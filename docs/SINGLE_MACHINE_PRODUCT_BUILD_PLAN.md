@@ -38,8 +38,10 @@ and the local/remote common foundation is in
 The source-level final integration decision, including the exact decisions for
 T3 Code, Hermes WebUI, and Hermes Desktop, is in
 [SINGLE_MACHINE_FINAL_EXECUTION_PLAN.md](SINGLE_MACHINE_FINAL_EXECUTION_PLAN.md).
-It supersedes this document's earlier Claude-before-Codex sequencing: the
-owner's chosen enablement order is Hermes, Codex, then Claude.
+It supersedes the earlier ordering. On macOS the supported enablement order is
+Hermes, then Claude, because issue #191 keeps local macOS Codex fail-closed.
+Codex follows later through the reviewed Linux route unless both macOS custody
+gates are separately proven.
 
 ## What we retain, borrow, and deliberately do not borrow
 
@@ -164,22 +166,12 @@ unreachable to a person without ordinary result-reading permission.
 **Done when:** one Hermes task reaches pending review once, cannot duplicate on
 restart, and its permitted workspace change is inspectable by the owner.
 
-### S3 — Codex on the selected local host
+### S3 — Claude Code local worker
 
-1. First decide the supported local host: prove a safe macOS custody design or
-   use the existing reviewed Linux path for the first operational installation.
-2. For macOS, solve the two recorded gates before enabling anything: verify the
-   exact running program while suspended before user code, and hold a protected
-   Codex home-directory handle rather than reopening a race-prone pathname.
-3. Reuse the App Server start/read/journal/result pipeline. Qualify actual
-   version, bounded framing, approval requests, stop, restart `thread/read`
-   and cleanup.
-
-**Done when:** a real Codex task has the same reviewable result/correction and
-no-duplicate restart behavior as Hermes. If the macOS proof cannot be made
-safe, the UI must say so and offer no pretend local-Codex start.
-
-### S4 — Claude Code local worker
+Claude is added after the bootstrap worker through the shared local-worker
+transition described in [LOCAL_ADAPTER_ADMISSION_DECISION.md](LOCAL_ADAPTER_ADMISSION_DECISION.md).
+It does not reuse or rewrite the installation journal's singular bootstrap
+`agent_readiness` receipt.
 
 1. Qualify the exact installed Claude Code version and stream-json behavior
    without copying its credentials into Control Room.
@@ -193,6 +185,22 @@ safe, the UI must say so and offer no pretend local-Codex start.
 **Done when:** a real bounded Claude task, a denied action, a cancellation and
 a post-restart result read all produce truthful canonical records without a
 second turn.
+
+### S4 — Codex on a supported host
+
+1. Use the existing reviewed Linux path for the first operational Codex
+   installation. A later macOS route may proceed only if both custody gates are
+   proven.
+2. For macOS, verify the exact running program while suspended before user code
+   and hold a protected Codex home-directory handle rather than reopening a
+   race-prone pathname.
+3. Reuse the App Server start/read/journal/result pipeline. Qualify actual
+   version, bounded framing, approval requests, stop, restart `thread/read`
+   and cleanup.
+
+**Done when:** a real Codex task on a supported host has the same reviewable
+result/correction and no-duplicate restart behavior as Hermes. Until the macOS
+proof is safe, the Mac UI must say so and offer no pretend local-Codex start.
 
 ### S5 — Three-agent local daily use
 

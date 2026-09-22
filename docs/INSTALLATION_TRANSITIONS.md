@@ -105,7 +105,9 @@ fresh verified reverse migration so history is not lost.
    protected data, launcher definitions, diagnostics, upgrade and uninstall
    instructions that preserve data.
 4. Complete installed-process qualifications and private host bindings for
-   each local adapter. Hermes Agent comes first, then Codex and Claude Code.
+   each local adapter. On macOS, Hermes Agent comes first and Claude Code is
+   added next through the shared transition. Codex uses the reviewed Linux
+   route unless both separate Mac custody gates are proven.
 5. Add remote enrollment, compatibility, reconnect, revocation, and a
    controlled two-computer proof using the same delivery contract.
 6. Build a source/target cutover coordinator around the existing verified

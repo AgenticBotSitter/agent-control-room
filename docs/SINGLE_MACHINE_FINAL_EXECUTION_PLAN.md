@@ -6,7 +6,12 @@
 
 Agent Control Room has two installation choices: **This computer** and **Several computers**. They are one product: one PostgreSQL authority database, the existing pg-boss queue, one task/result/review/correction lifecycle, and the same signed delivery packet.
 
-The local enablement order is Hermes Agent, Codex, Claude, then three-agent daily use and remote delivery. Later source work may proceed while an earlier real-world proof waits on the owner. An unproven capability is never shown as live.
+On macOS the local enablement order is Hermes Agent, then Claude, followed by
+daily use and remote delivery. Codex stays visibly unavailable on macOS under
+issue #191 and joins later through the reviewed Linux route unless both Mac
+custody gates are separately proven. Later source work may proceed while an
+earlier real-world proof waits on the owner. An unproven capability is never
+shown as live.
 
 ## Donor decisions
 
@@ -37,13 +42,16 @@ handoff window stops the run instead of being treated as an automatic retry.
 
 The shared worktree-change audit is source-only preparation for that later writing route. It binds a returned list of changed files to one approved delivery, one existing worktree lease, one base revision, explicit file limits and exact allowed paths. It also refuses a worktree lease that belongs to a different delivery run. It does not create a worktree, run Git, launch a harness or turn an audit into permission to write. This is deliberately shared so a later local or remote worker uses the same evidence rule rather than a separate local-only system.
 
-### P2 — Codex second
+### P2 — Claude second on macOS
+
+Keep the bounded JSON-lines decoder, owned process-session helper and canonical
+result publisher. Add only a transition-bound private process-acquisition host
+under them; all authority stays shared. Prove authenticated task, denial,
+cancellation and post-restart result reading without a guessed retry.
+
+### P3 — Codex on a supported host
 
 Keep App Server framing, journals, workspace identity, approval intake and result pipeline. The reviewed native bridge remains Linux-only. Before a macOS activation, prove suspended executable identity and protected private-state directory custody. Otherwise show the limitation, never a pretend Mac button. Prove bounded task, denial, stop/cleanup, result, restart read, bad-frame refusal and lost-reply recovery.
-
-### P3 — Claude third
-
-Keep the bounded JSON-lines decoder, owned process-session helper and canonical result publisher. Add only a private process-acquisition host under them; all authority stays shared. Prove authenticated task, denial, cancellation and post-restart result reading without a guessed retry.
 
 ### P4 — Complete locally, then extend remotely
 
