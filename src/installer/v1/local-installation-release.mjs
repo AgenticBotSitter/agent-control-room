@@ -12,12 +12,14 @@ const versionPattern = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/u;
 
 const requiredFiles = Object.freeze([
   "deploy/operator-config.mjs",
+  "deploy/agent-task-operator-config.mjs",
   "dist-vps/client/favicon.svg",
   "dist-vps/client/vinext-client-entry-manifest.json",
   "dist-vps/server/index.js",
   "dist-vps/server/runtime.js",
   "dist-vps/server/serving.js",
   "dist-vps/server/taskApplication.js",
+  "dist-vps/server/agentTaskOperator.js",
   "dist-vps/server/privateLocalInstallationOperatorCli.js",
   "package.json",
   "pnpm-lock.yaml",

@@ -16,6 +16,24 @@ setting or a copied website configuration cannot turn that mode on. Starting
 the host is therefore not evidence that any agent is connected or allowed to
 work.
 
+## Complete agent-task host configuration
+
+The release also contains `deploy/agent-task-operator-config.mjs`. It is the
+fixed loader for the complete host, not a second product configuration. Before
+activation, the operator creates one protected owner-only provider module
+outside the release and points the service environment variable
+`CONTROL_ROOM_AGENT_TASK_PROVIDER_FILE` at its absolute path. That private
+module supplies the already-reviewed task, worker, result, review, queue and
+native-TLS inputs. The loader rejects missing, relative, malformed, or changed
+providers before a database, listener, queue, worker, or credential store is
+touched.
+
+The provider contains sensitive operational references and must never be
+committed, uploaded, copied into the release, or placed in ordinary website
+settings. The ordinary `operator-config.mjs` remains website-only. Use the
+agent-task loader only after the full private input graph has been reviewed and
+the operator has separately authorized the activation.
+
 Before using it, prepare the reviewed dedicated database, private Cloudflare
 Access application and route, protected owner-bootstrap input, and protected
 website settings. Both supplied `.mjs` paths and the settings they load must

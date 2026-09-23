@@ -40,6 +40,7 @@ export const LOCAL_RELEASE_FILE_POLICY_V1 = Object.freeze({
     "NOTICE",
     "THIRD_PARTY.md",
     "deploy/operator-config.mjs",
+    "deploy/agent-task-operator-config.mjs",
     "package.json",
     "pnpm-lock.yaml",
     "scripts/prepare-local-installation.mjs",

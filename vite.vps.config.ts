@@ -21,6 +21,7 @@ export default defineConfig({
       preparation: "src/web/v1/private-fixture-preparation.ts", taskApplication: "src/web/v1/private-task-application.ts",
       taskBootstrap: "src/web/v1/private-task-startup.ts", nativeQueueFactories: "src/web/v1/installed-native-queue.ts",
       nativeQueueInspection: "src/persistence/pg-boss-schema-inspection.ts", taskHost: "src/web/v1/private-task-host.ts",
+      agentTaskOperator: "src/web/v1/private-agent-task-operator-configuration.ts",
       articleExtraction: "src/project-adapters/news/v1/article-extraction-runtime.mjs",
       productConfiguration: "src/config/v1/product-configuration.ts",
       githubWorkerBroker: "src/github-app/v1/private-service.ts",
