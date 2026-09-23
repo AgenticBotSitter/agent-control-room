@@ -22,6 +22,14 @@ The panel has no controls and cannot start, enable, or contact an agent. This
 is a source-tested user-interface improvement, not proof that a local worker
 is installed or operating.
 
+Prepared-task pages now also explain the selected local route's fixed limit:
+Hermes is supplied-text review only, and the first Claude route is text-only
+with tools and add-ons disabled. Those explanations are not availability
+claims—each says that qualification, owner enablement, and assignment are
+separate checks. The next UI capability still missing is a privacy-safe link
+between a current task observation and its exact local route; until that exists,
+the interface intentionally does not label a route as running.
+
 The macOS installation-journal sidecar binding and the separately versioned
 installed-manifest v2 binding are **source-only and inert**. The release build
 can bind and verify the named bytes, platform, architecture and digests before

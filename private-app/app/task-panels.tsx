@@ -145,13 +145,23 @@ export function HermesDeliveryRecoveryPanel({ recovery }: { recovery: HermesDeli
 export function TaskDetailPanel({ detail }: { detail: TaskDetail }) {
   const preparedFor = detail.preparedFor === "hermes" ? "Hermes Agent" : detail.preparedFor === "codex" ? "Codex"
     : detail.preparedFor === "claude" ? "Claude Code" : detail.preparedFor === "configured_worker" ? "Configured worker" : undefined;
+  const preparedRouteDetail = detail.preparedFor === "hermes"
+    ? "This route is limited to a supplied-text review. Before it can receive even that work, its local qualification and separate owner enablement must be recorded."
+    : detail.preparedFor === "claude"
+      ? "This route is limited to one text-only review. Its fixed first-task policy does not allow tools, add-ons, saved sessions, or unattended permission prompts."
+      : detail.preparedFor === "codex"
+        ? "This route has a saved Control Room task contract, but this page does not claim that a local Codex worker is available."
+        : detail.preparedFor === "configured_worker"
+          ? "This route is a saved plan category. Assignment still checks the configured route and does not start a worker." : undefined;
   return <div className="private-task-detail">
     <section className="private-panel"><span className="private-state">{taskStateLabel[detail.task.state]}</span><h2>{detail.task.title}</h2>
       <h3>Requested result</h3><p className="private-summary">{detail.instructions}</p>
       <p className="private-note"><ConfiguredTimestamp value={detail.task.createdAt} prefix="Saved" /> · <ConfiguredTimestamp value={detail.task.updatedAt} prefix="Job record updated" /></p>
       {detail.task.state === "proposed" && <p>This is saved proposed work, not an agent assignment.</p>}</section>
     {preparedFor && <section className="private-panel" aria-label="Prepared worker"><h2>Prepared worker</h2>
-      <p>This task is prepared for {preparedFor}. Preparation does not assign or start this worker.</p></section>}
+      <p>This task is prepared for {preparedFor}. Preparation does not assign or start this worker.</p>
+      <p className="private-note">{preparedRouteDetail}</p>
+      <p className="private-note">Next: open assignment to check the configured route for this task. A prepared route is not a current availability or running-work signal.</p></section>}
     <HermesDeliveryRecoveryPanel recovery={detail.hermesDeliveryRecovery} />
     <section className="private-panel"><h2>Agent progress</h2>
       <p>{detail.dispatch === "configured"

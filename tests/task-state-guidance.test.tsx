@@ -82,8 +82,19 @@ test("a prepared task shows only its safe worker category and no assignment clai
     const html = renderToStaticMarkup(<TaskDetailPanel detail={{ ...detail("ready"), preparedFor }} />);
     assert.match(html, new RegExp(`prepared for ${label}`));
     assert.match(html, /Preparation does not assign or start this worker/);
+    assert.match(html, /not a current availability or running-work signal/);
     assert.doesNotMatch(html, /template:|worker:|credential:|sha256:/);
   }
+});
+
+test("a prepared local worker explains its route limit without advertising an enabled process", () => {
+  const hermes = renderToStaticMarkup(<TaskDetailPanel detail={{ ...detail("ready"), preparedFor: "hermes" }} />);
+  assert.match(hermes, /limited to a supplied-text review/);
+  assert.match(hermes, /Before it can receive even that work/);
+  const claude = renderToStaticMarkup(<TaskDetailPanel detail={{ ...detail("ready"), preparedFor: "claude" }} />);
+  assert.match(claude, /one text-only review/);
+  assert.match(claude, /does not allow tools, add-ons, saved sessions, or unattended permission prompts/);
+  assert.doesNotMatch(`${hermes}${claude}`, /<button|<form|<input|available now|running now/i);
 });
 
 test("each ordinary task state points to one safe next destination or explanation", () => {
