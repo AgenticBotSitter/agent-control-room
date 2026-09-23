@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { CLAUDE_CODE_TEXT_REVIEW_FIXED_ARGS_V1 } from "../src/harness/claude-code-v1/text-review-invocation-policy";
+import { createClaudeCodeTextReviewQualificationEvidenceV1,
+  createClaudeCodeTextReviewQualificationFailureEvidenceV1 } from "../src/harness/claude-code-v1/qualification-evidence";
 import { qualifyPrivateLocalClaudeTextReviewV1,
   type PrivateLocalClaudeQualificationPortV1 } from "../src/installer/v1/private-local-claude-qualification";
 
@@ -45,6 +47,7 @@ test("owner-held Claude qualification accepts only one exact fixed text result a
     { input: 8, output: 5, total: 13 });
   assert.equal(value.terminalResultObserved, true);
   assert.equal(value.retryRequiresFreshOwnerAuthorization, false);
+  assert.match(createClaudeCodeTextReviewQualificationEvidenceV1(value).evidenceDigest, /^sha256:/);
   assert.deepEqual(request?.args, CLAUDE_CODE_TEXT_REVIEW_FIXED_ARGS_V1);
   assert.doesNotMatch(JSON.stringify(value), /private\/owner|CLAUDE_QUALIFICATION|00000000-0000-4000-8000-000000004242/i);
 });
@@ -76,4 +79,5 @@ test("a changed result, malformed usage, or unavailable process remains a failed
     workingDirectory: "/private/owner/work", expectedText: nonce, signal: new AbortController().signal },
   Object.freeze({ launch() { throw new Error("unavailable"); } }), () => 100);
   assert.equal(unavailable.failureReason, "installed_process_unavailable");
+  assert.deepEqual(createClaudeCodeTextReviewQualificationFailureEvidenceV1(unavailable).state, "failed");
 });
