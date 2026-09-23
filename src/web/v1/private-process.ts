@@ -235,11 +235,13 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
   if (options.planning && (options.planning.tenantId !== options.tenantId || options.planning.workspaceId !== options.workspaceId
     || typeof options.planning.plan !== "function" || options.planning.readSaved !== undefined && typeof options.planning.readSaved !== "function"
     || options.planning.readPreparedWorker !== undefined && typeof options.planning.readPreparedWorker !== "function"
+    || options.planning.readConfiguredLocalRoute !== undefined && typeof options.planning.readConfiguredLocalRoute !== "function"
     || options.planning.supportsProject !== undefined && typeof options.planning.supportsProject !== "function"
     || options.planning.templatesForProject !== undefined && typeof options.planning.templatesForProject !== "function")) throw new Error("invalid_private_app_config");
   const planning = options.planning ? Object.freeze({ plan: options.planning.plan.bind(options.planning),
     supportsProject: options.planning.supportsProject?.bind(options.planning), templatesForProject: options.planning.templatesForProject?.bind(options.planning),
-    readSaved: options.planning.readSaved?.bind(options.planning), readPreparedWorker: options.planning.readPreparedWorker?.bind(options.planning) }) : undefined;
+    readSaved: options.planning.readSaved?.bind(options.planning), readPreparedWorker: options.planning.readPreparedWorker?.bind(options.planning),
+    readConfiguredLocalRoute: options.planning.readConfiguredLocalRoute?.bind(options.planning) }) : undefined;
   if (options.revisions && (options.revisions.tenantId !== options.tenantId || options.revisions.workspaceId !== options.workspaceId
     || typeof options.revisions.plan !== "function")) throw new Error("invalid_private_app_config");
   const revisions = options.revisions ? Object.freeze({ tenantId: options.tenantId, workspaceId: options.workspaceId,

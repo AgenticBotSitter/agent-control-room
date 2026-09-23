@@ -18,10 +18,10 @@ import type { TaskRevisionOperation } from "./task-revision-operation";
 import { taskRevisionCommandSchema, taskRevisionRequestSchema } from "./task-revision-wire";
 import { sha256Digest } from "../../security";
 import { taskDetailSchema } from "./task-wire";
-import { observeTaskLocalRoute } from "./task-local-route-observation";
+import { observeTaskLocalRoute, type TrustedConfiguredLocalRoute } from "./task-local-route-observation";
 
 export function createTaskHttpHandler(options: { origin: string; trust: AccessTrust; service: WebTaskService;
-  ownerReviews?: WebTaskReviewService; ownerVerifications?: WebTaskVerificationService; planning?: Pick<TaskPlanningOperation, "plan" | "readSaved" | "readPreparedWorker" | "supportsProject" | "templatesForProject">;
+  ownerReviews?: WebTaskReviewService; ownerVerifications?: WebTaskVerificationService; planning?: Pick<TaskPlanningOperation, "plan" | "readSaved" | "readPreparedWorker" | "readConfiguredLocalRoute" | "supportsProject" | "templatesForProject">;
   assignment?: TaskAssignmentOperation; approvals?: TaskApprovalOperation; submission?: TaskSubmissionOperation; revisions?: TaskRevisionOperation;
   /** Trusted process selection; the browser cannot choose a header/provider. */
   gatewayAssertionProfile?: GatewayAssertionProviderProfileV1; clock?: () => number }) {
@@ -220,9 +220,10 @@ export function createTaskHttpHandler(options: { origin: string; trust: AccessTr
       if (jobId && request.method === "GET") {
         const detail = await options.service.detail(identity, projectId, jobId);
         const preparedFor = await options.planning?.readPreparedWorker?.(identity, projectId, jobId);
+        const configuredLocalRoute = await options.planning?.readConfiguredLocalRoute?.(identity, projectId, jobId) as TrustedConfiguredLocalRoute | undefined;
         const withPreparedRoute = { ...detail, preparedFor: preparedFor ?? null };
         return Response.json(taskDetailSchema.parse({ ...withPreparedRoute,
-          localRouteObservation: observeTaskLocalRoute(withPreparedRoute),
+          localRouteObservation: observeTaskLocalRoute(withPreparedRoute, configuredLocalRoute),
           dispatch: options.submission ? "configured" : "not_connected" }), { headers: privateResponseHeaders });
       }
       if (!jobId && request.method === "POST") {

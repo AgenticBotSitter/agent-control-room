@@ -16,7 +16,7 @@ test("task detail presents only the server-recorded prepared worker", async t =>
     planning: { async plan() { throw new Error("not reached by task detail"); }, async readPreparedWorker(...input) {
       calls.push(input);
       return "claude" as const;
-    } } });
+    }, async readConfiguredLocalRoute() { return "configured" as const; } } });
 
   const response = await handler(request(detailPath));
   assert.equal(response.status, 200);

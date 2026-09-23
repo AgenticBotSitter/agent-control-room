@@ -370,6 +370,10 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
     readPreparedWorker: (identity, projectId, jobId) => {
       const actor = { ...identity };
       return run(() => planner.readPreparedWorker(actor, projectId, jobId));
+    },
+    readConfiguredLocalRoute: (identity, projectId, jobId) => {
+      const actor = { ...identity };
+      return run(() => planner.readConfiguredLocalRoute(actor, projectId, jobId));
     } });
   const revisions = input.revisionPlanning ? Object.freeze({ ...scope,
     plan: (identity: Parameters<TaskExecutionPlanner["revise"]>[0], projectId: string, sourceJobId: string,

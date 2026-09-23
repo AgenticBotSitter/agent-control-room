@@ -107,8 +107,8 @@ test("a run may identify its saved local adapter without claiming current local 
 
 test("a local route status distinguishes a fresh matching task record from availability", () => {
   const running = renderToStaticMarkup(<TaskDetailPanel detail={{ ...detail("running", { routeEvidence: "local_claude" }),
-    preparedFor: "claude", localRouteObservation: { state: "current_recorded", adapter: "claude" } }} />);
-  assert.match(running, /fresh saved record of activity for this task on the prepared Claude Code adapter/i);
+    preparedFor: "claude", localRouteObservation: { state: "configured_local_route", adapter: "claude" } }} />);
+  assert.match(running, /trusted server configuration and fresh saved task record agree on the prepared Claude Code local route/i);
   assert.match(running, /does not show a worker identity, prove availability for another task/i);
   const uncertain = renderToStaticMarkup(<TaskDetailPanel detail={{ ...detail("running", { routeEvidence: "local_hermes", stale: true }),
     preparedFor: "hermes", localRouteObservation: { state: "needs_attention", adapter: "hermes" } }} />);

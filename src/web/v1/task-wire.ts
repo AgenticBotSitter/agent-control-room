@@ -53,7 +53,7 @@ export const taskRunSchema = z.object({ runId: id, harness: z.enum(["codex", "he
   timeline: z.array(progressPoint).max(50), earlierObservationsOmitted: z.boolean() }).strict();
 export type TaskRun = z.infer<typeof taskRunSchema>;
 export const taskLocalRouteObservationSchema = z.object({
-  state: z.enum(["not_prepared", "not_local_route", "not_observed", "current_recorded", "needs_attention", "recorded_not_current"]),
+  state: z.enum(["not_prepared", "not_local_route", "not_observed", "configured_local_route", "needs_attention", "recorded_not_current"]),
   adapter: z.enum(["hermes", "claude", "codex"]).nullable(),
 }).strict();
 export type TaskLocalRouteObservation = z.infer<typeof taskLocalRouteObservationSchema>;

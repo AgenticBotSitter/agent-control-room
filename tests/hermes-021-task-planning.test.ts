@@ -73,6 +73,10 @@ test("a Marvin Hermes 0.21 template creates a pinned text-review plan, not an ol
   assert.equal(saved.adapter, HERMES_021_MACOS_LOCAL_ADAPTER_V1);
   assert.equal(saved.connectorProfileDigest, template.connectorProfileDigest);
   assert.equal(saved.executionClass, "text_review");
+  assert.equal(await planner.readConfiguredLocalRoute(f.identity, binding.projectId, planned.receipt.jobId), "configured",
+    "only the trusted currently admitted adapter yields the browser-safe configured conclusion");
+  assert.equal(await notInstalled.readConfiguredLocalRoute(f.identity, binding.projectId, planned.receipt.jobId), "not_configured",
+    "a changed or missing local admission must not retain the configured conclusion");
   assert.equal(saved.job.jobType, HERMES_021_MACOS_LOCAL_JOB_TYPE_V1);
   assert.equal(saved.job.requiredCapability, HERMES_021_MACOS_LOCAL_CAPABILITY_V1);
   assert.notEqual(saved.schema, "control-room.task-execution-plan/v1");

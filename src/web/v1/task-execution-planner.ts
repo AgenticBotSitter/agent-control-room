@@ -160,7 +160,8 @@ type Plan = z.infer<typeof planSchema>;
 export type TaskPlanningTemplateChoice = Readonly<{ id: string; adapter: NativeTaskTemplate["adapter"] }>;
 export type TaskPlanningOperation = Readonly<{ tenantId: string; workspaceId: string; plan: TaskExecutionPlanner["plan"];
   supportsProject?: (projectId: string) => boolean; templatesForProject?: (projectId: string) => readonly TaskPlanningTemplateChoice[];
-  readSaved?: TaskExecutionPlanner["readSaved"]; readPreparedWorker?: TaskExecutionPlanner["readPreparedWorker"] }>;
+  readSaved?: TaskExecutionPlanner["readSaved"]; readPreparedWorker?: TaskExecutionPlanner["readPreparedWorker"];
+  readConfiguredLocalRoute?: TaskExecutionPlanner["readConfiguredLocalRoute"] }>;
 type Row = { tenant_id: string; project_id: string; source_job_id: string; job_id: string; plan: unknown; auth_tag: string };
 const joined = (tx: DatabaseSession): DatabaseClient => ({ query: tx.query.bind(tx), transaction: async work => work(tx),
   transactionWithPreCommitCheck: async (work, check) => { const result = await work(tx); await check(); return result; } });
@@ -359,6 +360,30 @@ export class TaskExecutionPlanner {
         || plan.schema === "control-room.task-execution-plan/v7" || plan.schema === "control-room.task-execution-plan/v8") return "hermes" as const;
       if (plan.schema === "control-room.task-execution-plan/v9" || plan.schema === "control-room.task-execution-plan/v10") return "claude" as const;
       return "configured_worker" as const;
+    });
+  }
+  /** Server-only conclusion about whether this saved task plan still names one
+   * exact locally admitted adapter. It intentionally returns no route detail. */
+  async readConfiguredLocalRoute(identity: VerifiedWebIdentity, projectId: string, jobId: string) {
+    localId.parse(projectId); localId.parse(jobId);
+    return new WebSessionAuthority(this.db, this.scope, this.clock, "task").authenticated(identity, async (tx, actor) => {
+      actor.require("tasks.read", projectId);
+      await this.projects.getViewInSession(tx, actor, projectId);
+      const row = (await tx.query<Row>("SELECT * FROM control_task_execution_plans WHERE tenant_id=$1 AND project_id=$2 AND job_id=$3",
+        [this.scope.tenantId, projectId, jobId])).rows[0];
+      if (!row) return "not_configured" as const;
+      const plan = this.verify(row);
+      if (plan.projectId !== projectId || plan.job.id !== jobId) fail();
+      await this.checkedJob(tx, plan);
+      const adapter = plan.schema === "control-room.task-execution-plan/v3" || plan.schema === "control-room.task-execution-plan/v4"
+        ? CODEX_APP_SERVER_ADAPTER : plan.schema === "control-room.task-execution-plan/v5"
+          || plan.schema === "control-room.task-execution-plan/v6" || plan.schema === "control-room.task-execution-plan/v7"
+          || plan.schema === "control-room.task-execution-plan/v8" ? HERMES_021_MACOS_LOCAL_ADAPTER_V1
+            : plan.schema === "control-room.task-execution-plan/v9" || plan.schema === "control-room.task-execution-plan/v10"
+              ? CLAUDE_CODE_LOCAL_ADAPTER_V1 : undefined;
+      if (!adapter || !this.localAdapterAdmission) return "not_configured" as const;
+      return this.localAdapterAdmission.enabledAdapters.filter(value => value === adapter).length === 1
+        ? "configured" as const : "not_configured" as const;
     });
   }
   private verify(row: Row) {

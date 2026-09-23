@@ -18,16 +18,24 @@ function detail(preparedFor: TaskDetail["preparedFor"], runs: ReturnType<typeof 
 test("local route observation uses the newest matching saved adapter record only", () => {
   const olderCurrent = run({ lastObservedAt: "2026-09-22T11:59:00.000Z" });
   const latestTerminal = run({ lastObservedAt: at, state: "succeeded", nativeState: "completed" });
-  assert.deepEqual(observeTaskLocalRoute(detail("claude", [olderCurrent, latestTerminal])),
+  assert.deepEqual(observeTaskLocalRoute(detail("claude", [olderCurrent, latestTerminal]), "configured"),
     { state: "recorded_not_current", adapter: "claude" });
-  assert.deepEqual(observeTaskLocalRoute(detail("claude", [run({ routeEvidence: "local_hermes" })])),
+  assert.deepEqual(observeTaskLocalRoute(detail("claude", [run({ routeEvidence: "local_hermes" })]), "configured"),
     { state: "not_observed", adapter: "claude" });
 });
 
 test("local route observation downgrades stale or uncertain saved evidence", () => {
   for (const patch of [{ stale: true }, { availability: "offline" as const }, { nativeState: "ambiguous" as const }]) {
-    assert.deepEqual(observeTaskLocalRoute(detail("claude", [run(patch)])), { state: "needs_attention", adapter: "claude" });
+    assert.deepEqual(observeTaskLocalRoute(detail("claude", [run(patch)]), "configured"), { state: "needs_attention", adapter: "claude" });
   }
   assert.deepEqual(observeTaskLocalRoute(detail(null, [])), { state: "not_prepared", adapter: null });
   assert.deepEqual(observeTaskLocalRoute(detail("configured_worker", [])), { state: "not_local_route", adapter: null });
+});
+
+test("configured-local wording requires the trusted exact route conclusion", () => {
+  const current = detail("claude", [run()]);
+  assert.deepEqual(observeTaskLocalRoute(current, "configured"), { state: "configured_local_route", adapter: "claude" });
+  for (const conclusion of [undefined, "not_configured", "ambiguous"] as const) {
+    assert.deepEqual(observeTaskLocalRoute(current, conclusion), { state: "needs_attention", adapter: "claude" });
+  }
 });

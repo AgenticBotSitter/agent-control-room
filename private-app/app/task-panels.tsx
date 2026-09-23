@@ -156,8 +156,8 @@ function LocalRouteObservationPanel({ detail }: { detail: TaskDetail }) {
     ? "This task has a saved worker category, but it is not one of the supported local routes."
     : observation.state === "not_observed"
       ? `This task is prepared for ${name}, but no matching saved local run observation exists yet.`
-      : observation.state === "current_recorded"
-        ? `Control Room has a fresh saved record of activity for this task on the prepared ${name} adapter.`
+      : observation.state === "configured_local_route"
+        ? `Control Room's trusted server configuration and fresh saved task record agree on the prepared ${name} local route.`
         : observation.state === "needs_attention"
           ? `The saved ${name} route observation needs attention. Control Room will not guess whether it is still working.`
           : `Control Room has a saved ${name} route observation, but it is not current task activity.`;
