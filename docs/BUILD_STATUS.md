@@ -21,12 +21,12 @@ substitute; and a lost acknowledgement does not cause a second send. The
 topology-neutral controller packet is now also carried by an additive,
 negotiated signed-node message pair. The remote worker durably records that
 packet before it returns its non-executing receipt; the controller accepts only
-the exact receipt from the same enrolled node and session. This is source
-evidence, not a live worker or task execution. The next remote-delivery package
-must bind canonical queued-task selection to the enrolled remote worker and
-retain the receipt in the existing PostgreSQL authority, reusing the existing
-session, receipt and reconnect machinery rather than adding a broker or a
-second queue.
+the exact receipt from the same enrolled node and session. The canonical v11
+queued-task selector, protected remote materializer, shared queue lifecycle,
+and private installation forwarding now reuse that receipt authority without a
+broker or second queue. This remains source evidence, not a live worker or task
+execution: a protected resolver, enrolled node, receipt-intake composition, and
+owner-approved live proof are still required.
 
 **Authoritative completion order:** follow
 [`LOCAL_TO_MULTI_SYSTEM_EXECUTION_PLAN.md`](LOCAL_TO_MULTI_SYSTEM_EXECUTION_PLAN.md).

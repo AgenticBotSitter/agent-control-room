@@ -22,9 +22,13 @@ delivery transport.
   and shared installation composition exist. The installed process route still
   needs its final production host binding, owner-attended qualification, and
   first-task proof.
-- The shared remote delivery contract and node-session bridge exist in source.
-  Canonical queued-task selection and the durable remote receipt still need to
-  be joined through the existing PostgreSQL authority.
+- The shared remote delivery contract, node-session bridge, canonical queued
+  task selection, and durable remote receipt are now joined in source through
+  the existing PostgreSQL authority. The protected installation configuration
+  can pass only the materializer's bounded delivery operations to the shared
+  task lifecycle. A real protected resolver, enrolled Linux node, and live
+  receipt intake remain to be configured and proven; source tests do not make
+  a remote worker available.
 - macOS Codex execution remains fail-closed. The discarded prototype could not
   protect Codex's pathname-based private home safely. The first supported
   Codex worker is therefore the reviewed Linux route in the several-computer
@@ -91,9 +95,10 @@ database, scheduler, website, and review path.
 
 ## Phase 4 — Add Codex through the supported Linux route
 
-1. Complete canonical queued-task selection for an enrolled remote worker and
-   persist its delivery receipt through the existing PostgreSQL/session path.
-   Do not add another broker, scheduler, or database.
+1. Assemble the protected resolver and receipt-intake composition for an
+   enrolled remote worker. It must use the existing canonical queued-task
+   selection and PostgreSQL receipt path; do not add another broker, scheduler,
+   or database.
 2. Enroll one Linux Codex worker with an exact compatible adapter and private
    certificate identity.
 3. Prove delivery to only that worker, result return, correction, disconnect
