@@ -222,6 +222,11 @@ backup/restore and local runtime assembly.
    required records and restricted login behavior.
 10. Reread the settled journal, configuration, first-owner, database, scheduler,
     release and recovery evidence immediately before the first startup effect.
+    The source now has a pure, redacted two-snapshot binding contract for this
+    final check. It refuses altered, incomplete, or substituted evidence and
+    has no reader or startup power of its own. The owner-held installation
+    reader remains responsible for supplying two genuinely separate current
+    observations; copying the first snapshot is not a valid reread.
 
 **Owner gate:** selecting private paths and database credentials, and allowing
 the actual disposable provision/restore.  
