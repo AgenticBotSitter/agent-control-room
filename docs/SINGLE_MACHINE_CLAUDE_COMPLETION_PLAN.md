@@ -192,10 +192,13 @@ topology until its separate architecture decision is accepted.
   a harness name. The HTTP proof also refuses a browser-supplied worker query
   and returns no prepared-worker label when the trusted planning reader is not
   configured.
-- Add an installation status panel that reports Hermes and Claude separately as
-  **not configured**, **qualification required**, **ready**, **unavailable**,
-  **running**, or **needs owner attention**. A stale observation is unavailable,
-  not ready.
+- Retain the installation status panel that reports Hermes and Claude separately
+  as **not configured**, **qualification required**, **ready for owner
+  enablement**, **unavailable**, or **needs owner attention**. It is a setup and
+  proof view, not a process monitor. “Running” is permitted only as a
+  task-specific saved observation when the task’s trusted route and fresh saved
+  record agree; it must never be an installation-wide live-worker claim. A stale
+  observation needs owner attention, not ready.
 - Ensure create-project → create-task → prepare → assign → approve → queue →
   result → review/correction is reachable with direct links, keyboard use,
   narrow screens, refresh/lost-request/lost-reply handling, and clear recovery
