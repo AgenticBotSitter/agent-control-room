@@ -3,6 +3,7 @@ import test from "node:test";
 import { computeAuthorityDigest, sha256Digest } from "../src/security";
 import { TaskExecutionPlanner, type NativeTaskTemplate } from "../src/web/v1/task-execution-planner";
 import { TaskAssignmentCoordinator } from "../src/web/v1/task-assignment-coordinator";
+import { WebTaskService } from "../src/web/v1/task-service";
 import { FleetSignalStore } from "../src/node-fleet/v1/fleet-signal-store";
 import { NativeApprovalPacketStore } from "../src/web/v1/native-approval-packet-store";
 import type { NativeTaskSubmission } from "../src/persistence/native-task-submission";
@@ -175,6 +176,20 @@ test("Hermes and Claude share one durable lifecycle without cross-route recovery
   const reviews = f.createReviews(f.db, () => now);
   const hermesReview = reviewRows.rows.find(row => row.run_id === hermesFirst.execution.registered.run.id)!;
   const claudeReview = reviewRows.rows.find(row => row.run_id === preparedClaude.delivery.identity.runId)!;
+  const ownerTasks = new WebTaskService(f.db, f.scope, () => now, {
+    harnessIntegrityKey: f.harnessKey, results: f.config,
+    reviews: { integrityKey: f.reviewKey, checkpoints: f.checkpoints }, ownerReviews: f.ownerConfig,
+  });
+  const [hermesPage, claudePage] = await Promise.all([
+    ownerTasks.results(f.identity, binding.projectId, hermesPlan.receipt.jobId),
+    ownerTasks.results(f.identity, binding.projectId, claudePlan.receipt.jobId),
+  ]);
+  assert.deepEqual(hermesPage.items.map(item => item.artifactId), [hermesReview.artifact_id]);
+  assert.deepEqual(claudePage.items.map(item => item.artifactId), [claudeReview.artifact_id]);
+  assert.equal(hermesPage.reviewCommands, "configured");
+  assert.equal(claudePage.reviewCommands, "configured");
+  assert.equal(hermesPage.reviews[0]?.status, "pending");
+  assert.equal(claudePage.reviews[0]?.status, "pending");
   const draft = (row: typeof hermesReview, decision: "accepted" | "changes_requested", feedback: string) => {
     const plan = durableResultReviewPlanSchemaV1.parse(row.plan);
     const receipt = durableResultReceiptSchemaV1.parse(row.receipt);
