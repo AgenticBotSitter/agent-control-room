@@ -22,6 +22,7 @@ import { durableResultReceiptSchemaV1 } from "../src/artifacts/v1/durable-result
 import { durableResultReviewPlanSchemaV1, durableReviewTargetV1 } from "../src/completion-gate/v1/durable-result-review-plan";
 import { DurableResultReviewSubmissionServiceV1 } from "../src/completion-gate/v1/durable-result-review-submission";
 import { DurableLocalResultInspectionServiceV1 } from "../src/completion-gate/v1/durable-local-result-inspection";
+import { RoutedTaskResultInspectionServiceV1 } from "../src/completion-gate/v1/routed-result-inspection";
 import { NativeResultVerificationService, type AutomaticDocumentScenario } from "../src/completion-gate/v1/native-result-verification";
 import { NativeTaskCompletionService } from "../src/persistence/native-task-completion";
 import type { ControllerWorkerDeliveryPortV1, ControllerWorkerDeliveryV1 } from "../src/harness/v1/controller-worker-delivery";
@@ -66,6 +67,16 @@ test("Hermes and Claude share one durable lifecycle without cross-route recovery
     deliveryIntegrityKeys: { hermes: new Uint8Array(32).fill(65), claude: new Uint8Array(32).fill(66) },
     checkpoints: f.checkpoints, storageClass: "local", storage: f.storage,
   });
+  // The installed composition begins with the retained Hermes inspector and
+  // adds Claude's separate receipt key.  Exercise that exact read-only bridge
+  // against real saved results, rather than only checking that it has a method.
+  const routedInspection = new RoutedTaskResultInspectionServiceV1(f.db, {
+    integrityKey: f.reviewKey, harnessIntegrityKey: f.harnessKey, checkpoints: f.checkpoints, results: f.config,
+  }, new DurableLocalResultInspectionServiceV1(f.db, {
+    integrityKey: f.resultKey, reviewIntegrityKey: f.reviewKey, harnessIntegrityKey: f.harnessKey,
+    deliveryIntegrityKeys: { hermes: new Uint8Array(32).fill(65) },
+    checkpoints: f.checkpoints, storageClass: "local", storage: f.storage,
+  })).withClaudeDeliveryIntegrityKey(new Uint8Array(32).fill(66));
   const makeTemplate = (id: string, adapter: string, executor: string, operation: string, profile: string): NativeTaskTemplate => {
     const hermes = adapter === HERMES_021_MACOS_LOCAL_ADAPTER_V1;
     const authority: NativeTaskTemplate["authority"] = { projectId: binding.projectId, allowedExecutor: executor,
@@ -216,6 +227,13 @@ test("Hermes and Claude share one durable lifecycle without cross-route recovery
     [hermesReview.artifact_id, claudeReview.artifact_id].sort());
   assert.deepEqual([inspectedHermes.execution.leaseId, inspectedClaude.execution.leaseId].sort(),
     [hermesAssigned.receipt.leaseId, claudeAssigned.receipt.leaseId].sort());
+  const [routedHermes, routedClaude] = await Promise.all([
+    f.db.transaction(tx => routedInspection.inspectSubmitted(tx, binding.tenantId, hermesReview.run_id)),
+    f.db.transaction(tx => routedInspection.inspectSubmitted(tx, binding.tenantId, claudeReview.run_id)),
+  ]);
+  assert.deepEqual([routedHermes.result.receipt.artifactId, routedClaude.result.receipt.artifactId].sort(),
+    [hermesReview.artifact_id, claudeReview.artifact_id].sort(),
+  "the installed Hermes-plus-Claude inspection route reads both saved local results");
   const accepted = await reviews.record(f.identity, binding.projectId, hermesPlan.receipt.jobId, draft(hermesReview, "accepted", ""),
     "shared-hermes-accept");
   assert.notEqual(draft(hermesReview, "accepted", "").targetId,
