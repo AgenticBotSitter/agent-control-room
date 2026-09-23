@@ -69,6 +69,10 @@ the necessary L3 service state.
   complete that package before asserting the shared restart row.
 - Keep adapter differences limited to executable/process qualification and
   terminal framing.
+- The source conformance suite now proves that separately prepared Hermes and
+  Claude deliveries retain two distinct receipts through a reconstructed
+  shared controller receiver. This is deliberately not a claim that either
+  process was launched, qualified, or enabled.
 
 **Done when:** the same test table proves both routes use the same canonical
 states and no adapter can bypass review or claim task authority.

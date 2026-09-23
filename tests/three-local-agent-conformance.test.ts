@@ -95,6 +95,44 @@ test("all three local worker identities use one non-executing delivery contract 
   }
 });
 
+test("two separately prepared local routes retain separate receipts through a shared controller restart", async () => {
+  // This is deliberately below the real-process adapters: it proves the one
+  // controller receipt shape does not accidentally turn two local routes into
+  // one task, while remaining a source-only proof that cannot launch either
+  // harness. Hermes and Claude are the two first supported local adapters.
+  const hermes = workers[0], claude = workers[2];
+  const first = receiptPort();
+  const inputFor = (worker: typeof workers[number], identity: ControllerWorkerDeliveryV1["identity"]) => {
+    const { schema: _schema, inputDigest: _inputDigest, deliveryId: _deliveryId, deliveryDigest: _deliveryDigest, ...input } = deliveryFor(worker);
+    return createControllerWorkerDeliveryV1({ ...input, identity });
+  };
+  const hermesPacket = inputFor(hermes, {
+    tenantId: "tenant:local", projectId: "project:local", jobId: "job:hermes", attemptId: "attempt:hermes",
+    runId: "run:hermes", nodeId: "node:marvin",
+  });
+  const claudePacket = inputFor(claude, {
+    tenantId: "tenant:local", projectId: "project:local", jobId: "job:claude", attemptId: "attempt:claude",
+    runId: "run:claude", nodeId: "node:claude",
+  });
+  const hermesReceipt = await deliverControllerWorkerPacketV1(first.port, hermesPacket,
+    { kind: "local", workerId: hermes.workerId });
+  const claudeReceipt = await deliverControllerWorkerPacketV1(first.port, claudePacket,
+    { kind: "local", workerId: claude.workerId });
+  assert.equal(hermesReceipt.disposition, "accepted");
+  assert.equal(claudeReceipt.disposition, "accepted");
+  assert.notEqual(hermesReceipt.deliveryId, claudeReceipt.deliveryId);
+  assert.equal(first.receipts.size, 2);
+
+  const restarted = receiptPort(first.receipts);
+  const replayedHermes = await deliverControllerWorkerPacketV1(restarted.port, hermesPacket,
+    { kind: "local", workerId: hermes.workerId });
+  const replayedClaude = await deliverControllerWorkerPacketV1(restarted.port, claudePacket,
+    { kind: "local", workerId: claude.workerId });
+  assert.equal(replayedHermes.disposition, "duplicate");
+  assert.equal(replayedClaude.disposition, "duplicate");
+  assert.equal(first.receipts.size, 2, "restart replay cannot add or merge local task receipts");
+});
+
 test("the shared local lifecycle carries a correction through result, review, and completion exactly once", async t => {
   // The existing disposable fixture is the authoritative lifecycle proof. It remains
   // adapter-neutral: the worker packet above is the boundary by which each local

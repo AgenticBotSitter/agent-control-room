@@ -37,6 +37,13 @@ success measurements. It cannot start Claude, reveal the command/login/prompt
 or output text, make a route available, or authorize work. The real
 installed-Claude qualification and first task are still owner-attended gates.
 
+The shared local-worker source conformance suite now proves that a prepared
+Hermes delivery and a prepared Claude delivery remain separate through the
+same controller receipt store and a simulated controller restart. The proof is
+non-executing: it does not launch, qualify, or enable either agent. It confirms
+one lifecycle boundary rather than creating a second local scheduler or result
+store.
+
 The macOS installation-journal sidecar binding and the separately versioned
 installed-manifest v2 binding are **source-only and inert**. The release build
 can bind and verify the named bytes, platform, architecture and digests before
