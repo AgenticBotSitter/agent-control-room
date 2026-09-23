@@ -329,7 +329,7 @@ async function boundedOpen(path: string, flags: number, signal: AbortSignal | un
   }
 }
 async function verifyNative(port: NativePort, kind: NativeKind, handle: FileHandle, observed: Identity,
-  signal: AbortSignal | undefined, deadlineMs: number): Promise<void> {
+  signal: AbortSignal | undefined, deadlineMs: number, allowExtendedAncestorAcl = false): Promise<void> {
   let result: unknown;
   try {
     result = await bounded(nativeSignal => port.verifyProtectedPath(Object.freeze({
@@ -344,11 +344,12 @@ async function verifyNative(port: NativePort, kind: NativeKind, handle: FileHand
     "extendedAcl", "ancestorVerified"]);
   if (value.schema !== PRIVATE_INSTALLED_CONFIGURATION_NATIVE_CUSTODY_V1 || value.outcome !== "verified"
     || value.descriptor !== handle.fd || value.device !== observed.device || value.inode !== observed.inode
-    || value.ownerUid !== observed.ownerUid || value.mode !== observed.mode || value.extendedAcl !== false
+    || value.ownerUid !== observed.ownerUid || value.mode !== observed.mode || typeof value.extendedAcl !== "boolean"
+    || value.extendedAcl === true && (kind !== "ancestor" || !allowExtendedAncestorAcl)
     || value.ancestorVerified !== true) return refused();
 }
 async function protectedDirectory(path: string, ownerUid: number, port: NativePort, signal: AbortSignal | undefined,
-  deadlineMs: number, kind: "ancestor" | "journal" = "ancestor"): Promise<Identity> {
+  deadlineMs: number, kind: "ancestor" | "journal" = "ancestor", allowExtendedAncestorAcl = false): Promise<Identity> {
   let handle: FileHandle | undefined;
   try {
     handle = await boundedOpen(path, openDirectory, signal, deadlineMs);
@@ -357,7 +358,7 @@ async function protectedDirectory(path: string, ownerUid: number, port: NativePo
     if (!statBefore.isDirectory() || !same(before, named) || ((before.mode & 0o022) !== 0 && !writableSharedStickyRoot)
       || ![0, ownerUid].includes(before.ownerUid) || await realpath(path) !== path) return refused();
     if (kind === "journal" && (before.ownerUid !== ownerUid || before.mode !== 0o700)) return refused();
-    await verifyNative(port, kind, handle, before, signal, deadlineMs);
+    await verifyNative(port, kind, handle, before, signal, deadlineMs, allowExtendedAncestorAcl);
     if (!same(before, identity(await handle.stat())) || !same(before, identity(await lstat(path)))) return refused();
     return before;
   } catch (error) {
@@ -368,9 +369,10 @@ async function protectedDirectory(path: string, ownerUid: number, port: NativePo
 }
 async function protectedAncestors(path: string, ownerUid: number, port: NativePort, signal: AbortSignal | undefined,
   deadlineMs: number): Promise<void> {
-  const ancestors: string[] = []; let current = dirname(path);
+  const protectedRoot = dirname(path), ancestors: string[] = []; let current = protectedRoot;
   while (true) { ancestors.push(current); if (current === "/") break; current = dirname(current); }
-  for (const ancestor of ancestors.reverse()) await protectedDirectory(ancestor, ownerUid, port, signal, deadlineMs);
+  for (const ancestor of ancestors.reverse())
+    await protectedDirectory(ancestor, ownerUid, port, signal, deadlineMs, "ancestor", ancestor !== protectedRoot);
 }
 async function readProtectedFile(path: string, ownerUid: number, expectedMode: number, exactBytes: number,
   expectedDigest: string, port: NativePort, kind: "manifest" | "configuration", signal: AbortSignal | undefined,

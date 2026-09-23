@@ -20,14 +20,74 @@ prepared for the owner's `cr` profile with the separately selected model and
 provider, but that exact selection still requires its own owner-attended
 qualification before it can receive a real Control Room task.
 
-All 364 test files are now reachable from the GitHub test lanes. Registering
+All 372 test files are now reachable from the GitHub test lanes. Registering
 the previously omitted shared Hermes/Claude startup checks exposed and fixed
 one stale Claude fixture that lacked the new Opus pin. The shared server
 composition now passes 109 checks, including retained Hermes operation when
 Claude is added, restart recovery, route isolation, and refusal of a
 Claude-only configuration. This is source evidence, not a live connection.
 
-## Source checkpoint (2026-09-22)
+## Source checkpoint (2026-09-23)
+
+The first macOS Claude process-custody helper is now source-complete and has
+passed independent review for its deliberately inert scope. It holds the
+selected executable and workspace, starts the target suspended, verifies the
+kernel-observed executable and working directory before continuing, owns one
+fresh process group, and reports bounded retirement without exposing paths or
+output. Its deterministic sidecar is release-bound and includes the repository
+license and notice. Disposable native/artifact checks pass on the current Mac;
+no real Claude process or credential was used. This does **not** activate the
+Claude route: the production Node port, helper-abrupt-death recovery, outer
+installed-manifest binding, real authentication compatibility and the
+owner-attended qualification remain required.
+
+The matching Node adapter now owns one use of that fixed native helper and has
+also passed independent review after a correction. A verified-but-unused hold
+is retired before the helper is allowed to continue; after continuation, helper
+death or an uncertain exit permanently withholds replay. The installed-host
+preflight captures a one-use, process-local provider for the full private input
+graph without putting callbacks, commands, paths or credentials into ordinary
+configuration. Both packages remain deliberately inert: no real Claude process
+was contacted and no installed owner-host provider is present yet.
+
+Protected installed configuration can now be assembled as data after it rejects
+secret-shaped fields and binds the installation, release, journal, database,
+worker and storage selections. Independent review accepted the corrected
+source-only package. A direct Mac-to-VPS database address is still preparation,
+not a usable live route. The runtime now accepts only exact loopback or an
+exact Tailscale IPv4 address bound to reviewed private-route evidence, normal
+TLS hostname verification, and the exact server certificate. Independent
+review and 122 focused checks accepted that source behavior. The VPS still
+needs a qualifying private PostgreSQL listener, trusted certificate, restricted
+accounts, and owner-authorized connection proof before the route can be used.
+
+Recovery preparation now has an independently reviewed, read-only tool
+preflight. It holds and rechecks the fixed retained PostgreSQL tool and release
+bytes, rejects substitutions and unsafe permissions, and explicitly reports
+that caller-supplied hashes are not trusted provenance. It cannot run a backup
+or restore, read credentials, or claim readiness. Trusted release pins, a
+protected backup destination, an isolated disposable restore cluster and a
+bounded concrete native execution implementation remain required. The narrow
+source host beneath that future implementation is now independently accepted:
+it fixes the operation sequence and argv, captures a dormant full process-group
+lifecycle before start, joins cancellation at the native-call boundary,
+sanitizes private failures, and reserves one absolute cleanup deadline through
+TERM, KILL and complete reaping. Fourteen focused checks pass. No process,
+database, backup, restore or credential was used by this source proof.
+
+The Mac background-service runtime now supplies the exact narrow interface
+expected by the existing installer plus fixed status, start, stop and restart
+controls. Independent review found and drove corrections for adapter
+compatibility, post-effect uncertainty, cross-operation locking, cancellation,
+deadlines, health observation and cleanup. Forty focused checks and the full
+installation lane pass. This is still a source-only port: no LaunchAgent was
+written or started, and the descriptor-safe native host plus owner-attended
+qualification remain required.
+
+The local setup page now gives one read-only next-step summary from saved setup
+evidence and refreshes only its existing protected status reads while visible.
+An interrupted, failed or uncertain stage is shown as inspect-before-repeat;
+the page still cannot install, repeat, enable or start anything.
 
 The local Hermes and Claude result paths now both publish through the same
 durable receipt, owner-review, correction, and recovery records. The installed

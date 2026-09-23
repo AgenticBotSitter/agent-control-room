@@ -69,6 +69,12 @@ No evidence in this package establishes those live prerequisites. If the VPS
 currently has no qualifying TLS setup, installation is blocked on that concrete
 prerequisite; setting `ssl:false` on a remote address is never an alternative.
 
+For a userspace-mode Tailscale VPS that cannot bind PostgreSQL directly to its
+tailnet address, the reviewed raw-forwarding activation and rollback design is
+[`PRIVATE_POSTGRES_TAILSCALE_SERVE_ACTIVATION.md`](PRIVATE_POSTGRES_TAILSCALE_SERVE_ACTIVATION.md).
+That document preserves this exact endpoint and TLS contract; it does not
+authorize the live route.
+
 ## Evidence
 
 The existing database option tests cover private address and identity binding,

@@ -35,10 +35,13 @@ import { copyVerifiedMacosProtectedDirectoryNativeSidecarV1, verifyProtectedDire
 
 export const MACOS_LOCAL_LAUNCHER_BUNDLE_V1 =
   "control-room.macos-local-launcher-bundle/v1";
+export const MACOS_LOCAL_LAUNCHER_BUNDLE_V2 =
+  "control-room.macos-local-launcher-bundle/v2";
 
 const MANIFEST_NAME = "MACOS_LAUNCHER_MANIFEST.json";
 const COMMAND_NAME = "Open Agent Control Room.command";
 const FIXED_FILE_COUNT = 19;
+const EXPANDED_FILE_COUNT = 31;
 const MAX_FILE_BYTES = 1024 * 1024 * 1024;
 const MAX_OUTPUT_BYTES = 1024 * 1024;
 const digestPattern = /^[a-f0-9]{64}$/u;
@@ -46,9 +49,22 @@ const versionPattern = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/u;
 const safeIdPattern = /^[a-z0-9](?:[a-z0-9-]{1,61}[a-z0-9])?$/u;
 const NATIVE_SIDECAR_DIRECTORY = "native/protected-directory";
 const JOURNAL_NATIVE_SIDECAR_DIRECTORY = "native/installation-journal";
+const CONFIGURATION_NATIVE_SIDECAR_DIRECTORY = "native/installed-configuration";
+const SERVICE_NATIVE_SIDECAR_DIRECTORY = "native/macos-service";
+const SERVICE_EXECUTABLE = `${SERVICE_NATIVE_SIDECAR_DIRECTORY}/macos-service-v1`;
 const RUNTIME_FILES = Object.freeze(["local-launcher-core.mjs", "local-release-assembly.mjs", "local-release-stager.mjs",
   "local-setup-launcher-supervisor.mjs", "macos-installation-journal-native-sidecar.mjs",
   "macos-local-launcher-bundle.mjs", "macos-protected-directory-native-sidecar.mjs"]);
+const EXPANDED_RUNTIME_FILES = Object.freeze([...RUNTIME_FILES,
+  "macos-installed-configuration-native-sidecar.mjs", "macos-service-native-sidecar.mjs"]);
+
+// Lazy imports preserve the exact legacy v1 layout: its extracted runtime has
+// neither new module, and must not attempt to resolve them.
+async function expandedSidecarModules() {
+  const [configuration, service] = await Promise.all([import("./macos-installed-configuration-native-sidecar.mjs"),
+    import("./macos-service-native-sidecar.mjs")]);
+  return { configuration, service };
+}
 
 const refused = (reason = "macos_local_launcher_bundle_refused") => {
   const error = new Error(reason);
@@ -95,10 +111,11 @@ function parseManifest(bytes) {
   const value = JSON.parse(bytes.toString("utf8"));
   if (!value || typeof value !== "object" || Array.isArray(value)
     || Object.keys(value).sort().join(",") !== "fileCount,files,node,platform,product,schema,version"
-    || value.schema !== MACOS_LOCAL_LAUNCHER_BUNDLE_V1 || value.product !== "agent-control-room"
+    || ![MACOS_LOCAL_LAUNCHER_BUNDLE_V1, MACOS_LOCAL_LAUNCHER_BUNDLE_V2].includes(value.schema)
+    || value.product !== "agent-control-room"
     || value.platform !== "darwin" || value.node !== ">=22.13.0" || !versionPattern.test(value.version)
     || !Array.isArray(value.files) || value.files.length !== value.fileCount
-    || value.files.length !== FIXED_FILE_COUNT) refused();
+    || value.files.length !== (value.schema === MACOS_LOCAL_LAUNCHER_BUNDLE_V2 ? EXPANDED_FILE_COUNT : FIXED_FILE_COUNT)) refused();
   const paths = value.files.map(entry => {
     if (!entry || typeof entry !== "object" || Array.isArray(entry)
       || Object.keys(entry).sort().join(",") !== "bytes,mode,path,sha256"
@@ -129,7 +146,7 @@ async function listTree(root) {
         await walk(path, name);
       } else if (entry.isFile()) files.push(name);
       else refused();
-      if (files.length > FIXED_FILE_COUNT + 1) refused();
+      if (files.length > EXPANDED_FILE_COUNT + 1) refused();
     }
   }
   await walk(root);
@@ -148,19 +165,31 @@ function expectedDirectories(paths) {
   return result;
 }
 
-function expectedBundleMembers(version, architecture) {
+function expectedBundleMembers(version, architecture, expanded = false) {
   const paths = [COMMAND_NAME, "release/SHA256SUMS", `release/agent-control-room-${version}.manifest.json`,
-    `release/agent-control-room-${version}.tar.gz`, ...RUNTIME_FILES.map(name => `runtime/${name}`),
+    `release/agent-control-room-${version}.tar.gz`,
+    ...(expanded ? EXPANDED_RUNTIME_FILES : RUNTIME_FILES).map(name => `runtime/${name}`),
     `${NATIVE_SIDECAR_DIRECTORY}/MACOS_PROTECTED_DIRECTORY_SIDECAR.json`,
     `${NATIVE_SIDECAR_DIRECTORY}/PROTECTED_DIRECTORY_MANIFEST.json`, `${NATIVE_SIDECAR_DIRECTORY}/SHA256SUMS`,
     `${NATIVE_SIDECAR_DIRECTORY}/agent-control-room-protected-directory-darwin-${architecture}.tar.gz`,
     `${JOURNAL_NATIVE_SIDECAR_DIRECTORY}/INSTALLATION_JOURNAL_MANIFEST.json`,
     `${JOURNAL_NATIVE_SIDECAR_DIRECTORY}/MACOS_INSTALLATION_JOURNAL_SIDECAR.json`,
     `${JOURNAL_NATIVE_SIDECAR_DIRECTORY}/SHA256SUMS`,
-    `${JOURNAL_NATIVE_SIDECAR_DIRECTORY}/agent-control-room-installation-journal-darwin-${architecture}.tar.gz`]
+    `${JOURNAL_NATIVE_SIDECAR_DIRECTORY}/agent-control-room-installation-journal-darwin-${architecture}.tar.gz`,
+    ...(expanded ? [
+      `${CONFIGURATION_NATIVE_SIDECAR_DIRECTORY}/INSTALLED_CONFIGURATION_MANIFEST.json`,
+      `${CONFIGURATION_NATIVE_SIDECAR_DIRECTORY}/MACOS_INSTALLED_CONFIGURATION_SIDECAR.json`,
+      `${CONFIGURATION_NATIVE_SIDECAR_DIRECTORY}/SHA256SUMS`,
+      `${CONFIGURATION_NATIVE_SIDECAR_DIRECTORY}/agent-control-room-installed-configuration-darwin-${architecture}.tar.gz`,
+      `${SERVICE_NATIVE_SIDECAR_DIRECTORY}/LICENSE`, `${SERVICE_NATIVE_SIDECAR_DIRECTORY}/NOTICE`,
+      `${SERVICE_NATIVE_SIDECAR_DIRECTORY}/MACOS_SERVICE_NATIVE_MANIFEST.json`,
+      `${SERVICE_NATIVE_SIDECAR_DIRECTORY}/MACOS_SERVICE_NATIVE_SIDECAR.json`,
+      `${SERVICE_NATIVE_SIDECAR_DIRECTORY}/SHA256SUMS`, SERVICE_EXECUTABLE,
+    ] : [])]
     .sort();
-  if (paths.length !== FIXED_FILE_COUNT || new Set(paths).size !== paths.length) refused();
-  return paths.map(path => Object.freeze({ path, mode: path === COMMAND_NAME ? "0755" : "0644" }));
+  if (paths.length !== (expanded ? EXPANDED_FILE_COUNT : FIXED_FILE_COUNT) || new Set(paths).size !== paths.length) refused();
+  return paths.map(path => Object.freeze({ path,
+    mode: path === COMMAND_NAME || expanded && path === SERVICE_EXECUTABLE ? "0755" : "0644" }));
 }
 
 /** Verifies the complete extracted one-asset launcher before it can stage a release. */
@@ -170,7 +199,8 @@ export async function verifyExtractedMacosLocalLauncherBundleV1(bundleRootInput)
   const manifestPath = join(bundleRoot, MANIFEST_NAME);
   const manifestStat = await regularFile(manifestPath, bundleRoot, 64 * 1024);
   if ((manifestStat.mode & 0o7777) !== 0o644) refused();
-  const manifest = parseManifest(await readFile(manifestPath));
+  const manifestBytes = await readFile(manifestPath), manifest = parseManifest(manifestBytes);
+  const expanded = manifest.schema === MACOS_LOCAL_LAUNCHER_BUNDLE_V2;
   const tree = await listTree(bundleRoot);
   const expectedFiles = [...manifest.files.map(entry => entry.path), MANIFEST_NAME].sort();
   const expectedDirs = expectedDirectories(expectedFiles);
@@ -203,12 +233,37 @@ export async function verifyExtractedMacosLocalLauncherBundleV1(bundleRootInput)
   } catch { refused(); }
   if (protectedDirectoryNativeSidecar.architecture !== installationJournalNativeSidecar.architecture
     || installationJournalNativeSidecar.sidecarManifestSha256 !== `sha256:${journalSidecarManifest.sha256}`) refused();
-  const expectedMembers = expectedBundleMembers(manifest.version, installationJournalNativeSidecar.architecture);
+  let installedConfigurationNativeSidecar, macosServiceNativeSidecar;
+  if (expanded) {
+    try {
+      const { configuration, service } = await expandedSidecarModules();
+      [installedConfigurationNativeSidecar, macosServiceNativeSidecar] = await Promise.all([
+        configuration.verifyMacosInstalledConfigurationNativeSidecarV1(join(bundleRoot, CONFIGURATION_NATIVE_SIDECAR_DIRECTORY),
+          { releaseVersion: manifest.version, architecture: installationJournalNativeSidecar.architecture }),
+        service.verifyMacosServiceNativeSidecarV1(join(bundleRoot, SERVICE_NATIVE_SIDECAR_DIRECTORY),
+          { releaseVersion: manifest.version, releaseSha256: `sha256:${releaseManifest.sha256}`,
+            architecture: installationJournalNativeSidecar.architecture }),
+      ]);
+    } catch { refused(); }
+  }
+  for (const [sidecar, path] of [
+    [installationJournalNativeSidecar, `${JOURNAL_NATIVE_SIDECAR_DIRECTORY}/MACOS_INSTALLATION_JOURNAL_SIDECAR.json`],
+    ...(expanded ? [
+      [installedConfigurationNativeSidecar, `${CONFIGURATION_NATIVE_SIDECAR_DIRECTORY}/MACOS_INSTALLED_CONFIGURATION_SIDECAR.json`],
+      [macosServiceNativeSidecar, `${SERVICE_NATIVE_SIDECAR_DIRECTORY}/MACOS_SERVICE_NATIVE_SIDECAR.json`],
+    ] : []),
+  ]) {
+    const member = manifest.files.find(entry => entry.path === path);
+    if (!member || sidecar.sidecarManifestSha256 !== `sha256:${member.sha256}`) refused();
+  }
+  const expectedMembers = expectedBundleMembers(manifest.version, installationJournalNativeSidecar.architecture, expanded);
   if (manifest.files.some((entry, index) => entry.path !== expectedMembers[index].path
     || entry.mode !== expectedMembers[index].mode)) refused();
-  return Object.freeze({ verified: true, version: manifest.version, fileCount: manifest.fileCount,
+  return Object.freeze({ schema: manifest.schema, verified: true, version: manifest.version, fileCount: manifest.fileCount,
+    outerLauncherManifestSha256: `sha256:${sha256(manifestBytes)}`,
     releaseManifestDigest: `sha256:${releaseManifest.sha256}`, protectedDirectoryNativeSidecar,
-    installationJournalNativeSidecar });
+    installationJournalNativeSidecar,
+    ...(expanded ? { installedConfigurationNativeSidecar, macosServiceNativeSidecar } : {}) });
 }
 
 function macosVersionFromKernel(value) {
@@ -341,7 +396,10 @@ export async function runMacosLocalLauncherBundleV1(input, dependencies = {}) {
   const verified = await verifyExtractedMacosLocalLauncherBundleV1(bundleRoot);
   const macosVersion = dependencies.macosVersion ?? macosVersionFromKernel(dependencies.kernelRelease ?? kernelRelease());
   if (!macosVersion || verified.protectedDirectoryNativeSidecar.architecture !== architecture
-    || verified.installationJournalNativeSidecar.architecture !== architecture) {
+    || verified.installationJournalNativeSidecar.architecture !== architecture
+    || (verified.schema === MACOS_LOCAL_LAUNCHER_BUNDLE_V2
+      && (verified.installedConfigurationNativeSidecar.architecture !== architecture
+        || verified.macosServiceNativeSidecar.architecture !== architecture))) {
     refused("macos_local_launcher_unsupported_platform");
   }
   try {
@@ -353,6 +411,14 @@ export async function runMacosLocalLauncherBundleV1(input, dependencies = {}) {
         releaseVersion: verified.version, architecture, macosVersion,
       }),
     ]);
+    if (verified.schema === MACOS_LOCAL_LAUNCHER_BUNDLE_V2) {
+      const { configuration, service } = await expandedSidecarModules();
+      await configuration.verifyMacosInstalledConfigurationNativeSidecarV1(
+        join(bundleRoot, CONFIGURATION_NATIVE_SIDECAR_DIRECTORY), { releaseVersion: verified.version, architecture, macosVersion });
+      await service.verifyMacosServiceNativeSidecarV1(join(bundleRoot, SERVICE_NATIVE_SIDECAR_DIRECTORY), {
+        releaseVersion: verified.version, architecture, releaseSha256: verified.releaseManifestDigest,
+      });
+    }
   } catch { refused("macos_local_launcher_unsupported_platform"); }
   const home = input.homeDirectory ?? homedir();
   if (typeof home !== "string" || !isAbsolute(home) || resolve(home) !== home) refused();
@@ -365,11 +431,14 @@ export async function runMacosLocalLauncherBundleV1(input, dependencies = {}) {
   const installationId = input.installationId ?? "macos-local";
   if (!safeIdPattern.test(installationId)) refused();
   const releaseDirectory = await canonicalDirectory(join(bundleRoot, "release"));
-  const { protectedDirectoryNativeSidecar, installationJournalNativeSidecar, ...verifiedBundle } = verified;
+  const { protectedDirectoryNativeSidecar, installationJournalNativeSidecar,
+    installedConfigurationNativeSidecar, macosServiceNativeSidecar } = verified;
+  const verifiedBundle = Object.freeze({ verified: verified.verified, version: verified.version,
+    fileCount: verified.fileCount, releaseManifestDigest: verified.releaseManifestDigest });
   const report = await runLocalLauncherCoreV1({ verifiedBundle, releaseDirectory, installRoot, journalRoot,
     installationId, topologyPlanDigest: defaultTopologyDigest(),
     environment: allowedChildEnvironment(home, dependencies.hostEnvironment ?? process.env),
-    executable: process.execPath, schema: MACOS_LOCAL_LAUNCHER_BUNDLE_V1 }, {
+    executable: process.execPath, schema: verified.schema }, {
     runner: dependencies.runner ?? runBoundedMacosLauncherChildV1,
     openerRunner: dependencies.openerRunner ?? runBoundedMacosLauncherChildV1,
     openerExecutable: "/usr/bin/open",
@@ -387,7 +456,10 @@ export async function runMacosLocalLauncherBundleV1(input, dependencies = {}) {
       setupHost: "macos_local_launcher_setup_host_refused",
     },
   });
-  return Object.freeze({ ...report, protectedDirectoryNativeSidecar, installationJournalNativeSidecar });
+  return Object.freeze({ ...report, outerLauncherManifestSha256: verified.outerLauncherManifestSha256,
+    protectedDirectoryNativeSidecar, installationJournalNativeSidecar,
+    ...(verified.schema === MACOS_LOCAL_LAUNCHER_BUNDLE_V2
+      ? { installedConfigurationNativeSidecar, macosServiceNativeSidecar } : {}) });
 }
 
 async function assertAbsent(path) {
@@ -422,31 +494,45 @@ exit "$status"
 
 /** Creates the single deterministic GitHub Release asset for the macOS source-only launcher. */
 export async function assembleMacosLocalLauncherBundleV1(input) {
+  return assembleMacosLocalLauncherBundle(input, false);
+}
+
+/** Copies and binds all four reviewed native sidecars without activating any. */
+export async function assembleMacosLocalLauncherBundleV2(input) {
+  return assembleMacosLocalLauncherBundle(input, true);
+}
+
+async function assembleMacosLocalLauncherBundle(input, expanded) {
+  const keys = ["journalNativeArtifactDirectory", "nativeArtifactDirectory", "outputDirectory", "releaseDirectory", "sourceRoot",
+    ...(expanded ? ["installedConfigurationNativeArtifactDirectory", "macosServiceNativeArtifactDirectory"] : [])];
   if (!input || typeof input !== "object" || Array.isArray(input)
-    || Object.keys(input).sort().join(",")
-      !== "journalNativeArtifactDirectory,nativeArtifactDirectory,outputDirectory,releaseDirectory,sourceRoot") refused();
+    || Object.keys(input).sort().join(",") !== keys.sort().join(",")) refused();
+  for (const key of keys) {
+    if (typeof input[key] !== "string" || !isAbsolute(input[key]) || resolve(input[key]) !== input[key]) refused();
+  }
   const sourceRoot = await canonicalDirectory(input.sourceRoot);
   const releaseDirectory = await canonicalDirectory(input.releaseDirectory);
-  if (typeof input.nativeArtifactDirectory !== "string" || !isAbsolute(input.nativeArtifactDirectory)
-    || resolve(input.nativeArtifactDirectory) !== input.nativeArtifactDirectory
-    || typeof input.journalNativeArtifactDirectory !== "string" || !isAbsolute(input.journalNativeArtifactDirectory)
-    || resolve(input.journalNativeArtifactDirectory) !== input.journalNativeArtifactDirectory
-    || typeof input.outputDirectory !== "string" || !isAbsolute(input.outputDirectory)
-    || resolve(input.outputDirectory) !== input.outputDirectory
-    || inside(input.outputDirectory, sourceRoot) || inside(sourceRoot, input.outputDirectory)) refused();
+  if (inside(input.outputDirectory, sourceRoot) || inside(sourceRoot, input.outputDirectory)) refused();
   const outputParent = await canonicalDirectory(dirname(input.outputDirectory));
   await assertAbsent(input.outputDirectory);
-  // Capture both reviewed artifact identities before any release or native
+  // Capture all reviewed artifact identities before any release or native
   // member is staged. Copying re-verifies the sources and must reproduce these
   // exact bounded identities, closing substitution and mixed-architecture gaps.
-  let expectedProtectedDirectoryArtifact, expectedInstallationJournalArtifact;
+  const modules = expanded ? await expandedSidecarModules() : undefined;
+  let expectedProtectedDirectoryArtifact, expectedInstallationJournalArtifact,
+    expectedConfigurationArtifact, expectedServiceArtifact;
   try {
     [expectedProtectedDirectoryArtifact, expectedInstallationJournalArtifact] = await Promise.all([
       verifyProtectedDirectoryNativeArtifactV1(input.nativeArtifactDirectory),
       verifyInstallationJournalNativeArtifactV1(input.journalNativeArtifactDirectory),
     ]);
+    if (expanded) [expectedConfigurationArtifact, expectedServiceArtifact] = await Promise.all([
+      modules.configuration.verifyInstalledConfigurationNativeArtifactV1(input.installedConfigurationNativeArtifactDirectory),
+      modules.service.verifyMacosServiceNativeArtifactV1(input.macosServiceNativeArtifactDirectory),
+    ]);
   } catch { refused(); }
-  if (expectedProtectedDirectoryArtifact.architecture !== expectedInstallationJournalArtifact.architecture) refused();
+  if ([expectedInstallationJournalArtifact, ...(expanded ? [expectedConfigurationArtifact, expectedServiceArtifact] : [])]
+    .some(artifact => artifact.architecture !== expectedProtectedDirectoryArtifact.architecture)) refused();
   const validation = await mkdtemp(join(outputParent, ".macos-launcher-validation-"));
   try {
     const staged = await stageLocalReleaseV1({ ownerAttended: true, releaseDirectory, installRoot: validation });
@@ -467,14 +553,15 @@ export async function assembleMacosLocalLauncherBundleV1(input) {
         await copyFile(source, destination, fsConstants.COPYFILE_EXCL);
         await chmod(destination, 0o644);
       }
-      for (const name of RUNTIME_FILES) {
+      for (const name of expanded ? EXPANDED_RUNTIME_FILES : RUNTIME_FILES) {
         const source = join(sourceRoot, "src", "installer", "v1", name);
         await regularFile(source, sourceRoot);
         const destination = join(bundleRoot, "runtime", name);
         await copyFile(source, destination, fsConstants.COPYFILE_EXCL);
         await chmod(destination, 0o644);
       }
-      let protectedDirectoryNativeSidecar, installationJournalNativeSidecar;
+      let protectedDirectoryNativeSidecar, installationJournalNativeSidecar,
+        installedConfigurationNativeSidecar, macosServiceNativeSidecar;
       try {
         protectedDirectoryNativeSidecar = await copyVerifiedMacosProtectedDirectoryNativeSidecarV1({
           artifactDirectory: input.nativeArtifactDirectory, destinationDirectory: join(bundleRoot, NATIVE_SIDECAR_DIRECTORY),
@@ -484,28 +571,45 @@ export async function assembleMacosLocalLauncherBundleV1(input) {
           artifactDirectory: input.journalNativeArtifactDirectory,
           destinationDirectory: join(bundleRoot, JOURNAL_NATIVE_SIDECAR_DIRECTORY), releaseVersion: staged.version,
         });
+        if (expanded) {
+          installedConfigurationNativeSidecar = await modules.configuration.copyVerifiedMacosInstalledConfigurationNativeSidecarV1({
+            artifactDirectory: input.installedConfigurationNativeArtifactDirectory,
+            destinationDirectory: join(bundleRoot, CONFIGURATION_NATIVE_SIDECAR_DIRECTORY), releaseVersion: staged.version,
+          });
+          macosServiceNativeSidecar = await modules.service.copyVerifiedMacosServiceNativeSidecarV1({
+            artifactDirectory: input.macosServiceNativeArtifactDirectory,
+            destinationDirectory: join(bundleRoot, SERVICE_NATIVE_SIDECAR_DIRECTORY),
+            releaseVersion: staged.version, releaseSha256: staged.releaseManifestDigest,
+          });
+        }
       } catch { refused(); }
       for (const [actual, expected] of [[protectedDirectoryNativeSidecar, expectedProtectedDirectoryArtifact],
-        [installationJournalNativeSidecar, expectedInstallationJournalArtifact]]) {
+        [installationJournalNativeSidecar, expectedInstallationJournalArtifact],
+        ...(expanded ? [[installedConfigurationNativeSidecar, expectedConfigurationArtifact]] : [])]) {
         for (const key of ["architecture", "sourceSha256", "archiveSha256", "artifactManifestSha256", "executableSha256"])
           if (actual[key] !== expected[key]) refused();
       }
+      if (expanded) for (const key of ["architecture", "sourceSha256", "artifactManifestSha256", "executableSha256"])
+        if (macosServiceNativeSidecar[key] !== expectedServiceArtifact[key]) refused();
       if (protectedDirectoryNativeSidecar.architecture !== installationJournalNativeSidecar.architecture) refused();
       await writeFile(join(bundleRoot, COMMAND_NAME), commandBytes(), { flag: "wx", mode: 0o755 });
       await chmod(join(bundleRoot, COMMAND_NAME), 0o755);
       const tree = await listTree(bundleRoot);
+      const expectedMembers = new Map(expectedBundleMembers(staged.version,
+        protectedDirectoryNativeSidecar.architecture, expanded).map(entry => [entry.path, entry.mode]));
       const rows = [];
       for (const path of tree.files.sort()) {
         const bytes = await readFile(join(bundleRoot, path));
         rows.push(Object.freeze({ path, bytes: bytes.byteLength, sha256: sha256(bytes),
-          mode: path === COMMAND_NAME ? "0755" : "0644" }));
+          mode: expectedMembers.get(path) }));
       }
-      const manifest = Object.freeze({ schema: MACOS_LOCAL_LAUNCHER_BUNDLE_V1, product: "agent-control-room",
+      const schema = expanded ? MACOS_LOCAL_LAUNCHER_BUNDLE_V2 : MACOS_LOCAL_LAUNCHER_BUNDLE_V1;
+      const manifest = Object.freeze({ schema, product: "agent-control-room",
         version: staged.version, platform: "darwin", node: ">=22.13.0", fileCount: rows.length,
         files: Object.freeze(rows) });
       await writeFile(join(bundleRoot, MANIFEST_NAME), `${JSON.stringify(manifest, null, 2)}\n`, { flag: "wx", mode: 0o644 });
       await chmod(join(bundleRoot, MANIFEST_NAME), 0o644);
-      await verifyExtractedMacosLocalLauncherBundleV1(bundleRoot);
+      const verified = await verifyExtractedMacosLocalLauncherBundleV1(bundleRoot);
       const archiveName = `${rootName}.tar.gz`;
       const archive = await createDeterministicTarGzipV1(bundleRoot, rootName,
         [...manifest.files, { path: MANIFEST_NAME, mode: "0644" }]
@@ -513,9 +617,11 @@ export async function assembleMacosLocalLauncherBundleV1(input) {
           .sort((left, right) => left.path.localeCompare(right.path, "en")));
       await mkdir(input.outputDirectory, { mode: 0o755 });
       await writeFile(join(input.outputDirectory, archiveName), archive, { flag: "wx", mode: 0o644 });
-      return Object.freeze({ schema: MACOS_LOCAL_LAUNCHER_BUNDLE_V1, version: staged.version, archiveName,
+      return Object.freeze({ schema, version: staged.version, archiveName,
         archiveSha256: sha256(archive), assetCount: 1, deterministic: true, platform: "darwin",
+        outerLauncherManifestSha256: verified.outerLauncherManifestSha256,
         protectedDirectoryNativeSidecar, installationJournalNativeSidecar,
+        ...(expanded ? { installedConfigurationNativeSidecar, macosServiceNativeSidecar } : {}),
         nodePrerequisite: ">=22.13.0", installsNode: false, publishes: false, signs: false });
     } finally {
       await rm(work, { recursive: true, force: true });

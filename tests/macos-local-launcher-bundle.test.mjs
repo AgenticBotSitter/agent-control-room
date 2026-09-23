@@ -7,10 +7,11 @@ import { dirname, join, resolve } from "node:path";
 import { setTimeout as wait } from "node:timers/promises";
 import test, { after, before } from "node:test";
 import { promisify } from "node:util";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { assembleLocalReleaseV1, createDeterministicTarGzipV1 } from "../src/installer/v1/local-release-assembly.mjs";
 import {
   assembleMacosLocalLauncherBundleV1,
+  assembleMacosLocalLauncherBundleV2,
   runBoundedMacosLauncherChildV1,
   runMacosLocalLauncherBundleV1,
   verifyExtractedMacosLocalLauncherBundleV1,
@@ -19,12 +20,55 @@ import { runLocalLauncherCoreV1 } from "../src/installer/v1/local-launcher-core.
 import { INSTALLATION_JOURNAL_NATIVE_REVIEWED_CFLAGS_V1 } from
   "../src/installer/v1/macos-installation-journal-native-sidecar.mjs";
 import { PROTECTED_DIRECTORY_NATIVE_REVIEWED_CFLAGS_V1 } from "../src/installer/v1/macos-protected-directory-native-sidecar.mjs";
+import { INSTALLED_CONFIGURATION_NATIVE_REVIEWED_CFLAGS_V1 } from "../src/installer/v1/macos-installed-configuration-native-sidecar.mjs";
+import { MACOS_SERVICE_NATIVE_REVIEWED_CFLAGS_V1 } from "../src/installer/v1/macos-service-native-sidecar.mjs";
 
 const run = promisify(execFile);
 const repository = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const refusal = { message: "macos_local_launcher_bundle_refused" };
 const sha256 = bytes => createHash("sha256").update(bytes).digest("hex");
 let suiteRoot, releaseDirectory, nativeArtifactDirectory, journalNativeArtifactDirectory, bundleRoot, assembled;
+let installedConfigurationNativeArtifactDirectory, macosServiceNativeArtifactDirectory, expandedBundleRoot, expandedAssembled;
+
+// Deliberately inert bytes: packaging tests never compile or execute native helpers.
+async function writeExpandedNativeArtifact(directory, kind, architecture = "arm64") {
+  const configuration = kind === "installed-configuration";
+  const executable = configuration ? "installed-configuration-v1" : "macos-service-v1";
+  const manifestName = configuration ? "INSTALLED_CONFIGURATION_MANIFEST.json" : "MACOS_SERVICE_NATIVE_MANIFEST.json";
+  const staging = configuration ? join(directory, "staging") : directory;
+  await mkdir(staging, { recursive: true });
+  const contents = new Map([["LICENSE", Buffer.from("fixture license\n")], ["NOTICE", Buffer.from("fixture notice\n")],
+    [executable, Buffer.from("inert packaging fixture; never execute\n")]]);
+  for (const [name, bytes] of contents) await writeFile(join(staging, name), bytes,
+    { mode: name === executable ? 0o755 : 0o644 });
+  const files = [...contents].map(([path, bytes]) => ({ path, bytes: bytes.length, sha256: sha256(bytes),
+    mode: path === executable ? "0755" : "0644" }));
+  const manifest = { schema: `control-room.${kind}-native-artifact/v1`, platform: "darwin", architecture,
+    minimumMacos: "13.0", protocol: configuration ? "ACRCFG1" : "ACRSVC1", sourceSha256: "c".repeat(64),
+    toolchain: { compiler: "Apple clang version 16.0.0", sdkVersion: "16.0", flags: [...(configuration
+      ? INSTALLED_CONFIGURATION_NATIVE_REVIEWED_CFLAGS_V1 : MACOS_SERVICE_NATIVE_REVIEWED_CFLAGS_V1)] },
+    files, ownerQualified: false };
+  const manifestBytes = Buffer.from(`${JSON.stringify(manifest, null, 2)}\n`);
+  await writeFile(join(staging, manifestName), manifestBytes, { mode: 0o644 });
+  if (configuration) {
+    const root = `agent-control-room-installed-configuration-darwin-${architecture}`;
+    const archive = await createDeterministicTarGzipV1(staging, root,
+      [...files.map(({ path, mode }) => ({ path, mode })), { path: manifestName, mode: "0644" }]);
+    await writeFile(join(directory, manifestName), manifestBytes, { mode: 0o644 });
+    await writeFile(join(directory, `${root}.tar.gz`), archive, { mode: 0o644 });
+    await writeFile(join(directory, "SHA256SUMS"), `${sha256(archive)}  ${root}.tar.gz\n`, { mode: 0o644 });
+    await rm(staging, { recursive: true, force: true });
+  } else {
+    contents.set(manifestName, manifestBytes);
+    await writeFile(join(directory, "SHA256SUMS"), [...contents].map(([name, bytes]) => `${sha256(bytes)}  ${name}\n`).join(""),
+      { mode: 0o644 });
+  }
+}
+
+function expandedInput(outputDirectory) {
+  return { sourceRoot: repository, releaseDirectory, nativeArtifactDirectory, journalNativeArtifactDirectory,
+    installedConfigurationNativeArtifactDirectory, macosServiceNativeArtifactDirectory, outputDirectory };
+}
 
 async function writeNativeArtifact(directory, architecture = "arm64") {
   const staging = join(directory, "staging"); await mkdir(staging, { recursive: true });
@@ -89,6 +133,13 @@ before(async () => {
   assembled = await assembleMacosLocalLauncherBundleV1({ sourceRoot: repository, releaseDirectory,
     nativeArtifactDirectory, journalNativeArtifactDirectory, outputDirectory: output });
   bundleRoot = await extract(join(output, assembled.archiveName), suiteRoot);
+  installedConfigurationNativeArtifactDirectory = join(suiteRoot, "configuration-artifact");
+  macosServiceNativeArtifactDirectory = join(suiteRoot, "service-artifact");
+  await writeExpandedNativeArtifact(installedConfigurationNativeArtifactDirectory, "installed-configuration");
+  await writeExpandedNativeArtifact(macosServiceNativeArtifactDirectory, "macos-service");
+  expandedAssembled = await assembleMacosLocalLauncherBundleV2(expandedInput(join(suiteRoot, "expanded-output")));
+  const expandedExtraction = join(suiteRoot, "expanded-extracted"); await mkdir(expandedExtraction);
+  expandedBundleRoot = await extract(join(suiteRoot, "expanded-output", expandedAssembled.archiveName), expandedExtraction);
 });
 
 after(async () => {
@@ -122,6 +173,115 @@ test("assembles one deterministic macOS asset with an executable Finder launcher
     assembled.installationJournalNativeSidecar.executableSha256);
   assert.equal(verified.installationJournalNativeSidecar.sidecarManifestSha256,
     assembled.installationJournalNativeSidecar.sidecarManifestSha256);
+});
+
+test("expanded v2 deterministically binds four inert sidecars and both extracted runtimes remain self-contained", async () => {
+  const second = await assembleMacosLocalLauncherBundleV2(expandedInput(join(suiteRoot, "expanded-second")));
+  assert.equal(second.archiveSha256, expandedAssembled.archiveSha256);
+  assert.equal(second.schema, "control-room.macos-local-launcher-bundle/v2");
+  const verified = await verifyExtractedMacosLocalLauncherBundleV1(expandedBundleRoot);
+  assert.equal(verified.fileCount, 31);
+  assert.equal(verified.outerLauncherManifestSha256, expandedAssembled.outerLauncherManifestSha256);
+  assert.equal(verified.outerLauncherManifestSha256,
+    `sha256:${sha256(await readFile(join(expandedBundleRoot, "MACOS_LAUNCHER_MANIFEST.json")))}`);
+  for (const [name, protocol] of [["protectedDirectoryNativeSidecar", "ACRDIR1"],
+    ["installationJournalNativeSidecar", "ACRJNL1"], ["installedConfigurationNativeSidecar", "ACRCFG1"],
+    ["macosServiceNativeSidecar", "ACRSVC1"]]) {
+    assert.equal(verified[name].protocol, protocol);
+    assert.equal(verified[name].architecture, "arm64");
+    assert.equal(verified[name].releaseVersion, "0.1.0");
+    assert.deepEqual(verified[name], expandedAssembled[name]);
+  }
+  assert.equal(verified.macosServiceNativeSidecar.releaseSha256, verified.releaseManifestDigest);
+  const manifest = JSON.parse(await readFile(join(expandedBundleRoot, "MACOS_LAUNCHER_MANIFEST.json"), "utf8"));
+  assert.deepEqual(manifest.files.filter(file => file.mode === "0755").map(file => file.path),
+    ["Open Agent Control Room.command", "native/macos-service/macos-service-v1"]);
+  for (const root of [bundleRoot, expandedBundleRoot]) {
+    const extractedModule = await import(pathToFileURL(join(root, "runtime/macos-local-launcher-bundle.mjs")).href);
+    assert.equal((await extractedModule.verifyExtractedMacosLocalLauncherBundleV1(root)).verified, true);
+  }
+});
+
+test("expanded x64 packaging remains inert and mismatched host or old macOS refuses before owner-root writes", async () => {
+  const input = expandedInput(join(suiteRoot, "expanded-x64-output"));
+  input.nativeArtifactDirectory = join(suiteRoot, "protected-x64");
+  input.journalNativeArtifactDirectory = join(suiteRoot, "journal-x64");
+  input.installedConfigurationNativeArtifactDirectory = join(suiteRoot, "configuration-x64");
+  input.macosServiceNativeArtifactDirectory = join(suiteRoot, "service-x64");
+  await writeNativeArtifact(input.nativeArtifactDirectory, "x64");
+  await writeJournalNativeArtifact(input.journalNativeArtifactDirectory, "x64");
+  await writeExpandedNativeArtifact(input.installedConfigurationNativeArtifactDirectory, "installed-configuration", "x64");
+  await writeExpandedNativeArtifact(input.macosServiceNativeArtifactDirectory, "macos-service", "x64");
+  const report = await assembleMacosLocalLauncherBundleV2(input);
+  const destination = join(suiteRoot, "expanded-x64-extracted"); await mkdir(destination);
+  const root = await extract(join(input.outputDirectory, report.archiveName), destination);
+  const verified = await verifyExtractedMacosLocalLauncherBundleV1(root);
+  assert.equal(verified.installedConfigurationNativeSidecar.architecture, "x64");
+  assert.equal(verified.macosServiceNativeSidecar.architecture, "x64");
+  const installRoot = join(destination, "must-not-exist");
+  for (const [architecture, macosVersion] of [["arm64", "13.0"], ["x64", "12.0"]]) {
+    await assert.rejects(runMacosLocalLauncherBundleV1({ bundleRoot: root, homeDirectory: suiteRoot, installRoot }, {
+      platform: "darwin", architecture, macosVersion, nodeVersion: "22.13.0",
+      runner: async () => { throw new Error("must not run"); },
+    }), { message: "macos_local_launcher_unsupported_platform" });
+    await assert.rejects(access(installRoot), error => error?.code === "ENOENT");
+  }
+});
+
+test("expanded assembly refuses missing, substituted, and mixed-architecture new inputs without publishing", async () => {
+  for (const [kind, key] of [["installed-configuration", "installedConfigurationNativeArtifactDirectory"],
+    ["macos-service", "macosServiceNativeArtifactDirectory"]]) {
+    const mixed = join(suiteRoot, `${kind}-mixed`); await writeExpandedNativeArtifact(mixed, kind, "x64");
+    const bad = join(suiteRoot, `${kind}-bad`); await writeExpandedNativeArtifact(bad, kind);
+    await writeFile(join(bad, kind === "macos-service" ? "macos-service-v1"
+      : "agent-control-room-installed-configuration-darwin-arm64.tar.gz"), "substituted\n");
+    for (const [name, value] of [["mixed", mixed], ["bad", bad], ["missing", undefined]]) {
+      const output = join(suiteRoot, `${kind}-${name}-output`);
+      const input = { ...expandedInput(output), [key]: value };
+      if (value === undefined) delete input[key];
+      await assert.rejects(assembleMacosLocalLauncherBundleV2(input), refusal);
+      await assert.rejects(access(output), error => error?.code === "ENOENT");
+    }
+  }
+});
+
+test("expanded verifier rejects coherent sidecar mismatches and unsafe inventory before owner-root writes", async () => {
+  async function rewriteSidecar(root, path, change) {
+    const value = JSON.parse(await readFile(join(root, path), "utf8")); change(value);
+    const bytes = Buffer.from(`${JSON.stringify(value, null, 2)}\n`); await writeFile(join(root, path), bytes);
+    const manifestPath = join(root, "MACOS_LAUNCHER_MANIFEST.json");
+    const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
+    const entry = manifest.files.find(file => file.path === path); entry.sha256 = sha256(bytes); entry.bytes = bytes.length;
+    await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+  }
+  for (const [name, mutate] of [
+    ["configuration-release", root => rewriteSidecar(root, "native/installed-configuration/MACOS_INSTALLED_CONFIGURATION_SIDECAR.json",
+      value => { value.releaseVersion = "0.1.1"; })],
+    ["service-release", root => rewriteSidecar(root, "native/macos-service/MACOS_SERVICE_NATIVE_SIDECAR.json",
+      value => { value.releaseSha256 = `sha256:${"f".repeat(64)}`; })],
+    ["service-version", root => rewriteSidecar(root, "native/macos-service/MACOS_SERVICE_NATIVE_SIDECAR.json",
+      value => { value.releaseVersion = "0.1.1"; })],
+    ["service-mode", root => chmod(join(root, "native/macos-service/macos-service-v1"), 0o644)],
+    ["missing-configuration", root => unlink(join(root, "native/installed-configuration/INSTALLED_CONFIGURATION_MANIFEST.json"))],
+    ["missing-service", root => unlink(join(root, "native/macos-service/macos-service-v1"))],
+    ["extra-member", root => writeFile(join(root, "native/macos-service/extra"), "extra\n")],
+    ["downgraded-schema", async root => {
+      const path = join(root, "MACOS_LAUNCHER_MANIFEST.json"), manifest = JSON.parse(await readFile(path, "utf8"));
+      manifest.schema = "control-room.macos-local-launcher-bundle/v1";
+      await writeFile(path, `${JSON.stringify(manifest, null, 2)}\n`);
+    }],
+  ]) {
+    const destination = join(suiteRoot, `expanded-mutation-${name}`); await mkdir(destination);
+    const root = await extract(join(suiteRoot, "expanded-output", expandedAssembled.archiveName), destination);
+    await mutate(root);
+    await assert.rejects(verifyExtractedMacosLocalLauncherBundleV1(root), refusal, name);
+    const installRoot = join(destination, "must-not-exist"); let calls = 0;
+    await assert.rejects(runMacosLocalLauncherBundleV1({ bundleRoot: root, homeDirectory: suiteRoot, installRoot }, {
+      platform: "darwin", architecture: "arm64", nodeVersion: "22.13.0", macosVersion: "13.0",
+      runner: async () => { calls += 1; },
+    }), refusal);
+    assert.equal(calls, 0); await assert.rejects(access(installRoot), error => error?.code === "ENOENT");
+  }
 });
 
 test("refuses substituted journal input and mixed native architectures before publishing an output", async () => {
@@ -162,6 +322,7 @@ test("the shared launcher core accepts a host-neutral handoff without platform p
   };
   const { protectedDirectoryNativeSidecar: _protectedSidecar,
     installationJournalNativeSidecar: _journalSidecar,
+    schema: _schema, outerLauncherManifestSha256: _outerDigest,
     ...verifiedBundle } = await verifyExtractedMacosLocalLauncherBundleV1(bundleRoot);
   const report = await runLocalLauncherCoreV1({ verifiedBundle,
     releaseDirectory: join(bundleRoot, "release"), installRoot, journalRoot, installationId: "portable-local",
@@ -255,8 +416,9 @@ test("refuses unsupported systems and old Node before writing an installation ro
   await assert.rejects(lstat(join(home, "Library")), error => error?.code === "ENOENT");
 });
 
-test("composes the existing stager with one stable installation identity without effects", async () => {
-  const installRoot = join(suiteRoot, "private-install"), journalRoot = join(suiteRoot, "private-journal");
+for (const expanded of [false, true]) test(`composes the ${expanded ? "expanded" : "legacy"} stager with one stable installation identity without effects`, async () => {
+  const launchBundleRoot = expanded ? expandedBundleRoot : bundleRoot;
+  const installRoot = join(suiteRoot, `private-install-${expanded}`), journalRoot = join(suiteRoot, `private-journal-${expanded}`);
   const launcherHome = join(suiteRoot, "launcher-home");
   await mkdir(installRoot, { mode: 0o700 }); await mkdir(journalRoot, { mode: 0o700 });
   const calls = [], supervisors = [];
@@ -281,7 +443,7 @@ test("composes the existing stager with one stable installation identity without
     }
     throw new Error("unexpected process");
   };
-  const report = await runMacosLocalLauncherBundleV1({ bundleRoot, homeDirectory: launcherHome, installRoot, journalRoot }, {
+  const report = await runMacosLocalLauncherBundleV1({ bundleRoot: launchBundleRoot, homeDirectory: launcherHome, installRoot, journalRoot }, {
     platform: "darwin", architecture: "arm64", macosVersion: "13.0", nodeVersion: "22.13.0", runner,
     async supervisor(spec, dependencies) {
       supervisors.push({ spec, dependencies });
@@ -302,11 +464,18 @@ test("composes the existing stager with one stable installation identity without
   assert.equal(report.installationJournalNativeSidecar.executableSha256,
     assembled.installationJournalNativeSidecar.executableSha256);
   assert.equal(report.productionAcceptanceComplete, false);
+  assert.equal(report.schema, `control-room.macos-local-launcher-bundle/v${expanded ? 2 : 1}`);
+  assert.equal(report.outerLauncherManifestSha256,
+    (expanded ? expandedAssembled : assembled).outerLauncherManifestSha256);
+  if (expanded) {
+    assert.deepEqual(report.installedConfigurationNativeSidecar, expandedAssembled.installedConfigurationNativeSidecar);
+    assert.deepEqual(report.macosServiceNativeSidecar, expandedAssembled.macosServiceNativeSidecar);
+  }
   assert.equal(calls.length, 3);
   assert.match(calls[0].args[0], /versions\/0\.1\.0\/scripts\/prepare-local-installation\.mjs$/u);
   assert.match(calls[1].args[0], /versions\/0\.1\.0\/scripts\/launch-local-setup\.mjs$/u);
   assert.match(calls[2].args[0], /versions\/0\.1\.0\/scripts\/initialize-local-installation-plan\.mjs$/u);
-  assert.ok(calls[1].args.includes(join(bundleRoot, "release")));
+  assert.ok(calls[1].args.includes(join(launchBundleRoot, "release")));
   assert.ok(calls[1].args.includes("--owner-attended"));
   assert.ok(calls[2].args.includes("--controller-only"));
   assert.ok(calls[2].args.includes("--owner-attended"));
@@ -483,4 +652,21 @@ test("assembler CLI requires canonical absolute inputs", async () => {
     "--source-root", repository, "--release-directory", releaseDirectory,
     "--native-artifact-directory", nativeArtifactDirectory,
     "--output-directory", join(suiteRoot, "missing-journal-cli-output")], { cwd: repository }), error => error?.code === 2);
+});
+
+test("assembler CLI selects expanded v2 only with both new native artifact inputs", async () => {
+  const base = [join(repository, "scripts/assemble-macos-local-launcher.mjs"),
+    "--source-root", repository, "--release-directory", releaseDirectory,
+    "--native-artifact-directory", nativeArtifactDirectory,
+    "--journal-native-artifact-directory", journalNativeArtifactDirectory,
+    "--output-directory", join(suiteRoot, "expanded-cli-output")];
+  const configuration = ["--installed-configuration-native-artifact-directory", installedConfigurationNativeArtifactDirectory];
+  const service = ["--macos-service-native-artifact-directory", macosServiceNativeArtifactDirectory];
+  for (const partial of [configuration, service, [...configuration, ...configuration]]) {
+    await assert.rejects(run(process.execPath, [...base, ...partial], { cwd: repository }), error => error?.code === 2);
+  }
+  const report = JSON.parse((await run(process.execPath, [...base, ...configuration, ...service], { cwd: repository })).stdout);
+  assert.equal(report.schema, "control-room.macos-local-launcher-bundle/v2");
+  assert.equal(report.archiveSha256, expandedAssembled.archiveSha256);
+  assert.equal(report.outerLauncherManifestSha256, expandedAssembled.outerLauncherManifestSha256);
 });

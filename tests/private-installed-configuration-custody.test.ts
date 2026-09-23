@@ -279,6 +279,28 @@ test("native ACL refusal and a proxied verifier cannot cross the boundary", asyn
   });
 });
 
+test("the custody reader accepts truthful harmless ACL evidence only for ordinary ancestors", async t => {
+  const f = await fixture(t), protectedIdentity = await lstat(f.root);
+  const native = { async verifyProtectedPath(request: any) {
+    return { schema: PRIVATE_INSTALLED_CONFIGURATION_NATIVE_CUSTODY_V1, outcome: "verified",
+      descriptor: request.descriptor, device: request.identity.device, inode: request.identity.inode,
+      ownerUid: request.identity.ownerUid, mode: request.identity.mode,
+      extendedAcl: request.kind === "ancestor" && request.identity.inode !== protectedIdentity.ino,
+      ancestorVerified: true };
+  } };
+  const composition = await createPrivateInstalledConfigurationCustodyV1({ ...f.input, native });
+  assert.equal(composition.status, "configuration_ready");
+  if (composition.status === "configuration_ready") assert.deepEqual(await composition.custody.loadPrivateConfigurationData(),
+    { nested: { permitted: true }, operatorFactory: "data-not-code", value: "private-data" });
+  const protectedAcl = { async verifyProtectedPath(request: any) {
+    return { schema: PRIVATE_INSTALLED_CONFIGURATION_NATIVE_CUSTODY_V1, outcome: "verified",
+      descriptor: request.descriptor, device: request.identity.device, inode: request.identity.inode,
+      ownerUid: request.identity.ownerUid, mode: request.identity.mode, extendedAcl: true, ancestorVerified: true };
+  } };
+  await assert.rejects(createPrivateInstalledConfigurationCustodyV1({ ...f.input, native: protectedAcl }),
+    /private_installed_configuration_custody_refused/u);
+});
+
 test("active cancellation aborts a running native verification", async t => {
   const f = await fixture(t), controller = new AbortController(); let entered = false, nativeAborted = false;
   const native = { async verifyProtectedPath(request: any) {
