@@ -4,6 +4,8 @@ import { createPrivateClaudeCodeInstalledProcessHostV1 } from
   "../../harness/claude-code-v1/private-installed-process-host";
 import type { PrivateClaudeCodeInstalledProcessHostConfigurationV1 } from
   "../../harness/claude-code-v1/private-process-acquisition";
+import { captureClaudeCodeTextReviewInvocationConfigurationV1 } from
+  "../../harness/claude-code-v1/text-review-invocation-policy";
 import type { ClaudeCodeLocalAssignedTaskExecutionV1 } from
   "../../harness/claude-code-v1/assigned-task-execution";
 import { createClaudeCodeLocalQueueExecutorV1 } from "./claude-code-local-executor";
@@ -61,6 +63,8 @@ export function createClaudeCodePrivateInstallationCompositionV1(
       || !input.execution || !input.execution.delivery || !input.execution.protectedStorage
       || typeof input.execution.protectedStorage.put !== "function"
       || typeof input.execution.protectedStorage.read !== "function") unavailable();
+    const installedProcessConfiguration = captureClaudeCodeTextReviewInvocationConfigurationV1(
+      input.installedProcessConfiguration);
     const binding = input.execution.delivery.binding;
     if (binding.adapterId !== CLAUDE_CODE_LOCAL_ADAPTER_V1) unavailable();
     const expectedAdmission = { installationId: input.admission.installationId,
@@ -70,12 +74,12 @@ export function createClaudeCodePrivateInstallationCompositionV1(
       databaseAuthorityDigest: input.admission.databaseAuthorityDigest,
       schedulerAuthorityDigest: input.admission.schedulerAuthorityDigest, adapterId: CLAUDE_CODE_LOCAL_ADAPTER_V1,
       workerId: binding.workerId,
-      adapterRevision: binding.adapterRevision, processConfiguration: input.installedProcessConfiguration,
-      workspaceBindingDigest: input.installedProcessConfiguration.workingDirectoryBindingDigest } as const;
+      adapterRevision: binding.adapterRevision, processConfiguration: installedProcessConfiguration,
+      workspaceBindingDigest: installedProcessConfiguration.workingDirectoryBindingDigest } as const;
     verifyLocalClaudePostInstallAdmissionReceiptV1(input.admission, expectedAdmission);
     const assertProcess = input.assertCurrentProcess.bind(input);
     const assertDelivery = input.assertCurrentDelivery.bind(input);
-    const host = createPrivateClaudeCodeInstalledProcessHostV1(input.installedProcessConfiguration, input.ports,
+    const host = createPrivateClaudeCodeInstalledProcessHostV1(installedProcessConfiguration, input.ports,
       Object.freeze({ assertCurrent(processBinding: ClaudeCodeProcessBindingV1) {
         verifyLocalClaudePostInstallAdmissionReceiptV1(input.admission, expectedAdmission);
         assertSynchronousFence(() => assertProcess(processBinding), unavailable);

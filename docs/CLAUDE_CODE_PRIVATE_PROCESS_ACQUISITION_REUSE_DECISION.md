@@ -14,6 +14,12 @@ the existing acquisition seam receives a binding digest but no task input.
   no-retry/no-resume semantics.
 - Retain a narrow custom host preflight for fixed executable, arguments and
   working directory. It cannot acquire a child yet.
+- Retain a narrow custom first-task invocation policy. It accepts exactly one
+  text-review argument set and therefore cannot gain a resume session, tools,
+  MCP servers, plug-ins, unattended permission approval, or persistent session
+  through a task or browser input. The policy is based on the documented Claude
+  CLI flags, not copied source code. Exact installed-version support remains an
+  owner-attended qualification requirement.
 - `anthropics/claude-agent-sdk-python` at `f7547d7233527739ece8b12ed28c57be96c966b5`
   (MIT) is reference only. We inspected
   `src/claude_agent_sdk/_internal/query.py`,

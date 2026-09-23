@@ -177,6 +177,15 @@ result, review and recovery contracts. Live Claude delivery remains unsupported
 until an exact installed CLI and private authentication/process port pass a
 separate owner-attended qualification.
 
+The first local Claude task now also has a source-enforced, fixed text-review
+invocation policy. It requires one printed stream response, one turn, no
+persisted session, no built-in or MCP tools, no plug-ins, and no unattended
+permission approval. The policy neither launches Claude nor proves that the
+installed CLI supports every flag; that exact version, its private login
+custody, and its provider-only network boundary remain owner-attended
+qualification evidence. A later writing route cannot reuse this first-task
+policy.
+
 A proposed native macOS Codex custody helper was independently rejected and is
 not part of the product or release. A disposable prototype exercised suspended
 launch and executable inspection as non-qualifying research, but no

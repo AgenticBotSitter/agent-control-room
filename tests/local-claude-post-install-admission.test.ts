@@ -13,6 +13,7 @@ import { verifyLocalClaudePostInstallAdmissionV1 } from "../src/installer/v1/loc
 import { privateArtifactStorageNamespaceDigestV1 } from "../src/web/v1/private-artifact-storage";
 import { createClaudeCodePrivateInstallationCompositionV1, isClaudeCodePrivateInstalledDeliverCapabilityV1 } from
   "../src/web/v1/claude-code-private-installation-composition";
+import { CLAUDE_CODE_TEXT_REVIEW_FIXED_ARGS_V1 } from "../src/harness/claude-code-v1/text-review-invocation-policy";
 
 const d = (value: unknown) => sha256Digest(value);
 
@@ -54,7 +55,7 @@ test("post-install Claude admission binds one additive committed transition with
     requestedRoutes: [...original.topologyInput.requestedRoutes, workerRoute] };
   const topology = planInstallationTopologyV1(transitionInput);
   const processConfiguration = { schema: "control-room.claude-code-private-installed-process-host-configuration/v1" as const,
-    process: { executablePath: "/private/bin/claude", args: ["--print"], workingDirectory: "/private/workspace", cleanupMs: 100 },
+    process: { executablePath: "/private/bin/claude", args: [...CLAUDE_CODE_TEXT_REVIEW_FIXED_ARGS_V1], workingDirectory: "/private/workspace", cleanupMs: 100 },
     executableSha256: d("executable"), workingDirectoryBindingDigest: d("workspace"), qualificationDigest: d("qualification"),
     startupDeadlineMs: 100, terminateDeadlineMs: 100, killDeadlineMs: 100 };
   const processConfigurationDigest = d({ purpose: "local-claude-installed-process-configuration/v1", configuration: processConfiguration });

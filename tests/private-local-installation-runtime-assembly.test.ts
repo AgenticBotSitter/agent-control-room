@@ -992,7 +992,7 @@ async function additiveClaudePackage(f: Awaited<ReturnType<typeof fixture>>, opt
     requestedRoutes: [...admissionPreparation.topologyInput.requestedRoutes, workerRoute] };
   const topology = planInstallationTopologyV1(transitionInput);
   const processConfiguration = { schema: "control-room.claude-code-private-installed-process-host-configuration/v1" as const,
-    process: { executablePath: "/private/bin/claude", args: ["--print"],
+    process: { executablePath: "/private/bin/claude", args: ["--print", "--output-format", "stream-json", "--verbose", "--restricted", "--bare", "--disallowedTools", "*,mcp__*", "--permission-prompts", "none", "--no-session-persistence", "--max-turns", "1"],
       workingDirectory: "/private/workspace", cleanupMs: 100 }, executableSha256: d("claude-executable"),
     workingDirectoryBindingDigest: d("claude-workspace"), qualificationDigest: d("claude-qualification"),
     startupDeadlineMs: 100, terminateDeadlineMs: 100, killDeadlineMs: 100 };

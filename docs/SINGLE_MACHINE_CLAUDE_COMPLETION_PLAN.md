@@ -90,6 +90,10 @@ Code itself.
   format. The implementation must settle whether it reuses the owner's
   existing Claude login state, record the accepted custody risks, and require
   owner attendance for that choice.
+- The source-level first-task policy is already fixed to one text-only printed
+  response with no persisted session, built-in tools, MCP tools, plug-ins, or
+  unattended permission approval. Do not relax that policy; a later writing
+  capability needs its own separately reviewed route.
 - The port must be single-purpose: no executable discovery, arbitrary command
   construction, inherited broad environment, plugin control, resume, or generic
   terminal access. Its qualification must demonstrate that user hooks, MCP
