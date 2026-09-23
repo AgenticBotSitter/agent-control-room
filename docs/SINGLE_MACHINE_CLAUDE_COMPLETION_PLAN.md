@@ -1,7 +1,7 @@
 # Single-machine Control Room completion plan: Claude included
 
-**Status:** proposed execution plan for independent Claude review, September 22,
-2026. It refines the local phases of
+**Status:** source packages C0-C3 are implemented and tested locally; C4
+requires owner-attended installation evidence. This plan refines the local phases of
 [`LOCAL_TO_MULTI_SYSTEM_EXECUTION_PLAN.md`](LOCAL_TO_MULTI_SYSTEM_EXECUTION_PLAN.md).
 The latter remains the product-wide authority.
 
@@ -53,6 +53,11 @@ Room has prepared, assigned, approved and queued for its exact worker route.
 
 ### C0 — Freeze the shared local-worker contract
 
+**Source status: completed.** The disposable two-worker proof now carries
+both routes through publication, owner review, verification, capacity release
+and completion using the same inspected result source. It does not start
+Hermes or Claude.
+
 **Purpose:** prove Hermes and Claude are two routes through the same lifecycle.
 
 **Prerequisites:** C0 can map and test source-only behavior now. It cannot
@@ -86,6 +91,11 @@ the necessary L3 service state.
 states and no adapter can bypass review or claim task authority.
 
 ### C1 — Complete the Claude private installed-process qualification boundary
+
+**Source status: completed.** The fixed owner-attended qualification command,
+sanitized success/failure evidence, strict process/session framing and
+admission binding are covered by source tests. Its one real invocation remains
+an owner action and is not implied by this status.
 
 **Purpose:** retain the accepted source composition and define the smallest safe
 boundary for qualifying it as a local Claude route, without changing Claude
@@ -132,6 +142,11 @@ one harmless first Claude task. The source package itself must not perform them.
 
 ### C2 — Integrate Hermes and Claude into one installed operator path
 
+**Source status: completed.** The protected installed composition preserves the
+Hermes route, admits Claude only as a fenced additive route, and forwards both
+through the same authenticated result inspection path. It is inert until the
+separate installation proof is supplied.
+
 **Purpose:** use one protected installation configuration and one operator,
 not two launchers.
 
@@ -167,6 +182,11 @@ or result storage. Claude-only remains a planned, explicitly refused future
 topology until its separate architecture decision is accepted.
 
 ### C3 — Finish the website as the owner’s local control surface
+
+**Source status: completed.** The existing owner pages now include direct,
+read-only navigation to local setup guidance and route-specific safe scope and
+next-step text for Hermes and Claude. They remain presentation-only and never
+claim a live worker.
 
 **Purpose:** make ordinary local use possible without terminal choreography.
 
@@ -210,6 +230,9 @@ topology until its separate architecture decision is accepted.
 from the site, without any fake live indicator.
 
 ### C4 — Local two-worker proof
+
+**Source status: the disposable proof is complete; the real proof is pending
+owner-attended installation.**
 
 **Purpose:** prove the real product slice, first with disposable data and then
 only with owner-approved live actions.
