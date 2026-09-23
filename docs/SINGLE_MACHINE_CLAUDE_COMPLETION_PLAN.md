@@ -73,20 +73,23 @@ the necessary L3 service state.
 **Done when:** the same test table proves both routes use the same canonical
 states and no adapter can bypass review or claim task authority.
 
-### C1 — Complete the Claude private installed-process seam
+### C1 — Complete the Claude private installed-process qualification boundary
 
-**Purpose:** complete the incomplete source composition into a safely qualified
-local Claude route without changing Claude Code itself.
+**Purpose:** retain the accepted source composition and define the smallest safe
+boundary for qualifying it as a local Claude route, without changing Claude
+Code itself.
 
 - Retain `src/harness/claude-code-v1/private-installed-process-host.ts`,
   `owned-process-session.ts`, `stream-json-decode.ts`, result publication, and
   `src/installer/v1/local-claude-installation-binding.ts`.
-- Build only the missing private, owner-held port that verifies the selected
-  Claude executable/version, fixed arguments, working directory, authentication
-  custody, bounded input delivery, process-group cleanup, restart-read/recovery
-  receipt, and exact output format. The implementation must settle whether it
-  reuses the owner's existing Claude login state, record the accepted custody
-  risks, and require owner attendance for that choice.
+- Retain the existing private installed-process host and post-install
+  composition. Build only the missing qualification evidence/owner-held port
+  that verifies the selected Claude executable/version, fixed arguments,
+  working directory, authentication custody, bounded input delivery,
+  process-group cleanup, restart-read/recovery receipt, and exact output
+  format. The implementation must settle whether it reuses the owner's
+  existing Claude login state, record the accepted custody risks, and require
+  owner attendance for that choice.
 - The port must be single-purpose: no executable discovery, arbitrary command
   construction, inherited broad environment, plugin control, resume, or generic
   terminal access. Its qualification must demonstrate that user hooks, MCP

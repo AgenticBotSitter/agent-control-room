@@ -49,16 +49,24 @@ restart recovery. Private application admission already requires Claude process,
 backup/restore and supervisor proof. This preparation deliberately mounts no
 callback into that admission path.
 
-The missing implementation remains a qualified process host beneath
-`AcquireClaudeCodeProcessV1` and `OwnedClaudeCodeProcessV1`. That existing seam
-receives a binding fingerprint but not the canonical `prepared.delivery.input`.
-The installed program's input interface, private authentication custody,
-cancellation/kill/reap behavior and restart-result behavior still require
-owner-attended qualification. If stdin is qualified, extend the existing byte
-port/session with bounded input delivery; do not invent another session owner.
-Until then this preparation reports `qualified_private_process_host_required`,
-even with complete supplied fixture evidence. Neither a successful unit test
-nor syntactically valid private command arguments prove a live Claude setup.
+The source tree now also contains the later, separate installed-process path:
+`private-installed-process-host.ts` owns one injected private child process,
+writes bounded input once, closes stdin, and owns cancellation/kill/reap; and
+`claude-code-private-installation-composition.ts` binds that host to the
+post-install admission receipt, queue executor, protected staging, and the
+canonical delivery fence. Those source components are not a live launcher:
+they require injected owner-held native ports and do not discover Claude,
+construct arbitrary commands, read credentials, or create a process during
+assembly.
+
+This earlier preparation therefore still reports
+`qualified_private_process_host_required`. That is an honest live-proof gate,
+not a claim that the source host is absent. The installed program's exact input
+interface, private authentication custody, provider-only network boundary,
+user-hook/MCP/plugin isolation, cancellation/kill/reap behavior and
+restart-result behavior require owner-attended qualification. Neither a
+successful unit test nor syntactically valid private command arguments prove a
+live Claude setup.
 
 Tests use disposable in-memory data, including deliberately fictitious command
 arguments, and never invoke Claude or inspect a real private installation.

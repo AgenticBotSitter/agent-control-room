@@ -77,10 +77,14 @@ ceiling and discarded.
 - `disposition().resubmissionSafe` is always `false`. A restart proves nothing about a
   previous attempt, so no path here marks a run safe to resubmit.
 
-The installed-process launcher remains deliberately absent. Before that is built, its
-fixed executable, argument list, bounded prompt bytes, working-directory custody,
-minimal environment, permission policy, process-group cleanup and cancellation proof
-must all be bound to the accepted task. This repository does not yet claim that proof.
+The source-only private installed-process host is present, but a live installed
+launcher remains deliberately unqualified. The host accepts only an injected,
+owner-held native child port; it does not discover an executable, read a login,
+or choose a command. Before live use, the fixed executable, argument list,
+bounded prompt bytes, working-directory custody, minimal environment, permission
+policy, process-group cleanup, user-hook/MCP/plugin isolation, provider-only
+network boundary, and cancellation proof must all be bound to the accepted task
+and owner-attended qualification. This repository does not yet claim that proof.
 
 ## Result identity is not minted in this package
 
