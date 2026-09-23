@@ -1004,7 +1004,7 @@ async function additiveClaudePackage(f: Awaited<ReturnType<typeof fixture>>, opt
   };
   const qualificationEvidence = createClaudeCodeTextReviewQualificationEvidenceV1(qualificationReport);
   const processConfiguration = { schema: "control-room.claude-code-private-installed-process-host-configuration/v1" as const,
-    process: { executablePath: "/private/bin/claude", args: ["--print", "--output-format", "stream-json", "--verbose", "--restricted", "--bare", "--disallowedTools", "*,mcp__*", "--permission-prompts", "none", "--no-session-persistence", "--max-turns", "1"],
+    process: { executablePath: "/private/bin/claude", args: ["--print", "--output-format", "stream-json", "--verbose", "--restricted", "--bare", "--disallowedTools", "*,mcp__*", "--permission-prompts", "none", "--no-session-persistence", "--max-turns", "1", "--model", "opus"],
       workingDirectory: "/private/workspace", cleanupMs: 100 }, executableSha256: d("claude-executable"),
     workingDirectoryBindingDigest: d("claude-workspace"), qualificationDigest: qualificationEvidence.evidenceDigest,
     startupDeadlineMs: 100, terminateDeadlineMs: 100, killDeadlineMs: 100 };
