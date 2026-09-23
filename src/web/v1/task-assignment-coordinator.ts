@@ -1080,8 +1080,15 @@ export class TaskAssignmentCoordinator {
       const stored = await this.stored(tx, job);
       const receipt = stored ? this.receipt(job, stored.attempt, stored.lease) : null;
       const { candidates } = await this.configuredCandidatesInSession(tx, project, job, plan, !!stored);
+      const recommendation = candidates.length === 1 ? { state: "one_configured_route" as const,
+        nodeId: candidates[0]!.nodeId, label: candidates[0]!.label, workScope: candidates[0]!.workScope,
+        availability: "unknown" as const, startsWork: false as const, grantsExecutionAuthority: false as const }
+        : candidates.length > 1 ? { state: "choice_required" as const, configuredRouteCount: candidates.length,
+          availability: "unknown" as const, startsWork: false as const, grantsExecutionAuthority: false as const }
+          : { state: "not_available" as const, availability: "unknown" as const,
+            startsWork: false as const, grantsExecutionAuthority: false as const };
       return { projectId, jobId, inputDigest: job.inputDigest, candidates, receipt, startsWork: false as const,
-        candidateEvidence: "configured_routes_only" as const };
+        recommendation, candidateEvidence: "configured_routes_only" as const };
     });
   }
 

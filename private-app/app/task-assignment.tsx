@@ -16,6 +16,14 @@ export function TaskAssignmentPanel({ options, receipt = options?.receipt, error
     {receipt && <div><p>Recorded reservation: {receipt.leaseState}. Ends {receipt.expiresAt}.</p>
       <p>{receipt.leaseCurrent ? "The reservation was current at the last check." : "The reservation is not current."} This is not proof that an agent started or stopped.</p></div>}
     {receipt?.leaseCurrent && !uncertain && <p>Next, <a href="#task-approval">check execution approval</a>. A reservation alone is not permission to run.</p>}
+    {options?.recommendation.state === "one_configured_route" && <div className="private-note" aria-label="Route recommendation">
+      <p><strong>Suggested route: {options.recommendation.label}.</strong> It is the one saved configured route for this task.</p>
+      <p>Availability and current usage are unknown here and are checked only when you assign. This suggestion does not select, reserve, start, or approve the route.</p>
+    </div>}
+    {options?.recommendation.state === "choice_required" && <p className="private-note" aria-label="Route recommendation">
+      More than one saved configured route can handle this task. Choose deliberately below; current availability and usage are unknown until assignment checks them.</p>}
+    {options?.recommendation.state === "not_available" && <p className="private-note" aria-label="Route recommendation">
+      No saved configured route can be suggested for this task. This does not prove that no worker exists.</p>}
     {options && (uncertain ? <button type="button" disabled={pending} onClick={onRetry}>Check this exact assignment change</button>
       : receipt ? receipt.leaseState === "active" && !receipt.leaseCurrent
         ? <button type="button" disabled={pending} onClick={() => onChange("expire")}>Reconcile expired reservation</button> : null

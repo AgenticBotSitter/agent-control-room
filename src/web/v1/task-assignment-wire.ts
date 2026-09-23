@@ -17,5 +17,16 @@ export const taskAssignmentOptionsSchema = z.object({ projectId: id, jobId: id, 
     /** A task-plan fact, not a claim that the selected worker is currently live. */
     workScope: z.enum(["bounded_text_review", "configured_task"]),
   }).strict()).max(64),
+  /** Advisory only. It is derived from saved configured routes and never
+   * reserves a route or claims present capacity. */
+  recommendation: z.discriminatedUnion("state", [
+    z.object({ state: z.literal("one_configured_route"), nodeId: id, label: z.string().min(1).max(180),
+      workScope: z.enum(["bounded_text_review", "configured_task"]), availability: z.literal("unknown"),
+      startsWork: z.literal(false), grantsExecutionAuthority: z.literal(false) }).strict(),
+    z.object({ state: z.literal("choice_required"), configuredRouteCount: z.number().int().min(2).max(64),
+      availability: z.literal("unknown"), startsWork: z.literal(false), grantsExecutionAuthority: z.literal(false) }).strict(),
+    z.object({ state: z.literal("not_available"), availability: z.literal("unknown"),
+      startsWork: z.literal(false), grantsExecutionAuthority: z.literal(false) }).strict(),
+  ]),
   receipt: taskAssignmentReceiptSchema.nullable(), startsWork: z.literal(false), candidateEvidence: z.literal("configured_routes_only") }).strict();
 export type TaskAssignmentOptions = z.infer<typeof taskAssignmentOptionsSchema>;

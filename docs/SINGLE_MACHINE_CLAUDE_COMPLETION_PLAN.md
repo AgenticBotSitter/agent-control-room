@@ -160,6 +160,11 @@ routes without duplicate scheduler, authority, service, or result storage.
 - Add the smallest missing cross-worker presentation: for each task, show the
   recommended available route, route-specific limitation, current saved
   delivery state, result/review state and exact next owner action.
+- The assignment page now gives a deliberately limited recommendation when
+  exactly one saved configured route can handle a task. It labels capacity and
+  current usage as unknown, does not preselect the route, and still requires
+  the owner to make the ordinary assignment choice. Several configured routes
+  remain an explicit owner choice.
 - A task run now carries a redacted, signed-adapter category for the three
   local adapters. The interface labels it as saved evidence only; route
   configuration and present availability remain separate evidence.

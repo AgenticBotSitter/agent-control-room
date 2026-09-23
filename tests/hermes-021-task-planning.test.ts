@@ -109,6 +109,9 @@ test("a Marvin Hermes 0.21 template creates a pinned text-review plan, not an ol
   const assignmentOptions = await assignments.options(f.identity, binding.projectId, planned.receipt.jobId);
   assert.deepEqual(assignmentOptions.candidates, [{ nodeId: binding.nodeId, label: "Synthetic node", platform: "linux",
     workScope: "bounded_text_review" }], "the owner sees the restricted local Hermes scope before reserving it");
+  assert.deepEqual(assignmentOptions.recommendation, { state: "one_configured_route", nodeId: binding.nodeId,
+    label: "Synthetic node", workScope: "bounded_text_review", availability: "unknown", startsWork: false,
+    grantsExecutionAuthority: false }, "a single saved route is advisory only and does not claim capacity");
   assert.equal(assignmentOptions.startsWork, false);
   const assigned = await assignments.assign(f.identity, binding.projectId, planned.receipt.jobId, binding.nodeId, planned.receipt.inputDigest);
   assert.equal(assigned.replayed, false);
