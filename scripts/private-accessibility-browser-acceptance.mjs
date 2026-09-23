@@ -260,6 +260,16 @@ try {
   const projectPath = new URL(page.url()).pathname;
 
   await stableMatrix(page, "360px", projectPath);
+  // Voice is intentionally present but inert on Settings. Visiting the page
+  // must not make a microphone-capable action appear until the owner opts in.
+  await page.goto(`${origin}/settings`, { waitUntil: "domcontentloaded" });
+  await page.getByRole("heading", { name: "Voice controls" }).waitFor();
+  check("Settings exposes optional voice as disabled by default",
+    (await page.getByRole("checkbox", { name: /enable voice controls/i }).isChecked()) === false);
+  check("Settings does not expose microphone actions before voice opt-in",
+    (await page.getByRole("button", { name: /start dictation|read aloud/i }).count()) === 0);
+  check("Settings names voice dictation as an unsent local draft",
+    (await page.getByText(/everything on this page works fully with keyboard and typed text/i).count()) === 1);
   const unknown = await page.goto(`${origin}${projectPath}/unknown-section`, { waitUntil: "domcontentloaded" });
   check("Unknown project section is not rendered as the overview", unknown?.status() === 404, `status=${unknown?.status() ?? "none"}`);
 
