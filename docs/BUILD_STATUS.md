@@ -14,6 +14,17 @@ owner supplies the protected real configuration and explicitly runs it. Eleven
 focused activation and launcher checks pass for the expanded path, including
 the refusal of an incomplete agent-task configuration before owner bootstrap.
 
+The existing signed remote Hermes and Codex delivery route has passed focused
+two-worker source journeys: an assigned worker alone can receive work and
+return a result; an incompatible, revoked, or merely connected worker cannot
+substitute; and a lost acknowledgement does not cause a second send. The
+topology-neutral controller packet and remote-session bridge remain a separate
+source contract only. They are not yet represented as negotiated signed-node
+messages, so they cannot be wired into the live session path by sending raw
+data. The next remote-delivery package must add that signed message pair and
+its authenticated worker intake, reusing the existing session, receipt, and
+reconnect machinery rather than adding a broker or a second queue.
+
 **Authoritative completion order:** follow
 [`LOCAL_TO_MULTI_SYSTEM_EXECUTION_PLAN.md`](LOCAL_TO_MULTI_SYSTEM_EXECUTION_PLAN.md).
 It finishes the supported single-computer installation first and then extends
