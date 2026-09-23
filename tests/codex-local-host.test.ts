@@ -4,7 +4,8 @@ import test from 'node:test';
 import { createCodexLocalHostV1 } from '../src/harness/codex-v1/local-host';
 import type { CodexLocalInitialHostInputV1, CodexLocalRecoverHostInputV1 } from '../src/harness/codex-v1/local-host';
 import { createCodexWorkerCompositionV1 } from '../src/node-bridge/codex-worker-composition';
-import { createPrivateRemoteCodexNodeEntryV1, PRIVATE_REMOTE_CODEX_NODE_ENTRY_V1 }
+import { createPrivateRemoteCodexNodeEntryCapabilityV1, createPrivateRemoteCodexNodeEntryV1,
+  PRIVATE_REMOTE_CODEX_NODE_ENTRY_CAPABILITY_V1, PRIVATE_REMOTE_CODEX_NODE_ENTRY_V1 }
   from '../src/node-bridge/private-remote-codex-node-entry';
 import { createCodexPhysicalQualificationReceiptBodyV1 } from '../src/harness/codex-v1/result-publication-contract';
 import { buildCodexTaskActivationV1, CODEX_ACTIVATION_FEATURE } from '../src/harness/codex-v1/activation-contract';
@@ -313,18 +314,19 @@ test('private remote Codex entry captures only protected matching bindings witho
     result: { ...workerQualification(), bridgeEvidence: f.journal,
       bridge: { async sendCodexResultReturn() { sends++; throw new Error('must not send'); } } },
   };
-  const entry = createPrivateRemoteCodexNodeEntryV1({
-    identity: { tenantId: 'tenant:test', nodeId: 'node:test', enrollmentDigest: sha256Digest('enrollment'),
+  const sealed = createPrivateRemoteCodexNodeEntryCapabilityV1({
+    session: { snapshot: { tenantId: 'tenant:test', nodeId: 'node:test', enrollmentDigest: sha256Digest('enrollment'),
       connectorProfileDigest: sha256Digest('profile'), sessionIdentityDigest: sha256Digest('session:private-node'),
-      assertCurrent() { identityChecks++; } },
+      }, assertEnrollmentAndRevocationCurrent() { identityChecks++; } },
     composition: configuration,
   });
+  const entry = createPrivateRemoteCodexNodeEntryV1(sealed.capability);
   assert.equal(entry.schema, PRIVATE_REMOTE_CODEX_NODE_ENTRY_V1);
   assert.equal(entry.startsWork, false); assert.equal(entry.grantsExecutionAuthority, false);
   assert.deepEqual(Object.keys(entry).sort(), ['close', 'grantsExecutionAuthority', 'recoverAndReturn', 'schema', 'start', 'startsWork']);
   assert.equal(initial.opened(), 0); assert.equal(recovery.opened(), 0); assert.equal(sends, 0);
-  assert.equal(identityChecks, 0); assert.equal(compositionChecks, 0,
-    'construction binds the session fence but does not invoke it');
+  assert.equal(identityChecks, 1, 'the installation session is checked before it can be sealed');
+  assert.equal(compositionChecks, 0, 'construction binds the composition fence but does not invoke it');
   await entry.close();
 });
 
@@ -342,16 +344,22 @@ test('private remote Codex entry rejects browser-shaped or mismatched protected 
     result: { ...workerQualification(), bridgeEvidence: f.journal,
       bridge: { async sendCodexResultReturn() { throw new Error('must not send'); } } },
   };
-  const identity = { tenantId: 'tenant:test', nodeId: 'node:test', enrollmentDigest: sha256Digest('enrollment'),
+  const session = { snapshot: { tenantId: 'tenant:test', nodeId: 'node:test', enrollmentDigest: sha256Digest('enrollment'),
     connectorProfileDigest: sha256Digest('profile'), sessionIdentityDigest: sha256Digest('session:private-node'),
-    assertCurrent() { checks++; } };
-  assert.throws(() => createPrivateRemoteCodexNodeEntryV1({ identity, composition: {
+  }, assertEnrollmentAndRevocationCurrent() { checks++; } };
+  assert.throws(() => createPrivateRemoteCodexNodeEntryCapabilityV1({ session, composition: {
     ...configuration, binding: { ...configuration.binding, connectorProfileDigest: sha256Digest('other-profile') },
   } }), /private_remote_codex_node_entry_unavailable/);
-  assert.throws(() => createPrivateRemoteCodexNodeEntryV1({ identity, composition: configuration,
+  assert.throws(() => createPrivateRemoteCodexNodeEntryV1({
+    schema: PRIVATE_REMOTE_CODEX_NODE_ENTRY_CAPABILITY_V1,
+    composition: configuration,
+  }), /private_remote_codex_node_entry_unavailable/, 'a matching synthetic composition is not a capability');
+  assert.throws(() => createPrivateRemoteCodexNodeEntryV1({
+    schema: PRIVATE_REMOTE_CODEX_NODE_ENTRY_CAPABILITY_V1,
     browserSelectedExecutable: '/not/allowed',
   }), /private_remote_codex_node_entry_unavailable/);
-  assert.equal(initial.opened(), 0); assert.equal(recovery.opened(), 0); assert.equal(checks, 0);
+  assert.equal(initial.opened(), 0); assert.equal(recovery.opened(), 0); assert.equal(checks, 1,
+    'the private session is checked before a mismatched binding is refused');
 });
 
 test('remote worker rejects missing activation, revoked session and changed binding before native start', async t => {

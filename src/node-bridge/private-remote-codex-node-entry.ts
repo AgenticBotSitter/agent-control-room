@@ -1,83 +1,119 @@
-import { z } from "zod";
+import { types } from "node:util";
 import { digestSchema, localId } from "../harness/v1/native-run-identifiers";
 import { assertSynchronousFence } from "../security/synchronous-fence";
 import { createCodexWorkerCompositionV1, type CodexWorkerCompositionInputV1 } from "./codex-worker-composition";
 
 /**
- * Private, installation-owned node entry for the first Linux Codex worker.
- * It joins the existing private Codex configuration/worker composition to an
- * already-authenticated node session. It deliberately does not open journals,
- * acquire a process, connect a bridge, start Codex, or read credentials.
+ * Private, installation-owned node entry for the first remote Codex worker.
+ * A task, browser, or ordinary configuration reader cannot supply its own
+ * process ports: only an installation composition may first seal them behind
+ * this one-use, in-memory capability.
  */
 export const PRIVATE_REMOTE_CODEX_NODE_ENTRY_V1 =
   "control-room.private-remote-codex-node-entry/v1" as const;
-
-const identitySchema = z.object({
-  tenantId: localId,
-  nodeId: localId,
-  enrollmentDigest: digestSchema,
-  connectorProfileDigest: digestSchema,
-  sessionIdentityDigest: digestSchema,
-  assertCurrent: z.function(),
-}).strict();
+export const PRIVATE_REMOTE_CODEX_NODE_ENTRY_CAPABILITY_V1 =
+  "control-room.private-remote-codex-node-entry-capability/v1" as const;
 
 const unavailable = (): never => { throw new Error("private_remote_codex_node_entry_unavailable"); };
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
 
-type ProtectedNodeIdentityV1 = z.infer<typeof identitySchema>;
+export type PrivateRemoteCodexAuthenticatedSessionV1 = Readonly<{
+  snapshot: Readonly<{
+    tenantId: string;
+    nodeId: string;
+    enrollmentDigest: string;
+    connectorProfileDigest: string;
+    sessionIdentityDigest: string;
+  }>;
+  /** Installation session fence: it must reject a revoked/changed enrollment. */
+  assertEnrollmentAndRevocationCurrent(): void;
+}>;
 
-function captureInput(value: unknown): { identity: ProtectedNodeIdentityV1; composition: CodexWorkerCompositionInputV1 } {
-  const input = isRecord(value) ? value : unavailable();
-  if (Object.keys(input).length !== 2 || !("identity" in input) || !("composition" in input)) unavailable();
-  const parsedIdentity = identitySchema.safeParse(input.identity);
-  if (!parsedIdentity.success) unavailable();
-  const parsed = parsedIdentity.data ?? unavailable();
-  const identity: ProtectedNodeIdentityV1 = {
-    tenantId: parsed.tenantId ?? unavailable(),
-    nodeId: parsed.nodeId ?? unavailable(),
-    enrollmentDigest: parsed.enrollmentDigest ?? unavailable(),
-    connectorProfileDigest: parsed.connectorProfileDigest ?? unavailable(),
-    sessionIdentityDigest: parsed.sessionIdentityDigest ?? unavailable(),
-    assertCurrent: parsed.assertCurrent ?? unavailable(),
-  };
-  const rawComposition = input.composition;
-  if (!isRecord(rawComposition) || Object.keys(rawComposition).length !== 5
-    || !("initial" in rawComposition) || !("recovery" in rawComposition) || !("result" in rawComposition)
-    || !("binding" in rawComposition) || !("assertSessionCurrent" in rawComposition)) unavailable();
-  const composition = rawComposition as unknown as CodexWorkerCompositionInputV1;
-  const binding = composition.binding;
-  if (!binding || binding.tenantId !== identity.tenantId || binding.nodeId !== identity.nodeId
-    || binding.enrollmentDigest !== identity.enrollmentDigest
-    || binding.connectorProfileDigest !== identity.connectorProfileDigest
-    || binding.sessionIdentityDigest !== identity.sessionIdentityDigest
-    || !digestSchema.safeParse(binding.activationFrameDigest).success
-    || typeof composition.assertSessionCurrent !== "function") unavailable();
-  return { identity: Object.freeze({ ...identity }), composition };
+export type PrivateRemoteCodexNodeEntryBindingV1 = Readonly<{
+  /** Supplied only by the authenticated private node session owner. */
+  session: PrivateRemoteCodexAuthenticatedSessionV1;
+  /** Supplied only by the existing private Codex installer composition. */
+  composition: CodexWorkerCompositionInputV1;
+}>;
+
+export type PrivateRemoteCodexNodeEntryCapabilityV1 = Readonly<{
+  schema: typeof PRIVATE_REMOTE_CODEX_NODE_ENTRY_CAPABILITY_V1;
+}>;
+
+const capabilities = new WeakMap<object, Readonly<{
+  worker: ReturnType<typeof createCodexWorkerCompositionV1>;
+}>>();
+
+function captureSession(value: PrivateRemoteCodexAuthenticatedSessionV1): Readonly<{
+  tenantId: string; nodeId: string; enrollmentDigest: string;
+  connectorProfileDigest: string; sessionIdentityDigest: string;
+  assertCurrent: () => void;
+}> {
+  const session = value;
+  if (!session || typeof session !== "object" || types.isProxy(session)
+    || !session.snapshot || typeof session.snapshot !== "object" || types.isProxy(session.snapshot)
+    || typeof session.assertEnrollmentAndRevocationCurrent !== "function") unavailable();
+  const snapshot = session.snapshot;
+  try {
+    localId.parse(snapshot.tenantId); localId.parse(snapshot.nodeId);
+    digestSchema.parse(snapshot.enrollmentDigest); digestSchema.parse(snapshot.connectorProfileDigest);
+    digestSchema.parse(snapshot.sessionIdentityDigest);
+  } catch { unavailable(); }
+  const assertCurrent = session.assertEnrollmentAndRevocationCurrent.bind(session);
+  assertSynchronousFence(assertCurrent, unavailable);
+  return Object.freeze({ tenantId: snapshot.tenantId, nodeId: snapshot.nodeId,
+    enrollmentDigest: snapshot.enrollmentDigest, connectorProfileDigest: snapshot.connectorProfileDigest,
+    sessionIdentityDigest: snapshot.sessionIdentityDigest, assertCurrent });
 }
 
 /**
- * Captures only protected inputs. The returned operations retain the existing
- * one-shot Codex worker behavior, but this constructor itself is inert. A
- * caller cannot choose a path, credential, transport, worker identity, or
- * callback through browser/task data: all such ports stay inside the supplied
- * installation-owned composition.
+ * The private installer seals its already-open authenticated-session snapshot
+ * and existing Codex composition. It performs no I/O, process acquisition,
+ * network connection, or task start. The returned capability is opaque and
+ * can be consumed once by the node launcher; it is not task/browser input.
  */
-export function createPrivateRemoteCodexNodeEntryV1(value: unknown) {
-  const captured = captureInput(value);
-  const worker = createCodexWorkerCompositionV1({ ...captured.composition,
-    binding: Object.freeze({ ...captured.composition.binding }),
+export function createPrivateRemoteCodexNodeEntryCapabilityV1(
+  value: PrivateRemoteCodexNodeEntryBindingV1,
+): Readonly<{ schema: typeof PRIVATE_REMOTE_CODEX_NODE_ENTRY_V1; startsWork: false;
+  capability: PrivateRemoteCodexNodeEntryCapabilityV1 }> {
+  const session = captureSession(value.session);
+  const composition = value.composition;
+  const binding = composition?.binding;
+  if (!binding || binding.tenantId !== session.tenantId || binding.nodeId !== session.nodeId
+    || binding.enrollmentDigest !== session.enrollmentDigest
+    || binding.connectorProfileDigest !== session.connectorProfileDigest
+    || binding.sessionIdentityDigest !== session.sessionIdentityDigest
+    || !digestSchema.safeParse(binding.activationFrameDigest).success
+    || typeof composition.assertSessionCurrent !== "function") unavailable();
+  const compositionCurrent = composition.assertSessionCurrent.bind(composition);
+  const worker = createCodexWorkerCompositionV1({ ...composition,
+    binding: Object.freeze({ ...binding }),
     assertSessionCurrent() {
-      assertSynchronousFence(captured.identity.assertCurrent, unavailable);
-      assertSynchronousFence(captured.composition.assertSessionCurrent, unavailable);
+      assertSynchronousFence(session.assertCurrent, unavailable);
+      assertSynchronousFence(compositionCurrent, unavailable);
     },
   });
+  const capability = Object.freeze({ schema: PRIVATE_REMOTE_CODEX_NODE_ENTRY_CAPABILITY_V1 });
+  capabilities.set(capability, Object.freeze({ worker }));
+  return Object.freeze({ schema: PRIVATE_REMOTE_CODEX_NODE_ENTRY_V1, startsWork: false as const, capability });
+}
+
+/**
+ * Consume an installation/session-owned capability. Raw composition, paths,
+ * credentials, callbacks, and browser-selected settings are rejected: the
+ * launcher receives only the opaque object from the private installer.
+ */
+export function createPrivateRemoteCodexNodeEntryV1(value: unknown) {
+  if (!value || typeof value !== "object" || types.isProxy(value)
+    || (value as { schema?: unknown }).schema !== PRIVATE_REMOTE_CODEX_NODE_ENTRY_CAPABILITY_V1) unavailable();
+  const capability = value as PrivateRemoteCodexNodeEntryCapabilityV1;
+  const bound = capabilities.get(capability) ?? unavailable();
+  if (!capabilities.delete(capability)) unavailable();
   return Object.freeze({
     schema: PRIVATE_REMOTE_CODEX_NODE_ENTRY_V1,
     startsWork: false as const,
     grantsExecutionAuthority: false as const,
-    async start(signal: AbortSignal) { return worker.start(signal); },
-    async recoverAndReturn(signal: AbortSignal) { return worker.recoverAndReturn(signal); },
-    async close() { await worker.close(); },
+    async start(signal: AbortSignal) { return bound.worker.start(signal); },
+    async recoverAndReturn(signal: AbortSignal) { return bound.worker.recoverAndReturn(signal); },
+    async close() { await bound.worker.close(); },
   });
 }
