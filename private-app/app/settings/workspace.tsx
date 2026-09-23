@@ -7,6 +7,7 @@ import { OwnerNotificationsWorkspace } from "../owner-notifications-workspace";
 import { useInstallationTopology } from "../installation-topology";
 import { InstallationTopologySummary } from "../installation-topology-summary";
 import { LocalInstallationWizard } from "../local-installation-wizard";
+import { VoiceControlsWorkspace } from "../voice-controls-workspace";
 
 export function PrivateSettingsWorkspace() {
   const configuration = useProductConfiguration();
@@ -35,5 +36,6 @@ export function PrivateSettingsWorkspace() {
       installationPlan={installationTopology?.plan} installationPlanStatus={installationTopology?.planState} />
     <InstallationTopologySummary setup={installationTopology?.setup} status={installationTopology?.state} />
     <OwnerNotificationsWorkspace />
+    <VoiceControlsWorkspace />
   </main></div>;
 }

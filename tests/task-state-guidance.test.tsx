@@ -38,6 +38,15 @@ test("Settings mounts the read-only owner notifications boundary", () => {
   assert.doesNotMatch(html, /Save notification policy/);
 });
 
+test("Settings exposes optional voice without giving it task authority", () => {
+  const html = renderToStaticMarkup(<PrivateSettingsWorkspace />);
+  assert.match(html, /Voice controls/);
+  assert.match(html, /optional and off/i);
+  assert.match(html, /Enable voice controls/);
+  assert.doesNotMatch(html, /Start dictation|Read aloud|Voice draft/);
+  assert.doesNotMatch(html, /Send task|Create project|Start agent/i);
+});
+
 const at = "2026-09-13T00:00:00.000Z";
 const digest = `sha256:${"a".repeat(64)}`;
 function detail(state: TaskDetail["task"]["state"], run?: Partial<TaskDetail["attempts"][number]["runs"][number]>,
