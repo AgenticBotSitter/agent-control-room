@@ -72,10 +72,10 @@ export function createTaskBrowserClient(transport: typeof fetch = fetch, makeKey
         return page;
       } catch (error) { throw error instanceof BrowserRequestError ? error : new BrowserRequestError("unavailable"); }
     },
-    async detail(projectId: string, jobId: string) {
+    async detail(projectId: string, jobId: string, signal?: AbortSignal) {
       try {
         checkId(projectId); checkId(jobId);
-        const detail = taskDetailSchema.parse(await read(`${path(projectId)}/${encodeURIComponent(jobId)}`));
+        const detail = taskDetailSchema.parse(await read(`${path(projectId)}/${encodeURIComponent(jobId)}`, signal));
         if (detail.project.projectId !== projectId || detail.task.projectId !== projectId || detail.task.jobId !== jobId) throw new Error();
         return detail;
       } catch (error) { throw error instanceof BrowserRequestError ? error : new BrowserRequestError("unavailable"); }

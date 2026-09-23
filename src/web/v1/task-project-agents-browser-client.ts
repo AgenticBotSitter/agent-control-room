@@ -3,9 +3,17 @@ import { readBrowserJson } from "./browser-json";
 import { readPrivateConnections, ConnectionBrowserError, type PrivateConnectionSnapshot } from "./connection-browser-client";
 import { readOperatorCapacityViewV1, type OperatorCapacityViewV1 } from "./operator-capacity-browser-client";
 import { catalogProjectIdSchema } from "./project-wire";
+import { createTaskBrowserClient } from "./task-browser-client";
 import { readTaskProjectOverview } from "./task-project-overview-browser-client";
 import type { TaskProjectOverview } from "./task-project-overview-wire";
+import type { TaskDetail } from "./task-wire";
 import { taskProjectAgentOptionsSchema, type TaskProjectAgentOptions } from "./task-project-agents-wire";
+
+export type ProjectAgentTaskEvidence = Readonly<{
+  jobId: string;
+  detail: { state: "ready"; value: TaskDetail }
+    | { state: "unavailable"; code: BrowserRequestError["code"] };
+}>;
 
 export type ProjectAgentVisibilityRead = Readonly<{
   eligibility: { state: "ready"; value: TaskProjectAgentOptions }
@@ -15,6 +23,8 @@ export type ProjectAgentVisibilityRead = Readonly<{
   capacity: { state: "ready"; value: OperatorCapacityViewV1 }
     | { state: "unavailable"; code: "authentication_required" | "operator_surface_unavailable" | "invalid_response" | "request_failed" };
   currentWork: { state: "ready"; value: TaskProjectOverview }
+    | { state: "unavailable"; code: BrowserRequestError["code"] };
+  agentWork: { state: "ready"; value: readonly ProjectAgentTaskEvidence[] }
     | { state: "unavailable"; code: BrowserRequestError["code"] };
 }>;
 
@@ -64,5 +74,16 @@ export async function readProjectAgentVisibility(projectId: string, transport: t
     readTaskProjectOverview(projectId, transport, signal).then(value => ({ state: "ready" as const, value }), error => ({
       state: "unavailable" as const, code: error instanceof BrowserRequestError ? error.code : "unavailable" as const })),
   ]);
-  return Object.freeze({ eligibility, connections, capacity, currentWork });
+  const agentWork = currentWork.state === "unavailable"
+    ? { state: "unavailable" as const, code: currentWork.code }
+    : { state: "ready" as const, value: Object.freeze(await Promise.all(currentWork.value.current.map(async task => {
+      try {
+        const value = await createTaskBrowserClient(transport).detail(projectId, task.jobId, signal);
+        return Object.freeze({ jobId: task.jobId, detail: { state: "ready" as const, value } });
+      } catch (error) {
+        return Object.freeze({ jobId: task.jobId, detail: { state: "unavailable" as const,
+          code: error instanceof BrowserRequestError ? error.code : "unavailable" as const } });
+      }
+    }))) };
+  return Object.freeze({ eligibility, connections, capacity, currentWork, agentWork });
 }
