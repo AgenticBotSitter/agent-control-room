@@ -97,12 +97,19 @@ export function createAuthenticatedRemoteNodeSessionDeliveryBridgeV1(input: Read
         const delivery = controllerWorkerDeliverySchemaV1.parse(deliveryValue);
         const route = controllerWorkerRouteSchemaV1.parse(routeValue);
         const channel = session.controllerWorkerDeliveryChannel();
-        if (!channel || route.kind !== "remote" || route.workerId !== workerId || delivery.worker.workerId !== workerId
-          || delivery.identity.nodeId !== channel.nodeId || signal?.aborted) unavailable();
+        const activeChannel = channel ?? unavailable();
+        if (route.kind !== "remote" || route.workerId !== workerId || delivery.worker.workerId !== workerId
+          || delivery.identity.nodeId !== activeChannel.nodeId || signal?.aborted) unavailable();
+        // `channel` is the authenticated, generation-bound view captured for
+        // this transmission.  Keep the node identity as a plain immutable
+        // value before either session callback runs; the session can be
+        // replaced between callbacks, but that must not turn this packet into
+        // a delivery for a different node.
+        const channelNodeId = activeChannel.nodeId;
         const queueId = queueIdFor(delivery), deadline = Date.parse(delivery.expiresAt);
         await session.stageControllerWorkerDelivery(async (sign, current) => {
           current.assertCurrent();
-          if (signal?.aborted || current.nodeId !== channel.nodeId) unavailable();
+          if (signal?.aborted || current.nodeId !== channelNodeId) unavailable();
           return sign(controllerWorkerNodeDispatchBodySchemaV1.parse({
             schema: "control-room.controller-worker-node-dispatch/v1", queueId, enrollmentDigest, delivery,
           }), deadline);
