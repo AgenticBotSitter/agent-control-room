@@ -12,6 +12,7 @@ import { TaskQualityCoordinator, taskQualityRequestSchema, taskQualitySweepReque
 import { timingSafeEqual } from "node:crypto";
 import { TaskCoordinatorInterruption } from "./task-coordinator-interruption";
 import { taskRevisionRequestSchema } from "./task-revision-wire";
+import type { TaskResultInspectionSourceV1 } from "../../completion-gate/v1/task-result-inspection";
 import { TaskResultCoordinator, taskResultRequestSchema, type TaskResultOperation } from "./task-result-coordinator";
 import { NativeEvidenceReceiver, captureNativeEvidenceInput, captureNativeEvidenceSettings, nativeEvidenceRegistrationSchema, type NativeEvidenceSettings } from "./native-evidence-receiver";
 import { ManagedNativeSessions, captureManagedNativeSessionSettings, type ManagedNativeSessionSettings } from "./managed-native-sessions";
@@ -74,6 +75,10 @@ export type TaskCoordinatorConfiguration = {
   installationTransitionAdmission?: { integrityKey: Uint8Array; workers: readonly { nodeId: string; workerId: string }[] };
   quality?: TaskQualityConfiguration;
   revisionPlanning?: true;
+  /** Installation-owned, authenticated result reader for a supported local adapter.
+   * It is a read-only bridge into the existing review, correction and capacity
+   * lifecycle; it cannot create a second scheduler, result store or authority. */
+  resultInspectionSource?: TaskResultInspectionSourceV1;
   /** An already verified, separately owned bounded control-plane pool. Never the private-web login. */
   database: TaskCoordinatorDatabase;
   /** Non-executing Idea writer, independently verified with the fixed creation role. */
@@ -247,13 +252,14 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
       }, input.clock);
   })();
   // Constructors validate and snapshot immutable templates, keys, route records and scope without SQL.
-  const planner = new TaskExecutionPlanner(db, scope, input.planning, input.clock, input.revisionPlanning ? input.quality : undefined);
+  const planner = new TaskExecutionPlanner(db, scope, input.planning, input.clock,
+    input.revisionPlanning ? input.quality : undefined, input.resultInspectionSource);
   const assignment = new TaskAssignmentCoordinator(db, scope, planner, input.routes, input.clock,
     input.approvals?.enrollments, input.approvals?.store, nativeSubmission, input.codex, transitionAdmission);
   if (input.quality && (input.quality.integrityKey.length !== input.planning.reviewIntegrityKey.length
     || !timingSafeEqual(input.quality.integrityKey, input.planning.reviewIntegrityKey)))
     throw new Error("task_coordinator_config_invalid");
-  const qualityCoordinator = input.quality ? new TaskQualityCoordinator(db, scope, input.quality, input.clock) : undefined;
+  const qualityCoordinator = input.quality ? new TaskQualityCoordinator(db, scope, input.quality, input.clock, input.resultInspectionSource) : undefined;
   const resultCoordinator = resultPool ? new TaskResultCoordinator(guardedDatabase(resultPool), scope, input.planning, input.quality!, input.clock) : undefined;
   // Result projection deliberately runs through the fixed native-result role,
   // after private-web authentication. It does not use the web role to write
