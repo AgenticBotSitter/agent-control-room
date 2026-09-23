@@ -40,6 +40,7 @@
     "preflight:local:service": "node --import tsx scripts/preflight-macos-local-service.ts",
     "preflight:hermes:local-runner": "node --import tsx scripts/preflight-local-hermes-021-runner.ts",
     "qualify:hermes:local-runner": "node --import tsx scripts/qualify-local-hermes-021-runner.ts",
+    "qualify:claude:local": "node --import tsx scripts/qualify-local-claude-code.ts",
     "test:daily-activity": "node --test tests/public-daily-activity.test.mjs",
     "test:access": "node --import tsx --test tests/access-library.test.ts",
     "test:offline-auth-conformance": "node --import tsx --test --test-concurrency=1 tests/private-owner-bootstrap-conformance.test.ts tests/private-ingress-conformance.test.ts",
