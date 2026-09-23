@@ -126,9 +126,12 @@ test("post-install Claude admission binds one additive committed transition with
           adapterRevision: workerRoute.adapterRevision, authorityDigest: d("authority"),
           acceptanceProfileId: "profile:fixture", acceptanceProfileDigest: d("acceptance") },
         authority: {} as never, receiptPort: {} as never, cleanupMs: 100,
-        clock: () => 0 }, results: {} as never,
+        clock: () => 0 }, results: { db: {} as never, integrityKey: new Uint8Array(32).fill(11),
+          reviewKey: new Uint8Array(32).fill(12), storage: {} as never, storageClass: "local",
+          reservations: {} as never } as never,
       protectedStorage: { async put() { throw new Error("must not run during composition"); },
         async read() { throw new Error("must not run during composition"); } } },
+    reviewCheckpoints: { async read() { return undefined; }, async advance() {}, async initialize() {} } as never,
     assertCurrentProcess() {}, assertCurrentDelivery() {} });
   assert.equal(isClaudeCodePrivateInstalledDeliverCapabilityV1(capability), true);
   assert.deepEqual(Object.getOwnPropertyNames(capability), ["deliver"]);

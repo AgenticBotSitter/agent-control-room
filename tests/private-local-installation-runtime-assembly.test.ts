@@ -1054,9 +1054,12 @@ async function additiveClaudePackage(f: Awaited<ReturnType<typeof fixture>>, opt
           adapterId: compositionAdapterId, adapterRevision: workerRoute.adapterRevision, authorityDigest: d("authority"),
           acceptanceProfileId: "profile:claude", acceptanceProfileDigest: d("acceptance") },
           authority: {} as never, receiptPort: {} as never, recheckBeforeAcquire: async () => {}, cleanupMs: 100,
-          clock: () => 0 }, results: {} as never,
-        protectedStorage: { async put() { throw new Error("not invoked during startup"); },
-          async read() { throw new Error("not invoked during startup"); } } },
+          clock: () => 0 }, results: { db: {} as never, integrityKey: new Uint8Array(32).fill(13),
+            reviewKey: new Uint8Array(32).fill(14), storage: {} as never, storageClass: "local",
+            reservations: {} as never } as never,
+          protectedStorage: { async put() { throw new Error("not invoked during startup"); },
+        async read() { throw new Error("not invoked during startup"); } } },
+      reviewCheckpoints: { async read() { return undefined; }, async advance() {}, async initialize() {} },
       assertCurrentProcess() {}, assertCurrentDelivery() {} } } };
 }
 

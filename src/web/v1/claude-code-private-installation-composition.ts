@@ -14,6 +14,8 @@ import { assertSynchronousFence } from "../../security/synchronous-fence";
 import { verifyLocalClaudePostInstallAdmissionReceiptV1, type LocalClaudePostInstallAdmissionV1 } from
   "../../installer/v1/local-claude-post-install-admission";
 import { CLAUDE_CODE_LOCAL_ADAPTER_V1 } from "../../harness/claude-code-v1/task-planning-contract";
+import { DurableResultReviewSubmissionServiceV1 } from "../../completion-gate/v1/durable-result-review-submission";
+import type { AwaitableRollbackCheckpointStoreV1 } from "../../security";
 
 export const CLAUDE_CODE_PRIVATE_INSTALLATION_COMPOSITION_V1 =
   "control-room.claude-code-private-installation-composition/v1" as const;
@@ -29,6 +31,10 @@ export type ClaudeCodePrivateInstallationCompositionInputV1 = Readonly<{
   installedProcessConfiguration: PrivateClaudeCodeInstalledProcessHostConfigurationV1;
   ports: Parameters<typeof createPrivateClaudeCodeInstalledProcessHostV1>[1];
   execution: ExecutionInput;
+  /** Installation-owned Completion Gate checkpoint store. The composer uses it
+   * to build the review-submission service itself; callers cannot inject a
+   * look-alike review callback into the private delivery graph. */
+  reviewCheckpoints: AwaitableRollbackCheckpointStoreV1;
   assertCurrentProcess(binding: ClaudeCodeProcessBindingV1): void;
   assertCurrentDelivery(delivery: ControllerWorkerDeliveryV1): void;
 }>;
@@ -62,7 +68,9 @@ export function createClaudeCodePrivateInstallationCompositionV1(
     if (!input || typeof input.assertCurrentProcess !== "function" || typeof input.assertCurrentDelivery !== "function"
       || !input.execution || !input.execution.delivery || !input.execution.protectedStorage
       || typeof input.execution.protectedStorage.put !== "function"
-      || typeof input.execution.protectedStorage.read !== "function") unavailable();
+      || typeof input.execution.protectedStorage.read !== "function"
+      || !input.reviewCheckpoints || typeof input.reviewCheckpoints.read !== "function"
+      || typeof input.reviewCheckpoints.advance !== "function" || typeof input.reviewCheckpoints.initialize !== "function") unavailable();
     const installedProcessConfiguration = captureClaudeCodeTextReviewInvocationConfigurationV1(
       input.installedProcessConfiguration);
     const binding = input.execution.delivery.binding;
@@ -84,7 +92,18 @@ export function createClaudeCodePrivateInstallationCompositionV1(
         verifyLocalClaudePostInstallAdmissionReceiptV1(input.admission, expectedAdmission);
         assertSynchronousFence(() => assertProcess(processBinding), unavailable);
       } }));
+    // Result publication is not allowed to take a caller-provided review
+    // callback. Build the same narrowly scoped service used by the installed
+    // Hermes route from the already-bound result configuration and protected
+    // storage. It can only register an authenticated pending owner review.
+    if (input.execution.results.reviewSubmission !== undefined) unavailable();
+    const reviewSubmission = new DurableResultReviewSubmissionServiceV1(input.execution.results.db, {
+      integrityKey: input.execution.results.integrityKey, reviewIntegrityKey: input.execution.results.reviewKey,
+      checkpoints: input.reviewCheckpoints, storageClass: input.execution.results.storageClass,
+      storage: input.execution.protectedStorage,
+    });
     const execution: ClaudeCodeLocalAssignedTaskExecutionV1 = Object.freeze({ ...input.execution,
+      results: Object.freeze({ ...input.execution.results, reviewSubmission }),
       delivery: Object.freeze({ ...input.execution.delivery, acquire: host.acquire }),
       assertAuthority(delivery: ControllerWorkerDeliveryV1) {
         verifyLocalClaudePostInstallAdmissionReceiptV1(input.admission, expectedAdmission);
