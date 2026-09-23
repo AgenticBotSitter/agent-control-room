@@ -4,6 +4,16 @@
 with disposable data; no Control Room installation or local worker is
 operational yet.
 
+The reviewed first-activation command now accepts either supported product
+mode: the website-only host or the complete agent-task host. In both cases it
+loads the protected owner and runtime configurations once, verifies that they
+refer to the same owner and database, runs the existing owner/database checks,
+and only then reaches the existing host startup boundary. It still does not
+create a database, listener, worker, certificate, route, or service until an
+owner supplies the protected real configuration and explicitly runs it. Eleven
+focused activation and launcher checks pass for the expanded path, including
+the refusal of an incomplete agent-task configuration before owner bootstrap.
+
 **Authoritative completion order:** follow
 [`LOCAL_TO_MULTI_SYSTEM_EXECUTION_PLAN.md`](LOCAL_TO_MULTI_SYSTEM_EXECUTION_PLAN.md).
 It finishes the supported single-computer installation first and then extends

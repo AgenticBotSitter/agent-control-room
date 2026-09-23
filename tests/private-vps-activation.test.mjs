@@ -18,6 +18,15 @@ const prepared = Object.freeze({ mode: "website-only", port: 3210, configuration
   ownerIdentityId: configuration.identityId, issuer: ownerInput.trust.issuer, audience: ownerInput.trust.audience,
 } } });
 
+function agentPrepared() {
+  return Object.freeze({ mode: "agent-tasks", port: 3210, nativeHttps: Object.freeze({}), configuration: Object.freeze({
+    web: prepared.configuration.web,
+    coordinator: Object.freeze({ nativeQueue: true, nativeQueueRecovery: true, revisionPlanning: true,
+      queueWorker: Object.freeze({}), nativeHttp: Object.freeze({}), approvals: Object.freeze({}),
+      quality: Object.freeze({}), resultDatabase: Object.freeze({}), evidence: Object.freeze({}), sessions: Object.freeze({}) }),
+  }) });
+}
+
 async function protectedPath(directory, name) {
   const path = join(directory, name); await writeFile(path, "// test-only", { mode: 0o600 }); await chmod(path, 0o600); return path;
 }
@@ -113,4 +122,35 @@ test("activation uses each loaded configuration once and passes frozen snapshots
   assert.equal(await activatePrivateVps(["--owner-bootstrap-configuration", ownerPath, "--configuration", runtimePath, "--start"], runtime), 0);
   assert.equal(ownerLoads, 1); assert.equal(runtimeLoads, 1);
   assert.ok(Object.isFrozen(calls[0])); assert.ok(Object.isFrozen(calls[1])); assert.equal(calls[1], calls[2]);
+});
+
+test("activation accepts the same bound owner/database input for the complete agent-task host", async t => {
+  const directory = await realpath(await mkdtemp(join(tmpdir(), "cr-private-activation-agent-")));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const ownerPath = await protectedPath(directory, "owner.mjs"), runtimePath = await protectedPath(directory, "runtime.mjs");
+  const order = [];
+  const runtime = { async loadOperator(path) {
+      return path === ownerPath ? { schema: "control-room.private-owner-bootstrap-configuration/v1", async createConfiguration() { return ownerInput; } }
+        : { schema: "control-room.private-vps-configuration/v1", async createConfiguration() { return agentPrepared(); } };
+    }, async bootstrap(value) { order.push(["bootstrap", value]); return 0; }, async check(value) { order.push(["check", value]); return 0; },
+    async start(value) { order.push(["start", value]); return 0; }, report() {}, reportError() {} };
+  assert.equal(await activatePrivateVps(["--owner-bootstrap-configuration", ownerPath, "--configuration", runtimePath, "--start"], runtime), 0);
+  assert.deepEqual(order.map(([stage]) => stage), ["bootstrap", "check", "start"]);
+  assert.equal(order[1][1].mode, "agent-tasks");
+  assert.equal(order[2][1], order[1][1]);
+});
+
+test("agent-task activation refuses before bootstrap when its required web identity is absent", async t => {
+  const directory = await realpath(await mkdtemp(join(tmpdir(), "cr-private-activation-agent-refusal-")));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const ownerPath = await protectedPath(directory, "owner.mjs"), runtimePath = await protectedPath(directory, "runtime.mjs");
+  const calls = [];
+  const incomplete = agentPrepared();
+  const runtime = { async loadOperator(path) {
+      return path === ownerPath ? { schema: "control-room.private-owner-bootstrap-configuration/v1", async createConfiguration() { return ownerInput; } }
+        : { schema: "control-room.private-vps-configuration/v1", async createConfiguration() { return { ...incomplete, configuration: { coordinator: incomplete.configuration.coordinator } }; } };
+    }, async bootstrap() { calls.push("bootstrap"); return 0; }, async check() { calls.push("check"); return 0; },
+    async start() { calls.push("start"); return 0; }, report() {}, reportError() {} };
+  assert.equal(await activatePrivateVps(["--owner-bootstrap-configuration", ownerPath, "--configuration", runtimePath, "--start"], runtime), 1);
+  assert.deepEqual(calls, []);
 });

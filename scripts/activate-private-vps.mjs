@@ -17,7 +17,12 @@ function assertCompatibleActivationInput(ownerInput, prepared) {
   const bootstrap = ownerInput?.configuration, trust = ownerInput?.trust, database = ownerInput?.database;
   const web = prepared?.configuration?.web;
   try {
-    if (!bootstrap || !trust || !database || !web || requirePrivateVpsMode(prepared) !== "website-only") throw new Error();
+    // First-owner bootstrap applies to both supported product modes.  The
+    // selected runtime still validates its complete website-only or
+    // agent-task graph before any listener or worker can start.  Keeping the
+    // compatibility comparison here prevents an agent-task configuration
+    // from silently bootstrapping a different database or owner.
+    if (!bootstrap || !trust || !database || !web || !["website-only", "agent-tasks"].includes(requirePrivateVpsMode(prepared))) throw new Error();
     if (bootstrap.databaseName !== database.database || bootstrap.databaseName !== web.database.database
       || database.host !== web.database.host || database.port !== web.database.port
       || database.majorVersion !== web.database.majorVersion
@@ -79,7 +84,7 @@ export async function activatePrivateVps(args, runtime = installed) {
     assertCompatibleActivationInput(ownerInput, prepared);
     if (await runtime.bootstrap(ownerInput) !== 0) throw new Error();
     if (await runtime.check(prepared) !== 0) throw new Error();
-    runtime.report("First-owner setup and database checks passed. Starting the private Control Room website.");
+    runtime.report("First-owner setup and database checks passed. Starting the reviewed private Control Room host.");
     if (await runtime.start(prepared) !== 0) throw new Error();
     return 0;
   } catch {
