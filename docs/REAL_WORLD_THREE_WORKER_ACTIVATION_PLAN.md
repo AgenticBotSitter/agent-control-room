@@ -102,6 +102,11 @@ database, scheduler, website, and review path.
    path retains signed node and enrollment binding and never reinterprets a
    receipt as an execution permit or resends a task. Do not add another broker,
    scheduler, or database.
+   The node-entry part must begin with a real authenticated-session owner that
+   creates a non-forgeable, one-use capability after bridge reconciliation and
+   retains the real revocation fence privately. Matching identifier strings,
+   ordinary callbacks, TypeScript-private fields, or a type-only wrapper are
+   not sufficient provenance.
 2. Wire the existing bounded Codex node composition through protected
    installation/node-entry inputs. For the first Linux Codex worker, reuse the
    existing approved Codex v3/v4
