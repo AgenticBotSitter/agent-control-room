@@ -97,6 +97,13 @@ sanitized success/failure evidence, strict process/session framing and
 admission binding are covered by source tests. Its one real invocation remains
 an owner action and is not implied by this status.
 
+The sanitized qualification result now also has a read-only recorder for the
+setup interface. A successful check records installed-process identity and the
+fixed permission boundary, while cancellation and restart recovery remain
+explicitly unfinished until the separate installed-task proof exists. A failed
+check records blocked evidence. The recorder starts no process, writes no
+configuration and grants no task authority.
+
 **Purpose:** retain the accepted source composition and define the smallest safe
 boundary for qualifying it as a local Claude route, without changing Claude
 Code itself.

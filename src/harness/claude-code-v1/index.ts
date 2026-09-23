@@ -6,6 +6,8 @@ export * from "./private-process-acquisition";
 export * from "./private-installed-process-host";
 export * from "./text-review-invocation-policy";
 export * from "./qualification-evidence";
+export * from "./local-process-readiness";
+export * from "./installation-readiness-record";
 export * from "./unsupported-operations";
 export * from "./result-publication";
 export * from "./local-worker-result";
