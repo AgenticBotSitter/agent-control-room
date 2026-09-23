@@ -24,9 +24,12 @@ node scripts/activate-private-vps.mjs \
   --start
 ```
 
-The command checks that the database, tenant, workspace, owner identity, Access
-issuer and Access audience are the same in both configurations before it can
-write anything. It then performs the existing single-use owner bootstrap. If
+The command checks that the complete database target (host, port, database name
+and PostgreSQL major version), tenant, workspace, owner identity, Access issuer
+and Access audience are the same in both configurations before it can write
+anything. It then uses one fixed in-memory copy of those checked settings for
+owner creation, the database check and website startup; it does not reload either
+configuration file between those stages. If
 that step fails or its result is uncertain, the command stops. Do **not** repeat
 the command until the exact database has been privately reconciled; a lost
 response may still mean the owner was created.
