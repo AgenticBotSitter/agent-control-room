@@ -256,6 +256,19 @@ export interface DurableResultPublicationConfigurationV1 {
    * never touches a reservation table directly.
    */
   reservations: NeutralReservationPort;
+  /**
+   * Optional, installation-owned bridge into the existing owner-review gate.
+   * The publisher first commits the durable receipt and review plan. This
+   * bridge then re-reads both records and registers the derived pending target.
+   * A failure leaves the result durable but unresolved; a caller must recover
+   * the review submission, never rerun the worker merely to recreate it.
+   */
+  reviewSubmission?: DurableResultReviewSubmissionPortV1;
+}
+
+/** Deliberately small capability injected only by trusted server composition. */
+export interface DurableResultReviewSubmissionPortV1 {
+  submit: (tenantId: string, runId: string) => Promise<{ target: CompletionReviewTargetV1 }>;
 }
 
 type NeutralReservationRow = NeutralReservationRowV1;
@@ -499,6 +512,13 @@ async function ensureNeutralReviewPlan(tx: DatabaseSession, reviewKey: Uint8Arra
   return expected;
 }
 
+async function registerPendingOwnerReviewV1(config: DurableResultPublicationConfigurationV1,
+  binding: DurableResultBindingV1, expected: CompletionReviewTargetV1): Promise<void> {
+  if (!config.reviewSubmission) return;
+  const submitted = await config.reviewSubmission.submit(binding.tenantId, binding.runId);
+  if (!submitted || sha256Digest(submitted.target) !== sha256Digest(expected)) unavailable();
+}
+
 /**
  * Harness-neutral durable text-result publication. Reserves the exact result
  * before writing bytes, verifies stored bytes, records one protected receipt
@@ -582,7 +602,12 @@ export async function publishDurableResultV1(config: DurableResultPublicationCon
     return { kind: "replay" as const, receipt, target: durableReviewTargetV1(plan, receipt) };
   }, assertAuthority);
 
-  if (acquired.kind === "replay") { assertAuthority(); return { receipt: acquired.receipt, target: acquired.target, replayed: true }; }
+  if (acquired.kind === "replay") {
+    assertAuthority();
+    await registerPendingOwnerReviewV1(config, binding, acquired.target);
+    assertAuthority();
+    return { receipt: acquired.receipt, target: acquired.target, replayed: true };
+  }
   if (ioState.storageUncertain) {
     await markUncertain("storage_port_previously_uncertain");
     throw new Error("durable_result_storage_uncertain");
@@ -641,6 +666,8 @@ export async function publishDurableResultV1(config: DurableResultPublicationCon
     await updateNeutralReservation(config.reservations, tx, key, verifiedReservation, committed, receivedAt);
     return { receipt, target: durableReviewTargetV1(plan, receipt) };
   }, assertAuthority);
+  assertAuthority();
+  await registerPendingOwnerReviewV1(config, binding, captured.target);
   assertAuthority();
   return { receipt: captured.receipt, target: captured.target, replayed: false };
 }

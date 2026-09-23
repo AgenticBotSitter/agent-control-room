@@ -3,6 +3,7 @@ import { z } from "zod";
 import type { DatabaseClient, DatabaseSession } from "../../persistence/database";
 import { jobRecordSchema } from "../../domain/v1";
 import { NativeResultStore, type NativeResultReadConfiguration } from "../../artifacts/v1/native-results";
+import { readDurableResultV1 } from "../../artifacts/v1/durable-result-publication";
 import { CompletionGateStoreV1, CompletionGateErrorV1, type CompletionAcceptanceProfileV1, type CompletionReviewV1,
   type CompletionFindingV1, type CompletionRiskV1 } from "../../completion-gate/v1";
 import { stageAsyncCompletionCheckpoint } from "../../completion-gate/v1/async-staged-checkpoint";
@@ -31,6 +32,9 @@ export class WebTaskReviewService {
   private readonly integrityKey: Uint8Array;
   private readonly checkpoints: AwaitableRollbackCheckpointStoreV1;
   private readonly results: NativeResultStore;
+  private readonly durableResultKey: Uint8Array;
+  private readonly durableStorageClass: NativeResultReadConfiguration["storageClass"];
+  private readonly durableReadBytes: NativeResultReadConfiguration["storage"]["read"];
   private readonly projects: WebProjectService;
   constructor(private readonly db: DatabaseClient, private readonly scope: { tenantId: string; workspaceId: string },
     config: WebTaskReviewConfiguration & { harnessIntegrityKey: Uint8Array; results: NativeResultReadConfiguration; ideaIntegrityKey?: Uint8Array },
@@ -41,6 +45,9 @@ export class WebTaskReviewService {
       advance: config.checkpoints.advance.bind(config.checkpoints), initialize: () => { throw new Error("review_provisioning_unavailable"); } });
     this.results = new NativeResultStore(db, config.harnessIntegrityKey, { ...config.results,
       storage: Object.freeze({ read: config.results.storage.read.bind(config.results.storage) }) });
+    this.durableResultKey = Uint8Array.from(config.results.integrityKey);
+    this.durableStorageClass = config.results.storageClass;
+    this.durableReadBytes = config.results.storage.read.bind(config.results.storage);
     this.projects = new WebProjectService(db, scope, clock, config.ideaIntegrityKey);
   }
   private ids(...values: string[]) {
@@ -99,11 +106,14 @@ export class WebTaskReviewService {
     if (snapshot.target.projectId !== projectId || snapshot.target.kind !== "document")
       throw new WebAccessError("not_found");
     const profile = await gate.getRecord(this.scope.tenantId, snapshot.target.acceptanceProfileId, "profile") as CompletionAcceptanceProfileV1;
-    const result = await this.results.read(tx, this.scope.tenantId, projectId, jobId, artifactId);
+    const lineage = await readTaskReviewPlanV1(tx, this.integrityKey, this.scope.tenantId, projectId, jobId);
+    const result = lineage?.schema === "control-room.durable-result-review-plan/v1"
+      ? await readDurableResultV1(tx, this.durableResultKey, this.durableStorageClass, this.durableReadBytes,
+        this.scope.tenantId, projectId, jobId, artifactId)
+      : await this.results.read(tx, this.scope.tenantId, projectId, jobId, artifactId);
     if (!result || result.receipt.contentHash !== snapshot.target.subjectDigest
       || result.receipt.nodeId !== snapshot.target.producer.actorId || snapshot.target.producer.actorType !== "agent")
       throw new WebAccessError("conflict");
-    const lineage = await readTaskReviewPlanV1(tx, this.integrityKey, this.scope.tenantId, projectId, jobId);
     verifyTaskReviewTargetV1(lineage, snapshot.target, result.receipt);
     const risk = risks[Math.max(risks.indexOf(profile.minimumRisk), risks.indexOf(job.authority.maxRisk))];
     const ownRecordedReview = (await tx.query(`SELECT id FROM control_completion_gate_records WHERE tenant_id=$1 AND project_id=$2

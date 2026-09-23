@@ -5,6 +5,8 @@ import { createDurableReservationPostgresPortV1 } from
   "../../artifacts/v1/neutral-reservation-postgres";
 import { PersistentLocalArtifactStorageV1 } from "../../artifacts/v1/persistent-local-storage";
 import { HarnessRunStoreV1 } from "../../harness/v1/store";
+import { DurableResultReviewSubmissionServiceV1 } from "../../completion-gate/v1/durable-result-review-submission";
+import type { AwaitableRollbackCheckpointStoreV1 } from "../../security/rollback-checkpoint";
 import type { ArtifactReadPortV1, ArtifactStoragePortV1 } from "../../node-executor/artifact-storage";
 import { HERMES_021_MACOS_CONNECTOR_PROFILE_DIGEST_V1, HERMES_021_SOURCE_REVISION_V1 } from
   "../../harness/hermes-021-v1/connector-profile";
@@ -395,8 +397,10 @@ function compose(preparationValue: unknown, portsValue: unknown) {
     localAdapterAdmission: Object.freeze({ enabledAdapters: Object.freeze([HERMES_021_MACOS_LOCAL_ADAPTER_V1]) }) });
   const resultKey = copyKey((rawCoordinator.quality as { results?: { integrityKey?: unknown } }).results?.integrityKey);
   const reviewKey = copyKey((rawCoordinator.quality as { integrityKey?: unknown }).integrityKey);
+  const reviewCheckpoints = (rawCoordinator.quality as { checkpoints?: AwaitableRollbackCheckpointStoreV1 }).checkpoints;
   const harnessKey = copyKey((composedWeb as { tasks?: { harnessIntegrityKey?: unknown } }).tasks?.harnessIntegrityKey);
-  if (sameKey(resultKey, reviewKey) || sameKey(resultKey, deliveryIntegrityKey)) return refused();
+  if (!reviewCheckpoints || typeof reviewCheckpoints.read !== "function" || typeof reviewCheckpoints.advance !== "function"
+    || typeof reviewCheckpoints.initialize !== "function" || sameKey(resultKey, reviewKey) || sameKey(resultKey, deliveryIntegrityKey)) return refused();
   const planner = new TaskExecutionPlanner(deferredDatabase.client, { tenantId, workspaceId },
     composedPlanning as never);
   const execution = Object.freeze({ preparation: new Hermes021MacosDispatchPreparationV1(deferredDatabase.client, planner,
@@ -412,7 +416,11 @@ function compose(preparationValue: unknown, portsValue: unknown) {
   const reviewedGraphCapability = mintReviewedHermesGraph(Object.freeze({
     tenantId, execution,
     results: Object.freeze({ db: deferredDatabase.client, integrityKey: resultKey, reviewKey,
-      storage: deferredStorage.port, storageClass: "local", reservations: createDurableReservationPostgresPortV1() }),
+      storage: deferredStorage.port, storageClass: "local", reservations: createDurableReservationPostgresPortV1(),
+      reviewSubmission: new DurableResultReviewSubmissionServiceV1(deferredDatabase.client, {
+        integrityKey: resultKey, reviewIntegrityKey: reviewKey, checkpoints: reviewCheckpoints,
+        storageClass: "local", storage: deferredStorage.port,
+      }) }),
     assertAuthority, subprocess: config.runnerConfiguration, installedCompositionIdentity,
   }));
   const delivery = createPrivateHermes021LocalInstalledCompositionDeliveryV1(reviewedGraphCapability);
