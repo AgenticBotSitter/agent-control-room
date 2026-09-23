@@ -13,6 +13,15 @@ Access application and route, protected owner-bootstrap input, and protected
 website settings. Both supplied `.mjs` paths and the settings they load must
 be canonical, operator-owned files readable only by that operator.
 
+## About the six-digit code
+
+Do not test a Cloudflare account MFA code against Control Room before the
+private website is activated. The website must first reach its Cloudflare
+Access sign-in page. Follow the authentication prompt shown there; do not
+assume a code used for the Cloudflare dashboard is interchangeable with a
+website sign-in code. A rejected code before the website is live does not
+prove the authenticator setup failed.
+
 After the owner has independently confirmed the current Access identity and
 approved first-owner enrollment, run this once from the pinned release:
 
