@@ -2,11 +2,14 @@ import assert from 'node:assert/strict';
 import { generateKeyPairSync } from 'node:crypto';
 import test from 'node:test';
 import { createCodexLocalHostV1 } from '../src/harness/codex-v1/local-host';
+import type { CodexLocalInitialHostInputV1, CodexLocalRecoverHostInputV1 } from '../src/harness/codex-v1/local-host';
+import { createCodexWorkerCompositionV1 } from '../src/node-bridge/codex-worker-composition';
+import { createCodexPhysicalQualificationReceiptBodyV1 } from '../src/harness/codex-v1/result-publication-contract';
 import { buildCodexTaskActivationV1, CODEX_ACTIVATION_FEATURE } from '../src/harness/codex-v1/activation-contract';
 import { CODEX_START_OPERATION, codexTaskDispatchBodySchemaV1,
   codexTaskPayloadDigestV1, codexTaskRunIdV1 } from '../src/harness/codex-v1/delivery-contract';
 import { CODEX_APP_SERVER_READ_CONTRACT,
-  CODEX_APP_SERVER_START_CONTRACT } from '../src/harness/codex-v1/schema-contract';
+  CODEX_APP_SERVER_START_CONTRACT, CODEX_APP_SERVER_RESULT_CONTRACT } from '../src/harness/codex-v1/schema-contract';
 import { SqliteCodexStartJournalV1 } from '../src/harness/codex-v1/start-journal';
 import { CodexActivationIntakeHandlerV1 } from '../src/node-bridge/codex-activation-handler';
 import { CodexDispatchIntakeHandlerV1 } from '../src/node-bridge/codex-dispatch-handler';
@@ -36,7 +39,7 @@ function intent() {
     revision: 'a'.repeat(40) };
 }
 
-async function portableActivation() {
+async function portableActivation(recordActivation = true) {
   const fixtureId = ++fixtureSequence;
   const workspaceIntent = intent();
   const approval = generateKeyPairSync('ed25519'), server = generateKeyPairSync('ed25519');
@@ -122,9 +125,11 @@ async function portableActivation() {
     currentAdmissionDigest: admissionDigest, receiptReceivedAt, activatedAt,
     activationExpiresAt: new Date(deadline).toISOString() });
   const activation = frame(4, 'harness.codex.dispatch.activation', activationBody, activatedAt, receipt.messageId);
-  await bridge.receive(JSON.stringify(activation), activatedAt);
-  await bridge.receive(JSON.stringify(activation), activatedAt);
-  assert.equal(journal.acceptedCodexActivation(body.queueId)?.frame.body.runId, workspaceIntent.runId);
+  if (recordActivation) {
+    await bridge.receive(JSON.stringify(activation), activatedAt);
+    await bridge.receive(JSON.stringify(activation), activatedAt);
+    assert.equal(journal.acceptedCodexActivation(body.queueId)?.frame.body.runId, workspaceIntent.runId);
+  }
   await bridge.disconnected(); dispatchHandler.close(); activationHandler.close();
   return { journal, body, workspaceIntent, activation,
     connectionAttemptId: `connection-attempt:codex-host:${fixtureId}`, clock: () => ++clock };
@@ -160,7 +165,7 @@ function startHost(f: Awaited<ReturnType<typeof portableActivation>>, starts: Sq
   let opened = 0, closed = 0;
   const authority = { currentAdmissionDigest: () => admissionDigest,
     assertCurrent() { if (options.revoked?.()) throw new Error('revoked'); } };
-  const host = createCodexLocalHostV1({ mode: 'initial', runId: f.workspaceIntent.runId,
+  const input: CodexLocalInitialHostInputV1 = { mode: 'initial', runId: f.workspaceIntent.runId,
     queueId: f.body.queueId, connectionAttemptId: f.connectionAttemptId,
     initializedConnectionDigest: sha256Digest('codex-host-initialized'), threadStartRequestId: 10,
     turnStartRequestId: 20, workspaceIntent: f.workspaceIntent, bridgeJournal: f.journal,
@@ -181,15 +186,16 @@ function startHost(f: Awaited<ReturnType<typeof portableActivation>>, starts: Sq
       async terminate() { resolveStdoutEnd(undefined); resolveExit({ code: null, signal: 'SIGTERM' }); }, exited }),
       async close() { closed++; await options.close?.(); } };
     },
-    startTimeoutMs: 1_000, processCleanupTimeoutMs: 100, clock: f.clock });
-  return { host, effects, sent, opened: () => opened, closed: () => closed };
+    startTimeoutMs: 1_000, processCleanupTimeoutMs: 100, clock: f.clock };
+  const host = createCodexLocalHostV1(input);
+  return { input, host, effects, sent, opened: () => opened, closed: () => closed };
 }
 
 function recoverHost(starts: SqliteCodexStartJournalV1, rawResult: unknown,
   options: { revoked?: boolean; close?: () => Promise<void> } = {}) {
   let opened = 0, closed = 0, reads = 0;
   const responses = ['{"id":1,"result":{}}', JSON.stringify({ id: 2, result: rawResult })];
-  const host = createCodexLocalHostV1({ mode: 'recover', runId: intent().runId, startJournal: starts,
+  const input: CodexLocalRecoverHostInputV1 = { mode: 'recover', runId: intent().runId, startJournal: starts,
     connectionAttemptId: 'connection-attempt:codex-host-recover',
     initializedConnectionDigest: sha256Digest('codex-host-recover-initialized'),
     authority: { assertCurrent() { if (options.revoked) throw new Error('revoked'); } },
@@ -209,14 +215,111 @@ function recoverHost(starts: SqliteCodexStartJournalV1, rawResult: unknown,
       async readStderr() { return undefined; }, async closeStdin() {},
       async terminate() { resolveStdoutEnd(undefined); resolveExit({ code: null, signal: 'SIGTERM' }); }, exited }),
       async close() { closed++; await options.close?.(); } };
-    }, readTimeoutMs: 1_000, cleanupTimeoutMs: 200, processCleanupTimeoutMs: 100 });
-  return { host, opened: () => opened, closed: () => closed };
+    }, readTimeoutMs: 1_000, cleanupTimeoutMs: 200, processCleanupTimeoutMs: 100 };
+  const host = createCodexLocalHostV1(input);
+  return { input, host, opened: () => opened, closed: () => closed };
 }
 
 function completedResult(items: unknown[], itemsView: 'full' | 'summary' = 'full') {
   return { thread: { id: 'thread:durable-host', cliVersion: CODEX_APP_SERVER_READ_CONTRACT.version,
     turns: [{ id: 'turn:durable-host', status: 'completed', itemsView, items }] } };
 }
+
+function workerQualification() {
+  const keys = generateKeyPairSync('ed25519');
+  const evidence = <T extends object>(material: T) => ({ ...material, evidenceDigest: sha256Digest(material) });
+  const body = createCodexPhysicalQualificationReceiptBodyV1({
+    schema: 'control-room.codex-physical-qualification-receipt/v1', qualificationId: 'qualification:test',
+    qualificationSignerKeyId: 'qualification-key:test', tenantId: 'tenant:test', nodeId: 'node:test',
+    connectorProfileId: 'profile:codex:test', connectorProfileDigest: sha256Digest('profile'),
+    exactPackage: { adapterId: 'codex-app-server/v1', packageName: CODEX_APP_SERVER_READ_CONTRACT.package,
+      packageVersion: CODEX_APP_SERVER_READ_CONTRACT.version,
+      generatedSchemaBundleSha256: CODEX_APP_SERVER_READ_CONTRACT.generatedBundleSha256,
+      threadStartParamsSchemaSha256: CODEX_APP_SERVER_START_CONTRACT.threadStart.paramsSchemaSha256,
+      threadStartResponseSchemaSha256: CODEX_APP_SERVER_START_CONTRACT.threadStart.responseSchemaSha256,
+      turnStartParamsSchemaSha256: CODEX_APP_SERVER_START_CONTRACT.turnStart.paramsSchemaSha256,
+      turnStartResponseSchemaSha256: CODEX_APP_SERVER_START_CONTRACT.turnStart.responseSchemaSha256,
+      threadReadResponseSchemaSha256: CODEX_APP_SERVER_RESULT_CONTRACT.threadReadResponseSchemaSha256,
+      agentMessageSourceSha256: CODEX_APP_SERVER_RESULT_CONTRACT.agentMessageSourceSha256 },
+    qualifiedAt: new Date(baseTime - 60_000).toISOString(),
+    start: evidence({ evidenceId: 'evidence:start', processAttemptId: 'process:start',
+      connectionAttemptId: 'connection:start', initializedConnectionDigest: sha256Digest('init:start'),
+      threadId: 'thread:qualification', turnId: 'turn:qualification', startObserved: true, cleanupVerified: true }),
+    restartRead: evidence({ evidenceId: 'evidence:restart', processAttemptId: 'process:restart',
+      connectionAttemptId: 'connection:restart', initializedConnectionDigest: sha256Digest('init:restart'),
+      threadId: 'thread:qualification', turnId: 'turn:qualification', itemId: 'item:qualification',
+      restartObserved: true, exactReadObserved: true, cleanupVerified: true }),
+    oneFreshProcessPerAttempt: true, sameDurableThreadObserved: true, sameDurableTurnObserved: true,
+    terminalCleanupVerified: true, processReuseObserved: false, retryObserved: false,
+    canonicalPublicationAllowed: false, completionVerified: false, grantsExecutionAuthority: false,
+    permitsRetry: false, permitsResume: false, permitsThreadRead: false,
+  });
+  return { qualificationReceipt: signArtifact(body, keys.privateKey),
+    qualificationPublicKeySpki: keys.publicKey.export({ type: 'spki', format: 'der' }).toString('base64url'),
+    qualificationMaximumAgeMs: 120_000 };
+}
+
+test('remote worker composes journaled activation, one native start, recovery and exact result return', async t => {
+  const f = await portableActivation(), starts = new SqliteCodexStartJournalV1(':memory:', { testOnlyAllowEphemeral: true });
+  t.after(() => { starts.close(); f.journal.close(); });
+  const initial = startHost(f, starts), recovery = recoverHost(starts, completedResult([
+    { type: 'agentMessage', id: 'item:final', phase: 'final_answer', text: 'Worker result.' },
+  ]));
+  let sends = 0;
+  const configuration: Parameters<typeof createCodexWorkerCompositionV1>[0] = { initial: initial.input, recovery: recovery.input,
+    binding: { tenantId: 'tenant:test', nodeId: 'node:test', enrollmentDigest: sha256Digest('enrollment'),
+      connectorProfileDigest: sha256Digest('profile'), activationFrameDigest: sha256Digest(f.activation) },
+    assertSessionCurrent() {}, result: { ...workerQualification(), bridgeEvidence: f.journal,
+      bridge: { async sendCodexResultReturn(queueId, body) {
+        sends++;
+        assert.equal(queueId, f.body.queueId);
+        assert.equal(body.identity.runId, f.workspaceIntent.runId);
+        assert.equal(body.publication.result.text, 'Worker result.');
+        // Transport receipt authentication belongs to PortableNodeBridge and
+        // is independently covered by codex-result-sender.test.ts.
+        return { testReceipt: true } as never;
+      } },
+    } };
+  const worker = createCodexWorkerCompositionV1(configuration);
+  assert.equal(initial.opened(), 0); assert.equal(recovery.opened(), 0); assert.equal(sends, 0);
+  await worker.start(new AbortController().signal);
+  await assert.rejects(worker.start(new AbortController().signal), /unavailable/);
+  assert.equal(initial.opened(), 1);
+  const reconstructed = createCodexWorkerCompositionV1(configuration);
+  await assert.rejects(reconstructed.start(new AbortController().signal), /unavailable/);
+  assert.equal(initial.opened(), 1, 'durable start reservation prevents a second process after reconstruction');
+  await reconstructed.close();
+  assert.equal((await worker.recoverAndReturn(new AbortController().signal)).disposition, 'receipted');
+  assert.equal(recovery.opened(), 1); assert.equal(sends, 1);
+  await assert.rejects(worker.recoverAndReturn(new AbortController().signal), /unavailable/);
+  assert.equal(sends, 1);
+  await worker.close();
+});
+
+test('remote worker rejects missing activation, revoked session and changed binding before native start', async t => {
+  for (const failure of ['missing-activation', 'revoked', 'wrong-node', 'wrong-enrollment'] as const) {
+    await t.test(failure, async t => {
+      const f = await portableActivation(failure !== 'missing-activation'), starts = new SqliteCodexStartJournalV1(':memory:', { testOnlyAllowEphemeral: true });
+      t.after(() => { starts.close(); f.journal.close(); });
+      const initial = startHost(f, starts), recovery = recoverHost(starts, completedResult([]));
+      if (failure === 'missing-activation') {
+        assert.ok(f.journal.acceptedCodexDelivery(f.body.queueId), 'an authenticated dispatch receipt exists');
+        assert.equal(f.journal.acceptedCodexActivation(f.body.queueId), undefined);
+      }
+      const worker = createCodexWorkerCompositionV1({ initial: initial.input, recovery: recovery.input,
+        binding: { tenantId: 'tenant:test', nodeId: failure === 'wrong-node' ? 'node:other' : 'node:test',
+          enrollmentDigest: sha256Digest(failure === 'wrong-enrollment' ? 'other' : 'enrollment'),
+          connectorProfileDigest: sha256Digest('profile'), activationFrameDigest: sha256Digest(f.activation) },
+        assertSessionCurrent() { if (failure === 'revoked') throw new Error('revoked'); },
+        result: { ...workerQualification(), bridgeEvidence: f.journal,
+          bridge: { async sendCodexResultReturn() { throw new Error('must not send'); } } },
+      });
+      await assert.rejects(worker.start(new AbortController().signal));
+      assert.equal(initial.opened(), 0); assert.deepEqual(initial.effects, []);
+      await worker.close();
+    });
+  }
+});
 
 test('portable activation starts once and recovery reads only the durable thread/turn as a noncanonical observation', async t => {
   const f = await portableActivation(), starts = new SqliteCodexStartJournalV1(':memory:', { testOnlyAllowEphemeral: true });
