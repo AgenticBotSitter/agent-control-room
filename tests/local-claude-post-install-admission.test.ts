@@ -116,7 +116,7 @@ test("post-install Claude admission binds one additive committed transition with
   assert.equal(receipt.workerId, workerRoute.workerId);
   assert.equal(receipt.evidenceDigest, evidenceDigest);
   assert.equal(isClaudeCodePrivateInstalledDeliverCapabilityV1(Object.freeze({ async deliver() {} })), false);
-  const capability = createClaudeCodePrivateInstallationCompositionV1({ tenantId: "tenant:fixture", admission: receipt,
+  const compositionInput = { tenantId: "tenant:fixture", admission: receipt,
     installedProcessConfiguration: processConfiguration,
     ports: { async verifyInstallation() { throw new Error("must not run during composition"); },
       launch() { throw new Error("must not run during composition"); } },
@@ -132,10 +132,15 @@ test("post-install Claude admission binds one additive committed transition with
       protectedStorage: { async put() { throw new Error("must not run during composition"); },
         async read() { throw new Error("must not run during composition"); } } },
     reviewCheckpoints: { async read() { return undefined; }, async advance() {}, async initialize() {} } as never,
-    assertCurrentProcess() {}, assertCurrentDelivery() {} });
+    assertCurrentProcess() {}, assertCurrentDelivery() {} };
+  const capability = createClaudeCodePrivateInstallationCompositionV1(compositionInput);
   assert.equal(isClaudeCodePrivateInstalledDeliverCapabilityV1(capability), true);
   assert.deepEqual(Object.getOwnPropertyNames(capability), ["deliver"]);
   assert.equal(Object.isFrozen(capability), true);
+  assert.throws(() => createClaudeCodePrivateInstallationCompositionV1({ ...compositionInput,
+    execution: { ...compositionInput.execution, results: { ...compositionInput.execution.results,
+      reviewSubmission: { async submit() { throw new Error("untrusted review hook"); } } } } }),
+  /claude_code_private_installation_composition_unavailable/);
   await assert.rejects(verifyLocalClaudePostInstallAdmissionV1({ ...input,
     requestedRoutes: [workerRoute] }, { async readOriginalInstallationHistory() { return original.history; },
     async readTransition() { return transition; } }), /post_install_admission_refused/);
