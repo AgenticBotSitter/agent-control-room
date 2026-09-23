@@ -80,7 +80,7 @@ export type PrivateTaskStartupConfiguration = {
   artifactStorage?: PrivateArtifactStorageConfigurationV1;
   /** Optional inert installation-owned adapters; never mounted in the queue or browser. */
   preparedLocalAdapters?: LocalAdapterInstallationPortsV1;
-  coordinator: Pick<TaskCoordinatorConfiguration, "planning" | "routes" | "approvals" | "quality" | "revisionPlanning" | "resultInspectionSource" | "nativeHttp" | "hermes021Local" | "claudeCodeLocal"> & {
+  coordinator: Pick<TaskCoordinatorConfiguration, "planning" | "routes" | "approvals" | "quality" | "revisionPlanning" | "resultInspectionSource" | "nativeHttp" | "hermes021Local" | "claudeCodeLocal" | "remoteControllerWorker"> & {
     codex?: CodexPermitConfiguration;
     /** Private transition-journal key for coordinator-only admission checks. */
     installationTransitionAdmission?: { integrityKey: Uint8Array; workers: readonly { nodeId: string; workerId: string }[] };
@@ -199,12 +199,26 @@ export function validatePrivateTaskStartupConfiguration(input: PrivateTaskStartu
     const claudeCodeLocal = input.coordinator.claudeCodeLocal;
     if (claudeCodeLocal && !isClaudeCodePrivateInstalledDeliverCapabilityV1(claudeCodeLocal)) throw new Error();
     if (claudeCodeLocal && (!nativeQueue || !approvals)) throw new Error();
+    // This capability is installation-owned. Its resolver, enrollment, node
+    // session, addresses and keys stay inside the materializer; startup
+    // captures only the two queue-facing methods bound to that original
+    // receiver. Browser and generic configuration never select a remote node.
+    const remoteControllerWorker = input.coordinator.remoteControllerWorker
+      ? (() => {
+        const materializer = input.coordinator.remoteControllerWorker!.materializer;
+        if (!materializer || typeof materializer.prepare !== "function" || typeof materializer.transmit !== "function") throw new Error();
+        return Object.freeze({ materializer: Object.freeze({
+          prepare: materializer.prepare.bind(materializer),
+          transmit: materializer.transmit.bind(materializer),
+        }) });
+      })() : undefined;
     const resultInspectionSource = input.coordinator.resultInspectionSource
       ? Object.freeze({ inspectSubmitted: input.coordinator.resultInspectionSource.inspectSubmitted.bind(input.coordinator.resultInspectionSource) }) : undefined;
     if (resultInspectionSource && (!quality || !resultDatabase || (!hermes021Local && !claudeCodeLocal))) throw new Error();
     const w = input.coordinator.queueWorker;
     const queueWorker = w ? { database: validatePrivatePostgresConfiguration(w.database), concurrency: w.concurrency ?? 1 } : undefined;
-    if (queueWorker && (!nativeQueue || (!sessions && !hermes021Local && !claudeCodeLocal) || queueWorker.database.host !== database.host
+    if (remoteControllerWorker && (!nativeQueue || !queueWorker)) throw new Error();
+    if (queueWorker && (!nativeQueue || (!sessions && !hermes021Local && !claudeCodeLocal && !remoteControllerWorker) || queueWorker.database.host !== database.host
       || queueWorker.database.port !== database.port || queueWorker.database.database !== database.database
       || [web.database.username, database.username, resultDatabase!.username, evidence!.database.username,
         ...(sessions ? [sessions.database.username] : [])].includes(queueWorker.database.username)
@@ -263,7 +277,7 @@ export function validatePrivateTaskStartupConfiguration(input: PrivateTaskStartu
       ideaCreation?.database, ideaRuntime?.database].some(value => value
         && privatePostgresEndpointPolicyDigestV1(value.privateEndpoint) !== endpointPolicyDigest)) throw new Error();
     return { web, preparedLocalAdapters, database, planning, routes, approvals, codex, installationTransitionAdmission, quality, revisionPlanning, resultInspectionSource, resultDatabase, evidence, sessions,
-      codexResultReturn, nativeHttp, nativeQueue, nativeQueueRecovery, queueWorker, hermes021Local,
+      codexResultReturn, nativeHttp, nativeQueue, nativeQueueRecovery, queueWorker, hermes021Local, remoteControllerWorker,
       hermes021LocalStartupReverification, claudeCodeLocalStartupReverification,
       claudeCodeLocalInstallationId: input.coordinator.claudeCodeLocalInstallationId,
       claudeCodeLocal, ideaCreation, ideaRuntime, news, artifactStorage };
@@ -538,6 +552,7 @@ export function createPrivateTaskBootstrap(dependencies: {
         resultInspectionSource: config.resultInspectionSource,
         hermes021Local: config.hermes021Local,
         claudeCodeLocal: config.claudeCodeLocal,
+        remoteControllerWorker: config.remoteControllerWorker,
         codex: config.codex,
         installationTransitionAdmission: config.installationTransitionAdmission,
         revisionPlanning: config.revisionPlanning, resultDatabase, clock,

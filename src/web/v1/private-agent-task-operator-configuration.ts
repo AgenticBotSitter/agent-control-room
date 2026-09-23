@@ -28,6 +28,8 @@ import { isClaudeCodePrivateInstalledDeliverCapabilityV1 } from
   "./claude-code-private-installation-composition";
 import { verifyLocalClaudePostInstallAdmissionReceiptV1 } from
   "../../installer/v1/local-claude-post-install-admission";
+import type { RemoteControllerWorkerMaterializerV1 } from
+  "../../harness/v1/remote-controller-worker-materializer";
 
 /** Pure operator-side assembly. This module performs no environment, filesystem,
  * network, listener, credential-store or database access: it only shapes
@@ -78,6 +80,8 @@ const operatorSettingsSchema = z.object({
     hermes021Local: z.boolean().optional(),
     /** A local Claude callback supplied by a separately qualified private host. */
     claudeCodeLocal: z.boolean().optional(),
+    /** Protected remote worker materialization through the shared queue only. */
+    remoteControllerWorker: z.boolean().optional(),
     artifactStorage: z.boolean().optional(),
     idea: z.boolean().optional(),
     news: z.boolean().optional(),
@@ -124,6 +128,10 @@ export type AgentTaskOperatorTrustedInputs = {
   claudeCodeLocalStartupReverification?: unknown;
   /** Exact original installation whose committed transition admitted Claude. */
   claudeCodeLocalInstallationId?: string;
+  /** Installation-owned remote materializer. It contains its own protected
+   * target resolver and authenticated session; neither can be configured in
+   * this generic operator shape. */
+  remoteControllerWorker?: { materializer: Pick<RemoteControllerWorkerMaterializerV1, "prepare" | "transmit"> };
   /** Installation-owned authenticated result reader. It is never browser input. */
   resultInspectionSource?: TaskResultInspectionSourceV1;
   /** Verified, plan-bound evidence from an owner-run disposable local restore.
@@ -401,6 +409,7 @@ export function assemblePrivateAgentTaskOperatorConfiguration(
   need(f.hermes021Local, t.hermes021Local, "hermes021Local");
   need(Boolean(f.hermes021Local || f.claudeCodeLocal), t.localBackupRestoreReadiness, "localBackupRestoreReadiness");
   need(f.claudeCodeLocal, t.claudeCodeLocal, "claudeCodeLocal");
+  need(f.remoteControllerWorker, t.remoteControllerWorker, "remoteControllerWorker");
   // Reject a forged Claude callback before reporting a downstream feature
   // dependency. That keeps a bad capability unmistakably invalid while the
   // later checks still enforce the Hermes-plus-Claude installation shape.
@@ -417,8 +426,10 @@ export function assemblePrivateAgentTaskOperatorConfiguration(
   if (f.nativeQueueRecovery && !f.nativeQueue) refuse("feature_chain:nativeQueueRecovery_requires_nativeQueue");
   if (f.evidence && (!f.quality || parsed.databaseRoles.results === undefined)) refuse("feature_chain:evidence_requires_quality_and_results_role");
   if (f.sessions && !f.evidence) refuse("feature_chain:sessions_requires_evidence");
-  if (f.queueWorker && (!f.nativeQueue || (!f.sessions && !f.hermes021Local && !f.claudeCodeLocal)))
+  if (f.queueWorker && (!f.nativeQueue || (!f.sessions && !f.hermes021Local && !f.claudeCodeLocal && !f.remoteControllerWorker)))
     refuse("feature_chain:queueWorker_requires_nativeQueue_and_worker_delivery");
+  if (f.remoteControllerWorker && (!f.nativeQueue || !f.queueWorker))
+    refuse("feature_chain:remoteControllerWorker_requires_nativeQueue_and_queueWorker");
   if (f.codex && (!f.nativeQueue || !f.sessions)) refuse("feature_chain:codex_requires_nativeQueue_and_sessions");
   if (f.codexResultReturn && (!f.codex || !f.quality || !f.artifactStorage || !f.sessions
     || parsed.databaseRoles.results === undefined)) refuse("feature_chain:codexResultReturn_requires_full_composition");
@@ -576,6 +587,20 @@ export function assemblePrivateAgentTaskOperatorConfiguration(
   // Preserve the module-private brand; rebinding into a structurally identical
   // object would deliberately turn the capability back into an invalid bare callback.
   const capturedClaude = f.claudeCodeLocal && trustedClaude ? trustedClaude : undefined;
+  // A remote materializer is deliberately opaque at this boundary. The
+  // protected provider constructs it with its resolver, enrollment and live
+  // session; the generic operator settings can only opt into a captured pair
+  // of queue-facing methods. Bind both methods now so later caller mutation
+  // cannot replace their receiver or redirect a transmission.
+  const trustedRemote = t.remoteControllerWorker;
+  if (f.remoteControllerWorker && (!trustedRemote || !trustedRemote.materializer
+    || typeof trustedRemote.materializer.prepare !== "function"
+    || typeof trustedRemote.materializer.transmit !== "function"))
+    refuse("remoteControllerWorker_invalid");
+  const capturedRemote = f.remoteControllerWorker && trustedRemote ? Object.freeze({ materializer: Object.freeze({
+    prepare: trustedRemote.materializer.prepare.bind(trustedRemote.materializer),
+    transmit: trustedRemote.materializer.transmit.bind(trustedRemote.materializer),
+  }) }) : undefined;
   const trustedResultInspection = t.resultInspectionSource;
   if (trustedResultInspection !== undefined && typeof trustedResultInspection.inspectSubmitted !== "function")
     refuse("missing_trusted_input:resultInspectionSource");
@@ -656,6 +681,7 @@ export function assemblePrivateAgentTaskOperatorConfiguration(
     ...(f.nativeHttp && t.nativeHttp ? { nativeHttp: t.nativeHttp } : {}),
     ...(capturedHermes ? { hermes021Local: capturedHermes } : {}),
     ...(capturedClaude ? { claudeCodeLocal: capturedClaude } : {}),
+    ...(capturedRemote ? { remoteControllerWorker: capturedRemote } : {}),
     ...(f.idea && t.idea ? {
       ideaCreation: {
         database: dbRole("ideaCreation") ?? dbRole("coordinator") as PrivatePostgresConfiguration,
@@ -743,6 +769,7 @@ export function assemblePrivateAgentTaskOperatorConfiguration(
       ...(coordinatorShape.claudeCodeLocalInstallationId ? {
         claudeCodeLocalInstallationId: coordinatorShape.claudeCodeLocalInstallationId,
       } : {}),
+      ...(capturedRemote ? { remoteControllerWorker: capturedRemote } : {}),
       ...(coordinatorShape.codex ? { codex: coordinatorShape.codex } : {}),
       ...(coordinatorShape.installationTransitionAdmission ? { installationTransitionAdmission: coordinatorShape.installationTransitionAdmission } : {}),
       ...(coordinatorShape.nativeQueue ? { nativeQueue: coordinatorShape.nativeQueue } : {}),
@@ -758,9 +785,10 @@ export function assemblePrivateAgentTaskOperatorConfiguration(
     },
   };
   const detached = deepDetach(hostCompatible);
-  const configuration = capturedHermes || capturedClaude ? Object.freeze({ ...detached, coordinator: Object.freeze({
+  const configuration = capturedHermes || capturedClaude || capturedRemote ? Object.freeze({ ...detached, coordinator: Object.freeze({
     ...detached.coordinator, ...(capturedHermes ? { hermes021Local: capturedHermes } : {}),
     ...(capturedClaude ? { claudeCodeLocal: capturedClaude } : {}),
+    ...(capturedRemote ? { remoteControllerWorker: capturedRemote } : {}),
   }) }) : detached;
   return Object.freeze({ configuration, port: parsed.port });
 }
