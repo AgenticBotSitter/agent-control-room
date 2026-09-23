@@ -14,6 +14,8 @@ import type { ArtifactLineageRecordV1 } from "../node-executor/artifact-evidence
 import { assertNativeSnapshotProgress, nativeTaskSnapshotBodySchema, type NativeTaskSnapshotBody } from "../harness/v1/native-observation";
 import { matchNativeTaskDispatchReceipt, type NativeTaskDispatchReceiptBody } from "../harness/v1/native-delivery";
 import { matchCodexTaskDispatchReceiptV1, type CodexTaskDispatchReceiptBodyV1 } from '../harness/codex-v1/delivery-contract';
+import { matchControllerWorkerNodeDispatchReceiptV1,
+  type ControllerWorkerNodeDispatchReceiptBodyV1 } from "../harness/v1/controller-worker-node-delivery";
 import { matchCodexTaskActivationV1, type CodexActivationFrameV1,
   type CodexDispatchFrameForActivationV1,
   type CodexDispatchReceiptFrameForActivationV1 } from '../harness/codex-v1/activation-contract';
@@ -350,6 +352,48 @@ export class SqliteBridgeJournal implements ReplayGuard {
     const rows = this.db.prepare(
       `SELECT queue_id FROM bridge_codex_deliveries WHERE queue_id=?`).all(queueId) as { queue_id: string }[];
     return rows.length;
+  }
+
+  /** Authenticated generic controller delivery only. It records the exact
+   * non-executing packet before the node sends its receipt; a later adapter
+   * must independently recheck current authority before doing any work. */
+  recordControllerWorkerDelivery(input: SignedNodeFrame<"controller.worker.delivery">,
+    receipt: ControllerWorkerNodeDispatchReceiptBodyV1, assertCurrent: () => void) {
+    const parsed = signedNodeFrameSchema.parse(input);
+    if (parsed.type !== "controller.worker.delivery") throw new Error("controller_worker_delivery_type_invalid");
+    const matched = matchControllerWorkerNodeDispatchReceiptV1(receipt, { messageId: parsed.messageId, body: parsed.body });
+    const identity = parsed.body.delivery.identity;
+    assertNoSecretMaterial(parsed.body, "controller worker delivery");
+    if (matched.disposition !== "accepted" || Date.parse(matched.receivedAt) < Date.parse(parsed.sentAt)
+      || Date.parse(matched.receivedAt) >= Date.parse(parsed.expiresAt)) throw new Error("controller_worker_delivery_time_invalid");
+    return this.transaction(() => {
+      assertSynchronousWorkspaceAuthority(assertCurrent);
+      if (this.db.prepare("SELECT message_id FROM bridge_controller_worker_deliveries WHERE queue_id=? OR message_id=?")
+        .get(parsed.body.queueId, parsed.messageId)) throw new Error("controller_worker_delivery_already_recorded");
+      const count = (this.db.prepare("SELECT count(*) AS count FROM bridge_controller_worker_deliveries").get() as { count: number }).count;
+      if (count >= 1024) throw new BridgeBackpressureError();
+      this.db.prepare(`INSERT INTO bridge_controller_worker_deliveries
+        (queue_id,message_id,tenant_id,project_id,node_id,job_id,attempt_id,run_id,worker_id,frame_json,frame_digest,receipt_json,receipt_digest)
+        VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(parsed.body.queueId, parsed.messageId, identity.tenantId,
+          identity.projectId, identity.nodeId, identity.jobId, identity.attemptId, identity.runId,
+          parsed.body.delivery.worker.workerId, JSON.stringify(parsed), sha256Digest(parsed), JSON.stringify(receipt), sha256Digest(receipt));
+      assertSynchronousWorkspaceAuthority(assertCurrent); return structuredClone(receipt);
+    });
+  }
+
+  /** Private historical packet; never an execution, retry, or browser-read capability. */
+  acceptedControllerWorkerDelivery(queueId: string) {
+    const row = this.db.prepare(`SELECT message_id,frame_json,frame_digest,receipt_json,receipt_digest
+      FROM bridge_controller_worker_deliveries WHERE queue_id=?`).get(queueId) as { message_id: string; frame_json: string;
+        frame_digest: string; receipt_json: string; receipt_digest: string } | undefined;
+    if (!row) return undefined;
+    const frame = signedNodeFrameSchema.parse(JSON.parse(row.frame_json));
+    if (frame.type !== "controller.worker.delivery" || frame.body.queueId !== queueId || frame.messageId !== row.message_id
+      || sha256Digest(frame) !== row.frame_digest) throw new Error("controller_worker_delivery_integrity_invalid");
+    const receipt = matchControllerWorkerNodeDispatchReceiptV1(JSON.parse(row.receipt_json), { messageId: frame.messageId, body: frame.body });
+    if (receipt.disposition !== "accepted" || sha256Digest(JSON.parse(row.receipt_json)) !== row.receipt_digest)
+      throw new Error("controller_worker_delivery_integrity_invalid");
+    return { frame, receipt };
   }
 
   /** Server-persisted activation acknowledgement only. This is durable evidence
@@ -1359,6 +1403,26 @@ export class SqliteBridgeJournal implements ReplayGuard {
         BEGIN SELECT RAISE(ABORT,'codex delivery is immutable'); END;
       CREATE TRIGGER IF NOT EXISTS bridge_codex_deliveries_no_delete BEFORE DELETE ON bridge_codex_deliveries
         BEGIN SELECT RAISE(ABORT,'codex delivery is immutable'); END;
+      CREATE TABLE IF NOT EXISTS bridge_controller_worker_deliveries (
+        queue_id TEXT PRIMARY KEY NOT NULL,
+        message_id TEXT NOT NULL UNIQUE,
+        tenant_id TEXT NOT NULL,
+        project_id TEXT NOT NULL,
+        node_id TEXT NOT NULL,
+        job_id TEXT NOT NULL,
+        attempt_id TEXT NOT NULL,
+        run_id TEXT NOT NULL UNIQUE,
+        worker_id TEXT NOT NULL,
+        frame_json TEXT NOT NULL,
+        frame_digest TEXT NOT NULL,
+        receipt_json TEXT NOT NULL,
+        receipt_digest TEXT NOT NULL,
+        UNIQUE(tenant_id,job_id,attempt_id)
+      );
+      CREATE TRIGGER IF NOT EXISTS bridge_controller_worker_deliveries_no_update BEFORE UPDATE ON bridge_controller_worker_deliveries
+        BEGIN SELECT RAISE(ABORT,'controller worker delivery is immutable'); END;
+      CREATE TRIGGER IF NOT EXISTS bridge_controller_worker_deliveries_no_delete BEFORE DELETE ON bridge_controller_worker_deliveries
+        BEGIN SELECT RAISE(ABORT,'controller worker delivery is immutable'); END;
       CREATE TABLE IF NOT EXISTS bridge_codex_activations (
         queue_id TEXT PRIMARY KEY NOT NULL REFERENCES bridge_codex_deliveries(queue_id),
         activation_id TEXT NOT NULL UNIQUE,

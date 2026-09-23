@@ -1,5 +1,6 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import { NATIVE_DELIVERY_FEATURE } from "../harness/v1/native-delivery";
+import { CONTROLLER_WORKER_NODE_DELIVERY_FEATURE_V1 } from "../harness/v1/controller-worker-node-delivery";
 import { CODEX_DELIVERY_FEATURE } from '../harness/codex-v1/delivery-contract';
 import { sha256Digest } from "../security";
 import {
@@ -21,6 +22,7 @@ import type { BridgeCommandHandler } from "./admission-handler";
 import type { NativeDispatchIntakeHandler } from "./native-dispatch-handler";
 import type { CodexDispatchIntakeHandlerV1 } from './codex-dispatch-handler';
 import type { CodexActivationIntakeHandlerV1 } from './codex-activation-handler';
+import type { ControllerWorkerDeliveryIntakeHandlerV1 } from "./controller-worker-delivery-handler";
 import { CODEX_ACTIVATION_FEATURE } from '../harness/codex-v1/activation-contract';
 import { CODEX_RESULT_RETURN_FEATURE_V1, codexResultReturnBodySchemaV1,
   type CodexResultReturnBodyV1, type CodexResultReturnFrameV1,
@@ -73,6 +75,7 @@ export interface NativeDeliveryChannel {
 export interface CodexDeliveryChannel extends NativeDeliveryChannel {}
 export interface CodexActivationChannel extends NativeDeliveryChannel {}
 export interface CodexResultReturnChannel extends NativeDeliveryChannel {}
+export interface ControllerWorkerDeliveryChannel extends NativeDeliveryChannel {}
 
 export interface OpenBridgeOptions {
   now: string;
@@ -107,6 +110,7 @@ export class PortableNodeBridge {
     private readonly nativeHandler?: NativeDispatchIntakeHandler,
     private readonly codexHandler?: CodexDispatchIntakeHandlerV1,
     private readonly codexActivationHandler?: CodexActivationIntakeHandlerV1,
+    private readonly controllerWorkerHandler?: ControllerWorkerDeliveryIntakeHandlerV1,
   ) {
     this.identity = Object.freeze({ ...identity, features: Object.freeze([...identity.features]) });
     this.serverAuthenticator = Object.freeze({ verify: serverAuthenticator.verify.bind(serverAuthenticator) });
@@ -130,6 +134,27 @@ export class PortableNodeBridge {
             this.statusValue.connectionId !== status.connectionId ||
             !this.statusValue.enabledFeatures?.includes(NATIVE_DELIVERY_FEATURE)) {
           throw new Error("Native delivery channel is no longer current");
+        }
+      },
+    });
+  }
+
+  controllerWorkerDeliveryChannel(): ControllerWorkerDeliveryChannel | undefined {
+    const status = this.statusValue;
+    if (!this.connectionReconciled || status.state !== "online" || status.lastSafeErrorCode || !this.transport
+      || !status.connectionId || !status.maxFrameBytes
+      || !this.identity.features.includes(CONTROLLER_WORKER_NODE_DELIVERY_FEATURE_V1)
+      || !status.enabledFeatures?.includes(CONTROLLER_WORKER_NODE_DELIVERY_FEATURE_V1)) return undefined;
+    const generation = this.connectionGeneration, transport = this.transport;
+    return Object.freeze({ tenantId: this.identity.tenantId, nodeId: this.identity.nodeId,
+      connectionId: status.connectionId, maxFrameBytes: status.maxFrameBytes,
+      grantsExecutionAuthority: false as const,
+      assertCurrent: () => {
+        if (!this.connectionReconciled || generation !== this.connectionGeneration || transport !== this.transport
+          || this.statusValue.state !== "online" || this.statusValue.lastSafeErrorCode
+          || this.statusValue.connectionId !== status.connectionId
+          || !this.statusValue.enabledFeatures?.includes(CONTROLLER_WORKER_NODE_DELIVERY_FEATURE_V1)) {
+          throw new Error("Controller worker delivery channel is no longer current");
         }
       },
     });
@@ -263,6 +288,20 @@ export class PortableNodeBridge {
     if (generation !== this.connectionGeneration) throw new Error("Bridge connection changed during authentication");
     const { frame, delivery } = verified;
     const priorStatus = this.journal.inboundStatus(frame.messageId);
+
+    if (frame.type === "controller.worker.delivery") {
+      try {
+        const channel = this.controllerWorkerDeliveryChannel();
+        if (delivery !== "accepted" || !channel || !this.controllerWorkerHandler)
+          throw new Error("Controller worker intake channel unavailable");
+        const receipt = await this.controllerWorkerHandler.accept(frame, channel);
+        channel.assertCurrent();
+        this.journal.markInboundProcessed(frame.messageId, receipt.receipt.receivedAt);
+        await this.sendBody("controller.worker.delivery.receipt", receipt, true,
+          receipt.receipt.receivedAt, frame.correlationId, frame.messageId);
+        channel.assertCurrent(); return;
+      } catch (error) { if (generation === this.connectionGeneration) this.failTransport(); throw error; }
+    }
 
     if (frame.type === "harness.native.dispatch") {
       try {
@@ -627,6 +666,7 @@ export class PortableNodeBridge {
       // Delivery-receipt uncertainty is reconciled explicitly; never replay it over a replacement connection.
       if (pending.frame.type === "harness.native.dispatch.receipt"
         || pending.frame.type === 'harness.codex.dispatch.receipt'
+        || pending.frame.type === "controller.worker.delivery.receipt"
         || pending.frame.type === 'harness.codex.result.return') continue;
       try {
         await this.requireTransport().send(JSON.stringify(pending.frame));
@@ -686,6 +726,7 @@ export class PortableNodeBridge {
       body,
     } as UnsignedNodeFrame<TType>;
     const materialDigest = type === "harness.native.dispatch.receipt" || type === 'harness.codex.dispatch.receipt'
+      || type === "controller.worker.delivery.receipt"
       ? sha256Digest(unsigned) : undefined;
     const frame = await this.signer.sign(unsigned) as SignedNodeFrame<TType>;
     if (generation !== this.connectionGeneration || transport !== this.transport) throw new Error("Bridge connection changed during signing");
