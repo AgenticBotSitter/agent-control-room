@@ -22,6 +22,15 @@ delivery is recorded as disconnected. Neither case creates a result, silently
 retries, or lets a restart reopen Claude. These are disposable source proofs,
 not evidence that either installed agent has run.
 
+The optional browser voice boundary is now mounted in **Settings**, but remains
+off until the owner explicitly enables it. Visiting the page does not request
+microphone access, start recognition, speak content, create work, or contact
+an agent. A confirmed transcript becomes only an editable, unsent local draft.
+The Settings composition and its default-off browser behavior are covered by
+focused accessibility checks. The current reconciled local source also passes
+the full TypeScript check, including the Claude qualification and shared
+Hermes/Claude lifecycle types.
+
 The private **Workers** page now separates local worker-route setup from the
 existing Hermes enrollment inventory and measured capacity. It shows only the
 saved, redacted state of Hermes Agent, Claude Code, and Codex: not configured,
