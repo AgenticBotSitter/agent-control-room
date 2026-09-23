@@ -147,6 +147,9 @@ routes without duplicate scheduler, authority, service, or result storage.
 - Add the smallest missing cross-worker presentation: for each task, show the
   recommended available route, route-specific limitation, current saved
   delivery state, result/review state and exact next owner action.
+- A task run now carries a redacted, signed-adapter category for the three
+  local adapters. The interface labels it as saved evidence only; route
+  configuration and present availability remain separate evidence.
 - Add an installation status panel that reports Hermes and Claude separately as
   **not configured**, **qualification required**, **ready**, **unavailable**,
   **running**, or **needs owner attention**. A stale observation is unavailable,

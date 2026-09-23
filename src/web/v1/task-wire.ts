@@ -40,6 +40,9 @@ const progressPoint = z.object({ version: count, state: nativeState, observedAt:
   availability: z.enum(["unknown", "current", "offline", "expired"]) }).strict();
 export const taskRunSchema = z.object({ runId: id, harness: z.enum(["codex", "hermes", "claude", "other"]),
   state: z.enum(harnessRunStates), lastObservedAt: z.string().datetime(), stale: z.boolean(),
+  /** A redacted category derived from the signed run adapter, not a claim that
+   * the corresponding local installation is still configured or available. */
+  routeEvidence: z.enum(["local_hermes", "local_claude", "local_codex", "other_or_unknown"]).optional(),
   firstObservedExecutionAt: z.string().datetime().nullable(), finishedObservedAt: z.string().datetime().nullable(),
   cancellation: z.enum(["not_requested", "requested", "confirmed", "reported", "unsupported"]),
   source: z.enum(["native_snapshot", "legacy"]), nativeState: nativeState.nullable(),

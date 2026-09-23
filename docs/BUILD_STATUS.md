@@ -30,6 +30,13 @@ separate checks. The next UI capability still missing is a privacy-safe link
 between a current task observation and its exact local route; until that exists,
 the interface intentionally does not label a route as running.
 
+Task observations now expose a redacted saved-adapter category when their
+signed run record identifies the local Hermes, Claude, or Codex adapter. The
+task page explains that this is evidence about that saved run only—not proof
+that the same worker is currently installed, configured, available, or
+running. This is a useful task-specific delivery clue without turning the
+website into a false live-status dashboard.
+
 Claude's fixed first-task policy is now paired with a source-only, sanitized
 qualification-evidence contract. It binds a future owner-attended check to the
 exact fixed text-review policy while retaining only a digest and bounded

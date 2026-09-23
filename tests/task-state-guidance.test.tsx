@@ -97,6 +97,13 @@ test("a prepared local worker explains its route limit without advertising an en
   assert.doesNotMatch(`${hermes}${claude}`, /<button|<form|<input|available now|running now/i);
 });
 
+test("a run may identify its saved local adapter without claiming current local availability", () => {
+  const html = renderToStaticMarkup(<TaskDetailPanel detail={detail("running", { routeEvidence: "local_claude" })} />);
+  assert.match(html, /Saved adapter route: local Claude Code adapter/);
+  assert.match(html, /does not prove that this computer still has that worker configured, available, or running/i);
+  assert.doesNotMatch(html, /Claude Code is running|Claude Code available now/i);
+});
+
 test("each ordinary task state points to one safe next destination or explanation", () => {
   const expected = new Map<TaskDetail["task"]["state"], string | undefined>([
     ["proposed", "#task-planning"], ["ready", "#task-assignment"], ["leased", "#task-assignment"],

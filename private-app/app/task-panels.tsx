@@ -99,11 +99,16 @@ export function TaskCatalogPanel({ page, after, href = (projectId, jobId, cursor
 function RunPanel({ run }: { run: TaskRun }) {
   const retained = run.stale || run.state === "disconnected" || run.availability !== null && run.availability !== "current";
   const label = run.nativeState ? nativeLabel[run.nativeState] : run.state.replaceAll("_", " ");
+  const routeLabel = run.routeEvidence === "local_hermes" ? "local Hermes Agent adapter"
+    : run.routeEvidence === "local_claude" ? "local Claude Code adapter"
+      : run.routeEvidence === "local_codex" ? "local Codex adapter"
+        : run.routeEvidence === "other_or_unknown" ? "another or unknown adapter" : undefined;
   return <section className="private-run" aria-label="Agent observation">
     <h4>{run.harness} · {retained ? "Agent progress is not current" : label}</h4>
     {retained && <p className="private-notice">Not a current live signal. {run.availability ? `Availability: ${run.availability}. ` : ""}
       Last reported state: {label}.</p>}
     <p>{run.source === "legacy" ? "Legacy adapter evidence" : "Native agent evidence"} · <ConfiguredTimestamp value={run.lastObservedAt} prefix="Last observed" /></p>
+    {routeLabel && <p className="private-note">Saved adapter route: {routeLabel}. This identifies the signed run record only; it does not prove that this computer still has that worker configured, available, or running.</p>}
     <dl className="private-task-facts"><div><dt>First observed working</dt><dd>{run.firstObservedExecutionAt ? <ConfiguredTimestamp value={run.firstObservedExecutionAt} /> : "Unknown"}</dd></div>
       <div><dt>Reported tokens</dt><dd>{run.usage?.totalTokens === null || run.usage?.totalTokens === undefined ? "Unknown" : run.usage.totalTokens.toLocaleString()}</dd></div>
       <div><dt>Cost</dt><dd>Unavailable — no enforced dollar limit</dd></div></dl>

@@ -25,7 +25,9 @@ import { WebProjectService } from "./project-service";
 import { catalogProjectIdSchema } from "./project-wire";
 import { taskDraftSchema, taskSummarySchema, taskReceiptSchema, taskDetailSchema, taskPageSchema,
   taskRunSchema, type HermesDeliveryRecovery, type TaskRun, type TaskReceipt } from "./task-wire";
-import { HERMES_021_MACOS_LOCAL_JOB_TYPE_V1, type Hermes021MacosDeliveryRecoveryStatusV1 } from "../../harness/hermes-021-v1";
+import { HERMES_021_MACOS_LOCAL_ADAPTER_V1, HERMES_021_MACOS_LOCAL_JOB_TYPE_V1, type Hermes021MacosDeliveryRecoveryStatusV1 } from "../../harness/hermes-021-v1";
+import { CLAUDE_CODE_LOCAL_ADAPTER_V1 } from "../../harness/claude-code-v1";
+import { CODEX_APP_SERVER_ADAPTER } from "../../harness/codex-v1/delivery-contract";
 import { taskPlanningOptionsSchema } from "./task-planning-wire";
 import { taskHomeActivitySchema } from "./task-home-wire";
 import { taskProjectOverviewSchema } from "./task-project-overview-wire";
@@ -39,6 +41,12 @@ function joined(tx: DatabaseSession): DatabaseClient {
     transactionWithPreCommitCheck: async <T>(run: (session: DatabaseSession) => Promise<T>, check: () => void | Promise<void>) => {
       const result = await run(tx); await check(); return result;
     } });
+}
+function routeEvidence(adapterId: string): "local_hermes" | "local_claude" | "local_codex" | "other_or_unknown" {
+  if (adapterId === HERMES_021_MACOS_LOCAL_ADAPTER_V1) return "local_hermes";
+  if (adapterId === CLAUDE_CODE_LOCAL_ADAPTER_V1) return "local_claude";
+  if (adapterId === CODEX_APP_SERVER_ADAPTER) return "local_codex";
+  return "other_or_unknown";
 }
 type TaskRow = { id: string; state: string; version: number; project_id: string; workflow_id: string;
   job: unknown; workflow: unknown; request: unknown };
@@ -302,7 +310,7 @@ export class WebTaskService {
           const { run, events } = inspected;
           const snapshots = events.flatMap(event => event.payload.category === "native_snapshot" ? [event.payload.snapshot] : []);
           const last = snapshots.at(-1);
-          runs.push(taskRunSchema.parse({ runId: run.id, harness: run.harness, state: run.state, lastObservedAt: run.lastObservedAt,
+          runs.push(taskRunSchema.parse({ runId: run.id, harness: run.harness, routeEvidence: routeEvidence(run.adapterId), state: run.state, lastObservedAt: run.lastObservedAt,
             stale: Date.parse(run.lastObservedAt) > Date.parse(actor.now) || Date.parse(actor.now) - Date.parse(run.lastObservedAt) > 120_000,
             firstObservedExecutionAt: run.startedAt ?? null, finishedObservedAt: run.finishedAt ?? null, cancellation: run.cancelState,
             source: run.nativeTask ? "native_snapshot" : "legacy", nativeState: last?.state ?? null,
