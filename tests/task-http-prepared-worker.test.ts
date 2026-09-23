@@ -20,13 +20,16 @@ test("task detail presents only the server-recorded prepared worker", async t =>
 
   const response = await handler(request(detailPath));
   assert.equal(response.status, 200);
-  const detail = await response.json() as { preparedFor: unknown };
+  const detail = await response.json() as { preparedFor: unknown; localRouteObservation: { state: unknown; adapter: unknown } };
   assert.equal(detail.preparedFor, "claude");
+  assert.deepEqual(detail.localRouteObservation, { state: "not_observed", adapter: "claude" });
   assert.equal(calls.length, 1);
   assert.deepEqual(calls[0]?.slice(1), [f.project.projectId, command.receipt.jobId]);
 
   // A browser parameter cannot choose a worker or reinterpret the saved plan.
   assert.equal((await handler(request(`${detailPath}?preparedFor=hermes`))).status, 400);
   const withoutPlanning = createTaskHttpHandler({ origin, trust, service: f.tasks, clock: () => now });
-  assert.equal((await (await withoutPlanning(request(detailPath))).json() as { preparedFor: unknown }).preparedFor, null);
+  const without = await (await withoutPlanning(request(detailPath))).json() as { preparedFor: unknown; localRouteObservation: unknown };
+  assert.equal(without.preparedFor, null);
+  assert.deepEqual(without.localRouteObservation, { state: "not_prepared", adapter: null });
 });

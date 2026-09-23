@@ -17,6 +17,8 @@ import { taskApprovalHttp } from "./task-approval-http";
 import type { TaskRevisionOperation } from "./task-revision-operation";
 import { taskRevisionCommandSchema, taskRevisionRequestSchema } from "./task-revision-wire";
 import { sha256Digest } from "../../security";
+import { taskDetailSchema } from "./task-wire";
+import { observeTaskLocalRoute } from "./task-local-route-observation";
 
 export function createTaskHttpHandler(options: { origin: string; trust: AccessTrust; service: WebTaskService;
   ownerReviews?: WebTaskReviewService; ownerVerifications?: WebTaskVerificationService; planning?: Pick<TaskPlanningOperation, "plan" | "readSaved" | "readPreparedWorker" | "supportsProject" | "templatesForProject">;
@@ -218,8 +220,10 @@ export function createTaskHttpHandler(options: { origin: string; trust: AccessTr
       if (jobId && request.method === "GET") {
         const detail = await options.service.detail(identity, projectId, jobId);
         const preparedFor = await options.planning?.readPreparedWorker?.(identity, projectId, jobId);
-        return Response.json({ ...detail, preparedFor: preparedFor ?? null,
-          dispatch: options.submission ? "configured" : "not_connected" }, { headers: privateResponseHeaders });
+        const withPreparedRoute = { ...detail, preparedFor: preparedFor ?? null };
+        return Response.json(taskDetailSchema.parse({ ...withPreparedRoute,
+          localRouteObservation: observeTaskLocalRoute(withPreparedRoute),
+          dispatch: options.submission ? "configured" : "not_connected" }), { headers: privateResponseHeaders });
       }
       if (!jobId && request.method === "POST") {
         if (request.headers.get("content-type")?.split(";")[0].trim() !== "application/json" || !request.body)

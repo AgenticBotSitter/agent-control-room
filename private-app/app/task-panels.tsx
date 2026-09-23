@@ -147,6 +147,26 @@ export function HermesDeliveryRecoveryPanel({ recovery }: { recovery: HermesDeli
   </section>;
 }
 
+function LocalRouteObservationPanel({ detail }: { detail: TaskDetail }) {
+  const observation = detail.localRouteObservation;
+  if (observation.state === "not_prepared") return null;
+  const name = observation.adapter === "hermes" ? "Hermes Agent" : observation.adapter === "claude" ? "Claude Code"
+    : observation.adapter === "codex" ? "Codex" : "this route";
+  const text = observation.state === "not_local_route"
+    ? "This task has a saved worker category, but it is not one of the supported local routes."
+    : observation.state === "not_observed"
+      ? `This task is prepared for ${name}, but no matching saved local run observation exists yet.`
+      : observation.state === "current_recorded"
+        ? `Control Room has a fresh saved record of activity for this task on the prepared ${name} adapter.`
+        : observation.state === "needs_attention"
+          ? `The saved ${name} route observation needs attention. Control Room will not guess whether it is still working.`
+          : `Control Room has a saved ${name} route observation, but it is not current task activity.`;
+  return <section className="private-panel" aria-label="Local task route"><h2>Local task route</h2>
+    <p className={observation.state === "needs_attention" ? "private-notice" : "private-state"}>{text}</p>
+    <p className="private-note">This is saved evidence for this task only. It does not show a worker identity, prove availability for another task, or start, retry, or contact an agent.</p>
+  </section>;
+}
+
 export function TaskDetailPanel({ detail }: { detail: TaskDetail }) {
   const preparedFor = detail.preparedFor === "hermes" ? "Hermes Agent" : detail.preparedFor === "codex" ? "Codex"
     : detail.preparedFor === "claude" ? "Claude Code" : detail.preparedFor === "configured_worker" ? "Configured worker" : undefined;
@@ -167,6 +187,7 @@ export function TaskDetailPanel({ detail }: { detail: TaskDetail }) {
       <p>This task is prepared for {preparedFor}. Preparation does not assign or start this worker.</p>
       <p className="private-note">{preparedRouteDetail}</p>
       <p className="private-note">Next: open assignment to check the configured route for this task. A prepared route is not a current availability or running-work signal.</p></section>}
+    <LocalRouteObservationPanel detail={detail} />
     <HermesDeliveryRecoveryPanel recovery={detail.hermesDeliveryRecovery} />
     <section className="private-panel"><h2>Agent progress</h2>
       <p>{detail.dispatch === "configured"

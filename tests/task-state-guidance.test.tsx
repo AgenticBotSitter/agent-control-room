@@ -52,6 +52,7 @@ function detail(state: TaskDetail["task"]["state"], run?: Partial<TaskDetail["at
         nativeState: "running", availability: "current", usage: null, resultClaim: null, timeline: [],
         earlierObservationsOmitted: false, ...run }] }] : [], earlierAttemptsOmitted: false,
     preparedFor: null, hermesDeliveryRecovery: { source: "not_applicable" },
+    localRouteObservation: { state: "not_prepared", adapter: null },
     progressSource, dispatch: "configured", artifacts: "configured", review: "recorded" };
 }
 
@@ -102,6 +103,17 @@ test("a run may identify its saved local adapter without claiming current local 
   assert.match(html, /Saved adapter route: local Claude Code adapter/);
   assert.match(html, /does not prove that this computer still has that worker configured, available, or running/i);
   assert.doesNotMatch(html, /Claude Code is running|Claude Code available now/i);
+});
+
+test("a local route status distinguishes a fresh matching task record from availability", () => {
+  const running = renderToStaticMarkup(<TaskDetailPanel detail={{ ...detail("running", { routeEvidence: "local_claude" }),
+    preparedFor: "claude", localRouteObservation: { state: "current_recorded", adapter: "claude" } }} />);
+  assert.match(running, /fresh saved record of activity for this task on the prepared Claude Code adapter/i);
+  assert.match(running, /does not show a worker identity, prove availability for another task/i);
+  const uncertain = renderToStaticMarkup(<TaskDetailPanel detail={{ ...detail("running", { routeEvidence: "local_hermes", stale: true }),
+    preparedFor: "hermes", localRouteObservation: { state: "needs_attention", adapter: "hermes" } }} />);
+  assert.match(uncertain, /will not guess whether it is still working/i);
+  assert.doesNotMatch(`${running}${uncertain}`, /<button|<form|<input/);
 });
 
 test("each ordinary task state points to one safe next destination or explanation", () => {

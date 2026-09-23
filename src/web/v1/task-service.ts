@@ -327,6 +327,7 @@ export class WebTaskService {
       const hermesDeliveryRecovery = await this.inspectHermesDeliveryRecovery(job, projectId, jobId, attempts);
       return taskDetailSchema.parse({ project, task: summary, instructions: request.objective, inputDigest: job.inputDigest,
         observedAt: actor.now, attempts, earlierAttemptsOmitted: attemptRows.length > 10, preparedFor: null,
+        localRouteObservation: { state: "not_prepared", adapter: null },
         hermesDeliveryRecovery,
         progressSource: store ? "configured" : "not_configured", dispatch: "not_connected",
         artifacts: this.resultStore ? "configured" : "not_connected", review: this.reviewConfig ? "recorded" : "not_connected" });

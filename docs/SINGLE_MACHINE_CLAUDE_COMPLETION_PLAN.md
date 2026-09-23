@@ -163,6 +163,11 @@ routes without duplicate scheduler, authority, service, or result storage.
 - A task run now carries a redacted, signed-adapter category for the three
   local adapters. The interface labels it as saved evidence only; route
   configuration and present availability remain separate evidence.
+- When a trusted saved plan and the latest matching canonical task-run record
+  agree on a local adapter category, the task page now shows that narrow
+  task-specific observation. A fresh record is described as saved activity,
+  never as a live worker check; stale, disconnected, ambiguous, terminal or
+  mismatched evidence is visibly not current or needs attention.
 - The existing protected task route already reads a prepared worker from the
   canonical planner and labels Hermes or Claude only after that saved planner
   record exists. It never chooses a worker merely from a browser preference or

@@ -52,11 +52,17 @@ export const taskRunSchema = z.object({ runId: id, harness: z.enum(["codex", "he
   resultClaim: z.object({ contentHash: digest, sizeBytes: count, verified: z.literal(false) }).strict().nullable(),
   timeline: z.array(progressPoint).max(50), earlierObservationsOmitted: z.boolean() }).strict();
 export type TaskRun = z.infer<typeof taskRunSchema>;
+export const taskLocalRouteObservationSchema = z.object({
+  state: z.enum(["not_prepared", "not_local_route", "not_observed", "current_recorded", "needs_attention", "recorded_not_current"]),
+  adapter: z.enum(["hermes", "claude", "codex"]).nullable(),
+}).strict();
+export type TaskLocalRouteObservation = z.infer<typeof taskLocalRouteObservationSchema>;
 export const taskDetailSchema = z.object({ project: projectViewSchema, task: taskSummarySchema,
   instructions: text(4000), inputDigest: digest, observedAt: z.string().datetime(),
   attempts: z.array(z.object({ attemptId: id, attemptNumber: count, state: z.enum(attemptStates),
     runs: z.array(taskRunSchema).max(10), additionalRunsOmitted: z.boolean() }).strict()).max(10),
   earlierAttemptsOmitted: z.boolean(), preparedFor: z.enum(["hermes", "codex", "claude", "configured_worker"]).nullable(),
+  localRouteObservation: taskLocalRouteObservationSchema,
   hermesDeliveryRecovery: hermesDeliveryRecoverySchema,
   progressSource: z.enum(["configured", "not_configured"]),
   dispatch: z.enum(["not_connected", "configured"]), artifacts: z.enum(["not_connected", "configured"]), review: z.enum(["not_connected", "recorded"]) }).strict();
