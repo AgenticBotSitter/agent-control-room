@@ -23,11 +23,12 @@ delivery transport.
   needs its final production host binding, owner-attended qualification, and
   first-task proof.
 - The shared remote delivery contract, node-session bridge, canonical queued
-  task selection, and protected installation forwarding exist in source. The
-  remote route is **not yet complete**: durable uncertain-send recovery,
-  reconstruction-stable packet identity, remote correction planning, node-side
-  Codex execution/result return, protected resolver/receipt intake composition,
-  and their disposable proofs remain before a remote worker can be activated.
+  task selection, durable uncertain-send recovery, reconstruction-stable packet
+  identity, remote correction planning, and protected installation forwarding
+  exist in source. The remote route is **not yet complete**: node-side Codex
+  execution/result return, protected resolver/receipt intake composition, late
+  receipt recovery after a rebuilt node session, and their disposable proofs
+  remain before a remote worker can be activated.
 - macOS Codex execution remains fail-closed. The discarded prototype could not
   protect Codex's pathname-based private home safely. The first supported
   Codex worker is therefore the reviewed Linux route in the several-computer
@@ -94,15 +95,16 @@ database, scheduler, website, and review path.
 
 ## Phase 4 — Add Codex through the supported Linux route
 
-1. Complete durable remote delivery: persist one send intent before transport,
-   never mark an uncertain send delivered, reconcile only an exact receipt, and
-   preserve packet identity across controller reconstruction. Do not add
-   another broker, scheduler, or database.
+1. Complete late-receipt recovery after a rebuilt node session. It must retain
+   signed node and enrollment binding and never reinterpret a receipt as an
+   execution permit or resend the task. Do not add another broker, scheduler,
+   or database.
 2. For the first Linux Codex worker, reuse the existing approved Codex v3/v4
    task, permit, activation, and result-return lifecycle. Add only a shared
    remote delivery wrapper for that already-approved task; a generic remote
-   receipt is never execution permission. Keep generic v11/v12 remote work
-   gated until it has an equally complete harness-authority bridge.
+   receipt is never execution permission. Generic v11 source plans and v12
+   correction plans remain gated until they have an equally complete
+   harness-authority bridge.
 3. Assemble the protected resolver and receipt-intake composition for an
    enrolled remote worker using the existing canonical task and PostgreSQL
    receipt paths.

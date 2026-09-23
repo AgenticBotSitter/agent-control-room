@@ -25,12 +25,11 @@ the exact receipt from the same enrolled node and session. The canonical v11
 queued-task selector, protected remote materializer, shared queue lifecycle,
 and private installation forwarding now reuse that receipt authority without a
 broker or second queue. A later audit found the remote path still needs durable
-uncertain-send recovery, reconstruction-stable packet identity, correction
-planning, and node-side Codex execution/result return before it can claim a
-complete source journey. The first Codex execution path must reuse the existing
-approved Codex v3/v4 permit and activation records; a generic remote packet is
-not execution authority. This remains source evidence, not a live worker or
-task execution.
+node-side Codex execution/result return and late receipt recovery after a
+rebuilt node session before it can claim a complete source journey. The first
+Codex execution path must reuse the existing approved Codex v3/v4 permit and
+activation records; a generic remote packet is not execution authority. This
+remains source evidence, not a live worker or task execution.
 
 **Authoritative completion order:** follow
 [`LOCAL_TO_MULTI_SYSTEM_EXECUTION_PLAN.md`](LOCAL_TO_MULTI_SYSTEM_EXECUTION_PLAN.md).
