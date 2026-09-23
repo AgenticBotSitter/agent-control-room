@@ -328,6 +328,59 @@ test("a local Claude delivery publishes once, then a rebuilt executor recovers t
   assert.equal(cancelledReceiptCalls, 0, "a cancelled run must not even contact the receipt endpoint");
   assert.equal((await f.db.query("SELECT run_id FROM control_native_review_plans WHERE tenant_id=$1 AND run_id=$2",
     [binding.tenantId, cancelledPrepared.delivery.identity.runId])).rows.length, 0);
+
+  // The installation composition injects this fence as `assertAuthority`.
+  // Refusing it after the queue/executor graph has been assembled must stop
+  // before the shared receipt, result reservation, acquired host or protected
+  // publication paths are even considered.
+  const refusedSource = await f.tasks.propose(f.identity, binding.projectId,
+    { ...taskDraft, title: "Post-assembly Claude admission refusal" }, "claude-post-assembly-refusal-source");
+  const refusedPlan = await planner.plan(f.identity, binding.projectId, refusedSource.receipt.jobId,
+    sha256Digest({ ...taskDraft, title: "Post-assembly Claude admission refusal" }));
+  const refusedAssignment = await assignments.assign(f.identity, binding.projectId, refusedPlan.receipt.jobId,
+    binding.nodeId, refusedPlan.receipt.inputDigest);
+  const refusedReference = { tenantId: binding.tenantId, projectId: binding.projectId, jobId: refusedPlan.receipt.jobId,
+    attemptId: refusedAssignment.receipt.attemptId, leaseId: refusedAssignment.receipt.leaseId,
+    inputDigest: refusedPlan.receipt.inputDigest };
+  const refusedPrepared = await preparation().prepare(refusedReference);
+  const attempts = { admission: 0, receipt: 0, reservation: 0, acquisition: 0, launch: 0, publication: 0 };
+  const refusedReceiptPort = { async receive(_packet: ControllerWorkerDeliveryV1) {
+    attempts.receipt++;
+    throw new Error("post_assembly_refusal_must_not_contact_receipt");
+  } };
+  const refusedReservations = {
+    async findForUpdate() { attempts.reservation++; throw new Error("post_assembly_refusal_must_not_reserve"); },
+    async insertFresh() { attempts.reservation++; throw new Error("post_assembly_refusal_must_not_reserve"); },
+    async compareAndSwap() { attempts.reservation++; throw new Error("post_assembly_refusal_must_not_reserve"); },
+  };
+  const refusedExecution = {
+    ...execution(() => {
+      attempts.acquisition++;
+      return {
+        get ready() {
+          attempts.launch++;
+          return Promise.reject(new Error("post_assembly_refusal_must_not_launch"));
+        },
+        async close() {},
+      };
+    }, refusedPrepared, refusedReceiptPort),
+    results: { ...results, reservations: refusedReservations },
+    protectedStorage: {
+      async put() { attempts.publication++; throw new Error("post_assembly_refusal_must_not_publish"); },
+      async read() { attempts.publication++; throw new Error("post_assembly_refusal_must_not_publish"); },
+    },
+    assertAuthority() {
+      attempts.admission++;
+      throw new Error("post_assembly_admission_rejected");
+    },
+  };
+  await assert.rejects(executeAssignedClaudeCodeLocalTaskV1(refusedExecution, refusedReference,
+    new AbortController().signal), /post_assembly_admission_rejected/);
+  assert.deepEqual(attempts, { admission: 1, receipt: 0, reservation: 0, acquisition: 0, launch: 0, publication: 0 },
+    "a rejected installed admission never reaches receipt, reservation, process or publication work");
+  assert.equal((await f.db.query("SELECT run_id FROM control_native_review_plans WHERE tenant_id=$1 AND run_id=$2",
+    [binding.tenantId, refusedPrepared.delivery.identity.runId])).rows.length, 0,
+  "a rejected installed admission cannot publish a review result");
 });
 
 test("one project can offer reviewed local workers without silently choosing one", async t => {

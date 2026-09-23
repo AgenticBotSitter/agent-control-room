@@ -75,6 +75,7 @@ export async function executeAssignedClaudeCodeLocalTaskV1(config: ClaudeCodeLoc
   if (typeof clock !== "function") unavailable();
   let prepared = await config.preparation.prepare(referenceValue);
   await config.preparation.assertCurrent(referenceValue, prepared);
+  config.assertAuthority(prepared.delivery);
   // A new preparation has a fresh issued-at timestamp. If the exact run has a
   // durable receipt, recover that authenticated original packet before asking
   // the delivery composition to decide whether it may publish staged evidence.
@@ -84,6 +85,7 @@ export async function executeAssignedClaudeCodeLocalTaskV1(config: ClaudeCodeLoc
   if (retainedReceipt) {
     const recovered = Object.freeze({ ...prepared, delivery: retainedReceipt.delivery });
     await config.preparation.assertCurrent(referenceValue, recovered);
+    config.assertAuthority(recovered.delivery);
     prepared = recovered;
   }
   const now = new Date(clock()).toISOString();
@@ -123,6 +125,7 @@ export async function executeAssignedClaudeCodeLocalTaskV1(config: ClaudeCodeLoc
       if (recheckSignal.aborted || !sameDelivery(candidate, prepared.delivery)
         || route.kind !== prepared.route.kind || route.workerId !== prepared.route.workerId) unavailable();
       await config.preparation.assertCurrent(referenceValue, prepared);
+      config.assertAuthority(prepared.delivery);
       if (recheckSignal.aborted) unavailable();
     } }, prepared.delivery, prepared.route, now, signal);
   const finish = (state: "published_pending_review" | "recovered_pending_review" | "terminal_result_uncertain" | "not_started",
