@@ -21,6 +21,7 @@ import { createPersistentNeutralReservationPort, createPersistentNeutralReservat
 import { durableResultReceiptSchemaV1 } from "../src/artifacts/v1/durable-result-receipt";
 import { durableResultReviewPlanSchemaV1, durableReviewTargetV1 } from "../src/completion-gate/v1/durable-result-review-plan";
 import { DurableResultReviewSubmissionServiceV1 } from "../src/completion-gate/v1/durable-result-review-submission";
+import { DurableLocalResultInspectionServiceV1 } from "../src/completion-gate/v1/durable-local-result-inspection";
 import type { ControllerWorkerDeliveryPortV1, ControllerWorkerDeliveryV1 } from "../src/harness/v1/controller-worker-delivery";
 import { ownerReviewFixture } from "./helpers/web-owner-review";
 import { binding, enrollment, instant } from "./hermes-native-fixture";
@@ -58,6 +59,11 @@ test("Hermes and Claude share one durable lifecycle without cross-route recovery
           ($3,$2,'fixture','1.0.0','control_room_native','disabled','v1',30)`,
   [HERMES_021_MACOS_LOCAL_ADAPTER_V1, binding.tenantId, CLAUDE_CODE_LOCAL_ADAPTER_V1]);
   let now = instant + 7_000;
+  const durableInspection = new DurableLocalResultInspectionServiceV1(f.db, {
+    integrityKey: f.resultKey, reviewIntegrityKey: f.reviewKey, harnessIntegrityKey: f.harnessKey,
+    deliveryIntegrityKeys: { hermes: new Uint8Array(32).fill(65), claude: new Uint8Array(32).fill(66) },
+    checkpoints: f.checkpoints, storageClass: "local", storage: f.storage,
+  });
   const makeTemplate = (id: string, adapter: string, executor: string, operation: string, profile: string): NativeTaskTemplate => {
     const hermes = adapter === HERMES_021_MACOS_LOCAL_ADAPTER_V1;
     const authority: NativeTaskTemplate["authority"] = { projectId: binding.projectId, allowedExecutor: executor,
@@ -119,7 +125,6 @@ test("Hermes and Claude share one durable lifecycle without cross-route recovery
   const hermesTarget = await hermesQueue.locateQueuedHarnessDelivery(references[0]!, new AbortController().signal);
   const claudeTarget = await claudeQueue.locateQueuedHarnessDelivery(references[1]!, new AbortController().signal);
   assert.equal(hermesTarget.kind, "hermes-021-local"); assert.equal(claudeTarget.kind, "claude-code-local");
-
   const hermesReference = { tenantId: binding.tenantId, projectId: binding.projectId, jobId: hermesPlan.receipt.jobId,
     attemptId: hermesAssigned.receipt.attemptId, leaseId: hermesAssigned.receipt.leaseId, inputDigest: hermesPlan.receipt.inputDigest };
   const hermesBinding = { localServiceId: "service:fixture-hermes", workerId: "worker:marvin", expectedVersion: "0.21.3" as const, sourceRevision: "00570550" };
@@ -197,6 +202,14 @@ test("Hermes and Claude share one durable lifecycle without cross-route recovery
     return { artifactId: row.artifact_id, targetId: target.id, targetDigest: sha256Digest(target), contentHash: receipt.contentHash,
       decision, feedback };
   };
+  const [inspectedHermes, inspectedClaude] = await Promise.all([
+    f.db.transaction(tx => durableInspection.inspectSubmitted(tx, binding.tenantId, hermesReview.run_id)),
+    f.db.transaction(tx => durableInspection.inspectSubmitted(tx, binding.tenantId, claudeReview.run_id)),
+  ]);
+  assert.deepEqual([inspectedHermes.result.receipt.artifactId, inspectedClaude.result.receipt.artifactId].sort(),
+    [hermesReview.artifact_id, claudeReview.artifact_id].sort());
+  assert.deepEqual([inspectedHermes.execution.leaseId, inspectedClaude.execution.leaseId].sort(),
+    [hermesAssigned.receipt.leaseId, claudeAssigned.receipt.leaseId].sort());
   const accepted = await reviews.record(f.identity, binding.projectId, hermesPlan.receipt.jobId, draft(hermesReview, "accepted", ""),
     "shared-hermes-accept");
   assert.notEqual(draft(hermesReview, "accepted", "").targetId,
