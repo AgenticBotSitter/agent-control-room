@@ -35,14 +35,32 @@ test("Claude qualification records process identity and permission proof but not
   assert.equal(recorded.proofs[1]?.evidenceDigest, recorded.proofs[2]?.evidenceDigest);
 });
 
-test("Claude qualification preserves separately recorded restart proof", () => {
-  const existing = createClaudeCodeLocalProcessReadinessV1({ planDigest: plan.planDigest, proofs: [
-    { proof: "cancellation_and_restart_recovery", state: "passed", evidenceDigest: sha256Digest("recovery") },
-  ] });
-  const recorded = recordClaudeCodeLocalQualificationReadinessV1(plan, report, existing);
-  assert.equal(summarizeClaudeCodeLocalProcessReadinessV1(plan.planDigest, recorded).state, "readiness_recorded");
-  assert.equal(recorded.proofs.find(item => item.proof === "cancellation_and_restart_recovery")?.evidenceDigest,
-    sha256Digest("recovery"));
+function previouslyReady() {
+  const qualified = recordClaudeCodeLocalQualificationReadinessV1(plan, report);
+  return createClaudeCodeLocalProcessReadinessV1({ planDigest: plan.planDigest,
+    proofs: qualified.proofs.map(item => item.proof === "cancellation_and_restart_recovery"
+      ? { proof: item.proof, state: "passed" as const, evidenceDigest: sha256Digest("recovery") }
+      : item) });
+}
+
+test("successful requalification cannot preserve a previously passed restart proof", () => {
+  const recorded = recordClaudeCodeLocalQualificationReadinessV1(plan, { ...report,
+    executableSha256: sha256Digest("replacement-claude-executable"),
+    workingDirectoryBindingDigest: sha256Digest("replacement-workspace") }, previouslyReady());
+  assert.deepEqual(recorded.proofs.find(item => item.proof === "cancellation_and_restart_recovery"),
+    { proof: "cancellation_and_restart_recovery", state: "not_started" });
+  assert.equal(summarizeClaudeCodeLocalProcessReadinessV1(plan.planDigest, recorded).state, "not_started");
+});
+
+test("failed requalification cannot preserve a previously passed restart proof", () => {
+  const failed = { ...report, qualified: false, executableSha256: sha256Digest("missing-claude-executable"),
+    workingDirectoryBindingDigest: sha256Digest("replacement-workspace"), terminalResultObserved: false,
+    terminalResultDigest: null, inputTokens: null, outputTokens: null, totalTokens: null, durationMs: null,
+    failureReason: "installed_process_unavailable" as const, retryRequiresFreshOwnerAuthorization: true };
+  const recorded = recordClaudeCodeLocalQualificationReadinessV1(plan, failed, previouslyReady());
+  assert.deepEqual(recorded.proofs.find(item => item.proof === "cancellation_and_restart_recovery"),
+    { proof: "cancellation_and_restart_recovery", state: "not_started" });
+  assert.equal(summarizeClaudeCodeLocalProcessReadinessV1(plan.planDigest, recorded).state, "blocked");
 });
 
 test("failed qualification becomes blocked evidence and wrong plans refuse", () => {

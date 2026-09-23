@@ -41,10 +41,8 @@ export function recordClaudeCodeLocalQualificationReadinessV1(planValue: unknown
       evidenceDigest: evidence.evidenceDigest });
     byProof.set("permission_boundary", { proof: "permission_boundary", state: settledState,
       evidenceDigest: evidence.evidenceDigest });
-    if (!byProof.has("cancellation_and_restart_recovery")) {
-      byProof.set("cancellation_and_restart_recovery",
-        { proof: "cancellation_and_restart_recovery", state: "not_started" });
-    }
+    byProof.set("cancellation_and_restart_recovery",
+      { proof: "cancellation_and_restart_recovery", state: "not_started" });
     return createClaudeCodeLocalProcessReadinessV1({ planDigest: plan.planDigest,
       proofs: [...byProof.values()] });
   } catch {
