@@ -697,15 +697,32 @@ export function reconcileDurableResultReservationCrashV1(value: unknown) {
   } catch { return unavailable(); }
 }
 
-/** Exact verified read of one neutral result. It acquires no bytes beyond the stored record. */
-export async function readDurableResultV1(tx: DatabaseSession, key: Uint8Array, storageClass: "local" | "r2",
-  readBytes: (artifactId: string, signal?: AbortSignal) => Promise<Uint8Array | undefined>,
-  tenantId: string, projectId: string, jobId: string, artifactId: string) {
+/** Exact verified durable receipt metadata. It does not acquire artifact bytes. */
+export async function readDurableResultReceiptV1(tx: DatabaseSession, key: Uint8Array, storageClass: "local" | "r2",
+  tenantId: string, projectId: string, jobId: string, artifactId: string): Promise<DurableResultReceiptV1 | undefined> {
   const row = (await tx.query<NeutralReceiptRow>(`SELECT ${neutralSelection}
     WHERE r.tenant_id=$1 AND r.project_id=$2 AND r.job_id=$3 AND r.artifact_id=$4`,
   [tenantId, projectId, jobId, artifactId])).rows[0];
   if (!row) return undefined;
-  const { receipt } = verifyNeutralReceiptRow(row, key, storageClass);
+  return verifyNeutralReceiptRow(row, key, storageClass).receipt;
+}
+
+/** Bounded verified durable receipt metadata for one task. It does not acquire artifact bytes. */
+export async function listDurableResultReceiptsV1(tx: DatabaseSession, key: Uint8Array, storageClass: "local" | "r2",
+  tenantId: string, projectId: string, jobId: string): Promise<{ receipts: DurableResultReceiptV1[]; additionalResultsOmitted: boolean }> {
+  const rows = (await tx.query<NeutralReceiptRow>(`SELECT ${neutralSelection}
+    WHERE r.tenant_id=$1 AND r.project_id=$2 AND r.job_id=$3
+    ORDER BY r.artifact_id COLLATE "C" LIMIT 51`, [tenantId, projectId, jobId])).rows;
+  return { receipts: rows.slice(0, 50).map(row => verifyNeutralReceiptRow(row, key, storageClass).receipt),
+    additionalResultsOmitted: rows.length > 50 };
+}
+
+/** Exact verified read of one neutral result. It acquires bytes only after authenticating its receipt. */
+export async function readDurableResultV1(tx: DatabaseSession, key: Uint8Array, storageClass: "local" | "r2",
+  readBytes: (artifactId: string, signal?: AbortSignal) => Promise<Uint8Array | undefined>,
+  tenantId: string, projectId: string, jobId: string, artifactId: string) {
+  const receipt = await readDurableResultReceiptV1(tx, key, storageClass, tenantId, projectId, jobId, artifactId);
+  if (!receipt) return undefined;
   const bytes = await readBytes(artifactId);
   if (!bytes) throw new Error("durable_result_content_unavailable");
   return { receipt, text: checkedResultBytes(bytes, receipt).text };

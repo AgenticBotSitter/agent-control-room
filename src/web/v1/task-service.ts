@@ -8,9 +8,10 @@ import { DOMAIN_CONTRACT_VERSION, requestRecordSchema, workflowRecordSchema, job
 import { appendAuditWith } from "../../audit/audit-store";
 import { assertNoSecretMaterial, computeAuthorityDigest, sha256Digest } from "../../security";
 import { HarnessRunStoreV1 } from "../../harness/v1/store";
-import { NativeResultStore, type NativeResultReadConfiguration, type TaskResultReceipt } from "../../artifacts/v1/native-results";
+import type { NativeResultReadConfiguration } from "../../artifacts/v1/native-results";
 import { CompletionGateStoreV1 } from "../../completion-gate/v1/store";
-import { readTaskReviewPlanV1, taskReviewRootSubjectIdV1, verifyTaskReviewTargetV1 } from "../../completion-gate/v1/task-review-plan";
+import { readTaskReviewPlanV1, taskReviewRootSubjectIdV1, type TaskResultReceiptV1, verifyTaskReviewTargetV1 } from "../../completion-gate/v1/task-review-plan";
+import { PlanSelectedTaskResultReaderV1 } from "./task-result-reader";
 import type { AwaitableRollbackCheckpointStoreV1 } from "../../security/rollback-checkpoint";
 import type { WebTaskReviewConfiguration } from "./task-review-service";
 import type { ManualVerificationScenario } from "./task-verification-service";
@@ -86,7 +87,7 @@ export interface WebTaskKeys {
   hermesDeliveryRecovery?: { inspect(scope: { tenantId: string; projectId: string; jobId: string; attemptId: string }):
     Promise<Hermes021MacosDeliveryRecoveryStatusV1> };
 }
-const resultMetadata = (receipt: TaskResultReceipt) => taskResultMetadataSchema.parse({ artifactId: receipt.artifactId,
+const resultMetadata = (receipt: TaskResultReceiptV1) => taskResultMetadataSchema.parse({ artifactId: receipt.artifactId,
   attemptId: receipt.attemptId, runId: receipt.runId, contentHash: receipt.contentHash, sizeBytes: receipt.sizeBytes,
   receivedAt: receipt.receivedAt, byteCheck: receipt.byteCheck, qualityAccepted: false });
 
@@ -94,7 +95,7 @@ export class WebTaskService {
   private readonly authority: WebSessionAuthority;
   private readonly projects: WebProjectService;
   private readonly harnessKey?: Uint8Array;
-  private readonly resultStore?: NativeResultStore;
+  private readonly resultStore?: PlanSelectedTaskResultReaderV1;
   private readonly reviewConfig?: NonNullable<WebTaskKeys["reviews"]>;
   private readonly reviewCommandsConfigured: boolean;
   private readonly verificationCommandsConfigured: boolean;
@@ -123,8 +124,8 @@ export class WebTaskService {
     if (keys?.results) {
       if (!this.harnessKey) throw new Error("task_key_invalid");
       // The web service retains only the read capability, even when composition supplied a fuller store.
-      this.resultStore = new NativeResultStore(db, this.harnessKey, { ...keys.results,
-        storage: Object.freeze({ read: keys.results.storage.read.bind(keys.results.storage) }) });
+      this.resultStore = new PlanSelectedTaskResultReaderV1(db, { harnessIntegrityKey: this.harnessKey,
+        results: keys.results, ...(keys.reviews ? { reviewIntegrityKey: keys.reviews.integrityKey } : {}) });
     }
     if (keys?.worktreeChangeEvidence) {
       if (typeof keys.worktreeChangeEvidence.inspect !== "function") throw new Error("task_key_invalid");

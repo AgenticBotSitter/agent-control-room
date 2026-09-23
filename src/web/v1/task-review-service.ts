@@ -2,8 +2,7 @@ import { randomUUID, timingSafeEqual } from "node:crypto";
 import { z } from "zod";
 import type { DatabaseClient, DatabaseSession } from "../../persistence/database";
 import { jobRecordSchema } from "../../domain/v1";
-import { NativeResultStore, type NativeResultReadConfiguration } from "../../artifacts/v1/native-results";
-import { readDurableResultV1 } from "../../artifacts/v1/durable-result-publication";
+import type { NativeResultReadConfiguration } from "../../artifacts/v1/native-results";
 import { CompletionGateStoreV1, CompletionGateErrorV1, type CompletionAcceptanceProfileV1, type CompletionReviewV1,
   type CompletionFindingV1, type CompletionRiskV1 } from "../../completion-gate/v1";
 import { stageAsyncCompletionCheckpoint } from "../../completion-gate/v1/async-staged-checkpoint";
@@ -14,6 +13,7 @@ import { appendAuditWith } from "../../audit/audit-store";
 import { WebSessionAuthority, type WebActor } from "./session-authority";
 import { WebProjectService } from "./project-service";
 import { WebAccessError, type VerifiedWebIdentity } from "./access-verifier";
+import { PlanSelectedTaskResultReaderV1 } from "./task-result-reader";
 import { catalogProjectIdSchema } from "./project-wire";
 import { taskReviewDraftSchema, taskReviewReceiptSchema, taskReviewNoteSchema, taskReviewOptionsSchema,
   type TaskReviewDraft, type TaskReviewReceipt } from "./task-review-wire";
@@ -31,10 +31,7 @@ const risks: CompletionRiskV1[] = ["low", "medium", "high", "critical"];
 export class WebTaskReviewService {
   private readonly integrityKey: Uint8Array;
   private readonly checkpoints: AwaitableRollbackCheckpointStoreV1;
-  private readonly results: NativeResultStore;
-  private readonly durableResultKey: Uint8Array;
-  private readonly durableStorageClass: NativeResultReadConfiguration["storageClass"];
-  private readonly durableReadBytes: NativeResultReadConfiguration["storage"]["read"];
+  private readonly results: PlanSelectedTaskResultReaderV1;
   private readonly projects: WebProjectService;
   constructor(private readonly db: DatabaseClient, private readonly scope: { tenantId: string; workspaceId: string },
     config: WebTaskReviewConfiguration & { harnessIntegrityKey: Uint8Array; results: NativeResultReadConfiguration; ideaIntegrityKey?: Uint8Array },
@@ -43,11 +40,8 @@ export class WebTaskReviewService {
     this.integrityKey = Uint8Array.from(config.integrityKey);
     this.checkpoints = Object.freeze({ read: config.checkpoints.read.bind(config.checkpoints),
       advance: config.checkpoints.advance.bind(config.checkpoints), initialize: () => { throw new Error("review_provisioning_unavailable"); } });
-    this.results = new NativeResultStore(db, config.harnessIntegrityKey, { ...config.results,
-      storage: Object.freeze({ read: config.results.storage.read.bind(config.results.storage) }) });
-    this.durableResultKey = Uint8Array.from(config.results.integrityKey);
-    this.durableStorageClass = config.results.storageClass;
-    this.durableReadBytes = config.results.storage.read.bind(config.results.storage);
+    this.results = new PlanSelectedTaskResultReaderV1(db, { harnessIntegrityKey: config.harnessIntegrityKey,
+      results: config.results, reviewIntegrityKey: config.integrityKey });
     this.projects = new WebProjectService(db, scope, clock, config.ideaIntegrityKey);
   }
   private ids(...values: string[]) {
@@ -107,10 +101,7 @@ export class WebTaskReviewService {
       throw new WebAccessError("not_found");
     const profile = await gate.getRecord(this.scope.tenantId, snapshot.target.acceptanceProfileId, "profile") as CompletionAcceptanceProfileV1;
     const lineage = await readTaskReviewPlanV1(tx, this.integrityKey, this.scope.tenantId, projectId, jobId);
-    const result = lineage?.schema === "control-room.durable-result-review-plan/v1"
-      ? await readDurableResultV1(tx, this.durableResultKey, this.durableStorageClass, this.durableReadBytes,
-        this.scope.tenantId, projectId, jobId, artifactId)
-      : await this.results.read(tx, this.scope.tenantId, projectId, jobId, artifactId);
+    const result = await this.results.read(tx, this.scope.tenantId, projectId, jobId, artifactId);
     if (!result || result.receipt.contentHash !== snapshot.target.subjectDigest
       || result.receipt.nodeId !== snapshot.target.producer.actorId || snapshot.target.producer.actorType !== "agent")
       throw new WebAccessError("conflict");
