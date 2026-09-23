@@ -3,7 +3,8 @@ import test from "node:test";
 import { computeAuthorityDigest, sha256Digest } from "../src/security";
 import { CONTROLLER_WORKER_REMOTE_ADAPTER_V1, CONTROLLER_WORKER_REMOTE_CAPABILITY_V1,
   CONTROLLER_WORKER_REMOTE_JOB_TYPE_V1, CONTROLLER_WORKER_REMOTE_START_OPERATION_V1 } from "../src/harness/v1/remote-worker-delivery";
-import { TaskExecutionPlanner, nativeTaskTemplateSchema, type NativeTaskTemplate } from "../src/web/v1/task-execution-planner";
+import { TaskExecutionPlanner, controllerWorkerRemoteTaskExecutionPlanSchemaV12,
+  nativeTaskTemplateSchema, type NativeTaskTemplate } from "../src/web/v1/task-execution-planner";
 import { taskPlanningTemplateChoiceSchema } from "../src/web/v1/task-planning-wire";
 import { binding, instant } from "./hermes-native-fixture";
 import { at } from "./native-task-fixture";
@@ -39,4 +40,48 @@ test("a remote-compatible text-review plan is durable but does not configure or 
   assert.equal(planned.receipt.startsWork, false);
   assert.equal(planned.receipt.grantsExecutionAuthority, false);
   assert.equal(await planner.readConfiguredLocalRoute(f.identity, binding.projectId, planned.receipt.jobId), "not_configured");
+});
+
+test("a remote correction schema preserves the source adapter and profile while naming a distinct proposed job", async t => {
+  const f = await ownerReviewFixture(); t.after(f.close);
+  const authority: NativeTaskTemplate["authority"] = { projectId: binding.projectId, allowedExecutor: "executor:remote",
+    allowedOperations: [CONTROLLER_WORKER_REMOTE_START_OPERATION_V1], credentialRefs: ["credential:remote"], filesystemRoots: [],
+    networkPolicy: "none", allowedNetworkDestinations: [], effectPolicy: "approval_required", maxRisk: "low",
+    maxDurationSeconds: 60, maxConcurrentEffects: 1, expiresAt: at(300_000), digest: "" };
+  authority.digest = computeAuthorityDigest(authority);
+  const template: NativeTaskTemplate = { id: "template:controller-worker-remote-revision", adapter: CONTROLLER_WORKER_REMOTE_ADAPTER_V1,
+    authority, instructions: "Return bounded revision evidence only.", connectorProfileDigest: sha256Digest("remote-revision-profile"),
+    acceptanceProfileId: f.profile.id, acceptanceProfileDigest: sha256Digest(f.profile) };
+  const planner = new TaskExecutionPlanner(f.db, f.scope, { template, integrityKey: new Uint8Array(32).fill(98),
+    reviewIntegrityKey: f.reviewKey, checkpoints: f.checkpoints }, () => instant + 7_000);
+  const source = await f.tasks.propose(f.identity, binding.projectId, taskDraft, "remote-revision-source");
+  const planned = await planner.plan(f.identity, binding.projectId, source.receipt.jobId, sha256Digest(taskDraft));
+  const saved = await planner.read(planned.receipt.jobId);
+  assert.ok(saved?.schema === "control-room.task-execution-plan/v11");
+  if (!saved || saved.schema !== "control-room.task-execution-plan/v11") throw new Error("missing remote source plan");
+  const feedback = "Please include the missing bounded evidence.";
+  const revision = controllerWorkerRemoteTaskExecutionPlanSchemaV12.parse({ ...saved,
+    schema: "control-room.task-execution-plan/v12", sourceJobId: saved.job.id,
+    sourceDigest: sha256Digest("accepted-remote-result-revision-context"),
+    input: { prompt: "A distinct correction task.", instructions: saved.input.instructions },
+    revision: { rootSubjectId: "subject:remote", rootTargetId: "target:remote-root", fromJobId: saved.job.id,
+      fromRunId: "run:remote-accepted", fromTargetId: "target:remote", fromTargetDigest: sha256Digest("remote-target"),
+      fromContentHash: sha256Digest("accepted remote result"), reviewId: "review:remote-changes", reviewDigest: sha256Digest("changes requested"),
+      findingIds: ["finding:remote-evidence"], feedbackDigest: sha256Digest(feedback), sourcePlanDigest: sha256Digest(saved),
+      revisionNumber: 1, originalPrompt: saved.input.prompt },
+    request: { ...saved.request, id: "request:remote-correction", objective: "A distinct correction task.", idempotencyKey: "revision:remote-correction" },
+    workflow: { ...saved.workflow, id: "workflow:remote-correction", requestId: "request:remote-correction",
+      definitionVersion: "controller-worker-remote-task-revision-plan/v1", jobIds: ["job:remote-correction"] },
+    job: { ...saved.job, id: "job:remote-correction", workflowId: "workflow:remote-correction",
+      inputDigest: sha256Digest({ prompt: "A distinct correction task.", instructions: saved.input.instructions }) },
+  });
+  assert.notEqual(revision.job.id, saved.job.id);
+  assert.equal(revision.job.state, "proposed");
+  assert.equal(revision.adapter, saved.adapter);
+  assert.equal(revision.connectorProfileDigest, saved.connectorProfileDigest);
+  assert.equal(revision.acceptanceProfileDigest, saved.acceptanceProfileDigest);
+  assert.equal(revision.job.jobType, CONTROLLER_WORKER_REMOTE_JOB_TYPE_V1);
+  assert.equal(revision.job.requiredCapability, CONTROLLER_WORKER_REMOTE_CAPABILITY_V1);
+  assert.throws(() => controllerWorkerRemoteTaskExecutionPlanSchemaV12.parse({ ...revision, adapter: "connector:claude-code-local-v1" }), /controller-worker-remote-v1/);
+  assert.throws(() => controllerWorkerRemoteTaskExecutionPlanSchemaV12.parse({ ...revision, connectorProfileDigest: "unbound-profile" }), /Invalid/);
 });

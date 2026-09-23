@@ -264,9 +264,10 @@ export class TaskAssignmentCoordinator {
     return Object.freeze({ kind: "hermes" as const, ...target, startsWork: false as const });
   }
   /**
-   * Canonically discriminates the additive v11 remote route without widening
+   * Canonically discriminates the additive remote route without widening
    * the legacy `ManagedNativeSessions` union. Non-remote queue locators return
-   * undefined; a v11 locator is fully revalidated before it becomes a target.
+   * undefined; a v11 source or v12 correction locator is fully revalidated
+   * before it becomes a target.
    */
   async locateQueuedRemoteControllerWorkerDelivery(input: NativeTaskSubmissionReference, signal: AbortSignal): Promise<RemoteControllerWorkerQueueDeliveryTarget | undefined> {
     const ref = nativeTaskSubmissionReferenceSchema.parse(input);
@@ -281,13 +282,13 @@ export class TaskAssignmentCoordinator {
       if (!plan || plan.tenantId !== ref.tenantId || plan.projectId !== ref.projectId
         || job.inputDigest !== ref.inputDigest || signal.aborted) conflict();
       return job.jobType === CONTROLLER_WORKER_REMOTE_JOB_TYPE_V1
-        && plan.schema === "control-room.task-execution-plan/v11";
+        && (plan.schema === "control-room.task-execution-plan/v11" || plan.schema === "control-room.task-execution-plan/v12");
     });
     if (!remote) return undefined;
     return this.locateApprovedRemoteControllerWorkerQueueDelivery(ref, signal);
   }
   /**
-   * Rebuilds only the canonical locator for a v11 remote task.  The locator is
+   * Rebuilds only the canonical locator for a remote source or correction task. The locator is
    * deliberately insufficient to send: the protected installation materializer
    * must re-read the plan, lease and enrolled target before it can use the
    * authenticated node session.
@@ -303,7 +304,7 @@ export class TaskAssignmentCoordinator {
       const job = await this.job(tx, ref.projectId, ref.jobId);
       const plan = await this.planner.readInSession(tx, ref.jobId);
       const stored = await this.stored(tx, job);
-      if (!plan || !stored || plan.schema !== "control-room.task-execution-plan/v11"
+      if (!plan || !stored || (plan.schema !== "control-room.task-execution-plan/v11" && plan.schema !== "control-room.task-execution-plan/v12")
         || plan.tenantId !== ref.tenantId || plan.projectId !== ref.projectId
         || job.inputDigest !== ref.inputDigest || job.jobType !== CONTROLLER_WORKER_REMOTE_JOB_TYPE_V1
         || job.requiredCapability !== CONTROLLER_WORKER_REMOTE_CAPABILITY_V1
