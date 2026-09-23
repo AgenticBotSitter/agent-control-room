@@ -80,6 +80,12 @@ import { privateArtifactStorageNamespaceDigestV1 } from "../src/web/v1/private-a
 import { privateAgentTaskCompositionFixture } from "./helpers/private-agent-task-composition";
 import { isClaudeCodePrivateInstalledDeliverCapabilityV1 } from
   "../src/web/v1/claude-code-private-installation-composition";
+import { composePrivateMacosClaudeCodePostInstallV1,
+  PRIVATE_MACOS_CLAUDE_CODE_POST_INSTALL_BRIDGE_V1 } from
+  "../src/node-bridge/private-macos-claude-code-post-install-bridge";
+import { createPrivateMacosClaudeCodeInstalledPortComposerV1,
+  PRIVATE_MACOS_CLAUDE_CODE_INSTALLED_PORT_COMPOSER_V1 } from
+  "../src/node-bridge/private-macos-claude-code-installed-port-composer";
 
 const d = (value: unknown) => sha256Digest(value);
 
@@ -1224,6 +1230,79 @@ async function additiveClaudePackage(f: Awaited<ReturnType<typeof fixture>>, opt
       reviewCheckpoints: { async read() { return undefined; }, async advance() {}, async initialize() {} },
       assertCurrentProcess() {}, assertCurrentDelivery() {} } } };
 }
+
+function installedClaudePortComposerFor(tuple: Awaited<ReturnType<typeof additiveClaudePackage>>) {
+  const processConfiguration = tuple.claudePostInstall.compositionInput.installedProcessConfiguration;
+  const report = tuple.claudePostInstall.admissionInput.qualificationReport;
+  const sidecar = { schema: "control-room.macos-claude-code-process-native-sidecar/v1", verified: true as const,
+    releaseVersion: "1.2.3", releaseSha256: d("claude-bridge-release"), platform: "darwin" as const,
+    architecture: "arm64" as const, minimumMacos: "13.0", protocol: "ACRCCP1",
+    sidecarManifestSha256: d("claude-bridge-sidecar"), archiveSha256: d("claude-bridge-archive"),
+    artifactManifestSha256: d("claude-bridge-artifact"), executableSha256: d("claude-bridge-helper"),
+    sourceSha256: "a".repeat(64), toolchain: {}, files: [], compiles: false as const,
+    downloads: false as const, installs: false as const };
+  return createPrivateMacosClaudeCodeInstalledPortComposerV1({
+    schema: PRIVATE_MACOS_CLAUDE_CODE_INSTALLED_PORT_COMPOSER_V1,
+    manifestReleaseBinding: { releaseVersion: sidecar.releaseVersion, releaseSha256: sidecar.releaseSha256,
+      platform: sidecar.platform, architecture: sidecar.architecture,
+      sidecarManifestSha256: sidecar.sidecarManifestSha256, archiveSha256: sidecar.archiveSha256,
+      artifactManifestSha256: sidecar.artifactManifestSha256, executableSha256: sidecar.executableSha256 },
+    verifiedSidecar: sidecar, installedProcessConfiguration: processConfiguration,
+    processPortConfiguration: { schema: "control-room.macos-claude-code-process-port/v1",
+      helperPath: "/private/fixture/claude-helper", helperSha256: sidecar.executableSha256,
+      executablePath: processConfiguration.process.executablePath, executableSha256: processConfiguration.executableSha256,
+      executableIdentity: { device: "1", inode: "2" }, workingDirectory: processConfiguration.process.workingDirectory,
+      workingDirectoryIdentity: { device: "1", inode: "3" },
+      workingDirectoryBindingDigest: processConfiguration.workingDirectoryBindingDigest,
+      qualificationDigest: processConfiguration.qualificationDigest, ownerUid: process.getuid?.() ?? 501,
+      holdDeadlineMs: 100, runDeadlineMs: 100, maximumInputBytes: 1024, maximumOutputBytes: 1024 },
+    qualificationReport: report });
+}
+
+test("verified installed Claude ports enter the existing additive post-install tuple once without replacing Hermes or invoking native work", async t => {
+  const f = await fixture(t), claude = await additiveClaudePackage(f), effects: string[] = [];
+  const originalPorts = claude.claudePostInstall.compositionInput.ports;
+  const composed = installedClaudePortComposerFor(claude);
+  const bridged = composePrivateMacosClaudeCodePostInstallV1({
+    schema: PRIVATE_MACOS_CLAUDE_CODE_POST_INSTALL_BRIDGE_V1,
+    claudePostInstall: claude.claudePostInstall, capability: composed.capability });
+  assert.notEqual(bridged.compositionInput.ports, originalPorts, "the checked native ports replace the fixture placeholder");
+  assert.equal(typeof bridged.compositionInput.ports.verifyInstallation, "function");
+  assert.equal(typeof bridged.compositionInput.ports.launch, "function");
+  assert.doesNotMatch(JSON.stringify(bridged), /installed-port-capability|private-macos-claude-code-installed-port/i,
+    "the opaque one-use capability is not serialized into the post-install tuple");
+  assert.throws(() => composePrivateMacosClaudeCodePostInstallV1({
+    schema: PRIVATE_MACOS_CLAUDE_CODE_POST_INSTALL_BRIDGE_V1,
+    claudePostInstall: claude.claudePostInstall, capability: composed.capability }),
+  /private_macos_claude_code_post_install_bridge_refused/u, "the capability is burned before any installation assembly");
+
+  const driftedComposer = installedClaudePortComposerFor(claude);
+  const drifted = { ...claude.claudePostInstall, compositionInput: {
+    ...claude.claudePostInstall.compositionInput,
+    installedProcessConfiguration: { ...claude.claudePostInstall.compositionInput.installedProcessConfiguration,
+      process: { ...claude.claudePostInstall.compositionInput.installedProcessConfiguration.process,
+        args: ["--resume"] } } } };
+  assert.throws(() => composePrivateMacosClaudeCodePostInstallV1({
+    schema: PRIVATE_MACOS_CLAUDE_CODE_POST_INSTALL_BRIDGE_V1,
+    claudePostInstall: drifted, capability: driftedComposer.capability }),
+  /private_macos_claude_code_post_install_bridge_refused/u, "tuple policy drift burns rather than retargets a checked port");
+  assert.throws(() => composePrivateMacosClaudeCodePostInstallV1({
+    schema: PRIVATE_MACOS_CLAUDE_CODE_POST_INSTALL_BRIDGE_V1,
+    claudePostInstall: claude.claudePostInstall, capability: driftedComposer.capability }),
+  /private_macos_claude_code_post_install_bridge_refused/u, "a drift refusal cannot be retried with the spent capability");
+
+  const assembly = createPrivateLocalInstallationRuntimeAssemblyV1({ runnerInput: f.runnerInput,
+    operatorSettings: { ...f.settings, features: { ...f.settings.features, claudeCodeLocal: true } },
+    operatorTrustedInputs: f.trusted, claudePostInstall: bridged },
+  { journal: f.journal, startupDependencies: startupBoundaryDependencies(effects) });
+  assert.equal(assembly.status, "ready");
+  if (assembly.status !== "ready") return;
+  const prepared = await assembly.prepare();
+  assert.equal(prepared.configuration.coordinator.hermes021Local, f.delivery,
+    "the existing Hermes route remains mandatory and exact");
+  assert.equal(isClaudeCodePrivateInstalledDeliverCapabilityV1(prepared.configuration.coordinator.claudeCodeLocal), true);
+  assert.deepEqual(effects, [], "bridge and preparation do not verify, launch, or otherwise invoke the native port");
+});
 
 test("additive Claude is reread, branded and carried through operator assembly to final startup while Hermes remains", async t => {
   const f = await fixture(t), sequence: string[] = [];

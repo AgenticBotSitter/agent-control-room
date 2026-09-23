@@ -44,7 +44,14 @@ type ReleaseBinding = Readonly<{
   executableSha256: string;
 }>;
 
-const privatePorts = new WeakMap<object, PrivateClaudeCodeInstalledProcessHostPortsV1>();
+type BoundPorts = Readonly<{
+  ports: PrivateClaudeCodeInstalledProcessHostPortsV1;
+  executableSha256: string;
+  workingDirectoryBindingDigest: string;
+  qualificationDigest: string;
+}>;
+
+const privatePorts = new WeakMap<object, BoundPorts>();
 
 function exact(value: unknown, keys: readonly string[]): Readonly<Record<string, unknown>> {
   if (!value || typeof value !== "object" || Array.isArray(value) || types.isProxy(value)
@@ -149,7 +156,9 @@ export function createPrivateMacosClaudeCodeInstalledPortComposerV1(value: unkno
       || report.workingDirectoryBindingDigest !== process.workingDirectoryBindingDigest) return refused();
     const ports = createPrivateMacosClaudeCodeInstalledProcessHostPortsV1(portConfiguration);
     const capability = Object.freeze({ schema: PRIVATE_MACOS_CLAUDE_CODE_INSTALLED_PORT_CAPABILITY_V1 });
-    privatePorts.set(capability, ports);
+    privatePorts.set(capability, Object.freeze({ ports, executableSha256: process.executableSha256,
+      workingDirectoryBindingDigest: process.workingDirectoryBindingDigest,
+      qualificationDigest: qualification.evidenceDigest }));
     return Object.freeze({ schema: PRIVATE_MACOS_CLAUDE_CODE_INSTALLED_PORT_COMPOSER_V1,
       status: "installed_port_bound" as const, capability,
       nativeEffects: false as const, launchesClaude: false as const, stagesSidecar: false as const,
@@ -166,7 +175,33 @@ export function consumePrivateMacosClaudeCodeInstalledProcessHostPortsV1(
   capability: unknown,
 ): PrivateClaudeCodeInstalledProcessHostPortsV1 {
   if (!capability || typeof capability !== "object" || types.isProxy(capability)) return refused();
-  const ports = privatePorts.get(capability);
-  if (!ports || !privatePorts.delete(capability)) return refused();
-  return ports;
+  const bound = privatePorts.get(capability);
+  if (!bound || !privatePorts.delete(capability)) return refused();
+  return bound.ports;
+}
+
+/**
+ * The post-install bridge must prove that its existing tuple still describes
+ * the same fixed executable, workspace and owner-attended qualification that
+ * created the opaque capability.  A mismatch burns the capability: retrying
+ * through a later tuple is not a safe recovery path.
+ */
+export function consumePrivateMacosClaudeCodeInstalledProcessHostPortsForPostInstallV1(
+  capability: unknown,
+  value: unknown,
+): PrivateClaudeCodeInstalledProcessHostPortsV1 {
+  if (!capability || typeof capability !== "object" || types.isProxy(capability)) return refused();
+  const bound = privatePorts.get(capability);
+  if (!bound || !privatePorts.delete(capability)) return refused();
+  try {
+    const input = exact(value, ["installedProcessConfiguration", "qualificationReport"]);
+    const process = captureClaudeCodeTextReviewInvocationConfigurationV1(input.installedProcessConfiguration as never);
+    const report = claudeCodeTextReviewQualificationReportSchemaV1.parse(input.qualificationReport);
+    const qualification = createClaudeCodeTextReviewQualificationEvidenceV1(report);
+    if (process.executableSha256 !== bound.executableSha256
+      || process.workingDirectoryBindingDigest !== bound.workingDirectoryBindingDigest
+      || process.qualificationDigest !== bound.qualificationDigest
+      || qualification.evidenceDigest !== bound.qualificationDigest) return refused();
+    return bound.ports;
+  } catch { return refused(); }
 }
