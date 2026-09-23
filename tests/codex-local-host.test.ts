@@ -4,6 +4,8 @@ import test from 'node:test';
 import { createCodexLocalHostV1 } from '../src/harness/codex-v1/local-host';
 import type { CodexLocalInitialHostInputV1, CodexLocalRecoverHostInputV1 } from '../src/harness/codex-v1/local-host';
 import { createCodexWorkerCompositionV1 } from '../src/node-bridge/codex-worker-composition';
+import { createPrivateRemoteCodexNodeEntryV1, PRIVATE_REMOTE_CODEX_NODE_ENTRY_V1 }
+  from '../src/node-bridge/private-remote-codex-node-entry';
 import { createCodexPhysicalQualificationReceiptBodyV1 } from '../src/harness/codex-v1/result-publication-contract';
 import { buildCodexTaskActivationV1, CODEX_ACTIVATION_FEATURE } from '../src/harness/codex-v1/activation-contract';
 import { CODEX_START_OPERATION, codexTaskDispatchBodySchemaV1,
@@ -268,7 +270,8 @@ test('remote worker composes journaled activation, one native start, recovery an
   let sends = 0;
   const configuration: Parameters<typeof createCodexWorkerCompositionV1>[0] = { initial: initial.input, recovery: recovery.input,
     binding: { tenantId: 'tenant:test', nodeId: 'node:test', enrollmentDigest: sha256Digest('enrollment'),
-      connectorProfileDigest: sha256Digest('profile'), activationFrameDigest: sha256Digest(f.activation) },
+      connectorProfileDigest: sha256Digest('profile'), sessionIdentityDigest: sha256Digest('session:codex-host'),
+      activationFrameDigest: sha256Digest(f.activation) },
     assertSessionCurrent() {}, result: { ...workerQualification(), bridgeEvidence: f.journal,
       bridge: { async sendCodexResultReturn(queueId, body) {
         sends++;
@@ -296,6 +299,61 @@ test('remote worker composes journaled activation, one native start, recovery an
   await worker.close();
 });
 
+test('private remote Codex entry captures only protected matching bindings without starting work', async t => {
+  const f = await portableActivation(), starts = new SqliteCodexStartJournalV1(':memory:', { testOnlyAllowEphemeral: true });
+  t.after(() => { starts.close(); f.journal.close(); });
+  const initial = startHost(f, starts), recovery = recoverHost(starts, completedResult([]));
+  let identityChecks = 0, compositionChecks = 0, sends = 0;
+  const configuration: Parameters<typeof createCodexWorkerCompositionV1>[0] = {
+    initial: initial.input, recovery: recovery.input,
+    binding: { tenantId: 'tenant:test', nodeId: 'node:test', enrollmentDigest: sha256Digest('enrollment'),
+      connectorProfileDigest: sha256Digest('profile'), sessionIdentityDigest: sha256Digest('session:private-node'),
+      activationFrameDigest: sha256Digest(f.activation) },
+    assertSessionCurrent() { compositionChecks++; },
+    result: { ...workerQualification(), bridgeEvidence: f.journal,
+      bridge: { async sendCodexResultReturn() { sends++; throw new Error('must not send'); } } },
+  };
+  const entry = createPrivateRemoteCodexNodeEntryV1({
+    identity: { tenantId: 'tenant:test', nodeId: 'node:test', enrollmentDigest: sha256Digest('enrollment'),
+      connectorProfileDigest: sha256Digest('profile'), sessionIdentityDigest: sha256Digest('session:private-node'),
+      assertCurrent() { identityChecks++; } },
+    composition: configuration,
+  });
+  assert.equal(entry.schema, PRIVATE_REMOTE_CODEX_NODE_ENTRY_V1);
+  assert.equal(entry.startsWork, false); assert.equal(entry.grantsExecutionAuthority, false);
+  assert.deepEqual(Object.keys(entry).sort(), ['close', 'grantsExecutionAuthority', 'recoverAndReturn', 'schema', 'start', 'startsWork']);
+  assert.equal(initial.opened(), 0); assert.equal(recovery.opened(), 0); assert.equal(sends, 0);
+  assert.equal(identityChecks, 0); assert.equal(compositionChecks, 0,
+    'construction binds the session fence but does not invoke it');
+  await entry.close();
+});
+
+test('private remote Codex entry rejects browser-shaped or mismatched protected input before work', async t => {
+  const f = await portableActivation(), starts = new SqliteCodexStartJournalV1(':memory:', { testOnlyAllowEphemeral: true });
+  t.after(() => { starts.close(); f.journal.close(); });
+  const initial = startHost(f, starts), recovery = recoverHost(starts, completedResult([]));
+  let checks = 0;
+  const configuration: Parameters<typeof createCodexWorkerCompositionV1>[0] = {
+    initial: initial.input, recovery: recovery.input,
+    binding: { tenantId: 'tenant:test', nodeId: 'node:test', enrollmentDigest: sha256Digest('enrollment'),
+      connectorProfileDigest: sha256Digest('profile'), sessionIdentityDigest: sha256Digest('session:private-node'),
+      activationFrameDigest: sha256Digest(f.activation) },
+    assertSessionCurrent() { checks++; },
+    result: { ...workerQualification(), bridgeEvidence: f.journal,
+      bridge: { async sendCodexResultReturn() { throw new Error('must not send'); } } },
+  };
+  const identity = { tenantId: 'tenant:test', nodeId: 'node:test', enrollmentDigest: sha256Digest('enrollment'),
+    connectorProfileDigest: sha256Digest('profile'), sessionIdentityDigest: sha256Digest('session:private-node'),
+    assertCurrent() { checks++; } };
+  assert.throws(() => createPrivateRemoteCodexNodeEntryV1({ identity, composition: {
+    ...configuration, binding: { ...configuration.binding, connectorProfileDigest: sha256Digest('other-profile') },
+  } }), /private_remote_codex_node_entry_unavailable/);
+  assert.throws(() => createPrivateRemoteCodexNodeEntryV1({ identity, composition: configuration,
+    browserSelectedExecutable: '/not/allowed',
+  }), /private_remote_codex_node_entry_unavailable/);
+  assert.equal(initial.opened(), 0); assert.equal(recovery.opened(), 0); assert.equal(checks, 0);
+});
+
 test('remote worker rejects missing activation, revoked session and changed binding before native start', async t => {
   for (const failure of ['missing-activation', 'revoked', 'wrong-node', 'wrong-enrollment'] as const) {
     await t.test(failure, async t => {
@@ -309,7 +367,8 @@ test('remote worker rejects missing activation, revoked session and changed bind
       const worker = createCodexWorkerCompositionV1({ initial: initial.input, recovery: recovery.input,
         binding: { tenantId: 'tenant:test', nodeId: failure === 'wrong-node' ? 'node:other' : 'node:test',
           enrollmentDigest: sha256Digest(failure === 'wrong-enrollment' ? 'other' : 'enrollment'),
-          connectorProfileDigest: sha256Digest('profile'), activationFrameDigest: sha256Digest(f.activation) },
+          connectorProfileDigest: sha256Digest('profile'), sessionIdentityDigest: sha256Digest('session:codex-host'),
+          activationFrameDigest: sha256Digest(f.activation) },
         assertSessionCurrent() { if (failure === 'revoked') throw new Error('revoked'); },
         result: { ...workerQualification(), bridgeEvidence: f.journal,
           bridge: { async sendCodexResultReturn() { throw new Error('must not send'); } } },
