@@ -40,7 +40,7 @@ test("compiled route parameters decode exactly once before reaching browser clie
 
 test("home gives honest navigation to existing private workspace surfaces", () => {
   const html = renderToStaticMarkup(createElement(Home));
-  for (const href of ["/projects", "/workers", "/needs-me", "/settings"]) assert.match(html, new RegExp(`href="${href}"`));
+  for (const href of ["/projects", "/workers", "/setup", "/needs-me", "/settings"]) assert.match(html, new RegExp(`href="${href}"`));
   assert.doesNotMatch(html, /href="\/ideas"/);
   assert.match(html, /aria-controls="private-workspace-navigation"/);
   assert.match(html, /<nav id="private-workspace-navigation" class="private-navigation"/);

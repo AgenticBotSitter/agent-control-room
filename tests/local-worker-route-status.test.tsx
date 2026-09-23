@@ -13,6 +13,7 @@ test("local worker status is explicit about missing or unavailable saved setup",
   assert.match(unavailable, /does not guess/);
   const absent = renderToStaticMarkup(createElement(LocalWorkerRouteStatus, { state: "available" }));
   assert.match(absent, /Not configured/);
+  for (const html of [loading, unavailable, absent]) assert.match(html, /href="\/setup"/);
   assert.doesNotMatch(`${loading}${unavailable}${absent}`, /<button|<form|<input|running now/i);
 });
 
@@ -29,6 +30,7 @@ test("local worker status maps proof states without claiming a running worker", 
     assert.match(html, new RegExp(label));
   assert.match(html, /never called running here without a current task record/);
   assert.match(html, /This panel has no current route-bound task observation/);
+  assert.match(html, /href="\/setup"/);
   assert.doesNotMatch(html, /worker:|sha256:|token|password|provider|model|<button|<form|<input/);
   const enablement = renderToStaticMarkup(createElement(LocalWorkerRouteStatus, { state: "available", setup: {
     localCapabilities: [{ ...localHarnessCapabilitiesV1[0]!, state: "owner_enablement_required" as const }],

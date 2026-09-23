@@ -1,5 +1,6 @@
 import type { InstallationSetupViewV1 } from "../../src/harness/v1/installation-setup-wire";
 import type { InstallationPlanViewV1 } from "../../src/installer/v1/installation-plan-view";
+import { LocalAgentCapabilityCard } from "./installation-topology-summary";
 
 type SetupStatus = "loading" | "available" | "unavailable";
 type StageState = "guide" | "saved" | "recorded" | "remaining" | "attention";
@@ -202,6 +203,14 @@ export function LocalInstallationWizard({ setup, status, installationPlan, insta
     </section>
 
     <RecoveryGuidance plan={installationPlan} status={installationPlanStatus} restart={installationPlanRestart} />
+
+    {setup?.mode === "this_computer" && setup.localCapabilities && <section className="private-note" aria-labelledby="local-route-guidance-title">
+      <h3 id="local-route-guidance-title">Local worker route guidance</h3>
+      <p>These are saved setup and proof descriptions for this installation, not a live worker check. Each route remains separately qualified and enabled.</p>
+      <ul className="private-local-agent-list">{setup.localCapabilities
+        .filter(agent => agent.id === "hermes" || agent.id === "claude")
+        .map(agent => <LocalAgentCapabilityCard key={agent.id} agent={agent} />)}</ul>
+    </section>}
 
     <section className="private-note" aria-labelledby="remaining-proof-title">
       <h3 id="remaining-proof-title">Remaining categories visible in saved setup status</h3>

@@ -67,13 +67,17 @@ test("first-run wizard labels the unfinished release journey as a source-only pr
 
 test("first-run wizard names remaining redacted proof categories and never claims an agent is live", () => {
   const html = renderToStaticMarkup(createElement(LocalInstallationWizard, { setup: localSetup(), status: "available" }));
+  assert.match(html, /Local worker route guidance/);
   assert.match(html, /Remaining categories visible in saved setup status/);
   assert.match(html, /Verified backup and disposable restore/);
   assert.match(html, /Owner-attended local worker qualification/);
   assert.match(html, /Hermes Agent: Remaining local setup proof/);
   assert.match(html, /Claude Code: Installed-process and permission qualification/);
   assert.match(html, /Codex: macOS process and private-state custody qualification/);
+  for (const text of ["Hermes Agent", "Claude Code", "Safe now", "Source-only", "First useful work after setup", "What that category requires"])
+    assert.match(html, new RegExp(text));
   assert.doesNotMatch(html, /worker:private-wizard|sha256:|running now|connected now/);
+  assert.doesNotMatch(html, /<button|<form|<input|<select|<textarea/);
 });
 
 test("first-run wizard requires both local worker proofs before recording connection", () => {

@@ -35,7 +35,7 @@ const localServiceProofLabels = {
   upgrade_and_rollback_procedure: "Safe update and rollback handling is prepared",
 } as const;
 
-function LocalAgentCapabilityCard({ agent }: { agent: LocalHarnessCapabilityV1 }) {
+export function LocalAgentCapabilityCard({ agent }: { agent: LocalHarnessCapabilityV1 }) {
   const operations = [
     ["Send a task", agent.operations.submit],
     ["Read a result", agent.operations.result],
