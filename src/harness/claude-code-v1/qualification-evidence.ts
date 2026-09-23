@@ -13,6 +13,8 @@ export const CLAUDE_CODE_TEXT_REVIEW_QUALIFICATION_REPORT_V1 =
   "control-room.claude-code-text-review-qualification-report/v1" as const;
 export const CLAUDE_CODE_TEXT_REVIEW_QUALIFICATION_EVIDENCE_V1 =
   "control-room.claude-code-text-review-qualification-evidence/v1" as const;
+export const CLAUDE_CODE_TEXT_REVIEW_QUALIFICATION_FAILURE_EVIDENCE_V1 =
+  "control-room.claude-code-text-review-qualification-failure-evidence/v1" as const;
 
 const digest = z.string().regex(/^sha256:[a-f0-9]{64}$/);
 const count = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
@@ -48,6 +50,26 @@ const successfulReport = claudeCodeTextReviewQualificationReportSchemaV1.superRe
   }
 });
 
+const failedReport = claudeCodeTextReviewQualificationReportSchemaV1.superRefine((value, context) => {
+  const measurements = [value.terminalResultDigest, value.inputTokens, value.outputTokens, value.totalTokens, value.durationMs];
+  const hasCompleteTerminalMeasurement = measurements.every(item => item !== null)
+    && value.totalTokens !== null && value.inputTokens !== null && value.outputTokens !== null
+    && value.totalTokens >= value.inputTokens + value.outputTokens;
+  const hasNoTerminalMeasurement = measurements.every(item => item === null);
+  if (value.qualified || value.failureReason === "none" || !value.retryRequiresFreshOwnerAuthorization
+    || (value.terminalResultObserved ? !hasCompleteTerminalMeasurement : !hasNoTerminalMeasurement)) {
+    context.addIssue({ code: "custom", message: "Claude text-review qualification failure is incoherent" });
+  }
+});
+
+export type ClaudeCodeTextReviewQualificationFailureEvidenceV1 = Readonly<{
+  schema: typeof CLAUDE_CODE_TEXT_REVIEW_QUALIFICATION_FAILURE_EVIDENCE_V1;
+  state: "failed";
+  evidenceDigest: string;
+  grantsExecutionAuthority: false;
+  retryRequiresFreshOwnerAuthorization: true;
+}>;
+
 /**
  * Converts only a successful, non-authorizing sanitized report into the
  * private installation fingerprint consumed by the already-existing process
@@ -57,4 +79,19 @@ export function createClaudeCodeTextReviewQualificationEvidenceV1(value: unknown
   const report = successfulReport.parse(value);
   return Object.freeze({ schema: CLAUDE_CODE_TEXT_REVIEW_QUALIFICATION_EVIDENCE_V1,
     evidenceDigest: sha256Digest({ schema: CLAUDE_CODE_TEXT_REVIEW_QUALIFICATION_EVIDENCE_V1, report }) });
+}
+
+/**
+ * Retains an owner-attended qualification failure without exporting its input,
+ * output, executable, login state, or failure details. This is refusal-only:
+ * it cannot establish readiness and a later attempt still needs fresh owner
+ * authorization.
+ */
+export function createClaudeCodeTextReviewQualificationFailureEvidenceV1(value: unknown): ClaudeCodeTextReviewQualificationFailureEvidenceV1 {
+  const report = failedReport.parse(value);
+  return Object.freeze({ schema: CLAUDE_CODE_TEXT_REVIEW_QUALIFICATION_FAILURE_EVIDENCE_V1,
+    state: "failed" as const,
+    evidenceDigest: sha256Digest({ schema: CLAUDE_CODE_TEXT_REVIEW_QUALIFICATION_FAILURE_EVIDENCE_V1, report }),
+    grantsExecutionAuthority: false as const,
+    retryRequiresFreshOwnerAuthorization: true as const });
 }

@@ -36,8 +36,11 @@ export function createClaudeCodeLocalProcessReadinessV1(input: Omit<ClaudeCodeLo
   const planDigest = digest.parse(input.planDigest);
   const proofs = z.array(item).max(3).parse(input.proofs);
   if (new Set(proofs.map(value => value.proof)).size !== proofs.length) throw new Error("claude_code_local_process_proof_duplicated");
-  if (proofs.some(value => value.state === "passed" && !value.evidenceDigest)) throw new Error("claude_code_local_process_pass_without_evidence");
-  if (proofs.some(value => value.state !== "passed" && value.evidenceDigest !== undefined)) throw new Error("claude_code_local_process_unverified_evidence");
+  if (proofs.some(value => (value.state === "passed" || value.state === "failed") && !value.evidenceDigest)) {
+    throw new Error("claude_code_local_process_settled_proof_without_evidence");
+  }
+  if (proofs.some(value => (value.state === "not_started" || value.state === "unavailable")
+    && value.evidenceDigest !== undefined)) throw new Error("claude_code_local_process_unverified_evidence");
   const material = { schema: CLAUDE_CODE_LOCAL_PROCESS_READINESS_V1, planDigest,
     proofs: [...proofs].sort((left, right) => left.proof.localeCompare(right.proof)) };
   return freeze({ ...material, readinessDigest: sha256Digest(material) });
