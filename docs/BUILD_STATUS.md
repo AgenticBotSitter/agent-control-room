@@ -500,6 +500,24 @@ used here.
 
 ## Current build block
 
+### Fresh source verification (2026-09-23)
+
+The current local-Hermes branch was rechecked on macOS after its verified VPS
+package preparation. The native installation-journal safety lane passed **43
+tests**; one unsupported-host check was intentionally skipped. It covers the
+small helper that safely remembers setup progress: protected-directory
+substitution, links, access-control changes, interrupted helper processes,
+deadlines, exact publication, recovery, and cleanup all fail safely rather
+than guessing. The helper was compiled and exercised only in disposable
+temporary folders; it was not installed, and no owner data was changed.
+
+The shared local-and-remote topology lane also passed **64 tests**. It proves
+that local and remote workers use the same task, result, review and correction
+path; that a lost reply or disconnect is not silently repeated; and that wrong,
+revoked, or incompatible workers are refused. This is source and disposable
+test evidence, not a live worker, database, service, or multi-machine
+deployment.
+
 **This computer** is being completed as one installation choice of the same
 Agent Control Room product as **Several computers**. Both choices retain one
 PostgreSQL authority database, the existing pg-boss scheduler, and one
