@@ -22,6 +22,8 @@ import { durableResultReceiptSchemaV1 } from "../src/artifacts/v1/durable-result
 import { durableResultReviewPlanSchemaV1, durableReviewTargetV1 } from "../src/completion-gate/v1/durable-result-review-plan";
 import { DurableResultReviewSubmissionServiceV1 } from "../src/completion-gate/v1/durable-result-review-submission";
 import { DurableLocalResultInspectionServiceV1 } from "../src/completion-gate/v1/durable-local-result-inspection";
+import { NativeResultVerificationService, type AutomaticDocumentScenario } from "../src/completion-gate/v1/native-result-verification";
+import { NativeTaskCompletionService } from "../src/persistence/native-task-completion";
 import type { ControllerWorkerDeliveryPortV1, ControllerWorkerDeliveryV1 } from "../src/harness/v1/controller-worker-delivery";
 import { ownerReviewFixture } from "./helpers/web-owner-review";
 import { binding, enrollment, instant } from "./hermes-native-fixture";
@@ -53,7 +55,7 @@ function acceptedClaudeReceipt(packet: ControllerWorkerDeliveryV1, receivedAt: s
  * harness-run store, durable result publisher, and owner-review gate in one DB.
  */
 test("Hermes and Claude share one durable lifecycle without cross-route recovery effects", async t => {
-  const f = await ownerReviewFixture(); t.after(f.close);
+  const f = await ownerReviewFixture(undefined, "# Result\nA useful shared local review result.\n# Evidence\nFixture evidence is explicit.\n"); t.after(f.close);
   await f.db.query(`INSERT INTO adapter_registry(id,tenant_id,source_system,contract_version,authority_mode,status,redaction_policy_version,cursor_retention_days)
     VALUES($1,$2,'fixture','1.0.0','control_room_native','disabled','v1',30),
           ($3,$2,'fixture','1.0.0','control_room_native','disabled','v1',30)`,
@@ -114,6 +116,10 @@ test("Hermes and Claude share one durable lifecycle without cross-route recovery
   const claudeAssignments = new TaskAssignmentCoordinator(f.db, f.scope, claudePlanner, claudeRoute, () => now + 1000);
   const hermesAssigned = await hermesAssignments.assign(f.identity, binding.projectId, hermesPlan.receipt.jobId, binding.nodeId, hermesPlan.receipt.inputDigest);
   const claudeAssigned = await claudeAssignments.assign(f.identity, binding.projectId, claudePlan.receipt.jobId, binding.nodeId, claudePlan.receipt.inputDigest);
+  // A real runner starts only after the lease is recorded. Keep the disposable
+  // lifecycle timestamps coherent so the later shared capacity proof is not
+  // accidentally testing an impossible clock ordering.
+  now += 2_000;
   const references: Parameters<NativeTaskSubmission["enqueueInSession"]>[1][] = [];
   const submissions: NativeTaskSubmission = { async enqueueInSession(_tx, reference) { references.push(reference); } };
   const hermesQueue = new TaskAssignmentCoordinator(f.db, f.scope, hermesPlanner, hermesRoute, () => now + 1000,
@@ -138,7 +144,7 @@ test("Hermes and Claude share one durable lifecycle without cross-route recovery
       policy: { assertAdmitted() { throw new Error("stale policy"); } }, terminalResultStorage: f.storage }, clock: () => now });
   const createHermes = (restart = false) => createHermes021LocalSubprocessQueueExecutorV1({ tenantId: binding.tenantId, execution: hermesExecution(), results: hermesResults,
     assertAuthority: () => {}, host: { async execute(input) { hermesStarts++; if (restart) throw new Error("recovery reopened Hermes");
-      await input.onLine(JSON.stringify({ type: "result", session_id: "session:shared-hermes", exit_code: 0, text: "Hermes review result.",
+      await input.onLine(JSON.stringify({ type: "result", session_id: "session:shared-hermes", exit_code: 0, text: "# Result\nHermes shared review result.\n# Evidence\nFixture evidence is explicit.\n",
         tokens: { input: 1, output: 1, total: 2, cache_read: 0, cache_write: 0 }, duration_ms: 1, timestamp: now })); } } });
   const hermesFirst = await createHermes().deliver(hermesTarget, new AbortController().signal);
   assert.equal(hermesFirst.publication?.replayed, false);
@@ -159,7 +165,7 @@ test("Hermes and Claude share one durable lifecycle without cross-route recovery
       authority: { currentAdmissionDigest: () => preparedClaude.delivery.authorityDigest, assertCurrent: () => {} }, receiptPort: claudeReceipt,
       acquire: () => { claudeStarts++; if (restart) throw new Error("recovery reopened Claude"); const sessionId = "00000000-0000-4000-8000-000000004242";
         return new FinishedClaudeProcess([`${JSON.stringify({ type: "system", subtype: "init", session_id: sessionId })}\n`,
-          `${JSON.stringify({ type: "result", subtype: "success", is_error: false, session_id: sessionId, result: "Claude review result.", usage: {} })}\n`]).acquire(); },
+          `${JSON.stringify({ type: "result", subtype: "success", is_error: false, session_id: sessionId, result: "# Result\\nClaude shared review result.\\n# Evidence\\nFixture evidence is explicit.\\n", usage: {} })}\n`]).acquire(); },
       cleanupMs: 500, clock: () => now }, results: claudeResults, protectedStorage: f.storage, assertAuthority: () => {}, clock: () => now });
   const claudeFirst = await createClaudeCodeLocalQueueExecutorV1({ tenantId: binding.tenantId, execution: claudeExecution() })
     .deliver(claudeTarget, new AbortController().signal);
@@ -228,4 +234,31 @@ test("Hermes and Claude share one durable lifecycle without cross-route recovery
     [binding.tenantId, hermesPlan.receipt.jobId, claudePlan.receipt.jobId])).rows[0], { count: 2 });
   assert.deepEqual((await f.db.query(`SELECT count(*)::int AS count FROM control_native_review_plans WHERE tenant_id=$1 AND run_id IN ($2,$3)`,
     [binding.tenantId, hermesFirst.execution.registered.run.id, preparedClaude.delivery.identity.runId])).rows[0], { count: 2 });
+
+  // The same authenticated local inspection source drives the ordinary
+  // verification and capacity/completion services. Hermes is accepted and
+  // completes; Claude has changes requested and releases only its capacity.
+  // This proves there is no adapter-specific completion shortcut.
+  now += 1_000;
+  const scenario: AutomaticDocumentScenario = { scenarioId: "scenario:content", acceptanceProfileId: f.profile.id,
+    acceptanceProfileDigest: sha256Digest(f.profile), rules: { version: "document-structure/v1", minUtf8Bytes: 20,
+      maxUtf8Bytes: 4096, requiredHeadings: ["Result", "Evidence"], forbiddenTerms: [] } };
+  const requests = [
+    { tenantId: binding.tenantId, runId: hermesReview.run_id, targetDigest: draft(hermesReview, "accepted", "").targetDigest,
+      contentHash: durableResultReceiptSchemaV1.parse(hermesReview.receipt).contentHash },
+    { tenantId: binding.tenantId, runId: claudeReview.run_id, targetDigest: draft(claudeReview, "changes_requested", "").targetDigest,
+      contentHash: durableResultReceiptSchemaV1.parse(claudeReview.receipt).contentHash },
+  ] as const;
+  const verification = new NativeResultVerificationService(f.db, f.ownerConfig, [scenario], () => now, durableInspection);
+  const [verifiedHermes, verifiedClaude] = await Promise.all(requests.map(request => verification.verify(request, () => {})));
+  assert.equal(verifiedHermes.replayed, false); assert.equal(verifiedClaude.replayed, false);
+  const completion = new NativeTaskCompletionService(f.db, f.ownerConfig, () => now, durableInspection);
+  const completedHermes = await completion.complete(requests[0], () => {});
+  const releasedClaude = await completion.releaseCapacity(requests[1], () => {});
+  assert.equal(completedHermes.replayed, false); assert.equal(releasedClaude.replayed, false);
+  const stateRows = await Promise.all([
+    f.canonical.get(binding.tenantId, "job", hermesPlan.receipt.jobId), f.canonical.get(binding.tenantId, "attempt", hermesAssigned.receipt.attemptId), f.canonical.get(binding.tenantId, "lease", hermesAssigned.receipt.leaseId),
+    f.canonical.get(binding.tenantId, "lease", claudeAssigned.receipt.leaseId),
+  ]);
+  assert.deepEqual(stateRows.map(row => row?.state), ["succeeded", "succeeded", "released", "released"]);
 });
