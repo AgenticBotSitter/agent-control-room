@@ -11,4 +11,3 @@ export { createCodexNativeProcessAcquisitionV1 } from "./codex-native-process";
 export { createNativeHttpsConnector } from "./native-connector";
 export { openPrivateNativeConfiguration } from "./private-native-configuration";
 export { openOwnedPrivateCodexConfigurationV1, openPrivateCodexConfigurationV1 } from "./private-codex-configuration";
-export { createPrivateRemoteCodexNodeEntryV1 } from "./private-remote-codex-node-entry";

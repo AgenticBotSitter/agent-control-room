@@ -4,7 +4,6 @@ import { createCodexResultSenderV1 } from '../harness/codex-v1/result-sender';
 import { parseCodexTaskActivationV1 } from '../harness/codex-v1/activation-contract';
 import { assertSynchronousFence } from '../security/synchronous-fence';
 import { sha256Digest } from '../security/canonical-digest';
-import { digestSchema } from '../harness/v1/native-run-identifiers';
 
 type ResultConfiguration = Parameters<typeof createCodexResultSenderV1>[0];
 
@@ -19,7 +18,7 @@ export interface CodexWorkerCompositionInputV1 {
     bridgeEvidence: ResultConfiguration['bridgeEvidence'];
   };
   binding: Readonly<{ tenantId: string; nodeId: string; enrollmentDigest: string;
-    connectorProfileDigest: string; sessionIdentityDigest: string; activationFrameDigest: string }>;
+    connectorProfileDigest: string; activationFrameDigest: string }>;
   assertSessionCurrent(): void;
 }
 
@@ -34,9 +33,6 @@ export function createCodexWorkerCompositionV1(value: CodexWorkerCompositionInpu
   const sendResult = value.result.bridge.sendCodexResultReturn.bind(value.result.bridge);
   if (initial.mode !== 'initial' || recovery.mode !== 'recover' || initial.runId !== recovery.runId
     || initial.startJournal !== recovery.startJournal) unavailable();
-  try { digestSchema.parse(binding.enrollmentDigest); digestSchema.parse(binding.connectorProfileDigest);
-    digestSchema.parse(binding.sessionIdentityDigest); digestSchema.parse(binding.activationFrameDigest); }
-  catch { unavailable(); }
   let startAttempted = false, recoveryAttempted = false, closed = false;
   const fence = () => {
     if (closed) unavailable();
