@@ -3,6 +3,8 @@ import { z } from "zod";
 import { NATIVE_DELIVERY_FEATURE, NATIVE_LEASE_DELIVERY_FEATURE, nativeTaskDispatchBodySchema, matchNativeTaskDispatchReceipt, type NativeTaskDispatchBody } from "../harness/v1/native-delivery";
 import { CODEX_DELIVERY_FEATURE, codexTaskDispatchBodySchemaV1, matchCodexTaskDispatchReceiptV1,
   type CodexTaskDispatchBodyV1 } from "../harness/codex-v1/delivery-contract";
+import { CONTROLLER_WORKER_NODE_DELIVERY_FEATURE_V1, controllerWorkerNodeDispatchBodySchemaV1,
+  matchControllerWorkerNodeDispatchReceiptV1, type ControllerWorkerNodeDispatchBodyV1 } from "../harness/v1/controller-worker-node-delivery";
 import { CODEX_ACTIVATION_FEATURE, codexTaskActivationBodySchemaV1, matchCodexTaskActivationV1,
   type CodexActivationFrameV1, type CodexDispatchFrameForActivationV1,
   type CodexDispatchReceiptFrameForActivationV1, type CodexTaskActivationBodyV1 } from "../harness/codex-v1/activation-contract";
@@ -71,6 +73,7 @@ export interface CodexResultReturnIntakeV1 {
 export class ServerNodeSession {
   private readonly config: z.output<typeof configSchema>;
   private state: "new" | "negotiating" | "reconciling" | "ready" | "prepared" | "transmitting" | "sent" | "receipted" | "recovered"
+    | "controller_worker_prepared" | "controller_worker_transmitting" | "controller_worker_sent" | "controller_worker_receipted"
     | "codex_prepared" | "codex_transmitting" | "codex_sent" | "codex_receipt_persisting" | "codex_receipted"
     | "codex_activation_prepared" | "codex_activating" | "codex_activation_sent_unconfirmed"
     | "codex_result_returned" | "closed" = "new";
@@ -78,6 +81,7 @@ export class ServerNodeSession {
   private preparedLease?: SignedNodeFrame<"job.lease.grant">;
   private recoveredFrame?: SignedNodeFrame<"harness.native.dispatch">;
   private preparedCodexFrame?: SignedNodeFrame<"harness.codex.dispatch">;
+  private preparedControllerWorkerFrame?: SignedNodeFrame<"controller.worker.delivery">;
   private acceptedCodexReceiptFrame?: SignedNodeFrame<"harness.codex.dispatch.receipt">;
   private preparedCodexActivationFrame?: SignedNodeFrame<"harness.codex.dispatch.activation">;
   private preparedCodexActivationFresh?: () => void;
@@ -168,7 +172,8 @@ export class ServerNodeSession {
     // A delayed handshake ACK may follow explicit staging or receipt, and a retained
     // outbox may place progress before its final ACK. Only ACKs are allowed outside
     // reconciliation; accepting one never changes delivery or execution state.
-    if (!["reconciling", "ready", "prepared", "sent", "receipted", "recovered",
+    if (!["reconciling", "ready", "prepared", "sent", "receipted", "recovered", "controller_worker_prepared",
+      "controller_worker_transmitting", "controller_worker_sent", "controller_worker_receipted",
       "codex_prepared", "codex_transmitting", "codex_sent", "codex_receipted",
       "codex_activation_prepared", "codex_activating", "codex_activation_sent_unconfirmed",
       "codex_result_returned"].includes(this.state))
@@ -291,6 +296,94 @@ export class ServerNodeSession {
       connectionId: this.connectionId, maxFrameBytes: this.maxFrameBytes, expiresAt: new Date(this.deadline).toISOString(),
       grantsExecutionAuthority: false as const,
       assertCurrent: () => { this.now(); if (this.busy || this.state !== "ready") throw new Error("Server Codex channel is unavailable"); },
+    });
+  }
+
+  controllerWorkerDeliveryChannel(): ServerNativeChannel | undefined {
+    try { this.now(); } catch { return undefined; }
+    if (this.busy || this.state !== "ready" || !this.connectionId
+      || !this.features.includes(CONTROLLER_WORKER_NODE_DELIVERY_FEATURE_V1)) return undefined;
+    return Object.freeze({ tenantId: this.config.tenantId, nodeId: this.config.nodeId, nodeKeyId: this.config.nodeKeyId,
+      connectionId: this.connectionId, maxFrameBytes: this.maxFrameBytes, expiresAt: new Date(this.deadline).toISOString(),
+      grantsExecutionAuthority: false as const,
+      assertCurrent: () => { this.now(); if (this.busy || this.state !== "ready") throw new Error("Server controller worker channel is unavailable"); },
+    });
+  }
+
+  /** Reserve one generic packet. The caller must have already selected the
+   * enrolled worker canonically; this only signs and sends that immutable
+   * packet once, and never starts an adapter or provider. */
+  async stageControllerWorkerDelivery<T>(commit: (sign: (body: ControllerWorkerNodeDispatchBodyV1,
+    deadline: number) => Promise<SignedNodeFrame<"controller.worker.delivery">>, channel: ServerNativeChannel) => Promise<T>): Promise<T> {
+    const available = this.controllerWorkerDeliveryChannel();
+    if (!available) throw new Error("Controller worker delivery channel unavailable");
+    return this.bounded(async () => {
+      let signed = false, reserved: SignedNodeFrame<"controller.worker.delivery"> | undefined;
+      const assertCurrent = () => { this.now(); if (this.state !== "ready") throw new Error("Controller worker envelope reservation is unavailable"); };
+      const channel = Object.freeze({ ...available, assertCurrent });
+      const value = await commit(async (input, deadline) => {
+        assertCurrent();
+        if (signed) throw new Error("Controller worker envelope already reserved");
+        signed = true;
+        const body = controllerWorkerNodeDispatchBodySchemaV1.parse(input);
+        if (body.delivery.identity.tenantId !== this.config.tenantId || body.delivery.identity.nodeId !== this.config.nodeId
+          || !Number.isSafeInteger(deadline) || deadline <= this.now()) throw new Error("Controller worker envelope scope or deadline mismatch");
+        const frame = await this.signFrame("controller.worker.delivery", body, undefined,
+          Math.min(deadline, Date.parse(body.delivery.expiresAt)));
+        assertCurrent(); reserved = structuredClone(frame); return frame;
+      }, channel);
+      assertCurrent();
+      if (!signed || !reserved) throw new Error("Controller worker envelope transaction did not reserve a frame");
+      this.preparedControllerWorkerFrame = reserved; this.state = "controller_worker_prepared";
+      return value;
+    });
+  }
+
+  /** Persist a caller-owned one-shot transmission intent before the only send. */
+  async sendPreparedControllerWorkerDelivery<T>(commit: (frame: SignedNodeFrame<"controller.worker.delivery">,
+    channel: ServerNativeChannel) => Promise<{ value: T; assertFresh(): void }>) {
+    if (this.state !== "controller_worker_prepared" || !this.preparedControllerWorkerFrame)
+      throw new Error("No prepared controller worker envelope is available");
+    const frame = structuredClone(this.preparedControllerWorkerFrame);
+    return this.bounded(async () => {
+      const assertCurrent = () => {
+        if (this.now() >= Date.parse(frame.expiresAt) || !["controller_worker_prepared", "controller_worker_transmitting"].includes(this.state))
+          throw new Error("Prepared controller worker transmission is unavailable");
+      };
+      const channel: ServerNativeChannel = Object.freeze({ tenantId: this.config.tenantId, nodeId: this.config.nodeId,
+        nodeKeyId: this.config.nodeKeyId, connectionId: this.connectionId!, maxFrameBytes: this.maxFrameBytes,
+        expiresAt: new Date(this.deadline).toISOString(), grantsExecutionAuthority: false, assertCurrent });
+      const result = await commit(structuredClone(frame), channel);
+      assertCurrent(); assertSynchronousFence(result.assertFresh, () => { throw new Error("Prepared controller worker transmission is unavailable"); });
+      assertCurrent(); this.state = "controller_worker_transmitting";
+      await this.ports.send(JSON.stringify(frame)); this.now(); this.state = "controller_worker_sent";
+      return { receipt: result.value, transportResult: "returned_without_receipt" as const, deliveryConfirmed: false as const };
+    });
+  }
+
+  /** Accept only the matching receipt from the same enrolled node and session. */
+  async acceptControllerWorkerDeliveryReceipt<T>(raw: string | Uint8Array,
+    commit: (receipt: SignedNodeFrame<"controller.worker.delivery.receipt">,
+      dispatch: SignedNodeFrame<"controller.worker.delivery">, assertCurrent: () => void) => Promise<T>): Promise<T> {
+    if (this.state !== "controller_worker_sent" || !this.preparedControllerWorkerFrame)
+      throw new Error("Controller worker receipt has no sent envelope");
+    const dispatch = structuredClone(this.preparedControllerWorkerFrame);
+    return this.bounded(async () => {
+      const frame = await this.authenticate(raw);
+      if (frame.type !== "controller.worker.delivery.receipt") throw new Error("Expected controller worker receipt");
+      const matched = matchControllerWorkerNodeDispatchReceiptV1(frame.body, { messageId: dispatch.messageId, body: dispatch.body });
+      if (frame.actorId !== dispatch.body.delivery.identity.nodeId || frame.tenantId !== dispatch.tenantId
+        || frame.connectionId !== dispatch.connectionId || frame.causationId !== dispatch.messageId
+        || frame.correlationId !== dispatch.correlationId) throw new Error("Controller worker receipt identity mismatch");
+      const assertCurrent = () => {
+        const now = this.now();
+        if (this.state !== "controller_worker_sent" || now >= Date.parse(frame.expiresAt)
+          || Date.parse(matched.receivedAt) > now || Date.parse(matched.receivedAt) < Date.parse(dispatch.sentAt)) {
+          throw new Error("Controller worker receipt window unavailable");
+        }
+      };
+      assertCurrent(); const value = await commit(structuredClone(frame), dispatch, assertCurrent);
+      assertCurrent(); this.state = "controller_worker_receipted"; return value;
     });
   }
 
@@ -605,7 +698,7 @@ export class ServerNodeSession {
     this.outboundIds.add(signed.messageId);
   }
 
-  private async signFrame<T extends "connection.accepted" | "node.reconciliation.request" | "protocol.ack" | "harness.native.dispatch" | "harness.codex.dispatch" | "harness.codex.dispatch.activation" | "harness.codex.result.return.receipt" | "job.lease.grant">(
+  private async signFrame<T extends "connection.accepted" | "node.reconciliation.request" | "protocol.ack" | "harness.native.dispatch" | "harness.codex.dispatch" | "harness.codex.dispatch.activation" | "harness.codex.result.return.receipt" | "controller.worker.delivery" | "job.lease.grant">(
     type: T, body: NodeMessageBodyMap[T], causationId?: string, deadline = this.deadline, sentAt = this.now()): Promise<SignedNodeFrame<T>> {
     const frame = { protocol: NODE_PROTOCOL_V1, direction: "server_to_node", senderKind: "control_room",
       tenantId: this.config.tenantId, actorId: this.config.serverId, keyId: this.config.serverKeyId,
