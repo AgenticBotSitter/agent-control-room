@@ -22,6 +22,7 @@ import { readTaskProjectAttention } from "../src/web/v1/task-project-attention-b
 import { decodePrivateRouteSegment } from "../private-app/app/route-segment";
 import { PrivateConnectionView } from "../private-app/app/connections/workspace";
 import { InstallationTopologySummary } from "../private-app/app/installation-topology-summary";
+import { LocalWorkerRouteStatus } from "../private-app/app/local-worker-route-status";
 import { TaskProposalForm } from "../private-app/app/task-panels";
 import { TaskAttentionPanel } from "../private-app/app/needs-me/task-attention";
 import { taskAttentionPageSchema, taskAttentionPresentation } from "../src/web/v1/task-attention-wire";
@@ -70,6 +71,19 @@ test("task proposal and worker inventory disclose unavailable operational facts"
     "Cancel and resume are unsupported"])
     assert.match(connections, new RegExp(text));
   assert.doesNotMatch(connections, /usage are unavailable in this view/);
+});
+
+test("workers page has a separate local route-status panel and does not turn inventory into a live monitor", () => {
+  const plan = planInstallationTopologyV1({ databaseAuthorityDigest: sha256Digest("database"), schedulerAuthorityDigest: sha256Digest("scheduler"),
+    currentRoutes: [{ kind: "local", workerId: "worker:local", adapterId: "connector:local-v1", adapterRevision: "00570550" }],
+    requestedRoutes: [{ kind: "local", workerId: "worker:local", adapterId: "connector:local-v1", adapterRevision: "00570550" }] });
+  const html = renderToStaticMarkup(createElement(LocalWorkerRouteStatus, { state: "available",
+    setup: createInstallationSetupViewV1({ plan, localBackupRestoreVerified: false }) }));
+  assert.match(html, /Local worker routes/);
+  assert.match(html, /Hermes Agent/); assert.match(html, /Claude Code/); assert.match(html, /Codex/);
+  assert.match(html, /not a live process monitor/);
+  assert.match(html, /Connection inventory and capacity evidence below cannot substitute/);
+  assert.doesNotMatch(html, /<button|<form|<input|worker:local|sha256:/);
 });
 
 test("project agents separates local installation setup from project availability", () => {

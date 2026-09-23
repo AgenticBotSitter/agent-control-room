@@ -12,6 +12,16 @@ plans remain architecture/history references, not competing execution queues.
 
 ## Source checkpoint (2026-09-22)
 
+The private **Workers** page now separates local worker-route setup from the
+existing Hermes enrollment inventory and measured capacity. It shows only the
+saved, redacted state of Hermes Agent, Claude Code, and Codex: not configured,
+qualification required, needs owner attention, ready for owner enablement, or
+not available on this computer. It deliberately does **not** call any route
+running: the current data model has no trustworthy task-to-local-route binding.
+The panel has no controls and cannot start, enable, or contact an agent. This
+is a source-tested user-interface improvement, not proof that a local worker
+is installed or operating.
+
 The macOS installation-journal sidecar binding and the separately versioned
 installed-manifest v2 binding are **source-only and inert**. The release build
 can bind and verify the named bytes, platform, architecture and digests before

@@ -6,6 +6,7 @@ import { PrivateHeader } from "../private-header";
 import { PrivateOperatorCapacityWorkspace } from "../operator-capacity-workspace";
 import { useInstallationTopology } from "../installation-topology";
 import { InstallationTopologySummary } from "../installation-topology-summary";
+import { LocalWorkerRouteStatus } from "../local-worker-route-status";
 
 export type PrivateConnectionViewState = { state: "loading" } | { state: "ready"; snapshot: PrivateConnectionSnapshot }
   | { state: "unavailable"; code: ConnectionBrowserError["code"] };
@@ -63,5 +64,6 @@ export function PrivateConnections() {
   }, [refresh]);
   return <PrivateConnectionView data={data} onRefresh={() => setRefresh(value => value + 1)}>
     <InstallationTopologySummary setup={installationTopology?.setup} status={installationTopology?.state} />
+    <LocalWorkerRouteStatus setup={installationTopology?.setup} state={installationTopology?.state ?? "loading"} />
   </PrivateConnectionView>;
 }
