@@ -10,9 +10,21 @@ let ownerHostProviderState = "unregistered";
 let ownerHostProvider;
 
 /** One process-local reviewed handoff. It accepts no path, environment name,
- * command, or serialized callback and cannot be replaced or reused. */
+ * command, callback, or serialized capability graph and cannot be replaced or
+ * reused. Its provenance is checked by the release module when consumed. */
 export function registerPrivateInstalledOwnerHostInputProviderV1(provider) {
-  if (ownerHostProviderState !== "unregistered" || typeof provider !== "function" || types.isProxy(provider))
+  if (ownerHostProviderState !== "unregistered" || !provider || typeof provider !== "object"
+    || types.isProxy(provider))
+    throw new Error("private_installed_owner_host_input_provider_refused");
+  const schema = inertOwnValue(provider, "schema");
+  const status = inertOwnValue(provider, "status");
+  const processLocal = inertOwnValue(provider, "processLocal");
+  const oneUse = inertOwnValue(provider, "oneUse");
+  const performsEffect = inertOwnValue(provider, "performsEffect");
+  if (!Object.isFrozen(provider)
+    || schema !== "control-room.private-installed-owner-host-provider/v1"
+    || (status !== "prepared" && status !== "blocked") || processLocal !== true
+    || oneUse !== true || performsEffect !== false)
     throw new Error("private_installed_owner_host_input_provider_refused");
   ownerHostProvider = provider;
   ownerHostProviderState = "registered";
@@ -24,7 +36,7 @@ async function takePrivateInstalledOwnerHostInputV1() {
   ownerHostProviderState = "spent";
   const provider = ownerHostProvider;
   ownerHostProvider = undefined;
-  return provider();
+  return provider;
 }
 
 function inertOwnValue(value, name) {
@@ -88,7 +100,9 @@ export async function runPrivateLocalInstallationOperator(args, runtime = instal
       const loadOwnerInput = typeof runtime.loadOwnerHeldInstalledOperatorInput === "function"
         ? runtime.loadOwnerHeldInstalledOperatorInput.bind(runtime)
         : installedRuntime.loadOwnerHeldInstalledOperatorInput;
-      const ownerInput = await loadOwnerInput();
+      const registeredProvider = await loadOwnerInput();
+      if (typeof module.consumePrivateInstalledOwnerHostProviderV1 !== "function") throw new Error();
+      const ownerInput = module.consumePrivateInstalledOwnerHostProviderV1(registeredProvider);
       const ownerInputStatus = inertOwnValue(ownerInput, "status");
       const ownerInputBlocker = inertOwnValue(ownerInput, "blocker");
       if (ownerInputStatus === "blocked" && typeof ownerInputBlocker === "string") {

@@ -15,6 +15,8 @@ import type { PrivateLocalInstallationSetupRuntimesV1 } from
  */
 export const PRIVATE_INSTALLED_OWNER_HOST_INPUT_COMPOSITION_V1 =
   "control-room.private-installed-owner-host-input-composition/v1" as const;
+export const PRIVATE_INSTALLED_OWNER_HOST_PROVIDER_V1 =
+  "control-room.private-installed-owner-host-provider/v1" as const;
 
 const stages = Object.freeze(["database_authority", "protected_data", "first_owner", "recovery",
   "platform_service", "agent_readiness", "final_review"] as const);
@@ -53,6 +55,16 @@ export type PrivateInstalledOwnerHostInputPreflightV1 = Readonly<{
 }>;
 
 const preparedLoaders = new WeakMap<object, PrivateInstalledLocalOperatorLoaderV1>();
+const preparedProviders = new WeakMap<object, PrivateInstalledOwnerHostInputPreflightV1>();
+
+export type PrivateInstalledOwnerHostProviderV1 = Readonly<{
+  schema: typeof PRIVATE_INSTALLED_OWNER_HOST_PROVIDER_V1;
+  status: "prepared" | "blocked";
+  blocker?: PrivateInstalledOwnerHostInputBlockerV1;
+  processLocal: true;
+  oneUse: true;
+  performsEffect: false;
+}>;
 
 function refused(): never {
   const error = new Error("private_installed_owner_host_input_composition_refused");
@@ -140,4 +152,35 @@ PrivateInstalledLocalOperatorLoaderV1 {
   const loader = preparedLoaders.get(value);
   if (!loader || !preparedLoaders.delete(value)) return refused();
   return loader;
+}
+
+/**
+ * Produces the only value the shipped release entry may register as an
+ * owner-host provider. The raw capability graph is captured by the existing
+ * reviewed composition first; this provider contains no callback, path,
+ * credential, command, or environment selector and is process-local/one-use.
+ *
+ * A blocked provider is useful rather than exceptional: the release launcher
+ * can report the first exact missing boundary without opening protected
+ * configuration or starting a native, database, service, worker, or agent
+ * effect.
+ */
+export function createPrivateInstalledOwnerHostProviderV1(value: unknown):
+PrivateInstalledOwnerHostProviderV1 {
+  const prepared = preflightPrivateInstalledOwnerHostInputCompositionV1(value);
+  const provider = Object.freeze({ schema: PRIVATE_INSTALLED_OWNER_HOST_PROVIDER_V1,
+    status: prepared.status === "loader_ready" ? "prepared" as const : "blocked" as const,
+    ...(prepared.status === "blocked" ? { blocker: prepared.blocker } : {}),
+    processLocal: true as const, oneUse: true as const, performsEffect: false as const });
+  preparedProviders.set(provider, prepared);
+  return provider;
+}
+
+/** Burns the provider before releasing its already-prepared opaque input. */
+export function consumePrivateInstalledOwnerHostProviderV1(value: unknown):
+PrivateInstalledOwnerHostInputPreflightV1 {
+  if (!value || typeof value !== "object" || types.isProxy(value)) return refused();
+  const prepared = preparedProviders.get(value);
+  if (!prepared || !preparedProviders.delete(value)) return refused();
+  return prepared;
 }

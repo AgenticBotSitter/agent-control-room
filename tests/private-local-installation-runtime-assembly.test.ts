@@ -39,8 +39,11 @@ import { createPrivateInstalledLocalOperatorLoaderV1,
   PRIVATE_INSTALLED_LOCAL_OPERATOR_LOADER_V1 } from
   "../src/installer/v1/private-installed-local-operator-loader";
 import { consumePrivateInstalledOwnerHostInputCompositionV1,
+  consumePrivateInstalledOwnerHostProviderV1,
+  createPrivateInstalledOwnerHostProviderV1,
   preflightPrivateInstalledOwnerHostInputCompositionV1,
-  PRIVATE_INSTALLED_OWNER_HOST_INPUT_COMPOSITION_V1 } from
+  PRIVATE_INSTALLED_OWNER_HOST_INPUT_COMPOSITION_V1,
+  PRIVATE_INSTALLED_OWNER_HOST_PROVIDER_V1 } from
   "../src/installer/v1/private-installed-owner-host-input-composition";
 import { PRIVATE_INSTALLED_CONFIGURATION_MANIFEST_BOUND_PREPARATION_V1,
   PRIVATE_INSTALLED_CONFIGURATION_CUSTODY_V2,
@@ -647,6 +650,57 @@ test("owner-host preflight names the first missing port and hands one opaque com
   });
   assert.equal(prepared.nativeSessionOpens(), 1, "the inert fake names the first unavailable live boundary");
   assert.equal(f.hermesCalls(), 0); assert.equal(f.reads(), 0); assert.equal(f.appends(), 0);
+});
+
+test("owner-host provider is callback-free, one-use, inert, and retains the first concrete blocker", async t => {
+  const blocked = createPrivateInstalledOwnerHostProviderV1({
+    schema: PRIVATE_INSTALLED_OWNER_HOST_INPUT_COMPOSITION_V1,
+  });
+  assert.deepEqual(blocked, {
+    schema: PRIVATE_INSTALLED_OWNER_HOST_PROVIDER_V1, status: "blocked",
+    blocker: "installed_configuration_custody_input_missing",
+    processLocal: true, oneUse: true, performsEffect: false,
+  });
+  assert.equal(Object.values(blocked).some(value => typeof value === "function"), false);
+  assert.throws(() => consumePrivateInstalledOwnerHostProviderV1(Object.freeze({
+    schema: PRIVATE_INSTALLED_OWNER_HOST_PROVIDER_V1, status: "blocked",
+    blocker: "installed_configuration_custody_input_missing",
+    processLocal: true, oneUse: true, performsEffect: false,
+  })), /private_installed_owner_host_input_composition_refused/u,
+  "a shape-compatible forged provider has no authority");
+  assert.equal(consumePrivateInstalledOwnerHostProviderV1(blocked).blocker,
+    "installed_configuration_custody_input_missing");
+  assert.throws(() => consumePrivateInstalledOwnerHostProviderV1(blocked),
+    /private_installed_owner_host_input_composition_refused/u);
+
+  const f = await fixture(t), prepared = await installedOperatorLoaderPackage(t, f);
+  const ready = createPrivateInstalledOwnerHostProviderV1({
+    schema: PRIVATE_INSTALLED_OWNER_HOST_INPUT_COMPOSITION_V1,
+    installedConfigurationCustodyInput: prepared.input.installedConfigurationCustodyInput,
+    stagedJournalSidecar: prepared.input.stagedJournalSidecar,
+    journalSessionFactory: prepared.input.journalCustodyPorts.createNativeSessionPort,
+    hermesRuntimePorts: {
+      startupBase: prepared.input.hermesRuntimePorts.startupBase,
+      deliveryIntegrityKey: prepared.input.hermesRuntimePorts.deliveryIntegrityKey,
+      assertCurrentDelivery: prepared.input.hermesRuntimePorts.assertCurrentDelivery,
+    },
+    setupRuntimes: {
+      database_authority: { postgres: {} }, protected_data: { protectedData: {} },
+      first_owner: { firstOwner: {} }, recovery: { recovery: {} },
+      platform_service: { platformService: {} }, agent_readiness: { agentReadiness: {} },
+      final_review: { finalReview: {} },
+    },
+    journalOperationDeadlineMs: prepared.input.journalOperationDeadlineMs,
+  });
+  assert.deepEqual(ready, { schema: PRIVATE_INSTALLED_OWNER_HOST_PROVIDER_V1,
+    status: "prepared", processLocal: true, oneUse: true, performsEffect: false });
+  assert.deepEqual(prepared.protectedReads, []); assert.deepEqual(prepared.factoryInputs, []);
+  const opaque = consumePrivateInstalledOwnerHostProviderV1(ready);
+  assert.equal(opaque.status, "loader_ready");
+  const loader = consumePrivateInstalledOwnerHostInputCompositionV1(opaque);
+  assert.equal(loader.status, "owner_inputs_captured");
+  assert.deepEqual(prepared.protectedReads, []); assert.deepEqual(prepared.factoryInputs, []);
+  assert.equal(prepared.nativeSessionOpens(), 0); assert.equal(f.hermesCalls(), 0);
 });
 
 test("installed operator loader refuses missing, foreign and mutated owner input before native session or runtime effects", async t => {

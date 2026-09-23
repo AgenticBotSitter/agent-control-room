@@ -80,6 +80,7 @@ test("assembles the same reviewed release bytes twice with no installation effec
     assert.equal(paths.has("scripts/launch-local-setup.mjs"), true);
     assert.equal(paths.has("scripts/initialize-local-installation-plan.mjs"), true);
     assert.equal(paths.has("scripts/run-local-setup-host.mjs"), true);
+    assert.equal(paths.has("scripts/preflight-private-local-owner-host.mjs"), true);
     assert.equal(paths.has("scripts/activate-private-vps.mjs"), true);
     assert.equal(paths.has("scripts/bootstrap-private-vps-owner.mjs"), true);
     assert.equal(paths.has("scripts/check-private-vps-database.mjs"), true);
@@ -188,13 +189,39 @@ process.stdout.write("prepared by controlled test fixture\\n");
     assert.deepEqual(calls[1].slice(0, 4), ["install", "--prod", "--frozen-lockfile", "--ignore-scripts"]);
     assert.equal(calls.length, 2);
 
+    const preflightEntry = await import(`${pathToFileURL(join(repository,
+      "scripts/preflight-private-local-owner-host.mjs")).href}?test=${encodeURIComponent(root)}`);
+    const preflightOutput = [], preflightErrors = [];
+    assert.equal(await preflightEntry.preflightPrivateLocalOwnerHostV1([], {
+      async verifyRelease() {},
+      async loadRelease() { return import(`${pathToFileURL(join(repository,
+        "dist-vps/server/privateLocalInstallationOperatorCli.js")).href}?preflight=${encodeURIComponent(root)}`); },
+      report(message) { preflightOutput.push(message); },
+      reportError(message) { preflightErrors.push(message); },
+    }), 1);
+    assert.deepEqual(preflightErrors, []);
+    assert.deepEqual(JSON.parse(preflightOutput.join("")), {
+      schema: "control-room.private-installed-owner-host-preflight/v1",
+      status: "blocked", blocker: "installed_configuration_custody_input_missing",
+      performsEffect: false, readsCredentials: false, readsPrivatePaths: false,
+      opensNativeSession: false, opensDatabase: false, startsService: false,
+      startsWorker: false, invokesAgent: false,
+    });
+
     const operator = await import(`${pathToFileURL(join(versionRoot,
       "scripts/run-private-local-installation-operator.mjs")).href}?prepared=${encodeURIComponent(root)}`);
     await operator.verifyInstalledPreparedOperatorReleaseV1(versionRoot);
     let preparedCustodyLoads = 0;
+    const preparedProvider = Object.freeze({
+      schema: "control-room.private-installed-owner-host-provider/v1",
+      status: "prepared", processLocal: true, oneUse: true, performsEffect: false,
+    });
     assert.equal(await operator.runPrivateLocalInstallationOperator(["status"], {
       async verifyRelease() { await operator.verifyInstalledPreparedOperatorReleaseV1(versionRoot); },
       async loadRelease() { return {
+        consumePrivateInstalledOwnerHostProviderV1(provider) {
+          assert.equal(provider, preparedProvider); return { ownerHeld: true };
+        },
         createPrivateInstalledLocalOperatorLoaderV1(input) {
           assert.deepEqual(input, { ownerHeld: true });
           return { status: "owner_inputs_captured", async loadInstalledConfiguration() {
@@ -205,7 +232,7 @@ process.stdout.write("prepared by controlled test fixture\\n");
           preparedCustodyLoads++; await runtime.loadInstalledConfiguration(); return 0;
         },
       }; },
-      async loadOwnerHeldInstalledOperatorInput() { return { ownerHeld: true }; }, report() {}, reportError() {},
+      async loadOwnerHeldInstalledOperatorInput() { return preparedProvider; }, report() {}, reportError() {},
       signals: new EventEmitter(), createOperator: undefined, startLifecycle: undefined,
     }), 0, "a successfully prepared extracted release reaches its fixed custody handoff");
     assert.equal(preparedCustodyLoads, 1);
@@ -223,13 +250,32 @@ process.stdout.write("prepared by controlled test fixture\\n");
     assert.deepEqual(unavailableErrors, Array(3).fill(
       "Control Room operator owner-held dependencies are unavailable; no setup action was started."));
     const opaqueOwnerHostInput = Object.freeze({ status: "loader_ready" });
+    const opaqueOwnerHostProvider = Object.freeze({
+      schema: "control-room.private-installed-owner-host-provider/v1",
+      status: "prepared", processLocal: true, oneUse: true, performsEffect: false,
+    });
+    let providerProxyTraps = 0;
+    const trappedProvider = new Proxy(opaqueOwnerHostProvider, {
+      getOwnPropertyDescriptor() { providerProxyTraps++; throw new Error("provider trap"); },
+      isExtensible() { providerProxyTraps++; throw new Error("provider trap"); },
+      get() { providerProxyTraps++; throw new Error("provider trap"); },
+    });
+    assert.throws(() => operator.registerPrivateInstalledOwnerHostInputProviderV1(trappedProvider),
+      /private_installed_owner_host_input_provider_refused/u);
+    assert.equal(providerProxyTraps, 0, "a proxy is refused before any reflective trap");
+    assert.throws(() => operator.registerPrivateInstalledOwnerHostInputProviderV1(
+      () => opaqueOwnerHostInput), /private_installed_owner_host_input_provider_refused/u,
+    "the shipped entry no longer accepts an arbitrary callback provider");
     assert.deepEqual(operator.registerPrivateInstalledOwnerHostInputProviderV1(
-      () => opaqueOwnerHostInput), { status: "registered", processLocal: true, oneUse: true });
+      opaqueOwnerHostProvider), { status: "registered", processLocal: true, oneUse: true });
     let consumedOwnerHostInputs = 0, registeredCliCalls = 0;
     assert.equal(await operator.runPrivateLocalInstallationOperator(["status"], {
       async verifyRelease() { await operator.verifyInstalledPreparedOperatorReleaseV1(versionRoot); },
       async loadRelease() { return {
         createPrivateInstalledLocalOperatorLoaderV1() { throw new Error("raw input must not be used"); },
+        consumePrivateInstalledOwnerHostProviderV1(provider) {
+          assert.equal(provider, opaqueOwnerHostProvider); return opaqueOwnerHostInput;
+        },
         consumePrivateInstalledOwnerHostInputCompositionV1(input) {
           consumedOwnerHostInputs++; assert.equal(input, opaqueOwnerHostInput);
           return { status: "owner_inputs_captured", async loadInstalledConfiguration() {
@@ -244,7 +290,7 @@ process.stdout.write("prepared by controlled test fixture\\n");
       createOperator: undefined, startLifecycle: undefined,
     }), 0, "the process-local registered provider reaches the shipped command without environment discovery");
     assert.equal(consumedOwnerHostInputs, 1); assert.equal(registeredCliCalls, 1);
-    assert.throws(() => operator.registerPrivateInstalledOwnerHostInputProviderV1(() => opaqueOwnerHostInput),
+    assert.throws(() => operator.registerPrivateInstalledOwnerHostInputProviderV1(opaqueOwnerHostProvider),
       /private_installed_owner_host_input_provider_refused/u);
     assert.equal(await operator.runPrivateLocalInstallationOperator(["status"], {
       async verifyRelease() { await operator.verifyInstalledPreparedOperatorReleaseV1(versionRoot); },
