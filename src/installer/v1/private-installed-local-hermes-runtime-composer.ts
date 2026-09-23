@@ -6,6 +6,7 @@ import { createDurableReservationPostgresPortV1 } from
 import { PersistentLocalArtifactStorageV1 } from "../../artifacts/v1/persistent-local-storage";
 import { HarnessRunStoreV1 } from "../../harness/v1/store";
 import { DurableResultReviewSubmissionServiceV1 } from "../../completion-gate/v1/durable-result-review-submission";
+import { DurableLocalResultInspectionServiceV1 } from "../../completion-gate/v1/durable-local-result-inspection";
 import type { AwaitableRollbackCheckpointStoreV1 } from "../../security/rollback-checkpoint";
 import type { ArtifactReadPortV1, ArtifactStoragePortV1 } from "../../node-executor/artifact-storage";
 import { HERMES_021_MACOS_CONNECTOR_PROFILE_DIGEST_V1, HERMES_021_SOURCE_REVISION_V1 } from
@@ -408,6 +409,14 @@ function compose(preparationValue: unknown, portsValue: unknown) {
     delivery: Object.freeze({ db: deferredDatabase.client, integrityKey: deliveryIntegrityKey,
       binding: config.workerBinding, policy: Object.freeze({ assertAdmitted() { return refused(); } }),
       terminalResultStorage: deferredStorage.port }) });
+  // This is a read-only bridge from the authenticated local Hermes receipt to
+  // the already-existing review, correction, and capacity lifecycle. It has
+  // no delivery, queue, database-write, or retry authority of its own.
+  const resultInspectionSource = new DurableLocalResultInspectionServiceV1(deferredDatabase.client, {
+    integrityKey: resultKey, reviewIntegrityKey: reviewKey, harnessIntegrityKey: harnessKey,
+    deliveryIntegrityKeys: { hermes: deliveryIntegrityKey }, checkpoints: reviewCheckpoints,
+    storageClass: "local", storage: deferredStorage.port,
+  });
   const installedCompositionIdentity = Object.freeze({ schema: PRIVATE_HERMES_021_INSTALLED_COMPOSITION_IDENTITY_V1,
     installationId: config.installationId, releaseDigest: config.releaseDigest,
     nativeSidecarIdentityDigest: sha256Digest(prepared.nativeSidecar),
@@ -432,7 +441,7 @@ function compose(preparationValue: unknown, portsValue: unknown) {
     approvals: rawCoordinator.approvals, quality: rawCoordinator.quality, revisionPlanning: rawCoordinator.revisionPlanning,
     nativeQueue: true as const, nativeQueueRecovery: true as const, database: rawCoordinator.database,
     resultDatabase: rawCoordinator.resultDatabase, evidence: rawCoordinator.evidence, queueWorker,
-    hermes021Local: delivery });
+    hermes021Local: delivery, resultInspectionSource });
   const candidateStartupConfiguration = Object.freeze({ web: composedWeb,
     artifactStorage: config.artifactStorage, coordinator: composedCoordinator });
   const startup = validatePrivateTaskStartupConfiguration(candidateStartupConfiguration as never);
@@ -445,6 +454,7 @@ function compose(preparationValue: unknown, portsValue: unknown) {
   const privateStartupConfiguration = Object.freeze({ web: startup.web, artifactStorage: startup.artifactStorage,
     coordinator: Object.freeze({ planning: Object.freeze(startup.planning), routes: startup.routes,
       approvals: capturedApprovals, quality: startup.quality,
+      ...(startup.resultInspectionSource ? { resultInspectionSource: startup.resultInspectionSource } : {}),
       ...(startup.revisionPlanning ? { revisionPlanning: startup.revisionPlanning } : {}),
       nativeQueue: true as const, nativeQueueRecovery: true as const, database: startup.database,
       resultDatabase: startup.resultDatabase, evidence: startup.evidence,

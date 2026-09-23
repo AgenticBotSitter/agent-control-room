@@ -28,7 +28,9 @@ export type DurableLocalResultInspectionConfigurationV1 = Readonly<{
   integrityKey: Uint8Array;
   reviewIntegrityKey: Uint8Array;
   harnessIntegrityKey: Uint8Array;
-  deliveryIntegrityKeys: Readonly<{ hermes: Uint8Array; claude: Uint8Array }>;
+  /** Only locally enrolled adapters need a key. An absent adapter is refused,
+   * never downgraded to an unsigned or shared receipt check. */
+  deliveryIntegrityKeys: Readonly<{ hermes?: Uint8Array; claude?: Uint8Array }>;
   checkpoints: AwaitableRollbackCheckpointStoreV1;
   storageClass: "local" | "r2";
   storage: ArtifactReadPortV1;
@@ -43,25 +45,27 @@ export class DurableLocalResultInspectionServiceV1 implements TaskResultInspecti
   private readonly resultKey: Uint8Array;
   private readonly reviewKey: Uint8Array;
   private readonly harnessKey: Uint8Array;
-  private readonly hermesDeliveryKey: Uint8Array;
-  private readonly claudeDeliveryKey: Uint8Array;
+  private readonly hermesDeliveryKey?: Uint8Array;
+  private readonly claudeDeliveryKey?: Uint8Array;
   private readonly checkpoints: AwaitableRollbackCheckpointStoreV1;
   private readonly readBytes: ArtifactReadPortV1["read"];
   private readonly storageClass: "local" | "r2";
 
   constructor(private readonly db: DatabaseClient, config: DurableLocalResultInspectionConfigurationV1) {
-    for (const key of [config.integrityKey, config.reviewIntegrityKey, config.harnessIntegrityKey,
-      config.deliveryIntegrityKeys?.hermes, config.deliveryIntegrityKeys?.claude]) {
+    const deliveryKeys = [config.deliveryIntegrityKeys?.hermes, config.deliveryIntegrityKeys?.claude]
+      .filter((key): key is Uint8Array => key !== undefined);
+    for (const key of [config.integrityKey, config.reviewIntegrityKey, config.harnessIntegrityKey, ...deliveryKeys]) {
       if (!(key instanceof Uint8Array) || key.length !== 32) unavailable();
     }
+    if (!deliveryKeys.length) unavailable();
     if (!config.checkpoints || typeof config.checkpoints.read !== "function" || typeof config.checkpoints.advance !== "function"
       || typeof config.checkpoints.initialize !== "function" || !["local", "r2"].includes(config.storageClass)
       || typeof config.storage?.read !== "function") unavailable();
     this.resultKey = Uint8Array.from(config.integrityKey);
     this.reviewKey = Uint8Array.from(config.reviewIntegrityKey);
     this.harnessKey = Uint8Array.from(config.harnessIntegrityKey);
-    this.hermesDeliveryKey = Uint8Array.from(config.deliveryIntegrityKeys.hermes);
-    this.claudeDeliveryKey = Uint8Array.from(config.deliveryIntegrityKeys.claude);
+    this.hermesDeliveryKey = config.deliveryIntegrityKeys.hermes && Uint8Array.from(config.deliveryIntegrityKeys.hermes);
+    this.claudeDeliveryKey = config.deliveryIntegrityKeys.claude && Uint8Array.from(config.deliveryIntegrityKeys.claude);
     this.checkpoints = Object.freeze({ read: config.checkpoints.read.bind(config.checkpoints),
       advance: config.checkpoints.advance.bind(config.checkpoints), initialize: config.checkpoints.initialize.bind(config.checkpoints) });
     this.readBytes = config.storage.read.bind(config.storage);
@@ -99,7 +103,9 @@ export class DurableLocalResultInspectionServiceV1 implements TaskResultInspecti
     verifyReviewPlanAgainstReceiptV1(plan, result.receipt);
     if (plan.terminalEvidenceDigest !== result.receipt.terminalEvidenceDigest || plan.plannedAt > result.receipt.receivedAt) return unavailable();
 
-    const delivery = await readControllerWorkerDeliveryReceiptV1(tx, hermes ? this.hermesDeliveryKey : this.claudeDeliveryKey,
+    const deliveryKey = hermes ? this.hermesDeliveryKey : this.claudeDeliveryKey;
+    if (!deliveryKey) return unavailable();
+    const delivery = await readControllerWorkerDeliveryReceiptV1(tx, deliveryKey,
       { tenantId, projectId: run.projectId, jobId: run.jobId, attemptId: run.attemptId });
     if (!delivery || delivery.delivery.identity.runId !== run.id || delivery.delivery.identity.nodeId !== run.nodeId
       || delivery.delivery.worker.adapterId !== run.adapterId || delivery.delivery.connectorProfileDigest !== run.connectorProfileDigest

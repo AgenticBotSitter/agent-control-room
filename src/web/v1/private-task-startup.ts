@@ -79,7 +79,7 @@ export type PrivateTaskStartupConfiguration = {
   artifactStorage?: PrivateArtifactStorageConfigurationV1;
   /** Optional inert installation-owned adapters; never mounted in the queue or browser. */
   preparedLocalAdapters?: LocalAdapterInstallationPortsV1;
-  coordinator: Pick<TaskCoordinatorConfiguration, "planning" | "routes" | "approvals" | "quality" | "revisionPlanning" | "nativeHttp" | "hermes021Local" | "claudeCodeLocal"> & {
+  coordinator: Pick<TaskCoordinatorConfiguration, "planning" | "routes" | "approvals" | "quality" | "revisionPlanning" | "resultInspectionSource" | "nativeHttp" | "hermes021Local" | "claudeCodeLocal"> & {
     codex?: CodexPermitConfiguration;
     /** Private transition-journal key for coordinator-only admission checks. */
     installationTransitionAdmission?: { integrityKey: Uint8Array; workers: readonly { nodeId: string; workerId: string }[] };
@@ -198,6 +198,9 @@ export function validatePrivateTaskStartupConfiguration(input: PrivateTaskStartu
     const claudeCodeLocal = input.coordinator.claudeCodeLocal;
     if (claudeCodeLocal && !isClaudeCodePrivateInstalledDeliverCapabilityV1(claudeCodeLocal)) throw new Error();
     if (claudeCodeLocal && (!nativeQueue || !approvals)) throw new Error();
+    const resultInspectionSource = input.coordinator.resultInspectionSource
+      ? Object.freeze({ inspectSubmitted: input.coordinator.resultInspectionSource.inspectSubmitted.bind(input.coordinator.resultInspectionSource) }) : undefined;
+    if (resultInspectionSource && (!quality || !resultDatabase || (!hermes021Local && !claudeCodeLocal))) throw new Error();
     const w = input.coordinator.queueWorker;
     const queueWorker = w ? { database: validatePrivatePostgresConfiguration(w.database), concurrency: w.concurrency ?? 1 } : undefined;
     if (queueWorker && (!nativeQueue || (!sessions && !hermes021Local && !claudeCodeLocal) || queueWorker.database.host !== database.host
@@ -254,7 +257,7 @@ export function validatePrivateTaskStartupConfiguration(input: PrivateTaskStartu
     const news = input.news ? captureNewsStartupConfiguration(input.news, web,
       [web.database, database, resultDatabase, evidence?.database, sessions?.database, queueWorker?.database,
         ideaCreation?.database, ideaRuntime?.database].filter((value): value is PrivatePostgresConfiguration => !!value)) : undefined;
-    return { web, preparedLocalAdapters, database, planning, routes, approvals, codex, installationTransitionAdmission, quality, revisionPlanning, resultDatabase, evidence, sessions,
+    return { web, preparedLocalAdapters, database, planning, routes, approvals, codex, installationTransitionAdmission, quality, revisionPlanning, resultInspectionSource, resultDatabase, evidence, sessions,
       codexResultReturn, nativeHttp, nativeQueue, nativeQueueRecovery, queueWorker, hermes021Local,
       hermes021LocalStartupReverification, claudeCodeLocalStartupReverification,
       claudeCodeLocalInstallationId: input.coordinator.claudeCodeLocalInstallationId,
@@ -527,6 +530,7 @@ export function createPrivateTaskBootstrap(dependencies: {
         ...(newsIntegration ? { newsCollections: newsIntegration.web } : {}) }, {
         scope: { tenantId: config.web.tenantId, workspaceId: config.web.workspaceId }, database: coordinator,
         planning: config.planning, routes: config.routes, approvals: config.approvals, quality: config.quality,
+        resultInspectionSource: config.resultInspectionSource,
         hermes021Local: config.hermes021Local,
         claudeCodeLocal: config.claudeCodeLocal,
         codex: config.codex,
