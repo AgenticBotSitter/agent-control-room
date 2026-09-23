@@ -40,6 +40,8 @@ import { createPrivateInstalledLocalHermesRuntimeComposerV1,
 import { createPrivateInstalledLocalOperatorLoaderV1,
   PRIVATE_INSTALLED_LOCAL_OPERATOR_LOADER_V1 } from
   "../src/installer/v1/private-installed-local-operator-loader";
+import { capturePrivateInstalledClaudePostInstallInputV1 } from
+  "../src/installer/v1/private-installed-claude-post-install-input";
 import { consumePrivateInstalledOwnerHostInputCompositionV1,
   consumePrivateInstalledOwnerHostProviderV1,
   createPrivateInstalledOwnerHostProviderV1,
@@ -1137,7 +1139,7 @@ test("callback, runner and queue substitution plus journal movement refuse befor
 });
 
 async function additiveClaudePackage(f: Awaited<ReturnType<typeof fixture>>, options: Readonly<{
-  installationId?: string; compositionAdapterId?: string;
+  installationId?: string; compositionAdapterId?: string; changeTransitionOnSecondRead?: boolean;
 }> = {}) {
   const admissionPreparation = f.runnerInput.admissionPreparationInput as unknown as {
     installationId: string; topologyInput: { databaseAuthorityDigest: string; schedulerAuthorityDigest: string;
@@ -1203,7 +1205,9 @@ async function additiveClaudePackage(f: Awaited<ReturnType<typeof fixture>>, opt
         workingDirectory: processConfiguration.process.workingDirectory,
         bindingDigest: processConfiguration.workingDirectoryBindingDigest } },
     admissionRuntime: { async readOriginalInstallationHistory() { return f.history; },
-      async readTransition() { transitionReads++; return transition; } },
+      async readTransition() { transitionReads++;
+        return options.changeTransitionOnSecondRead && transitionReads > 1
+          ? { ...transition, revision: transition.revision + 1 } : transition; } },
     compositionInput: { tenantId: "tenant:fixture", installedProcessConfiguration: processConfiguration,
       ports: { async verifyInstallation() { throw new Error("not invoked during startup"); },
         launch() { throw new Error("not invoked during startup"); } },
@@ -1292,5 +1296,152 @@ test("foreign installation and substituted Claude adapter refuse after transitio
       /local_claude_post_install_admission_refused|private_local_installation_runtime_assembly_refused|claude_code_private_installation_composition_unavailable/u);
     assert.equal(claude.transitionReads(), mode === "foreign" ? 0 : 1, mode);
     assert.deepEqual(effects, [], mode);
+  }
+});
+
+function installedClaudeProviderInput(prepared: Awaited<ReturnType<typeof installedOperatorLoaderPackage>>,
+  claudePostInstall: unknown) {
+  const input = prepared.input;
+  return { schema: PRIVATE_INSTALLED_OWNER_HOST_INPUT_COMPOSITION_V1,
+    installedConfigurationCustodyInput: input.installedConfigurationCustodyInput,
+    stagedJournalSidecar: input.stagedJournalSidecar,
+    journalSessionFactory: input.journalCustodyPorts.createNativeSessionPort,
+    hermesRuntimePorts: { startupBase: input.hermesRuntimePorts.startupBase,
+      deliveryIntegrityKey: input.hermesRuntimePorts.deliveryIntegrityKey,
+      assertCurrentDelivery: input.hermesRuntimePorts.assertCurrentDelivery, claudePostInstall },
+    setupRuntimes: { database_authority: { postgres: {} }, protected_data: { protectedData: {} },
+      first_owner: { firstOwner: {} }, recovery: { recovery: {} }, platform_service: { platformService: {} },
+      agent_readiness: { agentReadiness: {} }, final_review: { finalReview: {} } },
+    journalOperationDeadlineMs: input.journalOperationDeadlineMs };
+}
+
+test("installed owner provider captures additive Claude through protected loader and operator while retaining Hermes", async t => {
+  const f = await fixture(t), prepared = await installedOperatorLoaderPackage(t, f);
+  const claude = await additiveClaudePackage(f), effects: string[] = [];
+  const provider = createPrivateInstalledOwnerHostProviderV1(installedClaudeProviderInput(prepared, claude.claudePostInstall));
+  assert.equal(provider.status, "prepared");
+  assert.deepEqual(prepared.protectedReads, []); assert.deepEqual(prepared.factoryInputs, []);
+  assert.equal(claude.transitionReads(), 0); assert.equal(f.hermesCalls(), 0);
+  const captured = consumePrivateInstalledOwnerHostProviderV1(provider);
+  const loader = consumePrivateInstalledOwnerHostInputCompositionV1(captured);
+  // The caller no longer controls data, keys, or reader selection after the
+  // provider captures its one-use graph. The reader itself still observes live state.
+  claude.claudePostInstall.admissionInput.qualificationReport.durationMs = 999;
+  claude.claudePostInstall.compositionInput.execution.delivery.integrityKey.fill(99);
+  claude.claudePostInstall.admissionRuntime.readTransition = async () => { throw new Error("replacement reader"); };
+  const installed = await loader.loadInstalledConfiguration();
+  assert.equal(prepared.nativeSessionOpens(), 0);
+  const loaded = await (installed.custody as { loadPrivateConfiguration(): Promise<any> }).loadPrivateConfiguration();
+  assert.equal(loaded.assemblyInput.claudePostInstall.admissionInput.qualificationReport.durationMs, 100);
+  assert.equal(loaded.assemblyInput.claudePostInstall.compositionInput.execution.delivery.integrityKey[0], 0);
+  assert.equal(loaded.assemblyInput.operatorSettings.features.hermes021Local, true);
+  assert.equal(loaded.assemblyInput.operatorSettings.features.claudeCodeLocal, true);
+  const assembly = createPrivateLocalInstallationRuntimeAssemblyV1(loaded.assemblyInput,
+    { journal: f.journal, startupDependencies: startupBoundaryDependencies(effects) });
+  assert.equal(assembly.status, "ready");
+  if (assembly.status !== "ready") return;
+  const runtime = await assembly.prepare();
+  assert.equal(isClaudeCodePrivateInstalledDeliverCapabilityV1(runtime.configuration.coordinator.claudeCodeLocal), true);
+  assert.equal(runtime.configuration.coordinator.hermes021Local, loaded.assemblyInput.operatorTrustedInputs.hermes021Local);
+  assert.equal(claude.transitionReads(), 2);
+  const operator = createPrivateLocalInstallationOperatorV1({ async loadPrivateConfiguration() {
+    return { ...loaded, startupDependencies: startupBoundaryDependencies(effects) };
+  } }, { journal: f.journal });
+  if (operator.status === "blocked") throw new Error("installed additive operator blocked");
+  await assert.rejects(operator.start(), /private_task_startup_prerequisites_failed/u);
+  assert.equal(claude.transitionReads(), 4, "the operator retains both independent admission reads");
+  assert.deepEqual(effects, ["artifact-storage"], "only the disposable startup sentinel is reached");
+  assert.equal(f.hermesCalls(), 0); assert.equal(prepared.nativeSessionOpens(), 0);
+  await assert.rejects(loader.loadInstalledConfiguration(), /private_installed_local_operator_loader_refused/u);
+  assert.throws(() => consumePrivateInstalledOwnerHostProviderV1(provider), /private_installed_owner_host_input_composition_refused/u);
+  assert.throws(() => consumePrivateInstalledOwnerHostInputCompositionV1(captured), /private_installed_owner_host_input_composition_refused/u);
+});
+
+test("installed Claude tuple rejects accessors, proxies, extra selectors and callable admission data before reads", async t => {
+  const f = await fixture(t), prepared = await installedOperatorLoaderPackage(t, f);
+  const claude = await additiveClaudePackage(f);
+  let calls = 0;
+  const accessor = { ...claude.claudePostInstall };
+  Object.defineProperty(accessor, "admissionInput", { enumerable: true, get() { calls++; throw new Error("getter"); } });
+  const proxy = new Proxy(claude.claudePostInstall, { ownKeys() { calls++; throw new Error("proxy"); } });
+  const callbackProxy = new Proxy(() => {}, { apply() { calls++; throw new Error("callback proxy"); } });
+  for (const tuple of [undefined, null, accessor, proxy,
+    { ...claude.claudePostInstall, command: "unexpected" },
+    { ...claude.claudePostInstall, admissionRuntime: { ...claude.claudePostInstall.admissionRuntime, readTransition: callbackProxy } },
+    { ...claude.claudePostInstall, admissionInput: { ...claude.claudePostInstall.admissionInput, callback() { calls++; } } },
+    { ...claude.claudePostInstall, compositionInput: { ...claude.claudePostInstall.compositionInput, admission: {} } }]) {
+    assert.throws(() => createPrivateInstalledOwnerHostProviderV1(installedClaudeProviderInput(prepared, tuple)),
+      /private_installed_owner_host_input_composition_refused/u);
+  }
+  assert.equal(calls, 0); assert.equal(claude.transitionReads(), 0);
+  assert.deepEqual(prepared.protectedReads, []); assert.deepEqual(prepared.factoryInputs, []);
+  assert.equal(prepared.nativeSessionOpens(), 0); assert.equal(f.hermesCalls(), 0);
+});
+
+test("installed Claude capture wraps caller functions without consulting mutable callable metadata", async t => {
+  const f = await fixture(t), claude = await additiveClaudePackage(f);
+  let metadataReads = 0, processCalls = 0;
+  const composition = claude.claudePostInstall.compositionInput;
+  const guardedProcess = function(this: unknown) {
+    processCalls++;
+    return !!this && typeof this === "object"
+      && (this as { assertCurrentProcess?: unknown }).assertCurrentProcess === guardedProcess;
+  };
+  for (const property of ["bind", "name", "length"])
+    Object.defineProperty(guardedProcess, property, { configurable: true,
+      get() { metadataReads++; throw new Error(`caller-owned-${property}`); } });
+  const suppliedComposition = { ...composition, assertCurrentProcess: guardedProcess };
+  const captured = capturePrivateInstalledClaudePostInstallInputV1({ ...claude.claudePostInstall,
+    compositionInput: suppliedComposition }) as any;
+  assert.equal(metadataReads, 0);
+  assert.notEqual(captured.compositionInput.assertCurrentProcess, guardedProcess);
+  assert.equal(captured.compositionInput.assertCurrentProcess(), true);
+  assert.equal(processCalls, 1); assert.equal(metadataReads, 0);
+  Object.defineProperty(guardedProcess, "bind", { configurable: true,
+    get() { metadataReads++; throw new Error("mutated-bind"); } });
+  const rebound = captured.compositionInput.assertCurrentProcess.bind({ substituted: true });
+  assert.equal(rebound(), true);
+  assert.equal(processCalls, 2); assert.equal(metadataReads, 0);
+});
+
+test("installed Claude cannot bypass a missing Hermes startup base or the native journal blocker", async t => {
+  const f = await fixture(t), prepared = await installedOperatorLoaderPackage(t, f);
+  const claude = await additiveClaudePackage(f);
+  const input = installedClaudeProviderInput(prepared, claude.claudePostInstall);
+  assert.equal(createPrivateInstalledOwnerHostProviderV1({ ...input,
+    hermesRuntimePorts: { ...input.hermesRuntimePorts, startupBase: undefined } }).blocker, "hermes_startup_base_missing");
+  const composed = createPrivateInstalledLocalHermesRuntimeComposerV1(prepared.composed.preparation,
+    { ...prepared.composed.ports, claudePostInstall: claude.claudePostInstall });
+  assert.deepEqual(composed.operatorComposition, { status: "blocked", blocker: "native_journal_operation_custody_missing" });
+  const provider = createPrivateInstalledOwnerHostProviderV1(input);
+  const loader = consumePrivateInstalledOwnerHostInputCompositionV1(consumePrivateInstalledOwnerHostProviderV1(provider));
+  const installed = await loader.loadInstalledConfiguration();
+  const operator = createPrivateLocalInstallationOperatorV1(installed.custody, { journal: installed.journal });
+  if (operator.status === "blocked") throw new Error("operator construction blocked");
+  assertBlocked(await operator.start(), "private_configuration_custody_missing");
+  assert.equal(prepared.nativeSessionOpens(), 1); assert.equal(claude.transitionReads(), 0);
+  assert.equal(f.hermesCalls(), 0);
+});
+
+test("installed operator rejects changed Claude qualification and second-read transition drift before startup", async t => {
+  for (const mode of ["qualification", "transition", "foreign", "adapter"] as const) {
+    const f = await fixture(t), prepared = await installedOperatorLoaderPackage(t, f), effects: string[] = [];
+    const claude = await additiveClaudePackage(f, { changeTransitionOnSecondRead: mode === "transition",
+      ...(mode === "foreign" ? { installationId: "installation:foreign" } : {}),
+      ...(mode === "adapter" ? { compositionAdapterId: "connector:substituted" } : {}) });
+    if (mode === "qualification") claude.claudePostInstall.admissionInput.qualificationReport.durationMs++;
+    const provider = createPrivateInstalledOwnerHostProviderV1(installedClaudeProviderInput(prepared, claude.claudePostInstall));
+    const loader = consumePrivateInstalledOwnerHostInputCompositionV1(consumePrivateInstalledOwnerHostProviderV1(provider));
+    const installed = await loader.loadInstalledConfiguration();
+    const loaded = await (installed.custody as { loadPrivateConfiguration(): Promise<any> }).loadPrivateConfiguration();
+    const operator = createPrivateLocalInstallationOperatorV1({ async loadPrivateConfiguration() {
+      return { ...loaded, startupDependencies: startupBoundaryDependencies(effects) };
+    } }, { journal: f.journal });
+    if (operator.status === "blocked") throw new Error("operator construction blocked");
+    await assert.rejects(operator.start(),
+      /local_claude_post_install_admission_refused|private_local_installation_runtime_assembly_refused|claude_code_private_installation_composition_unavailable/u);
+    assert.equal(claude.transitionReads(), mode === "foreign" ? 0 : mode === "transition" ? 2 : 1, mode);
+    assert.deepEqual(effects, [], mode); assert.equal(f.hermesCalls(), 0); assert.equal(prepared.nativeSessionOpens(), 0);
+    await assert.rejects(loader.loadInstalledConfiguration(), /private_installed_local_operator_loader_refused/u);
   }
 });

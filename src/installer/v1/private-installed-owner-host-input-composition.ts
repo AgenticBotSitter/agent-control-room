@@ -112,7 +112,7 @@ PrivateInstalledOwnerHostInputPreflightV1 {
   if (field(input, "journalSessionFactory") === undefined) return blocked(missing.journalSessionFactory);
 
   const hermes = record(field(input, "hermesRuntimePorts") ?? {},
-    ["startupBase", "deliveryIntegrityKey", "assertCurrentDelivery"]);
+    ["startupBase", "deliveryIntegrityKey", "assertCurrentDelivery", "claudePostInstall"]);
   if (field(hermes, "startupBase") === undefined) return blocked(missing.hermesStartupBase);
   if (field(hermes, "deliveryIntegrityKey") === undefined) return blocked(missing.hermesDeliveryIntegrityKey);
   if (field(hermes, "assertCurrentDelivery") === undefined) return blocked(missing.hermesAssertCurrentDelivery);
@@ -132,7 +132,9 @@ PrivateInstalledOwnerHostInputPreflightV1 {
         createNativeSessionPort: field(input, "journalSessionFactory") }),
       hermesRuntimePorts: Object.freeze({ startupBase: field(hermes, "startupBase"),
         deliveryIntegrityKey: field(hermes, "deliveryIntegrityKey"),
-        assertCurrentDelivery: field(hermes, "assertCurrentDelivery"), setupRuntimes: setup }),
+        assertCurrentDelivery: field(hermes, "assertCurrentDelivery"), setupRuntimes: setup,
+        ...(Object.prototype.hasOwnProperty.call(hermes, "claudePostInstall")
+          ? { claudePostInstall: field(hermes, "claudePostInstall") } : {}) }),
       journalOperationDeadlineMs: field(input, "journalOperationDeadlineMs"),
     }));
   } catch { return refused(); }

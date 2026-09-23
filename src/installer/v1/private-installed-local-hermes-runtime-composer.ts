@@ -1,5 +1,6 @@
 import { timingSafeEqual } from "node:crypto";
 import { types } from "node:util";
+import { capturePrivateInstalledClaudePostInstallInputV1 } from "./private-installed-claude-post-install-input";
 import { z } from "zod";
 import { createDurableReservationPostgresPortV1 } from
   "../../artifacts/v1/neutral-reservation-postgres";
@@ -387,7 +388,10 @@ function assertDatabaseBindings(config: ReturnType<typeof parseConfiguration>, s
 function compose(preparationValue: unknown, portsValue: unknown) {
   const prepared = parsePreparation(preparationValue);
   const config = parseConfiguration(prepared.privateConfigurationData, prepared);
-  const ports = exact(portsValue, ["startupBase", "deliveryIntegrityKey", "assertCurrentDelivery", "setupRuntimes"]);
+  const ports = allowed(portsValue, ["startupBase", "deliveryIntegrityKey", "assertCurrentDelivery", "setupRuntimes"],
+    ["claudePostInstall"]);
+  const claudePostInstall = Object.prototype.hasOwnProperty.call(ports, "claudePostInstall")
+    ? capturePrivateInstalledClaudePostInstallInputV1(ports.claudePostInstall) : undefined;
   assertCapabilityGraph(ports.startupBase); assertCapabilityGraph(ports.setupRuntimes);
   if (typeof ports.assertCurrentDelivery !== "function" || types.isProxy(ports.assertCurrentDelivery)) return refused();
   const assertCurrentDelivery = Function.prototype.bind.call(ports.assertCurrentDelivery, portsValue) as (delivery: unknown) => void;
@@ -500,7 +504,8 @@ function compose(preparationValue: unknown, portsValue: unknown) {
     queueWorkerConcurrency: startup.queueWorker!.concurrency,
     features: Object.freeze({ nativeQueue: true, nativeQueueRecovery: true,
       ...(startup.revisionPlanning ? { revisionPlanning: true } : {}), quality: true, evidence: true,
-      queueWorker: true, artifactStorage: true, hermes021Local: true }),
+      queueWorker: true, artifactStorage: true, hermes021Local: true,
+      ...(claudePostInstall ? { claudeCodeLocal: true } : {}) }),
   });
   const trusted = Object.freeze({ web: Object.freeze({ ...startup.web, installationPlan: config.settledInstallationPlan }),
     planning: startup.planning, routes: startup.routes, approvalEnrollments: capturedApprovals.enrollments,
@@ -530,7 +535,8 @@ function compose(preparationValue: unknown, portsValue: unknown) {
   for (const stage of stages) setupRuntimes[stage] = captureRuntimePort(suppliedRuntimes[stage]);
   const setupSources = Object.freeze({ ...config.setupSources, agent_readiness: runnerInput });
   const loaded = Object.freeze({ prerequisiteInput: config.prerequisiteInput,
-    assemblyInput: Object.freeze({ runnerInput, operatorSettings: settings, operatorTrustedInputs: trusted }),
+    assemblyInput: Object.freeze({ runnerInput, operatorSettings: settings, operatorTrustedInputs: trusted,
+      ...(claudePostInstall ? { claudePostInstall } : {}) }),
     startupDependencies, setupSources, setupRuntimes: Object.freeze(setupRuntimes) });
   return Object.freeze({ prepared, config, loaded });
 }

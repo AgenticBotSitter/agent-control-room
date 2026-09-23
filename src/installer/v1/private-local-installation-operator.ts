@@ -1,5 +1,7 @@
 import { completeLocalInstallationPrerequisitesV1 } from "./local-installation-prerequisite-transaction";
 import { types } from "node:util";
+import { exactHostDataSnapshotV1 } from "../../security/host-value";
+import { capturePrivateInstalledClaudePostInstallInputV1 } from "./private-installed-claude-post-install-input";
 import { verifyInstallationTopologyPlanV1 } from "../../harness/v1/installation-topology";
 import { verifyInstallationPlanV1, type InstallationPlanV1 } from "./installation-plan";
 import { InstallationPlanFilesystemJournalV1 } from "./installation-plan-journal";
@@ -163,12 +165,16 @@ function captureStartupDependencies(value: unknown) {
 }
 
 function captureAssemblyInput(value: unknown) {
-  const assembly = exact(value, ["runnerInput", "operatorSettings", "operatorTrustedInputs"]);
+  const assembly = exactHostDataSnapshotV1(value,
+    ["runnerInput", "operatorSettings", "operatorTrustedInputs"], ["claudePostInstall"]);
+  if (!assembly) return refuse();
   // The established assembly immediately performs its own deep, identity-aware
   // capture. Here retain those opaque validated graphs while owning their outer
   // selector so a loader cannot swap a branch after return.
   return Object.freeze({ runnerInput: assembly.runnerInput, operatorSettings: assembly.operatorSettings,
-    operatorTrustedInputs: assembly.operatorTrustedInputs });
+    operatorTrustedInputs: assembly.operatorTrustedInputs,
+    ...(Object.prototype.hasOwnProperty.call(assembly, "claudePostInstall")
+      ? { claudePostInstall: capturePrivateInstalledClaudePostInstallInputV1(assembly.claudePostInstall) } : {}) });
 }
 
 function captureStageRuntime(value: unknown): unknown {
@@ -247,7 +253,9 @@ function prerequisiteBinding(value: unknown) {
 }
 
 function assemblyInstallationId(value: unknown) {
-  const assembly = exact(value, ["runnerInput", "operatorSettings", "operatorTrustedInputs"]);
+  const assembly = exactHostDataSnapshotV1(value,
+    ["runnerInput", "operatorSettings", "operatorTrustedInputs"], ["claudePostInstall"]);
+  if (!assembly) return refuse();
   const runner = exact(assembly.runnerInput, ["admissionPreparationInput", "privateStartupConfiguration", "startupAdmissionBinding"]);
   const admission = exact(runner.admissionPreparationInput, ["installationId", "installationPlan", "topologyInput", "workerBinding",
     "installationBinding", "installationBindingInput"]);

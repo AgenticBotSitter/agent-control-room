@@ -1,4 +1,6 @@
 import { types } from "node:util";
+import { exactHostDataSnapshotV1 } from "../../security/host-value";
+import { capturePrivateInstalledClaudePostInstallInputV1 } from "./private-installed-claude-post-install-input";
 import { canonicalJson } from "../../security/canonical-digest";
 import { createPrivateInstalledConfigurationCustodyV2,
   PRIVATE_INSTALLED_CONFIGURATION_CUSTODY_V2 } from
@@ -206,11 +208,15 @@ function captureHermesGraph(value: unknown, path: string, active = new WeakSet<o
 }
 
 function captureHermesPorts(value: unknown): unknown {
-  const ports = exact(value, ["startupBase", "deliveryIntegrityKey", "assertCurrentDelivery", "setupRuntimes"]);
+  const ports = exactHostDataSnapshotV1(value,
+    ["startupBase", "deliveryIntegrityKey", "assertCurrentDelivery", "setupRuntimes"], ["claudePostInstall"]);
+  if (!ports) return refused();
   return Object.freeze({ startupBase: captureHermesGraph(ports.startupBase, "hermesRuntimePorts.startupBase"),
     deliveryIntegrityKey: captureBytes(ports.deliveryIntegrityKey),
     assertCurrentDelivery: callable(ports.assertCurrentDelivery),
-    setupRuntimes: captureHermesGraph(ports.setupRuntimes, "hermesRuntimePorts.setupRuntimes") });
+    setupRuntimes: captureHermesGraph(ports.setupRuntimes, "hermesRuntimePorts.setupRuntimes"),
+    ...(Object.prototype.hasOwnProperty.call(ports, "claudePostInstall")
+      ? { claudePostInstall: capturePrivateInstalledClaudePostInstallInputV1(ports.claudePostInstall) } : {}) });
 }
 
 type CapturedInput = Readonly<{
