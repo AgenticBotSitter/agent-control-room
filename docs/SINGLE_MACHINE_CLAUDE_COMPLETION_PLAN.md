@@ -45,7 +45,7 @@ Room has prepared, assigned, approved and queued for its exact worker route.
 | --- | --- | --- |
 | Owner web workflow | private project, task, assignment, approval, submission, result, review, correction, worker, setup and workboard pages | UI source exists; it is not a live installed service yet. |
 | Hermes local worker | Hermes 0.21 planning, queue delivery, controlled runner, staging, result publication and review path | Source composition exists; first real task needs owner setup and approval. |
-| Claude local worker | Claude connector profile, task planning, dispatch, owned process session, strict stream decoder, terminal-result publisher, private process host, installation binding and post-install admission | Source pieces exist, but they are not yet a complete admitted route: the binding is not wired into admission, delivery input/recovery need explicit completion, and installed CLI qualification plus the first real task remain owner gates. |
+| Claude local worker | Claude connector profile, task planning, dispatch, owned process session, strict stream decoder, terminal-result publisher, private process host, installation binding and post-install admission | Source composition is bound to a fixed text-only qualification report and the protected operator path rechecks it before use. A dedicated installed-CLI qualification runner and the first real task remain owner gates. |
 | Shared lifecycle | canonical projects/tasks/attempts/results/reviews/corrections, PostgreSQL, pg-boss, protected result staging and durable publication | Retain; do not add a Claude-specific lifecycle. |
 | Single-to-several transition | installation topology and transition records, shared packet/receipt contracts and remote-worker foundations | Retain; local Claude is an additive local route, not a separate product. |
 
@@ -107,7 +107,9 @@ Code itself.
 - The protected post-install admission now re-derives that evidence fingerprint
   from the sanitized report and requires it to equal the immutable process
   configuration's qualification fingerprint. A changed report therefore cannot
-  be paired with an old admitted configuration.
+  be paired with an old admitted configuration. The installed-operator test
+  also proves an altered report is refused before configuration exposure or a
+  startup effect.
 - The port must be single-purpose: no executable discovery, arbitrary command
   construction, inherited broad environment, plugin control, resume, or generic
   terminal access. Its qualification must demonstrate that user hooks, MCP

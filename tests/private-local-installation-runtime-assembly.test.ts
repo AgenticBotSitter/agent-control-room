@@ -1078,6 +1078,30 @@ test("additive Claude is reread, branded and carried through operator assembly t
   assert.deepEqual(sequence, ["artifact-storage"], "first startup effect occurs only after both rereads");
 });
 
+test("altered Claude qualification evidence refuses before configuration or startup effects", async t => {
+  const f = await fixture(t), effects: string[] = [];
+  const claude = await additiveClaudePackage(f);
+  const tamperedClaudePostInstall = {
+    ...claude.claudePostInstall,
+    admissionInput: {
+      ...claude.claudePostInstall.admissionInput,
+      qualificationReport: {
+        ...claude.claudePostInstall.admissionInput.qualificationReport,
+        durationMs: 101,
+      },
+    },
+  };
+  const assembly = createPrivateLocalInstallationRuntimeAssemblyV1({ runnerInput: f.runnerInput,
+    operatorSettings: { ...f.settings, features: { ...f.settings.features, claudeCodeLocal: true } },
+    operatorTrustedInputs: f.trusted, claudePostInstall: tamperedClaudePostInstall },
+  { journal: f.journal, startupDependencies: dependencies(effects) });
+  assert.equal(assembly.status, "ready");
+  if (assembly.status === "ready") await assert.rejects(assembly.prepare(),
+    /local_claude_post_install_admission_refused/u);
+  assert.equal(claude.transitionReads(), 1, "transition is reread before the protected evidence check");
+  assert.deepEqual(effects, [], "a changed qualification report cannot reach startup effects");
+});
+
 test("foreign installation and substituted Claude adapter refuse after transition reread and before startup effects", async t => {
   for (const mode of ["foreign", "adapter"] as const) {
     const f = await fixture(t), effects: string[] = [];

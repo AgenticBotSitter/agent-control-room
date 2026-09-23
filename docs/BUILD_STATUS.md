@@ -17,7 +17,8 @@ existing Hermes enrollment inventory and measured capacity. It shows only the
 saved, redacted state of Hermes Agent, Claude Code, and Codex: not configured,
 qualification required, needs owner attention, ready for owner enablement, or
 not available on this computer. It deliberately does **not** call any route
-running: the current data model has no trustworthy task-to-local-route binding.
+running: saved route evidence identifies a signed run, not a present worker
+connection.
 The panel has no controls and cannot start, enable, or contact an agent. This
 is a source-tested user-interface improvement, not proof that a local worker
 is installed or operating.
@@ -26,8 +27,8 @@ Prepared-task pages now also explain the selected local route's fixed limit:
 Hermes is supplied-text review only, and the first Claude route is text-only
 with tools and add-ons disabled. Those explanations are not availability
 claims—each says that qualification, owner enablement, and assignment are
-separate checks. The next UI capability still missing is a privacy-safe link
-between a current task observation and its exact local route; until that exists,
+separate checks. The next UI capability still missing is a privacy-safe match
+between a current task and its exact configured local route; until that exists,
 the interface intentionally does not label a route as running.
 
 Task observations now expose a redacted saved-adapter category when their
@@ -49,6 +50,13 @@ qualification report itself and re-derives its fingerprint before accepting
 the route configuration. A report altered after the configuration was pinned
 is refused. This is source-only setup protection; it does not qualify, start,
 or enable Claude.
+
+The installed-operator integration test now extends that protection through
+the full local assembly: changing a saved Claude qualification measurement
+after the immutable process configuration was prepared makes the assembly
+refuse before it exposes configuration or reaches any startup effect. This
+protects the shared Hermes-and-Claude operator path without starting either
+agent.
 
 The shared local-worker source conformance suite now proves that a prepared
 Hermes delivery and a prepared Claude delivery remain separate through the
