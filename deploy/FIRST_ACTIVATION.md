@@ -1,12 +1,20 @@
 # First private activation
 
-This is the one-time private website activation command. It combines only the
-steps that are safe to combine: verify two protected configuration files
+This is the one-time private Control Room activation command. It combines only
+the steps that are safe to combine: verify two protected configuration files
 match, create the first owner once, inspect the restricted database, and start
-the existing private website launcher.
+the reviewed private host.
 
-It does **not** create a database, run migrations, change Cloudflare, start an
-agent, or retry a failed owner enrollment.
+It does **not** create a database, run migrations, change Cloudflare, enroll a
+worker, or retry a failed owner enrollment.
+
+The included `deploy/operator-config.mjs` deliberately prepares the
+**website-only** mode. The activation command can also start the complete
+agent-task mode, but only when a separate owner-held, reviewed configuration
+supplies its full private task, queue, result, and worker graph. A browser
+setting or a copied website configuration cannot turn that mode on. Starting
+the host is therefore not evidence that any agent is connected or allowed to
+work.
 
 Before using it, prepare the reviewed dedicated database, private Cloudflare
 Access application and route, protected owner-bootstrap input, and protected
@@ -35,8 +43,8 @@ node scripts/activate-private-vps.mjs \
 The command checks that the database target, tenant, workspace, owner identity,
 Access issuer, and Access audience match in both configurations before it can
 write anything. It uses one fixed in-memory copy of those checked settings for
-owner creation, the database check, and website startup; it does not reload a
-configuration file between stages.
+owner creation, the database check, and the selected host startup; it does not
+reload a configuration file between stages.
 
 If it fails or its result is uncertain, stop. Do not repeat it until the exact
 database has been privately reconciled: a lost response may still mean the
