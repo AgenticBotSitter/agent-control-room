@@ -24,9 +24,11 @@ packet before it returns its non-executing receipt; the controller accepts only
 the exact receipt from the same enrolled node and session. The canonical v11
 queued-task selector, protected remote materializer, shared queue lifecycle,
 and private installation forwarding now reuse that receipt authority without a
-broker or second queue. This remains source evidence, not a live worker or task
-execution: a protected resolver, enrolled node, receipt-intake composition, and
-owner-approved live proof are still required.
+broker or second queue. A later audit found the remote path still needs durable
+uncertain-send recovery, reconstruction-stable packet identity, correction
+planning, and node-side Codex execution/result return before it can claim a
+complete source journey. This remains source evidence, not a live worker or
+task execution.
 
 **Authoritative completion order:** follow
 [`LOCAL_TO_MULTI_SYSTEM_EXECUTION_PLAN.md`](LOCAL_TO_MULTI_SYSTEM_EXECUTION_PLAN.md).

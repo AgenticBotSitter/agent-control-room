@@ -23,12 +23,11 @@ delivery transport.
   needs its final production host binding, owner-attended qualification, and
   first-task proof.
 - The shared remote delivery contract, node-session bridge, canonical queued
-  task selection, and durable remote receipt are now joined in source through
-  the existing PostgreSQL authority. The protected installation configuration
-  can pass only the materializer's bounded delivery operations to the shared
-  task lifecycle. A real protected resolver, enrolled Linux node, and live
-  receipt intake remain to be configured and proven; source tests do not make
-  a remote worker available.
+  task selection, and protected installation forwarding exist in source. The
+  remote route is **not yet complete**: durable uncertain-send recovery,
+  reconstruction-stable packet identity, remote correction planning, node-side
+  Codex execution/result return, protected resolver/receipt intake composition,
+  and their disposable proofs remain before a remote worker can be activated.
 - macOS Codex execution remains fail-closed. The discarded prototype could not
   protect Codex's pathname-based private home safely. The first supported
   Codex worker is therefore the reviewed Linux route in the several-computer
@@ -95,13 +94,18 @@ database, scheduler, website, and review path.
 
 ## Phase 4 — Add Codex through the supported Linux route
 
-1. Assemble the protected resolver and receipt-intake composition for an
-   enrolled remote worker. It must use the existing canonical queued-task
-   selection and PostgreSQL receipt path; do not add another broker, scheduler,
-   or database.
-2. Enroll one Linux Codex worker with an exact compatible adapter and private
+1. Complete durable remote delivery: persist one send intent before transport,
+   never mark an uncertain send delivered, reconcile only an exact receipt, and
+   preserve packet identity across controller reconstruction. Do not add
+   another broker, scheduler, or database.
+2. Join accepted remote packets to the existing bounded Linux Codex execution
+   and result-return lifecycle, then add a remote correction-plan revision.
+3. Assemble the protected resolver and receipt-intake composition for an
+   enrolled remote worker using the existing canonical task and PostgreSQL
+   receipt paths.
+4. Enroll one Linux Codex worker with an exact compatible adapter and private
    certificate identity.
-3. Prove delivery to only that worker, result return, correction, disconnect
+5. Prove delivery to only that worker, result return, correction, disconnect
    uncertainty, exact reconnect reconciliation, revocation, and incompatible
    version refusal.
 4. Show Hermes, Claude, and Codex work in the same project and owner review
