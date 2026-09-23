@@ -10,6 +10,28 @@ const installedRuntime = Object.freeze({
   reportError: message => console.error(message),
 });
 
+/** Read-only preflight for a configuration already loaded by a trusted
+ * activation flow. It deliberately does not import or re-run configuration. */
+export async function checkPreparedPrivateVpsDatabase(prepared, runtime = installedRuntime) {
+  try {
+    const mode = requirePrivateVpsMode(prepared);
+    if (mode === 'website-only' ? prepared.configuration.coordinator
+      || Object.keys(prepared.configuration).some(key => !['web', 'ideaAuthoring'].includes(key))
+      : Object.keys(prepared.configuration).some(key => !['web', 'coordinator', 'news'].includes(key)))
+      throw new Error('private_database_check_configuration_invalid');
+    const release = await runtime.loadRelease();
+    const result = mode === 'agent-tasks' ? await release.checkPrivateTaskDatabase(prepared.configuration)
+      : 'ideaAuthoring' in prepared.configuration
+      ? await release.checkPrivateIdeaAuthoringDatabase(prepared.configuration)
+      : await release.checkPrivateWebDatabase(prepared.configuration.web);
+    runtime.report(JSON.stringify(result));
+    return 0;
+  } catch {
+    runtime.reportError('Control Room database check failed; inspect the approved target and connection cleanup before retrying. No readiness claim.');
+    return 1;
+  }
+}
+
 /** Explicit operator command. Import is inert; no command-line injection seams,
  * production overrides, app installation, listener or automatic retry. */
 export async function checkPrivateVpsDatabase(args, runtime = installedRuntime) {
@@ -25,18 +47,7 @@ export async function checkPrivateVpsDatabase(args, runtime = installedRuntime) 
     if (operator.schema !== 'control-room.private-vps-configuration/v1' || typeof operator.createConfiguration !== 'function')
       throw new Error('private_database_check_configuration_invalid');
     const prepared = await operator.createConfiguration({ signal: new AbortController().signal });
-    const mode = requirePrivateVpsMode(prepared);
-    if (mode === 'website-only' ? prepared.configuration.coordinator
-      || Object.keys(prepared.configuration).some(key => !['web', 'ideaAuthoring'].includes(key))
-      : Object.keys(prepared.configuration).some(key => !['web', 'coordinator', 'news'].includes(key)))
-      throw new Error('private_database_check_configuration_invalid');
-    const release = await runtime.loadRelease();
-    const result = mode === 'agent-tasks' ? await release.checkPrivateTaskDatabase(prepared.configuration)
-      : 'ideaAuthoring' in prepared.configuration
-      ? await release.checkPrivateIdeaAuthoringDatabase(prepared.configuration)
-      : await release.checkPrivateWebDatabase(prepared.configuration.web);
-    runtime.report(JSON.stringify(result));
-    return 0;
+    return await checkPreparedPrivateVpsDatabase(prepared, runtime);
   } catch {
     runtime.reportError('Control Room database check failed; inspect the approved target and connection cleanup before retrying. No readiness claim.');
     return 1;

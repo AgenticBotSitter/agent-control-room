@@ -8,6 +8,21 @@ const installed = Object.freeze({
   report: value => console.log(value), reportError: value => console.error(value),
 });
 
+/** Runs a configuration that has already been loaded and validated by a
+ * higher-level, explicit operator flow.  Keeping this separate lets that flow
+ * use the same reviewed input for every effect rather than re-reading files. */
+export async function bootstrapPreparedPrivateVpsOwner(input, runtime = installed) {
+  try {
+    const release = await runtime.loadRelease();
+    const receipt = await release.runPrivateOwnerBootstrap(input);
+    runtime.report(JSON.stringify(receipt));
+    return 0;
+  } catch {
+    runtime.reportError('Owner bootstrap failed or its outcome is uncertain. Do not automatically retry. Review the approved target and connection cleanup privately.');
+    return 1;
+  }
+}
+
 /** Explicit production write command. No automatic invocation or retry. */
 export async function bootstrapPrivateVpsOwner(args, runtime = installed) {
   try {
@@ -21,9 +36,7 @@ export async function bootstrapPrivateVpsOwner(args, runtime = installed) {
     const operator = await runtime.loadOperator(parsed.configurationPath);
     if (operator.schema !== 'control-room.private-owner-bootstrap-configuration/v1' || typeof operator.createConfiguration !== 'function') throw new Error();
     const input = await operator.createConfiguration();
-    const release = await runtime.loadRelease();
-    const receipt = await release.runPrivateOwnerBootstrap(input);
-    runtime.report(JSON.stringify(receipt)); return 0;
+    return await bootstrapPreparedPrivateVpsOwner(input, runtime);
   } catch {
     runtime.reportError('Owner bootstrap failed or its outcome is uncertain. Do not automatically retry. Review the approved target and connection cleanup privately.');
     return 1;

@@ -12,9 +12,9 @@ const configuration = Object.freeze({
 });
 const ownerInput = Object.freeze({ configuration, assertion: "synthetic-private-assertion",
   trust: { issuer: "https://access.example.invalid", audience: "test-app" },
-  database: { database: "control_room", password: "synthetic-private-password" } });
+  database: { host: "127.0.0.1", port: 5432, database: "control_room", majorVersion: 17, password: "synthetic-private-password" } });
 const prepared = Object.freeze({ mode: "website-only", port: 3210, configuration: { web: {
-  database: { database: "control_room" }, tenantId: configuration.tenantId, workspaceId: configuration.workspaceId,
+  database: { host: "127.0.0.1", port: 5432, database: "control_room", majorVersion: 17 }, tenantId: configuration.tenantId, workspaceId: configuration.workspaceId,
   ownerIdentityId: configuration.identityId, issuer: ownerInput.trust.issuer, audience: ownerInput.trust.audience,
 } } });
 
@@ -35,16 +35,19 @@ test("activation validates both protected inputs before bootstrap and never repo
   const directory = await realpath(await mkdtemp(join(tmpdir(), "cr-private-activation-")));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const ownerPath = await protectedPath(directory, "owner.mjs"), runtimePath = await protectedPath(directory, "runtime.mjs");
-  const reports = [], errors = [], order = [];
+  const reports = [], errors = [], order = [], received = [];
   const runtime = { async loadOperator(path) {
       order.push(`load:${path === ownerPath ? "owner" : "runtime"}`);
       return path === ownerPath ? { schema: "control-room.private-owner-bootstrap-configuration/v1", async createConfiguration() { return ownerInput; } }
         : { schema: "control-room.private-vps-configuration/v1", async createConfiguration() { return prepared; } };
-    }, async bootstrap() { order.push("bootstrap"); return 0; }, async check() { order.push("check"); return 0; },
-    async start() { order.push("start"); return 0; }, report: value => reports.push(value), reportError: value => errors.push(value) };
+    }, async bootstrap(input) { order.push("bootstrap"); received.push(input); return 0; }, async check(input) { order.push("check"); received.push(input); return 0; },
+    async start(input) { order.push("start"); received.push(input); return 0; }, report: value => reports.push(value), reportError: value => errors.push(value) };
   const args = ["--owner-bootstrap-configuration", ownerPath, "--configuration", runtimePath, "--start"];
   assert.equal(await activatePrivateVps(args, runtime), 0);
   assert.deepEqual(order, ["load:owner", "load:runtime", "bootstrap", "check", "start"]);
+  assert.equal(received[0].configuration.databaseName, "control_room");
+  assert.equal(received[1].configuration.web.database.port, 5432);
+  assert.equal(received[2], received[1]);
   assert.equal(errors.length, 0);
   assert.doesNotMatch([...reports, ...errors].join("\n"), /synthetic-private|test-app|access\.example/);
 });
@@ -69,4 +72,45 @@ test("mismatch and failed stages stop before later effects", async t => {
       : mode === "check" ? ["bootstrap", "check"] : ["bootstrap", "check", "start"]);
     assert.doesNotMatch(output.join("\n"), /synthetic-private|test-app|access\.example/);
   }
+});
+
+test("activation refuses a same-name database on a different port before bootstrap", async t => {
+  const directory = await realpath(await mkdtemp(join(tmpdir(), "cr-private-activation-port-")));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const ownerPath = await protectedPath(directory, "owner.mjs"), runtimePath = await protectedPath(directory, "runtime.mjs");
+  const calls = [];
+  const runtime = {
+    async loadOperator(path) {
+      return path === ownerPath ? { schema: "control-room.private-owner-bootstrap-configuration/v1", async createConfiguration() { return ownerInput; } }
+        : { schema: "control-room.private-vps-configuration/v1", async createConfiguration() {
+          return { ...prepared, configuration: { web: { ...prepared.configuration.web, database: { ...prepared.configuration.web.database, port: 55432 } } } };
+        } };
+    },
+    async bootstrap() { calls.push("bootstrap"); return 0; }, async check() { calls.push("check"); return 0; }, async start() { calls.push("start"); return 0; },
+    report() {}, reportError() {},
+  };
+  assert.equal(await activatePrivateVps(["--owner-bootstrap-configuration", ownerPath, "--configuration", runtimePath, "--start"], runtime), 1);
+  assert.deepEqual(calls, []);
+});
+
+test("activation uses each loaded configuration once and passes frozen snapshots to every stage", async t => {
+  const directory = await realpath(await mkdtemp(join(tmpdir(), "cr-private-activation-snapshot-")));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const ownerPath = await protectedPath(directory, "owner.mjs"), runtimePath = await protectedPath(directory, "runtime.mjs");
+  let ownerLoads = 0, runtimeLoads = 0;
+  const calls = [];
+  const runtime = {
+    async loadOperator(path) {
+      return path === ownerPath ? { schema: "control-room.private-owner-bootstrap-configuration/v1", async createConfiguration() {
+        ownerLoads += 1; return ownerLoads === 1 ? ownerInput : { ...ownerInput, configuration: { ...configuration, databaseName: "wrong" } };
+      } } : { schema: "control-room.private-vps-configuration/v1", async createConfiguration() {
+        runtimeLoads += 1; return runtimeLoads === 1 ? prepared : { ...prepared, configuration: { web: { ...prepared.configuration.web, ownerIdentityId: "wrong" } } };
+      } };
+    },
+    async bootstrap(input) { calls.push(input); return 0; }, async check(input) { calls.push(input); return 0; }, async start(input) { calls.push(input); return 0; },
+    report() {}, reportError() {},
+  };
+  assert.equal(await activatePrivateVps(["--owner-bootstrap-configuration", ownerPath, "--configuration", runtimePath, "--start"], runtime), 0);
+  assert.equal(ownerLoads, 1); assert.equal(runtimeLoads, 1);
+  assert.ok(Object.isFrozen(calls[0])); assert.ok(Object.isFrozen(calls[1])); assert.equal(calls[1], calls[2]);
 });

@@ -1,8 +1,8 @@
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import { checkPrivateVpsDatabase } from "./check-private-vps-database.mjs";
-import { bootstrapPrivateVpsOwner } from "./bootstrap-private-vps-owner.mjs";
-import { parsePrivateVpsArguments, requirePrivateVpsMode, validatePrivateVpsConfigurationPath, runPrivateVps } from "./run-private-vps.mjs";
+import { checkPreparedPrivateVpsDatabase } from "./check-private-vps-database.mjs";
+import { bootstrapPreparedPrivateVpsOwner } from "./bootstrap-private-vps-owner.mjs";
+import { parsePrivateVpsArguments, requirePrivateVpsMode, validatePrivateVpsConfigurationPath, runPreparedPrivateVps } from "./run-private-vps.mjs";
 
 function parseActivationArguments(args) {
   if (args.length === 1 && args[0] === "--help") return Object.freeze({ help: true });
@@ -21,17 +21,45 @@ function assertCompatibleActivationInput(ownerInput, prepared) {
   try {
     if (!bootstrap || !trust || !database || !web || requirePrivateVpsMode(prepared) !== "website-only") throw new Error();
     if (bootstrap.databaseName !== database.database || bootstrap.databaseName !== web.database.database
+      || database.host !== web.database.host || database.port !== web.database.port
+      || database.majorVersion !== web.database.majorVersion
       || bootstrap.tenantId !== web.tenantId || bootstrap.workspaceId !== web.workspaceId
       || bootstrap.identityId !== web.ownerIdentityId || trust.issuer !== web.issuer
       || trust.audience !== web.audience) throw new Error();
   } catch { throw new Error("private_activation_inputs_mismatch"); }
 }
 
+/** Configurations are trusted executable operator modules, but one-pass
+ * activation must still bind every later effect to the exact values first
+ * reviewed here. Clone ordinary values, retain function references (for key
+ * loaders), and freeze the resulting object graph. */
+function freezeActivationSnapshot(value, seen = new WeakMap()) {
+  if (value === null || typeof value !== "object") return value;
+  if (seen.has(value)) return seen.get(value);
+  if (value instanceof Uint8Array) return new Uint8Array(value);
+  if (Array.isArray(value)) {
+    const copy = [];
+    seen.set(value, copy);
+    for (const entry of value) copy.push(freezeActivationSnapshot(entry, seen));
+    return Object.freeze(copy);
+  }
+  if (Object.getPrototypeOf(value) !== Object.prototype && Object.getPrototypeOf(value) !== null)
+    throw new Error("private_activation_snapshot_invalid");
+  const copy = {};
+  seen.set(value, copy);
+  for (const key of Reflect.ownKeys(value)) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    if (!descriptor || "get" in descriptor || "set" in descriptor) throw new Error("private_activation_snapshot_invalid");
+    copy[key] = freezeActivationSnapshot(value[key], seen);
+  }
+  return Object.freeze(copy);
+}
+
 const installed = Object.freeze({
   loadOperator: path => import(pathToFileURL(path).href),
-  bootstrap: args => bootstrapPrivateVpsOwner(args),
-  check: args => checkPrivateVpsDatabase(args),
-  start: args => runPrivateVps(args),
+  bootstrap: input => bootstrapPreparedPrivateVpsOwner(input),
+  check: prepared => checkPreparedPrivateVpsDatabase(prepared),
+  start: prepared => runPreparedPrivateVps(prepared),
   report: value => console.log(value),
   reportError: value => console.error(value),
 });
@@ -56,12 +84,14 @@ export async function activatePrivateVps(args, runtime = installed) {
     const [ownerOperator, runtimeOperator] = await Promise.all([runtime.loadOperator(parsed.bootstrap), runtime.loadOperator(parsed.runtime)]);
     if (ownerOperator.schema !== "control-room.private-owner-bootstrap-configuration/v1" || typeof ownerOperator.createConfiguration !== "function"
       || runtimeOperator.schema !== "control-room.private-vps-configuration/v1" || typeof runtimeOperator.createConfiguration !== "function") throw new Error();
-    const [ownerInput, prepared] = await Promise.all([ownerOperator.createConfiguration(), runtimeOperator.createConfiguration({ signal: new AbortController().signal })]);
+    const [loadedOwnerInput, loadedPrepared] = await Promise.all([ownerOperator.createConfiguration(), runtimeOperator.createConfiguration({ signal: new AbortController().signal })]);
+    const ownerInput = freezeActivationSnapshot(loadedOwnerInput);
+    const prepared = freezeActivationSnapshot(loadedPrepared);
     assertCompatibleActivationInput(ownerInput, prepared);
-    if (await runtime.bootstrap(["--configuration", parsed.bootstrap]) !== 0) throw new Error();
-    if (await runtime.check(["--configuration", parsed.runtime]) !== 0) throw new Error();
+    if (await runtime.bootstrap(ownerInput) !== 0) throw new Error();
+    if (await runtime.check(prepared) !== 0) throw new Error();
     runtime.report("First-owner setup and database checks passed. Starting the private Control Room website.");
-    if (await runtime.start(["--configuration", parsed.runtime]) !== 0) throw new Error();
+    if (await runtime.start(prepared) !== 0) throw new Error();
     return 0;
   } catch {
     runtime.reportError("Control Room activation stopped before a usable website was confirmed. If owner creation may have been attempted, reconcile the private database before another activation attempt.");

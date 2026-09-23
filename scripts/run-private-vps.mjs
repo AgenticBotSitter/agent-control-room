@@ -61,25 +61,14 @@ export function requirePrivateVpsMode(prepared) {
 
 // Explicit in-process dependency injection supports offline tests. The CLI never
 // accepts runtime factories, import overrides or a test-mode flag from arguments.
-export async function runPrivateVps(args, runtime = installedRuntime) {
-  const parsed = parsePrivateVpsArguments(args);
-  if (parsed.help) {
-    runtime.report('Usage: node scripts/run-private-vps.mjs --configuration /absolute/operator-config.mjs');
-    runtime.report('Starts real resources. Requires approved operator setup; never use test credentials.');
-    return 0;
-  }
-  await validatePrivateVpsConfigurationPath(parsed.configurationPath);
-  // Fixed paths in this release, not cwd or a request-supplied module search path.
+/** Starts a configuration already loaded by an explicit activation flow. This
+ * prevents a time-of-check/time-of-use re-import of operator configuration. */
+export async function runPreparedPrivateVps(prepared, runtime = installedRuntime) {
+  // Fixed release imports, not cwd or a request-supplied module search path.
   const [{ createInstalledPrivateTaskHost, startPrivateHostLifecycle }, serving, renderer, bootstrap, ideaAuthoring] = await runtime.loadRelease();
   let mode;
   const lifecycle = startPrivateHostLifecycle({ signals: runtime.signals, async start(signal) {
     const active = () => { if (signal.aborted) throw new Error('private_vps_start_canceled'); };
-    active();
-    const operator = await runtime.loadOperator(parsed.configurationPath);
-    active();
-    if (operator.schema !== 'control-room.private-vps-configuration/v1'
-      || typeof operator.createConfiguration !== 'function') throw new Error('private_vps_configuration_invalid');
-    const prepared = await operator.createConfiguration({ signal });
     active();
     mode = requirePrivateVpsMode(prepared);
     const assets = await serving.loadPrivateClientAssets(fileURLToPath(new URL('../dist-vps/client', import.meta.url)));
@@ -109,6 +98,21 @@ export async function runPrivateVps(args, runtime = installedRuntime) {
   }
   runtime.report('Control Room private host closed.');
   return 0;
+}
+
+export async function runPrivateVps(args, runtime = installedRuntime) {
+  const parsed = parsePrivateVpsArguments(args);
+  if (parsed.help) {
+    runtime.report('Usage: node scripts/run-private-vps.mjs --configuration /absolute/operator-config.mjs');
+    runtime.report('Starts real resources. Requires approved operator setup; never use test credentials.');
+    return 0;
+  }
+  await validatePrivateVpsConfigurationPath(parsed.configurationPath);
+  const operator = await runtime.loadOperator(parsed.configurationPath);
+  if (operator.schema !== 'control-room.private-vps-configuration/v1'
+    || typeof operator.createConfiguration !== 'function') throw new Error('private_vps_configuration_invalid');
+  const prepared = await operator.createConfiguration({ signal: new AbortController().signal });
+  return runPreparedPrivateVps(prepared, runtime);
 }
 
 /** Reuses the restricted production web bootstrap, with no task planner or worker.
