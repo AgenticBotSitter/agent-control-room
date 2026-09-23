@@ -87,6 +87,18 @@ test("a changed canonical task or lease after durable receipt cannot acquire Cla
   assert.equal(state.acquires, 0, "the saved receipt never causes a second acquisition");
 });
 
+test("an observed caller cancellation after receipt is distinct from uncertain delivery", async t => {
+  const f = await nativeTaskFixture(); t.after(f.close);
+  const packet = delivery(), state = { revoked: false, receives: 0, acquires: 0 };
+  const controller = new AbortController(), config = composition(f, packet, state);
+  config.receiptPort = { async receive(value: ControllerWorkerDeliveryV1) {
+    state.receives++; controller.abort(); return accepted(value);
+  } };
+  const result = await deliverClaudeCodeLocalTaskV1(config, packet, { kind: "local", workerId: worker.workerId }, at(2000), controller.signal);
+  assert.equal(result.state, "delivery_cancelled");
+  assert.deepEqual({ receives: state.receives, acquires: state.acquires }, { receives: 1, acquires: 0 });
+});
+
 test("wrong worker and authority loss across the receipt await never reach acquisition", async t => {
   const wrongFixture = await nativeTaskFixture(); t.after(wrongFixture.close);
   const wrong = delivery({ worker: { ...worker, workerId: "worker:wrong" } });

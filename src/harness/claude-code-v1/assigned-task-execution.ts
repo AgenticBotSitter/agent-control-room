@@ -106,6 +106,15 @@ export async function executeAssignedClaudeCodeLocalTaskV1(config: ClaudeCodeLoc
     || existing.connectorProfileDigest !== candidate.connectorProfileDigest
     || existing.authorityDigest !== candidate.authorityDigest)) unavailable();
   const registered = existing ? { run: existing, replayed: true } : await config.runs.create(candidate);
+  // An earlier pickup that could not establish any durable receipt is an
+  // unresolved delivery, not permission for a restart to send the packet
+  // again.  If a receipt exists, the ordinary recovery path below may inspect
+  // its protected terminal evidence; without one, only owner recovery can
+  // decide what happened.
+  if (registered.run.state === "disconnected" && !retainedReceipt) return Object.freeze({
+    schema: CLAUDE_CODE_LOCAL_ASSIGNED_TASK_EXECUTION_V1, prepared, registered,
+    state: "terminal_result_uncertain" as const, startsWork: false as const, grantsExecutionAuthority: false as const,
+  });
   let sequence = (await config.runs.inspect(prepared.delivery.identity.tenantId, registered.run.id))?.events.length ?? 0;
   let observedState = registered.run.state;
   // A terminal failure/cancellation consumes this exact run. Do this before a
@@ -131,7 +140,25 @@ export async function executeAssignedClaudeCodeLocalTaskV1(config: ClaudeCodeLoc
   const finish = (state: "published_pending_review" | "recovered_pending_review" | "terminal_result_uncertain" | "not_started",
     publication?: ClaudeTerminalResultPublicationV1) => Object.freeze({ schema: CLAUDE_CODE_LOCAL_ASSIGNED_TASK_EXECUTION_V1,
       prepared, registered, state, ...(publication ? { publication } : {}), startsWork: false as const, grantsExecutionAuthority: false as const });
-  if (delivery.state === "delivery_uncertain" || delivery.state === "receipt_rejected") return finish("not_started");
+  if (delivery.state === "receipt_rejected") return finish("not_started");
+  if (delivery.state === "delivery_cancelled") {
+    // The receipt boundary was crossed but the owner/controller cancelled
+    // before acquisition.  Record that exact observed outcome in the shared
+    // run history; it is terminal and therefore cannot be reopened on restart.
+    if (observedState === "discovered") await append({ category: "lifecycle", state: "starting" }, now);
+    if (!isTerminalHarnessRunState(observedState)) await append({ category: "lifecycle", state: "cancelled",
+      reasonCode: "claude_local_delivery_cancelled" }, now);
+    return finish("not_started");
+  }
+  if (delivery.state === "delivery_uncertain") {
+    // A receipt or final pre-acquisition fence became uncertain.  This is not
+    // a start, a completion, or permission to resend.  The ordinary run
+    // history keeps it visible as disconnected for owner recovery.
+    if (observedState === "discovered") await append({ category: "lifecycle", state: "starting" }, now);
+    if (!isTerminalHarnessRunState(observedState)) await append({ category: "transport", state: "disconnected",
+      reasonCode: "claude_local_delivery_uncertain" }, now);
+    return finish("terminal_result_uncertain");
+  }
   const reservation = delivery.reservation;
   if (!reservation || !sameDelivery(reservation.delivery, prepared.delivery)) unavailable();
   const retainedBinding = retainClaudeCodeLocalResultBindingV1(prepared);

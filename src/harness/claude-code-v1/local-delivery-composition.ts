@@ -153,6 +153,8 @@ export async function deliverClaudeCodeLocalTaskV1(config: ClaudeCodeLocalDelive
   } catch {
     // A lost acknowledgement or a crash at the durable-commit boundary cannot
     // be recast as rejection or retried into acquisition.
+    if (signal?.aborted) return Object.freeze({ delivery, state: "delivery_cancelled" as const,
+      startsWork: false as const, grantsExecutionAuthority: false as const });
     return Object.freeze({ delivery, state: "delivery_uncertain" as const,
       startsWork: false as const, grantsExecutionAuthority: false as const });
   }
@@ -177,6 +179,13 @@ export async function deliverClaudeCodeLocalTaskV1(config: ClaudeCodeLocalDelive
     return Object.freeze({ reservation, session, state: "reserved_session_open" as const,
       startsWork: false as const, grantsExecutionAuthority: false as const });
   } catch {
+    // The caller's abort is an observed controller cancellation, not an
+    // ambiguous transport failure.  Preserve that distinction so the shared
+    // harness history can end the one reserved run without inventing a result
+    // or allowing a later pickup to reopen Claude.  Other failures remain
+    // uncertain: the receipt may have crossed a boundary we cannot prove.
+    if (signal?.aborted) return Object.freeze({ reservation, state: "delivery_cancelled" as const,
+      startsWork: false as const, grantsExecutionAuthority: false as const });
     return Object.freeze({ reservation, state: "delivery_uncertain" as const,
       startsWork: false as const, grantsExecutionAuthority: false as const });
   }

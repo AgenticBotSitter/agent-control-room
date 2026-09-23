@@ -151,11 +151,11 @@ test("a local Claude delivery publishes once, then a rebuilt executor recovers t
     reviewIntegrityKey: f.reviewKey, checkpoints: f.checkpoints }, () => now);
   const source = await f.tasks.propose(f.identity, binding.projectId, taskDraft, "claude-local-executor-source");
   const planned = await planner.plan(f.identity, binding.projectId, source.receipt.jobId, sha256Digest(taskDraft));
-  // This exercises four separate disposable task identities (success,
-  // rejected-before-start, and already-failed/cancelled runs). Capacity must not be
+  // This exercises several separate disposable task identities (success,
+  // rejected-before-start, cancellation/uncertainty, and already-failed/cancelled runs). Capacity must not be
   // the reason the terminal-run guard is tested.
   const route = [{ nodeId: binding.nodeId, executorId: authority.allowedExecutor,
-    capabilityProbeId: CLAUDE_CODE_LOCAL_CAPABILITY_V1, maxConcurrentTasks: 6, requiredScratchBytes: 0, leaseSeconds: 60 }] as const;
+    capabilityProbeId: CLAUDE_CODE_LOCAL_CAPABILITY_V1, maxConcurrentTasks: 8, requiredScratchBytes: 0, leaseSeconds: 60 }] as const;
   const signals = new FleetSignalStore(f.db);
   const telemetry: FleetSignalEnvelope = { schemaVersion: "1.0.0", tenantId: binding.tenantId, nodeId: binding.nodeId,
     sequence: 1, observedAt: at(6_000), expiresAt: at(120_000), trust: "reported", fingerprint: sha256Digest("claude-telemetry"),
@@ -271,6 +271,77 @@ test("a local Claude delivery publishes once, then a rebuilt executor recovers t
   await assert.rejects(restartedRejectedQueue.deliver(rejectedTarget, new AbortController().signal), /claude_code_local_queue_delivery_unresolved/);
   assert.deepEqual({ rejectedReceiptCalls, rejectedAcquisitions }, { rejectedReceiptCalls: 1, rejectedAcquisitions: 0 },
     "recovery preserves the receipt but never auto-resends a rejected local route");
+
+  // An owner/controller cancellation observed after an accepted receipt is not
+  // a mysterious non-start.  The shared history records it as terminal, no
+  // result reaches review, and a reconstructed executor cannot reopen Claude.
+  const cancelledDuringDeliverySource = await f.tasks.propose(f.identity, binding.projectId,
+    { ...taskDraft, title: "Cancelled during Claude delivery" }, "claude-cancel-during-delivery-source");
+  const cancelledDuringDeliveryPlan = await planner.plan(f.identity, binding.projectId, cancelledDuringDeliverySource.receipt.jobId,
+    sha256Digest({ ...taskDraft, title: "Cancelled during Claude delivery" }));
+  const cancelledDuringDeliveryAssignment = await assignments.assign(f.identity, binding.projectId,
+    cancelledDuringDeliveryPlan.receipt.jobId, binding.nodeId, cancelledDuringDeliveryPlan.receipt.inputDigest);
+  const cancelledDuringDeliveryReference = { tenantId: binding.tenantId, projectId: binding.projectId,
+    jobId: cancelledDuringDeliveryPlan.receipt.jobId, attemptId: cancelledDuringDeliveryAssignment.receipt.attemptId,
+    leaseId: cancelledDuringDeliveryAssignment.receipt.leaseId, inputDigest: cancelledDuringDeliveryPlan.receipt.inputDigest };
+  const cancelledDuringDeliveryPrepared = await preparation().prepare(cancelledDuringDeliveryReference);
+  const cancellation = new AbortController(); let cancelledDuringDeliveryAcquisitions = 0, cancelledDuringDeliveryReceipts = 0;
+  const cancelledDuringDeliveryReceiptPort = { async receive(packet: ControllerWorkerDeliveryV1) {
+    cancelledDuringDeliveryReceipts++; cancellation.abort(); return acceptedClaudeDelivery(packet, new Date(now).toISOString());
+  } };
+  const cancelledDuringDelivery = await executeAssignedClaudeCodeLocalTaskV1(execution(() => {
+    cancelledDuringDeliveryAcquisitions++; throw new Error("cancelled_delivery_must_not_acquire_claude");
+  }, cancelledDuringDeliveryPrepared, cancelledDuringDeliveryReceiptPort), cancelledDuringDeliveryReference, cancellation.signal);
+  assert.equal(cancelledDuringDelivery.state, "not_started");
+  assert.deepEqual({ cancelledDuringDeliveryReceipts, cancelledDuringDeliveryAcquisitions },
+    { cancelledDuringDeliveryReceipts: 1, cancelledDuringDeliveryAcquisitions: 0 });
+  const cancelledDuringDeliveryRun = await new HarnessRunStoreV1(f.db, f.harnessKey).inspect(binding.tenantId,
+    cancelledDuringDeliveryPrepared.delivery.identity.runId);
+  assert.equal(cancelledDuringDeliveryRun?.run.state, "cancelled");
+  assert.deepEqual(cancelledDuringDeliveryRun?.events.map(event => event.payload.category === "lifecycle" ? event.payload.state : undefined),
+    ["starting", "cancelled"]);
+  assert.equal((await f.db.query("SELECT run_id FROM control_native_review_plans WHERE tenant_id=$1 AND run_id=$2",
+    [binding.tenantId, cancelledDuringDeliveryPrepared.delivery.identity.runId])).rows.length, 0);
+  await assert.rejects(executeAssignedClaudeCodeLocalTaskV1(execution(() => {
+    cancelledDuringDeliveryAcquisitions++; throw new Error("cancelled_delivery_restart_must_not_acquire_claude");
+  }, cancelledDuringDeliveryPrepared, cancelledDuringDeliveryReceiptPort), cancelledDuringDeliveryReference,
+  new AbortController().signal), /claude_code_local_assigned_task_execution_unavailable/);
+  assert.equal(cancelledDuringDeliveryAcquisitions, 0, "a cancelled run cannot reopen Claude after restart");
+
+  // A failed receipt exchange is genuinely uncertain.  It is visible as a
+  // disconnected run, creates neither a review nor a replacement attempt, and
+  // a reconstructed executor must not resend the unknown original packet.
+  const uncertainSource = await f.tasks.propose(f.identity, binding.projectId,
+    { ...taskDraft, title: "Uncertain Claude delivery" }, "claude-uncertain-delivery-source");
+  const uncertainPlan = await planner.plan(f.identity, binding.projectId, uncertainSource.receipt.jobId,
+    sha256Digest({ ...taskDraft, title: "Uncertain Claude delivery" }));
+  const uncertainAssignment = await assignments.assign(f.identity, binding.projectId, uncertainPlan.receipt.jobId,
+    binding.nodeId, uncertainPlan.receipt.inputDigest);
+  const uncertainReference = { tenantId: binding.tenantId, projectId: binding.projectId, jobId: uncertainPlan.receipt.jobId,
+    attemptId: uncertainAssignment.receipt.attemptId, leaseId: uncertainAssignment.receipt.leaseId,
+    inputDigest: uncertainPlan.receipt.inputDigest };
+  const uncertainPrepared = await preparation().prepare(uncertainReference);
+  let uncertainReceiptCalls = 0, uncertainAcquisitions = 0;
+  const uncertainReceiptPort = { async receive(_packet: ControllerWorkerDeliveryV1) {
+    uncertainReceiptCalls++; throw new Error("receipt_exchange_lost");
+  } };
+  const uncertain = await executeAssignedClaudeCodeLocalTaskV1(execution(() => {
+    uncertainAcquisitions++; throw new Error("uncertain_delivery_must_not_acquire_claude");
+  }, uncertainPrepared, uncertainReceiptPort), uncertainReference, new AbortController().signal);
+  assert.equal(uncertain.state, "terminal_result_uncertain");
+  assert.deepEqual({ uncertainReceiptCalls, uncertainAcquisitions }, { uncertainReceiptCalls: 1, uncertainAcquisitions: 0 });
+  const uncertainRun = await new HarnessRunStoreV1(f.db, f.harnessKey).inspect(binding.tenantId, uncertainPrepared.delivery.identity.runId);
+  assert.equal(uncertainRun?.run.state, "disconnected");
+  assert.deepEqual(uncertainRun?.events.map(event => event.payload.category === "lifecycle"
+    ? event.payload.state : event.payload.category === "transport" ? event.payload.state : undefined), ["starting", "disconnected"]);
+  assert.equal((await f.db.query("SELECT run_id FROM control_native_review_plans WHERE tenant_id=$1 AND run_id=$2",
+    [binding.tenantId, uncertainPrepared.delivery.identity.runId])).rows.length, 0);
+  const uncertainRestart = await executeAssignedClaudeCodeLocalTaskV1(execution(() => {
+    uncertainAcquisitions++; throw new Error("uncertain_delivery_restart_must_not_acquire_claude");
+  }, uncertainPrepared, uncertainReceiptPort), uncertainReference, new AbortController().signal);
+  assert.equal(uncertainRestart.state, "terminal_result_uncertain");
+  assert.deepEqual({ uncertainReceiptCalls, uncertainAcquisitions }, { uncertainReceiptCalls: 1, uncertainAcquisitions: 0 },
+    "a restart does not resend an unconfirmed Claude delivery");
 
   // A prior terminal failure consumes that exact run. A later call cannot
   // contact Claude, add a delivery receipt, or publish old success evidence
