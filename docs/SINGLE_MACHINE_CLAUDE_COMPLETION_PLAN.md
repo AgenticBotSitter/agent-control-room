@@ -45,7 +45,7 @@ Room has prepared, assigned, approved and queued for its exact worker route.
 | --- | --- | --- |
 | Owner web workflow | private project, task, assignment, approval, submission, result, review, correction, worker, setup and workboard pages | UI source exists; it is not a live installed service yet. |
 | Hermes local worker | Hermes 0.21 planning, queue delivery, controlled runner, staging, result publication and review path | Source composition exists; first real task needs owner setup and approval. |
-| Claude local worker | Claude connector profile, task planning, dispatch, owned process session, strict stream decoder, terminal-result publisher, private process host, installation binding and post-install admission | Source composition is bound to a fixed text-only qualification report and the protected operator path rechecks it before use. A dedicated installed-CLI qualification runner and the first real task remain owner gates. |
+| Claude local worker | Claude connector profile, task planning, dispatch, owned process session, strict stream decoder, terminal-result publisher, private process host, installation binding and post-install admission | Source composition is bound to a fixed text-only qualification report and the protected operator path rechecks it before use. A dedicated owner-attended installed-CLI qualification runner exists; running it and the first real task remain owner gates. |
 | Shared lifecycle | canonical projects/tasks/attempts/results/reviews/corrections, PostgreSQL, pg-boss, protected result staging and durable publication | Retain; do not add a Claude-specific lifecycle. |
 | Single-to-several transition | installation topology and transition records, shared packet/receipt contracts and remote-worker foundations | Retain; local Claude is an additive local route, not a separate product. |
 
@@ -95,7 +95,8 @@ Code itself.
   `owned-process-session.ts`, `stream-json-decode.ts`, result publication, and
   `src/installer/v1/local-claude-installation-binding.ts`.
 - Retain the existing private installed-process host and post-install
-  composition. Build only the missing qualification evidence/owner-held port
+  composition. The source now includes a dedicated owner-attended
+  `qualify:claude:local` runner and its injected private process port. It
   that verifies the selected Claude executable/version, fixed arguments,
   working directory, authentication custody, bounded input delivery,
   process-group cleanup, restart-read/recovery receipt, and exact output
@@ -123,7 +124,7 @@ Code itself.
   terminal access. Its qualification must demonstrate that user hooks, MCP
   servers, plugins and project instructions are disabled or isolated for the
   fixed invocation.
-- Use owner-attended qualification only after all source tests pass. Preserve a
+- Use the owner-attended qualification only after all source tests pass. Preserve a
   failed qualification as evidence; never turn it into a retry.
 
 **Owner action needed later:** approve one text-only Claude qualification and

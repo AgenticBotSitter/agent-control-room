@@ -30,14 +30,20 @@ process is returned is cleanup uncertainty. Neither permits retry or resume.
 
 ## Deliberately still unsupported
 
-There is no live launcher in this package. It does not discover or contact an
-installed Claude executable, read credentials or environment variables, start
-a service, or use the network. The support matrix therefore remains
-source-only. A future private port must be qualified by the owner against the
-exact installed Claude version and must prove executable identity, fixed
-arguments and stdin format, private authentication custody, bounded
-TERM/KILL/reap behavior, exact stream frames and usage, and no-resume restart
-semantics before live startup can be enabled.
+The application package still has no default live launcher. It does not
+discover or contact an installed Claude executable, read credentials or broad
+environment variables, start a service, or use the network. The separate
+`qualify:claude:local` owner-attended command is a one-shot private port, not
+application startup: it requires an owner-pinned absolute executable and work
+directory, an explicit choice to reuse the owner login, and runs only the
+fixed text-review arguments. It reports only a digest and bounded token/time
+measurements. It cannot enable a worker, save a credential, or retry itself.
+
+The support matrix therefore remains source-only until that command is run by
+the owner against the exact installed Claude version and proves executable
+identity, fixed arguments and stdin format, private authentication custody,
+bounded TERM/KILL/reap behavior, exact stream frames and usage, and no-resume
+restart semantics before live startup can be enabled.
 
 The tests use injected fake native ports only. They cover exact one-time input,
 write/close/read ordering, active cancellation and deadlines, late-verification
