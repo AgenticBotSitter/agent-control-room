@@ -10,6 +10,23 @@ It finishes the supported single-computer installation first and then extends
 that same database, scheduler and lifecycle to several computers. Older build
 plans remain architecture/history references, not competing execution queues.
 
+The first installed Claude route is now pinned to Claude Code's `opus` alias
+instead of inheriting a desktop or command-line default. Its owner-attended
+qualification, saved process configuration, and later task execution must all
+agree on that immutable invocation policy. A separate redacted recorder can
+turn a successful qualification report into installation-readiness evidence;
+it does not start Claude or authorize work. The corresponding Hermes route is
+prepared for the owner's `cr` profile with the separately selected model and
+provider, but that exact selection still requires its own owner-attended
+qualification before it can receive a real Control Room task.
+
+All 364 test files are now reachable from the GitHub test lanes. Registering
+the previously omitted shared Hermes/Claude startup checks exposed and fixed
+one stale Claude fixture that lacked the new Opus pin. The shared server
+composition now passes 109 checks, including retained Hermes operation when
+Claude is added, restart recovery, route isolation, and refusal of a
+Claude-only configuration. This is source evidence, not a live connection.
+
 ## Source checkpoint (2026-09-22)
 
 The local Hermes and Claude result paths now both publish through the same
