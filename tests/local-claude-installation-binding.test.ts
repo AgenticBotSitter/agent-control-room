@@ -105,7 +105,9 @@ test("Claude refuses every incomplete process proof and coherent evidence replac
   for (const proof of input.processReadiness.proofs) {
     for (const state of ["not_started", "failed", "unavailable"] as const) {
       const processReadiness = createClaudeCodeLocalProcessReadinessV1({ planDigest: input.processReadiness.planDigest,
-        proofs: input.processReadiness.proofs.map(item => item.proof === proof.proof ? { proof: item.proof, state } : item) });
+        proofs: input.processReadiness.proofs.map(item => item.proof === proof.proof
+          ? { proof: item.proof, state, ...(state === "failed" ? { evidenceDigest: d(`failed:${item.proof}`) } : {}) }
+          : item) });
       refuses(() => prepareLocalClaudeInstallationBindingV1({ ...input, processReadiness }));
     }
   }
