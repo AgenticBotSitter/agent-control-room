@@ -3,6 +3,7 @@ import { generateKeyPairSync } from "node:crypto";
 import test from "node:test";
 import { createControllerWorkerDeliveryV1 } from "../src/harness/v1/controller-worker-delivery";
 import { CONTROLLER_WORKER_NODE_DELIVERY_FEATURE_V1, controllerWorkerNodeDispatchBodySchemaV1 } from "../src/harness/v1/controller-worker-node-delivery";
+import { createAuthenticatedRemoteNodeSessionDeliveryBridgeV1 } from "../src/harness/v1/remote-session-delivery-bridge";
 import { ControllerWorkerDeliveryIntakeHandlerV1 } from "../src/node-bridge/controller-worker-delivery-handler";
 import { PortableNodeBridge } from "../src/node-bridge/bridge";
 import { SqliteBridgeJournal } from "../src/node-bridge/journal";
@@ -64,24 +65,22 @@ async function connected() {
 
 test("server sends exactly one generic controller packet and accepts only its authenticated matching receipt", async () => {
   const f = await connected();
-  assert.ok(f.session.controllerWorkerDeliveryChannel());
-  let transmitted = 0, committed = 0;
-  await f.session.stageControllerWorkerDelivery(async (sign, channel) => {
-    channel.assertCurrent(); return sign(f.dispatch, Date.parse(f.dispatch.delivery.expiresAt));
-  });
-  await f.session.sendPreparedControllerWorkerDelivery(async (frame, channel) => {
-    transmitted++; channel.assertCurrent(); return { value: frame.messageId, assertFresh: channel.assertCurrent };
-  });
+  const remote = createAuthenticatedRemoteNodeSessionDeliveryBridgeV1({ session: {
+    workerId: f.dispatch.delivery.worker.workerId, enrollmentDigest: f.dispatch.enrollmentDigest, session: f.session,
+  } });
+  const transmitted = await remote.transmit(f.dispatch.delivery, { kind: "remote", workerId: f.dispatch.delivery.worker.workerId });
+  assert.equal(transmitted.deliveryDigest, f.dispatch.delivery.deliveryDigest);
   assert.equal(f.toNode.length, 1); f.advance(); await f.bridge.receive(f.toNode.shift()!, f.stamp());
   assert.equal(f.toServer.length, 1);
-  const saved = await f.session.acceptControllerWorkerDeliveryReceipt(f.toServer.shift()!, async (receipt, sent, current) => {
-    committed++; current(); assert.equal(receipt.body.receipt.startsWork, false); assert.equal(receipt.body.dispatchMessageId, sent.messageId);
-    return receipt.body.receipt;
+  let committed = 0;
+  const saved = await remote.acceptReceipt(f.toServer.shift()!, async value => {
+    committed++; value.assertCurrent(); assert.equal(value.receipt.startsWork, false);
+    assert.equal(value.delivery.deliveryDigest, f.dispatch.delivery.deliveryDigest); return value.receipt;
   });
   assert.equal(saved.disposition, "accepted");
-  assert.deepEqual([transmitted, committed], [1, 1]);
+  assert.equal(committed, 1);
   assert.equal(f.journal.acceptedControllerWorkerDelivery(f.dispatch.queueId)?.receipt.deliveryId, f.dispatch.delivery.deliveryId);
-  await assert.rejects(f.session.acceptControllerWorkerDeliveryReceipt("{}", async () => undefined));
+  await assert.rejects(remote.acceptReceipt("{}", async () => undefined));
   await f.close();
 });
 

@@ -1,6 +1,9 @@
 import { controllerWorkerDeliverySchemaV1, controllerWorkerRouteSchemaV1,
   type ControllerWorkerDeliveryPortV1, type ControllerWorkerDeliveryV1,
-  type ControllerWorkerRouteV1 } from "./controller-worker-delivery";
+  type ControllerWorkerDeliveryReceiptV1, type ControllerWorkerRouteV1 } from "./controller-worker-delivery";
+import { controllerWorkerNodeDispatchBodySchemaV1 } from "./controller-worker-node-delivery";
+import type { ServerNodeSession } from "../../node-control/server-node-session";
+import { sha256Digest } from "../../security/canonical-digest";
 
 const unavailable = (): never => { throw new Error("remote_worker_delivery_unavailable"); };
 
@@ -43,5 +46,89 @@ export function createAuthenticatedRemoteSessionDeliveryBridgeV1(input: Readonly
       if (route.kind !== "remote" || route.workerId !== workerId || delivery.worker.workerId !== workerId || signal?.aborted) unavailable();
       return send(delivery, Object.freeze({ kind: "remote" as const, workerId }), signal);
     } });
+  } catch { return unavailable(); }
+}
+
+/**
+ * The production-shaped counterpart to the small adapter above.  It binds the
+ * existing signed node session to one enrolled worker and exposes only the
+ * two phases that the session itself supports: transmit one immutable packet,
+ * then accept its exact signed receipt.  It deliberately does not create a
+ * connection, queue, retry loop, worker process, or database record.
+ */
+export interface AuthenticatedRemoteNodeSessionV1 {
+  readonly workerId: string;
+  readonly enrollmentDigest: string;
+  readonly session: Pick<ServerNodeSession, "controllerWorkerDeliveryChannel" | "stageControllerWorkerDelivery"
+    | "sendPreparedControllerWorkerDelivery" | "acceptControllerWorkerDeliveryReceipt">;
+}
+
+export type RemoteNodeDeliveryTransmissionV1 = Readonly<{
+  queueId: string;
+  enrollmentDigest: string;
+  deliveryId: string;
+  deliveryDigest: string;
+  startsWork: false;
+  grantsExecutionAuthority: false;
+}>;
+
+/**
+ * Adapts an already-authenticated signed node session.  The caller retains
+ * canonical receipt persistence because only the installation's PostgreSQL
+ * authority may decide when a received acknowledgement is durable.
+ */
+export function createAuthenticatedRemoteNodeSessionDeliveryBridgeV1(input: Readonly<{
+  session: AuthenticatedRemoteNodeSessionV1;
+}>) {
+  try {
+    if (!input || typeof input !== "object" || !input.session || typeof input.session !== "object") unavailable();
+    const bound = input.session;
+    const workerId = controllerWorkerRouteSchemaV1.parse({ kind: "remote", workerId: bound.workerId }).workerId;
+    const enrollmentDigest = /^sha256:[a-f0-9]{64}$/.test(bound.enrollmentDigest) ? bound.enrollmentDigest : unavailable();
+    const session = bound.session;
+    if (typeof session.controllerWorkerDeliveryChannel !== "function" || typeof session.stageControllerWorkerDelivery !== "function"
+      || typeof session.sendPreparedControllerWorkerDelivery !== "function" || typeof session.acceptControllerWorkerDeliveryReceipt !== "function") unavailable();
+    const queueIdFor = (delivery: ControllerWorkerDeliveryV1) => `native-queue:${sha256Digest({
+      tenantId: delivery.identity.tenantId, jobId: delivery.identity.jobId, attemptId: delivery.identity.attemptId,
+    }).slice(7)}`;
+    return Object.freeze({
+      async transmit(deliveryValue: unknown, routeValue: unknown, signal?: AbortSignal): Promise<RemoteNodeDeliveryTransmissionV1> {
+        if (signal?.aborted) unavailable();
+        const delivery = controllerWorkerDeliverySchemaV1.parse(deliveryValue);
+        const route = controllerWorkerRouteSchemaV1.parse(routeValue);
+        const channel = session.controllerWorkerDeliveryChannel();
+        if (!channel || route.kind !== "remote" || route.workerId !== workerId || delivery.worker.workerId !== workerId
+          || delivery.identity.nodeId !== channel.nodeId || signal?.aborted) unavailable();
+        const queueId = queueIdFor(delivery), deadline = Date.parse(delivery.expiresAt);
+        await session.stageControllerWorkerDelivery(async (sign, current) => {
+          current.assertCurrent();
+          if (signal?.aborted || current.nodeId !== channel.nodeId) unavailable();
+          return sign(controllerWorkerNodeDispatchBodySchemaV1.parse({
+            schema: "control-room.controller-worker-node-dispatch/v1", queueId, enrollmentDigest, delivery,
+          }), deadline);
+        });
+        await session.sendPreparedControllerWorkerDelivery(async (frame, current) => {
+          current.assertCurrent();
+          if (signal?.aborted || frame.body.queueId !== queueId || frame.body.enrollmentDigest !== enrollmentDigest) unavailable();
+          return { value: undefined, assertFresh: current.assertCurrent };
+        });
+        return Object.freeze({ queueId, enrollmentDigest, deliveryId: delivery.deliveryId, deliveryDigest: delivery.deliveryDigest,
+          startsWork: false as const, grantsExecutionAuthority: false as const });
+      },
+      async acceptReceipt<T>(raw: string | Uint8Array, persist: (value: Readonly<{
+        delivery: ControllerWorkerDeliveryV1;
+        route: Readonly<{ kind: "remote"; workerId: string }>;
+        receipt: ControllerWorkerDeliveryReceiptV1;
+        assertCurrent(): void;
+      }>) => Promise<T>): Promise<T> {
+        if (typeof persist !== "function") unavailable();
+        return session.acceptControllerWorkerDeliveryReceipt(raw, async (frame, dispatch, assertCurrent) => {
+          if (dispatch.body.enrollmentDigest !== enrollmentDigest || dispatch.body.delivery.worker.workerId !== workerId) unavailable();
+          assertCurrent();
+          return persist(Object.freeze({ delivery: dispatch.body.delivery,
+            route: Object.freeze({ kind: "remote" as const, workerId }), receipt: frame.body.receipt, assertCurrent }));
+        });
+      },
+    });
   } catch { return unavailable(); }
 }
