@@ -138,9 +138,12 @@ test("post-install Claude admission binds one additive committed transition with
   assert.equal(isClaudeCodePrivateInstalledDeliverCapabilityV1(capability), true);
   assert.deepEqual(Object.getOwnPropertyNames(capability), ["deliver"]);
   assert.equal(Object.isFrozen(capability), true);
-  assert.throws(() => createClaudeCodePrivateInstallationCompositionV1({ ...compositionInput,
-    execution: { ...compositionInput.execution, results: { ...compositionInput.execution.results,
-      reviewSubmission: { async submit() { throw new Error("untrusted review hook"); } } } } }),
+  const compositionWithUnsafeReviewHook = {
+    ...compositionInput,
+    execution: { ...(compositionInput.execution as object), results: { ...(compositionInput.execution.results as object),
+      reviewSubmission: { async submit() { throw new Error("untrusted review hook"); } } } },
+  };
+  assert.throws(() => createClaudeCodePrivateInstallationCompositionV1(compositionWithUnsafeReviewHook as never),
   /claude_code_private_installation_composition_unavailable/);
   await assert.rejects(verifyLocalClaudePostInstallAdmissionV1({ ...input,
     requestedRoutes: [workerRoute] }, { async readOriginalInstallationHistory() { return original.history; },

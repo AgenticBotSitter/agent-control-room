@@ -77,7 +77,7 @@ test("Hermes and Claude share one durable lifecycle without cross-route recovery
     deliveryIntegrityKeys: { hermes: new Uint8Array(32).fill(65) },
     checkpoints: f.checkpoints, storageClass: "local", storage: f.storage,
   })).withClaudeDeliveryIntegrityKey(new Uint8Array(32).fill(66));
-  const makeTemplate = (id: string, adapter: string, executor: string, operation: string, profile: string): NativeTaskTemplate => {
+  const makeTemplate = (id: string, adapter: NativeTaskTemplate["adapter"], executor: string, operation: string, profile: string): NativeTaskTemplate => {
     const hermes = adapter === HERMES_021_MACOS_LOCAL_ADAPTER_V1;
     const authority: NativeTaskTemplate["authority"] = { projectId: binding.projectId, allowedExecutor: executor,
       allowedOperations: [operation], credentialRefs: ["credential:fixture"], filesystemRoots: [], networkPolicy: hermes ? "allowlist" : "none",
@@ -206,6 +206,7 @@ test("Hermes and Claude share one durable lifecycle without cross-route recovery
     ownerTasks.results(f.identity, binding.projectId, hermesPlan.receipt.jobId),
     ownerTasks.results(f.identity, binding.projectId, claudePlan.receipt.jobId),
   ]);
+  assert.ok("items" in hermesPage && "items" in claudePage, "list result pages, not artifact-content reads");
   assert.deepEqual(hermesPage.items.map(item => item.artifactId), [hermesReview.artifact_id]);
   assert.deepEqual(claudePage.items.map(item => item.artifactId), [claudeReview.artifact_id]);
   assert.equal(hermesPage.reviewCommands, "configured");

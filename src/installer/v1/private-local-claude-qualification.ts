@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { isAbsolute, normalize } from "node:path";
 import { createClaudeCodeOwnedProcessSessionV1, type OwnedClaudeCodeProcessV1 } from "../../harness/claude-code-v1/owned-process-session";
-import { createClaudeCodeStreamDecoderV1 } from "../../harness/claude-code-v1/stream-json-decode";
+import { createClaudeCodeStreamDecoderV1, type ClaudeCodeResultFrameV1 } from "../../harness/claude-code-v1/stream-json-decode";
 import { CLAUDE_CODE_TEXT_REVIEW_FIXED_ARGS_V1,
   CLAUDE_CODE_TEXT_REVIEW_INVOCATION_POLICY_DIGEST_V1 } from "../../harness/claude-code-v1/text-review-invocation-policy";
 import { CLAUDE_CODE_TEXT_REVIEW_QUALIFICATION_REPORT_V1 } from "../../harness/claude-code-v1/qualification-evidence";
@@ -114,7 +114,7 @@ export async function qualifyPrivateLocalClaudeTextReviewV1(input: PrivateLocalC
     }, initialInput: new TextEncoder().encode(`Reply with exactly this text and nothing else: ${input.expectedText}`),
       signal: input.signal, acquire: () => owner!, cleanupMs: 2_000 });
     const wire = await session.ready, decoder = createClaudeCodeStreamDecoderV1();
-    let terminal: ReturnType<typeof decoder.accept> | undefined, terminalUsage: Readonly<{ input: number; output: number; total: number }> | undefined;
+    let terminal: ClaudeCodeResultFrameV1 | undefined, terminalUsage: Readonly<{ input: number; output: number; total: number }> | undefined;
     for (;;) {
       const line = await wire.readLine(input.signal);
       if (line === undefined) break;

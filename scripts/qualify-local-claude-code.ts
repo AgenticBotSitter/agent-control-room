@@ -58,7 +58,8 @@ if (!valid) {
           // A detached POSIX child owns its own process group. Both close paths
           // signal that group, so a CLI descendant cannot outlive qualification.
           detached: process.platform !== "win32",
-          windowsHide: true, env: { PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: process.env.HOME ?? "" },
+          windowsHide: true, env: { PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: process.env.HOME ?? "",
+            NODE_ENV: process.env.NODE_ENV ?? "production" },
           stdio: ["pipe", "pipe", "pipe"] }) as ChildProcessWithoutNullStreams;
         const exited = new Promise<Readonly<{ code: number | null; signal: string | null }>>(resolve =>
           child.once("close", (code, signal) => resolve({ code, signal })));
