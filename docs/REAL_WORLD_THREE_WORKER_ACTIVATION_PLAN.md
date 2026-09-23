@@ -98,8 +98,11 @@ database, scheduler, website, and review path.
    never mark an uncertain send delivered, reconcile only an exact receipt, and
    preserve packet identity across controller reconstruction. Do not add
    another broker, scheduler, or database.
-2. Join accepted remote packets to the existing bounded Linux Codex execution
-   and result-return lifecycle, then add a remote correction-plan revision.
+2. For the first Linux Codex worker, reuse the existing approved Codex v3/v4
+   task, permit, activation, and result-return lifecycle. Add only a shared
+   remote delivery wrapper for that already-approved task; a generic remote
+   receipt is never execution permission. Keep generic v11/v12 remote work
+   gated until it has an equally complete harness-authority bridge.
 3. Assemble the protected resolver and receipt-intake composition for an
    enrolled remote worker using the existing canonical task and PostgreSQL
    receipt paths.
