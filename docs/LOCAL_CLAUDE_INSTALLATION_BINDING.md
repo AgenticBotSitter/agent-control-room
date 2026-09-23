@@ -5,6 +5,30 @@ This source-only preparation binds existing evidence to the running
 callback, enables no worker and grants no task, retry or resume authority.
 It cannot qualify Claude, install it, read credentials or advance setup.
 
+## The separate owner-attended check
+
+The repository now supplies the narrow command that produces the sanitized
+qualification report required by the later private binding:
+
+```sh
+pnpm run qualify:claude:local -- --owner-attended --reuse-owner-login \
+  --executable /absolute/path/to/claude --workdir /absolute/path/to/empty-workspace
+```
+
+This is deliberately not a normal installation command. The owner must run it
+from an attached Terminal after reviewing the paths and confirming that the
+existing Claude login may be used for one text-only check. `--dry-run` shows
+whether the command shape is valid without starting Claude. A real run sends
+one generated nonce through the already-fixed text-review arguments, accepts
+only one exact successful stream result, then prints a report containing only
+an opaque response digest and token/time counts. It prints no path, prompt,
+answer, session ID, login state or raw stream data. A failed report is not a
+retry permission: another attempt needs fresh owner approval.
+
+The command does not save this report, turn on a worker, start a service, or
+change the database. The later protected installation procedure must bind its
+accepted report to the exact route and private process configuration.
+
 The matching reuse-map row is **Claude Code: retain Control Room; official SDK
 is a test reference**. The decision in
 [CLAUDE_CODE_PRIVATE_PROCESS_ACQUISITION_REUSE_DECISION.md](CLAUDE_CODE_PRIVATE_PROCESS_ACQUISITION_REUSE_DECISION.md)
