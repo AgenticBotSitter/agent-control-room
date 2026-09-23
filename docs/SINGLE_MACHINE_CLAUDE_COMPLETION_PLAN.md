@@ -212,6 +212,12 @@ only with owner-approved live actions.
 1. Disposable proof: two independently constructed local routes receive
    different bounded text-review tasks, publish results, wait for review and
    survive a simulated lost reply/restart without duplicate work.
+   The source suite now records separate Hermes and Claude route receipts and
+   distinct pending-review result evidence, then reconstructs the receipt
+   receiver to prove the repeated packet is a duplicate rather than a new
+   start. It also proves a cancelled Hermes attempt produces no result and no
+   automatic resend. This remains a disposable fake-port proof; it does not
+   claim either installed program ran.
 2. Owner-attended proof (only after L1-L3 prerequisites above): qualify the exact Hermes and Claude installations
    separately; create two harmless supplied-text tasks; approve and queue them;
    run them at the same time; confirm one saved terminal result per task; review
