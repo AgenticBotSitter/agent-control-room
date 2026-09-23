@@ -8,6 +8,20 @@ import type { Hermes021LocalQueueDeliveryTarget } from "./task-assignment-coordi
 const id = z.string().min(3).max(180).regex(/^[a-zA-Z0-9][a-zA-Z0-9._:-]*$/);
 const digest = z.string().regex(/^sha256:[a-f0-9]{64}$/);
 const unavailable = (): never => { throw new Error("hermes_021_local_executor_unavailable"); };
+const unresolved = (): never => { throw new Error("hermes_021_local_queue_delivery_unresolved"); };
+
+/** The shared queue may acknowledge a Hermes delivery only after its terminal
+ * result entered the ordinary pending-review path. A cancellation, lost local
+ * reply, or incomplete publication remains visible for recovery or owner
+ * attention; it must never look like successful queue delivery. */
+export function requireHermes021LocalQueuePublicationV1(value: unknown): void {
+  const publication = z.object({ publication: z.object({}).passthrough().optional() }).passthrough().parse(value).publication;
+  // `executeAndPublishAssignedHermes021MacosTaskV1` creates this member only
+  // after the existing durable publisher has accepted the exact terminal
+  // evidence and produced its review target. The queue boundary intentionally
+  // needs no second, divergent copy of that publisher's private shape.
+  if (publication === undefined) unresolved();
+}
 
 /** Convert only a verified local-queue target into the dispatch reader's
  * narrow reference. This deliberately has no task text, runner command,
@@ -42,6 +56,7 @@ export function createHermes021LocalQueueExecutorV1(input: Readonly<{
     const reference = hermes021LocalQueueTargetToDispatchReferenceV1(tenantId, target);
     const result = await executeAndPublishAssignedHermes021MacosTaskV1({ execution, results, assertAuthority },
       reference, signal);
+    requireHermes021LocalQueuePublicationV1(result);
     if (signal.aborted) unavailable();
     return result;
   } });
