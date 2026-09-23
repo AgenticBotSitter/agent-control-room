@@ -65,8 +65,10 @@ the necessary L3 service state.
 - Add only cross-adapter conformance tests that are missing: identical task
   state progression, cancellation result, uncertain delivery handling,
   pending review, correction and capacity release. Treat Claude restart-read
-  and recovery as new implementation work, not merely a missing test; name and
-  complete that package before asserting the shared restart row.
+  and recovery as implementation work, not merely a missing test. The existing
+  disposable Claude executor now proves restart-read recovery from protected
+  terminal evidence without reopening Claude; retain that proof when adding
+  the remaining cross-adapter cases.
 - Keep adapter differences limited to executable/process qualification and
   terminal framing.
 - The source conformance suite now proves that separately prepared Hermes and
@@ -156,6 +158,10 @@ routes without duplicate scheduler, authority, service, or result storage.
 - A task run now carries a redacted, signed-adapter category for the three
   local adapters. The interface labels it as saved evidence only; route
   configuration and present availability remain separate evidence.
+- The existing protected task route already reads a prepared worker from the
+  canonical planner and labels Hermes or Claude only after that saved planner
+  record exists. It never chooses a worker merely from a browser preference or
+  a harness name.
 - Add an installation status panel that reports Hermes and Claude separately as
   **not configured**, **qualification required**, **ready**, **unavailable**,
   **running**, or **needs owner attention**. A stale observation is unavailable,

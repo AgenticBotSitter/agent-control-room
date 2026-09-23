@@ -65,6 +65,13 @@ non-executing: it does not launch, qualify, or enable either agent. It confirms
 one lifecycle boundary rather than creating a second local scheduler or result
 store.
 
+The Claude source executor additionally proves a saved task can be prepared as
+one signed local delivery, publish one protected result, and after a simulated
+restart recover that exact result into pending review without reopening Claude.
+Together with the prepared-worker browser route, this confirms the site does
+not silently choose a worker from a browser preference. These remain
+disposable/source proofs, not evidence of a running local Claude installation.
+
 The macOS installation-journal sidecar binding and the separately versioned
 installed-manifest v2 binding are **source-only and inert**. The release build
 can bind and verify the named bytes, platform, architecture and digests before
