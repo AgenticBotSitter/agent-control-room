@@ -4,13 +4,13 @@ import { assertSynchronousFence } from "../../security/synchronous-fence";
 import { digestSchema } from "../v1/native-run-identifiers";
 import type { ClaudeCodeProcessBindingV1, ClaudeCodeProcessBytePortV1,
   OwnedClaudeCodeProcessV1 } from "./owned-process-session";
-import { capturePrivateClaudeCodeInstalledProcessHostConfigurationV1,
-  type PrivateClaudeCodeInstalledProcessHostConfigurationV1 } from "./private-process-acquisition";
+import type { PrivateClaudeCodeInstalledProcessHostConfigurationV1 } from "./private-process-acquisition";
+import { captureClaudeCodeTextReviewInvocationConfigurationV1 } from "./text-review-invocation-policy";
 
 export const CLAUDE_CODE_PRIVATE_INSTALLED_PROCESS_HOST_V1 =
   "control-room.claude-code-private-installed-process-host/v1" as const;
 
-type CapturedConfiguration = ReturnType<typeof capturePrivateClaudeCodeInstalledProcessHostConfigurationV1>;
+type CapturedConfiguration = ReturnType<typeof captureClaudeCodeTextReviewInvocationConfigurationV1>;
 
 export type PrivateClaudeCodeInstalledProcessVerificationRequestV1 = Readonly<{
   schema: typeof CLAUDE_CODE_PRIVATE_INSTALLED_PROCESS_HOST_V1;
@@ -166,7 +166,11 @@ function validExit(value: unknown): value is Readonly<{ code: number | null; sig
  */
 export function createPrivateClaudeCodeInstalledProcessHostV1(configurationValue: unknown,
   portsValue: unknown, launchAuthorityValue: unknown) {
-  const configuration = capturePrivateClaudeCodeInstalledProcessHostConfigurationV1(configurationValue);
+  // The installed host is itself the final native-launch boundary.  Do not
+  // rely on a higher-level composition to narrow a generic saved argv: every
+  // direct host caller must present the one reviewed text-review invocation.
+  const configuration = captureClaudeCodeTextReviewInvocationConfigurationV1(
+    configurationValue as PrivateClaudeCodeInstalledProcessHostConfigurationV1);
   const ports = capturePorts(portsValue);
   const launchAuthority = captureLaunchAuthority(launchAuthorityValue);
 

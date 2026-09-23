@@ -4,11 +4,13 @@ import { createPrivateClaudeCodeInstalledProcessHostV1,
   CLAUDE_CODE_PRIVATE_INSTALLED_PROCESS_HOST_V1,
   type PrivateClaudeCodeNativeChildV1 } from "../src/harness/claude-code-v1/private-installed-process-host";
 import { createClaudeCodeOwnedProcessSessionV1 } from "../src/harness/claude-code-v1/owned-process-session";
+import { CLAUDE_CODE_TEXT_REVIEW_FIXED_ARGS_V1 } from
+  "../src/harness/claude-code-v1/text-review-invocation-policy";
 
 const digest = (character: string) => `sha256:${character.repeat(64)}`;
 const configuration = {
   schema: "control-room.claude-code-private-installed-process-host-configuration/v1",
-  process: { executablePath: "/private/fixture/bin/claude", args: ["--print", "--output-format", "stream-json"],
+  process: { executablePath: "/private/fixture/bin/claude", args: [...CLAUDE_CODE_TEXT_REVIEW_FIXED_ARGS_V1],
     workingDirectory: "/private/fixture/work", cleanupMs: 50 },
   executableSha256: digest("1"), workingDirectoryBindingDigest: digest("2"), qualificationDigest: digest("3"),
   startupDeadlineMs: 25, terminateDeadlineMs: 10, killDeadlineMs: 10,
@@ -61,6 +63,31 @@ test("the private host verifies fixed installation evidence before launch and th
   assert.equal(fake.writes.length, 1); assert.equal(new TextDecoder().decode(fake.writes[0]), "one exact input");
   await session.close();
   assert.equal(events.includes("term"), true); assert.equal(events.at(-1), "close");
+});
+
+test("the direct installed host refuses every non-fixed text-review argv before verifier or launcher", () => {
+  const invalidArgs = [
+    CLAUDE_CODE_TEXT_REVIEW_FIXED_ARGS_V1.slice(0, -2),
+    [...CLAUDE_CODE_TEXT_REVIEW_FIXED_ARGS_V1, "--resume", "saved-session"],
+    [...CLAUDE_CODE_TEXT_REVIEW_FIXED_ARGS_V1, "--session-id", "saved-session"],
+    [...CLAUDE_CODE_TEXT_REVIEW_FIXED_ARGS_V1.slice(0, 4), "--plugin-dir", "/private/plugin",
+      ...CLAUDE_CODE_TEXT_REVIEW_FIXED_ARGS_V1.slice(4)],
+    [...CLAUDE_CODE_TEXT_REVIEW_FIXED_ARGS_V1.slice(0, 4), "--mcp-config", "/private/mcp.json",
+      ...CLAUDE_CODE_TEXT_REVIEW_FIXED_ARGS_V1.slice(4)],
+    [...CLAUDE_CODE_TEXT_REVIEW_FIXED_ARGS_V1.slice(0, -1), "2"],
+    CLAUDE_CODE_TEXT_REVIEW_FIXED_ARGS_V1.map((argument, index) => index === 9 ? "allow" : argument),
+  ];
+  for (const args of invalidArgs) {
+    let verifications = 0, launches = 0;
+    assert.throws(() => createPrivateClaudeCodeInstalledProcessHostV1({
+      ...configuration, process: { ...configuration.process, args },
+    }, {
+      async verifyInstallation() { verifications++; return verified(); },
+      launch() { launches++; return child().native; },
+    }, currentAuthority()), /claude_code_text_review_invocation_unavailable/);
+    assert.equal(verifications, 0, "invalid argv cannot reach the verifier");
+    assert.equal(launches, 0, "invalid argv cannot reach the native launcher");
+  }
 });
 
 test("abort and deadline actively cancel verification and never permit a late launch", async () => {
