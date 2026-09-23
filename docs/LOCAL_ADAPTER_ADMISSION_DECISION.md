@@ -68,3 +68,12 @@ callback to the ordinary queue executor after restart. A bare caller-supplied
 This decision authorizes source and disposable-test work only. It does not
 authorize an installed Claude process, credentials, provider contact, a real
 task, database changes, service changes, or a live transition.
+
+## Explicit non-goal: Claude-only installation
+
+This decision does **not** make Claude a replacement for the first Hermes
+bootstrap worker. A Claude-only route set is refused until a later decision
+defines how a protected installation can safely replace or remove its original
+bootstrap route, preserve unfinished work, bind the new route set, and
+re-verify it at restart. That later work must not create a second authority,
+database, scheduler, queue, or result store.

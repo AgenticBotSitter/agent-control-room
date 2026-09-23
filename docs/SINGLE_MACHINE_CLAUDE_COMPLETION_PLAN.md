@@ -142,14 +142,23 @@ not two launchers.
 - Capture each adapter's selected route, profile fingerprint, qualification
   receipt and workspace binding before startup. Revalidate them immediately
   before exposing queue delivery.
+- The currently accepted installation contract supports **Hermes-only** and,
+  after one committed fenced transition and controlled restart,
+  **Hermes-plus-Claude**. It deliberately refuses Claude-only for now: the
+  original Hermes bootstrap receipt is immutable historical evidence, and
+  safe removal, replacement, and first-Claude bootstrap need their own
+  reviewed current-route-set decision. Do not hide that refusal as a setup
+  error or silently reinterpret the Hermes receipt.
 - Start the existing shared queue worker once. Register each enabled local
   route with its own fixed capacity and capability, but keep the canonical
   scheduler and result publisher shared.
 - Prove a disabled, stale, incompatible, revoked, or unavailable Claude route
   is visibly unavailable and cannot reserve, receive or start a task.
 
-**Done when:** an installation can contain Hermes-only, Claude-only, or both
-routes without duplicate scheduler, authority, service, or result storage.
+**Done when:** an installation can contain Hermes-only or the reviewed
+Hermes-plus-Claude route set without duplicate scheduler, authority, service,
+or result storage. Claude-only remains a planned, explicitly refused future
+topology until its separate architecture decision is accepted.
 
 ### C3 — Finish the website as the owner’s local control surface
 
@@ -157,8 +166,8 @@ routes without duplicate scheduler, authority, service, or result storage.
 
 - Retain existing project/task/assignment/approval/submission/review screens
   and the read-only workboard. Do not replace them with a donor dashboard.
-- Add the smallest missing cross-worker presentation: for each task, show the
-  recommended available route, route-specific limitation, current saved
+- Add the smallest missing cross-worker presentation: for each task, show a
+  recommended configured route when saved evidence supports one, route-specific limitation, current saved
   delivery state, result/review state and exact next owner action.
 - The assignment page now gives a deliberately limited recommendation when
   exactly one saved configured route can handle a task. It labels capacity and
