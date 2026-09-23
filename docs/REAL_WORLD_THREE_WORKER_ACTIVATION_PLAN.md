@@ -25,10 +25,12 @@ delivery transport.
 - The shared remote delivery contract, node-session bridge, canonical queued
   task selection, durable uncertain-send recovery, reconstruction-stable packet
   identity, remote correction planning, protected installation forwarding, and
-  a bounded Codex node composition exist in source. The remote route is **not
-  yet complete**: protected resolver/receipt intake and node-entry composition,
-  late receipt recovery after a rebuilt node session, and their disposable
-  proofs remain before a remote worker can be activated.
+  a bounded Codex node composition exist in source. A replacement remote
+  session can safely reconcile an already-journaled receipt against the exact
+  durable signed-send record; it cannot resend or start work. The remote route
+  is **not yet complete**: protected resolver/receipt intake and node-entry
+  composition, plus their disposable proofs, remain before a remote worker can
+  be activated.
 - macOS Codex execution remains fail-closed. The discarded prototype could not
   protect Codex's pathname-based private home safely. The first supported
   Codex worker is therefore the reviewed Linux route in the several-computer
@@ -95,10 +97,11 @@ database, scheduler, website, and review path.
 
 ## Phase 4 — Add Codex through the supported Linux route
 
-1. Complete late-receipt recovery after a rebuilt node session. It must retain
-   signed node and enrollment binding and never reinterpret a receipt as an
-   execution permit or resend the task. Do not add another broker, scheduler,
-   or database.
+1. Complete the protected resolver, receipt-intake, and node-entry composition
+   for the existing recovered remote-delivery protocol. The completed recovery
+   path retains signed node and enrollment binding and never reinterprets a
+   receipt as an execution permit or resends a task. Do not add another broker,
+   scheduler, or database.
 2. Wire the existing bounded Codex node composition through protected
    installation/node-entry inputs. For the first Linux Codex worker, reuse the
    existing approved Codex v3/v4
