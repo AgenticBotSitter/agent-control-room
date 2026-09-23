@@ -43,6 +43,7 @@ function parseInstallationPlanResponseV1(value: unknown): Readonly<{
  */
 export function SetupWorkspace() {
   const [state, setState] = useState<SetupReadState>(loadingState);
+  const [generation, setGeneration] = useState(0);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -75,14 +76,28 @@ export function SetupWorkspace() {
       }
     };
     void load();
-    return () => controller.abort();
-  }, []);
+    // Setup is an owner-facing status page. Refresh only its two authenticated,
+    // read-only records while visible; a refreshed tab never repeats setup work.
+    let refreshing = false;
+    const refreshWhenVisible = () => {
+      if (document.hidden || refreshing) return;
+      refreshing = true;
+      void load().finally(() => { refreshing = false; });
+    };
+    const interval = setInterval(refreshWhenVisible, 30_000);
+    window.addEventListener("focus", refreshWhenVisible);
+    document.addEventListener("visibilitychange", refreshWhenVisible);
+    return () => { controller.abort(); clearInterval(interval); window.removeEventListener("focus", refreshWhenVisible);
+      document.removeEventListener("visibilitychange", refreshWhenVisible); };
+  }, [generation]);
 
   return <main id="private-main" className="private-shell" tabIndex={-1}>
     <section className="private-heading" aria-labelledby="setup-page-title">
       <p className="private-eyebrow">Source-only setup preview</p>
       <h1 id="setup-page-title">Set up Control Room</h1>
       <p><strong>The macOS bundle source exists, but a public release and live installation do not.</strong> This page shows only saved, browser-safe setup status and progress; it cannot install, start, enable, or configure Control Room.</p>
+      <p className="private-note">This page refreshes its saved setup status while it is visible and when you return to it. Refreshing never repeats a setup action.</p>
+      <button type="button" onClick={() => setGeneration(value => value + 1)}>Refresh saved setup status</button>
     </section>
     <LocalInstallationWizard setup={state.setup} status={state.status}
       installationPlan={state.installationPlan} installationPlanStatus={state.installationPlanStatus}

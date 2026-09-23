@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { LocalInstallationWizard } from "../private-app/app/local-installation-wizard";
+import { LocalInstallationWizard, localInstallationNextStepV1 } from "../private-app/app/local-installation-wizard";
 import { createInstallationReadinessV1 } from "../src/harness/v1/installation-readiness";
 import { createInstallationSetupViewV1 } from "../src/harness/v1/installation-setup-view";
 import { planInstallationTopologyV1 } from "../src/harness/v1/installation-topology";
@@ -63,6 +63,26 @@ test("first-run wizard labels the unfinished release journey as a source-only pr
   assert.match(html, /Several computers/);
   assert.match(html, /same database, scheduler, tasks, results, reviews and corrections/);
   assert.match(html, /do not receive a second controller or a synchronized copy/);
+  assert.match(html, /One next setup step/);
+  assert.match(html, /Next step is unavailable/);
+  assert.match(html, /cannot install, repeat, enable, or start anything/);
+});
+
+test("one-next-step guidance selects only the first incomplete stage and refuses to infer a restart", () => {
+  const ready = restartPlan("ready_to_begin");
+  assert.deepEqual(localInstallationNextStepV1(ready, "available"), {
+    heading: "Next: Planned download and compatibility check",
+    detail: "Review the release and this computer's compatibility before any installation action.", state: "remaining",
+  });
+  const inspection = restartPlan("inspect");
+  assert.deepEqual(localInstallationNextStepV1(inspection, "available"), {
+    heading: "Planned download and compatibility check needs attention",
+    detail: "Saved progress for this stage is running. Inspect its installation-owned evidence before starting any later stage or repeating this one.", state: "attention",
+  });
+  assert.deepEqual(localInstallationNextStepV1(undefined, "unavailable"), {
+    heading: "Next step is unavailable",
+    detail: "Control Room could not verify the saved installation plan. Do not start or repeat setup work from this page.", state: "unavailable",
+  });
 });
 
 test("first-run wizard names remaining redacted proof categories and never claims an agent is live", () => {

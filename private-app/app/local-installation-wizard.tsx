@@ -29,6 +29,30 @@ const serviceProofLabels = Object.freeze({
   upgrade_and_rollback_procedure: "Safe update and rollback procedure",
 });
 
+const stageTitles = Object.freeze({
+  release_preflight: "Planned download and compatibility check",
+  private_placement: "Record placement",
+  database_authority: "Prepare the authority database",
+  protected_data: "Prepare protected data",
+  first_owner: "Prepare owner access",
+  recovery: "Prove recovery",
+  platform_service: "Prepare the background service",
+  agent_readiness: "Connect workers",
+  final_review: "Review and enable",
+} satisfies Record<InstallationPlanViewV1["stages"][number]["stage"], string>);
+
+const stageOwnerGuidance = Object.freeze({
+  release_preflight: "Review the release and this computer's compatibility before any installation action.",
+  private_placement: "Confirm whether this installation begins on this computer or across several computers.",
+  database_authority: "Review the one authority-database preparation before any database change.",
+  protected_data: "Review the protected local-data location before it receives private configuration.",
+  first_owner: "Review the first-owner access boundary before the guarded owner setup.",
+  recovery: "Review the backup plan and prove a restore into disposable data before relying on it.",
+  platform_service: "Review safe start, stop, update, and rollback behavior before installing the background service.",
+  agent_readiness: "Complete each selected worker's separate qualification before enabling it for real work.",
+  final_review: "Review the saved evidence before deciding whether to enable this installation.",
+} satisfies Record<InstallationPlanViewV1["stages"][number]["stage"], string>);
+
 function stageState(setup: InstallationSetupViewV1 | undefined, proof: keyof typeof proofLabels): StageState {
   if (!setup) return "remaining";
   const item = setup.proofs.find(candidate => candidate.proof === proof);
@@ -84,6 +108,27 @@ function validatedRestartCategory(plan: InstallationPlanViewV1 | undefined,
     : next.state === "running" || next.state === "uncertain" ? "inspect"
     : next.state === "failed" ? "owner_attention" : "ready_to_begin";
   return value === expected ? expected : undefined;
+}
+
+/**
+ * Give an owner one actionable reading of the saved setup record instead of
+ * asking them to infer a next move from nine cards. It is status explanation
+ * only: it neither creates an installation action nor implies an effect ran.
+ */
+export function localInstallationNextStepV1(plan: InstallationPlanViewV1 | undefined,
+  status: SetupStatus | undefined): Readonly<{ heading: string; detail: string; state: "unavailable" | "remaining" | "attention" | "review" }> {
+  if (status !== "available" || !plan) return Object.freeze({ heading: "Next step is unavailable",
+    detail: "Control Room could not verify the saved installation plan. Do not start or repeat setup work from this page.", state: "unavailable" });
+  const next = plan.stages.find(item => item.state !== "passed");
+  if (!next) return Object.freeze({ heading: "Saved plan is ready for final review",
+    detail: "Every setup stage is recorded as passed. This is not proof that the service or any worker is running; review the saved evidence before enabling anything.", state: "review" });
+  const title = stageTitles[next.stage];
+  if (next.state === "running" || next.state === "failed" || next.state === "uncertain") return Object.freeze({
+    heading: `${title} needs attention`,
+    detail: `Saved progress for this stage is ${next.state.replaceAll("_", " ")}. Inspect its installation-owned evidence before starting any later stage or repeating this one.`,
+    state: "attention",
+  });
+  return Object.freeze({ heading: `Next: ${title}`, detail: stageOwnerGuidance[next.stage], state: "remaining" });
 }
 
 function RecoveryGuidance({ plan, status, restart }: Readonly<{
@@ -142,6 +187,7 @@ export function LocalInstallationWizard({ setup, status, installationPlan, insta
   const selectedMode = setup?.mode === "this_computer" ? "This computer"
     : setup?.mode === "several_computers" ? "Several computers" : undefined;
   const remaining = setup ? remainingProofs(setup) : [];
+  const nextStep = localInstallationNextStepV1(installationPlan, installationPlanStatus);
 
   return <section className="private-panel" aria-labelledby="first-run-installation-title">
     <p className="private-eyebrow">First-run installation</p>
@@ -165,6 +211,11 @@ export function LocalInstallationWizard({ setup, status, installationPlan, insta
     </section>
 
     <section aria-labelledby="installation-stage-title">
+      <section className="private-note" aria-labelledby="installation-next-step-title">
+        <h3 id="installation-next-step-title">One next setup step</h3>
+        <p><strong>{nextStep.heading}.</strong> {nextStep.detail}</p>
+        <p className="private-note">This is read-only guidance from saved progress. It cannot install, repeat, enable, or start anything.</p>
+      </section>
       <h3 id="installation-stage-title">Download and setup stages</h3>
       {status === "loading" && <p role="status">Reading saved installation proof…</p>}
       {status === "unavailable" && <p role="alert"><strong>Saved setup proof is unavailable.</strong> Nothing is treated as installed, ready, or running.</p>}
