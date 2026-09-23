@@ -12,6 +12,7 @@ import { ClaudeCodeLocalDispatchPreparationV1 } from "../src/harness/claude-code
 import { executeAssignedClaudeCodeLocalTaskV1 } from "../src/harness/claude-code-v1/assigned-task-execution";
 import { ClaudeCodeLocalRunRegistrationV1 } from "../src/harness/claude-code-v1/local-run-registration";
 import { HarnessRunStoreV1 } from "../src/harness/v1/store";
+import { readControllerWorkerDeliveryReceiptV1 } from "../src/harness/v1/controller-worker-delivery-receipt-store";
 import { NativeApprovalPacketStore } from "../src/web/v1/native-approval-packet-store";
 import type { NativeTaskSubmission } from "../src/persistence/native-task-submission";
 import { deliverVerifiedClaudeCodeLocalQueueTaskV1 } from "../src/web/v1/claude-code-local-queue-delivery";
@@ -235,18 +236,41 @@ test("a local Claude delivery publishes once, then a rebuilt executor recovers t
   const rejectedReference = { tenantId: binding.tenantId, projectId: binding.projectId, jobId: rejectedPlan.receipt.jobId,
     attemptId: rejectedAssignment.receipt.attemptId, leaseId: rejectedAssignment.receipt.leaseId, inputDigest: rejectedPlan.receipt.inputDigest };
   const rejectedPrepared = await preparation().prepare(rejectedReference);
+  let rejectedReceiptCalls = 0, rejectedAcquisitions = 0;
   const rejectedReceiptPort = { async receive(packet: ControllerWorkerDeliveryV1) {
+    rejectedReceiptCalls++;
     const accepted = acceptedClaudeDelivery(packet, new Date(now).toISOString());
     const { receiptDigest: _ignored, ...material } = accepted;
     return Object.freeze({ ...material, disposition: "rejected" as const, receiptDigest: sha256Digest({ ...material, disposition: "rejected" }) });
   } };
-  const rejected = await executeAssignedClaudeCodeLocalTaskV1(execution(() => {
+  const rejectedExecution = execution(() => {
+    rejectedAcquisitions++;
     throw new Error("rejected_delivery_must_not_acquire_claude");
-  }, rejectedPrepared, rejectedReceiptPort), rejectedReference, new AbortController().signal);
-  assert.equal(rejected.state, "not_started");
-  const rejectedRun = await new HarnessRunStoreV1(f.db, f.harnessKey).inspect(binding.tenantId, rejected.registered.run.id);
+  }, rejectedPrepared, rejectedReceiptPort);
+  const rejectedQueue = createClaudeCodeLocalQueueExecutorV1({ tenantId: binding.tenantId, execution: rejectedExecution });
+  const rejectedTarget = { kind: "claude-code-local" as const, nodeId: binding.nodeId, leaseId: rejectedAssignment.receipt.leaseId,
+    task: { projectId: binding.projectId, jobId: rejectedPlan.receipt.jobId, attemptId: rejectedAssignment.receipt.attemptId,
+      inputDigest: rejectedPlan.receipt.inputDigest }, startsWork: false as const, grantsExecutionAuthority: false as const };
+  await assert.rejects(rejectedQueue.deliver(rejectedTarget, new AbortController().signal), /claude_code_local_queue_delivery_unresolved/);
+  assert.equal(rejectedAcquisitions, 0, "a rejected route cannot acquire Claude through the shared queue executor");
+  assert.equal(rejectedReceiptCalls, 1);
+  const rejectedReceipt = await f.db.transaction(tx => readControllerWorkerDeliveryReceiptV1(tx, new Uint8Array(32).fill(91), rejectedReference));
+  assert.equal(rejectedReceipt?.receipt.disposition, "rejected", "the rejection remains recovery evidence, not a successful delivery");
+  const rejectedRun = await new HarnessRunStoreV1(f.db, f.harnessKey).inspect(binding.tenantId, rejectedPrepared.delivery.identity.runId);
   assert.equal(rejectedRun?.run.state, "discovered");
   assert.deepEqual(rejectedRun?.events, [], "a rejected receipt cannot leave a false Claude-start history");
+  assert.equal((await f.db.query("SELECT run_id FROM control_native_review_plans WHERE tenant_id=$1 AND run_id=$2",
+    [binding.tenantId, rejectedPrepared.delivery.identity.runId])).rows.length, 0,
+  "a rejected route cannot publish a result or create a review");
+
+  // Rebuilding the queue executor against the same receipt models restart
+  // recovery. It may inspect the exact rejection, but cannot turn it into an
+  // automatic resend, acquisition, publication, or review.
+  const restartedRejectedQueue = createClaudeCodeLocalQueueExecutorV1({ tenantId: binding.tenantId,
+    execution: execution(() => { rejectedAcquisitions++; throw new Error("restart_must_not_acquire_claude"); }, rejectedPrepared, rejectedReceiptPort) });
+  await assert.rejects(restartedRejectedQueue.deliver(rejectedTarget, new AbortController().signal), /claude_code_local_queue_delivery_unresolved/);
+  assert.deepEqual({ rejectedReceiptCalls, rejectedAcquisitions }, { rejectedReceiptCalls: 1, rejectedAcquisitions: 0 },
+    "recovery preserves the receipt but never auto-resends a rejected local route");
 
   // A prior terminal failure consumes that exact run. A later call cannot
   // contact Claude, add a delivery receipt, or publish old success evidence
