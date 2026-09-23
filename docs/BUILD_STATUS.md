@@ -12,6 +12,16 @@ plans remain architecture/history references, not competing execution queues.
 
 ## Source checkpoint (2026-09-22)
 
+The local Hermes and Claude result paths now both publish through the same
+durable receipt, owner-review, correction, and recovery records. The installed
+Claude composition constructs its own narrow owner-review submission service
+from the bound result, review, checkpoint, and protected-storage inputs; it
+does not accept an arbitrary callback from installation data. A Claude task
+cancelled after its receipt is saved is recorded as cancelled, while an unknown
+delivery is recorded as disconnected. Neither case creates a result, silently
+retries, or lets a restart reopen Claude. These are disposable source proofs,
+not evidence that either installed agent has run.
+
 The private **Workers** page now separates local worker-route setup from the
 existing Hermes enrollment inventory and measured capacity. It shows only the
 saved, redacted state of Hermes Agent, Claude Code, and Codex: not configured,

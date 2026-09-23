@@ -76,10 +76,11 @@ the necessary L3 service state.
   shared controller receiver. This is deliberately not a claim that either
   process was launched, qualified, or enabled.
 - Both local queue routes now acknowledge delivery only after a durable result
-  has entered the ordinary pending-review path. A cancelled Hermes run, a lost
-  local reply, or an uncertain result stays visible for recovery or owner
-  attention instead of being mislabeled as delivered. This is source-tested
-  behavior; it does not start either worker.
+  has entered the ordinary pending-review path. A cancelled Hermes or Claude
+  run is terminal; a lost local reply or uncertain result stays visibly
+  disconnected for recovery or owner attention. Neither case is silently
+  resent or mislabeled as delivered. This is source-tested behavior; it does
+  not start either worker.
 
 **Done when:** the same test table proves both routes use the same canonical
 states and no adapter can bypass review or claim task authority.
