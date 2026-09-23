@@ -52,6 +52,7 @@ test("owner-held Claude qualification accepts only one exact fixed text result a
   assert.equal(value.retryRequiresFreshOwnerAuthorization, false);
   assert.match(createClaudeCodeTextReviewQualificationEvidenceV1(value).evidenceDigest, /^sha256:/);
   assert.deepEqual(request?.args, CLAUDE_CODE_TEXT_REVIEW_FIXED_ARGS_V1);
+  assert.deepEqual(request?.args?.slice(-2), ["--model", "opus"]);
   assert.doesNotMatch(JSON.stringify(value), /private\/owner|CLAUDE_QUALIFICATION|00000000-0000-4000-8000-000000004242/i);
 });
 

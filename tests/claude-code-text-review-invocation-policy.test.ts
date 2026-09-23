@@ -23,6 +23,7 @@ const configuration = {
 };
 
 test("the first Claude task accepts only the fixed text-review invocation", () => {
+  assert.deepEqual(CLAUDE_CODE_TEXT_REVIEW_FIXED_ARGS_V1.slice(-2), ["--model", "opus"]);
   const captured = captureClaudeCodeTextReviewInvocationConfigurationV1(configuration);
   assert.deepEqual(captured.process.args, CLAUDE_CODE_TEXT_REVIEW_FIXED_ARGS_V1);
   assert.equal(Object.isFrozen(captured.process.args), true);

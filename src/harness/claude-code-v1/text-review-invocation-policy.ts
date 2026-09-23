@@ -25,6 +25,10 @@ export const CLAUDE_CODE_TEXT_REVIEW_FIXED_ARGS_V1 = Object.freeze([
   "--permission-prompts", "none",
   "--no-session-persistence",
   "--max-turns", "1",
+  // Claude Code documents `opus` as the rolling alias for the current Opus
+  // model. Keeping it in the immutable policy prevents a desktop/default
+  // model from silently changing this installed route.
+  "--model", "opus",
 ] as const);
 
 export type ClaudeCodeTextReviewInvocationConfigurationV1 = ReturnType<

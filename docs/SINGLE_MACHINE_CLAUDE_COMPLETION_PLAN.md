@@ -115,8 +115,11 @@ Code itself.
   owner attendance for that choice.
 - The source-level first-task policy is already fixed to one text-only printed
   response with no persisted session, built-in tools, MCP tools, plug-ins, or
-  unattended permission approval. Do not relax that policy; a later writing
-  capability needs its own separately reviewed route.
+  unattended permission approval. It also pins Claude Code's documented
+  `opus` alias so the route cannot inherit a different desktop/default model.
+  The installed qualification must be repeated if that fixed invocation
+  policy changes. Do not relax that policy; a later writing capability needs
+  its own separately reviewed route.
 - The source also has a sanitized qualification-evidence format bound to the
   digest of that exact fixed policy. A later owner-run check may record only
   bounded success measurements; it cannot export its command path, working
