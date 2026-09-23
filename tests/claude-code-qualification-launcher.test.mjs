@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { execFile } from "node:child_process";
+import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { promisify } from "node:util";
 
 const run = promisify(execFile);
@@ -24,4 +27,26 @@ test("local Claude qualification refuses an incomplete or non-owner-attended inv
     assert.doesNotMatch(error.stderr, /private\/owner/);
     return true;
   });
+});
+
+test("owner-attended qualification runs only the fixed argv through a disposable fake and retains no prompt text", async t => {
+  const directory = await mkdtemp(join(tmpdir(), "acr-claude-qualification-test-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const executable = join(directory, "fake-claude");
+  // This is not Claude Code. It is an isolated process fixture which proves
+  // the launcher supplies the fixed stream framing and sanitizes its report.
+  await writeFile(executable, `#!/bin/sh
+input=$(cat)
+nonce=$(printf '%s' "$input" | sed 's/^Reply with exactly this text and nothing else: //')
+printf '{"type":"system","subtype":"init","session_id":"00000000-0000-4000-8000-000000004242"}\\n'
+printf '{"type":"result","subtype":"success","is_error":false,"session_id":"00000000-0000-4000-8000-000000004242","result":"%s","usage":{"input_tokens":3,"output_tokens":2,"total_tokens":5}}\\n' "$nonce"
+`, { mode: 0o700 });
+  await chmod(executable, 0o700);
+  const { stdout, stderr } = await run(process.execPath, ["--import", "tsx", "scripts/qualify-local-claude-code.ts",
+    "--owner-attended", "--reuse-owner-login", "--executable", executable, "--workdir", directory], { cwd: process.cwd() });
+  assert.equal(stderr, "");
+  const report = JSON.parse(stdout);
+  assert.equal(report.qualified, true);
+  assert.deepEqual({ input: report.inputTokens, output: report.outputTokens, total: report.totalTokens }, { input: 3, output: 2, total: 5 });
+  assert.doesNotMatch(stdout, /Reply with exactly|CONTROL_ROOM_CLAUDE|00000000-0000-4000-8000-000000004242|acr-claude-qualification-test/);
 });
