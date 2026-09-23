@@ -1076,6 +1076,8 @@ test("additive Claude is reread, branded and carried through operator assembly t
   assert.equal(claude.transitionReads(), 2, "committed transition is reread before configuration exposure and again at the final startup boundary");
   assert.equal(isClaudeCodePrivateInstalledDeliverCapabilityV1(prepared.configuration.coordinator.claudeCodeLocal), true);
   assert.equal(prepared.configuration.coordinator.hermes021Local, f.delivery, "bootstrap Hermes remains exact");
+  assert.equal(typeof prepared.configuration.coordinator.resultInspectionSource?.inspectSubmitted, "function",
+    "both local routes retain one authenticated result-inspection bridge without starting either worker");
   await assert.rejects(assembly.start(), /private_task_startup_prerequisites_failed/u);
   assert.equal(claude.transitionReads(), 4, "each prepare path rereads the committed transition before configuration exposure and before startup");
   assert.deepEqual(sequence, ["artifact-storage"], "first startup effect occurs only after both route checks");

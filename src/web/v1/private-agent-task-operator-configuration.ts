@@ -15,6 +15,7 @@ import type { NewsStartupConfiguration } from "./news-startup-configuration";
 import type { PrivateArtifactStorageConfigurationV1 } from "./private-artifact-storage";
 import type { AwaitableRollbackCheckpointStoreV1 } from "../../security";
 import type { TaskCoordinatorConfiguration } from "./task-coordinator-lifecycle";
+import type { TaskResultInspectionSourceV1 } from "../../completion-gate/v1/task-result-inspection";
 import { summarizeInstallationReadinessV1, verifyInstallationReadinessV1,
   type InstallationReadinessV1 } from "../../harness/v1/installation-readiness";
 import { localBackupRestoreEvidenceDigestForInstallationPlanV1 } from "../../harness/v1/local-backup-restore-readiness";
@@ -122,6 +123,8 @@ export type AgentTaskOperatorTrustedInputs = {
   claudeCodeLocalStartupReverification?: unknown;
   /** Exact original installation whose committed transition admitted Claude. */
   claudeCodeLocalInstallationId?: string;
+  /** Installation-owned authenticated result reader. It is never browser input. */
+  resultInspectionSource?: TaskResultInspectionSourceV1;
   /** Verified, plan-bound evidence from an owner-run disposable local restore.
    * It is installation-only input, never browser data or a task record. */
   localBackupRestoreReadiness?: unknown;
@@ -397,6 +400,11 @@ export function assemblePrivateAgentTaskOperatorConfiguration(
   need(f.hermes021Local, t.hermes021Local, "hermes021Local");
   need(Boolean(f.hermes021Local || f.claudeCodeLocal), t.localBackupRestoreReadiness, "localBackupRestoreReadiness");
   need(f.claudeCodeLocal, t.claudeCodeLocal, "claudeCodeLocal");
+  // Reject a forged Claude callback before reporting a downstream feature
+  // dependency. That keeps a bad capability unmistakably invalid while the
+  // later checks still enforce the Hermes-plus-Claude installation shape.
+  if (f.claudeCodeLocal && !isClaudeCodePrivateInstalledDeliverCapabilityV1(t.claudeCodeLocal))
+    refuse("claudeCodeLocal_invalid");
   need(f.artifactStorage, t.artifactStorage, "artifactStorage");
   need(f.idea, t.idea, "idea");
   need(f.news, t.news, "news");
@@ -567,6 +575,12 @@ export function assemblePrivateAgentTaskOperatorConfiguration(
   // Preserve the module-private brand; rebinding into a structurally identical
   // object would deliberately turn the capability back into an invalid bare callback.
   const capturedClaude = f.claudeCodeLocal && trustedClaude ? trustedClaude : undefined;
+  const trustedResultInspection = t.resultInspectionSource;
+  if (trustedResultInspection !== undefined && typeof trustedResultInspection.inspectSubmitted !== "function")
+    refuse("missing_trusted_input:resultInspectionSource");
+  const capturedResultInspection = trustedResultInspection && Object.freeze({
+    inspectSubmitted: trustedResultInspection.inspectSubmitted.bind(trustedResultInspection),
+  });
   if (t.installationTransitionAdmission !== undefined && !Array.isArray(t.installationTransitionAdmission.workers))
     refuse("installation_transition_admission_workers_invalid");
   const capturedTransitionAdmission = t.installationTransitionAdmission === undefined ? undefined
@@ -603,6 +617,7 @@ export function assemblePrivateAgentTaskOperatorConfiguration(
     ...(capturedHermes ? { hermes021LocalStartupReverification: t.hermes021LocalStartupReverification } : {}),
     ...(capturedClaude ? { claudeCodeLocalStartupReverification: t.claudeCodeLocalStartupReverification } : {}),
     ...(capturedClaude ? { claudeCodeLocalInstallationId: t.claudeCodeLocalInstallationId } : {}),
+    ...(capturedResultInspection ? { resultInspectionSource: capturedResultInspection } : {}),
     ...(f.revisionPlanning ? { revisionPlanning: true as const } : {}),
     ...(f.quality && t.quality ? {
       quality: {
@@ -714,6 +729,7 @@ export function assemblePrivateAgentTaskOperatorConfiguration(
       approvals: coordinatorShape.approvals!,
       ...(coordinatorShape.quality ? { quality: coordinatorShape.quality } : {}),
       ...(coordinatorShape.revisionPlanning ? { revisionPlanning: coordinatorShape.revisionPlanning } : {}),
+      ...(coordinatorShape.resultInspectionSource ? { resultInspectionSource: coordinatorShape.resultInspectionSource } : {}),
       ...(coordinatorShape.nativeHttp ? { nativeHttp: coordinatorShape.nativeHttp } : {}),
       ...(capturedHermes ? { hermes021Local: capturedHermes } : {}),
       ...(coordinatorShape.hermes021LocalStartupReverification ? {

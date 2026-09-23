@@ -7,6 +7,7 @@ import { PersistentLocalArtifactStorageV1 } from "../../artifacts/v1/persistent-
 import { HarnessRunStoreV1 } from "../../harness/v1/store";
 import { DurableResultReviewSubmissionServiceV1 } from "../../completion-gate/v1/durable-result-review-submission";
 import { DurableLocalResultInspectionServiceV1 } from "../../completion-gate/v1/durable-local-result-inspection";
+import { RoutedTaskResultInspectionServiceV1 } from "../../completion-gate/v1/routed-result-inspection";
 import type { AwaitableRollbackCheckpointStoreV1 } from "../../security/rollback-checkpoint";
 import type { ArtifactReadPortV1, ArtifactStoragePortV1 } from "../../node-executor/artifact-storage";
 import { HERMES_021_MACOS_CONNECTOR_PROFILE_DIGEST_V1, HERMES_021_SOURCE_REVISION_V1 } from
@@ -412,11 +413,13 @@ function compose(preparationValue: unknown, portsValue: unknown) {
   // This is a read-only bridge from the authenticated local Hermes receipt to
   // the already-existing review, correction, and capacity lifecycle. It has
   // no delivery, queue, database-write, or retry authority of its own.
-  const resultInspectionSource = new DurableLocalResultInspectionServiceV1(deferredDatabase.client, {
+  const localResultInspection = new DurableLocalResultInspectionServiceV1(deferredDatabase.client, {
     integrityKey: resultKey, reviewIntegrityKey: reviewKey, harnessIntegrityKey: harnessKey,
     deliveryIntegrityKeys: { hermes: deliveryIntegrityKey }, checkpoints: reviewCheckpoints,
     storageClass: "local", storage: deferredStorage.port,
   });
+  const resultInspectionSource = new RoutedTaskResultInspectionServiceV1(deferredDatabase.client,
+    rawCoordinator.quality as never, localResultInspection);
   const installedCompositionIdentity = Object.freeze({ schema: PRIVATE_HERMES_021_INSTALLED_COMPOSITION_IDENTITY_V1,
     installationId: config.installationId, releaseDigest: config.releaseDigest,
     nativeSidecarIdentityDigest: sha256Digest(prepared.nativeSidecar),
@@ -454,7 +457,9 @@ function compose(preparationValue: unknown, portsValue: unknown) {
   const privateStartupConfiguration = Object.freeze({ web: startup.web, artifactStorage: startup.artifactStorage,
     coordinator: Object.freeze({ planning: Object.freeze(startup.planning), routes: startup.routes,
       approvals: capturedApprovals, quality: startup.quality,
-      ...(startup.resultInspectionSource ? { resultInspectionSource: startup.resultInspectionSource } : {}),
+      // Keep the privately composed reader identity so the later additive
+      // Claude composition can extend it without accepting a caller callback.
+      ...(resultInspectionSource ? { resultInspectionSource } : {}),
       ...(startup.revisionPlanning ? { revisionPlanning: startup.revisionPlanning } : {}),
       nativeQueue: true as const, nativeQueueRecovery: true as const, database: startup.database,
       resultDatabase: startup.resultDatabase, evidence: startup.evidence,
@@ -472,7 +477,7 @@ function compose(preparationValue: unknown, portsValue: unknown) {
   const trusted = Object.freeze({ web: Object.freeze({ ...startup.web, installationPlan: config.settledInstallationPlan }),
     planning: startup.planning, routes: startup.routes, approvalEnrollments: capturedApprovals.enrollments,
     approvalStore: capturedApprovals.store, quality: startup.quality, evidence,
-    artifactStorage: startup.artifactStorage, hermes021Local: delivery,
+    artifactStorage: startup.artifactStorage, hermes021Local: delivery, resultInspectionSource,
     localBackupRestoreReadiness: startup.web.localBackupRestoreReadiness });
   const runnerInput = Object.freeze({ admissionPreparationInput: config.admission,
     privateStartupConfiguration, startupAdmissionBinding });

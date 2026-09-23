@@ -11,6 +11,9 @@ import { verifyLocalClaudePostInstallAdmissionReceiptV1, verifyLocalClaudePostIn
   "./local-claude-post-install-admission";
 import { createClaudeCodePrivateInstallationCompositionV1 } from
   "../../web/v1/claude-code-private-installation-composition";
+import { extendInstalledResultInspectionWithClaudeV1 } from
+  "../../web/v1/claude-code-private-installation-composition";
+import type { RoutedTaskResultInspectionServiceV1 } from "../../completion-gate/v1/routed-result-inspection";
 import { planInstallationTopologyV1 } from "../../harness/v1/installation-topology";
 import { CLAUDE_CODE_LOCAL_ADAPTER_V1 } from "../../harness/claude-code-v1/task-planning-contract";
 
@@ -123,15 +126,19 @@ function captureRunnerInput(value: unknown) {
   if (!supplied || typeof supplied !== "object" || Array.isArray(supplied)
     || !supplied.coordinator || typeof supplied.coordinator !== "object") return refused();
   const delivery = supplied.coordinator.hermes021Local;
-  if (!delivery || typeof delivery !== "object" || typeof delivery.deliver !== "function" || !startup.queueWorker) return refused();
+  const resultInspectionSource = supplied.coordinator.resultInspectionSource;
+  if (!delivery || typeof delivery !== "object" || typeof delivery.deliver !== "function" || !startup.queueWorker
+    || resultInspectionSource !== undefined && typeof resultInspectionSource.inspectSubmitted !== "function") return refused();
   const coordinator = Object.freeze({ ...supplied.coordinator, planning: startup.planning, routes: startup.routes,
     approvals: startup.approvals, quality: startup.quality, revisionPlanning: startup.revisionPlanning,
     nativeHttp: startup.nativeHttp, nativeQueue: startup.nativeQueue, nativeQueueRecovery: startup.nativeQueueRecovery,
     queueWorker: startup.queueWorker, database: startup.database, resultDatabase: startup.resultDatabase,
-    evidence: startup.evidence, sessions: startup.sessions, hermes021Local: delivery });
+    evidence: startup.evidence, sessions: startup.sessions, hermes021Local: delivery,
+    ...(resultInspectionSource ? { resultInspectionSource } : {}) });
   const privateStartupConfiguration = Object.freeze({ ...supplied, web: startup.web, coordinator });
   return Object.freeze({ runnerInput: Object.freeze({ admissionPreparationInput,
-    privateStartupConfiguration, startupAdmissionBinding }), delivery, queueWorker: startup.queueWorker });
+    privateStartupConfiguration, startupAdmissionBinding }), delivery,
+    ...(resultInspectionSource ? { resultInspectionSource } : {}), queueWorker: startup.queueWorker });
 }
 
 function captureDependencies(value: unknown): StartupDependencies {
@@ -183,15 +190,19 @@ export function createPrivateLocalInstallationRuntimeAssemblyV1(inputValue: unkn
   if (!input.operatorTrustedInputs || typeof input.operatorTrustedInputs !== "object"
     || Array.isArray(input.operatorTrustedInputs)) return blocked("private_configuration_custody_missing");
   const trustedInput = input.operatorTrustedInputs as Record<string, unknown>;
-  if (trustedInput.hermes021Local !== captured.delivery) return blocked("private_configuration_custody_missing");
+  if (trustedInput.hermes021Local !== captured.delivery
+    || trustedInput.resultInspectionSource !== undefined && trustedInput.resultInspectionSource !== captured.resultInspectionSource)
+    return blocked("private_configuration_custody_missing");
   let detachedTrusted: Record<string, unknown>;
   try {
     const withoutDelivery = Object.fromEntries(Object.entries(trustedInput)
-      .filter(([name]) => name !== "hermes021Local"));
+      .filter(([name]) => name !== "hermes021Local" && name !== "resultInspectionSource"));
     detachedTrusted = captureOwned(withoutDelivery) as Record<string, unknown>;
   } catch { return blocked("private_configuration_custody_missing"); }
   const capturedTrusted: Readonly<Record<string, unknown>> = Object.freeze({
     ...detachedTrusted, hermes021Local: captured.delivery,
+    ...(trustedInput.resultInspectionSource === captured.resultInspectionSource && captured.resultInspectionSource
+      ? { resultInspectionSource: captured.resultInspectionSource } : {}),
   });
   let claudePostInstall: Readonly<Record<string, unknown>> | undefined;
   if (input.claudePostInstall !== undefined) {
@@ -208,6 +219,7 @@ export function createPrivateLocalInstallationRuntimeAssemblyV1(inputValue: unkn
     verifyPrivateLocalHermesStartupReverificationV1(receipt, { delivery: captured.delivery,
       queueWorker: captured.queueWorker, installationPlan: current });
     let claudeDelivery: ReturnType<typeof createClaudeCodePrivateInstallationCompositionV1> | undefined;
+    let resultInspectionSource = captured.resultInspectionSource as RoutedTaskResultInspectionServiceV1 | undefined;
     let claudeAdmission: Awaited<ReturnType<typeof verifyLocalClaudePostInstallAdmissionV1>> | undefined;
     if (claudePostInstall) {
       const admissionRuntime = claudePostInstall.admissionRuntime;
@@ -232,10 +244,13 @@ export function createPrivateLocalInstallationRuntimeAssemblyV1(inputValue: unkn
       if (!composition || typeof composition !== "object") return refused();
       claudeDelivery = createClaudeCodePrivateInstallationCompositionV1({ ...(composition as Record<string, unknown>),
         admission: claudeAdmission } as never);
+      if (resultInspectionSource)
+        resultInspectionSource = extendInstalledResultInspectionWithClaudeV1(claudeDelivery, resultInspectionSource);
     }
     const trusted = Object.freeze({ ...capturedTrusted,
       web: Object.freeze({ ...(capturedTrusted.web as Record<string, unknown>), installationPlan: current }),
       hermes021LocalStartupReverification: receipt,
+      ...(resultInspectionSource ? { resultInspectionSource } : {}),
       ...(claudeDelivery ? { claudeCodeLocal: claudeDelivery,
         claudeCodeLocalStartupReverification: claudeAdmission,
         claudeCodeLocalInstallationId: claudeAdmission?.installationId } : {}) });

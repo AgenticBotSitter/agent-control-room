@@ -15,6 +15,7 @@ import { verifyLocalClaudePostInstallAdmissionReceiptV1, type LocalClaudePostIns
   "../../installer/v1/local-claude-post-install-admission";
 import { CLAUDE_CODE_LOCAL_ADAPTER_V1 } from "../../harness/claude-code-v1/task-planning-contract";
 import { DurableResultReviewSubmissionServiceV1 } from "../../completion-gate/v1/durable-result-review-submission";
+import { RoutedTaskResultInspectionServiceV1 } from "../../completion-gate/v1/routed-result-inspection";
 import type { AwaitableRollbackCheckpointStoreV1 } from "../../security";
 
 export const CLAUDE_CODE_PRIVATE_INSTALLATION_COMPOSITION_V1 =
@@ -44,6 +45,7 @@ export type ClaudeCodePrivateInstalledDeliverCapabilityV1 = Readonly<{
 }>;
 
 const branded = new WeakSet<object>();
+const deliveryKeys = new WeakMap<object, Uint8Array>();
 const unavailable = (): never => { const error = new Error("claude_code_private_installation_composition_unavailable"); error.stack = undefined; throw error; };
 
 /** A bare `{ deliver }` callback cannot cross the private operator boundary. */
@@ -115,7 +117,24 @@ export function createClaudeCodePrivateInstallationCompositionV1(
       if (!(signal instanceof AbortSignal) || signal.aborted) unavailable();
       return queue.deliver(target, signal);
     } });
+    // Older source-only composition tests intentionally omit the receipt key
+    // because they never construct a result-inspection bridge. Keep delivery
+    // composition inert in that case; the later bridge extension refuses it.
+    const receiptKey = input.execution.delivery.integrityKey;
+    if (receiptKey instanceof Uint8Array && receiptKey.length === 32)
+      deliveryKeys.set(capability, Uint8Array.from(receiptKey));
     branded.add(capability);
     return capability;
   } catch { return unavailable(); }
+}
+
+/** The branded Claude delivery capability can contribute only its private
+ * receipt verifier to the existing installed Hermes inspection route. It
+ * cannot reveal a key, alter task data, or create another worker route. */
+export function extendInstalledResultInspectionWithClaudeV1(capability: unknown, source: unknown): RoutedTaskResultInspectionServiceV1 {
+  if (!isClaudeCodePrivateInstalledDeliverCapabilityV1(capability)
+    || !(source instanceof RoutedTaskResultInspectionServiceV1)) return unavailable();
+  const key = deliveryKeys.get(capability);
+  if (!key) return unavailable();
+  return source.withClaudeDeliveryIntegrityKey(key);
 }

@@ -50,6 +50,8 @@ export class DurableLocalResultInspectionServiceV1 implements TaskResultInspecti
   private readonly checkpoints: AwaitableRollbackCheckpointStoreV1;
   private readonly readBytes: ArtifactReadPortV1["read"];
   private readonly storageClass: "local" | "r2";
+  private readonly dbRef: DatabaseClient;
+  private readonly extensionConfiguration: DurableLocalResultInspectionConfigurationV1;
 
   constructor(private readonly db: DatabaseClient, config: DurableLocalResultInspectionConfigurationV1) {
     const deliveryKeys = [config.deliveryIntegrityKeys?.hermes, config.deliveryIntegrityKeys?.claude]
@@ -70,6 +72,23 @@ export class DurableLocalResultInspectionServiceV1 implements TaskResultInspecti
       advance: config.checkpoints.advance.bind(config.checkpoints), initialize: config.checkpoints.initialize.bind(config.checkpoints) });
     this.readBytes = config.storage.read.bind(config.storage);
     this.storageClass = config.storageClass;
+    this.dbRef = db;
+    this.extensionConfiguration = Object.freeze({ integrityKey: Uint8Array.from(config.integrityKey),
+      reviewIntegrityKey: Uint8Array.from(config.reviewIntegrityKey), harnessIntegrityKey: Uint8Array.from(config.harnessIntegrityKey),
+      deliveryIntegrityKeys: Object.freeze({
+        ...(config.deliveryIntegrityKeys.hermes ? { hermes: Uint8Array.from(config.deliveryIntegrityKeys.hermes) } : {}),
+        ...(config.deliveryIntegrityKeys.claude ? { claude: Uint8Array.from(config.deliveryIntegrityKeys.claude) } : {}),
+      }), checkpoints: this.checkpoints, storageClass: this.storageClass,
+      storage: Object.freeze({ read: this.readBytes }) });
+  }
+
+  /** Private composition extension only: retain the already-captured Hermes
+   * key while adding Claude's distinct receipt key. The result remains a
+   * read-only inspector and never exposes either key. */
+  withClaudeDeliveryIntegrityKey(key: Uint8Array): DurableLocalResultInspectionServiceV1 {
+    if (this.claudeDeliveryKey || !(key instanceof Uint8Array) || key.length !== 32) return unavailable();
+    return new DurableLocalResultInspectionServiceV1(this.dbRef, { ...this.extensionConfiguration,
+      deliveryIntegrityKeys: { ...this.extensionConfiguration.deliveryIntegrityKeys, claude: Uint8Array.from(key) } });
   }
 
   async inspectSubmitted(tx: DatabaseSession, tenantIdValue: string, runIdValue: string): Promise<SubmittedTaskResultInspectionV1> {
