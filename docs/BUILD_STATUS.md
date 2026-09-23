@@ -72,6 +72,12 @@ Together with the prepared-worker browser route, this confirms the site does
 not silently choose a worker from a browser preference. These remain
 disposable/source proofs, not evidence of a running local Claude installation.
 
+The protected task-detail HTTP route now has a direct integration test: it
+shows the worker recorded by the trusted planner, rejects a browser attempt to
+choose a different worker, and shows no worker label if the trusted planner is
+not configured. This makes the local website’s worker explanation truthful
+without giving the browser assignment authority.
+
 The macOS installation-journal sidecar binding and the separately versioned
 installed-manifest v2 binding are **source-only and inert**. The release build
 can bind and verify the named bytes, platform, architecture and digests before

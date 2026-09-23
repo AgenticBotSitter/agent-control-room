@@ -161,7 +161,9 @@ routes without duplicate scheduler, authority, service, or result storage.
 - The existing protected task route already reads a prepared worker from the
   canonical planner and labels Hermes or Claude only after that saved planner
   record exists. It never chooses a worker merely from a browser preference or
-  a harness name.
+  a harness name. The HTTP proof also refuses a browser-supplied worker query
+  and returns no prepared-worker label when the trusted planning reader is not
+  configured.
 - Add an installation status panel that reports Hermes and Claude separately as
   **not configured**, **qualification required**, **ready**, **unavailable**,
   **running**, or **needs owner attention**. A stale observation is unavailable,
