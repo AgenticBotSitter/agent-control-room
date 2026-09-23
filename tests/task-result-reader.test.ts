@@ -5,6 +5,7 @@ import { publishDurableResultV1, type DurableResultBindingV1 } from "../src/arti
 import { createInMemoryNeutralReservationPort } from "../src/artifacts/v1/neutral-reservation-port";
 import { PlanSelectedTaskResultReaderV1 } from "../src/web/v1/task-result-reader";
 import { CompletionGateStoreV1, type CompletionAcceptanceProfileV1 } from "../src/completion-gate/v1";
+import { DurableResultReviewSubmissionServiceV1 } from "../src/completion-gate/v1/durable-result-review-submission";
 import { sha256Digest } from "../src/security";
 import { at } from "./native-task-fixture";
 import { binding } from "./hermes-native-fixture";
@@ -28,7 +29,9 @@ async function durableFixture() {
     nodeId: binding.nodeId, workflowId: "workflow:test", harness: "third-party", connectorProfileDigest: connectorDigest,
     acceptanceProfileId: profile.id, acceptanceProfileDigest: sha256Digest(profile) };
   const published = await publishDurableResultV1({ db: f.db, integrityKey: f.resultKey, reviewKey: f.reviewKey,
-    storage: f.storage, storageClass: "local", reservations: createInMemoryNeutralReservationPort() }, {
+    storage: f.storage, storageClass: "local", reservations: createInMemoryNeutralReservationPort(),
+    reviewSubmission: new DurableResultReviewSubmissionServiceV1(f.db, { integrityKey: f.resultKey,
+      reviewIntegrityKey: f.reviewKey, checkpoints: f.checkpoints, storageClass: "local", storage: f.storage }) }, {
     binding: publication, bytes: new TextEncoder().encode("A plan-selected durable result."),
     receivedAt: at(2_000), assertAuthority: () => {} });
   const reader = new PlanSelectedTaskResultReaderV1(f.db, { harnessIntegrityKey: f.harnessKey, results: f.config,
