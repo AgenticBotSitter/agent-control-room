@@ -1235,4 +1235,6 @@ Until those gates are complete, the product is accurately described as
 - Single-computer build order: [SINGLE_MACHINE_PRODUCT_BUILD_PLAN.md](SINGLE_MACHINE_PRODUCT_BUILD_PLAN.md)
 - Shared local/remote contract: [SHARED_CONNECTOR_CONTRACT.md](SHARED_CONNECTOR_CONTRACT.md)
 - Operator proof procedure: [UNIFIED_OPERATOR_PROOF_RUNBOOK.md](UNIFIED_OPERATOR_PROOF_RUNBOOK.md)
+- Real-world Hermes, Claude and Codex activation order:
+  [REAL_WORLD_THREE_WORKER_ACTIVATION_PLAN.md](REAL_WORLD_THREE_WORKER_ACTIVATION_PLAN.md)
 - Reuse decisions and attribution: [SINGLE_MACHINE_REUSE_AUDIT.md](SINGLE_MACHINE_REUSE_AUDIT.md)
