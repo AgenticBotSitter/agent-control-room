@@ -195,8 +195,8 @@ export function createPrivateLocalInstallationRuntimeAssemblyV1(inputValue: unkn
   });
   let claudePostInstall: Readonly<Record<string, unknown>> | undefined;
   if (input.claudePostInstall !== undefined) {
-    try { claudePostInstall = exact(input.claudePostInstall,
-      ["admissionInput", "admissionRuntime", "compositionInput"]); }
+    try { claudePostInstall = captureOwned(exact(input.claudePostInstall,
+      ["admissionInput", "admissionRuntime", "compositionInput"])) as Readonly<Record<string, unknown>>; }
     catch { return blocked("private_configuration_custody_missing"); }
   }
 
@@ -244,6 +244,14 @@ export function createPrivateLocalInstallationRuntimeAssemblyV1(inputValue: unkn
     history = await journal.inspectSettledHistory(); current = settledCurrent(history);
     verifyPrivateLocalHermesStartupReverificationV1(receipt, { delivery: captured.delivery,
       queueWorker: captured.queueWorker, installationPlan: current });
+    if (claudeAdmission && claudePostInstall) {
+      const runtime = claudePostInstall.admissionRuntime as { readOriginalInstallationHistory?: unknown; readTransition?: unknown };
+      if (typeof runtime?.readOriginalInstallationHistory !== "function" || typeof runtime.readTransition !== "function") return refused();
+      const reread = await verifyLocalClaudePostInstallAdmissionV1(claudePostInstall.admissionInput as never,
+        Object.freeze({ readOriginalInstallationHistory: Function.prototype.bind.call(runtime.readOriginalInstallationHistory, runtime),
+          readTransition: Function.prototype.bind.call(runtime.readTransition, runtime) }));
+      if (reread.admissionDigest !== claudeAdmission.admissionDigest) return refused();
+    }
     if (signal?.aborted) return refused();
     return Object.freeze({ receipt, configuration: operator.configuration, port: operator.port, plan: current });
   }

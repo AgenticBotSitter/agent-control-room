@@ -419,9 +419,9 @@ export function assemblePrivateAgentTaskOperatorConfiguration(
   if (f.hermes021Local && (!f.nativeQueue || !f.queueWorker || !f.quality || !f.evidence || !f.artifactStorage
     || parsed.databaseRoles.results === undefined || parsed.databaseRoles.evidence === undefined))
     refuse("feature_chain:hermes021Local_requires_queue_results_and_artifacts");
-  if (f.claudeCodeLocal && (!f.nativeQueue || !f.queueWorker || !f.quality || !f.evidence || !f.artifactStorage
+  if (f.claudeCodeLocal && (!f.hermes021Local || !f.nativeQueue || !f.queueWorker || !f.quality || !f.evidence || !f.artifactStorage
     || parsed.databaseRoles.results === undefined || parsed.databaseRoles.evidence === undefined))
-    refuse("feature_chain:claudeCodeLocal_requires_queue_results_and_artifacts");
+    refuse("feature_chain:claudeCodeLocal_requires_hermes_queue_results_and_artifacts");
 
   // Database roles: one host/database, pairwise-distinct usernames, none reusing
   // the web pool login. Exact credential validation stays downstream.

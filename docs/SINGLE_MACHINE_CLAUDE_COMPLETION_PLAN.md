@@ -149,6 +149,10 @@ not two launchers.
   safe removal, replacement, and first-Claude bootstrap need their own
   reviewed current-route-set decision. Do not hide that refusal as a setup
   error or silently reinterpret the Hermes receipt.
+- The source now captures the additive Claude package before asynchronous
+  preparation, requires one unchanged Hermes bootstrap plus one distinct
+  Claude route, and rereads Claude admission at the final startup boundary.
+  Altered or substituted route evidence refuses before startup effects.
 - Start the existing shared queue worker once. Register each enabled local
   route with its own fixed capacity and capability, but keep the canonical
   scheduler and result publisher shared.

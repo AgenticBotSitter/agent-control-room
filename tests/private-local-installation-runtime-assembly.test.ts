@@ -1070,12 +1070,25 @@ test("additive Claude is reread, branded and carried through operator assembly t
   assert.equal(assembly.status, "ready");
   if (assembly.status !== "ready") return;
   const prepared = await assembly.prepare();
-  assert.equal(claude.transitionReads(), 1, "committed transition is reread before configuration exposure");
+  assert.equal(claude.transitionReads(), 2, "committed transition is reread before configuration exposure and again at the final startup boundary");
   assert.equal(isClaudeCodePrivateInstalledDeliverCapabilityV1(prepared.configuration.coordinator.claudeCodeLocal), true);
   assert.equal(prepared.configuration.coordinator.hermes021Local, f.delivery, "bootstrap Hermes remains exact");
   await assert.rejects(assembly.start(), /private_task_startup_prerequisites_failed/u);
-  assert.equal(claude.transitionReads(), 2, "final startup performs a fresh transition reread");
-  assert.deepEqual(sequence, ["artifact-storage"], "first startup effect occurs only after both rereads");
+  assert.equal(claude.transitionReads(), 4, "each prepare path rereads the committed transition before configuration exposure and before startup");
+  assert.deepEqual(sequence, ["artifact-storage"], "first startup effect occurs only after both route checks");
+});
+
+test("Claude cannot disable the retained Hermes bootstrap route", async t => {
+  const f = await fixture(t), effects: string[] = [];
+  const claude = await additiveClaudePackage(f);
+  const assembly = createPrivateLocalInstallationRuntimeAssemblyV1({ runnerInput: f.runnerInput,
+    operatorSettings: { ...f.settings, features: { ...f.settings.features, hermes021Local: false, claudeCodeLocal: true } },
+    operatorTrustedInputs: f.trusted, claudePostInstall: claude.claudePostInstall },
+  { journal: f.journal, startupDependencies: dependencies(effects) });
+  assert.equal(assembly.status, "ready");
+  if (assembly.status === "ready") await assert.rejects(assembly.prepare(),
+    /unexpected_trusted_input:hermes021Local|claudeCodeLocal_requires_hermes_queue_results_and_artifacts/u);
+  assert.deepEqual(effects, [], "a Claude-only feature set cannot reach startup effects");
 });
 
 test("altered Claude qualification evidence refuses before configuration or startup effects", async t => {

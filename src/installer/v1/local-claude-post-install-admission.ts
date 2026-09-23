@@ -153,6 +153,16 @@ export async function verifyLocalClaudePostInstallAdmissionV1(input: LocalClaude
     const topology = planInstallationTopologyV1(transitionTopologyInput);
     const workerRoute = route.parse(input.workerRoute);
     const requestedRoutes = installationTopologyInputSchemaV1.shape.requestedRoutes.parse(input.requestedRoutes);
+    const bootstrapRoutes = originalTopologyInput.requestedRoutes.filter(value => value.kind === "local"
+      && value.adapterId === HERMES_021_MACOS_LOCAL_ADAPTER_V1);
+    const bootstrap = bootstrapRoutes[0];
+    // This first admission contract is deliberately closed: it extends one
+    // original Hermes bootstrap by one distinct Claude route. It is not a
+    // removal, replacement, rebinding, or generic adapter-set mechanism.
+    if (!bootstrap || bootstrapRoutes.length !== 1 || originalTopologyInput.requestedRoutes.length !== 1
+      || workerRoute.workerId === bootstrap.workerId || transitionTopologyInput.requestedRoutes.length !== 2
+      || !transitionTopologyInput.requestedRoutes.some(value => canonicalJson(value) === canonicalJson(bootstrap))
+      || transitionTopologyInput.requestedRoutes.filter(value => canonicalJson(value) === canonicalJson(workerRoute)).length !== 1) refuse();
     if (canonicalJson(requestedRoutes) !== canonicalJson(transitionTopologyInput.requestedRoutes)
       || canonicalJson(transitionTopologyInput.currentRoutes) !== canonicalJson(originalTopologyInput.requestedRoutes)
       || transitionTopologyInput.databaseAuthorityDigest !== originalTopology.databaseAuthorityDigest
@@ -160,9 +170,7 @@ export async function verifyLocalClaudePostInstallAdmissionV1(input: LocalClaude
       || topology.addedLocalWorkerIds.length !== 1 || topology.addedLocalWorkerIds[0] !== workerRoute.workerId
       || topology.addedRemoteWorkerIds.length !== 0 || topology.reboundWorkerIds.length !== 0
       || topology.removedWorkerIds.length !== 0
-      || !transitionTopologyInput.requestedRoutes.some(value => canonicalJson(value) === canonicalJson(workerRoute))
-      || !originalTopologyInput.requestedRoutes.some(value => value.kind === "local"
-        && value.adapterId === HERMES_021_MACOS_LOCAL_ADAPTER_V1)) refuse();
+      || !transitionTopologyInput.requestedRoutes.some(value => canonicalJson(value) === canonicalJson(workerRoute))) refuse();
 
     const transitionId = id.parse(input.transitionId);
     const transition = verifyInstallationTransitionV1(await runtime.readTransition(transitionId));
