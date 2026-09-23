@@ -8,6 +8,8 @@ import { sha256Digest } from "../src/security/canonical-digest";
 import { nativeRevisedResultFixture } from "./helpers/native-revised-result";
 import { NativeResultVerificationService } from "../src/completion-gate/v1/native-result-verification";
 import { NativeTaskCompletionService } from "../src/persistence/native-task-completion";
+import { HERMES_021_MACOS_LOCAL_ADAPTER_V1, runHermes021MacosLocalTaskV1 } from "../src/harness/hermes-021-v1";
+import { CLAUDE_CODE_LOCAL_ADAPTER_V1 } from "../src/harness/claude-code-v1";
 
 /**
  * This is deliberately a controller-contract conformance proof, not a claim
@@ -157,4 +159,58 @@ test("the shared local lifecycle carries a correction through result, review, an
 
   const replay = await new NativeTaskCompletionService(x.f.db, x.config, x.f.clock).complete(x.request, () => {});
   assert.equal(replay.replayed, true, "completion replay cannot create a second corrected result");
+});
+
+test("C4's two local routes keep distinct pending reviews through lost-reply recovery without an automatic resend", async t => {
+  // Both adapters enter the already-tested controller packet/result/review path.
+  // The fixture injects only in-memory transport and disposable PGlite state; it
+  // never discovers, launches, or authenticates either local program.
+  const hermes = await nativeRevisedResultFixture("Hermes pending-review text.", { topologyRoute: "local",
+    topologyWorker: { workerId: "worker:marvin", adapterId: HERMES_021_MACOS_LOCAL_ADAPTER_V1, adapterRevision: revision } });
+  const claude = await nativeRevisedResultFixture("Claude pending-review text.", { topologyRoute: "local",
+    topologyWorker: { workerId: "worker:claude", adapterId: CLAUDE_CODE_LOCAL_ADAPTER_V1, adapterRevision: revision } });
+  t.after(claude.close); t.after(hermes.close);
+
+  assert.deepEqual(hermes.topology && { route: hermes.topology.route, workerId: hermes.topology.workerId,
+    adapterId: hermes.topology.adapterId }, { route: "local", workerId: "worker:marvin", adapterId: HERMES_021_MACOS_LOCAL_ADAPTER_V1 });
+  assert.deepEqual(claude.topology && { route: claude.topology.route, workerId: claude.topology.workerId,
+    adapterId: claude.topology.adapterId }, { route: "local", workerId: "worker:claude", adapterId: CLAUDE_CODE_LOCAL_ADAPTER_V1 });
+  assert.notEqual(hermes.topology?.deliveryId, claude.topology?.deliveryId,
+    "the shared receiver retains one receipt per local route");
+  assert.notEqual(hermes.delivered.artifact.contentHash, claude.delivered.artifact.contentHash,
+    "one route's pending-review result cannot be reused as the other route's result");
+  assert.equal(hermes.delivered.text, "Hermes pending-review text.");
+  assert.equal(claude.delivered.text, "Claude pending-review text.");
+
+  // Reconstructing the receipt receiver models a lost acknowledgement/controller
+  // restart. It retains the exact packets and reports duplicate delivery, not a
+  // fresh local start or a route substitution.
+  const receipts = receiptPort();
+  const replay = async (worker: typeof workers[number], lifecycle: typeof hermes) => {
+    const packet = deliveryFor(worker);
+    const route = { kind: "local" as const, workerId: worker.workerId };
+    await deliverControllerWorkerPacketV1(receipts.port, packet, route);
+    const restarted = receiptPort(receipts.receipts);
+    const duplicate = await deliverControllerWorkerPacketV1(restarted.port, packet, route);
+    assert.equal(duplicate.disposition, "duplicate");
+    assert.equal(duplicate.startsWork, false);
+    assert.equal(lifecycle.topology?.route, "local");
+  };
+  await replay(workers[0], hermes); await replay(workers[2], claude);
+  assert.equal(receipts.receipts.size, 2);
+
+  // An observed cancellation is a terminal no-result outcome. The injected
+  // port is called once, but the controller does not retry it or manufacture a
+  // pending review for cancelled work.
+  const abort = new AbortController(); let calls = 0;
+  const cancelled = runHermes021MacosLocalTaskV1({ localServiceId: "service:marvin-hermes", workerId: "worker:marvin",
+    expectedVersion: "0.21.3", sourceRevision: revision }, { tenantId: "tenant:local", projectId: "project:local",
+    jobId: "job:cancelled", attemptId: "attempt:cancelled", runId: "run:cancelled", nodeId: "node:marvin",
+    prompt: "Stop.", instructions: "Stop.", deadline: Date.parse(expiresAt) }, { async run(input) {
+      calls++; await new Promise<void>(resolve => input.signal?.addEventListener("abort", () => resolve(), { once: true }));
+      throw new Error("controller stopped");
+    } }, abort.signal);
+  abort.abort();
+  assert.deepEqual(await cancelled, { kind: "cancelled", reason: "hermes_local_execution_aborted" });
+  assert.equal(calls, 1);
 });

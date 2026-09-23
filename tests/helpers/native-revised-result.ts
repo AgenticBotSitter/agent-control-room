@@ -37,7 +37,8 @@ type NativeQualityCompletion = Awaited<ReturnType<typeof nativeQualityCompletion
 async function prepareNativeRevisedExecution(original: NativeQualityCompletion,
   planned: { receipt: { jobId: string } }, changeReview: { reviewId: string } | undefined,
   preparation: { sourceCapacityReleased: boolean; ownsOriginal: boolean;
-    topologyRoute?: "local" | "remote" }) {
+    topologyRoute?: "local" | "remote";
+    topologyWorker?: { workerId: string; adapterId: string; adapterRevision: string } }) {
   const { f } = original;
   const cleanup: (() => void | Promise<void>)[] = preparation.ownsOriginal ? [original.close] : [];
   const close = async () => { for (const fn of cleanup.reverse()) await fn(); };
@@ -143,13 +144,16 @@ async function prepareNativeRevisedExecution(original: NativeQualityCompletion,
       await bridge.receive(outgoing.shift()!, timestamp());
       return f.store.receiveDeliveryReceipt(f.db, session, incoming.shift()!, abort.signal);
     };
-    let topology: { deliveryId: string; deliveryDigest: string; route: "local" | "remote" } | undefined;
+    let topology: { deliveryId: string; deliveryDigest: string; route: "local" | "remote";
+      workerId: string; adapterId: string; adapterRevision: string } | undefined;
     if (preparation.topologyRoute) {
-      const route = { kind: preparation.topologyRoute, workerId: `worker:${prepared.request.nodeId}` } as const;
+      const worker = preparation.topologyWorker ?? { workerId: `worker:${prepared.request.nodeId}`,
+        adapterId: "connector:native-revision-lifecycle-test", adapterRevision: "0000000" };
+      const route = { kind: preparation.topologyRoute, workerId: worker.workerId } as const;
       const delivery = createControllerWorkerDeliveryV1({
         identity: { tenantId: registration.tenantId, projectId: registration.projectId, jobId: registration.jobId,
           attemptId: registration.attemptId, runId: registration.id, nodeId: registration.nodeId },
-        worker: { workerId: route.workerId, adapterId: "connector:native-revision-lifecycle-test", adapterRevision: "0000000" },
+        worker,
         input: plan.input, authorityDigest: plan.job.authority.digest,
         connectorProfileDigest: sha256Digest("native-revision-lifecycle-test-profile/v1"),
         acceptanceProfileId: plan.acceptanceProfileId, acceptanceProfileDigest: plan.acceptanceProfileDigest,
@@ -165,7 +169,8 @@ async function prepareNativeRevisedExecution(original: NativeQualityCompletion,
           disposition: "accepted" as const, startsWork: false as const, grantsExecutionAuthority: false as const };
         return { ...material, receiptDigest: sha256Digest(material) } satisfies ControllerWorkerDeliveryReceiptV1;
       } }, delivery, route, abort.signal);
-      topology = { deliveryId: sharedReceipt.deliveryId, deliveryDigest: sharedReceipt.deliveryDigest, route: route.kind };
+      topology = { deliveryId: sharedReceipt.deliveryId, deliveryDigest: sharedReceipt.deliveryDigest, route: route.kind,
+        workerId: worker.workerId, adapterId: worker.adapterId, adapterRevision: worker.adapterRevision };
     } else await transmitNative();
     const calls: string[] = [], providerRunId = `run_${"2".repeat(32)}`;
     let resultText: string | undefined;
@@ -212,8 +217,9 @@ async function prepareNativeRevisedExecution(original: NativeQualityCompletion,
   } catch (error) { await close(); throw error; }
 }
 
-export async function nativeRevisedExecutionFixture(configuration: { topologyRoute?: "local" | "remote" } = {}) {
-  const original = await nativeQualityCompletionFixture(undefined, undefined, configuration);
+export async function nativeRevisedExecutionFixture(configuration: { topologyRoute?: "local" | "remote";
+  topologyWorker?: { workerId: string; adapterId: string; adapterRevision: string } } = {}) {
+  const original = await nativeQualityCompletionFixture(undefined, undefined, { topologyRoute: configuration.topologyRoute });
   let changeReview: Awaited<ReturnType<typeof original.review>>["receipt"];
   let planned: Awaited<ReturnType<TaskExecutionPlanner["revise"]>>;
   try {
@@ -228,7 +234,8 @@ export async function nativeRevisedExecutionFixture(configuration: { topologyRou
   // Ownership transfers here. Preparation closes the original fixture on its own failure,
   // so this wrapper must not catch and close it a second time.
   return prepareNativeRevisedExecution(original, planned, changeReview,
-    { sourceCapacityReleased: false, ownsOriginal: true, topologyRoute: configuration.topologyRoute });
+    { sourceCapacityReleased: false, ownsOriginal: true, topologyRoute: configuration.topologyRoute,
+      topologyWorker: configuration.topologyWorker });
 }
 
 /** Prepare a revised synthetic child only after a mounted runtime has durably reviewed and
@@ -236,13 +243,16 @@ export async function nativeRevisedExecutionFixture(configuration: { topologyRou
  * The caller retains ownership of the supplied source fixture.
  */
 export function nativeRevisedExecutionAfterCapacityReleaseFixture(original: NativeQualityCompletion,
-  plannedReceipt: { jobId: string }, configuration: { topologyRoute?: "local" | "remote" } = {}) {
+  plannedReceipt: { jobId: string }, configuration: { topologyRoute?: "local" | "remote";
+    topologyWorker?: { workerId: string; adapterId: string; adapterRevision: string } } = {}) {
   return prepareNativeRevisedExecution(original, { receipt: plannedReceipt }, undefined,
-    { sourceCapacityReleased: true, ownsOriginal: false, topologyRoute: configuration.topologyRoute });
+    { sourceCapacityReleased: true, ownsOriginal: false, topologyRoute: configuration.topologyRoute,
+      topologyWorker: configuration.topologyWorker });
 }
 
 export async function nativeRevisedResultFixture(text = revisedText,
-  configuration: { topologyRoute?: "local" | "remote" } = {}) {
+  configuration: { topologyRoute?: "local" | "remote";
+    topologyWorker?: { workerId: string; adapterId: string; adapterRevision: string } } = {}) {
   const x = await nativeRevisedExecutionFixture(configuration);
   try {
     const reviewPlan = await x.register(), delivered = await x.deliver(text);
