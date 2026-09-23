@@ -6,7 +6,10 @@
  */
 import { spawn } from "node:child_process";
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
+import { createHash } from "node:crypto";
+import { readFile, realpath } from "node:fs/promises";
 import { isAbsolute, normalize } from "node:path";
+import { sha256Digest } from "../src/security/canonical-digest";
 import { qualifyPrivateLocalClaudeTextReviewV1,
   PRIVATE_LOCAL_CLAUDE_QUALIFICATION_V1 } from "../src/installer/v1/private-local-claude-qualification";
 
@@ -40,12 +43,40 @@ if (!valid) {
   const interrupt = () => controller.abort();
   process.once("SIGINT", interrupt); process.once("SIGTERM", interrupt);
   try {
-    const report = await qualifyPrivateLocalClaudeTextReviewV1({ executablePath: values["--executable"]!,
-      workingDirectory: values["--workdir"]!, expectedText: nonce, signal: controller.signal }, {
+    // Resolve and fingerprint the actual selected paths before launch. The
+    // resulting digests bind a successful report to one installed binary and
+    // one workspace without printing either private path or its version text.
+    const [executablePath, workingDirectory, executableBytes] = await Promise.all([
+      realpath(values["--executable"]!), realpath(values["--workdir"]!), readFile(values["--executable"]!),
+    ]);
+    const executableSha256 = `sha256:${createHash("sha256").update(executableBytes).digest("hex")}`;
+    const workingDirectoryBindingDigest = sha256Digest({ purpose: "local-claude-working-directory-binding/v1", workingDirectory });
+    const report = await qualifyPrivateLocalClaudeTextReviewV1({ executablePath,
+      workingDirectory, executableSha256, workingDirectoryBindingDigest, expectedText: nonce, signal: controller.signal }, {
       launch(request) {
         const child = spawn(request.executablePath, [...request.args], { cwd: request.workingDirectory, shell: false,
+          // A detached POSIX child owns its own process group. Both close paths
+          // signal that group, so a CLI descendant cannot outlive qualification.
+          detached: process.platform !== "win32",
           windowsHide: true, env: { PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: process.env.HOME ?? "" },
           stdio: ["pipe", "pipe", "pipe"] }) as ChildProcessWithoutNullStreams;
+        const exited = new Promise<Readonly<{ code: number | null; signal: string | null }>>(resolve =>
+          child.once("close", (code, signal) => resolve({ code, signal })));
+        const signalGroup = (signal: NodeJS.Signals) => {
+          if (!child.pid) return;
+          try { process.kill(process.platform === "win32" ? child.pid : -child.pid, signal); }
+          catch (error: unknown) { if (!(error && typeof error === "object" && "code" in error && error.code === "ESRCH")) throw error; }
+        };
+        let stopping: Promise<void> | undefined;
+        const terminateGroup = () => stopping ??= (async () => {
+          signalGroup("SIGTERM");
+          // Even if the CLI leader exits quickly, re-check its POSIX group and
+          // kill any descendant that ignored TERM. This is deliberately
+          // bounded below the session's two-second cleanup deadline.
+          await new Promise(resolve => setTimeout(resolve, 200));
+          signalGroup("SIGKILL");
+          await exited;
+        })();
         const reader = (stream: NodeJS.ReadableStream) => {
           const chunks: Uint8Array[] = [], waiters: ((value: Uint8Array | undefined) => void)[] = [];
           let ended = false;
@@ -61,9 +92,9 @@ if (!valid) {
           async writeStdin(bytes: Uint8Array) { await new Promise<void>((resolve, reject) => child.stdin.write(bytes, error => error ? reject(error) : resolve())); },
           readStdout: stdout, readStderr: stderr,
           async closeStdin() { child.stdin.end(); },
-          async terminate() { child.kill("SIGTERM"); },
-          exited: new Promise<Readonly<{ code: number | null; signal: string | null }>>(resolve => child.once("close", (code, signal) => resolve({ code, signal }))),
-        })), async close() { if (!child.killed) child.kill("SIGTERM"); } });
+          async terminate() { await terminateGroup(); },
+          exited,
+        })), async close() { await terminateGroup(); } });
       },
     });
     console.log(JSON.stringify(report, null, 2));
@@ -72,4 +103,3 @@ if (!valid) {
     process.removeListener("SIGINT", interrupt); process.removeListener("SIGTERM", interrupt);
   }
 }
-

@@ -997,6 +997,7 @@ async function additiveClaudePackage(f: Awaited<ReturnType<typeof fixture>>, opt
   const qualificationReport = {
     schema: CLAUDE_CODE_TEXT_REVIEW_QUALIFICATION_REPORT_V1, qualified: true,
     fixedInvocationPolicyDigest: CLAUDE_CODE_TEXT_REVIEW_INVOCATION_POLICY_DIGEST_V1,
+    executableSha256: d("claude-executable"), workingDirectoryBindingDigest: d("claude-workspace"),
     terminalResultObserved: true, terminalResultDigest: d("claude-terminal"), inputTokens: 5, outputTokens: 4,
     totalTokens: 9, durationMs: 100, failureReason: "none", retryRequiresFreshOwnerAuthorization: false,
     startsWork: false, grantsExecutionAuthority: false,

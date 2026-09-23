@@ -18,6 +18,10 @@ export const PRIVATE_LOCAL_CLAUDE_QUALIFICATION_V1 =
 export type PrivateLocalClaudeQualificationInputV1 = Readonly<{
   executablePath: string;
   workingDirectory: string;
+  /** Opaque identity of the exact executable that the owner selected. */
+  executableSha256: string;
+  /** Opaque binding of the exact resolved workspace that the owner selected. */
+  workingDirectoryBindingDigest: string;
   /** Random text supplied by the caller, never returned in a report. */
   expectedText: string;
   signal: AbortSignal;
@@ -36,6 +40,8 @@ export type ClaudeTextReviewQualificationReportV1 = Readonly<{
   schema: typeof CLAUDE_CODE_TEXT_REVIEW_QUALIFICATION_REPORT_V1;
   qualified: boolean;
   fixedInvocationPolicyDigest: typeof CLAUDE_CODE_TEXT_REVIEW_INVOCATION_POLICY_DIGEST_V1;
+  executableSha256: string;
+  workingDirectoryBindingDigest: string;
   terminalResultObserved: boolean;
   terminalResultDigest: string | null;
   inputTokens: number | null;
@@ -53,6 +59,7 @@ const safePath = (value: unknown): value is string => typeof value === "string" 
   && isAbsolute(value) && normalize(value) === value && !/[\u0000-\u001f\u007f]/u.test(value);
 const safeNonce = (value: unknown): value is string => typeof value === "string" && /^[A-Z0-9_-]{24,160}$/u.test(value);
 const count = (value: unknown): value is number => Number.isSafeInteger(value) && (value as number) >= 0;
+const digest = (value: unknown): value is string => typeof value === "string" && /^sha256:[a-f0-9]{64}$/u.test(value);
 
 function report(input: Omit<ClaudeTextReviewQualificationReportV1, "schema" | "fixedInvocationPolicyDigest" | "startsWork" | "grantsExecutionAuthority">): ClaudeTextReviewQualificationReportV1 {
   return Object.freeze({ schema: CLAUDE_CODE_TEXT_REVIEW_QUALIFICATION_REPORT_V1,
@@ -78,7 +85,8 @@ function usageFromTerminalLine(line: string): Readonly<{ input: number; output: 
 }
 
 function failed(reason: ClaudeTextReviewQualificationReportV1["failureReason"]): ClaudeTextReviewQualificationReportV1 {
-  return report({ qualified: false, terminalResultObserved: false, terminalResultDigest: null,
+  return report({ executableSha256: "sha256:" + "0".repeat(64), workingDirectoryBindingDigest: "sha256:" + "0".repeat(64),
+    qualified: false, terminalResultObserved: false, terminalResultDigest: null,
     inputTokens: null, outputTokens: null, totalTokens: null, durationMs: null,
     failureReason: reason, retryRequiresFreshOwnerAuthorization: true });
 }
@@ -90,7 +98,8 @@ function failed(reason: ClaudeTextReviewQualificationReportV1["failureReason"]):
  */
 export async function qualifyPrivateLocalClaudeTextReviewV1(input: PrivateLocalClaudeQualificationInputV1,
   port: PrivateLocalClaudeQualificationPortV1, now: () => number = Date.now): Promise<ClaudeTextReviewQualificationReportV1> {
-  if (!input || !safePath(input.executablePath) || !safePath(input.workingDirectory) || !safeNonce(input.expectedText)
+  if (!input || !safePath(input.executablePath) || !safePath(input.workingDirectory) || !digest(input.executableSha256)
+    || !digest(input.workingDirectoryBindingDigest) || !safeNonce(input.expectedText)
     || !(input.signal instanceof AbortSignal) || input.signal.aborted || !port || typeof port.launch !== "function" || typeof now !== "function")
     return failed("owner_configuration_invalid");
   const startedAt = now();
@@ -123,7 +132,8 @@ export async function qualifyPrivateLocalClaudeTextReviewV1(input: PrivateLocalC
       || !Number.isSafeInteger(durationMs) || durationMs < 0) return failed("terminal_result_unexpected");
     session.recordTerminalResultObserved();
     await session.close();
-    return report({ qualified: true, terminalResultObserved: true, terminalResultDigest: terminal.resultTextDigest,
+    return report({ executableSha256: input.executableSha256, workingDirectoryBindingDigest: input.workingDirectoryBindingDigest,
+      qualified: true, terminalResultObserved: true, terminalResultDigest: terminal.resultTextDigest,
       inputTokens: terminalUsage.input, outputTokens: terminalUsage.output, totalTokens: terminalUsage.total,
       durationMs, failureReason: "none", retryRequiresFreshOwnerAuthorization: false });
   } catch {

@@ -23,6 +23,9 @@ export const claudeCodeTextReviewQualificationReportSchemaV1 = z.object({
   schema: z.literal(CLAUDE_CODE_TEXT_REVIEW_QUALIFICATION_REPORT_V1),
   qualified: z.boolean(),
   fixedInvocationPolicyDigest: z.literal(CLAUDE_CODE_TEXT_REVIEW_INVOCATION_POLICY_DIGEST_V1),
+  /** Opaque identities only; paths and version text never leave the owner host. */
+  executableSha256: digest,
+  workingDirectoryBindingDigest: digest,
   terminalResultObserved: z.boolean(),
   terminalResultDigest: digest.nullable(),
   inputTokens: count.nullable(),

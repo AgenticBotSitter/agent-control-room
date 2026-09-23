@@ -14,7 +14,8 @@ import { verifyInstallationPlanV1, type InstallationPlanV1 } from "./installatio
 import { privateInstallationFinalReviewBindingsV1 } from "./private-installation-final-review";
 import { captureLocalPlatformServiceObservationV1 } from "./local-platform-service-observation";
 import { capturePrivateArtifactStorageConfigurationV1 } from "../../web/v1/private-artifact-storage";
-import { createClaudeCodeTextReviewQualificationEvidenceV1 } from "../../harness/claude-code-v1/qualification-evidence";
+import { claudeCodeTextReviewQualificationReportSchemaV1,
+  createClaudeCodeTextReviewQualificationEvidenceV1 } from "../../harness/claude-code-v1/qualification-evidence";
 
 export const LOCAL_CLAUDE_POST_INSTALL_ADMISSION_V1 =
   "control-room.local-claude-post-install-admission/v1" as const;
@@ -179,8 +180,11 @@ export async function verifyLocalClaudePostInstallAdmissionV1(input: LocalClaude
       || canonicalJson(transition.affectedWorkerIds) !== canonicalJson([workerRoute.workerId])) refuse();
 
     const processConfiguration = capturePrivateClaudeCodeInstalledProcessHostConfigurationV1(input.installedProcessConfiguration);
-    const qualificationEvidence = createClaudeCodeTextReviewQualificationEvidenceV1(input.qualificationReport);
-    if (processConfiguration.qualificationDigest !== qualificationEvidence.evidenceDigest) refuse();
+    const qualificationReport = claudeCodeTextReviewQualificationReportSchemaV1.parse(input.qualificationReport);
+    const qualificationEvidence = createClaudeCodeTextReviewQualificationEvidenceV1(qualificationReport);
+    if (processConfiguration.qualificationDigest !== qualificationEvidence.evidenceDigest
+      || qualificationReport.executableSha256 !== processConfiguration.executableSha256
+      || qualificationReport.workingDirectoryBindingDigest !== processConfiguration.workingDirectoryBindingDigest) refuse();
     const readiness = verifyClaudeCodeLocalProcessReadinessV1(input.processReadiness);
     if (summarizeClaudeCodeLocalProcessReadinessV1(topology.planDigest, readiness).state !== "readiness_recorded") refuse();
     const observed = observation.parse(input.processObservation);

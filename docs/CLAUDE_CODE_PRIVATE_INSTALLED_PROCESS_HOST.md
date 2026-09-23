@@ -36,8 +36,17 @@ environment variables, start a service, or use the network. The separate
 `qualify:claude:local` owner-attended command is a one-shot private port, not
 application startup: it requires an owner-pinned absolute executable and work
 directory, an explicit choice to reuse the owner login, and runs only the
-fixed text-review arguments. It reports only a digest and bounded token/time
-measurements. It cannot enable a worker, save a credential, or retry itself.
+fixed text-review arguments. Before launch it resolves and fingerprints the
+selected executable and workspace; the sanitized report carries only those
+opaque fingerprints, which must match the installed-process configuration. It
+reports only opaque digests and bounded token/time measurements. It cannot
+enable a worker, save a credential, or retry itself.
+
+On macOS the one-shot wrapper starts the selected process in a separate process
+group. Cleanup sends TERM to that group, then rechecks and sends KILL after a
+short bounded grace period, so a child process cannot silently outlive its
+qualification leader. This remains qualification only, not a background
+service or a task-execution permission.
 
 The support matrix therefore remains source-only until that command is run by
 the owner against the exact installed Claude version and proves executable

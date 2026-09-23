@@ -17,6 +17,8 @@ const report = {
   schema: CLAUDE_CODE_TEXT_REVIEW_QUALIFICATION_REPORT_V1,
   qualified: true,
   fixedInvocationPolicyDigest: CLAUDE_CODE_TEXT_REVIEW_INVOCATION_POLICY_DIGEST_V1,
+  executableSha256: digest,
+  workingDirectoryBindingDigest: `sha256:${"b".repeat(64)}`,
   terminalResultObserved: true,
   terminalResultDigest: digest,
   inputTokens: 9,
@@ -33,6 +35,8 @@ const failedReport = {
   schema: CLAUDE_CODE_TEXT_REVIEW_QUALIFICATION_REPORT_V1,
   qualified: false,
   fixedInvocationPolicyDigest: CLAUDE_CODE_TEXT_REVIEW_INVOCATION_POLICY_DIGEST_V1,
+  executableSha256: digest,
+  workingDirectoryBindingDigest: `sha256:${"b".repeat(64)}`,
   terminalResultObserved: false,
   terminalResultDigest: null,
   inputTokens: null,
@@ -52,6 +56,8 @@ test("a successful owner-run Claude check becomes a stable non-authorizing evide
   assert.deepEqual(evidence, createClaudeCodeTextReviewQualificationEvidenceV1({ ...report }));
   assert.notEqual(evidence.evidenceDigest, createClaudeCodeTextReviewQualificationEvidenceV1({ ...report,
     durationMs: 121 }).evidenceDigest);
+  assert.notEqual(evidence.evidenceDigest, createClaudeCodeTextReviewQualificationEvidenceV1({ ...report,
+    executableSha256: `sha256:${"c".repeat(64)}` }).evidenceDigest);
 });
 
 test("qualification evidence rejects incomplete, broadened, or retryable reports", () => {

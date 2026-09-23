@@ -60,6 +60,7 @@ test("post-install Claude admission binds one additive committed transition with
   const qualificationReport = {
     schema: CLAUDE_CODE_TEXT_REVIEW_QUALIFICATION_REPORT_V1, qualified: true,
     fixedInvocationPolicyDigest: CLAUDE_CODE_TEXT_REVIEW_INVOCATION_POLICY_DIGEST_V1,
+    executableSha256: d("executable"), workingDirectoryBindingDigest: d("workspace"),
     terminalResultObserved: true, terminalResultDigest: d("claude-terminal"), inputTokens: 5, outputTokens: 4,
     totalTokens: 9, durationMs: 100, failureReason: "none", retryRequiresFreshOwnerAuthorization: false,
     startsWork: false, grantsExecutionAuthority: false,
@@ -146,6 +147,10 @@ test("post-install Claude admission binds one additive committed transition with
     async readTransition() { return transition; } }), /post_install_admission_refused/);
   await assert.rejects(verifyLocalClaudePostInstallAdmissionV1({ ...input,
     qualificationReport: { ...qualificationReport, durationMs: 101 } }, {
+    async readOriginalInstallationHistory() { return original.history; }, async readTransition() { return transition; },
+  }), /post_install_admission_refused/);
+  await assert.rejects(verifyLocalClaudePostInstallAdmissionV1({ ...input,
+    qualificationReport: { ...qualificationReport, executableSha256: d("different-executable") } }, {
     async readOriginalInstallationHistory() { return original.history; }, async readTransition() { return transition; },
   }), /post_install_admission_refused/);
 });

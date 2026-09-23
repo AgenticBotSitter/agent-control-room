@@ -107,7 +107,7 @@ Code itself.
 - Retain the existing private installed-process host and post-install
   composition. The source now includes a dedicated owner-attended
   `qualify:claude:local` runner and its injected private process port. It
-  that verifies the selected Claude executable/version, fixed arguments,
+  verifies the selected Claude executable identity, fixed arguments,
   working directory, authentication custody, bounded input delivery,
   process-group cleanup, restart-read/recovery receipt, and exact output
   format. The implementation must settle whether it reuses the owner's

@@ -8,6 +8,8 @@ import { qualifyPrivateLocalClaudeTextReviewV1,
 
 const nonce = "CONTROL_ROOM_CLAUDE_QUALIFICATION_0123456789";
 const sessionId = "00000000-0000-4000-8000-000000004242";
+const executableSha256 = `sha256:${"1".repeat(64)}`;
+const workingDirectoryBindingDigest = `sha256:${"2".repeat(64)}`;
 
 function port(lines: readonly string[], onLaunch?: (request: unknown) => void): PrivateLocalClaudeQualificationPortV1 {
   return Object.freeze({ launch(request) {
@@ -38,7 +40,8 @@ function frame(type: "system" | "result", extra: Record<string, unknown> = {}) {
 test("owner-held Claude qualification accepts only one exact fixed text result and returns redacted evidence", async () => {
   let request: { args?: readonly string[] } | undefined;
   const value = await qualifyPrivateLocalClaudeTextReviewV1({ executablePath: "/private/owner/claude",
-    workingDirectory: "/private/owner/work", expectedText: nonce, signal: new AbortController().signal },
+    workingDirectory: "/private/owner/work", executableSha256, workingDirectoryBindingDigest,
+    expectedText: nonce, signal: new AbortController().signal },
   port([frame("system"), frame("result", { result: nonce,
     usage: { input_tokens: 8, output_tokens: 5, total_tokens: 13 } })], value => { request = value as typeof request; }),
   () => 100);
@@ -55,7 +58,8 @@ test("owner-held Claude qualification accepts only one exact fixed text result a
 test("qualification refuses invalid configuration before the owner-held launch port", async () => {
   let launches = 0;
   const value = await qualifyPrivateLocalClaudeTextReviewV1({ executablePath: "claude",
-    workingDirectory: "/private/owner/work", expectedText: nonce, signal: new AbortController().signal },
+    workingDirectory: "/private/owner/work", executableSha256, workingDirectoryBindingDigest,
+    expectedText: nonce, signal: new AbortController().signal },
   Object.freeze({ launch() { launches++; throw new Error("must not launch"); } }), () => 100);
   assert.equal(launches, 0);
   assert.equal(value.qualified, false);
@@ -70,13 +74,15 @@ test("a changed result, malformed usage, or unavailable process remains a failed
     [frame("system"), frame("result", { result: nonce, usage: { input_tokens: 1, output_tokens: 1, total_tokens: 1 } })],
   ]) {
     const value = await qualifyPrivateLocalClaudeTextReviewV1({ executablePath: "/private/owner/claude",
-      workingDirectory: "/private/owner/work", expectedText: nonce, signal: new AbortController().signal }, port(lines), () => 100);
+      workingDirectory: "/private/owner/work", executableSha256, workingDirectoryBindingDigest,
+      expectedText: nonce, signal: new AbortController().signal }, port(lines), () => 100);
     assert.equal(value.qualified, false);
     assert.equal(value.failureReason, "terminal_result_unexpected");
     assert.equal(value.terminalResultDigest, null);
   }
   const unavailable = await qualifyPrivateLocalClaudeTextReviewV1({ executablePath: "/private/owner/claude",
-    workingDirectory: "/private/owner/work", expectedText: nonce, signal: new AbortController().signal },
+    workingDirectory: "/private/owner/work", executableSha256, workingDirectoryBindingDigest,
+    expectedText: nonce, signal: new AbortController().signal },
   Object.freeze({ launch() { throw new Error("unavailable"); } }), () => 100);
   assert.equal(unavailable.failureReason, "installed_process_unavailable");
   assert.deepEqual(createClaudeCodeTextReviewQualificationFailureEvidenceV1(unavailable).state, "failed");
