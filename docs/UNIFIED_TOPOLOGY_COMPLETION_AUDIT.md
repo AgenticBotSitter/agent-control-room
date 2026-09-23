@@ -26,6 +26,14 @@ only accepts a passed result when an installer supplies a matching evidence
 fingerprint. This makes missing or stale proof records visible rather than
 mistakenly presenting them as a running worker.
 
+The downloadable local release includes one guarded private-website activation
+command. It checks two separately protected operator inputs agree on the
+database target, installation identifiers, owner identity and Access trust
+before it can create the first owner, inspect the database or start the
+website. It uses the same in-memory snapshots for every stage and refuses to
+retry an uncertain owner creation. The command is release-tested as inert when
+asking for help; it has not been run against a real database or website.
+
 The local setup page presents Hermes Agent, Claude Code and Codex separately.
 For each it shows an honest first-use scope, capability status and current
 blocker. The optional Mac Codex custody record contains only opaque evidence
@@ -113,6 +121,10 @@ procedure has been operated successfully.
    stops, and the result reaches pending review without a second Hermes run.
 6. A persistent unprivileged supervisor and update/rollback procedure are
    selected and separately authorized.
+7. For the private website route, the owner supplies the two protected
+   operator inputs and confirms the actual Cloudflare Access identity before
+   the guarded one-time activation command is used. Source preparation does
+   not activate the website or validate a live one-time code.
 
 ## What remains before enabling Several computers
 
