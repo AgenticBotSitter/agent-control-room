@@ -105,6 +105,24 @@ test("assembles the same reviewed release bytes twice with no installation effec
   }
 });
 
+test("the extracted activation helper is present and inert for help", async () => {
+  const root = await temporaryRoot("acr-release-activation-entry-");
+  try {
+    const report = await assembleLocalReleaseV1({ releaseRoot: repository, outputDirectory: join(root, "output") });
+    const extracted = await extract(join(root, "output", report.archiveName), root);
+    const activation = join(extracted, "scripts", "activate-private-vps.mjs");
+    const help = await run(process.execPath, [activation, "--help"], {
+      cwd: extracted,
+      env: { PATH: process.env.PATH ?? "" },
+    });
+    assert.match(help.stdout, /owner-bootstrap-configuration/u);
+    assert.match(help.stdout, /Do not retry/u);
+    assert.equal(help.stderr, "");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("the extracted operator command uses only its compiled entry and refuses bad assets before custody", async () => {
   const root = await temporaryRoot("acr-release-operator-entry-");
   try {
