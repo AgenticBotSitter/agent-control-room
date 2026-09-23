@@ -2,8 +2,38 @@
 import { pathToFileURL, fileURLToPath } from "node:url";
 import { basename, dirname, resolve } from "node:path";
 import { createHash } from "node:crypto";
+import { types } from "node:util";
 
 const shippedReleaseRoot = fileURLToPath(new URL("..", import.meta.url)).replace(/\/$/u, "");
+
+let ownerHostProviderState = "unregistered";
+let ownerHostProvider;
+
+/** One process-local reviewed handoff. It accepts no path, environment name,
+ * command, or serialized callback and cannot be replaced or reused. */
+export function registerPrivateInstalledOwnerHostInputProviderV1(provider) {
+  if (ownerHostProviderState !== "unregistered" || typeof provider !== "function" || types.isProxy(provider))
+    throw new Error("private_installed_owner_host_input_provider_refused");
+  ownerHostProvider = provider;
+  ownerHostProviderState = "registered";
+  return Object.freeze({ status: "registered", processLocal: true, oneUse: true });
+}
+
+async function takePrivateInstalledOwnerHostInputV1() {
+  if (ownerHostProviderState !== "registered") throw new Error("owner_held_installed_operator_input_missing");
+  ownerHostProviderState = "spent";
+  const provider = ownerHostProvider;
+  ownerHostProvider = undefined;
+  return provider();
+}
+
+function inertOwnValue(value, name) {
+  if (!value || typeof value !== "object" || types.isProxy(value)
+    || Object.getPrototypeOf(value) !== Object.prototype) return undefined;
+  const descriptor = Object.getOwnPropertyDescriptor(value, name);
+  return descriptor && descriptor.enumerable === true && "value" in descriptor
+    ? descriptor.value : undefined;
+}
 
 /** Read-only installed-release gate. This is deliberately the prepared-release
  * boundary: node_modules and its durable receipt must already exist. */
@@ -30,7 +60,7 @@ const installedRuntime = Object.freeze({
   // authority, Hermes authority, or service ports from arguments/environment.
   // An owner-attended host must inject the exact reviewed input in-process.
   async loadOwnerHeldInstalledOperatorInput() {
-    throw new Error("owner_held_installed_operator_input_missing");
+    return takePrivateInstalledOwnerHostInputV1();
   },
   report(message) { process.stdout.write(message); },
   reportError(message) { process.stderr.write(`${message}\n`); },
@@ -53,14 +83,21 @@ export async function runPrivateLocalInstallationOperator(args, runtime = instal
     const module = await runtime.loadRelease();
     if (typeof module?.runPrivateLocalInstallationOperatorCliV1 !== "function"
       || typeof module?.createPrivateInstalledLocalOperatorLoaderV1 !== "function") throw new Error();
-    if (typeof runtime.loadOwnerHeldInstalledOperatorInput !== "function") {
-      runtime.reportError("Control Room operator owner-held dependencies are unavailable; no setup action was started.");
-      return 1;
-    }
     let loader;
     try {
-      loader = module.createPrivateInstalledLocalOperatorLoaderV1(
-        await runtime.loadOwnerHeldInstalledOperatorInput());
+      const loadOwnerInput = typeof runtime.loadOwnerHeldInstalledOperatorInput === "function"
+        ? runtime.loadOwnerHeldInstalledOperatorInput.bind(runtime)
+        : installedRuntime.loadOwnerHeldInstalledOperatorInput;
+      const ownerInput = await loadOwnerInput();
+      const ownerInputStatus = inertOwnValue(ownerInput, "status");
+      const ownerInputBlocker = inertOwnValue(ownerInput, "blocker");
+      if (ownerInputStatus === "blocked" && typeof ownerInputBlocker === "string") {
+        runtime.reportError(`Control Room operator owner-host preflight is blocked: ${ownerInputBlocker}; no setup action was started.`);
+        return 1;
+      }
+      loader = ownerInputStatus === "loader_ready"
+        ? module.consumePrivateInstalledOwnerHostInputCompositionV1(ownerInput)
+        : module.createPrivateInstalledLocalOperatorLoaderV1(ownerInput);
       if (!loader || loader.status !== "owner_inputs_captured"
         || typeof loader.loadInstalledConfiguration !== "function") throw new Error();
     } catch {

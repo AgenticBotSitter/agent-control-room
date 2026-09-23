@@ -6,6 +6,10 @@ import { startPrivateHostLifecycle } from "../../web/v1/private-host-lifecycle";
 export { createPrivateInstalledLocalOperatorLoaderV1,
   PRIVATE_INSTALLED_LOCAL_OPERATOR_LOADER_V1 } from
   "./private-installed-local-operator-loader";
+export { consumePrivateInstalledOwnerHostInputCompositionV1,
+  preflightPrivateInstalledOwnerHostInputCompositionV1,
+  PRIVATE_INSTALLED_OWNER_HOST_INPUT_COMPOSITION_V1 } from
+  "./private-installed-owner-host-input-composition";
 
 /**
  * Narrow, source-only command facade for an already-installed private setup.

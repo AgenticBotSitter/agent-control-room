@@ -38,6 +38,10 @@ import { createPrivateInstalledLocalHermesRuntimeComposerV1,
 import { createPrivateInstalledLocalOperatorLoaderV1,
   PRIVATE_INSTALLED_LOCAL_OPERATOR_LOADER_V1 } from
   "../src/installer/v1/private-installed-local-operator-loader";
+import { consumePrivateInstalledOwnerHostInputCompositionV1,
+  preflightPrivateInstalledOwnerHostInputCompositionV1,
+  PRIVATE_INSTALLED_OWNER_HOST_INPUT_COMPOSITION_V1 } from
+  "../src/installer/v1/private-installed-owner-host-input-composition";
 import { PRIVATE_INSTALLED_CONFIGURATION_MANIFEST_BOUND_PREPARATION_V1,
   PRIVATE_INSTALLED_CONFIGURATION_CUSTODY_V2,
   PRIVATE_INSTALLED_CONFIGURATION_NATIVE_CUSTODY_V1,
@@ -575,6 +579,74 @@ test("the installed operator loader joins v2 custody, the exact Hermes graph and
     loaded.assemblyInput.runnerInput.privateStartupConfiguration.coordinator.hermes021Local);
   assert.equal(f.hermesCalls(), 0); assert.equal(f.reads(), 0); assert.equal(f.appends(), 0);
   await assert.rejects(loader.loadInstalledConfiguration(), /private_installed_local_operator_loader_refused/u);
+});
+
+test("owner-host preflight names the first missing port and hands one opaque complete package to the existing operator", async t => {
+  const f = await fixture(t), prepared = await installedOperatorLoaderPackage(t, f);
+  const base = { schema: PRIVATE_INSTALLED_OWNER_HOST_INPUT_COMPOSITION_V1 } as Record<string, unknown>;
+  assert.deepEqual(preflightPrivateInstalledOwnerHostInputCompositionV1(base), {
+    schema: PRIVATE_INSTALLED_OWNER_HOST_INPUT_COMPOSITION_V1, status: "blocked",
+    blocker: "installed_configuration_custody_input_missing", performsEffect: false,
+    readsProtectedConfiguration: false, opensNativeSession: false, opensDatabase: false,
+    startsService: false, startsWorker: false, invokesHermes: false,
+  });
+  Object.assign(base, {
+    installedConfigurationCustodyInput: prepared.input.installedConfigurationCustodyInput,
+    stagedJournalSidecar: prepared.input.stagedJournalSidecar,
+    journalSessionFactory: prepared.input.journalCustodyPorts.createNativeSessionPort,
+    hermesRuntimePorts: {
+      startupBase: prepared.input.hermesRuntimePorts.startupBase,
+      deliveryIntegrityKey: prepared.input.hermesRuntimePorts.deliveryIntegrityKey,
+      assertCurrentDelivery: prepared.input.hermesRuntimePorts.assertCurrentDelivery,
+    },
+    setupRuntimes: {}, journalOperationDeadlineMs: prepared.input.journalOperationDeadlineMs,
+  });
+  assert.equal(preflightPrivateInstalledOwnerHostInputCompositionV1(base).blocker,
+    "database_authority_runtime_missing");
+
+  const setupRuntimes = {
+    database_authority: { postgres: {} }, protected_data: { protectedData: {} },
+    first_owner: { firstOwner: {} }, recovery: { recovery: {} },
+    platform_service: { platformService: {} }, agent_readiness: { agentReadiness: {} },
+    final_review: { finalReview: {} },
+  };
+  base.setupRuntimes = setupRuntimes;
+  const missingCases: [Record<string, unknown>, string][] = [
+    [{ ...base, installedConfigurationCustodyInput: undefined }, "installed_configuration_custody_input_missing"],
+    [{ ...base, stagedJournalSidecar: undefined }, "staged_journal_sidecar_missing"],
+    [{ ...base, journalSessionFactory: undefined }, "journal_session_factory_missing"],
+    [{ ...base, hermesRuntimePorts: { ...(base.hermesRuntimePorts as object), startupBase: undefined } },
+      "hermes_startup_base_missing"],
+    [{ ...base, hermesRuntimePorts: { ...(base.hermesRuntimePorts as object), deliveryIntegrityKey: undefined } },
+      "hermes_delivery_integrity_key_missing"],
+    [{ ...base, hermesRuntimePorts: { ...(base.hermesRuntimePorts as object), assertCurrentDelivery: undefined } },
+      "hermes_assert_current_delivery_missing"],
+    ...Object.keys(setupRuntimes).map(stage => [{ ...base,
+      setupRuntimes: { ...setupRuntimes, [stage]: undefined } }, `${stage}_runtime_missing`] as [Record<string, unknown>, string]),
+    [{ ...base, journalOperationDeadlineMs: undefined }, "journal_operation_deadline_missing"],
+  ];
+  for (const [candidate, blocker] of missingCases)
+    assert.equal(preflightPrivateInstalledOwnerHostInputCompositionV1(candidate).blocker, blocker);
+  const preflight = preflightPrivateInstalledOwnerHostInputCompositionV1(base);
+  assert.equal(preflight.status, "loader_ready"); assert.equal(preflight.performsEffect, false);
+  assert.deepEqual(prepared.protectedReads, []); assert.deepEqual(prepared.factoryInputs, []);
+  assert.equal(prepared.nativeSessionOpens(), 0); assert.equal(f.hermesCalls(), 0);
+  assert.equal(f.reads(), 0); assert.equal(f.appends(), 0);
+
+  const loader = consumePrivateInstalledOwnerHostInputCompositionV1(preflight);
+  assert.throws(() => consumePrivateInstalledOwnerHostInputCompositionV1(preflight),
+    /private_installed_owner_host_input_composition_refused/u);
+  const installed = await loader.loadInstalledConfiguration();
+  assert.equal(prepared.nativeSessionOpens(), 0); assert.equal(f.hermesCalls(), 0);
+  const operator = createPrivateLocalInstallationOperatorV1(installed.custody, { journal: installed.journal });
+  if (operator.status === "blocked") throw new Error("owner-host package did not reach the existing operator");
+  assert.deepEqual(await operator.status(), {
+    schema: "control-room.private-local-installation-operator/v1", status: "blocked",
+    blocker: "private_configuration_custody_missing", createsStateMachine: false, createsStore: false,
+    createsScheduler: false, startsListener: false, exposesBrowserAction: false,
+  });
+  assert.equal(prepared.nativeSessionOpens(), 1, "the inert fake names the first unavailable live boundary");
+  assert.equal(f.hermesCalls(), 0); assert.equal(f.reads(), 0); assert.equal(f.appends(), 0);
 });
 
 test("installed operator loader refuses missing, foreign and mutated owner input before native session or runtime effects", async t => {

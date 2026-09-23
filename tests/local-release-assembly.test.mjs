@@ -222,6 +222,39 @@ process.stdout.write("prepared by controlled test fixture\\n");
     assert.equal(unavailableCliCalls, 0);
     assert.deepEqual(unavailableErrors, Array(3).fill(
       "Control Room operator owner-held dependencies are unavailable; no setup action was started."));
+    const opaqueOwnerHostInput = Object.freeze({ status: "loader_ready" });
+    assert.deepEqual(operator.registerPrivateInstalledOwnerHostInputProviderV1(
+      () => opaqueOwnerHostInput), { status: "registered", processLocal: true, oneUse: true });
+    let consumedOwnerHostInputs = 0, registeredCliCalls = 0;
+    assert.equal(await operator.runPrivateLocalInstallationOperator(["status"], {
+      async verifyRelease() { await operator.verifyInstalledPreparedOperatorReleaseV1(versionRoot); },
+      async loadRelease() { return {
+        createPrivateInstalledLocalOperatorLoaderV1() { throw new Error("raw input must not be used"); },
+        consumePrivateInstalledOwnerHostInputCompositionV1(input) {
+          consumedOwnerHostInputs++; assert.equal(input, opaqueOwnerHostInput);
+          return { status: "owner_inputs_captured", async loadInstalledConfiguration() {
+            return { custody: {}, journal: {} };
+          } };
+        },
+        async runPrivateLocalInstallationOperatorCliV1(_args, runtime) {
+          registeredCliCalls++; await runtime.loadInstalledConfiguration(); return 0;
+        },
+      }; },
+      report() {}, reportError() {}, signals: new EventEmitter(),
+      createOperator: undefined, startLifecycle: undefined,
+    }), 0, "the process-local registered provider reaches the shipped command without environment discovery");
+    assert.equal(consumedOwnerHostInputs, 1); assert.equal(registeredCliCalls, 1);
+    assert.throws(() => operator.registerPrivateInstalledOwnerHostInputProviderV1(() => opaqueOwnerHostInput),
+      /private_installed_owner_host_input_provider_refused/u);
+    assert.equal(await operator.runPrivateLocalInstallationOperator(["status"], {
+      async verifyRelease() { await operator.verifyInstalledPreparedOperatorReleaseV1(versionRoot); },
+      async loadRelease() { return {
+        createPrivateInstalledLocalOperatorLoaderV1() { throw new Error("provider was already spent"); },
+        async runPrivateLocalInstallationOperatorCliV1() { registeredCliCalls++; return 0; },
+      }; },
+      report() {}, reportError() {}, signals: new EventEmitter(),
+    }), 1, "the registered provider cannot be reused");
+    assert.equal(consumedOwnerHostInputs, 1); assert.equal(registeredCliCalls, 1);
     for (const name of ["altered", "missing", "linked"]) {
       const copiedInstall = join(root, `prepared-${name}`); await cp(installRoot, copiedInstall, { recursive: true });
       const copiedRoot = join(copiedInstall, "versions", manifest.version);

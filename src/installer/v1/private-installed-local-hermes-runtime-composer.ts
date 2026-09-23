@@ -34,6 +34,13 @@ import { verifyInstallationTopologyPlanV1 } from "../../harness/v1/installation-
 import { localHermesRunnerConfigurationDigestV1, verifyLocalHermesInstallationBindingV1 } from
   "./local-hermes-installation-binding";
 import { verifyInstallationPlanV1 } from "./installation-plan";
+import type { PrivatePostgresOwnerRuntimeV1 } from "./private-postgres-owner-runner";
+import type { PrivateProtectedRootOwnerRuntimeV1 } from "./private-protected-root-owner-runner";
+import type { PrivateFirstOwnerRuntimeV1 } from "./private-first-owner-runner";
+import type { PrivateRecoveryOwnerRuntimeV1 } from "./private-recovery-owner-runner";
+import type { PrivateMacosServiceOwnerRuntimeV1 } from "./private-macos-service-owner-runner";
+import type { PrivateLocalHermesAdmissionRuntimeV1 } from "./private-local-hermes-admission-runner";
+import type { PrivateInstallationFinalReviewContextV1 } from "./private-installation-final-review";
 import { PRIVATE_INSTALLED_CONFIGURATION_MANIFEST_BOUND_PREPARATION_V1,
   PRIVATE_INSTALLED_CONFIGURATION_NATIVE_SIDECAR_IDENTITY_V1 } from
   "./private-installed-configuration-custody";
@@ -94,6 +101,21 @@ const sidecarSchema = z.object({
 const stages = Object.freeze(["database_authority", "protected_data", "first_owner", "recovery",
   "platform_service", "agent_readiness", "final_review"] as const);
 type Stage = typeof stages[number];
+
+/** The exact seven owner-attended setup ports accepted by the installed
+ * operator. The stage names are the canonical installation-plan names; a host
+ * cannot rename, omit, or add a setup boundary. Individual port graphs remain
+ * opaque here and are captured by their existing stage runner on use. */
+export type PrivateLocalInstallationSetupRuntimesV1 = Readonly<{
+  database_authority: Readonly<{ postgres: PrivatePostgresOwnerRuntimeV1 }>;
+  protected_data: Readonly<{ protectedData: PrivateProtectedRootOwnerRuntimeV1 }>;
+  first_owner: Readonly<{ firstOwner: PrivateFirstOwnerRuntimeV1 }>;
+  recovery: Readonly<{ recovery: PrivateRecoveryOwnerRuntimeV1 }>;
+  platform_service: Readonly<{ platformService: PrivateMacosServiceOwnerRuntimeV1 }>;
+  agent_readiness: Readonly<{ agentReadiness: Omit<PrivateLocalHermesAdmissionRuntimeV1, "journal"> }>;
+  final_review: Readonly<{ finalReview: Readonly<{ signal: AbortSignal; controlDeadlineMs: number;
+    confirmOwnerAttached(context: PrivateInstallationFinalReviewContextV1): Promise<unknown> }> }>;
+}>;
 
 type DeferredStorage = Readonly<{
   port: ArtifactStoragePortV1 & ArtifactReadPortV1;
