@@ -9,8 +9,11 @@ import { publishDurableResultV1, readDurableResultV1, reconcileDurableResultRese
 import { durableReceiptFromCodexV1, durableReceiptFromNativeV1 } from "../src/artifacts/v1/durable-result-receipt";
 import { publishHermesSessionResultV1,
   type HermesSessionResultOutcomeV1 } from "../src/harness/hermes-gpt-v1/result-publication";
+import { publishHermes021MacosTerminalResultV1, publishCompletedHermes021MacosOutcomeV1,
+  classifyHermes021MacosResultV1, HERMES_021_MACOS_CONNECTOR_PROFILE_DIGEST_V1 } from "../src/harness/hermes-021-v1";
 import { projectClaudeTerminalResultEvidenceV1,
   terminalResultEvidenceSchemaV1 } from "../src/harness/v1/terminal-result-evidence";
+import { projectHermes021MacosTerminalResultEvidenceV1 } from "../src/harness/v1/terminal-result-evidence";
 import { reserveNativeResultWriteV1, markNativeResultReservationStorageUncertainV1 } from "../src/artifacts/v1/native-result-reservation";
 import { resultBytesHash } from "../src/artifacts/v1/native-results";
 import { taskReviewTargetV1 } from "../src/completion-gate/v1/task-review-plan";
@@ -849,6 +852,96 @@ function upstreamHermesInput(
     acceptanceProfile: { id: "profile:test:upstream-hermes", digest: digest("acceptance-profile") },
   };
 }
+
+function hermes021RawLine(text: string, sessionId = "session:hermes-021-durable"): string {
+  return JSON.stringify({ type: "result", session_id: sessionId, exit_code: 0, text,
+    tokens: { input: 12, output: 8, total: 20, cache_read: 0, cache_write: 0 }, duration_ms: 1200, timestamp: 1 });
+}
+
+function hermes021PublicationInput(runId: string, rawLine = hermes021RawLine("durable local Hermes result")) {
+  const record = JSON.parse(rawLine) as Record<string, unknown>;
+  return {
+    retainedBinding: { tenantId: binding.tenantId, projectId: binding.projectId, jobId: `job:${runId}`,
+      attemptId: `attempt:${runId}`, runId, nodeId: binding.nodeId, workflowId: "workflow:test",
+      authorityDigest: digest("hermes-021-authority"),
+      acceptanceProfileId: "profile:test:hermes-021", acceptanceProfileDigest: digest("hermes-021-profile") },
+    retainedTerminal: { sessionId: String(record.session_id), terminalResultDigest: sha256Digest(record) },
+    terminalResultRawLine: rawLine, acceptedConnectorProfileDigest: HERMES_021_MACOS_CONNECTOR_PROFILE_DIGEST_V1,
+    assertAuthority: () => {},
+  };
+}
+
+async function setupHermes021Provision(runId: string, input: ReturnType<typeof hermes021PublicationInput>, receivedAt: string) {
+  const retained = input.retainedBinding;
+  const evidence = projectHermes021MacosTerminalResultEvidenceV1({
+    lineage: { tenantId: retained.tenantId, projectId: retained.projectId, jobId: retained.jobId,
+      attemptId: retained.attemptId, runId: retained.runId, nodeId: retained.nodeId },
+    retained: { ...input.retainedTerminal, connectorProfileDigest: HERMES_021_MACOS_CONNECTOR_PROFILE_DIGEST_V1 },
+    terminalResultRawLine: input.terminalResultRawLine, observedAt: receivedAt,
+  });
+  const f = await setupWithProvision(runId, retained.authorityDigest);
+  await f.db.query("UPDATE control_harness_runs SET payload = payload || $3::jsonb WHERE tenant_id=$1 AND id=$2", [
+    binding.tenantId, runId, JSON.stringify({ connectorProfileDigest: HERMES_021_MACOS_CONNECTOR_PROFILE_DIGEST_V1 }),
+  ]);
+  return f;
+}
+
+test("Mac-local Hermes 0.21 result publishes once, survives replay, and remains pending review", async t => {
+  const storage = new ControlledStorage(); const runId = "run:durable-hermes-021"; const receivedAt = at(9200);
+  const input = hermes021PublicationInput(runId);
+  const f = await setupHermes021Provision(runId, input, receivedAt); t.after(f.close);
+  const outcome = classifyHermes021MacosResultV1([JSON.parse(input.terminalResultRawLine)]);
+  const first = await publishCompletedHermes021MacosOutcomeV1(configOf(f, storage), {
+    retainedBinding: input.retainedBinding, outcome, acceptedConnectorProfileDigest: input.acceptedConnectorProfileDigest,
+    receivedAt, assertAuthority: input.assertAuthority,
+  });
+  assert.equal(first.replayed, false);
+  assert.equal(first.receipt.harness, "hermes");
+  assert.equal(first.evidence.kind, "hermes_021_macos_terminal_result");
+  assert.equal(first.qualityAccepted, false);
+  assert.equal(first.target.subjectId, `job:${runId}`);
+  const replay = await publishCompletedHermes021MacosOutcomeV1(configOf(f, storage), {
+    retainedBinding: input.retainedBinding, outcome, acceptedConnectorProfileDigest: input.acceptedConnectorProfileDigest,
+    receivedAt, assertAuthority: input.assertAuthority,
+  });
+  assert.equal(replay.replayed, true);
+  assert.deepEqual(replay.receipt, first.receipt);
+  assert.equal(storage.putCalls, 1);
+});
+
+test("Mac-local Hermes 0.21 refuses foreign session or profile before durable writes", async t => {
+  const f = await setupWithProvision("run:durable-hermes-021-refuse"); t.after(f.close);
+  const storage = new ControlledStorage(); const receivedAt = at(9210);
+  const foreign = hermes021PublicationInput("run:durable-hermes-021-refuse", hermes021RawLine("foreign", "session:foreign"));
+  await assert.rejects(publishHermes021MacosTerminalResultV1(configOf(f, storage), {
+    ...foreign, retainedTerminal: { ...foreign.retainedTerminal, sessionId: "session:expected" }, receivedAt,
+  }), /terminal_result_evidence_unavailable/);
+  await assert.rejects(publishHermes021MacosTerminalResultV1(configOf(f, storage), {
+    ...foreign, acceptedConnectorProfileDigest: digest("wrong-hermes-profile"), receivedAt,
+  }), /hermes_021_macos_result_publication_connector_profile_mismatch/);
+  assert.equal(storage.putCalls, 0);
+});
+
+test("Mac-local Hermes 0.21 refuses a result after the recorded task authority changes", async t => {
+  const runId = "run:durable-hermes-021-authority-change";
+  const receivedAt = at(9220);
+  const input = hermes021PublicationInput(runId);
+  const f = await setupHermes021Provision(runId, input, receivedAt); t.after(f.close);
+  const storage = new ControlledStorage();
+  // Simulate the canonical task being amended after this run was admitted.
+  // The stored run still carries the old digest, so accepting its result
+  // would otherwise cross an authority boundary.
+  await f.db.query("UPDATE control_jobs SET authority_digest=$3, payload=jsonb_set(payload,'{authority,digest}',to_jsonb($3::text),false) WHERE tenant_id=$1 AND id=$2", [
+    binding.tenantId, input.retainedBinding.jobId, digest("later-hermes-021-authority"),
+  ]);
+  const outcome = classifyHermes021MacosResultV1([JSON.parse(input.terminalResultRawLine)]);
+  await assert.rejects(publishCompletedHermes021MacosOutcomeV1(configOf(f, storage), {
+    retainedBinding: input.retainedBinding, outcome,
+    acceptedConnectorProfileDigest: input.acceptedConnectorProfileDigest, receivedAt,
+    assertAuthority: input.assertAuthority,
+  }), /durable_result_identity_mismatch/);
+  assert.equal(storage.putCalls, 0);
+});
 
 test("upstream Hermes: a completed session result publishes exactly once and replays the existing receipt", async t => {
   const f = await setupWithProvision("run:durable-upstream-hermes"); t.after(f.close);

@@ -12,6 +12,9 @@ import { PrivateHeader } from "./private-header";
 import { useProductDisplayName, useProductModule } from "./product-configuration";
 import { ConfiguredTimestamp } from "./configured-timestamp";
 import { taskResultHrefV1 } from "./task-results";
+import { useInstallationTopology } from "./installation-topology";
+import { InstallationTopologySummary } from "./installation-topology-summary";
+import { PrivateOperatorCapacityWorkspace } from "./operator-capacity-workspace";
 
 type ReadState<T> = { state: "loading" } | { state: "ready"; value: T } | { state: "unavailable" };
 export type HomeDashboardState = Readonly<{
@@ -92,6 +95,7 @@ export function HomeDashboard({ data }: { data: HomeDashboardState }) {
 export function PrivateHome() {
   const displayName = useProductDisplayName();
   const ideaLab = useProductModule("ideaLab");
+  const installationTopology = useInstallationTopology();
   const [projects] = useState(() => createProjectBrowserClient());
   const [data, setData] = useState<HomeDashboardState>(loadingState);
   const [generation, setGeneration] = useState(0);
@@ -105,11 +109,30 @@ export function PrivateHome() {
       settle(readTaskAttention(), "attention"), settle(readPrivateConnections(), "connections")]);
     return () => { live = false; };
   }, [generation, projects]);
+  useEffect(() => {
+    // This dashboard only reads already-saved records.  Keep an open local
+    // Control Room view useful without inventing browser-side scheduling or
+    // treating an old page load as a current worker status.  Hidden tabs do
+    // not poll; they refresh once when the owner returns to the tab.
+    const refreshWhenVisible = () => {
+      if (!document.hidden) setGeneration(value => value + 1);
+    };
+    const interval = setInterval(refreshWhenVisible, 30_000);
+    window.addEventListener("focus", refreshWhenVisible);
+    document.addEventListener("visibilitychange", refreshWhenVisible);
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener("focus", refreshWhenVisible);
+      document.removeEventListener("visibilitychange", refreshWhenVisible);
+    };
+  }, []);
   return <div className="private-shell"><PrivateHeader /><main id="private-main" tabIndex={-1}>
     <section className="private-home-intro" aria-labelledby="home-title"><p className="private-eyebrow">Private workspace</p>
-      <h1 id="home-title">{displayName}</h1><p>Current saved work, results and attention from the protected Control Room services. Each section reports unavailable data instead of replacing it with a zero.</p>
+      <h1 id="home-title">{displayName}</h1><p>Current saved work, results and attention from the protected Control Room services. This page refreshes while it is open and again when you return to it. Each section reports unavailable data instead of replacing it with a zero.</p>
       <button type="button" onClick={() => setGeneration(value => value + 1)}>Refresh dashboard</button></section>
+    <InstallationTopologySummary setup={installationTopology?.setup} status={installationTopology?.state} />
     <HomeDashboard data={data} />
+    <PrivateOperatorCapacityWorkspace />
     {ideaLab && <aside className="private-note private-home-note" aria-label="Optional module"><strong>Idea Lab is optional.</strong>{" "}
       <a href="/ideas">Open Idea Lab</a> to compare ideas before promoting an approved one to a project.</aside>}
   </main></div>;

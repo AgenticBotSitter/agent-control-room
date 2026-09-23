@@ -16,12 +16,21 @@ export function TaskAssignmentPanel({ options, receipt = options?.receipt, error
     {receipt && <div><p>Recorded reservation: {receipt.leaseState}. Ends {receipt.expiresAt}.</p>
       <p>{receipt.leaseCurrent ? "The reservation was current at the last check." : "The reservation is not current."} This is not proof that an agent started or stopped.</p></div>}
     {receipt?.leaseCurrent && !uncertain && <p>Next, <a href="#task-approval">check execution approval</a>. A reservation alone is not permission to run.</p>}
+    {options?.recommendation.state === "one_configured_route" && <div className="private-note" aria-label="Route recommendation">
+      <p><strong>Suggested route: {options.recommendation.label}.</strong> It is the one saved configured route for this task.</p>
+      <p>Availability and current usage are unknown here and are checked only when you assign. This suggestion does not select, reserve, start, or approve the route.</p>
+    </div>}
+    {options?.recommendation.state === "choice_required" && <p className="private-note" aria-label="Route recommendation">
+      More than one saved configured route can handle this task. Choose deliberately below; current availability and usage are unknown until assignment checks them.</p>}
+    {options?.recommendation.state === "not_available" && <p className="private-note" aria-label="Route recommendation">
+      No saved configured route can be suggested for this task. This does not prove that no worker exists.</p>}
     {options && (uncertain ? <button type="button" disabled={pending} onClick={onRetry}>Check this exact assignment change</button>
       : receipt ? receipt.leaseState === "active" && !receipt.leaseCurrent
         ? <button type="button" disabled={pending} onClick={() => onChange("expire")}>Reconcile expired reservation</button> : null
       : options.candidates.length ? <div><p>Configured machines only. Availability and capacity are checked when you assign.</p>
         <label htmlFor="task-assignment-node">Machine</label><select id="task-assignment-node" value={nodeId} disabled={pending} onChange={event => setNodeId(event.target.value)}>
-          <option value="">Choose a machine</option>{options.candidates.map(candidate => <option key={candidate.nodeId} value={candidate.nodeId}>{candidate.label} · {candidate.platform}</option>)}</select>
+          <option value="">Choose a machine</option>{options.candidates.map(candidate => <option key={candidate.nodeId} value={candidate.nodeId}>{candidate.label} · {candidate.platform} · {candidate.workScope === "bounded_text_review" ? "text review only" : "configured task"}</option>)}</select>
+        {options.candidates.some(candidate => candidate.workScope === "bounded_text_review") && <p className="private-note">Text-review-only work returns a review, test outline, or proposed patch from supplied context. It cannot edit this project, use tools, access accounts, or make network requests.</p>}
         <button type="button" disabled={pending || !options.candidates.some(candidate => candidate.nodeId === nodeId)} onClick={() => onChange("assign")}>Assign without starting</button></div>
         : <p>No configured machine is available for a new assignment of this task.</p>)}
   </section>;

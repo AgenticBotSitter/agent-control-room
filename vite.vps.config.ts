@@ -24,6 +24,9 @@ export default defineConfig({
       articleExtraction: "src/project-adapters/news/v1/article-extraction-runtime.mjs",
       productConfiguration: "src/config/v1/product-configuration.ts",
       githubWorkerBroker: "src/github-app/v1/private-service.ts",
+      localSetupHost: "src/installer/v1/local-setup-host.ts",
+      localInstallationPlanBootstrap: "src/installer/v1/local-installation-plan-bootstrap.ts",
+      privateLocalInstallationOperatorCli: "src/installer/v1/private-local-installation-operator-cli.ts",
     } } } },
   },
   plugins: [vinext({ appDir: "private-app", rscOutDir: "dist-vps/server", ssrOutDir: "dist-vps/server/ssr" }), {

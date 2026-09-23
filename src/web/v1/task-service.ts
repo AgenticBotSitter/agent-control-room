@@ -8,9 +8,10 @@ import { DOMAIN_CONTRACT_VERSION, requestRecordSchema, workflowRecordSchema, job
 import { appendAuditWith } from "../../audit/audit-store";
 import { assertNoSecretMaterial, computeAuthorityDigest, sha256Digest } from "../../security";
 import { HarnessRunStoreV1 } from "../../harness/v1/store";
-import { NativeResultStore, type NativeResultReadConfiguration, type TaskResultReceipt } from "../../artifacts/v1/native-results";
+import type { NativeResultReadConfiguration } from "../../artifacts/v1/native-results";
 import { CompletionGateStoreV1 } from "../../completion-gate/v1/store";
-import { readTaskReviewPlanV1, taskReviewRootSubjectIdV1, verifyTaskReviewTargetV1 } from "../../completion-gate/v1/task-review-plan";
+import { readTaskReviewPlanV1, taskReviewRootSubjectIdV1, type TaskResultReceiptV1, verifyTaskReviewTargetV1 } from "../../completion-gate/v1/task-review-plan";
+import { PlanSelectedTaskResultReaderV1 } from "./task-result-reader";
 import type { AwaitableRollbackCheckpointStoreV1 } from "../../security/rollback-checkpoint";
 import type { WebTaskReviewConfiguration } from "./task-review-service";
 import type { ManualVerificationScenario } from "./task-verification-service";
@@ -19,14 +20,20 @@ import { WebAccessError, type VerifiedWebIdentity } from "./access-verifier";
 import { WebSessionAuthority, type WebActor } from "./session-authority";
 import { CONTROL_ROOM_IDEA_ADAPTER_V1 } from "../../idea-lab/v1/schemas";
 import { taskAttentionPageSchema, taskAttentionPresentation, type TaskAttentionPage } from "./task-attention-wire";
+import { taskProjectAttentionPageSchema, taskProjectResultAttentionReasons,
+  type TaskProjectAttentionPage } from "./task-project-attention-wire";
 import { WebProjectService } from "./project-service";
 import { catalogProjectIdSchema } from "./project-wire";
 import { taskDraftSchema, taskSummarySchema, taskReceiptSchema, taskDetailSchema, taskPageSchema,
-  taskRunSchema, type TaskRun, type TaskReceipt } from "./task-wire";
+  taskRunSchema, type HermesDeliveryRecovery, type TaskRun, type TaskReceipt } from "./task-wire";
+import { HERMES_021_MACOS_LOCAL_ADAPTER_V1, HERMES_021_MACOS_LOCAL_JOB_TYPE_V1, type Hermes021MacosDeliveryRecoveryStatusV1 } from "../../harness/hermes-021-v1";
+import { CLAUDE_CODE_LOCAL_ADAPTER_V1 } from "../../harness/claude-code-v1";
+import { CODEX_APP_SERVER_ADAPTER } from "../../harness/codex-v1/delivery-contract";
 import { taskPlanningOptionsSchema } from "./task-planning-wire";
 import { taskHomeActivitySchema } from "./task-home-wire";
 import { taskProjectOverviewSchema } from "./task-project-overview-wire";
 import { taskProjectFilesSchema } from "./task-project-files-wire";
+import type { TaskWorktreeChangeSummary } from "./task-result-wire";
 
 /** Joins existing stores to the caller-owned session transaction. No nested BEGIN/COMMIT and no
  * new authority: this closure stays inside authenticated(). The outer freshness check owns commit. */
@@ -35,6 +42,12 @@ function joined(tx: DatabaseSession): DatabaseClient {
     transactionWithPreCommitCheck: async <T>(run: (session: DatabaseSession) => Promise<T>, check: () => void | Promise<void>) => {
       const result = await run(tx); await check(); return result;
     } });
+}
+function routeEvidence(adapterId: string): "local_hermes" | "local_claude" | "local_codex" | "other_or_unknown" {
+  if (adapterId === HERMES_021_MACOS_LOCAL_ADAPTER_V1) return "local_hermes";
+  if (adapterId === CLAUDE_CODE_LOCAL_ADAPTER_V1) return "local_claude";
+  if (adapterId === CODEX_APP_SERVER_ADAPTER) return "local_codex";
+  return "other_or_unknown";
 }
 type TaskRow = { id: string; state: string; version: number; project_id: string; workflow_id: string;
   job: unknown; workflow: unknown; request: unknown };
@@ -63,8 +76,18 @@ export interface WebTaskKeys {
   reviews?: { integrityKey: Uint8Array; checkpoints: AwaitableRollbackCheckpointStoreV1 };
   ownerReviews?: WebTaskReviewConfiguration;
   manualVerificationScenarios?: readonly ManualVerificationScenario[];
+  /** Installation-owned aggregate reader. The web layer cannot receive a raw
+   * evidence table, receipt key, worktree plan, or filesystem path. */
+  worktreeChangeEvidence?: { inspect(identity: { tenantId: string; projectId: string; jobId: string; attemptId: string;
+    runId: string; artifactId: string }):
+    Promise<Readonly<{ changedFiles: number; changedBytes: number; addedFiles: number; modifiedFiles: number;
+      deletedFiles: number; evidenceDigest: string }> | undefined> };
+  /** Bound installation-owned read only. The web service never receives its
+   * receipt key, storage port, runner, profile, model, or workspace settings. */
+  hermesDeliveryRecovery?: { inspect(scope: { tenantId: string; projectId: string; jobId: string; attemptId: string }):
+    Promise<Hermes021MacosDeliveryRecoveryStatusV1> };
 }
-const resultMetadata = (receipt: TaskResultReceipt) => taskResultMetadataSchema.parse({ artifactId: receipt.artifactId,
+const resultMetadata = (receipt: TaskResultReceiptV1) => taskResultMetadataSchema.parse({ artifactId: receipt.artifactId,
   attemptId: receipt.attemptId, runId: receipt.runId, contentHash: receipt.contentHash, sizeBytes: receipt.sizeBytes,
   receivedAt: receipt.receivedAt, byteCheck: receipt.byteCheck, qualityAccepted: false });
 
@@ -72,17 +95,23 @@ export class WebTaskService {
   private readonly authority: WebSessionAuthority;
   private readonly projects: WebProjectService;
   private readonly harnessKey?: Uint8Array;
-  private readonly resultStore?: NativeResultStore;
+  private readonly resultStore?: PlanSelectedTaskResultReaderV1;
   private readonly reviewConfig?: NonNullable<WebTaskKeys["reviews"]>;
   private readonly reviewCommandsConfigured: boolean;
   private readonly verificationCommandsConfigured: boolean;
   private readonly ideaProjectsConfigured: boolean;
+  private readonly hermesDeliveryRecovery?: WebTaskKeys["hermesDeliveryRecovery"];
+  private readonly worktreeChangeEvidence?: NonNullable<WebTaskKeys["worktreeChangeEvidence"]>;
   constructor(private readonly db: DatabaseClient, private readonly scope: { tenantId: string; workspaceId: string },
     private readonly clock: () => number = Date.now, keys?: WebTaskKeys) {
     this.authority = new WebSessionAuthority(db, scope, clock, "task");
     this.ideaProjectsConfigured = !!keys?.ideaIntegrityKey;
     this.reviewCommandsConfigured = !!keys?.ownerReviews;
     this.verificationCommandsConfigured = !!keys?.manualVerificationScenarios?.length;
+    if (keys?.hermesDeliveryRecovery && typeof keys.hermesDeliveryRecovery.inspect !== "function") throw new Error("task_key_invalid");
+    this.hermesDeliveryRecovery = keys?.hermesDeliveryRecovery ? Object.freeze({
+      inspect: keys.hermesDeliveryRecovery.inspect.bind(keys.hermesDeliveryRecovery),
+    }) : undefined;
     if (keys?.manualVerificationScenarios && (!keys.results || !keys.reviews || !keys.harnessIntegrityKey)) throw new Error("task_key_invalid");
     if (keys?.ownerReviews && (!keys.results || !keys.reviews || !(keys.ownerReviews.integrityKey instanceof Uint8Array)
       || keys.ownerReviews.integrityKey.length !== 32 || keys.reviews.integrityKey.length !== 32
@@ -95,8 +124,12 @@ export class WebTaskService {
     if (keys?.results) {
       if (!this.harnessKey) throw new Error("task_key_invalid");
       // The web service retains only the read capability, even when composition supplied a fuller store.
-      this.resultStore = new NativeResultStore(db, this.harnessKey, { ...keys.results,
-        storage: Object.freeze({ read: keys.results.storage.read.bind(keys.results.storage) }) });
+      this.resultStore = new PlanSelectedTaskResultReaderV1(db, { harnessIntegrityKey: this.harnessKey,
+        results: keys.results, ...(keys.reviews ? { reviewIntegrityKey: keys.reviews.integrityKey } : {}) });
+    }
+    if (keys?.worktreeChangeEvidence) {
+      if (typeof keys.worktreeChangeEvidence.inspect !== "function") throw new Error("task_key_invalid");
+      this.worktreeChangeEvidence = Object.freeze({ inspect: keys.worktreeChangeEvidence.inspect.bind(keys.worktreeChangeEvidence) });
     }
     if (keys?.reviews) {
       if (!(keys.reviews.integrityKey instanceof Uint8Array) || keys.reviews.integrityKey.length !== 32) throw new Error("task_key_invalid");
@@ -104,6 +137,17 @@ export class WebTaskService {
         read: keys.reviews.checkpoints.read.bind(keys.reviews.checkpoints), initialize: () => { throw new Error("review_read_only"); },
         advance: () => { throw new Error("review_read_only"); } }) };
     }
+  }
+  private async inspectHermesDeliveryRecovery(job: { jobType: string }, projectId: string, jobId: string,
+    attempts: readonly { attemptId: string }[]): Promise<HermesDeliveryRecovery> {
+    if (job.jobType !== HERMES_021_MACOS_LOCAL_JOB_TYPE_V1) return { source: "not_applicable" };
+    if (!this.hermesDeliveryRecovery) return { source: "not_configured" };
+    if (attempts.length !== 1) return { source: "ambiguous_attempt" };
+    try {
+      const status = await this.hermesDeliveryRecovery.inspect({ tenantId: this.scope.tenantId, projectId, jobId,
+        attemptId: attempts[0]!.attemptId });
+      return { source: "configured", status };
+    } catch { return { source: "unavailable" }; }
   }
   private id(value: string) { if (!catalogProjectIdSchema.safeParse(value).success) throw new WebAccessError("invalid_request"); }
 
@@ -160,11 +204,31 @@ export class WebTaskService {
   }
 
   async propose(identity: VerifiedWebIdentity, projectId: string, value: unknown, key: string) {
+    return this.proposeInternal(identity, projectId, value, key, []);
+  }
+
+  /** Internal integration seam for a reviewed feature that needs ordinary
+   * proposed tasks to wait on already-existing ordinary tasks. This retains
+   * the same owner authorization, request/workflow/job bundle, idempotency
+   * ledger, and non-runnable materialization ceiling as `propose()`. */
+  async proposeWithDependencies(identity: VerifiedWebIdentity, projectId: string, value: unknown, key: string,
+    dependsOnJobIds: readonly string[]) {
+    return this.proposeInternal(identity, projectId, value, key, dependsOnJobIds);
+  }
+
+  private async proposeInternal(identity: VerifiedWebIdentity, projectId: string, value: unknown, key: string,
+    dependsOnJobIds: readonly string[]) {
     this.id(projectId);
     const parsed = taskDraftSchema.safeParse(value);
-    if (!parsed.success || !/^[A-Za-z0-9:_-]{12,180}$/.test(key)) throw new WebAccessError("invalid_request");
+    const dependencies = [...dependsOnJobIds].sort();
+    if (!parsed.success || !/^[A-Za-z0-9:_-]{12,180}$/.test(key)
+      || dependencies.some(id => !catalogProjectIdSchema.safeParse(id).success)
+      || new Set(dependencies).size !== dependencies.length) throw new WebAccessError("invalid_request");
     try { assertNoSecretMaterial(parsed.data); } catch { throw new WebAccessError("invalid_request"); }
-    const digest = sha256Digest({ ...this.scope, projectId, action: "tasks.propose", draft: parsed.data });
+    // Preserve the prior idempotency digest byte-for-byte for ordinary browser
+    // proposals. Only the narrow dependency integration adds this field.
+    const digest = sha256Digest({ ...this.scope, projectId, action: "tasks.propose", draft: parsed.data,
+      ...(dependencies.length ? { dependsOnJobIds: dependencies } : {}) });
     return this.authority.authenticated(identity, async (tx, actor) => {
       actor.require("tasks.read", projectId); actor.require("tasks.propose", projectId);
       const project = await this.projects.getViewInSession(tx, actor, projectId);
@@ -178,6 +242,16 @@ export class WebTaskService {
         return { receipt, replayed: true };
       }
       if (project.lifecycle !== "active") throw new WebAccessError("conflict");
+      for (const dependencyId of dependencies) {
+        const dependency = (await tx.query<{ project_id: string; payload: unknown }>(
+          "SELECT project_id,payload FROM control_jobs WHERE tenant_id=$1 AND id=$2 FOR SHARE",
+          [this.scope.tenantId, dependencyId])).rows[0];
+        if (!dependency || dependency.project_id !== projectId) throw new WebAccessError("conflict");
+        const job = jobRecordSchema.safeParse(dependency.payload);
+        if (!job.success || job.data.tenantId !== this.scope.tenantId || job.data.projectId !== projectId || job.data.id !== dependencyId) {
+          throw new WebAccessError("conflict");
+        }
+      }
       const requestId = `request:${randomUUID()}`, workflowId = `workflow:${randomUUID()}`, jobId = `job:${randomUUID()}`;
       const base = { contractVersion: DOMAIN_CONTRACT_VERSION, tenantId: this.scope.tenantId, version: 0, createdAt: actor.now, updatedAt: actor.now };
       const authority: AuthorityEnvelope = { projectId, allowedExecutor: "executor:unassigned", allowedOperations: ["task.propose"],
@@ -190,11 +264,11 @@ export class WebTaskService {
           state: "draft", priority: 50, requestedBy: { actorId: actor.id, actorType: "human" },
           idempotencyKey: sha256Digest({ ...this.scope, actorId: actor.id, key, action: "tasks.propose" }) },
         workflow: { ...base, id: workflowId, kind: "workflow", requestId, projectId, definitionVersion: "private-task-proposal/v1",
-          definitionDigest: sha256Digest({ type: "private-task-proposal/v1", projectId, draft: parsed.data }),
+          definitionDigest: sha256Digest({ type: "private-task-proposal/v1", projectId, draft: parsed.data, dependsOnJobIds: dependencies }),
           authorityMode: "control_room_native", state: "proposed", jobIds: [jobId] },
         job: { ...base, id: jobId, kind: "job", workflowId, projectId, jobType: "task.proposal", specVersion: "1.0.0",
           inputDigest: sha256Digest(parsed.data), state: "proposed", priority: 50, requiredCapability: "task.proposal.review",
-          dependsOnJobIds: [], authority, retryPolicy: { maxAttempts: 1, backoffSeconds: 0, retryableFailureCodes: [],
+          dependsOnJobIds: dependencies, authority, retryPolicy: { maxAttempts: 1, backoffSeconds: 0, retryableFailureCodes: [],
             retryAfterOrphan: false, ambiguousEffectPolicy: "attention" } },
       };
       await new CanonicalStore(joined(tx)).createProposedWorkBundle(bundle);
@@ -237,7 +311,7 @@ export class WebTaskService {
           const { run, events } = inspected;
           const snapshots = events.flatMap(event => event.payload.category === "native_snapshot" ? [event.payload.snapshot] : []);
           const last = snapshots.at(-1);
-          runs.push(taskRunSchema.parse({ runId: run.id, harness: run.harness, state: run.state, lastObservedAt: run.lastObservedAt,
+          runs.push(taskRunSchema.parse({ runId: run.id, harness: run.harness, routeEvidence: routeEvidence(run.adapterId), state: run.state, lastObservedAt: run.lastObservedAt,
             stale: Date.parse(run.lastObservedAt) > Date.parse(actor.now) || Date.parse(actor.now) - Date.parse(run.lastObservedAt) > 120_000,
             firstObservedExecutionAt: run.startedAt ?? null, finishedObservedAt: run.finishedAt ?? null, cancellation: run.cancelState,
             source: run.nativeTask ? "native_snapshot" : "legacy", nativeState: last?.state ?? null,
@@ -251,8 +325,11 @@ export class WebTaskService {
         attempts.push({ attemptId: attempt.id, attemptNumber: attempt.attemptNumber, state: attempt.state,
           runs, additionalRunsOmitted: ids.length > 10 });
       }
+      const hermesDeliveryRecovery = await this.inspectHermesDeliveryRecovery(job, projectId, jobId, attempts);
       return taskDetailSchema.parse({ project, task: summary, instructions: request.objective, inputDigest: job.inputDigest,
-        observedAt: actor.now, attempts, earlierAttemptsOmitted: attemptRows.length > 10,
+        observedAt: actor.now, attempts, earlierAttemptsOmitted: attemptRows.length > 10, preparedFor: null,
+        localRouteObservation: { state: "not_prepared", adapter: null },
+        hermesDeliveryRecovery,
         progressSource: store ? "configured" : "not_configured", dispatch: "not_connected",
         artifacts: this.resultStore ? "configured" : "not_connected", review: this.reviewConfig ? "recorded" : "not_connected" });
     });
@@ -296,7 +373,23 @@ export class WebTaskService {
   private async resultPage(tx: DatabaseSession, actor: WebActor, projectId: string, jobId: string) {
       const result = this.resultStore ? await this.resultStore.list(tx, this.scope.tenantId, projectId, jobId)
         : { receipts: [], additionalResultsOmitted: false };
-      const items = result.receipts.map(resultMetadata);
+      const items = await Promise.all(result.receipts.map(async receipt => {
+        let worktreeChangeSummary: TaskWorktreeChangeSummary;
+        if (!actor.can("tasks.results.read", projectId)) worktreeChangeSummary = { source: "not_authorized" };
+        else if (!this.worktreeChangeEvidence) worktreeChangeSummary = { source: "not_configured" };
+        else if (!receipt.artifactId.startsWith("artifact:result:")) worktreeChangeSummary = { source: "not_applicable" };
+        else {
+          let summary: Awaited<ReturnType<NonNullable<WebTaskKeys["worktreeChangeEvidence"]>["inspect"]>>;
+          try { summary = await this.worktreeChangeEvidence.inspect({ tenantId: this.scope.tenantId, projectId,
+            jobId, attemptId: receipt.attemptId, runId: receipt.runId, artifactId: receipt.artifactId }); } catch { summary = undefined; }
+          worktreeChangeSummary = summary ? { source: "recorded", changedFiles: summary.changedFiles,
+            changedBytes: summary.changedBytes, addedFiles: summary.addedFiles, modifiedFiles: summary.modifiedFiles,
+            deletedFiles: summary.deletedFiles, evidenceDigest: summary.evidenceDigest, startsWork: false,
+            grantsExecutionAuthority: false, permitsRetry: false, permitsResume: false, permitsApproval: false,
+            permitsMerge: false } : { source: "unavailable" };
+        }
+        return taskResultMetadataSchema.parse({ ...resultMetadata(receipt), worktreeChangeSummary });
+      }));
       const lineage = this.reviewConfig ? await readTaskReviewPlanV1(tx, this.reviewConfig.integrityKey,
         this.scope.tenantId, projectId, jobId) : undefined;
       const subjectId = taskReviewRootSubjectIdV1(lineage, jobId);
@@ -320,6 +413,35 @@ export class WebTaskService {
         canReadContent: !!this.resultStore && actor.can("tasks.results.read", projectId),
         reviewCommands: this.reviewCommandsConfigured ? "configured" : "not_connected",
         verificationCommands: this.verificationCommandsConfigured ? "configured" : "not_connected" });
+  }
+
+  /** One result/review inspection powers both the workspace-wide attention list and
+   * project pages. It only returns opaque identifiers already accepted by the signed
+   * result reader; it does not grant result reading, approval, revision, or execution. */
+  private async resultAttention(tx: DatabaseSession, actor: WebActor, row: TaskRow & { has_artifacts: boolean }) {
+    const reasons: TaskAttentionPage["items"][number]["reasons"] = [];
+    const resultArtifactIds: string[] = [];
+    if (!row.has_artifacts) return { reasons, resultArtifactIds };
+    const result = await this.resultPage(tx, actor, row.project_id, row.id);
+    if (result.resultSource === "not_configured" || result.reviewSource === "not_configured") {
+      reasons.push("result_checks_unavailable");
+      return { reasons, resultArtifactIds };
+    }
+    for (const review of result.reviews.filter(value => value.matchingArtifactIds.length > 0)) {
+      switch (review.status) {
+        case "pending": reasons.push("review"); break;
+        case "changes_requested": case "verification_blocked": case "revision_limit_reached":
+          reasons.push(review.status); break;
+      }
+      if (["pending", "changes_requested", "verification_blocked", "revision_limit_reached"].includes(review.status))
+        resultArtifactIds.push(...review.matchingArtifactIds);
+    }
+    if (result.additionalResultsOmitted || result.additionalTargetsOmitted
+      || result.reviews.some(value => value.additionalEvidenceOmitted)
+      || result.items.some(item => !result.reviews.some(review => review.matchingArtifactIds.includes(item.artifactId))))
+      reasons.push("result_checks_unavailable");
+    return { reasons: [...new Set(reasons)],
+      resultArtifactIds: result.canReadContent ? [...new Set(resultArtifactIds)].sort() : [] };
   }
 
   private attentionSources(actor: WebActor): TaskAttentionPage["sources"] {
@@ -369,22 +491,7 @@ export class WebTaskService {
         if (job.jobType === "harness.hermes.native.task" && ["leased", "running", "waiting_approval", "orphaned", "failed"].includes(summary.state))
           reasons.push("delivery_check");
         if (row.has_artifacts) {
-          const result = await this.resultPage(tx, actor, row.project_id, row.id);
-          if (result.resultSource === "not_configured" || result.reviewSource === "not_configured") {
-            reasons.push("result_checks_unavailable");
-          } else {
-            for (const review of result.reviews.filter(value => value.matchingArtifactIds.length > 0)) {
-              switch (review.status) {
-                case "pending": reasons.push("review"); break;
-                case "changes_requested": case "verification_blocked": case "revision_limit_reached":
-                  reasons.push(review.status); break;
-              }
-            }
-            if (result.additionalResultsOmitted || result.additionalTargetsOmitted
-              || result.reviews.some(value => value.additionalEvidenceOmitted)
-              || result.items.some(item => !result.reviews.some(review => review.matchingArtifactIds.includes(item.artifactId))))
-              reasons.push("result_checks_unavailable");
-          }
+          reasons.push(...(await this.resultAttention(tx, actor, row)).reasons);
         }
         if (reasons.length) {
           const uniqueReasons = [...new Set(reasons)];
@@ -394,6 +501,50 @@ export class WebTaskService {
       }
       return taskAttentionPageSchema.parse({ items, sources, examined: Math.min(rows.length, 25),
         nextCursor: rows.length > 25 ? rows[24].id : null, observedAt: actor.now, startsWork: false });
+    });
+  }
+
+  /** Bounded project-local slice of the same attention classification used by
+   * /needs-me/tasks. Result attention is deliberately independent from a task's
+   * execution-approval state: a returned pending result can appear after the task
+   * is no longer waiting_approval. */
+  async projectAttention(identity: VerifiedWebIdentity, projectId: string, mode: "inbox" | "reviews", after?: string) {
+    this.id(projectId); if (after !== undefined) this.id(after);
+    return this.authority.authenticated(identity, async (tx, actor) => {
+      actor.require("tasks.read", projectId);
+      await this.projects.getViewInSession(tx, actor, projectId);
+      const hasArtifact = `EXISTS(SELECT 1 FROM control_native_artifact_receipts a
+        WHERE a.tenant_id=j.tenant_id AND a.project_id=j.project_id AND a.job_id=j.id)`;
+      const candidate = mode === "reviews" ? hasArtifact : `(j.state IN ('proposed','waiting_approval','failed','orphaned')
+        OR (j.payload->>'jobType'='harness.hermes.native.task' AND j.state IN ('leased','running')) OR ${hasArtifact})`;
+      const rows = (await tx.query<TaskRow & { has_artifacts: boolean }>(`SELECT ${hasArtifact} AS has_artifacts, ${selection}
+        WHERE j.tenant_id=$1 AND j.project_id=$2 AND ($3::text IS NULL OR j.id COLLATE "C">$3 COLLATE "C") AND ${candidate}
+        ORDER BY j.id COLLATE "C" LIMIT 21`, [this.scope.tenantId, projectId, after ?? null])).rows;
+      const items: TaskProjectAttentionPage["items"] = [];
+      for (const row of rows.slice(0, 20)) {
+        const { summary, job } = validated(row, this.scope.tenantId, projectId);
+        const reasons: TaskAttentionPage["items"][number]["reasons"] = [];
+        if (mode === "inbox") {
+          if (summary.state === "proposed") reasons.push(job.jobType === "task.proposal" ? "proposal" : "assignment");
+          if (summary.state === "waiting_approval") reasons.push("approval");
+          if (summary.state === "failed" || summary.state === "orphaned") reasons.push(summary.state);
+          if (job.jobType === "harness.hermes.native.task" && ["leased", "running", "waiting_approval", "orphaned", "failed"].includes(summary.state))
+            reasons.push("delivery_check");
+        }
+        const result = await this.resultAttention(tx, actor, row);
+        reasons.push(...result.reasons);
+        const uniqueReasons = [...new Set(reasons)];
+        if (!uniqueReasons.length || mode === "reviews" && !uniqueReasons.some(reason =>
+          (taskProjectResultAttentionReasons as readonly string[]).includes(reason))) continue;
+        items.push({ task: summary, inputDigest: job.inputDigest, reasons: uniqueReasons,
+          resultArtifactIds: result.resultArtifactIds, ...taskAttentionPresentation(uniqueReasons) });
+      }
+      return taskProjectAttentionPageSchema.parse({ projectId, mode, items, examined: Math.min(rows.length, 20),
+        nextCursor: rows.length > 20 ? rows[19]!.id : null,
+        resultSource: this.resultStore ? "configured" : "not_configured",
+        reviewSource: this.reviewConfig ? "configured" : "not_configured",
+        resultContent: actor.can("tasks.results.read", projectId) ? "authorized" : "not_authorized",
+        observedAt: actor.now, startsWork: false });
     });
   }
 

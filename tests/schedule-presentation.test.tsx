@@ -130,7 +130,6 @@ async function mountPanel(options: {
   response?: Response | (() => Response);
   delayMs?: number;
 } = {}) {
-  // @ts-expect-error untyped module
   const jsdomModule = await import("jsdom");
   const JSDOM = (jsdomModule as { JSDOM: unknown }).JSDOM as new (
     html: string, options?: { url?: string; pretendToBeVisual?: boolean },
@@ -217,7 +216,6 @@ test("mounted panel: a stale pending old-project response cannot replace new-pro
   const oldProjectValue: ProjectScheduleStatus = { ...value, projectId: "project:old", observedAt: "2026-09-01T00:00:00.000Z" };
   const newProjectValue: ProjectScheduleStatus = { ...value, projectId: "project:new", observedAt: "2026-09-08T00:00:00.000Z" };
 
-  // @ts-expect-error untyped module
   const jsdomModule = await import("jsdom");
   const JSDOM = (jsdomModule as { JSDOM: unknown }).JSDOM as new (
     html: string, options?: { url?: string; pretendToBeVisual?: boolean },

@@ -38,7 +38,6 @@ function makeSynthesis(supported = true) {
 }
 
 async function mount(ui: React.ReactElement) {
-  // @ts-expect-error untyped module
   const jsdomModule = await import("jsdom");
   const JSDOM = (jsdomModule as { JSDOM: unknown }).JSDOM as new (
     html: string, options?: { url?: string; pretendToBeVisual?: boolean },

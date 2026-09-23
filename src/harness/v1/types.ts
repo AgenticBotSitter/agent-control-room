@@ -38,6 +38,9 @@ export interface HarnessRunV1 {
   harness: HarnessAdapterManifestV1["harness"];
   harnessVersion: string;
   nativeSessionKeyDigest: string;
+  /** Optional reviewed connector/authority anchors for non-native adapters. */
+  connectorProfileDigest?: string;
+  authorityDigest?: string;
   parentRunId?: string;
   revisionOfRunId?: string;
   state: HarnessRunState;

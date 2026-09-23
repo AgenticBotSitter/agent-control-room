@@ -385,7 +385,18 @@ export class CanonicalStore {
       || job.authority.maxConcurrentEffects !== 0) {
       throw new Error("Proposed work bundle exceeds the materialization ceiling");
     }
+    if (new Set(job.dependsOnJobIds).size !== job.dependsOnJobIds.length) {
+      throw new Error("Proposed work bundle has duplicate dependencies");
+    }
     return this.#transaction(async (tx) => {
+      // A proposed job may wait on earlier ordinary jobs, but it cannot use a
+      // dependency from another project as an invisible cross-project bridge.
+      // This check belongs at the canonical write boundary as well as the web
+      // service, because other callers may construct an ordinary bundle.
+      for (const dependencyId of job.dependsOnJobIds) {
+        const dependency = await this.#requireWith(tx, job.tenantId, "job", dependencyId) as JobRecord;
+        if (dependency.projectId !== job.projectId) throw new Error("Proposed work dependency project mismatch");
+      }
       let replayed = true;
       for (const entity of [request, workflow, job] as DomainEntity[]) {
         const existing = await this.#getWith(tx, entity.tenantId, entity.kind, entity.id);
@@ -395,6 +406,11 @@ export class CanonicalStore {
           await this.#insertWith(tx, entity);
           replayed = false;
         }
+      }
+      for (const dependencyId of job.dependsOnJobIds) {
+        await tx.query(`INSERT INTO control_job_dependencies (tenant_id,job_id,depends_on_job_id)
+          VALUES ($1,$2,$3) ON CONFLICT (tenant_id,job_id,depends_on_job_id) DO NOTHING`,
+        [job.tenantId, job.id, dependencyId]);
       }
       return { request, workflow, job, replayed };
     });

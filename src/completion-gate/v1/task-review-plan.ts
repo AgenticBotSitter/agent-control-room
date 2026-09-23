@@ -41,7 +41,7 @@ export function taskReviewTargetV1(plan: TaskReviewPlanV1, receipt: TaskResultRe
 }
 
 export function verifyTaskReviewTargetV1(plan: TaskReviewPlanV1 | undefined,
-  target: CompletionReviewTargetV1, receipt: TaskResultReceipt) {
+  target: CompletionReviewTargetV1, receipt: TaskResultReceiptV1) {
   if (!plan) {
     if (target.revisionNumber !== 0 || target.subjectId !== receipt.jobId) throw new Error("task_review_target_unavailable");
     return;

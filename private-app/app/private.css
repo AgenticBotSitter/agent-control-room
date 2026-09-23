@@ -48,6 +48,11 @@
 .private-action-link { display: inline-flex; min-height: 44px; align-items: center; border: 1px solid var(--border-strong); border-radius: .55rem; margin-top: .5rem; padding: .6rem .9rem; color: var(--green); font-weight: 700; }
 .private-action-link:hover { background: var(--surface-2); }
 .private-note { font-size: .875rem; margin-top: 1.5rem; }
+.private-local-agent-list { display: grid; gap: .75rem; list-style: none; margin: 1rem 0 0; padding: 0; }
+.private-local-agent-card { border: 1px solid var(--border, #c8c8c8); border-radius: .5rem; padding: 1rem; }
+.private-local-agent-card h4, .private-local-agent-card p { margin: 0 0 .6rem; }
+.private-local-agent-card details { margin-top: .75rem; }
+.private-local-agent-card details ul { margin: .65rem 0 0; padding-left: 1.25rem; }
 .private-shell main p a { padding-block: .15rem; }
 /* In-text and in-list links are inline by default, so their rect ignores block
  * metrics: make them inline-block with a 24px floor so the measured target

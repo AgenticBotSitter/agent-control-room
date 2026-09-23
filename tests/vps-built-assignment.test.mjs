@@ -10,7 +10,10 @@ import { at } from "./native-task-fixture.ts";
 import { request, origin } from "./helpers/web-foundation.ts";
 
 test("compiled assignment keeps scheduled planning and allocation server-only", async () => {
-  const compiled = await readFile(new URL("../dist-vps/server/taskApplication.js", import.meta.url), "utf8");
+  const compiled = await Promise.all([
+    readFile(new URL("../dist-vps/server/taskApplication.js", import.meta.url), "utf8"),
+    readFile(new URL("../dist-vps/server/runtime.js", import.meta.url), "utf8"),
+  ]).then(parts => parts.join("\n"));
   assert.match(compiled, /service:schedule-assignment:v1/);
   assert.match(compiled, /scheduled\.tasks\.plan/);
   assert.doesNotMatch(compiled, /api\/v1\/scheduled-assignment/);
@@ -25,7 +28,8 @@ test("compiled private assignment API records, reads and expires a real lease un
   t.after(() => app.close());
   const base = `/api/v1/projects/${f.prepared.receipt.projectId}/tasks/${f.prepared.receipt.jobId}`, path = `${base}/assignment`;
   const req = (url = path, method = "GET", body) => request(url, method, body, undefined, f.jwt);
-  assert.deepEqual(Object.keys(coordinator.webOperation()).sort(), ["assign", "expire", "options", "tenantId", "workspaceId"]);
+  assert.deepEqual(Object.keys(coordinator.webOperation()).sort(),
+    ["assign", "expire", "options", "projectOptions", "tenantId", "workspaceId"]);
   assert.equal("assignLocked" in coordinator, false);
   const options = await (await handler(req())).json(); assert.equal(options.candidates.length, 1); assert.equal(options.receipt, null);
   const draft = { action: "assign", expectedInputDigest: options.inputDigest, nodeId: options.candidates[0].nodeId };

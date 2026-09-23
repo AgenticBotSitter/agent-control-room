@@ -1,4 +1,4 @@
-import { createAccessVerifier, requireSameOrigin, WebAccessError, type AccessTrust } from "./access-verifier";
+import { createAccessVerifier, requireSameOrigin, WebAccessError, type AccessTrust, type GatewayAssertionProviderProfileV1 } from "./access-verifier";
 import type { WebProjectService } from "./project-service";
 import { privateResponseHeaders as responseHeaders, readBoundedJson, webFailure } from "./http-common";
 
@@ -10,9 +10,11 @@ async function readBody(request: Request): Promise<unknown> {
 
 /** Full Web Request -> transaction -> response seam. Composition is explicit; never opens a database. */
 export function createProjectHttpHandler(options: {
-  origin: string; trust: AccessTrust; service: WebProjectService; clock?: () => number;
+  origin: string; trust: AccessTrust; service: WebProjectService;
+  /** Trusted process selection; the browser cannot choose a header/provider. */
+  gatewayAssertionProfile?: GatewayAssertionProviderProfileV1; clock?: () => number;
 }) {
-  const verifyIdentity = createAccessVerifier(options.trust);
+  const verifyIdentity = createAccessVerifier(options.trust, options.gatewayAssertionProfile);
   const clock = options.clock ?? Date.now;
   return async (request: Request): Promise<Response> => {
     try {

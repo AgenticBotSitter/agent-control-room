@@ -6,7 +6,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import Home from "../private-app/app/page";
 import { HomeDashboard, type HomeDashboardState } from "../private-app/app/home-workspace";
 import SettingsPage from "../private-app/app/settings/page";
-import { PrivateProjectWorkspace } from "../private-app/app/workspace";
+import { PrivateProjectWorkspace, ProjectAgentInstallationStatus } from "../private-app/app/workspace";
 import { ProjectCatalogNavigation } from "../app/components/project-catalog-navigation";
 import { createProjectBrowserClient } from "../src/web/v1/browser-client";
 import { readTaskHomeActivity } from "../src/web/v1/task-home-browser-client";
@@ -17,11 +17,18 @@ import { ProjectFilesView } from "../private-app/app/project-files-workspace";
 import { readTaskProjectFiles } from "../src/web/v1/task-project-files-browser-client";
 import { ProjectNavigation } from "../private-app/app/project-navigation";
 import { ProjectTaskViewPanel } from "../private-app/app/project-task-views";
+import { ProjectResultReviewPanel } from "../private-app/app/project-result-review-workspace";
+import { readTaskProjectAttention } from "../src/web/v1/task-project-attention-browser-client";
 import { decodePrivateRouteSegment } from "../private-app/app/route-segment";
 import { PrivateConnectionView } from "../private-app/app/connections/workspace";
+import { InstallationTopologySummary } from "../private-app/app/installation-topology-summary";
+import { LocalWorkerRouteStatus } from "../private-app/app/local-worker-route-status";
 import { TaskProposalForm } from "../private-app/app/task-panels";
 import { TaskAttentionPanel } from "../private-app/app/needs-me/task-attention";
 import { taskAttentionPageSchema, taskAttentionPresentation } from "../src/web/v1/task-attention-wire";
+import { planInstallationTopologyV1 } from "../src/harness/v1/installation-topology";
+import { createInstallationSetupViewV1 } from "../src/harness/v1/installation-setup-view";
+import { sha256Digest } from "../src/security/canonical-digest";
 
 test("compiled route parameters decode exactly once before reaching browser clients", () => {
   assert.equal(decodePrivateRouteSegment("project%3Aalpha"), "project:alpha");
@@ -33,16 +40,22 @@ test("compiled route parameters decode exactly once before reaching browser clie
 
 test("home gives honest navigation to existing private workspace surfaces", () => {
   const html = renderToStaticMarkup(createElement(Home));
-  for (const href of ["/projects", "/workers", "/needs-me", "/settings"]) assert.match(html, new RegExp(`href="${href}"`));
+  for (const href of ["/projects", "/workers", "/setup", "/needs-me", "/settings"]) assert.match(html, new RegExp(`href="${href}"`));
   assert.doesNotMatch(html, /href="\/ideas"/);
   assert.match(html, /aria-controls="private-workspace-navigation"/);
   assert.match(html, /<nav id="private-workspace-navigation" class="private-navigation"/);
   assert.doesNotMatch(html, /<details/);
   assert.match(html, /Each section reports unavailable data instead of replacing it with a zero/);
+  assert.match(html, /Installation setup/);
+  assert.match(html, /Checking saved setup status/);
+  assert.doesNotMatch(html, /No reviewed setup plan is currently available/);
   assert.doesNotMatch(html, /Idea Lab is optional/);
   assert.doesNotMatch(html, /live workers|running now|0 tasks/i);
   for (const label of ["Loading saved work", "Loading saved attention items", "Loading verified result records",
     "Loading saved worker signals", "Loading saved projects"]) assert.match(html, new RegExp(label));
+  assert.match(html, /Operator capacity/);
+  assert.match(html, /Reading the recorded capacity and outcome evidence/);
+  assert.equal((html.match(/operator-capacity-title/g) ?? []).length, 2, "one read-only capacity panel is mounted");
 });
 
 test("task proposal and worker inventory disclose unavailable operational facts", () => {
@@ -58,6 +71,41 @@ test("task proposal and worker inventory disclose unavailable operational facts"
     "Cancel and resume are unsupported"])
     assert.match(connections, new RegExp(text));
   assert.doesNotMatch(connections, /usage are unavailable in this view/);
+});
+
+test("workers page has a separate local route-status panel and does not turn inventory into a live monitor", () => {
+  const plan = planInstallationTopologyV1({ databaseAuthorityDigest: sha256Digest("database"), schedulerAuthorityDigest: sha256Digest("scheduler"),
+    currentRoutes: [{ kind: "local", workerId: "worker:local", adapterId: "connector:local-v1", adapterRevision: "00570550" }],
+    requestedRoutes: [{ kind: "local", workerId: "worker:local", adapterId: "connector:local-v1", adapterRevision: "00570550" }] });
+  const html = renderToStaticMarkup(createElement(LocalWorkerRouteStatus, { state: "available",
+    setup: createInstallationSetupViewV1({ plan, localBackupRestoreVerified: false }) }));
+  assert.match(html, /Local worker routes/);
+  assert.match(html, /Hermes Agent/); assert.match(html, /Claude Code/); assert.match(html, /Codex/);
+  assert.match(html, /not a live process monitor/);
+  assert.match(html, /Connection inventory and capacity evidence below cannot substitute/);
+  assert.doesNotMatch(html, /<button|<form|<input|worker:local|sha256:/);
+});
+
+test("project agents separates local installation setup from project availability", () => {
+  const plan = planInstallationTopologyV1({ databaseAuthorityDigest: sha256Digest("database"), schedulerAuthorityDigest: sha256Digest("scheduler"),
+    currentRoutes: [{ kind: "local", workerId: "worker:local", adapterId: "connector:local-v1", adapterRevision: "00570550" }],
+    requestedRoutes: [{ kind: "local", workerId: "worker:local", adapterId: "connector:local-v1", adapterRevision: "00570550" }] });
+  const html = renderToStaticMarkup(createElement(ProjectAgentInstallationStatus, { topology: {
+    state: "available", setup: createInstallationSetupViewV1({ plan, localBackupRestoreVerified: false }),
+  } }));
+  assert.match(html, /Local worker setup on this computer/);
+  assert.match(html, /Installation-scoped setup status only/);
+  assert.match(html, /Three local worker routes/);
+  for (const label of ["Hermes Agent", "Claude Code", "Codex"]) assert.match(html, new RegExp(label));
+  assert.match(html, /not this project’s agent eligibility, available capacity, current work, or permission to assign a task/);
+  assert.doesNotMatch(html, /<button|<form|<input|Assign|Start agent/);
+  const remoteOnly = renderToStaticMarkup(createElement(ProjectAgentInstallationStatus, { topology: {
+    state: "available", setup: createInstallationSetupViewV1({ plan: planInstallationTopologyV1({ databaseAuthorityDigest: sha256Digest("database-remote"),
+      schedulerAuthorityDigest: sha256Digest("scheduler-remote"), currentRoutes: [{ kind: "remote", workerId: "worker:remote",
+        adapterId: "connector:remote-v1", adapterRevision: "00570550" }], requestedRoutes: [{ kind: "remote", workerId: "worker:remote",
+        adapterId: "connector:remote-v1", adapterRevision: "00570550" }] }), localBackupRestoreVerified: false }),
+  } }));
+  assert.equal(remoteOnly, "");
 });
 
 test("needs-attention items expose owner questions and sort urgent work first", () => {
@@ -259,11 +307,61 @@ test("project review page distinguishes unavailable data from an empty list", ()
   assert.doesNotMatch(html, /No task is currently recorded/);
 });
 
+test("project inbox and result reviews use exact protected results and keep execution approval separate", async () => {
+  const base = { projectId: "project:alpha", requestId: "request:alpha", jobId: "job:returned", title: "Returned report",
+    state: "succeeded" as const, version: 2, createdAt: "2026-09-04T10:00:00.000Z", updatedAt: "2026-09-04T12:00:00.000Z" };
+  const value = { projectId: base.projectId, mode: "reviews" as const, items: [{ task: base,
+    inputDigest: `sha256:${"a".repeat(64)}`, reasons: ["verification_blocked" as const], resultArtifactIds: ["artifact:returned"],
+    category: "uncertainty" as const, urgency: "urgent" as const, ownerQuestion: "What was already recorded, and is it safe to continue?" }],
+    nextCursor: "job:z-later", examined: 20, resultSource: "configured" as const, reviewSource: "configured" as const,
+    resultContent: "authorized" as const,
+    observedAt: "2026-09-04T12:00:00.000Z", startsWork: false as const };
+  const html = renderToStaticMarkup(createElement(ProjectResultReviewPanel,
+    { projectId: base.projectId, mode: "reviews", data: { state: "ready", value } }));
+  assert.match(html, /Returned result needs review|Verification is blocked/);
+  assert.match(html, /tasks\/job%3Areturned\?result=artifact%3Areturned#task-results/);
+  assert.match(html, /Execution approval remains a separate task decision/);
+  assert.match(html, /Check next saved tasks/);
+  assert.doesNotMatch(html, /approve|retry|submit|start work/i);
+  let requested = "", method = "";
+  const transport = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    requested = String(input); method = init?.method ?? ""; return Response.json(value);
+  }) as typeof fetch;
+  assert.equal((await readTaskProjectAttention(base.projectId, "reviews", undefined, transport)).items[0]?.task.state, "succeeded");
+  assert.equal(requested, "/api/v1/projects/project%3Aalpha/reviews"); assert.equal(method, "GET");
+  await assert.rejects(readTaskProjectAttention("project:other", "reviews", "bad\u0000cursor", transport), /invalid_request/);
+});
+
+test("project review attention does not turn unavailable evidence into an empty all-clear", () => {
+  const html = renderToStaticMarkup(createElement(ProjectResultReviewPanel, { projectId: "project:alpha", mode: "reviews",
+    data: { state: "ready", value: { projectId: "project:alpha", mode: "reviews", items: [], nextCursor: null, examined: 1,
+      resultSource: "not_configured", reviewSource: "not_configured", resultContent: "authorized",
+      observedAt: "2026-09-04T12:00:00.000Z", startsWork: false } } }));
+  assert.match(html, /not an all-clear for omitted or unavailable evidence/);
+  assert.doesNotMatch(html, /No returned result needs review/);
+});
+
+test("project review attention explains limited access without advertising a result link", () => {
+  const task = { projectId: "project:alpha", requestId: "request:alpha", jobId: "job:returned", title: "Returned report",
+    state: "succeeded" as const, version: 2, createdAt: "2026-09-04T10:00:00.000Z", updatedAt: "2026-09-04T12:00:00.000Z" };
+  const html = renderToStaticMarkup(createElement(ProjectResultReviewPanel, { projectId: task.projectId, mode: "reviews",
+    data: { state: "ready", value: { projectId: task.projectId, mode: "reviews", items: [{ task,
+      inputDigest: `sha256:${"a".repeat(64)}`, reasons: ["review"], resultArtifactIds: [], category: "review",
+      urgency: "soon", ownerQuestion: "Does the saved result meet the requested outcome, or does it need changes?" }],
+    nextCursor: null, examined: 1, resultSource: "configured", reviewSource: "configured", resultContent: "not_authorized",
+    observedAt: "2026-09-04T12:00:00.000Z", startsWork: false } } }));
+  assert.match(html, /Review metadata is visible/);
+  assert.match(html, /does not authorize opening result content/);
+  assert.doesNotMatch(html, /Open exact protected result/);
+});
+
 test("settings links to the real session surface without credential controls", () => {
   const html = renderToStaticMarkup(createElement(SettingsPage));
   assert.match(html, /href="\/session"/);
   assert.match(html, /does not expose credentials/);
-  assert.doesNotMatch(html, /password|api key|secret key/i);
+  assert.match(html, /Set up one Agent Control Room/);
+  assert.match(html, /No installation effects happen from this read-only view/);
+  assert.doesNotMatch(html, /type="password"|api key|secret key/i);
 });
 
 test("home links each recent result to its exact file, not a generic results anchor", () => {
@@ -324,7 +422,6 @@ async function mountTaskResults(options: { search?: string; canReadContent?: boo
   // jsdom ships no type declarations and cannot be augmented. Import it once
   // and bind exactly the surface these tests use, rather than widening the
   // module to `any`.
-  // @ts-expect-error untyped module
   const jsdomModule = await import("jsdom");
   const JSDOM = (jsdomModule as { JSDOM: unknown }).JSDOM as new (
     html: string, options?: { url?: string; pretendToBeVisual?: boolean },
@@ -560,4 +657,18 @@ test("workers boundary text no longer claims capacity data is unavailable", () =
   assert.match(html, /not part of this inventory/);
   assert.match(html, /operator capacity panel below shows the recorded capacity/);
   assert.match(html, /read-only/);
+});
+
+test("workers can show the reviewed installation plan without revealing routes or offering setup actions", () => {
+  const plan = planInstallationTopologyV1({
+    databaseAuthorityDigest: sha256Digest("database"), schedulerAuthorityDigest: sha256Digest("scheduler"),
+    currentRoutes: [{ kind: "local", workerId: "worker:local", adapterId: "connector:local-v1", adapterRevision: "00570550" }],
+    requestedRoutes: [{ kind: "local", workerId: "worker:local", adapterId: "connector:local-v1", adapterRevision: "00570550" }],
+  });
+  const html = renderToStaticMarkup(createElement(PrivateConnectionView, { data: { state: "loading" }, onRefresh: () => {} },
+    createElement(InstallationTopologySummary, { setup: createInstallationSetupViewV1({ plan, localBackupRestoreVerified: false }) })));
+  assert.match(html, /Installation setup/);
+  assert.match(html, /This computer/);
+  assert.match(html, /successful owner-attended local worker check/);
+  assert.doesNotMatch(html, /worker:local|sha256:|<form|<input/);
 });

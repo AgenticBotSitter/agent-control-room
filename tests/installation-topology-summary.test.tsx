@@ -1,0 +1,148 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { InstallationTopologySummary } from "../private-app/app/installation-topology-summary";
+import { planInstallationTopologyV1 } from "../src/harness/v1/installation-topology";
+import { createInstallationReadinessV1 } from "../src/harness/v1/installation-readiness";
+import { createCodexMacosCustodyReadinessV1 } from "../src/harness/codex-v1/macos-custody-readiness";
+import { createLocalSupervisorReadinessV1 } from "../src/harness/v1/local-supervisor-readiness";
+import { createInstallationTransitionV1 } from "../src/harness/v1/installation-transition";
+import { createInstallationSetupViewV1 } from "../src/harness/v1/installation-setup-view";
+import { sha256Digest } from "../src/security/canonical-digest";
+
+test("setup summary distinguishes a pending or unavailable saved-status read from an absent plan", () => {
+  const loading = renderToStaticMarkup(createElement(InstallationTopologySummary, { status: "loading" }));
+  assert.match(loading, /Checking saved setup status/);
+  assert.doesNotMatch(loading, /No reviewed setup plan/);
+  const unavailable = renderToStaticMarkup(createElement(InstallationTopologySummary, { status: "unavailable" }));
+  assert.match(unavailable, /Installation setup status is unavailable/);
+  assert.match(unavailable, /does not mean this computer or another worker is ready/);
+  assert.doesNotMatch(unavailable, /<button|<form|<input/);
+});
+
+test("setup summary describes one installation and never offers a live operation", () => {
+  const plan = planInstallationTopologyV1({ databaseAuthorityDigest: sha256Digest("database"), schedulerAuthorityDigest: sha256Digest("scheduler"),
+    currentRoutes: [{ kind: "local", workerId: "worker:local", adapterId: "connector:local-v1", adapterRevision: "00570550" }],
+    requestedRoutes: [{ kind: "local", workerId: "worker:local", adapterId: "connector:local-v1", adapterRevision: "00570550" },
+      { kind: "remote", workerId: "worker:remote", adapterId: "connector:remote-v1", adapterRevision: "00570550" }] });
+  const html = renderToStaticMarkup(createElement(InstallationTopologySummary, { setup: createInstallationSetupViewV1({ plan, localBackupRestoreVerified: false }) }));
+  assert.match(html, /Several computers/);
+  assert.match(html, /one database and one scheduler/);
+  assert.match(html, /two-computer delivery check/);
+  assert.doesNotMatch(html, /<button|<form|<input|worker:remote|sha256:/);
+});
+
+test("setup summary shows an honest proof checklist rather than a live worker", () => {
+  const plan = planInstallationTopologyV1({ databaseAuthorityDigest: sha256Digest("database"), schedulerAuthorityDigest: sha256Digest("scheduler"),
+    currentRoutes: [{ kind: "local", workerId: "worker:local", adapterId: "connector:local-v1", adapterRevision: "00570550" }],
+    requestedRoutes: [{ kind: "local", workerId: "worker:local", adapterId: "connector:local-v1", adapterRevision: "00570550" }] });
+  const readiness = createInstallationReadinessV1({ planDigest: plan.planDigest, proofs: [
+    { proof: "backup_restore", state: "passed", evidenceDigest: sha256Digest("backup") },
+    { proof: "local_owner_qualification", state: "not_started" },
+    { proof: "local_runner_bridge", state: "not_started" },
+  ] });
+  const html = renderToStaticMarkup(createElement(InstallationTopologySummary, { setup: createInstallationSetupViewV1({ plan, readiness, localBackupRestoreVerified: true }) }));
+  assert.match(html, /Setup is still in progress/);
+  assert.match(html, /Passed:.*backup-and-restore check/);
+  assert.match(html, /Not started:.*owner-attended local worker check/);
+  assert.match(html, /Not started:.*owner-attended local runner check/);
+  assert.match(html, /What to do next/);
+  assert.match(html, /Check the local agent connection/);
+  assert.match(html, /Three local worker routes/);
+  assert.match(html, /Local background service preparation/);
+  assert.match(html, /Private settings are protected/);
+  assert.match(html, /The service has one restricted launch definition/);
+  assert.match(html, /Safe restart and shutdown handling is prepared/);
+  assert.match(html, /Safe update and rollback handling is prepared/);
+  assert.match(html, /This panel cannot install, start, stop, or restart Control Room/);
+  assert.match(html, /Source-only status, not a live installation/);
+  assert.match(html, /what is simulated with disposable test data/);
+  assert.match(html, /<h4>Hermes Agent<\/h4><p><strong>Status: Partial setup proof recorded/);
+  assert.match(html, /Hermes is still not enabled or running/);
+  assert.match(html, /<strong>Safe now:<\/strong> Prepare and check one bounded delivery/);
+  assert.match(html, /<strong>Source-only:<\/strong> The delivery, result and recovery path is source-only evidence/);
+  assert.match(html, /<strong>Remaining setup category:<\/strong> Remaining local setup proof/);
+  assert.match(html, /First useful work after setup:.*plain-text review/);
+  assert.match(html, /cannot edit a project yet/);
+  assert.match(html, /<h4>Claude Code<\/h4><p><strong>Status: Local delivery preparation complete; process proof required/);
+  assert.match(html, /<strong>Remaining setup category:<\/strong> Installed-process and permission qualification/);
+  assert.match(html, /<h4>Codex<\/h4><p><strong>Status: Not available on this Mac yet/);
+  assert.match(html, /<strong>Remaining setup category:<\/strong> macOS process and private-state custody qualification/);
+  assert.match(html, /none of the statuses below means an agent is running/);
+  assert.match(html, /Hermes Agent connector capability details/);
+  assert.match(html, /Claude Code connector capability details/);
+  assert.match(html, /Codex connector capability details/);
+  assert.match(html, /<strong>Send a task:<\/strong> Not proven yet/);
+  assert.match(html, /<strong>Send a task:<\/strong> Not available in this connector/);
+  assert.doesNotMatch(html, /<button|<form|<input|worker:local|sha256:/);
+});
+
+test("setup summary presents an active reviewed transition without leaking worker identity or offering actions", () => {
+  const plan = planInstallationTopologyV1({ databaseAuthorityDigest: sha256Digest("database"), schedulerAuthorityDigest: sha256Digest("scheduler"),
+    currentRoutes: [{ kind: "local", workerId: "worker:local", adapterId: "connector:local-v1", adapterRevision: "00570550" }],
+    requestedRoutes: [{ kind: "local", workerId: "worker:local", adapterId: "connector:local-v1", adapterRevision: "00570550" },
+      { kind: "remote", workerId: "worker:remote", adapterId: "connector:remote-v1", adapterRevision: "00570550" }] });
+  const transition = createInstallationTransitionV1({ transitionId: "transition:display", topologyPlan: plan,
+    now: "2027-01-15T00:00:00.000Z" });
+  const html = renderToStaticMarkup(createElement(InstallationTopologySummary, { setup: createInstallationSetupViewV1({ plan, transition, localBackupRestoreVerified: false }) }));
+  assert.match(html, /Changing the setup/);
+  assert.match(html, /reviewed setup change is prepared/);
+  assert.match(html, /1 worker is affected/);
+  assert.match(html, /cannot start workers or move the database/);
+  assert.doesNotMatch(html, /<button|<form|<input|worker:remote|sha256:/);
+});
+
+test("setup summary distinguishes completed Hermes proof from an enabled worker", () => {
+  const plan = planInstallationTopologyV1({ databaseAuthorityDigest: sha256Digest("database"), schedulerAuthorityDigest: sha256Digest("scheduler"),
+    currentRoutes: [{ kind: "local", workerId: "worker:local", adapterId: "connector:local-v1", adapterRevision: "00570550" }],
+    requestedRoutes: [{ kind: "local", workerId: "worker:local", adapterId: "connector:local-v1", adapterRevision: "00570550" }] });
+  const readiness = createInstallationReadinessV1({ planDigest: plan.planDigest, proofs: [
+    { proof: "backup_restore", state: "passed", evidenceDigest: sha256Digest("backup") },
+    { proof: "local_owner_qualification", state: "passed", evidenceDigest: sha256Digest("qualification") },
+    { proof: "local_runner_bridge", state: "passed", evidenceDigest: sha256Digest("bridge") },
+  ] });
+  const supervisor = createLocalSupervisorReadinessV1({ planDigest: plan.planDigest, proofs: [
+    { proof: "private_configuration_custody", state: "passed", evidenceDigest: sha256Digest("custody") },
+    { proof: "restricted_launch_definition", state: "passed", evidenceDigest: sha256Digest("launch") },
+    { proof: "restart_and_drain_procedure", state: "passed", evidenceDigest: sha256Digest("restart") },
+    { proof: "upgrade_and_rollback_procedure", state: "passed", evidenceDigest: sha256Digest("rollback") },
+  ] });
+  const html = renderToStaticMarkup(createElement(InstallationTopologySummary, { setup: createInstallationSetupViewV1({ plan, readiness,
+    localBackupRestoreVerified: true, localSupervisorReadiness: supervisor }) }));
+  assert.match(html, /<h4>Hermes Agent<\/h4><p><strong>Status: Proof complete; owner enablement required/);
+  assert.match(html, /still has not started Hermes/);
+  assert.match(html, /Preparation recorded; service is still not installed or running/);
+  assert.doesNotMatch(html, /<button|<form|<input/);
+});
+
+test("a generic local backup pass never makes the overall setup page claim proof completion", () => {
+  const plan = planInstallationTopologyV1({ databaseAuthorityDigest: sha256Digest("database"), schedulerAuthorityDigest: sha256Digest("scheduler"),
+    currentRoutes: [{ kind: "local", workerId: "worker:local", adapterId: "connector:local-v1", adapterRevision: "00570550" }],
+    requestedRoutes: [{ kind: "local", workerId: "worker:local", adapterId: "connector:local-v1", adapterRevision: "00570550" }] });
+  const readiness = createInstallationReadinessV1({ planDigest: plan.planDigest, proofs: [
+    { proof: "backup_restore", state: "passed", evidenceDigest: sha256Digest("generic-backup") },
+    { proof: "local_owner_qualification", state: "passed", evidenceDigest: sha256Digest("qualification") },
+    { proof: "local_runner_bridge", state: "passed", evidenceDigest: sha256Digest("bridge") },
+  ] });
+  const html = renderToStaticMarkup(createElement(InstallationTopologySummary, { setup: createInstallationSetupViewV1({ plan, readiness, localBackupRestoreVerified: false }) }));
+  assert.match(html, /Setup is still in progress/);
+  assert.match(html, /Next: a verified backup-and-restore check/);
+  assert.match(html, /Needs verification:.*backup-and-restore check/);
+  assert.doesNotMatch(html, /Proofs are complete; owner enablement is still required/);
+});
+
+test("setup summary shows recorded Codex safety prerequisites without calling Codex enabled", () => {
+  const plan = planInstallationTopologyV1({ databaseAuthorityDigest: sha256Digest("database"), schedulerAuthorityDigest: sha256Digest("scheduler"),
+    currentRoutes: [{ kind: "local", workerId: "worker:codex", adapterId: "codex-app-server/v1", adapterRevision: "00570550" }],
+    requestedRoutes: [{ kind: "local", workerId: "worker:codex", adapterId: "codex-app-server/v1", adapterRevision: "00570550" }] });
+  const custody = createCodexMacosCustodyReadinessV1({ planDigest: plan.planDigest, proofs: [
+    { proof: "suspended_executable_identity", state: "passed", evidenceDigest: sha256Digest("suspended") },
+    { proof: "protected_private_state_handle", state: "passed", evidenceDigest: sha256Digest("private-state") },
+  ] });
+  const html = renderToStaticMarkup(createElement(InstallationTopologySummary, { setup: createInstallationSetupViewV1({ plan,
+    codexMacosCustodyReadiness: custody, localBackupRestoreVerified: false }) }));
+  assert.match(html, /Codex<\/h4><p><strong>Status: Mac safety prerequisites recorded/);
+  assert.match(html, /still has not started Codex/);
+  assert.doesNotMatch(html, /sha256:|suspended_executable_identity|protected_private_state_handle/);
+});

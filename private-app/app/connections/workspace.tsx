@@ -1,19 +1,23 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { ConnectionCenterPanel } from "../../../app/components/connection-center";
 import { ConnectionBrowserError, readPrivateConnections, type PrivateConnectionSnapshot } from "../../../src/web/v1/connection-browser-client";
 import { PrivateHeader } from "../private-header";
 import { PrivateOperatorCapacityWorkspace } from "../operator-capacity-workspace";
+import { useInstallationTopology } from "../installation-topology";
+import { InstallationTopologySummary } from "../installation-topology-summary";
+import { LocalWorkerRouteStatus } from "../local-worker-route-status";
 
 export type PrivateConnectionViewState = { state: "loading" } | { state: "ready"; snapshot: PrivateConnectionSnapshot }
   | { state: "unavailable"; code: ConnectionBrowserError["code"] };
 
-export function PrivateConnectionView({ data, onRefresh }: { data: PrivateConnectionViewState; onRefresh: () => void }) {
+export function PrivateConnectionView({ data, onRefresh, children }: { data: PrivateConnectionViewState; onRefresh: () => void; children?: ReactNode }) {
   return <div className="private-shell"><PrivateHeader /><main id="private-main" tabIndex={-1}>
     <div className="private-heading"><h1>Connections</h1><p>Saved enrollments and their last verified signals.</p>
       <p>This inventory covers all workspaces in this Control Room account.</p></div>
+    {children}
     <p className="private-note">This is the existing Hermes 0.21 enrollment inventory, not a live fleet monitor.
-      The new cross-machine agent connection and task runner are not connected here yet.</p>
+      Saved setup plans and verified worker signals are shown separately so a planned route is never presented as a running agent.</p>
     <p className="private-note">Worker platform details, eligible capabilities, available slots, current work and usage are not part of this inventory.
       The operator capacity panel below shows the recorded capacity and outcome evidence, read separately and read-only. Cancel and resume are unsupported here. Open a prepared task to see only the assignment choices that its configured service can actually verify.</p>
     <div className="private-actions"><button type="button" onClick={onRefresh} disabled={data.state === "loading"}>Refresh connections</button></div>
@@ -39,6 +43,7 @@ export function PrivateConnectionView({ data, onRefresh }: { data: PrivateConnec
 export function PrivateConnections() {
   const [data, setData] = useState<PrivateConnectionViewState>({ state: "loading" });
   const [refresh, setRefresh] = useState(0);
+  const installationTopology = useInstallationTopology();
   useEffect(() => {
     let live = true, generation = 0;
     const load = async () => {
@@ -57,5 +62,8 @@ export function PrivateConnections() {
     window.addEventListener("focus", focus);
     return () => { live = false; generation++; clearInterval(interval); window.removeEventListener("focus", focus); };
   }, [refresh]);
-  return <PrivateConnectionView data={data} onRefresh={() => setRefresh(value => value + 1)} />;
+  return <PrivateConnectionView data={data} onRefresh={() => setRefresh(value => value + 1)}>
+    <InstallationTopologySummary setup={installationTopology?.setup} status={installationTopology?.state} />
+    <LocalWorkerRouteStatus setup={installationTopology?.setup} state={installationTopology?.state ?? "loading"} />
+  </PrivateConnectionView>;
 }

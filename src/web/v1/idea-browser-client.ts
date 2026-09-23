@@ -1,6 +1,6 @@
 import { BrowserRequestError } from "./browser-client";
 import { readBrowserJson } from "./browser-json";
-import { ideaPageSchema, ideaDetailSchema } from "./idea-wire";
+import { ideaPageSchema, ideaDetailSchema, ideaResultProjectionReceiptSchema } from "./idea-wire";
 import { catalogProjectIdSchema } from "./project-wire";
 
 export function createIdeaBrowserClient(transport: typeof fetch = fetch) {
@@ -30,6 +30,21 @@ export function createIdeaBrowserClient(transport: typeof fetch = fetch) {
         const detail = ideaDetailSchema.parse(await read(`/api/v1/ideas/${encodeURIComponent(sessionId)}`, signal));
         if (detail.session.sessionId !== sessionId) throw new Error();
         return detail;
+      } catch (error) { throw error instanceof BrowserRequestError ? error : new BrowserRequestError("unavailable"); }
+    },
+    async projectReviewedResult(sessionId: string, taskKey: string, signal?: AbortSignal) {
+      id(sessionId); id(taskKey);
+      try {
+        const response = await transport(`/api/v1/ideas/${encodeURIComponent(sessionId)}/tasks/${encodeURIComponent(taskKey)}/contribution`, {
+          method: "POST", credentials: "same-origin", cache: "no-store", redirect: "error", signal: signal
+            ? AbortSignal.any([signal, AbortSignal.timeout(10_000)]) : AbortSignal.timeout(10_000),
+          headers: { "x-requested-with": "XMLHttpRequest", accept: "application/json" },
+        });
+        if (!response.ok) throw new BrowserRequestError(response.status === 401 ? "authentication_required"
+          : response.status === 403 ? "access_denied" : response.status === 404 ? "not_found" : response.status === 409 ? "conflict" : "unavailable");
+        const receipt = ideaResultProjectionReceiptSchema.parse(await readBrowserJson(response));
+        if (receipt.sessionId !== sessionId || receipt.taskKey !== taskKey) throw new Error();
+        return receipt;
       } catch (error) { throw error instanceof BrowserRequestError ? error : new BrowserRequestError("unavailable"); }
     },
   };

@@ -24,7 +24,7 @@ import type {
   OwnerNotificationSettingsV1,
 } from "../src/notifications/v1/index.ts";
 import { NotificationDecisionList, NotificationSettingsSurface } from "../private-app/app/notification-settings.tsx";
-import { TaskStateGuidance, taskStateGuidance } from "../private-app/app/task-panels.tsx";
+import { HermesDeliveryRecoveryPanel, TaskDetailPanel, TaskStateGuidance, taskStateGuidance } from "../private-app/app/task-panels.tsx";
 import { PrivateSettingsWorkspace } from "../private-app/app/settings/workspace.tsx";
 import { readOwnerNotificationsV1, unavailableOwnerNotificationsV1 } from "../src/web/v1/owner-notifications-browser-client.ts";
 import { OwnerNotificationsPanel } from "../private-app/app/owner-notifications-workspace.tsx";
@@ -51,8 +51,70 @@ function detail(state: TaskDetail["task"]["state"], run?: Partial<TaskDetail["at
         firstObservedExecutionAt: at, finishedObservedAt: null, cancellation: "not_requested", source: "native_snapshot",
         nativeState: "running", availability: "current", usage: null, resultClaim: null, timeline: [],
         earlierObservationsOmitted: false, ...run }] }] : [], earlierAttemptsOmitted: false,
+    preparedFor: null, hermesDeliveryRecovery: { source: "not_applicable" },
+    localRouteObservation: { state: "not_prepared", adapter: null },
     progressSource, dispatch: "configured", artifacts: "configured", review: "recorded" };
 }
+
+test("local Hermes recovery tells the owner only what saved evidence proves", () => {
+  const staged = renderToStaticMarkup(<HermesDeliveryRecoveryPanel recovery={{ source: "configured", status: {
+    state: "terminal_result_staged", terminal: { terminalResultDigest: digest, contentDigest: digest, sizeBytes: 12,
+      inputTokens: 4, outputTokens: 5, totalTokens: 9, durationMs: 8 },
+    startsWork: false, grantsExecutionAuthority: false, permitsRetry: false, permitsResume: false,
+  } }} />);
+  assert.match(staged, /Terminal result safely staged/);
+  assert.match(staged, /text and private runner settings are not shown/i);
+  assert.match(staged, /Saved result size/);
+  assert.match(staged, />12 bytes</);
+  assert.match(staged, /Reported tokens/);
+  assert.match(staged, />9</);
+  assert.match(staged, /Reported duration/);
+  assert.match(staged, />8 ms</);
+  assert.match(staged, /cannot start, retry, resume, publish, or contact Hermes/i);
+  assert.doesNotMatch(staged, /<button|<form|Start Hermes|Retry Hermes|Resume Hermes/);
+  assert.doesNotMatch(staged, /sha256:|session:/);
+  const ambiguous = renderToStaticMarkup(<HermesDeliveryRecoveryPanel recovery={{ source: "ambiguous_attempt" }} />);
+  assert.match(ambiguous, /will not guess which delivery record to inspect/i);
+});
+
+test("a prepared task shows only its safe worker category and no assignment claim", () => {
+  for (const [preparedFor, label] of [["hermes", "Hermes Agent"], ["codex", "Codex"], ["claude", "Claude Code"],
+    ["configured_worker", "Configured worker"]] as const) {
+    const html = renderToStaticMarkup(<TaskDetailPanel detail={{ ...detail("ready"), preparedFor }} />);
+    assert.match(html, new RegExp(`prepared for ${label}`));
+    assert.match(html, /Preparation does not assign or start this worker/);
+    assert.match(html, /not a current availability or running-work signal/);
+    assert.doesNotMatch(html, /template:|worker:|credential:|sha256:/);
+  }
+});
+
+test("a prepared local worker explains its route limit without advertising an enabled process", () => {
+  const hermes = renderToStaticMarkup(<TaskDetailPanel detail={{ ...detail("ready"), preparedFor: "hermes" }} />);
+  assert.match(hermes, /limited to a supplied-text review/);
+  assert.match(hermes, /Before it can receive even that work/);
+  const claude = renderToStaticMarkup(<TaskDetailPanel detail={{ ...detail("ready"), preparedFor: "claude" }} />);
+  assert.match(claude, /one text-only review/);
+  assert.match(claude, /does not allow tools, add-ons, saved sessions, or unattended permission prompts/);
+  assert.doesNotMatch(`${hermes}${claude}`, /<button|<form|<input|available now|running now/i);
+});
+
+test("a run may identify its saved local adapter without claiming current local availability", () => {
+  const html = renderToStaticMarkup(<TaskDetailPanel detail={detail("running", { routeEvidence: "local_claude" })} />);
+  assert.match(html, /Saved adapter route: local Claude Code adapter/);
+  assert.match(html, /does not prove that this computer still has that worker configured, available, or running/i);
+  assert.doesNotMatch(html, /Claude Code is running|Claude Code available now/i);
+});
+
+test("a local route status distinguishes a fresh matching task record from availability", () => {
+  const running = renderToStaticMarkup(<TaskDetailPanel detail={{ ...detail("running", { routeEvidence: "local_claude" }),
+    preparedFor: "claude", localRouteObservation: { state: "configured_local_route", adapter: "claude" } }} />);
+  assert.match(running, /trusted server configuration and fresh saved task record agree on the prepared Claude Code local route/i);
+  assert.match(running, /does not show a worker identity, prove availability for another task/i);
+  const uncertain = renderToStaticMarkup(<TaskDetailPanel detail={{ ...detail("running", { routeEvidence: "local_hermes", stale: true }),
+    preparedFor: "hermes", localRouteObservation: { state: "needs_attention", adapter: "hermes" } }} />);
+  assert.match(uncertain, /will not guess whether it is still working/i);
+  assert.doesNotMatch(`${running}${uncertain}`, /<button|<form|<input/);
+});
 
 test("each ordinary task state points to one safe next destination or explanation", () => {
   const expected = new Map<TaskDetail["task"]["state"], string | undefined>([
@@ -123,7 +185,11 @@ test("notification reader maps only attention and incidents using the fixed defa
     calls.push([url, init]);
     return Response.json({ snapshot });
   });
-  assert.deepEqual(calls, [["/api/v1/operator-surface", { credentials: "same-origin", cache: "no-store" }]]);
+  assert.equal(calls.length, 1);
+  const [url, init] = calls[0] as [string, RequestInit];
+  assert.equal(url, "/api/v1/operator-surface");
+  assert.equal(init.credentials, "same-origin"); assert.equal(init.cache, "no-store");
+  assert.ok(init.signal instanceof AbortSignal);
   assert.equal(view.state, "available");
   assert.equal(ownerNotificationSettingsSchemaV1.safeParse(view.settings).success, true);
   assert.equal(view.settings.tenantId, snapshot.tenantId);

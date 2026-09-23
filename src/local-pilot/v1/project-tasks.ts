@@ -38,6 +38,25 @@ export function createLocalPilotProjectTasksV1(
     async getResults(request: Request, projectId: string, jobId: string, artifactId?: string) {
       return tasks.results(await verify(request, "GET"), projectId, jobId, artifactId);
     },
+    // These projections deliberately use the same canonical task service as the
+    // private product.  The local pilot adds no scheduler, assignment, approval,
+    // retry, or result-writing path.
+    async home(request: Request) {
+      return tasks.home(await verify(request, "GET"));
+    },
+    async projectOverview(request: Request, projectId: string) {
+      return tasks.projectOverview(await verify(request, "GET"), projectId);
+    },
+    async projectAttention(request: Request, projectId: string, mode: "inbox" | "reviews", after?: string) {
+      return tasks.projectAttention(await verify(request, "GET"), projectId, mode, after);
+    },
+    async projectAgents(request: Request, projectId: string) {
+      await tasks.authorize(await verify(request, "GET"), projectId);
+      return { projectId, eligibilitySource: "not_configured" as const, workers: [], tasksExamined: 0,
+        additionalTasksOmitted: false, candidateEvidence: "configured_routes_only" as const,
+        observedAt: new Date().toISOString(), startsWork: false as const,
+        grantsAssignmentAuthority: false as const, grantsExecutionAuthority: false as const };
+    },
     async getSyntheticResult(request: Request, projectId: string, jobId: string, artifactId: string) {
       return tasks.readScopedResult(await verify(request, "GET"), projectId, jobId, async scope => {
         if (!source) throw new Error("synthetic_results_not_configured");

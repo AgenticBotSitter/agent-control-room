@@ -1,7 +1,7 @@
 import { z } from "zod";
 import type { DatabaseClient, DatabaseSession } from "../../persistence/database";
 import { jobRecordSchema } from "../../domain/v1";
-import { NativeResultStore, type NativeResultReadConfiguration } from "../../artifacts/v1/native-results";
+import type { NativeResultReadConfiguration } from "../../artifacts/v1/native-results";
 import { CompletionGateStoreV1, type CompletionAcceptanceProfileV1, type CompletionVerificationV1, type CompletionRiskV1 } from "../../completion-gate/v1";
 import { stageAsyncCompletionCheckpoint } from "../../completion-gate/v1/async-staged-checkpoint";
 import { readTaskReviewPlanV1, verifyTaskReviewTargetV1 } from "../../completion-gate/v1/task-review-plan";
@@ -10,6 +10,7 @@ import { appendAuditWith } from "../../audit/audit-store";
 import { WebSessionAuthority, type WebActor } from "./session-authority";
 import { WebProjectService } from "./project-service";
 import { WebAccessError, type VerifiedWebIdentity } from "./access-verifier";
+import { PlanSelectedTaskResultReaderV1 } from "./task-result-reader";
 import { catalogProjectIdSchema as id } from "./project-wire";
 import { taskVerificationDraftSchema, taskVerificationOptionsSchema, taskVerificationReceiptSchema } from "./task-verification-wire";
 
@@ -31,7 +32,7 @@ export class WebTaskVerificationService {
   private readonly key: Uint8Array;
   private readonly checkpoints: AwaitableRollbackCheckpointStoreV1;
   private readonly descriptors: readonly ManualVerificationScenario[];
-  private readonly results: NativeResultStore;
+  private readonly results: PlanSelectedTaskResultReaderV1;
   private readonly projects: WebProjectService;
   constructor(private readonly db: DatabaseClient, private readonly scope: { tenantId: string; workspaceId: string },
     config: WebTaskVerificationConfiguration, private readonly clock: () => number = Date.now) {
@@ -43,8 +44,8 @@ export class WebTaskVerificationService {
       throw new Error("verification_configuration_invalid");
     this.checkpoints = Object.freeze({ read: config.checkpoints.read.bind(config.checkpoints), advance: config.checkpoints.advance.bind(config.checkpoints),
       initialize: () => { throw new Error("verification_provisioning_unavailable"); } });
-    this.results = new NativeResultStore(db, config.harnessIntegrityKey, { ...config.results,
-      storage: Object.freeze({ read: config.results.storage.read.bind(config.results.storage) }) });
+    this.results = new PlanSelectedTaskResultReaderV1(db, { harnessIntegrityKey: config.harnessIntegrityKey,
+      results: config.results, reviewIntegrityKey: config.integrityKey });
     this.projects = new WebProjectService(db, scope, clock, config.ideaIntegrityKey);
   }
   private ids(...values: string[]) { if (values.some(value => !id.safeParse(value).success)) throw new WebAccessError("invalid_request"); }

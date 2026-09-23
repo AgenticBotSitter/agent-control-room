@@ -11,6 +11,7 @@ import { documentStructureRulesSchema } from "../../completion-gate/v1/document-
 import { assertNoSecretMaterial, sha256Digest } from "../../security";
 import { catalogProjectIdSchema } from "./project-wire";
 import { TaskCoordinatorInterruption } from "./task-coordinator-interruption";
+import type { TaskResultInspectionSourceV1 } from "../../completion-gate/v1/task-result-inspection";
 
 export type TaskQualityConfiguration = NativeQualityConfiguration & { scenarios: readonly AutomaticDocumentScenario[] };
 export const taskQualityRequestSchema = nativeQualityRequestSchema.extend({ projectId: catalogProjectIdSchema, jobId: catalogProjectIdSchema }).strict();
@@ -52,11 +53,20 @@ export function captureTaskQualityConfiguration(config: TaskQualityConfiguration
 export class TaskQualityCoordinator {
   private readonly config: TaskQualityConfiguration;
   private readonly scope: { tenantId: string; workspaceId: string };
+  private readonly inspectionSource?: TaskResultInspectionSourceV1;
   private highWater = Number.NEGATIVE_INFINITY;
   constructor(private readonly db: DatabaseClient, scope: { tenantId: string; workspaceId: string },
-    config: TaskQualityConfiguration, private readonly clock: () => number = Date.now) {
+    config: TaskQualityConfiguration, private readonly clock: () => number = Date.now,
+    inspectionSource?: TaskResultInspectionSourceV1) {
     this.scope = Object.freeze({ tenantId: catalogProjectIdSchema.parse(scope.tenantId), workspaceId: catalogProjectIdSchema.parse(scope.workspaceId) });
     this.config = captureTaskQualityConfiguration(config);
+    if (inspectionSource !== undefined && typeof inspectionSource.inspectSubmitted !== "function") return deny();
+    this.inspectionSource = inspectionSource && Object.freeze({ inspectSubmitted: inspectionSource.inspectSubmitted.bind(inspectionSource) });
+  }
+  private inspectSubmitted(tx: DatabaseSession, tenantId: string, runId: string) {
+    return this.inspectionSource
+      ? this.inspectionSource.inspectSubmitted(tx, tenantId, runId)
+      : new NativeResultSubmissionService(this.db, this.config).inspectSubmitted(tx, tenantId, runId);
   }
   private async scopeIn(tx: DatabaseSession, request: Pick<TaskQualityRequest, "projectId" | "jobId" | "runId">) {
     const rows = await tx.query(`SELECT p.id FROM control_harness_runs r
@@ -107,7 +117,7 @@ export class TaskQualityCoordinator {
       return candidates;
     }, current);
     current();
-    const submission = new NativeResultSubmissionService(this.db, this.config), items: TaskQualitySweepItem[] = [];
+    const items: TaskQualitySweepItem[] = [];
     for (const row of rows.slice(0, 5)) {
       current();
       try {
@@ -115,7 +125,7 @@ export class TaskQualityCoordinator {
           current();
           await this.scopeIn(tx, { projectId: request.projectId, jobId: row.job_id, runId: row.run_id });
           current();
-          const context = await submission.inspectSubmitted(tx, this.scope.tenantId, row.run_id);
+          const context = await this.inspectSubmitted(tx, this.scope.tenantId, row.run_id);
           current();
           if (context.run.projectId !== request.projectId || context.job.id !== row.job_id) return deny();
           return taskQualityRequestSchema.parse({ tenantId: this.scope.tenantId, projectId: request.projectId,
@@ -145,9 +155,8 @@ export class TaskQualityCoordinator {
       }, async () => { current(); await precommit(); current(); }); } };
     const native = nativeQualityRequestSchema.parse({ tenantId: request.tenantId, runId: request.runId,
       targetDigest: request.targetDigest, contentHash: request.contentHash });
-    const submission = new NativeResultSubmissionService(db, this.config);
     const inspect = () => db.transaction(async tx => {
-      const context = await submission.inspectSubmitted(tx, request.tenantId, request.runId);
+      const context = await this.inspectSubmitted(tx, request.tenantId, request.runId);
       if (context.run.projectId !== request.projectId || context.run.jobId !== request.jobId
         || context.snapshot.targetDigest !== request.targetDigest || context.result.receipt.contentHash !== request.contentHash) return deny();
       return context;
@@ -158,7 +167,7 @@ export class TaskQualityCoordinator {
       const scenarios = this.config.scenarios.filter(value => value.acceptanceProfileId === context.profile.id
         && value.acceptanceProfileDigest === sha256Digest(context.profile) && context.profile.requiredVerificationScenarioIds.includes(value.scenarioId));
       if (scenarios.length) {
-        const verified = await new NativeResultVerificationService(db, this.config, scenarios, time).verify(native, current);
+        const verified = await new NativeResultVerificationService(db, this.config, scenarios, time, this.inspectionSource).verify(native, current);
         verification = verified.replayed ? "replayed" : "recorded"; context = await inspect();
       } else verification = "not_configured";
     }
@@ -166,11 +175,11 @@ export class TaskQualityCoordinator {
     // Verified native completion frees occupancy independently of the quality disposition.
     // Ready results retain the existing atomic quality-completion path and its exact replay.
     const capacity = context.snapshot.status === "ready" ? undefined
-      : await new NativeTaskCompletionService(db, this.config, time).releaseCapacity(native, current);
+      : await new NativeTaskCompletionService(db, this.config, time, this.inspectionSource).releaseCapacity(native, current);
     current();
     switch (context.snapshot.status) {
       case "ready": {
-        const completion = await new NativeTaskCompletionService(db, this.config, time).complete(native, current);
+        const completion = await new NativeTaskCompletionService(db, this.config, time, this.inspectionSource).complete(native, current);
         current(); return { ...base, disposition: "completed" as const, completion };
       }
       case "pending": current(); return { ...base, capacity, disposition: "waiting_review" as const };

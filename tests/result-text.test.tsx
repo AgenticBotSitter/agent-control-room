@@ -32,6 +32,26 @@ test("actual results panel renders only currently authorized matching content", 
   assert.ok(!render(page, { ...content, artifact: { ...artifact, contentHash: `sha256:${"b".repeat(64)}` } }).includes("Unique protected result"));
 });
 
+test("coding-change evidence is aggregate-only and never mistaken for authority", () => {
+  const page: TaskResultsPage = { projectId: "project:test", jobId: "job:test", observedAt: "2026-09-08T12:00:00.000Z",
+    resultSource: "configured", reviewSource: "configured", reviews: [], additionalResultsOmitted: false,
+    additionalTargetsOmitted: false, canReadContent: false, reviewCommands: "not_connected", items: [{
+      artifactId: "artifact:test", attemptId: "attempt:test", runId: "run:test", contentHash: `sha256:${"a".repeat(64)}`,
+      sizeBytes: 20, receivedAt: "2026-09-08T12:00:00.000Z", byteCheck: "matched_recorded_claim", qualityAccepted: false,
+      worktreeChangeSummary: { source: "recorded", changedFiles: 2, changedBytes: 20, addedFiles: 1, modifiedFiles: 1, deletedFiles: 0,
+        evidenceDigest: `sha256:${"b".repeat(64)}`, startsWork: false, grantsExecutionAuthority: false,
+        permitsRetry: false, permitsResume: false, permitsApproval: false, permitsMerge: false } }] };
+  const html = renderToStaticMarkup(<TaskResultsPanel page={page} pending={false} onOpen={() => {}} onClose={() => {}} />);
+  assert.match(html, /Verified change summary: 2 files \/ 20 bytes/);
+  assert.match(html, /does not start, retry, resume, approve or merge work/);
+  for (const forbidden of ["src/secret.ts", "allowedPaths", "baseRevision", "resultReceiptDigest", "contentDigest"])
+    assert.doesNotMatch(html, new RegExp(forbidden));
+  const unavailable = renderToStaticMarkup(<TaskResultsPanel page={{ ...page, items: page.items.map(item => ({ ...item,
+    worktreeChangeSummary: { source: "unavailable" as const } })) }}
+    pending={false} onOpen={() => {}} onClose={() => {}} />);
+  assert.match(unavailable, /does not mean no files changed/);
+});
+
 test("oversized results retain full plain text without Markdown parsing", () => {
   const text = "x".repeat(32769);
   const html = renderToStaticMarkup(<ResultText text={text} />);

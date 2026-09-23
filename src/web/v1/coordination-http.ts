@@ -24,7 +24,7 @@
 //   * A valid coordinator revision matching the current head (refused otherwise)
 
 import { projectCoordinationActionResultSchema, projectCoordinationPageSchema } from "./project-coordination-wire";
-import { createAccessVerifier, requireSameOrigin, WebAccessError, type AccessTrust } from "./access-verifier";
+import { createAccessVerifier, requireSameOrigin, WebAccessError, type AccessTrust, type GatewayAssertionProviderProfileV1 } from "./access-verifier";
 import { privateResponseHeaders as responseHeaders, readBoundedJson, webFailure } from "./http-common";
 import { sha256Digest } from "../../security/digest";
 import type { ProjectCoordinationHttpService } from "./project-coordination-http";
@@ -37,6 +37,8 @@ export interface CoordinationHttpHandlerOptions {
   origin: string;
   trust: AccessTrust;
   service: ProjectCoordinationHttpService;
+  /** Trusted process selection; the browser cannot choose a header/provider. */
+  gatewayAssertionProfile?: GatewayAssertionProviderProfileV1;
   clock?: () => number;
   /**
    * Async predicate returning whether the coordination surface accepts writes.
@@ -130,7 +132,7 @@ function extractAppointFields(body: unknown): {
 }
 
 export function createCoordinationHttpHandler(options: CoordinationHttpHandlerOptions) {
-  const verifyIdentity = createAccessVerifier(options.trust);
+  const verifyIdentity = createAccessVerifier(options.trust, options.gatewayAssertionProfile);
   const clock = options.clock ?? Date.now;
   const isCoordinationEnabled = options.isCoordinationEnabled ?? (() => Promise.resolve(true));
   const inflight = options.inflight ?? new Map<string, Promise<unknown>>();

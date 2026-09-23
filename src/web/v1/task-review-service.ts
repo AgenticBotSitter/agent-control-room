@@ -2,7 +2,7 @@ import { randomUUID, timingSafeEqual } from "node:crypto";
 import { z } from "zod";
 import type { DatabaseClient, DatabaseSession } from "../../persistence/database";
 import { jobRecordSchema } from "../../domain/v1";
-import { NativeResultStore, type NativeResultReadConfiguration } from "../../artifacts/v1/native-results";
+import type { NativeResultReadConfiguration } from "../../artifacts/v1/native-results";
 import { CompletionGateStoreV1, CompletionGateErrorV1, type CompletionAcceptanceProfileV1, type CompletionReviewV1,
   type CompletionFindingV1, type CompletionRiskV1 } from "../../completion-gate/v1";
 import { stageAsyncCompletionCheckpoint } from "../../completion-gate/v1/async-staged-checkpoint";
@@ -13,6 +13,7 @@ import { appendAuditWith } from "../../audit/audit-store";
 import { WebSessionAuthority, type WebActor } from "./session-authority";
 import { WebProjectService } from "./project-service";
 import { WebAccessError, type VerifiedWebIdentity } from "./access-verifier";
+import { PlanSelectedTaskResultReaderV1 } from "./task-result-reader";
 import { catalogProjectIdSchema } from "./project-wire";
 import { taskReviewDraftSchema, taskReviewReceiptSchema, taskReviewNoteSchema, taskReviewOptionsSchema,
   type TaskReviewDraft, type TaskReviewReceipt } from "./task-review-wire";
@@ -30,7 +31,7 @@ const risks: CompletionRiskV1[] = ["low", "medium", "high", "critical"];
 export class WebTaskReviewService {
   private readonly integrityKey: Uint8Array;
   private readonly checkpoints: AwaitableRollbackCheckpointStoreV1;
-  private readonly results: NativeResultStore;
+  private readonly results: PlanSelectedTaskResultReaderV1;
   private readonly projects: WebProjectService;
   constructor(private readonly db: DatabaseClient, private readonly scope: { tenantId: string; workspaceId: string },
     config: WebTaskReviewConfiguration & { harnessIntegrityKey: Uint8Array; results: NativeResultReadConfiguration; ideaIntegrityKey?: Uint8Array },
@@ -39,8 +40,8 @@ export class WebTaskReviewService {
     this.integrityKey = Uint8Array.from(config.integrityKey);
     this.checkpoints = Object.freeze({ read: config.checkpoints.read.bind(config.checkpoints),
       advance: config.checkpoints.advance.bind(config.checkpoints), initialize: () => { throw new Error("review_provisioning_unavailable"); } });
-    this.results = new NativeResultStore(db, config.harnessIntegrityKey, { ...config.results,
-      storage: Object.freeze({ read: config.results.storage.read.bind(config.results.storage) }) });
+    this.results = new PlanSelectedTaskResultReaderV1(db, { harnessIntegrityKey: config.harnessIntegrityKey,
+      results: config.results, reviewIntegrityKey: config.integrityKey });
     this.projects = new WebProjectService(db, scope, clock, config.ideaIntegrityKey);
   }
   private ids(...values: string[]) {
@@ -99,11 +100,11 @@ export class WebTaskReviewService {
     if (snapshot.target.projectId !== projectId || snapshot.target.kind !== "document")
       throw new WebAccessError("not_found");
     const profile = await gate.getRecord(this.scope.tenantId, snapshot.target.acceptanceProfileId, "profile") as CompletionAcceptanceProfileV1;
+    const lineage = await readTaskReviewPlanV1(tx, this.integrityKey, this.scope.tenantId, projectId, jobId);
     const result = await this.results.read(tx, this.scope.tenantId, projectId, jobId, artifactId);
     if (!result || result.receipt.contentHash !== snapshot.target.subjectDigest
       || result.receipt.nodeId !== snapshot.target.producer.actorId || snapshot.target.producer.actorType !== "agent")
       throw new WebAccessError("conflict");
-    const lineage = await readTaskReviewPlanV1(tx, this.integrityKey, this.scope.tenantId, projectId, jobId);
     verifyTaskReviewTargetV1(lineage, snapshot.target, result.receipt);
     const risk = risks[Math.max(risks.indexOf(profile.minimumRisk), risks.indexOf(job.authority.maxRisk))];
     const ownRecordedReview = (await tx.query(`SELECT id FROM control_completion_gate_records WHERE tenant_id=$1 AND project_id=$2
