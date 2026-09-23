@@ -44,12 +44,15 @@ prepared for the owner's `cr` profile with the separately selected model and
 provider, but that exact selection still requires its own owner-attended
 qualification before it can receive a real Control Room task.
 
-All 372 test files are now reachable from the GitHub test lanes. Registering
-the previously omitted shared Hermes/Claude startup checks exposed and fixed
-one stale Claude fixture that lacked the new Opus pin. The shared server
-composition now passes 109 checks, including retained Hermes operation when
-Claude is added, restart recovery, route isolation, and refusal of a
-Claude-only configuration. This is source evidence, not a live connection.
+All 381 test files are now reachable from the GitHub test lanes. The shared
+controller-to-worker node-delivery checks are registered alongside the local
+Hermes and Claude installation checks, so a future automated run cannot leave
+the new remote-delivery contract untested. Registering the previously omitted
+shared Hermes/Claude startup checks exposed and fixed one stale Claude fixture
+that lacked the new Opus pin. The shared server composition now passes 109
+checks, including retained Hermes operation when Claude is added, restart
+recovery, route isolation, and refusal of a Claude-only configuration. This is
+source evidence, not a live connection.
 
 ## Source checkpoint (2026-09-23)
 
