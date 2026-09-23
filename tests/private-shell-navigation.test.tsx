@@ -4,7 +4,7 @@ import { createHash } from "node:crypto";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import Home from "../private-app/app/page";
-import { HomeDashboard, type HomeDashboardState } from "../private-app/app/home-workspace";
+import { HomeDashboard, HomeInstallationStatus, type HomeDashboardState } from "../private-app/app/home-workspace";
 import SettingsPage from "../private-app/app/settings/page";
 import { PrivateProjectWorkspace, ProjectAgentInstallationStatus } from "../private-app/app/workspace";
 import { ProjectCatalogNavigation } from "../app/components/project-catalog-navigation";
@@ -48,6 +48,8 @@ test("home gives honest navigation to existing private workspace surfaces", () =
   assert.match(html, /Each section reports unavailable data instead of replacing it with a zero/);
   assert.match(html, /Installation setup/);
   assert.match(html, /Checking saved setup status/);
+  assert.match(html, /Local worker routes/);
+  assert.match(html, /Checking saved local worker setup/);
   assert.doesNotMatch(html, /No reviewed setup plan is currently available/);
   assert.doesNotMatch(html, /Idea Lab is optional/);
   assert.doesNotMatch(html, /live workers|running now|0 tasks/i);
@@ -56,6 +58,20 @@ test("home gives honest navigation to existing private workspace surfaces", () =
   assert.match(html, /Operator capacity/);
   assert.match(html, /Reading the recorded capacity and outcome evidence/);
   assert.equal((html.match(/operator-capacity-title/g) ?? []).length, 2, "one read-only capacity panel is mounted");
+});
+
+test("home shows the three saved local route setup states without presenting them as live", () => {
+  const plan = planInstallationTopologyV1({ databaseAuthorityDigest: sha256Digest("database"),
+    schedulerAuthorityDigest: sha256Digest("scheduler"),
+    currentRoutes: [{ kind: "local", workerId: "worker:local", adapterId: "connector:local-v1", adapterRevision: "00570550" }],
+    requestedRoutes: [{ kind: "local", workerId: "worker:local", adapterId: "connector:local-v1", adapterRevision: "00570550" }] });
+  const html = renderToStaticMarkup(createElement(HomeInstallationStatus, { topology: {
+    state: "available", setup: createInstallationSetupViewV1({ plan, localBackupRestoreVerified: false }),
+  } }));
+  for (const label of ["Hermes Agent", "Claude Code", "Codex"]) assert.match(html, new RegExp(label));
+  assert.match(html, /saved setup and proof states, not a live process monitor/);
+  assert.match(html, /This panel has no current route-bound task observation/);
+  assert.doesNotMatch(html, /worker:local|sha256:|token|password|provider|model|<button|<form|<input/);
 });
 
 test("task proposal and worker inventory disclose unavailable operational facts", () => {

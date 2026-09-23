@@ -14,6 +14,7 @@ import { ConfiguredTimestamp } from "./configured-timestamp";
 import { taskResultHrefV1 } from "./task-results";
 import { useInstallationTopology } from "./installation-topology";
 import { InstallationTopologySummary } from "./installation-topology-summary";
+import { LocalWorkerRouteStatus } from "./local-worker-route-status";
 import { PrivateOperatorCapacityWorkspace } from "./operator-capacity-workspace";
 
 type ReadState<T> = { state: "loading" } | { state: "ready"; value: T } | { state: "unavailable" };
@@ -92,6 +93,18 @@ export function HomeDashboard({ data }: { data: HomeDashboardState }) {
   </div>;
 }
 
+/**
+ * Keep the installation overview and the concise local-route setup states
+ * together on Home. Both are backed by the same protected, redacted read;
+ * neither is a live process or availability check.
+ */
+export function HomeInstallationStatus({ topology }: { topology: ReturnType<typeof useInstallationTopology> }) {
+  return <>
+    <InstallationTopologySummary setup={topology.setup} status={topology.state} />
+    <LocalWorkerRouteStatus setup={topology.setup} state={topology.state} />
+  </>;
+}
+
 export function PrivateHome() {
   const displayName = useProductDisplayName();
   const ideaLab = useProductModule("ideaLab");
@@ -130,7 +143,7 @@ export function PrivateHome() {
     <section className="private-home-intro" aria-labelledby="home-title"><p className="private-eyebrow">Private workspace</p>
       <h1 id="home-title">{displayName}</h1><p>Current saved work, results and attention from the protected Control Room services. This page refreshes while it is open and again when you return to it. Each section reports unavailable data instead of replacing it with a zero.</p>
       <button type="button" onClick={() => setGeneration(value => value + 1)}>Refresh dashboard</button></section>
-    <InstallationTopologySummary setup={installationTopology?.setup} status={installationTopology?.state} />
+    <HomeInstallationStatus topology={installationTopology} />
     <HomeDashboard data={data} />
     <PrivateOperatorCapacityWorkspace />
     {ideaLab && <aside className="private-note private-home-note" aria-label="Optional module"><strong>Idea Lab is optional.</strong>{" "}
