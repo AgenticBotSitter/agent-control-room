@@ -24,11 +24,11 @@ delivery transport.
   first-task proof.
 - The shared remote delivery contract, node-session bridge, canonical queued
   task selection, durable uncertain-send recovery, reconstruction-stable packet
-  identity, remote correction planning, and protected installation forwarding
-  exist in source. The remote route is **not yet complete**: node-side Codex
-  execution/result return, protected resolver/receipt intake composition, late
-  receipt recovery after a rebuilt node session, and their disposable proofs
-  remain before a remote worker can be activated.
+  identity, remote correction planning, protected installation forwarding, and
+  a bounded Codex node composition exist in source. The remote route is **not
+  yet complete**: protected resolver/receipt intake and node-entry composition,
+  late receipt recovery after a rebuilt node session, and their disposable
+  proofs remain before a remote worker can be activated.
 - macOS Codex execution remains fail-closed. The discarded prototype could not
   protect Codex's pathname-based private home safely. The first supported
   Codex worker is therefore the reviewed Linux route in the several-computer
@@ -99,7 +99,9 @@ database, scheduler, website, and review path.
    signed node and enrollment binding and never reinterpret a receipt as an
    execution permit or resend the task. Do not add another broker, scheduler,
    or database.
-2. For the first Linux Codex worker, reuse the existing approved Codex v3/v4
+2. Wire the existing bounded Codex node composition through protected
+   installation/node-entry inputs. For the first Linux Codex worker, reuse the
+   existing approved Codex v3/v4
    task, permit, activation, and result-return lifecycle. Add only a shared
    remote delivery wrapper for that already-approved task; a generic remote
    receipt is never execution permission. Generic v11 source plans and v12
