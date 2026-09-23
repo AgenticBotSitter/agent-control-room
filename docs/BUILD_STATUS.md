@@ -30,6 +30,13 @@ separate checks. The next UI capability still missing is a privacy-safe link
 between a current task observation and its exact local route; until that exists,
 the interface intentionally does not label a route as running.
 
+Claude's fixed first-task policy is now paired with a source-only, sanitized
+qualification-evidence contract. It binds a future owner-attended check to the
+exact fixed text-review policy while retaining only a digest and bounded
+success measurements. It cannot start Claude, reveal the command/login/prompt
+or output text, make a route available, or authorize work. The real
+installed-Claude qualification and first task are still owner-attended gates.
+
 The macOS installation-journal sidecar binding and the separately versioned
 installed-manifest v2 binding are **source-only and inert**. The release build
 can bind and verify the named bytes, platform, architecture and digests before

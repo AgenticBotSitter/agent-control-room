@@ -94,6 +94,12 @@ Code itself.
   response with no persisted session, built-in tools, MCP tools, plug-ins, or
   unattended permission approval. Do not relax that policy; a later writing
   capability needs its own separately reviewed route.
+- The source also has a sanitized qualification-evidence format bound to the
+  digest of that exact fixed policy. A later owner-run check may record only
+  bounded success measurements; it cannot export its command path, working
+  directory, login state, prompt, answer text, session ID, or raw CLI frames.
+  This evidence is non-authorizing: it does not make a route live or give it a
+  task.
 - The port must be single-purpose: no executable discovery, arbitrary command
   construction, inherited broad environment, plugin control, resume, or generic
   terminal access. Its qualification must demonstrate that user hooks, MCP

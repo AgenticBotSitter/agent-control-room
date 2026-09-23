@@ -5,6 +5,7 @@ export * from "./owned-process-session";
 export * from "./private-process-acquisition";
 export * from "./private-installed-process-host";
 export * from "./text-review-invocation-policy";
+export * from "./qualification-evidence";
 export * from "./unsupported-operations";
 export * from "./result-publication";
 export * from "./local-worker-result";

@@ -2,6 +2,7 @@ import {
   capturePrivateClaudeCodeInstalledProcessHostConfigurationV1,
   type PrivateClaudeCodeInstalledProcessHostConfigurationV1,
 } from "./private-process-acquisition";
+import { sha256Digest } from "../../security/canonical-digest";
 
 /**
  * The first installed Claude route is deliberately narrower than a general
@@ -29,6 +30,17 @@ export const CLAUDE_CODE_TEXT_REVIEW_FIXED_ARGS_V1 = Object.freeze([
 export type ClaudeCodeTextReviewInvocationConfigurationV1 = ReturnType<
   typeof captureClaudeCodeTextReviewInvocationConfigurationV1
 >;
+
+/**
+ * A plan-safe fingerprint of the fixed first-task policy. It intentionally
+ * contains neither a command path nor any owner credential or workspace data.
+ * An owner-attended qualification can record this digest without exporting its
+ * private command configuration.
+ */
+export const CLAUDE_CODE_TEXT_REVIEW_INVOCATION_POLICY_DIGEST_V1 = sha256Digest({
+  schema: "control-room.claude-code-text-review-invocation-policy/v1",
+  args: CLAUDE_CODE_TEXT_REVIEW_FIXED_ARGS_V1,
+});
 
 type CapturedInstalledProcessConfiguration = ReturnType<
   typeof capturePrivateClaudeCodeInstalledProcessHostConfigurationV1
