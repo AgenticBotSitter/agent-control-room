@@ -604,6 +604,14 @@ revoked, or incompatible workers are refused. This is source and disposable
 test evidence, not a live worker, database, service, or multi-machine
 deployment.
 
+A focused recheck of the topology transition, remote admission, receipt,
+reconnect and proof-evidence paths passed **36 tests**. It additionally proves
+that the same authority-database receipt store records either local or remote
+delivery, affected workers are fenced while a topology change is paused, and a
+reconnect can record only the original receipt rather than resend work. This
+does not replace the required private transport, certificate, enrolled-worker,
+and owner-operated multi-machine proof.
+
 **This computer** is being completed as one installation choice of the same
 Agent Control Room product as **Several computers**. Both choices retain one
 PostgreSQL authority database, the existing pg-boss scheduler, and one

@@ -81,11 +81,13 @@ The source already contains and retains:
   and setup-journal foundations; and
 - source-tested local/remote lifecycle and correction journeys.
 
-The active source package is pull request #343. At the start of this plan its
-latest published head is mergeable and all completed public checks are green;
-one component job is still running. Work in the private checkout also contains
-an unfinished native installation-journal session package and must not be
-mistaken for accepted release source.
+The active source package has since incorporated the operation-scoped native
+installation-journal session, its deterministic macOS sidecar assembly, and
+the protected installed-configuration host. The current local source branch
+has passed focused native-custody, macOS-launcher, and unified topology lanes.
+Those are source and disposable-test results, not a released installation or
+authority to perform the owner-attended operating-system steps. Publication
+and hosted CI remain separate acceptance evidence.
 
 ## Reuse-before-rebuild rule
 
@@ -160,20 +162,17 @@ high reviewer if behavior changes.
 **Reuse:** current pull request #343 and its registered CI lanes.
 **Work:**
 
-1. Finish and accept the source-only operation-scoped installation-journal
-   session adapter already in progress. This phase does not implement or claim
-   the concrete native helper.
-2. Reproduce and correct any remaining Linux-only journal race without
-   weakening uncertain-outcome handling.
-3. Run type checks, the older-JavaScript compatibility check, local-installation
-   tests, unified topology tests, build tests and database verification.
-4. Obtain independent review for native/security-sensitive changes.
-5. Publish one coherent tested update to #343; merge only with explicit owner
-   approval.
+1. Re-run the registered checks against the integrated journal/configuration
+   custody package and correct only demonstrated compatibility or race defects.
+2. Obtain and retain independent review for any native or security-sensitive
+   correction.
+3. Publish one coherent tested checkpoint when repository publication is
+   authorized; do not describe a local branch as a released installation.
 
-**Done when:** the branch is clean, every required public check is green, the
-native journal code is either accepted or clearly excluded, and no temporary
-prototype is presented as release code.
+**Done when:** the branch is clean, the integrated journal/configuration
+custody package has the registered local evidence and an independent review,
+the hosted checks are green after publication, and no temporary prototype is
+presented as release code.
 
 ## L1 — Finish protected installation custody
 
@@ -587,14 +586,17 @@ For every phase:
 
 ## Immediate next package
 
-The next work is **L0**, not a new feature:
+The source-only journal/configuration custody package is integrated locally.
+The next implementation work is **L2/M0 in parallel**:
 
-1. finish and review the native installation-journal session now present as
-   unpublished work;
-2. verify the public CI result for #343 and resolve any real hosted-only race;
-3. publish one clean reviewed source checkpoint;
-4. proceed directly to L1 sidecar/release integration; and
-5. keep L6 ordinary UI/test work parallel where paths do not overlap.
+1. keep the existing single authority database, scheduler, recovery, and
+   owner-setup compositions ready for one owner-attended installation;
+2. keep the topology-transition journal and remote delivery path covered by
+   focused source tests; and
+3. prepare one reversible owner-operated activation bundle for private
+   PostgreSQL TLS, private routing, protected configuration, and the first
+   enrolled remote worker. The bundle must not create a second database,
+   scheduler, broker, or writer.
 
 This file is the execution checklist. Detailed contracts remain in their named
 architecture documents; if a detailed contract conflicts with a summary here,
