@@ -107,6 +107,10 @@ database, scheduler, website, and review path.
    retains the real revocation fence privately. Matching identifier strings,
    ordinary callbacks, TypeScript-private fields, or a type-only wrapper are
    not sufficient provenance.
+   The current source seam still requires the installed Codex admission/trust
+   owner to supply its concrete current-policy port. Until that protected
+   provider exists, this source package is a release blocker—not a live node
+   session or worker-ready claim.
 2. Wire the existing bounded Codex node composition through protected
    installation/node-entry inputs. For the first Linux Codex worker, reuse the
    existing approved Codex v3/v4

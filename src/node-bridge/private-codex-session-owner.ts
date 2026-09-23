@@ -83,6 +83,7 @@ export function createPrivateCodexSessionOwnerV1(value: PrivateCodexSessionOwner
     assertCurrent: input.currentPolicy.assertCurrent.bind(input.currentPolicy),
   });
   const clock = input.clock.bind(input);
+  const mintedQueueSessions = new Set<string>();
 
   return Object.freeze({
     schema: PRIVATE_CODEX_SESSION_OWNER_V1,
@@ -119,6 +120,13 @@ export function createPrivateCodexSessionOwnerV1(value: PrivateCodexSessionOwner
             tenantId: start.tenantId, nodeId: start.nodeId, queueId, connectionId: channel.connectionId,
             activationFrameDigest: sha256Digest(activation.frame), dispatchFrameDigest: sha256Digest(delivery.frame),
             trustRevision }) });
+        // This is deliberately burned before the capability leaves this
+        // closure. A lost, unused, or later-invalid capability is inspect-only
+        // evidence; it never earns a second mint for this queue/session.
+        const mintKey = sha256Digest({ tenantId: start.tenantId, nodeId: start.nodeId,
+          queueId, connectionId: channel.connectionId, activationFrameDigest: sha256Digest(activation.frame) });
+        if (mintedQueueSessions.has(mintKey)) unavailable();
+        mintedQueueSessions.add(mintKey);
         const capability = Object.freeze({ schema: PRIVATE_CODEX_SESSION_CAPABILITY_V1 });
         capabilities.set(capability, Object.freeze({ ...binding, assertCurrent: () => {
           assertCurrent();

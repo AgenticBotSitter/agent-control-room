@@ -320,6 +320,8 @@ test('private Codex session owner mints one capability only from reconciled brid
   assert.equal(minted.binding.tenantId, 'tenant:test');
   assert.equal(minted.binding.nodeId, 'node:test');
   assert.equal(minted.binding.enrollmentDigest, sha256Digest('enrollment'));
+  assert.throws(() => owner.mint(f.body.queueId), /private_codex_session_owner_unavailable/,
+    'a queue/session is burned at mint even before its capability is consumed');
   const session = consumePrivateCodexSessionCapabilityV1(minted.capability);
   session.assertCurrent();
   trustRevision = 'trust-revision:2';
