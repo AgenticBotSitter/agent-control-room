@@ -15,6 +15,8 @@ import { CodexActivationIntakeHandlerV1 } from '../src/node-bridge/codex-activat
 import { CodexDispatchIntakeHandlerV1 } from '../src/node-bridge/codex-dispatch-handler';
 import { PortableNodeBridge } from '../src/node-bridge/bridge';
 import { SqliteBridgeJournal } from '../src/node-bridge/journal';
+import { consumePrivateCodexSessionCapabilityV1, createPrivateCodexSessionOwnerV1,
+  PRIVATE_CODEX_SESSION_CAPABILITY_V1 } from '../src/node-bridge/private-codex-session-owner';
 import { computeArtifactBodyDigest, signArtifact } from '../src/node-policy/v1/crypto';
 import { computeEffectClaimKey } from '../src/node-policy/v1/effect-claim';
 import type { PinnedApprovalTrustStore } from '../src/node-policy/v1/pinned-approval-trust';
@@ -39,7 +41,7 @@ function intent() {
     revision: 'a'.repeat(40) };
 }
 
-async function portableActivation(recordActivation = true) {
+async function portableActivation(recordActivation = true, keepConnected = false) {
   const fixtureId = ++fixtureSequence;
   const workspaceIntent = intent();
   const approval = generateKeyPairSync('ed25519'), server = generateKeyPairSync('ed25519');
@@ -130,9 +132,12 @@ async function portableActivation(recordActivation = true) {
     await bridge.receive(JSON.stringify(activation), activatedAt);
     assert.equal(journal.acceptedCodexActivation(body.queueId)?.frame.body.runId, workspaceIntent.runId);
   }
-  await bridge.disconnected(); dispatchHandler.close(); activationHandler.close();
+  const closeBridge = async () => {
+    await bridge.disconnected(); dispatchHandler.close(); activationHandler.close();
+  };
+  if (!keepConnected) await closeBridge();
   return { journal, body, workspaceIntent, activation,
-    connectionAttemptId: `connection-attempt:codex-host:${fixtureId}`, clock: () => ++clock };
+    bridge, closeBridge, connectionAttemptId: `connection-attempt:codex-host:${fixtureId}`, clock: () => ++clock };
 }
 
 const threadResponse = (id: number, cwd: string) => JSON.stringify({ id, result: {
@@ -294,6 +299,51 @@ test('remote worker composes journaled activation, one native start, recovery an
   await assert.rejects(worker.recoverAndReturn(new AbortController().signal), /unavailable/);
   assert.equal(sends, 1);
   await worker.close();
+});
+
+test('private Codex session owner mints one capability only from reconciled bridge and journal evidence', async t => {
+  const f = await portableActivation(true, true);
+  t.after(async () => { await f.closeBridge(); f.journal.close(); });
+  let admission = admissionDigest, trustRevision = 'trust-revision:1', revoked = false;
+  const owner = createPrivateCodexSessionOwnerV1({ bridge: f.bridge, journal: f.journal,
+    currentPolicy: {
+      currentAdmissionDigest() { return admission; },
+      currentServerTrustRevision() { return trustRevision; },
+      assertCurrent() { if (revoked) throw new Error('revoked'); },
+    },
+    clock: () => baseTime + 3_000,
+  });
+  assert.equal(owner.schema, 'control-room.private-codex-session-owner/v1');
+  assert.equal(owner.startsWork, false);
+  const minted = owner.mint(f.body.queueId);
+  assert.equal(minted.schema, PRIVATE_CODEX_SESSION_CAPABILITY_V1);
+  assert.equal(minted.binding.tenantId, 'tenant:test');
+  assert.equal(minted.binding.nodeId, 'node:test');
+  assert.equal(minted.binding.enrollmentDigest, sha256Digest('enrollment'));
+  const session = consumePrivateCodexSessionCapabilityV1(minted.capability);
+  session.assertCurrent();
+  trustRevision = 'trust-revision:2';
+  assert.throws(() => session.assertCurrent(), /private_codex_session_owner_unavailable/,
+    'a changed protected trust state invalidates the captured session');
+  assert.throws(() => consumePrivateCodexSessionCapabilityV1(minted.capability), /private_codex_session_owner_unavailable/,
+    'a capability cannot be replayed');
+  revoked = true;
+  assert.throws(() => owner.mint(f.body.queueId), /private_codex_session_owner_unavailable/,
+    'minting rechecks the protected revocation fence');
+  revoked = false;
+  admission = sha256Digest('other-admission');
+  assert.throws(() => owner.mint(f.body.queueId), /private_codex_session_owner_unavailable/,
+    'a stale current-admission digest cannot mint a session');
+});
+
+test('private Codex session owner rejects structural fake bridge/journal inputs', () => {
+  assert.throws(() => createPrivateCodexSessionOwnerV1({
+    bridge: { codexActivationChannel() { return { assertCurrent() {} }; } } as never,
+    journal: { acceptedCodexDelivery() {}, acceptedCodexActivation() {} } as never,
+    currentPolicy: { currentAdmissionDigest() { return admissionDigest; }, currentServerTrustRevision() { return 'trust-revision:1'; },
+      assertCurrent() {} },
+    clock: () => baseTime,
+  }), /private_codex_session_owner_unavailable/);
 });
 
 test('remote worker rejects missing activation, revoked session and changed binding before native start', async t => {
