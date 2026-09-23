@@ -3,7 +3,7 @@ import { z } from "zod";
 import { NATIVE_DELIVERY_FEATURE, NATIVE_LEASE_DELIVERY_FEATURE, nativeTaskDispatchBodySchema, matchNativeTaskDispatchReceipt, type NativeTaskDispatchBody } from "../harness/v1/native-delivery";
 import { CODEX_DELIVERY_FEATURE, codexTaskDispatchBodySchemaV1, matchCodexTaskDispatchReceiptV1,
   type CodexTaskDispatchBodyV1 } from "../harness/codex-v1/delivery-contract";
-import { CONTROLLER_WORKER_NODE_DELIVERY_FEATURE_V1, controllerWorkerNodeDispatchBodySchemaV1,
+import { CONTROLLER_WORKER_NODE_DELIVERY_FEATURE_V1, CONTROLLER_WORKER_NODE_RECOVERY_FEATURE_V1, controllerWorkerNodeDispatchBodySchemaV1,
   matchControllerWorkerNodeDispatchReceiptV1, type ControllerWorkerNodeDispatchBodyV1 } from "../harness/v1/controller-worker-node-delivery";
 import { CODEX_ACTIVATION_FEATURE, codexTaskActivationBodySchemaV1, matchCodexTaskActivationV1,
   type CodexActivationFrameV1, type CodexDispatchFrameForActivationV1,
@@ -384,6 +384,41 @@ export class ServerNodeSession {
       };
       assertCurrent(); const value = await commit(structuredClone(frame), dispatch, assertCurrent);
       assertCurrent(); this.state = "controller_worker_receipted"; return value;
+    });
+  }
+
+  /** A fresh session may accept historical receipt evidence only against a
+   * controller-loaded, durable signed send intent. No dispatch is sent here. */
+  async recoverControllerWorkerDeliveryReceipt<T>(raw: string | Uint8Array,
+    load: (scope: Readonly<{ projectId: string; jobId: string; attemptId: string }>) => Promise<SignedNodeFrame<"controller.worker.delivery">>,
+    commit: (receipt: SignedNodeFrame<"controller.worker.delivery.receipt.recovery">,
+      dispatch: SignedNodeFrame<"controller.worker.delivery">, assertCurrent: () => void) => Promise<T>): Promise<T> {
+    if (!this.controllerWorkerDeliveryChannel() || !this.features.includes(CONTROLLER_WORKER_NODE_RECOVERY_FEATURE_V1)) {
+      throw new Error("Controller worker recovery not negotiated");
+    }
+    return this.bounded(async () => {
+      const frame = await this.authenticate(raw);
+      if (frame.type !== "controller.worker.delivery.receipt.recovery") throw new Error("Expected controller worker recovery");
+      const intent = signedNodeFrameSchema.parse(await load(frame.body.scope));
+      if (intent.type !== "controller.worker.delivery") throw new Error("Controller worker recovery intent missing");
+      const receipt = matchControllerWorkerNodeDispatchReceiptV1(frame.body.receipt, { messageId: intent.messageId, body: intent.body });
+      const identity = intent.body.delivery.identity;
+      if (intent.tenantId !== this.config.tenantId || identity.nodeId !== this.config.nodeId
+        || frame.body.dispatchFrameDigest !== sha256Digest(intent)
+        || frame.causationId !== intent.messageId || frame.correlationId !== intent.correlationId
+        || frame.body.scope.projectId !== identity.projectId || frame.body.scope.jobId !== identity.jobId
+        || frame.body.scope.attemptId !== identity.attemptId) throw new Error("Controller worker recovery binding mismatch");
+      const assertCurrent = () => {
+        const now = this.now();
+        if (this.state !== "ready" || now >= Date.parse(frame.expiresAt) || now >= Date.parse(intent.expiresAt)
+          || Date.parse(receipt.receivedAt) < Date.parse(intent.sentAt)
+          || Date.parse(receipt.receivedAt) >= Date.parse(intent.expiresAt)
+          || Date.parse(receipt.receivedAt) > Date.parse(frame.sentAt)) throw new Error("Controller worker recovery expired");
+      };
+      assertCurrent();
+      const result = await commit(frame, intent, assertCurrent);
+      assertCurrent();
+      return result;
     });
   }
 

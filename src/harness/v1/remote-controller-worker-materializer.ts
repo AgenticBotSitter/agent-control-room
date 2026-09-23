@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { signedNodeFrameSchema, type SignedNodeFrame } from "../../node-protocol/v1";
 import { attemptRecordSchema, jobRecordSchema, leaseRecordSchema } from "../../domain/v1";
 import type { DatabaseClient, DatabaseSession } from "../../persistence/database";
 import { sha256Digest, hmacSha256Tag } from "../../security";
@@ -117,14 +118,15 @@ export class RemoteControllerWorkerMaterializerV1 {
   }
 
   private async readIntent(tx: DatabaseSession, ref: z.infer<typeof referenceSchema>) {
-    const row = (await tx.query<{ request_digest: string; result: { prepared: unknown; tag: string } }>(
+    const row = (await tx.query<{ request_digest: string; result: { prepared: unknown; tag: string; signedFrame?: unknown } }>(
       `SELECT request_digest,result FROM control_idempotency WHERE tenant_id=$1
        AND operation_scope='remote-controller-worker-dispatch-intent/v1' AND idempotency_key=$2`,
       [ref.tenantId, ref.attemptId])).rows[0];
     if (!row) return null;
     const prepared = preparedSchema.parse(row.result.prepared) as RemoteControllerWorkerPreparedDeliveryV1;
+    const signedFrame = row.result.signedFrame === undefined ? undefined : signedNodeFrameSchema.parse(row.result.signedFrame);
     if (row.request_digest !== sha256Digest(ref)
-      || row.result.tag !== hmacSha256Tag(this.integrityKey, { ref, prepared })) unavailable();
+      || row.result.tag !== hmacSha256Tag(this.integrityKey, { ref, prepared, ...(signedFrame ? { signedFrame } : {}) })) unavailable();
     return prepared;
   }
 
@@ -140,8 +142,8 @@ export class RemoteControllerWorkerMaterializerV1 {
   /**
    * Stages/sends through the existing authenticated node-session bridge. A
    * durable dispatch intent suppresses a second send even without a receipt.
-   * Uncertainty remains until the authenticated original session supplies its
-   * receipt; reconstructing the materializer does not recover a lost session.
+   * The exact signed envelope is also committed immediately before send so
+   * a replacement authenticated session can reconcile its existing receipt.
    */
   async transmit(value: RemoteControllerWorkerMaterializationReferenceV1, preparedValue: unknown,
     signal?: AbortSignal): Promise<Readonly<{ kind: "transmitted"; transmission: RemoteNodeDeliveryTransmissionV1; startsWork: false; grantsExecutionAuthority: false } | {
@@ -184,7 +186,22 @@ export class RemoteControllerWorkerMaterializerV1 {
     if (!claimed) return Object.freeze({ kind: "uncertain", startsWork: false, grantsExecutionAuthority: false });
     try {
       const transmission = await createAuthenticatedRemoteNodeSessionDeliveryBridgeV1({ session: target.session })
-        .transmit(prepared.delivery, prepared.route, signal);
+        .transmit(prepared.delivery, prepared.route, signal, async frame => {
+          await this.assertCurrent(ref, prepared);
+          const signedFrame = signedNodeFrameSchema.parse(frame);
+          if (signedFrame.type !== "controller.worker.delivery" || signedFrame.body.delivery.deliveryDigest !== prepared.delivery.deliveryDigest
+            || signedFrame.body.enrollmentDigest !== prepared.enrollmentDigest) unavailable();
+          await this.db.transaction(async tx => {
+            const tag = hmacSha256Tag(this.integrityKey, { ref, prepared });
+            const updated = await tx.query(`UPDATE control_idempotency SET result=$4::jsonb
+              WHERE tenant_id=$1 AND operation_scope='remote-controller-worker-dispatch-intent/v1'
+              AND idempotency_key=$2 AND request_digest=$3 AND result->>'tag'=$5
+              RETURNING idempotency_key`, [ref.tenantId, ref.attemptId, sha256Digest(ref),
+              JSON.stringify({ prepared, signedFrame, tag: hmacSha256Tag(this.integrityKey, { ref, prepared, signedFrame }) }), tag]);
+            if (updated.rows.length !== 1) unavailable();
+          });
+          await this.assertCurrent(ref, prepared);
+        });
       return Object.freeze({ kind: "transmitted" as const, transmission,
         startsWork: false as const, grantsExecutionAuthority: false as const });
     } catch {
@@ -226,6 +243,56 @@ export class RemoteControllerWorkerMaterializerV1 {
         return result;
       });
     });
+  }
+
+  /** Reconcile a journaled receipt on a replacement authenticated connection.
+   * Neither missing signed intent nor expired work can be repaired by resend. */
+  async recoverReceipt(value: RemoteControllerWorkerMaterializationReferenceV1, preparedValue: unknown,
+    raw: string | Uint8Array, recordedAt: unknown) {
+    const ref = referenceSchema.parse(value);
+    const prepared = preparedSchema.parse(preparedValue) as RemoteControllerWorkerPreparedDeliveryV1;
+    const target = await this.resolveForPrepared(ref, prepared);
+    const verifyTarget = async () => {
+      const current = await this.resolveForPrepared(ref, prepared);
+      if (current.session.session !== target.session.session || this.clock() >= Date.parse(prepared.delivery.expiresAt)
+        || !admitRemoteWorkerDeliveryV1({ delivery: prepared.delivery, route: prepared.route,
+          enrollment: current.enrollment, supportedAdapterRevisions: current.supportedAdapterRevisions }).accepted) unavailable();
+    };
+    await verifyTarget();
+    const session = target.session.session;
+    if (!session.recoverControllerWorkerDeliveryReceipt) unavailable();
+    return session.recoverControllerWorkerDeliveryReceipt!(raw, async scope => {
+      if (scope.projectId !== ref.projectId || scope.jobId !== ref.jobId || scope.attemptId !== ref.attemptId) unavailable();
+      return this.db.transaction(async tx => {
+        const row = (await tx.query<{ request_digest: string; result: { prepared: unknown; signedFrame?: unknown; tag: string } }>(
+          `SELECT request_digest,result FROM control_idempotency WHERE tenant_id=$1
+           AND operation_scope='remote-controller-worker-dispatch-intent/v1' AND idempotency_key=$2`,
+          [ref.tenantId, ref.attemptId])).rows[0];
+        if (!row || row.request_digest !== sha256Digest(ref) || !row.result.signedFrame) return unavailable();
+        const signedFrame = signedNodeFrameSchema.parse(row.result.signedFrame);
+        if (signedFrame.type !== "controller.worker.delivery" || sha256Digest(row.result.prepared) !== sha256Digest(prepared)
+          || row.result.tag !== hmacSha256Tag(this.integrityKey, { ref, prepared, signedFrame })
+          || signedFrame.body.delivery.deliveryDigest !== prepared.delivery.deliveryDigest
+          || signedFrame.body.enrollmentDigest !== target.enrollment.enrollmentDigest) return unavailable();
+        return signedFrame as SignedNodeFrame<"controller.worker.delivery">;
+      });
+    }, async (frame, _dispatch, assertCurrent) => this.db.transaction(async tx => {
+      await verifyTarget();
+      assertCurrent();
+      const receipt = frame.body.receipt.receipt;
+      const prior = await readControllerWorkerDeliveryReceiptV1(tx, this.integrityKey, ref);
+      if (prior) {
+        if (prior.delivery.deliveryDigest !== prepared.delivery.deliveryDigest
+          || prior.receipt.receiptDigest !== receipt.receiptDigest) unavailable();
+        await verifyTarget(); assertCurrent();
+        return Object.freeze({ receipt: prior.receipt, replayed: true,
+          startsWork: false as const, grantsExecutionAuthority: false as const });
+      }
+      const result = await persistControllerWorkerDeliveryReceiptV1(tx, this.integrityKey, prepared.delivery, receipt, recordedAt);
+      await verifyTarget();
+      assertCurrent();
+      return result;
+    }));
   }
 
   private async resolveForPrepared(ref: z.infer<typeof referenceSchema>, prepared: RemoteControllerWorkerPreparedDeliveryV1) {

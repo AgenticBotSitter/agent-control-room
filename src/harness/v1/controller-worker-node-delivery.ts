@@ -10,6 +10,7 @@ import { digestSchema, localId } from "./native-run-identifiers";
 
 /** Optional negotiated feature. Older enrolled workers cannot receive this pair. */
 export const CONTROLLER_WORKER_NODE_DELIVERY_FEATURE_V1 = "controller.worker.delivery.v1" as const;
+export const CONTROLLER_WORKER_NODE_RECOVERY_FEATURE_V1 = "controller.worker.delivery.recovery.v1" as const;
 
 const timestamp = z.string().datetime();
 const queueFor = (delivery: ControllerWorkerDeliveryV1) => `native-queue:${sha256Digest({
@@ -50,6 +51,16 @@ export const controllerWorkerNodeDispatchReceiptBodySchemaV1 = z.object({
   }
 });
 export type ControllerWorkerNodeDispatchReceiptBodyV1 = z.infer<typeof controllerWorkerNodeDispatchReceiptBodySchemaV1>;
+
+/** A fresh authenticated connection may report only an existing receipt. It
+ * carries no prompt, authority grant or instruction to repeat delivery. */
+export const controllerWorkerNodeReceiptRecoverySchemaV1 = z.object({
+  schema: z.literal("control-room.controller-worker-node-receipt-recovery/v1"),
+  scope: z.object({ projectId: localId, jobId: localId, attemptId: localId }).strict(),
+  dispatchFrameDigest: digestSchema,
+  receipt: controllerWorkerNodeDispatchReceiptBodySchemaV1,
+}).strict();
+export type ControllerWorkerNodeReceiptRecoveryV1 = z.infer<typeof controllerWorkerNodeReceiptRecoverySchemaV1>;
 
 /**
  * Match only after the outer receipt frame has been authenticated as the

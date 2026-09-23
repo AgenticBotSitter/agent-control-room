@@ -5,7 +5,8 @@ import type { NativeTaskDispatchBody, NativeTaskDispatchReceiptBody } from "../.
 import type { CodexTaskDispatchBodyV1, CodexTaskDispatchReceiptBodyV1 } from "../../harness/codex-v1/delivery-contract";
 import type { CodexTaskActivationBodyV1 } from "../../harness/codex-v1/activation-contract";
 import type { CodexResultReturnBodyV1, CodexResultReturnReceiptBodyV1 } from "../../harness/codex-v1/result-return";
-import type { ControllerWorkerNodeDispatchBodyV1, ControllerWorkerNodeDispatchReceiptBodyV1 } from "../../harness/v1/controller-worker-node-delivery";
+import type { ControllerWorkerNodeDispatchBodyV1, ControllerWorkerNodeDispatchReceiptBodyV1,
+  ControllerWorkerNodeReceiptRecoveryV1 } from "../../harness/v1/controller-worker-node-delivery";
 
 export const NODE_PROTOCOL_V1 = "control-room-node/v1" as const;
 export const NODE_PROTOCOL_SUPPORTED_VERSIONS = [NODE_PROTOCOL_V1] as const;
@@ -306,6 +307,7 @@ export interface NodeMessageBodyMap {
   "harness.codex.result.return.receipt": CodexResultReturnReceiptBodyV1;
   "controller.worker.delivery": ControllerWorkerNodeDispatchBodyV1;
   "controller.worker.delivery.receipt": ControllerWorkerNodeDispatchReceiptBodyV1;
+  "controller.worker.delivery.receipt.recovery": ControllerWorkerNodeReceiptRecoveryV1;
   "job.cancel": CancelRequestBody;
   "job.cancel.ack": CancelAcknowledgementBody;
   "node.reconciliation.request": ReconciliationRequestBody;

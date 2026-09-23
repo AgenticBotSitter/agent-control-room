@@ -1,6 +1,7 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import { NATIVE_DELIVERY_FEATURE } from "../harness/v1/native-delivery";
-import { CONTROLLER_WORKER_NODE_DELIVERY_FEATURE_V1 } from "../harness/v1/controller-worker-node-delivery";
+import { CONTROLLER_WORKER_NODE_DELIVERY_FEATURE_V1, CONTROLLER_WORKER_NODE_RECOVERY_FEATURE_V1,
+  controllerWorkerNodeReceiptRecoverySchemaV1 } from "../harness/v1/controller-worker-node-delivery";
 import { CODEX_DELIVERY_FEATURE } from '../harness/codex-v1/delivery-contract';
 import { sha256Digest } from "../security";
 import {
@@ -158,6 +159,36 @@ export class PortableNodeBridge {
         }
       },
     });
+  }
+
+  /** Report an already journaled receipt over a new authenticated connection.
+   * This never passes a packet back through delivery intake or starts work. */
+  async recoverControllerWorkerReceipt(queueId: string, now: string): Promise<void> {
+    const channel = this.controllerWorkerDeliveryChannel();
+    if (!channel || !this.identity.features.includes(CONTROLLER_WORKER_NODE_RECOVERY_FEATURE_V1)
+      || !this.statusValue.enabledFeatures?.includes(CONTROLLER_WORKER_NODE_RECOVERY_FEATURE_V1)) {
+      throw new Error("Controller worker receipt recovery unavailable");
+    }
+    channel.assertCurrent();
+    const saved = this.journal.acceptedControllerWorkerDelivery(queueId);
+    if (!saved || !Number.isFinite(Date.parse(now)) || Date.parse(now) >= Date.parse(saved.frame.expiresAt)
+      || Date.parse(now) < Date.parse(saved.receipt.receivedAt)
+      || saved.frame.tenantId !== channel.tenantId || saved.frame.body.delivery.identity.nodeId !== channel.nodeId) {
+      throw new Error("Controller worker receipt recovery unavailable");
+    }
+    const dispatch = saved.frame;
+    const body = controllerWorkerNodeReceiptRecoverySchemaV1.parse({
+      schema: "control-room.controller-worker-node-receipt-recovery/v1",
+      scope: { projectId: dispatch.body.delivery.identity.projectId, jobId: dispatch.body.delivery.identity.jobId,
+        attemptId: dispatch.body.delivery.identity.attemptId }, dispatchFrameDigest: sha256Digest(dispatch),
+      receipt: { schema: "control-room.controller-worker-node-dispatch-receipt/v1", queueId,
+        dispatchMessageId: dispatch.messageId, dispatchBodyDigest: dispatch.bodyDigest,
+        enrollmentDigest: dispatch.body.enrollmentDigest, receipt: saved.receipt },
+    });
+    channel.assertCurrent();
+    await this.sendBody("controller.worker.delivery.receipt.recovery", body, true, now,
+      dispatch.correlationId, dispatch.messageId, false);
+    channel.assertCurrent();
   }
 
   codexDeliveryChannel(): CodexDeliveryChannel | undefined {
@@ -667,6 +698,7 @@ export class PortableNodeBridge {
       if (pending.frame.type === "harness.native.dispatch.receipt"
         || pending.frame.type === 'harness.codex.dispatch.receipt'
         || pending.frame.type === "controller.worker.delivery.receipt"
+        || pending.frame.type === "controller.worker.delivery.receipt.recovery"
         || pending.frame.type === 'harness.codex.result.return') continue;
       try {
         await this.requireTransport().send(JSON.stringify(pending.frame));
@@ -727,6 +759,7 @@ export class PortableNodeBridge {
     } as UnsignedNodeFrame<TType>;
     const materialDigest = type === "harness.native.dispatch.receipt" || type === 'harness.codex.dispatch.receipt'
       || type === "controller.worker.delivery.receipt"
+      || type === "controller.worker.delivery.receipt.recovery"
       ? sha256Digest(unsigned) : undefined;
     const frame = await this.signer.sign(unsigned) as SignedNodeFrame<TType>;
     if (generation !== this.connectionGeneration || transport !== this.transport) throw new Error("Bridge connection changed during signing");

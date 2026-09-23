@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { generateKeyPairSync } from "node:crypto";
+import { signNodeFrame, type SignedNodeFrame } from "../src/node-protocol/v1";
 import { computeAuthorityDigest, sha256Digest } from "../src/security";
 import { TaskExecutionPlanner, type NativeTaskTemplate } from "../src/web/v1/task-execution-planner";
 import { TaskAssignmentCoordinator, validateTaskAssignmentRoutes } from "../src/web/v1/task-assignment-coordinator";
@@ -29,7 +31,8 @@ function remoteTarget(state: "enrolled" | "revoked" = "enrolled") {
   const enrollment = createRemoteWorkerEnrollmentV1({ workerId: "worker:remote-reviewed", adapterId: "connector:remote-reviewed",
     adapterRevision: "revision:7654321", enrollmentId: "enrollment:remote-reviewed", state,
     enrolledAt: at(1_000), revokedAt: state === "revoked" ? at(8_000) : null });
-  let dispatch: { body: { delivery: ControllerWorkerDeliveryV1 } } | undefined;
+  let dispatch: SignedNodeFrame<'controller.worker.delivery'> | undefined;
+  const serverKeys = generateKeyPairSync('ed25519');
   let sends = 0;
   let dropReply = true;
   let nextReceipt: ReturnType<typeof receipt> | undefined;
@@ -37,11 +40,18 @@ function remoteTarget(state: "enrolled" | "revoked" = "enrolled") {
     controllerWorkerDeliveryChannel() { return { nodeId: binding.nodeId }; },
     async stageControllerWorkerDelivery(work: (sign: (body: unknown, deadline: number) => unknown,
       current: { nodeId: string; assertCurrent(): void }) => Promise<unknown>) {
-      await work((body: unknown) => { dispatch = { body: body as { delivery: ControllerWorkerDeliveryV1 } }; return {}; },
+      await work((body: unknown) => {
+        dispatch = signNodeFrame({ protocol: 'control-room-node/v1', direction: 'server_to_node',
+          messageId: 'message:materializer-dispatch', correlationId: 'correlation:materializer', tenantId: binding.tenantId,
+          actorId: 'server:fixture', senderKind: 'control_room', keyId: 'server-key:fixture', connectionId: 'connection:original',
+          sequence: 1, sentAt: at(8_500), expiresAt: (body as { delivery: ControllerWorkerDeliveryV1 }).delivery.expiresAt,
+          nonce: 'materializer_dispatch_nonce_123456789', type: 'controller.worker.delivery', body: body as never }, serverKeys.privateKey);
+        return dispatch;
+      },
         { nodeId: binding.nodeId, assertCurrent() {} });
     },
     async sendPreparedControllerWorkerDelivery(work: (frame: { body: unknown }, current: { assertCurrent(): void }) => Promise<unknown>) {
-      sends++; await work({ body: dispatch!.body }, { assertCurrent() {} });
+      await work(dispatch!, { assertCurrent() {} }); sends++;
       if (dropReply) { dropReply = false; throw new Error("fixture_transport_reply_lost_after_send"); }
     },
     async acceptControllerWorkerDeliveryReceipt(_raw: string | Uint8Array, work: (frame: { body: { receipt: ReturnType<typeof receipt> } },
@@ -50,13 +60,21 @@ function remoteTarget(state: "enrolled" | "revoked" = "enrolled") {
       return work({ body: { receipt: nextReceipt } }, { body: { enrollmentDigest: enrollment.enrollmentDigest,
         delivery: dispatch.body.delivery } }, () => {});
     },
+    // Authentication is exercised with real signed sessions in the server
+    // delivery suite; this seam tests controller persistence reconstruction.
+    async recoverControllerWorkerDeliveryReceipt(raw: string, load: (scope: unknown) => Promise<unknown>,
+      commit: (frame: unknown, dispatch: unknown, assertCurrent: () => void) => Promise<unknown>) {
+      const frame = JSON.parse(raw);
+      return commit(frame, await load(frame.body.scope), () => {});
+    },
   };
   const value: RemoteControllerWorkerResolvedTargetV1 = Object.freeze({ nodeId: binding.nodeId,
     workerId: enrollment.workerId, adapterId: enrollment.adapterId, adapterRevision: enrollment.adapterRevision,
     enrollment, supportedAdapterRevisions: Object.freeze([enrollment.adapterRevision]), session: {
       workerId: enrollment.workerId, enrollmentDigest: enrollment.enrollmentDigest, session: session as never,
     } });
-  return { value, sends: () => sends, setReceipt(value: ControllerWorkerDeliveryV1) { nextReceipt = receipt(value); } };
+  return { value, sends: () => sends, setReceipt(value: ControllerWorkerDeliveryV1) { nextReceipt = receipt(value); },
+    dispatch: () => dispatch };
 }
 
 test("the controller materializes a leased v11 plan through its protected target and records one remote receipt", async t => {
@@ -119,6 +137,10 @@ test("the controller materializes a leased v11 plan through its protected target
   await assert.rejects(deliverVerifiedRemoteControllerWorkerQueueTaskV1({ reference: queueReference,
     signal: new AbortController().signal, target: target!, materializer }), /native_task_delivery_unresolved/);
   assert.equal(current.sends(), 1);
+  const intentRow = (await f.db.query<{ result: { signedFrame: unknown } }>(
+    "SELECT result FROM control_idempotency WHERE tenant_id=$1 AND operation_scope='remote-controller-worker-dispatch-intent/v1' AND idempotency_key=$2",
+    [ref.tenantId, ref.attemptId])).rows[0]!;
+  assert.deepEqual(intentRow.result.signedFrame, current.dispatch(), 'exact signed intent was stored before send');
   now += 1_000;
   const reconstructed = new RemoteControllerWorkerMaterializerV1(f.db, planner, resolver, new Uint8Array(32).fill(61), () => now);
   assert.deepEqual(await reconstructed.prepare(ref), prepared, "reconstruction retains the exact immutable packet");
@@ -131,8 +153,25 @@ test("the controller materializes a leased v11 plan through its protected target
   assert.deepEqual(concurrent.map(value => value.kind), ["uncertain", "uncertain"]);
   assert.equal(current.sends(), 1);
   current.setReceipt(prepared.delivery);
-  const recorded = await reconstructed.acceptReceipt(ref, prepared, "fixture-receipt", at(10_000));
+  const replacement = remoteTarget();
+  const recovered = new RemoteControllerWorkerMaterializerV1(f.db, planner, { async resolve() { return replacement.value; } },
+    new Uint8Array(32).fill(61), () => now);
+  const recoveryFrame = JSON.stringify({ body: { scope: { projectId: ref.projectId, jobId: ref.jobId, attemptId: ref.attemptId },
+    receipt: { receipt: receipt(prepared.delivery) } } });
+  const recorded = await recovered.recoverReceipt(ref, prepared, recoveryFrame, at(10_000));
   assert.equal(recorded.replayed, false);
+  assert.equal(replacement.sends(), 0, 'replacement session never resends');
+  assert.equal((await recovered.recoverReceipt(ref, prepared, recoveryFrame, at(11_000))).replayed, true);
+  const originalIntent = (await f.db.query<{ result: Record<string, unknown> }>(
+    "SELECT result FROM control_idempotency WHERE tenant_id=$1 AND operation_scope='remote-controller-worker-dispatch-intent/v1' AND idempotency_key=$2",
+    [ref.tenantId, ref.attemptId])).rows[0]!.result;
+  for (const damaged of [{ ...originalIntent, signedFrame: undefined }, { ...originalIntent, tag: sha256Digest('corrupt-tag') }]) {
+    await f.db.query("UPDATE control_idempotency SET result=$3::jsonb WHERE tenant_id=$1 AND operation_scope='remote-controller-worker-dispatch-intent/v1' AND idempotency_key=$2",
+      [ref.tenantId, ref.attemptId, JSON.stringify(damaged)]);
+    await assert.rejects(recovered.recoverReceipt(ref, prepared, recoveryFrame, at(11_000)), /unavailable/);
+  }
+  await f.db.query("UPDATE control_idempotency SET result=$3::jsonb WHERE tenant_id=$1 AND operation_scope='remote-controller-worker-dispatch-intent/v1' AND idempotency_key=$2",
+    [ref.tenantId, ref.attemptId, JSON.stringify(originalIntent)]);
   const receiptReplay = await reconstructed.acceptReceipt(ref, prepared, "fixture-receipt", at(11_000));
   assert.equal(receiptReplay.replayed, true, "a later recording time does not change the original receipt");
   const again = await deliverVerifiedRemoteControllerWorkerQueueTaskV1({ reference: queueReference,
@@ -144,6 +183,7 @@ test("the controller materializes a leased v11 plan through its protected target
   const revoked = remoteTarget("revoked");
   const revokedResolver = { async resolve() { return revoked.value; } };
   const fenced = new RemoteControllerWorkerMaterializerV1(f.db, planner, revokedResolver, new Uint8Array(32).fill(61), () => now);
+  await assert.rejects(fenced.recoverReceipt(ref, prepared, recoveryFrame, at(11_000)), /unavailable/);
   await assert.rejects(fenced.assertCurrent(ref, prepared), /remote_controller_worker_materializer_unavailable/,
     "a revoked protected target cannot authorize a new transmission");
   assert.deepEqual(await deliverVerifiedRemoteControllerWorkerQueueTaskV1({ reference: queueReference,

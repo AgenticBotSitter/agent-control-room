@@ -4,6 +4,7 @@ import { controllerWorkerDeliverySchemaV1, controllerWorkerRouteSchemaV1,
 import { controllerWorkerNodeDispatchBodySchemaV1 } from "./controller-worker-node-delivery";
 import type { ServerNodeSession } from "../../node-control/server-node-session";
 import { sha256Digest } from "../../security/canonical-digest";
+import type { SignedNodeFrame } from "../../node-protocol/v1";
 
 const unavailable = (): never => { throw new Error("remote_worker_delivery_unavailable"); };
 
@@ -60,7 +61,8 @@ export interface AuthenticatedRemoteNodeSessionV1 {
   readonly workerId: string;
   readonly enrollmentDigest: string;
   readonly session: Pick<ServerNodeSession, "controllerWorkerDeliveryChannel" | "stageControllerWorkerDelivery"
-    | "sendPreparedControllerWorkerDelivery" | "acceptControllerWorkerDeliveryReceipt">;
+    | "sendPreparedControllerWorkerDelivery" | "acceptControllerWorkerDeliveryReceipt">
+    & Partial<Pick<ServerNodeSession, "recoverControllerWorkerDeliveryReceipt">>;
 }
 
 export type RemoteNodeDeliveryTransmissionV1 = Readonly<{
@@ -92,7 +94,8 @@ export function createAuthenticatedRemoteNodeSessionDeliveryBridgeV1(input: Read
       tenantId: delivery.identity.tenantId, jobId: delivery.identity.jobId, attemptId: delivery.identity.attemptId,
     }).slice(7)}`;
     return Object.freeze({
-      async transmit(deliveryValue: unknown, routeValue: unknown, signal?: AbortSignal): Promise<RemoteNodeDeliveryTransmissionV1> {
+      async transmit(deliveryValue: unknown, routeValue: unknown, signal?: AbortSignal,
+        persistIntent?: (frame: SignedNodeFrame<"controller.worker.delivery">) => Promise<void>): Promise<RemoteNodeDeliveryTransmissionV1> {
         if (signal?.aborted) unavailable();
         const delivery = controllerWorkerDeliverySchemaV1.parse(deliveryValue);
         const route = controllerWorkerRouteSchemaV1.parse(routeValue);
@@ -117,6 +120,9 @@ export function createAuthenticatedRemoteNodeSessionDeliveryBridgeV1(input: Read
         await session.sendPreparedControllerWorkerDelivery(async (frame, current) => {
           current.assertCurrent();
           if (signal?.aborted || frame.body.queueId !== queueId || frame.body.enrollmentDigest !== enrollmentDigest) unavailable();
+          if (persistIntent) await persistIntent(frame);
+          current.assertCurrent();
+          if (signal?.aborted) unavailable();
           return { value: undefined, assertFresh: current.assertCurrent };
         });
         return Object.freeze({ queueId, enrollmentDigest, deliveryId: delivery.deliveryId, deliveryDigest: delivery.deliveryDigest,
