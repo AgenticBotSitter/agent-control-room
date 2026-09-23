@@ -28,12 +28,15 @@ The contract deliberately records `private_network`, not a vendor-specific
 database or a new tunnel service, so the same installation contract can later
 use another reviewed private route.
 
-This is preparation evidence only. The retained production PostgreSQL runtime
-currently accepts loopback (`127.0.0.1`) and therefore cannot yet open a direct
-Mac-to-VPS Tailscale endpoint. A separately reviewed runtime-compatibility
-change is required before this planned private endpoint can be loaded or
-connected. This package does not claim database load, connection, startup, or
-runtime compatibility, and it does not create a forwarding service.
+This is preparation evidence only. The application PostgreSQL runtime accepts
+exact loopback (`127.0.0.1`) or the narrow private TLS endpoint defined in
+[Private PostgreSQL endpoint contract](PRIVATE_POSTGRES_ENDPOINT_CONTRACT.md).
+When a `privateEndpoint` policy is supplied, preparation binds its reviewed
+private-route evidence to this same authority declaration. A legacy plan with
+only a hostname is still preparation data and cannot load as runtime
+configuration. This package does not claim database load, connection, startup,
+certificate readiness, or a verified live route, and creates no forwarding
+service. Privileged PostgreSQL setup tools remain VPS-loopback-only.
 
 The plan is data-only. It rejects functions, callbacks, accessors, proxies,
 cycles, raw connection URLs, common credential values, command-shaped fields,

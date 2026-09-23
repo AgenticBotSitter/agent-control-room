@@ -6,6 +6,11 @@ import { createPrivatePgDatabase, bindPrivatePgPool } from "../src/web/v1/privat
 import { EventEmitter } from "node:events";
 import { fixturePreparationPostgresOptions } from "../src/web/v1/private-fixture-preparation";
 import { createRehearsalProbe } from "../src/web/v1/private-rehearsal-probe";
+import { createHash } from "node:crypto";
+import type { PeerCertificate } from "node:tls";
+import { validatePrivatePostgresConfiguration } from "../src/web/v1/private-postgres";
+import { PRIVATE_POSTGRES_ENDPOINT_V1, privatePostgresEndpointFingerprintV1 } from
+  "../src/web/v1/private-postgres-endpoint";
 
 const require = createRequire(import.meta.url);
 // Exercise the installed library without connecting or inspecting real settings.
@@ -106,4 +111,81 @@ test("checked-out error quarantines the database and close waits for client end"
   client.emit("end"); finish();
   await closing; await denied;
   assert.equal(closed, true);
+});
+
+function remoteConfiguration() {
+  const endpoint = { ...config, host: "100.101.102.103" };
+  return { ...endpoint, privateEndpoint: { schema: PRIVATE_POSTGRES_ENDPOINT_V1, routeKind: "tailscale" as const,
+    endpointFingerprint: privatePostgresEndpointFingerprintV1(endpoint),
+    privateRouteEvidenceDigest: `sha256:${"a".repeat(64)}`,
+    serverIdentity: { serverName: "synthetic-database.example.invalid",
+      certificateSha256: `sha256:${createHash("sha256").update("synthetic certificate").digest("hex")}` } } };
+}
+
+test("direct private pg routing pins the numeric address and verified TLS identity without DNS", () => {
+  const input = remoteConfiguration(), options = privatePgOptions(input), client = new Client(options);
+  assert.equal(client.connectionParameters.host, "100.101.102.103");
+  assert.equal(client.connectionParameters.ssl.servername, input.privateEndpoint.serverIdentity.serverName);
+  assert.equal(client.connectionParameters.ssl.rejectUnauthorized, true);
+  assert.equal(client.connectionParameters.ssl.minVersion, "TLSv1.2");
+  assert.equal(client.connectionParameters.sslnegotiation, "postgres");
+  assert.equal(Object.isFrozen(options.ssl), true);
+  const captured = validatePrivatePostgresConfiguration(input);
+  input.privateEndpoint.serverIdentity.serverName = "changed.example.invalid";
+  assert.equal(captured.privateEndpoint?.serverIdentity.serverName, "synthetic-database.example.invalid");
+});
+
+test("private endpoints reject public, alternate loopback, ambiguous, DNS and unbound addresses", () => {
+  for (const host of ["0.0.0.0", "::", "::1", "127.0.0.2", "127.1", "2130706433", "0177.0.0.1",
+    "::ffff:127.0.0.1", "224.0.0.1", "255.255.255.255", "8.8.8.8", "169.254.169.254", "192.168.1.2",
+    "localhost", "localhost.", "database.example.invalid", "100.63.255.255", "100.128.0.1",
+    "100.64.0.0", "100.127.255.255", "100.010.102.103", "100.101.102.103 ", "100.101.102.103/32"]) {
+    const input = remoteConfiguration(); input.host = host;
+    input.privateEndpoint.endpointFingerprint = privatePostgresEndpointFingerprintV1(input);
+    assert.throws(() => privatePgOptions(input), /invalid_private_database_endpoint/u, host);
+  }
+  assert.throws(() => privatePgOptions({ ...config, host: "100.101.102.103" }));
+  const drift = remoteConfiguration(); drift.host = "100.101.102.104";
+  assert.throws(() => privatePgOptions(drift), /invalid_private_database_endpoint/u);
+  const changedPort = remoteConfiguration(); changedPort.port += 1;
+  assert.throws(() => privatePgOptions(changedPort), /invalid_private_database_endpoint/u);
+  const loopbackWithPolicy = { ...remoteConfiguration(), host: "127.0.0.1" };
+  assert.throws(() => privatePgOptions(loopbackWithPolicy), /invalid_private_database_endpoint/u);
+});
+
+test("private TLS validates the declared hostname and exact certificate with sanitized failures", () => {
+  const options = privatePgOptions(remoteConfiguration());
+  assert.notEqual(options.ssl, false);
+  if (!options.ssl || !options.ssl.checkServerIdentity) throw new Error("missing TLS verifier");
+  const certificate = { subjectaltname: "DNS:synthetic-database.example.invalid",
+    raw: Buffer.from("synthetic certificate") } as PeerCertificate;
+  assert.equal(options.ssl.checkServerIdentity("100.101.102.103", certificate), undefined);
+  assert.equal(options.ssl.checkServerIdentity("100.101.102.103", { ...certificate,
+    subjectaltname: "DNS:foreign.example.invalid" })?.message, "private_database_server_identity_refused");
+  assert.equal(options.ssl.checkServerIdentity("100.101.102.103", { ...certificate,
+    raw: Buffer.from("different certificate") })?.message, "private_database_server_identity_refused");
+  assert.equal(options.ssl.checkServerIdentity("100.101.102.103", { subjectaltname: certificate.subjectaltname } as PeerCertificate)
+    ?.message, "private_database_server_identity_refused");
+});
+
+test("private endpoint capture refuses executable properties, unbound proof and TLS downgrade", () => {
+  let accessors = 0;
+  const input = remoteConfiguration();
+  Object.defineProperty(input.privateEndpoint, "privateRouteEvidenceDigest", {
+    enumerable: true, get() { accessors += 1; return `sha256:${"a".repeat(64)}`; },
+  });
+  assert.throws(() => privatePgOptions(input)); assert.equal(accessors, 0);
+  const proxy = new Proxy(remoteConfiguration(), { get() { accessors += 1; throw new Error(); } });
+  assert.throws(() => privatePgOptions(proxy)); assert.equal(accessors, 0);
+  const invalidProof = remoteConfiguration(); invalidProof.privateEndpoint.privateRouteEvidenceDigest = "unverified";
+  assert.throws(() => privatePgOptions(invalidProof));
+  const downgrade = { ...remoteConfiguration(), ssl: false };
+  assert.throws(() => privatePgOptions(downgrade), /invalid_private_database_config/u);
+  const invalidServerName = remoteConfiguration(); invalidServerName.privateEndpoint.serverIdentity.serverName = "localhost";
+  assert.throws(() => privatePgOptions(invalidServerName));
+});
+
+test("remote pool remains lazy and closes without a connection or credentials discovery", async () => {
+  const database = createPrivatePgDatabase(remoteConfiguration());
+  await database.close(); assert.equal(database.isAvailable(), false);
 });

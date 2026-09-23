@@ -22,6 +22,8 @@ import { canonicalJson, sha256Digest } from "../../security/canonical-digest";
 import { capturePrivateArtifactStorageConfigurationV1 } from "../../web/v1/private-artifact-storage";
 import { createPrivatePostgresDatabase, validatePrivatePostgresConfiguration,
   type PrivatePostgresConfiguration } from "../../web/v1/private-postgres";
+import { capturePrivatePostgresEndpointPolicyV1, privatePostgresEndpointPolicyDigestV1 } from
+  "../../web/v1/private-postgres-endpoint";
 import { installPrivateApplication } from "../../web/v1/private-process";
 import { createInstalledNativeQueueFactories } from "../../web/v1/installed-native-queue";
 import { createPrivateHermes021LocalInstalledCompositionDeliveryV1,
@@ -82,10 +84,10 @@ const digest = z.string().regex(/^sha256:[a-f0-9]{64}$/u);
 const identifier = z.string().min(3).max(180).regex(/^[a-zA-Z0-9][a-zA-Z0-9._:-]*$/u);
 const installationId = z.string().regex(/^[a-z0-9](?:[a-z0-9-]{1,61}[a-z0-9])?$/u);
 const safeRole = z.string().regex(/^[a-z][a-z0-9_]{0,62}$/u);
-const databaseIdentitySchema = z.object({ host: z.literal("127.0.0.1"), port: z.number().int().min(1).max(65_535),
+const databaseIdentitySchema = z.object({ host: z.string(), port: z.number().int().min(1).max(65_535),
   database: safeRole, majorVersion: z.literal(17), roles: z.object({ web: safeRole, coordinator: safeRole,
     results: safeRole, evidence: safeRole, queueWorker: safeRole }).strict(),
-  queueConcurrency: z.number().int().min(1).max(8) }).strict();
+  queueConcurrency: z.number().int().min(1).max(8), privateEndpoint: z.unknown().optional() }).strict();
 const taskPolicySchema = z.object({ adapter: z.literal(HERMES_021_MACOS_LOCAL_ADAPTER_V1),
   connectorProfileDigest: z.literal(HERMES_021_MACOS_CONNECTOR_PROFILE_DIGEST_V1),
   taskClass: z.literal("text_review"), tools: z.literal("none"), maximumTurns: z.literal(1),
@@ -214,7 +216,8 @@ function sameKey(left: Uint8Array, right: Uint8Array) {
 function databaseIdentity(value: PrivatePostgresConfiguration) {
   const parsed = validatePrivatePostgresConfiguration(value);
   return Object.freeze({ host: parsed.host, port: parsed.port, database: parsed.database,
-    username: parsed.username, majorVersion: parsed.majorVersion });
+    username: parsed.username, majorVersion: parsed.majorVersion,
+    endpointPolicyDigest: privatePostgresEndpointPolicyDigestV1(parsed.privateEndpoint) });
 }
 
 function createDeferredDatabase(): Readonly<{ client: DatabaseClient; bind(value: unknown): void }> {
@@ -342,7 +345,9 @@ function parseConfiguration(value: unknown, prepared: ReturnType<typeof parsePre
   if (digest.parse(config.runtimeIdentityDigest) !== expectedRuntimeIdentityDigest) return refused();
   const agentSource = exact((captureStageMap(config.setupSources)).agent_readiness, ["schema"]);
   if (agentSource.schema !== PRIVATE_INSTALLED_LOCAL_HERMES_AGENT_SOURCE_V1) return refused();
-  const database = Object.freeze(databaseIdentitySchema.parse(config.database));
+  const databaseInput = databaseIdentitySchema.parse(config.database);
+  const privateEndpoint = capturePrivatePostgresEndpointPolicyV1(databaseInput, databaseInput.privateEndpoint);
+  const database = Object.freeze({ ...databaseInput, privateEndpoint });
   const roles = Object.values(database.roles);
   if (new Set(roles).size !== roles.length) return refused();
   const operator = exact(config.operator, ["port", "templateId"]);
@@ -373,6 +378,7 @@ function assertDatabaseBindings(config: ReturnType<typeof parseConfiguration>, s
   for (const [name, value] of Object.entries(actual)) {
     if (value.host !== expected.host || value.port !== expected.port || value.database !== expected.database
       || value.majorVersion !== expected.majorVersion
+      || value.endpointPolicyDigest !== privatePostgresEndpointPolicyDigestV1(expected.privateEndpoint)
       || value.username !== expected.roles[name as keyof typeof expected.roles]) return refused();
   }
   if (c.queueWorker!.concurrency !== expected.queueConcurrency) return refused();

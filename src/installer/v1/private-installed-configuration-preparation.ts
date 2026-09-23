@@ -8,6 +8,7 @@ import { PRIVATE_INSTALLED_CONFIGURATION_CUSTODY_V2,
   "./private-installed-configuration-custody";
 import { PRIVATE_INSTALLED_LOCAL_HERMES_CONFIGURATION_V1 } from
   "./private-installed-local-hermes-runtime-composer";
+import { capturePrivatePostgresEndpointPolicyV1 } from "../../web/v1/private-postgres-endpoint";
 
 /**
  * Inert bridge from the already-reviewed installed Hermes configuration to
@@ -238,8 +239,9 @@ function capture(inputValue: unknown) {
   if (prerequisite.installationId !== installationId || prerequisite.releaseDigest !== releaseDigest) return refused();
   const authority = databaseBinding(input.databaseAuthority);
   if (topology.databaseAuthorityDigest !== authority.databaseAuthorityDigest) return refused();
-  const database = exact(configuration.database,
-    ["host", "port", "database", "majorVersion", "roles", "queueConcurrency"]);
+  const databaseKeys = ["host", "port", "database", "majorVersion", "roles", "queueConcurrency"];
+  if (Object.prototype.hasOwnProperty.call(configuration.database, "privateEndpoint")) databaseKeys.push("privateEndpoint");
+  const database = exact(configuration.database, databaseKeys);
   if (database.database !== authority.database || database.majorVersion !== authority.majorVersion
     || typeof database.host !== "string" || database.host.length < 1 || database.host.length > 255
     || !Number.isInteger(database.port) || (database.port as number) < 1 || (database.port as number) > 65_535
@@ -247,6 +249,11 @@ function capture(inputValue: unknown) {
     || (database.queueConcurrency as number) > 8) return refused();
   if (privateInstalledPostgresEndpointFingerprintV1({ host: database.host, port: database.port,
     database: database.database, majorVersion: database.majorVersion }) !== authority.endpointFingerprint) return refused();
+  if (database.privateEndpoint !== undefined) {
+    const endpoint = capturePrivatePostgresEndpointPolicyV1({ host: database.host,
+      port: database.port as number, database: database.database, majorVersion: database.majorVersion }, database.privateEndpoint);
+    if (!endpoint || endpoint.privateRouteEvidenceDigest !== authority.privateRouteEvidenceDigest) return refused();
+  }
   const roles = exact(database.roles, ["web", "coordinator", "results", "evidence", "queueWorker"]);
   if (Object.values(roles).some(role => typeof role !== "string" || !rolePattern.test(role as string))
     || new Set(Object.values(roles)).size !== 5) return refused();

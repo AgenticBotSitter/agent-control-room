@@ -17,6 +17,7 @@ import { preflightPrivateInstalledOwnerHostInputCompositionV1,
   PRIVATE_INSTALLED_OWNER_HOST_INPUT_COMPOSITION_V1 } from
   "../src/installer/v1/private-installed-owner-host-input-composition";
 import { sha256Digest } from "../src/security/canonical-digest";
+import { PRIVATE_POSTGRES_ENDPOINT_V1 } from "../src/web/v1/private-postgres-endpoint";
 
 const d = (value: unknown) => sha256Digest(value);
 const root = "/Users/example-owner/Library/Application Support/Agent Control Room/Protected";
@@ -82,6 +83,23 @@ test("prepares one redacted standard-mac plan for the existing configuration and
   const text = JSON.stringify(plan);
   assert.doesNotMatch(text, /example-owner|private-authority|owner-held|credential:test|postgres(?:ql)?:\/\//iu);
   assert.doesNotMatch(text, /not-allowed|run-me|raw-secret-value|postgres(?:ql)?:\/\//iu);
+});
+
+test("private TLS endpoint policy is bound to the same reviewed private-route evidence", () => {
+  const input = source(); input.privateConfigurationData.database.host = "100.101.102.103";
+  const database = input.privateConfigurationData.database;
+  input.databaseAuthority.endpointFingerprint = privateInstalledPostgresEndpointFingerprintV1({
+    host: database.host, port: database.port, database: database.database, majorVersion: database.majorVersion });
+  const policy = { schema: PRIVATE_POSTGRES_ENDPOINT_V1, routeKind: "tailscale" as const,
+    endpointFingerprint: input.databaseAuthority.endpointFingerprint,
+    privateRouteEvidenceDigest: input.databaseAuthority.privateRouteEvidenceDigest,
+    serverIdentity: { serverName: "synthetic-db.example.invalid", certificateSha256: d("certificate") } };
+  Object.assign(database, { privateEndpoint: policy });
+  const plan = preparePrivateInstalledConfigurationV1(input);
+  assert.equal(plan.status, "configuration_plan_ready");
+  assert.doesNotMatch(JSON.stringify(plan), /100\.101\.102\.103|synthetic-db/u);
+  policy.privateRouteEvidenceDigest = d("different route");
+  assert.equal(preflightPrivateInstalledConfigurationPreparationV1(input).status, "blocked");
 });
 
 test("private publication returns the exact existing custody input without invoking a port or writing", () => {

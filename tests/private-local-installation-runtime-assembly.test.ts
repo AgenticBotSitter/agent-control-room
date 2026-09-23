@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { chmod, lstat, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { PRIVATE_POSTGRES_ENDPOINT_V1, privatePostgresEndpointFingerprintV1 } from
+  "../src/web/v1/private-postgres-endpoint";
 import test from "node:test";
 import { createArtifactBackupInventoryV1, verifyRestoredArtifactBackupInventoryV1 } from
   "../src/artifacts/v1/artifact-backup-inventory";
@@ -390,6 +392,35 @@ test("installed data composes the real inert Hermes graph and retains the native
       "the source-composed restart identity must reproduce the receipt that settled agent readiness");
   }
   assert.equal(f.hermesCalls(), 0); assert.ok(f.reads() > 0); assert.equal(f.appends(), 0);
+});
+
+test("installed remote authority preserves one TLS and route binding across every database role", async t => {
+  const f = await fixture(t), input = installedComposerPackage(f);
+  const config = input.preparation.privateConfigurationData;
+  config.database.host = "100.101.102.103";
+  const policy = { schema: PRIVATE_POSTGRES_ENDPOINT_V1, routeKind: "tailscale" as const,
+    endpointFingerprint: privatePostgresEndpointFingerprintV1(config.database), privateRouteEvidenceDigest: d("private route"),
+    serverIdentity: { serverName: "synthetic-db.example.invalid", certificateSha256: d("peer certificate") } };
+  Object.assign(config.database, { privateEndpoint: policy });
+  const { installedManifestBindingDigest: _binding, ...configurationWithoutBinding } = config;
+  config.installedManifestBindingDigest = d({ purpose: "private-installed-local-hermes-configuration-binding/v1",
+    installationId: input.preparation.installationId, journal: input.preparation.journal,
+    nativeSidecar: input.preparation.nativeSidecar, configuration: configurationWithoutBinding });
+  const c = input.ports.startupBase.coordinator;
+  const remote = (database: typeof c.database) => ({ ...database, host: config.database.host, privateEndpoint: policy });
+  input.ports.startupBase.web.database = remote(input.ports.startupBase.web.database);
+  c.database = remote(c.database); c.resultDatabase = remote(c.resultDatabase!);
+  c.evidence = { ...c.evidence!, database: remote(c.evidence!.database) };
+  c.queueWorker = { ...c.queueWorker!, database: remote(c.queueWorker!.database) };
+  const composer = createPrivateInstalledLocalHermesRuntimeComposerV1(input.preparation, input.ports);
+  const loaded = await composer.custody.loadPrivateConfiguration();
+  const startup = loaded.assemblyInput.runnerInput.privateStartupConfiguration;
+  assert.deepEqual(startup.coordinator.database.privateEndpoint, policy);
+  assert.deepEqual(startup.coordinator.queueWorker!.database.privateEndpoint, policy);
+  assert.equal(composer.performsEffect, false); assert.equal(f.hermesCalls(), 0);
+  c.resultDatabase = { ...c.resultDatabase!, privateEndpoint: { ...policy, privateRouteEvidenceDigest: d("different route") } };
+  assert.throws(() => createPrivateInstalledLocalHermesRuntimeComposerV1(input.preparation, input.ports));
+  assert.equal(f.hermesCalls(), 0); assert.equal(f.appends(), 0);
 });
 
 test("a changed installed runtime identity cannot reuse the settled admission receipt", async t => {

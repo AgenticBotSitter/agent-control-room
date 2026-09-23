@@ -42,6 +42,7 @@ const databaseRoleSchema = z.object({
   username: z.string(),
   password: z.string(),
   majorVersion: z.number(),
+  privateEndpoint: z.unknown().optional(),
 }).strict();
 
 const operatorSettingsSchema = z.object({
