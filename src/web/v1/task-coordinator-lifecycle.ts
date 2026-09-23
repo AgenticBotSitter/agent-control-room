@@ -4,7 +4,7 @@ import { localId } from "../../harness/v1/native-run-identifiers";
 import { TaskExecutionPlanner, type TaskPlanningOperation } from "./task-execution-planner";
 import { TaskAssignmentCoordinator, type TaskAssignmentOperation, type TaskAssignmentRoute, type NativeApprovalEnrollment,
   type CodexPermitConfiguration, type Hermes021LocalQueueDeliveryTarget, type ClaudeCodeLocalQueueDeliveryTarget,
-  type InstallationTransitionAdmissionFence } from "./task-assignment-coordinator";
+  type RemoteControllerWorkerQueueDeliveryTarget, type InstallationTransitionAdmissionFence } from "./task-assignment-coordinator";
 import { isInstallationTransitionAdmissionPausedV1 } from "../../harness/v1/installation-transition-store";
 import type { NativeApprovalPacketStore } from "./native-approval-packet-store";
 import { nativeTaskApprovalPacketSchema } from "../../harness/v1/native-approval-packet";
@@ -28,6 +28,8 @@ import { captureCodexResultIntakeSettingsV1, CodexResultIntakeV1,
   type CodexResultIntakeSettingsV1 } from "./codex-result-intake";
 import { deliverVerifiedHermes021LocalQueueTaskV1 } from "./hermes-021-local-queue-delivery";
 import { deliverVerifiedClaudeCodeLocalQueueTaskV1 } from "./claude-code-local-queue-delivery";
+import { deliverVerifiedRemoteControllerWorkerQueueTaskV1 } from "./remote-controller-worker-queue-delivery";
+import type { RemoteControllerWorkerMaterializerV1 } from "../../harness/v1/remote-controller-worker-materializer";
 import { NativeResultStore } from "../../artifacts/v1/native-results";
 import { CompletionGateStoreV1 } from "../../completion-gate/v1/store";
 import { CanonicalIdeaTaskResultProjectionServiceV1 } from "../../idea-lab/v1/canonical-result-projection";
@@ -68,6 +70,10 @@ export type TaskCoordinatorConfiguration = {
   /** Installation-owned Claude route. It is optional and inert until a separate
    * process qualification and private host composition supply this callback. */
   claudeCodeLocal?: { deliver(target: ClaudeCodeLocalQueueDeliveryTarget, signal: AbortSignal): Promise<void> };
+  /** Optional installation-owned remote worker materializer. It is inert until
+   * the shared queue worker receives a canonically leased v11 reference. The
+   * browser never selects its worker, session, enrollment, or key. */
+  remoteControllerWorker?: { materializer: Pick<RemoteControllerWorkerMaterializerV1, "prepare" | "transmit"> };
   /** Reviewed Codex permit bindings. Configuration alone starts no process or workspace. */
   codex?: CodexPermitConfiguration;
   /** Private installation journal key. It is copied at assembly and never
@@ -126,6 +132,10 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
     throw new Error("task_coordinator_config_invalid");
   if (input.claudeCodeLocal && !input.nativeSubmission)
     throw new Error("task_coordinator_config_invalid");
+  if (input.remoteControllerWorker && (!input.nativeSubmission || !input.remoteControllerWorker.materializer
+    || typeof input.remoteControllerWorker.materializer.prepare !== "function"
+    || typeof input.remoteControllerWorker.materializer.transmit !== "function"))
+    throw new Error("task_coordinator_config_invalid");
   if (input.installationTransitionAdmission && (!(input.installationTransitionAdmission.integrityKey instanceof Uint8Array)
     || input.installationTransitionAdmission.integrityKey.length !== 32
     || !Array.isArray(input.installationTransitionAdmission.workers)
@@ -151,6 +161,8 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
   }) : undefined;
   const hermes021Local = input.hermes021Local ? Object.freeze({ deliver: input.hermes021Local.deliver.bind(input.hermes021Local) }) : undefined;
   const claudeCodeLocal = input.claudeCodeLocal ? Object.freeze({ deliver: input.claudeCodeLocal.deliver.bind(input.claudeCodeLocal) }) : undefined;
+  const remoteControllerWorker = input.remoteControllerWorker
+    ? Object.freeze({ materializer: input.remoteControllerWorker.materializer }) : undefined;
   const closeSubmission = input.nativeSubmission?.close?.bind(input.nativeSubmission);
   const capture = (resource: TaskCoordinatorDatabase) => {
     if (!resource || typeof resource.close !== "function" || typeof resource.isAvailable !== "function"
@@ -449,7 +461,13 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
   return Object.freeze({ planning, assignment: assignments, ...(approvals ? { approvals } : {}), ...(quality ? { quality } : {}),
     ...(ideaCreation ? { ideaCreation } : {}),
     ...(ideaResultProjection ? { ideaResultProjection } : {}),
-    ...(nativeSubmission && (sessions || hermes021Local || claudeCodeLocal) ? { queueDelivery: async (ref: Parameters<ManagedNativeSessions["deliverApproved"]>[0], signal: AbortSignal) => {
+    ...(nativeSubmission && (sessions || hermes021Local || claudeCodeLocal || remoteControllerWorker) ? { queueDelivery: async (ref: Parameters<ManagedNativeSessions["deliverApproved"]>[0], signal: AbortSignal) => {
+      const remote = await assignment.locateQueuedRemoteControllerWorkerDelivery(ref, signal);
+      if (remote) {
+        if (!remoteControllerWorker || signal.aborted) throw new Error("native_task_delivery_unresolved");
+        return deliverVerifiedRemoteControllerWorkerQueueTaskV1({ reference: ref, signal, target: remote,
+          materializer: remoteControllerWorker.materializer });
+      }
       const target = await assignment.locateQueuedHarnessDelivery(ref, signal);
       if (target.kind === "hermes-021-local") {
         if (!hermes021Local || signal.aborted) throw new Error("native_task_delivery_unresolved");

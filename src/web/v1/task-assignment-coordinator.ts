@@ -24,7 +24,7 @@ import type { ServerNodeSession } from "../../node-control/server-node-session";
 import { assertSynchronousFence } from "../../security/synchronous-fence";
 import { CODEX_APP_SERVER_CAPABILITY, CODEX_APP_SERVER_JOB_TYPE } from "../../harness/codex-v1/delivery-contract";
 import { HERMES_021_MACOS_LOCAL_CAPABILITY_V1, HERMES_021_MACOS_LOCAL_JOB_TYPE_V1 } from "../../harness/hermes-021-v1/macos-local-worker";
-import { CONTROLLER_WORKER_REMOTE_CAPABILITY_V1 } from "../../harness/v1/remote-worker-delivery";
+import { CONTROLLER_WORKER_REMOTE_CAPABILITY_V1, CONTROLLER_WORKER_REMOTE_JOB_TYPE_V1 } from "../../harness/v1/remote-worker-delivery";
 import { HERMES_021_MACOS_CONNECTOR_PROFILE_DIGEST_V1 } from "../../harness/hermes-021-v1/connector-profile";
 import { CLAUDE_CODE_CONNECTOR_PROFILE_DIGEST_V1, CLAUDE_CODE_LOCAL_ADAPTER_V1,
   CLAUDE_CODE_LOCAL_CAPABILITY_V1, CLAUDE_CODE_LOCAL_JOB_TYPE_V1 } from "../../harness/claude-code-v1/task-planning-contract";
@@ -95,6 +95,15 @@ export type Hermes021LocalQueueDeliveryTarget = Readonly<{
  * process handle, command, workspace, credential or route setting. */
 export type ClaudeCodeLocalQueueDeliveryTarget = Readonly<{
   kind: "claude-code-local"; nodeId: string; leaseId: string;
+  task: Readonly<{ projectId: string; jobId: string; attemptId: string; inputDigest: string }>;
+  startsWork: false; grantsExecutionAuthority: false;
+}>;
+/** A queue locator for an already-leased remote controller worker.  It has no
+ * worker identity, enrollment, session, address, credential, or packet.  The
+ * installation-owned materializer reconstructs those facts immediately before
+ * a send, from the protected node binding. */
+export type RemoteControllerWorkerQueueDeliveryTarget = Readonly<{
+  kind: "controller-worker-remote"; nodeId: string; leaseId: string;
   task: Readonly<{ projectId: string; jobId: string; attemptId: string; inputDigest: string }>;
   startsWork: false; grantsExecutionAuthority: false;
 }>;
@@ -253,6 +262,64 @@ export class TaskAssignmentCoordinator {
     if (kind === "claude-code-local") return this.locateApprovedClaudeCodeLocalQueueDelivery(ref, signal);
     const target = await this.locateApprovedQueueDelivery(ref, signal);
     return Object.freeze({ kind: "hermes" as const, ...target, startsWork: false as const });
+  }
+  /**
+   * Canonically discriminates the additive v11 remote route without widening
+   * the legacy `ManagedNativeSessions` union. Non-remote queue locators return
+   * undefined; a v11 locator is fully revalidated before it becomes a target.
+   */
+  async locateQueuedRemoteControllerWorkerDelivery(input: NativeTaskSubmissionReference, signal: AbortSignal): Promise<RemoteControllerWorkerQueueDeliveryTarget | undefined> {
+    const ref = nativeTaskSubmissionReferenceSchema.parse(input);
+    if (!this.nativeTaskSubmission || !(signal instanceof AbortSignal) || signal.aborted
+      || ref.tenantId !== this.scope.tenantId) conflict();
+    const remote = await this.db.transaction(async tx => {
+      await tx.query("SELECT id FROM tenants WHERE id=$1 FOR UPDATE", [this.scope.tenantId]);
+      await tx.query("SELECT project_id FROM control_manual_project_heads WHERE tenant_id=$1 AND project_id=$2 FOR UPDATE",
+        [this.scope.tenantId, ref.projectId]);
+      const job = await this.job(tx, ref.projectId, ref.jobId);
+      const plan = await this.planner.readInSession(tx, ref.jobId);
+      if (!plan || plan.tenantId !== ref.tenantId || plan.projectId !== ref.projectId
+        || job.inputDigest !== ref.inputDigest || signal.aborted) conflict();
+      return job.jobType === CONTROLLER_WORKER_REMOTE_JOB_TYPE_V1
+        && plan.schema === "control-room.task-execution-plan/v11";
+    });
+    if (!remote) return undefined;
+    return this.locateApprovedRemoteControllerWorkerQueueDelivery(ref, signal);
+  }
+  /**
+   * Rebuilds only the canonical locator for a v11 remote task.  The locator is
+   * deliberately insufficient to send: the protected installation materializer
+   * must re-read the plan, lease and enrolled target before it can use the
+   * authenticated node session.
+   */
+  async locateApprovedRemoteControllerWorkerQueueDelivery(input: NativeTaskSubmissionReference, signal: AbortSignal) {
+    const ref = nativeTaskSubmissionReferenceSchema.parse(input);
+    if (!this.nativeTaskSubmission || !(signal instanceof AbortSignal) || signal.aborted
+      || ref.tenantId !== this.scope.tenantId) conflict();
+    return this.db.transaction(async tx => {
+      await tx.query("SELECT id FROM tenants WHERE id=$1 FOR UPDATE", [this.scope.tenantId]);
+      await tx.query("SELECT project_id FROM control_manual_project_heads WHERE tenant_id=$1 AND project_id=$2 FOR UPDATE",
+        [this.scope.tenantId, ref.projectId]);
+      const job = await this.job(tx, ref.projectId, ref.jobId);
+      const plan = await this.planner.readInSession(tx, ref.jobId);
+      const stored = await this.stored(tx, job);
+      if (!plan || !stored || plan.schema !== "control-room.task-execution-plan/v11"
+        || plan.tenantId !== ref.tenantId || plan.projectId !== ref.projectId
+        || job.inputDigest !== ref.inputDigest || job.jobType !== CONTROLLER_WORKER_REMOTE_JOB_TYPE_V1
+        || job.requiredCapability !== CONTROLLER_WORKER_REMOTE_CAPABILITY_V1
+        || stored.attempt.id !== ref.attemptId || signal.aborted) conflict();
+      const route = this.routes.find(value => value.nodeId === stored.lease.nodeId);
+      const now = this.clock();
+      if (!route || route.executorId !== job.authority.allowedExecutor
+        || route.capabilityProbeId !== CONTROLLER_WORKER_REMOTE_CAPABILITY_V1
+        || stored.lease.state !== "active" || !Number.isSafeInteger(now) || now < 0
+        || now >= Date.parse(stored.lease.expiresAt) || now >= Date.parse(job.authority.expiresAt)) conflict();
+      await this.assertTransitionAdmission(tx, route.nodeId);
+      return Object.freeze({ kind: "controller-worker-remote" as const, nodeId: route.nodeId, leaseId: stored.lease.id,
+        task: Object.freeze({ projectId: ref.projectId, jobId: ref.jobId, attemptId: ref.attemptId,
+          inputDigest: ref.inputDigest }), startsWork: false as const,
+        grantsExecutionAuthority: false as const }) satisfies RemoteControllerWorkerQueueDeliveryTarget;
+    });
   }
   /** Stages one signed Codex envelope and stores it before any transport send. */
   async stageApprovedCodexQueueDelivery(input: NativeTaskSubmissionReference, session: ServerNodeSession, signal: AbortSignal) {

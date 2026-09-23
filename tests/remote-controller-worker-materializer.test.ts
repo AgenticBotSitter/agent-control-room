@@ -10,6 +10,8 @@ import { CONTROLLER_WORKER_REMOTE_ADAPTER_V1, CONTROLLER_WORKER_REMOTE_CAPABILIT
   createRemoteWorkerEnrollmentV1 } from "../src/harness/v1/remote-worker-delivery";
 import { RemoteControllerWorkerMaterializerV1, type RemoteControllerWorkerResolvedTargetV1 } from "../src/harness/v1/remote-controller-worker-materializer";
 import type { ControllerWorkerDeliveryV1 } from "../src/harness/v1/controller-worker-delivery";
+import { deliverVerifiedRemoteControllerWorkerQueueTaskV1 } from "../src/web/v1/remote-controller-worker-queue-delivery";
+import type { NativeTaskSubmission } from "../src/persistence/native-task-submission";
 import { binding, instant } from "./hermes-native-fixture";
 import { at } from "./native-task-fixture";
 import { ownerReviewFixture } from "./helpers/web-owner-review";
@@ -98,14 +100,28 @@ test("the controller materializes a leased v11 plan through its protected target
   assert.equal(prepared.route.kind, "remote");
   assert.equal(prepared.startsWork, false);
   assert.equal((await planner.read(planned.receipt.jobId))?.job.jobType, CONTROLLER_WORKER_REMOTE_JOB_TYPE_V1);
-  const sent = await materializer.transmit(ref, prepared);
-  assert.equal(sent.kind, "transmitted");
+  // The shared queue passes only a native locator. The additive remote
+  // discriminator reconstructs a leased target; neither record carries a
+  // worker, session, enrollment or credential.
+  const submission: NativeTaskSubmission = { async enqueueInSession() {} };
+  const queueCoordinator = new TaskAssignmentCoordinator(f.db, f.scope, planner, route, () => now + 1_000,
+    [], undefined, submission);
+  const queueReference = { schema: "control-room.native-task-submission/v1" as const, tenantId: ref.tenantId,
+    projectId: ref.projectId, jobId: ref.jobId, attemptId: ref.attemptId,
+    queueId: `native-queue:${sha256Digest({ tenantId: ref.tenantId, jobId: ref.jobId, attemptId: ref.attemptId }).slice(7)}`,
+    inputDigest: ref.inputDigest, packetDigest: sha256Digest("remote-queue-packet") };
+  const target = await queueCoordinator.locateQueuedRemoteControllerWorkerDelivery(queueReference, new AbortController().signal);
+  assert.ok(target);
+  const delivered = await deliverVerifiedRemoteControllerWorkerQueueTaskV1({ reference: queueReference,
+    signal: new AbortController().signal, target: target!, materializer });
+  assert.deepEqual(delivered, { disposition: "delivered" });
   assert.equal(current.sends(), 1);
   current.setReceipt(prepared.delivery);
   const recorded = await materializer.acceptReceipt(ref, prepared, "fixture-receipt", at(10_000));
   assert.equal(recorded.replayed, false);
-  const again = await materializer.transmit(ref, prepared);
-  assert.equal(again.kind, "already_recorded");
+  const again = await deliverVerifiedRemoteControllerWorkerQueueTaskV1({ reference: queueReference,
+    signal: new AbortController().signal, target: target!, materializer });
+  assert.deepEqual(again, { disposition: "delivered" });
   assert.equal(current.sends(), 1, "a recorded receipt blocks a second remote transmission");
   await materializer.assertCurrent(ref, prepared);
 
@@ -114,4 +130,9 @@ test("the controller materializes a leased v11 plan through its protected target
   const fenced = new RemoteControllerWorkerMaterializerV1(f.db, planner, revokedResolver, new Uint8Array(32).fill(61), () => now);
   await assert.rejects(fenced.prepare(ref), /remote_controller_worker_materializer_unavailable/,
     "a revoked protected target cannot materialize a new remote delivery");
+  await assert.rejects(deliverVerifiedRemoteControllerWorkerQueueTaskV1({ reference: queueReference,
+    signal: new AbortController().signal, target: target!, materializer: fenced }),
+  /remote_controller_worker_materializer_unavailable/,
+  "a revoked protected target refuses before a second send");
+  assert.equal(current.sends(), 1);
 });

@@ -212,7 +212,7 @@ export class RemoteControllerWorkerMaterializerV1 {
       || job.requiredCapability !== CONTROLLER_WORKER_REMOTE_CAPABILITY_V1 || attempt.jobId !== job.id || lease.jobId !== job.id
       || lease.attemptId !== attempt.id || lease.nodeId !== attempt.nodeId || Date.parse(lease.expiresAt) <= now
       || Date.parse(job.authority.expiresAt) <= now) unavailable();
-    const target = captureTarget(await this.resolver.resolve(Object.freeze({ tenantId: ref.tenantId, nodeId: attempt.nodeId,
+    const target = captureTarget(await this.resolver.resolve(Object.freeze({ tenantId: ref.tenantId, nodeId: id.parse(attempt.nodeId),
       adapterId: CONTROLLER_WORKER_REMOTE_ADAPTER_V1, requiredCapability: CONTROLLER_WORKER_REMOTE_CAPABILITY_V1,
       connectorProfileDigest: plan.connectorProfileDigest })));
     if (target.nodeId !== attempt.nodeId || target.enrollment.state !== "enrolled") unavailable();
