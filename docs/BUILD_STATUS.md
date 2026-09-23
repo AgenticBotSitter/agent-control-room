@@ -44,6 +44,12 @@ success measurements. It cannot start Claude, reveal the command/login/prompt
 or output text, make a route available, or authorize work. The real
 installed-Claude qualification and first task are still owner-attended gates.
 
+The protected Claude post-install admission now requires the sanitized
+qualification report itself and re-derives its fingerprint before accepting
+the route configuration. A report altered after the configuration was pinned
+is refused. This is source-only setup protection; it does not qualify, start,
+or enable Claude.
+
 The shared local-worker source conformance suite now proves that a prepared
 Hermes delivery and a prepared Claude delivery remain separate through the
 same controller receipt store and a simulated controller restart. The proof is

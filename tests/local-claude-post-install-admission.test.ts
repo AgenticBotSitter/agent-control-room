@@ -13,7 +13,10 @@ import { verifyLocalClaudePostInstallAdmissionV1 } from "../src/installer/v1/loc
 import { privateArtifactStorageNamespaceDigestV1 } from "../src/web/v1/private-artifact-storage";
 import { createClaudeCodePrivateInstallationCompositionV1, isClaudeCodePrivateInstalledDeliverCapabilityV1 } from
   "../src/web/v1/claude-code-private-installation-composition";
-import { CLAUDE_CODE_TEXT_REVIEW_FIXED_ARGS_V1 } from "../src/harness/claude-code-v1/text-review-invocation-policy";
+import { CLAUDE_CODE_TEXT_REVIEW_FIXED_ARGS_V1,
+  CLAUDE_CODE_TEXT_REVIEW_INVOCATION_POLICY_DIGEST_V1 } from "../src/harness/claude-code-v1/text-review-invocation-policy";
+import { CLAUDE_CODE_TEXT_REVIEW_QUALIFICATION_REPORT_V1,
+  createClaudeCodeTextReviewQualificationEvidenceV1 } from "../src/harness/claude-code-v1/qualification-evidence";
 
 const d = (value: unknown) => sha256Digest(value);
 
@@ -54,9 +57,17 @@ test("post-install Claude admission binds one additive committed transition with
     currentRoutes: original.topologyInput.requestedRoutes,
     requestedRoutes: [...original.topologyInput.requestedRoutes, workerRoute] };
   const topology = planInstallationTopologyV1(transitionInput);
+  const qualificationReport = {
+    schema: CLAUDE_CODE_TEXT_REVIEW_QUALIFICATION_REPORT_V1, qualified: true,
+    fixedInvocationPolicyDigest: CLAUDE_CODE_TEXT_REVIEW_INVOCATION_POLICY_DIGEST_V1,
+    terminalResultObserved: true, terminalResultDigest: d("claude-terminal"), inputTokens: 5, outputTokens: 4,
+    totalTokens: 9, durationMs: 100, failureReason: "none", retryRequiresFreshOwnerAuthorization: false,
+    startsWork: false, grantsExecutionAuthority: false,
+  };
+  const qualificationEvidence = createClaudeCodeTextReviewQualificationEvidenceV1(qualificationReport);
   const processConfiguration = { schema: "control-room.claude-code-private-installed-process-host-configuration/v1" as const,
     process: { executablePath: "/private/bin/claude", args: [...CLAUDE_CODE_TEXT_REVIEW_FIXED_ARGS_V1], workingDirectory: "/private/workspace", cleanupMs: 100 },
-    executableSha256: d("executable"), workingDirectoryBindingDigest: d("workspace"), qualificationDigest: d("qualification"),
+    executableSha256: d("executable"), workingDirectoryBindingDigest: d("workspace"), qualificationDigest: qualificationEvidence.evidenceDigest,
     startupDeadlineMs: 100, terminateDeadlineMs: 100, killDeadlineMs: 100 };
   const processConfigurationDigest = d({ purpose: "local-claude-installed-process-configuration/v1", configuration: processConfiguration });
   const readiness = createClaudeCodeLocalProcessReadinessV1({ planDigest: topology.planDigest,
@@ -93,10 +104,11 @@ test("post-install Claude admission binds one additive committed transition with
       now: `2026-09-22T00:00:0${now}.000Z`, evidenceDigest });
   const input = { installationId: "installation:fixture", originalInstallationPlan: original.plan,
     originalTopologyInput: original.topologyInput, transitionTopologyInput: transitionInput, transitionId,
-    workerRoute, requestedRoutes: transitionInput.requestedRoutes, installedProcessConfiguration: processConfiguration,
+    workerRoute, requestedRoutes: transitionInput.requestedRoutes, installedProcessConfiguration: processConfiguration, qualificationReport,
     processReadiness: readiness, processObservation, protectedResultStorage, serviceObservation,
     permittedWorkspace: { workspaceId: "workspace:fixture", workingDirectory: "/private/workspace",
       bindingDigest: processConfiguration.workingDirectoryBindingDigest } };
+  assert.equal(processConfiguration.qualificationDigest, qualificationEvidence.evidenceDigest);
   const receipt = await verifyLocalClaudePostInstallAdmissionV1(input, {
     async readOriginalInstallationHistory() { return original.history; }, async readTransition() { return transition; } });
   assert.equal(receipt.transitionPublishesRoute, false);
@@ -124,4 +136,8 @@ test("post-install Claude admission binds one additive committed transition with
   await assert.rejects(verifyLocalClaudePostInstallAdmissionV1({ ...input,
     requestedRoutes: [workerRoute] }, { async readOriginalInstallationHistory() { return original.history; },
     async readTransition() { return transition; } }), /post_install_admission_refused/);
+  await assert.rejects(verifyLocalClaudePostInstallAdmissionV1({ ...input,
+    qualificationReport: { ...qualificationReport, durationMs: 101 } }, {
+    async readOriginalInstallationHistory() { return original.history; }, async readTransition() { return transition; },
+  }), /post_install_admission_refused/);
 });

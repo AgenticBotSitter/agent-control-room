@@ -104,6 +104,10 @@ Code itself.
   directory, login state, prompt, answer text, session ID, or raw CLI frames.
   This evidence is non-authorizing: it does not make a route live or give it a
   task.
+- The protected post-install admission now re-derives that evidence fingerprint
+  from the sanitized report and requires it to equal the immutable process
+  configuration's qualification fingerprint. A changed report therefore cannot
+  be paired with an old admitted configuration.
 - The port must be single-purpose: no executable discovery, arbitrary command
   construction, inherited broad environment, plugin control, resume, or generic
   terminal access. Its qualification must demonstrate that user hooks, MCP

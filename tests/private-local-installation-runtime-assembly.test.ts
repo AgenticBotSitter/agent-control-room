@@ -17,6 +17,9 @@ import { createLocalBackupRestoreReadinessV1 } from "../src/harness/v1/local-bac
 import { createLocalSupervisorReadinessV1 } from "../src/harness/v1/local-supervisor-readiness";
 import { planInstallationTopologyV1 } from "../src/harness/v1/installation-topology";
 import { createClaudeCodeLocalProcessReadinessV1 } from "../src/harness/claude-code-v1/local-process-readiness";
+import { CLAUDE_CODE_TEXT_REVIEW_QUALIFICATION_REPORT_V1,
+  createClaudeCodeTextReviewQualificationEvidenceV1 } from "../src/harness/claude-code-v1/qualification-evidence";
+import { CLAUDE_CODE_TEXT_REVIEW_INVOCATION_POLICY_DIGEST_V1 } from "../src/harness/claude-code-v1/text-review-invocation-policy";
 import { CLAUDE_CODE_LOCAL_ADAPTER_V1, CLAUDE_CODE_CONNECTOR_PROFILE_DIGEST_V1 } from
   "../src/harness/claude-code-v1/task-planning-contract";
 import { createInstallationTransitionV1, advanceInstallationTransitionV1 } from
@@ -991,10 +994,18 @@ async function additiveClaudePackage(f: Awaited<ReturnType<typeof fixture>>, opt
     currentRoutes: admissionPreparation.topologyInput.requestedRoutes,
     requestedRoutes: [...admissionPreparation.topologyInput.requestedRoutes, workerRoute] };
   const topology = planInstallationTopologyV1(transitionInput);
+  const qualificationReport = {
+    schema: CLAUDE_CODE_TEXT_REVIEW_QUALIFICATION_REPORT_V1, qualified: true,
+    fixedInvocationPolicyDigest: CLAUDE_CODE_TEXT_REVIEW_INVOCATION_POLICY_DIGEST_V1,
+    terminalResultObserved: true, terminalResultDigest: d("claude-terminal"), inputTokens: 5, outputTokens: 4,
+    totalTokens: 9, durationMs: 100, failureReason: "none", retryRequiresFreshOwnerAuthorization: false,
+    startsWork: false, grantsExecutionAuthority: false,
+  };
+  const qualificationEvidence = createClaudeCodeTextReviewQualificationEvidenceV1(qualificationReport);
   const processConfiguration = { schema: "control-room.claude-code-private-installed-process-host-configuration/v1" as const,
     process: { executablePath: "/private/bin/claude", args: ["--print", "--output-format", "stream-json", "--verbose", "--restricted", "--bare", "--disallowedTools", "*,mcp__*", "--permission-prompts", "none", "--no-session-persistence", "--max-turns", "1"],
       workingDirectory: "/private/workspace", cleanupMs: 100 }, executableSha256: d("claude-executable"),
-    workingDirectoryBindingDigest: d("claude-workspace"), qualificationDigest: d("claude-qualification"),
+    workingDirectoryBindingDigest: d("claude-workspace"), qualificationDigest: qualificationEvidence.evidenceDigest,
     startupDeadlineMs: 100, terminateDeadlineMs: 100, killDeadlineMs: 100 };
   const processConfigurationDigest = d({ purpose: "local-claude-installed-process-configuration/v1",
     configuration: processConfiguration });
@@ -1029,7 +1040,7 @@ async function additiveClaudePackage(f: Awaited<ReturnType<typeof fixture>>, opt
     admissionInput: { installationId, originalInstallationPlan: f.plan,
       originalTopologyInput: admissionPreparation.topologyInput, transitionTopologyInput: transitionInput,
       transitionId, workerRoute, requestedRoutes: transitionInput.requestedRoutes,
-      installedProcessConfiguration: processConfiguration, processReadiness, processObservation,
+      installedProcessConfiguration: processConfiguration, qualificationReport, processReadiness, processObservation,
       protectedResultStorage, serviceObservation, permittedWorkspace: { workspaceId: "workspace:fixture",
         workingDirectory: processConfiguration.process.workingDirectory,
         bindingDigest: processConfiguration.workingDirectoryBindingDigest } },

@@ -14,6 +14,7 @@ import { verifyInstallationPlanV1, type InstallationPlanV1 } from "./installatio
 import { privateInstallationFinalReviewBindingsV1 } from "./private-installation-final-review";
 import { captureLocalPlatformServiceObservationV1 } from "./local-platform-service-observation";
 import { capturePrivateArtifactStorageConfigurationV1 } from "../../web/v1/private-artifact-storage";
+import { createClaudeCodeTextReviewQualificationEvidenceV1 } from "../../harness/claude-code-v1/qualification-evidence";
 
 export const LOCAL_CLAUDE_POST_INSTALL_ADMISSION_V1 =
   "control-room.local-claude-post-install-admission/v1" as const;
@@ -82,6 +83,9 @@ export type LocalClaudePostInstallAdmissionInputV1 = Readonly<{
   workerRoute: unknown;
   requestedRoutes: unknown;
   installedProcessConfiguration: unknown;
+  /** Sanitized owner-attended record. Its digest must be the exact value
+   * already pinned by the immutable process configuration. */
+  qualificationReport: unknown;
   processReadiness: unknown;
   processObservation: unknown;
   protectedResultStorage: unknown;
@@ -167,6 +171,8 @@ export async function verifyLocalClaudePostInstallAdmissionV1(input: LocalClaude
       || canonicalJson(transition.affectedWorkerIds) !== canonicalJson([workerRoute.workerId])) refuse();
 
     const processConfiguration = capturePrivateClaudeCodeInstalledProcessHostConfigurationV1(input.installedProcessConfiguration);
+    const qualificationEvidence = createClaudeCodeTextReviewQualificationEvidenceV1(input.qualificationReport);
+    if (processConfiguration.qualificationDigest !== qualificationEvidence.evidenceDigest) refuse();
     const readiness = verifyClaudeCodeLocalProcessReadinessV1(input.processReadiness);
     if (summarizeClaudeCodeLocalProcessReadinessV1(topology.planDigest, readiness).state !== "readiness_recorded") refuse();
     const observed = observation.parse(input.processObservation);
