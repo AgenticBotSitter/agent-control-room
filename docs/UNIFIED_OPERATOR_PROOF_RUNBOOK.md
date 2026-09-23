@@ -168,6 +168,31 @@ Record only digests, timestamps, release identity, and pass/fail evidence.
 This adds an enrolled remote worker to the same installation. It does not add
 a second scheduler, broker, database, task ID, or review path.
 
+### B0. One owner-approved activation session
+
+Treat the private database route, the controller's private service, and the
+first remote-worker enrollment as one reversible activation session—not as a
+series of unrelated configuration edits. Before its first effect, capture a
+redacted backup and digest of the existing PostgreSQL configuration, private
+routing state, service definition, and Control Room release identity. The
+session must then, in this order:
+
+1. make PostgreSQL use a real certificate and require encrypted restricted-role
+   connections;
+2. add only the approved private route from the controller to that PostgreSQL
+   listener, without changing existing private website routes or opening a
+   public listener;
+3. run the existing migration, restricted-role, backup and restore checks;
+4. start the already reviewed Control Room service using protected operator
+   configuration; and
+5. enroll one intended worker and immediately run Proof B2.
+
+If any step after a configuration change is uncertain, stop new work, preserve
+the original evidence, and use the recorded rollback procedure. Do not repeat
+an uncertain task or reset unrelated private routing. A successful session is
+one coherent installation proof; it does not authorize a second controller or
+database.
+
 ### B1. Enroll and connect one worker privately
 
 1. Prepare the remote computer with the same sanitized preparation process.
