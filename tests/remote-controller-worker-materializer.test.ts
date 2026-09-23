@@ -31,6 +31,7 @@ function remoteTarget(state: "enrolled" | "revoked" = "enrolled") {
     enrolledAt: at(1_000), revokedAt: state === "revoked" ? at(8_000) : null });
   let dispatch: { body: { delivery: ControllerWorkerDeliveryV1 } } | undefined;
   let sends = 0;
+  let dropReply = true;
   let nextReceipt: ReturnType<typeof receipt> | undefined;
   const session = {
     controllerWorkerDeliveryChannel() { return { nodeId: binding.nodeId }; },
@@ -41,6 +42,7 @@ function remoteTarget(state: "enrolled" | "revoked" = "enrolled") {
     },
     async sendPreparedControllerWorkerDelivery(work: (frame: { body: unknown }, current: { assertCurrent(): void }) => Promise<unknown>) {
       sends++; await work({ body: dispatch!.body }, { assertCurrent() {} });
+      if (dropReply) { dropReply = false; throw new Error("fixture_transport_reply_lost_after_send"); }
     },
     async acceptControllerWorkerDeliveryReceipt(_raw: string | Uint8Array, work: (frame: { body: { receipt: ReturnType<typeof receipt> } },
       dispatchFrame: { body: { enrollmentDigest: string; delivery: ControllerWorkerDeliveryV1 } }, assertCurrent: () => void) => Promise<unknown>) {
@@ -95,6 +97,8 @@ test("the controller materializes a leased v11 plan through its protected target
   const ref = { tenantId: binding.tenantId, projectId: binding.projectId, jobId: planned.receipt.jobId,
     attemptId: assigned.receipt.attemptId, leaseId: assigned.receipt.leaseId, inputDigest: planned.receipt.inputDigest };
   const prepared = await materializer.prepare(ref);
+  now += 500;
+  assert.deepEqual(await materializer.prepare(ref), prepared, "pre-send reconstruction uses canonical lease time");
   assert.equal(prepared.delivery.worker.workerId, "worker:remote-reviewed");
   assert.equal(prepared.delivery.worker.adapterId, "connector:remote-reviewed");
   assert.equal(prepared.route.kind, "remote");
@@ -112,13 +116,25 @@ test("the controller materializes a leased v11 plan through its protected target
     inputDigest: ref.inputDigest, packetDigest: sha256Digest("remote-queue-packet") };
   const target = await queueCoordinator.locateQueuedRemoteControllerWorkerDelivery(queueReference, new AbortController().signal);
   assert.ok(target);
-  const delivered = await deliverVerifiedRemoteControllerWorkerQueueTaskV1({ reference: queueReference,
-    signal: new AbortController().signal, target: target!, materializer });
-  assert.deepEqual(delivered, { disposition: "delivered" });
+  await assert.rejects(deliverVerifiedRemoteControllerWorkerQueueTaskV1({ reference: queueReference,
+    signal: new AbortController().signal, target: target!, materializer }), /native_task_delivery_unresolved/);
+  assert.equal(current.sends(), 1);
+  now += 1_000;
+  const reconstructed = new RemoteControllerWorkerMaterializerV1(f.db, planner, resolver, new Uint8Array(32).fill(61), () => now);
+  assert.deepEqual(await reconstructed.prepare(ref), prepared, "reconstruction retains the exact immutable packet");
+  await assert.rejects(deliverVerifiedRemoteControllerWorkerQueueTaskV1({ reference: queueReference,
+    signal: new AbortController().signal, target: target!, materializer: reconstructed }), /native_task_delivery_unresolved/);
+  assert.equal(current.sends(), 1, "a dropped acknowledgement never authorizes another send after reconstruction");
+  await assert.rejects(reconstructed.prepare({ ...ref, inputDigest: sha256Digest("changed-input") }),
+    /remote_controller_worker_materializer_unavailable/, "a changed locator cannot adopt the saved intent");
+  const concurrent = await Promise.all([reconstructed.transmit(ref, prepared), materializer.transmit(ref, prepared)]);
+  assert.deepEqual(concurrent.map(value => value.kind), ["uncertain", "uncertain"]);
   assert.equal(current.sends(), 1);
   current.setReceipt(prepared.delivery);
-  const recorded = await materializer.acceptReceipt(ref, prepared, "fixture-receipt", at(10_000));
+  const recorded = await reconstructed.acceptReceipt(ref, prepared, "fixture-receipt", at(10_000));
   assert.equal(recorded.replayed, false);
+  const receiptReplay = await reconstructed.acceptReceipt(ref, prepared, "fixture-receipt", at(11_000));
+  assert.equal(receiptReplay.replayed, true, "a later recording time does not change the original receipt");
   const again = await deliverVerifiedRemoteControllerWorkerQueueTaskV1({ reference: queueReference,
     signal: new AbortController().signal, target: target!, materializer });
   assert.deepEqual(again, { disposition: "delivered" });
@@ -128,11 +144,10 @@ test("the controller materializes a leased v11 plan through its protected target
   const revoked = remoteTarget("revoked");
   const revokedResolver = { async resolve() { return revoked.value; } };
   const fenced = new RemoteControllerWorkerMaterializerV1(f.db, planner, revokedResolver, new Uint8Array(32).fill(61), () => now);
-  await assert.rejects(fenced.prepare(ref), /remote_controller_worker_materializer_unavailable/,
-    "a revoked protected target cannot materialize a new remote delivery");
-  await assert.rejects(deliverVerifiedRemoteControllerWorkerQueueTaskV1({ reference: queueReference,
-    signal: new AbortController().signal, target: target!, materializer: fenced }),
-  /remote_controller_worker_materializer_unavailable/,
-  "a revoked protected target refuses before a second send");
+  await assert.rejects(fenced.assertCurrent(ref, prepared), /remote_controller_worker_materializer_unavailable/,
+    "a revoked protected target cannot authorize a new transmission");
+  assert.deepEqual(await deliverVerifiedRemoteControllerWorkerQueueTaskV1({ reference: queueReference,
+    signal: new AbortController().signal, target: target!, materializer: fenced }), { disposition: "delivered" },
+  "reading historical delivery evidence after revocation does not transmit");
   assert.equal(current.sends(), 1);
 });

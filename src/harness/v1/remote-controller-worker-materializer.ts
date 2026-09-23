@@ -1,8 +1,9 @@
 import { z } from "zod";
 import { attemptRecordSchema, jobRecordSchema, leaseRecordSchema } from "../../domain/v1";
 import type { DatabaseClient, DatabaseSession } from "../../persistence/database";
-import { sha256Digest } from "../../security";
-import { type TaskExecutionPlanner, controllerWorkerRemoteTaskExecutionPlanSchemaV11 } from "../../web/v1/task-execution-planner";
+import { sha256Digest, hmacSha256Tag } from "../../security";
+import { type TaskExecutionPlanner, controllerWorkerRemoteTaskExecutionPlanSchemaV11,
+  controllerWorkerRemoteTaskExecutionPlanSchemaV12 } from "../../web/v1/task-execution-planner";
 import { controllerWorkerAdapterIdSchemaV1, controllerWorkerDeliverySchemaV1,
   createControllerWorkerDeliveryV1, type ControllerWorkerDeliveryReceiptV1, type ControllerWorkerDeliveryV1 } from "./controller-worker-delivery";
 import { persistControllerWorkerDeliveryReceiptV1, readControllerWorkerDeliveryReceiptV1 } from "./controller-worker-delivery-receipt-store";
@@ -112,7 +113,19 @@ export class RemoteControllerWorkerMaterializerV1 {
 
   async prepare(value: RemoteControllerWorkerMaterializationReferenceV1): Promise<RemoteControllerWorkerPreparedDeliveryV1> {
     const ref = referenceSchema.parse(value);
-    return this.db.transaction(tx => this.prepareInSession(tx, ref));
+    return this.db.transaction(async tx => (await this.readIntent(tx, ref)) ?? this.prepareInSession(tx, ref));
+  }
+
+  private async readIntent(tx: DatabaseSession, ref: z.infer<typeof referenceSchema>) {
+    const row = (await tx.query<{ request_digest: string; result: { prepared: unknown; tag: string } }>(
+      `SELECT request_digest,result FROM control_idempotency WHERE tenant_id=$1
+       AND operation_scope='remote-controller-worker-dispatch-intent/v1' AND idempotency_key=$2`,
+      [ref.tenantId, ref.attemptId])).rows[0];
+    if (!row) return null;
+    const prepared = preparedSchema.parse(row.result.prepared) as RemoteControllerWorkerPreparedDeliveryV1;
+    if (row.request_digest !== sha256Digest(ref)
+      || row.result.tag !== hmacSha256Tag(this.integrityKey, { ref, prepared })) unavailable();
+    return prepared;
   }
 
   /** A changed lease, plan, enrollment, selected worker, or session binding
@@ -120,22 +133,23 @@ export class RemoteControllerWorkerMaterializerV1 {
   async assertCurrent(value: RemoteControllerWorkerMaterializationReferenceV1, preparedValue: unknown): Promise<void> {
     const ref = referenceSchema.parse(value);
     const prepared = preparedSchema.parse(preparedValue) as RemoteControllerWorkerPreparedDeliveryV1;
-    const current = await this.prepare(ref);
+    const current = await this.db.transaction(tx => this.prepareInSession(tx, ref));
     if (bindingDigest(prepared) !== bindingDigest(current)) unavailable();
   }
 
   /**
    * Stages/sends through the existing authenticated node-session bridge. A
-   * durable receipt suppresses a second send; an uncertain send has no retry
-   * path here and must use the existing reconnect-reconciliation path.
+   * durable dispatch intent suppresses a second send even without a receipt.
+   * Uncertainty remains until the authenticated original session supplies its
+   * receipt; reconstructing the materializer does not recover a lost session.
    */
   async transmit(value: RemoteControllerWorkerMaterializationReferenceV1, preparedValue: unknown,
     signal?: AbortSignal): Promise<Readonly<{ kind: "transmitted"; transmission: RemoteNodeDeliveryTransmissionV1; startsWork: false; grantsExecutionAuthority: false } | {
-      kind: "already_recorded"; receipt: ControllerWorkerDeliveryReceiptV1; startsWork: false; grantsExecutionAuthority: false }>> {
+      kind: "already_recorded"; receipt: ControllerWorkerDeliveryReceiptV1; startsWork: false; grantsExecutionAuthority: false } | {
+      kind: "uncertain"; startsWork: false; grantsExecutionAuthority: false }>> {
     if (signal?.aborted) unavailable();
     const ref = referenceSchema.parse(value);
     const prepared = preparedSchema.parse(preparedValue) as RemoteControllerWorkerPreparedDeliveryV1;
-    await this.assertCurrent(ref, prepared);
     const prior = await this.db.transaction(tx => readControllerWorkerDeliveryReceiptV1(tx, this.integrityKey, {
       tenantId: ref.tenantId, projectId: ref.projectId, jobId: ref.jobId, attemptId: ref.attemptId }));
     if (prior) {
@@ -144,31 +158,73 @@ export class RemoteControllerWorkerMaterializerV1 {
       return Object.freeze({ kind: "already_recorded" as const, receipt: prior.receipt,
         startsWork: false as const, grantsExecutionAuthority: false as const });
     }
+    const existingIntent = await this.db.transaction(tx => this.readIntent(tx, ref));
+    if (existingIntent) {
+      if (sha256Digest(existingIntent) !== sha256Digest(prepared)) unavailable();
+      return Object.freeze({ kind: "uncertain", startsWork: false, grantsExecutionAuthority: false });
+    }
+    await this.assertCurrent(ref, prepared);
     const target = await this.resolveForPrepared(ref, prepared);
     const admission = admitRemoteWorkerDeliveryV1({ delivery: prepared.delivery, route: prepared.route,
       enrollment: target.enrollment, supportedAdapterRevisions: target.supportedAdapterRevisions });
     if (!admission.accepted) unavailable();
-    const transmission = await createAuthenticatedRemoteNodeSessionDeliveryBridgeV1({ session: target.session })
-      .transmit(prepared.delivery, prepared.route, signal);
-    return Object.freeze({ kind: "transmitted" as const, transmission,
-      startsWork: false as const, grantsExecutionAuthority: false as const });
+    // Commit the immutable packet before any transport effect. A crash at any
+    // later point means uncertainty, never permission to send it again.
+    const claimed = await this.db.transaction(async tx => {
+      const current = await this.prepareInSession(tx, ref);
+      if (sha256Digest(current) !== sha256Digest(prepared)) unavailable();
+      const inserted = await tx.query(`INSERT INTO control_idempotency
+        (tenant_id,operation_scope,idempotency_key,request_digest,status,result)
+        VALUES($1,'remote-controller-worker-dispatch-intent/v1',$2,$3,'completed',$4::jsonb)
+        ON CONFLICT(tenant_id,operation_scope,idempotency_key) DO NOTHING RETURNING idempotency_key`,
+      [ref.tenantId, ref.attemptId, sha256Digest(ref), JSON.stringify({ prepared,
+        tag: hmacSha256Tag(this.integrityKey, { ref, prepared }) })]);
+      return inserted.rows.length === 1;
+    });
+    if (!claimed) return Object.freeze({ kind: "uncertain", startsWork: false, grantsExecutionAuthority: false });
+    try {
+      const transmission = await createAuthenticatedRemoteNodeSessionDeliveryBridgeV1({ session: target.session })
+        .transmit(prepared.delivery, prepared.route, signal);
+      return Object.freeze({ kind: "transmitted" as const, transmission,
+        startsWork: false as const, grantsExecutionAuthority: false as const });
+    } catch {
+      // The intent has committed. Even a rejected transport promise cannot
+      // prove the peer did not receive the packet.
+      return Object.freeze({ kind: "uncertain", startsWork: false, grantsExecutionAuthority: false });
+    }
   }
 
-  /** Accepts only the signed receipt for this exact prepared packet, then
+  /** Accepts only the signed receipt for the durably recorded packet, then
    * stores it in the existing PostgreSQL receipt table. It does not execute
-   * work and a receipt replay is intentionally harmless. */
+   * work and a receipt replay is intentionally harmless. An expired lease is
+   * not new execution authority: the original receipt's receive time must
+   * still be inside the packet window, and the session authenticates the
+   * envelope. Lost session recovery is not implemented by this method. */
   async acceptReceipt(value: RemoteControllerWorkerMaterializationReferenceV1, preparedValue: unknown,
     raw: string | Uint8Array, recordedAt: unknown) {
     const ref = referenceSchema.parse(value);
     const prepared = preparedSchema.parse(preparedValue) as RemoteControllerWorkerPreparedDeliveryV1;
-    await this.assertCurrent(ref, prepared);
+    const intent = await this.db.transaction(tx => this.readIntent(tx, ref));
+    if (!intent || sha256Digest(intent) !== sha256Digest(prepared)) unavailable();
     const target = await this.resolveForPrepared(ref, prepared);
     const bridge = createAuthenticatedRemoteNodeSessionDeliveryBridgeV1({ session: target.session });
     return bridge.acceptReceipt(raw, async received => {
       if (received.delivery.deliveryDigest !== prepared.delivery.deliveryDigest
         || received.route.workerId !== prepared.route.workerId || received.route.kind !== "remote") unavailable();
-      return this.db.transaction(tx => persistControllerWorkerDeliveryReceiptV1(tx, this.integrityKey,
-        received.delivery, received.receipt, recordedAt));
+      return this.db.transaction(async tx => {
+        received.assertCurrent();
+        const prior = await readControllerWorkerDeliveryReceiptV1(tx, this.integrityKey, ref);
+        if (prior) {
+          if (prior.delivery.deliveryDigest !== prepared.delivery.deliveryDigest
+            || prior.receipt.receiptDigest !== received.receipt.receiptDigest) unavailable();
+          return Object.freeze({ receipt: prior.receipt, replayed: true,
+            startsWork: false as const, grantsExecutionAuthority: false as const });
+        }
+        const result = await persistControllerWorkerDeliveryReceiptV1(tx, this.integrityKey,
+          received.delivery, received.receipt, recordedAt);
+        received.assertCurrent();
+        return result;
+      });
     });
   }
 
@@ -200,7 +256,9 @@ export class RemoteControllerWorkerMaterializerV1 {
     const job = jobRecordSchema.parse(jobRow.payload), attempt = attemptRecordSchema.parse(attemptRow.payload), lease = leaseRecordSchema.parse(leaseRow.payload);
     const rawPlan = await this.planner.readInSession(tx, ref.jobId);
     const plan = rawPlan?.schema === "control-room.task-execution-plan/v11"
-      ? controllerWorkerRemoteTaskExecutionPlanSchemaV11.parse(rawPlan) : unavailable();
+      ? controllerWorkerRemoteTaskExecutionPlanSchemaV11.parse(rawPlan)
+      : rawPlan?.schema === "control-room.task-execution-plan/v12"
+        ? controllerWorkerRemoteTaskExecutionPlanSchemaV12.parse(rawPlan) : unavailable();
     if (plan.adapter !== CONTROLLER_WORKER_REMOTE_ADAPTER_V1 || plan.tenantId !== ref.tenantId || plan.projectId !== ref.projectId
       || plan.job.id !== ref.jobId || jobRow.state !== job.state || jobRow.version !== job.version || jobRow.project_id !== job.projectId
       || attemptRow.state !== attempt.state || attemptRow.version !== attempt.version || attemptRow.job_id !== attempt.jobId
@@ -223,7 +281,7 @@ export class RemoteControllerWorkerMaterializerV1 {
       nodeId: id.parse(attempt.nodeId) }, worker: { workerId: target.workerId, adapterId: target.adapterId,
       adapterRevision: target.adapterRevision }, input: plan.input, authorityDigest: job.authority.digest,
       connectorProfileDigest: plan.connectorProfileDigest, acceptanceProfileId: plan.acceptanceProfileId,
-      acceptanceProfileDigest: plan.acceptanceProfileDigest, issuedAt: new Date(now).toISOString(), expiresAt });
+      acceptanceProfileDigest: plan.acceptanceProfileDigest, issuedAt: lease.acquiredAt, expiresAt });
     const admission = admitRemoteWorkerDeliveryV1({ delivery, route: { kind: "remote", workerId: target.workerId },
       enrollment: target.enrollment, supportedAdapterRevisions: target.supportedAdapterRevisions });
     if (!admission.accepted) unavailable();

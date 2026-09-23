@@ -27,6 +27,9 @@ export async function deliverVerifiedRemoteControllerWorkerQueueTaskV1(input: Re
   const prepared = await input.materializer.prepare(materialization);
   if (input.signal.aborted) unavailable();
   const result = await input.materializer.transmit(materialization, prepared, input.signal);
-  if (input.signal.aborted || (result.kind !== "transmitted" && result.kind !== "already_recorded")) unavailable();
+  // A transport send is not acknowledgement. The existing queue retains this
+  // as unresolved until the exact receipt has reached canonical persistence.
+  if (input.signal.aborted || result.kind !== "already_recorded")
+    throw new Error("native_task_delivery_unresolved");
   return Object.freeze({ disposition: "delivered" as const });
 }
