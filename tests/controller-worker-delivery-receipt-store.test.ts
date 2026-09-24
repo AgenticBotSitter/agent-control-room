@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createControllerWorkerDeliveryV1, type ControllerWorkerDeliveryV1 } from "../src/harness/v1/controller-worker-delivery";
-import { persistControllerWorkerDeliveryReceiptV1, readControllerWorkerDeliveryReceiptV1 } from "../src/harness/v1/controller-worker-delivery-receipt-store";
+import { persistControllerWorkerDeliveryReceiptV1, readControllerWorkerDeliveryReceiptV1,
+  readLockedControllerWorkerDeliveryReceiptV1 } from "../src/harness/v1/controller-worker-delivery-receipt-store";
 import { admitRemoteWorkerDeliveryV1, createRemoteWorkerEnrollmentV1,
   deliverAndRecordAdmittedRemoteWorkerPacketV1, observeRemoteWorkerDeliveryV1,
   reconcileAndRecordRemoteWorkerDeliveryAfterReconnectV1 } from "../src/harness/v1/remote-worker-delivery";
@@ -57,6 +58,10 @@ test("the one PostgreSQL authority retains an exact local worker receipt across 
   assert.equal(saved?.delivery.deliveryDigest, packet.deliveryDigest);
   assert.equal(saved?.receipt.route.kind, "local");
   assert.equal(saved?.startsWork, false);
+  const locked = await f.db.transaction(tx => readLockedControllerWorkerDeliveryReceiptV1(tx, key, {
+    tenantId: binding.tenantId, projectId: binding.projectId, jobId: binding.jobId, attemptId: binding.attemptId }));
+  assert.equal(locked?.receipt.receiptDigest, local.receiptDigest,
+    "a mutating remote-evidence transaction can lock and authenticate the exact saved receipt");
 });
 
 test("the same PostgreSQL receipt store retains a remote acknowledgement without a second authority", async t => {

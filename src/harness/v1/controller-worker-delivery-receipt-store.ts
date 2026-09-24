@@ -88,11 +88,11 @@ export async function persistControllerWorkerDeliveryReceiptV1(tx: DatabaseSessi
 }
 
 /** Reads one authenticated historical receipt. It has no transport or worker side effect. */
-export async function readControllerWorkerDeliveryReceiptV1(tx: DatabaseSession, integrityKey: Uint8Array,
-  scope: { tenantId: string; projectId: string; jobId: string; attemptId: string }) {
+async function readControllerWorkerDeliveryReceipt(tx: DatabaseSession, integrityKey: Uint8Array,
+  scope: { tenantId: string; projectId: string; jobId: string; attemptId: string }, lock: boolean) {
   if (!(integrityKey instanceof Uint8Array) || integrityKey.length !== 32) fail();
   const row = (await tx.query<Row>(`SELECT tenant_id,project_id,job_id,attempt_id,record,auth_tag
-    FROM control_worker_delivery_receipts WHERE tenant_id=$1 AND job_id=$2 AND attempt_id=$3`,
+    FROM control_worker_delivery_receipts WHERE tenant_id=$1 AND job_id=$2 AND attempt_id=$3${lock ? " FOR UPDATE" : ""}`,
   [scope.tenantId, scope.jobId, scope.attemptId])).rows[0];
   if (!row) return null;
   const record = verify(integrityKey, row);
@@ -100,4 +100,16 @@ export async function readControllerWorkerDeliveryReceiptV1(tx: DatabaseSession,
     || record.delivery.identity.jobId !== scope.jobId || record.delivery.identity.attemptId !== scope.attemptId) fail();
   return Object.freeze({ delivery: record.delivery, receipt: record.receipt, recordedAt: record.recordedAt,
     startsWork: false as const, grantsExecutionAuthority: false as const });
+}
+
+/** Read-only receipt lookup for views and non-mutating preparation. */
+export async function readControllerWorkerDeliveryReceiptV1(tx: DatabaseSession, integrityKey: Uint8Array,
+  scope: { tenantId: string; projectId: string; jobId: string; attemptId: string }) {
+  return readControllerWorkerDeliveryReceipt(tx, integrityKey, scope, false);
+}
+
+/** Locked receipt lookup for a transaction which will record remote evidence. */
+export async function readLockedControllerWorkerDeliveryReceiptV1(tx: DatabaseSession, integrityKey: Uint8Array,
+  scope: { tenantId: string; projectId: string; jobId: string; attemptId: string }) {
+  return readControllerWorkerDeliveryReceipt(tx, integrityKey, scope, true);
 }

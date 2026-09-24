@@ -127,13 +127,17 @@ export async function createRemoteWorkerEnrollmentInStoreV1(tx: DatabaseSession,
 }
 
 /** Reads the current enrolled authority and rechecks every expected binding plus live node/key state. */
-export async function readCurrentRemoteWorkerEnrollmentV1(tx: DatabaseSession, key: Uint8Array,
+async function readCurrentRemoteWorkerEnrollment(tx: DatabaseSession, key: Uint8Array,
   input: Readonly<{ tenantId: unknown; workerId: unknown; nodeId: unknown; nodeKeyId: unknown;
     adapterId: unknown; adapterRevision: unknown; capabilityDigest: unknown; enrollmentId: unknown;
-    enrollmentDigest: unknown; releaseBindingDigest: unknown; now: unknown }>): Promise<RemoteWorkerEnrollmentRecordV1> {
+    enrollmentDigest: unknown; releaseBindingDigest: unknown; now: unknown }>, lock: boolean): Promise<RemoteWorkerEnrollmentRecordV1> {
   if (!validKey(key)) unavailable();
   const tenantId = id.parse(input.tenantId), workerId = id.parse(input.workerId);
-  const current = (await revisions(tx, key, tenantId, workerId)).at(-1)?.record ?? unavailable();
+  // Enrollment writers take this fence before appending a revision.  A
+  // terminal-result transaction must take it too, otherwise it could read an
+  // enrolled row while a revocation is about to append a newer one.
+  if (lock) await lockTenant(tx, tenantId);
+  const current = (await revisions(tx, key, tenantId, workerId, lock)).at(-1)?.record ?? unavailable();
   if (current.state !== "enrolled" || current.nodeId !== id.parse(input.nodeId)
     || current.nodeKeyId !== id.parse(input.nodeKeyId) || current.adapterId !== id.parse(input.adapterId)
     || current.adapterRevision !== z.string().min(7).max(180).parse(input.adapterRevision)
@@ -141,8 +145,23 @@ export async function readCurrentRemoteWorkerEnrollmentV1(tx: DatabaseSession, k
     || current.enrollmentId !== id.parse(input.enrollmentId)
     || current.enrollmentDigest !== digest.parse(input.enrollmentDigest)
     || current.releaseBindingDigest !== digest.parse(input.releaseBindingDigest)) unavailable();
-  requireCurrentKey(await nodeKey(tx, current, false), current, input.now);
+  requireCurrentKey(await nodeKey(tx, current, lock), current, input.now);
   return current;
+}
+
+/** Read-only current authority check. It does not reserve a lifecycle fence. */
+export async function readCurrentRemoteWorkerEnrollmentV1(tx: DatabaseSession, key: Uint8Array,
+  input: Parameters<typeof readCurrentRemoteWorkerEnrollment>[2]): Promise<RemoteWorkerEnrollmentRecordV1> {
+  return readCurrentRemoteWorkerEnrollment(tx, key, input, false);
+}
+
+/**
+ * Current authority check for a transaction which will mutate receipt-bound
+ * remote evidence. It serializes against enrollment lifecycle changes.
+ */
+export async function readLockedCurrentRemoteWorkerEnrollmentV1(tx: DatabaseSession, key: Uint8Array,
+  input: Parameters<typeof readCurrentRemoteWorkerEnrollment>[2]): Promise<RemoteWorkerEnrollmentRecordV1> {
+  return readCurrentRemoteWorkerEnrollment(tx, key, input, true);
 }
 
 /** Appends one reviewed lifecycle change; it never starts or contacts a worker. */

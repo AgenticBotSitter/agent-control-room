@@ -5,7 +5,7 @@ import { adaptPglite } from "../src/persistence/database";
 import { sha256Digest } from "../src/security";
 import { createRemoteWorkerEnrollmentV1 } from "../src/harness/v1/remote-worker-delivery";
 import { advanceRemoteWorkerEnrollmentInStoreV1, createRemoteWorkerEnrollmentInStoreV1,
-  readCurrentRemoteWorkerEnrollmentV1 } from "../src/harness/v1/remote-worker-enrollment-store";
+  readCurrentRemoteWorkerEnrollmentV1, readLockedCurrentRemoteWorkerEnrollmentV1 } from "../src/harness/v1/remote-worker-enrollment-store";
 import { nativeTaskFixture } from "./native-task-fixture";
 
 const key = new Uint8Array(32).fill(85);
@@ -43,6 +43,9 @@ test("canonical enrollment store exact-replays and rejects changed authority mat
 
   assert.equal((await f.db.transaction(tx => readCurrentRemoteWorkerEnrollmentV1(tx, key,
     currentInput(first.record)))).recordDigest, first.record.recordDigest);
+  assert.equal((await f.db.transaction(tx => readLockedCurrentRemoteWorkerEnrollmentV1(tx, key,
+    currentInput(first.record)))).recordDigest, first.record.recordDigest,
+  "a mutating remote-evidence transaction can take the same current enrollment fence");
   for (const patch of [
     { nodeId: "node:substitute" }, { nodeKeyId: "key:substitute" }, { workerId: "worker:substitute" },
     { adapterRevision: "revision:substitute" }, { capabilityDigest: digest("substitute") },
