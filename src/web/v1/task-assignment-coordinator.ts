@@ -104,7 +104,7 @@ export type ClaudeCodeLocalQueueDeliveryTarget = Readonly<{
  * installation-owned materializer reconstructs those facts immediately before
  * a send, from the protected node binding. */
 export type RemoteControllerWorkerQueueDeliveryTarget = Readonly<{
-  kind: "controller-worker-remote"; nodeId: string; leaseId: string;
+  kind: "controller-worker-remote"; nodeId: string; leaseId: string; leaseEpoch: number;
   task: Readonly<{ projectId: string; jobId: string; attemptId: string; inputDigest: string }>;
   startsWork: false; grantsExecutionAuthority: false;
 }>;
@@ -374,10 +374,12 @@ export class TaskAssignmentCoordinator {
       const now = this.clock();
       if (!route || route.executorId !== job.authority.allowedExecutor
         || route.capabilityProbeId !== CONTROLLER_WORKER_REMOTE_CAPABILITY_V1
-        || stored.lease.state !== "active" || !Number.isSafeInteger(now) || now < 0
+        || stored.lease.state !== "active" || stored.attempt.leaseEpoch !== stored.lease.epoch
+        || !Number.isSafeInteger(now) || now < 0
         || now >= Date.parse(stored.lease.expiresAt) || now >= Date.parse(job.authority.expiresAt)) conflict();
       await this.assertTransitionAdmission(tx, route.nodeId);
       return Object.freeze({ kind: "controller-worker-remote" as const, nodeId: route.nodeId, leaseId: stored.lease.id,
+        leaseEpoch: stored.lease.epoch,
         task: Object.freeze({ projectId: ref.projectId, jobId: ref.jobId, attemptId: ref.attemptId,
           inputDigest: ref.inputDigest }), startsWork: false as const,
         grantsExecutionAuthority: false as const }) satisfies RemoteControllerWorkerQueueDeliveryTarget;

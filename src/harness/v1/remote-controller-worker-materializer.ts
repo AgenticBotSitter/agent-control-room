@@ -34,7 +34,7 @@ export const REMOTE_CONTROLLER_WORKER_MATERIALIZER_V1 =
 /** A leased canonical task reference.  It has no worker, connection, address,
  * credential, or transport input: those facts belong to the protected resolver. */
 export type RemoteControllerWorkerMaterializationReferenceV1 = Readonly<{
-  tenantId: string; projectId: string; jobId: string; attemptId: string; leaseId: string; inputDigest: string;
+  tenantId: string; projectId: string; jobId: string; attemptId: string; leaseId: string; leaseEpoch: number; inputDigest: string;
 }>;
 
 /** The only resolver input is controller-derived placement and plan facts. */
@@ -66,14 +66,17 @@ export type RemoteControllerWorkerPreparedDeliveryV1 = Readonly<{
   workflowId: string;
   route: Readonly<{ kind: "remote"; workerId: string }>;
   enrollmentDigest: string;
+  leaseEpoch: number;
   startsWork: false;
   grantsExecutionAuthority: false;
 }>;
 
-const referenceSchema = z.object({ tenantId: id, projectId: id, jobId: id, attemptId: id, leaseId: id, inputDigest: digest }).strict();
+const referenceSchema = z.object({ tenantId: id, projectId: id, jobId: id, attemptId: id, leaseId: id,
+  leaseEpoch: z.number().int().positive().max(Number.MAX_SAFE_INTEGER), inputDigest: digest }).strict();
 const preparedSchema = z.object({
   schema: z.literal(REMOTE_CONTROLLER_WORKER_MATERIALIZER_V1), delivery: controllerWorkerDeliverySchemaV1,
   workflowId: id, route: z.object({ kind: z.literal("remote"), workerId: id }).strict(), enrollmentDigest: digest,
+  leaseEpoch: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
   startsWork: z.literal(false), grantsExecutionAuthority: z.literal(false),
 }).strict();
 const targetSchema = z.object({
@@ -104,6 +107,7 @@ function captureTarget(value: unknown): RemoteControllerWorkerResolvedTargetV1 {
 
 function bindingDigest(value: RemoteControllerWorkerPreparedDeliveryV1) {
   return sha256Digest({ workflowId: value.workflowId, route: value.route, enrollmentDigest: value.enrollmentDigest,
+    leaseEpoch: value.leaseEpoch,
     identity: value.delivery.identity, worker: value.delivery.worker, input: value.delivery.input,
     authorityDigest: value.delivery.authorityDigest, connectorProfileDigest: value.delivery.connectorProfileDigest,
     acceptanceProfileId: value.delivery.acceptanceProfileId,
@@ -129,6 +133,8 @@ export class RemoteControllerWorkerMaterializerV1 {
     return this.db.transaction(async tx => {
       const intent = await this.readIntent(tx, ref);
       if (!intent) return this.prepareInSession(tx, ref);
+      const current = await this.prepareInSession(tx, ref);
+      if (bindingDigest(intent) !== bindingDigest(current)) unavailable();
       await this.resolveForPrepared(ref, intent, tx);
       return intent;
     });
@@ -325,6 +331,10 @@ export class RemoteControllerWorkerMaterializerV1 {
   /** Registers the exact accepted packet; it remains discovered and cannot start work. */
   private async registerAcceptedRemoteRunInSession(tx: DatabaseSession, ref: z.infer<typeof referenceSchema>,
     prepared: RemoteControllerWorkerPreparedDeliveryV1, receipt: ControllerWorkerDeliveryReceiptV1) {
+    // A receipt may arrive long after the packet was prepared.  Rebuild under
+    // the receipt transaction so a replaced lease cannot register a stale run.
+    const current = await this.prepareInSession(tx, ref);
+    if (bindingDigest(current) !== bindingDigest(prepared)) unavailable();
     if (receipt.disposition !== "accepted" || receipt.deliveryId !== prepared.delivery.deliveryId
       || receipt.deliveryDigest !== prepared.delivery.deliveryDigest || receipt.workerId !== prepared.delivery.worker.workerId
       || receipt.route.kind !== "remote" || receipt.route.workerId !== prepared.route.workerId) unavailable();
@@ -332,6 +342,7 @@ export class RemoteControllerWorkerMaterializerV1 {
       adapterId: prepared.delivery.worker.adapterId, adapterRevision: prepared.delivery.worker.adapterRevision,
       deliveryDigest: prepared.delivery.deliveryDigest, receiptDigest: receipt.receiptDigest,
       enrollmentDigest: prepared.enrollmentDigest, leaseId: ref.leaseId, inputDigest: ref.inputDigest,
+      leaseEpoch: prepared.leaseEpoch,
       deadline: prepared.delivery.expiresAt });
     const createdAt = receipt.receivedAt;
     const run = { schemaVersion: "control-room-harness/v1" as const, id: prepared.delivery.identity.runId,
@@ -388,11 +399,11 @@ export class RemoteControllerWorkerMaterializerV1 {
     const jobRow = (await tx.query<{ payload: unknown; state: string; version: number; project_id: string }>(
       "SELECT payload,state,version,project_id FROM control_jobs WHERE tenant_id=$1 AND project_id=$2 AND id=$3 FOR UPDATE",
       [ref.tenantId, ref.projectId, ref.jobId])).rows[0];
-    const attemptRow = (await tx.query<{ payload: unknown; state: string; version: number; job_id: string; node_id: string }>(
-      "SELECT payload,state,version,job_id,node_id FROM control_attempts WHERE tenant_id=$1 AND id=$2 FOR UPDATE",
+    const attemptRow = (await tx.query<{ payload: unknown; state: string; version: number; job_id: string; node_id: string; lease_epoch: number | string }>(
+      "SELECT payload,state,version,job_id,node_id,lease_epoch FROM control_attempts WHERE tenant_id=$1 AND id=$2 FOR UPDATE",
       [ref.tenantId, ref.attemptId])).rows[0];
-    const leaseRow = (await tx.query<{ payload: unknown; state: string; version: number; attempt_id: string; job_id: string; node_id: string; expires_at: string | Date }>(
-      "SELECT payload,state,version,attempt_id,job_id,node_id,expires_at FROM control_leases WHERE tenant_id=$1 AND id=$2 FOR UPDATE",
+    const leaseRow = (await tx.query<{ payload: unknown; state: string; version: number; attempt_id: string; job_id: string; node_id: string; epoch: number | string; expires_at: string | Date }>(
+      "SELECT payload,state,version,attempt_id,job_id,node_id,epoch,expires_at FROM control_leases WHERE tenant_id=$1 AND id=$2 FOR UPDATE",
       [ref.tenantId, ref.leaseId])).rows[0];
     if (!jobRow || !attemptRow || !leaseRow) unavailable();
     const job = jobRecordSchema.parse(jobRow.payload), attempt = attemptRecordSchema.parse(attemptRow.payload), lease = leaseRecordSchema.parse(leaseRow.payload);
@@ -404,13 +415,15 @@ export class RemoteControllerWorkerMaterializerV1 {
     if (plan.adapter !== CONTROLLER_WORKER_REMOTE_ADAPTER_V1 || plan.tenantId !== ref.tenantId || plan.projectId !== ref.projectId
       || plan.job.id !== ref.jobId || jobRow.state !== job.state || jobRow.version !== job.version || jobRow.project_id !== job.projectId
       || attemptRow.state !== attempt.state || attemptRow.version !== attempt.version || attemptRow.job_id !== attempt.jobId
-      || attemptRow.node_id !== attempt.nodeId || leaseRow.state !== lease.state || leaseRow.version !== lease.version
+      || attemptRow.node_id !== attempt.nodeId || Number(attemptRow.lease_epoch) !== attempt.leaseEpoch
+      || leaseRow.state !== lease.state || leaseRow.version !== lease.version || Number(leaseRow.epoch) !== lease.epoch
       || leaseRow.attempt_id !== lease.attemptId || leaseRow.job_id !== lease.jobId || leaseRow.node_id !== lease.nodeId
       || new Date(leaseRow.expires_at).toISOString() !== lease.expiresAt || job.state !== "leased" || attempt.state !== "leased"
       || lease.state !== "active" || job.inputDigest !== ref.inputDigest || plan.job.inputDigest !== ref.inputDigest
       || plan.executionClass !== "text_review" || job.jobType !== CONTROLLER_WORKER_REMOTE_JOB_TYPE_V1
       || job.requiredCapability !== CONTROLLER_WORKER_REMOTE_CAPABILITY_V1 || attempt.jobId !== job.id || lease.jobId !== job.id
       || lease.attemptId !== attempt.id || lease.nodeId !== attempt.nodeId || Date.parse(lease.expiresAt) <= now
+      || ref.leaseEpoch !== attempt.leaseEpoch || attempt.leaseEpoch !== lease.epoch
       || Date.parse(job.authority.expiresAt) <= now) unavailable();
     const target = captureTarget(await this.resolver.resolve(Object.freeze({ tenantId: ref.tenantId, nodeId: id.parse(attempt.nodeId),
       adapterId: CONTROLLER_WORKER_REMOTE_ADAPTER_V1, requiredCapability: CONTROLLER_WORKER_REMOTE_CAPABILITY_V1,
@@ -420,7 +433,8 @@ export class RemoteControllerWorkerMaterializerV1 {
     const expiresAt = new Date(Math.min(Date.parse(lease.expiresAt), Date.parse(job.authority.expiresAt))).toISOString();
     const delivery = createControllerWorkerDeliveryV1({ identity: { tenantId: ref.tenantId, projectId: ref.projectId,
       jobId: ref.jobId, attemptId: ref.attemptId, runId: `run:controller-worker-remote:${sha256Digest({ tenantId: ref.tenantId,
-        jobId: ref.jobId, attemptId: ref.attemptId, leaseId: ref.leaseId, planDigest: sha256Digest(plan) }).slice(7)}`,
+        jobId: ref.jobId, attemptId: ref.attemptId, leaseId: ref.leaseId, leaseEpoch: lease.epoch,
+        planDigest: sha256Digest(plan) }).slice(7)}`,
       nodeId: id.parse(attempt.nodeId) }, worker: { workerId: target.workerId, adapterId: target.adapterId,
       adapterRevision: target.adapterRevision }, input: plan.input, authorityDigest: job.authority.digest,
       connectorProfileDigest: plan.connectorProfileDigest, acceptanceProfileId: plan.acceptanceProfileId,
@@ -430,7 +444,7 @@ export class RemoteControllerWorkerMaterializerV1 {
     if (!admission.accepted) unavailable();
     return Object.freeze({ schema: REMOTE_CONTROLLER_WORKER_MATERIALIZER_V1, delivery, workflowId: job.workflowId,
       route: Object.freeze({ kind: "remote" as const, workerId: target.workerId }),
-      enrollmentDigest: target.enrollment.enrollmentDigest, startsWork: false as const,
+      enrollmentDigest: target.enrollment.enrollmentDigest, leaseEpoch: lease.epoch, startsWork: false as const,
       grantsExecutionAuthority: false as const });
   }
 }

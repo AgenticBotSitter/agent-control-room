@@ -20,10 +20,11 @@ export async function deliverVerifiedRemoteControllerWorkerQueueTaskV1(input: Re
     || !input.materializer || typeof input.materializer.prepare !== "function" || typeof input.materializer.transmit !== "function") unavailable();
   const target = input.target, ref = input.reference;
   if (!target || target.kind !== "controller-worker-remote" || target.nodeId.length < 3 || target.leaseId.length < 3
+    || !Number.isSafeInteger(target.leaseEpoch) || target.leaseEpoch < 1
     || target.task.projectId !== ref.projectId || target.task.jobId !== ref.jobId || target.task.attemptId !== ref.attemptId
     || target.task.inputDigest !== ref.inputDigest || target.startsWork !== false || target.grantsExecutionAuthority !== false) unavailable();
   const materialization = Object.freeze({ tenantId: ref.tenantId, projectId: ref.projectId, jobId: ref.jobId,
-    attemptId: ref.attemptId, leaseId: target.leaseId, inputDigest: ref.inputDigest });
+    attemptId: ref.attemptId, leaseId: target.leaseId, leaseEpoch: target.leaseEpoch, inputDigest: ref.inputDigest });
   const prepared = await input.materializer.prepare(materialization);
   if (input.signal.aborted) unavailable();
   const result = await input.materializer.transmit(materialization, prepared, input.signal);

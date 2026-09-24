@@ -122,13 +122,15 @@ test("the controller materializes a leased v11 plan through its protected target
   const resolver = { async resolve(input: { nodeId: string }) { assert.equal(input.nodeId, binding.nodeId); return current.value; } };
   const materializer = new RemoteControllerWorkerMaterializerV1(f.db, planner, resolver, new Uint8Array(32).fill(61), () => now);
   const ref = { tenantId: binding.tenantId, projectId: binding.projectId, jobId: planned.receipt.jobId,
-    attemptId: assigned.receipt.attemptId, leaseId: assigned.receipt.leaseId, inputDigest: planned.receipt.inputDigest };
+    attemptId: assigned.receipt.attemptId, leaseId: assigned.receipt.leaseId, leaseEpoch: assigned.receipt.leaseEpoch,
+    inputDigest: planned.receipt.inputDigest };
   const prepared = await materializer.prepare(ref);
   now += 500;
   assert.deepEqual(await materializer.prepare(ref), prepared, "pre-send reconstruction uses canonical lease time");
   assert.equal(prepared.delivery.worker.workerId, "worker:remote-reviewed");
   assert.equal(prepared.delivery.worker.adapterId, "connector:remote-reviewed");
   assert.equal(prepared.route.kind, "remote");
+  assert.equal(prepared.leaseEpoch, assigned.receipt.leaseEpoch);
   assert.equal(prepared.startsWork, false);
   assert.equal((await planner.read(planned.receipt.jobId))?.job.jobType, CONTROLLER_WORKER_REMOTE_JOB_TYPE_V1);
   // The shared queue passes only a native locator. The additive remote
@@ -143,6 +145,7 @@ test("the controller materializes a leased v11 plan through its protected target
     inputDigest: ref.inputDigest, packetDigest: sha256Digest("remote-queue-packet") };
   const target = await queueCoordinator.locateQueuedRemoteControllerWorkerDelivery(queueReference, new AbortController().signal);
   assert.ok(target);
+  assert.equal(target!.leaseEpoch, assigned.receipt.leaseEpoch);
   await assert.rejects(deliverVerifiedRemoteControllerWorkerQueueTaskV1({ reference: queueReference,
     signal: new AbortController().signal, target: target!, materializer }), /native_task_delivery_unresolved/);
   assert.equal(current.sends(), 1);
@@ -167,6 +170,19 @@ test("the controller materializes a leased v11 plan through its protected target
     new Uint8Array(32).fill(61), () => now);
   const recoveryFrame = JSON.stringify({ body: { scope: { projectId: ref.projectId, jobId: ref.jobId, attemptId: ref.attemptId },
     receipt: { receipt: receipt(prepared.delivery) } } });
+  // A late receipt must not turn a packet from the previous lease epoch into
+  // a discovered run. The receipt write and registration share one rollback.
+  await f.db.query(`UPDATE control_attempts SET lease_epoch=lease_epoch+1,
+    payload=jsonb_set(payload,'{leaseEpoch}',to_jsonb((payload->>'leaseEpoch')::int+1),true)
+    WHERE tenant_id=$1 AND id=$2`, [binding.tenantId, ref.attemptId]);
+  await assert.rejects(recovered.recoverReceipt(ref, prepared, recoveryFrame, at(10_000)), /unavailable/,
+    "a receipt after an epoch change cannot register an old prepared delivery");
+  assert.equal((await f.db.query<{ count: string }>(`SELECT count(*)::text AS count
+    FROM control_worker_delivery_receipts WHERE tenant_id=$1 AND attempt_id=$2`,
+  [binding.tenantId, ref.attemptId])).rows[0]!.count, "0", "the rejected receipt rolls back");
+  await f.db.query(`UPDATE control_attempts SET lease_epoch=lease_epoch-1,
+    payload=jsonb_set(payload,'{leaseEpoch}',to_jsonb((payload->>'leaseEpoch')::int-1),true)
+    WHERE tenant_id=$1 AND id=$2`, [binding.tenantId, ref.attemptId]);
   const recorded = await recovered.recoverReceipt(ref, prepared, recoveryFrame, at(10_000));
   assert.equal(recorded.replayed, false);
   assert.equal(recorded.registrationReplayed, false);
@@ -175,10 +191,12 @@ test("the controller materializes a leased v11 plan through its protected target
   assert.deepEqual({ state: registered?.run.state, events: registered?.events.length,
     workerId: registered?.run.remoteTask?.workerId, deliveryDigest: registered?.run.remoteTask?.deliveryDigest,
     receiptDigest: registered?.run.remoteTask?.receiptDigest, enrollmentDigest: registered?.run.remoteTask?.enrollmentDigest,
-    leaseId: registered?.run.remoteTask?.leaseId, inputDigest: registered?.run.remoteTask?.inputDigest },
+    leaseId: registered?.run.remoteTask?.leaseId, leaseEpoch: registered?.run.remoteTask?.leaseEpoch,
+    inputDigest: registered?.run.remoteTask?.inputDigest },
   { state: "discovered", events: 0, workerId: prepared.delivery.worker.workerId,
     deliveryDigest: prepared.delivery.deliveryDigest, receiptDigest: receipt(prepared.delivery).receiptDigest,
-    enrollmentDigest: prepared.enrollmentDigest, leaseId: ref.leaseId, inputDigest: ref.inputDigest },
+    enrollmentDigest: prepared.enrollmentDigest, leaseId: ref.leaseId, leaseEpoch: prepared.leaseEpoch,
+    inputDigest: ref.inputDigest },
   "an accepted remote receipt registers exactly its still-unstarted delivery");
   await assert.rejects(new HarnessRunStoreV1(f.db, new Uint8Array(32).fill(61)).append({
     schemaVersion: "control-room-harness-event/v1", tenantId: binding.tenantId,
@@ -206,6 +224,18 @@ test("the controller materializes a leased v11 plan through its protected target
     signal: new AbortController().signal, target: target!, materializer });
   assert.deepEqual(again, { disposition: "delivered" });
   assert.equal(current.sends(), 1, "a recorded receipt blocks a second remote transmission");
+  await materializer.assertCurrent(ref, prepared);
+
+  // A saved dispatch intent is not a substitute for the currently leased
+  // attempt.  The later remote-result path relies on this same epoch fence.
+  await f.db.query(`UPDATE control_attempts SET lease_epoch=lease_epoch+1,
+    payload=jsonb_set(payload,'{leaseEpoch}',to_jsonb((payload->>'leaseEpoch')::int+1),true)
+    WHERE tenant_id=$1 AND id=$2`, [binding.tenantId, ref.attemptId]);
+  await assert.rejects(materializer.prepare(ref), /remote_controller_worker_materializer_unavailable/,
+    "a saved intent cannot outlive the bound attempt lease epoch");
+  await f.db.query(`UPDATE control_attempts SET lease_epoch=lease_epoch-1,
+    payload=jsonb_set(payload,'{leaseEpoch}',to_jsonb((payload->>'leaseEpoch')::int-1),true)
+    WHERE tenant_id=$1 AND id=$2`, [binding.tenantId, ref.attemptId]);
   await materializer.assertCurrent(ref, prepared);
 
   await f.db.query("UPDATE control_node_keys SET state='retired' WHERE tenant_id=$1 AND node_id=$2 AND id='key:test'",

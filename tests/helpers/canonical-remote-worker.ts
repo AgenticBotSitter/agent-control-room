@@ -121,7 +121,7 @@ export async function canonicalRemoteWorkerFixture() {
   const assigned = await assignments.assign(f.identity, binding.projectId, planned.receipt.jobId, binding.nodeId, planned.receipt.inputDigest);
   return { f, planner, connectorProfileDigest, now: () => now, advance(ms: number) { now += ms; },
     ref: { tenantId: binding.tenantId, projectId: binding.projectId, jobId: planned.receipt.jobId, attemptId: assigned.receipt.attemptId,
-      leaseId: assigned.receipt.leaseId, inputDigest: planned.receipt.inputDigest } };
+      leaseId: assigned.receipt.leaseId, leaseEpoch: assigned.receipt.leaseEpoch, inputDigest: planned.receipt.inputDigest } };
 }
 
 export async function enrollCanonicalRemoteWorker(c: Awaited<ReturnType<typeof canonicalRemoteWorkerFixture>>,

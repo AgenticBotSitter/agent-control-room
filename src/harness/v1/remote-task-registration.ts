@@ -8,6 +8,7 @@ import { z } from "zod";
 const id = z.string().min(3).max(180).regex(/^[a-zA-Z0-9][a-zA-Z0-9._:-]*$/);
 const digest = z.string().regex(/^sha256:[a-f0-9]{64}$/);
 const instant = z.string().datetime().refine(value => new Date(value).toISOString() === value);
+const leaseEpoch = z.number().int().positive().max(Number.MAX_SAFE_INTEGER);
 
 export const remoteTaskRegistrationSchemaV1 = z.object({
   workerId: id,
@@ -17,6 +18,7 @@ export const remoteTaskRegistrationSchemaV1 = z.object({
   receiptDigest: digest,
   enrollmentDigest: digest,
   leaseId: id,
+  leaseEpoch,
   inputDigest: digest,
   deadline: instant,
 }).strict();
