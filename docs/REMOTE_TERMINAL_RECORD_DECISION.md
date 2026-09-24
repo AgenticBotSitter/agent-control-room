@@ -110,6 +110,11 @@ transaction rollback. It must also prove that recording alone publishes no
 bytes, completes no review, releases no capacity, retries no work, and starts
 no worker.
 
+**Progress:** step 1 is now implemented and tested in source. The remote-run
+registration stays in the existing receipt transaction and generic event
+appenders refuse its run. Steps 2–5 remain intentionally unfinished until the
+protected terminal intake can reread every durable binding itself.
+
 ## Crash and review handling
 
 If the terminal record saves but artifact storage or publication is uncertain,

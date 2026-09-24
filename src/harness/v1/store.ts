@@ -148,6 +148,7 @@ export class HarnessRunStoreV1 {
       if (!row) throw new Error("harness run not found");
       const run = verifiedRun(row,this.integrityKey);
       if (Boolean(run.nativeTask) !== native) throw new Error("native and legacy observation paths cannot be mixed");
+      if (run.remoteTask && !native) throw new Error("remote task observations require private remote ingestion");
       const prior = await tx.query<EventRow>(`SELECT tenant_id,run_id,sequence,occurred_at,source,source_event_key_digest,event_digest,event_auth_tag,payload,recorded_at FROM control_harness_run_events WHERE tenant_id=$1 AND run_id=$2 AND (sequence=$3 OR source_event_key_digest=$4)`, [event.tenantId,event.runId,event.sequence,event.sourceEventKeyDigest]);
       if (prior.rows[0]) {
         verifiedEvent(prior.rows[0],this.integrityKey);

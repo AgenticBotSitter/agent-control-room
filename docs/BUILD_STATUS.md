@@ -189,6 +189,17 @@ of those checks inside its transaction before it can record a terminal event.
 No remote result bytes, publication, review, capacity release, or task
 completion occurs yet.
 
+**September 24 remote-run registration progress:** once a remote worker's
+signed acceptance receipt is saved, the same protected database operation now
+creates (or exactly reuses) one *discovered* Control Room run. It binds the
+already saved delivery, receipt, worker enrollment, lease, deadline, and input
+fingerprints. This is deliberately not a work start: it writes no events and
+does not run an adapter, publish a result, complete a task, release capacity,
+or retry delivery. Generic callers are refused if they try to advance a remote
+registered run; only the later protected remote intake may do that. Reconnect
+reuses the original registration without another send. This is disposable
+source evidence only; no remote worker, database, service, or network changed.
+
 The first installed Claude route is now pinned to Claude Code's `opus` alias
 instead of inheriting a desktop or command-line default. Its owner-attended
 qualification, saved process configuration, and later task execution must all

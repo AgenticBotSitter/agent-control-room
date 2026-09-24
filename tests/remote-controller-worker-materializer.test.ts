@@ -14,6 +14,7 @@ import { RemoteControllerWorkerMaterializerV1, type RemoteControllerWorkerResolv
 import { advanceRemoteWorkerEnrollmentInStoreV1, createRemoteWorkerEnrollmentInStoreV1 } from
   "../src/harness/v1/remote-worker-enrollment-store";
 import type { ControllerWorkerDeliveryV1 } from "../src/harness/v1/controller-worker-delivery";
+import { HarnessRunStoreV1 } from "../src/harness/v1/store";
 import { deliverVerifiedRemoteControllerWorkerQueueTaskV1 } from "../src/web/v1/remote-controller-worker-queue-delivery";
 import type { NativeTaskSubmission } from "../src/persistence/native-task-submission";
 import { binding, instant } from "./hermes-native-fixture";
@@ -168,8 +169,27 @@ test("the controller materializes a leased v11 plan through its protected target
     receipt: { receipt: receipt(prepared.delivery) } } });
   const recorded = await recovered.recoverReceipt(ref, prepared, recoveryFrame, at(10_000));
   assert.equal(recorded.replayed, false);
+  assert.equal(recorded.registrationReplayed, false);
+  const registered = await new HarnessRunStoreV1(f.db, new Uint8Array(32).fill(61))
+    .inspect(binding.tenantId, prepared.delivery.identity.runId);
+  assert.deepEqual({ state: registered?.run.state, events: registered?.events.length,
+    workerId: registered?.run.remoteTask?.workerId, deliveryDigest: registered?.run.remoteTask?.deliveryDigest,
+    receiptDigest: registered?.run.remoteTask?.receiptDigest, enrollmentDigest: registered?.run.remoteTask?.enrollmentDigest,
+    leaseId: registered?.run.remoteTask?.leaseId, inputDigest: registered?.run.remoteTask?.inputDigest },
+  { state: "discovered", events: 0, workerId: prepared.delivery.worker.workerId,
+    deliveryDigest: prepared.delivery.deliveryDigest, receiptDigest: receipt(prepared.delivery).receiptDigest,
+    enrollmentDigest: prepared.enrollmentDigest, leaseId: ref.leaseId, inputDigest: ref.inputDigest },
+  "an accepted remote receipt registers exactly its still-unstarted delivery");
+  await assert.rejects(new HarnessRunStoreV1(f.db, new Uint8Array(32).fill(61)).append({
+    schemaVersion: "control-room-harness-event/v1", tenantId: binding.tenantId,
+    runId: prepared.delivery.identity.runId, sequence: 1, occurredAt: at(10_001), source: "control_room",
+    sourceEventKeyDigest: sha256Digest("untrusted-remote-start"),
+    payload: { category: "lifecycle", state: "starting" } }), /private remote ingestion/,
+  "a generic store holder cannot turn a registered remote packet into work");
   assert.equal(replacement.sends(), 0, 'replacement session never resends');
-  assert.equal((await recovered.recoverReceipt(ref, prepared, recoveryFrame, at(11_000))).replayed, true);
+  const replayed = await recovered.recoverReceipt(ref, prepared, recoveryFrame, at(11_000));
+  assert.equal(replayed.replayed, true);
+  assert.equal(replayed.registrationReplayed, true, "reconnect reuses the original remote run");
   const originalIntent = (await f.db.query<{ result: Record<string, unknown> }>(
     "SELECT result FROM control_idempotency WHERE tenant_id=$1 AND operation_scope='remote-controller-worker-dispatch-intent/v1' AND idempotency_key=$2",
     [ref.tenantId, ref.attemptId])).rows[0]!.result;

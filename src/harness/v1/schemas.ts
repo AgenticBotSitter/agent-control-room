@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { HARNESS_CONTRACT_VERSION_V1, HARNESS_EVENT_SCHEMA_VERSION_V1, harnessRunStates } from "./types";
 import { nativeTaskRegistrationSchema, nativeTaskSnapshotBodySchema, NATIVE_HERMES_ADAPTER_ID, NATIVE_HERMES_VERSION } from "./native-observation";
+import { remoteTaskRegistrationSchemaV1 } from "./remote-task-registration";
 
 const id = z.string().min(3).max(180).regex(/^[a-zA-Z0-9][a-zA-Z0-9._:-]*$/);
 const version = z.string().min(1).max(80).regex(/^[a-zA-Z0-9][a-zA-Z0-9._+-]*$/);
@@ -32,10 +33,14 @@ export const harnessRunSchemaV1 = z.object({
   nativeSessionKeyDigest: digest, connectorProfileDigest: digest.optional(), authorityDigest: digest.optional(),
   parentRunId: id.optional(), revisionOfRunId: id.optional(), state: z.enum(harnessRunStates), resumable: z.boolean(),
   cancelState: z.enum(["not_requested", "requested", "confirmed", "reported", "unsupported"]), nativeTask: nativeTaskRegistrationSchema.optional(),
+  remoteTask: remoteTaskRegistrationSchemaV1.optional(),
   createdAt: time, updatedAt: time, startedAt: time.optional(), finishedAt: time.optional(), lastObservedAt: time, safeReasonCode: id.optional(),
 }).strict().superRefine((run, context) => {
   if (Boolean(run.nativeTask) !== (run.adapterId === NATIVE_HERMES_ADAPTER_ID)
     || run.nativeTask && (run.harness !== "hermes" || run.harnessVersion !== NATIVE_HERMES_VERSION || run.adapterVersion !== "1.0.0" || run.resumable || run.cancelState === "confirmed")
+    || run.remoteTask && (run.nativeTask || run.adapterId !== run.remoteTask.adapterId
+      || run.adapterVersion !== "1.0.0" || run.harness !== "other" || run.harnessVersion !== "1.0.0"
+      || run.resumable || run.cancelState !== "unsupported")
     || run.cancelState === "reported" && (!run.nativeTask || run.state !== "cancelled")) {
     context.addIssue({ code: "custom", message: "native observation registration or cancellation semantics mismatch" });
   }

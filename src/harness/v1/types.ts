@@ -1,4 +1,5 @@
 import type { NativeSnapshotEventPayload, NativeTaskRegistration } from "./native-observation";
+import type { RemoteTaskRegistrationV1 } from "./remote-task-registration";
 
 export const HARNESS_CONTRACT_VERSION_V1 = "control-room-harness/v1" as const;
 export const HARNESS_EVENT_SCHEMA_VERSION_V1 = "control-room-harness-event/v1" as const;
@@ -47,6 +48,8 @@ export interface HarnessRunV1 {
   resumable: boolean;
   cancelState: "not_requested" | "requested" | "confirmed" | "reported" | "unsupported";
   nativeTask?: NativeTaskRegistration;
+  /** Registration only: an accepted remote packet is not evidence of execution. */
+  remoteTask?: RemoteTaskRegistrationV1;
   createdAt: string;
   updatedAt: string;
   startedAt?: string;

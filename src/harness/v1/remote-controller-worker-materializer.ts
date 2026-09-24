@@ -1,5 +1,7 @@
 import { z } from "zod";
 import { signedNodeFrameSchema, type SignedNodeFrame } from "../../node-protocol/v1";
+import { HarnessRunStoreV1 } from "./store";
+import { remoteTaskRegistrationSchemaV1 } from "./remote-task-registration";
 import { attemptRecordSchema, jobRecordSchema, leaseRecordSchema } from "../../domain/v1";
 import type { DatabaseClient, DatabaseSession } from "../../persistence/database";
 import { sha256Digest, hmacSha256Tag } from "../../security";
@@ -19,6 +21,10 @@ const id = z.string().min(3).max(180).regex(/^[a-zA-Z0-9][a-zA-Z0-9._:-]*$/);
 const digest = z.string().regex(/^sha256:[a-f0-9]{64}$/);
 const adapterRevision = z.string().min(7).max(180);
 const unavailable = (): never => { throw new Error("remote_controller_worker_materializer_unavailable"); };
+const joined = (tx: DatabaseSession): DatabaseClient => Object.freeze({
+  query: tx.query.bind(tx), transaction: async work => work(tx),
+  transactionWithPreCommitCheck: async (work, check) => { const result = await work(tx); await check(); return result; },
+});
 
 export const REMOTE_CONTROLLER_WORKER_MATERIALIZER_V1 =
   "control-room.remote-controller-worker-materializer/v1" as const;
@@ -245,14 +251,18 @@ export class RemoteControllerWorkerMaterializerV1 {
         if (prior) {
           if (prior.delivery.deliveryDigest !== prepared.delivery.deliveryDigest
             || prior.receipt.receiptDigest !== received.receipt.receiptDigest) unavailable();
-          return Object.freeze({ receipt: prior.receipt, replayed: true,
+          const registration = await this.registerAcceptedRemoteRunInSession(tx, ref, prepared, prior.receipt);
+          await this.assertCanonicalEnrollment(tx, ref.tenantId, target);
+          received.assertCurrent();
+          return Object.freeze({ receipt: prior.receipt, replayed: true, registrationReplayed: registration.replayed,
             startsWork: false as const, grantsExecutionAuthority: false as const });
         }
         const result = await persistControllerWorkerDeliveryReceiptV1(tx, this.integrityKey,
           received.delivery, received.receipt, recordedAt);
+        const registration = await this.registerAcceptedRemoteRunInSession(tx, ref, prepared, result.receipt);
         await this.assertCanonicalEnrollment(tx, ref.tenantId, target);
         received.assertCurrent();
-        return result;
+        return Object.freeze({ ...result, registrationReplayed: registration.replayed });
       });
     });
   }
@@ -297,14 +307,41 @@ export class RemoteControllerWorkerMaterializerV1 {
         if (prior.delivery.deliveryDigest !== prepared.delivery.deliveryDigest
           || prior.receipt.receiptDigest !== receipt.receiptDigest) unavailable();
         await verifyTarget(tx); assertCurrent();
-        return Object.freeze({ receipt: prior.receipt, replayed: true,
+        const registration = await this.registerAcceptedRemoteRunInSession(tx, ref, prepared, prior.receipt);
+        await verifyTarget(tx); assertCurrent();
+        return Object.freeze({ receipt: prior.receipt, replayed: true, registrationReplayed: registration.replayed,
           startsWork: false as const, grantsExecutionAuthority: false as const });
       }
       const result = await persistControllerWorkerDeliveryReceiptV1(tx, this.integrityKey, prepared.delivery, receipt, recordedAt);
+      const registration = await this.registerAcceptedRemoteRunInSession(tx, ref, prepared, result.receipt);
       await verifyTarget(tx);
       assertCurrent();
-      return result;
+      return Object.freeze({ ...result, registrationReplayed: registration.replayed });
     }));
+  }
+
+  /** Registers the exact accepted packet; it remains discovered and cannot start work. */
+  private async registerAcceptedRemoteRunInSession(tx: DatabaseSession, ref: z.infer<typeof referenceSchema>,
+    prepared: RemoteControllerWorkerPreparedDeliveryV1, receipt: ControllerWorkerDeliveryReceiptV1) {
+    if (receipt.disposition !== "accepted" || receipt.deliveryId !== prepared.delivery.deliveryId
+      || receipt.deliveryDigest !== prepared.delivery.deliveryDigest || receipt.workerId !== prepared.delivery.worker.workerId
+      || receipt.route.kind !== "remote" || receipt.route.workerId !== prepared.route.workerId) unavailable();
+    const remoteTask = remoteTaskRegistrationSchemaV1.parse({ workerId: prepared.delivery.worker.workerId,
+      adapterId: prepared.delivery.worker.adapterId, adapterRevision: prepared.delivery.worker.adapterRevision,
+      deliveryDigest: prepared.delivery.deliveryDigest, receiptDigest: receipt.receiptDigest,
+      enrollmentDigest: prepared.enrollmentDigest, leaseId: ref.leaseId, inputDigest: ref.inputDigest,
+      deadline: prepared.delivery.expiresAt });
+    const createdAt = receipt.receivedAt;
+    const run = { schemaVersion: "control-room-harness/v1" as const, id: prepared.delivery.identity.runId,
+      tenantId: prepared.delivery.identity.tenantId, projectId: prepared.delivery.identity.projectId,
+      jobId: prepared.delivery.identity.jobId, attemptId: prepared.delivery.identity.attemptId,
+      nodeId: prepared.delivery.identity.nodeId, adapterId: prepared.delivery.worker.adapterId,
+      adapterVersion: "1.0.0", harness: "other" as const, harnessVersion: "1.0.0",
+      nativeSessionKeyDigest: sha256Digest({ purpose: "remote-task-registration/v1", remoteTask }),
+      connectorProfileDigest: prepared.delivery.connectorProfileDigest, authorityDigest: prepared.delivery.authorityDigest,
+      state: "discovered" as const, resumable: false, cancelState: "unsupported" as const, remoteTask,
+      createdAt, updatedAt: createdAt, lastObservedAt: createdAt };
+    return new HarnessRunStoreV1(joined(tx), this.integrityKey).create(run);
   }
 
   private async resolveForPrepared(ref: z.infer<typeof referenceSchema>, prepared: RemoteControllerWorkerPreparedDeliveryV1,
