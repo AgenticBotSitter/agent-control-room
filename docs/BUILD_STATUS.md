@@ -92,6 +92,17 @@ mechanism and a reviewed, release-bound recovery sidecar respectively, followed
 by the later owner-attended activation session. No Keychain item, database,
 backup, service, route, or worker was touched while creating these packages.
 
+The local Hermes route has an equally explicit boundary. The current
+path-based macOS launch cannot prove that the reviewed Hermes program and its
+interpreter/runtime have not changed, so it remains blocked. The new contract
+defines the smallest future route: an unchanged Hermes runtime captured in a
+verified read-only image and a matching, release-bound native helper. It grants
+no launch or qualification authority today, and deliberately rejects paths,
+commands, credentials, fabricated readiness, and changed release records.
+This preserves the existing Hermes installation; it does not modify or copy
+Hermes source. A fresh owner-attended text-only qualification will be required
+only after that protected runtime route is actually installed.
+
 The first macOS Claude process-custody helper is now source-complete and has
 passed independent review for its deliberately inert scope. It holds the
 selected executable and workspace, starts the target suspended, verifies the
