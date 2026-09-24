@@ -1,0 +1,127 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { createPrivateRemoteControllerWorkerCompositionV1, capturePrivateRemoteControllerWorkerQueueCapabilityV1,
+  capturePrivateRemoteControllerWorkerReceiptIngressCapabilityV1, PrivateRemoteControllerWorkerEnrollmentStateV1 } from
+  "../src/harness/v1/private-remote-controller-worker-composition";
+import { CONTROLLER_WORKER_REMOTE_ADAPTER_V1, createRemoteWorkerEnrollmentV1 } from "../src/harness/v1/remote-worker-delivery";
+import { advanceRemoteWorkerEnrollmentInStoreV1 } from "../src/harness/v1/remote-worker-enrollment-store";
+import { binding } from "./hermes-native-fixture";
+import { at } from "./native-task-fixture";
+import { canonicalCapabilityDigest, canonicalReleaseBindingDigest, canonicalRemoteWorkerFixture,
+  enrollCanonicalRemoteWorker, realInstalledConnection } from "./helpers/canonical-remote-worker";
+
+test("two canonical remote workers are receipt-isolated and reconnect only recovers the original durable receipt", async t => {
+  const c = await canonicalRemoteWorkerFixture(); t.after(c.f.close); c.advance(1_500);
+  const enrolled = (workerId: string) => createRemoteWorkerEnrollmentV1({ workerId,
+    adapterId: CONTROLLER_WORKER_REMOTE_ADAPTER_V1, adapterRevision: "revision:7654321",
+    enrollmentId: `enrollment:${workerId.slice(7)}`, state: "enrolled", enrolledAt: at(1_000), revokedAt: null });
+  const workerA = enrolled("worker:remote-a"), workerB = enrolled("worker:remote-b");
+  await enrollCanonicalRemoteWorker(c, workerA); await enrollCanonicalRemoteWorker(c, workerB);
+  const connectionA = await realInstalledConnection(workerA, c.now), connectionB = await realInstalledConnection(workerB, c.now);
+  t.after(connectionA.close); t.after(connectionB.close);
+  const stateA = new PrivateRemoteControllerWorkerEnrollmentStateV1(workerA);
+  const stateB = new PrivateRemoteControllerWorkerEnrollmentStateV1(workerB);
+  const compose = (worker: typeof workerA, state: PrivateRemoteControllerWorkerEnrollmentStateV1,
+    session: typeof connectionA.session) => createPrivateRemoteControllerWorkerCompositionV1({ db: c.f.db, planner: c.planner,
+    integrityKey: new Uint8Array(32).fill(61), tenantId: binding.tenantId, nodeId: binding.nodeId, workerId: worker.workerId,
+    connectorProfileDigest: c.connectorProfileDigest, capabilityDigest: canonicalCapabilityDigest,
+    releaseBindingDigest: canonicalReleaseBindingDigest, enrollmentState: state,
+    supportedAdapterRevisions: [worker.adapterRevision], session, clock: c.now });
+  const controllerA = compose(workerA, stateA, connectionA.session);
+  const controllerB = compose(workerB, stateB, connectionB.session);
+  const queueA = capturePrivateRemoteControllerWorkerQueueCapabilityV1(controllerA);
+  assert.deepEqual({ startsWork: queueA.startsWork, grantsExecutionAuthority: queueA.grantsExecutionAuthority },
+    { startsWork: false, grantsExecutionAuthority: false }, "queue custody is never execution authority");
+  const preparedA = await controllerA.materializer.prepare(c.ref);
+  assert.deepEqual({ startsWork: preparedA.startsWork, grantsExecutionAuthority: preparedA.grantsExecutionAuthority },
+    { startsWork: false, grantsExecutionAuthority: false });
+  const sent = await controllerA.materializer.transmit(c.ref, preparedA);
+  assert.equal(sent.kind, "transmitted");
+  if (sent.kind !== "transmitted") throw new Error("expected one canonical send");
+  const dispatchA = connectionA.takeDispatch();
+  await assert.rejects(connectionB.receiveDispatch(dispatchA), /(?:unauthenticated|unavailable|invalid|forbidden)/,
+    "worker B cannot receive worker A's signed packet");
+  await assert.rejects(controllerB.materializer.prepare(c.ref), /unavailable/,
+    "worker B's protected resolver cannot adopt worker A's durable packet");
+  assert.equal(connectionB.sends(), 0, "a foreign worker neither receives nor sends a substitute packet");
+  const lostReceipt = await connectionA.receiveDispatch(dispatchA);
+  assert.equal(connectionA.sends(), 1, "only worker A received the one packet");
+
+  await connectionA.reconnect();
+  const reconstructedA = compose(workerA, stateA, connectionA.session);
+  const reconstructedPrepared = await reconstructedA.materializer.prepare(c.ref);
+  assert.deepEqual(reconstructedPrepared, preparedA, "controller reconstruction retains only worker A's durable packet");
+  const ingressA = capturePrivateRemoteControllerWorkerReceiptIngressCapabilityV1(reconstructedA);
+  const recoveredRaw = await connectionA.recovery(sent.transmission.queueId);
+  const recovered = await ingressA.recover(recoveredRaw) as { replayed: boolean; startsWork: boolean; grantsExecutionAuthority: boolean };
+  assert.deepEqual({ replayed: recovered.replayed, startsWork: recovered.startsWork,
+    grantsExecutionAuthority: recovered.grantsExecutionAuthority },
+  { replayed: false, startsWork: false, grantsExecutionAuthority: false });
+  assert.equal(connectionA.sends(), 1, "reconnect recovers the original durable receipt without a second send");
+  await assert.rejects(ingressA.recover(lostReceipt), /unavailable/, "the recovery ingress cannot settle a second receipt");
+
+  const row = await c.f.db.transaction(tx => advanceRemoteWorkerEnrollmentInStoreV1(tx, new Uint8Array(32).fill(61), {
+    tenantId: binding.tenantId, workerId: workerA.workerId, expectedRevision: 0, state: "draining",
+    evidenceDigest: "sha256:" + "1".repeat(64), now: new Date(c.now() + 1).toISOString() }));
+  await assert.rejects(reconstructedA.materializer.prepare(c.ref), /unavailable/, "a stale resolver cannot bypass draining");
+  const quarantined = await c.f.db.transaction(tx => advanceRemoteWorkerEnrollmentInStoreV1(tx, new Uint8Array(32).fill(61), {
+    tenantId: binding.tenantId, workerId: workerA.workerId, expectedRevision: row.record.revision, state: "quarantined",
+    evidenceDigest: "sha256:" + "2".repeat(64), now: new Date(c.now() + 2).toISOString() }));
+  await assert.rejects(reconstructedA.materializer.prepare(c.ref), /unavailable/, "a stale resolver cannot bypass quarantine");
+  const revoked = await c.f.db.transaction(tx => advanceRemoteWorkerEnrollmentInStoreV1(tx, new Uint8Array(32).fill(61), {
+    tenantId: binding.tenantId, workerId: workerA.workerId, expectedRevision: quarantined.record.revision, state: "revoked",
+    evidenceDigest: "sha256:" + "3".repeat(64), now: new Date(c.now() + 3).toISOString() }));
+  await assert.rejects(reconstructedA.materializer.prepare(c.ref), /unavailable/, "a stale resolver cannot bypass revocation");
+  assert.equal(revoked.record.state, "revoked");
+});
+
+test("stale remote resolvers reread lifecycle and key authority before preparing a packet", async t => {
+  for (const state of ["draining", "quarantined", "revoked"] as const) await t.test(state, async t => {
+    const c = await canonicalRemoteWorkerFixture(); t.after(c.f.close); c.advance(1_500);
+    const worker = createRemoteWorkerEnrollmentV1({ workerId: `worker:stale-${state}`,
+      adapterId: CONTROLLER_WORKER_REMOTE_ADAPTER_V1, adapterRevision: "revision:7654321", enrollmentId: `enrollment:stale-${state}`,
+      state: "enrolled", enrolledAt: at(1_000), revokedAt: null });
+    await enrollCanonicalRemoteWorker(c, worker);
+    const connection = await realInstalledConnection(worker, c.now); t.after(connection.close);
+    const controller = createPrivateRemoteControllerWorkerCompositionV1({ db: c.f.db, planner: c.planner,
+      integrityKey: new Uint8Array(32).fill(61), tenantId: binding.tenantId, nodeId: binding.nodeId, workerId: worker.workerId,
+      connectorProfileDigest: c.connectorProfileDigest, capabilityDigest: canonicalCapabilityDigest,
+      releaseBindingDigest: canonicalReleaseBindingDigest, enrollmentState: new PrivateRemoteControllerWorkerEnrollmentStateV1(worker),
+      supportedAdapterRevisions: [worker.adapterRevision], session: connection.session, clock: c.now });
+    await controller.materializer.prepare(c.ref);
+    let revision = 0;
+    for (const next of state === "draining" ? ["draining"] as const
+      : state === "quarantined" ? ["draining", "quarantined"] as const
+        : ["draining", "quarantined", "revoked"] as const) {
+      const advanced = await c.f.db.transaction(tx => advanceRemoteWorkerEnrollmentInStoreV1(tx, new Uint8Array(32).fill(61), {
+        tenantId: binding.tenantId, workerId: worker.workerId, expectedRevision: revision, state: next,
+        evidenceDigest: `sha256:${(next === "draining" ? "1" : next === "quarantined" ? "2" : "3").repeat(64)}`,
+        now: new Date(c.now() + revision + 1).toISOString() }));
+      revision = advanced.record.revision;
+    }
+    await assert.rejects(controller.materializer.prepare(c.ref), /unavailable/);
+    assert.equal(connection.sends(), 0, "stale lifecycle state cannot send or start work");
+  });
+  await t.test("key rotation", async t => {
+    const c = await canonicalRemoteWorkerFixture(); t.after(c.f.close); c.advance(1_500);
+    const worker = createRemoteWorkerEnrollmentV1({ workerId: "worker:stale-key", adapterId: CONTROLLER_WORKER_REMOTE_ADAPTER_V1,
+      adapterRevision: "revision:7654321", enrollmentId: "enrollment:stale-key", state: "enrolled", enrolledAt: at(1_000), revokedAt: null });
+    await enrollCanonicalRemoteWorker(c, worker);
+    const connection = await realInstalledConnection(worker, c.now); t.after(connection.close);
+    const controller = createPrivateRemoteControllerWorkerCompositionV1({ db: c.f.db, planner: c.planner,
+      integrityKey: new Uint8Array(32).fill(61), tenantId: binding.tenantId, nodeId: binding.nodeId, workerId: worker.workerId,
+      connectorProfileDigest: c.connectorProfileDigest, capabilityDigest: canonicalCapabilityDigest,
+      releaseBindingDigest: canonicalReleaseBindingDigest, enrollmentState: new PrivateRemoteControllerWorkerEnrollmentStateV1(worker),
+      supportedAdapterRevisions: [worker.adapterRevision], session: connection.session, clock: c.now });
+    await controller.materializer.prepare(c.ref);
+    await c.f.db.query("UPDATE control_node_keys SET state='retired' WHERE tenant_id=$1 AND node_id=$2 AND id='key:test'",
+      [binding.tenantId, binding.nodeId]);
+    await c.f.db.query(`INSERT INTO control_node_keys (id,tenant_id,node_id,algorithm,public_key_spki,fingerprint,state,valid_from,created_at)
+      VALUES('key:rotated',$1,$2,'ed25519','c3BraQ','sha256:${"4".repeat(64)}','active',$3,$3)`,
+    [binding.tenantId, binding.nodeId, new Date(c.now()).toISOString()]);
+    await c.f.db.query("UPDATE control_nodes SET identity_key_id='key:rotated', payload=jsonb_set(payload,'{identityKeyId}',to_jsonb('key:rotated'::text)) WHERE tenant_id=$1 AND id=$2",
+      [binding.tenantId, binding.nodeId]);
+    await assert.rejects(controller.materializer.prepare(c.ref), /unavailable/);
+    assert.equal(connection.sends(), 0, "stale node-key authority cannot send or start work");
+  });
+});

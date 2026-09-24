@@ -468,6 +468,13 @@ rotating every machine or revealing private configuration to the browser.
 and replay review.
 **Reuse:** shared delivery packet/receipt, signed node protocol, remote session
 manager, result publication and source-tested reconnect journeys.
+**Source progress (September 24):** a two-worker disposable conformance
+journey now checks that one enrolled worker cannot receive, adopt, or settle
+the other's packet. A reconstructed controller plus replacement session can
+recover exactly the original durable receipt without sending again. This is
+not a live worker enrollment, network connection, provider call, or execution
+proof; protected installed receipt mounting remains a separate owner-bound
+implementation.
 **Work:**
 
 1. Deliver the exact controller packet to only its intended worker.

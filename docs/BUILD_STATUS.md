@@ -90,6 +90,17 @@ tests cover exact retry, restart reread, node-key rotation, draining,
 quarantine, revocation, and stale resolver refusal. It has not enrolled a live
 worker, contacted a remote machine, or changed a live database.
 
+**September 24 local-workspace and remote-reconnect progress:** a private
+coding-workspace holder now retains the existing verified workspace lease for
+the full delivery instead of losing it after preparation. It admits one exact
+delivery once, fixes the already-reviewed change limits, retains creation or
+cleanup uncertainty for reconciliation, and never launches an adapter or
+releases task capacity. A second disposable conformance journey now proves
+that two independently enrolled remote workers cannot accept or settle each
+other's packet, and that a replacement session can recover only the original
+durable receipt without another send. These tests do not create a worktree on
+the owner's machine, connect a worker, start a task, or change a database.
+
 The first installed Claude route is now pinned to Claude Code's `opus` alias
 instead of inheriting a desktop or command-line default. Its owner-attended
 qualification, saved process configuration, and later task execution must all
