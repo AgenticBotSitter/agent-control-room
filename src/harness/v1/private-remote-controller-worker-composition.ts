@@ -37,17 +37,15 @@ function isExactInstalledSession(value: unknown): value is ServerNodeSession {
 type Composition = Readonly<{
   schema: typeof PRIVATE_REMOTE_CONTROLLER_WORKER_COMPOSITION_V1;
   materializer: Readonly<Pick<RemoteControllerWorkerMaterializerV1, "prepare" | "transmit">>;
-  receiptIntake: Readonly<{
-    accept(reference: RemoteControllerWorkerMaterializationReferenceV1,
-      raw: string | Uint8Array, recordedAt: unknown): Promise<unknown>;
-    recover(reference: RemoteControllerWorkerMaterializationReferenceV1,
-      raw: string | Uint8Array, recordedAt: unknown): Promise<unknown>;
-  }>;
   startsWork: false;
   grantsExecutionAuthority: false;
 }>;
 
 const compositions = new WeakSet<object>();
+const receiptIntakes = new WeakMap<object, Readonly<{
+  accept(raw: string | Uint8Array): Promise<unknown>;
+  recover(raw: string | Uint8Array): Promise<unknown>;
+}>>();
 
 /**
  * The only remote-delivery value that may cross from the installed remote
@@ -61,6 +59,22 @@ export type PrivateRemoteControllerWorkerQueueCapabilityV1 = Readonly<{
 }>;
 
 const queueCapabilities = new WeakSet<object>();
+
+/**
+ * One opaque, installed-session-only receipt ingress.  It intentionally has
+ * no materialization reference, session, timestamp, resolver, or queue API:
+ * those are captured from the exact branded composition and its protected
+ * pending delivery state.  It remains receipt-only and cannot execute work.
+ */
+export type PrivateRemoteControllerWorkerReceiptIngressCapabilityV1 = Readonly<{
+  accept(raw: string | Uint8Array): Promise<unknown>;
+  recover(raw: string | Uint8Array): Promise<unknown>;
+  startsWork: false;
+  grantsExecutionAuthority: false;
+}>;
+
+const receiptIngressCapabilities = new WeakSet<object>();
+const capturedReceiptIngresses = new WeakSet<object>();
 
 /**
  * Installation-owned current enrollment fence. Identity and adapter revision
@@ -181,32 +195,51 @@ export function createPrivateRemoteControllerWorkerCompositionV1(value: {
     } });
     const materializer = new RemoteControllerWorkerMaterializerV1(db, planner, resolver,
       integrityKey, value.clock ?? Date.now);
+    let pendingReference: RemoteControllerWorkerMaterializationReferenceV1 | undefined;
+    const capturePendingReference = (reference: RemoteControllerWorkerMaterializationReferenceV1) => {
+      const next = Object.freeze({ ...reference });
+      if (pendingReference && sha256Digest(pendingReference) !== sha256Digest(next)) unavailable();
+      pendingReference = next;
+    };
+    // Only canonical materializer methods may establish pending receipt state.
+    // The eventual ingress never receives this locator from its caller.
     const queue = Object.freeze({
-      prepare: materializer.prepare.bind(materializer),
-      transmit: materializer.transmit.bind(materializer),
+      async prepare(reference: RemoteControllerWorkerMaterializationReferenceV1) {
+        const prepared = await materializer.prepare(reference);
+        capturePendingReference(reference);
+        return prepared;
+      },
+      async transmit(reference: RemoteControllerWorkerMaterializationReferenceV1, prepared: unknown, signal?: AbortSignal) {
+        capturePendingReference(reference);
+        return materializer.transmit(reference, prepared, signal);
+      },
     });
     // The receipt API deliberately reconstructs the exact prepared packet
     // from canonical records.  No caller-supplied prepared object can redirect
     // intake to another node/session/delivery.
+    let receiptUse: "accept" | "recover" | undefined;
     const receiptIntake = Object.freeze({
-      async accept(reference: RemoteControllerWorkerMaterializationReferenceV1,
-        raw: string | Uint8Array, recordedAt: unknown) {
+      async accept(raw: string | Uint8Array) {
+        if (receiptUse) unavailable(); receiptUse = "accept";
+        const reference = pendingReference ?? unavailable();
         assertSessionCurrent();
         const prepared = await materializer.prepare(reference);
         assertSessionCurrent();
-        return materializer.acceptReceipt(reference, prepared, raw, recordedAt);
+        return materializer.acceptReceipt(reference, prepared, raw, new Date((value.clock ?? Date.now)()).toISOString());
       },
-      async recover(reference: RemoteControllerWorkerMaterializationReferenceV1,
-        raw: string | Uint8Array, recordedAt: unknown) {
+      async recover(raw: string | Uint8Array) {
+        if (receiptUse) unavailable(); receiptUse = "recover";
+        const reference = pendingReference ?? unavailable();
         assertSessionCurrent();
         const prepared = await materializer.prepare(reference);
         assertSessionCurrent();
-        return materializer.recoverReceipt(reference, prepared, raw, recordedAt);
+        return materializer.recoverReceipt(reference, prepared, raw, new Date((value.clock ?? Date.now)()).toISOString());
       },
     });
     const composition = Object.freeze({ schema: PRIVATE_REMOTE_CONTROLLER_WORKER_COMPOSITION_V1,
-      materializer: queue, receiptIntake, startsWork: false as const, grantsExecutionAuthority: false as const });
+      materializer: queue, startsWork: false as const, grantsExecutionAuthority: false as const });
     compositions.add(composition);
+    receiptIntakes.set(composition, receiptIntake);
     return composition;
   } catch { return unavailable(); }
 }
@@ -241,6 +274,32 @@ export function isPrivateRemoteControllerWorkerQueueCapabilityV1(value: unknown)
 value is PrivateRemoteControllerWorkerQueueCapabilityV1 {
   return !!value && typeof value === "object" && !types.isProxy(value)
     && queueCapabilities.has(value as object)
+    && (value as { startsWork?: unknown }).startsWork === false
+    && (value as { grantsExecutionAuthority?: unknown }).grantsExecutionAuthority === false;
+}
+
+/**
+ * Release the separately branded ingress exactly once for an exact installed
+ * composition.  Generic queue assembly cannot obtain it, and a copied,
+ * proxied, replayed, or replacement-session composition cannot manufacture it.
+ */
+export function capturePrivateRemoteControllerWorkerReceiptIngressCapabilityV1(value: unknown):
+PrivateRemoteControllerWorkerReceiptIngressCapabilityV1 {
+  const composition = isPrivateRemoteControllerWorkerCompositionV1(value) ? value : unavailable();
+  if (capturedReceiptIngresses.has(composition)) unavailable();
+  const intake = receiptIntakes.get(composition) ?? unavailable();
+  capturedReceiptIngresses.add(composition);
+  const capability = Object.freeze({ accept: intake.accept.bind(intake), recover: intake.recover.bind(intake),
+    startsWork: false as const, grantsExecutionAuthority: false as const });
+  receiptIngressCapabilities.add(capability);
+  return capability;
+}
+
+/** Installed frame mounting accepts only the exact capability above. */
+export function isPrivateRemoteControllerWorkerReceiptIngressCapabilityV1(value: unknown):
+value is PrivateRemoteControllerWorkerReceiptIngressCapabilityV1 {
+  return !!value && typeof value === "object" && !types.isProxy(value)
+    && receiptIngressCapabilities.has(value as object)
     && (value as { startsWork?: unknown }).startsWork === false
     && (value as { grantsExecutionAuthority?: unknown }).grantsExecutionAuthority === false;
 }

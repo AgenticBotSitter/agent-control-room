@@ -13,8 +13,9 @@ import { computeAuthorityDigest, sha256Digest } from "../src/security";
 import { assemblePrivateAgentTaskOperatorConfiguration } from "../src/web/v1/private-agent-task-operator-configuration";
 import { validatePrivateTaskStartupConfiguration } from "../src/web/v1/private-task-startup";
 import { operatorConfigurationScenario } from "./helpers/private-agent-task-operator-configuration";
-import { capturePrivateRemoteControllerWorkerQueueCapabilityV1, createPrivateRemoteControllerWorkerCompositionV1,
-  isPrivateRemoteControllerWorkerCompositionV1, isPrivateRemoteControllerWorkerQueueCapabilityV1,
+import { capturePrivateRemoteControllerWorkerQueueCapabilityV1, capturePrivateRemoteControllerWorkerReceiptIngressCapabilityV1,
+  createPrivateRemoteControllerWorkerCompositionV1, isPrivateRemoteControllerWorkerCompositionV1,
+  isPrivateRemoteControllerWorkerQueueCapabilityV1, isPrivateRemoteControllerWorkerReceiptIngressCapabilityV1,
   PrivateRemoteControllerWorkerEnrollmentStateV1 } from
   "../src/harness/v1/private-remote-controller-worker-composition";
 import { CONTROLLER_WORKER_REMOTE_ADAPTER_V1, CONTROLLER_WORKER_REMOTE_CAPABILITY_V1,
@@ -148,6 +149,12 @@ test("the protected remote composition binds one enrolled session and recovers i
   assert.deepEqual(Object.keys(capability).sort(), ["grantsExecutionAuthority", "materializer", "startsWork"]);
   assert.equal(capability.startsWork, false); assert.equal(capability.grantsExecutionAuthority, false);
   assert.equal(Object.isFrozen(capability), true); assert.equal(Object.isFrozen(capability.materializer), true);
+  const ingress = capturePrivateRemoteControllerWorkerReceiptIngressCapabilityV1(original);
+  assert.equal(isPrivateRemoteControllerWorkerReceiptIngressCapabilityV1(ingress), true);
+  assert.deepEqual(Object.keys(ingress).sort(), ["accept", "grantsExecutionAuthority", "recover", "startsWork"]);
+  assert.equal(ingress.startsWork, false); assert.equal(ingress.grantsExecutionAuthority, false);
+  assert.throws(() => capturePrivateRemoteControllerWorkerReceiptIngressCapabilityV1(original), /unavailable/,
+    "the installed receipt ingress cannot be replayed from one composition");
   assert.equal(connection.sends(), 0, "capturing custody neither sends nor starts remote work");
   const operatorInput = operatorConfigurationScenario("full");
   (operatorInput.settings.features as unknown as Record<string, boolean>).remoteControllerWorker = true;
@@ -165,6 +172,11 @@ test("the protected remote composition binds one enrolled session and recovers i
     assert.equal(isPrivateRemoteControllerWorkerQueueCapabilityV1(forged), false);
     assert.throws(() => capturePrivateRemoteControllerWorkerQueueCapabilityV1(forged), /unavailable/);
   }
+  for (const forged of [
+    { ...ingress },
+    { accept: ingress.accept, recover: ingress.recover, startsWork: false, grantsExecutionAuthority: false },
+    new Proxy(ingress, {}),
+  ]) assert.equal(isPrivateRemoteControllerWorkerReceiptIngressCapabilityV1(forged), false);
   assert.throws(() => Object.defineProperty(capability.materializer, "prepare", { value: async () => undefined }), /TypeError/);
   const prepared = await original.materializer.prepare(c.ref);
   assert.equal(prepared.startsWork, false); assert.equal(prepared.grantsExecutionAuthority, false);
@@ -176,27 +188,29 @@ test("the protected remote composition binds one enrolled session and recovers i
   c.advance(500);
 
   await connection.reconnect();
-  await assert.rejects(original.receiptIntake.recover(c.ref, "{}", at(10_000)), /unavailable/,
+  await assert.rejects(ingress.recover("{}"), /unavailable/,
     "the old session cannot intake a receipt after replacement");
   const recovered = build(connection.session);
+  await recovered.materializer.prepare(c.ref);
+  const recoveredIngress = capturePrivateRemoteControllerWorkerReceiptIngressCapabilityV1(recovered);
   const raw = await connection.recovery(sent.transmission.queueId);
-  const firstRecovery = await recovered.receiptIntake.recover(c.ref, raw, at(10_000)) as { replayed: boolean; startsWork: boolean };
+  const firstRecovery = await recoveredIngress.recover(raw) as { replayed: boolean; startsWork: boolean };
   assert.equal(firstRecovery.replayed, false); assert.equal(firstRecovery.startsWork, false);
   assert.equal(connection.sends(), 1, "receipt recovery never resends or starts the delivery");
   const replayRaw = await connection.recovery(sent.transmission.queueId);
-  const replay = await recovered.receiptIntake.recover(c.ref, replayRaw, at(10_000)) as { replayed: boolean };
-  assert.equal(replay.replayed, true); assert.equal(connection.sends(), 1);
+  await assert.rejects(recoveredIngress.recover(replayRaw), /unavailable/,
+    "the installed ingress burns after a recovered receipt rather than replaying it");
+  assert.equal(connection.sends(), 1);
 
   const changed = JSON.parse(replayRaw); changed.body.scope.attemptId = "attempt:foreign";
-  await assert.rejects(recovered.receiptIntake.recover(c.ref, JSON.stringify(changed), at(10_000)),
+  await assert.rejects(recoveredIngress.recover(JSON.stringify(changed)),
     /(unavailable|unauthenticated)/);
-  await assert.rejects(recovered.receiptIntake.recover({ ...c.ref, attemptId: "attempt:foreign" }, raw, at(10_000)), /unavailable/);
   assert.equal(connection.sends(), 1);
 
   enrollmentState.revoke(createRemoteWorkerEnrollmentV1({ workerId: enrollment.workerId,
     adapterId: enrollment.adapterId, adapterRevision: enrollment.adapterRevision,
     enrollmentId: enrollment.enrollmentId, state: "revoked", enrolledAt: enrollment.enrolledAt, revokedAt: at(10_500) }));
-  await assert.rejects(recovered.receiptIntake.recover(c.ref, raw, at(11_000)), /unavailable/,
+  await assert.rejects(recoveredIngress.recover(raw), /unavailable/,
     "current protected revocation fences even an exact historical receipt replay");
 
   const row = (await c.f.db.query<{ count: string }>(
@@ -219,13 +233,15 @@ test("the protected composition accepts an ordinary real-session receipt exactly
   const prepared = await composition.materializer.prepare(c.ref);
   const sent = await composition.materializer.transmit(c.ref, prepared);
   assert.equal(sent.kind, "transmitted");
+  const ingress = capturePrivateRemoteControllerWorkerReceiptIngressCapabilityV1(composition);
   const rawReceipt = await connection.deliverToNode();
-  const accepted = await composition.receiptIntake.accept(c.ref, rawReceipt, at(10_000)) as {
+  const accepted = await ingress.accept(rawReceipt) as {
     replayed: boolean; startsWork: boolean; grantsExecutionAuthority: boolean;
   };
   assert.deepEqual({ replayed: accepted.replayed, startsWork: accepted.startsWork,
     grantsExecutionAuthority: accepted.grantsExecutionAuthority },
   { replayed: false, startsWork: false, grantsExecutionAuthority: false });
+  await assert.rejects(ingress.accept(rawReceipt), /unavailable/, "an ingress cannot replay a receipt");
   const historical = await composition.materializer.transmit(c.ref, prepared);
   assert.equal(historical.kind, "already_recorded");
   assert.equal(connection.sends(), 1, "the recorded ordinary receipt suppresses every later send");
