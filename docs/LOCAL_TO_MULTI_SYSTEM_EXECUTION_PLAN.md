@@ -492,6 +492,11 @@ The exact reuse and required missing bindings are maintained in
 The durable terminal record will reuse the existing harness-run ledger as
 defined in [`REMOTE_TERMINAL_RECORD_DECISION.md`](REMOTE_TERMINAL_RECORD_DECISION.md),
 not a separate remote-result store.
+Before it can write that ledger, remote receipt acceptance must register one
+discovered remote run and retain the existing lease, delivery, receipt and
+enrollment fingerprints. The terminal intake then locks and rereads those
+records together. This is an implementation dependency, not a second worker
+or another queue.
 **Work:**
 
 1. Deliver the exact controller packet to only its intended worker.

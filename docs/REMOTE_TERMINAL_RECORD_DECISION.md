@@ -69,6 +69,47 @@ terminal identity. The controller re-reads the run ledger:
    adapter, review-submission service, and remote inspection source. Publication
    is still pending owner review, never automatic completion.
 
+## Accepted safe-ingress build order
+
+The receipt, worker-enrollment, dispatch-intent, lease, and run-ledger records
+already exist, but are not yet one complete authority chain. In particular, a
+receipt alone does not retain the worker-enrollment revision, and remote
+delivery does not yet create the canonical run record that a terminal result
+would later close. The next package must close those links together; it must
+not add a result table, second scheduler, or general-purpose message broker.
+
+1. When a receipt is accepted, create or replay one **discovered** remote run
+   in that same protected database operation. Its narrow registration carries
+   the existing lease, input, delivery, receipt, enrollment, and deadline
+   fingerprints. Registration does not mean that work has started.
+2. Add the typed terminal event to the existing run ledger, but reject it from
+   the public append API just as native snapshots are rejected today.
+3. Mint a one-use terminal intake only from the already protected remote
+   controller composition. A copied object, a browser caller, or a generic run
+   store must not be able to manufacture that intake.
+4. In one database transaction, the intake rereads and locks the current
+   enrollment and node key, exact receipt, signed dispatch intent, registered
+   run, task attempt, and lease. It compares every worker, node, delivery,
+   receipt, enrollment, run, attempt, lease, deadline, content, and timing
+   fingerprint before it appends the terminal event.
+5. Immediately before commit it rereads the current session and authority. An
+   exact reconnect replay returns the existing event; changed evidence or any
+   expired, revoked, missing, or foreign binding is refused.
+
+The private intake must reuse these existing parts: the remote materialization
+reference and prepared delivery, signed terminal-return contract, current
+enrollment reader, delivery-receipt reader, task-plan read, and the run
+ledger's authenticated sequencing. It must add only the narrow locked helpers
+required to join them.
+
+Required disposable proof includes a successful first record, exact reconnect
+replay, changed-evidence refusal, foreign-worker refusal, missing/rejected
+receipt refusal, lease/authority expiration, node-key rotation, enrollment
+drain/quarantine/revocation, concurrent completion versus revocation, and
+transaction rollback. It must also prove that recording alone publishes no
+bytes, completes no review, releases no capacity, retries no work, and starts
+no worker.
+
 ## Crash and review handling
 
 If the terminal record saves but artifact storage or publication is uncertain,
