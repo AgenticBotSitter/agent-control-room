@@ -6,6 +6,7 @@ import { readProjectAgentVisibility, type ProjectAgentTaskEvidence,
 import type { TaskProjectAgentOptions } from "../../src/web/v1/task-project-agents-wire";
 import type { OperatorCapacityWorkerV1 } from "../../src/web/v1/operator-capacity-browser-client";
 import type { TaskRun } from "../../src/web/v1/task-wire";
+import type { TaskLocalRouteObservation } from "../../src/web/v1/task-local-route-observation";
 import { ConfiguredTimestamp } from "./configured-timestamp";
 
 type State = { state: "loading" } | { state: "ready"; value: ProjectAgentVisibilityRead };
@@ -36,6 +37,21 @@ function latestSavedRun(evidence: ProjectAgentTaskEvidence): TaskRun | undefined
   return evidence.detail.value.attempts.flatMap(attempt => attempt.runs).at(0);
 }
 
+/** A saved task-local conclusion, not a probe of an agent or machine. */
+function localRouteText(value: TaskLocalRouteObservation): string {
+  const adapter = value.adapter === "hermes" ? "Hermes Agent"
+    : value.adapter === "claude" ? "Claude Code"
+      : value.adapter === "codex" ? "Codex" : undefined;
+  if (value.state === "configured_local_route") {
+    return `${adapter ?? "The local adapter"} has a matching saved route record for this task. This is not proof that it is connected or running now.`;
+  }
+  if (value.state === "not_prepared") return "This task has not been prepared for a local adapter.";
+  if (value.state === "not_local_route") return "This task is not prepared for a local adapter.";
+  if (value.state === "not_observed") return `${adapter ?? "The local adapter"} has no saved local-route observation for this task.`;
+  if (value.state === "needs_attention") return `${adapter ?? "The local adapter"} needs attention before this task can rely on its saved local-route record.`;
+  return `${adapter ?? "The local adapter"} has an older saved local-route record; inspect the task before relying on it.`;
+}
+
 function AgentWorkEvidence({ currentWork, agentWork, projectId }: {
   currentWork: ProjectAgentVisibilityRead["currentWork"];
   agentWork: ProjectAgentVisibilityRead["agentWork"];
@@ -57,6 +73,7 @@ function AgentWorkEvidence({ currentWork, agentWork, projectId }: {
                 <p><strong>Saved route category:</strong> Unavailable — no saved run route category is recorded.</p>
                 <p><strong>Model evidence:</strong> Unavailable — protected task detail does not expose a saved model.</p></>
                 : <dl className="private-task-facts">
+                  <div><dt>Local task route</dt><dd>{localRouteText(evidence.detail.value.localRouteObservation)}</dd></div>
                   <div><dt>Saved route category</dt><dd>{run.routeEvidence ? routeLabel[run.routeEvidence] : "Unavailable — not recorded for this run"}</dd></div>
                   <div><dt>Latest saved run state</dt><dd>{(run.nativeState ?? run.state).replaceAll("_", " ")}</dd></div>
                   <div><dt>Freshness</dt><dd>{run.stale ? "Stale saved observation" : "Not marked stale at read time"}</dd></div>

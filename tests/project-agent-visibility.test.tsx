@@ -160,6 +160,9 @@ test("project view presents eligibility, availability, connections, and work as 
   assert.match(html, /Agent work evidence/);
   assert.match(html, /Task state:<\/strong> running/);
   assert.match(html, /Local Claude Code adapter/);
+  assert.match(html, /Local task route/);
+  assert.match(html, /Claude Code has a matching saved route record for this task/);
+  assert.match(html, /not proof that it is connected or running now/);
   assert.match(html, /Latest saved run state/);
   assert.match(html, /Not marked stale at read time/);
   assert.match(html, /Reported tokens/);
@@ -170,6 +173,24 @@ test("project view presents eligibility, availability, connections, and work as 
   assert.match(html, /does not expose a saved model/);
   assert.match(html, /current work is not attributed to a worker here/i);
   assert.doesNotMatch(html, /Assign without starting|Start work|Reserve worker|<button|<form/);
+});
+
+test("project task card downgrades uncertain local-route evidence without inventing worker status", () => {
+  const detail = taskDetail("job:two");
+  detail.localRouteObservation = { state: "needs_attention", adapter: "claude" };
+  const state: ProjectAgentVisibilityRead = {
+    eligibility: { state: "unavailable", code: "unavailable" },
+    capacity: { state: "unavailable", code: "operator_surface_unavailable" },
+    connections: { state: "unavailable", code: "unavailable" },
+    currentWork: { state: "ready", value: { projectId: binding.projectId, current: [detail.task], awaitingReview: [], recent: [],
+      additionalCurrentOmitted: false, additionalReviewsOmitted: false, additionalRecentOmitted: false, observedAt, startsWork: false } },
+    agentWork: { state: "ready", value: [{ jobId: detail.task.jobId, detail: { state: "ready", value: detail } }] },
+  };
+  const html = renderToStaticMarkup(createElement(ProjectAgentVisibilityView, {
+    state: { state: "ready", value: state }, projectId: binding.projectId,
+  }));
+  assert.match(html, /Claude Code needs attention before this task can rely on its saved local-route record/);
+  assert.doesNotMatch(html, /matching saved route record for this task|Start work|Reserve worker/);
 });
 
 test("sanitized connection pseudonyms are never joined to canonical eligible workers", () => {
