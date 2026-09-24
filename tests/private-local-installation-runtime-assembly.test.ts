@@ -33,6 +33,8 @@ import { createPrivateLocalInstallationRuntimeAssemblyV1 } from
   "../src/installer/v1/private-local-installation-runtime-assembly";
 import { createPrivateLocalInstallationOperatorV1 } from
   "../src/installer/v1/private-local-installation-operator";
+import { assessSchedulerResultStorageActivationSourceV1 } from
+  "../src/installer/v1/scheduler-result-storage-activation-source";
 import { createPrivateInstalledLocalHermesRuntimeComposerV1,
   PRIVATE_INSTALLED_LOCAL_HERMES_AGENT_SOURCE_V1,
   PRIVATE_INSTALLED_LOCAL_HERMES_CONFIGURATION_V1 } from
@@ -894,11 +896,14 @@ test("installed operator reports ready and reaches the exact first injected star
   const setupSources = Object.fromEntries(["database_authority", "protected_data", "first_owner", "recovery",
     "platform_service", "agent_readiness", "final_review"].map(stage => [stage, {}]));
   const setupRuntimes = Object.fromEntries(Object.keys(setupSources).map(stage => [stage, undefined]));
+  const localActivationStatus = { schedulerResultStorage: assessSchedulerResultStorageActivationSourceV1({ installationId: "fixture-installation",
+      releaseDigest: f.plan.releaseDigest, topologyPlanDigest: f.topology.planDigest,
+      schedulerReadinessEvidence: undefined, protectedStorageRestoreEvidence: undefined }) };
   const loaded = { prerequisiteInput: { installationId: "fixture-installation",
       topologyPlan: f.topology,
       releaseDigest: f.plan.releaseDigest, releasePreflight: {}, privatePlacement: {} },
     assemblyInput: { runnerInput: f.runnerInput, operatorSettings: f.settings, operatorTrustedInputs: f.trusted },
-    startupDependencies: startupBoundaryDependencies(effects), setupSources, setupRuntimes };
+    startupDependencies: startupBoundaryDependencies(effects), setupSources, setupRuntimes, localActivationStatus };
   const direct = createPrivateLocalInstallationRuntimeAssemblyV1(loaded.assemblyInput,
     { journal: f.journal, startupDependencies: loaded.startupDependencies });
   assert.equal(direct.status, "ready");
@@ -906,7 +911,16 @@ test("installed operator reports ready and reaches the exact first injected star
   if (operator.status === "blocked") throw new Error("operator constructor blocked");
   const status = await operator.status();
   assert.equal(status.status, "ready", JSON.stringify(status));
-  if (status.status === "ready") assert.equal(status.nextStage, "complete");
+  if (status.status === "ready") {
+    const activation = status.localActivationStatus;
+    assert.equal(status.nextStage, "complete");
+    assert.equal(activation.twoLocalWorkerPreflight.status, "missing_local_proof");
+    assert.equal(activation.schedulerResultStorage.state, "blocked");
+    assert.equal(activation.schedulerResultStorage.performsEffect, false);
+    assert.equal(activation.schedulerResultStorage.evidenceDigest,
+      localActivationStatus.schedulerResultStorage.evidenceDigest);
+    assert.doesNotMatch(JSON.stringify(activation), /password|\/fixture\/|postgresql:\/\//iu);
+  }
   await assert.rejects(operator.start(), /private_task_startup_prerequisites_failed/u);
   assert.deepEqual(effects, ["artifact-storage"]);
   assert.equal(f.hermesCalls(), 0);

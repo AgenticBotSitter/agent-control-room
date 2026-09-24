@@ -9,6 +9,10 @@ import { planInstallationTopologyV1 } from "../src/harness/v1/installation-topol
 import { advanceInstallationPlanV1, createInstallationPlanV1, installationSetupStagesV1 } from "../src/installer/v1/installation-plan";
 import { sha256Digest } from "../src/security/canonical-digest";
 import { InstallationPlanFilesystemJournalV1 } from "../src/installer/v1/installation-plan-journal";
+import { projectTwoLocalWorkerActivationPreflightV1 } from
+  "../src/installer/v1/two-local-worker-activation-preflight";
+import { assessSchedulerResultStorageActivationSourceV1 } from
+  "../src/installer/v1/scheduler-result-storage-activation-source";
 
 function journal() {
   return {
@@ -154,6 +158,50 @@ test("loaded nested accessors and proxies are refused before the first journal r
   const blocked = await operator.status();
   assert.equal(blocked.status, "blocked");
   assert.equal(getterCalls, 0); assert.equal(reads, 0);
+});
+
+test("local activation status is redacted, bound, and rejected before journal or runtime use", async () => {
+  const f = statusFixture(); let reads = 0, appends = 0;
+  const activation = { schedulerResultStorage: assessSchedulerResultStorageActivationSourceV1({ installationId: "fixture-installation",
+      releaseDigest: f.releaseDigest, topologyPlanDigest: f.topology.planDigest,
+      schedulerReadinessEvidence: undefined, protectedStorageRestoreEvidence: undefined }) };
+  const journal = { ...f.journal, async readHistory() { reads++; return [f.plan]; },
+    async append(value: typeof f.plan) { appends++; return { installationId: "fixture-installation",
+      revision: value.revision, planDigest: value.planDigest }; } };
+  for (const localActivationStatus of [
+    { ...activation, schedulerResultStorage: assessSchedulerResultStorageActivationSourceV1({
+      installationId: "foreign-installation", releaseDigest: f.releaseDigest, topologyPlanDigest: f.topology.planDigest,
+      schedulerReadinessEvidence: undefined, protectedStorageRestoreEvidence: undefined }) },
+    { ...activation, twoLocalWorkerPreflight: projectTwoLocalWorkerActivationPreflightV1({}) },
+  ]) {
+    const configuration = { ...f.configuration, localActivationStatus };
+    const operator = createPrivateLocalInstallationOperatorV1(
+      { async loadPrivateConfiguration() { return configuration; } }, { journal });
+    if (operator.status === "blocked") throw new Error("unexpected constructor blocker");
+    assertBlocked(await operator.status(), "private_configuration_custody_missing");
+  }
+  assert.equal(reads, 0); assert.equal(appends, 0);
+});
+
+test("nested activation accessors, custom prototypes, and proxies are refused before a verifier or journal can observe them", async () => {
+  const f = statusFixture(); let getterCalls = 0, reads = 0;
+  const scheduler = assessSchedulerResultStorageActivationSourceV1({ installationId: "fixture-installation",
+    releaseDigest: f.releaseDigest, topologyPlanDigest: f.topology.planDigest,
+    schedulerReadinessEvidence: undefined, protectedStorageRestoreEvidence: undefined }) as Record<string, unknown>;
+  const accessor = { ...scheduler } as Record<string, unknown>;
+  Object.defineProperty(accessor, "schema", { enumerable: true, get() { getterCalls++; return scheduler.schema; } });
+  let prototypeGetterCalls = 0;
+  const inherited = Object.create(Object.defineProperty({}, "schema", { get() { prototypeGetterCalls++; return scheduler.schema; } }));
+  for (const [name, value] of Object.entries(scheduler)) if (name !== "schema") inherited[name] = value;
+  class SchedulerRecord { constructor(readonly value: unknown) {} }
+  for (const schedulerResultStorage of [accessor, inherited, new SchedulerRecord(scheduler), new Proxy(scheduler, {})]) {
+    const configuration = { ...f.configuration, localActivationStatus: { schedulerResultStorage } };
+    const operator = createPrivateLocalInstallationOperatorV1({ async loadPrivateConfiguration() { return configuration; } },
+      { journal: { ...f.journal, async readHistory() { reads++; return [f.plan]; } } });
+    if (operator.status === "blocked") throw new Error("unexpected constructor blocker");
+    assertBlocked(await operator.status(), "private_configuration_custody_missing");
+  }
+  assert.equal(getterCalls, 0); assert.equal(prototypeGetterCalls, 0); assert.equal(reads, 0);
 });
 
 test("setupNext checks cancellation after prerequisite settlement before it can dispatch a stage", async () => {

@@ -6,6 +6,8 @@ import { createLocalBackupRestoreReadinessV1 } from "../src/harness/v1/local-bac
 import { sha256Digest } from "../src/security/canonical-digest";
 import { assessSchedulerResultStorageActivationSourceV1 } from
   "../src/installer/v1/scheduler-result-storage-activation-source";
+import { verifySchedulerResultStorageActivationSourceV1 } from
+  "../src/installer/v1/scheduler-result-storage-activation-source";
 import { composeThreeWorkerActivationBundlePreflightV1, createThreeWorkerActivationBundleCustodyV1,
   recordSchedulerResultStorageThreeWorkerActivationSourceProofV1 } from
   "../src/installer/v1/three-worker-activation-bundle-preflight";
@@ -59,4 +61,26 @@ test("a proof from one activation aggregate cannot be replayed into another", ()
   const proof = recordSchedulerResultStorageThreeWorkerActivationSourceProofV1({ aggregate: first.aggregate });
   assert.throws(() => composeThreeWorkerActivationBundlePreflightV1({ aggregate: second.aggregate,
     sourceProofs: [proof] }), /preflight_refused/u);
+});
+
+test("a retained scheduler/storage assessment is integrity-checked before reuse", () => {
+  const assessment = assessSchedulerResultStorageActivationSourceV1({ ...binding,
+    schedulerReadinessEvidence: undefined, protectedStorageRestoreEvidence: undefined });
+  assert.equal(verifySchedulerResultStorageActivationSourceV1(assessment).evidenceDigest, assessment.evidenceDigest);
+  assert.throws(() => verifySchedulerResultStorageActivationSourceV1({ ...assessment, blocker: "other" }),
+    /activation_source_refused/u);
+});
+
+test("scheduler/storage verification refuses accessors, custom prototypes, and proxies before parsing", () => {
+  const assessment = assessSchedulerResultStorageActivationSourceV1({ ...binding,
+    schedulerReadinessEvidence: undefined, protectedStorageRestoreEvidence: undefined }) as Record<string, unknown>;
+  let accessorCalls = 0, inheritedCalls = 0;
+  const accessor = { ...assessment } as Record<string, unknown>;
+  Object.defineProperty(accessor, "schema", { enumerable: true, get() { accessorCalls++; return assessment.schema; } });
+  const inherited = Object.create(Object.defineProperty({}, "schema", { get() { inheritedCalls++; return assessment.schema; } }));
+  for (const [name, value] of Object.entries(assessment)) if (name !== "schema") inherited[name] = value;
+  class Report { constructor(readonly value: unknown) {} }
+  for (const candidate of [accessor, inherited, new Report(assessment), new Proxy(assessment, {})])
+    assert.throws(() => verifySchedulerResultStorageActivationSourceV1(candidate), /activation_source_refused/u);
+  assert.equal(accessorCalls, 0); assert.equal(inheritedCalls, 0);
 });

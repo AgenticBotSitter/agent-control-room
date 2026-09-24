@@ -6,6 +6,9 @@ import { verifyInstallationTopologyPlanV1 } from "../../harness/v1/installation-
 import { verifyInstallationPlanV1, type InstallationPlanV1 } from "./installation-plan";
 import { InstallationPlanFilesystemJournalV1 } from "./installation-plan-journal";
 import { createPrivateLocalInstallationRuntimeAssemblyV1 } from "./private-local-installation-runtime-assembly";
+import { projectTwoLocalWorkerActivationPreflightV1 } from "./two-local-worker-activation-preflight";
+import { assessSchedulerResultStorageActivationSourceV1, verifySchedulerResultStorageActivationSourceV1,
+  type SchedulerResultStorageActivationSourceV1 } from "./scheduler-result-storage-activation-source";
 
 /**
  * Installed-process composition only.  The custody implementation is supplied
@@ -38,6 +41,7 @@ type CapturedLoaded = Readonly<{
   startupDependencies: unknown;
   setupSources: Readonly<Record<SetupStage, unknown>>;
   setupRuntimes: Readonly<Record<SetupStage, unknown | undefined>>;
+  localActivationStatus?: Readonly<{ schedulerResultStorage: SchedulerResultStorageActivationSourceV1 }>;
 }>;
 type Loaded = CapturedLoaded & Readonly<{
   assembly: ReturnType<typeof createPrivateLocalInstallationRuntimeAssemblyV1>;
@@ -149,6 +153,41 @@ function captureData(value: unknown, captured = new WeakMap<object, unknown>(), 
   const frozen = Object.freeze(result); captured.set(value, frozen); return frozen;
 }
 
+/** Strict data-only snapshot for values that will be handed to a structural
+ * verifier. Unlike the wider installed configuration capture, this never
+ * retains class instances, callable objects, typed arrays, or custom
+ * prototypes for later inspection by Zod. */
+function captureStrictData(value: unknown, captured = new WeakMap<object, unknown>(), active = new WeakSet<object>()): unknown {
+  if (value === null || typeof value === "string" || typeof value === "boolean") return value;
+  if (typeof value === "number") return Number.isFinite(value) ? value : refuse();
+  if (!value || typeof value !== "object" || types.isProxy(value) || active.has(value)) return refuse();
+  const previous = captured.get(value);
+  if (previous !== undefined) return previous;
+  active.add(value);
+  if (Array.isArray(value)) {
+    if (Object.getPrototypeOf(value) !== Array.prototype || Object.getOwnPropertySymbols(value).length !== 0) return refuse();
+    const length = Object.getOwnPropertyDescriptor(value, "length");
+    if (!length || !("value" in length) || !Number.isSafeInteger(length.value) || length.value < 0
+      || Object.getOwnPropertyNames(value).length !== (length.value as number) + 1) return refuse();
+    const result: unknown[] = new Array(length.value as number); captured.set(value, result);
+    for (let index = 0; index < result.length; index++) {
+      const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
+      if (!descriptor || descriptor.enumerable !== true || !("value" in descriptor)) return refuse();
+      result[index] = captureStrictData(descriptor.value, captured, active);
+    }
+    active.delete(value); return Object.freeze(result);
+  }
+  if (Object.getPrototypeOf(value) !== Object.prototype || Object.getOwnPropertySymbols(value).length !== 0) return refuse();
+  const result: Record<string, unknown> = {}; captured.set(value, result);
+  for (const name of Object.getOwnPropertyNames(value)) {
+    if (name === "__proto__" || name === "prototype" || name === "constructor") return refuse();
+    const descriptor = Object.getOwnPropertyDescriptor(value, name);
+    if (!descriptor || descriptor.enumerable !== true || !("value" in descriptor)) return refuse();
+    result[name] = captureStrictData(descriptor.value, captured, active);
+  }
+  active.delete(value); return Object.freeze(result);
+}
+
 function captureStartupDependencies(value: unknown) {
   const optional = ["clock", "prepareNativeSubmission", "startNativeWorker", "prepareNewsSubmission", "startNewsWorker", "openArtifactStorage"];
   if (!value || typeof value !== "object" || types.isProxy(value) || Object.getPrototypeOf(value) !== Object.prototype
@@ -199,15 +238,49 @@ function captureStageRuntime(value: unknown): unknown {
 }
 
 function captureLoaded(value: unknown): CapturedLoaded {
-  const loaded = exact(value, ["prerequisiteInput", "assemblyInput", "startupDependencies", "setupSources", "setupRuntimes"]);
+  const loaded = exactHostDataSnapshotV1(value,
+    ["prerequisiteInput", "assemblyInput", "startupDependencies", "setupSources", "setupRuntimes"], ["localActivationStatus"]);
+  if (!loaded) return refuse();
   const sources = captureStageMap(loaded.setupSources), runtimes = captureStageMap(loaded.setupRuntimes);
   const captured = new WeakMap<object, unknown>();
   const capturedSources: Record<string, unknown> = {}, capturedRuntimes: Record<string, unknown> = {};
   for (const stage of stages) { capturedSources[stage] = captureData(sources[stage], captured); capturedRuntimes[stage] = captureStageRuntime(runtimes[stage]); }
-  return Object.freeze({ prerequisiteInput: captureData(loaded.prerequisiteInput, captured),
+  const prerequisiteInput = captureData(loaded.prerequisiteInput, captured);
+  const binding = prerequisiteBinding(prerequisiteInput);
+  let localActivationStatus: CapturedLoaded["localActivationStatus"];
+  if (Object.prototype.hasOwnProperty.call(loaded, "localActivationStatus")) {
+    // Capture the entire caller-owned graph before a Zod verifier sees it.
+    // That preserves the operator's no-accessor/no-proxy boundary even for
+    // deeply nested preflight material.
+    const capturedStatus = captureStrictData(loaded.localActivationStatus);
+    const status = exact(capturedStatus, ["schedulerResultStorage"]);
+    const schedulerResultStorage = verifySchedulerResultStorageActivationSourceV1(status.schedulerResultStorage);
+    if (schedulerResultStorage.installationId !== binding.installationId || schedulerResultStorage.releaseDigest !== binding.releaseDigest
+      || schedulerResultStorage.topologyPlanDigest !== binding.topologyPlan.planDigest) return refuse();
+    localActivationStatus = Object.freeze({ schedulerResultStorage });
+  }
+  return Object.freeze({ prerequisiteInput,
     assemblyInput: captureAssemblyInput(loaded.assemblyInput), startupDependencies: captureStartupDependencies(loaded.startupDependencies),
     setupSources: Object.freeze(capturedSources) as Readonly<Record<SetupStage, unknown>>,
-    setupRuntimes: Object.freeze(capturedRuntimes) as Readonly<Record<SetupStage, unknown | undefined>>, });
+    setupRuntimes: Object.freeze(capturedRuntimes) as Readonly<Record<SetupStage, unknown | undefined>>,
+    ...(localActivationStatus ? { localActivationStatus } : {}) });
+}
+
+function localActivationStatus(configured: CapturedLoaded, binding: ReturnType<typeof prerequisiteBinding>) {
+  // Older installed configurations have no retained local preflight yet. Show
+  // only the honest empty projection and the existing blocked scheduler/store
+  // assessment; do not infer qualification or readiness from configuration.
+  const retainedScheduler = configured.localActivationStatus?.schedulerResultStorage;
+  return Object.freeze({
+    // No caller-provided Hermes/Claude preflight is accepted here. The current
+    // source has no exact installation binding for it, so status may state only
+    // the derived missing-proof condition until that contract exists.
+    twoLocalWorkerPreflight: projectTwoLocalWorkerActivationPreflightV1({}),
+    schedulerResultStorage: retainedScheduler ?? assessSchedulerResultStorageActivationSourceV1({
+      installationId: binding.installationId, releaseDigest: binding.releaseDigest,
+      topologyPlanDigest: binding.topologyPlan.planDigest,
+      schedulerReadinessEvidence: undefined, protectedStorageRestoreEvidence: undefined }),
+  });
 }
 
 function blocked(blocker: Blocker): PrivateLocalInstallationOperatorBlockedV1 {
@@ -358,7 +431,11 @@ export function createPrivateLocalInstallationOperatorV1(custodyValue: unknown, 
     cancellation(signal);
     let plan: InstallationPlanV1;
     try {
-      plan = (await authenticatedCurrent(configured, signal)).plan;
+      const authenticated = await authenticatedCurrent(configured, signal);
+      plan = authenticated.plan;
+      // Verify/capture the redacted activation evidence before any stage port
+      // is observed. A stale, tampered, or foreign assessment is not a status.
+      localActivationStatus(configured, authenticated.binding);
     }
     catch { return blocked("private_configuration_custody_missing"); }
     const assembly = configured.assembly;
@@ -372,8 +449,10 @@ export function createPrivateLocalInstallationOperatorV1(custodyValue: unknown, 
       try { linkedRuntime(stage, stageRuntime, signal).close(); }
       catch { return blocked(stage === "platform_service" ? "native_service_custody_missing" : "private_configuration_custody_missing"); }
     }
+    const binding = prerequisiteBinding(configured.prerequisiteInput);
     return Object.freeze({ schema: PRIVATE_LOCAL_INSTALLATION_OPERATOR_V1, status: "ready" as const,
       nextStage: stage ?? "complete", installationPlanDigest: plan.planDigest, installationPlanRevision: plan.revision,
+      localActivationStatus: localActivationStatus(configured, binding),
       createsStateMachine: false as const, createsStore: false as const, createsScheduler: false as const,
       startsListener: false as const, exposesBrowserAction: false as const });
   }
