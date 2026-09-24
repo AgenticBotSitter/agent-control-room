@@ -20,13 +20,18 @@ The exact public checkout at that revision was inspected without modification.
 `LICENSE`; `uv.lock` is the dependency-resolution source, not permission to
 install anything during image formation or startup.
 
-That inspection found four incompatibilities with a sealed import boundary.
-`hermes_cli/main.py` inserts the source root into `sys.path`; its import-time
-early recovery can run `ensurepip`, `pip` or `uv`; `cli.py` installs a
-`sys.meta_path` finder; and normal agent startup discovers bundled, user,
-project and Python entry-point plugins. These are supported upstream
-behaviours, not findings that Control Room may patch away. The current source
-therefore does not satisfy the future sealed-runtime policy.
+That inspection found blockers to a sealed import boundary. `hermes_cli/main.py`
+inserts the source root into `sys.path` and imports the early-recovery path;
+that path can react to recovery markers and run `ensurepip`, `pip` or `uv`.
+`cli.py` installs a `sys.meta_path` finder; normal agent startup retains
+provider discovery and bundled, user, project and Python entry-point plugin
+discovery; and profile environment selection can still choose runtime state.
+Safe mode and lazy-install controls reduce particular upstream branches, but
+are only partial mitigations: they do not remove these import, discovery,
+marker, or environment facts. These are supported upstream behaviours, not
+findings that Control Room may patch away. The current source therefore does
+not satisfy the future sealed-runtime policy or report a real worker launch as
+ready.
 
 ## Proposed release layout and startup policy
 

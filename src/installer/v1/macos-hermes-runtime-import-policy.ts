@@ -53,14 +53,23 @@ const sourceReviewSchema = z.object({
   entryPointVerified: z.literal(true),
   pythonRequirementVerified: z.literal(true),
   licenseVerified: z.literal(true),
+  safeModeAndLazyInstallArePartialMitigationsOnly: z.literal(true),
+  providerDiscoveryRemainsReachable: z.literal(true),
+  bootstrapImportsRecoveryHook: z.literal(true),
   bootstrapMutatesSysPath: z.literal(true),
   bootstrapCanInstallOrRepairDependencies: z.literal(true),
+  bootstrapRecoveryMarkersRemainRelevant: z.literal(true),
+  profileEnvironmentCanSelectRuntimeState: z.literal(true),
   runtimeInstallsMetaPathHook: z.literal(true),
   runtimeDiscoversUserProjectAndEntryPointPlugins: z.literal(true),
   compatibleWithPolicy: z.literal(false),
   blockers: z.tuple([
+    z.literal("provider_discovery"),
+    z.literal("bootstrap_import_hook"),
     z.literal("bootstrap_sys_path_mutation"),
     z.literal("bootstrap_install_or_repair"),
+    z.literal("bootstrap_recovery_markers"),
+    z.literal("profile_environment"),
     z.literal("runtime_meta_path_hook"),
     z.literal("runtime_plugin_discovery"),
   ]),
@@ -90,6 +99,8 @@ const policySchema = z.object({
   grantsProcessAuthority: z.literal(false),
   grantsInstallAuthority: z.literal(false),
   grantsQualificationAuthority: z.literal(false),
+  realWorkerLaunchReady: z.literal(false),
+  grantsWorkerLaunchAuthority: z.literal(false),
   policyDigest: digest,
 }).strict();
 
@@ -98,9 +109,9 @@ export type MacosHermesRuntimeImportPolicyV1 = Readonly<z.infer<typeof policySch
 const inputNames = ["architecture", "dependencyInventoryDigest", "licenseInventoryDigest",
   "nativeLibraryInventoryDigest", "runtimeImageManifestDigest"] as const;
 const policyNames = ["architecture", "bootstrap", "grantsImageAuthority", "grantsInstallAuthority",
-  "grantsProcessAuthority", "grantsQualificationAuthority", "hermesSourceRevision", "hermesVersion",
+  "grantsProcessAuthority", "grantsQualificationAuthority", "grantsWorkerLaunchAuthority", "hermesSourceRevision", "hermesVersion",
   "importBoundary", "inventories", "moduleRoots", "platform", "policyDigest", "pythonAbi", "schema",
-  "sourceReview", "status"] as const;
+  "realWorkerLaunchReady", "sourceReview", "status"] as const;
 const bootstrapNames = ["callable", "consoleScript", "importSite", "interpreterEntry", "isolated", "kind",
   "moduleSearchPathsSet", "useEnvironment", "useUserSite", "writeBytecode"] as const;
 const moduleRootNames = ["imageRelativePath", "permitsPathMutation", "role"] as const;
@@ -110,9 +121,11 @@ const importBoundaryNames = ["acceptsBootstrapInstallOrRepair", "acceptsCredenti
   "acceptsPythonPath", "acceptsUserSite"] as const;
 const inventoryNames = ["dependencyInventoryDigest", "licenseInventoryDigest", "nativeLibraryInventoryDigest",
   "runtimeImageManifestDigest"] as const;
-const sourceReviewNames = ["blockers", "bootstrapCanInstallOrRepairDependencies", "bootstrapMutatesSysPath",
-  "compatibleWithPolicy", "entryPointVerified", "licenseVerified", "pythonRequirementVerified",
-  "runtimeDiscoversUserProjectAndEntryPointPlugins", "runtimeInstallsMetaPathHook"] as const;
+const sourceReviewNames = ["blockers", "bootstrapCanInstallOrRepairDependencies", "bootstrapImportsRecoveryHook",
+  "bootstrapMutatesSysPath", "bootstrapRecoveryMarkersRemainRelevant", "compatibleWithPolicy", "entryPointVerified",
+  "licenseVerified", "profileEnvironmentCanSelectRuntimeState", "providerDiscoveryRemainsReachable",
+  "pythonRequirementVerified", "runtimeDiscoversUserProjectAndEntryPointPlugins", "runtimeInstallsMetaPathHook",
+  "safeModeAndLazyInstallArePartialMitigationsOnly"] as const;
 
 function refuse(): never {
   const error = new Error("macos_hermes_runtime_import_policy_refused");
@@ -199,19 +212,29 @@ function material(value: z.infer<typeof inventorySchema> & { architecture: "arm6
       entryPointVerified: true as const,
       pythonRequirementVerified: true as const,
       licenseVerified: true as const,
+      // Upstream controls can reduce a branch, but neither proves a sealed
+      // import/runtime closure or a real worker launch.
+      safeModeAndLazyInstallArePartialMitigationsOnly: true as const,
+      providerDiscoveryRemainsReachable: true as const,
+      bootstrapImportsRecoveryHook: true as const,
       bootstrapMutatesSysPath: true as const,
       bootstrapCanInstallOrRepairDependencies: true as const,
+      bootstrapRecoveryMarkersRemainRelevant: true as const,
+      profileEnvironmentCanSelectRuntimeState: true as const,
       runtimeInstallsMetaPathHook: true as const,
       runtimeDiscoversUserProjectAndEntryPointPlugins: true as const,
       compatibleWithPolicy: false as const,
-      blockers: ["bootstrap_sys_path_mutation", "bootstrap_install_or_repair", "runtime_meta_path_hook",
-        "runtime_plugin_discovery"] as const,
+      blockers: ["provider_discovery", "bootstrap_import_hook", "bootstrap_sys_path_mutation",
+        "bootstrap_install_or_repair", "bootstrap_recovery_markers", "profile_environment",
+        "runtime_meta_path_hook", "runtime_plugin_discovery"] as const,
     },
     status: "policy_only" as const,
     grantsImageAuthority: false as const,
     grantsProcessAuthority: false as const,
     grantsInstallAuthority: false as const,
     grantsQualificationAuthority: false as const,
+    realWorkerLaunchReady: false as const,
+    grantsWorkerLaunchAuthority: false as const,
   };
 }
 
@@ -254,7 +277,7 @@ export function parseMacosHermesRuntimeImportPolicyV1(value: unknown): MacosHerm
   exact(outer.sourceReview, sourceReviewNames);
   const roots = exactArray(outer.moduleRoots, 4);
   for (const root of roots) exact(root, moduleRootNames);
-  const blockers = exactArray((outer.sourceReview as Readonly<Record<string, unknown>>).blockers, 4);
+  const blockers = exactArray((outer.sourceReview as Readonly<Record<string, unknown>>).blockers, 8);
   const parsed = policySchema.safeParse({ ...outer, moduleRoots: roots,
     sourceReview: { ...(outer.sourceReview as Readonly<Record<string, unknown>>), blockers } });
   if (!parsed.success) refuse();

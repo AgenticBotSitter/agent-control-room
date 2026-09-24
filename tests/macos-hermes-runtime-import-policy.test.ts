@@ -59,19 +59,27 @@ test("records the pinned source incompatibilities and grants no effect authority
     entryPointVerified: true,
     pythonRequirementVerified: true,
     licenseVerified: true,
+    safeModeAndLazyInstallArePartialMitigationsOnly: true,
+    providerDiscoveryRemainsReachable: true,
+    bootstrapImportsRecoveryHook: true,
     bootstrapMutatesSysPath: true,
     bootstrapCanInstallOrRepairDependencies: true,
+    bootstrapRecoveryMarkersRemainRelevant: true,
+    profileEnvironmentCanSelectRuntimeState: true,
     runtimeInstallsMetaPathHook: true,
     runtimeDiscoversUserProjectAndEntryPointPlugins: true,
     compatibleWithPolicy: false,
-    blockers: ["bootstrap_sys_path_mutation", "bootstrap_install_or_repair", "runtime_meta_path_hook",
-      "runtime_plugin_discovery"],
+    blockers: ["provider_discovery", "bootstrap_import_hook", "bootstrap_sys_path_mutation",
+      "bootstrap_install_or_repair", "bootstrap_recovery_markers", "profile_environment",
+      "runtime_meta_path_hook", "runtime_plugin_discovery"],
   });
   assert.equal(policy.status, "policy_only");
   assert.equal(policy.grantsImageAuthority, false);
   assert.equal(policy.grantsProcessAuthority, false);
   assert.equal(policy.grantsInstallAuthority, false);
   assert.equal(policy.grantsQualificationAuthority, false);
+  assert.equal(policy.realWorkerLaunchReady, false);
+  assert.equal(policy.grantsWorkerLaunchAuthority, false);
 });
 
 test("the import boundary excludes hooks, external paths, plugins, installs and private material", () => {
@@ -120,6 +128,8 @@ test("refuses proxies, accessors and every saved-policy relaxation", () => {
     { ...policy, grantsProcessAuthority: true },
     { ...policy, grantsInstallAuthority: true },
     { ...policy, grantsQualificationAuthority: true },
+    { ...policy, realWorkerLaunchReady: true },
+    { ...policy, grantsWorkerLaunchAuthority: true },
     { ...policy, pythonAbi: "cp312" },
     { ...policy, bootstrap: { ...policy.bootstrap, useEnvironment: true } },
     { ...policy, moduleRoots: policy.moduleRoots.map((root, index) => index === 3
@@ -129,6 +139,12 @@ test("refuses proxies, accessors and every saved-policy relaxation", () => {
     { ...policy, importBoundary: { ...policy.importBoundary,
       acceptsCredentialsProfilesMemoriesSkills: true } },
     { ...policy, sourceReview: { ...policy.sourceReview, compatibleWithPolicy: true } },
+    { ...policy, sourceReview: { ...policy.sourceReview,
+      safeModeAndLazyInstallArePartialMitigationsOnly: false } },
+    { ...policy, sourceReview: { ...policy.sourceReview, providerDiscoveryRemainsReachable: false } },
+    { ...policy, sourceReview: { ...policy.sourceReview, bootstrapImportsRecoveryHook: false } },
+    { ...policy, sourceReview: { ...policy.sourceReview, bootstrapRecoveryMarkersRemainRelevant: false } },
+    { ...policy, sourceReview: { ...policy.sourceReview, profileEnvironmentCanSelectRuntimeState: false } },
     { ...policy, privatePath: "/private/owner" },
   ]) assert.throws(() => parseMacosHermesRuntimeImportPolicyV1(changed), refusal);
 });
