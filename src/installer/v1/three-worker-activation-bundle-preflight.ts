@@ -2,11 +2,11 @@ import { z } from "zod";
 import { canonicalJson, sha256Digest } from "../../security/canonical-digest";
 import { verifyHermes021MacosProtectedWorkerReadinessV1 } from
   "../../harness/hermes-021-v1/protected-worker-readiness";
-import { verifyLocalInstallationReleasePreparationV1 } from "./local-installation-release.mjs";
 import { verifyPrivateInstalledConfigurationPreparationV1 } from
   "./private-installed-configuration-preparation";
 import { consumePrivateInstalledConfigurationV3PostWriteActivationEvidenceV1 } from
   "./private-installed-configuration-v3-owner-writer";
+import { verifyProtectedReleaseReviewPreparationV1 } from "./protected-release-review-preparation";
 import { assessSchedulerResultStorageActivationSourceV1 } from
   "./scheduler-result-storage-activation-source";
 
@@ -117,21 +117,21 @@ export function recordHermesThreeWorkerActivationSourceProofV1(input: Readonly<{
 }
 
 /**
- * Records exact filesystem inventory as preparation evidence only. The local
- * inventory does not authenticate who selected or reviewed its expected
- * bundle digest, so it must remain blocked until a separately trusted release
- * identity binds that digest to this installation.
+ * Records an exact aggregate-bound release-review preparation. It carries the
+ * real filesystem inventory digest but deliberately remains blocked until the
+ * future owner-attestation host consumes its separate one-use input.
  */
 export function recordVerifiedReleaseThreeWorkerActivationSourceProofV1(input: Readonly<{
-  aggregate: unknown; releasePreparation: unknown;
+  aggregate: unknown; releaseReviewPreparation: unknown;
 }>): object {
   const selected = aggregate(input?.aggregate);
-  const report = verifyLocalInstallationReleasePreparationV1(input.releasePreparation);
-  if (report.bundle.state !== "matched_expected_digest"
-    || report.releaseManifestDigest !== selected.releaseDigest) return refused();
+  const review = verifyProtectedReleaseReviewPreparationV1(input.releaseReviewPreparation);
+  if (review.installationId !== selected.installationId || review.releaseDigest !== selected.releaseDigest
+    || review.topologyPlanDigest !== selected.topologyPlanDigest) return refused();
   const evidenceDigest = sha256Digest({ purpose: "three-worker-verified-release-source-proof/v1",
     installationId: selected.installationId, releaseDigest: selected.releaseDigest,
-    topologyPlanDigest: selected.topologyPlanDigest, report });
+    topologyPlanDigest: selected.topologyPlanDigest, bundleDigest: review.bundleDigest,
+    preparationEvidenceDigest: review.preparationEvidenceDigest });
   const token = Object.freeze({ schema: THREE_WORKER_ACTIVATION_SOURCE_PROOF_V1 });
   proofs.set(token, Object.freeze({ ...selected, aggregate: input.aggregate as object,
     component: "verified_release" as const, sourceSchema: definitions.verified_release.sourceSchema,

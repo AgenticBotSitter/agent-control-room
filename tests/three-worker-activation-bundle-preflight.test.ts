@@ -17,6 +17,8 @@ import { composeThreeWorkerActivationBundlePreflightV1, createThreeWorkerActivat
 import { prepareLocalInstallationReleaseV1 } from "../src/installer/v1/local-installation-release.mjs";
 import { assembleLocalReleaseV1 } from "../src/installer/v1/local-release-assembly.mjs";
 import { stageLocalReleaseV1 } from "../src/installer/v1/local-release-stager.mjs";
+import { consumeProtectedReleaseReviewInputCapabilityV1, prepareProtectedReleaseReviewV1 } from
+  "../src/installer/v1/protected-release-review-preparation";
 import { PRIVATE_INSTALLED_CONFIGURATION_PREPARATION_V1,
   preparePrivateInstalledConfigurationV1, privateInstalledPostgresEndpointFingerprintV1 } from
   "../src/installer/v1/private-installed-configuration-preparation";
@@ -152,10 +154,12 @@ test("real release inventory remains blocked without a reviewed release identity
   t.after(() => rm(source.root, { recursive: true, force: true }));
   const selectedBinding = { ...binding, releaseDigest: source.releasePreparation.releaseManifestDigest };
   const custody = createThreeWorkerActivationBundleCustodyV1(selectedBinding);
-  assert.throws(() => recordVerifiedReleaseThreeWorkerActivationSourceProofV1({ aggregate: custody.aggregate,
-    releasePreparation: source.fingerprint }), /preflight_refused/u);
-  const proof = recordVerifiedReleaseThreeWorkerActivationSourceProofV1({ aggregate: custody.aggregate,
+  assert.throws(() => prepareProtectedReleaseReviewV1({ ...selectedBinding,
+    releasePreparation: source.fingerprint }), /protected_release_review_preparation_refused/u);
+  const review = prepareProtectedReleaseReviewV1({ ...selectedBinding,
     releasePreparation: source.releasePreparation });
+  const proof = recordVerifiedReleaseThreeWorkerActivationSourceProofV1({ aggregate: custody.aggregate,
+    releaseReviewPreparation: review });
   const plan = composeThreeWorkerActivationBundlePreflightV1({ aggregate: custody.aggregate, sourceProofs: [proof] });
   const releaseComponent = plan.components.find(item => item.component === "verified_release");
   assert.equal(releaseComponent?.state, "blocked");
@@ -163,7 +167,17 @@ test("real release inventory remains blocked without a reviewed release identity
   assert.match(releaseComponent?.evidenceDigest ?? "", /^sha256:[a-f0-9]{64}$/u);
   assert.equal(plan.components.filter(item => item.blocker === "source_proof_missing").length, 5);
   assert.throws(() => recordVerifiedReleaseThreeWorkerActivationSourceProofV1({ aggregate: custody.aggregate,
-    releasePreparation: structuredClone(source.releasePreparation) }), /local_installation_package_refused/u);
+    releaseReviewPreparation: structuredClone(review) }), /protected_release_review_preparation_refused/u);
+  const foreign = createThreeWorkerActivationBundleCustodyV1({ ...selectedBinding,
+    topologyPlanDigest: d("foreign-topology") });
+  assert.throws(() => recordVerifiedReleaseThreeWorkerActivationSourceProofV1({ aggregate: foreign.aggregate,
+    releaseReviewPreparation: review }), /preflight_refused/u);
+  assert.throws(() => consumeProtectedReleaseReviewInputCapabilityV1({ ...review.ownerReviewInputCapability }),
+    /protected_release_review_preparation_refused/u);
+  const pending = consumeProtectedReleaseReviewInputCapabilityV1(review.ownerReviewInputCapability);
+  assert.equal(pending.ownerReviewStillRequired, true); assert.equal(pending.performsEffect, false);
+  assert.throws(() => consumeProtectedReleaseReviewInputCapabilityV1(review.ownerReviewInputCapability),
+    /protected_release_review_preparation_refused/u);
 });
 
 test("real protected-configuration plan remains blocked until owner write verification", () => {
