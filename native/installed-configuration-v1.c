@@ -265,6 +265,7 @@ static int publish(char *path, size_t path_count, const unsigned char *configura
     const unsigned char *manifest, uint32_t manifest_count) {
   static const char final_name[] = "Protected", temporary_name[] = ".Protected.acr-new";
   int parent = -1, root = -1, config_fd = -1, manifest_fd = -1, journal_fd = -1;
+  int temporary_created = 0, renamed = 0;
   struct stat parent_identity, root_identity, config_identity, manifest_identity, journal_identity, observed, named;
   if (!standard_root(path, path_count)) goto failed;
   static const char test_prefix[] = ACR_TEST_ROOT_PREFIX;
@@ -280,6 +281,7 @@ static int publish(char *path, size_t path_count, const unsigned char *configura
       || !absent(parent, temporary_name)) goto failed;
   umask(077);
   if (mkdirat(parent, temporary_name, 0700) != 0) goto failed;
+  temporary_created = 1;
   root = openat(parent, temporary_name, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
   if (root < 0 || !private_root(root, &root_identity)
       || fstatat(parent, temporary_name, &named, AT_SYMLINK_NOFOLLOW) != 0
@@ -295,7 +297,9 @@ static int publish(char *path, size_t path_count, const unsigned char *configura
 #ifdef ACR_TEST_FAULT_BEFORE_RENAME
       || 1
 #endif
-      || renameatx_np(parent, temporary_name, parent, final_name, RENAME_EXCL) != 0 || fsync(parent) != 0) goto failed;
+      || renameatx_np(parent, temporary_name, parent, final_name, RENAME_EXCL) != 0) goto failed;
+  renamed = 1;
+  if (fsync(parent) != 0) goto failed;
   if (fstatat(parent, final_name, &named, AT_SYMLINK_NOFOLLOW) != 0 || !same_identity(&named, &root_identity)
       || !private_root(root, &observed) || !same_identity(&observed, &root_identity)
       || !exact_file(root, "operator.json", config_fd, &config_identity, configuration_count)
@@ -324,6 +328,25 @@ static int publish(char *path, size_t path_count, const unsigned char *configura
   }
   close(journal_fd); close(manifest_fd); close(config_fd); close(root); close_components(); return 0;
 failed:
+  /* Before the atomic visibility point, roll back only the exact objects this
+   * invocation still holds. A substituted or ambiguous object is deliberately
+   * left for owner inspection instead of broad name-based cleanup. */
+  if (temporary_created && !renamed && parent >= 0 && root >= 0
+      && config_fd >= 0 && manifest_fd >= 0 && journal_fd >= 0
+      && absent(parent, final_name)
+      && fstatat(parent, temporary_name, &named, AT_SYMLINK_NOFOLLOW) == 0
+      && same_identity(&named, &root_identity)
+      && private_root(root, &observed) && same_identity(&observed, &root_identity)
+      && exact_file(root, "installed-manifest.json", manifest_fd, &manifest_identity, manifest_count)
+      && exact_file(root, "operator.json", config_fd, &config_identity, configuration_count)
+      && exact_private_directory(root, "installation-journal", journal_fd, &journal_identity)) {
+    int cleanup_ok = 1;
+    if (unlinkat(root, "installed-manifest.json", 0) != 0) cleanup_ok = 0;
+    if (cleanup_ok && unlinkat(root, "operator.json", 0) != 0) cleanup_ok = 0;
+    if (cleanup_ok && unlinkat(root, "installation-journal", AT_REMOVEDIR) != 0) cleanup_ok = 0;
+    if (cleanup_ok && fsync(root) == 0
+        && unlinkat(parent, temporary_name, AT_REMOVEDIR) == 0) (void)fsync(parent);
+  }
   if (journal_fd >= 0) close(journal_fd);
   if (manifest_fd >= 0) close(manifest_fd);
   if (config_fd >= 0) close(config_fd);

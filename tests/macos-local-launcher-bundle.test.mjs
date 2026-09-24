@@ -40,6 +40,9 @@ import {
   PRIVATE_INSTALLED_CONFIGURATION_PREPARATION_V1,
   PRIVATE_INSTALLED_CONFIGURATION_V3_MATERIALIZATION_PREPARATION_V1,
 } from "../src/installer/v1/private-installed-configuration-preparation.ts";
+import { createPrivateInstalledConfigurationV3OwnerWriterV1,
+  PRIVATE_INSTALLED_CONFIGURATION_V3_OWNER_WRITE_REQUEST_V1 } from
+  "../src/installer/v1/private-installed-configuration-v3-owner-writer.ts";
 import { runLocalLauncherCoreV1 } from "../src/installer/v1/local-launcher-core.mjs";
 import { INSTALLATION_JOURNAL_NATIVE_REVIEWED_CFLAGS_V1 } from
   "../src/installer/v1/macos-installation-journal-native-sidecar.mjs";
@@ -454,6 +457,41 @@ test("v3 manifest preparation rejects look-alikes, substitutions, incomplete bin
     schema: PRIVATE_INSTALLED_CONFIGURATION_V3_MATERIALIZATION_PREPARATION_V1,
     configurationPlan: incompletePlan, verifiedLauncherBundle: incompleteReport,
   }), /refused/u, "a v2 launcher cannot materialize a v3 Claude manifest");
+});
+
+test("v3 owner writer accepts only the opaque exact-plan capability and explicit owner invocation", async () => {
+  const verified = await verifyExtractedMacosLocalLauncherBundleV1(claudeBoundBundleRoot);
+  const source = { ...installedConfigurationSourceForLauncher(verified),
+    standardProtectedRootPath: join(homedir(), "Library", "Application Support", "Agent Control Room", "Protected"),
+    expectedOwnerUid: typeof process.geteuid === "function" ? process.geteuid() : 501 };
+  const configurationPlan = preparePrivateInstalledConfigurationV1(source);
+  const prepared = preparePrivateInstalledConfigurationV3MaterializationV1({
+    schema: PRIVATE_INSTALLED_CONFIGURATION_V3_MATERIALIZATION_PREPARATION_V1,
+    configurationPlan, verifiedLauncherBundle: verified,
+  });
+  const publication = composePrivateInstalledConfigurationV3MaterializationPublicationV1(prepared);
+  assert.throws(() => createPrivateInstalledConfigurationV3OwnerWriterV1(
+    { ...publication.materializationCapability }), /refused/u,
+  "a structural copy cannot select bytes, paths, helper, or configuration");
+  const writer = createPrivateInstalledConfigurationV3OwnerWriterV1(publication.materializationCapability);
+  assert.deepEqual({ schema: writer.schema, status: writer.status, oneUse: writer.oneUse,
+    acceptsPath: writer.acceptsPath, acceptsBytes: writer.acceptsBytes,
+    acceptsConfiguration: writer.acceptsConfiguration, acceptsNativeCallback: writer.acceptsNativeCallback,
+    performsEffectOnConstruction: writer.performsEffectOnConstruction }, {
+    schema: "control-room.private-installed-configuration-v3-owner-writer/v1",
+    status: "ready_for_explicit_owner_attended_write", oneUse: true,
+    acceptsPath: false, acceptsBytes: false, acceptsConfiguration: false,
+    acceptsNativeCallback: false, performsEffectOnConstruction: false });
+  assert.doesNotMatch(JSON.stringify(writer), /example-owner|operator\.json|installed-manifest|sidecarRoot/u);
+  assert.throws(() => createPrivateInstalledConfigurationV3OwnerWriterV1(
+    publication.materializationCapability), /refused/u, "the exact preparation capability cannot be replayed");
+  await assert.rejects(writer.materialize({ schema: PRIVATE_INSTALLED_CONFIGURATION_V3_OWNER_WRITE_REQUEST_V1,
+    ownerAttended: true, signal: new AbortController().signal, deadlineUnixMs: Date.now() + 1_000,
+    manifestPath: "/tmp/substitution" }), /refused/u,
+  "the owner invocation accepts no path or byte substitution");
+  await assert.rejects(writer.materialize({ schema: PRIVATE_INSTALLED_CONFIGURATION_V3_OWNER_WRITE_REQUEST_V1,
+    ownerAttended: false, signal: new AbortController().signal, deadlineUnixMs: Date.now() + 1_000 }), /refused/u,
+  "the future runtime must make the owner-attended invocation explicit");
 });
 
 test("a same-release second launcher cannot replace the verifier continuation bound to plan A", async () => {

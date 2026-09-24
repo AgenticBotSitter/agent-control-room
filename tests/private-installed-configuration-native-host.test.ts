@@ -434,6 +434,8 @@ macosTest("before-rename and after-rename-before-reply faults leave the final ro
     const protectedRoot = join(parent, "Protected");
     if (fault === "ACR_TEST_FAULT_BEFORE_RENAME") {
       await assert.rejects(lstat(protectedRoot), (error: NodeJS.ErrnoException) => error.code === "ENOENT");
+      assert.equal((await readdir(parent)).includes(".Protected.acr-new"), false,
+        "a fully identity-verified pre-rename partial tree is rolled back");
     } else {
       assert.deepEqual((await readdir(protectedRoot)).sort(),
         ["installation-journal", "installed-manifest.json", "operator.json"]);
