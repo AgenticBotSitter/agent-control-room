@@ -21,6 +21,18 @@ session capability. Its outer installer still must construct the live bridge,
 journal, trust stores, and key custody from protected installed state before
 Codex can be called live or worker-ready.
 
+The outer-installer gap is now mapped in
+[`PROTECTED_LINUX_CODEX_OUTER_INSTALLER_PLAN.md`](PROTECTED_LINUX_CODEX_OUTER_INSTALLER_PLAN.md).
+The analysis found that a safe installed-capability contract cannot yet be
+minted: the node bridge lacks an owned durable request/response lane for the
+signed current-admission exchange, and generic server startup does not retain
+the protected remote receipt-intake half of its existing composition. The plan
+identifies the exact reusable bridge, journal, trust, key-custody, resolver,
+receipt, current-admission, and result components; it splits the missing work
+into five fail-closed composition boundaries with adversarial acceptance tests.
+This is documentation only and did not inspect credentials, connect a node, or
+change an installed configuration.
+
 The reviewed first-activation command now accepts either supported product
 mode: the website-only host or the complete agent-task host. In both cases it
 loads the protected owner and runtime configurations once, verifies that they
