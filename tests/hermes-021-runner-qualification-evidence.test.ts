@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { createHermes021MacosLocalRunnerQualificationEvidenceV1,
   runHermes021MacosInstallationBoundRunnerQualificationV1,
-  verifyHermes021MacosInstallationBoundRunnerQualificationEvidenceV1,
   HERMES_021_MACOS_LOCAL_ADAPTER_V1, HERMES_021_SOURCE_REVISION_V1,
   HERMES_021_MACOS_LOCAL_RUNNER_QUALIFICATION_REPORT_V1 } from "../src/harness/hermes-021-v1";
 import { planInstallationTopologyV1 } from "../src/harness/v1/installation-topology";
@@ -30,7 +29,7 @@ test("runner qualification evidence refuses an incomplete or failed run", () => 
   assert.throws(() => createHermes021MacosLocalRunnerQualificationEvidenceV1({ ...passing, totalTokens: 1 }));
 });
 
-test("owner-attended runner procedure alone mints evidence bound to its exact runner selection", async () => {
+test("reviewed executable still cannot mint evidence without pinned-handle launch", async () => {
   const route = { kind: "local" as const, workerId: "worker:marvin", adapterId: HERMES_021_MACOS_LOCAL_ADAPTER_V1,
     adapterRevision: HERMES_021_SOURCE_REVISION_V1 };
   const topologyPlan = planInstallationTopologyV1({ databaseAuthorityDigest: sha256Digest("database"),
@@ -41,20 +40,8 @@ test("owner-attended runner procedure alone mints evidence bound to its exact ru
   const fixture = await createHermesOwnerQualificationHostFixture(runnerConfiguration);
   const input = { installationId: "fixture-installation", releaseDigest: sha256Digest("release"), topologyPlan,
     workerBinding, runnerConfiguration, reviewedExecutableIdentity: fixture.reviewedExecutableIdentity };
-  const qualified = await runHermes021MacosInstallationBoundRunnerQualificationV1(input, fixture.host);
-  const evidence = qualified.evidence;
-  const current = { installationId: input.installationId, releaseDigest: input.releaseDigest, topologyPlan,
-    workerBinding, runnerConfiguration, reviewedExecutableIdentity: fixture.reviewedExecutableIdentity,
-    runnerQualificationReport: qualified.report };
-  assert.equal(evidence.startsHermes, false);
-  assert.equal(evidence.grantsExecutionAuthority, false);
-  assert.deepEqual(verifyHermes021MacosInstallationBoundRunnerQualificationEvidenceV1(evidence, current), evidence);
-  assert.throws(() => verifyHermes021MacosInstallationBoundRunnerQualificationEvidenceV1(evidence,
-    { ...current, runnerConfiguration: { ...runnerConfiguration, profile: "substituted" } }));
-  assert.throws(() => verifyHermes021MacosInstallationBoundRunnerQualificationEvidenceV1({ ...evidence }, current),
+  await assert.rejects(runHermes021MacosInstallationBoundRunnerQualificationV1(input, fixture.host),
     /installation_bound_runner_qualification_evidence_unavailable/u);
-  const serialized = JSON.stringify(evidence);
-  for (const secret of Object.values(runnerConfiguration)) assert.equal(serialized.includes(String(secret)), false);
 });
 
 test("a fabricated matching terminal callback has no owner-host provenance", async () => {
@@ -83,7 +70,7 @@ test("an injectable factory-created host cannot mint qualification evidence", as
   const topologyPlan = planInstallationTopologyV1({ databaseAuthorityDigest: sha256Digest("database"),
     schedulerAuthorityDigest: sha256Digest("scheduler"), currentRoutes: [], requestedRoutes: [route] });
   const runnerConfiguration = hermesOwnerQualificationConfigurationFixture();
-  const reviewedExecutableIdentity = await hermesOwnerQualificationIdentityFixture(runnerConfiguration);
+  const reviewedExecutableIdentity = (await hermesOwnerQualificationIdentityFixture(runnerConfiguration)).record;
   let launches = 0;
   const genericHost = createHermes021MacosSubprocessStreamJsonHostV1(runnerConfiguration,
     () => { launches += 1; throw new Error("must not launch"); }, async () => "/private/tmp/hostile-hermes",

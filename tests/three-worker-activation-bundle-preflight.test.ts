@@ -6,12 +6,10 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { planInstallationTopologyV1 } from "../src/harness/v1/installation-topology";
 import { HERMES_021_MACOS_LOCAL_ADAPTER_V1, HERMES_021_SOURCE_REVISION_V1,
-  createHermes021MacosProtectedWorkerReadinessV1,
   runHermes021MacosInstallationBoundRunnerQualificationV1 } from "../src/harness/hermes-021-v1";
 import { sha256Digest } from "../src/security/canonical-digest";
 import { composeThreeWorkerActivationBundlePreflightV1, createThreeWorkerActivationBundleCustodyV1,
-  recordProtectedConfigurationThreeWorkerActivationSourceProofV1,
-  recordHermesThreeWorkerActivationSourceProofV1, refreshThreeWorkerActivationBundlePreflightV1,
+  recordProtectedConfigurationThreeWorkerActivationSourceProofV1, refreshThreeWorkerActivationBundlePreflightV1,
   recordVerifiedReleaseThreeWorkerActivationSourceProofV1,
   verifyThreeWorkerActivationBundlePreflightV1 } from
   "../src/installer/v1/three-worker-activation-bundle-preflight";
@@ -88,20 +86,16 @@ function protectedConfigurationSource() {
     verificationDeadlineMs: 5_000 });
 }
 
-async function hermesSource() {
+async function assertHermesPinnedLaunchBlocked() {
   const workerBinding = Object.freeze({ localServiceId: "service:marvin", workerId: route.workerId,
     expectedVersion: "0.21.3" as const, sourceRevision: HERMES_021_SOURCE_REVISION_V1 });
   const runnerConfiguration = hermesOwnerQualificationConfigurationFixture({ profile: "owner-profile-private",
     model: "qwen3.8:27b-long", provider: "ollama" });
   const fixture = await createHermesOwnerQualificationHostFixture(runnerConfiguration);
-  const qualified = await runHermes021MacosInstallationBoundRunnerQualificationV1({
+  await assert.rejects(runHermes021MacosInstallationBoundRunnerQualificationV1({
     installationId: binding.installationId, releaseDigest: binding.releaseDigest, topologyPlan, workerBinding,
-    runnerConfiguration, reviewedExecutableIdentity: fixture.reviewedExecutableIdentity }, fixture.host);
-  const currentInput = { installationId: binding.installationId, releaseDigest: binding.releaseDigest,
-    topologyInput, topologyPlan, workerBinding, runnerConfiguration,
-    reviewedExecutableIdentity: fixture.reviewedExecutableIdentity,
-    runnerQualificationReport: qualified.report, runnerQualificationEvidence: qualified.evidence };
-  return { currentInput, readiness: createHermes021MacosProtectedWorkerReadinessV1(currentInput) };
+    runnerConfiguration, reviewedExecutableIdentity: fixture.reviewedExecutableIdentity }, fixture.host),
+  /installation_bound_runner_qualification_evidence_unavailable/u);
 }
 
 test("custody alone cannot manufacture ready evidence or rollback", () => {
@@ -183,28 +177,12 @@ test("real protected-configuration plan advances only its exact aggregate", () =
     configurationPlan }), /preflight_refused/u);
 });
 
-test("real Hermes producer proof updates only Hermes and invalidates old aggregate generation", async () => {
+test("reviewed path-based Hermes remains blocked without pinned executable launch", async () => {
   const custody = createThreeWorkerActivationBundleCustodyV1(binding);
-  const first = composeThreeWorkerActivationBundlePreflightV1({ aggregate: custody.aggregate });
-  const source = await hermesSource();
-  const hermesProof = recordHermesThreeWorkerActivationSourceProofV1({ aggregate: custody.aggregate, ...source });
-  const refreshed = refreshThreeWorkerActivationBundlePreflightV1({ aggregate: custody.aggregate,
-    current: first, sourceProofs: [hermesProof] });
-  assert.equal(refreshed.kind, "invalidated");
-  assert.equal(refreshed.plan.generation, 2);
-  assert.equal(refreshed.plan.status, "blocked");
-  assert.deepEqual(refreshed.plan.ownerActions, ["approve_hermes_first_task"]);
-  assert.equal(refreshed.plan.components.find(item => item.component === "hermes_route")?.state,
-    "owner_attended_action");
-  assert.throws(() => verifyThreeWorkerActivationBundlePreflightV1(custody.aggregate, first), /preflight_refused/u);
-  assert.deepEqual(verifyThreeWorkerActivationBundlePreflightV1(custody.aggregate, refreshed.plan), refreshed.plan);
-});
-
-test("Hermes proof refuses a different aggregate binding", async () => {
-  const source = await hermesSource();
-  const custody = createThreeWorkerActivationBundleCustodyV1({ ...binding, releaseDigest: d("other-release") });
-  assert.throws(() => recordHermesThreeWorkerActivationSourceProofV1({ aggregate: custody.aggregate, ...source }),
-    /preflight_refused|readiness_unavailable/u);
+  await assertHermesPinnedLaunchBlocked();
+  const plan = composeThreeWorkerActivationBundlePreflightV1({ aggregate: custody.aggregate });
+  assert.equal(plan.components.find(item => item.component === "hermes_route")?.blocker, "source_proof_missing");
+  assert.deepEqual(plan.ownerActions, []);
 });
 
 test("exact replay stays current and output tampering refuses", () => {

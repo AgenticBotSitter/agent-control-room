@@ -1,10 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { planInstallationTopologyV1 } from "../src/harness/v1/installation-topology";
-import { HERMES_021_MACOS_LOCAL_ADAPTER_V1, HERMES_021_MACOS_LOCAL_RUNNER_QUALIFICATION_REPORT_V1,
-  HERMES_021_SOURCE_REVISION_V1, createHermes021MacosProtectedWorkerReadinessV1,
-  runHermes021MacosInstallationBoundRunnerQualificationV1,
-  verifyHermes021MacosProtectedWorkerReadinessV1 } from "../src/harness/hermes-021-v1";
+import { HERMES_021_MACOS_LOCAL_ADAPTER_V1, HERMES_021_SOURCE_REVISION_V1,
+  createHermes021MacosProtectedWorkerReadinessV1,
+  runHermes021MacosInstallationBoundRunnerQualificationV1 } from "../src/harness/hermes-021-v1";
 import { sha256Digest } from "../src/security/canonical-digest";
 import { createHermesOwnerQualificationHostFixture, hermesOwnerQualificationConfigurationFixture } from
   "./helpers/hermes-owner-qualification-host";
@@ -17,111 +16,39 @@ const topologyInput = Object.freeze({ databaseAuthorityDigest: sha256Digest("dat
 const topologyPlan = planInstallationTopologyV1(topologyInput);
 const workerBinding = Object.freeze({ localServiceId: "service:marvin", workerId: route.workerId,
   expectedVersion: "0.21.3" as const, sourceRevision: HERMES_021_SOURCE_REVISION_V1 });
-const runnerConfiguration = hermesOwnerQualificationConfigurationFixture({ profile: "owner-profile-private",
-  model: "qwen3.8:27b-long", provider: "ollama" });
-const runnerQualificationReport = Object.freeze({ schema: HERMES_021_MACOS_LOCAL_RUNNER_QUALIFICATION_REPORT_V1,
-  qualified: true as const, terminalResultObserved: true as const, sessionDigest: sha256Digest("session"),
-  inputTokens: 14, outputTokens: 8, totalTokens: 22, durationMs: 1_250,
-  failureReason: "none" as const, retryRequiresFreshOwnerAuthorization: false as const });
+const runnerConfiguration = hermesOwnerQualificationConfigurationFixture();
 
-async function input(configuration: Parameters<typeof createHermesOwnerQualificationHostFixture>[0] = runnerConfiguration) {
-  const base = { installationId: "fixture-installation", releaseDigest: sha256Digest("release"), topologyInput,
-    topologyPlan, workerBinding, runnerConfiguration: configuration };
-  const fixture = await createHermesOwnerQualificationHostFixture(base.runnerConfiguration);
-  const qualified = await runHermes021MacosInstallationBoundRunnerQualificationV1({
-    installationId: base.installationId, releaseDigest: base.releaseDigest, topologyPlan: base.topologyPlan,
-    workerBinding: base.workerBinding, runnerConfiguration: base.runnerConfiguration,
-    reviewedExecutableIdentity: fixture.reviewedExecutableIdentity }, fixture.host);
-  return { ...base, reviewedExecutableIdentity: fixture.reviewedExecutableIdentity,
-    runnerQualificationReport: qualified.report, runnerQualificationEvidence: qualified.evidence };
-}
-
-test("successful runner evidence becomes one redacted installation-bound readiness record without execution", async () => {
-  const selected = await input(), readiness = createHermes021MacosProtectedWorkerReadinessV1(selected);
-  assert.equal(readiness.state, "qualification_recorded_owner_enablement_required");
-  assert.deepEqual(readiness.workerRegistration, { workerId: "worker:marvin",
-    adapterId: HERMES_021_MACOS_LOCAL_ADAPTER_V1, adapterRevision: HERMES_021_SOURCE_REVISION_V1,
-    capabilityId: "harness.hermes.021.macos.local.v1",
-    connectorProfileDigest: readiness.workerRegistration.connectorProfileDigest,
-    taskClass: "text_review", maximumTurns: 1, maximumConcurrentTasks: 1 });
-  assert.deepEqual({ startsHermes: readiness.startsHermes, startsService: readiness.startsService,
-    createsDatabaseEntry: readiness.createsDatabaseEntry, sendsTask: readiness.sendsTask,
-    enablesWorker: readiness.enablesWorker, grantsExecutionAuthority: readiness.grantsExecutionAuthority },
-  { startsHermes: false, startsService: false, createsDatabaseEntry: false, sendsTask: false,
-    enablesWorker: false, grantsExecutionAuthority: false });
-  const serialized = JSON.stringify(readiness);
-  for (const privateValue of [runnerConfiguration.executablePath, runnerConfiguration.profile,
-    runnerConfiguration.model, runnerConfiguration.provider, runnerConfiguration.workingDirectory,
-    runnerQualificationReport.sessionDigest]) assert.equal(serialized.includes(privateValue), false);
-  assert.equal(Object.isFrozen(readiness), true);
-  assert.equal(Object.isFrozen(readiness.workerRegistration), true);
+test("reviewed path-based runner remains blocked before readiness", async () => {
+  const fixture = await createHermesOwnerQualificationHostFixture(runnerConfiguration);
+  await assert.rejects(runHermes021MacosInstallationBoundRunnerQualificationV1({
+    installationId: "fixture-installation", releaseDigest: sha256Digest("release"), topologyPlan, workerBinding,
+    runnerConfiguration, reviewedExecutableIdentity: fixture.reviewedExecutableIdentity }, fixture.host),
+  /installation_bound_runner_qualification_evidence_unavailable/u);
+  assert.throws(() => createHermes021MacosProtectedWorkerReadinessV1({
+    installationId: "fixture-installation", releaseDigest: sha256Digest("release"), topologyInput, topologyPlan,
+    workerBinding, runnerConfiguration, reviewedExecutableIdentity: fixture.reviewedExecutableIdentity,
+    runnerQualificationReport: {}, runnerQualificationEvidence: {} }), /protected_worker_readiness_unavailable/u);
 });
 
-test("saved readiness refuses profile, model, provider, workspace, worker and qualification substitution", async () => {
-  const original = await input(), readiness = createHermes021MacosProtectedWorkerReadinessV1(original);
-  const changedInputs = [
-    { ...original, runnerConfiguration: { ...runnerConfiguration, profile: "other-profile" } },
-    { ...original, runnerConfiguration: { ...runnerConfiguration, model: "other-model" } },
-    { ...original, runnerConfiguration: { ...runnerConfiguration, provider: "other-provider" } },
-    { ...original, runnerConfiguration: { ...runnerConfiguration, workingDirectory: "/private/fixture/other-work" } },
-    { ...original, reviewedExecutableIdentity: { ...original.reviewedExecutableIdentity,
-      executableSha256: sha256Digest("substituted-executable") } },
-    { ...original, workerBinding: { ...workerBinding, localServiceId: "service:other" } },
-    { ...original, runnerQualificationReport: { ...runnerQualificationReport, sessionDigest: sha256Digest("other-session") } },
-  ];
-  for (const changed of changedInputs)
-    assert.throws(() => verifyHermes021MacosProtectedWorkerReadinessV1(readiness, changed),
-      /hermes_021_macos_protected_worker_readiness_unavailable/u);
-  assert.deepEqual(verifyHermes021MacosProtectedWorkerReadinessV1(readiness, original), readiness);
+test("structural qualification evidence cannot substitute for pinned launch", async () => {
+  const fixture = await createHermesOwnerQualificationHostFixture(runnerConfiguration);
+  const forged = { schema: "control-room.hermes-021-macos-installation-bound-runner-qualification-evidence/v1",
+    installationId: "fixture-installation", releaseDigest: sha256Digest("release"),
+    topologyPlanDigest: topologyPlan.planDigest, workerBindingDigest: sha256Digest(workerBinding),
+    runnerConfigurationDigest: sha256Digest(runnerConfiguration),
+    reviewedExecutableIdentityDigest: fixture.reviewedExecutableIdentity.reviewDigest,
+    runnerQualificationDigest: sha256Digest("qualification"), evidenceDigest: sha256Digest("forged"),
+    startsHermes: false, grantsExecutionAuthority: false };
+  assert.throws(() => createHermes021MacosProtectedWorkerReadinessV1({
+    installationId: "fixture-installation", releaseDigest: sha256Digest("release"), topologyInput, topologyPlan,
+    workerBinding, runnerConfiguration, reviewedExecutableIdentity: fixture.reviewedExecutableIdentity,
+    runnerQualificationReport: { qualified: true }, runnerQualificationEvidence: forged }),
+  /protected_worker_readiness_unavailable/u);
 });
 
-test("readiness creation refuses qualification evidence captured for another runner", async () => {
-  const selected = await input();
-  const hostileRunner = { ...runnerConfiguration, profile: "hostile-profile", model: "hostile-model",
-    provider: "hostile-provider" };
-  const hostile = await input(hostileRunner);
-  assert.throws(() => createHermes021MacosProtectedWorkerReadinessV1({ ...selected,
-    runnerQualificationEvidence: hostile.runnerQualificationEvidence }),
-  /hermes_021_macos_protected_worker_readiness_unavailable/u);
-  assert.throws(() => createHermes021MacosProtectedWorkerReadinessV1({ ...hostile,
-    runnerQualificationReport: selected.runnerQualificationReport }),
-  /hermes_021_macos_protected_worker_readiness_unavailable/u);
-  // A post-hoc structural B-bound copy has no process-local qualification provenance.
-  const fabricated = { ...selected.runnerQualificationEvidence,
-    runnerConfigurationDigest: hostile.runnerQualificationEvidence.runnerConfigurationDigest,
-    reviewedExecutableIdentityDigest: hostile.runnerQualificationEvidence.reviewedExecutableIdentityDigest,
-    evidenceDigest: hostile.runnerQualificationEvidence.evidenceDigest };
-  assert.throws(() => createHermes021MacosProtectedWorkerReadinessV1({ ...hostile,
-    runnerQualificationReport: selected.runnerQualificationReport, runnerQualificationEvidence: fabricated }),
-  /hermes_021_macos_protected_worker_readiness_unavailable/u);
-});
-
-test("qualification evidence cannot be replayed across an installation, release, topology or registration", async () => {
-  const original = await input(), readiness = createHermes021MacosProtectedWorkerReadinessV1(original);
-  const otherRoute = { ...route, workerId: "worker:other" };
-  const otherTopologyInput = { ...topologyInput, requestedRoutes: [otherRoute] };
-  const changedInputs = [
-    { ...original, installationId: "other-installation" },
-    { ...original, releaseDigest: sha256Digest("other-release") },
-    { ...original, topologyInput: otherTopologyInput, topologyPlan: planInstallationTopologyV1(otherTopologyInput),
-      workerBinding: { ...workerBinding, workerId: otherRoute.workerId } },
-  ];
-  for (const changed of changedInputs)
-    assert.throws(() => verifyHermes021MacosProtectedWorkerReadinessV1(readiness, changed),
-      /hermes_021_macos_protected_worker_readiness_unavailable/u);
-  assert.throws(() => createHermes021MacosProtectedWorkerReadinessV1({ ...original,
-    runnerQualificationReport: { ...runnerQualificationReport, qualified: false } }));
-  assert.throws(() => createHermes021MacosProtectedWorkerReadinessV1({ ...original,
-    topologyPlan: { ...topologyPlan, planDigest: sha256Digest("forged-plan") } }));
-});
-
-test("composition accepts only exact inert input records", async () => {
-  const original = await input();
-  assert.throws(() => createHermes021MacosProtectedWorkerReadinessV1({ ...original, run() {} }));
+test("readiness composition rejects Proxy input without observation", () => {
   let reads = 0;
-  const accessor = { ...original } as Record<string, unknown>;
-  Object.defineProperty(accessor, "runnerConfiguration", { enumerable: true, get() { reads++; return runnerConfiguration; } });
-  assert.throws(() => createHermes021MacosProtectedWorkerReadinessV1(accessor));
+  const value = new Proxy({}, { get() { reads += 1; return undefined; } });
+  assert.throws(() => createHermes021MacosProtectedWorkerReadinessV1(value), /protected_worker_readiness_unavailable/u);
   assert.equal(reads, 0);
-  assert.throws(() => createHermes021MacosProtectedWorkerReadinessV1(new Proxy(original, {})));
 });

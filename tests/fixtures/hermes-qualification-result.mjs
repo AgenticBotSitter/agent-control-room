@@ -1,6 +1,10 @@
 #!/usr/bin/env node
 import { readFile } from "node:fs/promises";
 
+if (process.argv[2] === "--version") {
+  process.stdout.write("Hermes Agent v0.21.3 (fixture) · upstream 00570550\n");
+  process.exit(0);
+}
 const queryIndex = process.argv.indexOf("--query-file");
 const queryPath = queryIndex >= 0 ? process.argv[queryIndex + 1] : undefined;
 if (!queryPath) process.exit(2);

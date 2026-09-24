@@ -1,7 +1,5 @@
 import { spawn, type ChildProcessWithoutNullStreams, type SpawnOptions } from "node:child_process";
-import { createHash } from "node:crypto";
-import { constants } from "node:fs";
-import { lstat, mkdtemp, open, realpath, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, normalize } from "node:path";
 import { StringDecoder } from "node:string_decoder";
@@ -9,7 +7,8 @@ import { types } from "node:util";
 import { z } from "zod";
 import type { Hermes021MacosStreamJsonHostV1 } from "./stream-json-private-port";
 import type { Hermes021MacosTaskV1 } from "./macos-local-worker";
-import { captureHermes021MacosReviewedExecutableIdentityV1,
+import { attestHermes021MacosReviewedExecutableFileV1,
+  consumeHermes021MacosExecutableReviewCapabilityV1,
   type Hermes021MacosReviewedExecutableIdentityV1 } from "./reviewed-executable-identity";
 
 const unavailable = (): never => { throw new Error("hermes_021_macos_subprocess_host_unavailable"); };
@@ -175,66 +174,23 @@ export function createHermes021MacosSubprocessStreamJsonHostV1(configurationValu
   return createHost(configurationValue, launch, makeDirectory, removeDirectory, saveFile, now);
 }
 
-function sameStat(left: Awaited<ReturnType<typeof lstat>>, right: Awaited<ReturnType<typeof lstat>>): boolean {
-  return left.dev === right.dev && left.ino === right.ino && left.mode === right.mode && left.size === right.size
-    && left.nlink === right.nlink && left.uid === right.uid && left.gid === right.gid
-    && left.mtimeMs === right.mtimeMs && left.ctimeMs === right.ctimeMs;
-}
-
-async function attestExecutable(path: string, reviewed: Hermes021MacosReviewedExecutableIdentityV1,
-  expectedStat?: Awaited<ReturnType<typeof lstat>>): Promise<Awaited<ReturnType<typeof lstat>>> {
-  let handle: Awaited<ReturnType<typeof open>> | undefined, bytes: Buffer | undefined;
-  try {
-    const namedBefore = await lstat(path);
-    if (!namedBefore.isFile() || namedBefore.isSymbolicLink() || namedBefore.nlink !== 1
-      || (namedBefore.mode & 0o111) === 0 || await realpath(path) !== path) unavailable();
-    handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
-    const openedBefore = await handle.stat();
-    if (!sameStat(namedBefore, openedBefore) || expectedStat && !sameStat(expectedStat, openedBefore)
-      || openedBefore.size < 1 || openedBefore.size > 64 * 1024 * 1024) unavailable();
-    bytes = await handle.readFile();
-    const openedAfter = await handle.stat(), namedAfter = await lstat(path);
-    const executableSha256 = `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
-    if (!sameStat(openedBefore, openedAfter) || !sameStat(openedBefore, namedAfter)
-      || bytes.length !== openedBefore.size || executableSha256 !== reviewed.executableSha256
-      || await realpath(path) !== path) unavailable();
-    return openedBefore;
-  } catch { return unavailable(); }
-  finally { bytes?.fill(0); await handle?.close().catch(() => undefined); }
-}
-
 /**
- * Concrete owner-terminal subprocess route. There is deliberately no launch,
- * filesystem, clock, or callback injection seam: only this native constructor
- * can place a host in qualification custody.
+ * Captures one reviewed owner executable for qualification, but deliberately
+ * refuses use: Node's path-based spawn cannot execute the already-opened file
+ * descriptor, leaving an uncloseable final check-to-exec replacement race.
  */
 export async function createHermes021MacosNativeOwnerQualificationHostV1(
-  configurationValue: unknown, reviewedExecutableIdentityValue: unknown): Promise<object> {
+  configurationValue: unknown, executableReviewCapability: unknown): Promise<object> {
   const configuration = captureHermes021MacosSubprocessHostConfigurationV1(configurationValue);
-  const reviewedExecutableIdentity = captureHermes021MacosReviewedExecutableIdentityV1(reviewedExecutableIdentityValue);
-  const executableStat = await attestExecutable(configuration.executablePath, reviewedExecutableIdentity);
-  const host = createHost(configuration,
-    (file, args, options) => spawn(file, [...args], options) as ChildProcessWithoutNullStreams,
-    mkdtemp, rm, writeFile, Date.now,
-    async () => { await attestExecutable(configuration.executablePath, reviewedExecutableIdentity, executableStat); });
+  const review = consumeHermes021MacosExecutableReviewCapabilityV1(executableReviewCapability);
+  if (configuration.executablePath !== review.executablePath) unavailable();
+  await attestHermes021MacosReviewedExecutableFileV1(review.executablePath,
+    review.record.executableSha256, review.stat);
   const capability = Object.freeze({ schema: "control-room.hermes-021-macos-native-owner-qualification-host/v1",
     providesGeneralExecutionAuthority: false as const });
-  ownerQualificationHosts.set(capability, Object.freeze({ configuration, reviewedExecutableIdentity,
-    async qualify(expectedText) {
-      if (!/^CONTROL_ROOM_HERMES_RUNNER_[a-f0-9]{32}$/u.test(expectedText)) unavailable();
-      const lines: unknown[] = [];
-      await host.execute(Object.freeze({ task: Object.freeze({ tenantId: "tenant:qualification",
-        projectId: "project:qualification", jobId: "job:qualification", attemptId: "attempt:qualification",
-        runId: "run:qualification", nodeId: "node:qualification",
-        prompt: `Reply with exactly this text and nothing else: ${expectedText}`,
-        instructions: "Use no tools and do not write files.",
-        deadline: Date.now() + configuration.maximumRunBudgetSeconds * 1_000 + 5_000 }),
-      async onLine(line) {
-        if (lines.length >= 64 || typeof line !== "string" || line.includes("\n") || line.includes("\r")) unavailable();
-        try { lines.push(JSON.parse(line)); } catch { unavailable(); }
-      } }));
-      return Object.freeze(lines);
-    } }));
+  ownerQualificationHosts.set(capability, Object.freeze({ configuration,
+    reviewedExecutableIdentity: review.record,
+    async qualify(_expectedText: string): Promise<readonly unknown[]> { return unavailable(); } }));
   return capability;
 }
 
