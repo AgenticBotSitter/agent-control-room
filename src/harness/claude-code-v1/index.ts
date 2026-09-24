@@ -5,6 +5,7 @@ export * from "./owned-process-session";
 export * from "./private-process-acquisition";
 export * from "./private-installed-process-host";
 export * from "./text-review-invocation-policy";
+export * from "./owner-trusted-local-exec";
 export * from "./qualification-evidence";
 export * from "./local-process-readiness";
 export * from "./installation-readiness-record";
