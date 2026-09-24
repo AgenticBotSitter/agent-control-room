@@ -19,8 +19,9 @@ delivery transport.
   qualifications. That proves the bridge can reach Hermes; it does not yet
   enable ordinary work.
 - The Claude source route, bounded task policy, result publication, recovery,
-  and shared installation composition exist. The installed process route still
-  needs its final production host binding, owner-attended qualification, and
+  shared installation composition, and protected qualification route exist.
+  It still needs protected installed-manifest materialization, the trusted
+  installed native-verifier composition, owner-attended qualification, and
   first-task proof.
 - The shared remote delivery contract, node-session bridge, canonical queued
   task selection, durable uncertain-send recovery, reconstruction-stable packet
@@ -107,10 +108,12 @@ database, scheduler, website, and review path.
    retains the real revocation fence privately. Matching identifier strings,
    ordinary callbacks, TypeScript-private fields, or a type-only wrapper are
    not sufficient provenance.
-   The current source seam still requires the installed Codex admission/trust
-   owner to supply its concrete current-policy port. Until that protected
-   provider exists, this source package is a release blocker—not a live node
-   session or worker-ready claim.
+  The current source read now revalidates the complete current permit and
+  exact queued evidence before it returns a non-executing signed answer.
+  The installed Codex admission/trust owner still must supply that concrete
+  current-policy port through protected node-entry composition. Until that
+  composition exists, this source package is a release blocker—not a live node
+  session or worker-ready claim.
    That provider must combine the protected local trust revision and pin with
    an authenticated, installation-owned read of the controller's current
    project/job/attempt/lease/node state for the exact queue. A saved activation

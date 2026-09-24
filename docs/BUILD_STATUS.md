@@ -4,6 +4,15 @@
 with disposable data; no Control Room installation or local worker is
 operational yet.
 
+**Current activation checkpoint (2026-09-23):** the protected Claude
+qualification route and the Codex current-admission read are accepted
+source-only packages. Claude's route is fixed to its reviewed helper and
+text-only policy; Codex's signed read rechecks the live controller-side permit,
+route, profile, enrollment/pin, lease, and exact queued evidence without
+sending or starting work. Both remain preparation: the installed Claude
+verifier/manifest composition and protected Linux Codex node-entry composition
+are still required before either can be called live or worker-ready.
+
 The reviewed first-activation command now accepts either supported product
 mode: the website-only host or the complete agent-task host. In both cases it
 loads the protected owner and runtime configurations once, verifies that they
