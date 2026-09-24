@@ -1,8 +1,9 @@
 # Hermes runtime entry and import policy
 
-Status: bounded design research, 2026-09-23. No runtime was captured or started;
-no Hermes installation, profile, authentication or private data was inspected.
-This document does not establish a qualified launcher.
+Status: bounded public-source review and policy, 2026-09-24. No runtime was
+captured or started; no Hermes installation, profile, authentication or
+private data was inspected. This document does not establish a qualified
+launcher.
 
 ## What is established
 
@@ -12,20 +13,34 @@ Control Room pins Hermes 0.21.3 at
 supplies a profile, work directory and a restricted tool selection. Those
 arguments alone do not establish where Python or Hermes imports code from.
 
-The exact public source was not available in the inspected research snapshots.
-Attempts to read the pinned `pyproject.toml` and `hermes_cli/main.py` through
-GitHub and its raw source endpoint returned cache misses. Consequently neither
-the package entry point nor a complete dependency list is verified here.
-Do not substitute current upstream main or infer an entry point from a package
-name. The next source inspection must resolve the pinned console-script target,
-its import-time initialization, profile loading and plugin discovery first.
+The exact public checkout at that revision was inspected without modification.
+`pyproject.toml` fixes the `hermes` console script to
+`hermes_cli.main:main`, declares Python `>=3.11,<3.14`, and the checked-in
+`.python-version` selects 3.11. The same metadata declares MIT and ships
+`LICENSE`; `uv.lock` is the dependency-resolution source, not permission to
+install anything during image formation or startup.
+
+That inspection found four incompatibilities with a sealed import boundary.
+`hermes_cli/main.py` inserts the source root into `sys.path`; its import-time
+early recovery can run `ensurepip`, `pip` or `uv`; `cli.py` installs a
+`sys.meta_path` finder; and normal agent startup discovers bundled, user,
+project and Python entry-point plugins. These are supported upstream
+behaviours, not findings that Control Room may patch away. The current source
+therefore does not satisfy the future sealed-runtime policy.
 
 ## Proposed release layout and startup policy
 
 The release can define stable *packaging roles* now: interpreter, standard
 library, extension modules, Hermes code/resources, dependencies, fixed bootstrap
-and notices. Exact internal paths, Python ABI and Hermes callable remain unset
-until the pinned source and interpreter distribution have been checked.
+and notices. The source review now fixes the Python ABI, callable and proposed
+image-relative role paths; none is verified runtime-image evidence yet.
+
+The source-only `macos-hermes-runtime-import-policy.ts` now records the exact
+entry point, CPython 3.11 ABI, architecture, isolated bootstrap, image-relative
+module roots and digest bindings for the runtime, dependency, native-library
+and license inventories. It rejects caller-selected roots, hooks, plugins and
+private paths and grants no image, process, install or qualification authority.
+It deliberately records the pinned source as incompatible.
 
 Use CPython's existing isolated initialization facilities, with an explicit
 image-relative module search list resolved by the native host. Disable
@@ -76,10 +91,13 @@ code was copied by this research.
 
 ## Next implementation decision
 
-A candidate policy and negative test specification can be implemented now.
-A final fixed entry layout cannot yet be represented as verified. First obtain
-the pinned public files and dependency metadata for source review. Later capture
-of the existing runtime, image creation/mounting and real qualification remain
-within the owner-authorized capture/activation stage described in
+A candidate policy and negative test specification are now implemented. They
+are a refusal boundary, not evidence that the fixed entry layout works. Before
+packaging can proceed, upstream must provide a supported invocation mode that
+avoids the four recorded incompatibilities, or architecture must explicitly
+retain the gap; Control Room must not modify Hermes source to make it fit.
+Later inventory formation, capture of the existing runtime, image
+creation/mounting and real qualification remain within the owner-authorized
+capture/activation stage described in
 `HERMES_MACOS_RELEASE_SIDECAR_CUSTODY.md`. No private Hermes data is needed to
-complete the public-source review.
+retain or review this source finding.

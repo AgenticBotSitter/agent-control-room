@@ -38,7 +38,15 @@ earlier owner-attended qualification remains useful compatibility evidence,
 but it cannot authorize a future installed launch route with different process
 custody.
 
-The next build package is the concrete implementation described by
+The exact pinned public source and its proposed import boundary have now been
+reviewed. The source-only policy fixes `hermes_cli.main:main`, CPython 3.11,
+architecture, isolated image-relative roots and inventory digest bindings, but
+it correctly remains blocked: upstream startup mutates `sys.path`, can repair
+or install packages, installs a meta-path hook and discovers plugins. It does
+not modify Hermes or grant image, process, installation or qualification
+authority.
+
+The next build package remains the concrete implementation described by
 `HERMES_MACOS_RELEASE_SIDECAR_CUSTODY.md`:
 
 - a deterministic, licensed, read-only image containing the complete,
@@ -53,6 +61,10 @@ The next build package is the concrete implementation described by
   altered interpreter/modules, extra or missing runtime entries, writable
   images, wrong release/architecture, helper loss, descendant cleanup and
   capability replay/forgery.
+
+Before image formation, that import-policy incompatibility needs an
+upstream-supported, source-unchanged resolution. A Control Room patch, caller
+assertion or Python flag is not an acceptable substitute.
 
 Until that package is accepted, the installed route must refuse before starting
 Hermes. No saved path, provider/model value, claimed readiness record or prior

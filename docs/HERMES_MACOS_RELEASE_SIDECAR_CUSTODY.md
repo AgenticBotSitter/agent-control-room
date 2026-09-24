@@ -46,16 +46,27 @@ entries and extra entries. The result remains `inventory_only`: it does not
 walk a live installation, read file contents, prove that credentials are
 absent, create an image or grant packaging or launch authority.
 
+The exact pinned public source has now also been reviewed and a pure import
+policy added. It binds `hermes_cli.main:main`, CPython 3.11, architecture,
+isolated bootstrap/module roots and the future dependency, native-library and
+license inventories. The policy refuses external roots, import hooks, plugins,
+bootstrap installation and private material. The reviewed source is marked
+incompatible because startup mutates `sys.path`, may repair or install
+dependencies, installs a meta-path hook and discovers plugins. The policy is
+not a workaround and grants no authority.
+
 ## Required source work before any live attempt
 
 Control Room must still:
 
 1. build and independently review the native launch host, including complete
    process-group cleanup and helper-loss behavior;
-2. define the reviewed public-runtime inclusion list, then implement the
-   owner-authorized packager that captures the complete interpreter and Hermes
-   dependency closure, verifies license material and proves credentials are
-   absent before feeding observations into the deterministic inventory;
+2. resolve the recorded upstream import-policy incompatibility without
+   modifying Hermes source, define the reviewed public-runtime inclusion list,
+   then implement the owner-authorized packager that captures the complete
+   interpreter and Hermes dependency closure, verifies license material and
+   proves credentials are absent before feeding observations into the
+   deterministic inventory;
 3. add artifact verification and copy logic to the macOS launcher bundle, bind
    all bytes to the portable release, and extend protected installed-manifest
    custody with a one-use Hermes sidecar capability;
@@ -79,9 +90,11 @@ skills or private configuration. Any download, install, administrator action,
 read-only image attachment, operating-system prompt or persistent-service
 change requires its own owner approval.
 
-Before that authorization is requested, release engineering must settle and
-review the exact public-runtime inclusion list and the fixed internal Hermes
-entry point. The future capture helper—not this pure manifest module—must
+Before that authorization is requested, release engineering must resolve the
+blocked upstream startup behaviour, then settle and review the exact
+public-runtime inclusion list. The entry point is now known but is not safe to
+launch under the sealed policy. The future capture helper—not either pure
+policy/manifest module—must
 enforce that list while it reads the public runtime, scan the selected closure
 for forbidden private material, include the applicable license notices, build
 the read-only image and independently verify its digest. This is the exact

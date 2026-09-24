@@ -125,6 +125,17 @@ mechanism and a reviewed, release-bound recovery sidecar respectively, followed
 by the later owner-attended activation session. No Keychain item, database,
 backup, service, route, or worker was touched while creating these packages.
 
+The exact pinned Hermes 0.21.3 public source was also inspected without
+modification. A new source-only import policy binds its verified
+`hermes_cli.main:main` entry, CPython 3.11 ABI, architecture, isolated
+image-relative module roots and future runtime/dependency/native-library/license
+inventory digests. It refuses external paths, import hooks, plugins, startup
+installation and private material, and grants no image, process, install or
+qualification authority. The policy remains blocked because reviewed upstream
+startup mutates `sys.path`, may repair or install dependencies, installs a
+meta-path hook and discovers plugins. Five focused policy checks pass. No
+Hermes process, image, installation or private data was opened or changed.
+
 The local Hermes route has an equally explicit boundary. The current
 path-based macOS launch cannot prove that the reviewed Hermes program and its
 interpreter/runtime have not changed, so it remains blocked. The new contract
