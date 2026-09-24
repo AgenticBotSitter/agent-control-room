@@ -98,3 +98,21 @@ export function consumeHermes021MacosExecutableReviewCapabilityV1(value: unknown
 export function hermes021MacosReviewedExecutableIdentityDigestV1(value: unknown) {
   return captureHermes021MacosReviewedExecutableIdentityV1(value).reviewDigest;
 }
+
+/** Re-check the reviewed pathname immediately before an owned launch. This is
+ * not a sealing claim: path-based spawn retains a same-user replacement race. */
+export async function reattestHermes021MacosReviewedExecutableIdentityV1(value: unknown): Promise<void> {
+  if (!value || typeof value !== "object" || types.isProxy(value)) return unavailable();
+  const review = records.get(value);
+  if (!review || canonicalJson(recordSchema.parse(value)) !== canonicalJson(review.record)) return unavailable();
+  await attestHermes021MacosReviewedExecutableFileV1(review.executablePath,
+    review.record.executableSha256, review.stat);
+}
+
+/** Confirms that captured owner configuration still names the reviewed file. */
+export function assertHermes021MacosReviewedExecutableIdentityPathV1(value: unknown, executablePath: unknown): void {
+  if (!value || typeof value !== "object" || types.isProxy(value) || typeof executablePath !== "string") return unavailable();
+  const review = records.get(value);
+  if (!review || review.executablePath !== executablePath
+    || canonicalJson(recordSchema.parse(value)) !== canonicalJson(review.record)) return unavailable();
+}

@@ -30,7 +30,7 @@ therefore not missing assembly seams. Adding another wrapper, queue, scheduler,
 database or readiness record would duplicate accepted code without making the
 worker safer or more operational.
 
-## The one remaining source blocker
+## The remaining local activation path
 
 The current path-based Hermes launch cannot prove that the script, Python
 interpreter and loaded modules are unchanged between review and execution. The
@@ -46,7 +46,15 @@ or install packages, installs a meta-path hook and discovers plugins. It does
 not modify Hermes or grant image, process, installation or qualification
 authority.
 
-The next build package remains the concrete implementation described by
+The local product therefore supports two deliberately different deployment
+paths. The current active path is **owner-authorized local runner**: it binds
+the reviewed executable identity and fixed text-only runner policy to this
+installation, then rechecks the executable immediately before every task. It
+must say plainly that it does not resist a malicious same-user filesystem
+change. It is appropriate for an owner-operated Mac, not for hostile-local
+filesystem protection.
+
+The stronger optional path remains the concrete implementation described by
 `HERMES_MACOS_RELEASE_SIDECAR_CUSTODY.md`:
 
 - a deterministic, licensed, read-only image containing the complete,
@@ -64,11 +72,12 @@ The next build package remains the concrete implementation described by
 
 Before image formation, that import-policy incompatibility needs an
 upstream-supported, source-unchanged resolution. A Control Room patch, caller
-assertion or Python flag is not an acceptable substitute.
+assertion or Python flag is not an acceptable substitute. This stronger path
+is not a prerequisite for the owner-authorized local runner.
 
-Until that package is accepted, the installed route must refuse before starting
-Hermes. No saved path, provider/model value, claimed readiness record or prior
-qualification result may clear this blocker.
+Until the owner-authorized runner package is accepted, the installed route
+must refuse before starting Hermes. No saved path, provider/model value,
+claimed readiness record or prior qualification result may clear this blocker.
 
 ## Exact later owner gates
 
