@@ -16,6 +16,7 @@ import { readCodexDeliveryEnvelopeReceipt } from "../src/web/v1/codex-delivery-e
 import { readCodexTransmissionIntentReceipt } from "../src/web/v1/codex-transmission-intent";
 import { readCodexDeliveryReceipt } from "../src/web/v1/codex-delivery-receipt";
 import { readCodexActivationTransmissionIntentInSession } from "../src/web/v1/codex-activation-transmission-intent";
+import { createCodexCurrentAdmissionReadResponderV1 } from "../src/web/v1/codex-current-admission-read";
 import { computeAuthorityDigest, sha256Digest } from "../src/security";
 import { TaskAssignmentCoordinator, type TaskAssignmentRoute } from "../src/web/v1/task-assignment-coordinator";
 import { TaskExecutionPlanner, type NativeTaskTemplate } from "../src/web/v1/task-execution-planner";
@@ -114,7 +115,7 @@ async function connectedCodexSession(f: Awaited<ReturnType<typeof setup>>, nodeK
     type: "node.reconciliation.report", body: { lastAcknowledgedServerSequence: lastSequence, attempts: [] } }, f.keys.privateKey);
   await session.receive(JSON.stringify(report));
   toNode.length = 0;
-  return { session, toNode, connectionId, serverSpki };
+  return { session, toNode, connectionId, serverSpki, server };
 }
 
 async function assignAndQueue(f: Awaited<ReturnType<typeof setup>>) {
@@ -209,6 +210,48 @@ test("owner planning and assignment produce one canonical Codex reservation with
       new AbortController().signal);
     assert.equal(admissionResult.startsWork, false); assert.equal(admissionResult.grantsExecutionAuthority, false);
     assert.equal(admissionResult.currentAdmission.queueId, reference.queueId);
+    // Actual node-protocol round trip: the responder authenticates raw node
+    // bytes, asks the protected coordinator for a fresh read, and returns only
+    // a bounded response body for the caller's existing server signer.
+    const responseAuthenticator = new NodeProtocolAuthenticator({ async resolve(value) {
+      return { ...value, algorithm: "ed25519" as const,
+        publicKeySpki: f.keys.publicKey.export({ format: "der", type: "spki" }).toString("base64url"),
+        state: "active" as const, principalState: "active" as const, validFrom: at(-60_000) };
+    } }, { async consume() { return "accepted" as const; } }, new FixedWindowProtocolRateLimiter(100, 60));
+    const responder = createCodexCurrentAdmissionReadResponderV1({ coordinator: f.assignment,
+      authenticator: responseAuthenticator, tenantId: binding.tenantId, nodeId: binding.nodeId,
+      connectionId: link.connectionId, transportIdentity: "transport:codex-test", clock: () => instant + 8000 });
+    let readSequence = 10;
+    const readRequest = (change: { body?: Record<string, unknown>; connectionId?: string; actorId?: string;
+      sentAt?: string; expiresAt?: string } = {}) => {
+      const sequence = readSequence++, nonce = `read${String(sequence).padStart(39, "a")}`;
+      return signNodeFrame({ protocol: NODE_PROTOCOL_V1, direction: "node_to_server", senderKind: "node",
+        tenantId: binding.tenantId, actorId: change.actorId ?? binding.nodeId, keyId: "key:test",
+        connectionId: change.connectionId ?? link.connectionId, sequence,
+        messageId: `message:codex-admission-read-${sequence}`, correlationId: "correlation:codex-admission-read",
+        nonce, sentAt: change.sentAt ?? at(8000), expiresAt: change.expiresAt ?? at(60_000), type: "harness.codex.current-admission.read",
+        body: { schema: "control-room.codex-current-admission-read-request/v1", projectId: binding.projectId,
+          jobId: saved.job.id, attemptId: assigned.receipt.attemptId, inputDigest: saved.job.inputDigest,
+          ...admissionRead, challengeNonce: nonce, startsWork: false, grantsExecutionAuthority: false,
+          ...change.body } }, f.keys.privateKey);
+    };
+    const sentBeforeRead = link.toNode.length;
+    const roundTrip = await responder.read(JSON.stringify(readRequest()));
+    assert.equal(roundTrip.startsWork, false); assert.equal(roundTrip.grantsExecutionAuthority, false);
+    const signedResponse = signNodeFrame(responder.unsignedResponse(roundTrip.request, roundTrip.body,
+      { serverId: "server:codex-test", serverKeyId: "server-key:codex-test" }, 99), link.server.privateKey);
+    assert.equal(signedResponse.type, "harness.codex.current-admission.read.response");
+    assert.equal(signedResponse.body.currentAdmissionDigest, admissionRead.currentAdmissionDigest);
+    assert.equal(link.toNode.length, sentBeforeRead);
+    for (const changed of [
+      { body: { packetDigest: sha256Digest("wrong-packet") } },
+      { body: { activationFrameDigest: sha256Digest("wrong-activation") } },
+      { body: { currentAdmissionDigest: sha256Digest("wrong-current") } },
+      { sentAt: at(7000), expiresAt: at(7999) }, { connectionId: "connection:wrong" }, { actorId: "node:wrong" },
+    ]) await assert.rejects(responder.read(JSON.stringify(readRequest(changed))));
+    f.setTrustRevision("trust-revision:changed-for-responder");
+    await assert.rejects(responder.read(JSON.stringify(readRequest())));
+    f.setTrustRevision("trust-revision:codex-test");
     // Exact historical evidence is a binding, never a substitute for the
     // current route/profile/pin and canonical-state checks.
     await assert.rejects(f.assignment.readCurrentCodexQueuedAdmission(reference, {
