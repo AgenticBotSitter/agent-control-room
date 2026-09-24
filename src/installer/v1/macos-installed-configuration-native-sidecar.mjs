@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { access, chmod, lstat, mkdir, mkdtemp, open, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
+import { access, chmod, lstat, mkdir, mkdtemp, open, readFile, readdir, realpath, rm, rmdir, unlink, writeFile } from "node:fs/promises";
 import { release as kernelRelease } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { gunzipSync } from "node:zlib";
@@ -28,6 +28,7 @@ const MAX_FILES = 8;
 const digestPattern = /^[a-f0-9]{64}$/u;
 const sha256 = bytes => createHash("sha256").update(bytes).digest("hex");
 const refused = () => { throw new Error("macos_installed_configuration_native_sidecar_refused"); };
+const stagedFactoryCustody = new WeakMap();
 
 function exact(value, names) {
   if (!value || typeof value !== "object" || Array.isArray(value) || Object.getPrototypeOf(value) !== Object.prototype
@@ -322,12 +323,49 @@ export async function stageMacosInstalledConfigurationNativeFactoryInputV1(input
     }
     const executablePath = join(staging, EXECUTABLE_NAME), executable = await regular(executablePath, staging);
     if ((executable.mode & 0o7777) !== 0o700 || `sha256:${sha256(await readFile(executablePath))}` !== sidecar.executableSha256) refused();
-    return Object.freeze({ schema: MACOS_INSTALLED_CONFIGURATION_NATIVE_SIDECAR_V1, nativeArtifact: sidecar,
+    const result = Object.freeze({ schema: MACOS_INSTALLED_CONFIGURATION_NATIVE_SIDECAR_V1, nativeArtifact: sidecar,
       installedConfigurationNativeHostInput: Object.freeze({ executablePath, executableSha256: sidecar.executableSha256 }),
       staged: true, compiles: false, downloads: false, installs: false });
+    const directory = await lstat(staging, { bigint: true });
+    const entries = new Map();
+    for (const name of [...artifact.parsed.files.keys()]) {
+      const stat = await lstat(join(staging, name), { bigint: true });
+      entries.set(name, Object.freeze({ device: stat.dev, inode: stat.ino }));
+    }
+    stagedFactoryCustody.set(result, { staging,
+      directory: Object.freeze({ device: directory.dev, inode: directory.ino }), entries, retiring: false });
+    return result;
   } catch (error) {
     await rm(staging, { recursive: true, force: true });
     throw error;
+  }
+}
+
+/** Retires only the exact private staging tree minted for this opaque result. */
+export async function retireMacosInstalledConfigurationNativeFactoryInputV1(value) {
+  if (!value || typeof value !== "object") refused();
+  const custody = stagedFactoryCustody.get(value);
+  if (!custody || custody.retiring) refused();
+  custody.retiring = true;
+  try {
+    const directory = await lstat(custody.staging, { bigint: true }).catch(() => refused());
+    if (!directory.isDirectory() || directory.isSymbolicLink()
+      || directory.dev !== custody.directory.device || directory.ino !== custody.directory.inode) refused();
+    const names = (await readdir(custody.staging)).sort();
+    const expected = [...custody.entries.keys()].sort();
+    if (JSON.stringify(names) !== JSON.stringify(expected)) refused();
+    for (const name of expected) {
+      const path = join(custody.staging, name), stat = await lstat(path, { bigint: true }).catch(() => refused());
+      const identity = custody.entries.get(name);
+      if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1n
+        || stat.dev !== identity.device || stat.ino !== identity.inode) refused();
+      await unlink(path); custody.entries.delete(name);
+    }
+    await rmdir(custody.staging);
+    stagedFactoryCustody.delete(value);
+    return Object.freeze({ outcome: "confirmed", remainingFiles: 0 });
+  } finally {
+    custody.retiring = false;
   }
 }
 

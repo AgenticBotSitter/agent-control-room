@@ -8,6 +8,7 @@ import { createDeterministicTarGzipV1 } from "../src/installer/v1/local-release-
 import { buildInstalledConfigurationNativeArtifactV1 } from "../scripts/build-installed-configuration-native.mjs";
 import { copyVerifiedMacosInstalledConfigurationNativeSidecarV1,
   INSTALLED_CONFIGURATION_NATIVE_REVIEWED_CFLAGS_V1,
+  retireMacosInstalledConfigurationNativeFactoryInputV1,
   stageMacosInstalledConfigurationNativeFactoryInputV1,
   verifyInstalledConfigurationNativeArtifactV1,
   verifyMacosInstalledConfigurationNativeSidecarV1 } from
@@ -64,6 +65,12 @@ macosTest("sidecar is release bound and stages only the captured verified helper
     assert.deepEqual(await readFile(staged.installedConfigurationNativeHostInput.executablePath), Buffer.from("inert fixed helper\n"));
     assert.equal((await lstat(staged.installedConfigurationNativeHostInput.executablePath)).mode & 0o7777, 0o700);
     assert.equal(staged.compiles, false); assert.equal(staged.downloads, false); assert.equal(staged.installs, false);
+    const stagedRoot = join(staged.installedConfigurationNativeHostInput.executablePath, "..");
+    assert.deepEqual(await retireMacosInstalledConfigurationNativeFactoryInputV1(staged),
+      { outcome: "confirmed", remainingFiles: 0 });
+    await assert.rejects(lstat(stagedRoot), error => error?.code === "ENOENT");
+    await assert.rejects(retireMacosInstalledConfigurationNativeFactoryInputV1(staged), refusal,
+      "a retired staging capability cannot target a replacement path");
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 

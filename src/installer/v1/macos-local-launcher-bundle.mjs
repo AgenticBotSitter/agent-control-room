@@ -58,6 +58,12 @@ const RUNTIME_FILES = Object.freeze(["local-launcher-core.mjs", "local-release-a
 const EXPANDED_RUNTIME_FILES = Object.freeze([...RUNTIME_FILES,
   "macos-installed-configuration-native-sidecar.mjs", "macos-service-native-sidecar.mjs"]);
 
+// A verified launcher report is also the process-local provenance token for
+// its installed-configuration verifier.  Keeping the private path and full
+// sidecar identity outside the report prevents later installation code from
+// replacing them with a look-alike record or a caller-selected helper path.
+const installedConfigurationVerifierCustody = new WeakMap();
+
 // Lazy imports preserve the exact legacy v1 layout: its extracted runtime has
 // neither new module, and must not attempt to resolve them.
 async function expandedSidecarModules() {
@@ -259,11 +265,30 @@ export async function verifyExtractedMacosLocalLauncherBundleV1(bundleRootInput)
   const expectedMembers = expectedBundleMembers(manifest.version, installationJournalNativeSidecar.architecture, expanded);
   if (manifest.files.some((entry, index) => entry.path !== expectedMembers[index].path
     || entry.mode !== expectedMembers[index].mode)) refused();
-  return Object.freeze({ schema: manifest.schema, verified: true, version: manifest.version, fileCount: manifest.fileCount,
+  const report = Object.freeze({ schema: manifest.schema, verified: true, version: manifest.version, fileCount: manifest.fileCount,
     outerLauncherManifestSha256: `sha256:${sha256(manifestBytes)}`,
     releaseManifestDigest: `sha256:${releaseManifest.sha256}`, protectedDirectoryNativeSidecar,
     installationJournalNativeSidecar,
     ...(expanded ? { installedConfigurationNativeSidecar, macosServiceNativeSidecar } : {}) });
+  if (expanded) installedConfigurationVerifierCustody.set(report, Object.freeze({
+    sidecarRoot: join(bundleRoot, CONFIGURATION_NATIVE_SIDECAR_DIRECTORY),
+    sidecar: installedConfigurationNativeSidecar,
+    releaseManifestDigest: report.releaseManifestDigest,
+    version: report.version,
+  }));
+  return report;
+}
+
+/**
+ * Burns one freshly verified expanded-launcher report and releases only its
+ * captured installed-configuration verifier binding.  A reconstructed plain
+ * object, even with byte-identical public fields, has no custody entry.
+ */
+export function consumeMacosLocalLauncherInstalledConfigurationVerifierCustodyV1(value) {
+  if (!value || typeof value !== "object") refused();
+  const custody = installedConfigurationVerifierCustody.get(value);
+  if (!custody || !installedConfigurationVerifierCustody.delete(value)) refused();
+  return custody;
 }
 
 function macosVersionFromKernel(value) {

@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
-import { access, chmod, lstat, mkdir, mkdtemp, readFile, realpath, rename, rm, symlink, unlink, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { access, chmod, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, symlink, unlink, writeFile } from "node:fs/promises";
+import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { setTimeout as wait } from "node:timers/promises";
 import test, { after, before } from "node:test";
@@ -14,8 +14,12 @@ import {
   assembleMacosLocalLauncherBundleV2,
   runBoundedMacosLauncherChildV1,
   runMacosLocalLauncherBundleV1,
+  consumeMacosLocalLauncherInstalledConfigurationVerifierCustodyV1,
   verifyExtractedMacosLocalLauncherBundleV1,
 } from "../src/installer/v1/macos-local-launcher-bundle.mjs";
+import { createPrivateInstalledConfigurationNativeVerifierCustodyV1,
+  PRIVATE_INSTALLED_CONFIGURATION_NATIVE_VERIFIER_CUSTODY_V1 } from
+  "../src/installer/v1/private-installed-configuration-native-verifier-custody.ts";
 import { runLocalLauncherCoreV1 } from "../src/installer/v1/local-launcher-core.mjs";
 import { INSTALLATION_JOURNAL_NATIVE_REVIEWED_CFLAGS_V1 } from
   "../src/installer/v1/macos-installation-journal-native-sidecar.mjs";
@@ -200,6 +204,54 @@ test("expanded v2 deterministically binds four inert sidecars and both extracted
     const extractedModule = await import(pathToFileURL(join(root, "runtime/macos-local-launcher-bundle.mjs")).href);
     assert.equal((await extractedModule.verifyExtractedMacosLocalLauncherBundleV1(root)).verified, true);
   }
+});
+
+test("expanded verification mints one opaque concrete configuration-verifier custody and rejects look-alikes", async () => {
+  const verified = await verifyExtractedMacosLocalLauncherBundleV1(expandedBundleRoot);
+  const configurationBytes = Uint8Array.from(Buffer.from("{\"protected\":true}\n", "utf8"));
+  const manifestBytes = Uint8Array.from(Buffer.from("{\"schema\":\"not-read-during-composition\"}\n", "utf8"));
+  const installation = {
+    installationId: "local-control-room", releaseDigest: verified.releaseManifestDigest,
+    planDigest: `sha256:${"e".repeat(64)}`,
+    protectedRootPath: join(homedir(), "Library", "Application Support", "Agent Control Room", "Protected"),
+    expectedOwnerUid: typeof process.geteuid === "function" ? process.geteuid() : 501,
+    verificationDeadlineMs: 1_000, configurationBytes,
+    configurationSha256: `sha256:${sha256(configurationBytes)}`, manifestBytes,
+    manifestSha256: `sha256:${sha256(manifestBytes)}`,
+  };
+  const input = { schema: PRIVATE_INSTALLED_CONFIGURATION_NATIVE_VERIFIER_CUSTODY_V1,
+    verifiedLauncherBundle: verified, installation };
+
+  assert.throws(() => createPrivateInstalledConfigurationNativeVerifierCustodyV1({ ...input,
+    verifiedLauncherBundle: { ...verified } }), /refused/u,
+  "a field-identical plain report has no verifier provenance");
+  assert.throws(() => createPrivateInstalledConfigurationNativeVerifierCustodyV1({ ...input,
+    installation: { ...installation, protectedRootPath: join(suiteRoot, "caller-selected") } }),
+  /native_verifier_custody_refused/u, "the caller cannot choose the protected path");
+  assert.throws(() => createPrivateInstalledConfigurationNativeVerifierCustodyV1({ ...input,
+    installation: { ...installation, native: { verifyProtectedPath() {} } } }),
+  /native_verifier_custody_refused/u, "there is no structural native-verifier input");
+
+  const before = (await readdir(await realpath(tmpdir()))).filter(name => name.startsWith(".acr-installed-configuration-sidecar-"));
+  const composed = createPrivateInstalledConfigurationNativeVerifierCustodyV1(input);
+  assert.deepEqual({ status: composed.status, performsEffectOnConstruction: composed.performsEffectOnConstruction,
+    acceptsNativeVerifierCallback: composed.acceptsNativeVerifierCallback, acceptsHelperPath: composed.acceptsHelperPath,
+    acceptsProtectedRootPathOverride: composed.acceptsProtectedRootPathOverride,
+    retainsCredentialValueInPublicConfiguration: composed.retainsCredentialValueInPublicConfiguration,
+    nextReleaseBoundary: composed.nextReleaseBoundary }, {
+    status: "protected_native_verifier_bound", performsEffectOnConstruction: false,
+    acceptsNativeVerifierCallback: false, acceptsHelperPath: false, acceptsProtectedRootPathOverride: false,
+    retainsCredentialValueInPublicConfiguration: false, nextReleaseBoundary: "ship_and_bind_claude_process_sidecar",
+  });
+  assert.equal("verifiedLauncherBundle" in composed, false); assert.equal("installation" in composed, false);
+  assert.throws(() => consumeMacosLocalLauncherInstalledConfigurationVerifierCustodyV1(verified), refusal,
+    "the composer burns launcher custody exactly once");
+  await assert.rejects(composed.custody.loadManifestBoundPrivateConfigurationData(),
+    /private_installed_configuration_native_verifier_custody_refused/u);
+  await assert.rejects(composed.custody.loadManifestBoundPrivateConfigurationData(),
+    /private_installed_configuration_native_verifier_custody_refused/u, "a failed native read cannot select a replacement");
+  const after = (await readdir(await realpath(tmpdir()))).filter(name => name.startsWith(".acr-installed-configuration-sidecar-"));
+  assert.deepEqual(after, before, "failed disposable verification retires only its own staging directory");
 });
 
 test("expanded x64 packaging remains inert and mismatched host or old macOS refuses before owner-root writes", async () => {

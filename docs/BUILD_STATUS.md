@@ -9,8 +9,12 @@ qualification route and the Codex current-admission read are accepted
 source-only packages. Claude's route is fixed to its reviewed helper and
 text-only policy; Codex's signed read rechecks the live controller-side permit,
 route, profile, enrollment/pin, lease, and exact queued evidence without
-sending or starting work. Both remain preparation: the installed Claude
-verifier/manifest composition is still required. The protected Linux Codex
+sending or starting work. Both remain preparation. The Claude installed-
+configuration verifier is now held behind an opaque, one-use custody minted
+only by exact expanded-launcher verification; callers cannot substitute a
+structural verifier, helper path, or protected root. The release still must
+ship and bind the Claude process sidecar and materialize the protected v3
+manifest before owner-attended qualification. The protected Linux Codex
 node-entry join now exists in source: it owns the signed current-admission
 reader, never exposes the derived policy port, and yields only a one-use
 session capability. Its outer installer still must construct the live bridge,
@@ -86,10 +90,14 @@ no real Claude process or credential was used. A later source package adds an
 independent supervisor that contains both helper loss and watchdog loss without
 letting a task become a result or a retry. A protected, additive installed
 manifest v3 now binds that exact helper release through a one-use capability;
-older manifests are not upgraded automatically. This does **not** activate the
-Claude route: protected installed native-verifier custody, real authentication
-compatibility, manifest-v3 materialization, and the owner-attended qualification
-remain required.
+older manifests are not upgraded automatically. An outer source-only custody
+now reaches that reader only through the concrete installed-configuration
+native host pinned by a freshly verified expanded launcher. The caller cannot
+supply a verifier callback, helper path, or protected-root override, and the
+public composition retains no credential value. This does **not** activate the
+Claude route: the release must next ship and bind the Claude process sidecar,
+prove real authentication compatibility, materialize manifest v3, and complete
+the owner-attended qualification.
 
 The matching Node adapter now owns one use of that fixed native helper and has
 also passed independent review after a correction. A verified-but-unused hold
@@ -235,8 +243,12 @@ tree, not evidence of an installed package or a completed native operation.
 The additive installed-manifest v3 reader now similarly preserves v1/v2 while
 binding the exact Claude process supervisor release, platform and architecture.
 It releases only a one-use internal capability after protected manifest and
-journal rereads; caller-supplied helper identities are refused. This is still
-source-only: it does not create v3 manifests, stage any helper, or start Claude.
+journal rereads; caller-supplied helper identities are refused. Its outer
+installed-verifier custody is also source-complete: the exact launcher report
+mints the only accepted provenance, and the concrete installed-configuration
+native host verifies the fixed owner root. This remains source-only. It does
+not create v3 manifests, ship or bind the Claude process sidecar, install a
+helper, start Claude, or prove real authentication.
 
 The reuse register now records four additional source inspections:
 `joeynyc/honeycomb-lab`, `joeynyc/hermes-hudui`, `joeynyc/hermes-hud`, and

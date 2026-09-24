@@ -20,9 +20,11 @@ delivery transport.
   enable ordinary work.
 - The Claude source route, bounded task policy, result publication, recovery,
   shared installation composition, and protected qualification route exist.
-  It still needs protected installed-manifest materialization, the trusted
-  installed native-verifier composition, owner-attended qualification, and
-  first-task proof.
+  The installed-configuration native verifier is now held by an opaque,
+  launcher-minted custody rather than a caller-supplied callback or path. The
+  next release package must ship and bind the Claude process sidecar, then
+  materialize the protected v3 manifest. Real authentication compatibility,
+  owner-attended qualification, and first-task proof still follow.
 - The shared remote delivery contract, node-session bridge, canonical queued
   task selection, durable uncertain-send recovery, reconstruction-stable packet
   identity, remote correction planning, protected installation forwarding, and
@@ -84,9 +86,12 @@ returns it to the same website review flow.
 
 ## Phase 3 — Make Claude Code a second ordinary local worker
 
-1. Finish the production Node binding beneath the accepted macOS Claude
-   custody helper, including helper-death recovery and installed-manifest
-   binding.
+1. Build on the source-complete installed-configuration verifier custody. Ship
+   the Claude process sidecar in the release, bind it to the protected v3
+   manifest, and finish the production Node binding beneath the accepted macOS
+   Claude custody helper, including helper-death recovery. Do not treat the
+   installed-configuration verifier as proof that the Claude process sidecar
+   has been shipped, installed, or qualified.
 2. Retain the fixed first route: Claude Code `opus`, supplied-text review,
    tools and add-ons disabled, and the reviewed working directory.
 3. Run the separate owner-attended installed-process qualification and save
