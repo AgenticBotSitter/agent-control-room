@@ -89,4 +89,3 @@ inspection found Hermes WebUI and Hermes Desktop useful as conservative
 session/status presentation references, but neither provides Control Room's
 installation authority, canonical queue, durable receipt, review or native
 macOS process custody. No donor runtime should replace the assembled path.
-
