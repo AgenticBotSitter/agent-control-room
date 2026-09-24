@@ -78,7 +78,7 @@ test("the installed Claude port is bound to one exact manifest, sidecar, fixed p
   assert.equal(result.stagesSidecar, false);
   assert.deepEqual(result.remainingBlockers, [
     "owner_attended_native_login_qualification_missing",
-    "independent_helper_death_recovery_missing",
+    "installed_helper_release_custody_missing",
   ]);
   assert.doesNotMatch(JSON.stringify(result), /private\/owner|workspace/i);
   const ports = consumePrivateMacosClaudeCodeInstalledProcessHostPortsV1(result.capability);

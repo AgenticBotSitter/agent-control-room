@@ -112,8 +112,14 @@ observation window while the process remains suspended. Named-path validation,
 held-file hashing and guest validation repeat immediately before SIGCONT.
 STARTED is emitted only after all checks and successful SIGCONT.
 
-The helper keeps the leader waitable until cleanup. TERM and KILL signal only
-the verified fresh group. Natural leader exit also triggers group KILL so a
+The executable first creates an independent supervisor and an otherwise empty
+process-group anchor. Supervisor-private readiness and watchdog descriptors are
+relocated above the six public protocol descriptors and marked close-on-exec;
+the target therefore cannot inherit the watchdog writer. The custodian and target never expose that private group
+identifier through the wire protocol. The target joins the already anchored
+group while suspended; only then may the existing identity checks permit it to
+continue. The custodian keeps the target leader waitable until cleanup. TERM
+and KILL signal only the verified anchored group. Natural leader exit also triggers group KILL so a
 remaining ordinary descendant cannot turn leader exit into false retirement.
 The helper then reaps the leader and observes group absence. No further group
 signal is sent after leader reaping, avoiding a numeric PID/group reuse hazard.
@@ -163,7 +169,12 @@ independent security review.
 
 This is process custody, not an OS sandbox. It does not contain a malicious
 same-UID actor or a target that deliberately escapes its group via setsid or
-other privilege mechanisms. SIGKILL of the helper cannot run cleanup; the
-future owner-held supervisor must retain and prove that recovery obligation.
-Those missing proofs must not be converted into a qualified worker or a cleared
-L5 owner gate.
+other privilege mechanisms. Abrupt loss of the inner custodian is recovered by
+the independent anchor watchdog even if the outer supervisor also disappears.
+Simultaneous loss of both the anchor watchdog and custodian is an
+operating-system/service-custody concern and cannot be converted into a task
+result. The supervisor never signals a numeric group after reaping its anchor;
+possible PID/group reuse can therefore produce only uncertainty, not authority
+over a different process. Installed release provenance and the real owner-attended qualification
+also remain separate gates. Those missing proofs must not be converted into a
+qualified worker or a cleared L5 owner gate.

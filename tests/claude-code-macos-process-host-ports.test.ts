@@ -22,13 +22,17 @@ const run = promisify(execFile), nativeTest = process.platform === "darwin" ? te
 const signal = () => new AbortController().signal;
 const digest = (text: string | Buffer) => `sha256:${createHash("sha256").update(text).digest("hex")}`;
 const binding = { processAttemptId: "fixture-process", runId: "fixture-run", attemptId: "fixture-attempt", invocationDigest: digest("invocation") };
-let root: string, helper: string, original: string, statusFixture: string;
+let root: string, helper: string, preHoldDeathHelper: string, original: string, statusFixture: string;
 before(async () => {
   if (process.platform !== "darwin") return;
   root = await mkdtemp("/private/tmp/acr-claude-port-test-"); await chmod(root, 0o700);
   helper = join(root, "helper"); original = join(root, "fixture"); statusFixture = join(root, "status-fixture");
+  preHoldDeathHelper = join(root, "pre-hold-death-helper");
   await run("/usr/bin/clang", [...CLAUDE_CODE_PROCESS_NATIVE_REVIEWED_CFLAGS_V1,
     "native/claude-code-process-v1.c", "-o", helper], { timeout: 30_000 });
+  await run("/usr/bin/clang", [...CLAUDE_CODE_PROCESS_NATIVE_REVIEWED_CFLAGS_V1,
+    "-DACR_TEST_CUSTODIAN_DEATH_BEFORE_HOLD=1", "native/claude-code-process-v1.c", "-o", preHoldDeathHelper],
+  { timeout: 30_000 });
   await run("/usr/bin/clang", ["-std=c11", "-O2", "-Wall", "-Wextra", "-Werror",
     "tests/helpers/claude-code-port-fixture.c", "-o", original], { timeout: 30_000 });
   await run("/usr/bin/clang", ["-std=c11", "-O2", "-Wall", "-Wextra", "-Werror",
@@ -112,14 +116,26 @@ nativeTest("natural leader exit retires its remaining ordinary descendant before
   assert.deepEqual(await child.exited, { code: 11, signal: null }); await child.close(signal());
 });
 
-nativeTest("helper death stays uncertain even when the disposable target retires itself", async t => {
+nativeTest("custodian death after GO is recovered without turning uncertainty into a result or retry", async t => {
   const s = await setup(t); await s.ports.verifyInstallation({ ...s.request, signal: signal() }); const child = s.launch();
   await child.writeStdin(Buffer.from("h"), signal()); await assert.rejects(child.exited, /_uncertain/);
   await assert.rejects(child.close(signal()), /_uncertain/);
-  await new Promise(resolve => setTimeout(resolve, 250));
+  await new Promise(resolve => setTimeout(resolve, 100));
+  await s.ports.verifyInstallation({ ...s.request, signal: signal() }); const next = s.launch();
+  await next.writeStdin(Buffer.from("x"), signal()); await next.closeStdin(signal());
+  assert.deepEqual(await next.exited, { code: 7, signal: null });
+  assert.equal(CLAUDE_CODE_MACOS_PROCESS_PORT_ACTIVATION_BLOCKERS_V1.includes(
+    "independent_helper_death_recovery_missing" as never), false);
+});
+
+nativeTest("custodian death before HOLD is recovered within the bound and cannot start a target", async t => {
+  const s = await setup(t, { helperPath: preHoldDeathHelper, helperSha256: digest(await readFile(preHoldDeathHelper)) });
+  const started = Date.now();
+  await assert.rejects(s.ports.verifyInstallation({ ...s.request, signal: signal() }), /_refused/);
+  assert.ok(Date.now() - started < 3_000, "independent recovery must remain inside its cleanup bound");
+  await new Promise(resolve => setTimeout(resolve, 100));
   await assert.rejects(s.ports.verifyInstallation({ ...s.request, signal: signal() }), /_refused/,
-    "unknown helper death must keep the port locked even after fixture output closes");
-  assert.ok(CLAUDE_CODE_MACOS_PROCESS_PORT_ACTIVATION_BLOCKERS_V1.includes("independent_helper_death_recovery_missing"));
+    "a recovered failed custodian may create a fresh HOLD, never resume the failed one");
 });
 
 nativeTest("bounded output and expired held verification fail closed", async t => {

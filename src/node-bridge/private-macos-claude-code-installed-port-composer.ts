@@ -122,7 +122,7 @@ export type PrivateMacosClaudeCodeInstalledPortComposerV1 = Readonly<{
   nativeEffects: false;
   launchesClaude: false;
   stagesSidecar: false;
-  remainingBlockers: readonly ["owner_attended_native_login_qualification_missing", "independent_helper_death_recovery_missing"];
+  remainingBlockers: readonly ["owner_attended_native_login_qualification_missing", "installed_helper_release_custody_missing"];
 }>;
 
 /**
@@ -164,7 +164,7 @@ export function createPrivateMacosClaudeCodeInstalledPortComposerV1(value: unkno
       nativeEffects: false as const, launchesClaude: false as const, stagesSidecar: false as const,
       remainingBlockers: Object.freeze([
         "owner_attended_native_login_qualification_missing",
-        "independent_helper_death_recovery_missing",
+        "installed_helper_release_custody_missing",
       ]) as PrivateMacosClaudeCodeInstalledPortComposerV1["remainingBlockers"] });
   } catch { return refused(); }
 }

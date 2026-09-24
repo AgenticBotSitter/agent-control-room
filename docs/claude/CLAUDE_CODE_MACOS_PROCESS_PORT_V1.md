@@ -52,12 +52,14 @@ as helper evidence. Helper death, bad framing, lost custody or output overflow
 rejects the result as uncertain.
 
 On uncertainty the adapter closes the control pipe, allowing the still-live
-helper to perform cleanup. It never kills the helper as a substitute for
-proving target retirement. If the helper itself receives SIGKILL, Node cannot
-establish process-group recovery from this protocol. A future independent
-supervisor or equivalent reviewed recovery design remains necessary. The
-helper-death test uses a target fixture that retires itself; that is negative
-evidence about uncertainty, not evidence of production recovery.
+custodian to perform cleanup. The native executable now starts an independent
+supervisor and an otherwise empty process-group anchor before the custodian can
+read HOLD. A suspended target joins that anchored group. If the custodian dies,
+the supervisor retires the entire anchored group, reaps its own children and
+proves group absence before returning the reserved recovery exit. The task is
+still uncertain and is never resumed or retried; only native capacity is safe
+for a later, separately authorized task. Neither the anchor nor target pid is
+published as protocol or application authority.
 
 ## Activation remains blocked
 
@@ -67,9 +69,6 @@ The module exports these unresolved boundaries explicitly:
   authentication and its supported executable layout remain untested. The
   helper deliberately supplies no HOME or login environment. Tests never use
   owner credentials or launch Claude.
-- `independent_helper_death_recovery_missing`: SIGKILL of the helper cannot
-  guarantee cleanup, and the Node process cannot reconstruct custody from
-  status frames without identities.
 - `installed_helper_release_custody_missing`: the adapter checks the helper
   file and ancestor permissions and hashes an opened file before spawning its
   path. This detects drift but is not kernel-bound helper launch custody. An
@@ -85,11 +84,12 @@ not be assumed to meet that native requirement.
 
 ## Verification
 
-`tests/claude-code-macos-process-host-ports.test.ts` runs ten bounded native
+`tests/claude-code-macos-process-host-ports.test.ts` runs bounded native
 tests using compiled disposable fixtures. It covers host signal handoff,
 output/status separation, invalid requests and pins, duplicate/concurrent
 calls, replacement and symlink refusal, TERM-resistant escalation, remaining
-ordinary descendants, helper-death uncertainty, bounded output, stale HOLD,
+ordinary descendants, custodian death before HOLD and after GO, bounded recovery,
+bounded output, stale HOLD,
 fragmented/malformed/extra/partial status frames, sequential task reuse, and
 authority refusal followed by safe HOLD retirement and a later valid task.
 

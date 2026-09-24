@@ -57,8 +57,26 @@ static uint64_t deadline;
 static uint32_t run_ms;
 static volatile sig_atomic_t cancelled;
 static pid_t child = -1;
+/* Private to the native supervisor/custodian pair.  This identifier never
+ * crosses the status protocol and is never accepted back as authority. */
+static pid_t recovery_group = -1;
 static int reaped;
 static int group_owned;
+
+/* Supervisor-private descriptors must never alias the six public protocol
+ * descriptors, even if a caller entered with one of 0..5 closed.  Keeping
+ * them close-on-exec also makes target non-inheritance independent of the
+ * spawn implementation's CLOEXEC_DEFAULT support. */
+static int private_fd(int *fd) {
+  if (*fd <= 5) {
+    int moved = fcntl(*fd, F_DUPFD_CLOEXEC, 6);
+    if (moved < 0) return -1;
+    close(*fd); *fd = moved;
+    return 0;
+  }
+  int flags = fcntl(*fd, F_GETFD);
+  return flags >= 0 && fcntl(*fd, F_SETFD, flags | FD_CLOEXEC) == 0 ? 0 : -1;
+}
 
 static uint64_t now_ms(void) {
   struct timespec ts;
@@ -214,7 +232,7 @@ static int guest_matches(void) {
   struct proc_bsdinfo info;
   if (proc_pidinfo(child, PROC_PIDTBSDINFO, 0, &info, sizeof(info)) != (int)sizeof(info)
       || info.pbi_pid != (uint32_t)child || info.pbi_ppid != (uint32_t)getpid()
-      || info.pbi_pgid != (uint32_t)child || info.pbi_status != SSTOP
+      || info.pbi_pgid != (uint32_t)recovery_group || info.pbi_status != SSTOP
       || info.pbi_uid != owner || info.pbi_ruid != owner || info.pbi_svuid != owner
       || (info.pbi_flags & PROC_FLAG_TRACED) != 0) return -1;
   struct proc_vnodepathinfo paths;
@@ -247,7 +265,8 @@ static int spawn_suspended(void) {
   short flags = POSIX_SPAWN_START_SUSPENDED | POSIX_SPAWN_SETPGROUP | POSIX_SPAWN_CLOEXEC_DEFAULT
     | POSIX_SPAWN_SETSIGMASK | POSIX_SPAWN_SETSIGDEF;
   int result = posix_spawnattr_setflags(&attributes, flags)
-    || posix_spawnattr_setpgroup(&attributes, 0) || posix_spawnattr_setsigmask(&attributes, &mask)
+    || recovery_group <= 1 || posix_spawnattr_setpgroup(&attributes, recovery_group)
+    || posix_spawnattr_setsigmask(&attributes, &mask)
     || posix_spawnattr_setsigdefault(&attributes, &defaults)
     || posix_spawn_file_actions_adddup2(&actions, 3, 0)
     || posix_spawn_file_actions_adddup2(&actions, 4, 1)
@@ -262,7 +281,7 @@ static int spawn_suspended(void) {
   if (result != 0 || child <= 0) return -1;
   struct proc_bsdinfo identity;
   group_owned = proc_pidinfo(child, PROC_PIDTBSDINFO, 0, &identity, sizeof(identity)) == (int)sizeof(identity)
-    && identity.pbi_ppid == (uint32_t)getpid() && identity.pbi_pgid == (uint32_t)child;
+    && identity.pbi_ppid == (uint32_t)getpid() && identity.pbi_pgid == (uint32_t)recovery_group;
   return group_owned ? 0 : -1;
 }
 static int await_suspended_identity(void) {
@@ -283,8 +302,8 @@ static int leader_finished(void) {
 }
 static int group_signal(int number) {
   /* Never signal a numeric group again once its leader has been reaped. */
-  if (child <= 0 || reaped || !group_owned) return -1;
-  return kill(-child, number) == 0 || errno == ESRCH ? 0 : -1;
+  if (child <= 0 || recovery_group <= 1 || reaped || !group_owned) return -1;
+  return kill(-recovery_group, number) == 0 || errno == ESRCH ? 0 : -1;
 }
 static int retire(int *exit_status) {
   if (child <= 0 || reaped) return -1;
@@ -303,7 +322,7 @@ static int retire(int *exit_status) {
   if (!reaped || !group_owned) return -1;
   /* No more signals after reaping; PID/group reuse can only cause uncertainty. */
   while (now_ms() < until) {
-    if (kill(-child, 0) != 0 && errno == ESRCH) return 0;
+    if (kill(-recovery_group, 0) != 0 && errno == ESRCH) return 0;
     poll(NULL, 0, 10);
   }
   return -1;
@@ -318,9 +337,10 @@ static void close_paths(void) {
   for (size_t i = 0; i < program.count; i++) close(program.items[i].fd);
   for (size_t i = 0; i < workspace.count; i++) close(workspace.items[i].fd);
 }
-int main(int argc, char **argv) {
+static int __attribute__((unused)) custodian_main(int argc, char **argv, pid_t owned_group) {
   (void)argv;
   int outcome = 1, exit_status = 0, resumed = 0;
+  recovery_group = owned_group;
   signal(SIGPIPE, SIG_IGN); signal(SIGTERM, cancel); signal(SIGINT, cancel); signal(SIGHUP, cancel);
   owner = geteuid(); deadline = now_ms() + 30000U;
   if (argc != 1 || owner == 0 || getuid() != owner || getgid() != getegid()) goto done;
@@ -382,3 +402,111 @@ done:
 close:
   close_paths(); return outcome;
 }
+
+/*
+ * A separate parent owns an otherwise empty process-group anchor before the
+ * custodian can read HOLD or create a target.  The target joins that anchored
+ * group while suspended.  If the custodian disappears, the supervisor still
+ * owns a non-reusable group identity long enough to kill it and prove absence.
+ * Neither the anchor pid nor the target pid is emitted on the public protocol.
+ */
+static int supervise(int argc, char **argv) {
+  int ready[2] = { -1, -1 };
+  int watch[2] = { -1, -1 };
+  if (pipe(ready) != 0 || private_fd(&ready[0]) != 0 || private_fd(&ready[1]) != 0
+      || pipe(watch) != 0 || private_fd(&watch[0]) != 0 || private_fd(&watch[1]) != 0) {
+    if (ready[0] >= 0) close(ready[0]); if (ready[1] >= 0) close(ready[1]);
+    if (watch[0] >= 0) close(watch[0]); if (watch[1] >= 0) close(watch[1]);
+    return 2;
+  }
+  pid_t anchor = fork();
+  if (anchor < 0) { close(ready[0]); close(ready[1]); close(watch[0]); close(watch[1]); return 2; }
+  if (anchor == 0) {
+    close(ready[0]); close(watch[1]);
+    for (int fd = 0; fd <= 5; fd++) close(fd);
+    if (setpgid(0, 0) != 0) _exit(111);
+    unsigned char value = 1;
+    if (write(ready[1], &value, 1) != 1) _exit(112);
+    close(ready[1]);
+    /* The custodian owns the only writer after its fork. EOF therefore means
+     * it is gone even if the outer supervisor also died. The anchor kills its
+     * own group, including itself and every target member. */
+    for (;;) {
+      unsigned char ignored;
+      ssize_t count = read(watch[0], &ignored, 1);
+      if (count < 0 && errno == EINTR) continue;
+      if (count == 0) { (void)kill(-getpid(), SIGKILL); _exit(114); }
+      if (count < 0) _exit(115);
+    }
+  }
+  close(ready[1]); close(watch[0]);
+  unsigned char value = 0;
+  if (read(ready[0], &value, 1) != 1 || value != 1) {
+    close(ready[0]); close(watch[1]); (void)kill(anchor, SIGKILL); (void)waitpid(anchor, NULL, 0); return 2;
+  }
+  close(ready[0]);
+  pid_t custodian = fork();
+  if (custodian < 0) { close(watch[1]); (void)kill(-anchor, SIGKILL); (void)waitpid(anchor, NULL, 0); return 2; }
+  if (custodian == 0) {
+    /* Keep the watchdog writer for this process lifetime; it is never exposed
+     * to the target because CLOEXEC_DEFAULT closes it at target exec. */
+#ifdef ACR_TEST_CUSTODIAN_DEATH_BEFORE_HOLD
+    (void)argc; (void)argv; (void)kill(getpid(), SIGKILL); _exit(113);
+#else
+    _exit(custodian_main(argc, argv, anchor));
+#endif
+  }
+  close(watch[1]);
+  /* Only the custodian may retain protocol and target streams. */
+  for (int fd = 0; fd <= 5; fd++) close(fd);
+  int custodian_status = 0, anchor_status = 0;
+  int custodian_done = 0, anchor_done = 0;
+  uint64_t until = now_ms() + 640000U;
+  while (!custodian_done && now_ms() > 0 && now_ms() < until) {
+    pid_t observed = waitpid(custodian, &custodian_status, WNOHANG);
+    if (observed == custodian) custodian_done = 1;
+    else if (observed < 0 && errno != EINTR) break;
+    if (!anchor_done) {
+      observed = waitpid(anchor, &anchor_status, WNOHANG);
+      if (observed == anchor) anchor_done = 1;
+      else if (observed < 0 && errno != EINTR) break;
+    }
+    if (!custodian_done) poll(NULL, 0, 10);
+  }
+  /* Cleanup is unconditional.  On the normal path the custodian already did
+   * this; after abrupt death this is the independent recovery action. */
+  if (!custodian_done) (void)kill(custodian, SIGKILL);
+  /* Never signal this numeric group after its anchor has been reaped: a
+   * later PID/PGID reuse must be treated as uncertainty, not authority. */
+  if (!anchor_done) (void)kill(-anchor, SIGKILL);
+  uint64_t cleanup_until = now_ms() + 3000U;
+  while ((!custodian_done || !anchor_done) && now_ms() > 0 && now_ms() < cleanup_until) {
+    if (!custodian_done) {
+      pid_t observed = waitpid(custodian, &custodian_status, WNOHANG);
+      if (observed == custodian) custodian_done = 1;
+      else if (observed < 0 && errno != EINTR) break;
+    }
+    if (!anchor_done) {
+      pid_t observed = waitpid(anchor, &anchor_status, WNOHANG);
+      if (observed == anchor) anchor_done = 1;
+      else if (observed < 0 && errno != EINTR) break;
+    }
+    if (!custodian_done || !anchor_done) poll(NULL, 0, 10);
+  }
+  int absent = 0;
+  if (custodian_done && anchor_done) {
+    while (now_ms() > 0 && now_ms() < cleanup_until) {
+      if (kill(-anchor, 0) != 0 && errno == ESRCH) { absent = 1; break; }
+      poll(NULL, 0, 10);
+    }
+  }
+  if (!absent || !custodian_done || !anchor_done) return 2;
+  if (WIFEXITED(custodian_status)
+      && (WEXITSTATUS(custodian_status) == 0 || WEXITSTATUS(custodian_status) == 1))
+    return WEXITSTATUS(custodian_status);
+  /* Exact exit 2 means cleanup was independently confirmed after custodian
+   * loss.  It is not a task result and never grants replay or resume. */
+  return 2;
+}
+
+int main(int argc, char **argv) { return supervise(argc, argv); }

@@ -9,7 +9,7 @@ import { CLAUDE_CODE_PROCESS_NATIVE_REVIEWED_CFLAGS_V1 } from
   "../src/installer/v1/macos-claude-code-process-native-sidecar.mjs";
 
 const run = promisify(execFile), nativeTest = process.platform === "darwin" ? test : test.skip;
-let root, helper, original;
+let root, helper, original, closeFdLauncher;
 before(async () => {
   if (process.platform !== "darwin") return;
   root = await mkdtemp("/private/tmp/acr-claude-custody-test-"); await chmod(root, 0o700);
@@ -18,6 +18,9 @@ before(async () => {
     "native/claude-code-process-v1.c", "-o", helper], { timeout: 30_000 });
   await run("/usr/bin/clang", ["-std=c11", "-O2", "-Wall", "-Wextra", "-Werror",
     "tests/helpers/claude-code-native-fixture.c", "-o", original], { timeout: 30_000 });
+  closeFdLauncher = join(root, "close-fd-launcher");
+  await run("/usr/bin/clang", ["-std=c11", "-O2", "-Wall", "-Wextra", "-Werror",
+    "tests/helpers/claude-code-close-fd-launcher.c", "-o", closeFdLauncher], { timeout: 30_000 });
 });
 after(async () => { if (root) await rm(root, { recursive: true, force: true }); });
 
@@ -71,6 +74,24 @@ nativeTest("CANCEL retires HOLD without creating any target", async t => {
   const s = await setup(t); s.child.stdin.write(s.frame); assert.equal((await s.next())[4], 1);
   s.child.stdin.write(command(3)); assert.equal((await s.next())[4], 6); assert.equal(await s.exit, 0);
   await assert.rejects(s.marker(), { code: "ENOENT" });
+});
+
+nativeTest("private watchdog descriptors cannot occupy or leak through a missing protocol descriptor", async () => {
+  const child = spawn(closeFdLauncher, [helper], {
+    stdio: ["pipe", "pipe", "pipe", "pipe", "pipe", "pipe"],
+    env: { PATH: "/usr/bin:/bin" },
+  });
+  const output = [];
+  child.stdout.on("data", chunk => output.push(chunk));
+  const exit = await new Promise((resolve, reject) => {
+    child.once("error", reject);
+    child.once("exit", resolve);
+  });
+  const frames = Buffer.concat(output);
+  assert.equal(exit, 1);
+  assert.equal(frames.length, 16);
+  assert.equal(frames.subarray(0, 4).toString(), "ACRS");
+  assert.equal(frames[4], 4);
 });
 
 nativeTest("replacement of executable or workspace after VERIFIED refuses before target code", async t => {

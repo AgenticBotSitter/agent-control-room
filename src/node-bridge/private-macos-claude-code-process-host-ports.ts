@@ -39,7 +39,6 @@ type Exit = Readonly<{ code: number | null; signal: string | null }>;
 /** These source ports are not sufficient evidence for installation activation. */
 export const CLAUDE_CODE_MACOS_PROCESS_PORT_ACTIVATION_BLOCKERS_V1 = Object.freeze([
   "owner_attended_native_login_qualification_missing",
-  "independent_helper_death_recovery_missing",
   "installed_helper_release_custody_missing",
 ] as const);
 
@@ -143,6 +142,7 @@ class NativeSession {
   private commandCount = 0;
   private sentEof = false;
   private terminal: Exit | undefined;
+  private recoveredAfterCustodianLoss = false;
   private timer: ReturnType<typeof setTimeout>;
   private unlinkVerification: () => void = () => {};
   constructor(readonly configuration: Configuration, signal: AbortSignal) {
@@ -163,19 +163,23 @@ class NativeSession {
       if (this.frames.length || !["exit", "cancelled", "refused"].includes(this.phase)) this.fail();
     });
     child.stdout!.on("error", () => this.fail()); child.on("error", () => this.fail());
-    // A surviving target may still hold its output pipes after helper death;
-    // detect death on exit, without waiting indefinitely for pipe closure.
+    // Exact exit 2 is emitted only by the independently retained supervisor
+    // after it has reaped the custodian and anchor and proved group absence.
+    // The task remains uncertain, but the port's native custody is retired.
     child.once("exit", (code, signalName) => {
       // REFUSED uses exit 1. Its final status may still be in the pipe when
       // exit fires, so validate that exact pairing only after pipe closure.
-      if ((code !== 0 && code !== 1) || signalName !== null) this.fail();
+      if (code === 2 && signalName === null) this.recoveredAfterCustodianLoss = true;
+      else if ((code !== 0 && code !== 1) || signalName !== null) this.fail();
     });
     child.once("close", (code, signalName) => {
       clearTimeout(this.timer); this.unlinkVerification();
       const expectedCode = this.phase === "refused" ? 1 : 0;
-      if (this.frames.length || code !== expectedCode || signalName !== null) this.fail();
+      if (this.frames.length || (code !== expectedCode && !(code === 2 && this.recoveredAfterCustodianLoss))
+        || signalName !== null) this.fail();
       if (this.phase === "exit" && this.terminal) { this.exited.resolve(this.terminal); this.closed.resolve(); }
       else if (this.phase === "cancelled" || this.phase === "refused") this.closed.resolve();
+      else if (this.phase === "failed" && this.recoveredAfterCustodianLoss) this.closed.resolve();
       else { this.fail(); this.closed.reject(uncertain()); }
     });
     const abort = () => this.fail();
@@ -189,8 +193,9 @@ class NativeSession {
     this.phase = "failed"; this.unlinkVerification();
     this.verified.reject(refused()); this.started.reject(uncertain()); this.exited.reject(uncertain());
     this.output?.fail(); this.errors?.fail();
-    // EOF asks the custodian to clean its owned group. Killing the helper
-    // would prevent that cleanup. No helper-death recovery is claimed here.
+    // EOF asks the custodian to clean its owned group. If that custodian is
+    // already gone, the independent supervisor owns the same anchored group
+    // and emits exact exit 2 only after cleanup is proved.
     this.control?.destroy(); this.input?.destroy();
   }
   private status(bytes: Buffer) {
