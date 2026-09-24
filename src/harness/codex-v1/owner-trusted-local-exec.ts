@@ -112,7 +112,13 @@ export function createOwnerTrustedLocalCodexExecV1(dependencies: Readonly<{ spaw
         stdio: ["pipe", "pipe", "pipe"], env: Object.freeze({ HOME: process.env.HOME ?? "", PATH: SYSTEM_PATH,
           LANG: process.env.LANG ?? "en_US.UTF-8", TMPDIR: process.env.TMPDIR ?? "/tmp" }) });
     } catch { return failed("failed", "spawn_refused"); }
-    if (!child.stdin || !child.stdout || !child.stderr) return failed("cleanup_uncertain", "stdio_unavailable");
+    if (!child.stdin || !child.stdout || !child.stderr) {
+      // A process may already exist even when the expected streams were not
+      // supplied. Never leave that detached process running merely because we
+      // cannot observe its output.
+      processGroupSignal(child, "SIGKILL");
+      return failed("cleanup_uncertain", "stdio_unavailable");
+    }
     return await new Promise<OwnerTrustedLocalCodexExecResultV1>(resolve => {
       let settled = false, bytes = 0, stdout = "", resultText: string | undefined, terminal = false;
       let usage: { inputTokens?: number; outputTokens?: number } | undefined;
@@ -125,13 +131,14 @@ export function createOwnerTrustedLocalCodexExecV1(dependencies: Readonly<{ spaw
         settled = true; clearTimeout(deadline); if (killer) clearTimeout(killer);
         input.signal?.removeEventListener("abort", cancel); resolve(value);
       };
+      const stoppedResult = () => stop === "canceled" ? failed("canceled", "aborted")
+        : stop === "timed_out" ? failed("timed_out", "deadline_exceeded")
+          : failed("failed", "process_or_output_refused");
       const terminate = (reason: "canceled" | "timed_out" | "failed") => {
         if (stop) {
           if (processGroupExists(child)) return;
           if (killer) clearTimeout(killer);
-          if (stop === "canceled") return finish(failed("canceled", "aborted"));
-          if (stop === "timed_out") return finish(failed("timed_out", "deadline_exceeded"));
-          return finish(failed("failed", "process_or_output_refused"));
+          return finish(stoppedResult());
         }
         stop = reason;
         if (!processGroupSignal(child, "SIGTERM")) {
@@ -140,9 +147,7 @@ export function createOwnerTrustedLocalCodexExecV1(dependencies: Readonly<{ spaw
         killer = setTimeout(() => {
           stopCleanupVerified = processGroupSignal(child, "SIGKILL");
           if (!stopCleanupVerified) return finish(failed("cleanup_uncertain", "process_group_unavailable"));
-          if (stop === "canceled") return finish(failed("canceled", "aborted"));
-          if (stop === "timed_out") return finish(failed("timed_out", "deadline_exceeded"));
-          return finish(failed("failed", "process_or_output_refused"));
+          return finish(stoppedResult());
         }, KILL_AFTER_MS);
       };
       const cancel = () => terminate("canceled");
@@ -178,7 +183,13 @@ export function createOwnerTrustedLocalCodexExecV1(dependencies: Readonly<{ spaw
         // A detached process may have children which ignore TERM. Do not claim
         // cleanup merely because the direct parent closed; the KILL timer above
         // is the bounded process-group cleanup acknowledgement.
-        if (stop) return;
+        // The direct child is gone. If its detached group is gone too, TERM
+        // was sufficient and we can return immediately. A surviving child
+        // remains owned by the deadline KILL timer below.
+        if (stop) {
+          if (processGroupExists(child)) return;
+          return finish(stoppedResult());
+        }
         if (code !== 0 || !terminal || resultText === undefined) return finish(failed("failed", "process_or_output_refused"));
         finish(Object.freeze({ status: "completed" as const, text: resultText, ...(usage ? { usage: Object.freeze(usage) } : {}) }));
       });

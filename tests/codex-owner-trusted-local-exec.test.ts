@@ -51,6 +51,17 @@ test("requires the caller-provided task directory to be empty", async () => {
   assert.deepEqual(result, { status: "failed", reason: "working_directory_not_empty" });
 });
 
+test("cancellation stops a direct child promptly instead of waiting for the kill timer", async () => {
+  const controller = new AbortController();
+  const started = Date.now();
+  const pending = adapter().execute(input(await taskDirectory(), "wait", 10_000, controller.signal));
+  await new Promise(resolve => setTimeout(resolve, 25));
+  controller.abort();
+  const result = await pending;
+  assert.equal(result.status, "canceled");
+  assert.ok(Date.now() - started < 1_000, "a direct child exited after TERM without waiting for KILL");
+});
+
 test("refuses malformed output and nonzero exits", async () => {
   const malformed = await adapter().execute(input(await taskDirectory(), "malformed"));
   assert.notEqual(malformed.status, "completed");

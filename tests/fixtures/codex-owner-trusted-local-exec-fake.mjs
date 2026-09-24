@@ -5,6 +5,8 @@ const prompt = readFileSync(0, "utf8");
 if (prompt === "hang") {
   spawn("sh", ["-c", "trap '' TERM; while :; do sleep 1; done"], { stdio: "ignore" });
   setInterval(() => {}, 1_000);
+} else if (prompt === "wait") {
+  setInterval(() => {}, 1_000);
 } else if (prompt === "malformed") {
   process.stdout.write("not-json\n");
 } else if (prompt === "nonzero") {
