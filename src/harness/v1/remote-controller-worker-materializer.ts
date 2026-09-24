@@ -22,8 +22,10 @@ const digest = z.string().regex(/^sha256:[a-f0-9]{64}$/);
 const adapterRevision = z.string().min(7).max(180);
 const unavailable = (): never => { throw new Error("remote_controller_worker_materializer_unavailable"); };
 const joined = (tx: DatabaseSession): DatabaseClient => Object.freeze({
-  query: tx.query.bind(tx), transaction: async work => work(tx),
-  transactionWithPreCommitCheck: async (work, check) => { const result = await work(tx); await check(); return result; },
+  query: tx.query.bind(tx),
+  transaction: async <T,>(work: (session: DatabaseSession) => Promise<T>) => work(tx),
+  transactionWithPreCommitCheck: async <T,>(work: (session: DatabaseSession) => Promise<T>,
+    check: () => void | Promise<void>) => { const result = await work(tx); await check(); return result; },
 });
 
 export const REMOTE_CONTROLLER_WORKER_MATERIALIZER_V1 =

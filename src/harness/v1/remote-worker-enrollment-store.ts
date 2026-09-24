@@ -133,8 +133,7 @@ export async function readCurrentRemoteWorkerEnrollmentV1(tx: DatabaseSession, k
     enrollmentDigest: unknown; releaseBindingDigest: unknown; now: unknown }>): Promise<RemoteWorkerEnrollmentRecordV1> {
   if (!validKey(key)) unavailable();
   const tenantId = id.parse(input.tenantId), workerId = id.parse(input.workerId);
-  const current = (await revisions(tx, key, tenantId, workerId)).at(-1)?.record;
-  if (!current) unavailable();
+  const current = (await revisions(tx, key, tenantId, workerId)).at(-1)?.record ?? unavailable();
   if (current.state !== "enrolled" || current.nodeId !== id.parse(input.nodeId)
     || current.nodeKeyId !== id.parse(input.nodeKeyId) || current.adapterId !== id.parse(input.adapterId)
     || current.adapterRevision !== z.string().min(7).max(180).parse(input.adapterRevision)
