@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { types } from "node:util";
 import { canonicalJson, sha256Digest } from "../../security/canonical-digest";
 import { installationTopologyInputSchemaV1, planInstallationTopologyV1,
   verifyInstallationTopologyPlanV1 } from "../v1/installation-topology";
@@ -6,8 +7,8 @@ import { HERMES_021_MACOS_CONNECTOR_PROFILE_DIGEST_V1, HERMES_021_SOURCE_REVISIO
   HERMES_021_VERSION_V1 } from "./connector-profile";
 import { HERMES_021_MACOS_LOCAL_ADAPTER_V1, HERMES_021_MACOS_LOCAL_CAPABILITY_V1,
   hermes021MacosLocalBindingSchemaV1 } from "./macos-local-worker";
-import { createHermes021MacosLocalRunnerQualificationEvidenceV1 } from "./runner-qualification-evidence";
-import { captureHermes021MacosSubprocessHostConfigurationV1 } from "./subprocess-stream-json-host";
+import { hermes021MacosRunnerConfigurationDigestV1,
+  verifyHermes021MacosInstallationBoundRunnerQualificationEvidenceV1 } from "./runner-qualification-evidence";
 
 /**
  * Protected, non-executing join between the already completed fixed-runner
@@ -64,6 +65,7 @@ export type Hermes021MacosProtectedWorkerReadinessInputV1 = Readonly<{
   workerBinding: unknown;
   runnerConfiguration: unknown;
   runnerQualificationReport: unknown;
+  runnerQualificationEvidence: unknown;
 }>;
 
 const unavailable = (): never => {
@@ -73,10 +75,10 @@ const unavailable = (): never => {
 };
 
 function exactInput(value: unknown): Hermes021MacosProtectedWorkerReadinessInputV1 {
-  if (!value || typeof value !== "object" || Array.isArray(value)
+  if (!value || typeof value !== "object" || Array.isArray(value) || types.isProxy(value)
     || Object.getPrototypeOf(value) !== Object.prototype || Object.getOwnPropertySymbols(value).length !== 0) return unavailable();
   const names = ["installationId", "releaseDigest", "topologyInput", "topologyPlan", "workerBinding",
-    "runnerConfiguration", "runnerQualificationReport"] as const;
+    "runnerConfiguration", "runnerQualificationReport", "runnerQualificationEvidence"] as const;
   const actual = Object.getOwnPropertyNames(value);
   if (actual.length !== names.length || actual.some(name => !names.includes(name as typeof names[number]))) return unavailable();
   for (const name of names) {
@@ -115,8 +117,11 @@ Hermes021MacosProtectedWorkerReadinessV1 {
       || !topologyPlan.requiredProofs.includes("local_owner_qualification")
       || !topologyPlan.requiredProofs.includes("local_runner_bridge")) return unavailable();
 
-    const runnerConfiguration = captureHermes021MacosSubprocessHostConfigurationV1(input.runnerConfiguration);
-    const qualification = createHermes021MacosLocalRunnerQualificationEvidenceV1(input.runnerQualificationReport);
+    const qualificationInput = { installationId: selectedInstallationId, releaseDigest: selectedReleaseDigest,
+      topologyPlan, workerBinding, runnerConfiguration: input.runnerConfiguration,
+      runnerQualificationReport: input.runnerQualificationReport };
+    const qualification = verifyHermes021MacosInstallationBoundRunnerQualificationEvidenceV1(
+      input.runnerQualificationEvidence, qualificationInput);
     const workerRegistration = Object.freeze({ workerId: workerBinding.workerId,
       adapterId: HERMES_021_MACOS_LOCAL_ADAPTER_V1, adapterRevision: HERMES_021_SOURCE_REVISION_V1,
       capabilityId: HERMES_021_MACOS_LOCAL_CAPABILITY_V1,
@@ -129,8 +134,7 @@ Hermes021MacosProtectedWorkerReadinessV1 {
       schedulerAuthorityDigest: topologyPlan.schedulerAuthorityDigest,
       workerRegistration,
       workerBindingDigest: sha256Digest(workerBinding),
-      runnerConfigurationDigest: sha256Digest({ purpose: "hermes-021-protected-runner-configuration/v1",
-        configuration: runnerConfiguration }),
+      runnerConfigurationDigest: hermes021MacosRunnerConfigurationDigestV1(input.runnerConfiguration),
       qualificationEvidenceDigest: qualification.evidenceDigest,
       state: "qualification_recorded_owner_enablement_required" as const,
       startsHermes: false as const, startsService: false as const, createsDatabaseEntry: false as const,
