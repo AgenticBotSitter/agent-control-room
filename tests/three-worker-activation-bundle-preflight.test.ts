@@ -19,6 +19,9 @@ import { assembleLocalReleaseV1 } from "../src/installer/v1/local-release-assemb
 import { stageLocalReleaseV1 } from "../src/installer/v1/local-release-stager.mjs";
 import { consumeProtectedReleaseReviewInputCapabilityV1, prepareProtectedReleaseReviewV1 } from
   "../src/installer/v1/protected-release-review-preparation";
+import { prepareProtectedReleaseReviewOwnerAttestationV1,
+  verifyProtectedReleaseReviewOwnerAttestationV1 } from
+  "../src/installer/v1/protected-release-review-owner-attestation";
 import { PRIVATE_INSTALLED_CONFIGURATION_PREPARATION_V1,
   preparePrivateInstalledConfigurationV1, privateInstalledPostgresEndpointFingerprintV1 } from
   "../src/installer/v1/private-installed-configuration-preparation";
@@ -174,10 +177,47 @@ test("real release inventory remains blocked without a reviewed release identity
     releaseReviewPreparation: review }), /preflight_refused/u);
   assert.throws(() => consumeProtectedReleaseReviewInputCapabilityV1({ ...review.ownerReviewInputCapability }),
     /protected_release_review_preparation_refused/u);
-  const pending = consumeProtectedReleaseReviewInputCapabilityV1(review.ownerReviewInputCapability);
-  assert.equal(pending.ownerReviewStillRequired, true); assert.equal(pending.performsEffect, false);
-  assert.throws(() => consumeProtectedReleaseReviewInputCapabilityV1(review.ownerReviewInputCapability),
+  const ownerReview = prepareProtectedReleaseReviewOwnerAttestationV1(review.ownerReviewInputCapability);
+  assert.equal(ownerReview.status, "blocked");
+  assert.equal(ownerReview.blocker, "native_owner_release_review_host_missing");
+  assert.equal(ownerReview.providesReviewedReleaseIdentity, false);
+  assert.equal(ownerReview.acceptsCallerApproval, false); assert.equal(ownerReview.acceptsCallback, false);
+  assert.equal(ownerReview.performsEffect, false); assert.equal(ownerReview.publishesRelease, false);
+  assert.deepEqual(verifyProtectedReleaseReviewOwnerAttestationV1(ownerReview), {
+    installationId: selectedBinding.installationId, releaseDigest: selectedBinding.releaseDigest,
+    topologyPlanDigest: selectedBinding.topologyPlanDigest, bundleDigest: source.releasePreparation.bundle.digest,
+    preparationEvidenceDigest: review.preparationEvidenceDigest, ownerReviewStillRequired: true,
+    performsEffect: false });
+  assert.throws(() => verifyProtectedReleaseReviewOwnerAttestationV1(structuredClone(ownerReview)),
+    /owner_attestation_refused/u);
+  assert.throws(() => prepareProtectedReleaseReviewOwnerAttestationV1(review.ownerReviewInputCapability),
     /protected_release_review_preparation_refused/u);
+});
+
+test("fake owner, callback and cross-plan inputs cannot mint reviewed release identity", async t => {
+  const source = await releaseSource();
+  t.after(() => rm(source.root, { recursive: true, force: true }));
+  const selectedBinding = { ...binding, releaseDigest: source.releasePreparation.releaseManifestDigest };
+  const first = prepareProtectedReleaseReviewV1({ ...selectedBinding,
+    releasePreparation: source.releasePreparation });
+  let callbacks = 0;
+  for (const forged of [{ ownerReviewInputCapability: first.ownerReviewInputCapability, ownerAttended: true },
+    { ownerReviewInputCapability: first.ownerReviewInputCapability, approve() { callbacks += 1; } },
+    new Proxy(first.ownerReviewInputCapability, {})]) {
+    assert.throws(() => prepareProtectedReleaseReviewOwnerAttestationV1(forged),
+      /protected_release_review_preparation_refused/u);
+  }
+  assert.equal(callbacks, 0);
+
+  const foreignBinding = { ...selectedBinding, topologyPlanDigest: d("foreign-release-review-topology") };
+  const foreign = prepareProtectedReleaseReviewV1({ ...foreignBinding,
+    releasePreparation: source.releasePreparation });
+  const foreignPlan = prepareProtectedReleaseReviewOwnerAttestationV1(foreign.ownerReviewInputCapability);
+  assert.equal(foreignPlan.topologyPlanDigest, foreignBinding.topologyPlanDigest);
+  assert.notEqual(foreignPlan.pendingReviewDigest,
+    prepareProtectedReleaseReviewOwnerAttestationV1(first.ownerReviewInputCapability).pendingReviewDigest);
+  assert.equal(foreignPlan.providesReviewedReleaseIdentity, false);
+  assert.equal(foreignPlan.performsEffect, false);
 });
 
 test("real protected-configuration plan remains blocked until owner write verification", () => {
