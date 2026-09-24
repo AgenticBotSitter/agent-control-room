@@ -18,7 +18,7 @@ function captureBase(value: unknown): Base {
  * bridge. The supplied host still owns canonical authority and publication. */
 export function createOwnerTrustedLocalCodexDeliveryV1(baseValue: Base, executor: OwnerTrustedLocalCodexExecV1,
   configuration: Configuration) {
-  const base = captureBase(baseValue);
+  const base = Object.freeze({ ...captureBase(baseValue) });
   const execution = createOwnerTrustedLocalCodexExecutionAdapterV1(executor, configuration);
   return Object.freeze({ deliver: (delivery: unknown, route: unknown, receivedAt: string, signal?: AbortSignal) =>
     deliverOwnerTrustedLocalCliTaskV1({ ...base, execute: execution.execute.bind(execution) }, delivery, route, receivedAt, signal) });
@@ -28,7 +28,7 @@ export function createOwnerTrustedLocalCodexDeliveryV1(baseValue: Base, executor
  * bridge. It deliberately inherits Claude's reviewed no-tools CLI boundary. */
 export function createOwnerTrustedLocalClaudeDeliveryV1(baseValue: Base, executor: OwnerTrustedLocalClaudeExecV1,
   configuration: Configuration) {
-  const base = captureBase(baseValue);
+  const base = Object.freeze({ ...captureBase(baseValue) });
   const execution = createOwnerTrustedLocalClaudeExecutionAdapterV1(executor, configuration);
   return Object.freeze({ deliver: (delivery: unknown, route: unknown, receivedAt: string, signal?: AbortSignal) =>
     deliverOwnerTrustedLocalCliTaskV1({ ...base, execute: execution.execute.bind(execution) }, delivery, route, receivedAt, signal) });

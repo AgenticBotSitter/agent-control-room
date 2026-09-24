@@ -47,3 +47,14 @@ test("the composed Claude delivery keeps a nonzero CLI outcome out of publicatio
   const result = await delivery.deliver(packet(workerId, adapterId), { kind: "local", workerId }, at(2000));
   assert.equal(result.state, "execution_failed"); assert.equal(state.published, 0);
 });
+
+test("a composed delivery snapshots its host-owned binding before future calls", async t => {
+  const f = await nativeTaskFixture(); t.after(f.close); const state = { published: 0 }, workerId = "worker:codex-snapshot", adapterId = "connector:codex-snapshot-v1";
+  const mutable = base(f, workerId, adapterId, state);
+  const delivery = createOwnerTrustedLocalCodexDeliveryV1(mutable, { async execute() {
+    return { status: "completed" as const, text: "snapshot result" };
+  } }, baseConfiguration);
+  mutable.binding = { workerId: "worker:other", adapterId, adapterRevision: "00570550" };
+  const result = await delivery.deliver(packet(workerId, adapterId), { kind: "local", workerId }, at(2000));
+  assert.equal(result.state, "published"); assert.equal(state.published, 1);
+});
