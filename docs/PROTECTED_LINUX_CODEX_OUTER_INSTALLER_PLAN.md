@@ -1,7 +1,10 @@
 # Protected Linux Codex outer-installer source plan
 
-**Status:** implementation-ready gap analysis; deliberately no installation
-contract is minted by this package.
+**Status:** active implementation plan. The source-only current-admission
+exchange (LCOI-2) and opaque receipt-ingress capability (LCOI-4) are now
+implemented and tested; both remain unmounted until a protected
+installed-state owner exists. No installation contract is minted by this
+document.
 
 This plan covers the first supported Linux Codex route only. It identifies the
 existing source that must be reused and the smallest missing composition
@@ -11,6 +14,18 @@ Codex execution, and canonical controller receipt/result intake.
 It does not install anything, open a database, read a credential, connect a
 node, qualify Codex, or make a worker ready. No path, account, endpoint,
 certificate, key reference, or host identity is recorded here.
+
+## Source progress update
+
+LCOI-2 now belongs to `PortableNodeBridge` and its shared durable journal. It
+reserves the exact queue-bound current-admission request before its one send,
+accepts only the matching signed response, and refuses uncertain, stale,
+duplicate, oversized, or mismatched replies. LCOI-4 now issues a separate,
+opaque, one-use receipt-ingress capability from the private remote composition;
+it derives the task reference and time from protected pending state instead of
+caller input. Neither boundary starts Codex or makes a worker ready. The
+remaining work is protected installed-state construction and mounting at the
+real session ingress, not another transport or database.
 
 ## Why this change is documentation only
 
