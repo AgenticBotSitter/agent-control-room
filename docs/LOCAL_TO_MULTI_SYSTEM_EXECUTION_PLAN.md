@@ -451,6 +451,14 @@ the Hermes-specific connection registry is not remote-worker authority.
    the worker.
 4. Implement renewal, rotation, quarantine, drain and permanent revocation.
 
+**Source progress (September 24):** the append-only canonical enrollment
+store now records the exact worker/node/key/adapter/capability/release binding,
+with exact retry and lifecycle revisions. Remote delivery rereads that store
+before preparation, sending, receipt intake and reconnect recovery. A stale
+resolver snapshot is refused after key rotation, draining, quarantine or
+revocation. This is disposable source evidence only: no worker has been
+enrolled against a live installation.
+
 **Done when:** one worker can be individually trusted or revoked without
 rotating every machine or revealing private configuration to the browser.
 

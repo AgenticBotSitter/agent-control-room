@@ -82,6 +82,14 @@ are recorded in
 [`REMOTE_WORKER_ENROLLMENT_AUTHORITY_DECISION.md`](REMOTE_WORKER_ENROLLMENT_AUTHORITY_DECISION.md).
 No live database or remote worker was changed while making that decision.
 
+**September 24 remote-enrollment progress:** the approved projection now has
+a canonical append-only store and a corrected source migration that permits an
+enrollment's lifecycle revisions. The controller rereads that store before it
+prepares, sends, accepts a receipt, or recovers a remote delivery. Disposable
+tests cover exact retry, restart reread, node-key rotation, draining,
+quarantine, revocation, and stale resolver refusal. It has not enrolled a live
+worker, contacted a remote machine, or changed a live database.
+
 The first installed Claude route is now pinned to Claude Code's `opus` alias
 instead of inheriting a desktop or command-line default. Its owner-attended
 qualification, saved process configuration, and later task execution must all
