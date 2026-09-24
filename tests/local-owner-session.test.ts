@@ -39,6 +39,18 @@ test("local owner session rejects wrong code, forwarded requests, foreign origin
     (error: unknown) => error instanceof WebAccessError && error.code === "authentication_required");
 });
 
+test("local owner session rate-limits repeated wrong-code attempts without locking a valid session forever", async () => {
+  const service = new LocalOwnerSessionServiceV1(profile);
+  const bad = "wrong-code-that-is-still-long-enough";
+  for (let attempt = 0; attempt < 5; attempt++) await assert.rejects(service.issue(
+    request(undefined, { origin, "content-type": "application/json" }, JSON.stringify({ ownerCode: bad })), bad, 1_000 + attempt),
+    (error: unknown) => error instanceof WebAccessError && error.code === "authentication_required");
+  await assert.rejects(service.issue(request(undefined, { origin, "content-type": "application/json" }, JSON.stringify({ ownerCode })), ownerCode, 1_006),
+    (error: unknown) => error instanceof WebAccessError && error.code === "access_denied");
+  await assert.doesNotReject(service.issue(request(undefined, { origin, "content-type": "application/json" }, JSON.stringify({ ownerCode })), ownerCode,
+    1_000 + 60_001));
+});
+
 test("local owner sign-in request accepts only a small exact JSON object", async () => {
   const valid = request(undefined, { "content-type": "application/json" }, JSON.stringify({ ownerCode }));
   assert.equal(await readLocalOwnerCodeV1(valid), ownerCode);
