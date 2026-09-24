@@ -76,5 +76,5 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
     } catch (error) { return webFailure(error); }
   }
 
-  return Object.freeze({ handle, close: () => closed ??= options.database.close() });
+  return Object.freeze({ handle, isReady: () => closed === undefined, close: () => closed ??= options.database.close() });
 }
