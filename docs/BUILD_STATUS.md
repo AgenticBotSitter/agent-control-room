@@ -158,6 +158,16 @@ package is a separately reviewed canonical publisher that can make those
 durable lifecycle decisions in the existing PostgreSQL transaction. No remote
 worker, database, service, or network was changed for this source proof.
 
+**September 24 remote-result publication plan:** source mapping confirms that
+the existing durable publisher, PostgreSQL reservation adapter, owner-review
+submission, reader, correction, and completion paths can be reused unchanged.
+The remote path is missing only their safe bindings: bounded result material,
+a durable remote terminal record, recorded run/lifecycle facts, private
+installed composition, and a remote inspection bridge. The ordered design is
+recorded in [`GENERIC_REMOTE_RESULT_PUBLICATION_PLAN.md`](GENERIC_REMOTE_RESULT_PUBLICATION_PLAN.md).
+It explicitly rules out a second result system, database, scheduler, or
+approval process.
+
 The first installed Claude route is now pinned to Claude Code's `opus` alias
 instead of inheriting a desktop or command-line default. Its owner-attended
 qualification, saved process configuration, and later task execution must all

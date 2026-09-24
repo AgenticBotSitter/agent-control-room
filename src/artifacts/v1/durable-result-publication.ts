@@ -250,10 +250,10 @@ export interface DurableResultPublicationConfigurationV1 {
   storageClass: "local" | "r2";
   storageIoMs?: number;
   /**
-   * Reservation persistence. The PostgreSQL adapter for the dedicated
-   * neutral sibling table is lead-owned and pending; until it lands,
-   * callers inject the in-memory port (tests, local runs). The publisher
-   * never touches a reservation table directly.
+   * Reservation persistence. The production adapter targets the dedicated
+   * neutral sibling table; tests may inject an in-memory port, which is not
+   * durable across restart. The publisher never touches a reservation table
+   * directly.
    */
   reservations: NeutralReservationPort;
   /**

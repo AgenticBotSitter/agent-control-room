@@ -487,6 +487,8 @@ receipt. Its ordering and terminal replay protection are intentionally
 session-local and inert: it cannot yet publish a result, finish a task, release
 capacity, or claim restart-safe generic result recovery. A later canonical
 publisher must add those durable effects in the existing PostgreSQL lifecycle.
+The exact reuse and required missing bindings are maintained in
+[`GENERIC_REMOTE_RESULT_PUBLICATION_PLAN.md`](GENERIC_REMOTE_RESULT_PUBLICATION_PLAN.md).
 **Work:**
 
 1. Deliver the exact controller packet to only its intended worker.
