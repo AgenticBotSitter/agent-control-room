@@ -17,6 +17,20 @@ const plan = () => planInstallationTopologyV1({ databaseAuthorityDigest: digest(
   currentRoutes: [{ kind: "local", workerId: "worker:old", adapterId: "connector:old", adapterRevision: "0000001" }],
   requestedRoutes: [{ kind: "local", workerId: "worker:new", adapterId: "connector:new", adapterRevision: "0000001" }] });
 
+const transitionPlan = (direction: "local_to_several" | "several_to_local", suffix: string) => {
+  const retained = `worker:retained:${suffix}`;
+  const departing = `worker:departing:${suffix}`;
+  const arriving = `worker:arriving:${suffix}`;
+  const local = (workerId: string) => ({ kind: "local" as const, workerId, adapterId: "connector:local", adapterRevision: "0000001" });
+  const remote = (workerId: string) => ({ kind: "remote" as const, workerId, adapterId: "connector:remote", adapterRevision: "0000001" });
+  return Object.freeze({ retained, departing, arriving, topologyPlan: planInstallationTopologyV1({
+    databaseAuthorityDigest: digest("database"), schedulerAuthorityDigest: digest("scheduler"),
+    ...(direction === "local_to_several"
+      ? { currentRoutes: [local(retained), local(departing)], requestedRoutes: [local(retained), remote(arriving)] }
+      : { currentRoutes: [local(retained), remote(departing)], requestedRoutes: [local(retained), local(arriving)] }),
+  }) });
+};
+
 test("the signed journal exact-replays and refuses changed or stale revisions", async t => {
   const f = await nativeTaskFixture(); t.after(f.close);
   const input = { tenantId, transitionId, topologyPlan: plan(), now: at(0) };
@@ -70,6 +84,58 @@ test("the admission reader fences only affected workers from durable pause throu
     expectedRevision: 0, action: "pause_admission", now: at(8), evidenceDigest: digest("second-pause") }));
   assert.equal(await f.db.transaction(tx => isInstallationTransitionAdmissionPausedV1(tx, key, { tenantId, workerId: "worker:old" })), true,
     "the reader considers every current transition for the worker, not a caller-selected transition");
+});
+
+test("authenticated drain status survives durable rereads and retries in both topology directions", async t => {
+  const f = await nativeTaskFixture(); t.after(f.close);
+  const advance = (input: Parameters<typeof advanceInstallationTransitionRecordV1>[2]) =>
+    f.db.transaction(tx => advanceInstallationTransitionRecordV1(tx, key, input));
+  const paused = (workerId: string) => f.db.transaction(tx => isInstallationTransitionAdmissionPausedV1(tx, key, { tenantId, workerId }));
+
+  for (const direction of ["local_to_several", "several_to_local"] as const) {
+    const clean = transitionPlan(direction, `${direction}:clean`);
+    const uncertain = transitionPlan(direction, `${direction}:uncertain`);
+    const cleanId = `transition:${direction}:clean`, uncertainId = `transition:${direction}:uncertain`;
+    for (const [transitionId, candidate, drainStatus] of [
+      [cleanId, clean, "all_drained"], [uncertainId, uncertain, "uncertain_work_recorded"],
+    ] as const) {
+      await f.db.transaction(tx => createInstallationTransitionRecordV1(tx, key,
+        { tenantId, transitionId, topologyPlan: candidate.topologyPlan, now: at(0) }));
+      await advance({ tenantId, transitionId, expectedRevision: 0, action: "pause_admission", now: at(1), evidenceDigest: digest(`${transitionId}:pause`) });
+      const drain = { tenantId, transitionId, expectedRevision: 1, action: "record_drain", now: at(2),
+        evidenceDigest: digest(`${transitionId}:drain`), drainStatus } as const;
+      assert.equal((await advance(drain)).replayed, false);
+      assert.equal((await advance(drain)).replayed, true, "the exact durable drain retry is replayed");
+      const reread = await f.db.transaction(tx => readInstallationTransitionRecordV1(tx, key, { tenantId, transitionId }));
+      assert.equal(reread!.drainStatus, drainStatus, "the authenticated reread retains the exact drain outcome");
+      for (const workerId of [candidate.departing, candidate.arriving]) assert.equal(await paused(workerId), true);
+      assert.equal(await paused(candidate.retained), false, "the retained worker is not fenced");
+    }
+
+    let committed = (await advance({ tenantId, transitionId: cleanId, expectedRevision: 2, action: "verify_proofs", now: at(3),
+      evidenceDigest: digest(`${cleanId}:proof`) })).record;
+    committed = (await advance({ tenantId, transitionId: cleanId, expectedRevision: committed.revision, action: "commit", now: at(4),
+      evidenceDigest: digest(`${cleanId}:commit`) })).record;
+    assert.equal(committed.state, "committed");
+    for (const workerId of [clean.departing, clean.arriving]) assert.equal(await paused(workerId), false,
+      "commit releases this transition's fence");
+    for (const workerId of [uncertain.departing, uncertain.arriving]) assert.equal(await paused(workerId), true,
+      "commit cannot release another transition's fence");
+
+    let failed = (await advance({ tenantId, transitionId: uncertainId, expectedRevision: 2, action: "fail", now: at(3),
+      failureDigest: digest(`${uncertainId}:failure`) })).record;
+    for (const workerId of [uncertain.departing, uncertain.arriving]) assert.equal(await paused(workerId), true,
+      "affected workers remain fenced after failure");
+    failed = (await advance({ tenantId, transitionId: uncertainId, expectedRevision: failed.revision, action: "prepare_rollback", now: at(4),
+      evidenceDigest: digest(`${uncertainId}:rollback-ready`) })).record;
+    for (const workerId of [uncertain.departing, uncertain.arriving]) assert.equal(await paused(workerId), true,
+      "affected workers remain fenced while rollback is prepared");
+    await advance({ tenantId, transitionId: uncertainId, expectedRevision: failed.revision, action: "rollback", now: at(5),
+      evidenceDigest: digest(`${uncertainId}:rolled-back`) });
+    for (const workerId of [uncertain.departing, uncertain.arriving]) assert.equal(await paused(workerId), false,
+      "rollback releases only its completed transition fence");
+    assert.equal(await paused(uncertain.retained), false, "the retained worker remains unaffected through rollback");
+  }
 });
 
 test("a retagged journal row is unavailable and the task coordinator is the only added role grant", async t => {

@@ -94,7 +94,7 @@ export async function createInstallationTransitionRecordV1(tx: DatabaseSession, 
 /** Appends exactly one reviewed state-machine revision. It starts no work. */
 export async function advanceInstallationTransitionRecordV1(tx: DatabaseSession, integrityKey: Uint8Array,
   input: Readonly<{ tenantId: unknown; transitionId: unknown; expectedRevision: unknown; action: unknown; now: unknown;
-    evidenceDigest?: unknown; failureDigest?: unknown }>) {
+    evidenceDigest?: unknown; failureDigest?: unknown; drainStatus?: unknown }>) {
   if (!keyIsValid(integrityKey)) fail();
   const tenantId = id.parse(input.tenantId), transitionId = id.parse(input.transitionId), expectedRevision = revision.parse(input.expectedRevision);
   await lockTenant(tx, tenantId);

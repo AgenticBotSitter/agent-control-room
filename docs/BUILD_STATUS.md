@@ -101,6 +101,14 @@ other's packet, and that a replacement session can recover only the original
 durable receipt without another send. These tests do not create a worktree on
 the owner's machine, connect a worker, start a task, or change a database.
 
+**September 24 topology-transition progress:** durable transition records now
+expose their already-supported clean-versus-uncertain drain outcome to typed
+callers. Disposable journeys cover both changing from one computer to several
+and changing back: affected workers remain fenced through interruption and
+rollback, an unchanged worker is not fenced, and one transition cannot clear
+another transition's fence. This records and checks a transition plan only;
+it does not publish a route, move a database, enable a worker, or start work.
+
 The first installed Claude route is now pinned to Claude Code's `opus` alias
 instead of inheriting a desktop or command-line default. Its owner-attended
 qualification, saved process configuration, and later task execution must all

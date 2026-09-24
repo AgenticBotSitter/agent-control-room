@@ -390,6 +390,12 @@ not block the finished local Hermes-and-Claude product.
 **Model:** Astra high architecture; Sol high implementation.
 **Reuse:** existing topology plan, installation transition journal, shared
 delivery contract and database relocation preparation.
+**Source progress (September 24):** authenticated transition records now make
+the existing `all_drained` versus `uncertain_work_recorded` outcome available
+to typed callers. Disposable journeys preserve that outcome through durable
+rereads, replay, failure, rollback, and commit in both directions. They retain
+the single database and scheduler identities and fence only affected workers.
+They do not observe a live drain, publish a route, or elect a controller.
 **Work:**
 
 1. Define local-to-several, several-to-local and worker-route-change
