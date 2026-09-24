@@ -4,6 +4,7 @@ import type { PrivateClientAssets } from "./private-assets";
 import type { MacLocalProtectedConfigurationV1 } from "./mac-local-protected-configuration";
 import { createMacLocalControlRoomServiceV1 } from "./mac-local-serving";
 import { createMacLocalStartupV1 } from "./mac-local-startup";
+import type { MacLocalCanonicalTaskOperationsV1 } from "./mac-local-web-process";
 
 type OpenedDatabase = Readonly<{ client: DatabaseClient; close(): Promise<void> }>;
 type LocalService = Readonly<{ start(): Promise<void>; close(): Promise<void>; isReady(): boolean }>;
@@ -16,6 +17,10 @@ export function createMacLocalWebServiceFromConfigurationV1(input: Readonly<{
   database: OpenedDatabase;
   assets: PrivateClientAssets;
   render(request: Request): Promise<Response> | Response;
+  /** The existing shared controller operations.  Supplying these makes the
+   * local website use the same task/review/correction lifecycle as every
+   * other topology; omitting them intentionally leaves those routes absent. */
+  operations?: MacLocalCanonicalTaskOperationsV1;
   createServer?: (options: Readonly<ServerOptions>) => Server;
   listenerTiming?: { bindMs?: number; closeMs?: number };
 }>): LocalService {
@@ -29,6 +34,7 @@ export function createMacLocalWebServiceFromConfigurationV1(input: Readonly<{
     localOwnerSession: configuration.localOwnerSession,
     workspaceId: configuration.workspaceId,
     database: input.database,
+    ...(input.operations ? { ...input.operations } : {}),
     assets: input.assets,
     render: input.render,
     ...(input.createServer ? { createServer: input.createServer } : {}),
@@ -46,6 +52,7 @@ export function createMacLocalProtectedHostV1(input: Readonly<{
   openDatabase(configuration: MacLocalProtectedConfigurationV1["database"]): OpenedDatabase;
   assets: PrivateClientAssets;
   render(request: Request): Promise<Response> | Response;
+  operations?: MacLocalCanonicalTaskOperationsV1;
   createServer?: (options: Readonly<ServerOptions>) => Server;
   listenerTiming?: { bindMs?: number; closeMs?: number };
 }>) {
@@ -57,6 +64,7 @@ export function createMacLocalProtectedHostV1(input: Readonly<{
     openDatabase: input.openDatabase,
     createService: ({ configuration, database }) => createMacLocalWebServiceFromConfigurationV1({
       configuration, database, assets: input.assets, render: input.render,
+      ...(input.operations ? { operations: input.operations } : {}),
       ...(input.createServer ? { createServer: input.createServer } : {}),
       ...(input.listenerTiming ? { listenerTiming: input.listenerTiming } : {}),
     }),

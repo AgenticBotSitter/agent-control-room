@@ -31,6 +31,12 @@ export interface MacLocalWebProcessOptionsV1 {
   clock?: () => number;
 }
 
+/** Existing controller operations supplied by the host.  This is deliberately
+ * only a typed pass-through: the Mac-local web wrapper cannot construct a
+ * planner, queue, result store, review system, or worker of its own. */
+export type MacLocalCanonicalTaskOperationsV1 = Pick<MacLocalWebProcessOptionsV1,
+  "ownerReviews" | "ownerVerifications" | "planning" | "assignment" | "approvals" | "submission" | "revisions">;
+
 /**
  * The first real Mac-local web composition. It has a fixed loopback-only owner
  * authentication seam and reuses the normal project service and its database
