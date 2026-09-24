@@ -2,6 +2,7 @@
  * native fixture. These modes exercise cleanup without any real agent. */
 #include <signal.h>
 #include <stdlib.h>
+#include <fcntl.h>
 #include <unistd.h>
 #include <sys/types.h>
 
@@ -30,6 +31,15 @@ int main(void) {
     if (kill(getppid(), SIGKILL) != 0) return 95;
     usleep(150000);
     return 12;
+  }
+  if (mode == 'a') {
+    /* Kill only the process-group leader (the private anchor), then leave
+     * evidence if supervisor recovery fails to retire this target. */
+    if (kill(getpgrp(), SIGKILL) != 0) return 96;
+    usleep(500000);
+    int marker = open("anchor-target-survived", O_WRONLY | O_CREAT | O_EXCL, 0600);
+    if (marker >= 0) close(marker);
+    while (1) pause();
   }
   while (1) pause();
 }

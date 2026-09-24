@@ -60,6 +60,7 @@ static pid_t child = -1;
 /* Private to the native supervisor/custodian pair.  This identifier never
  * crosses the status protocol and is never accepted back as authority. */
 static pid_t recovery_group = -1;
+static int cleanup_intent_fd = -1;
 static int reaped;
 static int group_owned;
 
@@ -118,6 +119,23 @@ static int status(uint8_t code, uint8_t kind, uint32_t value, uint8_t absent) {
       || flags < 0 || fcntl(1, F_SETFL, flags | O_NONBLOCK) != 0) return -1;
   ssize_t count = write(1, bytes, sizeof(bytes));
   return count == (ssize_t)sizeof(bytes) ? 0 : -1;
+}
+static int exited_unreaped(pid_t pid) {
+  siginfo_t value; memset(&value, 0, sizeof(value));
+  if (waitid(P_PID, (id_t)pid, &value, WEXITED | WNOHANG | WNOWAIT) != 0) return -1;
+  return value.si_pid == pid ? 1 : 0;
+}
+static void declare_cleanup_intent(void) {
+  if (cleanup_intent_fd < 0) return;
+  unsigned char value = 1;
+  while (write(cleanup_intent_fd, &value, 1) < 0 && errno == EINTR) {}
+}
+static int consume_cleanup_intent(int fd) {
+  unsigned char value;
+  ssize_t count = read(fd, &value, 1);
+  if (count == 1 && value == 1) return 1;
+  if (count < 0 && (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR)) return 0;
+  return count == 0 ? 0 : -1;
 }
 static int same(const struct stat *a, const struct stat *b) {
   return a->st_dev == b->st_dev && a->st_ino == b->st_ino && a->st_uid == b->st_uid
@@ -303,6 +321,7 @@ static int leader_finished(void) {
 static int group_signal(int number) {
   /* Never signal a numeric group again once its leader has been reaped. */
   if (child <= 0 || recovery_group <= 1 || reaped || !group_owned) return -1;
+  if (number == SIGKILL) declare_cleanup_intent();
   return kill(-recovery_group, number) == 0 || errno == ESRCH ? 0 : -1;
 }
 static int retire(int *exit_status) {
@@ -413,17 +432,25 @@ close:
 static int supervise(int argc, char **argv) {
   int ready[2] = { -1, -1 };
   int watch[2] = { -1, -1 };
+  int intent[2] = { -1, -1 };
   if (pipe(ready) != 0 || private_fd(&ready[0]) != 0 || private_fd(&ready[1]) != 0
-      || pipe(watch) != 0 || private_fd(&watch[0]) != 0 || private_fd(&watch[1]) != 0) {
+      || pipe(watch) != 0 || private_fd(&watch[0]) != 0 || private_fd(&watch[1]) != 0
+      || pipe(intent) != 0 || private_fd(&intent[0]) != 0 || private_fd(&intent[1]) != 0) {
     if (ready[0] >= 0) close(ready[0]); if (ready[1] >= 0) close(ready[1]);
     if (watch[0] >= 0) close(watch[0]); if (watch[1] >= 0) close(watch[1]);
+    if (intent[0] >= 0) close(intent[0]); if (intent[1] >= 0) close(intent[1]);
     return 2;
   }
+  int intent_flags = fcntl(intent[0], F_GETFL);
+  if (intent_flags < 0 || fcntl(intent[0], F_SETFL, intent_flags | O_NONBLOCK) != 0) {
+    close(ready[0]); close(ready[1]); close(watch[0]); close(watch[1]); close(intent[0]); close(intent[1]); return 2;
+  }
   pid_t anchor = fork();
-  if (anchor < 0) { close(ready[0]); close(ready[1]); close(watch[0]); close(watch[1]); return 2; }
+  if (anchor < 0) { close(ready[0]); close(ready[1]); close(watch[0]); close(watch[1]); close(intent[0]); close(intent[1]); return 2; }
   if (anchor == 0) {
-    close(ready[0]); close(watch[1]);
+    close(ready[0]); close(watch[1]); close(intent[0]); close(intent[1]);
     for (int fd = 0; fd <= 5; fd++) close(fd);
+    signal(SIGTERM, SIG_IGN); signal(SIGINT, SIG_IGN); signal(SIGHUP, SIG_IGN);
     if (setpgid(0, 0) != 0) _exit(111);
     unsigned char value = 1;
     if (write(ready[1], &value, 1) != 1) _exit(112);
@@ -442,12 +469,15 @@ static int supervise(int argc, char **argv) {
   close(ready[1]); close(watch[0]);
   unsigned char value = 0;
   if (read(ready[0], &value, 1) != 1 || value != 1) {
-    close(ready[0]); close(watch[1]); (void)kill(anchor, SIGKILL); (void)waitpid(anchor, NULL, 0); return 2;
+    close(ready[0]); close(watch[1]); close(intent[0]); close(intent[1]);
+    (void)kill(anchor, SIGKILL); (void)waitpid(anchor, NULL, 0); return 2;
   }
   close(ready[0]);
   pid_t custodian = fork();
-  if (custodian < 0) { close(watch[1]); (void)kill(-anchor, SIGKILL); (void)waitpid(anchor, NULL, 0); return 2; }
+  if (custodian < 0) { close(watch[1]); close(intent[0]); close(intent[1]);
+    (void)kill(-anchor, SIGKILL); (void)waitpid(anchor, NULL, 0); return 2; }
   if (custodian == 0) {
+    close(intent[0]); cleanup_intent_fd = intent[1];
     /* Keep the watchdog writer for this process lifetime; it is never exposed
      * to the target because CLOEXEC_DEFAULT closes it at target exec. */
 #ifdef ACR_TEST_CUSTODIAN_DEATH_BEFORE_HOLD
@@ -456,51 +486,71 @@ static int supervise(int argc, char **argv) {
     _exit(custodian_main(argc, argv, anchor));
 #endif
   }
-  close(watch[1]);
+  close(watch[1]); close(intent[1]);
   /* Only the custodian may retain protocol and target streams. */
   for (int fd = 0; fd <= 5; fd++) close(fd);
   int custodian_status = 0, anchor_status = 0;
-  int custodian_done = 0, anchor_done = 0;
+  int custodian_done = 0, anchor_exited = 0, anchor_reaped = 0;
+  int intent_seen = 0, unexpected_anchor = 0;
   uint64_t until = now_ms() + 640000U;
   while (!custodian_done && now_ms() > 0 && now_ms() < until) {
     pid_t observed = waitpid(custodian, &custodian_status, WNOHANG);
     if (observed == custodian) custodian_done = 1;
     else if (observed < 0 && errno != EINTR) break;
-    if (!anchor_done) {
-      observed = waitpid(anchor, &anchor_status, WNOHANG);
-      if (observed == anchor) anchor_done = 1;
-      else if (observed < 0 && errno != EINTR) break;
+    if (!anchor_exited) {
+      int state = exited_unreaped(anchor);
+      if (state > 0) anchor_exited = 1;
+      else if (state < 0 && errno != EINTR) break;
+    }
+    if (!intent_seen) {
+      int state = consume_cleanup_intent(intent[0]);
+      if (state > 0) intent_seen = 1;
+      else if (state < 0) break;
+    }
+    /* Anchor loss invalidates custody immediately. Keep the dead child
+     * unreaped so its numeric PID/PGID cannot be reused before the group is
+     * killed. The affected attempt can only become uncertainty. */
+    if (anchor_exited && !anchor_reaped && !custodian_done) {
+      if (!intent_seen) { unexpected_anchor = 1; break; }
+      /* The custodian declared this SIGKILL before issuing it. Signal again
+       * while the anchor remains waitable, then reap so the custodian can
+       * prove group absence and finish its own bounded cleanup. */
+      (void)kill(-anchor, SIGKILL);
+      if (waitpid(anchor, &anchor_status, 0) != anchor) break;
+      anchor_reaped = 1;
     }
     if (!custodian_done) poll(NULL, 0, 10);
   }
   /* Cleanup is unconditional.  On the normal path the custodian already did
    * this; after abrupt death this is the independent recovery action. */
   if (!custodian_done) (void)kill(custodian, SIGKILL);
-  /* Never signal this numeric group after its anchor has been reaped: a
-   * later PID/PGID reuse must be treated as uncertainty, not authority. */
-  if (!anchor_done) (void)kill(-anchor, SIGKILL);
+  /* The anchor is deliberately still waitable here. Signal while that child
+   * keeps the numeric PID/PGID non-reusable, then reap and only observe. */
+  if (!anchor_reaped) (void)kill(-anchor, SIGKILL);
   uint64_t cleanup_until = now_ms() + 3000U;
-  while ((!custodian_done || !anchor_done) && now_ms() > 0 && now_ms() < cleanup_until) {
+  while ((!custodian_done || !anchor_reaped) && now_ms() > 0 && now_ms() < cleanup_until) {
     if (!custodian_done) {
       pid_t observed = waitpid(custodian, &custodian_status, WNOHANG);
       if (observed == custodian) custodian_done = 1;
       else if (observed < 0 && errno != EINTR) break;
     }
-    if (!anchor_done) {
+    if (!anchor_reaped) {
       pid_t observed = waitpid(anchor, &anchor_status, WNOHANG);
-      if (observed == anchor) anchor_done = 1;
+      if (observed == anchor) anchor_reaped = 1;
       else if (observed < 0 && errno != EINTR) break;
     }
-    if (!custodian_done || !anchor_done) poll(NULL, 0, 10);
+    if (!custodian_done || !anchor_reaped) poll(NULL, 0, 10);
   }
   int absent = 0;
-  if (custodian_done && anchor_done) {
+  if (custodian_done && anchor_reaped) {
     while (now_ms() > 0 && now_ms() < cleanup_until) {
       if (kill(-anchor, 0) != 0 && errno == ESRCH) { absent = 1; break; }
       poll(NULL, 0, 10);
     }
   }
-  if (!absent || !custodian_done || !anchor_done) return 2;
+  close(intent[0]);
+  if (!absent || !custodian_done || !anchor_reaped) return 2;
+  if (unexpected_anchor) return 2;
   if (WIFEXITED(custodian_status)
       && (WEXITSTATUS(custodian_status) == 0 || WEXITSTATUS(custodian_status) == 1))
     return WEXITSTATUS(custodian_status);

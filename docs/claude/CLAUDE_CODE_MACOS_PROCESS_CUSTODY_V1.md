@@ -115,7 +115,12 @@ STARTED is emitted only after all checks and successful SIGCONT.
 The executable first creates an independent supervisor and an otherwise empty
 process-group anchor. Supervisor-private readiness and watchdog descriptors are
 relocated above the six public protocol descriptors and marked close-on-exec;
-the target therefore cannot inherit the watchdog writer. The custodian and target never expose that private group
+the target therefore cannot inherit the watchdog writer. A separate private
+cleanup-intent pipe distinguishes a custodian-declared group kill from an
+unexpected anchor death. The supervisor observes a dead anchor without first
+reaping it, so it can retire that still-owned group before the numeric identity
+could be reused. Unexpected anchor death kills the target group and custodian
+and can produce only uncertainty. The custodian and target never expose that private group
 identifier through the wire protocol. The target joins the already anchored
 group while suspended; only then may the existing identity checks permit it to
 continue. The custodian keeps the target leader waitable until cleanup. TERM

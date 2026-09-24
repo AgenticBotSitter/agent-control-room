@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { chmod, copyFile, lstat, mkdir, mkdtemp, readFile, rename, rm, symlink } from "node:fs/promises";
+import { access, chmod, copyFile, lstat, mkdir, mkdtemp, readFile, rename, rm, symlink } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { after, before, test, type TestContext } from "node:test";
@@ -126,6 +126,17 @@ nativeTest("custodian death after GO is recovered without turning uncertainty in
   assert.deepEqual(await next.exited, { code: 7, signal: null });
   assert.equal(CLAUDE_CODE_MACOS_PROCESS_PORT_ACTIVATION_BLOCKERS_V1.includes(
     "independent_helper_death_recovery_missing" as never), false);
+});
+
+nativeTest("anchor death after GO retires the target before releasing capacity for a fresh task", async t => {
+  const s = await setup(t); await s.ports.verifyInstallation({ ...s.request, signal: signal() }); const child = s.launch();
+  await child.writeStdin(Buffer.from("a"), signal()); await assert.rejects(child.exited, /_uncertain/);
+  await assert.rejects(child.close(signal()), /_uncertain/);
+  await new Promise(resolve => setTimeout(resolve, 550));
+  await assert.rejects(access(join(s.workspace, "anchor-target-survived")), { code: "ENOENT" });
+  await s.ports.verifyInstallation({ ...s.request, signal: signal() }); const next = s.launch();
+  await next.writeStdin(Buffer.from("x"), signal()); await next.closeStdin(signal());
+  assert.deepEqual(await next.exited, { code: 7, signal: null });
 });
 
 nativeTest("custodian death before HOLD is recovered within the bound and cannot start a target", async t => {
