@@ -13,7 +13,7 @@ export function createMacLocalStartupV1(input: Readonly<{
   openDatabase(configuration: MacLocalProtectedConfigurationV1["database"]): OpenedDatabase;
   readVersion(executablePath: string): Promise<string>;
   createService(input: Readonly<{ configuration: MacLocalProtectedConfigurationV1; database: OpenedDatabase;
-    workerReadiness: MacLocalWorkerReadinessV1 }>): LocalService;
+    workerReadiness: MacLocalWorkerReadinessV1 }>): LocalService | Promise<LocalService>;
 }>) {
   if (!input || typeof input.openDatabase !== "function" || typeof input.readVersion !== "function" || typeof input.createService !== "function")
     throw new Error("mac_local_startup_invalid");
@@ -27,7 +27,7 @@ export function createMacLocalStartupV1(input: Readonly<{
     try {
       database = input.openDatabase(configuration.database);
       if (!database || !database.client || typeof database.close !== "function") throw new Error();
-      service = input.createService({ configuration, database, workerReadiness });
+      service = await input.createService({ configuration, database, workerReadiness });
       if (!service || typeof service.start !== "function" || typeof service.close !== "function") throw new Error();
       await service.start();
       return Object.freeze({ close: service.close.bind(service), workerReadiness });

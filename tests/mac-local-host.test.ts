@@ -46,6 +46,31 @@ test("does not open the database when the pinned worker changes", async () => {
   assert.equal(opened, false);
 });
 
+test("protected Mac startup creates the shared task lifecycle only after worker verification and owns its shutdown", async () => {
+  const trace: string[] = [];
+  const server = new EventEmitter() as Server;
+  server.listen = ((_options: object, callback: () => void) => { queueMicrotask(callback); return server; }) as Server["listen"];
+  server.close = ((callback?: (error?: Error) => void) => { queueMicrotask(() => callback?.()); return server; }) as Server["close"];
+  server.closeIdleConnections = () => {}; server.closeAllConnections = () => {};
+  const host = createMacLocalProtectedHostV1({
+    async loadConfiguration() { trace.push("load"); return configuration; },
+    async readVersion() { trace.push("version"); return "codex test"; },
+    openDatabase() { trace.push("web-database"); return { client: {} as never, async close() { trace.push("web-close"); } }; },
+    async createTaskApplication({ configuration: received, workerReadiness }) {
+      trace.push("task-application");
+      assert.equal(received, configuration);
+      assert.deepEqual(workerReadiness.read(), [{ kind: "codex", state: "ready", proof: "not_proven" }]);
+      return { operations: {}, isReady: () => true, async close() { trace.push("task-close"); } };
+    },
+    assets: { async respond() { return undefined; } }, render() { return new Response("local"); },
+    createServer: () => server, listenerTiming: { bindMs: 100, closeMs: 100 },
+  });
+  const running = await host.start();
+  assert.deepEqual(trace, ["load", "version", "web-database", "task-application"]);
+  await running.close();
+  assert.deepEqual(trace, ["load", "version", "web-database", "task-application", "web-close", "task-close"]);
+});
+
 test("a Mac-local host owns the shared task composition and fails ready when that composition is unavailable", async () => {
   let databaseCloses = 0, taskCloses = 0, available = true;
   const server = new EventEmitter() as Server;
@@ -77,5 +102,13 @@ test("a Mac-local host refuses operations from a different controller lifecycle"
     configuration, database: { client: {} as never, async close() {} },
     assets: { async respond() { return undefined; } }, render() { return new Response("local"); },
     operations: {}, taskApplication: { operations: {}, isReady: () => true, async close() {} },
+  }), /mac_local_host_configuration_invalid/);
+});
+
+test("a protected Mac host refuses bare operations mixed with a task-application factory", () => {
+  assert.throws(() => createMacLocalProtectedHostV1({
+    async loadConfiguration() { return configuration; }, async readVersion() { return "codex test"; },
+    openDatabase() { return {} as never; }, assets: { async respond() { return undefined; } }, render() { return new Response("local"); },
+    operations: {}, createTaskApplication: async () => ({ operations: {}, isReady: () => true, async close() {} }),
   }), /mac_local_host_configuration_invalid/);
 });

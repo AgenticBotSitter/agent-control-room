@@ -75,22 +75,45 @@ export function createMacLocalProtectedHostV1(input: Readonly<{
   assets: PrivateClientAssets;
   render(request: Request): Promise<Response> | Response;
   operations?: MacLocalCanonicalTaskOperationsV1;
+  /** Optional construction of the shared task lifecycle after local executable
+   * verification and the restricted web database opening. The factory owns any
+   * extra restricted controller connections it opens; the returned lifecycle
+   * is then owned by the local host. */
+  createTaskApplication?: (input: Readonly<{
+    configuration: MacLocalProtectedConfigurationV1;
+    database: OpenedDatabase;
+    workerReadiness: MacLocalWorkerReadinessV1;
+  }>) => Pick<MacLocalTaskApplicationV1, "operations" | "isReady" | "close"> | Promise<Pick<MacLocalTaskApplicationV1, "operations" | "isReady" | "close">>;
   createServer?: (options: Readonly<ServerOptions>) => Server;
   listenerTiming?: { bindMs?: number; closeMs?: number };
 }>) {
   if (!input || typeof input.loadConfiguration !== "function" || typeof input.readVersion !== "function"
     || typeof input.openDatabase !== "function" || !input.assets || typeof input.assets.respond !== "function"
     || typeof input.render !== "function") throw new Error("mac_local_host_configuration_invalid");
+  if (input.operations && input.createTaskApplication) throw new Error("mac_local_host_configuration_invalid");
   const startup = createMacLocalStartupV1({
     readVersion: input.readVersion,
     openDatabase: input.openDatabase,
-    createService: ({ configuration, database, workerReadiness }) => createMacLocalWebServiceFromConfigurationV1({
-      configuration, database, assets: input.assets, render: input.render,
-      ...(input.operations ? { operations: input.operations } : {}),
-      workerReadiness,
-      ...(input.createServer ? { createServer: input.createServer } : {}),
-      ...(input.listenerTiming ? { listenerTiming: input.listenerTiming } : {}),
-    }),
+    createService: async ({ configuration, database, workerReadiness }) => {
+      let taskApplication: Pick<MacLocalTaskApplicationV1, "operations" | "isReady" | "close"> | undefined;
+      try {
+        taskApplication = input.createTaskApplication
+          ? await input.createTaskApplication({ configuration, database, workerReadiness }) : undefined;
+        return createMacLocalWebServiceFromConfigurationV1({
+          configuration, database, assets: input.assets, render: input.render,
+          ...(taskApplication ? { taskApplication } : input.operations ? { operations: input.operations } : {}),
+          workerReadiness,
+          ...(input.createServer ? { createServer: input.createServer } : {}),
+          ...(input.listenerTiming ? { listenerTiming: input.listenerTiming } : {}),
+        });
+      } catch (error) {
+        if (taskApplication) {
+          try { await taskApplication.close(); }
+          catch { throw new Error("mac_local_host_cleanup_uncertain"); }
+        }
+        throw error;
+      }
+    },
   });
   return Object.freeze({ async start() { return startup.start(await input.loadConfiguration()); } });
 }
