@@ -120,6 +120,15 @@ Add one Linux-only owner that:
 Return only an opaque, one-use factory for LCOI-2. Do not return a readiness
 boolean.
 
+**Current custody research:** the reusable stores reopen SQLite files by name,
+including ordinary sidecar files, so this owner needs a qualified Linux
+custody mechanism rather than another TypeScript path validator. The evaluated
+options and their licenses are recorded in
+[`LINUX_CODEX_SQLITE_CUSTODY_CANDIDATES.md`](LINUX_CODEX_SQLITE_CUSTODY_CANDIDATES.md).
+The leading candidate is a separately identified, tightly scoped trusted state
+process that reuses the current stores; it is not selected or qualified merely
+by this reference.
+
 ### LCOI-2: reconciled Codex bridge owner
 
 **Source progress:** complete. `PortableNodeBridge` now owns the durable,
