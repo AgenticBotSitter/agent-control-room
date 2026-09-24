@@ -237,10 +237,10 @@ export class RemoteControllerWorkerMaterializerV1 {
 
   /** Accepts only the signed receipt for the durably recorded packet, then
    * stores it in the existing PostgreSQL receipt table. It does not execute
-   * work and a receipt replay is intentionally harmless. An expired lease is
-   * not new execution authority: the original receipt's receive time must
-   * still be inside the packet window, and the session authenticates the
-   * envelope. Lost session recovery is not implemented by this method. */
+   * work and a receipt replay is intentionally harmless. A replaced or
+   * expired lease cannot add or register receipt evidence; the session still
+   * authenticates the envelope. Lost session recovery is not implemented by
+   * this method. */
   async acceptReceipt(value: RemoteControllerWorkerMaterializationReferenceV1, preparedValue: unknown,
     raw: string | Uint8Array, recordedAt: unknown) {
     const ref = referenceSchema.parse(value);

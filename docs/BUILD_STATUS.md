@@ -200,6 +200,15 @@ registered run; only the later protected remote intake may do that. Reconnect
 reuses the original registration without another send. This is disposable
 source evidence only; no remote worker, database, service, or network changed.
 
+**September 24 remote lease-epoch fence:** the remote delivery keeps the same
+lease revision from the canonical queue locator through packet preparation,
+saved-intent reconstruction, receipt intake, and discovered-run registration.
+If a receipt arrives after its lease has been replaced, the controller rejects
+it inside the same database transaction: neither the receipt nor a discovered
+run remains. Disposable tests cover that rollback alongside the ordinary
+two-worker and reconnect paths. This is source-only protection; no worker,
+database, or service was changed.
+
 The first installed Claude route is now pinned to Claude Code's `opus` alias
 instead of inheriting a desktop or command-line default. Its owner-attended
 qualification, saved process configuration, and later task execution must all
