@@ -6,6 +6,7 @@ import { captureMacLocalAdapterRegistryV1, deliverMacLocalAdapterV1,
 import { OWNER_TRUSTED_LOCAL_ENABLEMENT_V1 } from "../src/harness/v1/owner-trusted-local-enablements";
 import { LOCAL_ADAPTER_IDS_V1 } from "../src/harness/v1/local-adapter-installation";
 import { sha256Digest } from "../src/security/canonical-digest";
+import { createMacLocalWorkerReadinessV1 } from "../src/web/v1/mac-local-worker-readiness";
 
 const at = "2026-09-24T20:00:00.000Z";
 const enablement = Object.freeze({ schema: OWNER_TRUSTED_LOCAL_ENABLEMENT_V1, mode: "mac-local" as const, nodeId: "mac-1" as const,
@@ -30,7 +31,8 @@ function fixture() {
     workerId: `worker:${harness}`, adapterId: LOCAL_ADAPTER_IDS_V1[harness], adapterRevision: "revision:test",
     async deliver(delivery) { calls.push(delivery.worker.workerId); return { harness, state: "delegated" as const }; },
   };
-  return { registry: { enablement, adapters }, calls };
+  const readiness = createMacLocalWorkerReadinessV1(enablement, { nodeId: "mac-1", enabledWorkerIds: ["worker:codex", "worker:hermes", "worker:claude"] });
+  return { registry: { enablement, readiness, adapters }, readiness, calls };
 }
 
 test("captures only pinned enabled worker callbacks and calls the exact selected adapter", async () => {
@@ -62,4 +64,12 @@ test("refuses a callback not bound to a pinned enabled worker", () => {
     ...f.registry.adapters.codex!, workerId: "worker:claude" } } }), /mac_local_adapter_registry_unavailable/);
   assert.throws(() => captureMacLocalAdapterRegistryV1({ ...f.registry, adapters: { codex: {
     ...f.registry.adapters.codex!, adapterId: "adapter:wrong" } } }), /mac_local_adapter_registry_unavailable/);
+});
+
+test("refuses delivery before an unavailable worker callback can run", async () => {
+  const f = fixture(), delivery = packet("hermes");
+  f.readiness.recordReadinessFailure("worker:hermes");
+  await assert.rejects(deliverMacLocalAdapterV1(f.registry, delivery, { kind: "local", workerId: "worker:hermes" }, at),
+    /mac_local_adapter_registry_unavailable/);
+  assert.deepEqual(f.calls, []);
 });

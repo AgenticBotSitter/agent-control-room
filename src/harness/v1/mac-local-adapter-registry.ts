@@ -26,6 +26,10 @@ const kindForHarness: Readonly<Record<Harness, OwnerTrustedLocalWorkerKindV1>> =
  */
 export type MacLocalAdapterRegistryV1 = Readonly<{
   enablement: OwnerTrustedLocalEnablementV1;
+  /** The current host generation's status, derived after pinned executable
+   * verification. This is checked immediately before the existing adapter
+   * composition is called; it does not itself grant execution authority. */
+  readiness: Readonly<{ isReady(workerId: string): boolean }>;
   adapters: Readonly<Partial<Record<Harness, Readonly<{
     workerId: string;
     adapterId: string;
@@ -44,7 +48,7 @@ function harnessFor(kind: OwnerTrustedLocalWorkerKindV1): Harness {
  * per-harness delivery compositions.  No callback is run while capturing. */
 export function captureMacLocalAdapterRegistryV1(value: MacLocalAdapterRegistryV1): MacLocalAdapterRegistryV1 {
   if (!value || typeof value !== "object" || Array.isArray(value)
-    || Object.keys(value).length !== 2 || !Object.hasOwn(value, "enablement") || !Object.hasOwn(value, "adapters")
+    || Object.keys(value).length !== 3 || !Object.hasOwn(value, "enablement") || !Object.hasOwn(value, "readiness") || !Object.hasOwn(value, "adapters")
     || !value.adapters || typeof value.adapters !== "object" || Array.isArray(value.adapters)) refused();
   // A freshly loaded protected file has four fields; a previously captured
   // registry carries its verified digest as a fifth.  Validate either form
@@ -55,6 +59,8 @@ export function captureMacLocalAdapterRegistryV1(value: MacLocalAdapterRegistryV
       schema: rawEnablement.schema, mode: rawEnablement.mode, nodeId: rawEnablement.nodeId, workers: rawEnablement.workers,
     }); })()
     : captureOwnerTrustedLocalEnablementV1(rawEnablement);
+  if (!value.readiness || typeof value.readiness.isReady !== "function") refused();
+  const readiness = Object.freeze({ isReady: value.readiness.isReady.bind(value.readiness) });
   const adapters: Partial<Record<Harness, Readonly<{ workerId: string; adapterId: string; adapterRevision: string; deliver: Deliver }>>> = {};
   const enabled = new Map(enablement.workers.map(worker => [worker.kind, worker]));
   const keys = Object.keys(value.adapters);
@@ -72,7 +78,7 @@ export function captureMacLocalAdapterRegistryV1(value: MacLocalAdapterRegistryV
       deliver: port.deliver.bind(port),
     }) });
   }
-  return Object.freeze({ enablement, adapters: Object.freeze(adapters) });
+  return Object.freeze({ enablement, readiness, adapters: Object.freeze(adapters) });
 }
 
 /**
@@ -92,6 +98,9 @@ export async function deliverMacLocalAdapterV1(registryValue: MacLocalAdapterReg
   if (route.kind !== "local" || route.workerId !== delivery.worker.workerId) refused();
   const worker = registry.enablement.workers.find(value => value.workerId === route.workerId);
   if (!worker) refused();
+  let ready: unknown;
+  try { ready = registry.readiness.isReady(worker.workerId); } catch { return refused(); }
+  if (ready !== true) refused();
   const harness = harnessFor(worker.kind), adapter = registry.adapters[harness];
   if (!adapter || adapter.workerId !== worker.workerId || adapter.adapterId !== delivery.worker.adapterId
     || adapter.adapterRevision !== delivery.worker.adapterRevision) refused();
