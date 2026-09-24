@@ -19,7 +19,10 @@ A command the owner runs from Terminal.
 
 **Checks, for each role:**
 - Validate the settings with `validatePrivatePostgresConfiguration`.
-- Reuse `checkPrivateWebDatabase` / `createPrivateWebDatabaseCheck` from `src/web/v1/private-startup.ts` for the web role.
+- For W1, use the same generic read-only check for the web role and label it
+  honestly as a generic result. `createPrivateWebDatabaseCheck` needs the real
+  startup configuration (including non-JSON owner values), so it is a required
+  W3 startup gate rather than something to stub here.
 - For the other roles, connect read-only and confirm:
   - the TLS peer is verified
   - the role name matches
