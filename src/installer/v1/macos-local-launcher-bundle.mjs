@@ -69,6 +69,10 @@ const CLAUDE_BOUND_RUNTIME_FILES = Object.freeze([...EXPANDED_RUNTIME_FILES,
 // sidecar identity outside the report prevents later installation code from
 // replacing them with a look-alike record or a caller-selected helper path.
 const installedConfigurationVerifierCustody = new WeakMap();
+// V3 manifest planning needs only immutable release identities, never helper
+// paths.  Keep that one-use data custody separate from the later native-
+// verifier custody so planning cannot consume or expose the verifier route.
+const v3ManifestMaterializationCustody = new WeakMap();
 
 // Lazy imports preserve the exact legacy v1 layout: its extracted runtime has
 // neither new module, and must not attempt to resolve them.
@@ -309,12 +313,22 @@ export async function verifyExtractedMacosLocalLauncherBundleV1(bundleRootInput)
   if (expanded) installedConfigurationVerifierCustody.set(report, Object.freeze({
     sidecarRoot: join(bundleRoot, CONFIGURATION_NATIVE_SIDECAR_DIRECTORY),
     sidecar: installedConfigurationNativeSidecar,
+    installationJournalSidecar: installationJournalNativeSidecar,
+    outerLauncherManifestSha256: report.outerLauncherManifestSha256,
     releaseManifestDigest: report.releaseManifestDigest,
     version: report.version,
     ...(claudeBound ? {
       claudeProcessSidecarRoot: join(bundleRoot, CLAUDE_PROCESS_NATIVE_SIDECAR_DIRECTORY),
       claudeProcessSidecar: claudeCodeProcessNativeSidecar,
     } : {}),
+  }));
+  if (claudeBound) v3ManifestMaterializationCustody.set(report, Object.freeze({
+    installedConfigurationSidecar: installedConfigurationNativeSidecar,
+    installationJournalSidecar: installationJournalNativeSidecar,
+    outerLauncherManifestSha256: report.outerLauncherManifestSha256,
+    releaseManifestDigest: report.releaseManifestDigest,
+    version: report.version,
+    claudeProcessSidecar: claudeCodeProcessNativeSidecar,
   }));
   return report;
 }
@@ -328,6 +342,14 @@ export function consumeMacosLocalLauncherInstalledConfigurationVerifierCustodyV1
   if (!value || typeof value !== "object") refused();
   const custody = installedConfigurationVerifierCustody.get(value);
   if (!custody || !installedConfigurationVerifierCustody.delete(value)) refused();
+  return custody;
+}
+
+/** Burns one V3-only data custody without exposing helper paths or consuming the later verifier custody. */
+export function consumeMacosLocalLauncherV3ManifestMaterializationCustodyV1(value) {
+  if (!value || typeof value !== "object") refused();
+  const custody = v3ManifestMaterializationCustody.get(value);
+  if (!custody || !v3ManifestMaterializationCustody.delete(value)) refused();
   return custody;
 }
 

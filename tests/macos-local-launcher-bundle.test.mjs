@@ -16,11 +16,26 @@ import {
   runBoundedMacosLauncherChildV1,
   runMacosLocalLauncherBundleV1,
   consumeMacosLocalLauncherInstalledConfigurationVerifierCustodyV1,
+  consumeMacosLocalLauncherV3ManifestMaterializationCustodyV1,
   verifyExtractedMacosLocalLauncherBundleV1,
 } from "../src/installer/v1/macos-local-launcher-bundle.mjs";
 import { createPrivateInstalledConfigurationNativeVerifierCustodyV1,
   PRIVATE_INSTALLED_CONFIGURATION_NATIVE_VERIFIER_CUSTODY_V1 } from
   "../src/installer/v1/private-installed-configuration-native-verifier-custody.ts";
+import { planInstallationTopologyV1 } from "../src/harness/v1/installation-topology.ts";
+import { sha256Digest } from "../src/security/canonical-digest.ts";
+import { PRIVATE_INSTALLED_CONFIGURATION_NATIVE_SIDECAR_IDENTITY_V1 } from
+  "../src/installer/v1/private-installed-configuration-custody.ts";
+import { PRIVATE_INSTALLED_LOCAL_HERMES_CONFIGURATION_V1 } from
+  "../src/installer/v1/private-installed-local-hermes-runtime-composer.ts";
+import {
+  composePrivateInstalledConfigurationV3MaterializationPublicationV1,
+  preparePrivateInstalledConfigurationV1,
+  preparePrivateInstalledConfigurationV3MaterializationV1,
+  privateInstalledPostgresEndpointFingerprintV1,
+  PRIVATE_INSTALLED_CONFIGURATION_PREPARATION_V1,
+  PRIVATE_INSTALLED_CONFIGURATION_V3_MATERIALIZATION_PREPARATION_V1,
+} from "../src/installer/v1/private-installed-configuration-preparation.ts";
 import { runLocalLauncherCoreV1 } from "../src/installer/v1/local-launcher-core.mjs";
 import { INSTALLATION_JOURNAL_NATIVE_REVIEWED_CFLAGS_V1 } from
   "../src/installer/v1/macos-installation-journal-native-sidecar.mjs";
@@ -80,6 +95,49 @@ function expandedInput(outputDirectory) {
 
 function claudeBoundInput(outputDirectory) {
   return { ...expandedInput(outputDirectory), claudeCodeProcessNativeArtifactDirectory };
+}
+
+function installedConfigurationSourceForLauncher(verified, mutation = {}) {
+  const digest = value => sha256Digest(value);
+  const databaseEndpoint = { host: "private-authority.invalid", port: 5432,
+    database: "control_room", majorVersion: 17 };
+  const databaseAuthority = { provider: "postgresql", majorVersion: 17, database: "control_room",
+    networkClass: "private_network", databaseAuthorityDigest: digest("database-authority"),
+    targetIdentityDigest: digest("database-target"),
+    endpointFingerprint: privateInstalledPostgresEndpointFingerprintV1(databaseEndpoint),
+    credentialReferenceFingerprint: digest("owner-secret-reference"),
+    privateRouteEvidenceDigest: digest("reviewed-private-route") };
+  const topologyPlan = planInstallationTopologyV1({ databaseAuthorityDigest: databaseAuthority.databaseAuthorityDigest,
+    schedulerAuthorityDigest: digest("scheduler"), currentRoutes: [], requestedRoutes: [] });
+  const journal = verified.installationJournalNativeSidecar;
+  const nativeSidecar = { schema: PRIVATE_INSTALLED_CONFIGURATION_NATIVE_SIDECAR_IDENTITY_V1,
+    releaseVersion: journal.releaseVersion, portableReleaseManifestSha256: verified.releaseManifestDigest,
+    outerLauncherManifestSha256: verified.outerLauncherManifestSha256,
+    sidecarManifestSha256: journal.sidecarManifestSha256, archiveSha256: journal.archiveSha256,
+    artifactManifestSha256: journal.artifactManifestSha256, executableSha256: journal.executableSha256,
+    platform: "darwin", protocol: "ACRJNL1", architecture: journal.architecture,
+    ...(mutation.nativeSidecar ?? {}) };
+  const privateConfigurationData = { schema: PRIVATE_INSTALLED_LOCAL_HERMES_CONFIGURATION_V1,
+    installationId: "local-control-room", releaseDigest: verified.releaseManifestDigest,
+    installedManifestBindingDigest: digest("installed-binding"), runtimeIdentityDigest: digest("runtime"),
+    prerequisiteInput: { installationId: "local-control-room", topologyPlan,
+      releaseDigest: verified.releaseManifestDigest, releasePreflight: { evidenceDigest: digest("release-preflight") },
+      privatePlacement: { evidenceDigest: digest("private-placement") } },
+    settledInstallationPlan: { schema: "control-room.installation-plan/v1", digest: digest("plan") },
+    hermes: { runnerConfiguration: { executablePath: "/private/owner-held/hermes",
+      workingDirectory: "/private/owner-held/workspace", profile: "cr", model: "owner-selected-model",
+      provider: "owner-selected-provider" }, taskPolicy: { taskClass: "text_review", tools: "none" } },
+    operator: { port: 3210, templateId: "template:hermes-text-review" },
+    database: { ...databaseEndpoint, roles: { web: "control_room_web", coordinator: "control_room_coordinator",
+      results: "control_room_results", evidence: "control_room_evidence", queueWorker: "control_room_queue_worker" },
+    queueConcurrency: 1 }, artifactStorage: { local: { rootPath: "/private/owner-held/results" },
+      inventory: { storageNamespaceDigest: digest("storage") } },
+    setupSources: { database_authority: { targetIdentityDigest: databaseAuthority.targetIdentityDigest },
+      agent_readiness: { schema: "control-room.private-installed-local-hermes-agent-source/v1" } } };
+  return { schema: PRIVATE_INSTALLED_CONFIGURATION_PREPARATION_V1, installationId: "local-control-room",
+    releaseDigest: verified.releaseManifestDigest,
+    standardProtectedRootPath: "/Users/example-owner/Library/Application Support/Agent Control Room/Protected",
+    expectedOwnerUid: 501, privateConfigurationData, nativeSidecar, databaseAuthority, verificationDeadlineMs: 5_000 };
 }
 
 async function writeClaudeProcessNativeArtifact(directory, architecture = "arm64") {
@@ -277,6 +335,100 @@ test("v3 ships one exact release-bound Claude process sidecar without installing
   assert.equal(releaseCustody.claudeProcessSidecarRoot,
     join(claudeBoundBundleRoot, "native/claude-code-process"));
   assert.deepEqual(releaseCustody.claudeProcessSidecar, second.claudeCodeProcessNativeSidecar);
+});
+
+test("v3 manifest preparation consumes exact launcher custody and emits only inert owner-write bytes", async () => {
+  const verified = await verifyExtractedMacosLocalLauncherBundleV1(claudeBoundBundleRoot);
+  const configurationPlan = preparePrivateInstalledConfigurationV1(installedConfigurationSourceForLauncher(verified));
+  const prepared = preparePrivateInstalledConfigurationV3MaterializationV1({
+    schema: PRIVATE_INSTALLED_CONFIGURATION_V3_MATERIALIZATION_PREPARATION_V1,
+    configurationPlan, verifiedLauncherBundle: verified,
+  });
+  assert.equal(prepared.status, "ready_for_owner_attended_materialization");
+  assert.equal(prepared.manifest.schema, "control-room.private-installed-configuration-custody/v3");
+  assert.deepEqual(prepared.preflight, { status: "passed", exactVerifiedLauncherBound: true,
+    exactConfigurationVerifierBound: true,
+    exactJournalSidecarBound: true, exactClaudeProcessSidecarBound: true,
+    evidenceDigest: prepared.preflight.evidenceDigest });
+  assert.deepEqual(prepared.rollback, { status: "not_required_before_materialization",
+    previousInstallationUnchanged: true, createdPaths: 0, cleanupRequired: false,
+    evidenceDigest: prepared.rollback.evidenceDigest });
+  assert.equal(prepared.performsEffect, false); assert.equal(prepared.writesProtectedFiles, false);
+  assert.equal(prepared.containsProtectedPath, false); assert.equal(prepared.containsConfigurationBytes, false);
+  assert.equal(prepared.containsHelperPath, false); assert.equal(prepared.containsVerifier, false);
+  const redacted = JSON.stringify(prepared);
+  assert.doesNotMatch(redacted, /example-owner|private-authority|owner-held|\.acr-|sidecarRoot/u);
+  assert.throws(() => consumeMacosLocalLauncherV3ManifestMaterializationCustodyV1(verified), refusal,
+    "manifest preparation burns only its data-only launcher custody");
+  const laterVerifierCustody = consumeMacosLocalLauncherInstalledConfigurationVerifierCustodyV1(verified);
+  assert.equal(laterVerifierCustody.releaseManifestDigest, verified.releaseManifestDigest,
+    "materialization preparation preserves the separate later native-verifier custody");
+  const publication = composePrivateInstalledConfigurationV3MaterializationPublicationV1(prepared);
+  assert.equal(publication.status, "exact_bytes_ready_for_owner_attended_write");
+  assert.equal(publication.performsEffect, false); assert.equal(publication.writesProtectedFiles, false);
+  assert.equal(publication.acceptsPath, false); assert.equal(publication.acceptsVerifier, false);
+  assert.equal(publication.acceptsHelperBytes, false); assert.equal(publication.acceptsConfiguration, false);
+  const manifest = JSON.parse(Buffer.from(publication.manifestBytes).toString("utf8"));
+  assert.equal(manifest.schema, "control-room.private-installed-configuration-custody/v3");
+  assert.deepEqual(manifest.claudeCodeProcessNativeSidecar, {
+    schema: "control-room.private-installed-claude-process-sidecar-identity/v1",
+    releaseVersion: verified.version, releaseSha256: verified.releaseManifestDigest,
+    sidecarManifestSha256: verified.claudeCodeProcessNativeSidecar.sidecarManifestSha256,
+    archiveSha256: verified.claudeCodeProcessNativeSidecar.archiveSha256,
+    artifactManifestSha256: verified.claudeCodeProcessNativeSidecar.artifactManifestSha256,
+    executableSha256: verified.claudeCodeProcessNativeSidecar.executableSha256,
+    platform: "darwin", architecture: verified.claudeCodeProcessNativeSidecar.architecture,
+    minimumMacos: "13.0", protocol: "ACRCCP1",
+  });
+  assert.equal(manifest.journal.nativeSidecar.outerLauncherManifestSha256,
+    verified.outerLauncherManifestSha256);
+  assert.throws(() => composePrivateInstalledConfigurationV3MaterializationPublicationV1(prepared), /refused/u,
+    "exact bytes are one-use");
+});
+
+test("v3 manifest preparation rejects look-alikes, substitutions, incomplete binding, and replay", async () => {
+  const extraFieldReport = await verifyExtractedMacosLocalLauncherBundleV1(claudeBoundBundleRoot);
+  const extraFieldPlan = preparePrivateInstalledConfigurationV1(installedConfigurationSourceForLauncher(extraFieldReport));
+  for (const extra of [
+    { helperPath: "/tmp/helper" }, { helperBytes: Uint8Array.of(1) },
+    { verifier: { verifyProtectedPath() {} } }, { configuration: { arbitrary: true } },
+  ]) assert.throws(() => preparePrivateInstalledConfigurationV3MaterializationV1({
+    schema: PRIVATE_INSTALLED_CONFIGURATION_V3_MATERIALIZATION_PREPARATION_V1,
+    configurationPlan: extraFieldPlan, verifiedLauncherBundle: extraFieldReport, ...extra,
+  }), /refused/u);
+
+  const clonedReport = await verifyExtractedMacosLocalLauncherBundleV1(claudeBoundBundleRoot);
+  const clonedReportPlan = preparePrivateInstalledConfigurationV1(installedConfigurationSourceForLauncher(clonedReport));
+  assert.throws(() => preparePrivateInstalledConfigurationV3MaterializationV1({
+    schema: PRIVATE_INSTALLED_CONFIGURATION_V3_MATERIALIZATION_PREPARATION_V1,
+    configurationPlan: clonedReportPlan, verifiedLauncherBundle: { ...clonedReport },
+  }), /refused/u, "a structural launcher report has no custody");
+
+  const clonedPlanReport = await verifyExtractedMacosLocalLauncherBundleV1(claudeBoundBundleRoot);
+  const clonedPlan = preparePrivateInstalledConfigurationV1(installedConfigurationSourceForLauncher(clonedPlanReport));
+  assert.throws(() => preparePrivateInstalledConfigurationV3MaterializationV1({
+    schema: PRIVATE_INSTALLED_CONFIGURATION_V3_MATERIALIZATION_PREPARATION_V1,
+    configurationPlan: structuredClone(clonedPlan), verifiedLauncherBundle: clonedPlanReport,
+  }), /refused/u, "a structural configuration plan has no captured bytes");
+
+  const substitutedReport = await verifyExtractedMacosLocalLauncherBundleV1(claudeBoundBundleRoot);
+  const substitutedPlan = preparePrivateInstalledConfigurationV1(installedConfigurationSourceForLauncher(substitutedReport,
+    { nativeSidecar: { executableSha256: `sha256:${"f".repeat(64)}` } }));
+  assert.throws(() => preparePrivateInstalledConfigurationV3MaterializationV1({
+    schema: PRIVATE_INSTALLED_CONFIGURATION_V3_MATERIALIZATION_PREPARATION_V1,
+    configurationPlan: substitutedPlan, verifiedLauncherBundle: substitutedReport,
+  }), /refused/u, "the journal helper identity cannot be substituted");
+  assert.throws(() => preparePrivateInstalledConfigurationV3MaterializationV1({
+    schema: PRIVATE_INSTALLED_CONFIGURATION_V3_MATERIALIZATION_PREPARATION_V1,
+    configurationPlan: substitutedPlan, verifiedLauncherBundle: substitutedReport,
+  }), /refused/u, "a failed binding cannot be retried with replacement input");
+
+  const incompleteReport = await verifyExtractedMacosLocalLauncherBundleV1(expandedBundleRoot);
+  const incompletePlan = preparePrivateInstalledConfigurationV1(installedConfigurationSourceForLauncher(incompleteReport));
+  assert.throws(() => preparePrivateInstalledConfigurationV3MaterializationV1({
+    schema: PRIVATE_INSTALLED_CONFIGURATION_V3_MATERIALIZATION_PREPARATION_V1,
+    configurationPlan: incompletePlan, verifiedLauncherBundle: incompleteReport,
+  }), /refused/u, "a v2 launcher cannot materialize a v3 Claude manifest");
 });
 
 test("v3 refuses missing, changed, or mixed-architecture Claude helper input without publishing", async () => {
