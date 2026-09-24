@@ -349,7 +349,7 @@ export function createHermes021MacosOwnerAuthorizedLocalOnlyPrivatePortV1(contra
   const host = createHermes021MacosOwnerAuthorizedLocalOnlyStreamJsonHostV1(contractValue);
   const port = createHermes021MacosStreamJsonPrivatePortV1(captured.workerBinding, host);
   let used = false;
-  return Object.freeze({ async run(input) {
+  return Object.freeze({ async run(input: Parameters<Hermes021MacosLocalPrivatePortV1["run"]>[0]) {
     if (used || !input || input.localServiceId !== captured.workerBinding.localServiceId
       || sha256Digest(denseData(input.task)) !== admission.taskDigest
       || attempts.activeTaskDigest !== undefined || attempts.attemptedTaskDigests.has(admission.taskDigest)) return runnerRefused();
