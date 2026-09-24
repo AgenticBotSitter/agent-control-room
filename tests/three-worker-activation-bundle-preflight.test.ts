@@ -146,7 +146,7 @@ test("a structural fake Hermes host cannot advance the activation preflight", as
   assert.deepEqual(plan.ownerActions, []);
 });
 
-test("real release inventory advances only the verified-release component", async t => {
+test("real release inventory remains blocked without a reviewed release identity", async t => {
   const source = await releaseSource();
   t.after(() => rm(source.root, { recursive: true, force: true }));
   const selectedBinding = { ...binding, releaseDigest: source.releasePreparation.releaseManifestDigest };
@@ -156,19 +156,24 @@ test("real release inventory advances only the verified-release component", asyn
   const proof = recordVerifiedReleaseThreeWorkerActivationSourceProofV1({ aggregate: custody.aggregate,
     releasePreparation: source.releasePreparation });
   const plan = composeThreeWorkerActivationBundlePreflightV1({ aggregate: custody.aggregate, sourceProofs: [proof] });
-  assert.equal(plan.components.find(item => item.component === "verified_release")?.state, "ready");
+  const releaseComponent = plan.components.find(item => item.component === "verified_release");
+  assert.equal(releaseComponent?.state, "blocked");
+  assert.equal(releaseComponent?.blocker, "reviewed_release_identity_missing");
+  assert.match(releaseComponent?.evidenceDigest ?? "", /^sha256:[a-f0-9]{64}$/u);
   assert.equal(plan.components.filter(item => item.blocker === "source_proof_missing").length, 5);
   assert.throws(() => recordVerifiedReleaseThreeWorkerActivationSourceProofV1({ aggregate: custody.aggregate,
     releasePreparation: structuredClone(source.releasePreparation) }), /local_installation_package_refused/u);
 });
 
-test("real protected-configuration plan advances only its exact aggregate", () => {
+test("real protected-configuration plan remains blocked until owner write verification", () => {
   const configurationPlan = protectedConfigurationSource();
   const custody = createThreeWorkerActivationBundleCustodyV1(binding);
   const proof = recordProtectedConfigurationThreeWorkerActivationSourceProofV1({ aggregate: custody.aggregate,
     configurationPlan });
   const plan = composeThreeWorkerActivationBundlePreflightV1({ aggregate: custody.aggregate, sourceProofs: [proof] });
-  assert.equal(plan.components.find(item => item.component === "protected_configuration")?.state, "ready");
+  assert.equal(plan.components.find(item => item.component === "protected_configuration")?.state, "blocked");
+  assert.equal(plan.components.find(item => item.component === "protected_configuration")?.blocker,
+    "owner_materialization_verification_missing");
   assert.equal(plan.components.filter(item => item.blocker === "source_proof_missing").length, 5);
   assert.throws(() => recordProtectedConfigurationThreeWorkerActivationSourceProofV1({ aggregate: custody.aggregate,
     configurationPlan: structuredClone(configurationPlan) }), /private_installed_configuration_preparation_refused/u);
