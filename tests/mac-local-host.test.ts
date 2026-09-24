@@ -3,7 +3,7 @@ import { EventEmitter } from "node:events";
 import type { Server } from "node:http";
 import test from "node:test";
 import { sha256Digest } from "../src/security";
-import { createMacLocalProtectedHostV1 } from "../src/web/v1/mac-local-host";
+import { createMacLocalProtectedHostV1, createMacLocalWebServiceFromConfigurationV1 } from "../src/web/v1/mac-local-host";
 import { MAC_LOCAL_PROTECTED_CONFIGURATION_V1 } from "../src/web/v1/mac-local-protected-configuration";
 import { LOCAL_OWNER_SESSION_PROFILE_V1 } from "../src/web/v1/local-owner-session";
 import { OWNER_TRUSTED_LOCAL_ENABLEMENT_V1 } from "../src/harness/v1/owner-trusted-local-enablements";
@@ -44,4 +44,38 @@ test("does not open the database when the pinned worker changes", async () => {
   });
   await assert.rejects(host.start());
   assert.equal(opened, false);
+});
+
+test("a Mac-local host owns the shared task composition and fails ready when that composition is unavailable", async () => {
+  let databaseCloses = 0, taskCloses = 0, available = true;
+  const server = new EventEmitter() as Server;
+  server.listen = ((_options: object, callback: () => void) => { queueMicrotask(callback); return server; }) as Server["listen"];
+  server.close = ((callback?: (error?: Error) => void) => { queueMicrotask(() => callback?.()); return server; }) as Server["close"];
+  server.closeIdleConnections = () => {}; server.closeAllConnections = () => {};
+  const service = createMacLocalWebServiceFromConfigurationV1({
+    configuration,
+    database: { client: {} as never, async close() { databaseCloses++; } },
+    assets: { async respond() { return undefined; } },
+    render() { return new Response("local"); },
+    createServer: () => server, listenerTiming: { bindMs: 100, closeMs: 100 },
+    taskApplication: {
+      operations: {}, isReady: () => available,
+      async close() { taskCloses++; },
+    },
+  });
+  await service.start();
+  assert.equal(service.isReady(), true);
+  available = false;
+  assert.equal(service.isReady(), false, "the site never presents itself as ready after its controller is unavailable");
+  await service.close();
+  assert.equal(databaseCloses, 1);
+  assert.equal(taskCloses, 1);
+});
+
+test("a Mac-local host refuses operations from a different controller lifecycle", () => {
+  assert.throws(() => createMacLocalWebServiceFromConfigurationV1({
+    configuration, database: { client: {} as never, async close() {} },
+    assets: { async respond() { return undefined; } }, render() { return new Response("local"); },
+    operations: {}, taskApplication: { operations: {}, isReady: () => true, async close() {} },
+  }), /mac_local_host_configuration_invalid/);
 });
