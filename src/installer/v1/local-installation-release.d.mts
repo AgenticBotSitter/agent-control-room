@@ -23,3 +23,7 @@ export function prepareLocalInstallationReleaseV1(input: Readonly<{
   expectedDigest?: `sha256:${string}`;
   serviceState?: "validated_not_installed";
 }>): Promise<LocalInstallationReleaseReportV1>;
+
+export function verifyLocalInstallationReleasePreparationV1(
+  value: unknown,
+): LocalInstallationReleaseReportV1;

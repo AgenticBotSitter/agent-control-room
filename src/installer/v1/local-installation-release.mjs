@@ -9,6 +9,7 @@ const MAX_PACKAGE_BYTES = 64 * 1024;
 const MAX_RELEASE_MANIFEST_BYTES = 16 * 1024 * 1024;
 const digestPattern = /^sha256:[a-f0-9]{64}$/u;
 const versionPattern = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/u;
+const preparedReports = new WeakSet();
 
 const requiredFiles = Object.freeze([
   "deploy/operator-config.mjs",
@@ -122,11 +123,23 @@ export async function prepareLocalInstallationReleaseV1(input) {
         "Review database, backup and supervisor readiness before activation."]
       : ["Review database, backup and supervisor readiness before activation.",
         "Use the separate owner-authorized activation step when every readiness check passes."];
-    return Object.freeze({ schema: SCHEMA, mode: "dry-run", bundle, service,
+    const report = Object.freeze({ schema: SCHEMA, mode: "dry-run", bundle, service,
       releaseManifestDigest: `sha256:${createHash("sha256").update(releaseManifestBytes).digest("hex")}`,
       readyForOwnerSetup: true, startsService: false, createsDatabase: false,
       writesCredentials: false, nextSteps: Object.freeze(nextSteps) });
+    preparedReports.add(report);
+    return report;
   } catch {
     return refused();
   }
+}
+
+/**
+ * Re-authenticates an exact report produced by this module's real filesystem
+ * inventory. A parsed, cloned, or caller-authored look-alike has no process-
+ * local provenance and is refused.
+ */
+export function verifyLocalInstallationReleasePreparationV1(value) {
+  if (!value || typeof value !== "object" || !preparedReports.has(value)) refused();
+  return value;
 }

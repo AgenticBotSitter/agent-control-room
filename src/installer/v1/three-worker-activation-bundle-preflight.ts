@@ -2,6 +2,9 @@ import { z } from "zod";
 import { canonicalJson, sha256Digest } from "../../security/canonical-digest";
 import { verifyHermes021MacosProtectedWorkerReadinessV1 } from
   "../../harness/hermes-021-v1/protected-worker-readiness";
+import { verifyLocalInstallationReleasePreparationV1 } from "./local-installation-release.mjs";
+import { verifyPrivateInstalledConfigurationPreparationV1 } from
+  "./private-installed-configuration-preparation";
 
 /**
  * Redacted, source-only view of one bounded activation window. A component can
@@ -36,12 +39,12 @@ const rollbackKind = z.enum(rollbackKinds);
 export type ThreeWorkerActivationBundleComponentV1 = z.infer<typeof component>;
 type AggregateState = Binding & { generation: number; currentPlanDigest?: string };
 type SourceProof = Binding & Readonly<{ aggregate: object; component: ThreeWorkerActivationBundleComponentV1;
-  sourceSchema: string; state: "owner_attended_action"; evidenceDigest: string }>;
+  sourceSchema: string; state: "ready" | "owner_attended_action"; evidenceDigest: string }>;
 const aggregates = new WeakMap<object, AggregateState>();
 const proofs = new WeakMap<object, SourceProof>();
 
 const componentOutput = z.object({ component, sourceSchema: z.string().min(1).max(160),
-  state: z.enum(["blocked", "owner_attended_action"]), blocker: z.literal("source_proof_missing").optional(),
+  state: z.enum(["blocked", "ready", "owner_attended_action"]), blocker: z.literal("source_proof_missing").optional(),
   evidenceDigest: digest.optional() }).strict();
 const materialSchema = z.object({ schema: z.literal(THREE_WORKER_ACTIVATION_BUNDLE_PREFLIGHT_V1),
   installationId, releaseDigest: digest, topologyPlanDigest: digest, generation: z.number().int().positive(),
@@ -95,6 +98,42 @@ export function recordHermesThreeWorkerActivationSourceProofV1(input: Readonly<{
   const token = Object.freeze({ schema: THREE_WORKER_ACTIVATION_SOURCE_PROOF_V1 });
   proofs.set(token, Object.freeze({ ...selected, aggregate: input.aggregate as object, component: "hermes_route" as const,
     sourceSchema: definitions.hermes_route.sourceSchema, state: "owner_attended_action" as const, evidenceDigest }));
+  return token;
+}
+
+/** Accepts only the exact report returned by the filesystem-backed release inventory. */
+export function recordVerifiedReleaseThreeWorkerActivationSourceProofV1(input: Readonly<{
+  aggregate: unknown; releasePreparation: unknown;
+}>): object {
+  const selected = aggregate(input?.aggregate);
+  const report = verifyLocalInstallationReleasePreparationV1(input.releasePreparation);
+  if (report.bundle.state !== "matched_expected_digest"
+    || report.releaseManifestDigest !== selected.releaseDigest) return refused();
+  const evidenceDigest = sha256Digest({ purpose: "three-worker-verified-release-source-proof/v1",
+    installationId: selected.installationId, releaseDigest: selected.releaseDigest,
+    topologyPlanDigest: selected.topologyPlanDigest, report });
+  const token = Object.freeze({ schema: THREE_WORKER_ACTIVATION_SOURCE_PROOF_V1 });
+  proofs.set(token, Object.freeze({ ...selected, aggregate: input.aggregate as object,
+    component: "verified_release" as const, sourceSchema: definitions.verified_release.sourceSchema,
+    state: "ready" as const, evidenceDigest }));
+  return token;
+}
+
+/** Accepts only an exact process-local protected-configuration preparation plan. */
+export function recordProtectedConfigurationThreeWorkerActivationSourceProofV1(input: Readonly<{
+  aggregate: unknown; configurationPlan: unknown;
+}>): object {
+  const selected = aggregate(input?.aggregate);
+  const verified = verifyPrivateInstalledConfigurationPreparationV1(input.configurationPlan);
+  if (verified.installationId !== selected.installationId || verified.releaseDigest !== selected.releaseDigest
+    || verified.topologyPlanDigest !== selected.topologyPlanDigest) return refused();
+  const evidenceDigest = sha256Digest({ purpose: "three-worker-protected-configuration-source-proof/v1",
+    installationId: selected.installationId, releaseDigest: selected.releaseDigest,
+    topologyPlanDigest: selected.topologyPlanDigest, sourcePlanDigest: verified.planDigest });
+  const token = Object.freeze({ schema: THREE_WORKER_ACTIVATION_SOURCE_PROOF_V1 });
+  proofs.set(token, Object.freeze({ ...selected, aggregate: input.aggregate as object,
+    component: "protected_configuration" as const,
+    sourceSchema: definitions.protected_configuration.sourceSchema, state: "ready" as const, evidenceDigest }));
   return token;
 }
 

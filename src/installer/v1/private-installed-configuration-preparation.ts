@@ -46,6 +46,7 @@ type NativePort = Readonly<{ verifyProtectedPath(request: unknown): Promise<unkn
 type Captured = Readonly<{
   installationId: string;
   releaseDigest: string;
+  topologyPlanDigest: string;
   rootPath: string;
   ownerUid: number;
   configurationBytes: Uint8Array;
@@ -382,6 +383,7 @@ function capture(inputValue: unknown) {
     journalPathFingerprint: sha256Digest({ purpose: "private-installed-configuration-path/v1", kind: "journal",
       path: join(rootPath, journalDirectoryName) }), manifestName, configurationName, journalDirectoryName });
   return Object.freeze({ installationId, releaseDigest, rootPath, ownerUid: input.expectedOwnerUid as number,
+    topologyPlanDigest: topology.planDigest,
     verificationDeadlineMs: input.verificationDeadlineMs as number, configurationBytes, manifestBytes,
     configurationSha256: sha256Bytes(configurationBytes), manifestSha256: sha256Bytes(manifestBytes),
     fingerprints, authority });
@@ -402,7 +404,8 @@ function planFor(captured: ReturnType<typeof capture>): PrivateInstalledConfigur
   const plan = Object.freeze({ ...material,
     planDigest: sha256Digest({ purpose: "private-installed-configuration-preparation/v1", plan: material }) });
   capturedPlans.set(plan, Object.freeze({ installationId: captured.installationId,
-    releaseDigest: captured.releaseDigest, rootPath: captured.rootPath, ownerUid: captured.ownerUid,
+    releaseDigest: captured.releaseDigest, topologyPlanDigest: captured.topologyPlanDigest,
+    rootPath: captured.rootPath, ownerUid: captured.ownerUid,
     configurationBytes: Uint8Array.from(captured.configurationBytes), manifestBytes: Uint8Array.from(captured.manifestBytes),
     verificationDeadlineMs: captured.verificationDeadlineMs, planDigest: plan.planDigest }));
   return plan;
@@ -426,6 +429,19 @@ export function preflightPrivateInstalledConfigurationPreparationV1(value: unkno
 /** Creates a redacted plan. Exact bytes and private paths stay process-local. */
 export function preparePrivateInstalledConfigurationV1(value: unknown): PrivateInstalledConfigurationPlanV1 {
   try { return planFor(capture(value)); } catch { return refused(); }
+}
+
+/**
+ * Re-authenticates one exact source-only plan without releasing its private
+ * bytes or consuming its later owner-materialization custody. Structural
+ * copies and caller-authored plans have no entry in the producer's WeakMap.
+ */
+export function verifyPrivateInstalledConfigurationPreparationV1(value: unknown) {
+  if (!value || typeof value !== "object" || types.isProxy(value)) return refused();
+  const captured = capturedPlans.get(value);
+  if (!captured) return refused();
+  return Object.freeze({ installationId: captured.installationId, releaseDigest: captured.releaseDigest,
+    topologyPlanDigest: captured.topologyPlanDigest, planDigest: captured.planDigest });
 }
 
 function launcherV3Custody(value: unknown): LauncherV3Custody {
