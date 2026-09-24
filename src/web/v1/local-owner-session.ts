@@ -68,8 +68,12 @@ export class LocalOwnerSessionServiceV1 {
   private failures: number[] = [];
   constructor(readonly profile: LocalOwnerSessionProfileV1) {}
 
+  assertLocalRequest(request: Request, requireOrigin = false): void {
+    localRequest(request, this.profile.origin, requireOrigin);
+  }
+
   async issue(request: Request, ownerCode: unknown, nowMs: number): Promise<{ cookie: string; expiresAt: string }> {
-    localRequest(request, this.profile.origin, true);
+    this.assertLocalRequest(request, true);
     this.failures = this.failures.filter(value => value > nowMs - failureWindowMs);
     if (this.failures.length >= maxFailures) throw new WebAccessError("access_denied");
     if (typeof ownerCode !== "string" || ownerCode.length < 24 || ownerCode.length > 200
@@ -86,7 +90,7 @@ export class LocalOwnerSessionServiceV1 {
   }
 
   verify(request: Request, nowMs: number): VerifiedWebIdentity {
-    localRequest(request, this.profile.origin, false);
+    this.assertLocalRequest(request);
     const token = oneCookie(request), tokenDigest = sha256Digest({ token }), session = this.sessions.get(tokenDigest);
     if (!session || Date.parse(session.issuedAt) > nowMs || Date.parse(session.expiresAt) <= nowMs)
       throw new WebAccessError("authentication_required");

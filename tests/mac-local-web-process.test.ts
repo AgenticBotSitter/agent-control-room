@@ -45,6 +45,8 @@ test("the Mac-local wrapper does not accept a forwarded or foreign request", asy
   const response = await app.handle(new Request(`${origin}/api/v1/local-owner-session`, { method: "POST", headers: {
     origin, forwarded: "for=192.0.2.1", "content-type": "application/json" }, body: JSON.stringify({ ownerCode }) }), () => new Response("unused"));
   assert.equal(response.status, 403);
+  const sessionPage = await app.handle(new Request(`${origin}/session`, { headers: { forwarded: "for=192.0.2.1" } }), () => new Response("unused"));
+  assert.equal(sessionPage.status, 403);
   await app.close();
 });
 

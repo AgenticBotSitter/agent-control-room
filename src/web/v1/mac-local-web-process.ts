@@ -42,6 +42,7 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
       if (url.origin !== options.origin) throw new WebAccessError("access_denied");
       if (url.pathname === "/session") {
         if (request.method !== "GET" || url.search) throw new WebAccessError("invalid_request");
+        sessions.assertLocalRequest(request);
         return renderLocalOwnerSignInPageV1();
       }
       if (url.pathname === "/api/v1/local-owner-session") {
