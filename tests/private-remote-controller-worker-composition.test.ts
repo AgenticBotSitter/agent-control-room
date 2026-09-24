@@ -21,6 +21,7 @@ import { capturePrivateRemoteControllerWorkerQueueCapabilityV1, capturePrivateRe
 import { CONTROLLER_WORKER_REMOTE_ADAPTER_V1, CONTROLLER_WORKER_REMOTE_CAPABILITY_V1,
   CONTROLLER_WORKER_REMOTE_JOB_TYPE_V1, CONTROLLER_WORKER_REMOTE_START_OPERATION_V1,
   createRemoteWorkerEnrollmentV1 } from "../src/harness/v1/remote-worker-delivery";
+import { createRemoteWorkerEnrollmentInStoreV1 } from "../src/harness/v1/remote-worker-enrollment-store";
 import { TaskExecutionPlanner, type NativeTaskTemplate } from "../src/web/v1/task-execution-planner";
 import { boundPrivateDatabase } from "../src/web/v1/bounded-database";
 import { TaskAssignmentCoordinator } from "../src/web/v1/task-assignment-coordinator";
@@ -40,14 +41,14 @@ async function realInstalledConnection(enrollment: ReturnType<typeof createRemot
     adapterId: enrollment.adapterId, adapterRevision: enrollment.adapterRevision,
     enrollmentDigest: enrollment.enrollmentDigest }, journal, clock);
   const bridge = new PortableNodeBridge({ tenantId: binding.tenantId, nodeId: binding.nodeId,
-    keyId: "node-key:protected-remote",
+    keyId: "key:test",
     features: [CONTROLLER_WORKER_NODE_DELIVERY_FEATURE_V1, CONTROLLER_WORKER_NODE_RECOVERY_FEATURE_V1] }, journal,
   { async sign(frame) { return signNodeFrame(frame, nodeKeys.privateKey); } },
   new NodeProtocolAuthenticator({ async resolve(value) { return { ...value, algorithm: "ed25519", publicKeySpki: serverSpki,
     state: "active", principalState: "active", validFrom: at(1_000) }; } }, journal,
   new FixedWindowProtocolRateLimiter(100, 60)), undefined, undefined, undefined, undefined, undefined, handler);
   const createSession = () => new ServerNodeSession({ tenantId: binding.tenantId, nodeId: binding.nodeId,
-    nodeKeyId: "node-key:protected-remote", serverId: "server:control-room", serverKeyId: "server-key:control-room",
+    nodeKeyId: "key:test", serverId: "server:control-room", serverKeyId: "server-key:control-room",
     serverPublicKeySpki: serverSpki, transportIdentity: "transport:protected-remote",
     features: [CONTROLLER_WORKER_NODE_DELIVERY_FEATURE_V1, CONTROLLER_WORKER_NODE_RECOVERY_FEATURE_V1],
     maxFrameBytes: 131_072, heartbeatIntervalSeconds: 30 }, {
@@ -129,6 +130,18 @@ async function canonical() {
       attemptId: assigned.receipt.attemptId, leaseId: assigned.receipt.leaseId, inputDigest: planned.receipt.inputDigest } };
 }
 
+const canonicalCapabilityDigest = sha256Digest("protected-remote-capabilities");
+const canonicalReleaseBindingDigest = sha256Digest("protected-remote-release");
+
+async function enrollCanonical(c: Awaited<ReturnType<typeof canonical>>,
+  enrollment: ReturnType<typeof createRemoteWorkerEnrollmentV1>) {
+  await c.f.db.transaction(tx => createRemoteWorkerEnrollmentInStoreV1(tx, new Uint8Array(32).fill(61), {
+    tenantId: binding.tenantId, nodeId: binding.nodeId, nodeKeyId: "key:test", enrollment,
+    capabilityDigest: canonicalCapabilityDigest, releaseBindingDigest: canonicalReleaseBindingDigest,
+    now: new Date(c.now()).toISOString(),
+  }));
+}
+
 test("the protected remote composition binds one enrolled session and recovers its exact receipt without resend", async t => {
   const c = await canonical(); t.after(c.f.close);
   const enrollment = createRemoteWorkerEnrollmentV1({ workerId: "worker:protected-remote",
@@ -136,10 +149,12 @@ test("the protected remote composition binds one enrolled session and recovers i
     enrollmentId: "enrollment:protected-remote", state: "enrolled", enrolledAt: at(1_000), revokedAt: null });
   const enrollmentState = new PrivateRemoteControllerWorkerEnrollmentStateV1(enrollment);
   c.advance(1_500);
+  await enrollCanonical(c, enrollment);
   const connection = await realInstalledConnection(enrollment, c.now); t.after(connection.close);
   const build = (session: ServerNodeSession) => createPrivateRemoteControllerWorkerCompositionV1({ db: c.f.db,
     planner: c.planner, integrityKey: new Uint8Array(32).fill(61), tenantId: binding.tenantId,
     nodeId: binding.nodeId, workerId: enrollment.workerId, connectorProfileDigest: c.connectorProfileDigest,
+    capabilityDigest: canonicalCapabilityDigest, releaseBindingDigest: canonicalReleaseBindingDigest,
     enrollmentState, supportedAdapterRevisions: [enrollment.adapterRevision], session, clock: c.now });
   const original = build(connection.session);
   assert.equal(isPrivateRemoteControllerWorkerCompositionV1(original), true);
@@ -224,10 +239,12 @@ test("the protected composition accepts an ordinary real-session receipt exactly
   const enrollment = createRemoteWorkerEnrollmentV1({ workerId: "worker:protected-remote",
     adapterId: CONTROLLER_WORKER_REMOTE_ADAPTER_V1, adapterRevision: "revision:7654321",
     enrollmentId: "enrollment:protected-remote", state: "enrolled", enrolledAt: at(1_000), revokedAt: null });
+  await enrollCanonical(c, enrollment);
   const connection = await realInstalledConnection(enrollment, c.now); t.after(connection.close);
   const composition = createPrivateRemoteControllerWorkerCompositionV1({ db: c.f.db, planner: c.planner,
     integrityKey: new Uint8Array(32).fill(61), tenantId: binding.tenantId, nodeId: binding.nodeId,
     workerId: enrollment.workerId, connectorProfileDigest: c.connectorProfileDigest,
+    capabilityDigest: canonicalCapabilityDigest, releaseBindingDigest: canonicalReleaseBindingDigest,
     enrollmentState: new PrivateRemoteControllerWorkerEnrollmentStateV1(enrollment),
     supportedAdapterRevisions: [enrollment.adapterRevision], session: connection.session, clock: c.now });
   const prepared = await composition.materializer.prepare(c.ref);
@@ -252,11 +269,13 @@ test("the private composition refuses revoked, foreign and structurally fake ins
   const valid = createRemoteWorkerEnrollmentV1({ workerId: "worker:protected-remote",
     adapterId: CONTROLLER_WORKER_REMOTE_ADAPTER_V1, adapterRevision: "revision:7654321",
     enrollmentId: "enrollment:protected-remote", state: "enrolled", enrolledAt: at(1_000), revokedAt: null });
+  await enrollCanonical(c, valid);
   const connection = await realInstalledConnection(valid, c.now); t.after(connection.close);
   const session = connection.session;
   const base = { db: c.f.db as DatabaseClient, planner: c.planner, integrityKey: new Uint8Array(32).fill(61),
     tenantId: binding.tenantId, nodeId: binding.nodeId, workerId: valid.workerId,
     connectorProfileDigest: c.connectorProfileDigest,
+    capabilityDigest: canonicalCapabilityDigest, releaseBindingDigest: canonicalReleaseBindingDigest,
     enrollmentState: new PrivateRemoteControllerWorkerEnrollmentStateV1(valid),
     supportedAdapterRevisions: [valid.adapterRevision], session, clock: c.now };
   const revoked = createRemoteWorkerEnrollmentV1({ workerId: valid.workerId,

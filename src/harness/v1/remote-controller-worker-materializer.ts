@@ -11,6 +11,7 @@ import { persistControllerWorkerDeliveryReceiptV1, readControllerWorkerDeliveryR
 import { CONTROLLER_WORKER_REMOTE_ADAPTER_V1, CONTROLLER_WORKER_REMOTE_CAPABILITY_V1,
   CONTROLLER_WORKER_REMOTE_JOB_TYPE_V1, admitRemoteWorkerDeliveryV1, remoteWorkerEnrollmentSchemaV1,
   type RemoteWorkerEnrollmentV1 } from "./remote-worker-delivery";
+import { readCurrentRemoteWorkerEnrollmentV1 } from "./remote-worker-enrollment-store";
 import { createAuthenticatedRemoteNodeSessionDeliveryBridgeV1, type AuthenticatedRemoteNodeSessionV1,
   type RemoteNodeDeliveryTransmissionV1 } from "./remote-session-delivery-bridge";
 
@@ -43,6 +44,7 @@ export type RemoteControllerWorkerTargetRequestV1 = Readonly<{
 export type RemoteControllerWorkerResolvedTargetV1 = Readonly<{
   nodeId: string; workerId: string; adapterId: string; adapterRevision: string;
   enrollment: RemoteWorkerEnrollmentV1; supportedAdapterRevisions: readonly string[];
+  enrollmentAuthority: Readonly<{ nodeKeyId: string; capabilityDigest: string; releaseBindingDigest: string }>;
   session: AuthenticatedRemoteNodeSessionV1;
 }>;
 
@@ -69,6 +71,7 @@ const preparedSchema = z.object({
 const targetSchema = z.object({
   nodeId: id, workerId: id, adapterId: controllerWorkerAdapterIdSchemaV1, adapterRevision,
   enrollment: remoteWorkerEnrollmentSchemaV1, supportedAdapterRevisions: z.array(adapterRevision).min(1).max(32),
+  enrollmentAuthority: z.object({ nodeKeyId: id, capabilityDigest: digest, releaseBindingDigest: digest }).strict(),
   session: z.unknown(),
 }).strict();
 
@@ -87,6 +90,7 @@ function captureTarget(value: unknown): RemoteControllerWorkerResolvedTargetV1 {
   return Object.freeze({ nodeId: parsed.nodeId, workerId: parsed.workerId, adapterId: parsed.adapterId,
     adapterRevision: parsed.adapterRevision, enrollment: parsed.enrollment,
     supportedAdapterRevisions: Object.freeze([...parsed.supportedAdapterRevisions]),
+    enrollmentAuthority: Object.freeze(parsed.enrollmentAuthority),
     session: session as AuthenticatedRemoteNodeSessionV1 });
 }
 
@@ -114,7 +118,12 @@ export class RemoteControllerWorkerMaterializerV1 {
 
   async prepare(value: RemoteControllerWorkerMaterializationReferenceV1): Promise<RemoteControllerWorkerPreparedDeliveryV1> {
     const ref = referenceSchema.parse(value);
-    return this.db.transaction(async tx => (await this.readIntent(tx, ref)) ?? this.prepareInSession(tx, ref));
+    return this.db.transaction(async tx => {
+      const intent = await this.readIntent(tx, ref);
+      if (!intent) return this.prepareInSession(tx, ref);
+      await this.resolveForPrepared(ref, intent, tx);
+      return intent;
+    });
   }
 
   private async readIntent(tx: DatabaseSession, ref: z.infer<typeof referenceSchema>) {
@@ -152,6 +161,7 @@ export class RemoteControllerWorkerMaterializerV1 {
     if (signal?.aborted) unavailable();
     const ref = referenceSchema.parse(value);
     const prepared = preparedSchema.parse(preparedValue) as RemoteControllerWorkerPreparedDeliveryV1;
+    await this.resolveForPrepared(ref, prepared);
     const prior = await this.db.transaction(tx => readControllerWorkerDeliveryReceiptV1(tx, this.integrityKey, {
       tenantId: ref.tenantId, projectId: ref.projectId, jobId: ref.jobId, attemptId: ref.attemptId }));
     if (prior) {
@@ -230,6 +240,7 @@ export class RemoteControllerWorkerMaterializerV1 {
         || received.route.workerId !== prepared.route.workerId || received.route.kind !== "remote") unavailable();
       return this.db.transaction(async tx => {
         received.assertCurrent();
+        await this.assertCanonicalEnrollment(tx, ref.tenantId, target);
         const prior = await readControllerWorkerDeliveryReceiptV1(tx, this.integrityKey, ref);
         if (prior) {
           if (prior.delivery.deliveryDigest !== prepared.delivery.deliveryDigest
@@ -239,6 +250,7 @@ export class RemoteControllerWorkerMaterializerV1 {
         }
         const result = await persistControllerWorkerDeliveryReceiptV1(tx, this.integrityKey,
           received.delivery, received.receipt, recordedAt);
+        await this.assertCanonicalEnrollment(tx, ref.tenantId, target);
         received.assertCurrent();
         return result;
       });
@@ -252,8 +264,8 @@ export class RemoteControllerWorkerMaterializerV1 {
     const ref = referenceSchema.parse(value);
     const prepared = preparedSchema.parse(preparedValue) as RemoteControllerWorkerPreparedDeliveryV1;
     const target = await this.resolveForPrepared(ref, prepared);
-    const verifyTarget = async () => {
-      const current = await this.resolveForPrepared(ref, prepared);
+    const verifyTarget = async (tx?: DatabaseSession) => {
+      const current = await this.resolveForPrepared(ref, prepared, tx);
       if (current.session.session !== target.session.session || this.clock() >= Date.parse(prepared.delivery.expiresAt)
         || !admitRemoteWorkerDeliveryV1({ delivery: prepared.delivery, route: prepared.route,
           enrollment: current.enrollment, supportedAdapterRevisions: current.supportedAdapterRevisions }).accepted) unavailable();
@@ -277,25 +289,26 @@ export class RemoteControllerWorkerMaterializerV1 {
         return signedFrame as SignedNodeFrame<"controller.worker.delivery">;
       });
     }, async (frame, _dispatch, assertCurrent) => this.db.transaction(async tx => {
-      await verifyTarget();
+      await verifyTarget(tx);
       assertCurrent();
       const receipt = frame.body.receipt.receipt;
       const prior = await readControllerWorkerDeliveryReceiptV1(tx, this.integrityKey, ref);
       if (prior) {
         if (prior.delivery.deliveryDigest !== prepared.delivery.deliveryDigest
           || prior.receipt.receiptDigest !== receipt.receiptDigest) unavailable();
-        await verifyTarget(); assertCurrent();
+        await verifyTarget(tx); assertCurrent();
         return Object.freeze({ receipt: prior.receipt, replayed: true,
           startsWork: false as const, grantsExecutionAuthority: false as const });
       }
       const result = await persistControllerWorkerDeliveryReceiptV1(tx, this.integrityKey, prepared.delivery, receipt, recordedAt);
-      await verifyTarget();
+      await verifyTarget(tx);
       assertCurrent();
       return result;
     }));
   }
 
-  private async resolveForPrepared(ref: z.infer<typeof referenceSchema>, prepared: RemoteControllerWorkerPreparedDeliveryV1) {
+  private async resolveForPrepared(ref: z.infer<typeof referenceSchema>, prepared: RemoteControllerWorkerPreparedDeliveryV1,
+    tx?: DatabaseSession) {
     const target = captureTarget(await this.resolver.resolve(Object.freeze({ tenantId: ref.tenantId,
       nodeId: prepared.delivery.identity.nodeId, adapterId: CONTROLLER_WORKER_REMOTE_ADAPTER_V1,
       requiredCapability: CONTROLLER_WORKER_REMOTE_CAPABILITY_V1,
@@ -304,7 +317,30 @@ export class RemoteControllerWorkerMaterializerV1 {
       || target.workerId !== prepared.delivery.worker.workerId || target.adapterId !== prepared.delivery.worker.adapterId
       || target.adapterRevision !== prepared.delivery.worker.adapterRevision
       || target.enrollment.enrollmentDigest !== prepared.enrollmentDigest) unavailable();
+    if (tx) await this.assertCanonicalEnrollment(tx, ref.tenantId, target);
+    else await this.db.transaction(session => this.assertCanonicalEnrollment(session, ref.tenantId, target));
     return target;
+  }
+
+  private async assertCanonicalEnrollment(tx: DatabaseSession, tenantId: string,
+    target: RemoteControllerWorkerResolvedTargetV1) {
+    const now = this.clock();
+    if (!Number.isSafeInteger(now) || now < 0) unavailable();
+    try {
+      await readCurrentRemoteWorkerEnrollmentV1(tx, this.integrityKey, {
+        tenantId,
+        workerId: target.workerId,
+        nodeId: target.nodeId,
+        nodeKeyId: target.enrollmentAuthority.nodeKeyId,
+        adapterId: target.adapterId,
+        adapterRevision: target.adapterRevision,
+        capabilityDigest: target.enrollmentAuthority.capabilityDigest,
+        enrollmentId: target.enrollment.enrollmentId,
+        enrollmentDigest: target.enrollment.enrollmentDigest,
+        releaseBindingDigest: target.enrollmentAuthority.releaseBindingDigest,
+        now: new Date(now).toISOString(),
+      });
+    } catch { unavailable(); }
   }
 
   private async prepareInSession(tx: DatabaseSession, ref: z.infer<typeof referenceSchema>) {
@@ -341,6 +377,7 @@ export class RemoteControllerWorkerMaterializerV1 {
       adapterId: CONTROLLER_WORKER_REMOTE_ADAPTER_V1, requiredCapability: CONTROLLER_WORKER_REMOTE_CAPABILITY_V1,
       connectorProfileDigest: plan.connectorProfileDigest })));
     if (target.nodeId !== attempt.nodeId || target.enrollment.state !== "enrolled") unavailable();
+    await this.assertCanonicalEnrollment(tx, ref.tenantId, target);
     const expiresAt = new Date(Math.min(Date.parse(lease.expiresAt), Date.parse(job.authority.expiresAt))).toISOString();
     const delivery = createControllerWorkerDeliveryV1({ identity: { tenantId: ref.tenantId, projectId: ref.projectId,
       jobId: ref.jobId, attemptId: ref.attemptId, runId: `run:controller-worker-remote:${sha256Digest({ tenantId: ref.tenantId,

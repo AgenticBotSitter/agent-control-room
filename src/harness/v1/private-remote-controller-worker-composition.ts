@@ -122,6 +122,8 @@ export function createPrivateRemoteControllerWorkerCompositionV1(value: {
   tenantId: string;
   nodeId: string;
   connectorProfileDigest: string;
+  capabilityDigest: string;
+  releaseBindingDigest: string;
   enrollmentState: PrivateRemoteControllerWorkerEnrollmentStateV1;
   supportedAdapterRevisions: readonly string[];
   workerId: string;
@@ -138,6 +140,7 @@ export function createPrivateRemoteControllerWorkerCompositionV1(value: {
       || Object.getPrototypeOf(value.enrollmentState) !== PrivateRemoteControllerWorkerEnrollmentStateV1.prototype
       || typeof value.clock !== "undefined" && typeof value.clock !== "function"
       || !digest.test(value.connectorProfileDigest)
+      || !digest.test(value.capabilityDigest) || !digest.test(value.releaseBindingDigest)
       || !Array.isArray(value.supportedAdapterRevisions)
       || value.supportedAdapterRevisions.length < 1 || value.supportedAdapterRevisions.length > 32
       || value.supportedAdapterRevisions.some(revision => typeof revision !== "string"
@@ -165,6 +168,7 @@ export function createPrivateRemoteControllerWorkerCompositionV1(value: {
     const integrityKey = Uint8Array.from(value.integrityKey), tenantId = value.tenantId,
       nodeId = value.nodeId, workerId = value.workerId,
       connectorProfileDigest = value.connectorProfileDigest,
+      capabilityDigest = value.capabilityDigest, releaseBindingDigest = value.releaseBindingDigest,
       supportedAdapterRevisions = Object.freeze([...value.supportedAdapterRevisions]);
     const enrollmentSnapshot = Object.freeze(structuredClone(enrollment));
     const boundConnectionId = channel.connectionId, boundNodeKeyId = channel.nodeKeyId;
@@ -190,6 +194,7 @@ export function createPrivateRemoteControllerWorkerCompositionV1(value: {
         || request.connectorProfileDigest !== connectorProfileDigest) unavailable();
       return Object.freeze({ nodeId, workerId, adapterId: enrollmentSnapshot.adapterId,
         adapterRevision: enrollmentSnapshot.adapterRevision, enrollment: enrollmentSnapshot,
+        enrollmentAuthority: Object.freeze({ nodeKeyId: boundNodeKeyId, capabilityDigest, releaseBindingDigest }),
         supportedAdapterRevisions, session: Object.freeze({ workerId,
           enrollmentDigest: enrollmentSnapshot.enrollmentDigest, session: boundSession }) });
     } });

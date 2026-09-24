@@ -11,6 +11,8 @@ import { CONTROLLER_WORKER_REMOTE_ADAPTER_V1, CONTROLLER_WORKER_REMOTE_CAPABILIT
   CONTROLLER_WORKER_REMOTE_JOB_TYPE_V1, CONTROLLER_WORKER_REMOTE_START_OPERATION_V1,
   createRemoteWorkerEnrollmentV1 } from "../src/harness/v1/remote-worker-delivery";
 import { RemoteControllerWorkerMaterializerV1, type RemoteControllerWorkerResolvedTargetV1 } from "../src/harness/v1/remote-controller-worker-materializer";
+import { advanceRemoteWorkerEnrollmentInStoreV1, createRemoteWorkerEnrollmentInStoreV1 } from
+  "../src/harness/v1/remote-worker-enrollment-store";
 import type { ControllerWorkerDeliveryV1 } from "../src/harness/v1/controller-worker-delivery";
 import { deliverVerifiedRemoteControllerWorkerQueueTaskV1 } from "../src/web/v1/remote-controller-worker-queue-delivery";
 import type { NativeTaskSubmission } from "../src/persistence/native-task-submission";
@@ -72,7 +74,8 @@ function remoteTarget(state: "enrolled" | "revoked" = "enrolled") {
     workerId: enrollment.workerId, adapterId: enrollment.adapterId, adapterRevision: enrollment.adapterRevision,
     enrollment, supportedAdapterRevisions: Object.freeze([enrollment.adapterRevision]), session: {
       workerId: enrollment.workerId, enrollmentDigest: enrollment.enrollmentDigest, session: session as never,
-    } });
+    }, enrollmentAuthority: Object.freeze({ nodeKeyId: "key:test", capabilityDigest: sha256Digest("remote-capabilities"),
+      releaseBindingDigest: sha256Digest("remote-release") }) });
   return { value, sends: () => sends, setReceipt(value: ControllerWorkerDeliveryV1) { nextReceipt = receipt(value); },
     dispatch: () => dispatch };
 }
@@ -110,6 +113,11 @@ test("the controller materializes a leased v11 plan through its protected target
   const assignments = new TaskAssignmentCoordinator(f.db, f.scope, planner, route, () => now + 1_000);
   const assigned = await assignments.assign(f.identity, binding.projectId, planned.receipt.jobId, binding.nodeId, planned.receipt.inputDigest);
   const current = remoteTarget();
+  const enrollmentRecord = await f.db.transaction(tx => createRemoteWorkerEnrollmentInStoreV1(tx,
+    new Uint8Array(32).fill(61), { tenantId: binding.tenantId, nodeId: binding.nodeId,
+      nodeKeyId: current.value.enrollmentAuthority.nodeKeyId, enrollment: current.value.enrollment,
+      capabilityDigest: current.value.enrollmentAuthority.capabilityDigest,
+      releaseBindingDigest: current.value.enrollmentAuthority.releaseBindingDigest, now: new Date(now).toISOString() }));
   const resolver = { async resolve(input: { nodeId: string }) { assert.equal(input.nodeId, binding.nodeId); return current.value; } };
   const materializer = new RemoteControllerWorkerMaterializerV1(f.db, planner, resolver, new Uint8Array(32).fill(61), () => now);
   const ref = { tenantId: binding.tenantId, projectId: binding.projectId, jobId: planned.receipt.jobId,
@@ -180,14 +188,49 @@ test("the controller materializes a leased v11 plan through its protected target
   assert.equal(current.sends(), 1, "a recorded receipt blocks a second remote transmission");
   await materializer.assertCurrent(ref, prepared);
 
+  await f.db.query("UPDATE control_node_keys SET state='retired' WHERE tenant_id=$1 AND node_id=$2 AND id='key:test'",
+    [binding.tenantId, binding.nodeId]);
+  await f.db.query(`INSERT INTO control_node_keys
+    (id,tenant_id,node_id,algorithm,public_key_spki,fingerprint,state,valid_from,created_at)
+    VALUES('key:rotated',$1,$2,'ed25519','c3BraQ',$3,'active',$4,$4)`,
+  [binding.tenantId, binding.nodeId, sha256Digest("rotated-materializer-key"), new Date(now).toISOString()]);
+  await f.db.query(`UPDATE control_nodes SET identity_key_id='key:rotated',
+    payload=jsonb_set(payload,'{identityKeyId}',to_jsonb('key:rotated'::text)) WHERE tenant_id=$1 AND id=$2`,
+  [binding.tenantId, binding.nodeId]);
+  await assert.rejects(reconstructed.prepare(ref), /remote_controller_worker_materializer_unavailable/,
+    "a stale resolver snapshot cannot bypass canonical node-key rotation");
+  await assert.rejects(reconstructed.transmit(ref, prepared), /remote_controller_worker_materializer_unavailable/);
+  await assert.rejects(reconstructed.acceptReceipt(ref, prepared, "fixture-receipt", at(11_000)), /unavailable/);
+  await assert.rejects(reconstructed.recoverReceipt(ref, prepared, recoveryFrame, at(11_000)), /unavailable/);
+  const draining = await f.db.transaction(tx => advanceRemoteWorkerEnrollmentInStoreV1(tx, new Uint8Array(32).fill(61), {
+    tenantId: binding.tenantId, workerId: current.value.workerId, expectedRevision: enrollmentRecord.record.revision,
+    state: "draining", evidenceDigest: sha256Digest("remote-draining"), now: new Date(now + 1).toISOString() }));
+  await assert.rejects(reconstructed.prepare(ref), /remote_controller_worker_materializer_unavailable/,
+    "a saved resolver snapshot cannot bypass canonical draining state");
+  await assert.rejects(reconstructed.assertCurrent(ref, prepared), /remote_controller_worker_materializer_unavailable/);
+  await assert.rejects(reconstructed.transmit(ref, prepared), /remote_controller_worker_materializer_unavailable/);
+  await assert.rejects(reconstructed.acceptReceipt(ref, prepared, "fixture-receipt", at(11_000)), /unavailable/);
+  await assert.rejects(reconstructed.recoverReceipt(ref, prepared, recoveryFrame, at(11_000)), /unavailable/);
+  const quarantined = await f.db.transaction(tx => advanceRemoteWorkerEnrollmentInStoreV1(tx,
+    new Uint8Array(32).fill(61), { tenantId: binding.tenantId, workerId: current.value.workerId,
+      expectedRevision: draining.record.revision, state: "quarantined", evidenceDigest: sha256Digest("remote-quarantined"),
+      now: new Date(now + 2).toISOString() }));
+  await assert.rejects(reconstructed.prepare(ref), /remote_controller_worker_materializer_unavailable/,
+    "a saved resolver snapshot cannot bypass canonical quarantine");
+  await f.db.transaction(tx => advanceRemoteWorkerEnrollmentInStoreV1(tx, new Uint8Array(32).fill(61), {
+    tenantId: binding.tenantId, workerId: current.value.workerId, expectedRevision: quarantined.record.revision,
+    state: "revoked", evidenceDigest: sha256Digest("remote-revoked"), now: new Date(now + 3).toISOString() }));
+  await assert.rejects(reconstructed.prepare(ref), /remote_controller_worker_materializer_unavailable/,
+    "a saved resolver snapshot cannot bypass canonical revocation");
+
   const revoked = remoteTarget("revoked");
   const revokedResolver = { async resolve() { return revoked.value; } };
   const fenced = new RemoteControllerWorkerMaterializerV1(f.db, planner, revokedResolver, new Uint8Array(32).fill(61), () => now);
   await assert.rejects(fenced.recoverReceipt(ref, prepared, recoveryFrame, at(11_000)), /unavailable/);
   await assert.rejects(fenced.assertCurrent(ref, prepared), /remote_controller_worker_materializer_unavailable/,
     "a revoked protected target cannot authorize a new transmission");
-  assert.deepEqual(await deliverVerifiedRemoteControllerWorkerQueueTaskV1({ reference: queueReference,
-    signal: new AbortController().signal, target: target!, materializer: fenced }), { disposition: "delivered" },
-  "reading historical delivery evidence after revocation does not transmit");
+  await assert.rejects(deliverVerifiedRemoteControllerWorkerQueueTaskV1({ reference: queueReference,
+    signal: new AbortController().signal, target: target!, materializer: fenced }), /unavailable/,
+  "canonical draining authority fences even historical delivery evidence");
   assert.equal(current.sends(), 1);
 });
