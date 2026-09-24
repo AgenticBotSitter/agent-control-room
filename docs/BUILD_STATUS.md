@@ -166,7 +166,12 @@ a durable remote terminal record, recorded run/lifecycle facts, private
 installed composition, and a remote inspection bridge. The ordered design is
 recorded in [`GENERIC_REMOTE_RESULT_PUBLICATION_PLAN.md`](GENERIC_REMOTE_RESULT_PUBLICATION_PLAN.md).
 It explicitly rules out a second result system, database, scheduler, or
-approval process.
+approval process. An independent security review added three prerequisites
+before implementation: a terminal identity that survives a reconnect without
+reusing a signed transport message, a completed-only publication gate that
+rechecks run/lease/authority timing, and an explicitly selected canonical home
+for the durable terminal record. No remote bytes will be accepted until those
+decisions are made.
 
 The first installed Claude route is now pinned to Claude Code's `opus` alias
 instead of inheriting a desktop or command-line default. Its owner-attended

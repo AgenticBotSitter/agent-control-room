@@ -48,11 +48,38 @@ remote machines.
    durable receipt, review plan, profile, run, and terminal record before it
    permits a review, correction, capacity release, or completion.
 
+## Decisions required before code
+
+These are security boundaries, not implementation details. They are deliberately
+settled here before any remote result bytes are accepted.
+
+1. **Stable terminal identity versus transport envelope.** A signed message is
+   tied to its connection, sequence number, and time. A reconnect therefore
+   cannot reuse that message's digest as an “exact replay.” The durable record
+   needs its own immutable identity, derived from the delivery, worker,
+   enrollment, terminal outcome, and content digest. A fresh signed envelope
+   may reference that identity after reconnect, but a changed outcome or bytes
+   must conflict. Concurrent controllers must lock and return the one record.
+2. **Completed-only publication eligibility.** The generic publisher checks
+   saved run identity, but it does not itself prove remote success. Its private
+   caller must re-read current enrollment, delivery, run, lease, authority,
+   deadline, and durable terminal record at each commit fence. Only a completed
+   terminal state with bytes whose measured hash and length match the durable
+   record may be published. Failed, cancelled, late, revoked, or uncertain
+   work stays nonpublishing until a separately designed outcome path exists.
+3. **Canonical terminal-record home.** The terminal record cannot be an
+   in-memory receiver value or a result reservation, because it must exist
+   before publication and survive a restart. The implementation must select
+   the existing canonical run/event persistence, including its uniqueness and
+   transaction/locking rule, or add one narrowly reviewed canonical migration.
+   It must also define the safe handling of a crash between terminal recording,
+   byte storage, durable publication, and review registration.
+
 ## Required ordering
 
 1. Write a source-only remote terminal-material and durable terminal-record
-   contract. It must be bound to the existing delivery receipt; it must not
-   launch, retry, or complete work.
+   contract after the three decisions above. It must be bound to the existing
+   delivery receipt; it must not launch, retry, or complete work.
 2. Add the private composition that re-reads that record and calls the existing
    durable publisher. Use the PostgreSQL reservation adapter already present;
    do not add a table or a new result store.
