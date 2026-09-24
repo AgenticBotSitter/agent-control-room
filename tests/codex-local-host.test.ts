@@ -24,6 +24,8 @@ import { createPrivateCodexInstalledNodeEntryV1 } from '../src/node-bridge/priva
 import { PinnedApprovalTrustStore } from '../src/node-policy/v1/pinned-approval-trust';
 import { PinnedOwnerTrust } from '../src/node-policy/v1/owner-pins';
 import { SqliteNodeSecurityStateRepository } from '../src/node-policy/v1/persistent-security-state';
+import { EncryptedFileNodePrivateKeyStore, InjectedUnwrapSecretSource,
+  sealEncryptedPrivateKey } from '../src/node-policy/v1/encrypted-file-key-store';
 import { computeArtifactBodyDigest, signArtifact } from '../src/node-policy/v1/crypto';
 import { computeEffectClaimKey } from '../src/node-policy/v1/effect-claim';
 import { computeNormalizedOperationDigest } from '../src/node-policy/v1/policy-evaluator';
@@ -379,16 +381,24 @@ test('installed Codex node entry turns one signed current read into one bound se
     keys: [{ keyId: 'approval-key:test', algorithm: 'ed25519', spki: approvalSpki,
       fingerprint: `sha256:${createHash('sha256').update(Buffer.from(approvalSpki, 'base64url')).digest('hex')}` }] },
   { security, clock: () => baseTime + 3_000 });
-  const keys = { reference: () => ({ contractVersion: 'control-room-node-policy/v1' as const,
-    keyId: 'node-key:test', referenceId: 'key-reference:test', provider: 'memory_test' as const,
-    mode: 'test' as const, algorithm: 'Ed25519' as const }), async availability() {
-    return { state: 'available' as const, keyReferenceId: 'key-reference:test',
-      observedAt: new Date(baseTime + 3_000).toISOString() };
-  }, async unlock() {}, async sign(bytes: Uint8Array) {
-    return new Uint8Array(cryptoSign(null, Buffer.from(bytes), f.node.privateKey));
-  }, async lock() {}, async dispose() {} };
-  t.after(async () => { approvals.close(); security.close(); await f.closeBridge(); f.journal.close();
+  const reference = { contractVersion: 'control-room-node-policy/v1' as const,
+    keyId: 'node-key:test', referenceId: 'key-reference:test', provider: 'encrypted_file' as const,
+    mode: 'encrypted_file' as const, algorithm: 'Ed25519' as const };
+  const wrappingKey = Buffer.alloc(32, 7), envelope = sealEncryptedPrivateKey({ privateKey: f.node.privateKey,
+    reference, wrappingKey });
+  const keys = new EncryptedFileNodePrivateKeyStore(reference,
+    { now: () => new Date(baseTime + 3_000).toISOString() },
+    { async availability() { return 'available' as const; }, async load() { return envelope; } },
+    new InjectedUnwrapSecretSource('platform_secret', async () => Uint8Array.from(wrappingKey)));
+  await keys.unlock();
+  t.after(async () => { approvals.close(); security.close(); await keys.dispose(); await f.closeBridge(); f.journal.close();
     await rm(directory, { recursive: true, force: true }); });
+
+  assert.throws(() => createPrivateCodexInstalledNodeEntryV1({ bridge: f.bridge, journal: f.journal,
+    security, approvals, keys: { reference: () => reference,
+      async sign(bytes: Uint8Array) { return new Uint8Array(cryptoSign(null, Buffer.from(bytes), f.node.privateKey)); } } as never,
+    clock: () => baseTime + 3_000 }), /private_codex_installed_node_entry_unavailable/,
+  'a fake signing port is rejected even when every other protected input is genuine');
 
   const entry = createPrivateCodexInstalledNodeEntryV1({ bridge: f.bridge, journal: f.journal,
     security, approvals, keys, clock: () => baseTime + 3_000 });

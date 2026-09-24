@@ -1,5 +1,5 @@
 import { types } from "node:util";
-import type { NodePrivateKeyStore } from "../node-policy/v1/stores";
+import { EncryptedFileNodePrivateKeyStore } from "../node-policy/v1/encrypted-file-key-store";
 import { PinnedApprovalTrustStore } from "../node-policy/v1/pinned-approval-trust";
 import { SqliteNodeSecurityStateRepository } from "../node-policy/v1/persistent-security-state";
 import { PortableNodeBridge } from "./bridge";
@@ -30,15 +30,17 @@ export function createPrivateCodexInstalledNodeEntryV1(value: {
   journal: SqliteBridgeJournal;
   security: SqliteNodeSecurityStateRepository;
   approvals: PinnedApprovalTrustStore;
-  keys: NodePrivateKeyStore;
+  /** First-release Linux custody. Other platforms require their own reviewed concrete wrapper. */
+  keys: EncryptedFileNodePrivateKeyStore;
   clock?: () => number;
 }) {
   if (!value || typeof value !== "object" || types.isProxy(value)
     || !(value.bridge instanceof PortableNodeBridge) || !(value.journal instanceof SqliteBridgeJournal)
     || !(value.security instanceof SqliteNodeSecurityStateRepository)
     || !(value.approvals instanceof PinnedApprovalTrustStore)
-    || !value.keys || typeof value.keys !== "object" || types.isProxy(value.keys)
-    || typeof value.keys.reference !== "function" || typeof value.keys.sign !== "function"
+    || !(value.keys instanceof EncryptedFileNodePrivateKeyStore) || types.isProxy(value.keys)
+    || Object.getPrototypeOf(value.keys) !== EncryptedFileNodePrivateKeyStore.prototype
+    || Object.hasOwn(value.keys, "reference") || Object.hasOwn(value.keys, "sign")
     || value.clock !== undefined && typeof value.clock !== "function") unavailable();
   const bridge = value.bridge, journal = value.journal, clock = value.clock ?? Date.now;
   const reader = createPrivateCodexCurrentAdmissionReaderV1({ ...value, clock });
