@@ -1,5 +1,7 @@
 # Real-world three-worker activation plan
 
+> **Superseded for execution — September 24, 2026:** follow [`MAC_LOCAL_CRITICAL_PATH.md`](MAC_LOCAL_CRITICAL_PATH.md). Codex is a managed Mac worker (no Linux); the authority is the existing VPS PostgreSQL (no Mac database); workers use the explicit owner-trusted local CLI model. This document remains architecture/history.
+
 **Status:** execution plan; source and disposable tests are substantial, but no
 three-worker installation is operational yet.
 

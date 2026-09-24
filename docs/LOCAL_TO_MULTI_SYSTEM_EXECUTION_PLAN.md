@@ -1,5 +1,7 @@
 # Local-to-multi-system execution plan
 
+> **Superseded for execution — September 24, 2026:** follow [`MAC_LOCAL_CRITICAL_PATH.md`](MAC_LOCAL_CRITICAL_PATH.md). Codex is a managed Mac worker (no Linux); the authority is the existing VPS PostgreSQL (no Mac database); workers use the explicit owner-trusted local CLI model. This document remains architecture/history.
+
 **Status:** authoritative completion plan, September 22, 2026
 **Scope:** finish a usable **This computer** installation first, then extend that
 same installation into **Several computers**.

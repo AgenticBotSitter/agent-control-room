@@ -1,5 +1,7 @@
 # Agent Control Room build status
 
+> **Active plan — September 24, 2026:** Claude leads. Execution follows [`MAC_LOCAL_CRITICAL_PATH.md`](MAC_LOCAL_CRITICAL_PATH.md): website plus Hermes, Claude and Codex on this Mac against the existing VPS PostgreSQL. Nothing is operational yet; the protected install directory holds no configuration. Entries below are history unless that plan reuses them.
+
 **Status:** active **single-computer** source build. The product is prepared
 and extensively tested with disposable data; no Control Room installation or
 local worker is operational yet.

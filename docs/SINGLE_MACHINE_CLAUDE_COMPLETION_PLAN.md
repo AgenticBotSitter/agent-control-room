@@ -1,5 +1,7 @@
 # Single-machine Control Room completion plan: Claude included
 
+> **Superseded for execution — September 24, 2026:** follow [`MAC_LOCAL_CRITICAL_PATH.md`](MAC_LOCAL_CRITICAL_PATH.md). Codex is a managed Mac worker (no Linux); the authority is the existing VPS PostgreSQL (no Mac database); workers use the explicit owner-trusted local CLI model. This document remains architecture/history.
+
 **Status:** source packages C0-C3 are implemented and tested locally; C4
 requires owner-attended installation evidence. This plan refines the local phases of
 [`LOCAL_TO_MULTI_SYSTEM_EXECUTION_PLAN.md`](LOCAL_TO_MULTI_SYSTEM_EXECUTION_PLAN.md).
