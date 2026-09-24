@@ -146,6 +146,18 @@ It will not add another queue, database, broker, result store, approval system,
 or remote completion authority. Until that package and its installed worker
 mounting are proven, no remote result is represented as a finished task.
 
+**September 24 remote-result ingress progress:** the first signed ingress now
+accepts receipt-bound remote progress and terminal evidence only after the
+private controller composition rereads the current enrollment and exact saved
+delivery receipt. It refuses a changed worker, node, key, connection, receipt,
+sequence, progress direction, or terminal replay; it never sends another
+delivery. The accepted evidence is deliberately session-local and inert: it
+does not persist a generic result, finish a task, release capacity, authorize
+a retry, or appear as a completed result in the owner interface. The next
+package is a separately reviewed canonical publisher that can make those
+durable lifecycle decisions in the existing PostgreSQL transaction. No remote
+worker, database, service, or network was changed for this source proof.
+
 The first installed Claude route is now pinned to Claude Code's `opus` alias
 instead of inheriting a desktop or command-line default. Its owner-attended
 qualification, saved process configuration, and later task execution must all

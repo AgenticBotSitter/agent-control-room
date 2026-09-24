@@ -481,6 +481,12 @@ recover exactly the original durable receipt without sending again. This is
 not a live worker enrollment, network connection, provider call, or execution
 proof; protected installed receipt mounting remains a separate owner-bound
 implementation.
+The first result-return layer now accepts signed, receipt-bound progress and
+terminal evidence only after it rereads the current enrollment and delivery
+receipt. Its ordering and terminal replay protection are intentionally
+session-local and inert: it cannot yet publish a result, finish a task, release
+capacity, or claim restart-safe generic result recovery. A later canonical
+publisher must add those durable effects in the existing PostgreSQL lifecycle.
 **Work:**
 
 1. Deliver the exact controller packet to only its intended worker.

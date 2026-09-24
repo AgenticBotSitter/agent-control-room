@@ -7,6 +7,7 @@ import { CODEX_DELIVERY_FEATURE, codexTaskDispatchBodySchemaV1, matchCodexTaskDi
   type CodexTaskDispatchBodyV1 } from "../harness/codex-v1/delivery-contract";
 import { CONTROLLER_WORKER_NODE_DELIVERY_FEATURE_V1, CONTROLLER_WORKER_NODE_RECOVERY_FEATURE_V1, controllerWorkerNodeDispatchBodySchemaV1,
   matchControllerWorkerNodeDispatchReceiptV1, type ControllerWorkerNodeDispatchBodyV1 } from "../harness/v1/controller-worker-node-delivery";
+import { CONTROLLER_WORKER_RESULT_RETURN_FEATURE_V1 } from "../harness/v1/controller-worker-result-return";
 import { CODEX_ACTIVATION_FEATURE, codexTaskActivationBodySchemaV1, matchCodexTaskActivationV1,
   type CodexActivationFrameV1, type CodexDispatchFrameForActivationV1,
   type CodexDispatchReceiptFrameForActivationV1, type CodexTaskActivationBodyV1 } from "../harness/codex-v1/activation-contract";
@@ -57,6 +58,12 @@ export interface ServerNativeChannel {
  * stage/send/receipt methods retain their own state-machine and busy fences.
  */
 export interface ControllerWorkerSessionBindingV1 extends ServerNativeChannel {}
+
+/** Authenticated current-session fence exposed only to an inert result intake. */
+export interface ControllerWorkerResultReturnChannelV1 extends ControllerWorkerSessionBindingV1 {}
+export type ControllerWorkerResultReturnFrameV1 =
+  | SignedNodeFrame<"controller.worker.result.progress">
+  | SignedNodeFrame<"controller.worker.result.terminal">;
 
 export interface NativeEnvelopeChannel extends ServerNativeChannel {
   readonly serverId: string;
@@ -526,6 +533,44 @@ export class ServerNodeSession {
       };
       assertCurrent();
       const result = await commit(frame, intent, assertCurrent);
+      assertCurrent();
+      return result;
+    });
+  }
+
+  /**
+   * Authenticates one generic worker progress or terminal frame on the current
+   * signed-node session. This seam deliberately owns no result store and makes
+   * no lifecycle transition. The private installed composition must re-read
+   * the canonical enrollment and exact delivery receipt inside `commit`.
+   */
+  async receiveControllerWorkerResultReturn<T>(raw: string | Uint8Array,
+    commit: (frame: ControllerWorkerResultReturnFrameV1,
+      channel: ControllerWorkerResultReturnChannelV1) => Promise<T>): Promise<T> {
+    const states = ["controller_worker_receipted"];
+    if (!this.connectionId || !states.includes(this.state)
+      || !this.features.includes(CONTROLLER_WORKER_RESULT_RETURN_FEATURE_V1)
+      || typeof commit !== "function") throw new Error("Controller worker result return channel unavailable");
+    return this.bounded(async () => {
+      const frame = await this.authenticate(raw);
+      if (frame.type !== "controller.worker.result.progress" && frame.type !== "controller.worker.result.terminal") {
+        throw new Error("Expected controller worker result return");
+      }
+      const connectionId = this.connectionId!;
+      const assertCurrent = () => {
+        const now = this.now();
+        if (this.connectionId !== connectionId || !states.includes(this.state)
+          || now >= Date.parse(frame.expiresAt) || Date.parse(frame.body.occurredAt) > now) {
+          throw new Error("Controller worker result return channel unavailable");
+        }
+      };
+      const channel: ControllerWorkerResultReturnChannelV1 = Object.freeze({
+        tenantId: this.config.tenantId, nodeId: this.config.nodeId, nodeKeyId: this.config.nodeKeyId,
+        connectionId, maxFrameBytes: this.maxFrameBytes, expiresAt: new Date(this.deadline).toISOString(),
+        grantsExecutionAuthority: false, assertCurrent,
+      });
+      assertCurrent();
+      const result = await commit(structuredClone(frame) as ControllerWorkerResultReturnFrameV1, channel);
       assertCurrent();
       return result;
     });

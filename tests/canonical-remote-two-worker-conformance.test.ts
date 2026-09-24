@@ -1,9 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createPrivateRemoteControllerWorkerCompositionV1, capturePrivateRemoteControllerWorkerQueueCapabilityV1,
-  capturePrivateRemoteControllerWorkerReceiptIngressCapabilityV1, PrivateRemoteControllerWorkerEnrollmentStateV1 } from
+  capturePrivateRemoteControllerWorkerReceiptIngressCapabilityV1,
+  capturePrivateRemoteControllerWorkerResultIngressCapabilityV1,
+  PrivateRemoteControllerWorkerEnrollmentStateV1 } from
   "../src/harness/v1/private-remote-controller-worker-composition";
 import { CONTROLLER_WORKER_REMOTE_ADAPTER_V1, createRemoteWorkerEnrollmentV1 } from "../src/harness/v1/remote-worker-delivery";
+import { createControllerWorkerProgressReturnV1, createControllerWorkerTerminalReturnV1 } from
+  "../src/harness/v1/controller-worker-result-return";
 import { advanceRemoteWorkerEnrollmentInStoreV1 } from "../src/harness/v1/remote-worker-enrollment-store";
 import { binding } from "./hermes-native-fixture";
 import { at } from "./native-task-fixture";
@@ -124,4 +128,56 @@ test("stale remote resolvers reread lifecycle and key authority before preparing
     await assert.rejects(controller.materializer.prepare(c.ref), /unavailable/);
     assert.equal(connection.sends(), 0, "stale node-key authority cannot send or start work");
   });
+});
+
+test("an enrolled remote worker returns receipt-bound inert evidence without a second delivery", async t => {
+  const c = await canonicalRemoteWorkerFixture(); t.after(c.f.close); c.advance(1_500);
+  const worker = createRemoteWorkerEnrollmentV1({ workerId: "worker:remote-result",
+    adapterId: CONTROLLER_WORKER_REMOTE_ADAPTER_V1, adapterRevision: "revision:7654321",
+    enrollmentId: "enrollment:remote-result", state: "enrolled", enrolledAt: at(1_000), revokedAt: null });
+  await enrollCanonicalRemoteWorker(c, worker);
+  const connection = await realInstalledConnection(worker, c.now); t.after(connection.close);
+  const controller = createPrivateRemoteControllerWorkerCompositionV1({ db: c.f.db, planner: c.planner,
+    integrityKey: new Uint8Array(32).fill(61), tenantId: binding.tenantId, nodeId: binding.nodeId,
+    workerId: worker.workerId, connectorProfileDigest: c.connectorProfileDigest,
+    capabilityDigest: canonicalCapabilityDigest, releaseBindingDigest: canonicalReleaseBindingDigest,
+    enrollmentState: new PrivateRemoteControllerWorkerEnrollmentStateV1(worker),
+    supportedAdapterRevisions: [worker.adapterRevision], session: connection.session, clock: c.now });
+  const prepared = await controller.materializer.prepare(c.ref);
+  const sent = await controller.materializer.transmit(c.ref, prepared);
+  assert.equal(sent.kind, "transmitted");
+  if (sent.kind !== "transmitted") throw new Error("expected one dispatch");
+  const delivery = prepared.delivery;
+  const deliveryRaw = connection.takeDispatch();
+  const receiptRaw = await connection.receiveDispatch(deliveryRaw);
+  const receiptIngress = capturePrivateRemoteControllerWorkerReceiptIngressCapabilityV1(controller);
+  const accepted = await receiptIngress.accept(receiptRaw) as { receipt: unknown };
+  const receipt = accepted.receipt as Parameters<typeof createControllerWorkerProgressReturnV1>[0]["deliveryReceipt"];
+  c.advance(1);
+  const base = { identity: { tenantId: delivery.identity.tenantId, projectId: delivery.identity.projectId,
+    jobId: delivery.identity.jobId, attemptId: delivery.identity.attemptId, runId: delivery.identity.runId,
+    nodeId: delivery.identity.nodeId, workerId: delivery.worker.workerId }, deliveryReceipt: receipt,
+    enrollmentDigest: worker.enrollmentDigest, connectionId: connection.connectionId(),
+    occurredAt: new Date(c.now()).toISOString() };
+  const progress = createControllerWorkerProgressReturnV1({ ...base, sequence: 1, progressPercent: 50,
+    evidenceDigest: "sha256:" + "a".repeat(64) });
+  const terminal = createControllerWorkerTerminalReturnV1({ ...base, sequence: 2, outcome: "completed",
+    resultEvidenceDigest: "sha256:" + "b".repeat(64), safeReasonCode: null });
+  const ingress = capturePrivateRemoteControllerWorkerResultIngressCapabilityV1(controller);
+  const progressResult = await ingress.receive(await connection.result("controller.worker.result.progress", progress));
+  assert.deepEqual({ kind: progressResult.kind, recordsCompletion: progressResult.recordsCompletion,
+    publishesResult: progressResult.publishesResult, releasesCapacity: progressResult.releasesCapacity },
+  { kind: "progress", recordsCompletion: false, publishesResult: false, releasesCapacity: false });
+  const terminalRaw = await connection.result("controller.worker.result.terminal", terminal);
+  const terminalResult = await ingress.receive(terminalRaw);
+  assert.deepEqual({ kind: terminalResult.kind, replayed: terminalResult.replayed,
+    recordsCompletion: terminalResult.recordsCompletion, permitsRetry: terminalResult.permitsRetry },
+  { kind: "terminal", replayed: false, recordsCompletion: false, permitsRetry: false });
+  const replay = await ingress.receive(terminalRaw);
+  assert.equal(replay.replayed, true, "an exact lost terminal acknowledgement is inertly replayed");
+  await assert.rejects(ingress.receive(await connection.result("controller.worker.result.progress", progress)), /unavailable/,
+    "progress cannot follow a terminal record");
+  await assert.rejects((ingress.receive as (this: object, raw: string) => Promise<unknown>).call({}, terminalRaw), /unavailable/,
+    "a copied receiver cannot use the installed ingress");
+  assert.equal(connection.sends(), 1, "result evidence never retransmits the delivery");
 });

@@ -24,10 +24,11 @@ result evidence for the exact delivery that was already recorded. It must:
    PostgreSQL before accepting data. A disconnected, replaced, rotated,
    drained, quarantined, revoked, wrong-worker, expired, copied, or malformed
    message is refused.
-3. Preserve ordering and replay rules: progress cannot move backwards or jump
-   past a saved terminal record; an exact terminal replay returns the original
-   saved receipt; uncertainty never creates a replacement task, result, or
-   provider/workspace run.
+3. Preserve ordering rules: progress is contiguous and cannot move backwards
+   or follow a terminal record. In this first inert package, an exact terminal
+   replay is session-local evidence only; it does not claim a saved receipt
+   across a restart or reconnect. Uncertainty never creates a replacement
+   task, result, or provider/workspace run.
 4. Use the existing harness-neutral durable result publication and normal
    pending-owner-review flow once its existing binding requirements are met.
    The remote worker never decides that work is accepted, complete, approved,
@@ -64,11 +65,12 @@ inspect credentials, expose a port, or allow a browser to submit a raw result.
 3. Add one private installed-composition ingress that captures the exact
    controller materialization reference and rechecks current canonical state.
 4. Reuse the durable publisher only after all its current binding requirements
-   are represented; otherwise retain a terminal record as unresolved evidence
-   and record the specific missing binding rather than inventing authority.
+   are represented; otherwise retain terminal evidence only in the current
+   protected session and record the specific missing binding rather than
+   inventing durable authority.
 5. Prove, with disposable tests: intended-worker acceptance; wrong worker/key/
    connection/delivery refusal; duplicate and out-of-order progress refusal;
-   terminal exact replay; restart/reconnect recovery without resend or rerun;
+   session-local terminal exact replay; reconnect recovery without resend or rerun;
    and revocation before publication.
 
 No claim of a working remote worker is valid until the protected installed

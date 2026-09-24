@@ -1,8 +1,11 @@
 import { generateKeyPairSync } from "node:crypto";
 import { ServerNodeSession } from "../../src/node-control/server-node-session";
-import { FixedWindowProtocolRateLimiter, NodeProtocolAuthenticator, signNodeFrame } from "../../src/node-protocol/v1";
+import { FixedWindowProtocolRateLimiter, NODE_PROTOCOL_V1, NodeProtocolAuthenticator, signNodeFrame,
+  type NodeMessageBodyMap } from "../../src/node-protocol/v1";
 import { CONTROLLER_WORKER_NODE_DELIVERY_FEATURE_V1, CONTROLLER_WORKER_NODE_RECOVERY_FEATURE_V1 } from
   "../../src/harness/v1/controller-worker-node-delivery";
+import { CONTROLLER_WORKER_RESULT_RETURN_FEATURE_V1 } from
+  "../../src/harness/v1/controller-worker-result-return";
 import { ControllerWorkerDeliveryIntakeHandlerV1 } from "../../src/node-bridge/controller-worker-delivery-handler";
 import { PortableNodeBridge } from "../../src/node-bridge/bridge";
 import { SqliteBridgeJournal } from "../../src/node-bridge/journal";
@@ -32,7 +35,8 @@ export async function realInstalledConnection(enrollment: ReturnType<typeof crea
     adapterId: enrollment.adapterId, adapterRevision: enrollment.adapterRevision,
     enrollmentDigest: enrollment.enrollmentDigest }, journal, clock);
   const bridge = new PortableNodeBridge({ tenantId: binding.tenantId, nodeId: binding.nodeId,
-    keyId: "key:test", features: [CONTROLLER_WORKER_NODE_DELIVERY_FEATURE_V1, CONTROLLER_WORKER_NODE_RECOVERY_FEATURE_V1] }, journal,
+    keyId: "key:test", features: [CONTROLLER_WORKER_NODE_DELIVERY_FEATURE_V1, CONTROLLER_WORKER_NODE_RECOVERY_FEATURE_V1,
+      CONTROLLER_WORKER_RESULT_RETURN_FEATURE_V1] }, journal,
   { async sign(frame) { return signNodeFrame(frame, nodeKeys.privateKey); } },
   new NodeProtocolAuthenticator({ async resolve(value) { return { ...value, algorithm: "ed25519", publicKeySpki: serverSpki,
     state: "active", principalState: "active", validFrom: at(1_000) }; } }, journal,
@@ -40,18 +44,21 @@ export async function realInstalledConnection(enrollment: ReturnType<typeof crea
   const createSession = () => new ServerNodeSession({ tenantId: binding.tenantId, nodeId: binding.nodeId,
     nodeKeyId: "key:test", serverId: "server:control-room", serverKeyId: "server-key:control-room",
     serverPublicKeySpki: serverSpki, transportIdentity: "transport:protected-remote",
-    features: [CONTROLLER_WORKER_NODE_DELIVERY_FEATURE_V1, CONTROLLER_WORKER_NODE_RECOVERY_FEATURE_V1],
+    features: [CONTROLLER_WORKER_NODE_DELIVERY_FEATURE_V1, CONTROLLER_WORKER_NODE_RECOVERY_FEATURE_V1,
+      CONTROLLER_WORKER_RESULT_RETURN_FEATURE_V1],
     maxFrameBytes: 131_072, heartbeatIntervalSeconds: 30 }, {
     clock, authentication: new NodeProtocolAuthenticator({ async resolve(value) { return { ...value, algorithm: "ed25519",
       publicKeySpki: nodeSpki, state: "active", principalState: "active", validFrom: at(1_000) }; } },
     { async consume() { return "accepted" as const; } }, new FixedWindowProtocolRateLimiter(100, 60)),
     async sign(frame) { return signNodeFrame(frame, serverKeys.privateKey); }, async send(raw) { toNode.push(raw); },
   });
-  let session = createSession(), deliverySends = 0;
+  let session = createSession(), deliverySends = 0, activeConnectionId = "", resultSequence = 100;
   const pumpHandshake = async () => {
     await bridge.open({ async send(raw) { toServer.push(raw); }, async close() {} },
       { now: new Date(clock()).toISOString(), transportIdentity: "transport:protected-remote" });
-    await session.acceptHello(toServer.shift()!);
+    const hello = toServer.shift()!;
+    activeConnectionId = (JSON.parse(hello) as { connectionId: string }).connectionId;
+    await session.acceptHello(hello);
     while (toNode.length || toServer.length) {
       while (toNode.length) await bridge.receive(toNode.shift()!, new Date(clock()).toISOString());
       while (toServer.length) await session.receive(toServer.shift()!);
@@ -70,6 +77,18 @@ export async function realInstalledConnection(enrollment: ReturnType<typeof crea
       session = createSession(); await pumpHandshake(); },
     async recovery(queueId: string) { await bridge.recoverControllerWorkerReceipt(queueId, new Date(clock()).toISOString());
       const raw = toServer.shift(); if (!raw) throw new Error("missing recovery receipt"); return raw; },
+    connectionId: () => activeConnectionId,
+    async result<T extends "controller.worker.result.progress" | "controller.worker.result.terminal">(
+      type: T, body: NodeMessageBodyMap[T]) {
+      const sentAt = new Date(clock()).toISOString();
+      const frame = await signNodeFrame({ protocol: NODE_PROTOCOL_V1, direction: "node_to_server",
+        senderKind: "node", messageId: `message:result:${++resultSequence}`,
+        correlationId: body.deliveryReceipt.deliveryId, tenantId: binding.tenantId,
+        actorId: binding.nodeId, keyId: "key:test", connectionId: activeConnectionId,
+        sequence: resultSequence, sentAt, expiresAt: new Date(clock() + 30_000).toISOString(),
+        nonce: `nonce_result_${resultSequence}_x`, type, body }, nodeKeys.privateKey);
+      return JSON.stringify(frame);
+    },
     async close() { session.disconnect(); await bridge.close(); handler.close(); journal.close(); },
   };
 }
