@@ -128,6 +128,9 @@ options and their licenses are recorded in
 The leading candidate is a separately identified, tightly scoped trusted state
 process that reuses the current stores; it is not selected or qualified merely
 by this reference.
+Its allowed boundaries, exact retained bindings, restart rules, and Linux
+evidence requirements are captured in
+[`LINUX_TRUSTED_STATE_PROCESS_CONTRACT.md`](LINUX_TRUSTED_STATE_PROCESS_CONTRACT.md).
 
 ### LCOI-2: reconciled Codex bridge owner
 
