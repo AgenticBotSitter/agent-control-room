@@ -70,12 +70,8 @@ function taskText(input: Parameters<Hermes021MacosStreamJsonHostV1["execute"]>[0
  * does not start Hermes, retain credentials, or enable a worker. The caller
  * must still supply the existing Control Room policy and queue composition.
  */
-export function createHermes021MacosSubprocessStreamJsonHostV1(configurationValue: unknown,
-  launch: Launch = (file, args, options) => spawn(file, [...args], options) as ChildProcessWithoutNullStreams,
-  makeDirectory: MakeDirectory = mkdtemp,
-  removeDirectory: RemoveDirectory = rm,
-  saveFile: SaveFile = writeFile,
-  now: () => number = Date.now): Hermes021MacosStreamJsonHostV1 {
+function createHost(configurationValue: unknown, launch: Launch, makeDirectory: MakeDirectory,
+  removeDirectory: RemoveDirectory, saveFile: SaveFile, now: () => number): Hermes021MacosStreamJsonHostV1 {
   const configuration = captureHermes021MacosSubprocessHostConfigurationV1(configurationValue);
   if (typeof launch !== "function" || typeof makeDirectory !== "function" || typeof removeDirectory !== "function"
     || typeof saveFile !== "function" || typeof now !== "function") unavailable();
@@ -158,6 +154,31 @@ export function createHermes021MacosSubprocessStreamJsonHostV1(configurationValu
       await removeDirectory(directory, { recursive: true, force: true });
     }
   } });
+  return host;
+}
+
+/** General process host with explicit test seams. It never mints owner
+ * qualification authority, including when every injected primitive is real. */
+export function createHermes021MacosSubprocessStreamJsonHostV1(configurationValue: unknown,
+  launch: Launch = (file, args, options) => spawn(file, [...args], options) as ChildProcessWithoutNullStreams,
+  makeDirectory: MakeDirectory = mkdtemp,
+  removeDirectory: RemoveDirectory = rm,
+  saveFile: SaveFile = writeFile,
+  now: () => number = Date.now): Hermes021MacosStreamJsonHostV1 {
+  return createHost(configurationValue, launch, makeDirectory, removeDirectory, saveFile, now);
+}
+
+/**
+ * Concrete owner-terminal subprocess route. There is deliberately no launch,
+ * filesystem, clock, or callback injection seam: only this native constructor
+ * can place a host in qualification custody.
+ */
+export function createHermes021MacosNativeOwnerQualificationHostV1(
+  configurationValue: unknown): Hermes021MacosStreamJsonHostV1 {
+  const configuration = captureHermes021MacosSubprocessHostConfigurationV1(configurationValue);
+  const host = createHost(configuration,
+    (file, args, options) => spawn(file, [...args], options) as ChildProcessWithoutNullStreams,
+    mkdtemp, rm, writeFile, Date.now);
   ownerQualificationHosts.set(host, Object.freeze({ configuration, execute: host.execute.bind(host) }));
   return host;
 }

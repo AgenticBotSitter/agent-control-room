@@ -6,7 +6,8 @@ import { HERMES_021_MACOS_LOCAL_ADAPTER_V1, HERMES_021_MACOS_LOCAL_RUNNER_QUALIF
   runHermes021MacosInstallationBoundRunnerQualificationV1,
   verifyHermes021MacosProtectedWorkerReadinessV1 } from "../src/harness/hermes-021-v1";
 import { sha256Digest } from "../src/security/canonical-digest";
-import { createHermesOwnerQualificationHostFixture } from "./helpers/hermes-owner-qualification-host";
+import { createHermesOwnerQualificationHostFixture, hermesOwnerQualificationConfigurationFixture } from
+  "./helpers/hermes-owner-qualification-host";
 
 const route = Object.freeze({ kind: "local" as const, workerId: "worker:marvin",
   adapterId: HERMES_021_MACOS_LOCAL_ADAPTER_V1, adapterRevision: HERMES_021_SOURCE_REVISION_V1 });
@@ -16,9 +17,8 @@ const topologyInput = Object.freeze({ databaseAuthorityDigest: sha256Digest("dat
 const topologyPlan = planInstallationTopologyV1(topologyInput);
 const workerBinding = Object.freeze({ localServiceId: "service:marvin", workerId: route.workerId,
   expectedVersion: "0.21.3" as const, sourceRevision: HERMES_021_SOURCE_REVISION_V1 });
-const runnerConfiguration = Object.freeze({ executablePath: "/private/fixture/hermes", profile: "owner-profile-private",
-  model: "qwen3.8:27b-long", provider: "ollama", workingDirectory: "/private/fixture/work",
-  taskClass: "text_review" as const, maximumTurns: 1 as const, maximumRunBudgetSeconds: 120 });
+const runnerConfiguration = hermesOwnerQualificationConfigurationFixture({ profile: "owner-profile-private",
+  model: "qwen3.8:27b-long", provider: "ollama" });
 const runnerQualificationReport = Object.freeze({ schema: HERMES_021_MACOS_LOCAL_RUNNER_QUALIFICATION_REPORT_V1,
   qualified: true as const, terminalResultObserved: true as const, sessionDigest: sha256Digest("session"),
   inputTokens: 14, outputTokens: 8, totalTokens: 22, durationMs: 1_250,
@@ -27,11 +27,10 @@ const runnerQualificationReport = Object.freeze({ schema: HERMES_021_MACOS_LOCAL
 async function input(configuration: Parameters<typeof createHermesOwnerQualificationHostFixture>[0] = runnerConfiguration) {
   const base = { installationId: "fixture-installation", releaseDigest: sha256Digest("release"), topologyInput,
     topologyPlan, workerBinding, runnerConfiguration: configuration };
-  const fixture = createHermesOwnerQualificationHostFixture(base.runnerConfiguration);
+  const host = createHermesOwnerQualificationHostFixture(base.runnerConfiguration);
   const qualified = await runHermes021MacosInstallationBoundRunnerQualificationV1({
     installationId: base.installationId, releaseDigest: base.releaseDigest, topologyPlan: base.topologyPlan,
-    workerBinding: base.workerBinding, runnerConfiguration: base.runnerConfiguration }, fixture.host);
-  fixture.close();
+    workerBinding: base.workerBinding, runnerConfiguration: base.runnerConfiguration }, host);
   return { ...base, runnerQualificationReport: qualified.report, runnerQualificationEvidence: qualified.evidence };
 }
 
@@ -75,7 +74,7 @@ test("saved readiness refuses profile, model, provider, workspace, worker and qu
 test("readiness creation refuses qualification evidence captured for another runner", async () => {
   const selected = await input();
   const hostileRunner = { ...runnerConfiguration, profile: "hostile-profile", model: "hostile-model",
-    provider: "hostile-provider", workingDirectory: "/private/fixture/hostile-work" };
+    provider: "hostile-provider" };
   const hostile = await input(hostileRunner);
   assert.throws(() => createHermes021MacosProtectedWorkerReadinessV1({ ...selected,
     runnerQualificationEvidence: hostile.runnerQualificationEvidence }),

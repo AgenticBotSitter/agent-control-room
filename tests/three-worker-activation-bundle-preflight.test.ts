@@ -9,7 +9,8 @@ import { composeThreeWorkerActivationBundlePreflightV1, createThreeWorkerActivat
   recordHermesThreeWorkerActivationSourceProofV1, refreshThreeWorkerActivationBundlePreflightV1,
   verifyThreeWorkerActivationBundlePreflightV1 } from
   "../src/installer/v1/three-worker-activation-bundle-preflight";
-import { createHermesOwnerQualificationHostFixture } from "./helpers/hermes-owner-qualification-host";
+import { createHermesOwnerQualificationHostFixture, hermesOwnerQualificationConfigurationFixture } from
+  "./helpers/hermes-owner-qualification-host";
 
 const d = (value: string) => sha256Digest(value);
 const route = Object.freeze({ kind: "local" as const, workerId: "worker:marvin",
@@ -23,14 +24,12 @@ const binding = Object.freeze({ installationId: "control-room-one", releaseDiges
 async function hermesSource() {
   const workerBinding = Object.freeze({ localServiceId: "service:marvin", workerId: route.workerId,
     expectedVersion: "0.21.3" as const, sourceRevision: HERMES_021_SOURCE_REVISION_V1 });
-  const runnerConfiguration = Object.freeze({ executablePath: "/private/fixture/hermes", profile: "owner-profile-private",
-    model: "qwen3.8:27b-long", provider: "ollama", workingDirectory: "/private/fixture/work",
-    taskClass: "text_review" as const, maximumTurns: 1 as const, maximumRunBudgetSeconds: 120 });
-  const fixture = createHermesOwnerQualificationHostFixture(runnerConfiguration);
+  const runnerConfiguration = hermesOwnerQualificationConfigurationFixture({ profile: "owner-profile-private",
+    model: "qwen3.8:27b-long", provider: "ollama" });
+  const host = createHermesOwnerQualificationHostFixture(runnerConfiguration);
   const qualified = await runHermes021MacosInstallationBoundRunnerQualificationV1({
     installationId: binding.installationId, releaseDigest: binding.releaseDigest, topologyPlan, workerBinding,
-    runnerConfiguration }, fixture.host);
-  fixture.close();
+    runnerConfiguration }, host);
   const currentInput = { installationId: binding.installationId, releaseDigest: binding.releaseDigest,
     topologyInput, topologyPlan, workerBinding, runnerConfiguration,
     runnerQualificationReport: qualified.report, runnerQualificationEvidence: qualified.evidence };
