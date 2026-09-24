@@ -48,6 +48,14 @@ export interface ServerNativeChannel {
   assertCurrent(): void;
 }
 
+/**
+ * Read-only identity fence for one negotiated controller-worker connection.
+ * Unlike the delivery channel, this remains observable while that exact
+ * connection is in its prepared/sent/receipt phases. It grants no operation:
+ * stage/send/receipt methods retain their own state-machine and busy fences.
+ */
+export interface ControllerWorkerSessionBindingV1 extends ServerNativeChannel {}
+
 export interface NativeEnvelopeChannel extends ServerNativeChannel {
   readonly serverId: string;
   readonly serverKeyId: string;
@@ -307,6 +315,24 @@ export class ServerNodeSession {
       connectionId: this.connectionId, maxFrameBytes: this.maxFrameBytes, expiresAt: new Date(this.deadline).toISOString(),
       grantsExecutionAuthority: false as const,
       assertCurrent: () => { this.now(); if (this.busy || this.state !== "ready") throw new Error("Server controller worker channel is unavailable"); },
+    });
+  }
+
+  controllerWorkerSessionBinding(): ControllerWorkerSessionBindingV1 | undefined {
+    try { this.now(); } catch { return undefined; }
+    const states = ["ready", "controller_worker_prepared", "controller_worker_transmitting",
+      "controller_worker_sent", "controller_worker_receipted"];
+    if (!this.connectionId || !states.includes(this.state)
+      || !this.features.includes(CONTROLLER_WORKER_NODE_DELIVERY_FEATURE_V1)) return undefined;
+    const connectionId = this.connectionId;
+    return Object.freeze({ tenantId: this.config.tenantId, nodeId: this.config.nodeId, nodeKeyId: this.config.nodeKeyId,
+      connectionId, maxFrameBytes: this.maxFrameBytes, expiresAt: new Date(this.deadline).toISOString(),
+      grantsExecutionAuthority: false as const,
+      assertCurrent: () => {
+        this.now();
+        if (this.connectionId !== connectionId || !states.includes(this.state))
+          throw new Error("Server controller worker session binding is unavailable");
+      },
     });
   }
 
