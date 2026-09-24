@@ -20,7 +20,10 @@ CREATE TABLE control_remote_worker_enrollment_revisions (
   record jsonb NOT NULL,
   auth_tag text NOT NULL CHECK (auth_tag ~ '^hmac-sha256:[a-f0-9]{64}$'),
   PRIMARY KEY (tenant_id,worker_id,revision),
-  UNIQUE (tenant_id,enrollment_id),
+  -- Every revision retains the immutable enrollment ID.  Including revision
+  -- prevents reuse at the same history position while allowing that one
+  -- enrollment's authenticated lifecycle chain to advance.
+  UNIQUE (tenant_id,enrollment_id,revision),
   FOREIGN KEY (tenant_id,node_id) REFERENCES control_nodes(tenant_id,id) ON DELETE RESTRICT,
   FOREIGN KEY (tenant_id,node_id,node_key_id) REFERENCES control_node_keys(tenant_id,node_id,id) ON DELETE RESTRICT,
   CONSTRAINT ck_remote_worker_enrollment_revision_mirrors CHECK (
