@@ -489,6 +489,9 @@ capacity, or claim restart-safe generic result recovery. A later canonical
 publisher must add those durable effects in the existing PostgreSQL lifecycle.
 The exact reuse and required missing bindings are maintained in
 [`GENERIC_REMOTE_RESULT_PUBLICATION_PLAN.md`](GENERIC_REMOTE_RESULT_PUBLICATION_PLAN.md).
+The durable terminal record will reuse the existing harness-run ledger as
+defined in [`REMOTE_TERMINAL_RECORD_DECISION.md`](REMOTE_TERMINAL_RECORD_DECISION.md),
+not a separate remote-result store.
 **Work:**
 
 1. Deliver the exact controller packet to only its intended worker.

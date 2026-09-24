@@ -173,6 +173,13 @@ rechecks run/lease/authority timing, and an explicitly selected canonical home
 for the durable terminal record. No remote bytes will be accepted until those
 decisions are made.
 
+**September 24 terminal-record decision:** the future restart-safe remote
+terminal record will reuse the existing append-only harness-run event ledger.
+It will be a new tightly bounded event type, bound to the saved delivery and
+enrollment, while actual result text remains in existing protected artifact
+storage. This prevents a reconnect from treating an old signed network message
+as a durable identity and avoids creating a second remote-result database.
+
 The first installed Claude route is now pinned to Claude Code's `opus` alias
 instead of inheriting a desktop or command-line default. Its owner-attended
 qualification, saved process configuration, and later task execution must all

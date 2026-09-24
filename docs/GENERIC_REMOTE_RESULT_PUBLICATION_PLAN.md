@@ -75,6 +75,11 @@ settled here before any remote result bytes are accepted.
    It must also define the safe handling of a crash between terminal recording,
    byte storage, durable publication, and review registration.
 
+The chosen home and its reconnect rules are recorded in
+[`REMOTE_TERMINAL_RECORD_DECISION.md`](REMOTE_TERMINAL_RECORD_DECISION.md):
+the existing append-only harness-run event ledger, with a new narrowly typed
+remote-terminal event. This preserves one database and one lifecycle.
+
 ## Required ordering
 
 1. Write a source-only remote terminal-material and durable terminal-record
