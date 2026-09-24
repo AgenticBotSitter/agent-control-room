@@ -63,3 +63,21 @@ test("a local policy refusal records no receipt and never invokes Marvin", async
   const rows = await f.db.query<{ count: string }>("SELECT count(*)::text AS count FROM control_worker_delivery_receipts");
   assert.equal(rows.rows[0]?.count, "0");
 });
+
+test("a revoked canonical recheck after the receipt cannot start Hermes and a replay stays fenced", async t => {
+  const f = await nativeTaskFixture(); t.after(f.close);
+  const packet = delivery(); let runs = 0;
+  const config = { db: f.db, integrityKey: receiptKey, binding: localBinding,
+    policy: { assertAdmitted() {} },
+    async recheckBeforeLaunch() { throw new Error("lease_revoked"); },
+    privatePort: { async run() { runs++; return [result]; } } };
+  await assert.rejects(deliverHermes021MacosLocalTaskV1(config, packet,
+    { kind: "local", workerId: localBinding.workerId }, at(2000)), /lease_revoked/);
+  assert.equal(runs, 0);
+  const rows = await f.db.query<{ count: string }>("SELECT count(*)::text AS count FROM control_worker_delivery_receipts");
+  assert.equal(rows.rows[0]?.count, "1");
+  const replay = await deliverHermes021MacosLocalTaskV1(config, packet,
+    { kind: "local", workerId: localBinding.workerId }, at(2000));
+  assert.equal(replay.state, "already_delivered");
+  assert.equal(runs, 0);
+});
