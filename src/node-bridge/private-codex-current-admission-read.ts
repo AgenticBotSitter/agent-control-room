@@ -11,6 +11,7 @@ import type { NodePrivateKeyStore } from "../node-policy/v1/stores";
 import { NODE_PROTOCOL_V1, signedNodeFrameSchema, verifyNodeFrameSignature, type SignedNodeFrame,
   type UnsignedNodeFrame } from "../node-protocol/v1";
 import { sha256Digest } from "../security/canonical-digest";
+import { codexApprovalPacketDigestV1 } from "../web/v1/codex-task-queue";
 import { PortableNodeBridge } from "./bridge";
 import { SqliteBridgeJournal } from "./journal";
 import { ProtectedStoreFrameSigner } from "./protected-store-signer";
@@ -23,7 +24,7 @@ export const CODEX_CURRENT_ADMISSION_READ_MAX_LIFETIME_MS_V1 = 30_000;
 
 const unavailable = (): never => { throw new Error("private_codex_current_admission_read_unavailable"); };
 const capabilities = new WeakMap<object, Readonly<{
-  queueId: string; currentAdmissionDigest: string; ownerTrustRevisionDigest: string; assertCurrent(): void;
+  queueId: string; currentAdmissionDigest: string; serverTrustRevision: string; assertCurrent(): void;
 }>>();
 
 export type PrivateCodexCurrentAdmissionCapabilityV1 = Readonly<{
@@ -45,7 +46,6 @@ type Issued = Readonly<{
   request: SignedNodeFrame<"harness.codex.current-admission.read">;
   activationFrameDigest: string;
   admissionDigest: string;
-  ownerTrustRevisionDigest: string;
   trustRevision: string;
   connectionId: string;
   expiresAt: number;
@@ -79,11 +79,12 @@ export function createPrivateCodexCurrentAdmissionReaderV1(input: {
   const channelFor = (queueId: string) => {
     const channel = bridge.codexActivationChannel();
     const activation = journal.acceptedCodexActivation(queueId);
-    if (!channel || !activation || channel.grantsExecutionAuthority !== false) unavailable();
+    const delivery = journal.acceptedCodexDelivery(queueId);
+    if (!channel || !activation || !delivery || channel.grantsExecutionAuthority !== false) unavailable();
     const start = activation.frame.body;
     if (activation.frame.type !== "harness.codex.dispatch.activation" || channel.tenantId !== start.tenantId
       || channel.nodeId !== start.nodeId || activation.frame.connectionId !== channel.connectionId) unavailable();
-    return { channel, activation, start };
+    return { channel, activation, delivery, start };
   };
   const assertInstallationCurrent = (queueId: string, item: Issued) => {
     const { channel, activation } = channelFor(queueId);
@@ -102,7 +103,7 @@ export function createPrivateCodexCurrentAdmissionReaderV1(input: {
     async issue(queueId: string) {
       try {
         localId.parse(queueId); if (issued.has(queueId)) unavailable();
-        const { channel, activation, start } = channelFor(queueId);
+        const { channel, activation, delivery, start } = channelFor(queueId);
         channel.assertCurrent(); approvals.assertAvailable();
         const binding = approvals.binding();
         if (binding.tenantId !== activation.frame.tenantId || binding.nodeId !== channel.nodeId) unavailable();
@@ -114,7 +115,8 @@ export function createPrivateCodexCurrentAdmissionReaderV1(input: {
         const body = codexCurrentAdmissionReadRequestSchemaV1.parse({
           schema: "control-room.codex-current-admission-read-request/v1", queueId,
           projectId: start.projectId, jobId: start.jobId, attemptId: start.attemptId, nodeId: start.nodeId,
-          inputDigest: start.inputDigest, activationFrameDigest: sha256Digest(activation.frame),
+          inputDigest: start.inputDigest, packetDigest: codexApprovalPacketDigestV1(delivery.frame.body),
+          activationFrameDigest: sha256Digest(activation.frame),
           currentAdmissionDigest: start.currentAdmissionDigest, challengeNonce: nonce,
           startsWork: false, grantsExecutionAuthority: false,
         });
@@ -125,7 +127,7 @@ export function createPrivateCodexCurrentAdmissionReaderV1(input: {
           sentAt: new Date(now).toISOString(), expiresAt: new Date(expiresAt).toISOString(), nonce,
           type: "harness.codex.current-admission.read", body } as UnsignedNodeFrame<"harness.codex.current-admission.read">);
         issued.set(queueId, Object.freeze({ request, activationFrameDigest: body.activationFrameDigest,
-          admissionDigest: body.currentAdmissionDigest, ownerTrustRevisionDigest: "", trustRevision,
+          admissionDigest: body.currentAdmissionDigest, trustRevision,
           connectionId: channel.connectionId, expiresAt, nonce }));
         return Object.freeze({ request });
       } catch { return unavailable(); }
@@ -156,13 +158,12 @@ export function createPrivateCodexCurrentAdmissionReaderV1(input: {
           now, maximumExpiresAt: item.expiresAt,
         });
         if (body.expiresAt !== response.expiresAt) unavailable();
-        const accepted = Object.freeze({ ...item, ownerTrustRevisionDigest: body.ownerTrustRevisionDigest });
-        assertInstallationCurrent(queueId, accepted);
+        assertInstallationCurrent(queueId, item);
         issued.delete(queueId);
         const capability = Object.freeze({ schema: PRIVATE_CODEX_CURRENT_ADMISSION_CAPABILITY_V1 });
         capabilities.set(capability, Object.freeze({ queueId, currentAdmissionDigest: body.currentAdmissionDigest,
-          ownerTrustRevisionDigest: body.ownerTrustRevisionDigest,
-          assertCurrent: () => assertInstallationCurrent(queueId, accepted) }));
+          serverTrustRevision: item.trustRevision,
+          assertCurrent: () => assertInstallationCurrent(queueId, item) }));
         return Object.freeze({ schema: PRIVATE_CODEX_CURRENT_ADMISSION_CAPABILITY_V1, capability, response: body });
       } catch { return unavailable(); }
     },
@@ -180,7 +181,7 @@ export function consumePrivateCodexCurrentAdmissionCapabilityV1(value: unknown) 
     currentAdmissionDigest(queueId: string) {
       if (queueId !== bound.queueId) unavailable(); bound.assertCurrent(); return bound.currentAdmissionDigest;
     },
-    currentServerTrustRevision() { bound.assertCurrent(); return bound.ownerTrustRevisionDigest; },
+    currentServerTrustRevision() { bound.assertCurrent(); return bound.serverTrustRevision; },
     assertCurrent(queueId: string) { if (queueId !== bound.queueId) unavailable(); bound.assertCurrent(); },
   });
 }

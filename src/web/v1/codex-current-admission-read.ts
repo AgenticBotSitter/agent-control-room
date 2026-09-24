@@ -1,12 +1,10 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import { codexCurrentAdmissionReadResponseSchemaV1, type CodexCurrentAdmissionReadResponseV1 }
   from "../../harness/codex-v1/current-admission-read-contract";
-import { type DatabaseClient } from "../../persistence/database";
+import { nativeTaskSubmissionReferenceSchema } from "../../persistence/native-task-submission";
 import { NODE_PROTOCOL_V1, type NodeProtocolAuthenticator, type SignedNodeFrame, type UnsignedNodeFrame }
   from "../../node-protocol/v1";
-import { sha256Digest } from "../../security";
-import { assertCanonicalCodexAdmissionInSession, readCodexActivationTransmissionIntentInSession }
-  from "./codex-activation-transmission-intent";
+import type { TaskAssignmentCoordinator } from "./task-assignment-coordinator";
 
 export const CODEX_CURRENT_ADMISSION_READ_MAX_LIFETIME_MS_V1 = 30_000;
 const unavailable = (): never => { throw new Error("codex_current_admission_read_unavailable"); };
@@ -18,23 +16,18 @@ const unavailable = (): never => { throw new Error("codex_current_admission_read
  * this source package only returns one signed-response payload.
  */
 export function createCodexCurrentAdmissionReadResponderV1(input: {
-  db: DatabaseClient;
-  activationIntegrityKey: Uint8Array;
+  coordinator: Pick<TaskAssignmentCoordinator, "readCurrentCodexQueuedAdmission">;
   authenticator: Pick<NodeProtocolAuthenticator, "verify">;
   tenantId: string;
   nodeId: string;
   connectionId: string;
   transportIdentity: string;
-  /** Current server owner-trust revision from the same protected configuration used by withCodexPermit. */
-  currentOwnerTrustRevision(): string;
   clock?: () => number;
 }) {
-  if (!input || !input.db || typeof input.db.transaction !== "function"
-    || !(input.activationIntegrityKey instanceof Uint8Array) || input.activationIntegrityKey.length !== 32
+  if (!input || !input.coordinator || typeof input.coordinator.readCurrentCodexQueuedAdmission !== "function"
     || !input.authenticator || typeof input.authenticator.verify !== "function"
     || typeof input.tenantId !== "string" || typeof input.nodeId !== "string"
     || typeof input.connectionId !== "string" || typeof input.transportIdentity !== "string"
-    || typeof input.currentOwnerTrustRevision !== "function"
     || input.clock !== undefined && typeof input.clock !== "function") unavailable();
   const clock = input.clock ?? Date.now;
 
@@ -56,33 +49,27 @@ export function createCodexCurrentAdmissionReadResponderV1(input: {
         if (authenticated.delivery !== "accepted" || request.type !== "harness.codex.current-admission.read"
           || request.tenantId !== input.tenantId || request.actorId !== input.nodeId
           || request.connectionId !== input.connectionId || request.senderKind !== "node") unavailable();
-        const body = request.body, scope = { tenantId: input.tenantId, projectId: body.projectId,
-          jobId: body.jobId, attemptId: body.attemptId, inputDigest: body.inputDigest };
-        const checked = await input.db.transaction(async tx => {
-          const saved = await readCodexActivationTransmissionIntentInSession(tx, input.activationIntegrityKey, scope);
-          if (!saved) unavailable();
-          const admission = saved.currentAdmission;
-          await assertCanonicalCodexAdmissionInSession(tx, admission);
-          const revision = input.currentOwnerTrustRevision();
-          if (sha256Digest(revision) !== admission.ownerTrustRevisionDigest
-            || body.queueId !== admission.queueId || body.nodeId !== admission.nodeId
-            || body.currentAdmissionDigest !== sha256Digest(admission)
-            || body.activationFrameDigest !== sha256Digest(saved.frame)
-            || admission.tenantId !== request.tenantId || admission.connectionId !== request.connectionId
-            || saved.frame.body.currentAdmissionDigest !== body.currentAdmissionDigest
-            || now >= Date.parse(admission.admissionExpiresAt) || now >= Date.parse(saved.frame.expiresAt)) unavailable();
-          return Object.freeze({ admission, activationFrameDigest: sha256Digest(saved.frame) });
-        });
+        const body = request.body;
+        const reference = nativeTaskSubmissionReferenceSchema.parse({ schema: "control-room.native-task-submission/v1",
+          tenantId: input.tenantId, projectId: body.projectId, jobId: body.jobId, attemptId: body.attemptId,
+          queueId: body.queueId, inputDigest: body.inputDigest, packetDigest: body.packetDigest });
+        const checked = await input.coordinator.readCurrentCodexQueuedAdmission(reference, {
+          queueId: body.queueId, nodeId: body.nodeId, packetDigest: body.packetDigest,
+          activationFrameDigest: body.activationFrameDigest, currentAdmissionDigest: body.currentAdmissionDigest,
+        }, new AbortController().signal);
+        const admission = checked.currentAdmission;
+        if (admission.tenantId !== request.tenantId || admission.connectionId !== request.connectionId
+          || now >= Date.parse(admission.admissionExpiresAt)) unavailable();
         const expiresAt = Math.min(now + CODEX_CURRENT_ADMISSION_READ_MAX_LIFETIME_MS_V1,
-          Date.parse(request.expiresAt), Date.parse(checked.admission.admissionExpiresAt));
+          Date.parse(request.expiresAt), Date.parse(admission.admissionExpiresAt));
         if (!Number.isFinite(expiresAt) || expiresAt <= now) unavailable();
         const response = codexCurrentAdmissionReadResponseSchemaV1.parse({
-          schema: "control-room.codex-current-admission-read-response/v1", queueId: checked.admission.queueId,
-          projectId: checked.admission.projectId, jobId: checked.admission.jobId, attemptId: checked.admission.attemptId,
-          nodeId: checked.admission.nodeId, requestMessageId: request.messageId, requestBodyDigest: request.bodyDigest,
+          schema: "control-room.codex-current-admission-read-response/v1", queueId: admission.queueId,
+          projectId: admission.projectId, jobId: admission.jobId, attemptId: admission.attemptId,
+          nodeId: admission.nodeId, requestMessageId: request.messageId, requestBodyDigest: request.bodyDigest,
           challengeNonce: body.challengeNonce, activationFrameDigest: checked.activationFrameDigest,
           currentAdmissionDigest: body.currentAdmissionDigest,
-          ownerTrustRevisionDigest: checked.admission.ownerTrustRevisionDigest,
+          ownerTrustRevisionDigest: admission.ownerTrustRevisionDigest,
           checkedAt: new Date(now).toISOString(), expiresAt: new Date(expiresAt).toISOString(),
           startsWork: false, grantsExecutionAuthority: false,
         });

@@ -19,7 +19,7 @@ const instant = z.string().datetime({ offset: true });
 export const codexCurrentAdmissionReadRequestSchemaV1 = z.object({
   schema: z.literal(CODEX_CURRENT_ADMISSION_READ_REQUEST_SCHEMA_V1),
   queueId: id, projectId: id, jobId: id, attemptId: id, nodeId: id,
-  inputDigest: digest, activationFrameDigest: digest, currentAdmissionDigest: digest,
+  inputDigest: digest, packetDigest: digest, activationFrameDigest: digest, currentAdmissionDigest: digest,
   challengeNonce: nonce, startsWork: z.literal(false), grantsExecutionAuthority: z.literal(false),
 }).strict();
 export type CodexCurrentAdmissionReadRequestV1 = z.infer<typeof codexCurrentAdmissionReadRequestSchemaV1>;

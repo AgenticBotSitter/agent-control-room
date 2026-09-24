@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { generateKeyPairSync } from "node:crypto";
 import test from "node:test";
-import { matchCodexCurrentAdmissionReadResponseV1 } from "../src/harness/codex-v1/current-admission-read-contract";
+import { codexCurrentAdmissionReadRequestSchemaV1,
+  matchCodexCurrentAdmissionReadResponseV1 } from "../src/harness/codex-v1/current-admission-read-contract";
 import { NODE_PROTOCOL_V1, signNodeFrame, signedNodeFrameSchema } from "../src/node-protocol/v1";
 import { sha256Digest } from "../src/security";
 
@@ -40,6 +41,18 @@ test("Codex current-admission read accepts only exact signed, bounded read evide
   assert.deepEqual(parsed.body, body);
   assert.equal(parsed.body.startsWork, false);
   assert.equal(parsed.body.grantsExecutionAuthority, false);
+});
+
+test("read request binds the exact approved packet as well as activation evidence", () => {
+  const value = codexCurrentAdmissionReadRequestSchemaV1.parse({
+    schema: "control-room.codex-current-admission-read-request/v1", queueId: request.queueId,
+    projectId: request.projectId, jobId: request.jobId, attemptId: request.attemptId, nodeId: request.nodeId,
+    inputDigest: digest("input"), packetDigest: digest("approved-packet"),
+    activationFrameDigest: request.activationFrameDigest, currentAdmissionDigest: request.currentAdmissionDigest,
+    challengeNonce: request.challengeNonce, startsWork: false, grantsExecutionAuthority: false,
+  });
+  assert.equal(value.packetDigest, digest("approved-packet"));
+  assert.throws(() => codexCurrentAdmissionReadRequestSchemaV1.parse({ ...value, packetDigest: "not-a-digest" }));
 });
 
 test("Codex current-admission read rejects replay substitution, stale owner state, and expiry", () => {

@@ -42,8 +42,9 @@ import { codexApprovalPacketDigestV1, enqueueCodexTaskInSession, readCodexApprov
 import { persistCodexDeliveryEnvelope } from "./codex-delivery-envelope";
 import { persistCodexTransmissionIntent } from "./codex-transmission-intent";
 import { persistCodexDeliveryReceipt } from "./codex-delivery-receipt";
-import { codexCurrentAdmissionSchemaV1, persistCodexActivationTransmissionIntent,
-  type CodexCurrentAdmissionBasisV1 } from "./codex-activation-transmission-intent";
+import { assertCanonicalCodexAdmissionInSession, codexCurrentAdmissionSchemaV1,
+  persistCodexActivationTransmissionIntent, readCodexActivationTransmissionIntentInSession,
+  type CodexCurrentAdmissionBasisV1, type CodexCurrentAdmissionV1 } from "./codex-activation-transmission-intent";
 import { taskProjectAgentOptionsSchema } from "./task-project-agents-wire";
 
 type CanonicalNativeApproval = ReturnType<typeof prepareNativeTaskApprovalWithLease> & {
@@ -229,6 +230,66 @@ export class TaskAssignmentCoordinator {
           task: Object.freeze({ projectId: ref.projectId, jobId: ref.jobId, attemptId: ref.attemptId,
             inputDigest: ref.inputDigest }), startsWork: false as const }),
           assertFresh: () => { assertCurrent(); queued.authority.assertFresh(); } };
+      }, { reference: ref, signal });
+  }
+  /**
+   * Protected, non-executing current-admission read for an already activated
+   * Codex queue.  The native reference remains only a locator: this repeats
+   * the complete owner/pin/route/profile/lease fence in `withCodexPermit`
+   * before returning evidence.  It cannot send, launch, or grant execution.
+   */
+  async readCurrentCodexQueuedAdmission(input: NativeTaskSubmissionReference, expected: {
+    queueId: string; nodeId: string; packetDigest: string; activationFrameDigest: string; currentAdmissionDigest: string;
+  }, signal: AbortSignal): Promise<Readonly<{
+    currentAdmission: CodexCurrentAdmissionV1; activationFrameDigest: string;
+    startsWork: false; grantsExecutionAuthority: false;
+  }>> {
+    const ref = nativeTaskSubmissionReferenceSchema.parse(input);
+    digestSchema.parse(expected.packetDigest); digestSchema.parse(expected.activationFrameDigest);
+    digestSchema.parse(expected.currentAdmissionDigest); localId.parse(expected.queueId); localId.parse(expected.nodeId);
+    if (!this.nativeTaskSubmission || !(signal instanceof AbortSignal) || signal.aborted
+      || ref.tenantId !== this.scope.tenantId || ref.packetDigest !== expected.packetDigest) conflict();
+    return this.withCodexPermit(undefined, ref.projectId, ref.jobId, ref.inputDigest, undefined,
+      async (tx, _prepared, assertCurrent, _actorId, _configured, _nodeKeyId, _deadline, queued, basis) => {
+        if (!queued || !basis || queued.body.queueId !== expected.queueId || queued.body.start.nodeId !== expected.nodeId
+          || queued.body.start.attemptId !== ref.attemptId || codexApprovalPacketDigestV1(queued.body) !== expected.packetDigest) conflict();
+        const scope = { tenantId: ref.tenantId, projectId: ref.projectId, jobId: ref.jobId,
+          attemptId: ref.attemptId, inputDigest: ref.inputDigest };
+        const saved = await readCodexActivationTransmissionIntentInSession(tx, this.codex!.integrityKey, scope);
+        if (!saved || saved.currentAdmission.queueId !== expected.queueId
+          || saved.currentAdmission.nodeId !== expected.nodeId
+          || sha256Digest(saved.frame) !== expected.activationFrameDigest
+          || sha256Digest(saved.currentAdmission) !== expected.currentAdmissionDigest
+          || saved.frame.body.currentAdmissionDigest !== expected.currentAdmissionDigest) conflict();
+        await assertCanonicalCodexAdmissionInSession(tx, saved.currentAdmission);
+        // `checkedAt` is intentionally fresh for this read. Every authority-bearing
+        // field must otherwise be exactly the current withCodexPermit snapshot.
+        const currentBasis = (value: CodexCurrentAdmissionV1 | CodexCurrentAdmissionBasisV1) => ({
+          schema: value.schema, tenantId: value.tenantId, projectId: value.projectId, projectVersion: value.projectVersion,
+          projectLifecycle: value.projectLifecycle, jobId: value.jobId, jobVersion: value.jobVersion,
+          jobState: value.jobState, attemptId: value.attemptId, attemptVersion: value.attemptVersion,
+          attemptState: value.attemptState, leaseId: value.leaseId, leaseVersion: value.leaseVersion,
+          leaseEpoch: value.leaseEpoch, leaseState: value.leaseState, leaseExpiresAt: value.leaseExpiresAt,
+          nodeId: value.nodeId, nodeVersion: value.nodeVersion, nodeState: value.nodeState,
+          nodeKeyId: value.nodeKeyId, nodeKeyState: value.nodeKeyState, nodeKeyValidFrom: value.nodeKeyValidFrom,
+          nodeKeyValidUntil: value.nodeKeyValidUntil, authorityDigest: value.authorityDigest,
+          authorityExpiresAt: value.authorityExpiresAt, approvalKeyId: value.approvalKeyId,
+          ownerTrustRevisionDigest: value.ownerTrustRevisionDigest, configurationExpiresAt: value.configurationExpiresAt,
+          admissionExpiresAt: value.admissionExpiresAt,
+        });
+        if (sha256Digest(currentBasis(saved.currentAdmission)) !== sha256Digest(currentBasis(basis))
+          || saved.currentAdmission.permitDigest !== queued.body.permitDigest
+          || saved.currentAdmission.inputDigest !== queued.body.start.inputDigest
+          || saved.currentAdmission.operationDigest !== queued.body.start.operationDigest
+          || saved.currentAdmission.effectClaimKey !== queued.body.start.effectClaimKey
+          || saved.currentAdmission.enrollmentDigest !== queued.body.start.enrollmentDigest
+          || saved.currentAdmission.connectorProfileDigest !== queued.body.start.connectorProfileDigest
+          || saved.currentAdmission.workspaceIntentDigest !== queued.body.start.workspaceIntentDigest) conflict();
+        assertCurrent(); queued.authority.assertFresh();
+        const result = Object.freeze({ currentAdmission: saved.currentAdmission,
+          activationFrameDigest: expected.activationFrameDigest, startsWork: false as const,
+          grantsExecutionAuthority: false as const });
+        return { value: result, assertFresh: () => { assertCurrent(); queued.authority.assertFresh(); } };
       }, { reference: ref, signal });
   }
   /** Trusted shared-queue discriminator. The queue reference is only a locator:

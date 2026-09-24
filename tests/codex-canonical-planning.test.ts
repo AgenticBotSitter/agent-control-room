@@ -4,6 +4,7 @@ import test from "node:test";
 import { CODEX_APP_SERVER_ADAPTER, CODEX_APP_SERVER_CAPABILITY, CODEX_APP_SERVER_JOB_TYPE,
   CODEX_DELIVERY_FEATURE, CODEX_START_OPERATION } from "../src/harness/codex-v1/delivery-contract";
 import { createCodexOwnerPermitIssuer } from "../src/harness/codex-v1/owner-permit";
+import { CODEX_ACTIVATION_FEATURE } from "../src/harness/codex-v1/activation-contract";
 import type { PinnedApprovalTrustStore } from "../src/node-policy/v1/pinned-approval-trust";
 import { FleetSignalStore } from "../src/node-fleet/v1/fleet-signal-store";
 import type { FleetSignalEnvelope } from "../src/node-fleet/v1/schemas";
@@ -14,6 +15,7 @@ import { readNativeTaskQueueIntentInSession } from "../src/web/v1/native-task-qu
 import { readCodexDeliveryEnvelopeReceipt } from "../src/web/v1/codex-delivery-envelope";
 import { readCodexTransmissionIntentReceipt } from "../src/web/v1/codex-transmission-intent";
 import { readCodexDeliveryReceipt } from "../src/web/v1/codex-delivery-receipt";
+import { readCodexActivationTransmissionIntentInSession } from "../src/web/v1/codex-activation-transmission-intent";
 import { computeAuthorityDigest, sha256Digest } from "../src/security";
 import { TaskAssignmentCoordinator, type TaskAssignmentRoute } from "../src/web/v1/task-assignment-coordinator";
 import { TaskExecutionPlanner, type NativeTaskTemplate } from "../src/web/v1/task-execution-planner";
@@ -57,8 +59,9 @@ async function setup() {
   await signals.ingestAuthenticated(capability, at(6000), binding);
   const approvalKeys = generateKeyPairSync("ed25519"), approvalKeyId = "approval-key:codex-test";
   const publicKeySpki = approvalKeys.publicKey.export({ format: "der", type: "spki" }).toString("base64url");
+  let pinsAvailable = true, trustRevision = "trust-revision:codex-test";
   const approvals = { binding: () => ({ tenantId: binding.tenantId, nodeId: binding.nodeId, nodeClass: "personal-compute" }),
-    assertAvailable() {}, async resolveApprovalKey(keyId: string) {
+    assertAvailable() { if (!pinsAvailable) throw new Error("pin set changed"); }, async resolveApprovalKey(keyId: string) {
       return keyId === approvalKeyId ? new Uint8Array(Buffer.from(publicKeySpki, "base64url")) : undefined;
     } } as unknown as PinnedApprovalTrustStore;
   const codexIntegrityKey = new Uint8Array(32).fill(83);
@@ -67,7 +70,7 @@ async function setup() {
       workspaceIntentDigest: template.workspaceIntentDigest!, credentialRef: authority.credentialRefs[0],
       filesystemRoot: authority.filesystemRoots[0], workspacePath: "/synthetic/project/workspaces/codex-canonical",
       validUntil: instant + 180_000, approvalKeyId, approvals,
-      security: { currentServerTrustRevision: () => "trust-revision:codex-test" } }] };
+      security: { currentServerTrustRevision: () => trustRevision } }] };
   const submissions: NativeTaskSubmissionReference[] = [];
   const submission = { async enqueueInSession(_tx: unknown, reference: NativeTaskSubmissionReference) {
     submissions.push(structuredClone(reference));
@@ -75,7 +78,9 @@ async function setup() {
   const assignment = new TaskAssignmentCoordinator(f.db, f.scope, planner, [route], () => instant + 8000,
     [], undefined, submission, codexConfig);
   return { ...f, authority, template, planner, planned, route, assignment, approvalKeys, publicKeySpki,
-    codexIntegrityKey, codexConfig, submissions };
+    codexIntegrityKey, codexConfig, submissions,
+    setPinsAvailable: (value: boolean) => { pinsAvailable = value; },
+    setTrustRevision: (value: string) => { trustRevision = value; } };
 }
 
 async function connectedCodexSession(f: Awaited<ReturnType<typeof setup>>, nodeKeyId = "key:test") {
@@ -89,7 +94,7 @@ async function connectedCodexSession(f: Awaited<ReturnType<typeof setup>>, nodeK
   } }, { async consume() { return "accepted" as const; } }, new FixedWindowProtocolRateLimiter(100, 60));
   const session = new ServerNodeSession({ tenantId: binding.tenantId, nodeId: binding.nodeId, nodeKeyId,
     serverId: "server:codex-test", serverKeyId: "server-key:codex-test", serverPublicKeySpki: serverSpki,
-    transportIdentity: "transport:codex-test", features: [CODEX_DELIVERY_FEATURE], maxFrameBytes: 131_072,
+    transportIdentity: "transport:codex-test", features: [CODEX_DELIVERY_FEATURE, CODEX_ACTIVATION_FEATURE], maxFrameBytes: 131_072,
     heartbeatIntervalSeconds: 30 }, { authentication, clock: () => instant + 8000,
     async sign(frame) { return signNodeFrame(frame, server.privateKey); }, async send(raw) { toNode.push(raw); } });
   const connectionId = "connection:codex-canonical";
@@ -97,7 +102,7 @@ async function connectedCodexSession(f: Awaited<ReturnType<typeof setup>>, nodeK
     tenantId: binding.tenantId, actorId: binding.nodeId, keyId: nodeKeyId, connectionId, sequence: 1,
     messageId: "message:codex-canonical-hello", correlationId: "correlation:codex-canonical",
     nonce: "codex_canonical_hello_nonce_123456789", sentAt: at(8000), expiresAt: at(120_000),
-    type: "connection.hello", body: { supportedProtocols: [NODE_PROTOCOL_V1], features: [CODEX_DELIVERY_FEATURE],
+    type: "connection.hello", body: { supportedProtocols: [NODE_PROTOCOL_V1], features: [CODEX_DELIVERY_FEATURE, CODEX_ACTIVATION_FEATURE],
       requestedMaxFrameBytes: 131_072, lastAcknowledgedServerSequence: 0, unresolvedAttemptIds: [] } }, f.keys.privateKey);
   await session.acceptHello(JSON.stringify(hello));
   const sent = toNode.map(raw => JSON.parse(raw) as SignedNodeFrame);
@@ -190,6 +195,46 @@ test("owner planning and assignment produce one canonical Codex reservation with
     const received = await f.assignment.receiveCodexDeliveryReceipt(link.session, JSON.stringify(nodeReceipt),
       new AbortController().signal);
     assert.equal(received.executionConfirmed, false); assert.equal(received.startsWork, false);
+    // A current-admission reader must revisit the complete protected Codex
+    // permit path, not trust the historical activation record by itself.
+    const activationFrame = (await f.db.transaction(tx => readCodexActivationTransmissionIntentInSession(tx,
+      f.codexIntegrityKey, { tenantId: binding.tenantId, projectId: binding.projectId, jobId: saved.job.id,
+        attemptId: assigned.receipt.attemptId, inputDigest: saved.job.inputDigest })))?.frame;
+    assert.ok(activationFrame);
+    assert.equal(activationFrame.type, "harness.codex.dispatch.activation");
+    const admissionRead = { queueId: reference.queueId, nodeId: binding.nodeId, packetDigest: reference.packetDigest,
+      activationFrameDigest: sha256Digest(activationFrame),
+      currentAdmissionDigest: activationFrame.body.currentAdmissionDigest };
+    const admissionResult = await f.assignment.readCurrentCodexQueuedAdmission(reference, admissionRead,
+      new AbortController().signal);
+    assert.equal(admissionResult.startsWork, false); assert.equal(admissionResult.grantsExecutionAuthority, false);
+    assert.equal(admissionResult.currentAdmission.queueId, reference.queueId);
+    // Exact historical evidence is a binding, never a substitute for the
+    // current route/profile/pin and canonical-state checks.
+    await assert.rejects(f.assignment.readCurrentCodexQueuedAdmission(reference, {
+      ...admissionRead, currentAdmissionDigest: sha256Digest("wrong-current-admission") }, new AbortController().signal));
+    const profileChanged = { ...f.codexConfig, enrollments: f.codexConfig.enrollments.map(value => ({ ...value,
+      connectorProfileDigest: sha256Digest("changed-current-admission-profile") })) };
+    const profileChangedCoordinator = new TaskAssignmentCoordinator(f.db, f.scope, f.planner, [f.route], () => instant + 8000,
+      [], undefined, { async enqueueInSession() {} }, profileChanged);
+    await assert.rejects(profileChangedCoordinator.readCurrentCodexQueuedAdmission(reference, admissionRead,
+      new AbortController().signal));
+    const routeChangedCoordinator = new TaskAssignmentCoordinator(f.db, f.scope, f.planner,
+      [{ ...f.route, executorId: "executor:changed" }], () => instant + 8000,
+      [], undefined, { async enqueueInSession() {} }, f.codexConfig);
+    await assert.rejects(routeChangedCoordinator.readCurrentCodexQueuedAdmission(reference, admissionRead,
+      new AbortController().signal));
+    f.setPinsAvailable(false);
+    await assert.rejects(f.assignment.readCurrentCodexQueuedAdmission(reference, admissionRead,
+      new AbortController().signal));
+    f.setPinsAvailable(true); f.setTrustRevision("trust-revision:changed-after-activation");
+    await assert.rejects(f.assignment.readCurrentCodexQueuedAdmission(reference, admissionRead,
+      new AbortController().signal));
+    f.setTrustRevision("trust-revision:codex-test");
+    await f.db.query("UPDATE control_manual_project_heads SET version=version+1 WHERE tenant_id=$1 AND project_id=$2",
+      [binding.tenantId, binding.projectId]);
+    await assert.rejects(f.assignment.readCurrentCodexQueuedAdmission(reference, admissionRead,
+      new AbortController().signal));
     const scope = { tenantId: binding.tenantId, projectId: binding.projectId, jobId: saved.job.id,
       attemptId: assigned.receipt.attemptId, inputDigest: saved.job.inputDigest };
     const evidence = await f.db.transaction(async tx => Promise.all([
