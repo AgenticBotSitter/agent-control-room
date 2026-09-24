@@ -5,6 +5,8 @@ import { nativeTaskSnapshotBodySchema } from "../../harness/v1/native-observatio
 import { nativeTaskDispatchBodySchema, nativeTaskDispatchReceiptBodySchema } from "../../harness/v1/native-delivery";
 import { codexTaskDispatchBodySchemaV1, codexTaskDispatchReceiptBodySchemaV1 } from "../../harness/codex-v1/delivery-contract";
 import { codexTaskActivationBodySchemaV1 } from "../../harness/codex-v1/activation-contract";
+import { codexCurrentAdmissionReadRequestSchemaV1, codexCurrentAdmissionReadResponseSchemaV1 }
+  from "../../harness/codex-v1/current-admission-read-contract";
 import { codexResultReturnBodySchemaV1, codexResultReturnReceiptBodySchemaV1 } from "../../harness/codex-v1/result-return";
 import { assertControllerWorkerNodeDispatchFrameV1, assertControllerWorkerNodeReceiptFrameV1,
   controllerWorkerNodeDispatchBodySchemaV1, controllerWorkerNodeDispatchReceiptBodySchemaV1,
@@ -369,6 +371,10 @@ export const signedNodeFrameSchema = z.discriminatedUnion("type", [
   frame("harness.codex.dispatch", codexTaskDispatchBodySchemaV1, { direction: "server_to_node", senderKind: "control_room" }),
   frame("harness.codex.dispatch.receipt", codexTaskDispatchReceiptBodySchemaV1, { direction: "node_to_server", senderKind: "node" }),
   frame("harness.codex.dispatch.activation", codexTaskActivationBodySchemaV1, { direction: "server_to_node", senderKind: "control_room" }),
+  frame("harness.codex.current-admission.read", codexCurrentAdmissionReadRequestSchemaV1,
+    { direction: "node_to_server", senderKind: "node" }),
+  frame("harness.codex.current-admission.read.response", codexCurrentAdmissionReadResponseSchemaV1,
+    { direction: "server_to_node", senderKind: "control_room" }),
   frame("harness.codex.result.return", codexResultReturnBodySchemaV1, { direction: "node_to_server", senderKind: "node" }),
   frame("harness.codex.result.return.receipt", codexResultReturnReceiptBodySchemaV1, { direction: "server_to_node", senderKind: "control_room" }),
   frame("controller.worker.delivery", controllerWorkerNodeDispatchBodySchemaV1, { direction: "server_to_node", senderKind: "control_room" }),
@@ -465,5 +471,5 @@ export const signedNodeFrameSchema = z.discriminatedUnion("type", [
   }
 });
 
-export const nodeToServerTypes = new Set(["connection.hello", "connection.enrollment.deliver", "node.heartbeat", "node.fleet.signal", "job.offer.decision", "job.event", "harness.native.snapshot", "harness.native.dispatch.receipt", "harness.codex.dispatch.receipt", "harness.codex.result.return", "controller.worker.delivery.receipt", "controller.worker.delivery.receipt.recovery", "job.cancel.ack", "node.reconciliation.report", "node.operation.ack", "protocol.ack", "protocol.error"]);
-export const serverToNodeTypes = new Set(["connection.accepted", "job.offer", "job.lease.grant", "job.lease.renewed", "job.cancel", "harness.native.dispatch", "harness.codex.dispatch", "harness.codex.dispatch.activation", "harness.codex.result.return.receipt", "controller.worker.delivery", "node.reconciliation.request", "node.operation.request", "protocol.ack", "protocol.error"]);
+export const nodeToServerTypes = new Set(["connection.hello", "connection.enrollment.deliver", "node.heartbeat", "node.fleet.signal", "job.offer.decision", "job.event", "harness.native.snapshot", "harness.native.dispatch.receipt", "harness.codex.dispatch.receipt", "harness.codex.current-admission.read", "harness.codex.result.return", "controller.worker.delivery.receipt", "controller.worker.delivery.receipt.recovery", "job.cancel.ack", "node.reconciliation.report", "node.operation.ack", "protocol.ack", "protocol.error"]);
+export const serverToNodeTypes = new Set(["connection.accepted", "job.offer", "job.lease.grant", "job.lease.renewed", "job.cancel", "harness.native.dispatch", "harness.codex.dispatch", "harness.codex.dispatch.activation", "harness.codex.current-admission.read.response", "harness.codex.result.return.receipt", "controller.worker.delivery", "node.reconciliation.request", "node.operation.request", "protocol.ack", "protocol.error"]);
