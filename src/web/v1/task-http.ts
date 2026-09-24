@@ -31,12 +31,15 @@ export function createTaskHttpHandler(options: { origin: string; trust?: AccessT
   const localOwnerSession = options.localOwnerSession;
   if (localOwnerSession && (localOwnerSession.profile.origin !== options.origin || new URL(options.origin).protocol !== "http:"))
     throw new Error("task_http_local_owner_config_invalid");
+  if (localOwnerSession && (options.trust !== undefined || options.gatewayAssertionProfile !== undefined))
+    throw new Error("task_http_authentication_modes_conflict");
   const verify = localOwnerSession ? undefined : options.trust === undefined ? undefined
     : createAccessVerifier(options.trust, options.gatewayAssertionProfile);
   if (!localOwnerSession && !verify) throw new Error("task_http_authentication_not_configured");
   return async (request: Request): Promise<Response> => {
     try {
-      if (!localOwnerSession) requireSameOrigin(request, options.origin);
+      if (localOwnerSession) localOwnerSession.assertLocalRequest(request, !["GET", "HEAD"].includes(request.method));
+      else requireSameOrigin(request, options.origin);
       const identity = localOwnerSession ? localOwnerSession.verify(request, (options.clock ?? Date.now)()) : verify!(request, (options.clock ?? Date.now)());
       const url = new URL(request.url);
       const absRoute = /^\/api\/v1\/projects\/([^/]+)\/tasks\/from-news$/.exec(url.pathname);

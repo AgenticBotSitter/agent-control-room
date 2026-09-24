@@ -20,13 +20,16 @@ export function createProjectHttpHandler(options: {
   const localOwnerSession = options.localOwnerSession;
   if (localOwnerSession && (localOwnerSession.profile.origin !== options.origin || new URL(options.origin).protocol !== "http:"))
     throw new Error("project_http_local_owner_config_invalid");
+  if (localOwnerSession && (options.trust !== undefined || options.gatewayAssertionProfile !== undefined))
+    throw new Error("project_http_authentication_modes_conflict");
   const verifyIdentity = localOwnerSession ? undefined : options.trust === undefined ? undefined
     : createAccessVerifier(options.trust, options.gatewayAssertionProfile);
   if (!localOwnerSession && !verifyIdentity) throw new Error("project_http_authentication_not_configured");
   const clock = options.clock ?? Date.now;
   return async (request: Request): Promise<Response> => {
     try {
-      if (!localOwnerSession) requireSameOrigin(request, options.origin);
+      if (localOwnerSession) localOwnerSession.assertLocalRequest(request, !["GET", "HEAD"].includes(request.method));
+      else requireSameOrigin(request, options.origin);
       const identity = localOwnerSession ? localOwnerSession.verify(request, clock()) : verifyIdentity!(request, clock());
       const url = new URL(request.url), path = url.pathname;
       if (path === "/api/v1/projects" && request.method === "GET") {

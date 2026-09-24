@@ -30,14 +30,18 @@ test("the real Mac-local wrapper signs in locally and reaches the existing proje
   const projects = await app.handle(request("/api/v1/projects", { headers: { cookie: cookie! } }), () => new Response("unused"));
   assert.equal(projects.status, 200);
   assert.match(await projects.text(), /projects/);
-  const created = await app.handle(request("/api/v1/projects", { method: "POST", headers: { cookie: cookie!, "content-type": "application/json",
+  const foreignPort = await app.handle(request("/api/v1/projects", { method: "POST", headers: { cookie: cookie!, origin: "http://127.0.0.1:1", "content-type": "application/json",
+    "idempotency-key": "mac-local-project-foreign-port-001" }, body: JSON.stringify({ title: "Foreign port", summary: "Must be refused" }) }),
+  () => new Response("unused"));
+  assert.equal(foreignPort.status, 403);
+  const created = await app.handle(request("/api/v1/projects", { method: "POST", headers: { cookie: cookie!, origin, "content-type": "application/json",
     "idempotency-key": "mac-local-project-create-001" }, body: JSON.stringify({ title: "Local wrapper project", summary: "Disposable route proof" }) }),
   () => new Response("unused"));
   assert.equal(created.status, 201); const projectId = (await created.json() as { project: { projectId: string } }).project.projectId;
   const tasks = await app.handle(request(`/api/v1/projects/${encodeURIComponent(projectId)}/tasks`, { headers: { cookie: cookie! } }), () => new Response("unused"));
   assert.equal(tasks.status, 200, await tasks.text());
   const proposed = await app.handle(request(`/api/v1/projects/${encodeURIComponent(projectId)}/tasks`, { method: "POST", headers: {
-    cookie: cookie!, "content-type": "application/json", "idempotency-key": "mac-local-task-proposal-001" },
+    cookie: cookie!, origin, "content-type": "application/json", "idempotency-key": "mac-local-task-proposal-001" },
   body: JSON.stringify({ title: "Local text task", instructions: "Return a harmless short answer." }) }), () => new Response("unused"));
   assert.equal(proposed.status, 201, await proposed.text());
   const shell = await app.handle(request("/projects", { headers: { cookie: cookie! } }), () => new Response("real shell"));

@@ -138,6 +138,8 @@ export function createCoordinationHttpHandler(options: CoordinationHttpHandlerOp
   const localOwnerSession = options.localOwnerSession;
   if (localOwnerSession && (localOwnerSession.profile.origin !== options.origin || new URL(options.origin).protocol !== "http:"))
     throw new Error("coordination_http_local_owner_config_invalid");
+  if (localOwnerSession && (options.trust !== undefined || options.gatewayAssertionProfile !== undefined))
+    throw new Error("coordination_http_authentication_modes_conflict");
   const verifyIdentity = localOwnerSession ? undefined : options.trust === undefined ? undefined
     : createAccessVerifier(options.trust, options.gatewayAssertionProfile);
   if (!localOwnerSession && !verifyIdentity) throw new Error("coordination_http_authentication_not_configured");
@@ -154,7 +156,8 @@ export function createCoordinationHttpHandler(options: CoordinationHttpHandlerOp
     `${idempotencyKey}\n${projectId}\n${subaction}\n${identitySubject}\n${bodyDigest}`;
   return async (request: Request): Promise<Response> => {
     try {
-        if (!localOwnerSession) requireSameOrigin(request, options.origin);
+        if (localOwnerSession) localOwnerSession.assertLocalRequest(request, !["GET", "HEAD"].includes(request.method));
+        else requireSameOrigin(request, options.origin);
         const identity: Identity = localOwnerSession ? localOwnerSession.verify(request, clock()) : verifyIdentity!(request, clock());
         const url = new URL(request.url);
         const path = url.pathname;
