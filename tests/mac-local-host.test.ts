@@ -136,3 +136,57 @@ test("a protected Mac host refuses bare operations mixed with a task-application
     operations: {}, createTaskApplication: async () => ({ operations: {}, isReady: () => true, async close() {} }),
   }), /mac_local_host_configuration_invalid/);
 });
+
+test("starts the existing queue worker only after the loopback site is listening and closes both together", async () => {
+  const trace: string[] = [];
+  const server = new EventEmitter() as Server;
+  server.listen = ((_options: object, callback: () => void) => { trace.push("site-start"); queueMicrotask(callback); return server; }) as Server["listen"];
+  server.close = ((callback?: (error?: Error) => void) => { trace.push("site-close"); queueMicrotask(() => callback?.()); return server; }) as Server["close"];
+  server.closeIdleConnections = () => {}; server.closeAllConnections = () => {};
+  const host = createMacLocalProtectedHostV1({
+    async loadConfiguration() { return configuration; }, async readVersion() { return "codex test"; },
+    openDatabase() { return { client: {} as never, async close() { trace.push("database-close"); } }; },
+    async loadDatabaseRoles() { return databaseRoles; },
+    async createTaskApplication() { return { operations: {}, isReady: () => true, async close() { trace.push("task-close"); },
+      async queueDelivery() {}, queueRecovery: { async verify() {} } }; },
+    async startQueueWorker(value) {
+      trace.push("queue-start");
+      assert.equal(value.database.username, "control_room_queue_worker");
+      assert.equal(value.application.loginNames.includes("control_room_web"), true);
+      return { status: () => ({ accepting: true }), async close() { trace.push("queue-close"); } };
+    },
+    assets: { async respond() { return undefined; } }, render() { return new Response("local"); },
+    createServer: () => server, listenerTiming: { bindMs: 100, closeMs: 100 },
+  });
+  const running = await host.start();
+  assert.deepEqual(trace.slice(0, 2), ["site-start", "queue-start"]);
+  await running.close();
+  assert.deepEqual(trace.slice(-4), ["queue-close", "site-close", "database-close", "task-close"]);
+});
+
+test("refuses a queue-worker factory without the task lifecycle it delivers", () => {
+  assert.throws(() => createMacLocalProtectedHostV1({
+    async loadConfiguration() { return configuration; }, async readVersion() { return "codex test"; },
+    openDatabase() { return {} as never; }, assets: { async respond() { return undefined; } }, render() { return new Response("local"); },
+    async startQueueWorker() { return { status: () => ({ accepting: true }), async close() {} }; },
+  }), /mac_local_host_configuration_invalid/);
+});
+
+test("closes a rejected queue worker before it closes the local site", async () => {
+  const trace: string[] = [];
+  const server = new EventEmitter() as Server;
+  server.listen = ((_options: object, callback: () => void) => { queueMicrotask(callback); return server; }) as Server["listen"];
+  server.close = ((callback?: (error?: Error) => void) => { trace.push("site-close"); queueMicrotask(() => callback?.()); return server; }) as Server["close"];
+  server.closeIdleConnections = () => {}; server.closeAllConnections = () => {};
+  const host = createMacLocalProtectedHostV1({
+    async loadConfiguration() { return configuration; }, async readVersion() { return "codex test"; },
+    openDatabase() { return { client: {} as never, async close() {} }; },
+    async loadDatabaseRoles() { return databaseRoles; },
+    async createTaskApplication() { return { operations: {}, isReady: () => true, async close() {}, async queueDelivery() {} }; },
+    async startQueueWorker() { return { status: () => ({ accepting: false }), async close() { trace.push("worker-close"); } }; },
+    assets: { async respond() { return undefined; } }, render() { return new Response("local"); },
+    createServer: () => server, listenerTiming: { bindMs: 100, closeMs: 100 },
+  });
+  await assert.rejects(host.start(), /mac_local_startup_failed/);
+  assert.deepEqual(trace, ["worker-close", "site-close"]);
+});

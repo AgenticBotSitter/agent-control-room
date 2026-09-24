@@ -8,9 +8,12 @@ import type { MacLocalCanonicalTaskOperationsV1 } from "./mac-local-web-process"
 import type { MacLocalWorkerReadinessV1 } from "./mac-local-worker-readiness";
 import type { MacLocalTaskApplicationV1 } from "./mac-local-task-application";
 import type { MacLocalDatabaseRolesV1 } from "./mac-local-database-roles";
+import type { NativeQueueWorkerStartupConfiguration } from "./native-queue-worker-startup";
 
 type OpenedDatabase = Readonly<{ client: DatabaseClient; close(): Promise<void> }>;
 type LocalService = Readonly<{ start(): Promise<void>; close(): Promise<void>; isReady(): boolean }>;
+type HostedTaskApplication = Pick<MacLocalTaskApplicationV1, "operations" | "isReady" | "close" | "queueDelivery" | "queueRecovery">;
+type OwnedQueueWorker = Readonly<{ close(): Promise<void>; status(): { accepting: boolean } }>;
 
 /** One small composition for the Mac-local web host. It deliberately uses the
  * dedicated loopback web process, rather than adapting the hosted Cloudflare
@@ -27,7 +30,7 @@ export function createMacLocalWebServiceFromConfigurationV1(input: Readonly<{
   /** A complete, existing controller composition. This is mutually exclusive
    * with bare operations so a local host cannot accidentally mix operations
    * from one controller with the lifecycle of another. */
-  taskApplication?: Pick<MacLocalTaskApplicationV1, "operations" | "isReady" | "close">;
+  taskApplication?: HostedTaskApplication;
   workerReadiness?: Pick<MacLocalWorkerReadinessV1, "read">;
   createServer?: (options: Readonly<ServerOptions>) => Server;
   listenerTiming?: { bindMs?: number; closeMs?: number };
@@ -85,10 +88,14 @@ export function createMacLocalProtectedHostV1(input: Readonly<{
     database: OpenedDatabase;
     workerReadiness: MacLocalWorkerReadinessV1;
     databaseRoles: MacLocalDatabaseRolesV1;
-  }>) => Pick<MacLocalTaskApplicationV1, "operations" | "isReady" | "close"> | Promise<Pick<MacLocalTaskApplicationV1, "operations" | "isReady" | "close">>;
+  }>) => HostedTaskApplication | Promise<HostedTaskApplication>;
   /** Reads the fixed owner-only database-role file. It is required whenever a
    * shared task composition is configured, and is read before any pool opens. */
   loadDatabaseRoles?: () => Promise<MacLocalDatabaseRolesV1>;
+  /** The existing installed pg-boss worker factory. It is optional because
+   * construction and website-only local setup never start a queue. When
+   * configured it starts only after the loopback listener is ready. */
+  startQueueWorker?: (configuration: NativeQueueWorkerStartupConfiguration) => Promise<OwnedQueueWorker>;
   createServer?: (options: Readonly<ServerOptions>) => Server;
   listenerTiming?: { bindMs?: number; closeMs?: number };
 }>) {
@@ -97,21 +104,63 @@ export function createMacLocalProtectedHostV1(input: Readonly<{
     || typeof input.render !== "function") throw new Error("mac_local_host_configuration_invalid");
   if (input.operations && input.createTaskApplication) throw new Error("mac_local_host_configuration_invalid");
   if (input.createTaskApplication && typeof input.loadDatabaseRoles !== "function") throw new Error("mac_local_host_configuration_invalid");
+  if (input.startQueueWorker && (!input.createTaskApplication || typeof input.startQueueWorker !== "function"))
+    throw new Error("mac_local_host_configuration_invalid");
   const startup = createMacLocalStartupV1({
     readVersion: input.readVersion,
     openDatabase: input.openDatabase,
     createService: async ({ configuration, database, workerReadiness, databaseRoles }) => {
-      let taskApplication: Pick<MacLocalTaskApplicationV1, "operations" | "isReady" | "close"> | undefined;
+      let taskApplication: HostedTaskApplication | undefined;
       try {
         if (input.createTaskApplication && !databaseRoles) throw new Error("mac_local_host_configuration_invalid");
         taskApplication = input.createTaskApplication
           ? await input.createTaskApplication({ configuration, database, workerReadiness, databaseRoles: databaseRoles! }) : undefined;
-        return createMacLocalWebServiceFromConfigurationV1({
+        const web = createMacLocalWebServiceFromConfigurationV1({
           configuration, database, assets: input.assets, render: input.render,
           ...(taskApplication ? { taskApplication } : input.operations ? { operations: input.operations } : {}),
           workerReadiness,
           ...(input.createServer ? { createServer: input.createServer } : {}),
           ...(input.listenerTiming ? { listenerTiming: input.listenerTiming } : {}),
+        });
+        if (!input.startQueueWorker) return web;
+        if (!taskApplication?.queueDelivery || !databaseRoles) throw new Error("mac_local_host_configuration_invalid");
+        let worker: OwnedQueueWorker | undefined, closing: Promise<void> | undefined, starting: Promise<void> | undefined;
+        let workerClose: Promise<void> | undefined;
+        let closeRequested = false;
+        const closeWorker = () => workerClose ??= worker?.close ? Promise.resolve().then(worker.close.bind(worker)) : Promise.resolve();
+        return Object.freeze({
+          start() {
+            return starting ??= (async () => {
+            await web.start();
+            try {
+              worker = await input.startQueueWorker!({ database: databaseRoles.queueWorker,
+                application: { host: databaseRoles.coordinator.host, port: databaseRoles.coordinator.port,
+                  database: databaseRoles.coordinator.database,
+                  loginNames: [databaseRoles.web.username, databaseRoles.coordinator.username, databaseRoles.results.username] },
+                concurrency: 1,
+                deliver: taskApplication!.queueDelivery!,
+                ...(taskApplication!.queueRecovery?.verify ? { verifyRecovery: taskApplication!.queueRecovery.verify } : {}),
+              });
+              if (!worker || typeof worker.close !== "function" || typeof worker.status !== "function" || !worker.status().accepting || closeRequested)
+                throw new Error("mac_local_host_queue_worker_unavailable");
+            } catch (error) {
+              const stopped = worker?.close ? await Promise.allSettled([closeWorker()]) : [];
+              const site = await Promise.allSettled([web.close()]);
+              if ([...stopped, ...site].some(result => result.status === "rejected"))
+                throw new Error("mac_local_host_cleanup_uncertain");
+              throw error;
+            }
+            })();
+          },
+          isReady: () => web.isReady() && worker?.status().accepting === true,
+          close: () => closing ??= (async () => {
+            closeRequested = true;
+            await starting?.catch(() => {});
+            const workerClosed = worker?.close ? await Promise.allSettled([closeWorker()]) : [];
+            const webClosed = await Promise.allSettled([web.close()]);
+            if ([...workerClosed, ...webClosed].some(result => result.status === "rejected"))
+              throw new Error("mac_local_host_cleanup_uncertain");
+          })(),
         });
       } catch (error) {
         if (taskApplication) {
