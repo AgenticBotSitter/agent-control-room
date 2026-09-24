@@ -1,4 +1,6 @@
 import { randomBytes, randomUUID } from "node:crypto";
+import { consumeCodexSessionIngressV1, type CodexSessionIngressV1 } from "./codex-session-ingress";
+import { CODEX_CURRENT_ADMISSION_READ_FEATURE_V1 } from "../harness/codex-v1/current-admission-read-contract";
 import { z } from "zod";
 import { NATIVE_DELIVERY_FEATURE, NATIVE_LEASE_DELIVERY_FEATURE, nativeTaskDispatchBodySchema, matchNativeTaskDispatchReceipt, type NativeTaskDispatchBody } from "../harness/v1/native-delivery";
 import { CODEX_DELIVERY_FEATURE, codexTaskDispatchBodySchemaV1, matchCodexTaskDispatchReceiptV1,
@@ -103,12 +105,24 @@ export class ServerNodeSession {
   private features: string[] = [];
   private outboundSequence = 0;
   private readonly outboundIds = new Set<string>();
+  readonly #codexIngress?: ReturnType<typeof consumeCodexSessionIngressV1>;
 
-  constructor(config: ServerNodeSessionConfig, private readonly ports: ServerNodeSessionPorts) {
+  constructor(config: ServerNodeSessionConfig, private readonly ports: ServerNodeSessionPorts, ingress?: CodexSessionIngressV1) {
     this.config = configSchema.parse(config);
     this.maxFrameBytes = this.config.maxFrameBytes;
     this.ports = Object.freeze({ authentication: ports.authentication,
       sign: ports.sign.bind(ports), send: ports.send.bind(ports), clock: ports.clock.bind(ports) });
+    if (ingress) {
+      if (new.target !== ServerNodeSession) throw new Error("Codex ingress requires exact server session");
+      this.#codexIngress = consumeCodexSessionIngressV1(ingress);
+      for (const name of Object.getOwnPropertyNames(ServerNodeSession.prototype)) {
+        if (name === "constructor") continue;
+        const descriptor = Object.getOwnPropertyDescriptor(ServerNodeSession.prototype, name)!;
+        if (typeof descriptor.value === "function") Object.defineProperty(this, name, {
+          value: descriptor.value, writable: false, configurable: false,
+        });
+      }
+    }
   }
 
   disconnect(): void { this.state = "closed"; }
@@ -218,6 +232,64 @@ export class ServerNodeSession {
   /** Authenticates and publishes one completed Codex return, then signs and sends only
    * its transport receipt. Exact authenticator duplicates reuse the cached receipt. */
   async acceptCodexResultReturn(raw: string | Uint8Array, intake: CodexResultReturnIntakeV1) {
+    if (this.#codexIngress) throw new Error("Mounted Codex ingress owns its result receiver");
+    return this.acceptOwnedCodexResultReturn(raw, intake);
+  }
+
+  private assertCodexIngress() {
+    this.now();
+    if (!this.#codexIngress || !this.preparedCodexActivationFrame || !this.connectionId
+      || !["codex_activation_sent_unconfirmed", "codex_result_returned"].includes(this.state)
+      || ![CODEX_DELIVERY_FEATURE, CODEX_ACTIVATION_FEATURE, CODEX_RESULT_RETURN_FEATURE_V1,
+        CODEX_CURRENT_ADMISSION_READ_FEATURE_V1].every(feature => this.features.includes(feature))) {
+      throw new Error("Codex session ingress unavailable");
+    }
+    const reference = this.#codexIngress.reference;
+    const activation = this.preparedCodexActivationFrame;
+    this.#codexIngress.result.assertQualified(this.config.tenantId, this.config.nodeId,
+      activation.body.connectorProfileDigest, this.now());
+    if (reference.tenantId !== this.config.tenantId || reference.projectId !== activation.body.projectId
+      || reference.jobId !== activation.body.jobId || reference.attemptId !== activation.body.attemptId
+      || reference.queueId !== activation.body.queueId || reference.inputDigest !== activation.body.inputDigest
+      || this.now() >= Date.parse(activation.expiresAt) || this.now() >= Date.parse(activation.body.activationExpiresAt)
+      || activation.body.nodeId !== this.config.nodeId || activation.connectionId !== this.connectionId) {
+      throw new Error("Codex session ingress binding mismatch");
+    }
+    return { ingress: this.#codexIngress, activation };
+  }
+
+  async receiveCodexCurrentAdmissionRead(raw: string | Uint8Array): Promise<void> {
+    this.assertCodexIngress();
+    await this.bounded(async () => {
+      const { ingress, activation } = this.assertCodexIngress();
+      const frame = await this.authenticate(raw);
+      if (frame.type !== "harness.codex.current-admission.read") throw new Error("Expected Codex admission read");
+      const ref = ingress.reference;
+      if (frame.body.queueId !== ref.queueId || frame.body.projectId !== ref.projectId
+        || frame.body.jobId !== ref.jobId || frame.body.attemptId !== ref.attemptId
+        || frame.body.inputDigest !== ref.inputDigest || frame.body.packetDigest !== ref.packetDigest
+        || frame.body.nodeId !== this.config.nodeId || frame.body.activationFrameDigest !== sha256Digest(activation)
+        || frame.body.currentAdmissionDigest !== activation.body.currentAdmissionDigest) {
+        throw new Error("Codex admission read binding mismatch");
+      }
+      await ingress.responder.recheck(ref, activation, this.config.nodeKeyId);
+      const answer = await ingress.responder.readAuthenticated({ frame, delivery: "accepted" });
+      this.assertCodexIngress();
+      const signed = await this.signFrame("harness.codex.current-admission.read.response", answer.body,
+        frame.messageId, Date.parse(answer.body.expiresAt));
+      this.assertCodexIngress();
+      await this.ports.send(JSON.stringify(signed));
+      this.now(); this.outboundIds.add(signed.messageId);
+    });
+  }
+
+  async receiveCodexResultReturn(raw: string | Uint8Array) {
+    const { ingress } = this.assertCodexIngress();
+    return this.acceptOwnedCodexResultReturn(raw, ingress.result);
+  }
+
+  private async acceptOwnedCodexResultReturn(raw: string | Uint8Array, intake: CodexResultReturnIntakeV1) {
+    if (this.#codexIngress && intake !== this.#codexIngress.result) throw new Error("Codex ingress receiver mismatch");
     if (!["codex_activation_sent_unconfirmed", "codex_result_returned"].includes(this.state)
       || !this.connectionId || !this.preparedCodexActivationFrame
       || !this.features.includes(CODEX_RESULT_RETURN_FEATURE_V1)
@@ -226,6 +298,12 @@ export class ServerNodeSession {
     }
     return this.bounded(async () => {
       const authenticated = await this.authenticateCodexResult(raw);
+      if (this.#codexIngress) {
+        if (authenticated.delivery !== "accepted") throw new Error("Mounted Codex ingress rejects replay");
+        const { ingress, activation } = this.assertCodexIngress();
+        await ingress.responder.recheck(ingress.reference, activation, this.config.nodeKeyId);
+        this.assertCodexIngress();
+      }
       if (authenticated.frame.type !== "harness.codex.result.return") {
         throw new Error("Expected Codex result return");
       }
@@ -270,6 +348,11 @@ export class ServerNodeSession {
         receivedAt: new Date(this.now()).toISOString(),
         issueReceipt: async (body: CodexResultReturnReceiptBodyV1) => {
           assertCurrent();
+          if (this.#codexIngress) {
+            const { ingress, activation } = this.assertCodexIngress();
+            await ingress.responder.recheck(ingress.reference, activation, this.config.nodeKeyId);
+            assertCurrent();
+          }
           await intake.publish(authenticated, assertCurrent);
           assertCurrent();
           return this.signFrame("harness.codex.result.return.receipt", body,
@@ -759,7 +842,7 @@ export class ServerNodeSession {
     this.outboundIds.add(signed.messageId);
   }
 
-  private async signFrame<T extends "connection.accepted" | "node.reconciliation.request" | "protocol.ack" | "harness.native.dispatch" | "harness.codex.dispatch" | "harness.codex.dispatch.activation" | "harness.codex.result.return.receipt" | "controller.worker.delivery" | "job.lease.grant">(
+  private async signFrame<T extends "connection.accepted" | "node.reconciliation.request" | "protocol.ack" | "harness.native.dispatch" | "harness.codex.dispatch" | "harness.codex.dispatch.activation" | "harness.codex.result.return.receipt" | "harness.codex.current-admission.read.response" | "controller.worker.delivery" | "job.lease.grant">(
     type: T, body: NodeMessageBodyMap[T], causationId?: string, deadline = this.deadline, sentAt = this.now()): Promise<SignedNodeFrame<T>> {
     const frame = { protocol: NODE_PROTOCOL_V1, direction: "server_to_node", senderKind: "control_room",
       tenantId: this.config.tenantId, actorId: this.config.serverId, keyId: this.config.serverKeyId,
