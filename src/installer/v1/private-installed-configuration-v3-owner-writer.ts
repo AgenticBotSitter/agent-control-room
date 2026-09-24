@@ -83,7 +83,9 @@ const digestPattern = /^sha256:[a-f0-9]{64}$/u;
 type PostWriteVerificationCapability = Readonly<{
   installationId: string;
   releaseDigest: string;
+  topologyPlanDigest: string;
   planDigest: string;
+  publicationEvidenceDigest: string;
   protectedRootPath: string;
   expectedOwnerUid: number;
   verificationDeadlineMs: number;
@@ -94,6 +96,10 @@ type PostWriteVerificationCapability = Readonly<{
   nativeVerifierContinuation: object;
 }>;
 const postWriteVerificationCapabilities = new WeakMap<object, PostWriteVerificationCapability>();
+const postWriteActivationEvidenceCapabilities = new WeakMap<object, Readonly<{
+  installationId: string; releaseDigest: string; topologyPlanDigest: string; planDigest: string;
+  publicationEvidenceDigest: string; configurationSha256: string; manifestSha256: string;
+}>>();
 
 function sanitized(kind: "refused" | "uncertain"): Error {
   const error = new Error(`private_installed_configuration_v3_owner_writer_${kind}`);
@@ -155,6 +161,15 @@ function binding(materialization: Materialization, custody: WriterCustody) {
     postWriteVerifierContinuation: custody.postWriteVerifierContinuation });
 }
 
+function publicationEvidence(materialization: Materialization,
+  receipt: PrivateInstalledConfigurationNativePublicationReceiptV1): string {
+  return sha256Digest({ purpose: "private-installed-configuration-v3-publication/v1",
+    planDigest: materialization.planDigest, configurationSha256: receipt.configurationSha256,
+    manifestSha256: receipt.manifestSha256, ownerUid: receipt.ownerUid, rootIdentity: receipt.rootIdentity,
+    configurationIdentity: receipt.configurationIdentity, manifestIdentity: receipt.manifestIdentity,
+    journalIdentity: receipt.journalIdentity });
+}
+
 function report(materialization: Materialization, outcome: "published" | "uncertain",
   cleanupConfirmed: boolean, receipt?: PrivateInstalledConfigurationNativePublicationReceiptV1,
   postWriteVerificationCapability?: object): PrivateInstalledConfigurationV3OwnerWriteReportV1 {
@@ -162,12 +177,7 @@ function report(materialization: Materialization, outcome: "published" | "uncert
   const rollbackMaterial = Object.freeze({ planDigest: materialization.planDigest, outcome,
     finalRootState, atomicVisibilityBoundary: true as const, partialFinalRootVisible: false as const,
     automaticRetryAllowed: false as const, stagedHelperCleanup: cleanupConfirmed ? "confirmed" as const : "unconfirmed" as const });
-  const publicationEvidenceDigest = receipt ? sha256Digest({
-    purpose: "private-installed-configuration-v3-publication/v1", planDigest: materialization.planDigest,
-    configurationSha256: receipt.configurationSha256, manifestSha256: receipt.manifestSha256,
-    ownerUid: receipt.ownerUid, rootIdentity: receipt.rootIdentity, configurationIdentity: receipt.configurationIdentity,
-    manifestIdentity: receipt.manifestIdentity, journalIdentity: receipt.journalIdentity,
-  }) : undefined;
+  const publicationEvidenceDigest = receipt ? publicationEvidence(materialization, receipt) : undefined;
   return Object.freeze({ schema: PRIVATE_INSTALLED_CONFIGURATION_V3_OWNER_WRITE_REPORT_V1, outcome,
     planDigest: materialization.planDigest, configurationSha256: materialization.configurationSha256,
     manifestSha256: materialization.manifestSha256,
@@ -243,7 +253,8 @@ PrivateInstalledConfigurationV3OwnerWriterV1 {
         });
         postWriteVerificationCapabilities.set(postWriteVerificationCapability, Object.freeze({
           installationId: materialization.installationId, releaseDigest: materialization.releaseDigest,
-          planDigest: materialization.planDigest, protectedRootPath: bound.rootPath,
+          topologyPlanDigest: materialization.topologyPlanDigest, planDigest: materialization.planDigest,
+          publicationEvidenceDigest: publicationEvidence(materialization, receipt), protectedRootPath: bound.rootPath,
           expectedOwnerUid: materialization.expectedOwnerUid,
           verificationDeadlineMs: materialization.verificationDeadlineMs,
           configurationBytes: Uint8Array.from(materialization.configurationBytes),
@@ -251,6 +262,12 @@ PrivateInstalledConfigurationV3OwnerWriterV1 {
           manifestBytes: Uint8Array.from(materialization.manifestBytes),
           manifestSha256: materialization.manifestSha256,
           nativeVerifierContinuation: bound.postWriteVerifierContinuation,
+        }));
+        postWriteActivationEvidenceCapabilities.set(postWriteVerificationCapability, Object.freeze({
+          installationId: materialization.installationId, releaseDigest: materialization.releaseDigest,
+          topologyPlanDigest: materialization.topologyPlanDigest, planDigest: materialization.planDigest,
+          publicationEvidenceDigest: publicationEvidence(materialization, receipt),
+          configurationSha256: materialization.configurationSha256, manifestSha256: materialization.manifestSha256,
         }));
       }
       materialization.configurationBytes.fill(0); materialization.manifestBytes.fill(0);
@@ -272,10 +289,26 @@ export function consumePrivateInstalledConfigurationV3PostWriteVerificationCapab
   const captured = postWriteVerificationCapabilities.get(value);
   if (!captured || !postWriteVerificationCapabilities.delete(value)) return refused();
   return Object.freeze({ schema: PRIVATE_INSTALLED_CONFIGURATION_V3_POST_WRITE_VERIFICATION_CAPABILITY_V1,
-    installationId: captured.installationId, releaseDigest: captured.releaseDigest, planDigest: captured.planDigest,
+    installationId: captured.installationId, releaseDigest: captured.releaseDigest,
+    topologyPlanDigest: captured.topologyPlanDigest, planDigest: captured.planDigest,
     protectedRootPath: captured.protectedRootPath, expectedOwnerUid: captured.expectedOwnerUid,
     verificationDeadlineMs: captured.verificationDeadlineMs,
     configurationBytes: Uint8Array.from(captured.configurationBytes), configurationSha256: captured.configurationSha256,
     manifestBytes: Uint8Array.from(captured.manifestBytes), manifestSha256: captured.manifestSha256,
     nativeVerifierContinuation: captured.nativeVerifierContinuation });
+}
+
+/**
+ * Burns only the activation-evidence view of the exact post-write capability.
+ * The native on-disk verifier view remains independently one-use. No caller
+ * can mint this entry from a report, digest, path, or structural capability.
+ */
+export function consumePrivateInstalledConfigurationV3PostWriteActivationEvidenceV1(value: unknown) {
+  if (!value || typeof value !== "object" || types.isProxy(value)) return refused();
+  const captured = postWriteActivationEvidenceCapabilities.get(value);
+  if (!captured || !postWriteActivationEvidenceCapabilities.delete(value)) return refused();
+  return Object.freeze({ installationId: captured.installationId, releaseDigest: captured.releaseDigest,
+    topologyPlanDigest: captured.topologyPlanDigest, planDigest: captured.planDigest,
+    publicationEvidenceDigest: captured.publicationEvidenceDigest,
+    configurationSha256: captured.configurationSha256, manifestSha256: captured.manifestSha256 });
 }

@@ -79,6 +79,7 @@ export type PrivateInstalledConfigurationV3MaterializationCapabilityV1 = Readonl
 type CapturedV3MaterializationCapability = Readonly<{
   installationId: string;
   releaseDigest: string;
+  topologyPlanDigest: string;
   planDigest: string;
   rootPath: string;
   ownerUid: number;
@@ -603,7 +604,8 @@ export function composePrivateInstalledConfigurationV3MaterializationPublication
     schema: PRIVATE_INSTALLED_CONFIGURATION_V3_MATERIALIZATION_CAPABILITY_V1,
   });
   capturedV3MaterializationCapabilities.set(materializationCapability, Object.freeze({
-    installationId: captured.installationId, releaseDigest: captured.releaseDigest, planDigest,
+    installationId: captured.installationId, releaseDigest: captured.releaseDigest,
+    topologyPlanDigest: captured.topologyPlanDigest, planDigest,
     rootPath: captured.rootPath, ownerUid: captured.ownerUid,
     verificationDeadlineMs: captured.verificationDeadlineMs,
     configurationBytes: Uint8Array.from(captured.configurationBytes),
@@ -630,7 +632,8 @@ export function consumePrivateInstalledConfigurationV3MaterializationCapabilityV
   const captured = capturedV3MaterializationCapabilities.get(value);
   if (!captured || !capturedV3MaterializationCapabilities.delete(value)) return refused();
   return Object.freeze({ schema: PRIVATE_INSTALLED_CONFIGURATION_V3_MATERIALIZATION_CAPABILITY_V1,
-    installationId: captured.installationId, releaseDigest: captured.releaseDigest, planDigest: captured.planDigest,
+    installationId: captured.installationId, releaseDigest: captured.releaseDigest,
+    topologyPlanDigest: captured.topologyPlanDigest, planDigest: captured.planDigest,
     manifestPath: join(captured.rootPath, "installed-manifest.json"),
     configurationPath: join(captured.rootPath, "operator.json"),
     journalPath: join(captured.rootPath, "installation-journal"),

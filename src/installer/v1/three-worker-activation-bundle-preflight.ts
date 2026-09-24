@@ -5,6 +5,8 @@ import { verifyHermes021MacosProtectedWorkerReadinessV1 } from
 import { verifyLocalInstallationReleasePreparationV1 } from "./local-installation-release.mjs";
 import { verifyPrivateInstalledConfigurationPreparationV1 } from
   "./private-installed-configuration-preparation";
+import { consumePrivateInstalledConfigurationV3PostWriteActivationEvidenceV1 } from
+  "./private-installed-configuration-v3-owner-writer";
 
 /**
  * Redacted, source-only view of one bounded activation window. A component can
@@ -39,13 +41,13 @@ const rollbackKind = z.enum(rollbackKinds);
 export type ThreeWorkerActivationBundleComponentV1 = z.infer<typeof component>;
 type AggregateState = Binding & { generation: number; currentPlanDigest?: string };
 type SourceProof = Binding & Readonly<{ aggregate: object; component: ThreeWorkerActivationBundleComponentV1;
-  sourceSchema: string; state: "blocked" | "owner_attended_action"; evidenceDigest: string;
+  sourceSchema: string; state: "blocked" | "ready" | "owner_attended_action"; evidenceDigest: string;
   blocker?: "reviewed_release_identity_missing" | "owner_materialization_verification_missing" }>;
 const aggregates = new WeakMap<object, AggregateState>();
 const proofs = new WeakMap<object, SourceProof>();
 
 const componentOutput = z.object({ component, sourceSchema: z.string().min(1).max(160),
-  state: z.enum(["blocked", "owner_attended_action"]), blocker: z.enum(["source_proof_missing",
+  state: z.enum(["blocked", "ready", "owner_attended_action"]), blocker: z.enum(["source_proof_missing",
     "reviewed_release_identity_missing", "owner_materialization_verification_missing"]).optional(),
   evidenceDigest: digest.optional() }).strict();
 const materialSchema = z.object({ schema: z.literal(THREE_WORKER_ACTIVATION_BUNDLE_PREFLIGHT_V1),
@@ -146,6 +148,31 @@ export function recordProtectedConfigurationThreeWorkerActivationSourceProofV1(i
     component: "protected_configuration" as const,
     sourceSchema: definitions.protected_configuration.sourceSchema, state: "blocked" as const,
     blocker: "owner_materialization_verification_missing" as const, evidenceDigest }));
+  return token;
+}
+
+/**
+ * Consumes the activation-only view of the writer's opaque post-write
+ * capability. That view exists only after the native publisher returned its
+ * exact atomic publication receipt and both cleanup boundaries succeeded.
+ */
+export function recordClaudeOwnerWriteThreeWorkerActivationSourceProofV1(input: Readonly<{
+  aggregate: unknown; postWriteVerificationCapability: unknown;
+}>): object {
+  const selected = aggregate(input?.aggregate);
+  const verified = consumePrivateInstalledConfigurationV3PostWriteActivationEvidenceV1(
+    input.postWriteVerificationCapability);
+  if (verified.installationId !== selected.installationId || verified.releaseDigest !== selected.releaseDigest
+    || verified.topologyPlanDigest !== selected.topologyPlanDigest) return refused();
+  const evidenceDigest = sha256Digest({ purpose: "three-worker-claude-owner-write-source-proof/v1",
+    installationId: selected.installationId, releaseDigest: selected.releaseDigest,
+    topologyPlanDigest: selected.topologyPlanDigest, sourcePlanDigest: verified.planDigest,
+    publicationEvidenceDigest: verified.publicationEvidenceDigest,
+    configurationSha256: verified.configurationSha256, manifestSha256: verified.manifestSha256 });
+  const token = Object.freeze({ schema: THREE_WORKER_ACTIVATION_SOURCE_PROOF_V1 });
+  proofs.set(token, Object.freeze({ ...selected, aggregate: input.aggregate as object,
+    component: "claude_owner_write" as const, sourceSchema: definitions.claude_owner_write.sourceSchema,
+    state: "ready" as const, evidenceDigest }));
   return token;
 }
 

@@ -9,6 +9,7 @@ import { HERMES_021_MACOS_LOCAL_ADAPTER_V1, HERMES_021_SOURCE_REVISION_V1,
   runHermes021MacosInstallationBoundRunnerQualificationV1 } from "../src/harness/hermes-021-v1";
 import { sha256Digest } from "../src/security/canonical-digest";
 import { composeThreeWorkerActivationBundlePreflightV1, createThreeWorkerActivationBundleCustodyV1,
+  recordClaudeOwnerWriteThreeWorkerActivationSourceProofV1,
   recordProtectedConfigurationThreeWorkerActivationSourceProofV1, refreshThreeWorkerActivationBundlePreflightV1,
   recordVerifiedReleaseThreeWorkerActivationSourceProofV1,
   verifyThreeWorkerActivationBundlePreflightV1 } from
@@ -180,6 +181,27 @@ test("real protected-configuration plan remains blocked until owner write verifi
   const foreign = createThreeWorkerActivationBundleCustodyV1({ ...binding, topologyPlanDigest: d("foreign-topology") });
   assert.throws(() => recordProtectedConfigurationThreeWorkerActivationSourceProofV1({ aggregate: foreign.aggregate,
     configurationPlan }), /preflight_refused/u);
+});
+
+test("forged, cross-plan and replayed Claude post-write capabilities cannot advance preflight", () => {
+  const custody = createThreeWorkerActivationBundleCustodyV1(binding);
+  const foreign = createThreeWorkerActivationBundleCustodyV1({ ...binding, topologyPlanDigest: d("foreign-topology") });
+  const forged = Object.freeze({
+    schema: "control-room.private-installed-configuration-v3-post-write-verification-capability/v1",
+  });
+  for (const aggregate of [custody.aggregate, foreign.aggregate]) {
+    assert.throws(() => recordClaudeOwnerWriteThreeWorkerActivationSourceProofV1({ aggregate,
+      postWriteVerificationCapability: forged }), /owner_writer_refused/u);
+  }
+  assert.throws(() => recordClaudeOwnerWriteThreeWorkerActivationSourceProofV1({ aggregate: custody.aggregate,
+    postWriteVerificationCapability: { ...forged } }), /owner_writer_refused/u);
+  assert.throws(() => recordClaudeOwnerWriteThreeWorkerActivationSourceProofV1({ aggregate: custody.aggregate,
+    postWriteVerificationCapability: new Proxy(forged, {}) }), /owner_writer_refused/u);
+  const plan = composeThreeWorkerActivationBundlePreflightV1({ aggregate: custody.aggregate });
+  assert.equal(plan.components.find(item => item.component === "claude_owner_write")?.blocker,
+    "source_proof_missing");
+  assert.equal(plan.performsEffect, false); assert.equal(plan.writesProtectedFiles, false);
+  assert.equal(plan.invokesAgent, false); assert.deepEqual(plan.ownerActions, []);
 });
 
 test("reviewed path-based Hermes remains blocked without pinned executable launch", async () => {
