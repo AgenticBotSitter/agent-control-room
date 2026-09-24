@@ -25,6 +25,7 @@
 
 import { projectCoordinationActionResultSchema, projectCoordinationPageSchema } from "./project-coordination-wire";
 import { createAccessVerifier, requireSameOrigin, WebAccessError, type AccessTrust, type GatewayAssertionProviderProfileV1 } from "./access-verifier";
+import type { LocalOwnerSessionServiceV1 } from "./local-owner-session";
 import { privateResponseHeaders as responseHeaders, readBoundedJson, webFailure } from "./http-common";
 import { sha256Digest } from "../../security/digest";
 import type { ProjectCoordinationHttpService } from "./project-coordination-http";
@@ -35,11 +36,13 @@ type RevisionInput = Parameters<ProjectCoordinationHttpService["appointCoordinat
 
 export interface CoordinationHttpHandlerOptions {
   origin: string;
-  trust: AccessTrust;
+  trust?: AccessTrust;
   service: ProjectCoordinationHttpService;
   /** Trusted process selection; the browser cannot choose a header/provider. */
   gatewayAssertionProfile?: GatewayAssertionProviderProfileV1;
   clock?: () => number;
+  /** Explicit loopback-only owner-session service; never a generic injected verifier. */
+  localOwnerSession?: LocalOwnerSessionServiceV1;
   /**
    * Async predicate returning whether the coordination surface accepts writes.
    * When false, every POST route refuses with `not_found` and the read still succeeds.
@@ -132,7 +135,12 @@ function extractAppointFields(body: unknown): {
 }
 
 export function createCoordinationHttpHandler(options: CoordinationHttpHandlerOptions) {
-  const verifyIdentity = createAccessVerifier(options.trust, options.gatewayAssertionProfile);
+  const localOwnerSession = options.localOwnerSession;
+  if (localOwnerSession && (localOwnerSession.profile.origin !== options.origin || new URL(options.origin).protocol !== "http:"))
+    throw new Error("coordination_http_local_owner_config_invalid");
+  const verifyIdentity = localOwnerSession ? undefined : options.trust === undefined ? undefined
+    : createAccessVerifier(options.trust, options.gatewayAssertionProfile);
+  if (!localOwnerSession && !verifyIdentity) throw new Error("coordination_http_authentication_not_configured");
   const clock = options.clock ?? Date.now;
   const isCoordinationEnabled = options.isCoordinationEnabled ?? (() => Promise.resolve(true));
   const inflight = options.inflight ?? new Map<string, Promise<unknown>>();
@@ -146,8 +154,8 @@ export function createCoordinationHttpHandler(options: CoordinationHttpHandlerOp
     `${idempotencyKey}\n${projectId}\n${subaction}\n${identitySubject}\n${bodyDigest}`;
   return async (request: Request): Promise<Response> => {
     try {
-        requireSameOrigin(request, options.origin);
-        const identity: Identity = verifyIdentity(request, clock());
+        if (!localOwnerSession) requireSameOrigin(request, options.origin);
+        const identity: Identity = localOwnerSession ? localOwnerSession.verify(request, clock()) : verifyIdentity!(request, clock());
         const url = new URL(request.url);
         const path = url.pathname;
         const coordination = /^\/api\/v1\/projects\/([^/]+)\/coordination(?:\/([^/]+))?$/.exec(path);

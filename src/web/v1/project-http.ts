@@ -1,4 +1,5 @@
 import { createAccessVerifier, requireSameOrigin, WebAccessError, type AccessTrust, type GatewayAssertionProviderProfileV1 } from "./access-verifier";
+import type { LocalOwnerSessionServiceV1 } from "./local-owner-session";
 import type { WebProjectService } from "./project-service";
 import { privateResponseHeaders as responseHeaders, readBoundedJson, webFailure } from "./http-common";
 
@@ -10,16 +11,23 @@ async function readBody(request: Request): Promise<unknown> {
 
 /** Full Web Request -> transaction -> response seam. Composition is explicit; never opens a database. */
 export function createProjectHttpHandler(options: {
-  origin: string; trust: AccessTrust; service: WebProjectService;
+  origin: string; trust?: AccessTrust; service: WebProjectService;
   /** Trusted process selection; the browser cannot choose a header/provider. */
   gatewayAssertionProfile?: GatewayAssertionProviderProfileV1; clock?: () => number;
+  /** Explicit loopback-only owner-session service; never a generic injected verifier. */
+  localOwnerSession?: LocalOwnerSessionServiceV1;
 }) {
-  const verifyIdentity = createAccessVerifier(options.trust, options.gatewayAssertionProfile);
+  const localOwnerSession = options.localOwnerSession;
+  if (localOwnerSession && (localOwnerSession.profile.origin !== options.origin || new URL(options.origin).protocol !== "http:"))
+    throw new Error("project_http_local_owner_config_invalid");
+  const verifyIdentity = localOwnerSession ? undefined : options.trust === undefined ? undefined
+    : createAccessVerifier(options.trust, options.gatewayAssertionProfile);
+  if (!localOwnerSession && !verifyIdentity) throw new Error("project_http_authentication_not_configured");
   const clock = options.clock ?? Date.now;
   return async (request: Request): Promise<Response> => {
     try {
-      requireSameOrigin(request, options.origin);
-      const identity = verifyIdentity(request, clock());
+      if (!localOwnerSession) requireSameOrigin(request, options.origin);
+      const identity = localOwnerSession ? localOwnerSession.verify(request, clock()) : verifyIdentity!(request, clock());
       const url = new URL(request.url), path = url.pathname;
       if (path === "/api/v1/projects" && request.method === "GET") {
         if ([...url.searchParams.keys()].some(key => !["after", "lifecycle"].includes(key))

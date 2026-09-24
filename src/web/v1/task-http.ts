@@ -1,4 +1,5 @@
 import { createAccessVerifier, requireSameOrigin, WebAccessError, type AccessTrust, type GatewayAssertionProviderProfileV1 } from "./access-verifier";
+import type { LocalOwnerSessionServiceV1 } from "./local-owner-session";
 import { privateResponseHeaders, readBoundedJson, webFailure } from "./http-common";
 import type { WebTaskService } from "./task-service";
 import type { WebTaskReviewService } from "./task-review-service";
@@ -20,16 +21,23 @@ import { sha256Digest } from "../../security";
 import { taskDetailSchema } from "./task-wire";
 import { observeTaskLocalRoute, type TrustedConfiguredLocalRoute } from "./task-local-route-observation";
 
-export function createTaskHttpHandler(options: { origin: string; trust: AccessTrust; service: WebTaskService;
+export function createTaskHttpHandler(options: { origin: string; trust?: AccessTrust; service: WebTaskService;
   ownerReviews?: WebTaskReviewService; ownerVerifications?: WebTaskVerificationService; planning?: Pick<TaskPlanningOperation, "plan" | "readSaved" | "readPreparedWorker" | "readConfiguredLocalRoute" | "supportsProject" | "templatesForProject">;
   assignment?: TaskAssignmentOperation; approvals?: TaskApprovalOperation; submission?: TaskSubmissionOperation; revisions?: TaskRevisionOperation;
   /** Trusted process selection; the browser cannot choose a header/provider. */
-  gatewayAssertionProfile?: GatewayAssertionProviderProfileV1; clock?: () => number }) {
-  const verify = createAccessVerifier(options.trust, options.gatewayAssertionProfile);
+  gatewayAssertionProfile?: GatewayAssertionProviderProfileV1; clock?: () => number;
+  /** Explicit loopback-only owner-session service; never a generic injected verifier. */
+  localOwnerSession?: LocalOwnerSessionServiceV1 }) {
+  const localOwnerSession = options.localOwnerSession;
+  if (localOwnerSession && (localOwnerSession.profile.origin !== options.origin || new URL(options.origin).protocol !== "http:"))
+    throw new Error("task_http_local_owner_config_invalid");
+  const verify = localOwnerSession ? undefined : options.trust === undefined ? undefined
+    : createAccessVerifier(options.trust, options.gatewayAssertionProfile);
+  if (!localOwnerSession && !verify) throw new Error("task_http_authentication_not_configured");
   return async (request: Request): Promise<Response> => {
     try {
-      requireSameOrigin(request, options.origin);
-      const identity = verify(request, (options.clock ?? Date.now)());
+      if (!localOwnerSession) requireSameOrigin(request, options.origin);
+      const identity = localOwnerSession ? localOwnerSession.verify(request, (options.clock ?? Date.now)()) : verify!(request, (options.clock ?? Date.now)());
       const url = new URL(request.url);
       const absRoute = /^\/api\/v1\/projects\/([^/]+)\/tasks\/from-news$/.exec(url.pathname);
       if (absRoute) {
