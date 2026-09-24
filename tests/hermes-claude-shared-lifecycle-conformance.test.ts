@@ -195,6 +195,9 @@ test("Hermes and Claude run concurrently through one durable lifecycle without c
   await claudeOpened.promise;
   assert.deepEqual({ hermesStarts, claudeStarts }, { hermesStarts: 1, claudeStarts: 1 },
     "both distinct local workers begin before either is allowed to publish a result");
+  assert.deepEqual((await f.db.query(`SELECT count(*)::int AS count FROM control_native_review_plans
+    WHERE tenant_id=$1`, [binding.tenantId])).rows[0], { count: 0 },
+  "neither held worker can publish a result before both deliveries have started");
   releaseHermesOutput.resolve(); releaseClaudeOutput.resolve();
   const [hermesFirst, claudeFirst] = await Promise.all([hermesDelivery, claudeDelivery]);
   assert.equal(hermesFirst.publication?.replayed, false);
