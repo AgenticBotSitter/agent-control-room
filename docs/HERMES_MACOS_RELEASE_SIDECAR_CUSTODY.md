@@ -36,15 +36,26 @@ always `contract_only`, carries every remaining blocker, performs no native
 attempt and grants neither launch nor qualification authority. A caller-built
 look-alike can at most reproduce a blocked planning record.
 
+The source now also contains a pure runtime-image inventory manifest builder
+and verifier. It records only normalized relative paths, entry kinds, safe
+read-only modes, byte counts and content digests. It stores no absolute paths,
+owner identity or timestamps. Formation and later verification both require an
+exact entry set and refuse links, special files, hard-linked regular files,
+writable modes, unsafe names, missing parent directories, duplicates, missing
+entries and extra entries. The result remains `inventory_only`: it does not
+walk a live installation, read file contents, prove that credentials are
+absent, create an image or grant packaging or launch authority.
+
 ## Required source work before any live attempt
 
 Control Room must still:
 
 1. build and independently review the native launch host, including complete
    process-group cleanup and helper-loss behavior;
-2. define a deterministic, licensed runtime-image builder that inventories
-   the complete interpreter and Hermes dependency closure, rejects links,
-   special files and unlisted entries, and proves credentials are absent;
+2. define the reviewed public-runtime inclusion list, then implement the
+   owner-authorized packager that captures the complete interpreter and Hermes
+   dependency closure, verifies license material and proves credentials are
+   absent before feeding observations into the deterministic inventory;
 3. add artifact verification and copy logic to the macOS launcher bundle, bind
    all bytes to the portable release, and extend protected installed-manifest
    custody with a one-use Hermes sidecar capability;
@@ -67,6 +78,15 @@ must not read or copy credentials, protected values, profiles, memories,
 skills or private configuration. Any download, install, administrator action,
 read-only image attachment, operating-system prompt or persistent-service
 change requires its own owner approval.
+
+Before that authorization is requested, release engineering must settle and
+review the exact public-runtime inclusion list and the fixed internal Hermes
+entry point. The future capture helper—not this pure manifest module—must
+enforce that list while it reads the public runtime, scan the selected closure
+for forbidden private material, include the applicable license notices, build
+the read-only image and independently verify its digest. This is the exact
+owner-bound next step; no live Hermes data needs to be inspected to finish the
+remaining source design and tests around it.
 
 After the reviewed sidecar is shipped, the owner must install its exact
 architecture-specific bytes into the protected Control Room installation,
