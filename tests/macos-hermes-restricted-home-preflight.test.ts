@@ -8,12 +8,15 @@ import { buildMacosHermesRuntimeImageManifestV1 as inventory } from
   "../src/installer/v1/macos-hermes-runtime-image-manifest";
 import { buildMacosHermesRuntimeImportPolicyV1 as policy } from
   "../src/installer/v1/macos-hermes-runtime-import-policy";
+import { buildMacosHermesSealedRuntimeCandidatePolicyV1 as candidate } from
+  "../src/installer/v1/macos-hermes-sealed-runtime-candidate-policy";
 
 const d = (c: string) => `sha256:${c.repeat(64)}`;
-function fixture(extraFiles: string[] = []) {
+function fixture(extraFiles: string[] = [], omittedFiles: string[] = []) {
   const files = ["python/bin/python3.11", "runtime/hermes/hermes_cli/main.py",
-    "runtime/hermes/hermes_cli/_early_recovery.py", "runtime/hermes/cli.py",
-    "runtime/dependencies/openai/_base_client.py", ...extraFiles];
+    "runtime/hermes/hermes_cli/_early_recovery.py", "runtime/hermes/hermes_cli/_startup_fast.py",
+    "runtime/hermes/cli.py", "runtime/dependencies/openai/_base_client.py", ...extraFiles]
+    .filter(path => !omittedFiles.includes(path));
   const dirs = new Set(["python/lib/python3.11/lib-dynload"]);
   for (const path of [...files, ...dirs]) {
     const parts = path.split("/");
@@ -49,6 +52,14 @@ test("recognizes image-internal reviewed behavior while retaining all live block
   assert.deepEqual(prepare(JSON.parse(JSON.stringify(fixture()))), result);
 });
 
+test("candidate policy cannot substitute for the native host's existing import contract", () => {
+  const input = fixture();
+  const candidatePolicy = candidate(input);
+  assert.throws(() => prepare({ ...input, nativeHostInput: {
+    ...input.nativeHostInput, importPolicy: candidatePolicy,
+  } }));
+});
+
 test("rejects execution-home code, profiles, credentials, symlinks and arbitrary paths", () => {
   for (const path of ["plugins", "providers", "profiles", "config.yaml", ".env", "auth.json",
     "memories", "skills", "../escape", "/external", ".update-incomplete"])
@@ -66,6 +77,7 @@ test("rejects recovery triggers and executable site-loading hooks inside an othe
 });
 
 test("refuses runtime options, missing closure files and untrusted property evaluation", () => {
+  assert.throws(() => prepare(fixture([], ["runtime/hermes/hermes_cli/_startup_fast.py"])));
   for (const name of ["env", "args", "profile", "externalRoots", "readyForLaunch"])
     assert.throws(() => prepare({ ...fixture(), [name]: true }));
   const input = fixture();

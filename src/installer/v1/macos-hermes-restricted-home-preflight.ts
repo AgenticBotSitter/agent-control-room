@@ -48,7 +48,8 @@ export function prepareMacosHermesRestrictedHomePreflightV1(value: unknown) {
     "runtime/hermes", "runtime/dependencies"];
   for (const root of roots) if (entries.get(root)?.kind !== "directory") refuse();
   for (const path of ["python/bin/python3.11", "runtime/hermes/hermes_cli/main.py",
-    "runtime/hermes/hermes_cli/_early_recovery.py", "runtime/hermes/cli.py",
+    "runtime/hermes/hermes_cli/_early_recovery.py", "runtime/hermes/hermes_cli/_startup_fast.py",
+    "runtime/hermes/cli.py",
     "runtime/dependencies/openai/_base_client.py"])
     if (entries.get(path)?.kind !== "regular_file") refuse();
   // No symlink entries can survive the existing manifest parser. Reject

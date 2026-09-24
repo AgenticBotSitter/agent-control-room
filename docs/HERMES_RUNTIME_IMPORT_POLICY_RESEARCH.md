@@ -119,11 +119,38 @@ entry-point metadata, other dynamic loading, native filesystem custody and the
 restricted home's real runtime behavior remain unproven. The pinned source's
 MIT attribution remains upstream; no Python source was copied or modified.
 
-A candidate policy and negative test specification are now implemented. They
-are a refusal boundary, not evidence that the fixed entry layout works. Before
-packaging can proceed, upstream must provide a supported invocation mode that
-avoids the four recorded incompatibilities, or architecture must explicitly
-retain the gap; Control Room must not modify Hermes source to make it fit.
+### Additive sealed-runtime candidate (September 24)
+
+`macos-hermes-sealed-runtime-candidate-policy.ts` records a separate, inert
+candidate while preserving the original import policy and native-host input
+contract. Its builder requires successful native-host and restricted-home
+preflight joins and binds both resulting digests, the unchanged baseline
+policy and its inventory digests. Parsing verifies a saved statement's
+consistency, not custody or inventory possession. The candidate
+hard-codes only two root mutations: `main.py`'s conditional realpath parent
+insertion and `_startup_fast.py`'s `ensure_project_root_on_path`, which removes
+realpath-equivalent entries and prepends the same `runtime/hermes` root.
+The restricted-home preflight now also requires `_startup_fast.py` in its
+supplied inventory.
+
+The candidate describes only `cli.py`'s `_AsyncHttpxDelNeuter` finder for
+`openai._base_client`: self-removal before ordinary resolution and replacement
+of `AsyncHttpxClientWrapper.__del__`. Its required future resolved target is
+exactly `runtime/dependencies/openai/_base_client.py`. No caller can choose
+another root, finder, module or target, including by recalculating the digest.
+These are source-review statements, not runtime enforcement or custody proof.
+
+All image, process, install, qualification, launch and packaging authority
+flags remain false. The candidate retains baseline incompatibility and
+blockers for native filesystem custody, dependency repair, plugin entry points,
+dynamic loading, native libraries, restricted-home runtime behavior and actual
+hook-target resolution. The existing native-host contract refuses the candidate
+as a substitute for its v1 import policy. Negative tests exercise altered
+exceptions, forged digests, changed blockers and authority, and hostile data.
+
+Before packaging can proceed, the unresolved compatibility and custody gaps
+must be resolved through reviewed evidence; Control Room must not modify
+Hermes source to make it fit.
 Later inventory formation, capture of the existing runtime, image
 creation/mounting and real qualification remain within the owner-authorized
 capture/activation stage described in
