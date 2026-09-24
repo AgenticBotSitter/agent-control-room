@@ -46,6 +46,16 @@ entries and extra entries. The result remains `inventory_only`: it does not
 walk a live installation, read file contents, prove that credentials are
 absent, create an image or grant packaging or launch authority.
 
+A separate build-time candidate inspector can now inspect only a supplied,
+disposable public runtime directory and feed its observations into that same
+manifest. It refuses links, special or writable entries, hard links,
+unreviewed paths, missing `LICENSE` or `NOTICE`, `/nix/store/` references, and
+all native Mach-O binaries (including universal binaries). Raw byte scanning
+cannot prove a native library closure, so no native binary is accepted until a
+separately reviewed dependency validator exists. It retains neither absolute
+paths nor file contents, creates no image, and grants neither packaging nor
+launch authority.
+
 The exact pinned public source has now also been reviewed and a pure import
 policy added. It binds `hermes_cli.main:main`, CPython 3.11, architecture,
 isolated bootstrap/module roots and the future dependency, native-library and
@@ -54,6 +64,26 @@ bootstrap installation and private material. The reviewed source is marked
 incompatible because startup mutates `sys.path`, may repair or install
 dependencies, installs a meta-path hook and discovers plugins. The policy is
 not a workaround and grants no authority.
+
+## Upstream packaging reuse decision
+
+The pinned Hermes source already contains a locked Nix packaging recipe. Its
+dependency lock, wheel preference, Apple Silicon adjustments, package-data
+rules and asset separation are useful build inputs and must be retained as
+evidence for a future candidate runtime. Its published `minimal` output is
+**not** a suitable Control Room runtime: it still builds the broad `all`
+dependency group, includes desktop/server tooling, uses Python 3.12, and
+depends on absolute `/nix/store` links and wrappers. Copying it would violate
+the Control Room rule that the installed worker has no mutable or external
+runtime paths.
+
+Control Room will therefore reuse the pinned recipe and lock to construct or
+evaluate a separately portable, text-worker-only candidate. It will not spoof
+the upstream Nix-build flag to produce an ordinary wheel, dereference Nix
+links opportunistically, or build a general Nix relocation system. A
+build-time candidate inspector must reject links, external store references,
+unbundled native-library references, unsafe modes and missing notices before
+the existing exact runtime-image manifest can record the candidate.
 
 ## Required source work before any live attempt
 
