@@ -70,7 +70,11 @@ process-local capabilities after checking the **current** private-route
 authorization, observing and pinning the actual TLS peer certificate, and
 completing the exact restricted-role database preflight. Caller-supplied
 digests, endpoint policy objects, or structurally matching evidence must never
-advance this gate.
+advance this gate. The protected composition now consumes the exact post-write
+installed-configuration capability and exposes only a one-use owner-attended
+boundary, but it remains explicitly blocked until a reviewed native route
+observer can produce those three process-local capabilities; it does not
+connect, inspect, or mint evidence by itself.
 
 **Owner involvement:** one attended activation window to unlock the protected
 credential stores and approve any operating-system prompts. All preflight,

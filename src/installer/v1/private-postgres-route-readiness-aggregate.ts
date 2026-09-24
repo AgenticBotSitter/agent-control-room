@@ -101,6 +101,12 @@ function selected(value: unknown): Binding {
   return aggregates.get(value as object) ?? refused();
 }
 
+/** Redacted process-local binding used only by the protected owner composer. */
+export function privatePostgresRouteReadinessAggregateFingerprintV1(value: unknown): string {
+  return sha256Digest({ purpose: "private-postgres-route-readiness-aggregate-binding/v1",
+    binding: selected(value) });
+}
+
 function prepareAssessmentBody(held: Binding, proofsValue: unknown) {
   if (!Array.isArray(proofsValue) || proofsValue.length !== 3
     || proofsValue[0] !== "current_private_route_authorization"
