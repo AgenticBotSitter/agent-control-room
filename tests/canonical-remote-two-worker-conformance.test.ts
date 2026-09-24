@@ -65,6 +65,21 @@ test("two canonical remote workers are receipt-isolated and reconnect only recov
   assert.equal(connectionA.sends(), 1, "reconnect recovers the original durable receipt without a second send");
   await assert.rejects(ingressA.recover(lostReceipt), /unavailable/, "the recovery ingress cannot settle a second receipt");
 
+  // A replacement connection which proved the original receipt is eligible to
+  // return receipt-bound evidence.  The evidence remains inert at this stage.
+  c.advance(1);
+  const recoveredReceipt = recovered.receipt as { receiptDigest: string; deliveryId: string; deliveryDigest: string };
+  const recoveredProgress = createControllerWorkerProgressReturnV1({
+    identity: { ...preparedA.delivery.identity, workerId: workerA.workerId },
+    deliveryReceipt: recoveredReceipt, enrollmentDigest: workerA.enrollmentDigest,
+    connectionId: connectionA.connectionId(), sequence: 1, occurredAt: new Date(c.now()).toISOString(),
+    progressPercent: 1, evidenceDigest: "sha256:" + "4".repeat(64),
+  });
+  const recoveredResultIngress = capturePrivateRemoteControllerWorkerResultIngressCapabilityV1(reconstructedA);
+  const recoveredProgressResult = await recoveredResultIngress.receive(await connectionA.result(
+    "controller.worker.result.progress", recoveredProgress));
+  assert.equal(recoveredProgressResult.kind, "progress", "recovered receipt enables only the existing inert result channel");
+
   const row = await c.f.db.transaction(tx => advanceRemoteWorkerEnrollmentInStoreV1(tx, new Uint8Array(32).fill(61), {
     tenantId: binding.tenantId, workerId: workerA.workerId, expectedRevision: 0, state: "draining",
     evidenceDigest: "sha256:" + "1".repeat(64), now: new Date(c.now() + 1).toISOString() }));
