@@ -70,6 +70,19 @@ test("protected factory re-attests immediately before spawn and refuses executab
   /hermes_021_macos_reviewed_executable_identity_unavailable/u);
 });
 
+test("runs the final authority fence after executable attestation and before spawning", async t => {
+  const f = await fixture(t);
+  const runner = createHermes021MacosOwnerAuthorizedLocalOnlyRunnerV1(f.input);
+  const admission = admitted(runner, f.input);
+  let rechecks = 0;
+  const port = createHermes021MacosOwnerAuthorizedLocalOnlyPrivatePortV1(runner, admission.gate, async () => {
+    rechecks += 1;
+    throw new Error("revoked_after_attestation");
+  });
+  await assert.rejects(port.run({ localServiceId: "service:fixture", task: admission.task }), /revoked_after_attestation/u);
+  assert.equal(rechecks, 1);
+});
+
 test("refuses getter-backed nested data and burns each admitted task gate exactly once", async t => {
   const f = await fixture(t); let reads = 0;
   const hostileWorker = Object.defineProperty({ ...f.input.workerBinding }, "workerId", {

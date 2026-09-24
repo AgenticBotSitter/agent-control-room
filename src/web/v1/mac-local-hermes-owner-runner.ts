@@ -33,7 +33,8 @@ type OwnerRunnerAdmission = Readonly<{
 export function createMacLocalHermesOwnerRunnerPortFactoryV1(input: Readonly<{
   runner: unknown;
   admission: OwnerRunnerAdmission;
-}>): Readonly<{ createPrivatePort(input: Readonly<{ task: Hermes021MacosTaskV1 }>): Hermes021MacosLocalPrivatePortV1 }> {
+}>): Readonly<{ createPrivatePort(input: Readonly<{ task: Hermes021MacosTaskV1;
+  recheckBeforeSpawn?: () => Promise<void> }>): Hermes021MacosLocalPrivatePortV1 }> {
   if (!input || !input.runner || !input.admission) unavailable();
   const admission = input.admission;
   const workerBinding = hermes021MacosLocalBindingSchemaV1.parse(admission.workerBinding);
@@ -51,7 +52,8 @@ export function createMacLocalHermesOwnerRunnerPortFactoryV1(input: Readonly<{
       workerBinding,
       task,
     });
-    return createHermes021MacosOwnerAuthorizedLocalOnlyPrivatePortV1(runner, gate);
+    if (value.recheckBeforeSpawn !== undefined && typeof value.recheckBeforeSpawn !== "function") unavailable();
+    return createHermes021MacosOwnerAuthorizedLocalOnlyPrivatePortV1(runner, gate, value.recheckBeforeSpawn);
   } });
 }
 
@@ -72,7 +74,8 @@ export function createMacLocalHermesOwnerRunnerQueueDeliveryV1(input: Readonly<{
   if (!input || !input.execution?.delivery || !input.results || typeof input.assertAuthority !== "function") unavailable();
   const factory = createMacLocalHermesOwnerRunnerPortFactoryV1({ runner: input.runner, admission: input.admission });
   const execution: Hermes021MacosAssignedTaskExecutionV1 = Object.freeze({ ...input.execution,
-    delivery: Object.freeze({ ...input.execution.delivery, createPrivatePort: ({ task }) => factory.createPrivatePort({ task }) }),
+    delivery: Object.freeze({ ...input.execution.delivery, createPrivatePort: ({ task, recheckBeforeSpawn }) =>
+      factory.createPrivatePort({ task, recheckBeforeSpawn }) }),
   });
   return createHermes021LocalQueueExecutorV1({ tenantId: input.tenantId, execution, results: input.results,
     assertAuthority: input.assertAuthority });

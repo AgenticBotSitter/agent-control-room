@@ -23,7 +23,10 @@ export type Hermes021MacosLocalDeliveryCompositionV1 = Readonly<{
    * runners mint their one-use port only after the final authority recheck. */
   privatePort?: Hermes021MacosLocalPrivatePortV1;
   createPrivatePort?: (input: Readonly<{ delivery: ControllerWorkerDeliveryV1;
-    route: ControllerWorkerRouteV1; task: ReturnType<typeof prepareHermes021MacosTaskV1> }>) => Hermes021MacosLocalPrivatePortV1;
+    route: ControllerWorkerRouteV1; task: ReturnType<typeof prepareHermes021MacosTaskV1>;
+    /** Runs after the runner's final executable attestation and immediately
+     * before spawn. It is the second half of the canonical authority fence. */
+    recheckBeforeSpawn?: () => Promise<void> }>) => Hermes021MacosLocalPrivatePortV1;
   /** Installation-owned canonical recheck from the assigned queue path. It
    * runs after the receipt is durable and immediately before the private
    * runner, so a revoked lease cannot cross the process boundary. */
@@ -77,7 +80,12 @@ export async function deliverHermes021MacosLocalTaskV1(config: Hermes021MacosLoc
   // durable receipt and the final current-authority recheck. A replay returns
   // above and therefore can never mint another process port.
   const privatePort = config.privatePort ?? config.createPrivatePort!(Object.freeze({ delivery, route,
-    task: prepareHermes021MacosTaskV1(delivery, route, binding) }));
+    task: prepareHermes021MacosTaskV1(delivery, route, binding),
+    ...(config.recheckBeforeLaunch ? { recheckBeforeSpawn: async () => {
+      await config.recheckBeforeLaunch!(delivery, route, signal);
+      if (signal?.aborted) unavailable();
+    } } : {}),
+  }));
   if (!privatePort || typeof privatePort.run !== "function") unavailable();
   const outcome: Hermes021MacosTaskOutcomeV1 = await runAdmittedHermes021MacosLocalTaskV1(delivery, route, binding,
     config.policy, privatePort, signal, terminalStage);

@@ -284,7 +284,8 @@ function createHost(configurationValue: unknown, launch: Launch, makeDirectory: 
  * uncertain launch. This remains intentionally unmounted from application
  * composition so it cannot create a second lifecycle.
  */
-function createHermes021MacosOwnerAuthorizedLocalOnlyStreamJsonHostV1(contractValue: unknown): Hermes021MacosStreamJsonHostV1 {
+function createHermes021MacosOwnerAuthorizedLocalOnlyStreamJsonHostV1(contractValue: unknown,
+  recheckBeforeSpawn?: () => Promise<void>): Hermes021MacosStreamJsonHostV1 {
   if (!contractValue || typeof contractValue !== "object" || types.isProxy(contractValue)) return runnerRefused();
   const captured = ownerAuthorizedLocalOnlyRunners.get(contractValue);
   if (!captured) return runnerRefused();
@@ -300,8 +301,15 @@ function createHermes021MacosOwnerAuthorizedLocalOnlyStreamJsonHostV1(contractVa
     || contractDigest !== sha256Digest({ purpose: "hermes-021-owner-authorized-local-only-runner/v1", contract: material })
     || contract.runnerConfigurationDigest !== localRunnerConfigurationDigest(captured.configuration)
     || contract.reviewedExecutableIdentityDigest !== hermes021MacosReviewedExecutableIdentityDigestV1(captured.reviewedExecutableIdentity)) return runnerRefused();
+  if (recheckBeforeSpawn !== undefined && typeof recheckBeforeSpawn !== "function") return runnerRefused();
   return createHost(captured.configuration, (file, args, options) => spawn(file, [...args], options) as ChildProcessWithoutNullStreams,
-    mkdtemp, rm, writeFile, Date.now, async () => reattestHermes021MacosReviewedExecutableIdentityV1(captured.reviewedExecutableIdentity));
+    mkdtemp, rm, writeFile, Date.now, async () => {
+      await reattestHermes021MacosReviewedExecutableIdentityV1(captured.reviewedExecutableIdentity);
+      // The controller's current-authority read must occur after the final
+      // awaited executable check. Otherwise a revoke in that I/O window could
+      // still reach spawn with an old admission.
+      await recheckBeforeSpawn?.();
+    });
 }
 
 /** Mints one task-only gate after rechecking its current installation binding. */
@@ -331,7 +339,7 @@ export function admitHermes021MacosOwnerAuthorizedLocalOnlyTaskV1(contractValue:
  * a caller cannot substitute another local worker merely by reusing a host.
  */
 export function createHermes021MacosOwnerAuthorizedLocalOnlyPrivatePortV1(contractValue: unknown,
-  admissionValue: unknown): Hermes021MacosLocalPrivatePortV1 {
+  admissionValue: unknown, recheckBeforeSpawn?: () => Promise<void>): Hermes021MacosLocalPrivatePortV1 {
   if (!contractValue || typeof contractValue !== "object" || types.isProxy(contractValue)) return runnerRefused();
   const captured = ownerAuthorizedLocalOnlyRunners.get(contractValue);
   const admission = admissionValue && typeof admissionValue === "object" && !types.isProxy(admissionValue)
@@ -346,7 +354,8 @@ export function createHermes021MacosOwnerAuthorizedLocalOnlyPrivatePortV1(contra
   // gate merely by presenting it to this factory.
   if (admission.contractDigest !== contract.contractDigest
     || !ownerAuthorizedLocalOnlyAdmissions.delete(admissionValue as object)) return runnerRefused();
-  const host = createHermes021MacosOwnerAuthorizedLocalOnlyStreamJsonHostV1(contractValue);
+  if (recheckBeforeSpawn !== undefined && typeof recheckBeforeSpawn !== "function") return runnerRefused();
+  const host = createHermes021MacosOwnerAuthorizedLocalOnlyStreamJsonHostV1(contractValue, recheckBeforeSpawn);
   const port = createHermes021MacosStreamJsonPrivatePortV1(captured.workerBinding, host);
   let used = false;
   return Object.freeze({ async run(input: Parameters<Hermes021MacosLocalPrivatePortV1["run"]>[0]) {
