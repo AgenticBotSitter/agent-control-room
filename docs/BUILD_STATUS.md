@@ -68,10 +68,14 @@ kernel-observed executable and working directory before continuing, owns one
 fresh process group, and reports bounded retirement without exposing paths or
 output. Its deterministic sidecar is release-bound and includes the repository
 license and notice. Disposable native/artifact checks pass on the current Mac;
-no real Claude process or credential was used. This does **not** activate the
-Claude route: the production Node port, helper-abrupt-death recovery, outer
-installed-manifest binding, real authentication compatibility and the
-owner-attended qualification remain required.
+no real Claude process or credential was used. A later source package adds an
+independent supervisor that contains both helper loss and watchdog loss without
+letting a task become a result or a retry. A protected, additive installed
+manifest v3 now binds that exact helper release through a one-use capability;
+older manifests are not upgraded automatically. This does **not** activate the
+Claude route: protected installed native-verifier custody, real authentication
+compatibility, manifest-v3 materialization, and the owner-attended qualification
+remain required.
 
 The matching Node adapter now owns one use of that fixed native helper and has
 also passed independent review after a correction. A verified-but-unused hold
@@ -213,6 +217,12 @@ an installation-root write, but the launcher does not stage, invoke or qualify
 the native sidecar. The v2 reader returns frozen manifest data only; it does not
 write, upgrade or activate a manifest. These are safety checks in the source
 tree, not evidence of an installed package or a completed native operation.
+
+The additive installed-manifest v3 reader now similarly preserves v1/v2 while
+binding the exact Claude process supervisor release, platform and architecture.
+It releases only a one-use internal capability after protected manifest and
+journal rereads; caller-supplied helper identities are refused. This is still
+source-only: it does not create v3 manifests, stage any helper, or start Claude.
 
 The reuse register now records four additional source inspections:
 `joeynyc/honeycomb-lab`, `joeynyc/hermes-hudui`, `joeynyc/hermes-hud`, and
