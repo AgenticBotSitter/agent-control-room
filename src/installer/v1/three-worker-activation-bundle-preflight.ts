@@ -80,6 +80,13 @@ function aggregate(value: unknown) {
   return aggregates.get(value as object) ?? refused();
 }
 
+/** Read-only binding projection for source-specific protected compositions. */
+export function captureThreeWorkerActivationAggregateBindingV1(value: unknown): Binding {
+  const selected = aggregate(value);
+  return Object.freeze(bindingSchema.parse({ installationId: selected.installationId,
+    releaseDigest: selected.releaseDigest, topologyPlanDigest: selected.topologyPlanDigest }));
+}
+
 /** Returns no producer issuers. Holding this custody cannot fabricate readiness. */
 export function createThreeWorkerActivationBundleCustodyV1(bindingValue: unknown) {
   const binding = bindingSchema.parse(bindingValue), token = Object.freeze({ schema: THREE_WORKER_ACTIVATION_BUNDLE_CUSTODY_V1 });
