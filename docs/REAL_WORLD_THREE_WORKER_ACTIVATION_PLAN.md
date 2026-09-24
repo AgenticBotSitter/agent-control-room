@@ -63,6 +63,15 @@ owner approvals:
    agent-task host. Confirm the private website reports actual saved evidence,
    not simulated or inferred readiness.
 
+The database-route source remains deliberately blocked in the current source.
+The redacted aggregate contract now names the three exact proofs, but it has no
+generic evidence recorder: a protected owner-runner still has to issue opaque,
+process-local capabilities after checking the **current** private-route
+authorization, observing and pinning the actual TLS peer certificate, and
+completing the exact restricted-role database preflight. Caller-supplied
+digests, endpoint policy objects, or structurally matching evidence must never
+advance this gate.
+
 **Owner involvement:** one attended activation window to unlock the protected
 credential stores and approve any operating-system prompts. All preflight,
 backup, configuration, verification, rollback preparation, and post-checks
