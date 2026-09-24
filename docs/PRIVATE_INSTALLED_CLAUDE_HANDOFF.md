@@ -3,17 +3,18 @@
 Status: source-only integration. No Claude process, database, service, native
 journal session, credential, or real installation is opened by this package.
 
-The installed owner-host provider may now capture the existing optional
-`claudePostInstall` tuple alongside its required Hermes runtime ports. The
-protected loader carries that tuple through the installed Hermes composer and
-the ordinary operator into the existing local runtime assembly. There is no
-new admission format, transition store, scheduler, or worker lifecycle.
+The installed owner-host provider captures the fixed Claude v3 custody binding
+alongside its required Hermes runtime ports. The protected loader carries that
+one-use binding through the installed Hermes composer and ordinary operator
+into the existing local runtime assembly. There is no new admission format,
+transition store, scheduler, or worker lifecycle.
 
-The tuple contains exactly `admissionInput`, `admissionRuntime`, and
+The binding contains exactly `admissionInput`, `admissionRuntime`, and
 `compositionInput`. Its admission input is data only; its two history/transition
 readers and reviewed composition ports are supplied by the owner-held source
-composition. Ordinary installed JSON still cannot supply functions, commands,
-module names, or an alternate configuration loader. The new capture helper
+composition. The binding is not an unrestricted caller-provided tuple:
+ordinary installed JSON cannot supply functions, commands, module names, or an
+alternate configuration loader. The capture helper
 reuses the existing host-value primitives to reject proxies and accessors
 without evaluating them, copy private key bytes without caller-controlled
 iteration, and capture the plain capability graph before any protected read.

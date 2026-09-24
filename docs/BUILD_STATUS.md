@@ -421,13 +421,14 @@ tree, not evidence of an installed package or a completed native operation.
 
 The additive installed-manifest v3 reader now similarly preserves v1/v2 while
 binding the exact Claude process supervisor release, platform and architecture.
-It releases only a one-use internal capability after protected manifest and
+The release assembly packages and verifies that named sidecar, then releases
+only one-use internal materialization custody after protected manifest and
 journal rereads; caller-supplied helper identities are refused. Its outer
 installed-verifier custody is also source-complete: the exact launcher report
 mints the only accepted provenance, and the concrete installed-configuration
 native host verifies the fixed owner root. This remains source-only. It does
-not create v3 manifests, ship or bind the Claude process sidecar, install a
-helper, start Claude, or prove real authentication.
+not create a protected v3 manifest, install a helper, start Claude, or prove
+real authentication.
 
 The reuse register now records four additional source inspections:
 `joeynyc/honeycomb-lab`, `joeynyc/hermes-hudui`, `joeynyc/hermes-hud`, and
