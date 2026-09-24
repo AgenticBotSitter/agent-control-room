@@ -270,17 +270,29 @@ export function createPrivateFirstOwnerCeremonyAdapterV1(input: AdapterInputV1):
       if (state === "closed") return Response.json({ error: "owner_bootstrap_unavailable" }, { status: 503 });
       let response: Response | undefined;
       try { response = await ceremonyRoute(request); } catch { if (state === "running") rejectCompletion?.(); return fail(); }
+      // close() is a permanent adapter fence. A request that began before
+      // close but returns afterward must not tell the browser that bootstrap
+      // succeeded: the runner has already made the outcome owner attention.
+      if (state === "closed") return Response.json({ error: "owner_bootstrap_unavailable" }, { status: 503 });
       if (state === "running" && response instanceof Response) {
         let pathname = "";
         try { pathname = new URL(request.url).pathname; } catch { return response; }
         if (request.method === "POST" && pathname === "/api/v1/owner-bootstrap" && response.status === 201) {
           try {
             const completed = exactCompletion(await boundedJson(response.clone()));
+            // The body can arrive after cleanup. Recheck after every await
+            // before turning an owner-visible response into completion.
+            if (state === "closed") return Response.json({ error: "owner_bootstrap_unavailable" }, { status: 503 });
             if (isBootstrapOnly() !== false) return fail();
+            if (state === "closed") return Response.json({ error: "owner_bootstrap_unavailable" }, { status: 503 });
             state = "complete"; resolveCompletion?.(completed);
-          } catch { rejectCompletion?.(); }
+          } catch {
+            if (state === "closed") return Response.json({ error: "owner_bootstrap_unavailable" }, { status: 503 });
+            rejectCompletion?.();
+          }
         }
       }
+      if (state === "closed") return Response.json({ error: "owner_bootstrap_unavailable" }, { status: 503 });
       return response;
     },
     async runRetainedOwnerBootstrapCeremony(context) {

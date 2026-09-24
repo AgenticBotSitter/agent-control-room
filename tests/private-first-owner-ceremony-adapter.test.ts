@@ -13,7 +13,8 @@ import type { LinuxUnixOwnerBootstrapControlAttemptV1, OwnerBootstrapCeremonyV1 
 
 const d = (value: unknown) => sha256Digest(value);
 
-function fixture(options: { completion?: unknown; row?: Record<string, unknown>; close?: () => Promise<void> } = {}) {
+function fixture(options: { completion?: unknown; row?: Record<string, unknown>; close?: () => Promise<void>;
+  route?: () => Promise<Response> } = {}) {
   const expectedOwnerSubjectDigest = d("expected-owner");
   const request: FirstOwnerActionRequestV1 = Object.freeze({
     schema: "control-room.first-owner-action-request/v1", installationPlanDigest: d("plan"),
@@ -54,7 +55,8 @@ function fixture(options: { completion?: unknown; row?: Record<string, unknown>;
     async arm() { calls.push("arm"); return { schema: "control-room.owner-bootstrap-arm/v1", armed: true,
       expiresAt: "2099-01-01T00:00:00.000Z", listenerStarted: false,
       physicalPeerQualificationComplete: false }; },
-    async route() { calls.push("route"); bootstrapOnly = false; return Response.json(completion, { status: 201 }); },
+    async route() { calls.push("route"); if (options.route) return options.route(); bootstrapOnly = false;
+      return Response.json(completion, { status: 201 }); },
     async close() { calls.push("close"); await options.close?.(); },
   };
   const database: Pick<DatabaseClient, "query"> = { async query<T>(statement: string, params?: unknown[]) {
@@ -143,6 +145,53 @@ test("arm evidence, malformed terminal responses, abort, replay, and hanging cle
   await assert.rejects(hanging.adapter.cleanupRetainedOwnerBootstrapCeremony({ ...hanging.context,
     scope: "retained_owner_bootstrap_ceremony", signal: new AbortController().signal }), /uncertain/);
   assert.ok(Date.now() - started < 500);
+});
+
+test("a request that returns after cleanup cannot report owner-bootstrap success", async () => {
+  let entered!: () => void, releaseRoute!: () => void;
+  const routeEntered = new Promise<void>(resolve => { entered = resolve; });
+  const routeReleased = new Promise<void>(resolve => { releaseRoute = resolve; });
+  const f = fixture({ route: async () => {
+    entered(); await routeReleased;
+    return Response.json({ schema: "control-room.owner-bootstrap-complete/v1", ownerCreated: true,
+      normalApplicationAvailable: true, physicalGatewayAcceptanceComplete: false }, { status: 201 });
+  } });
+
+  const running = f.adapter.runRetainedOwnerBootstrapCeremony(f.context);
+  await new Promise(resolve => setTimeout(resolve, 0));
+  const response = f.adapter.route(new Request("https://control.example/api/v1/owner-bootstrap", { method: "POST" }));
+  await routeEntered;
+  const cleanup = await f.adapter.cleanupRetainedOwnerBootstrapCeremony({ ...f.context,
+    scope: "retained_owner_bootstrap_ceremony", signal: new AbortController().signal });
+  releaseRoute();
+  assert.equal((await response)?.status, 503);
+  assert.equal(cleanup.outcome, "confirmed");
+  await assert.rejects(running, /uncertain/);
+});
+
+test("cleanup during response-body parsing cannot turn a late success or parse failure into 201", async () => {
+  for (const body of [JSON.stringify({ schema: "control-room.owner-bootstrap-complete/v1", ownerCreated: true,
+    normalApplicationAvailable: true, physicalGatewayAcceptanceComplete: false }), "not-json"]) {
+    let opened!: () => void, closeBody!: () => void, emitted = false;
+    const bodyOpened = new Promise<void>(resolve => { opened = resolve; });
+    const bodyClosed = new Promise<void>(resolve => { closeBody = resolve; });
+    const f = fixture({ route: async () => new Response(new ReadableStream<Uint8Array>({ pull(stream) {
+      if (emitted) return; emitted = true; stream.enqueue(new TextEncoder().encode(body)); opened();
+      return bodyClosed.then(() => stream.close());
+    } }, { highWaterMark: 0 }), { status: 201, headers: { "content-type": "application/json" } }) });
+    const running = f.adapter.runRetainedOwnerBootstrapCeremony(f.context);
+    await new Promise(resolve => setTimeout(resolve, 0));
+    const response = f.adapter.route(new Request("https://control.example/api/v1/owner-bootstrap", { method: "POST" }));
+    await bodyOpened;
+    const cleanup = await f.adapter.cleanupRetainedOwnerBootstrapCeremony({ ...f.context,
+      scope: "retained_owner_bootstrap_ceremony", signal: new AbortController().signal });
+    closeBody();
+    const returned = await response;
+    assert.equal(returned?.status, 503);
+    assert.deepEqual(await returned?.json(), { error: "owner_bootstrap_unavailable" });
+    assert.equal(cleanup.outcome, "confirmed");
+    await assert.rejects(running, /uncertain/);
+  }
 });
 
 test("the adapter is source-only and creates no second listener, authentication, identity, or receipt system", async () => {
