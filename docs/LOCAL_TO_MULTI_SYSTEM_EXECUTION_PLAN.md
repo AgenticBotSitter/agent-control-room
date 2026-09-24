@@ -608,13 +608,15 @@ them without developer-only commands or hidden private knowledge.
 
 ## Critical path
 
-`L0 → L1 → L2 → L3 → L4/L5 → L6 → L7 → M0 → M1(preparation)/M2 → M3 → M4 → M5 → M6(optional relocation) → M7`
+`L0 → L1 → L2 → L3 → L4/L5 → L6 → L7`, then and only then
+`M0 → M1(preparation)/M2 → M3 → M4 → M5 → M6(optional relocation) → M7`
 
 - L4 and L5 may run in parallel after L2 provides the accepted installation
   boundary.
 - Most of L6 may proceed in parallel with L3–L5, but live-status controls wait
   for the accepted installed compositions.
-- M0 source work may proceed during owner-attended L7 proof.
+- M0 source work begins only after the local acceptance journey is complete.
+  It must not consume capacity while L2–L7 are still incomplete.
 - M1 inert controller-host preparation and M2 worker-enrollment source work may
   run in parallel after M0. M1 never activates a second writer.
 - M5 completes the several-computer product with the existing controller; M6
@@ -652,16 +654,19 @@ For every phase:
 ## Immediate next package
 
 The source-only journal/configuration custody package is integrated locally.
-The next implementation work is **L2/M0 in parallel**:
+The next implementation work is **local L2–L6 only**:
 
-1. keep the existing single authority database, scheduler, recovery, and
-   owner-setup compositions ready for one owner-attended installation;
-2. keep the topology-transition journal and remote delivery path covered by
-   focused source tests; and
-3. prepare one reversible owner-operated activation bundle for private
-   PostgreSQL TLS, private routing, protected configuration, and the first
-   enrolled remote worker. The bundle must not create a second database,
-   scheduler, broker, or writer.
+1. complete the remaining protected local setup and service-custody seams;
+2. finish the sealed local Hermes runtime path and the already-composed Claude
+   qualification/activation path;
+3. keep the existing website's worker, task, result and review views tied to
+   truthful local evidence; and
+4. assemble one reversible, owner-operated local activation bundle only after
+   the source route is complete. It must not create a second database,
+   scheduler, broker, writer, or remote worker.
+
+Remote enrollment, private routing for additional computers, controller
+relocation, and every `M*` package remain deferred until L7.
 
 This file is the execution checklist. Detailed contracts remain in their named
 architecture documents; if a detailed contract conflicts with a summary here,
