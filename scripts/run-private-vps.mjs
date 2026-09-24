@@ -40,7 +40,7 @@ const installedRuntime = Object.freeze({
  * actual resource, role, trust pin and authority; this cannot certify them. */
 export function requirePrivateVpsMode(prepared) {
   const coordinator = prepared?.configuration?.coordinator;
-  if (!prepared?.configuration || !['website-only', 'agent-tasks'].includes(prepared.mode)) {
+  if (!prepared?.configuration || !['website-only', 'agent-tasks', 'mac-local'].includes(prepared.mode)) {
     throw new Error('private_vps_mode_invalid');
   }
   if ('ideaAuthoring' in prepared.configuration && (prepared.mode !== 'website-only' || coordinator))
@@ -48,6 +48,20 @@ export function requirePrivateVpsMode(prepared) {
   if (prepared.mode === 'website-only') {
     if (coordinator?.nativeQueue || coordinator?.queueWorker || coordinator?.nativeHttp || prepared.nativeHttps
       || coordinator && 'ideaRuntime' in coordinator || 'news' in prepared.configuration) {
+      throw new Error('private_vps_mode_invalid');
+    }
+  } else if (prepared.mode === 'mac-local') {
+    // This is the same task lifecycle used by the full private host, placed on
+    // one owner-controlled Mac.  It deliberately has no native HTTP listener,
+    // remote session, evidence receiver or HTTPS dependency: those belong to
+    // the multi-computer deployment.  A later bootstrap still validates every
+    // actual database, protected configuration and worker capability.
+    if (!coordinator || coordinator.nativeQueue !== true || coordinator.nativeQueueRecovery !== true
+      || coordinator.revisionPlanning !== true || !coordinator.queueWorker || !coordinator.approvals
+      || !coordinator.quality || !coordinator.resultDatabase
+      || (!coordinator.hermes021Local && !coordinator.claudeCodeLocal)
+      || coordinator.nativeHttp || coordinator.evidence || coordinator.sessions || coordinator.remoteControllerWorker
+      || prepared.nativeHttps) {
       throw new Error('private_vps_mode_invalid');
     }
   } else if (!coordinator || coordinator.nativeQueue !== true || coordinator.nativeQueueRecovery !== true

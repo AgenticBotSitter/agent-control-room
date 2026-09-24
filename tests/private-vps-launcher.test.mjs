@@ -43,6 +43,23 @@ test('operator mode cannot silently enable workers or accept an incomplete agent
   assert.throws(() => requirePrivateVpsMode({ ...agent, nativeHttps: undefined }));
 });
 
+test('mac-local mode admits only the shared local task lifecycle, never remote infrastructure', () => {
+  const coordinator = { nativeQueue: true, nativeQueueRecovery: true, revisionPlanning: true,
+    queueWorker: {}, approvals: {}, quality: {}, resultDatabase: {}, hermes021Local: {} };
+  const local = { mode: 'mac-local', configuration: { coordinator } };
+  assert.equal(requirePrivateVpsMode(local), 'mac-local');
+  for (const field of ['nativeQueue', 'nativeQueueRecovery', 'revisionPlanning', 'queueWorker', 'approvals', 'quality', 'resultDatabase']) {
+    const incomplete = { ...coordinator }; delete incomplete[field];
+    assert.throws(() => requirePrivateVpsMode({ ...local, configuration: { coordinator: incomplete } }), field);
+  }
+  assert.throws(() => requirePrivateVpsMode({ ...local, configuration: { coordinator: { ...coordinator, hermes021Local: undefined } } }),
+    /private_vps_mode_invalid/);
+  for (const field of ['nativeHttp', 'evidence', 'sessions', 'remoteControllerWorker']) {
+    assert.throws(() => requirePrivateVpsMode({ ...local, configuration: { coordinator: { ...coordinator, [field]: {} } } }), field);
+  }
+  assert.throws(() => requirePrivateVpsMode({ ...local, nativeHttps: {} }), /private_vps_mode_invalid/);
+});
+
 test('actual help and invalid-input commands exit without compiled startup or configuration', () => {
   const script = fileURLToPath(new URL('../scripts/run-private-vps.mjs', import.meta.url));
   for (const args of [['--help'], []]) {
