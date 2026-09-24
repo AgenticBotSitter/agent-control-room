@@ -3,9 +3,12 @@
 **Status:** accepted source design, September 24. No migration, database
 operation, service, or worker is performed by this document.
 
-**Source progress:** `remote-terminal-record.ts` now supplies the strict,
-data-only stable identity contract and focused disposable checks. The later
-ledger ingestion, byte material, and publisher mounting remain separate.
+**Source progress:** `remote-terminal-record.ts` supplies the strict,
+data-only stable identity contract and focused disposable checks. A first
+ledger-writing draft was rejected by independent security review because it
+did not bind the worker, delivery receipt, and enrollment to durable authority
+inside its transaction. It was removed before commit. The later private ledger
+ingestion, bounded byte material, and publisher mounting remain separate.
 
 ## Decision
 
@@ -52,7 +55,9 @@ terminal identity. The controller re-reads the run ledger:
 ## Required source packages
 
 1. Extend the shared harness-event schema with a narrowly typed
-   `remote_terminal` event and add a private authenticated ingestion method.
+   `remote_terminal` event and a private authenticated ingestion method that
+   locks and verifies the durable delivery, enrolled worker, and current
+   authority before it changes a run.
    Generic callers cannot append it.
 2. Make remote delivery create/reuse the canonical harness run before any work
    is represented as started. The stored run identity is re-read at terminal

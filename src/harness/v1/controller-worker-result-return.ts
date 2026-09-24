@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { sha256Digest } from "../../security/canonical-digest";
 import { controllerWorkerDeliveryReceiptSchemaV1 } from "./controller-worker-delivery";
+import { remoteTerminalIdentityDigestV1 } from "./remote-terminal-record";
 
 /** Optional negotiated feature for generic, non-executing worker evidence. */
 export const CONTROLLER_WORKER_RESULT_RETURN_FEATURE_V1 = "controller.worker.result.return.v1" as const;
@@ -56,10 +57,18 @@ const terminalMaterialSchemaV1 = z.object({
   ...common,
   outcome: z.enum(["completed", "failed", "cancelled"]),
   resultEvidenceDigest: digest.nullable(),
+  contentHash: digest.nullable(),
+  sizeBytes: z.number().int().min(1).max(65_536).nullable(),
+  startedAt: instant.nullable(),
   safeReasonCode: id.nullable(),
 }).strict().superRefine((value, context) => {
-  if ((value.outcome === "completed") !== (value.resultEvidenceDigest !== null)
-    || (value.outcome === "completed") === (value.safeReasonCode !== null)) {
+  const completed = value.outcome === "completed";
+  if (completed !== (value.resultEvidenceDigest !== null)
+    || completed !== (value.contentHash !== null)
+    || completed !== (value.sizeBytes !== null)
+    || completed !== (value.startedAt !== null)
+    || completed === (value.safeReasonCode !== null)
+    || completed && Date.parse(value.occurredAt) < Date.parse(value.startedAt!)) {
     context.addIssue({ code: "custom", message: "terminal outcome evidence mismatch" });
   }
 });
@@ -71,12 +80,31 @@ const terminalMaterialSchemaV1 = z.object({
  */
 export const controllerWorkerTerminalReturnBodySchemaV1 = terminalMaterialSchemaV1.safeExtend({
   returnDigest: digest,
+  terminalIdentityDigest: digest.nullable(),
 }).strict().superRefine((value, context) => {
-  const { returnDigest, ...material } = value;
+  const { returnDigest, terminalIdentityDigest, ...material } = value;
   if (returnDigest !== sha256Digest(material)
     || value.deliveryReceipt.workerId !== value.identity.workerId
     || value.deliveryReceipt.route.kind !== "remote"
     || value.deliveryReceipt.route.workerId !== value.identity.workerId) {
+    context.addIssue({ code: "custom", message: "controller worker terminal return binding mismatch" });
+    return;
+  }
+  if (value.outcome !== "completed") {
+    if (terminalIdentityDigest !== null) {
+      context.addIssue({ code: "custom", message: "non-completed terminal return cannot claim a durable result identity" });
+    }
+    return;
+  }
+  if (value.resultEvidenceDigest === null || value.contentHash === null || value.sizeBytes === null
+    || value.startedAt === null || terminalIdentityDigest !== remoteTerminalIdentityDigestV1({
+      tenantId: value.identity.tenantId, projectId: value.identity.projectId, jobId: value.identity.jobId,
+      attemptId: value.identity.attemptId, runId: value.identity.runId, nodeId: value.identity.nodeId,
+      workerId: value.identity.workerId, deliveryReceiptDigest: value.deliveryReceipt.receiptDigest,
+      enrollmentDigest: value.enrollmentDigest, terminalEvidenceDigest: value.resultEvidenceDigest,
+      outcome: "completed", contentHash: value.contentHash, sizeBytes: value.sizeBytes,
+      startedAt: value.startedAt, finishedAt: value.occurredAt,
+    })) {
     context.addIssue({ code: "custom", message: "controller worker terminal return binding mismatch" });
   }
 });
@@ -93,10 +121,20 @@ Omit<ControllerWorkerProgressReturnBodyV1, "schema" | "returnDigest">): Controll
 }
 
 export function createControllerWorkerTerminalReturnV1(value:
-Omit<ControllerWorkerTerminalReturnBodyV1, "schema" | "returnDigest">): ControllerWorkerTerminalReturnBodyV1 {
+  Omit<ControllerWorkerTerminalReturnBodyV1, "schema" | "returnDigest" | "terminalIdentityDigest">): ControllerWorkerTerminalReturnBodyV1 {
   const material = terminalMaterialSchemaV1.parse({ schema: CONTROLLER_WORKER_TERMINAL_RETURN_V1, ...value });
+  const terminalIdentityDigest = material.outcome === "completed"
+    ? remoteTerminalIdentityDigestV1({
+      tenantId: material.identity.tenantId, projectId: material.identity.projectId, jobId: material.identity.jobId,
+      attemptId: material.identity.attemptId, runId: material.identity.runId, nodeId: material.identity.nodeId,
+      workerId: material.identity.workerId, deliveryReceiptDigest: material.deliveryReceipt.receiptDigest,
+      enrollmentDigest: material.enrollmentDigest, terminalEvidenceDigest: material.resultEvidenceDigest!,
+      outcome: "completed", contentHash: material.contentHash!, sizeBytes: material.sizeBytes!,
+      startedAt: material.startedAt!, finishedAt: material.occurredAt,
+    })
+    : null;
   return Object.freeze(controllerWorkerTerminalReturnBodySchemaV1.parse({ ...material,
-    returnDigest: sha256Digest(material) }));
+    terminalIdentityDigest, returnDigest: sha256Digest(material) }));
 }
 
 /** Frame-level checks bind the body to the authenticated signed-node session. */

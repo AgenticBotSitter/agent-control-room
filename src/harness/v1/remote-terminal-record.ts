@@ -34,6 +34,14 @@ export const remoteTerminalRecordSchemaV1 = materialSchema.safeExtend({
 
 export type RemoteTerminalRecordV1 = z.infer<typeof remoteTerminalRecordSchemaV1>;
 
+/** Stable digest only; unlike a signed transport frame it has no connection or sequence. */
+export function remoteTerminalIdentityDigestV1(value:
+  Omit<RemoteTerminalRecordV1, "schema" | "terminalIdentityDigest">): string {
+  const material = materialSchema.parse(value);
+  assertNoSecretMaterial(material, "remote terminal record");
+  return sha256Digest({ purpose: "remote-terminal-record/v1", material });
+}
+
 /**
  * Builds data only. It does not accept a network frame, persist a record,
  * publish bytes, finish a task, or grant a worker any authority.
@@ -45,6 +53,6 @@ export function createRemoteTerminalRecordV1(value:
   return Object.freeze(remoteTerminalRecordSchemaV1.parse({
     schema: REMOTE_TERMINAL_RECORD_SCHEMA_V1,
     ...material,
-    terminalIdentityDigest: sha256Digest({ purpose: "remote-terminal-record/v1", material }),
+    terminalIdentityDigest: remoteTerminalIdentityDigestV1(material),
   }));
 }

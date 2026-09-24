@@ -11,6 +11,7 @@ import { createControllerWorkerProgressReturnV1, createControllerWorkerTerminalR
 import { advanceRemoteWorkerEnrollmentInStoreV1 } from "../src/harness/v1/remote-worker-enrollment-store";
 import { binding } from "./hermes-native-fixture";
 import { at } from "./native-task-fixture";
+import { sha256Digest } from "../src/security";
 import { canonicalCapabilityDigest, canonicalReleaseBindingDigest, canonicalRemoteWorkerFixture,
   enrollCanonicalRemoteWorker, realInstalledConnection } from "./helpers/canonical-remote-worker";
 
@@ -162,7 +163,8 @@ test("an enrolled remote worker returns receipt-bound inert evidence without a s
   const progress = createControllerWorkerProgressReturnV1({ ...base, sequence: 1, progressPercent: 50,
     evidenceDigest: "sha256:" + "a".repeat(64) });
   const terminal = createControllerWorkerTerminalReturnV1({ ...base, sequence: 2, outcome: "completed",
-    resultEvidenceDigest: "sha256:" + "b".repeat(64), safeReasonCode: null });
+    resultEvidenceDigest: "sha256:" + "b".repeat(64), contentHash: "sha256:" + "c".repeat(64), sizeBytes: 42,
+    startedAt: base.occurredAt, safeReasonCode: null });
   const ingress = capturePrivateRemoteControllerWorkerResultIngressCapabilityV1(controller);
   const progressResult = await ingress.receive(await connection.result("controller.worker.result.progress", progress));
   assert.deepEqual({ kind: progressResult.kind, recordsCompletion: progressResult.recordsCompletion,
@@ -180,4 +182,21 @@ test("an enrolled remote worker returns receipt-bound inert evidence without a s
   await assert.rejects((ingress.receive as (this: object, raw: string) => Promise<unknown>).call({}, terminalRaw), /unavailable/,
     "a copied receiver cannot use the installed ingress");
   assert.equal(connection.sends(), 1, "result evidence never retransmits the delivery");
+});
+
+test("a failed remote terminal stays receipt-bound evidence without claiming a completed-result identity", async () => {
+  const deliveryReceipt = { schema: "control-room.controller-worker-delivery-receipt/v1" as const,
+    deliveryId: "delivery:failed-return", deliveryDigest: "sha256:" + "a".repeat(64),
+    workerId: "worker:failed-return", route: { kind: "remote" as const, workerId: "worker:failed-return" },
+    receivedAt: at(1_900), disposition: "accepted" as const, startsWork: false as const,
+    grantsExecutionAuthority: false as const };
+  const returned = createControllerWorkerTerminalReturnV1({
+    identity: { tenantId: binding.tenantId, projectId: binding.projectId, jobId: binding.jobId,
+      attemptId: binding.attemptId, runId: "run:failed-return", nodeId: binding.nodeId, workerId: "worker:failed-return" },
+    deliveryReceipt: { ...deliveryReceipt, receiptDigest: sha256Digest(deliveryReceipt) },
+    enrollmentDigest: "sha256:" + "c".repeat(64), connectionId: "connection:failed-return", sequence: 1,
+    occurredAt: at(2_000), outcome: "failed", resultEvidenceDigest: null, contentHash: null,
+    sizeBytes: null, startedAt: null, safeReasonCode: "worker_failed" });
+  assert.equal(returned.terminalIdentityDigest, null);
+  assert.equal(returned.outcome, "failed");
 });

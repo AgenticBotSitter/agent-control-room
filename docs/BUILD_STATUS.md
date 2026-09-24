@@ -179,11 +179,15 @@ It will be a new tightly bounded event type, bound to the saved delivery and
 enrollment, while actual result text remains in existing protected artifact
 storage. This prevents a reconnect from treating an old signed network message
 as a durable identity and avoids creating a second remote-result database.
-The stable terminal-record contract is now source-complete and disposable-tested:
+The stable terminal-record contract is source-complete and disposable-tested:
 the same completed result retains one identity across a reconnect, while changed
-content or invalid timing cannot reuse it. It is still data only; no remote
-result bytes, publication, review, capacity release, or task completion occurs
-until the next private composition package is built.
+content or invalid timing cannot reuse it. An independent security review found
+that the first proposed ledger-writing seam did not itself bind a worker,
+delivery receipt, and enrollment to durable authority. That unsafe draft was
+removed before it was committed. The next private composition must perform all
+of those checks inside its transaction before it can record a terminal event.
+No remote result bytes, publication, review, capacity release, or task
+completion occurs yet.
 
 The first installed Claude route is now pinned to Claude Code's `opus` alias
 instead of inheriting a desktop or command-line default. Its owner-attended
