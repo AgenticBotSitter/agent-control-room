@@ -1,6 +1,6 @@
 import { createServer } from "node:http";
 import type { IncomingMessage, Server, ServerOptions, ServerResponse } from "node:http";
-import { createPrivateNodeHandler, privateHttpLimits } from "./private-node-handler";
+import { createMacLocalNodeHandler, createPrivateNodeHandler, privateHttpLimits } from "./private-node-handler";
 import { privateResponseHeaders } from "./http-common";
 export { loadPrivateClientAssets } from "./private-assets";
 export { createPrivateNodeHandler } from "./private-node-handler";
@@ -34,6 +34,12 @@ type LocalSetupBridge = GitHubBrokerBridge;
  */
 export function createPrivateNodeService(options: Parameters<typeof createPrivateNodeHandler>[0] & ListenerOptions) {
   return createLoopbackService(options, () => createPrivateNodeHandler(options));
+}
+
+/** Inert real Mac-local listener. It cannot be configured with a hosted origin
+ * and must still be explicitly started by trusted composition. */
+export function createMacLocalNodeService(options: Parameters<typeof createMacLocalNodeHandler>[0] & ListenerOptions) {
+  return createLoopbackService(options, () => createMacLocalNodeHandler(options));
 }
 
 /** Owns an already assembled disposable demo bridge, never a production runtime.

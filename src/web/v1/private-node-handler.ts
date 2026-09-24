@@ -50,6 +50,11 @@ const productionMode: NodeHandlerMode = Object.freeze({ localLoopback: false, al
 const contributorDemoMode: NodeHandlerMode = Object.freeze({ localLoopback: true, allowPost: true,
   allowCookies: true, allowSetCookie: true, rejectForwarded: true, rejectCredentialHeaders: false,
   validateSuppliedOrigin: false, injectSetupMarker: false });
+/** Selected by the Mac-local composition only. This accepts cookies strictly
+ * on loopback; it does not select or replace application authentication. */
+const macLocalMode: NodeHandlerMode = Object.freeze({ localLoopback: true, allowPost: true,
+  allowCookies: true, allowSetCookie: true, rejectForwarded: true, rejectCredentialHeaders: false,
+  validateSuppliedOrigin: true, injectSetupMarker: false });
 const localSetupMode: NodeHandlerMode = Object.freeze({ localLoopback: true, allowPost: false,
   allowCookies: false, allowSetCookie: false, rejectForwarded: true, rejectCredentialHeaders: true,
   validateSuppliedOrigin: true, injectSetupMarker: true });
@@ -194,6 +199,17 @@ export function createPrivateNodeHandler(options: NodeHandlerOptions) {
 export function createContributorDemoNodeHandler(options: NodeHandlerOptions) {
   if (options.origin !== "http://127.0.0.1:3000") throw new Error("demo_serving_config_invalid");
   return createNodeHandler(options, contributorDemoMode);
+}
+
+/** Loopback transport for the separately composed real Mac-local application.
+ * Unlike the contributor-demo transport, this factory accepts any fixed local
+ * port but never an HTTPS/remote origin, a second origin, or forwarded headers. */
+export function createMacLocalNodeHandler(options: NodeHandlerOptions) {
+  const origin = new URL(options.origin);
+  if (origin.protocol !== "http:" || origin.hostname !== "127.0.0.1" || !origin.port
+    || origin.origin !== options.origin || options.secondaryOrigin !== undefined)
+    throw new Error("mac_local_serving_config_invalid");
+  return createNodeHandler(options, macLocalMode);
 }
 
 export type LocalSetupNodeHandlerOptions = Readonly<{
