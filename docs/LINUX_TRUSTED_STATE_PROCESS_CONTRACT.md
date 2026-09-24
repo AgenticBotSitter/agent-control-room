@@ -1,10 +1,13 @@
 # Trusted Linux worker state process: implementation contract
 
-Status: proposed source contract for LCOI-1 candidate 1, 2026-09-23.
+Status: selected qualification contract for LCOI-1 candidate 1, 2026-09-24.
 **Not implemented, installed, qualified, or permission to start an agent.**
-The existing Linux installed-state owner continues to refuse. This document
-does not supersede the accepted custody requirement; accepting the isolation
-mechanism requires architecture review and the Linux evidence below.
+Candidate 1—the systemd-managed trusted Node custodian with a distinct,
+untrusted execution identity—is the sole approach selected for the next
+disposable Linux qualification. The existing Linux installed-state owner
+continues to refuse. This does not certify the mechanism or supersede the
+accepted custody requirement: implementation, Linux evidence, and independent
+security review remain required before any worker can be called live.
 
 ## Chosen composition and scope
 
@@ -41,11 +44,14 @@ not a new scheduler, database, permission system or agent framework.
 
 The missing adapter must acquire the reviewed Codex executable under the
 separate execution identity and return only the existing bounded process
-transport/cleanup interface to the trusted process. The current acquisition
-implementation is not evidence that privilege separation exists. A generic
-`spawn(command, args, env, cwd, uid)` endpoint is prohibited. Workspaces and
-agent authentication stay with the execution identity; node signing keys,
-owner pins, and worker journals stay with the custodian.
+transport/cleanup interface to the trusted process. A narrowly scoped,
+release-bound supervisor/launcher owns the identity transition; neither Codex
+nor the general Node custodian receives a generic privileged launch interface.
+The current acquisition implementation is not evidence that privilege
+separation exists. A generic `spawn(command, args, env, cwd, uid)` endpoint is
+prohibited. Workspaces and agent authentication stay with the execution
+identity; node signing keys, owner pins, and worker journals stay with the
+custodian.
 
 ## Installation and channel binding
 
@@ -62,7 +68,10 @@ protected installation state, never from model output or an HTTP request:
   identities, their common protected storage domain, and approved workspace
   intent/root binding. Bind concrete store identities in addition to filenames.
 - Custodian identity, execution identity, reviewed launch-policy digest, and
-  supervisor-owned channel identity. Identity equality must be refused.
+  supervisor-owned channel identity. Identity equality must be refused. The
+  qualification must also bind effective groups, relevant ACLs and
+  capabilities, and prove that no state descriptor or privilege survives an
+  execution-identity handoff or a later service restart.
 
 Keep these values private. Emit only existing redacted diagnostics publicly.
 An identity or matching digest sent over a pipe is a comparison value, not proof
@@ -131,26 +140,28 @@ or silently normalize permissions. Shutdown alone is not proof the child died.
 
 ## Required isolation decision and Linux qualification
 
-The proposed trust boundary trusts the kernel, system supervisor,
+The selected qualification target trusts the kernel, system supervisor,
 administrator and the reviewed custodian code. It must contain hostile task
 processes, including arbitrary code under the execution identity. It does not
-claim to contain arbitrary code already running as the custodian or root.
-Architecture review must explicitly accept that boundary before replacing the
-current owner refusal; this document does not grant that acceptance.
+claim to contain arbitrary code already running as the custodian or root. This
+selects the boundary to test; it does not replace the current owner refusal.
 
 Directory isolation must hold through initial validation, all main/WAL/SHM/
 rollback-journal I/O, close, downtime and restart. Legitimate SQLite sidecar
-recreation within that protected domain is permitted only by the reviewed
-lifecycle; this is not an invariant that every sidecar inode stays fixed forever.
-Check protected ancestors and deployment inputs before allowing a supervisor
-to create or change ownership of state. No network-shared SQLite state.
+recreation within that continuously protected domain is permitted only by the
+reviewed lifecycle; this is not an invariant that every sidecar inode stays
+fixed forever. Check protected ancestors and deployment inputs before allowing
+a supervisor to create or change ownership of state. No network-shared SQLite
+state.
 
 Pin the Linux/supervisor, Node/SQLite, release and launch-adapter versions in a
 qualification artifact. On disposable Linux state prove:
 
 - Hostile task identity cannot replace ancestors/files/sidecars, change modes,
   attach hard links, inspect custodian memory, inherit state descriptors, alter
-  launch configuration or impersonate the private launcher channel.
+  launch configuration or impersonate the private launcher channel. Tests must
+  cover supplementary groups, ACLs, capabilities, service-manager overrides,
+  and stop/restart identity reuse—not just unequal user IDs.
 - Wrong installation, release, enrollment, profile, key, workspace, peer,
   channel/run and boot bindings fail before protected I/O or execution.
 - Concurrent duplicate activation, lost response, crash after reservation,

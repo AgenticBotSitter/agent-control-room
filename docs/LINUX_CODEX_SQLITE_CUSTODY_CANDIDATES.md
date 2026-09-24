@@ -1,26 +1,33 @@
 # Linux Codex SQLite custody candidates
 
-Research date: 2026-09-23. Supporting research for
+Research date: 2026-09-23; qualification selection recorded 2026-09-24. Supporting research for
 [the installed-state reuse audit](LINUX_CODEX_INSTALLED_STATE_REUSE_AUDIT.md)
-and [LCOI-1](PROTECTED_LINUX_CODEX_OUTER_INSTALLER_PLAN.md), not an accepted
-security contract, implementation, installation, or Linux qualification.
+and [LCOI-1](PROTECTED_LINUX_CODEX_OUTER_INSTALLER_PLAN.md). Candidate 1 is
+selected only as the next disposable Linux qualification path; it is not an
+accepted production security contract, implementation, installation, or Linux
+qualification.
 
-## Recommendation
+## Qualification selection
 
-Evaluate **a separate trusted state process, using the existing Node SQLite
-stores inside an OS-protected directory**, first. Use maintained systemd/Linux
-isolation facilities rather than writing a SQLite filesystem implementation.
-This is a conditional engineering recommendation: the repository has no
-qualified Linux arrangement yet, and LCOI-1 must continue to refuse.
+Candidate 1 is the sole path to evaluate first: **a separate trusted Node state
+process, using the existing Node SQLite stores inside an OS-protected directory**.
+Use maintained systemd/Linux isolation facilities rather than writing a SQLite
+filesystem implementation. Candidates 2 and 3 are not parallel build work and
+need a new decision if this qualification demonstrates a specific unmet
+requirement. The repository has no qualified Linux arrangement yet, and LCOI-1
+must continue to refuse.
 
 The custodian needs its own service identity, distinct from Codex and every
 untrusted task process. A private directory owned by the same account that
-runs arbitrary task commands is insufficient. Nor does a filesystem namespace
-alone stop another process outside that namespace modifying the backing files.
-No candidate here protects against a compromised kernel, host administrator,
-or arbitrary code already executing as the trusted custodian. Architecture
-review must explicitly settle those trust assumptions; this document does not
-quietly weaken the existing custody requirement.
+runs arbitrary task commands is insufficient. The release-bound supervisor
+must own the identity transition: merely comparing different user IDs in a
+configuration object is not isolation. Qualification must prove that groups,
+ACLs, capabilities, inherited descriptors, service-manager overrides, and
+identity reuse across stop/restart cannot bridge the boundary. Nor does a
+filesystem namespace alone stop another process outside that namespace
+modifying the backing files. No candidate here protects against a compromised
+kernel, host administrator, or arbitrary code already executing as the trusted
+custodian. This is a qualification target, not a weakened custody claim.
 
 ## Repository fit
 
@@ -99,12 +106,14 @@ The proposed integration must prove the following with disposable Linux state:
    Verify that WAL/SHM recreation is legitimate SQLite activity inside the
    protected directory, not permission to substitute an unrelated file.
 
-Architecture review must decide whether this invariant satisfies the current
-`retained_owner_mode_realpath_inode_link_and_sqlite_sidecar_identity` contract.
-Requiring one immutable SHM/WAL inode forever would conflict with normal
-SQLite lifecycle; accepting controlled recreation requires an explicit decision
-and evidence, not a renamed success flag. Pin the supported Linux, systemd,
-Node and embedded SQLite versions before any implementation qualification.
+For this selected qualification target, controlled SQLite WAL/SHM/rollback
+sidecar recreation is allowed only inside the protected state domain and only
+by the reviewed lifecycle. Requiring one immutable sidecar inode forever would
+conflict with normal SQLite lifecycle. Qualification must prove an untrusted
+identity cannot exploit this allowance to substitute a file. This is not
+evidence that the current path-based stores satisfy the requirement. Pin the
+supported Linux, systemd, Node and embedded SQLite versions before any
+implementation qualification.
 
 ## Evidence boundary
 

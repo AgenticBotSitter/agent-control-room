@@ -126,6 +126,18 @@ Closing the short App Server start session deliberately does not remove that
 workspace or release task capacity. This is source-only safety wiring; macOS
 Codex remains unavailable until its separate native custody requirements pass.
 
+**September 24 multi-computer custody decision:** the first Linux Codex worker
+will be qualified through one selected path: a systemd-managed trusted Node
+state process, with Codex task execution under a separate untrusted operating-
+system identity. This retains the current signed bridge, journals, encrypted
+key store, controller database and remote-delivery contract; it does not add a
+second database, scheduler, broker, or agent framework. The choice is only a
+testable Linux qualification target. The installed-state owner still refuses
+until the release-bound supervisor, protected state directory, identity/channel
+boundaries, disposable Linux attack tests, and independent security review are
+complete. No Linux service, account, credential, database, remote worker, or
+task was changed while recording this decision.
+
 The first installed Claude route is now pinned to Claude Code's `opus` alias
 instead of inheriting a desktop or command-line default. Its owner-attended
 qualification, saved process configuration, and later task execution must all

@@ -35,15 +35,15 @@ and security journals; PostgreSQL remains installation authority.
 
 ## Smallest remaining implementation packages
 
-1. **Choose and prove Linux file custody before constructing the owner.** Reuse
-   the existing schemas and journal operations. Evaluate a supported SQLite
-   binding/host that can maintain the required directory and file protections,
-   or an independently reviewed OS isolation arrangement that makes existing
-   pathname opens meet that contract. This choice is unresolved. Do not assume
-   an `O_NOFOLLOW` check or `/proc/self/fd/N` filename solves all SQLite sidecar
-   behavior. Do not write a custom SQLite virtual filesystem before evaluating
-   maintained implementations and the isolation alternative. A Linux test host
-   is required to validate the selected mechanism; macOS tests cannot prove it.
+1. **Prove selected Linux file custody before constructing the owner.** Reuse
+   the existing schemas and journal operations. The selected qualification path
+   is a systemd-managed trusted Node custodian with a separate task-execution
+   identity, so existing pathname opens are safe only if the required protected
+   directory and file lifetime are proven on Linux. Do not assume an
+   `O_NOFOLLOW` check or `/proc/self/fd/N` filename solves all SQLite sidecar
+   behavior. Do not write a custom SQLite virtual filesystem unless this
+   qualification establishes a concrete unmet requirement. A Linux test host
+   is required; macOS tests cannot prove the mechanism.
 2. **Bind installation and key inputs to that host.** Read and retain the
    release-bound manifest/configuration through the verified host; match
    installation, release, tenant, node, enrollment, profile, workspace and key

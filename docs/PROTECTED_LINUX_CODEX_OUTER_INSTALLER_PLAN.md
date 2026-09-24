@@ -125,9 +125,11 @@ including ordinary sidecar files, so this owner needs a qualified Linux
 custody mechanism rather than another TypeScript path validator. The evaluated
 options and their licenses are recorded in
 [`LINUX_CODEX_SQLITE_CUSTODY_CANDIDATES.md`](LINUX_CODEX_SQLITE_CUSTODY_CANDIDATES.md).
-The leading candidate is a separately identified, tightly scoped trusted state
-process that reuses the current stores; it is not selected or qualified merely
-by this reference.
+The selected qualification candidate is a separately identified, tightly
+scoped systemd-managed trusted state process that reuses the current stores.
+It is not implemented or qualified merely by this reference; the existing
+owner remains unavailable until the documented disposable Linux proof and
+independent review pass.
 Its allowed boundaries, exact retained bindings, restart rules, and Linux
 evidence requirements are captured in
 [`LINUX_TRUSTED_STATE_PROCESS_CONTRACT.md`](LINUX_TRUSTED_STATE_PROCESS_CONTRACT.md).

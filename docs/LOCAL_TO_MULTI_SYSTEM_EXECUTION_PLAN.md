@@ -498,6 +498,14 @@ workspace effect and never create a second result.
 Terra medium conformance tests.
 **Reuse:** the same local Hermes adapter behind remote delivery and the reviewed
 Linux Codex descriptor-acquisition/App Server path.
+**Selected Linux custody route:** before the Linux Codex worker can be mounted,
+qualify the systemd-managed trusted Node state process in
+[`LINUX_TRUSTED_STATE_PROCESS_CONTRACT.md`](LINUX_TRUSTED_STATE_PROCESS_CONTRACT.md).
+It retains the current Node SQLite journals inside one protected domain and
+uses a separate untrusted execution identity. This is a qualification target,
+not a claim that the route is installed or worker-ready. Do not start a second
+candidate or custom SQLite filesystem unless that qualification documents a
+specific unmet requirement.
 **Work:**
 
 1. Qualify a remote Hermes worker with the same capability-specific policy.
