@@ -64,6 +64,42 @@ test("the Mac-local wrapper does not accept a forwarded or foreign request", asy
   await app.close();
 });
 
+test("the Mac-local wrapper forwards the existing assignment operation through local owner authentication", async t => {
+  const fixture = await privateOwnerBootstrapFixture({ fresh: "mac-local-assignment" }); t.after(fixture.close);
+  await createPrivateOwnerBootstrapCommand({ openDatabase: fixture.openDatabase(), clock: () => conformanceNow })({
+    configuration: fixture.configuration, database: fixture.database, trust: fixture.trust, assertion: fixture.assertion,
+  });
+  const origin = "http://127.0.0.1:3210", ownerCode = "mac-local-owner-code-long-enough";
+  const calls: unknown[][] = [];
+  const app = createMacLocalWebProcessV1({ origin, workspaceId: fixture.configuration.workspaceId,
+    localOwnerSession: { schema: LOCAL_OWNER_SESSION_PROFILE_V1, origin, tenantId: fixture.configuration.tenantId,
+      provider: fixture.trust.issuer, subject: conformanceSubject, ownerCodeDigest: sha256Digest({ ownerCode }), sessionSeconds: 900 },
+    database: { client: fixture.client, close: async () => {} }, clock: () => conformanceNow,
+    assignment: { async options(...input) {
+      calls.push(input);
+      const [, projectId, jobId] = input as [unknown, string, string];
+      return { projectId, jobId, inputDigest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        candidates: [], recommendation: { state: "not_available", availability: "unknown", startsWork: false, grantsExecutionAuthority: false },
+        receipt: null, startsWork: false, candidateEvidence: "configured_routes_only" };
+    }, async assign() { throw new Error("not used"); }, async expire() { throw new Error("not used"); } },
+  });
+  const request = (path: string, init: RequestInit = {}) => new Request(`${origin}${path}`, init);
+  const signedIn = await app.handle(request("/api/v1/local-owner-session", { method: "POST", headers: {
+    origin, "sec-fetch-site": "same-origin", "content-type": "application/json" }, body: JSON.stringify({ ownerCode }) }), () => new Response("unused"));
+  const cookie = signedIn.headers.get("set-cookie"); assert.ok(cookie);
+  const created = await app.handle(request("/api/v1/projects", { method: "POST", headers: { cookie: cookie!, origin,
+    "content-type": "application/json", "idempotency-key": "mac-local-assignment-project-001" }, body: JSON.stringify({ title: "Assignment path", summary: "Route proof" }) }), () => new Response("unused"));
+  const projectId = (await created.json() as { project: { projectId: string } }).project.projectId;
+  const task = await app.handle(request(`/api/v1/projects/${encodeURIComponent(projectId)}/tasks`, { method: "POST", headers: { cookie: cookie!, origin,
+    "content-type": "application/json", "idempotency-key": "mac-local-assignment-task-001" }, body: JSON.stringify({ title: "Assignment task", instructions: "Return a short answer." }) }), () => new Response("unused"));
+  const jobId = (await task.json() as { receipt: { jobId: string } }).receipt.jobId;
+  const options = await app.handle(request(`/api/v1/projects/${encodeURIComponent(projectId)}/tasks/${encodeURIComponent(jobId)}/assignment`, { headers: { cookie: cookie! } }), () => new Response("unused"));
+  assert.equal(options.status, 200, await options.text());
+  assert.equal(calls.length, 1);
+  assert.deepEqual((calls[0] as unknown[]).slice(1), [projectId, jobId]);
+  await app.close();
+});
+
 test("the Mac-local transport is loopback-only and is the only transport that relays its session cookie", async () => {
   const origin = "http://127.0.0.1:3210";
   assert.throws(() => createMacLocalNodeHandler({ origin: "https://private.example.invalid", application: {

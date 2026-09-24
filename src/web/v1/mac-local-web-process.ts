@@ -7,12 +7,27 @@ import { WebProjectService } from "./project-service";
 import { createProjectHttpHandler } from "./project-http";
 import { WebTaskService } from "./task-service";
 import { createTaskHttpHandler } from "./task-http";
+import type { WebTaskReviewService } from "./task-review-service";
+import type { WebTaskVerificationService } from "./task-verification-service";
+import type { TaskPlanningOperation } from "./task-execution-planner";
+import type { TaskAssignmentOperation } from "./task-assignment-coordinator";
+import type { TaskApprovalOperation, TaskSubmissionOperation } from "./task-coordinator-lifecycle";
+import type { TaskRevisionOperation } from "./task-revision-operation";
 
 export interface MacLocalWebProcessOptionsV1 {
   origin: string;
   localOwnerSession: Readonly<LocalOwnerSessionProfileV1>;
   workspaceId: string;
   database: { client: DatabaseClient; close: () => Promise<void> };
+  /** Existing canonical task operations, supplied by the host composition.
+   * The local wrapper owns no planner, queue, review store, or worker. */
+  ownerReviews?: WebTaskReviewService;
+  ownerVerifications?: WebTaskVerificationService;
+  planning?: Pick<TaskPlanningOperation, "plan" | "readSaved" | "readPreparedWorker" | "readConfiguredLocalRoute" | "supportsProject" | "templatesForProject">;
+  assignment?: TaskAssignmentOperation;
+  approvals?: TaskApprovalOperation;
+  submission?: TaskSubmissionOperation;
+  revisions?: TaskRevisionOperation;
   clock?: () => number;
 }
 
@@ -34,7 +49,15 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
   const tasks = new WebTaskService(options.database.client,
     { tenantId: profile.tenantId, workspaceId: options.workspaceId }, clock);
   const projectHttp = createProjectHttpHandler({ origin: options.origin, localOwnerSession: sessions, service: projects, clock });
-  const taskHttp = createTaskHttpHandler({ origin: options.origin, localOwnerSession: sessions, service: tasks, clock });
+  const taskHttp = createTaskHttpHandler({ origin: options.origin, localOwnerSession: sessions, service: tasks, clock,
+    ...(options.ownerReviews ? { ownerReviews: options.ownerReviews } : {}),
+    ...(options.ownerVerifications ? { ownerVerifications: options.ownerVerifications } : {}),
+    ...(options.planning ? { planning: options.planning } : {}),
+    ...(options.assignment ? { assignment: options.assignment } : {}),
+    ...(options.approvals ? { approvals: options.approvals } : {}),
+    ...(options.submission ? { submission: options.submission } : {}),
+    ...(options.revisions ? { revisions: options.revisions } : {}),
+  });
   let closed: Promise<void> | undefined;
 
   async function handle(request: Request, render: () => Promise<Response> | Response): Promise<Response> {
