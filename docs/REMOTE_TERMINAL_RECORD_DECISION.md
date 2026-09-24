@@ -3,6 +3,10 @@
 **Status:** accepted source design, September 24. No migration, database
 operation, service, or worker is performed by this document.
 
+**Source progress:** `remote-terminal-record.ts` now supplies the strict,
+data-only stable identity contract and focused disposable checks. The later
+ledger ingestion, byte material, and publisher mounting remain separate.
+
 ## Decision
 
 Use the existing append-only **harness run and harness-run-event ledger** as
