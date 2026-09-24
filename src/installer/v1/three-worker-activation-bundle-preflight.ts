@@ -7,6 +7,8 @@ import { verifyPrivateInstalledConfigurationPreparationV1 } from
   "./private-installed-configuration-preparation";
 import { consumePrivateInstalledConfigurationV3PostWriteActivationEvidenceV1 } from
   "./private-installed-configuration-v3-owner-writer";
+import { assessSchedulerResultStorageActivationSourceV1 } from
+  "./scheduler-result-storage-activation-source";
 
 /**
  * Redacted, source-only view of one bounded activation window. A component can
@@ -42,13 +44,15 @@ export type ThreeWorkerActivationBundleComponentV1 = z.infer<typeof component>;
 type AggregateState = Binding & { generation: number; currentPlanDigest?: string };
 type SourceProof = Binding & Readonly<{ aggregate: object; component: ThreeWorkerActivationBundleComponentV1;
   sourceSchema: string; state: "blocked" | "ready" | "owner_attended_action"; evidenceDigest: string;
-  blocker?: "reviewed_release_identity_missing" | "owner_materialization_verification_missing" }>;
+  blocker?: "reviewed_release_identity_missing" | "owner_materialization_verification_missing"
+    | "opaque_scheduler_and_restore_proof_missing" }>;
 const aggregates = new WeakMap<object, AggregateState>();
 const proofs = new WeakMap<object, SourceProof>();
 
 const componentOutput = z.object({ component, sourceSchema: z.string().min(1).max(160),
   state: z.enum(["blocked", "ready", "owner_attended_action"]), blocker: z.enum(["source_proof_missing",
-    "reviewed_release_identity_missing", "owner_materialization_verification_missing"]).optional(),
+    "reviewed_release_identity_missing", "owner_materialization_verification_missing",
+    "opaque_scheduler_and_restore_proof_missing"]).optional(),
   evidenceDigest: digest.optional() }).strict();
 const materialSchema = z.object({ schema: z.literal(THREE_WORKER_ACTIVATION_BUNDLE_PREFLIGHT_V1),
   installationId, releaseDigest: digest, topologyPlanDigest: digest, generation: z.number().int().positive(),
@@ -148,6 +152,27 @@ export function recordProtectedConfigurationThreeWorkerActivationSourceProofV1(i
     component: "protected_configuration" as const,
     sourceSchema: definitions.protected_configuration.sourceSchema, state: "blocked" as const,
     blocker: "owner_materialization_verification_missing" as const, evidenceDigest }));
+  return token;
+}
+
+/**
+ * Performs the current source-specific scheduler/storage assessment. There is
+ * deliberately no ready branch: existing settings and restore records are
+ * structural and cannot become activation evidence through this aggregate.
+ */
+export function recordSchedulerResultStorageThreeWorkerActivationSourceProofV1(input: Readonly<{
+  aggregate: unknown; schedulerReadinessEvidence?: unknown; protectedStorageRestoreEvidence?: unknown;
+}>): object {
+  const selected = aggregate(input?.aggregate);
+  const assessment = assessSchedulerResultStorageActivationSourceV1({ installationId: selected.installationId,
+    releaseDigest: selected.releaseDigest, topologyPlanDigest: selected.topologyPlanDigest,
+    schedulerReadinessEvidence: input.schedulerReadinessEvidence,
+    protectedStorageRestoreEvidence: input.protectedStorageRestoreEvidence });
+  const token = Object.freeze({ schema: THREE_WORKER_ACTIVATION_SOURCE_PROOF_V1 });
+  proofs.set(token, Object.freeze({ ...selected, aggregate: input.aggregate as object,
+    component: "scheduler_result_storage" as const,
+    sourceSchema: definitions.scheduler_result_storage.sourceSchema, state: "blocked" as const,
+    blocker: assessment.blocker, evidenceDigest: assessment.evidenceDigest }));
   return token;
 }
 
