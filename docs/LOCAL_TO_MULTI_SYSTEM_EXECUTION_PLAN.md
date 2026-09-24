@@ -484,7 +484,8 @@ implementation.
 **Work:**
 
 1. Deliver the exact controller packet to only its intended worker.
-2. Authenticate progress, terminal result and failure evidence.
+2. Authenticate progress, terminal result and failure evidence through the
+   accepted [receipt-bound ingress decision](REMOTE_WORKER_RESULT_INGRESS_DECISION.md).
 3. Reconnect to the original delivery rather than create a new task.
 4. Treat lost acknowledgement as uncertain until durable evidence is read.
 5. Reject duplicate, changed, expired, revoked and wrong-worker messages.

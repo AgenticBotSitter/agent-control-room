@@ -138,6 +138,14 @@ boundaries, disposable Linux attack tests, and independent security review are
 complete. No Linux service, account, credential, database, remote worker, or
 task was changed while recording this decision.
 
+**September 24 remote-result decision:** remote delivery currently stops at a
+saved non-executing receipt. The next shared multi-computer source package is
+one signed, receipt-bound result ingress that returns bounded progress and
+terminal evidence through the existing PostgreSQL result and owner-review path.
+It will not add another queue, database, broker, result store, approval system,
+or remote completion authority. Until that package and its installed worker
+mounting are proven, no remote result is represented as a finished task.
+
 The first installed Claude route is now pinned to Claude Code's `opus` alias
 instead of inheriting a desktop or command-line default. Its owner-attended
 qualification, saved process configuration, and later task execution must all
