@@ -56,6 +56,13 @@ separately reviewed dependency validator exists. It retains neither absolute
 paths nor file contents, creates no image, and grants neither packaging nor
 launch authority.
 
+A separate source-only Mach-O parser now records a digest for a deliberately
+minimal, supplied thin-image graph. It rejects ordinary real-image load
+commands as well as universal images and performs no filesystem lookup. It
+does not change the candidate inspector, establish custody, or clear the
+`native_library_closure_unproven` blocker; a complete real native-image
+closure review remains required before any native candidate is accepted.
+
 The exact pinned public source has now also been reviewed and a pure import
 policy added. It binds `hermes_cli.main:main`, CPython 3.11, architecture,
 isolated bootstrap/module roots and the future dependency, native-library and
