@@ -843,6 +843,75 @@ export class SqliteBridgeJournal implements ReplayGuard {
     return this.transaction(() => this.stageOutboundWithinTransaction(frame, essential, createdAt));
   }
 
+  /** Reserve the only current-admission send for a queue in the same durable
+   * journal as the bridge outbox. The reservation is committed before I/O and
+   * is never re-opened after a failed or lost send. */
+  reserveCodexCurrentAdmissionExchange(frameValue: SignedNodeFrame<"harness.codex.current-admission.read">,
+    reservedAt: string): void {
+    const frame = signedNodeFrameSchema.parse(frameValue);
+    if (frame.type !== "harness.codex.current-admission.read" || frame.direction !== "node_to_server"
+      || frame.senderKind !== "node" || frame.body.startsWork !== false
+      || frame.body.grantsExecutionAuthority !== false) {
+      throw new Error("codex_current_admission_exchange_invalid");
+    }
+    this.transaction(() => {
+      if (this.db.prepare(`SELECT queue_id FROM bridge_codex_current_admission_exchanges
+        WHERE queue_id=? OR request_message_id=?`).get(frame.body.queueId, frame.messageId)) {
+        throw new Error("codex_current_admission_exchange_already_reserved");
+      }
+      this.stageOutboundWithinTransaction(frame, true, reservedAt);
+      this.db.prepare(`INSERT INTO bridge_codex_current_admission_exchanges
+        (queue_id,request_message_id,connection_id,request_json,request_digest,status,reserved_at)
+        VALUES(?,?,?,?,?,'reserved',?)`).run(frame.body.queueId, frame.messageId, frame.connectionId,
+          JSON.stringify(frame), sha256Digest(frame), reservedAt);
+    });
+  }
+
+  markCodexCurrentAdmissionExchangeSent(messageId: string, sentAt: string): void {
+    this.transaction(() => {
+      const exchange = this.db.prepare(`UPDATE bridge_codex_current_admission_exchanges
+        SET status='sent',sent_at=? WHERE request_message_id=? AND status='reserved'`)
+        .run(sentAt, messageId);
+      const outbound = this.db.prepare(`UPDATE bridge_outbox SET status='sent',send_attempts=1,last_sent_at=?
+        WHERE message_id=? AND status='pending' AND send_attempts=0`).run(sentAt, messageId);
+      if (exchange.changes !== 1 || outbound.changes !== 1) {
+        throw new Error("codex_current_admission_exchange_send_unavailable");
+      }
+    });
+  }
+
+  recordCodexCurrentAdmissionExchangeResponse(
+    responseValue: SignedNodeFrame<"harness.codex.current-admission.read.response">, receivedAt: string): void {
+    const response = signedNodeFrameSchema.parse(responseValue);
+    if (response.type !== "harness.codex.current-admission.read.response" || response.direction !== "server_to_node"
+      || response.senderKind !== "control_room" || !response.causationId) {
+      throw new Error("codex_current_admission_exchange_response_invalid");
+    }
+    const causationId = response.causationId;
+    this.transaction(() => {
+      const row = this.db.prepare(`SELECT queue_id,connection_id,request_json,request_digest,status
+        FROM bridge_codex_current_admission_exchanges WHERE request_message_id=?`)
+        .get(causationId) as { queue_id: string; connection_id: string; request_json: string;
+          request_digest: string; status: string } | undefined;
+      if (!row || row.status !== "sent") throw new Error("codex_current_admission_exchange_response_unknown");
+      const request = signedNodeFrameSchema.parse(JSON.parse(row.request_json));
+      if (request.type !== "harness.codex.current-admission.read" || sha256Digest(request) !== row.request_digest
+        || request.body.queueId !== row.queue_id || response.connectionId !== row.connection_id
+        || response.body.queueId !== row.queue_id || response.body.requestMessageId !== request.messageId
+        || response.body.requestBodyDigest !== request.bodyDigest
+        || response.body.challengeNonce !== request.body.challengeNonce) {
+        throw new Error("codex_current_admission_exchange_response_mismatch");
+      }
+      const changed = this.db.prepare(`UPDATE bridge_codex_current_admission_exchanges
+        SET status='responded',response_message_id=?,response_json=?,response_digest=?,responded_at=?
+        WHERE request_message_id=? AND status='sent'`).run(response.messageId, JSON.stringify(response),
+          sha256Digest(response), receivedAt, request.messageId);
+      if (changed.changes !== 1) throw new Error("codex_current_admission_exchange_response_duplicate");
+      this.db.prepare(`UPDATE bridge_outbox SET status='acknowledged',acknowledged_at=?
+        WHERE message_id=? AND status='sent'`).run(receivedAt, request.messageId);
+    });
+  }
+
   appendJobEvent(event: JobEventBody, recordedAt: string, artifactLineage?: ArtifactLineageRecordV1): "recorded" | "duplicate" {
     assertNoSecretMaterial(event, "durable job event");
     assertEventShape(event);
@@ -1437,6 +1506,27 @@ export class SqliteBridgeJournal implements ReplayGuard {
         BEGIN SELECT RAISE(ABORT,'codex activation is immutable'); END;
       CREATE TRIGGER IF NOT EXISTS bridge_codex_activations_no_delete BEFORE DELETE ON bridge_codex_activations
         BEGIN SELECT RAISE(ABORT,'codex activation is immutable'); END;
+      CREATE TABLE IF NOT EXISTS bridge_codex_current_admission_exchanges (
+        queue_id TEXT PRIMARY KEY NOT NULL REFERENCES bridge_codex_activations(queue_id),
+        request_message_id TEXT NOT NULL UNIQUE REFERENCES bridge_outbox(message_id),
+        connection_id TEXT NOT NULL,
+        request_json TEXT NOT NULL,
+        request_digest TEXT NOT NULL UNIQUE,
+        status TEXT NOT NULL CHECK(status IN ('reserved','sent','responded')),
+        reserved_at TEXT NOT NULL,
+        sent_at TEXT,
+        response_message_id TEXT UNIQUE,
+        response_json TEXT,
+        response_digest TEXT UNIQUE,
+        responded_at TEXT,
+        CHECK((status='reserved' AND sent_at IS NULL AND response_json IS NULL)
+          OR (status='sent' AND sent_at IS NOT NULL AND response_json IS NULL)
+          OR (status='responded' AND sent_at IS NOT NULL AND response_message_id IS NOT NULL
+            AND response_json IS NOT NULL AND response_digest IS NOT NULL AND responded_at IS NOT NULL))
+      );
+      CREATE TRIGGER IF NOT EXISTS bridge_codex_current_admission_exchanges_no_delete
+        BEFORE DELETE ON bridge_codex_current_admission_exchanges
+        BEGIN SELECT RAISE(ABORT,'codex current admission exchange is immutable history'); END;
       CREATE TABLE IF NOT EXISTS bridge_codex_result_returns (
         return_id TEXT PRIMARY KEY NOT NULL,
         run_id TEXT NOT NULL UNIQUE,

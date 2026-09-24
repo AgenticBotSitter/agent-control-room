@@ -29,6 +29,9 @@ import { CODEX_RESULT_RETURN_FEATURE_V1, codexResultReturnBodySchemaV1,
   type CodexResultReturnBodyV1, type CodexResultReturnFrameV1,
   type CodexResultReturnReceiptFrameV1 } from '../harness/codex-v1/result-return';
 import { nativeTaskSnapshotBodySchema, type NativeTaskSnapshotBody } from "../harness/v1/native-observation";
+import { CODEX_CURRENT_ADMISSION_READ_FEATURE_V1, codexCurrentAdmissionReadRequestSchemaV1,
+  type CodexCurrentAdmissionReadRequestV1 } from "../harness/codex-v1/current-admission-read-contract";
+import { codexApprovalPacketDigestV1 } from "../web/v1/codex-task-queue";
 
 export type BridgeState = "stopped" | "connecting" | "authenticating" | "reconciling" | "online" | "backing_off" | "draining";
 
@@ -98,6 +101,13 @@ export class PortableNodeBridge {
     messageId: string;
     generation: number;
     resolve(receipt: CodexResultReturnReceiptFrameV1): void;
+    reject(error: Error): void;
+  };
+  private codexAdmissionWaiter?: {
+    requestMessageId: string;
+    queueId: string;
+    generation: number;
+    resolve(response: SignedNodeFrame<"harness.codex.current-admission.read.response">): void;
     reject(error: Error): void;
   };
 
@@ -304,6 +314,12 @@ export class PortableNodeBridge {
     const connectionId = this.requireConnection();
     const transportIdentity = this.transportIdentity;
     if (!transportIdentity) throw new Error("Bridge transport identity is unavailable");
+    const rawBytes = typeof raw === "string" ? Buffer.byteLength(raw, "utf8") : raw.byteLength;
+    if (this.statusValue.maxFrameBytes && rawBytes > this.statusValue.maxFrameBytes) {
+      this.statusValue = { ...this.statusValue, lastSafeErrorCode: "protocol_rejected" };
+      if (this.codexAdmissionWaiter) this.failTransport();
+      throw new Error("Server frame exceeds the negotiated limit");
+    }
     let verified;
     try {
       verified = await this.serverAuthenticator.verify(raw, {
@@ -314,6 +330,7 @@ export class PortableNodeBridge {
       });
     } catch (error) {
       this.statusValue = { ...this.statusValue, lastSafeErrorCode: "protocol_rejected" };
+      if (this.codexAdmissionWaiter) this.failTransport();
       throw error;
     }
     if (generation !== this.connectionGeneration) throw new Error("Bridge connection changed during authentication");
@@ -368,7 +385,8 @@ export class PortableNodeBridge {
       return;
     }
 
-    if (delivery === "duplicate" && priorStatus === "processed") {
+    if (delivery === "duplicate" && priorStatus === "processed"
+      && frame.type !== "harness.codex.current-admission.read.response") {
       await this.sendAcknowledgement(frame, "duplicate", now);
       return;
     }
@@ -400,6 +418,21 @@ export class PortableNodeBridge {
         const waiter = this.codexResultWaiter;
         if (waiter && waiter.generation === generation
           && waiter.messageId === receipt.body.returnMessageId) waiter.resolve(receipt);
+        return;
+      } catch (error) { if (generation === this.connectionGeneration) this.failTransport(); throw error; }
+    }
+
+    if (frame.type === "harness.codex.current-admission.read.response") {
+      try {
+        const waiter = this.codexAdmissionWaiter;
+        if (delivery !== "accepted" || !waiter || waiter.generation !== generation
+          || frame.causationId !== waiter.requestMessageId || frame.body.queueId !== waiter.queueId
+          || !this.statusValue.enabledFeatures?.includes(CODEX_CURRENT_ADMISSION_READ_FEATURE_V1)) {
+          throw new Error("Codex current-admission response unavailable");
+        }
+        this.journal.recordCodexCurrentAdmissionExchangeResponse(frame, now);
+        this.journal.markInboundProcessed(frame.messageId, now);
+        waiter.resolve(frame);
         return;
       } catch (error) { if (generation === this.connectionGeneration) this.failTransport(); throw error; }
     }
@@ -463,6 +496,102 @@ export class PortableNodeBridge {
   async heartbeat(body: HeartbeatBody, now: string): Promise<"staged" | "duplicate" | "coalesced"> {
     if (this.statusValue.state !== "online" && this.statusValue.state !== "draining") throw new Error("Bridge is not online");
     return this.sendBody("node.heartbeat", body, false, now);
+  }
+
+  /** One exact, queue-bound, non-executing current-admission exchange. The
+   * journal reservation and sent marker precede the sole transport write;
+   * timeout, abort, disconnect, or write uncertainty permanently burns it. */
+  async exchangeCodexCurrentAdmission(bodyValue: CodexCurrentAdmissionReadRequestV1,
+    now: string, expiresAt: string, signal: AbortSignal, responseTimeoutMs = 5_000): Promise<Readonly<{
+      request: SignedNodeFrame<"harness.codex.current-admission.read">;
+      response: SignedNodeFrame<"harness.codex.current-admission.read.response">;
+    }>> {
+    const generation = this.connectionGeneration;
+    const pending = await this.serializeSend(async () => {
+      const body = codexCurrentAdmissionReadRequestSchemaV1.parse(bodyValue);
+      if (!(signal instanceof AbortSignal) || signal.aborted || !Number.isSafeInteger(responseTimeoutMs)
+        || responseTimeoutMs < 1 || responseTimeoutMs > 30_000 || this.codexAdmissionWaiter
+        || this.statusValue.state !== "online"
+        || !this.identity.features.includes(CODEX_CURRENT_ADMISSION_READ_FEATURE_V1)
+        || !this.statusValue.enabledFeatures?.includes(CODEX_CURRENT_ADMISSION_READ_FEATURE_V1)) {
+        throw new Error("Codex current-admission exchange unavailable");
+      }
+      const connectionId = this.requireConnection(), transport = this.requireTransport();
+      const activation = this.journal.acceptedCodexActivation(body.queueId);
+      const delivery = this.journal.acceptedCodexDelivery(body.queueId);
+      if (!activation || !delivery || activation.frame.connectionId !== connectionId
+        || body.projectId !== activation.frame.body.projectId || body.jobId !== activation.frame.body.jobId
+        || body.attemptId !== activation.frame.body.attemptId || body.nodeId !== activation.frame.body.nodeId
+        || body.inputDigest !== activation.frame.body.inputDigest
+        || body.packetDigest !== codexApprovalPacketDigestV1(delivery.frame.body)
+        || body.activationFrameDigest !== sha256Digest(activation.frame)
+        || body.currentAdmissionDigest !== activation.frame.body.currentAdmissionDigest) {
+        throw new Error("Codex current-admission queue binding unavailable");
+      }
+      const sentAt = Date.parse(now), deadline = Date.parse(expiresAt);
+      if (!Number.isFinite(sentAt) || new Date(sentAt).toISOString() !== now
+        || !Number.isFinite(deadline) || new Date(deadline).toISOString() !== expiresAt || deadline <= sentAt
+        || deadline > Date.parse(activation.frame.expiresAt)) {
+        throw new Error("Codex current-admission exchange time invalid");
+      }
+      const unsigned: UnsignedNodeFrame<"harness.codex.current-admission.read"> = {
+        protocol: NODE_PROTOCOL_V1, direction: "node_to_server", senderKind: "node",
+        tenantId: this.identity.tenantId, actorId: this.identity.nodeId, keyId: this.identity.keyId,
+        connectionId, sequence: this.journal.nextOutboundSequence(connectionId),
+        messageId: `message:codex-admission:${this.idFactory()}`,
+        correlationId: `correlation:codex-admission:${this.idFactory()}`,
+        sentAt: now, expiresAt, nonce: body.challengeNonce,
+        type: "harness.codex.current-admission.read", body,
+      };
+      const materialDigest = sha256Digest(unsigned);
+      const signed = signedNodeFrameSchema.parse(await this.signer.sign(unsigned));
+      if (signed.type !== "harness.codex.current-admission.read") throw new Error("Codex admission signer changed type");
+      const { signature, bodyDigest, ...material } = signed;
+      if (!signature || bodyDigest !== sha256Digest(body) || sha256Digest(material) !== materialDigest
+        || Buffer.byteLength(JSON.stringify(signed), "utf8") > (this.statusValue.maxFrameBytes ?? 0)) {
+        throw new Error("Codex admission signer changed the prepared frame");
+      }
+      const request = signed as SignedNodeFrame<"harness.codex.current-admission.read">;
+      this.journal.reserveCodexCurrentAdmissionExchange(request, now);
+      let resolve!: (response: SignedNodeFrame<"harness.codex.current-admission.read.response">) => void;
+      let reject!: (error: Error) => void;
+      const response = new Promise<SignedNodeFrame<"harness.codex.current-admission.read.response">>((res, rej) => {
+        resolve = res; reject = rej;
+      });
+      void response.catch(() => {});
+      this.codexAdmissionWaiter = { requestMessageId: request.messageId, queueId: body.queueId,
+        generation, resolve, reject };
+      const onAbort = () => reject(new Error("Codex current-admission response unavailable"));
+      signal.addEventListener("abort", onAbort, { once: true });
+      const timer = setTimeout(onAbort, responseTimeoutMs);
+      const cleanup = () => {
+        clearTimeout(timer); signal.removeEventListener("abort", onAbort);
+        if (this.codexAdmissionWaiter?.requestMessageId === request.messageId) this.codexAdmissionWaiter = undefined;
+      };
+      this.journal.markCodexCurrentAdmissionExchangeSent(request.messageId, now);
+      try {
+        const write = transport.send(JSON.stringify(request));
+        void write.catch(() => {});
+        await Promise.race([write, response.then(() => undefined)]);
+        if (generation !== this.connectionGeneration) throw new Error("Codex admission connection changed");
+        return { request, response, cleanup };
+      } catch (error) {
+        cleanup();
+        if (generation === this.connectionGeneration) this.failTransport();
+        throw error;
+      }
+    });
+    try {
+      const response = await pending.response;
+      if (generation !== this.connectionGeneration) throw new Error("Codex admission connection changed");
+      return Object.freeze({ request: pending.request, response });
+    } catch (error) {
+      this.codexAdmissionWaiter?.reject(new Error("Codex current-admission response unavailable"));
+      if (generation === this.connectionGeneration) this.failTransport();
+      throw error;
+    } finally {
+      pending.cleanup();
+    }
   }
 
   /** The node journal remains the snapshot source across disconnects. Publication uses the existing
@@ -631,6 +760,8 @@ export class PortableNodeBridge {
   }
 
   async close(): Promise<void> {
+    this.codexAdmissionWaiter?.reject(new Error('Codex current-admission connection closed'));
+    this.codexAdmissionWaiter = undefined;
     this.codexResultWaiter?.reject(new Error('Codex result return connection closed'));
     this.codexResultWaiter = undefined;
     this.connectionGeneration += 1;
@@ -643,6 +774,8 @@ export class PortableNodeBridge {
   }
 
   async disconnected(): Promise<number> {
+    this.codexAdmissionWaiter?.reject(new Error('Codex current-admission connection disconnected'));
+    this.codexAdmissionWaiter = undefined;
     this.codexResultWaiter?.reject(new Error('Codex result return connection disconnected'));
     this.codexResultWaiter = undefined;
     this.connectionGeneration += 1;
@@ -699,7 +832,8 @@ export class PortableNodeBridge {
         || pending.frame.type === 'harness.codex.dispatch.receipt'
         || pending.frame.type === "controller.worker.delivery.receipt"
         || pending.frame.type === "controller.worker.delivery.receipt.recovery"
-        || pending.frame.type === 'harness.codex.result.return') continue;
+        || pending.frame.type === 'harness.codex.result.return'
+        || pending.frame.type === "harness.codex.current-admission.read") continue;
       try {
         await this.requireTransport().send(JSON.stringify(pending.frame));
         this.journal.markSent(pending.frame.messageId, now);
@@ -831,6 +965,8 @@ export class PortableNodeBridge {
   }
 
   private failTransport(): void {
+    this.codexAdmissionWaiter?.reject(new Error('Codex current-admission transport unavailable'));
+    this.codexAdmissionWaiter = undefined;
     this.codexResultWaiter?.reject(new Error('Codex result return transport unavailable'));
     this.codexResultWaiter = undefined;
     this.connectionGeneration += 1;

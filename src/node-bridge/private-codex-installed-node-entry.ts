@@ -50,14 +50,7 @@ export function createPrivateCodexInstalledNodeEntryV1(value: {
     schema: PRIVATE_CODEX_INSTALLED_NODE_ENTRY_V1,
     startsWork: false as const,
     grantsExecutionAuthority: false as const,
-    async issue(queueId: string) {
-      if (issued.has(queueId)) unavailable();
-      // Burn before the signed request leaves this boundary. Uncertain send or
-      // a lost answer cannot become a second request for the same activation.
-      issued.add(queueId);
-      try { return await reader.issue(queueId); } catch { return unavailable(); }
-    },
-    async accept(queueId: string, rawResponse: string | Uint8Array): Promise<Readonly<{
+    async exchange(queueId: string, signal: AbortSignal, responseTimeoutMs = 5_000): Promise<Readonly<{
       schema: typeof PRIVATE_CODEX_INSTALLED_NODE_ENTRY_V1;
       startsWork: false;
       grantsExecutionAuthority: false;
@@ -65,9 +58,16 @@ export function createPrivateCodexInstalledNodeEntryV1(value: {
       binding: Readonly<{ tenantId: string; nodeId: string; enrollmentDigest: string;
         connectorProfileDigest: string; sessionIdentityDigest: string }>;
     }>> {
-      if (!issued.has(queueId)) unavailable();
+      if (issued.has(queueId)) unavailable();
+      if (!(signal instanceof AbortSignal)) unavailable();
+      // Burn before reservation or transport. Uncertain journal/sign/send or a
+      // lost answer cannot become a second request for the same activation.
+      issued.add(queueId);
       try {
-        const accepted = await reader.accept(queueId, rawResponse);
+        const prepared = await reader.issue(queueId);
+        const carried = await bridge.exchangeCodexCurrentAdmission(prepared.request.body,
+          prepared.request.sentAt, prepared.request.expiresAt, signal, responseTimeoutMs);
+        const accepted = await reader.accept(queueId, JSON.stringify(carried.response), carried.request);
         const policy = consumePrivateCodexCurrentAdmissionCapabilityV1(accepted.capability);
         const owner = createPrivateCodexSessionOwnerV1({ bridge, journal, currentPolicy: policy, clock });
         const minted = owner.mint(queueId);

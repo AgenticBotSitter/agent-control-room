@@ -32,6 +32,8 @@ import { computeNormalizedOperationDigest } from '../src/node-policy/v1/policy-e
 import { NODE_PROTOCOL_V1, NodeProtocolAuthenticator, signNodeFrame,
   type UnsignedNodeFrame } from '../src/node-protocol/v1';
 import { sha256Digest } from '../src/security/canonical-digest';
+import { CODEX_CURRENT_ADMISSION_READ_FEATURE_V1 } from '../src/harness/codex-v1/current-admission-read-contract';
+import { codexApprovalPacketDigestV1 } from '../src/web/v1/codex-task-queue';
 
 const baseTime = Date.parse('2026-09-13T12:00:00.000Z');
 const deadline = baseTime + 60_000;
@@ -100,7 +102,7 @@ async function portableActivation(recordActivation = true, keepConnected = false
     currentAdmissionDigest: () => admissionDigest, assertCurrent() {},
   }, () => clock);
   const sent: string[] = [];
-  const features = ['harness.codex.dispatch.v1', CODEX_ACTIVATION_FEATURE];
+  const features = ['harness.codex.dispatch.v1', CODEX_ACTIVATION_FEATURE, CODEX_CURRENT_ADMISSION_READ_FEATURE_V1];
   let id = 0;
   const bridge = new PortableNodeBridge({ tenantId: start.tenantId, nodeId: start.nodeId,
     keyId: 'node-key:test', features }, journal,
@@ -109,7 +111,11 @@ async function portableActivation(recordActivation = true, keepConnected = false
     publicKeySpki: serverSpki, state: 'active', principalState: 'active',
     validFrom: new Date(baseTime - 1_000).toISOString() }; } }, journal, { async consume() {} }),
   () => `codex-host-bridge-${++id}`, undefined, undefined, dispatchHandler, activationHandler);
-  const transport = { async send(value: string) { sent.push(value); }, async close() {} };
+  let admissionResponder: ((request: Record<string, unknown>) => void) | undefined;
+  const transport = { async send(value: string) {
+    sent.push(value); const parsed = JSON.parse(value) as Record<string, unknown>;
+    if (parsed.type === 'harness.codex.current-admission.read') admissionResponder?.(parsed);
+  }, async close() {} };
   const at = new Date(clock).toISOString();
   await bridge.open(transport, { now: at, transportIdentity: 'transport:codex-host' });
   const hello = JSON.parse(sent[0]!) as { messageId: string; connectionId: string };
@@ -145,7 +151,38 @@ async function portableActivation(recordActivation = true, keepConnected = false
   };
   if (!keepConnected) await closeBridge();
   return { journal, body, workspaceIntent, activation, approval, server, node,
-    bridge, closeBridge, connectionAttemptId: `connection-attempt:codex-host:${fixtureId}`, clock: () => ++clock };
+    bridge, closeBridge, setAdmissionResponder(value: (request: Record<string, unknown>) => void) {
+      admissionResponder = value;
+    }, sent, connectionAttemptId: `connection-attempt:codex-host:${fixtureId}`, clock: () => ++clock };
+}
+
+function currentAdmissionRequest(f: Awaited<ReturnType<typeof portableActivation>>) {
+  const start = f.activation.body;
+  return { schema: 'control-room.codex-current-admission-read-request/v1' as const,
+    queueId: start.queueId, projectId: start.projectId, jobId: start.jobId, attemptId: start.attemptId,
+    nodeId: start.nodeId, inputDigest: start.inputDigest, packetDigest: codexApprovalPacketDigestV1(f.body),
+    activationFrameDigest: sha256Digest(f.activation), currentAdmissionDigest: start.currentAdmissionDigest,
+    challengeNonce: 'A'.repeat(43), startsWork: false as const, grantsExecutionAuthority: false as const };
+}
+
+function currentAdmissionResponse(f: Awaited<ReturnType<typeof portableActivation>>,
+  request: ReturnType<typeof signNodeFrame>, change: { causationId?: string; expiresAt?: string } = {}) {
+  const body = request.body as ReturnType<typeof currentAdmissionRequest>;
+  const checkedAt = new Date(baseTime + 3_000).toISOString();
+  const responseBody = { schema: 'control-room.codex-current-admission-read-response/v1' as const,
+    queueId: body.queueId, projectId: body.projectId, jobId: body.jobId, attemptId: body.attemptId,
+    nodeId: body.nodeId, requestMessageId: request.messageId, requestBodyDigest: request.bodyDigest,
+    challengeNonce: body.challengeNonce, activationFrameDigest: body.activationFrameDigest,
+    currentAdmissionDigest: body.currentAdmissionDigest, ownerTrustRevisionDigest: sha256Digest('owner-trust:test'),
+    checkedAt, expiresAt: change.expiresAt ?? new Date(baseTime + 20_000).toISOString(),
+    startsWork: false as const, grantsExecutionAuthority: false as const };
+  return signNodeFrame({ protocol: NODE_PROTOCOL_V1, direction: 'server_to_node', senderKind: 'control_room',
+    tenantId: 'tenant:test', actorId: 'control-room:test', keyId: 'server-key:test',
+    connectionId: request.connectionId, sequence: 5, messageId: 'message:current-admission-response',
+    correlationId: request.correlationId, causationId: change.causationId ?? request.messageId,
+    sentAt: checkedAt, expiresAt: responseBody.expiresAt,
+    nonce: 'current_admission_response_nonce_123456789',
+    type: 'harness.codex.current-admission.read.response', body: responseBody }, f.server.privateKey);
 }
 
 const threadResponse = (id: number, cwd: string) => JSON.stringify({ id, result: {
@@ -403,35 +440,38 @@ test('installed Codex node entry turns one signed current read into one bound se
   const entry = createPrivateCodexInstalledNodeEntryV1({ bridge: f.bridge, journal: f.journal,
     security, approvals, keys, clock: () => baseTime + 3_000 });
   assert.equal(entry.startsWork, false); assert.equal(entry.grantsExecutionAuthority, false);
-  const issued = await entry.issue(f.body.queueId);
-  await assert.rejects(entry.issue(f.body.queueId), /private_codex_installed_node_entry_unavailable/,
-    'uncertain issue is burned instead of silently duplicated');
-  const responseBody = { schema: 'control-room.codex-current-admission-read-response/v1' as const,
-    queueId: issued.request.body.queueId, projectId: issued.request.body.projectId,
-    jobId: issued.request.body.jobId, attemptId: issued.request.body.attemptId,
-    nodeId: issued.request.body.nodeId, requestMessageId: issued.request.messageId,
-    requestBodyDigest: issued.request.bodyDigest, challengeNonce: issued.request.body.challengeNonce,
-    activationFrameDigest: issued.request.body.activationFrameDigest,
-    currentAdmissionDigest: issued.request.body.currentAdmissionDigest,
-    ownerTrustRevisionDigest: sha256Digest('owner-trust:test'),
-    checkedAt: new Date(baseTime + 3_000).toISOString(), expiresAt: new Date(baseTime + 20_000).toISOString(),
-    startsWork: false as const, grantsExecutionAuthority: false as const };
-  const response = signNodeFrame({ protocol: NODE_PROTOCOL_V1, direction: 'server_to_node',
-    senderKind: 'control_room', tenantId: 'tenant:test', actorId: 'control-room:test', keyId: 'server-key:test',
-    connectionId: f.activation.connectionId, sequence: 90, messageId: 'message:installed-entry-response',
-    correlationId: 'correlation:installed-entry', causationId: issued.request.messageId,
-    sentAt: responseBody.checkedAt, expiresAt: responseBody.expiresAt,
-    nonce: 'installed_entry_response_nonce_1234567890',
-    type: 'harness.codex.current-admission.read.response', body: responseBody }, f.server.privateKey);
-  const admitted = await entry.accept(f.body.queueId, JSON.stringify(response));
+  f.setAdmissionResponder(requestValue => {
+    const request = requestValue as unknown as ReturnType<typeof signNodeFrame>;
+    const requestBody = request.body as Record<string, string>;
+    const responseBody = { schema: 'control-room.codex-current-admission-read-response/v1' as const,
+      queueId: requestBody.queueId, projectId: requestBody.projectId,
+      jobId: requestBody.jobId, attemptId: requestBody.attemptId,
+      nodeId: requestBody.nodeId, requestMessageId: request.messageId,
+      requestBodyDigest: request.bodyDigest, challengeNonce: requestBody.challengeNonce,
+      activationFrameDigest: requestBody.activationFrameDigest,
+      currentAdmissionDigest: requestBody.currentAdmissionDigest,
+      ownerTrustRevisionDigest: sha256Digest('owner-trust:test'),
+      checkedAt: new Date(baseTime + 3_000).toISOString(), expiresAt: new Date(baseTime + 20_000).toISOString(),
+      startsWork: false as const, grantsExecutionAuthority: false as const };
+    const response = signNodeFrame({ protocol: NODE_PROTOCOL_V1, direction: 'server_to_node',
+      senderKind: 'control_room', tenantId: 'tenant:test', actorId: 'control-room:test', keyId: 'server-key:test',
+      connectionId: request.connectionId, sequence: 5, messageId: 'message:installed-entry-response',
+      correlationId: request.correlationId, causationId: request.messageId,
+      sentAt: responseBody.checkedAt, expiresAt: responseBody.expiresAt,
+      nonce: 'installed_entry_response_nonce_1234567890',
+      type: 'harness.codex.current-admission.read.response', body: responseBody }, f.server.privateKey);
+    queueMicrotask(() => { void f.bridge.receive(JSON.stringify(response), responseBody.checkedAt); });
+  });
+  const admitted = await entry.exchange(f.body.queueId, new AbortController().signal);
+  await assert.rejects(entry.exchange(f.body.queueId, new AbortController().signal),
+    /private_codex_installed_node_entry_unavailable/,
+    'completed exchange is burned instead of silently duplicated');
   assert.equal(admitted.startsWork, false); assert.equal(admitted.grantsExecutionAuthority, false);
   assert.equal(admitted.binding.tenantId, 'tenant:test'); assert.equal(admitted.binding.nodeId, 'node:test');
   const session = consumePrivateCodexSessionCapabilityV1(admitted.sessionCapability);
   session.assertCurrent();
   assert.throws(() => consumePrivateCodexSessionCapabilityV1(admitted.sessionCapability),
     /private_codex_session_owner_unavailable/, 'installed session capability is one-use');
-  await assert.rejects(entry.accept(f.body.queueId, JSON.stringify(response)),
-    /private_codex_installed_node_entry_unavailable/, 'signed response cannot be replayed');
 });
 
 test('installed Codex node entry rejects structural authority substitutes before issuing', () => {
@@ -439,6 +479,84 @@ test('installed Codex node entry rejects structural authority substitutes before
     bridge: { codexActivationChannel() {} }, journal: {}, security: {}, approvals: {}, keys: {
       reference() {}, async sign() { return new Uint8Array(); } },
   } as never), /private_codex_installed_node_entry_unavailable/);
+});
+
+test('bridge-owned Codex admission exchange rejects cross-causation, stale, duplicate and oversized responses', async t => {
+  await t.test('altered queue binding before send', async t => {
+    const f = await portableActivation(true, true);
+    t.after(async () => { await f.closeBridge(); f.journal.close(); });
+    await assert.rejects(f.bridge.exchangeCodexCurrentAdmission({ ...currentAdmissionRequest(f), jobId: 'job:other' },
+      new Date(baseTime + 3_000).toISOString(), new Date(baseTime + 20_000).toISOString(),
+      new AbortController().signal, 50));
+    assert.equal(f.sent.filter(value => JSON.parse(value).type === 'harness.codex.current-admission.read').length, 0);
+  });
+
+  await t.test('cross-causation', async t => {
+    const f = await portableActivation(true, true);
+    t.after(async () => { await f.closeBridge(); f.journal.close(); });
+    f.setAdmissionResponder(value => {
+      const response = currentAdmissionResponse(f, value as unknown as ReturnType<typeof signNodeFrame>,
+        { causationId: 'message:unrelated-request' });
+      queueMicrotask(() => { void f.bridge.receive(JSON.stringify(response), response.body.checkedAt).catch(() => {}); });
+    });
+    await assert.rejects(f.bridge.exchangeCodexCurrentAdmission(currentAdmissionRequest(f),
+      new Date(baseTime + 3_000).toISOString(), new Date(baseTime + 20_000).toISOString(),
+      new AbortController().signal, 50));
+  });
+
+  await t.test('stale response', async t => {
+    const f = await portableActivation(true, true);
+    t.after(async () => { await f.closeBridge(); f.journal.close(); });
+    f.setAdmissionResponder(value => {
+      const response = currentAdmissionResponse(f, value as unknown as ReturnType<typeof signNodeFrame>,
+        { expiresAt: new Date(baseTime + 4_000).toISOString() });
+      queueMicrotask(() => { void f.bridge.receive(JSON.stringify(response),
+        new Date(baseTime + 5_000).toISOString()).catch(() => {}); });
+    });
+    await assert.rejects(f.bridge.exchangeCodexCurrentAdmission(currentAdmissionRequest(f),
+      new Date(baseTime + 3_000).toISOString(), new Date(baseTime + 20_000).toISOString(),
+      new AbortController().signal, 50));
+  });
+
+  await t.test('oversized response', async t => {
+    const f = await portableActivation(true, true);
+    t.after(async () => { await f.closeBridge(); f.journal.close(); });
+    f.setAdmissionResponder(() => queueMicrotask(() => {
+      void f.bridge.receive('x'.repeat(131_073), new Date(baseTime + 3_000).toISOString()).catch(() => {});
+    }));
+    await assert.rejects(f.bridge.exchangeCodexCurrentAdmission(currentAdmissionRequest(f),
+      new Date(baseTime + 3_000).toISOString(), new Date(baseTime + 20_000).toISOString(),
+      new AbortController().signal, 50));
+  });
+
+  await t.test('duplicate response and lost reply do not create another send', async t => {
+    const f = await portableActivation(true, true);
+    t.after(async () => { await f.closeBridge(); f.journal.close(); });
+    let response: ReturnType<typeof signNodeFrame> | undefined;
+    f.setAdmissionResponder(value => {
+      response = currentAdmissionResponse(f, value as unknown as ReturnType<typeof signNodeFrame>);
+      queueMicrotask(() => { void f.bridge.receive(JSON.stringify(response),
+        new Date(baseTime + 3_000).toISOString()).catch(() => {}); });
+    });
+    await f.bridge.exchangeCodexCurrentAdmission(currentAdmissionRequest(f),
+      new Date(baseTime + 3_000).toISOString(), new Date(baseTime + 20_000).toISOString(),
+      new AbortController().signal, 50);
+    await assert.rejects(f.bridge.receive(JSON.stringify(response), new Date(baseTime + 3_000).toISOString()));
+    assert.equal(f.sent.filter(value => JSON.parse(value).type === 'harness.codex.current-admission.read').length, 1);
+  });
+
+  await t.test('lost response burns the queue and stays non-executing', async t => {
+    const f = await portableActivation(true, true);
+    t.after(async () => { await f.closeBridge(); f.journal.close(); });
+    await assert.rejects(f.bridge.exchangeCodexCurrentAdmission(currentAdmissionRequest(f),
+      new Date(baseTime + 3_000).toISOString(), new Date(baseTime + 20_000).toISOString(),
+      new AbortController().signal, 5));
+    assert.equal(f.sent.filter(value => JSON.parse(value).type === 'harness.codex.current-admission.read').length, 1);
+    await assert.rejects(f.bridge.exchangeCodexCurrentAdmission(currentAdmissionRequest(f),
+      new Date(baseTime + 3_000).toISOString(), new Date(baseTime + 20_000).toISOString(),
+      new AbortController().signal, 5));
+    assert.equal(f.sent.filter(value => JSON.parse(value).type === 'harness.codex.current-admission.read').length, 1);
+  });
 });
 
 test('remote worker rejects missing activation, revoked session and changed binding before native start', async t => {

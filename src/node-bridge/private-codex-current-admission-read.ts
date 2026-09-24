@@ -35,7 +35,8 @@ export type PrivateCodexCurrentAdmissionReaderV1 = Readonly<{
   schema: typeof PRIVATE_CODEX_CURRENT_ADMISSION_READER_V1;
   startsWork: false;
   issue(queueId: string): Promise<Readonly<{ request: SignedNodeFrame<"harness.codex.current-admission.read"> }>>;
-  accept(queueId: string, rawResponse: string | Uint8Array): Promise<Readonly<{
+  accept(queueId: string, rawResponse: string | Uint8Array,
+    carriedRequest?: SignedNodeFrame<"harness.codex.current-admission.read">): Promise<Readonly<{
     schema: typeof PRIVATE_CODEX_CURRENT_ADMISSION_CAPABILITY_V1;
     capability: PrivateCodexCurrentAdmissionCapabilityV1;
     response: Readonly<CodexCurrentAdmissionReadResponseV1>;
@@ -137,9 +138,16 @@ export function createPrivateCodexCurrentAdmissionReaderV1(input: {
         return Object.freeze({ request });
       } catch { return unavailable(); }
     },
-    async accept(queueId: string, rawResponse: string | Uint8Array) {
+    async accept(queueId: string, rawResponse: string | Uint8Array,
+      carriedRequest?: SignedNodeFrame<"harness.codex.current-admission.read">) {
       try {
-        localId.parse(queueId); const item = issued.get(queueId) ?? unavailable();
+        localId.parse(queueId); const original = issued.get(queueId) ?? unavailable();
+        const request = carriedRequest ?? original.request;
+        if (request.type !== "harness.codex.current-admission.read"
+          || request.bodyDigest !== original.request.bodyDigest
+          || sha256Digest(request.body) !== sha256Digest(original.request.body)
+          || request.body.challengeNonce !== original.nonce) unavailable();
+        const item = Object.freeze({ ...original, request, connectionId: request.connectionId });
         assertInstallationCurrent(queueId, item);
         const bytes = typeof rawResponse === "string" ? Buffer.from(rawResponse) : Buffer.from(rawResponse);
         const { channel, activation } = channelFor(queueId);
