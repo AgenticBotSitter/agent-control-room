@@ -79,6 +79,19 @@ source evidence, not a live connection.
 
 ## Source checkpoint (2026-09-23)
 
+**Latest activation hardening:** The common activation preflight now has two
+additional, deliberately blocked boundaries. A release-review boundary binds
+the exact installation, release, topology, prepared bundle, and one-use review
+challenge, but cannot treat a browser flag, callback, exported key, or
+structurally similar record as an owner approval. A recovery boundary likewise
+binds the exact reviewed recovery tool set but cannot start a process, access
+storage, or call a database through caller-provided verification or launch
+callbacks. Both packages are source-tested refusals, not live activation
+features. The remaining implementations require a reviewed native owner-review
+mechanism and a reviewed, release-bound recovery sidecar respectively, followed
+by the later owner-attended activation session. No Keychain item, database,
+backup, service, route, or worker was touched while creating these packages.
+
 The first macOS Claude process-custody helper is now source-complete and has
 passed independent review for its deliberately inert scope. It holds the
 selected executable and workspace, starts the target suspended, verifies the
