@@ -58,6 +58,25 @@ test("a local CLI failure records no false result and a restart cannot rerun it"
   assert.equal(replay.state, "already_delivered"); assert.equal(state.executions, 1);
 });
 
+test("a lease revoked while a local CLI runs cannot publish its returned text", async t => {
+  const f = await nativeTaskFixture(); t.after(f.close); const state = { checks: 0, executions: 0, publishes: 0 };
+  const value = config(f.db, state); value.assertCurrent = async () => {
+    state.checks++; if (state.checks === 3) throw new Error("lease_revoked");
+  };
+  const first = await deliverOwnerTrustedLocalCliTaskV1(value, packet(), { kind: "local", workerId: worker.workerId }, at(2000));
+  assert.equal(first.state, "delivery_uncertain"); assert.equal(state.executions, 1); assert.equal(state.publishes, 0);
+  const replay = await deliverOwnerTrustedLocalCliTaskV1(value, packet(), { kind: "local", workerId: worker.workerId }, at(2000));
+  assert.equal(replay.state, "already_delivered"); assert.equal(state.executions, 1);
+});
+
+test("cancellation during a local CLI cannot publish its returned text", async t => {
+  const f = await nativeTaskFixture(); t.after(f.close); const state = { checks: 0, executions: 0, publishes: 0 };
+  const aborter = new AbortController(), value = config(f.db, state);
+  value.execute = async () => { state.executions++; aborter.abort(); return { kind: "completed" as const, text: "late text" }; };
+  const result = await deliverOwnerTrustedLocalCliTaskV1(value, packet(), { kind: "local", workerId: worker.workerId }, at(2000), aborter.signal);
+  assert.equal(result.state, "delivery_cancelled"); assert.equal(state.executions, 1); assert.equal(state.publishes, 0);
+});
+
 test("a cancelled local delivery cannot start a CLI or publish a result", async t => {
   const f = await nativeTaskFixture(); t.after(f.close); const state = { checks: 0, executions: 0, publishes: 0 };
   const aborter = new AbortController(); aborter.abort();

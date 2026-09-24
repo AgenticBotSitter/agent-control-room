@@ -111,6 +111,14 @@ export async function deliverOwnerTrustedLocalCliTaskV1(config: OwnerTrustedLoca
     const execution = result(await config.execute(Object.freeze({ delivery, receipt, signal })));
     if (execution.kind === "failed") return Object.freeze({ delivery, receipt, state: "execution_failed" as const,
       reason: execution.reason, startsWork: false as const, grantsExecutionAuthority: false as const });
+    // A text CLI can run for minutes. Re-check cancellation and the existing
+    // canonical lease immediately before publication; an earlier pre-spawn
+    // check is never permission to publish a result after revocation.
+    if (signal.aborted) return Object.freeze({ delivery, receipt, state: "delivery_cancelled" as const,
+      startsWork: false as const, grantsExecutionAuthority: false as const });
+    await config.assertCurrent(delivery, route, signal);
+    if (signal.aborted) return Object.freeze({ delivery, receipt, state: "delivery_cancelled" as const,
+      startsWork: false as const, grantsExecutionAuthority: false as const });
     await config.publish(Object.freeze({ delivery, receipt, text: execution.text, signal }));
     return Object.freeze({ delivery, receipt, state: "published" as const, contentDigest: sha256Digest(execution.text),
       startsWork: false as const, grantsExecutionAuthority: false as const });
