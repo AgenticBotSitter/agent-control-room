@@ -74,3 +74,8 @@ test("deadline kills the detached process group even when its child ignores TERM
   assert.deepEqual(result, { status: "timed_out", reason: "deadline_exceeded" });
   assert.ok(Date.now() - started >= 5_000, "waited through the TERM-to-KILL cleanup window");
 });
+
+test("does not report completion while a detached descendant remains", async () => {
+  const result = await adapter().execute(input(await taskDirectory(), "leak", 10_000));
+  assert.notEqual(result.status, "completed");
+});

@@ -7,6 +7,7 @@ import { types } from "node:util";
 const MAX_PROMPT_BYTES = 64 * 1024;
 const MAX_OUTPUT_BYTES = 1024 * 1024;
 const KILL_AFTER_MS = 5_000;
+const KILL_CONFIRM_MS = 50;
 const SYSTEM_PATH = "/usr/bin:/bin";
 
 export type OwnerTrustedLocalCodexExecResultV1 = Readonly<
@@ -124,7 +125,6 @@ export function createOwnerTrustedLocalCodexExecV1(dependencies: Readonly<{ spaw
       let usage: { inputTokens?: number; outputTokens?: number } | undefined;
       let stop: "canceled" | "timed_out" | "failed" | undefined;
       let killer: ReturnType<typeof setTimeout> | undefined;
-      let stopCleanupVerified = false;
       const decoder = new StringDecoder("utf8");
       const finish = (value: OwnerTrustedLocalCodexExecResultV1) => {
         if (settled) return;
@@ -145,9 +145,13 @@ export function createOwnerTrustedLocalCodexExecV1(dependencies: Readonly<{ spaw
           finish(failed("cleanup_uncertain", "process_group_unavailable")); return;
         }
         killer = setTimeout(() => {
-          stopCleanupVerified = processGroupSignal(child, "SIGKILL");
-          if (!stopCleanupVerified) return finish(failed("cleanup_uncertain", "process_group_unavailable"));
-          return finish(stoppedResult());
+          if (!processGroupSignal(child, "SIGKILL")) return finish(failed("cleanup_uncertain", "process_group_unavailable"));
+          // KILL is an instruction, not proof that detached descendants are
+          // gone. Confirm the whole process group before reporting a normal
+          // cancellation, timeout, or malformed-output failure.
+          killer = setTimeout(() => processGroupExists(child)
+            ? finish(failed("cleanup_uncertain", "process_group_still_running"))
+            : finish(stoppedResult()), KILL_CONFIRM_MS);
         }, KILL_AFTER_MS);
       };
       const cancel = () => terminate("canceled");
@@ -189,6 +193,16 @@ export function createOwnerTrustedLocalCodexExecV1(dependencies: Readonly<{ spaw
         if (stop) {
           if (processGroupExists(child)) return;
           return finish(stoppedResult());
+        }
+        // A direct CLI process can exit while a detached descendant remains.
+        // Never call a task completed until that owned group is absent.
+        if (processGroupExists(child)) {
+          stop = "failed";
+          if (!processGroupSignal(child, "SIGKILL")) return finish(failed("cleanup_uncertain", "process_group_unavailable"));
+          killer = setTimeout(() => processGroupExists(child)
+            ? finish(failed("cleanup_uncertain", "process_group_still_running"))
+            : finish(stoppedResult()), KILL_CONFIRM_MS);
+          return;
         }
         if (code !== 0 || !terminal || resultText === undefined) return finish(failed("failed", "process_or_output_refused"));
         finish(Object.freeze({ status: "completed" as const, text: resultText, ...(usage ? { usage: Object.freeze(usage) } : {}) }));

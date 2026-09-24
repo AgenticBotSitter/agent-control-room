@@ -11,6 +11,11 @@ if (prompt === "hang") {
   process.stdout.write("not-json\n");
 } else if (prompt === "nonzero") {
   process.exitCode = 7;
+} else if (prompt === "leak") {
+  // The direct process exits while a child remains in its detached process
+  // group unless the adapter verifies and cleans the entire group.
+  const child = spawn("sh", ["-c", "trap '' TERM; while :; do sleep 1; done"], { stdio: "ignore" });
+  child.unref();
 } else {
   const received = { args: process.argv.slice(2), env: Object.keys(process.env).sort(), prompt };
   process.stdout.write(`${JSON.stringify({ type: "item.completed", item: { type: "reasoning" } })}\n`);
