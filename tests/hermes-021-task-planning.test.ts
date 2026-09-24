@@ -8,6 +8,10 @@ import { HERMES_021_MACOS_LOCAL_ADAPTER_V1, HERMES_021_MACOS_LOCAL_CAPABILITY_V1
   HERMES_021_MACOS_CONNECTOR_PROFILE_DIGEST_V1, Hermes021MacosDispatchPreparationV1,
   executeAssignedHermes021MacosTaskV1 } from "../src/harness/hermes-021-v1";
 import { createInMemoryNeutralReservationPort } from "../src/artifacts/v1/neutral-reservation-port";
+import { durableResultReceiptSchemaV1 } from "../src/artifacts/v1/durable-result-receipt";
+import { durableResultReviewPlanSchemaV1, durableReviewTargetV1 } from "../src/completion-gate/v1/durable-result-review-plan";
+import { DurableLocalResultInspectionServiceV1 } from "../src/completion-gate/v1/durable-local-result-inspection";
+import { DurableResultReviewSubmissionServiceV1 } from "../src/completion-gate/v1/durable-result-review-submission";
 import { FleetSignalStore } from "../src/node-fleet/v1/fleet-signal-store";
 import { HarnessRunStoreV1 } from "../src/harness/v1/store";
 import { NativeApprovalPacketStore } from "../src/web/v1/native-approval-packet-store";
@@ -208,8 +212,12 @@ test("a Marvin Hermes 0.21 template creates a pinned text-review plan, not an ol
   const execution = { preparation: dispatcher, runs: new HarnessRunStoreV1(f.db, new Uint8Array(32).fill(25)),
     delivery: { db: f.db, integrityKey: new Uint8Array(32).fill(24),
     binding: localBinding, policy: localPolicy, terminalResultStorage: f.storage }, clock: () => deliveryNow };
+  const reviewSubmission = new DurableResultReviewSubmissionServiceV1(f.db, {
+    integrityKey: f.resultKey, reviewIntegrityKey: f.reviewKey, checkpoints: f.checkpoints,
+    storageClass: "local", storage: f.storage,
+  });
   const results = { db: f.db, integrityKey: f.resultKey, reviewKey: f.reviewKey, storage: f.storage,
-    storageClass: "local" as const, reservations: createInMemoryNeutralReservationPort() };
+    storageClass: "local" as const, reservations: createInMemoryNeutralReservationPort(), reviewSubmission };
   const localExecutor = createHermes021LocalSubprocessQueueExecutorV1({ tenantId: binding.tenantId,
     execution,
     results,
@@ -320,6 +328,49 @@ test("a Marvin Hermes 0.21 template creates a pinned text-review plan, not an ol
   assert.equal(replay.registered.replayed, true);
   assert.equal(replay.lifecycle.length, 0);
   assert.equal(launches, 1);
+
+  // The owner-requested correction creates a new Hermes 0.21 task through
+  // the shared revision planner. It does not reopen the saved run or bypass
+  // the normal later assignment and delivery path.
+  const reviewRow = (await f.db.query<{ plan: unknown; artifact_id: string; receipt: unknown }>(`
+    SELECT p.plan,r.artifact_id,r.receipt
+    FROM control_native_review_plans p
+    JOIN control_native_artifact_receipts r ON r.tenant_id=p.tenant_id AND r.run_id=p.run_id
+    WHERE p.tenant_id=$1 AND p.run_id=$2`, [binding.tenantId, executed.registered.run.id])).rows[0];
+  assert.ok(reviewRow, "the completed local Hermes run must have one reviewable result");
+  const reviewPlan = durableResultReviewPlanSchemaV1.parse(reviewRow.plan);
+  const receipt = durableResultReceiptSchemaV1.parse(reviewRow.receipt);
+  const target = durableReviewTargetV1(reviewPlan, receipt);
+  const feedback = "Please make the evidence clearer.";
+  const review = await f.createReviews(f.db, () => deliveryNow).record(f.identity, binding.projectId, planned.receipt.jobId, {
+    artifactId: reviewRow.artifact_id, targetId: target.id, targetDigest: sha256Digest(target),
+    contentHash: receipt.contentHash, decision: "changes_requested", feedback,
+  }, "marvin-021-revision-plan");
+  const revisionInspection = new DurableLocalResultInspectionServiceV1(f.db, {
+    integrityKey: f.resultKey, reviewIntegrityKey: f.reviewKey, harnessIntegrityKey: new Uint8Array(32).fill(25),
+    deliveryIntegrityKeys: { hermes: new Uint8Array(32).fill(24) }, checkpoints: f.checkpoints,
+    storageClass: "local", storage: f.storage,
+  });
+  const revisionPlanner = new TaskExecutionPlanner(f.db, f.scope, { template, integrityKey: new Uint8Array(32).fill(91),
+    reviewIntegrityKey: f.reviewKey, checkpoints: f.checkpoints,
+    localAdapterAdmission: { enabledAdapters: [HERMES_021_MACOS_LOCAL_ADAPTER_V1] } }, () => deliveryNow,
+  undefined, revisionInspection);
+  const correction = { runId: executed.registered.run.id, targetId: target.id, targetDigest: sha256Digest(target),
+    contentHash: receipt.contentHash, reviewId: review.receipt.reviewId, feedback };
+  const revision = await revisionPlanner.revise(f.identity, binding.projectId, planned.receipt.jobId,
+    correction, new AbortController().signal);
+  assert.equal(revision.replayed, false);
+  assert.equal(revision.receipt.startsWork, false);
+  const revisionPlan = await revisionPlanner.read(revision.receipt.jobId);
+  assert.ok(revisionPlan && revisionPlan.schema === "control-room.task-execution-plan/v8");
+  if (!revisionPlan || revisionPlan.schema !== "control-room.task-execution-plan/v8") throw new Error("missing Hermes revision plan");
+  assert.equal(revisionPlan.revision.fromRunId, executed.registered.run.id);
+  assert.equal(revisionPlan.revision.reviewId, review.receipt.reviewId);
+  assert.equal(revisionPlan.job.state, "proposed");
+  const revisionReplay = await revisionPlanner.revise(f.identity, binding.projectId, planned.receipt.jobId,
+    correction, new AbortController().signal);
+  assert.equal(revisionReplay.replayed, true);
+  assert.deepEqual(revisionReplay.receipt, revision.receipt);
 
   const reboundExecution = { ...restartedExecutor.execution,
     preparation: new Hermes021MacosDispatchPreparationV1(f.db, planner,

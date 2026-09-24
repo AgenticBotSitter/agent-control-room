@@ -43,6 +43,14 @@ export interface OwnedCodexAppServerProcessV1 {
 export type AcquireCodexAppServerProcessV1 = (binding: CodexAppServerProcessBindingV1,
   signal: AbortSignal) => OwnedCodexAppServerProcessV1;
 
+/** A one-binding App Server acquisition owned by a reviewed platform-specific
+ * provider. The local host depends only on this shared capability, not on a
+ * Linux-only launcher implementation. */
+export type CodexAppServerProcessAcquisitionV1 = Readonly<{
+  acquire: AcquireCodexAppServerProcessV1;
+  close(): Promise<void>;
+}>;
+
 interface ProcessJsonlWire {
   send(line: string, signal: AbortSignal): Promise<void>;
   writeLine(line: string, signal: AbortSignal): Promise<void>;

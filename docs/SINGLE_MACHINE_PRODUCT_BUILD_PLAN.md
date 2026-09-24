@@ -28,7 +28,7 @@ pretend that it is live.
 | Database | One PostgreSQL database per installation. Local files hold protected result bytes and recovery evidence only. |
 | Work engine | Existing pg-boss queue remains the only scheduler. No harness gets its own queue or automatic retry loop. |
 | Agent connection | One signed delivery packet and one result/review lifecycle are used by local and later remote workers. Route choice is delivery information, not a separate task type. |
-| Private settings | Executable locations, logins, model/provider settings and workspace paths stay in installation-owned configuration, never task records, browser data, logs or public GitHub. |
+| Private settings | Executable locations, logins, provider routing details and workspace paths stay in installation-owned configuration, never browser data, logs or public GitHub. A later owner task form may select one already-qualified model/provider/effort option; the task retains only its safe selection fingerprint and requested effort, never a credential or routing detail. |
 | Recovery | A lost acknowledgement is uncertain. The controller reads saved receipt or staged terminal evidence before deciding anything; it does not run an agent again by guesswork. |
 
 The shared contract is in [SHARED_CONNECTOR_CONTRACT.md](SHARED_CONNECTOR_CONTRACT.md)
@@ -38,10 +38,12 @@ and the local/remote common foundation is in
 The source-level final integration decision, including the exact decisions for
 T3 Code, Hermes WebUI, and Hermes Desktop, is in
 [SINGLE_MACHINE_FINAL_EXECUTION_PLAN.md](SINGLE_MACHINE_FINAL_EXECUTION_PLAN.md).
-It supersedes the earlier ordering. On macOS the supported enablement order is
-Hermes, then Claude, because issue #191 keeps local macOS Codex fail-closed.
-Codex follows later through the reviewed Linux route unless both macOS custody
-gates are separately proven.
+It supersedes the earlier ordering. On macOS the enablement order is Hermes,
+then Claude. A local Codex App Server worker is a later supported connection,
+not something the desktop Codex chat can be assumed to provide. The local
+product must not silently substitute a Linux worker for that later Mac-worker
+requirement. Until Codex's owner-trusted local process and custody checks pass,
+the browser must show it as unavailable rather than pretending it is connected.
 
 ## What we retain, borrow, and deliberately do not borrow
 
@@ -77,7 +79,7 @@ downloaded-release journey.
 | --- | --- | --- |
 | Hermes Agent | Local queue route, task plan, controlled subprocess shape, terminal staging, result publication, review handoff and restart-safe receipt behavior. The owner-attended fixed runner bridge has been qualified on the Mac for one bounded text-only response. | Private installation binding and protected data/restart/backup proof; an approved first real task policy and owner enablement. The current `bot_room` text runner is **not** general code-writing support, and its qualification did not create a Control Room task or enable ordinary work. |
 | Claude Code | Bounded stream-json decoding, owned injected session cleanup and canonical result publication; queue admission and a source-only executor that reuses the signed delivery, ordinary run history, protected staging and restart-recovery path; plus an opaque plan-bound readiness record for installed-process identity, permission limits, and cancellation/restart behavior. | A separately reviewed private installed-process binding, authenticated owner proof, and exact installed-session behavior. Current profile correctly says every live operation is unsupported until those requirements and a separate enablement decision are complete. |
-| Codex | App Server contract, strict JSON-lines handling, activation/start/read journals, workspace checks and canonical result path. | A safe Mac process-custody solution and owner-attended qualification. Current code deliberately supports native execution only on the reviewed Linux route; Mac must stay unavailable until its credential-directory and suspended-process proof requirements pass. |
+| Codex | App Server contract, strict JSON-lines handling, activation/start/read journals, workspace checks and canonical result path. | An owner-trusted Mac process host, narrowly scoped execution policy and owner-attended qualification. Mac stays unavailable until those proofs pass; a Linux route does not silently count as the requested Mac worker. |
 
 ## Build order and completion evidence
 
@@ -188,19 +190,19 @@ second turn.
 
 ### S4 — Codex on a supported host
 
-1. Use the existing reviewed Linux path for the first operational Codex
-   installation. A later macOS route may proceed only if both custody gates are
-   proven.
-2. For macOS, verify the exact running program while suspended before user code
-   and hold a protected Codex home-directory handle rather than reopening a
-   race-prone pathname.
+1. Reopen the owner-trusted local macOS App Server route only after a supported
+   mechanism can satisfy its two custody prerequisites; do not bypass them or
+   represent the desktop chat as a worker.
+2. Verify the exact running program while suspended before user code and hold
+   a protected Codex home-directory handle rather than reopening a race-prone
+   pathname.
 3. Reuse the App Server start/read/journal/result pipeline. Qualify actual
    version, bounded framing, approval requests, stop, restart `thread/read`
    and cleanup.
 
-**Done when:** a real Codex task on a supported host has the same reviewable
-result/correction and no-duplicate restart behavior as Hermes. Until the macOS
-proof is safe, the Mac UI must say so and offer no pretend local-Codex start.
+**Done when:** a real local Mac Codex task has the same reviewable
+result/correction and no-duplicate restart behavior as Hermes. Until the Mac
+proof is safe, the UI must say so and offer no pretend local-Codex start.
 
 ### S5 — Three-agent local daily use
 

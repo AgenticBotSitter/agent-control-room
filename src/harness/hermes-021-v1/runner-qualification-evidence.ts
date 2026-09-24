@@ -6,7 +6,8 @@ import { verifyInstallationTopologyPlanV1 } from "../v1/installation-topology";
 import { HERMES_021_SOURCE_REVISION_V1, HERMES_021_VERSION_V1 } from "./connector-profile";
 import { hermes021MacosLocalBindingSchemaV1, hermes021MacosTerminalResultSchemaV1 } from "./macos-local-worker";
 import { captureHermes021MacosSubprocessHostConfigurationV1,
-  consumeHermes021MacosOwnerQualificationHostV1 } from "./subprocess-stream-json-host";
+  consumeHermes021MacosOwnerQualificationHostV1,
+  createHermes021MacosOwnerAuthorizedLocalOnlyRunnerV1 } from "./subprocess-stream-json-host";
 import { captureHermes021MacosReviewedExecutableIdentityV1,
   hermes021MacosReviewedExecutableIdentityDigestV1 } from "./reviewed-executable-identity";
 
@@ -81,6 +82,15 @@ type OwnerAttendedQualificationInput = Omit<InstallationBoundEvidenceInput, "run
 const installationBoundEvidenceProvenance = new WeakMap<object, Readonly<{
   evidence: Hermes021MacosInstallationBoundRunnerQualificationEvidenceV1;
   report: z.infer<typeof hermes021MacosLocalRunnerQualificationReportSchemaV1>;
+}>>();
+const qualifiedRunnerCapabilities = new WeakMap<object, Readonly<{
+  installationId: string;
+  releaseDigest: string;
+  topologyPlan: unknown;
+  workerBinding: unknown;
+  runnerConfiguration: unknown;
+  reviewedExecutableIdentity: unknown;
+  evidence: Hermes021MacosInstallationBoundRunnerQualificationEvidenceV1;
 }>>();
 
 const boundUnavailable = (): never => {
@@ -169,7 +179,8 @@ function sanitizedSuccessfulReport(terminalValue: unknown, expectedText: string)
  */
 export async function runHermes021MacosInstallationBoundRunnerQualificationV1(inputValue: unknown,
   ownerQualificationHostValue: unknown): Promise<Readonly<{ report: z.infer<typeof hermes021MacosLocalRunnerQualificationReportSchemaV1>;
-    evidence: Hermes021MacosInstallationBoundRunnerQualificationEvidenceV1 }>> {
+    evidence: Hermes021MacosInstallationBoundRunnerQualificationEvidenceV1;
+    runnerCapability: object }>> {
   try {
     const input = exactProcedureInput(inputValue);
     const plan = verifyInstallationTopologyPlanV1(input.topologyPlan);
@@ -197,8 +208,66 @@ export async function runHermes021MacosInstallationBoundRunnerQualificationV1(in
       evidenceDigest: sha256Digest({ purpose: "hermes-021-installation-bound-runner-qualification/v1",
         evidence: bound.material }) }));
     installationBoundEvidenceProvenance.set(evidence, Object.freeze({ evidence, report }));
-    return Object.freeze({ report, evidence });
+    const runnerCapability = Object.freeze({ schema: "control-room.hermes-021-macos-qualified-runner-capability/v1" });
+    qualifiedRunnerCapabilities.set(runnerCapability, Object.freeze({ installationId: input.installationId,
+      releaseDigest: input.releaseDigest, topologyPlan: plan, workerBinding: binding,
+      runnerConfiguration: configuration, reviewedExecutableIdentity, evidence }));
+    return Object.freeze({ report, evidence, runnerCapability });
   } catch { return boundUnavailable(); }
+}
+
+/**
+ * Converts the one-use, process-local result of an owner-attended
+ * qualification into the bounded local runner used by installed delivery.
+ * It deliberately needs the current installation-plan digest and revision:
+ * a qualification from an earlier installation state cannot be carried into
+ * a changed controller.  The capability is not serializable and is consumed
+ * once, so a restart requires a fresh owner-attended qualification.
+ */
+export function consumeHermes021MacosQualifiedOwnerRunnerV1(inputValue: unknown): object {
+  try {
+    const input = exactRunnerEnablementInput(inputValue);
+    const capability = input.runnerCapability as object;
+    const captured = qualifiedRunnerCapabilities.get(capability);
+    if (!captured || !qualifiedRunnerCapabilities.delete(capability)) return boundUnavailable();
+    const topology = verifyInstallationTopologyPlanV1(input.topologyPlan);
+    const workerBinding = hermes021MacosLocalBindingSchemaV1.parse(input.workerBinding);
+    const configuration = captureHermes021MacosSubprocessHostConfigurationV1(input.runnerConfiguration);
+    if (input.installationId !== captured.installationId || input.releaseDigest !== captured.releaseDigest
+      || canonicalJson(topology) !== canonicalJson(captured.topologyPlan)
+      || canonicalJson(workerBinding) !== canonicalJson(captured.workerBinding)
+      || canonicalJson(configuration) !== canonicalJson(captured.runnerConfiguration)) return boundUnavailable();
+    const evidence = verifyHermes021MacosInstallationBoundRunnerQualificationEvidenceV1(input.evidence, {
+      installationId: input.installationId, releaseDigest: input.releaseDigest, topologyPlan: topology,
+      workerBinding, runnerConfiguration: configuration,
+      reviewedExecutableIdentity: captured.reviewedExecutableIdentity,
+      runnerQualificationReport: installationBoundEvidenceProvenance.get(captured.evidence)?.report,
+    });
+    if (canonicalJson(evidence) !== canonicalJson(captured.evidence)) return boundUnavailable();
+    return createHermes021MacosOwnerAuthorizedLocalOnlyRunnerV1({ installationId: input.installationId,
+      installationPlanDigest: input.installationPlanDigest, installationPlanRevision: input.installationPlanRevision,
+      topologyPlanDigest: topology.planDigest, releaseDigest: input.releaseDigest, workerBinding,
+      runnerConfiguration: configuration, reviewedExecutableIdentity: captured.reviewedExecutableIdentity });
+  } catch { return boundUnavailable(); }
+}
+
+function exactRunnerEnablementInput(value: unknown): Readonly<Record<string, unknown>> {
+  if (!value || typeof value !== "object" || Array.isArray(value) || types.isProxy(value)
+    || Object.getPrototypeOf(value) !== Object.prototype || Object.getOwnPropertySymbols(value).length !== 0) return boundUnavailable();
+  const names = ["runnerCapability", "installationId", "installationPlanDigest", "installationPlanRevision",
+    "releaseDigest", "topologyPlan", "workerBinding", "runnerConfiguration", "evidence"] as const;
+  const actual = Object.getOwnPropertyNames(value);
+  if (actual.length !== names.length || actual.some(name => !names.includes(name as typeof names[number]))) return boundUnavailable();
+  for (const name of names) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, name);
+    if (!descriptor || descriptor.enumerable !== true || !("value" in descriptor)) return boundUnavailable();
+  }
+  if (typeof (value as Record<string, unknown>).installationId !== "string"
+    || typeof (value as Record<string, unknown>).installationPlanDigest !== "string"
+    || !Number.isSafeInteger((value as Record<string, unknown>).installationPlanRevision)
+    || (value as Record<string, unknown>).installationPlanRevision as number < 0
+    || typeof (value as Record<string, unknown>).releaseDigest !== "string") return boundUnavailable();
+  return value as Readonly<Record<string, unknown>>;
 }
 
 export function verifyHermes021MacosInstallationBoundRunnerQualificationEvidenceV1(value: unknown,

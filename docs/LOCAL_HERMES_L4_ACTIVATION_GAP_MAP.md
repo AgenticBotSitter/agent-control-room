@@ -1,8 +1,10 @@
 # Local Hermes L4 activation gap map
 
-**Status:** the canonical Control Room lifecycle is assembled in source. The
-installed Hermes process-custody route is not yet implemented, so this is not a
-live worker and no owner action is useful yet.
+**Status:** the canonical Control Room lifecycle and the bounded
+owner-authorized local Hermes runner are assembled and connected in source.
+The route is not live yet: it still needs the protected installed owner-host
+that creates its one-use runner from real owner-held configuration. This is not
+an invitation to paste paths, credentials, or commands into the browser.
 
 ## What is already one connected source path
 
@@ -30,7 +32,7 @@ therefore not missing assembly seams. Adding another wrapper, queue, scheduler,
 database or readiness record would duplicate accepted code without making the
 worker safer or more operational.
 
-## The one remaining source blocker
+## The remaining local activation path
 
 The current path-based Hermes launch cannot prove that the script, Python
 interpreter and loaded modules are unchanged between review and execution. The
@@ -46,7 +48,15 @@ or install packages, installs a meta-path hook and discovers plugins. It does
 not modify Hermes or grant image, process, installation or qualification
 authority.
 
-The next build package remains the concrete implementation described by
+The local product therefore supports two deliberately different deployment
+paths. The current active path is **owner-authorized local runner**: it binds
+the reviewed executable identity and fixed text-only runner policy to this
+installation, then rechecks the executable immediately before every task. It
+must say plainly that it does not resist a malicious same-user filesystem
+change. It is appropriate for an owner-operated Mac, not for hostile-local
+filesystem protection.
+
+The stronger optional path remains the concrete implementation described by
 `HERMES_MACOS_RELEASE_SIDECAR_CUSTODY.md`:
 
 - a deterministic, licensed, read-only image containing the complete,
@@ -64,29 +74,35 @@ The next build package remains the concrete implementation described by
 
 Before image formation, that import-policy incompatibility needs an
 upstream-supported, source-unchanged resolution. A Control Room patch, caller
-assertion or Python flag is not an acceptable substitute.
+assertion or Python flag is not an acceptable substitute. This stronger path
+is not a prerequisite for the owner-authorized local runner.
 
-Until that package is accepted, the installed route must refuse before starting
-Hermes. No saved path, provider/model value, claimed readiness record or prior
-qualification result may clear this blocker.
+The owner-authorized runner package is now accepted in source. A focused
+end-to-end journey proves the runner minted by its fresh qualification receives
+one recorded canonical task and that an identical retry returns the stored
+result without a second Hermes launch. The runner is still deliberately
+process-local and one-use: a restart needs a new owner-attended qualification.
+No saved path, provider/model value, claimed readiness record or prior
+qualification result may recreate it.
 
 ## Exact later owner gates
 
 These are future owner-attended steps, not actions requested by this source
 package:
 
-1. Authorize a bounded public-runtime inventory and packaging run. It must not
-   inspect or copy credentials, profiles, memories, skills or private data.
-2. Install the reviewed, architecture-specific Hermes sidecar/runtime image in
-   the protected Control Room installation and materialize the manifest that
-   binds its exact release bytes.
-3. Complete the existing seven setup stages against the real installation:
+1. Complete the fixed protected owner-host composition. It must obtain the
+   selected local Hermes settings only from protected installed configuration,
+   re-attest the reviewed executable, run one fresh qualification in-process,
+   consume the resulting one-use runner, and pass that opaque runner into the
+   existing installed graph. It must not expose those settings to the browser,
+   logs, ordinary configuration, or task records.
+2. Complete the existing seven setup stages against the real installation:
    database authority, protected data, first owner, recovery, platform service,
    Hermes readiness and final review.
-4. Attend one fresh text-only Hermes qualification through the installed
-   sidecar using the privately selected profile/model/provider/work folder.
+3. Attend one fresh text-only Hermes qualification through the installed
+   owner-host using the privately selected profile/model/provider/work folder.
    The previous pathname-based qualification cannot replace this step.
-5. Separately enable the worker and authorize one harmless bounded real task.
+4. Separately enable the worker and authorize one harmless bounded real task.
    Its saved result must enter ordinary pending review, and any correction must
    reuse the same task/run authority rather than starting a hidden retry.
 

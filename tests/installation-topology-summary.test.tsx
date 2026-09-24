@@ -68,7 +68,8 @@ test("setup summary shows an honest proof checklist rather than a live worker", 
   assert.match(html, /<h4>Claude Code<\/h4><p><strong>Status: Local delivery preparation complete; process proof required/);
   assert.match(html, /<strong>Remaining setup category:<\/strong> Installed-process and permission qualification/);
   assert.match(html, /<h4>Codex<\/h4><p><strong>Status: Not available on this Mac yet/);
-  assert.match(html, /<strong>Remaining setup category:<\/strong> macOS process and private-state custody qualification/);
+  assert.match(html, /<strong>Remaining setup category:<\/strong> Upstream protected-home support for macOS/);
+  assert.match(html, /will not bypass this safety limit/);
   assert.match(html, /none of the statuses below means an agent is running/);
   assert.match(html, /Hermes Agent connector capability details/);
   assert.match(html, /Claude Code connector capability details/);
@@ -132,7 +133,7 @@ test("a generic local backup pass never makes the overall setup page claim proof
   assert.doesNotMatch(html, /Proofs are complete; owner enablement is still required/);
 });
 
-test("setup summary shows recorded Codex safety prerequisites without calling Codex enabled", () => {
+test("setup summary keeps Codex unavailable even when a custody record is presented", () => {
   const plan = planInstallationTopologyV1({ databaseAuthorityDigest: sha256Digest("database"), schedulerAuthorityDigest: sha256Digest("scheduler"),
     currentRoutes: [{ kind: "local", workerId: "worker:codex", adapterId: "codex-app-server/v1", adapterRevision: "00570550" }],
     requestedRoutes: [{ kind: "local", workerId: "worker:codex", adapterId: "codex-app-server/v1", adapterRevision: "00570550" }] });
@@ -142,7 +143,8 @@ test("setup summary shows recorded Codex safety prerequisites without calling Co
   ] });
   const html = renderToStaticMarkup(createElement(InstallationTopologySummary, { setup: createInstallationSetupViewV1({ plan,
     codexMacosCustodyReadiness: custody, localBackupRestoreVerified: false }) }));
-  assert.match(html, /Codex<\/h4><p><strong>Status: Mac safety prerequisites recorded/);
-  assert.match(html, /still has not started Codex/);
+  assert.match(html, /Codex<\/h4><p><strong>Status: Not available on this Mac yet/);
+  assert.match(html, /protected home-directory mechanism/);
+  assert.match(html, /will not bypass this safety limit/);
   assert.doesNotMatch(html, /sha256:|suspended_executable_identity|protected_private_state_handle/);
 });

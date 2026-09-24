@@ -54,6 +54,25 @@ export type PrivateInstalledOwnerHostInputPreflightV1 = Readonly<{
   invokesHermes: false;
 }>;
 
+/** Read-only inventory of every still-missing installation boundary. It is
+ * intentionally separate from the one-use preflight: it never captures a
+ * loader or opens any protected resource, and gives the owner one complete
+ * setup bundle instead of a sequence of surprise prompts. */
+export type PrivateInstalledOwnerHostInputInventoryV1 = Readonly<{
+  schema: typeof PRIVATE_INSTALLED_OWNER_HOST_INPUT_COMPOSITION_V1;
+  /** `boundaries_present` is not a successful installation preflight: the
+   * one-use loader still validates every captured capability afterwards. */
+  status: "blocked" | "boundaries_present";
+  blockers: readonly PrivateInstalledOwnerHostInputBlockerV1[];
+  performsEffect: false;
+  readsProtectedConfiguration: false;
+  opensNativeSession: false;
+  opensDatabase: false;
+  startsService: false;
+  startsWorker: false;
+  invokesHermes: false;
+}>;
+
 const preparedLoaders = new WeakMap<object, PrivateInstalledLocalOperatorLoaderV1>();
 const preparedProviders = new WeakMap<object, PrivateInstalledOwnerHostInputPreflightV1>();
 
@@ -96,6 +115,37 @@ function blocked(blocker: PrivateInstalledOwnerHostInputBlockerV1): PrivateInsta
     invokesHermes: false as const });
 }
 
+function inventory(value: unknown): PrivateInstalledOwnerHostInputInventoryV1 {
+  const input = record(value, ["schema", "installedConfigurationCustodyInput", "stagedJournalSidecar",
+    "journalSessionFactory", "hermesRuntimePorts", "setupRuntimes", "journalOperationDeadlineMs",
+    "claudeProtectedBinding"]);
+  if (field(input, "schema") !== PRIVATE_INSTALLED_OWNER_HOST_INPUT_COMPOSITION_V1) return refused();
+  const blockers: PrivateInstalledOwnerHostInputBlockerV1[] = [];
+  if (field(input, "installedConfigurationCustodyInput") === undefined) blockers.push(missing.installedConfigurationCustodyInput);
+  if (field(input, "stagedJournalSidecar") === undefined) blockers.push(missing.stagedJournalSidecar);
+  if (field(input, "journalSessionFactory") === undefined) blockers.push(missing.journalSessionFactory);
+  const hermes = record(field(input, "hermesRuntimePorts") ?? {},
+    ["startupBase", "deliveryIntegrityKey", "assertCurrentDelivery", "ownerAuthorizedLocalHermesRunner",
+      "ownerAuthorizedLocalHermesRunnerProvider"]);
+  if (field(hermes, "startupBase") === undefined) blockers.push(missing.hermesStartupBase);
+  if (field(hermes, "deliveryIntegrityKey") === undefined) blockers.push(missing.hermesDeliveryIntegrityKey);
+  if (field(hermes, "assertCurrentDelivery") === undefined) blockers.push(missing.hermesAssertCurrentDelivery);
+  const setup = record(field(input, "setupRuntimes") ?? {}, stages) as Partial<PrivateLocalInstallationSetupRuntimesV1>;
+  for (const stage of stages)
+    if (!Object.prototype.hasOwnProperty.call(setup, stage) || setup[stage] === undefined) blockers.push(missing[stage]);
+  if (field(input, "journalOperationDeadlineMs") === undefined) blockers.push(missing.journalOperationDeadlineMs);
+  return Object.freeze({ schema: PRIVATE_INSTALLED_OWNER_HOST_INPUT_COMPOSITION_V1,
+    status: blockers.length === 0 ? "boundaries_present" as const : "blocked" as const, blockers: Object.freeze(blockers),
+    performsEffect: false as const, readsProtectedConfiguration: false as const, opensNativeSession: false as const,
+    opensDatabase: false as const, startsService: false as const, startsWorker: false as const,
+    invokesHermes: false as const });
+}
+
+export function inspectPrivateInstalledOwnerHostInputCompositionV1(value: unknown):
+PrivateInstalledOwnerHostInputInventoryV1 {
+  return inventory(value);
+}
+
 /**
  * Returns the first missing required host boundary in a fixed order. A complete
  * input is captured by the existing reviewed loader and represented only by a
@@ -103,25 +153,16 @@ function blocked(blocker: PrivateInstalledOwnerHostInputBlockerV1): PrivateInsta
  */
 export function preflightPrivateInstalledOwnerHostInputCompositionV1(value: unknown):
 PrivateInstalledOwnerHostInputPreflightV1 {
+  const inspected = inventory(value);
+  if (inspected.status === "blocked") return blocked(inspected.blockers[0]!);
   const input = record(value, ["schema", "installedConfigurationCustodyInput", "stagedJournalSidecar",
     "journalSessionFactory", "hermesRuntimePorts", "setupRuntimes", "journalOperationDeadlineMs",
     "claudeProtectedBinding"]);
   if (field(input, "schema") !== PRIVATE_INSTALLED_OWNER_HOST_INPUT_COMPOSITION_V1) return refused();
-  if (field(input, "installedConfigurationCustodyInput") === undefined)
-    return blocked(missing.installedConfigurationCustodyInput);
-  if (field(input, "stagedJournalSidecar") === undefined) return blocked(missing.stagedJournalSidecar);
-  if (field(input, "journalSessionFactory") === undefined) return blocked(missing.journalSessionFactory);
-
   const hermes = record(field(input, "hermesRuntimePorts") ?? {},
-    ["startupBase", "deliveryIntegrityKey", "assertCurrentDelivery"]);
-  if (field(hermes, "startupBase") === undefined) return blocked(missing.hermesStartupBase);
-  if (field(hermes, "deliveryIntegrityKey") === undefined) return blocked(missing.hermesDeliveryIntegrityKey);
-  if (field(hermes, "assertCurrentDelivery") === undefined) return blocked(missing.hermesAssertCurrentDelivery);
-
+    ["startupBase", "deliveryIntegrityKey", "assertCurrentDelivery", "ownerAuthorizedLocalHermesRunner",
+      "ownerAuthorizedLocalHermesRunnerProvider"]);
   const setup = record(field(input, "setupRuntimes") ?? {}, stages) as Partial<PrivateLocalInstallationSetupRuntimesV1>;
-  for (const stage of stages) if (!Object.prototype.hasOwnProperty.call(setup, stage) || setup[stage] === undefined)
-    return blocked(missing[stage]);
-  if (field(input, "journalOperationDeadlineMs") === undefined) return blocked(missing.journalOperationDeadlineMs);
 
   let loader: PrivateInstalledLocalOperatorLoaderV1;
   try {
@@ -133,7 +174,11 @@ PrivateInstalledOwnerHostInputPreflightV1 {
         createNativeSessionPort: field(input, "journalSessionFactory") }),
       hermesRuntimePorts: Object.freeze({ startupBase: field(hermes, "startupBase"),
         deliveryIntegrityKey: field(hermes, "deliveryIntegrityKey"),
-        assertCurrentDelivery: field(hermes, "assertCurrentDelivery"), setupRuntimes: setup }),
+        assertCurrentDelivery: field(hermes, "assertCurrentDelivery"), setupRuntimes: setup,
+        ...(Object.prototype.hasOwnProperty.call(hermes, "ownerAuthorizedLocalHermesRunner")
+          ? { ownerAuthorizedLocalHermesRunner: field(hermes, "ownerAuthorizedLocalHermesRunner") } : {}),
+        ...(Object.prototype.hasOwnProperty.call(hermes, "ownerAuthorizedLocalHermesRunnerProvider")
+          ? { ownerAuthorizedLocalHermesRunnerProvider: field(hermes, "ownerAuthorizedLocalHermesRunnerProvider") } : {}) }),
       ...(Object.prototype.hasOwnProperty.call(input, "claudeProtectedBinding")
         ? { claudeProtectedBinding: field(input, "claudeProtectedBinding") } : {}),
       journalOperationDeadlineMs: field(input, "journalOperationDeadlineMs"),

@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { createHash } from "node:crypto";
 import { constants } from "node:fs";
 import { chmod, lstat, mkdtemp, open, readdir, realpath, rmdir, unlink, type FileHandle } from "node:fs/promises";
@@ -182,9 +182,9 @@ async function checkedHelper(configuration: Configuration): Promise<Buffer> {
     }
     handle = await open(configuration.executablePath, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
     const before = await handle.stat({ bigint: true });
-    if (!before.isFile() || before.nlink !== 1n || ![0n, BigInt(configuration.expectedOwnerUid)].includes(before.uid)
-      || (before.mode & 0o6022n) !== 0n || (before.mode & 0o100n) === 0n
-      || before.size < 1n || before.size > BigInt(maximumHelperBytes)) return refuse();
+    if (!before.isFile() || before.nlink !== BigInt(1) || ![BigInt(0), BigInt(configuration.expectedOwnerUid)].includes(before.uid)
+      || (before.mode & BigInt(0o6022)) !== BigInt(0) || (before.mode & BigInt(0o100)) === BigInt(0)
+      || before.size < BigInt(1) || before.size > BigInt(maximumHelperBytes)) return refuse();
     const captured = Buffer.alloc(Number(before.size)); let offset = 0;
     while (offset < captured.length) {
       const read = await handle.read(captured, offset, captured.length - offset, offset);
@@ -209,7 +209,7 @@ async function cleanIdentityOwnedStaging(staging: Readonly<PartialStaging>): Pro
     if (entries.length === 1 && staging.executable && entries[0] === "installed-configuration-v1") {
       if (!staging.executableIdentity) return false;
       const executable = await lstat(staging.executable, { bigint: true });
-      if (!executable.isFile() || executable.isSymbolicLink() || executable.nlink !== 1n
+      if (!executable.isFile() || executable.isSymbolicLink() || executable.nlink !== BigInt(1)
         || executable.dev !== staging.executableIdentity.dev || executable.ino !== staging.executableIdentity.ino) return false;
       await unlink(staging.executable);
     } else if (entries.length !== 0) return false;
@@ -228,7 +228,7 @@ async function stageHelper(configuration: Configuration,
     await chmod(staging.directory, 0o700);
     const directoryStat = await lstat(staging.directory, { bigint: true });
     if (!directoryStat.isDirectory() || directoryStat.isSymbolicLink()
-      || directoryStat.uid !== BigInt(configuration.expectedOwnerUid) || (directoryStat.mode & 0o7777n) !== 0o700n
+      || directoryStat.uid !== BigInt(configuration.expectedOwnerUid) || (directoryStat.mode & BigInt(0o7777)) !== BigInt(0o700)
       || directoryStat.dev !== createdDirectory.dev || directoryStat.ino !== createdDirectory.ino
       || (await readdir(staging.directory)).length !== 0) return uncertain();
     staging.executable = join(staging.directory, "installed-configuration-v1");
@@ -236,8 +236,8 @@ async function stageHelper(configuration: Configuration,
       | constants.O_RDWR | constants.O_NONBLOCK, 0o500);
     const created = await handle.stat({ bigint: true });
     staging.executableIdentity = Object.freeze({ dev: created.dev, ino: created.ino });
-    if (!created.isFile() || created.isSymbolicLink() || created.nlink !== 1n
-      || created.uid !== BigInt(configuration.expectedOwnerUid) || (created.mode & 0o7777n) !== 0o500n) return uncertain();
+    if (!created.isFile() || created.isSymbolicLink() || created.nlink !== BigInt(1)
+      || created.uid !== BigInt(configuration.expectedOwnerUid) || (created.mode & BigInt(0o7777)) !== BigInt(0o500)) return uncertain();
     let offset = 0;
     while (offset < captured.length) {
       const wrote = await handle.write(captured, offset, captured.length - offset, offset);
@@ -249,8 +249,8 @@ async function stageHelper(configuration: Configuration,
       if (read.bytesRead < 1) return uncertain(); offset += read.bytesRead;
     }
     const executableStat = await handle.stat({ bigint: true }), named = await lstat(staging.executable, { bigint: true });
-    if (!executableStat.isFile() || executableStat.nlink !== 1n
-      || executableStat.uid !== BigInt(configuration.expectedOwnerUid) || (executableStat.mode & 0o7777n) !== 0o500n
+    if (!executableStat.isFile() || executableStat.nlink !== BigInt(1)
+      || executableStat.uid !== BigInt(configuration.expectedOwnerUid) || (executableStat.mode & BigInt(0o7777)) !== BigInt(0o500)
       || !same(executableStat, named) || named.isSymbolicLink() || sha256(observed) !== configuration.executableSha256) return uncertain();
     return Object.freeze({ directory: staging.directory,
       directoryIdentity: Object.freeze({ device: directoryStat.dev, inode: directoryStat.ino }),
@@ -301,9 +301,9 @@ function runHelper(staged: Staged, input: Buffer, descriptor: number | undefined
     let settled = false, failed = false, outputCount = 0, leaderClosed = false;
     let escalation: ReturnType<typeof setTimeout> | undefined, retirementPoll: ReturnType<typeof setTimeout> | undefined;
     let retirementDeadline = 0; const chunks: Buffer[] = [];
-    const child = spawn(staged.executable, [], { shell: false, cwd: "/", detached: true,
-      env: { PATH: "/usr/bin:/bin", LANG: "C", LC_ALL: "C" },
-      stdio: ["pipe", "pipe", "pipe", descriptor === undefined ? "ignore" : descriptor] });
+    const child: ChildProcessWithoutNullStreams = spawn(staged.executable, [], { shell: false, cwd: "/", detached: true,
+      env: { PATH: "/usr/bin:/bin", LANG: "C", LC_ALL: "C", NODE_ENV: "production" },
+      stdio: ["pipe", "pipe", "pipe", descriptor === undefined ? "ignore" : descriptor] }) as never;
     custody.helpers.add(child);
     if (child.pid) custody.groups.add(child.pid);
     const finish = (value?: Buffer) => {

@@ -1,4 +1,4 @@
-import { createHermes021MacosStreamJsonPrivatePortV1, createHermes021MacosSubprocessStreamJsonHostV1,
+import { createHermes021MacosOwnerAuthorizedLocalOnlyTaskPortFactoryV1, createHermes021MacosOwnerAuthorizedLocalOnlyProviderTaskPortFactoryV1, createHermes021MacosStreamJsonPrivatePortV1, createHermes021MacosSubprocessStreamJsonHostV1,
   type Hermes021MacosLocalDeliveryCompositionV1, type Hermes021MacosStreamJsonHostV1,
   type Hermes021MacosSubprocessHostConfigurationV1 } from "../../harness/hermes-021-v1";
 import type { Hermes021MacosAssignedTaskExecutionV1 } from "../../harness/hermes-021-v1/assigned-task-execution";
@@ -27,16 +27,29 @@ export function createHermes021LocalSubprocessQueueExecutorV1(input: Readonly<{
   assertAuthority: (delivery: ControllerWorkerDeliveryV1) => void;
   host?: Hermes021MacosStreamJsonHostV1;
   subprocess?: Hermes021MacosSubprocessHostConfigurationV1;
+  /** Opaque, installed owner-authorized runner. It is converted into a fresh
+   * one-use port only after the canonical delivery recheck. */
+  ownerAuthorizedRunner?: object;
+  /** Inert until the owner-attended qualification activates its runner. */
+  ownerAuthorizedRunnerProvider?: object;
   clock?: () => number;
 }>) {
   if (!input || !input.execution || !input.execution.delivery || !input.results || typeof input.assertAuthority !== "function"
-    || (input.host === undefined) === (input.subprocess === undefined)) unavailable();
+    || [input.host, input.subprocess, input.ownerAuthorizedRunner, input.ownerAuthorizedRunnerProvider].filter(value => value !== undefined).length !== 1) unavailable();
   const delivery = input.execution.delivery;
-  const host = input.host ?? createHermes021MacosSubprocessStreamJsonHostV1(input.subprocess);
-  if (!host || typeof host.execute !== "function") unavailable();
-  const privatePort = createHermes021MacosStreamJsonPrivatePortV1(delivery.binding, host, input.clock);
+  const ownerControlled = input.ownerAuthorizedRunner !== undefined || input.ownerAuthorizedRunnerProvider !== undefined;
+  const privatePort = !ownerControlled
+    ? createHermes021MacosStreamJsonPrivatePortV1(delivery.binding,
+      input.host ?? createHermes021MacosSubprocessStreamJsonHostV1(input.subprocess), input.clock)
+    : undefined;
+  if (!ownerControlled && (!privatePort || typeof privatePort.run !== "function")) unavailable();
+  const privatePortFactory = input.ownerAuthorizedRunner !== undefined
+    ? createHermes021MacosOwnerAuthorizedLocalOnlyTaskPortFactoryV1(input.ownerAuthorizedRunner)
+    : input.ownerAuthorizedRunnerProvider !== undefined
+      ? createHermes021MacosOwnerAuthorizedLocalOnlyProviderTaskPortFactoryV1(input.ownerAuthorizedRunnerProvider)
+      : undefined;
   const execution: Hermes021MacosAssignedTaskExecutionV1 = Object.freeze({ ...input.execution,
-    delivery: Object.freeze({ ...delivery, privatePort }) });
+    delivery: Object.freeze({ ...delivery, ...(privatePort ? { privatePort } : { privatePortFactory }) }) });
   const queueExecutor = createHermes021LocalQueueExecutorV1({ tenantId: input.tenantId, execution, results: input.results,
     assertAuthority: input.assertAuthority });
   // Retain this private, already-composed execution value for the surrounding

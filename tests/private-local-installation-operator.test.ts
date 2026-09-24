@@ -173,6 +173,8 @@ test("local activation status is redacted, bound, and rejected before journal or
       installationId: "foreign-installation", releaseDigest: f.releaseDigest, topologyPlanDigest: f.topology.planDigest,
       schedulerReadinessEvidence: undefined, protectedStorageRestoreEvidence: undefined }) },
     { ...activation, twoLocalWorkerPreflight: projectTwoLocalWorkerActivationPreflightV1({}) },
+    { ...activation, claude: { readiness: {}, planDigest: f.topology.planDigest } },
+    { ...activation, hermes: { readiness: {}, currentInput: {} } },
   ]) {
     const configuration = { ...f.configuration, localActivationStatus };
     const operator = createPrivateLocalInstallationOperatorV1(

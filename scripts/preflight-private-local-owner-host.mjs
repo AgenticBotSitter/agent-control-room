@@ -35,14 +35,19 @@ export async function preflightPrivateLocalOwnerHostV1(args, ports = runtime) {
   try {
     await ports.verifyRelease();
     const module = await ports.loadRelease();
-    if (typeof module?.createPrivateInstalledOwnerHostProviderV1 !== "function") throw new Error();
-    const provider = module.createPrivateInstalledOwnerHostProviderV1(Object.freeze({ schema: inputSchema }));
+    if (typeof module?.createPrivateInstalledOwnerHostProviderV1 !== "function"
+      || typeof module?.inspectPrivateInstalledOwnerHostInputCompositionV1 !== "function") throw new Error();
+    const input = Object.freeze({ schema: inputSchema });
+    const inventory = module.inspectPrivateInstalledOwnerHostInputCompositionV1(input);
+    if (!inventory || inventory.status !== "blocked" || !Array.isArray(inventory.blockers)
+      || inventory.blockers.length === 0) throw new Error();
+    const provider = module.createPrivateInstalledOwnerHostProviderV1(input);
     if (!provider || provider.schema !== "control-room.private-installed-owner-host-provider/v1"
       || provider.status !== "blocked" || typeof provider.blocker !== "string"
       || provider.processLocal !== true || provider.oneUse !== true || provider.performsEffect !== false) throw new Error();
     ports.report(`${JSON.stringify(Object.freeze({
       schema: "control-room.private-installed-owner-host-preflight/v1",
-      status: "blocked",
+      status: "blocked", blockers: inventory.blockers,
       blocker: provider.blocker,
       performsEffect: false,
       readsCredentials: false,

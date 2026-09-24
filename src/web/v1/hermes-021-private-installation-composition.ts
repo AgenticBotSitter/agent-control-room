@@ -70,7 +70,8 @@ const installedCompositionIdentitySchema = z.object({
 }).strict();
 type InstalledCompositionIdentity = Readonly<z.infer<typeof installedCompositionIdentitySchema>>;
 type InstalledCompositionCapabilityMetadata = Readonly<{ tenantId: string;
-  assertAuthority: (delivery: ControllerWorkerDeliveryV1) => void; identity: InstalledCompositionIdentity }>;
+  assertAuthority: (delivery: ControllerWorkerDeliveryV1) => void; identity: InstalledCompositionIdentity;
+  ownerAuthorizedRunner?: object; ownerAuthorizedRunnerProvider?: object }>;
 const installedCompositionCapabilities = new WeakMap<object, InstalledCompositionCapabilityMetadata>();
 
 /** Opaque source-composition capability. The data identity is restart-stable,
@@ -80,16 +81,26 @@ function createPrivateHermes021InstalledCompositionCapabilityV1(input: unknown):
   if (!input || typeof input !== "object" || Array.isArray(input) || types.isProxy(input)
     || Object.getPrototypeOf(input) !== Object.prototype || Object.getOwnPropertySymbols(input).length !== 0) unavailable();
   const names = Object.getOwnPropertyNames(input);
-  if (names.length !== 3 || names.some(name => !["tenantId", "assertAuthority", "identity"].includes(name))) unavailable();
+  if ((names.length < 3 || names.length > 5)
+    || names.some(name => !["tenantId", "assertAuthority", "identity", "ownerAuthorizedRunner", "ownerAuthorizedRunnerProvider"].includes(name))
+    || (names.includes("ownerAuthorizedRunner") && names.includes("ownerAuthorizedRunnerProvider"))) unavailable();
   const descriptors = Object.fromEntries(names.map(name => [name, Object.getOwnPropertyDescriptor(input, name)]));
   if (Object.values(descriptors).some(descriptor => !descriptor || descriptor.enumerable !== true || !("value" in descriptor))) unavailable();
   const tenantId = identifier.parse(descriptors.tenantId!.value);
   const assertAuthority = descriptors.assertAuthority!.value;
   if (typeof assertAuthority !== "function" || types.isProxy(assertAuthority)) unavailable();
   const identity = Object.freeze(installedCompositionIdentitySchema.parse(descriptors.identity!.value));
+  const ownerAuthorizedRunner = descriptors.ownerAuthorizedRunner?.value;
+  const ownerAuthorizedRunnerProvider = descriptors.ownerAuthorizedRunnerProvider?.value;
+  if (ownerAuthorizedRunner !== undefined && (!ownerAuthorizedRunner || typeof ownerAuthorizedRunner !== "object"
+    || types.isProxy(ownerAuthorizedRunner))) unavailable();
+  if (ownerAuthorizedRunnerProvider !== undefined && (!ownerAuthorizedRunnerProvider || typeof ownerAuthorizedRunnerProvider !== "object"
+    || types.isProxy(ownerAuthorizedRunnerProvider))) unavailable();
   const capability = Object.freeze({ schema: PRIVATE_HERMES_021_INSTALLED_COMPOSITION_CAPABILITY_V1 });
   installedCompositionCapabilities.set(capability, Object.freeze({ tenantId,
-    assertAuthority: assertAuthority as (delivery: ControllerWorkerDeliveryV1) => void, identity }));
+    assertAuthority: assertAuthority as (delivery: ControllerWorkerDeliveryV1) => void, identity,
+    ...(ownerAuthorizedRunner ? { ownerAuthorizedRunner: ownerAuthorizedRunner as object } : {}),
+    ...(ownerAuthorizedRunnerProvider ? { ownerAuthorizedRunnerProvider: ownerAuthorizedRunnerProvider as object } : {}) }));
   return capability;
 }
 
@@ -119,10 +130,15 @@ export function createPrivateHermes021LocalInstalledCompositionDeliveryV1(input:
   catch { return unavailable(); }
   const identity = captureInstalledCompositionIdentity(captured.installedCompositionIdentity);
   const capability = createPrivateHermes021InstalledCompositionCapabilityV1({ tenantId: captured.tenantId,
-    assertAuthority: captured.assertAuthority, identity });
+    assertAuthority: captured.assertAuthority, identity,
+    ...(captured.ownerAuthorizedRunner ? { ownerAuthorizedRunner: captured.ownerAuthorizedRunner } : {}),
+    ...(captured.ownerAuthorizedRunnerProvider ? { ownerAuthorizedRunnerProvider: captured.ownerAuthorizedRunnerProvider } : {}) });
   return createDelivery({ tenantId: captured.tenantId,
     execution: captured.execution, results: captured.results, assertAuthority: captured.assertAuthority,
-    subprocess: captured.subprocess }, capability);
+    subprocess: captured.subprocess, ...(captured.ownerAuthorizedRunner
+      ? { ownerAuthorizedRunner: captured.ownerAuthorizedRunner } : {}),
+    ...(captured.ownerAuthorizedRunnerProvider
+      ? { ownerAuthorizedRunnerProvider: captured.ownerAuthorizedRunnerProvider } : {}) }, capability);
 }
 
 function runnerConfigurationDigest(value: Hermes021MacosSubprocessHostConfigurationV1) {
@@ -161,11 +177,13 @@ function createDelivery(input: unknown, installedCompositionCapability?: object)
     results: z.unknown(),
     assertAuthority: z.unknown(),
     subprocess: z.unknown(),
+    ownerAuthorizedRunner: z.unknown().optional(),
+    ownerAuthorizedRunnerProvider: z.unknown().optional(),
   }).strict().safeParse(input);
   const data = parsed.data;
   if (!parsed.success || data === undefined) unavailable();
   const configuration = data as Readonly<{ tenantId: string; execution: unknown; results: unknown;
-    assertAuthority: unknown; subprocess: unknown }>;
+    assertAuthority: unknown; subprocess: unknown; ownerAuthorizedRunner?: object; ownerAuthorizedRunnerProvider?: object }>;
   if (!configuration.execution || typeof configuration.execution !== "object"
     || !configuration.results || typeof configuration.results !== "object"
     || typeof configuration.assertAuthority !== "function" || types.isProxy(configuration.assertAuthority)) unavailable();
@@ -187,7 +205,11 @@ function createDelivery(input: unknown, installedCompositionCapability?: object)
     }>,
     results: configuration.results as DurableResultPublicationConfigurationV1,
     assertAuthority: configuration.assertAuthority as (delivery: ControllerWorkerDeliveryV1) => void,
-    subprocess: subprocess as Hermes021MacosSubprocessHostConfigurationV1,
+    ...(configuration.ownerAuthorizedRunner
+      ? { ownerAuthorizedRunner: configuration.ownerAuthorizedRunner }
+      : configuration.ownerAuthorizedRunnerProvider
+        ? { ownerAuthorizedRunnerProvider: configuration.ownerAuthorizedRunnerProvider }
+      : { subprocess: subprocess as Hermes021MacosSubprocessHostConfigurationV1 }),
   });
   const delivery = Object.freeze({ async deliver(target: unknown, signal: AbortSignal): Promise<void> {
     // Validate this public boundary before the narrower queue executor receives
@@ -210,7 +232,9 @@ function createDelivery(input: unknown, installedCompositionCapability?: object)
     ? installedCompositionCapabilities.get(installedCompositionCapability) : undefined;
   if (installedCompositionCapability !== undefined && (!installedCapability
     || installedCapability.tenantId !== configuration.tenantId
-    || installedCapability.assertAuthority !== configuration.assertAuthority)) unavailable();
+    || installedCapability.assertAuthority !== configuration.assertAuthority
+    || installedCapability.ownerAuthorizedRunner !== configuration.ownerAuthorizedRunner
+    || installedCapability.ownerAuthorizedRunnerProvider !== configuration.ownerAuthorizedRunnerProvider)) unavailable();
   const compositionInstanceDigest = installedCapability
     ? sha256Digest({ purpose: "private-hermes-installed-composition-instance/v1",
       identity: installedCapability.identity, tenantId: installedCapability.tenantId, workerBindingDigest,

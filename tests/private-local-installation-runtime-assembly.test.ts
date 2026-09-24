@@ -47,6 +47,7 @@ import { capturePrivateInstalledClaudePostInstallInputV1 } from
 import { consumePrivateInstalledOwnerHostInputCompositionV1,
   consumePrivateInstalledOwnerHostProviderV1,
   createPrivateInstalledOwnerHostProviderV1,
+  inspectPrivateInstalledOwnerHostInputCompositionV1,
   preflightPrivateInstalledOwnerHostInputCompositionV1,
   PRIVATE_INSTALLED_OWNER_HOST_INPUT_COMPOSITION_V1,
   PRIVATE_INSTALLED_OWNER_HOST_PROVIDER_V1 } from
@@ -117,10 +118,10 @@ function installedSidecar(releaseDigest: string, variant = "current") {
 }
 
 function installedRuntimeIdentity(installationId: string, releaseDigest: string, nativeSidecar: unknown,
-  workerBinding: unknown, runnerConfiguration: unknown) {
+  workerBinding: unknown, runnerConfiguration: unknown, reviewedExecutableSha256: string) {
   return d({ purpose: "private-installed-local-hermes-runtime-identity/v1", installationId, releaseDigest,
     nativeSidecarIdentityDigest: d(nativeSidecar), workerBindingDigest: d(workerBinding),
-    runnerConfigurationDigest: localHermesRunnerConfigurationDigestV1(runnerConfiguration) });
+    runnerConfigurationDigest: localHermesRunnerConfigurationDigestV1(runnerConfiguration), reviewedExecutableSha256 });
 }
 
 function completedInstallationPlan(result: unknown): InstallationPlanV1 {
@@ -350,7 +351,7 @@ function installedComposerPackage(f: any, sidecarVariant = "current"): { prepara
   const nativeSidecar = installedSidecar(f.plan.releaseDigest, sidecarVariant);
   const runtimeIdentityDigest = installedRuntimeIdentity("fixture-installation", f.plan.releaseDigest,
     nativeSidecar, f.runnerInput.admissionPreparationInput.workerBinding,
-    f.runnerInput.admissionPreparationInput.installationBindingInput.runnerConfiguration);
+    f.runnerInput.admissionPreparationInput.installationBindingInput.runnerConfiguration, d("reviewed-hermes-executable"));
   const configurationWithoutBinding = {
     schema: PRIVATE_INSTALLED_LOCAL_HERMES_CONFIGURATION_V1,
     installationId: "fixture-installation", releaseDigest: f.plan.releaseDigest,
@@ -361,6 +362,7 @@ function installedComposerPackage(f: any, sidecarVariant = "current"): { prepara
     hermes: { admissionPreparationInput: f.runnerInput.admissionPreparationInput,
       admissionRequestDigest: f.runnerInput.startupAdmissionBinding.admissionRequestDigest,
       runnerConfiguration: f.runnerInput.admissionPreparationInput.installationBindingInput.runnerConfiguration,
+      reviewedExecutableSha256: d("reviewed-hermes-executable"),
       taskPolicy: { adapter: HERMES_021_MACOS_LOCAL_ADAPTER_V1,
         connectorProfileDigest: HERMES_021_MACOS_CONNECTOR_PROFILE_DIGEST_V1,
         taskClass: "text_review", tools: "none", maximumTurns: 1, maximumRunBudgetSeconds: 120 } },
@@ -402,7 +404,12 @@ test("installed data composes the real inert Hermes graph and retains the native
   const loaded = await composer.custody.loadPrivateConfiguration();
   assert.equal(loaded.assemblyInput.runnerInput.privateStartupConfiguration.coordinator.queueWorker?.concurrency,
     f.queueWorker.concurrency);
-  assert.equal(loaded.setupSources.agent_readiness, loaded.assemblyInput.runnerInput);
+  assert.notEqual(loaded.setupSources.agent_readiness, loaded.assemblyInput.runnerInput,
+    "attended activation keeps its opaque runner holder outside ordinary startup input");
+  assert.equal((loaded.setupSources.agent_readiness as { admissionPreparationInput?: unknown }).admissionPreparationInput,
+    loaded.assemblyInput.runnerInput.admissionPreparationInput);
+  assert.equal((loaded.setupSources.agent_readiness as { ownerAuthorizedRunnerProvider?: unknown }).ownerAuthorizedRunnerProvider !== undefined,
+    true);
   assert.equal(loaded.assemblyInput.operatorTrustedInputs.hermes021Local,
     loaded.assemblyInput.runnerInput.privateStartupConfiguration.coordinator.hermes021Local);
   assert.deepEqual(composer.contracts, { taskClass: "text_review",
@@ -472,6 +479,7 @@ test("installed composer rejects foreign, mutated, secret-bearing and callback-s
   };
   mutate(copy => { copy.installationId = "foreign-installation"; });
   mutate(copy => { copy.nativeSidecar.archiveSha256 = d("mutated"); });
+  mutate(copy => { copy.privateConfigurationData.hermes.reviewedExecutableSha256 = d("substituted-hermes-executable"); });
   mutate(copy => { copy.privateConfigurationData.hermes.taskPolicy.tools = "browser"; });
   mutate(copy => { copy.privateConfigurationData.setupSources.final_review = { credential: "forbidden" }; });
   const getterPorts = { ...input.ports, get assertCurrentDelivery() { effects(); return () => {}; } };
@@ -637,7 +645,10 @@ test("the installed operator loader joins v2 custody, the exact Hermes graph and
   const loaded = await (installed.custody as { loadPrivateConfiguration(): Promise<unknown> }).loadPrivateConfiguration() as any;
   assert.equal(loaded.assemblyInput.runnerInput.privateStartupConfiguration.coordinator.queueWorker?.concurrency,
     f.queueWorker.concurrency);
-  assert.equal(loaded.setupSources.agent_readiness, loaded.assemblyInput.runnerInput);
+  assert.notEqual(loaded.setupSources.agent_readiness, loaded.assemblyInput.runnerInput,
+    "the activation-only holder must not become ordinary startup data");
+  assert.equal((loaded.setupSources.agent_readiness as { admissionPreparationInput?: unknown }).admissionPreparationInput,
+    loaded.assemblyInput.runnerInput.admissionPreparationInput);
   assert.equal(loaded.assemblyInput.operatorTrustedInputs.hermes021Local,
     loaded.assemblyInput.runnerInput.privateStartupConfiguration.coordinator.hermes021Local);
   assert.equal(f.hermesCalls(), 0); assert.equal(f.reads(), 0); assert.equal(f.appends(), 0);
@@ -647,6 +658,16 @@ test("the installed operator loader joins v2 custody, the exact Hermes graph and
 test("owner-host preflight names the first missing port and hands one opaque complete package to the existing operator", async t => {
   const f = await fixture(t), prepared = await installedOperatorLoaderPackage(t, f);
   const base = { schema: PRIVATE_INSTALLED_OWNER_HOST_INPUT_COMPOSITION_V1 } as Record<string, unknown>;
+  assert.deepEqual(inspectPrivateInstalledOwnerHostInputCompositionV1(base), {
+    schema: PRIVATE_INSTALLED_OWNER_HOST_INPUT_COMPOSITION_V1, status: "blocked", blockers: [
+      "installed_configuration_custody_input_missing", "staged_journal_sidecar_missing",
+      "journal_session_factory_missing", "hermes_startup_base_missing", "hermes_delivery_integrity_key_missing",
+      "hermes_assert_current_delivery_missing", "database_authority_runtime_missing", "protected_data_runtime_missing",
+      "first_owner_runtime_missing", "recovery_runtime_missing", "platform_service_runtime_missing",
+      "agent_readiness_runtime_missing", "final_review_runtime_missing", "journal_operation_deadline_missing",
+    ], performsEffect: false, readsProtectedConfiguration: false, opensNativeSession: false,
+    opensDatabase: false, startsService: false, startsWorker: false, invokesHermes: false,
+  }, "the owner receives one complete, inert prerequisite bundle before any setup is attempted");
   assert.deepEqual(preflightPrivateInstalledOwnerHostInputCompositionV1(base), {
     schema: PRIVATE_INSTALLED_OWNER_HOST_INPUT_COMPOSITION_V1, status: "blocked",
     blocker: "installed_configuration_custody_input_missing", performsEffect: false,
@@ -674,6 +695,8 @@ test("owner-host preflight names the first missing port and hands one opaque com
     final_review: { finalReview: {} },
   };
   base.setupRuntimes = setupRuntimes;
+  assert.deepEqual(inspectPrivateInstalledOwnerHostInputCompositionV1(base).blockers, [],
+    "the inventory becomes ready only when every fixed host boundary is present");
   const missingCases: [Record<string, unknown>, string][] = [
     [{ ...base, installedConfigurationCustodyInput: undefined }, "installed_configuration_custody_input_missing"],
     [{ ...base, stagedJournalSidecar: undefined }, "staged_journal_sidecar_missing"],
@@ -896,9 +919,15 @@ test("installed operator reports ready and reaches the exact first injected star
   const setupSources = Object.fromEntries(["database_authority", "protected_data", "first_owner", "recovery",
     "platform_service", "agent_readiness", "final_review"].map(stage => [stage, {}]));
   const setupRuntimes = Object.fromEntries(Object.keys(setupSources).map(stage => [stage, undefined]));
+  const claudeReadiness = createClaudeCodeLocalProcessReadinessV1({ planDigest: f.topology.planDigest, proofs: [
+    { proof: "installed_process_identity", state: "passed", evidenceDigest: d("claude-identity") },
+    { proof: "permission_boundary", state: "passed", evidenceDigest: d("claude-policy") },
+    { proof: "cancellation_and_restart_recovery", state: "passed", evidenceDigest: d("claude-recovery") },
+  ] });
   const localActivationStatus = { schedulerResultStorage: assessSchedulerResultStorageActivationSourceV1({ installationId: "fixture-installation",
       releaseDigest: f.plan.releaseDigest, topologyPlanDigest: f.topology.planDigest,
-      schedulerReadinessEvidence: undefined, protectedStorageRestoreEvidence: undefined }) };
+      schedulerReadinessEvidence: undefined, protectedStorageRestoreEvidence: undefined }),
+    claude: { readiness: claudeReadiness, planDigest: f.topology.planDigest } };
   const loaded = { prerequisiteInput: { installationId: "fixture-installation",
       topologyPlan: f.topology,
       releaseDigest: f.plan.releaseDigest, releasePreflight: {}, privatePlacement: {} },
@@ -915,6 +944,15 @@ test("installed operator reports ready and reaches the exact first injected star
     const activation = status.localActivationStatus;
     assert.equal(status.nextStage, "complete");
     assert.equal(activation.twoLocalWorkerPreflight.status, "missing_local_proof");
+    assert.deepEqual(activation.twoLocalWorkerPreflight.workers[1], {
+      worker: "claude", prerequisite: "claude_process_readiness", status: "prepared",
+      evidenceDigest: claudeReadiness.readinessDigest,
+    }, "the installed website status retains verified Claude readiness without enabling Claude");
+    assert.equal(activation.activationBundle.status, "blocked");
+    assert.equal(activation.activationBundle.components.length, 7,
+      "the single owner status must include Hermes and Claude activation gates together");
+    assert.deepEqual(activation.activationBundle.ownerActions, ["approve_claude_first_task"],
+      "a verified source readiness should surface only the next real owner action, not enable the worker");
     assert.equal(activation.schedulerResultStorage.state, "blocked");
     assert.equal(activation.schedulerResultStorage.performsEffect, false);
     assert.equal(activation.schedulerResultStorage.evidenceDigest,

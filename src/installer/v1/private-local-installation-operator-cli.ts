@@ -9,6 +9,7 @@ export { createPrivateInstalledLocalOperatorLoaderV1,
 export { consumePrivateInstalledOwnerHostInputCompositionV1,
   consumePrivateInstalledOwnerHostProviderV1,
   createPrivateInstalledOwnerHostProviderV1,
+  inspectPrivateInstalledOwnerHostInputCompositionV1,
   preflightPrivateInstalledOwnerHostInputCompositionV1,
   PRIVATE_INSTALLED_OWNER_HOST_INPUT_COMPOSITION_V1,
   PRIVATE_INSTALLED_OWNER_HOST_PROVIDER_V1 } from

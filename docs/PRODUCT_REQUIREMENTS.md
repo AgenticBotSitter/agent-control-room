@@ -68,6 +68,7 @@ tested version and limitations.
 | WORK-013 | Always | Preserve owner authority over consequential actions even when a project lead is active. | Negative tests refuse self-granted effect approval, expanded budget and foreign-project control. |
 | WORK-014 | MVP | Show a recommended worker, harness/model class, effort level and known cost/usage tradeoff before assignment while preserving the owner's final policy choice. | Selection explains its capability and limit basis; unknown price or usage remains unknown and a recommendation grants no authority. |
 | WORK-015 | Always | Version reusable worker/reviewer skills and bind any required procedure to the work packet without treating the skill as permission. | Workers can retrieve the exact procedure/version and stale or substituted skills fail compatibility checks. |
+| WORK-016 | Next | Let an owner choose a compatible model and effort level when assigning a task to a worker, including a provider when that worker supports more than one. | The browser shows only installation-qualified choices for the selected worker; the canonical task records a safe model-selection fingerprint and requested effort, while credentials, provider routing details and private paths remain outside task records and public logs. Unsupported or stale choices are refused before dispatch. |
 
 ## 4. Results, reviews, files and recovery
 

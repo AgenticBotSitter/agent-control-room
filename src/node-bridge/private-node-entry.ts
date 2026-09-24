@@ -7,6 +7,7 @@ export { createCodexLocalHostV1 } from "../harness/codex-v1/local-host";
 export { createCodexResultSenderV1 } from "../harness/codex-v1/result-sender";
 export { createCodexRecoveredResultRuntimeV1 } from "../harness/codex-v1/recovered-result-runtime";
 export { createCodexAppServerProcessSessionV1 } from "../harness/codex-v1/app-server-process-session";
+export { createCodexMacosOwnerTrustedProcessAcquisitionV1 } from "../harness/codex-v1/macos-owner-trusted-process";
 export { createCodexNativeProcessAcquisitionV1 } from "./codex-native-process";
 export { createNativeHttpsConnector } from "./native-connector";
 export { openPrivateNativeConfiguration } from "./private-native-configuration";

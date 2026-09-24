@@ -13,6 +13,7 @@ test('compiled one-task entry composes actual components and closes denied synth
   const release = await import('../dist-vps/server/nodeConnector.js');
   assert.equal(typeof release.openOwnedPrivateCodexConfigurationV1, 'function');
   assert.equal(typeof release.createCodexResultSenderV1, 'function');
+  assert.equal(typeof release.createCodexMacosOwnerTrustedProcessAcquisitionV1, 'function');
   assert.equal(typeof release.createCodexRecoveredResultRuntimeV1, 'function');
   const f = await nativeNodeRuntimeFixture();
   t.after(() => f.close());

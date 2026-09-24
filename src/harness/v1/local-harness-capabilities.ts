@@ -1,7 +1,6 @@
 import type { ConnectorOperationNameV1, ConnectorProfileV1 } from "./connector-profile";
 import { claudeCodeConnectorProfileV1 } from "../claude-code-v1/connector-profile";
 import { hermes021MacosLocalConnectorProfileV1 } from "../hermes-021-v1/connector-profile";
-import { summarizeCodexMacosCustodyReadinessV1 } from "../codex-v1/macos-custody-readiness";
 import { summarizeClaudeCodeLocalProcessReadinessV1 } from "../claude-code-v1/local-process-readiness";
 import { summarizeLocalSupervisorReadinessV1 } from "./local-supervisor-readiness";
 import { summarizeInstallationReadinessV1, type InstallationReadinessV1 } from "./installation-readiness";
@@ -74,12 +73,12 @@ export const localHarnessCapabilitiesV1: readonly LocalHarnessCapabilityV1[] = O
     label: "Codex",
     state: "not_available",
     stateLabel: "Not available on this Mac yet",
-    summary: "Control Room has the App Server task and recovery contracts, but local macOS execution deliberately remains off.",
-    firstSupportedWork: "No local work is enabled on this Mac until the separate process-custody proof passes.",
-    safeNow: "Retain the source contracts for a future App Server task and recovery path. This does not inspect or start Codex.",
-    sourceOnly: "The App Server task and recovery contracts are source-only. They are not evidence of a local Codex installation, identity or private-state access.",
-    remainingSetupCategory: "macOS process and private-state custody qualification",
-    nextStep: "First prove a safe macOS process and private-credential custody design, then perform the separate owner-attended qualification.",
+    summary: "Control Room has the App Server task and recovery contracts, but local macOS execution remains off because Codex does not yet provide the protected home-directory mechanism this product requires.",
+    firstSupportedWork: "No local Codex work is enabled on this Mac. Hermes Agent and Claude Code can complete the supported local-worker path without it.",
+    safeNow: "Keep Codex status visible as unavailable and use the supported local Hermes or Claude route. This does not inspect or start Codex.",
+    sourceOnly: "The App Server task and recovery contracts are source-only. A saved Mac custody record cannot make the pathname-based private state safe or start a local Codex worker.",
+    remainingSetupCategory: "Upstream protected-home support for macOS",
+    nextStep: "Wait for a supported Codex protected-home interface, or use the separately supported Linux worker route. Installing, restarting, or re-qualifying the Mac app will not bypass this safety limit.",
     operations: Object.freeze({ submit: "unsupported", result: "unsupported", cancel: "unsupported", read: "unsupported" }),
   }),
 ]);
@@ -92,7 +91,7 @@ export const localHarnessCapabilitiesV1: readonly LocalHarnessCapabilityV1[] = O
  * source-only description.
  */
 export function summarizeLocalHarnessCapabilitiesV1(plan?: InstallationTopologyPlanV1,
-  readiness?: InstallationReadinessV1, codexMacosCustodyReadiness?: unknown, claudeCodeLocalProcessReadiness?: unknown,
+  readiness?: InstallationReadinessV1, _codexMacosCustodyReadiness?: unknown, claudeCodeLocalProcessReadiness?: unknown,
   localBackupRestoreVerified = false, localSupervisorReadiness?: unknown): readonly LocalHarnessCapabilityV1[] {
   if (!plan || !plan.requiredProofs.includes("local_owner_qualification") || !plan.requiredProofs.includes("local_runner_bridge"))
     return localHarnessCapabilitiesV1;
@@ -101,15 +100,13 @@ export function summarizeLocalHarnessCapabilitiesV1(plan?: InstallationTopologyP
   const hermes = localHarnessCapabilitiesV1[0]!;
   const claude = localHarnessCapabilitiesV1[1]!;
   const codex = localHarnessCapabilitiesV1[2]!;
-  const custody = summarizeCodexMacosCustodyReadinessV1(plan.planDigest, codexMacosCustodyReadiness);
-  const codexCapability = custody.state === "blocked" ? Object.freeze({ ...codex, state: "setup_needs_attention" as const,
-    stateLabel: "Mac safety proof needs attention", summary: "Control Room has not enabled Codex on this Mac. A required process or private-state custody proof is unavailable or failed.",
-    remainingSetupCategory: "Corrective macOS custody proof",
-    nextStep: "Correct the specific owner-run custody proof, record fresh non-secret evidence, then complete the separate exact-harness qualification." })
-    : custody.state === "custody_recorded" ? Object.freeze({ ...codex, state: "setup_required" as const,
-      stateLabel: "Mac safety prerequisites recorded", summary: "The two Mac custody prerequisites are recorded, but Control Room still has not started Codex.",
-      remainingSetupCategory: "Owner-attended exact-harness qualification",
-      nextStep: "Perform the separate owner-attended exact-harness qualification. This record alone cannot enable or launch Codex." }) : codex;
+  // A status record cannot fix the missing product capability on macOS.  Codex
+  // still needs an upstream-supported protected home-directory mechanism; the
+  // existing pathname-based state location is not safe enough.  Keep this
+  // route unavailable even if a caller presents a structurally valid custody
+  // record, rather than leading an owner through a qualification that cannot
+  // safely enable a worker.
+  const codexCapability = codex;
   const claudeReadiness = summarizeClaudeCodeLocalProcessReadinessV1(plan.planDigest, claudeCodeLocalProcessReadiness);
   const supervisor = summarizeLocalSupervisorReadinessV1(plan.planDigest, localSupervisorReadiness);
   const claudeCapability = claudeReadiness.state === "blocked" ? Object.freeze({ ...claude, state: "setup_needs_attention" as const,

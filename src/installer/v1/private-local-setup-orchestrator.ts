@@ -55,7 +55,8 @@ type Runtime = Readonly<{ journal: Journal; postgres?: PrivatePostgresOwnerRunti
   protectedData?: PrivateProtectedRootOwnerRuntimeV1; firstOwner?: PrivateFirstOwnerRuntimeV1;
   recovery?: PrivateRecoveryOwnerRuntimeV1; platformService?: PrivateMacosServiceOwnerRuntimeV1;
   agentReadiness?: Readonly<{ signal: AbortSignal; controlDeadlineMs: number;
-    confirmOwnerAttachedTerminal(context: PrivateLocalHermesAdmissionRunnerContextV1): Promise<unknown> }>;
+    confirmOwnerAttachedTerminal(context: PrivateLocalHermesAdmissionRunnerContextV1): Promise<unknown>;
+    qualifyOwnerAuthorizedRunner?(context: PrivateLocalHermesAdmissionRunnerContextV1): Promise<object> }>;
   finalReview?: Readonly<{ signal: AbortSignal; controlDeadlineMs: number;
     confirmOwnerAttached(context: PrivateInstallationFinalReviewContextV1): Promise<unknown> }> }>;
 
@@ -75,7 +76,7 @@ export type PrivateLocalSetupOrchestratorResultV1 = Readonly<{
   exposesBrowserEffect: false;
   suppliesNativeEffect: false;
   retriesUncertainEffect: false;
-  invokesHermes: false;
+  invokesHermes: boolean;
 }>;
 
 const installationIdPattern = /^[a-z0-9](?:[a-z0-9-]{1,61}[a-z0-9])?$/u;
@@ -182,7 +183,21 @@ function capturePlatformServiceRuntime(value: unknown): PrivateMacosServiceOwner
 }
 
 async function captureAgentReadinessSource(value: unknown, input: Captured) {
-  const source = exact(value, ["admissionPreparationInput", "privateStartupConfiguration", "startupAdmissionBinding"]);
+  const sourceRecord = record(value);
+  const permitted = ["admissionPreparationInput", "privateStartupConfiguration", "startupAdmissionBinding",
+    "ownerAuthorizedRunnerProvider", "hermesQualificationRuntime"];
+  if (Object.keys(sourceRecord).some(name => !permitted.includes(name))
+    || ["admissionPreparationInput", "privateStartupConfiguration", "startupAdmissionBinding"].some(name =>
+      !Object.prototype.hasOwnProperty.call(sourceRecord, name))) return refused();
+  const source = Object.freeze({ admissionPreparationInput: sourceRecord.admissionPreparationInput,
+    privateStartupConfiguration: sourceRecord.privateStartupConfiguration,
+    startupAdmissionBinding: sourceRecord.startupAdmissionBinding });
+  const ownerAuthorizedRunnerProvider = sourceRecord.ownerAuthorizedRunnerProvider;
+  const hermesQualificationRuntime = sourceRecord.hermesQualificationRuntime;
+  if (ownerAuthorizedRunnerProvider !== undefined && (!ownerAuthorizedRunnerProvider
+    || typeof ownerAuthorizedRunnerProvider !== "object")) return refused();
+  if (hermesQualificationRuntime !== undefined && (!hermesQualificationRuntime
+    || typeof hermesQualificationRuntime !== "object")) return refused();
   const admission = exact(source.admissionPreparationInput, ["installationId", "installationPlan", "topologyInput",
     "workerBinding", "installationBinding", "installationBindingInput"]);
   const admissionPreparationInput = clonePlain(admission);
@@ -228,15 +243,22 @@ async function captureAgentReadinessSource(value: unknown, input: Captured) {
       admissionRequestDigest: preparation.admissionRequestDigest,
     });
   } catch { return refused(); }
-  return Object.freeze({ admissionPreparationInput, privateStartupConfiguration, startupAdmissionBinding, ...plans });
+  return Object.freeze({ admissionPreparationInput, privateStartupConfiguration, startupAdmissionBinding, ...plans,
+    ...(ownerAuthorizedRunnerProvider ? { ownerAuthorizedRunnerProvider } : {}),
+    ...(hermesQualificationRuntime ? { hermesQualificationRuntime } : {}) });
 }
 
 function captureAgentReadinessRuntime(value: unknown) {
-  const runtime = exact(value, ["signal", "controlDeadlineMs", "confirmOwnerAttachedTerminal"]);
+  const captured = record(value), names = Object.keys(captured);
+  if (names.some(name => !["signal", "controlDeadlineMs", "confirmOwnerAttachedTerminal", "qualifyOwnerAuthorizedRunner"].includes(name))
+    || ["signal", "controlDeadlineMs", "confirmOwnerAttachedTerminal"].some(name => !names.includes(name))) return refused();
+  const runtime = captured;
   if (typeof runtime.confirmOwnerAttachedTerminal !== "function") return refused();
+  if (runtime.qualifyOwnerAuthorizedRunner !== undefined && typeof runtime.qualifyOwnerAuthorizedRunner !== "function") return refused();
   const owner = value as NonNullable<Runtime["agentReadiness"]>;
   return Object.freeze({ signal: signal(runtime.signal), controlDeadlineMs: deadline(runtime.controlDeadlineMs, 30_000),
-    confirmOwnerAttachedTerminal: owner.confirmOwnerAttachedTerminal.bind(owner) });
+    confirmOwnerAttachedTerminal: owner.confirmOwnerAttachedTerminal.bind(owner),
+    ...(runtime.qualifyOwnerAuthorizedRunner ? { qualifyOwnerAuthorizedRunner: owner.qualifyOwnerAuthorizedRunner!.bind(owner) } : {}) });
 }
 
 function captureFinalReviewRuntime(value: unknown) {
@@ -495,11 +517,14 @@ async function agentReadiness(input: Captured, journal: Journal, current: Instal
   await append(journal, input.installationId, source.running, true);
   const runnerInput = Object.freeze({ admissionPreparationInput: source.admissionPreparationInput,
     privateStartupConfiguration: source.privateStartupConfiguration,
-    startupAdmissionBinding: source.startupAdmissionBinding });
+    startupAdmissionBinding: source.startupAdmissionBinding,
+    ...(source.ownerAuthorizedRunnerProvider ? { ownerAuthorizedRunnerProvider: source.ownerAuthorizedRunnerProvider } : {}),
+    ...(source.hermesQualificationRuntime ? { hermesQualificationRuntime: source.hermesQualificationRuntime } : {}) });
   const result = await runPrivateLocalHermesAdmissionV1(runnerInput, Object.freeze({ journal,
     signal: runtime.signal, controlDeadlineMs: runtime.controlDeadlineMs,
-    confirmOwnerAttachedTerminal: runtime.confirmOwnerAttachedTerminal }));
-  if (result.invokesHermes !== false) return refused();
+    confirmOwnerAttachedTerminal: runtime.confirmOwnerAttachedTerminal,
+    ...(runtime.qualifyOwnerAuthorizedRunner ? { qualifyOwnerAuthorizedRunner: runtime.qualifyOwnerAuthorizedRunner } : {}) }));
+  if (runnerInput.ownerAuthorizedRunnerProvider === undefined ? result.invokesHermes !== false : result.invokesHermes !== true) return refused();
   const settlement = Object.freeze({ runnerInput, terminalConfirmation: result.terminalConfirmation });
   let settled;
   try { settled = await confirmLocalHermesAdmissionTerminalV1(settlement, { journal }); }

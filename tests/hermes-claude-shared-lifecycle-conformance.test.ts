@@ -99,11 +99,12 @@ test("Hermes and Claude run concurrently through one durable lifecycle without c
     HERMES_021_MACOS_LOCAL_ADAPTER_V1, "executor:marvin", HERMES_021_MACOS_LOCAL_START_OPERATION_V1,
     HERMES_021_MACOS_CONNECTOR_PROFILE_DIGEST_V1), integrityKey: new Uint8Array(32).fill(61),
     reviewIntegrityKey: f.reviewKey, checkpoints: f.checkpoints,
-    localAdapterAdmission: { enabledAdapters: [HERMES_021_MACOS_LOCAL_ADAPTER_V1] } }, () => now);
+    localAdapterAdmission: { enabledAdapters: [HERMES_021_MACOS_LOCAL_ADAPTER_V1] } }, () => now,
+  undefined, routedInspection);
   const claudePlanner = new TaskExecutionPlanner(f.db, f.scope, { template: makeTemplate("template:shared-claude",
     CLAUDE_CODE_LOCAL_ADAPTER_V1, "executor:claude", CLAUDE_CODE_LOCAL_START_OPERATION_V1,
     CLAUDE_CODE_CONNECTOR_PROFILE_DIGEST_V1), integrityKey: new Uint8Array(32).fill(62),
-    reviewIntegrityKey: f.reviewKey, checkpoints: f.checkpoints }, () => now);
+    reviewIntegrityKey: f.reviewKey, checkpoints: f.checkpoints }, () => now, undefined, routedInspection);
   const hermesSource = await f.tasks.propose(f.identity, binding.projectId, { ...taskDraft, title: "Hermes shared lifecycle" }, "shared-hermes-source");
   const claudeSource = await f.tasks.propose(f.identity, binding.projectId, { ...taskDraft, title: "Claude shared lifecycle" }, "shared-claude-source");
   const hermesPlan = await hermesPlanner.plan(f.identity, binding.projectId, hermesSource.receipt.jobId,
@@ -264,6 +265,33 @@ test("Hermes and Claude run concurrently through one durable lifecycle without c
     draft(claudeReview, "changes_requested", "Please correct this result."), "shared-claude-correct");
   assert.equal(accepted.replayed, false); assert.equal(corrected.receipt.decision, "changes_requested");
 
+  // A requested change is not a hidden retry of the saved Claude run.  It
+  // must become one new, linked Claude plan through the same controller
+  // planner, to be assigned and delivered later through the ordinary queue.
+  const correction = {
+    runId: claudeReview.run_id,
+    targetId: draft(claudeReview, "changes_requested", "Please correct this result.").targetId,
+    targetDigest: draft(claudeReview, "changes_requested", "Please correct this result.").targetDigest,
+    contentHash: durableResultReceiptSchemaV1.parse(claudeReview.receipt).contentHash,
+    reviewId: corrected.receipt.reviewId,
+    feedback: "Please correct this result.",
+  };
+  const revised = await claudePlanner.revise(f.identity, binding.projectId, claudePlan.receipt.jobId,
+    correction, new AbortController().signal);
+  assert.equal(revised.replayed, false);
+  assert.equal(revised.receipt.startsWork, false);
+  assert.equal(revised.receipt.executionAvailability, "requires_separate_assignment_and_approval");
+  const revisedPlan = await claudePlanner.read(revised.receipt.jobId);
+  assert.ok(revisedPlan && revisedPlan.schema === "control-room.task-execution-plan/v10");
+  if (!revisedPlan || revisedPlan.schema !== "control-room.task-execution-plan/v10") throw new Error("missing Claude revision plan");
+  assert.equal(revisedPlan.revision.fromRunId, claudeReview.run_id);
+  assert.equal(revisedPlan.revision.reviewId, corrected.receipt.reviewId);
+  assert.equal(revisedPlan.job.state, "proposed");
+  const revisedReplay = await claudePlanner.revise(f.identity, binding.projectId, claudePlan.receipt.jobId,
+    correction, new AbortController().signal);
+  assert.equal(revisedReplay.replayed, true);
+  assert.deepEqual(revisedReplay.receipt, revised.receipt);
+
   now += 1000;
   const hermesRecovered = await createHermes(true).deliver(hermesTarget, new AbortController().signal);
   const claudeRecovered = await executeAssignedClaudeCodeLocalTaskV1(claudeExecution(true), claudeReference, new AbortController().signal);
@@ -286,7 +314,7 @@ test("Hermes and Claude run concurrently through one durable lifecycle without c
   const requests = [
     { tenantId: binding.tenantId, runId: hermesReview.run_id, targetDigest: draft(hermesReview, "accepted", "").targetDigest,
       contentHash: durableResultReceiptSchemaV1.parse(hermesReview.receipt).contentHash },
-    { tenantId: binding.tenantId, runId: claudeReview.run_id, targetDigest: draft(claudeReview, "changes_requested", "").targetDigest,
+    { tenantId: binding.tenantId, runId: claudeReview.run_id, targetDigest: draft(claudeReview, "changes_requested", "Please correct this result.").targetDigest,
       contentHash: durableResultReceiptSchemaV1.parse(claudeReview.receipt).contentHash },
   ] as const;
   const verification = new NativeResultVerificationService(f.db, f.ownerConfig, [scenario], () => now, durableInspection);

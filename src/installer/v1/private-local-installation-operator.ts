@@ -7,8 +7,16 @@ import { verifyInstallationPlanV1, type InstallationPlanV1 } from "./installatio
 import { InstallationPlanFilesystemJournalV1 } from "./installation-plan-journal";
 import { createPrivateLocalInstallationRuntimeAssemblyV1 } from "./private-local-installation-runtime-assembly";
 import { projectTwoLocalWorkerActivationPreflightV1 } from "./two-local-worker-activation-preflight";
+import { verifyHermes021MacosProtectedWorkerReadinessV1 } from
+  "../../harness/hermes-021-v1/protected-worker-readiness";
+import { verifyClaudeCodeLocalProcessReadinessV1 } from
+  "../../harness/claude-code-v1/local-process-readiness";
 import { assessSchedulerResultStorageActivationSourceV1, verifySchedulerResultStorageActivationSourceV1,
   type SchedulerResultStorageActivationSourceV1 } from "./scheduler-result-storage-activation-source";
+import { composeThreeWorkerActivationBundlePreflightV1,
+  createThreeWorkerActivationBundleCustodyV1,
+  recordClaudeThreeWorkerActivationSourceProofV1,
+  recordHermesThreeWorkerActivationSourceProofV1 } from "./three-worker-activation-bundle-preflight";
 
 /**
  * Installed-process composition only.  The custody implementation is supplied
@@ -41,7 +49,11 @@ type CapturedLoaded = Readonly<{
   startupDependencies: unknown;
   setupSources: Readonly<Record<SetupStage, unknown>>;
   setupRuntimes: Readonly<Record<SetupStage, unknown | undefined>>;
-  localActivationStatus?: Readonly<{ schedulerResultStorage: SchedulerResultStorageActivationSourceV1 }>;
+  localActivationStatus?: Readonly<{
+    schedulerResultStorage: SchedulerResultStorageActivationSourceV1;
+    hermes?: Readonly<{ readiness: unknown; currentInput: unknown }>;
+    claude?: Readonly<{ readiness: unknown; planDigest: string }>;
+  }>;
 }>;
 type Loaded = CapturedLoaded & Readonly<{
   assembly: ReturnType<typeof createPrivateLocalInstallationRuntimeAssemblyV1>;
@@ -67,6 +79,17 @@ function exact(value: unknown, names: readonly string[]): Readonly<Record<string
       const descriptor = Object.getOwnPropertyDescriptor(value, key);
       return !descriptor || descriptor.enumerable !== true || !("value" in descriptor);
     })) return refuse();
+  return value as Readonly<Record<string, unknown>>;
+}
+
+function allowed(value: unknown, required: readonly string[], optional: readonly string[] = []): Readonly<Record<string, unknown>> {
+  if (!value || typeof value !== "object" || types.isProxy(value) || Array.isArray(value)
+    || Object.getPrototypeOf(value) !== Object.prototype || Object.getOwnPropertySymbols(value).length !== 0) return refuse();
+  const names = Object.getOwnPropertyNames(value), permitted = [...required, ...optional];
+  if (names.some(name => !permitted.includes(name)) || required.some(name => !names.includes(name)) || names.some(name => {
+    const descriptor = Object.getOwnPropertyDescriptor(value, name);
+    return !descriptor || descriptor.enumerable !== true || !("value" in descriptor);
+  })) return refuse();
   return value as Readonly<Record<string, unknown>>;
 }
 
@@ -249,15 +272,34 @@ function captureLoaded(value: unknown): CapturedLoaded {
   const binding = prerequisiteBinding(prerequisiteInput);
   let localActivationStatus: CapturedLoaded["localActivationStatus"];
   if (Object.prototype.hasOwnProperty.call(loaded, "localActivationStatus")) {
-    // Capture the entire caller-owned graph before a Zod verifier sees it.
-    // That preserves the operator's no-accessor/no-proxy boundary even for
-    // deeply nested preflight material.
-    const capturedStatus = captureStrictData(loaded.localActivationStatus);
-    const status = exact(capturedStatus, ["schedulerResultStorage"]);
+    // This value originates only in protected installed configuration. Capture
+    // each optional worker proof before verifying it, so a browser request or
+    // a later caller mutation cannot make an unavailable worker look ready.
+    const capturedStatus = captureData(loaded.localActivationStatus);
+    const status = allowed(capturedStatus, ["schedulerResultStorage"], ["hermes", "claude"]);
     const schedulerResultStorage = verifySchedulerResultStorageActivationSourceV1(status.schedulerResultStorage);
     if (schedulerResultStorage.installationId !== binding.installationId || schedulerResultStorage.releaseDigest !== binding.releaseDigest
       || schedulerResultStorage.topologyPlanDigest !== binding.topologyPlan.planDigest) return refuse();
-    localActivationStatus = Object.freeze({ schedulerResultStorage });
+    let hermes: Readonly<{ readiness: unknown; currentInput: unknown }> | undefined;
+    if (Object.prototype.hasOwnProperty.call(status, "hermes")) {
+      const value = exact(status.hermes, ["readiness", "currentInput"]);
+      // Re-derive the readiness record now. This retains the established
+      // protected Hermes proof boundary rather than trusting a saved summary.
+      const readiness = verifyHermes021MacosProtectedWorkerReadinessV1(value.readiness, value.currentInput);
+      if (readiness.installationId !== binding.installationId || readiness.releaseDigest !== binding.releaseDigest
+        || readiness.topologyPlanDigest !== binding.topologyPlan.planDigest) return refuse();
+      hermes = Object.freeze({ readiness, currentInput: value.currentInput });
+    }
+    let claude: Readonly<{ readiness: unknown; planDigest: string }> | undefined;
+    if (Object.prototype.hasOwnProperty.call(status, "claude")) {
+      const value = exact(status.claude, ["readiness", "planDigest"]);
+      const readiness = verifyClaudeCodeLocalProcessReadinessV1(value.readiness);
+      if (typeof value.planDigest !== "string" || value.planDigest !== binding.topologyPlan.planDigest
+        || readiness.planDigest !== value.planDigest) return refuse();
+      claude = Object.freeze({ readiness, planDigest: value.planDigest });
+    }
+    localActivationStatus = Object.freeze({ schedulerResultStorage,
+      ...(hermes === undefined ? {} : { hermes }), ...(claude === undefined ? {} : { claude }) });
   }
   return Object.freeze({ prerequisiteInput,
     assemblyInput: captureAssemblyInput(loaded.assemblyInput), startupDependencies: captureStartupDependencies(loaded.startupDependencies),
@@ -271,15 +313,36 @@ function localActivationStatus(configured: CapturedLoaded, binding: ReturnType<t
   // only the honest empty projection and the existing blocked scheduler/store
   // assessment; do not infer qualification or readiness from configuration.
   const retainedScheduler = configured.localActivationStatus?.schedulerResultStorage;
+  const activationCustody = createThreeWorkerActivationBundleCustodyV1({ installationId: binding.installationId,
+    releaseDigest: binding.releaseDigest, topologyPlanDigest: binding.topologyPlan.planDigest });
+  const hermes = configured.localActivationStatus?.hermes;
+  const claude = configured.localActivationStatus?.claude;
+  const localWorkers = projectTwoLocalWorkerActivationPreflightV1({
+    ...(hermes ? { hermes } : {}), ...(claude ? { claude } : {}),
+  });
+  const activationProofs = [
+    ...(hermes ? [recordHermesThreeWorkerActivationSourceProofV1({
+      aggregate: activationCustody.aggregate, readiness: hermes.readiness, currentInput: hermes.currentInput,
+    })] : []),
+    ...(claude ? [recordClaudeThreeWorkerActivationSourceProofV1({
+      aggregate: activationCustody.aggregate, readiness: claude.readiness,
+    })] : []),
+  ];
   return Object.freeze({
-    // No caller-provided Hermes/Claude preflight is accepted here. The current
-    // source has no exact installation binding for it, so status may state only
-    // the derived missing-proof condition until that contract exists.
-    twoLocalWorkerPreflight: projectTwoLocalWorkerActivationPreflightV1({}),
+    // The optional records were re-derived from protected installed inputs in
+    // `captureLoaded`. This is presentation only: even a prepared result here
+    // does not enable a worker or grant task authority.
+    twoLocalWorkerPreflight: localWorkers,
     schedulerResultStorage: retainedScheduler ?? assessSchedulerResultStorageActivationSourceV1({
       installationId: binding.installationId, releaseDigest: binding.releaseDigest,
       topologyPlanDigest: binding.topologyPlan.planDigest,
       schedulerReadinessEvidence: undefined, protectedStorageRestoreEvidence: undefined }),
+    // This output is a redacted, read-only checklist. It is created from the
+    // installed plan binding only and accepts no caller-supplied readiness or
+    // action capability, so status cannot manufacture a worker enablement.
+    activationBundle: composeThreeWorkerActivationBundlePreflightV1({
+      aggregate: activationCustody.aggregate, sourceProofs: activationProofs,
+    }),
   });
 }
 

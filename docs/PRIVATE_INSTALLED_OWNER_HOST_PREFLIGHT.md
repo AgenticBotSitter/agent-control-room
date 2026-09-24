@@ -13,9 +13,11 @@ node scripts/preflight-private-local-owner-host.mjs
 
 The command verifies the exact prepared release, loads only the release-bound
 Control Room entry, creates the callback-free one-use owner-host provider, and
-prints the first concrete missing boundary. It does not read private paths or
-credentials, open the installation journal or PostgreSQL, start a service or
-worker, or invoke Hermes or Claude.
+prints the first concrete missing boundary **and** the complete ordered list
+of remaining prerequisites. That gives the owner one setup bundle rather than
+a sequence of surprise prompts. It does not read private paths or credentials,
+open the installation journal or PostgreSQL, start a service or worker, or
+invoke Hermes or Claude.
 
 At the current source checkpoint its expected result is
 `installed_configuration_custody_input_missing`. That is a real product gap,

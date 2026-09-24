@@ -28,7 +28,8 @@ test("local harness capabilities are truthful, bounded and installation-safe", (
   assert.equal(claude.remainingSetupCategory, "Installed-process and permission qualification");
   assert.equal(codex.state, "not_available");
   assert.equal(codex.operations.submit, "unsupported");
-  assert.equal(codex.remainingSetupCategory, "macOS process and private-state custody qualification");
+  assert.equal(codex.remainingSetupCategory, "Upstream protected-home support for macOS");
+  assert.match(codex.nextStep, /protected-home/i);
   const rendered = JSON.stringify(localHarnessCapabilitiesV1);
   assert.doesNotMatch(rendered, /\/Users\/|https?:\/\/|(?:token|password|profile)\s*[=:]/i);
 });
@@ -90,7 +91,7 @@ test("a recorded Hermes runner proof remains visible while other local setup pro
   assert.doesNotMatch(JSON.stringify(hermes), /sha256:|worker:marvin|profile|provider|model/i);
 });
 
-test("macOS Codex custody readiness is plan-bound and never becomes launch authority", () => {
+test("a recorded macOS Codex custody shape never overrides the unavailable product route", () => {
   const plan = planInstallationTopologyV1({ databaseAuthorityDigest: sha256Digest("database"), schedulerAuthorityDigest: sha256Digest("scheduler"),
     currentRoutes: [{ kind: "local", workerId: "worker:codex", adapterId: "codex-app-server/v1", adapterRevision: "00570550" }],
     requestedRoutes: [{ kind: "local", workerId: "worker:codex", adapterId: "codex-app-server/v1", adapterRevision: "00570550" }] });
@@ -99,15 +100,15 @@ test("macOS Codex custody readiness is plan-bound and never becomes launch autho
     { proof: "protected_private_state_handle", state: "passed", evidenceDigest: sha256Digest("private-state") },
   ] });
   const codex = summarizeLocalHarnessCapabilitiesV1(plan, undefined, custody).find(value => value.id === "codex")!;
-  assert.equal(codex.state, "setup_required");
-  assert.match(codex.stateLabel, /safety prerequisites/i);
-  assert.match(codex.summary, /has not started Codex/i);
-  assert.match(codex.nextStep, /cannot enable or launch Codex/i);
-  assert.equal(codex.remainingSetupCategory, "Owner-attended exact-harness qualification");
+  assert.equal(codex.state, "not_available");
+  assert.match(codex.summary, /protected home-directory/i);
+  assert.match(codex.nextStep, /Linux worker route/i);
+  assert.equal(codex.remainingSetupCategory, "Upstream protected-home support for macOS");
   assert.doesNotMatch(JSON.stringify(custody), /(?:path|token|password|credential|CODEX_HOME)\s*[=:]/i);
   const otherPlanCustody = createCodexMacosCustodyReadinessV1({ ...custody, planDigest: sha256Digest("other"),
     proofs: custody.proofs });
-  assert.throws(() => summarizeLocalHarnessCapabilitiesV1(plan, undefined, otherPlanCustody), /plan_mismatch/);
+  const foreign = summarizeLocalHarnessCapabilitiesV1(plan, undefined, otherPlanCustody).find(value => value.id === "codex")!;
+  assert.deepEqual(foreign, codex, "an unrelated custody record cannot alter the unavailable Mac route");
 });
 
 test("recorded Claude process proof remains owner-enabled rather than live", () => {
@@ -125,7 +126,7 @@ test("recorded Claude process proof remains owner-enabled rather than live", () 
   assert.equal(claude.operations.submit, "unsupported");
 });
 
-test("failed macOS Codex custody evidence remains an actionable refusal", () => {
+test("failed macOS Codex custody evidence cannot turn an unsupported route into an owner repair task", () => {
   const plan = planInstallationTopologyV1({ databaseAuthorityDigest: sha256Digest("database"), schedulerAuthorityDigest: sha256Digest("scheduler"),
     currentRoutes: [{ kind: "local", workerId: "worker:codex", adapterId: "codex-app-server/v1", adapterRevision: "00570550" }],
     requestedRoutes: [{ kind: "local", workerId: "worker:codex", adapterId: "codex-app-server/v1", adapterRevision: "00570550" }] });
@@ -134,6 +135,6 @@ test("failed macOS Codex custody evidence remains an actionable refusal", () => 
     { proof: "protected_private_state_handle", state: "failed" },
   ] });
   const codex = summarizeLocalHarnessCapabilitiesV1(plan, undefined, custody).find(value => value.id === "codex")!;
-  assert.equal(codex.state, "setup_needs_attention");
-  assert.match(codex.nextStep, /owner-run custody proof/i);
+  assert.equal(codex.state, "not_available");
+  assert.match(codex.nextStep, /will not bypass this safety limit/i);
 });

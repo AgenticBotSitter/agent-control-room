@@ -16,7 +16,10 @@ import { HERMES_021_MACOS_CONNECTOR_PROFILE_DIGEST_V1, HERMES_021_SOURCE_REVISIO
 import { Hermes021MacosDispatchPreparationV1 } from "../../harness/hermes-021-v1/dispatch-preparation";
 import { HERMES_021_MACOS_LOCAL_ADAPTER_V1, HERMES_021_MACOS_LOCAL_CAPABILITY_V1,
   hermes021MacosLocalBindingSchemaV1 } from "../../harness/hermes-021-v1/macos-local-worker";
-import { captureHermes021MacosSubprocessHostConfigurationV1 } from
+import { assertHermes021MacosOwnerAuthorizedLocalOnlyRunnerBindingV1,
+  assertHermes021MacosOwnerAuthorizedLocalOnlyRunnerProviderBindingV1,
+  createHermes021MacosOwnerAuthorizedLocalOnlyRunnerProviderV1,
+  captureHermes021MacosSubprocessHostConfigurationV1 } from
   "../../harness/hermes-021-v1/subprocess-stream-json-host";
 import type { DatabaseClient, DatabaseSession } from "../../persistence/database";
 import { canonicalJson, sha256Digest } from "../../security/canonical-digest";
@@ -47,6 +50,8 @@ import type { PrivateInstallationFinalReviewContextV1 } from "./private-installa
 import { PRIVATE_INSTALLED_CONFIGURATION_MANIFEST_BOUND_PREPARATION_V1,
   PRIVATE_INSTALLED_CONFIGURATION_NATIVE_SIDECAR_IDENTITY_V1 } from
   "./private-installed-configuration-custody";
+import { createPrivateLocalHermesOwnerQualificationRuntimeV1 } from
+  "./private-local-hermes-owner-qualification-runtime";
 
 /**
  * Pure installed-data -> callable-graph composition.  It deliberately stops
@@ -63,7 +68,8 @@ export const PRIVATE_INSTALLED_LOCAL_HERMES_REVIEWED_GRAPH_CAPABILITY_V1 =
   "control-room.private-installed-local-hermes-reviewed-graph-capability/v1" as const;
 
 type ReviewedHermesGraph = Readonly<{ tenantId: string; execution: unknown; results: unknown;
-  assertAuthority: (delivery: unknown) => void; subprocess: unknown; installedCompositionIdentity: unknown }>;
+  assertAuthority: (delivery: unknown) => void; subprocess: unknown; installedCompositionIdentity: unknown;
+  ownerAuthorizedRunner?: object; ownerAuthorizedRunnerProvider?: object }>;
 const reviewedHermesGraphs = new WeakMap<object, ReviewedHermesGraph>();
 
 function mintReviewedHermesGraph(graph: ReviewedHermesGraph): object {
@@ -324,12 +330,17 @@ function parseConfiguration(value: unknown, prepared: ReturnType<typeof parsePre
   if (settledInstallationPlan.releaseDigest !== releaseDigest
     || settledInstallationPlan.topologyPlanDigest !== topology.planDigest
     || (!formsAgentReadiness && settledInstallationPlan.stages.some(stage => stage.state !== "passed"))) return refused();
-  const hermes = exact(config.hermes, ["admissionPreparationInput", "admissionRequestDigest", "runnerConfiguration", "taskPolicy"]);
+  const hermes = exact(config.hermes, ["admissionPreparationInput", "admissionRequestDigest", "runnerConfiguration",
+    "reviewedExecutableSha256", "taskPolicy"]);
   const admission = exact(hermes.admissionPreparationInput, ["installationId", "installationPlan", "topologyInput",
     "workerBinding", "installationBinding", "installationBindingInput"]);
   const plan = verifyInstallationPlanV1(admission.installationPlan);
   const workerBinding = Object.freeze(hermes021MacosLocalBindingSchemaV1.parse(admission.workerBinding));
   const runnerConfiguration = captureHermes021MacosSubprocessHostConfigurationV1(hermes.runnerConfiguration);
+  // This is not a credential. It is the fingerprint of the exact local
+  // Hermes program the owner reviewed. The later owner-attended activation
+  // bridge must re-attest this value before it can mint a one-use runner.
+  const reviewedExecutableSha256 = digest.parse(hermes.reviewedExecutableSha256);
   const taskPolicy = Object.freeze(taskPolicySchema.parse(hermes.taskPolicy));
   if (admission.installationId !== prepared.installationId || plan.releaseDigest !== releaseDigest
     || plan.topologyPlanDigest !== topology.planDigest || workerBinding.sourceRevision !== HERMES_021_SOURCE_REVISION_V1
@@ -342,7 +353,8 @@ function parseConfiguration(value: unknown, prepared: ReturnType<typeof parsePre
   const expectedRuntimeIdentityDigest = sha256Digest({ purpose: "private-installed-local-hermes-runtime-identity/v1",
     installationId: prepared.installationId, releaseDigest,
     nativeSidecarIdentityDigest: sha256Digest(prepared.nativeSidecar),
-    workerBindingDigest: sha256Digest(workerBinding), runnerConfigurationDigest: binding.runnerConfigurationDigest });
+    workerBindingDigest: sha256Digest(workerBinding), runnerConfigurationDigest: binding.runnerConfigurationDigest,
+    reviewedExecutableSha256 });
   if (digest.parse(config.runtimeIdentityDigest) !== expectedRuntimeIdentityDigest) return refused();
   const agentSource = exact((captureStageMap(config.setupSources)).agent_readiness, ["schema"]);
   if (agentSource.schema !== PRIVATE_INSTALLED_LOCAL_HERMES_AGENT_SOURCE_V1) return refused();
@@ -366,7 +378,7 @@ function parseConfiguration(value: unknown, prepared: ReturnType<typeof parsePre
   if (Buffer.byteLength(canonicalJson(config), "utf8") > 256 * 1024) return refused();
   return Object.freeze({ installationId: prepared.installationId, releaseDigest, prerequisiteInput: prerequisite,
     topology, plan, settledInstallationPlan, admission, admissionRequestDigest: digest.parse(hermes.admissionRequestDigest),
-    workerBinding, runnerConfiguration, taskPolicy, database, operatorPort: operator.port as number, templateId,
+    workerBinding, runnerConfiguration, reviewedExecutableSha256, taskPolicy, database, operatorPort: operator.port as number, templateId,
     artifactStorage, setupSources, installedManifestBindingDigest: expectedManifestBinding,
     runtimeIdentityDigest: expectedRuntimeIdentityDigest });
 }
@@ -389,13 +401,36 @@ function compose(preparationValue: unknown, portsValue: unknown) {
   const prepared = parsePreparation(preparationValue);
   const config = parseConfiguration(prepared.privateConfigurationData, prepared);
   const ports = allowed(portsValue, ["startupBase", "deliveryIntegrityKey", "assertCurrentDelivery", "setupRuntimes"],
-    ["claudePostInstall"]);
+    ["claudePostInstall", "ownerAuthorizedLocalHermesRunner", "ownerAuthorizedLocalHermesRunnerProvider"]);
   const claudePostInstall = Object.prototype.hasOwnProperty.call(ports, "claudePostInstall")
     ? capturePrivateInstalledClaudePostInstallInputV1(ports.claudePostInstall) : undefined;
   assertCapabilityGraph(ports.startupBase); assertCapabilityGraph(ports.setupRuntimes);
   if (typeof ports.assertCurrentDelivery !== "function" || types.isProxy(ports.assertCurrentDelivery)) return refused();
   const assertCurrentDelivery = Function.prototype.bind.call(ports.assertCurrentDelivery, portsValue) as (delivery: unknown) => void;
   const deliveryIntegrityKey = copyKey(ports.deliveryIntegrityKey);
+  const ownerAuthorizedRunner = Object.prototype.hasOwnProperty.call(ports, "ownerAuthorizedLocalHermesRunner")
+    ? ports.ownerAuthorizedLocalHermesRunner as object : undefined;
+  const suppliedOwnerAuthorizedRunnerProvider = Object.prototype.hasOwnProperty.call(ports, "ownerAuthorizedLocalHermesRunnerProvider")
+    ? ports.ownerAuthorizedLocalHermesRunnerProvider as object : undefined;
+  if (ownerAuthorizedRunner !== undefined && suppliedOwnerAuthorizedRunnerProvider !== undefined) return refused();
+  if (ownerAuthorizedRunner !== undefined) assertHermes021MacosOwnerAuthorizedLocalOnlyRunnerBindingV1(ownerAuthorizedRunner, {
+    installationId: config.installationId, installationPlanDigest: config.plan.planDigest,
+    installationPlanRevision: config.plan.revision, topologyPlanDigest: config.topology.planDigest,
+    releaseDigest: config.releaseDigest, workerBinding: config.workerBinding, runnerConfiguration: config.runnerConfiguration,
+  });
+  if (suppliedOwnerAuthorizedRunnerProvider !== undefined) assertHermes021MacosOwnerAuthorizedLocalOnlyRunnerProviderBindingV1(suppliedOwnerAuthorizedRunnerProvider, {
+    installationId: config.installationId, installationPlanDigest: config.plan.planDigest,
+    installationPlanRevision: config.plan.revision, topologyPlanDigest: config.topology.planDigest,
+    releaseDigest: config.releaseDigest, workerBinding: config.workerBinding, runnerConfiguration: config.runnerConfiguration,
+  });
+  // A normal installed graph starts inert. The provider is deliberately
+  // process-local and is filled only by the attended agent-readiness stage.
+  const ownerAuthorizedRunnerProvider = ownerAuthorizedRunner === undefined
+    ? suppliedOwnerAuthorizedRunnerProvider ?? createHermes021MacosOwnerAuthorizedLocalOnlyRunnerProviderV1({
+      installationId: config.installationId, installationPlanDigest: config.plan.planDigest,
+      installationPlanRevision: config.plan.revision, topologyPlanDigest: config.topology.planDigest,
+      releaseDigest: config.releaseDigest, workerBinding: config.workerBinding, runnerConfiguration: config.runnerConfiguration,
+    }) : undefined;
   const rawBase = exact(ports.startupBase, ["web", "coordinator"]);
   const rawCoordinator = allowed(rawBase.coordinator, ["planning", "routes", "approvals", "quality",
     "database", "resultDatabase", "evidence", "queueWorker"], ["revisionPlanning"]);
@@ -466,6 +501,8 @@ function compose(preparationValue: unknown, portsValue: unknown) {
         storageClass: "local", storage: deferredStorage.port,
       }) }),
     assertAuthority, subprocess: config.runnerConfiguration, installedCompositionIdentity,
+    ...(ownerAuthorizedRunner ? { ownerAuthorizedRunner } : {}),
+    ...(ownerAuthorizedRunnerProvider ? { ownerAuthorizedRunnerProvider } : {}),
   }));
   const delivery = createPrivateHermes021LocalInstalledCompositionDeliveryV1(reviewedGraphCapability);
   const queueWorker = rawCoordinator.queueWorker as { database: PrivatePostgresConfiguration; concurrency?: number };
@@ -514,6 +551,13 @@ function compose(preparationValue: unknown, portsValue: unknown) {
     localBackupRestoreReadiness: startup.web.localBackupRestoreReadiness });
   const runnerInput = Object.freeze({ admissionPreparationInput: config.admission,
     privateStartupConfiguration, startupAdmissionBinding });
+  const agentReadinessSource = Object.freeze({ ...runnerInput,
+    ...(ownerAuthorizedRunnerProvider ? { ownerAuthorizedRunnerProvider } : {}),
+    ...(ownerAuthorizedRunnerProvider ? { hermesQualificationRuntime:
+      createPrivateLocalHermesOwnerQualificationRuntimeV1({ installationId: config.installationId,
+        installationPlanDigest: config.plan.planDigest, installationPlanRevision: config.plan.revision,
+        releaseDigest: config.releaseDigest, topologyPlan: config.topology, workerBinding: config.workerBinding,
+        runnerConfiguration: config.runnerConfiguration, reviewedExecutableSha256: config.reviewedExecutableSha256 }) } : {}) });
   const queueFactories = createInstalledNativeQueueFactories({ openWorkerDatabase: createPrivatePostgresDatabase });
   const expectedCoordinator = databaseIdentity(startup.database);
   const startupDependencies = Object.freeze({
@@ -533,7 +577,7 @@ function compose(preparationValue: unknown, portsValue: unknown) {
   });
   const suppliedRuntimes = captureStageMap(ports.setupRuntimes), setupRuntimes: Record<string, unknown> = {};
   for (const stage of stages) setupRuntimes[stage] = captureRuntimePort(suppliedRuntimes[stage]);
-  const setupSources = Object.freeze({ ...config.setupSources, agent_readiness: runnerInput });
+  const setupSources = Object.freeze({ ...config.setupSources, agent_readiness: agentReadinessSource });
   const loaded = Object.freeze({ prerequisiteInput: config.prerequisiteInput,
     assemblyInput: Object.freeze({ runnerInput, operatorSettings: settings, operatorTrustedInputs: trusted,
       ...(claudePostInstall ? { claudePostInstall } : {}) }),

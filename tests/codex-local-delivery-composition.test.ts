@@ -90,7 +90,8 @@ function observation(packet: ControllerWorkerDeliveryV1) {
 
 test('Codex local delivery persists the shared receipt before one injected host observation and exact replay never starts again', async t => {
   const f = await nativeTaskFixture(); t.after(f.close);
-  const packet = delivery(), state = { revoked: false, receives: 0, starts: 0 }, config = composition(f, packet, state);
+  const packet = delivery(), state: { revoked: boolean; receives: number; starts: number; binds?: number } =
+    { revoked: false, receives: 0, starts: 0 }, config = composition(f, packet, state);
   const first = await deliverCodexLocalTaskV1(config, packet, { kind: 'local', workerId: worker.workerId }, at(2000));
   assert.equal(first.state, 'started_observation'); assert.equal(state.receives, 1); assert.equal(state.starts, 1);
   assert.equal(state.binds, 1);

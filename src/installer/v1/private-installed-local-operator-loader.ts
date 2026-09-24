@@ -165,6 +165,11 @@ function captureJournalPorts(value: unknown): unknown {
 }
 
 function permittedHermesOpaque(path: string, value: object): boolean {
+  // The runner is a process-local branded capability. Copying it as ordinary
+  // JSON would lose its custody; preserve it only for the installed composer,
+  // which verifies its exact installation binding before selecting it.
+  if (path === "hermesRuntimePorts.ownerAuthorizedLocalHermesRunner"
+    || path === "hermesRuntimePorts.ownerAuthorizedLocalHermesRunnerProvider") return true;
   if (/^hermesRuntimePorts\.setupRuntimes\.[^.]+\.[^.]+\.signal$/u.test(path)) {
     if (Object.getPrototypeOf(value) !== abortSignalPrototype
       || Object.getOwnPropertyNames(value).length !== 0) return refused();
@@ -221,14 +226,21 @@ function captureHermesGraph(value: unknown, path: string, active = new WeakSet<o
 
 function captureHermesPorts(value: unknown): unknown {
   const ports = exactHostDataSnapshotV1(value,
-    ["startupBase", "deliveryIntegrityKey", "assertCurrentDelivery", "setupRuntimes"], ["claudePostInstall"]);
+    ["startupBase", "deliveryIntegrityKey", "assertCurrentDelivery", "setupRuntimes"],
+    ["claudePostInstall", "ownerAuthorizedLocalHermesRunner", "ownerAuthorizedLocalHermesRunnerProvider"]);
   if (!ports) return refused();
   return Object.freeze({ startupBase: captureHermesGraph(ports.startupBase, "hermesRuntimePorts.startupBase"),
     deliveryIntegrityKey: captureBytes(ports.deliveryIntegrityKey),
     assertCurrentDelivery: callable(ports.assertCurrentDelivery),
     setupRuntimes: captureHermesGraph(ports.setupRuntimes, "hermesRuntimePorts.setupRuntimes"),
     ...(Object.prototype.hasOwnProperty.call(ports, "claudePostInstall")
-      ? { claudePostInstall: capturePrivateInstalledClaudePostInstallInputV1(ports.claudePostInstall) } : {}) });
+      ? { claudePostInstall: capturePrivateInstalledClaudePostInstallInputV1(ports.claudePostInstall) } : {}),
+    ...(Object.prototype.hasOwnProperty.call(ports, "ownerAuthorizedLocalHermesRunner")
+      ? { ownerAuthorizedLocalHermesRunner: captureHermesGraph(ports.ownerAuthorizedLocalHermesRunner,
+        "hermesRuntimePorts.ownerAuthorizedLocalHermesRunner") } : {}),
+    ...(Object.prototype.hasOwnProperty.call(ports, "ownerAuthorizedLocalHermesRunnerProvider")
+      ? { ownerAuthorizedLocalHermesRunnerProvider: captureHermesGraph(ports.ownerAuthorizedLocalHermesRunnerProvider,
+        "hermesRuntimePorts.ownerAuthorizedLocalHermesRunnerProvider") } : {}) });
 }
 
 type ClaudeProtectedBinding = Readonly<{

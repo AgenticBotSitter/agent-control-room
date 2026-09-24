@@ -202,7 +202,13 @@ process.stdout.write("prepared by controlled test fixture\\n");
     assert.deepEqual(preflightErrors, []);
     assert.deepEqual(JSON.parse(preflightOutput.join("")), {
       schema: "control-room.private-installed-owner-host-preflight/v1",
-      status: "blocked", blocker: "installed_configuration_custody_input_missing",
+      status: "blocked", blocker: "installed_configuration_custody_input_missing", blockers: [
+        "installed_configuration_custody_input_missing", "staged_journal_sidecar_missing",
+        "journal_session_factory_missing", "hermes_startup_base_missing", "hermes_delivery_integrity_key_missing",
+        "hermes_assert_current_delivery_missing", "database_authority_runtime_missing", "protected_data_runtime_missing",
+        "first_owner_runtime_missing", "recovery_runtime_missing", "platform_service_runtime_missing",
+        "agent_readiness_runtime_missing", "final_review_runtime_missing", "journal_operation_deadline_missing",
+      ],
       performsEffect: false, readsCredentials: false, readsPrivatePaths: false,
       opensNativeSession: false, opensDatabase: false, startsService: false,
       startsWorker: false, invokesAgent: false,

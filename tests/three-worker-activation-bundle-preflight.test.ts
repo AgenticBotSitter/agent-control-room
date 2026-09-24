@@ -7,8 +7,11 @@ import { fileURLToPath } from "node:url";
 import { planInstallationTopologyV1 } from "../src/harness/v1/installation-topology";
 import { HERMES_021_MACOS_LOCAL_ADAPTER_V1, HERMES_021_SOURCE_REVISION_V1,
   runHermes021MacosInstallationBoundRunnerQualificationV1 } from "../src/harness/hermes-021-v1";
+import { createClaudeCodeLocalProcessReadinessV1 } from
+  "../src/harness/claude-code-v1/local-process-readiness";
 import { sha256Digest } from "../src/security/canonical-digest";
 import { composeThreeWorkerActivationBundlePreflightV1, createThreeWorkerActivationBundleCustodyV1,
+  recordClaudeThreeWorkerActivationSourceProofV1,
   recordClaudeOwnerWriteThreeWorkerActivationSourceProofV1,
   recordProtectedConfigurationThreeWorkerActivationSourceProofV1, refreshThreeWorkerActivationBundlePreflightV1,
   recordVerifiedReleaseThreeWorkerActivationSourceProofV1,
@@ -40,6 +43,14 @@ const topologyInput = Object.freeze({ databaseAuthorityDigest: d("database"), sc
 const topologyPlan = planInstallationTopologyV1(topologyInput);
 const binding = Object.freeze({ installationId: "control-room-one", releaseDigest: d("release"),
   topologyPlanDigest: topologyPlan.planDigest });
+
+function claudeReadiness(planDigest = binding.topologyPlanDigest) {
+  return createClaudeCodeLocalProcessReadinessV1({ planDigest, proofs: [
+    { proof: "installed_process_identity", state: "passed", evidenceDigest: d("claude-installed") },
+    { proof: "permission_boundary", state: "passed", evidenceDigest: d("claude-permissions") },
+    { proof: "cancellation_and_restart_recovery", state: "passed", evidenceDigest: d("claude-recovery") },
+  ] });
+}
 
 async function releaseSource() {
   const root = await realpath(await mkdtemp(join(tmpdir(), "acr-activation-release-")));
@@ -77,7 +88,8 @@ function protectedConfigurationSource() {
     settledInstallationPlan: { schema: "control-room.installation-plan/v1", digest: d("plan") },
     hermes: { runnerConfiguration: { executablePath: "/private/owner-held/hermes",
       workingDirectory: "/private/owner-held/workspace", profile: "cr", model: "owner-model",
-      provider: "owner-provider" }, taskPolicy: { taskClass: "text_review", tools: "none" } },
+      provider: "owner-provider" }, reviewedExecutableSha256: d("reviewed-hermes-executable"),
+      taskPolicy: { taskClass: "text_review", tools: "none" } },
     operator: { port: 3210, templateId: "template:hermes-text-review" },
     database: { ...endpoint, roles: { web: "control_room_web", coordinator: "control_room_coordinator",
       results: "control_room_results", evidence: "control_room_evidence", queueWorker: "control_room_queue_worker" },
@@ -112,7 +124,7 @@ test("custody alone cannot manufacture ready evidence or rollback", () => {
   assert.equal(custody.providesRollbackRecorder, false);
   const plan = composeThreeWorkerActivationBundlePreflightV1({ aggregate: custody.aggregate });
   assert.equal(plan.status, "blocked");
-  assert.equal(plan.components.filter(item => item.blocker === "source_proof_missing").length, 6);
+  assert.equal(plan.components.filter(item => item.blocker === "source_proof_missing").length, 7);
   assert.deepEqual(plan.rollback.missing, ["release_rollback", "database_snapshot", "private_route_snapshot",
     "website_route_snapshot", "protected_configuration_prior_state"]);
   assert.deepEqual(plan.ownerActions, []);
@@ -168,7 +180,7 @@ test("real release inventory remains blocked without a reviewed release identity
   assert.equal(releaseComponent?.state, "blocked");
   assert.equal(releaseComponent?.blocker, "reviewed_release_identity_missing");
   assert.match(releaseComponent?.evidenceDigest ?? "", /^sha256:[a-f0-9]{64}$/u);
-  assert.equal(plan.components.filter(item => item.blocker === "source_proof_missing").length, 5);
+  assert.equal(plan.components.filter(item => item.blocker === "source_proof_missing").length, 6);
   assert.throws(() => recordVerifiedReleaseThreeWorkerActivationSourceProofV1({ aggregate: custody.aggregate,
     releaseReviewPreparation: structuredClone(review) }), /protected_release_review_preparation_refused/u);
   const foreign = createThreeWorkerActivationBundleCustodyV1({ ...selectedBinding,
@@ -229,7 +241,7 @@ test("real protected-configuration plan remains blocked until owner write verifi
   assert.equal(plan.components.find(item => item.component === "protected_configuration")?.state, "blocked");
   assert.equal(plan.components.find(item => item.component === "protected_configuration")?.blocker,
     "owner_materialization_verification_missing");
-  assert.equal(plan.components.filter(item => item.blocker === "source_proof_missing").length, 5);
+  assert.equal(plan.components.filter(item => item.blocker === "source_proof_missing").length, 6);
   assert.throws(() => recordProtectedConfigurationThreeWorkerActivationSourceProofV1({ aggregate: custody.aggregate,
     configurationPlan: structuredClone(configurationPlan) }), /private_installed_configuration_preparation_refused/u);
   const foreign = createThreeWorkerActivationBundleCustodyV1({ ...binding, topologyPlanDigest: d("foreign-topology") });
@@ -256,6 +268,21 @@ test("forged, cross-plan and replayed Claude post-write capabilities cannot adva
     "source_proof_missing");
   assert.equal(plan.performsEffect, false); assert.equal(plan.writesProtectedFiles, false);
   assert.equal(plan.invokesAgent, false); assert.deepEqual(plan.ownerActions, []);
+});
+
+test("verified Claude readiness enters the same bundle but still needs a first-task decision", () => {
+  const custody = createThreeWorkerActivationBundleCustodyV1(binding);
+  const proof = recordClaudeThreeWorkerActivationSourceProofV1({ aggregate: custody.aggregate,
+    readiness: claudeReadiness() });
+  const plan = composeThreeWorkerActivationBundlePreflightV1({ aggregate: custody.aggregate, sourceProofs: [proof] });
+  const route = plan.components.find(item => item.component === "claude_route");
+  assert.equal(route?.state, "owner_attended_action");
+  assert.equal(route?.sourceSchema, "control-room.claude-code-local-process-readiness/v1");
+  assert.deepEqual(plan.ownerActions, ["approve_claude_first_task"]);
+  assert.equal(plan.status, "blocked", "one process proof never turns the whole installation live");
+  const foreign = createThreeWorkerActivationBundleCustodyV1({ ...binding, topologyPlanDigest: d("other-plan") });
+  assert.throws(() => recordClaudeThreeWorkerActivationSourceProofV1({ aggregate: foreign.aggregate,
+    readiness: claudeReadiness() }), /three_worker_activation_bundle_preflight_refused/u);
 });
 
 test("reviewed path-based Hermes remains blocked without pinned executable launch", async () => {

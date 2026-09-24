@@ -5,7 +5,7 @@ import { parseWorkspaceIntent, type WorkspaceIntent } from './workspace-intent';
 import { createCodexLocalHostV1, type CodexLocalInitialHostInputV1,
   type CodexLocalRecoverHostInputV1 } from '../harness/codex-v1/local-host';
 import { SqliteCodexStartJournalV1 } from '../harness/codex-v1/start-journal';
-import type { CodexNativeProcessAcquisitionV1 } from './codex-native-process';
+import type { CodexAppServerProcessAcquisitionV1 } from '../harness/codex-v1/app-server-process-session';
 import type { CodexDeliveryBoundWorkspacePolicyV1 } from '../harness/codex-v1/delivery-bound-workspace-preparation';
 
 export interface PrivateCodexStatePathsV1 { bridge: string; starts: string }
@@ -182,10 +182,10 @@ export function openPrivateCodexConfigurationV1(input: PrivateCodexConfiguration
  * ordered attempt across host/session, acquisition, then journals.
  */
 export async function openOwnedPrivateCodexConfigurationV1(input: PrivateCodexConfigurationInputV1,
-  ports: OwnedPrivateCodexConfigurationPortsV1, acquisition: CodexNativeProcessAcquisitionV1,
+  ports: OwnedPrivateCodexConfigurationPortsV1, acquisition: CodexAppServerProcessAcquisitionV1,
   signal: AbortSignal) {
   const resources: PrivateCodexResourcesV1 = {};
-  let acquire: CodexNativeProcessAcquisitionV1['acquire'] | undefined;
+  let acquire: CodexAppServerProcessAcquisitionV1['acquire'] | undefined;
   let closeAcquisition: (() => Promise<void>) | undefined;
   let closePromise: Promise<void> | undefined;
   let runController: AbortController | undefined;

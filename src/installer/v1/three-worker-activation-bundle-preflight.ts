@@ -2,6 +2,9 @@ import { z } from "zod";
 import { canonicalJson, sha256Digest } from "../../security/canonical-digest";
 import { verifyHermes021MacosProtectedWorkerReadinessV1 } from
   "../../harness/hermes-021-v1/protected-worker-readiness";
+import { summarizeClaudeCodeLocalProcessReadinessV1,
+  verifyClaudeCodeLocalProcessReadinessV1 } from
+  "../../harness/claude-code-v1/local-process-readiness";
 import { verifyPrivateInstalledConfigurationPreparationV1 } from
   "./private-installed-configuration-preparation";
 import { consumePrivateInstalledConfigurationV3PostWriteActivationEvidenceV1 } from
@@ -33,6 +36,7 @@ const definitions = Object.freeze({
   database_route: Object.freeze({ sourceSchema: "control-room.private-postgres-endpoint/v1" }),
   scheduler_result_storage: Object.freeze({ sourceSchema: "control-room.agent-task-operator-settings/v1" }),
   hermes_route: Object.freeze({ sourceSchema: "control-room.hermes-021-macos-protected-worker-readiness/v1" }),
+  claude_route: Object.freeze({ sourceSchema: "control-room.claude-code-local-process-readiness/v1" }),
   claude_owner_write: Object.freeze({
     sourceSchema: "control-room.private-installed-configuration-v3-owner-writer/v1" }),
 });
@@ -57,7 +61,7 @@ const componentOutput = z.object({ component, sourceSchema: z.string().min(1).ma
 const materialSchema = z.object({ schema: z.literal(THREE_WORKER_ACTIVATION_BUNDLE_PREFLIGHT_V1),
   installationId, releaseDigest: digest, topologyPlanDigest: digest, generation: z.number().int().positive(),
   status: z.literal("blocked"), components: z.array(componentOutput).length(Object.keys(definitions).length),
-  ownerActions: z.array(z.literal("approve_hermes_first_task")).max(1),
+  ownerActions: z.array(z.enum(["approve_hermes_first_task", "approve_claude_first_task"])).max(2),
   rollback: z.object({ status: z.literal("missing_source_proof"),
     missing: z.array(rollbackKind).length(rollbackKinds.length) }).strict(),
   containsCredentialValue: z.literal(false), containsPrivatePath: z.literal(false), containsEndpoint: z.literal(false),
@@ -67,7 +71,21 @@ const materialSchema = z.object({ schema: z.literal(THREE_WORKER_ACTIVATION_BUND
   changesCertificate: z.literal(false), startsService: z.literal(false), startsWorker: z.literal(false),
   invokesAgent: z.literal(false) }).strict();
 const planSchema = materialSchema.extend({ planDigest: digest }).strict();
-export type ThreeWorkerActivationBundlePreflightV1 = Readonly<z.infer<typeof planSchema>>;
+type ActivationBundlePlanMaterialV1 = z.infer<typeof planSchema>;
+/**
+ * The public projection is immutable all the way down. This matters because
+ * it is reused by read-only operator/web status: a caller must not be able to
+ * mutate a component or owner-action list after its digest was verified.
+ */
+export type ThreeWorkerActivationBundlePreflightV1 = Readonly<
+  Omit<ActivationBundlePlanMaterialV1, "components" | "ownerActions" | "rollback"> & Readonly<{
+    components: readonly Readonly<z.infer<typeof componentOutput>>[];
+    ownerActions: readonly ("approve_hermes_first_task" | "approve_claude_first_task")[];
+    rollback: Readonly<Omit<ActivationBundlePlanMaterialV1["rollback"], "missing"> & Readonly<{
+      missing: readonly (typeof rollbackKinds)[number][];
+    }>>;
+  }>
+>;
 
 function refused(): never { const error = new Error("three_worker_activation_bundle_preflight_refused"); error.stack = undefined; throw error; }
 function freezePlan(value: z.infer<typeof planSchema>): ThreeWorkerActivationBundlePreflightV1 {
@@ -113,6 +131,27 @@ export function recordHermesThreeWorkerActivationSourceProofV1(input: Readonly<{
   const token = Object.freeze({ schema: THREE_WORKER_ACTIVATION_SOURCE_PROOF_V1 });
   proofs.set(token, Object.freeze({ ...selected, aggregate: input.aggregate as object, component: "hermes_route" as const,
     sourceSchema: definitions.hermes_route.sourceSchema, state: "owner_attended_action" as const, evidenceDigest }));
+  return token;
+}
+
+/**
+ * Carries only verified, plan-bound Claude process readiness into the same
+ * activation checklist as Hermes. A passed process proof is not task
+ * authority: the bundle still requires the separate first-task decision.
+ */
+export function recordClaudeThreeWorkerActivationSourceProofV1(input: Readonly<{
+  aggregate: unknown; readiness: unknown;
+}>): object {
+  const selected = aggregate(input?.aggregate);
+  const readiness = verifyClaudeCodeLocalProcessReadinessV1(input.readiness);
+  if (readiness.planDigest !== selected.topologyPlanDigest
+    || summarizeClaudeCodeLocalProcessReadinessV1(selected.topologyPlanDigest, readiness).state !== "readiness_recorded") return refused();
+  const evidenceDigest = sha256Digest({ purpose: "three-worker-claude-source-proof/v1",
+    readinessDigest: readiness.readinessDigest, installationId: selected.installationId,
+    releaseDigest: selected.releaseDigest, topologyPlanDigest: selected.topologyPlanDigest });
+  const token = Object.freeze({ schema: THREE_WORKER_ACTIVATION_SOURCE_PROOF_V1 });
+  proofs.set(token, Object.freeze({ ...selected, aggregate: input.aggregate as object, component: "claude_route" as const,
+    sourceSchema: definitions.claude_route.sourceSchema, state: "owner_attended_action" as const, evidenceDigest }));
   return token;
 }
 
@@ -225,7 +264,10 @@ function build(selected: AggregateState, aggregateToken: object, generation: num
       : Object.freeze({ component: name, sourceSchema: definitions[name].sourceSchema,
         state: "blocked" as const, blocker: "source_proof_missing" as const });
   }).sort((left, right) => left.component.localeCompare(right.component));
-  const ownerActions = byComponent.has("hermes_route") ? ["approve_hermes_first_task" as const] : [];
+  const ownerActions = [
+    ...(byComponent.has("hermes_route") ? ["approve_hermes_first_task" as const] : []),
+    ...(byComponent.has("claude_route") ? ["approve_claude_first_task" as const] : []),
+  ];
   const material = materialSchema.parse({ schema: THREE_WORKER_ACTIVATION_BUNDLE_PREFLIGHT_V1,
     installationId: selected.installationId, releaseDigest: selected.releaseDigest,
     topologyPlanDigest: selected.topologyPlanDigest, generation, status: "blocked", components, ownerActions,

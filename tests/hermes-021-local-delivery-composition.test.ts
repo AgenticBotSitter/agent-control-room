@@ -63,3 +63,68 @@ test("a local policy refusal records no receipt and never invokes Marvin", async
   const rows = await f.db.query<{ count: string }>("SELECT count(*)::text AS count FROM control_worker_delivery_receipts");
   assert.equal(rows.rows[0]?.count, "0");
 });
+
+test("a task-bound port is minted after the durable receipt and final authority recheck", async t => {
+  const f = await nativeTaskFixture(); t.after(f.close);
+  const packet = delivery(); let receiptVisible = false, rechecked = false, factoryCalls = 0, runs = 0, checks = 0;
+  const config = { db: f.db, integrityKey: receiptKey, binding: localBinding,
+    policy: { assertAdmitted() {} },
+    async recheckBeforeLaunch() {
+      checks++;
+      const rows = await f.db.query<{ count: string }>("SELECT count(*)::text AS count FROM control_worker_delivery_receipts");
+      receiptVisible = rows.rows[0]?.count === "1"; rechecked = true;
+    },
+    privatePortFactory: { create(task: { projectId: string; jobId: string }, beforeSpawn?: () => Promise<void>) {
+      factoryCalls++; assert.equal(receiptVisible, true); assert.equal(rechecked, true);
+      assert.equal(task.projectId, packet.identity.projectId); assert.equal(task.jobId, packet.identity.jobId);
+      return { async run() { await beforeSpawn?.(); runs++; return [result]; } };
+    } } };
+  const delivered = await deliverHermes021MacosLocalTaskV1(config, packet,
+    { kind: "local", workerId: localBinding.workerId }, at(2000));
+  assert.equal(delivered.state, "completed_delivery");
+  assert.equal(delivered.outcome?.kind, "completed");
+  assert.equal(factoryCalls, 1); assert.equal(runs, 1); assert.equal(checks, 2,
+    "the final check is repeated by the task-bound port immediately before spawning Hermes");
+});
+
+test("a task revoked while local launch preparation is in progress never reaches Hermes", async t => {
+  const f = await nativeTaskFixture(); t.after(f.close);
+  const packet = delivery(); let checks = 0, runs = 0;
+  const config = { db: f.db, integrityKey: receiptKey, binding: localBinding,
+    policy: { assertAdmitted() {} },
+    async recheckBeforeLaunch() {
+      checks++;
+      // The first check admits construction after the receipt is durable. The
+      // second is the task-bound check after preparation and models a revoked
+      // lease immediately before the process boundary.
+      if (checks === 2) throw new Error("delivery_revoked");
+    },
+    privatePortFactory: { create(_task: unknown, beforeSpawn?: () => Promise<void>) {
+      return { async run() { await beforeSpawn?.(); runs++; return [result]; } };
+    } } };
+  const first = await deliverHermes021MacosLocalTaskV1(config, packet,
+    { kind: "local", workerId: localBinding.workerId }, at(2000));
+  assert.equal(first.state, "completed_delivery");
+  assert.deepEqual(first.outcome, { kind: "uncertain", reason: "hermes_local_transport_unavailable" });
+  assert.equal(checks, 2); assert.equal(runs, 0);
+  const replay = await deliverHermes021MacosLocalTaskV1(config, packet,
+    { kind: "local", workerId: localBinding.workerId }, at(2000));
+  assert.equal(replay.state, "already_delivered", "a revoked pre-spawn attempt is not retried automatically");
+  assert.equal(runs, 0);
+});
+
+test("a task-port factory failure after the receipt is uncertainty, not a retry", async t => {
+  const f = await nativeTaskFixture(); t.after(f.close);
+  const packet = delivery(); let factoryCalls = 0;
+  const config = { db: f.db, integrityKey: receiptKey, binding: localBinding,
+    policy: { assertAdmitted() {} },
+    privatePortFactory: { create() { factoryCalls++; throw new Error("runner_unavailable"); } } };
+  const first = await deliverHermes021MacosLocalTaskV1(config, packet,
+    { kind: "local", workerId: localBinding.workerId }, at(2000));
+  assert.equal(first.state, "completed_delivery");
+  assert.deepEqual(first.outcome, { kind: "uncertain", reason: "hermes_local_transport_unavailable" });
+  const replay = await deliverHermes021MacosLocalTaskV1(config, packet,
+    { kind: "local", workerId: localBinding.workerId }, at(2000));
+  assert.equal(replay.state, "already_delivered");
+  assert.equal(factoryCalls, 1, "the durable receipt prevents another runner-mint attempt");
+});
