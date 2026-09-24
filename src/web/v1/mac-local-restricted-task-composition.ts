@@ -3,6 +3,7 @@ import { createMacLocalTaskApplicationV1, type MacLocalTaskApplicationInputV1 } 
 import type { TaskCoordinatorConfiguration, TaskCoordinatorDatabase } from "./task-coordinator-lifecycle";
 
 type CoordinatorWithoutOwnedPools = Omit<TaskCoordinatorConfiguration, "database" | "resultDatabase">;
+type TaskApplication = Awaited<ReturnType<typeof createMacLocalTaskApplicationV1>>;
 
 /**
  * Opens the two controller-owned restricted roles for the existing Mac-local
@@ -15,7 +16,9 @@ export async function createMacLocalRestrictedTaskApplicationV1(input: Readonly<
   databaseRoles: MacLocalDatabaseRolesV1;
   openDatabase(configuration: MacLocalDatabaseRolesV1["coordinator"]): TaskCoordinatorDatabase;
   coordinator: CoordinatorWithoutOwnedPools;
-}>) {
+}>, dependencies: Readonly<{
+  createTaskApplication?: (input: MacLocalTaskApplicationInputV1) => Promise<TaskApplication>;
+}> = {}) {
   if (!input?.web?.database || !input?.coordinator || typeof input.openDatabase !== "function")
     throw new Error("mac_local_restricted_task_composition_invalid");
   const roles = captureMacLocalDatabaseRolesV1(input.databaseRoles);
@@ -27,7 +30,8 @@ export async function createMacLocalRestrictedTaskApplicationV1(input: Readonly<
     if (!coordinator || !results || coordinator === results || coordinator.client === results.client
       || coordinator.client === input.web.database.client || results.client === input.web.database.client)
       throw new Error("mac_local_restricted_task_composition_invalid");
-    return await createMacLocalTaskApplicationV1({ web: input.web,
+    const create = dependencies.createTaskApplication ?? createMacLocalTaskApplicationV1;
+    return await create({ web: input.web,
       coordinator: Object.freeze({ ...input.coordinator, database: coordinator, resultDatabase: results }),
     });
   } catch (error) {
