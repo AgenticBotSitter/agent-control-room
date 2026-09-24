@@ -2,6 +2,15 @@
 
 Codex appends one short entry per work package (see `CODEX_MAC_BUILD_EXECUTION.md`).
 
+- 2026-09-24 — W4 three-agent lifecycle composition: the existing restricted
+  Mac task lifecycle can now carry the independently fenced Hermes, Claude,
+  and managed Codex local routes together. They retain one authority database,
+  one existing task/review/correction lifecycle, and one existing queue path;
+  no process, queue, or worker starts merely because all three are configured.
+  Focused three-agent composition and Codex queue checks plus the TypeScript
+  check pass. The next missing assembly is the protected host's fixed real
+  Codex delivery configuration and publisher closure.
+
 - 2026-09-24 — W4 managed local Codex queue path: a saved owner-trusted local
   Codex text-review plan can now use the same existing canonical assignment,
   signed approval record, native submission queue, and pickup recheck as the
