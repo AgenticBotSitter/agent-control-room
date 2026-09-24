@@ -87,8 +87,23 @@ import { composePrivateMacosClaudeCodePostInstallV1,
 import { createPrivateMacosClaudeCodeInstalledPortComposerV1,
   PRIVATE_MACOS_CLAUDE_CODE_INSTALLED_PORT_COMPOSER_V1 } from
   "../src/node-bridge/private-macos-claude-code-installed-port-composer";
+import { createPrivateMacosClaudeCodeSupervisedQualificationRouteDigestV1,
+  PRIVATE_MACOS_CLAUDE_CODE_QUALIFICATION_PROCESS_PORT_V1 } from
+  "../src/node-bridge/private-macos-claude-code-qualification-port-composer";
 
 const d = (value: unknown) => sha256Digest(value);
+const claudeSupervisedRouteDigest = () => createPrivateMacosClaudeCodeSupervisedQualificationRouteDigestV1({
+  releaseVersion: "1.2.3", releaseSha256: d("claude-bridge-release"), platform: "darwin",
+  architecture: "arm64", sidecarManifestSha256: d("claude-bridge-sidecar"),
+  archiveSha256: d("claude-bridge-archive"), artifactManifestSha256: d("claude-bridge-artifact"),
+  executableSha256: d("claude-bridge-helper"),
+}, { schema: PRIVATE_MACOS_CLAUDE_CODE_QUALIFICATION_PROCESS_PORT_V1,
+  helperPath: "/private/fixture/claude-helper", helperSha256: d("claude-bridge-helper"),
+  executablePath: "/private/bin/claude", executableSha256: d("claude-executable"),
+  executableIdentity: { device: "1", inode: "2" }, workingDirectory: "/private/workspace",
+  workingDirectoryIdentity: { device: "1", inode: "3" },
+  workingDirectoryBindingDigest: d("claude-workspace"), ownerUid: process.getuid?.() ?? 501,
+  holdDeadlineMs: 100, runDeadlineMs: 100, maximumInputBytes: 1024, maximumOutputBytes: 1024 });
 
 function installedSidecar(releaseDigest: string, variant = "current") {
   return { schema: PRIVATE_INSTALLED_CONFIGURATION_NATIVE_SIDECAR_IDENTITY_V1,
@@ -1167,6 +1182,7 @@ async function additiveClaudePackage(f: Awaited<ReturnType<typeof fixture>>, opt
     schema: CLAUDE_CODE_TEXT_REVIEW_QUALIFICATION_REPORT_V1, qualified: true,
     fixedInvocationPolicyDigest: CLAUDE_CODE_TEXT_REVIEW_INVOCATION_POLICY_DIGEST_V1,
     executableSha256: d("claude-executable"), workingDirectoryBindingDigest: d("claude-workspace"),
+    supervisedRouteDigest: claudeSupervisedRouteDigest(),
     terminalResultObserved: true, terminalResultDigest: d("claude-terminal"), inputTokens: 5, outputTokens: 4,
     totalTokens: 9, durationMs: 100, failureReason: "none", retryRequiresFreshOwnerAuthorization: false,
     startsWork: false, grantsExecutionAuthority: false,

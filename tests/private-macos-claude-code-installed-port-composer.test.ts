@@ -14,6 +14,9 @@ import {
   PRIVATE_MACOS_CLAUDE_CODE_INSTALLED_PORT_CAPABILITY_V1,
   PRIVATE_MACOS_CLAUDE_CODE_INSTALLED_PORT_COMPOSER_V1,
 } from "../src/node-bridge/private-macos-claude-code-installed-port-composer";
+import { createPrivateMacosClaudeCodeSupervisedQualificationRouteDigestV1,
+  PRIVATE_MACOS_CLAUDE_CODE_QUALIFICATION_PROCESS_PORT_V1 } from
+  "../src/node-bridge/private-macos-claude-code-qualification-port-composer";
 import {
   CLAUDE_CODE_TEXT_REVIEW_FIXED_ARGS_V1,
   CLAUDE_CODE_TEXT_REVIEW_INVOCATION_POLICY_DIGEST_V1,
@@ -70,10 +73,24 @@ async function protectedCapability(t: TestContext, identity = sidecar) {
 
 async function fixture(t: TestContext) {
   const executableSha256 = digest("claude"), workspaceDigest = digest("workspace");
+  const qualificationPortConfiguration = {
+    schema: PRIVATE_MACOS_CLAUDE_CODE_QUALIFICATION_PROCESS_PORT_V1, helperPath: "/private/owner/helper",
+    helperSha256: sidecar.executableSha256, executablePath: "/private/owner/claude", executableSha256,
+    executableIdentity: { device: "1", inode: "2" }, workingDirectory: "/private/owner/workspace",
+    workingDirectoryIdentity: { device: "1", inode: "3" }, workingDirectoryBindingDigest: workspaceDigest,
+    ownerUid: process.getuid?.() ?? 501, holdDeadlineMs: 2_000, runDeadlineMs: 5_000,
+    maximumInputBytes: 1024, maximumOutputBytes: 1024,
+  };
+  const release = { releaseVersion: sidecar.releaseVersion, releaseSha256: sidecar.releaseSha256,
+    platform: sidecar.platform, architecture: sidecar.architecture,
+    sidecarManifestSha256: sidecar.sidecarManifestSha256, archiveSha256: sidecar.archiveSha256,
+    artifactManifestSha256: sidecar.artifactManifestSha256, executableSha256: sidecar.executableSha256 };
   const report = {
     schema: CLAUDE_CODE_TEXT_REVIEW_QUALIFICATION_REPORT_V1, qualified: true,
     fixedInvocationPolicyDigest: CLAUDE_CODE_TEXT_REVIEW_INVOCATION_POLICY_DIGEST_V1,
-    executableSha256, workingDirectoryBindingDigest: workspaceDigest, terminalResultObserved: true,
+    executableSha256, workingDirectoryBindingDigest: workspaceDigest,
+    supervisedRouteDigest: createPrivateMacosClaudeCodeSupervisedQualificationRouteDigestV1(
+      release, qualificationPortConfiguration), terminalResultObserved: true,
     terminalResultDigest: digest("terminal"), inputTokens: 11, outputTokens: 7, totalTokens: 18, durationMs: 12,
     failureReason: "none" as const, retryRequiresFreshOwnerAuthorization: false,
     startsWork: false as const, grantsExecutionAuthority: false as const,
@@ -113,9 +130,7 @@ test("the installed Claude port is bound to one exact manifest, sidecar, fixed p
   assert.equal(result.nativeEffects, false);
   assert.equal(result.launchesClaude, false);
   assert.equal(result.stagesSidecar, false);
-  assert.deepEqual(result.remainingBlockers, [
-    "owner_attended_native_login_qualification_missing",
-  ]);
+  assert.deepEqual(result.remainingBlockers, []);
   assert.doesNotMatch(JSON.stringify(result), /private\/owner|workspace/i);
   const ports = consumePrivateMacosClaudeCodeInstalledProcessHostPortsV1(result.capability);
   assert.equal(typeof ports.verifyInstallation, "function");

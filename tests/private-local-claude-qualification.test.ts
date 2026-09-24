@@ -49,8 +49,11 @@ test("owner-held Claude qualification accepts only one exact fixed text result a
   assert.deepEqual({ input: value.inputTokens, output: value.outputTokens, total: value.totalTokens },
     { input: 8, output: 5, total: 13 });
   assert.equal(value.terminalResultObserved, true);
+  assert.equal(value.supervisedRouteDigest, null);
   assert.equal(value.retryRequiresFreshOwnerAuthorization, false);
-  assert.match(createClaudeCodeTextReviewQualificationEvidenceV1(value).evidenceDigest, /^sha256:/);
+  assert.throws(() => createClaudeCodeTextReviewQualificationEvidenceV1(value),
+    /Claude text-review qualification did not pass/u,
+    "a generic injected port can test framing but cannot become installed readiness evidence");
   assert.deepEqual(request?.args, CLAUDE_CODE_TEXT_REVIEW_FIXED_ARGS_V1);
   assert.deepEqual(request?.args?.slice(-2), ["--model", "opus"]);
   assert.doesNotMatch(JSON.stringify(value), /private\/owner|CLAUDE_QUALIFICATION|00000000-0000-4000-8000-000000004242/i);

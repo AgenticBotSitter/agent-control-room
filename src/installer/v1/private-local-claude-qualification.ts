@@ -42,6 +42,9 @@ export type ClaudeTextReviewQualificationReportV1 = Readonly<{
   fixedInvocationPolicyDigest: typeof CLAUDE_CODE_TEXT_REVIEW_INVOCATION_POLICY_DIGEST_V1;
   executableSha256: string;
   workingDirectoryBindingDigest: string;
+  /** Null for the generic injected probe. Only the protected native route may
+   * replace this with its exact route digest after the probe settles. */
+  supervisedRouteDigest: string | null;
   terminalResultObserved: boolean;
   terminalResultDigest: string | null;
   inputTokens: number | null;
@@ -86,6 +89,7 @@ function usageFromTerminalLine(line: string): Readonly<{ input: number; output: 
 
 function failed(reason: ClaudeTextReviewQualificationReportV1["failureReason"]): ClaudeTextReviewQualificationReportV1 {
   return report({ executableSha256: "sha256:" + "0".repeat(64), workingDirectoryBindingDigest: "sha256:" + "0".repeat(64),
+    supervisedRouteDigest: null,
     qualified: false, terminalResultObserved: false, terminalResultDigest: null,
     inputTokens: null, outputTokens: null, totalTokens: null, durationMs: null,
     failureReason: reason, retryRequiresFreshOwnerAuthorization: true });
@@ -133,6 +137,7 @@ export async function qualifyPrivateLocalClaudeTextReviewV1(input: PrivateLocalC
     session.recordTerminalResultObserved();
     await session.close();
     return report({ executableSha256: input.executableSha256, workingDirectoryBindingDigest: input.workingDirectoryBindingDigest,
+      supervisedRouteDigest: null,
       qualified: true, terminalResultObserved: true, terminalResultDigest: terminal.resultTextDigest,
       inputTokens: terminalUsage.input, outputTokens: terminalUsage.output, totalTokens: terminalUsage.total,
       durationMs, failureReason: "none", retryRequiresFreshOwnerAuthorization: false });

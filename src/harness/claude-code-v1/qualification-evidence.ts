@@ -26,6 +26,10 @@ export const claudeCodeTextReviewQualificationReportSchemaV1 = z.object({
   /** Opaque identities only; paths and version text never leave the owner host. */
   executableSha256: digest,
   workingDirectoryBindingDigest: digest,
+  /** Present only when the exact protected native supervisor route wrapped
+   * the generic text probe. A path-only or directly spawned probe retains
+   * null and cannot become installation evidence. */
+  supervisedRouteDigest: digest.nullable(),
   terminalResultObserved: z.boolean(),
   terminalResultDigest: digest.nullable(),
   inputTokens: count.nullable(),
@@ -45,7 +49,7 @@ export const claudeCodeTextReviewQualificationReportSchemaV1 = z.object({
 }).strict();
 
 const successfulReport = claudeCodeTextReviewQualificationReportSchemaV1.superRefine((value, context) => {
-  if (!value.qualified || !value.terminalResultObserved || !value.terminalResultDigest
+  if (!value.qualified || !value.supervisedRouteDigest || !value.terminalResultObserved || !value.terminalResultDigest
     || value.inputTokens === null || value.outputTokens === null || value.totalTokens === null || value.durationMs === null
     || value.totalTokens < value.inputTokens + value.outputTokens || value.failureReason !== "none"
     || value.retryRequiresFreshOwnerAuthorization) {

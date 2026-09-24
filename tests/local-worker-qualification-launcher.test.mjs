@@ -23,7 +23,7 @@ async function fixture(directory, name, source) {
   return path;
 }
 
-test("combined owner-attended qualification runs Hermes then Claude and emits one sanitized report", async t => {
+test("combined legacy launcher cannot turn a generic Claude path into qualification", async t => {
   const directory = await mkdtemp(join(tmpdir(), "acr-combined-qualification-"));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const hermes = await fixture(directory, "fake-hermes", `
@@ -48,16 +48,16 @@ console.log(JSON.stringify({ type: "system", subtype: "init", session_id: "00000
 console.log(JSON.stringify({ type: "result", subtype: "success", is_error: false,
   session_id: "00000000-0000-4000-8000-000000004242", result: expected,
   usage: { input_tokens: 3, output_tokens: 2, total_tokens: 5 } }));`);
-  const { stdout, stderr } = await run(process.execPath, args(directory, hermes, claude), { cwd: process.cwd() });
-  assert.equal(stderr, "");
-  const report = JSON.parse(stdout);
-  assert.equal(report.qualified, true);
-  assert.equal(report.hermes.state, "qualified");
-  assert.equal(report.claude.state, "qualified");
-  assert.equal(report.startsWork, false);
-  assert.equal(report.grantsWorkerAuthority, false);
-  assert.equal(await readFile(join(directory, "order"), "utf8"), "hermes\nhermes\nclaude\n");
-  assert.doesNotMatch(stdout, /private-profile|private-model|private-provider|private-session|acr-combined-qualification/);
+  await assert.rejects(run(process.execPath, args(directory, hermes, claude), { cwd: process.cwd() }), error => {
+    assert.equal(error.code, 1); assert.equal(error.stderr, "");
+    const report = JSON.parse(error.stdout);
+    assert.equal(report.qualified, false); assert.equal(report.hermes.state, "qualified");
+    assert.equal(report.claude.state, "launcher_unavailable");
+    assert.equal(report.startsWork, false); assert.equal(report.grantsWorkerAuthority, false);
+    assert.doesNotMatch(error.stdout, /private-profile|private-model|private-provider|private-session|acr-combined-qualification/);
+    return true;
+  });
+  assert.equal(await readFile(join(directory, "order"), "utf8"), "hermes\nhermes\n");
 });
 
 test("a failed first qualification stops before Claude and does not echo private inputs", async t => {

@@ -20,6 +20,7 @@ const plan = planInstallationTopologyV1({ databaseAuthorityDigest: sha256Digest(
 const report = { schema: "control-room.claude-code-text-review-qualification-report/v1", qualified: true,
   fixedInvocationPolicyDigest: CLAUDE_CODE_TEXT_REVIEW_INVOCATION_POLICY_DIGEST_V1,
   executableSha256: sha256Digest("private-executable"), workingDirectoryBindingDigest: sha256Digest("private-workspace"),
+  supervisedRouteDigest: sha256Digest("private-supervised-route"),
   terminalResultObserved: true, terminalResultDigest: sha256Digest("private-answer"), inputTokens: 10,
   outputTokens: 4, totalTokens: 14, durationMs: 250, failureReason: "none",
   retryRequiresFreshOwnerAuthorization: false, startsWork: false, grantsExecutionAuthority: false };

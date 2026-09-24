@@ -61,6 +61,7 @@ test("post-install Claude admission binds one additive committed transition with
     schema: CLAUDE_CODE_TEXT_REVIEW_QUALIFICATION_REPORT_V1, qualified: true,
     fixedInvocationPolicyDigest: CLAUDE_CODE_TEXT_REVIEW_INVOCATION_POLICY_DIGEST_V1,
     executableSha256: d("executable"), workingDirectoryBindingDigest: d("workspace"),
+    supervisedRouteDigest: d("supervised-route"),
     terminalResultObserved: true, terminalResultDigest: d("claude-terminal"), inputTokens: 5, outputTokens: 4,
     totalTokens: 9, durationMs: 100, failureReason: "none", retryRequiresFreshOwnerAuthorization: false,
     startsWork: false, grantsExecutionAuthority: false,

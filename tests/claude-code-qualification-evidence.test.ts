@@ -19,6 +19,7 @@ const report = {
   fixedInvocationPolicyDigest: CLAUDE_CODE_TEXT_REVIEW_INVOCATION_POLICY_DIGEST_V1,
   executableSha256: digest,
   workingDirectoryBindingDigest: `sha256:${"b".repeat(64)}`,
+  supervisedRouteDigest: `sha256:${"d".repeat(64)}`,
   terminalResultObserved: true,
   terminalResultDigest: digest,
   inputTokens: 9,
@@ -37,6 +38,7 @@ const failedReport = {
   fixedInvocationPolicyDigest: CLAUDE_CODE_TEXT_REVIEW_INVOCATION_POLICY_DIGEST_V1,
   executableSha256: digest,
   workingDirectoryBindingDigest: `sha256:${"b".repeat(64)}`,
+  supervisedRouteDigest: null,
   terminalResultObserved: false,
   terminalResultDigest: null,
   inputTokens: null,
@@ -65,6 +67,7 @@ test("qualification evidence rejects incomplete, broadened, or retryable reports
   assert.throws(() => createClaudeCodeTextReviewQualificationEvidenceV1({ ...report, terminalResultDigest: null }));
   assert.throws(() => createClaudeCodeTextReviewQualificationEvidenceV1({ ...report, totalTokens: 15 }));
   assert.throws(() => createClaudeCodeTextReviewQualificationEvidenceV1({ ...report, retryRequiresFreshOwnerAuthorization: true }));
+  assert.throws(() => createClaudeCodeTextReviewQualificationEvidenceV1({ ...report, supervisedRouteDigest: null }));
   assert.equal(claudeCodeTextReviewQualificationReportSchemaV1.safeParse({ ...report,
     fixedInvocationPolicyDigest: digest }).success, false);
   assert.equal(claudeCodeTextReviewQualificationReportSchemaV1.safeParse({ ...report,

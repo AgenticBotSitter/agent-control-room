@@ -15,6 +15,9 @@ import {
 } from "../harness/claude-code-v1/text-review-invocation-policy";
 import { consumePrivateInstalledClaudeProcessReleaseCapabilityV1 } from
   "../installer/v1/private-installed-configuration-custody";
+import { createPrivateMacosClaudeCodeSupervisedQualificationRouteDigestV1,
+  PRIVATE_MACOS_CLAUDE_CODE_QUALIFICATION_PROCESS_PORT_V1 } from
+  "./private-macos-claude-code-qualification-port-composer";
 
 /**
  * This composer joins already-verified, owner-held data.  It neither reads a
@@ -51,6 +54,7 @@ type BoundPorts = Readonly<{
   executableSha256: string;
   workingDirectoryBindingDigest: string;
   qualificationDigest: string;
+  supervisedRouteDigest: string;
 }>;
 
 const privatePorts = new WeakMap<object, BoundPorts>();
@@ -124,7 +128,7 @@ export type PrivateMacosClaudeCodeInstalledPortComposerV1 = Readonly<{
   nativeEffects: false;
   launchesClaude: false;
   stagesSidecar: false;
-  remainingBlockers: readonly ["owner_attended_native_login_qualification_missing"];
+  remainingBlockers: readonly [];
 }>;
 
 /**
@@ -153,6 +157,10 @@ export function createPrivateMacosClaudeCodeInstalledPortComposerV1(value: unkno
     const report = claudeCodeTextReviewQualificationReportSchemaV1.parse(input.qualificationReport);
     if (report.schema !== CLAUDE_CODE_TEXT_REVIEW_QUALIFICATION_REPORT_V1) return refused();
     const qualification = createClaudeCodeTextReviewQualificationEvidenceV1(report);
+    const { schema: _portSchema, qualificationDigest: _qualificationDigest, ...qualificationPort } = portConfiguration;
+    void _portSchema; void _qualificationDigest;
+    const supervisedRouteDigest = createPrivateMacosClaudeCodeSupervisedQualificationRouteDigestV1(manifest,
+      { schema: PRIVATE_MACOS_CLAUDE_CODE_QUALIFICATION_PROCESS_PORT_V1, ...qualificationPort });
     if (portConfiguration.helperSha256 !== sidecar.executableSha256
       || portConfiguration.executablePath !== process.process.executablePath
       || portConfiguration.executableSha256 !== process.executableSha256
@@ -160,19 +168,18 @@ export function createPrivateMacosClaudeCodeInstalledPortComposerV1(value: unkno
       || portConfiguration.workingDirectoryBindingDigest !== process.workingDirectoryBindingDigest
       || portConfiguration.qualificationDigest !== process.qualificationDigest
       || portConfiguration.qualificationDigest !== qualification.evidenceDigest
+      || report.supervisedRouteDigest !== supervisedRouteDigest
       || report.executableSha256 !== process.executableSha256
       || report.workingDirectoryBindingDigest !== process.workingDirectoryBindingDigest) return refused();
     const ports = createPrivateMacosClaudeCodeInstalledProcessHostPortsV1(portConfiguration);
     const capability = Object.freeze({ schema: PRIVATE_MACOS_CLAUDE_CODE_INSTALLED_PORT_CAPABILITY_V1 });
     privatePorts.set(capability, Object.freeze({ ports, executableSha256: process.executableSha256,
       workingDirectoryBindingDigest: process.workingDirectoryBindingDigest,
-      qualificationDigest: qualification.evidenceDigest }));
+      qualificationDigest: qualification.evidenceDigest, supervisedRouteDigest }));
     return Object.freeze({ schema: PRIVATE_MACOS_CLAUDE_CODE_INSTALLED_PORT_COMPOSER_V1,
       status: "installed_port_bound" as const, capability,
       nativeEffects: false as const, launchesClaude: false as const, stagesSidecar: false as const,
-      remainingBlockers: Object.freeze([
-        "owner_attended_native_login_qualification_missing",
-      ]) as PrivateMacosClaudeCodeInstalledPortComposerV1["remainingBlockers"] });
+      remainingBlockers: Object.freeze([]) as PrivateMacosClaudeCodeInstalledPortComposerV1["remainingBlockers"] });
   } catch { return refused(); }
 }
 
@@ -208,7 +215,8 @@ export function consumePrivateMacosClaudeCodeInstalledProcessHostPortsForPostIns
     if (process.executableSha256 !== bound.executableSha256
       || process.workingDirectoryBindingDigest !== bound.workingDirectoryBindingDigest
       || process.qualificationDigest !== bound.qualificationDigest
-      || qualification.evidenceDigest !== bound.qualificationDigest) return refused();
+      || qualification.evidenceDigest !== bound.qualificationDigest
+      || report.supervisedRouteDigest !== bound.supervisedRouteDigest) return refused();
     return bound.ports;
   } catch { return refused(); }
 }

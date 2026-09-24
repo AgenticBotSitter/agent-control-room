@@ -76,11 +76,20 @@ The module exports these unresolved boundaries explicitly:
   established before this factory becomes a production default. The adapter
   does not defend against arbitrary hostile same-user replacement.
 
-Nothing in this document converts prior path-only Claude qualification into
-native custody evidence. The real qualifier must move to this same reviewed
-path and introduce appropriate versioned evidence before promotion. It also
-needs a private workspace with mode 0700; an ordinary source checkout should
-not be assumed to meet that native requirement.
+The protected pre-admission composer now moves qualification onto this same
+supervised helper route. It consumes the installed-manifest release capability,
+checks the exact helper, executable and workspace identities, and fixes the
+Opus/text-only/no-tools argument vector before the target can start. Its
+sanitized report carries only an opaque digest of that exact route. A generic
+spawn or the older path-only command produces no such digest and cannot become
+installation readiness evidence. The later installed-port composer re-derives
+the digest from its protected manifest and refuses a substituted report.
+
+This remains source evidence until the owner provides a protected manifest-v3
+installation and runs the owner-attended qualification. The command-line entry
+accepts no executable or workspace paths; an installed owner host must inject
+the one-use route capability in process. An ordinary source checkout is never
+treated as native qualification.
 
 ## Verification
 
