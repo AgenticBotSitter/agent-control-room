@@ -13,6 +13,8 @@ import {
 import {
   captureClaudeCodeTextReviewInvocationConfigurationV1,
 } from "../harness/claude-code-v1/text-review-invocation-policy";
+import { consumePrivateInstalledClaudeProcessReleaseCapabilityV1 } from
+  "../installer/v1/private-installed-configuration-custody";
 
 /**
  * This composer joins already-verified, owner-held data.  It neither reads a
@@ -122,7 +124,7 @@ export type PrivateMacosClaudeCodeInstalledPortComposerV1 = Readonly<{
   nativeEffects: false;
   launchesClaude: false;
   stagesSidecar: false;
-  remainingBlockers: readonly ["owner_attended_native_login_qualification_missing", "installed_helper_release_custody_missing"];
+  remainingBlockers: readonly ["owner_attended_native_login_qualification_missing"];
 }>;
 
 /**
@@ -134,10 +136,16 @@ export type PrivateMacosClaudeCodeInstalledPortComposerV1 = Readonly<{
  */
 export function createPrivateMacosClaudeCodeInstalledPortComposerV1(value: unknown): PrivateMacosClaudeCodeInstalledPortComposerV1 {
   try {
-    const input = exact(value, ["schema", "manifestReleaseBinding", "verifiedSidecar", "installedProcessConfiguration",
+    const input = exact(value, ["schema", "manifestReleaseCapability", "verifiedSidecar", "installedProcessConfiguration",
       "processPortConfiguration", "qualificationReport"]);
     if (input.schema !== PRIVATE_MACOS_CLAUDE_CODE_INSTALLED_PORT_COMPOSER_V1) return refused();
-    const manifest = releaseBinding(input.manifestReleaseBinding);
+    const protectedIdentity = consumePrivateInstalledClaudeProcessReleaseCapabilityV1(
+      input.manifestReleaseCapability);
+    const manifest = releaseBinding({ releaseVersion: protectedIdentity.releaseVersion,
+      releaseSha256: protectedIdentity.releaseSha256, platform: protectedIdentity.platform,
+      architecture: protectedIdentity.architecture, sidecarManifestSha256: protectedIdentity.sidecarManifestSha256,
+      archiveSha256: protectedIdentity.archiveSha256, artifactManifestSha256: protectedIdentity.artifactManifestSha256,
+      executableSha256: protectedIdentity.executableSha256 });
     const sidecar = verifiedSidecar(input.verifiedSidecar);
     if (!sameRelease(manifest, sidecar)) return refused();
     const process = captureClaudeCodeTextReviewInvocationConfigurationV1(input.installedProcessConfiguration as never);
@@ -164,7 +172,6 @@ export function createPrivateMacosClaudeCodeInstalledPortComposerV1(value: unkno
       nativeEffects: false as const, launchesClaude: false as const, stagesSidecar: false as const,
       remainingBlockers: Object.freeze([
         "owner_attended_native_login_qualification_missing",
-        "installed_helper_release_custody_missing",
       ]) as PrivateMacosClaudeCodeInstalledPortComposerV1["remainingBlockers"] });
   } catch { return refused(); }
 }

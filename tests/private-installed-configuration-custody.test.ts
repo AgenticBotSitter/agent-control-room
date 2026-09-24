@@ -4,8 +4,11 @@ import { chmod, link, lstat, mkdir, mkdtemp, readFile, rename, rm, writeFile } f
 import { join } from "node:path";
 import test, { type TestContext } from "node:test";
 import { canonicalJson } from "../src/security/canonical-digest";
-import { createPrivateInstalledConfigurationCustodyV1, createPrivateInstalledConfigurationCustodyV2,
+import { consumePrivateInstalledClaudeProcessReleaseCapabilityV1, createPrivateInstalledConfigurationCustodyV1,
+  createPrivateInstalledConfigurationCustodyV2, createPrivateInstalledConfigurationCustodyV3,
+  PRIVATE_INSTALLED_CLAUDE_PROCESS_SIDECAR_IDENTITY_V1,
   PRIVATE_INSTALLED_CONFIGURATION_CUSTODY_V1, PRIVATE_INSTALLED_CONFIGURATION_CUSTODY_V2,
+  PRIVATE_INSTALLED_CONFIGURATION_CUSTODY_V3,
   PRIVATE_INSTALLED_CONFIGURATION_MANIFEST_BOUND_PREPARATION_V1,
   PRIVATE_INSTALLED_CONFIGURATION_NATIVE_CUSTODY_V1,
   PRIVATE_INSTALLED_CONFIGURATION_NATIVE_SIDECAR_IDENTITY_V1 } from
@@ -65,6 +68,24 @@ async function fixtureV2(t: TestContext) {
   const input = { ...base.input, schema: PRIVATE_INSTALLED_CONFIGURATION_CUSTODY_V2,
     manifestBytes: manifestBytes.length, manifestSha256: digest(manifestBytes) };
   return { ...base, manifest, manifestBytes, input, nativeSidecar };
+}
+
+async function fixtureV3(t: TestContext) {
+  const base = await fixtureV2(t);
+  const claudeCodeProcessNativeSidecar = {
+    schema: PRIVATE_INSTALLED_CLAUDE_PROCESS_SIDECAR_IDENTITY_V1, releaseVersion: "0.1.0",
+    releaseSha256: `sha256:${"7".repeat(64)}`, sidecarManifestSha256: `sha256:${"8".repeat(64)}`,
+    archiveSha256: `sha256:${"9".repeat(64)}`, artifactManifestSha256: `sha256:${"a".repeat(64)}`,
+    executableSha256: `sha256:${"b".repeat(64)}`, platform: "darwin" as const, architecture: "arm64" as const,
+    minimumMacos: "13.0" as const, protocol: "ACRCCP1" as const,
+  };
+  const manifest = { ...base.manifest, schema: PRIVATE_INSTALLED_CONFIGURATION_CUSTODY_V3,
+    claudeCodeProcessNativeSidecar };
+  const manifestBytes = encoded(manifest);
+  await writeFile(base.manifestPath, manifestBytes, { mode: 0o600 }); await chmod(base.manifestPath, 0o600);
+  const input = { ...base.input, schema: PRIVATE_INSTALLED_CONFIGURATION_CUSTODY_V3,
+    manifestBytes: manifestBytes.length, manifestSha256: digest(manifestBytes) };
+  return { ...base, manifest, manifestBytes, input, claudeCodeProcessNativeSidecar };
 }
 
 test("fixed custody returns canonical data but explicitly blocks journal and operator composition", async t => {
@@ -132,6 +153,42 @@ test("v1 stays blocked and v1/v2 manifests are never auto-upgraded across APIs",
     schema: PRIVATE_INSTALLED_CONFIGURATION_CUSTODY_V1 }), /private_installed_configuration_custody_refused/u);
   assert.deepEqual(await readFile(old.manifestPath), old.manifestBytes);
   assert.deepEqual(await readFile(current.manifestPath), current.manifestBytes);
+});
+
+test("v3 binds one opaque Claude helper release capability without accepting v1/v2 as upgrades", async t => {
+  const f = await fixtureV3(t), composition = await createPrivateInstalledConfigurationCustodyV3(f.input);
+  assert.equal(composition.status, "manifest_bound_configuration_ready");
+  if (composition.status !== "manifest_bound_configuration_ready") return;
+  const prepared = await composition.custody.loadManifestBoundPrivateConfigurationData();
+  assert.deepEqual(consumePrivateInstalledClaudeProcessReleaseCapabilityV1(
+    prepared.claudeCodeProcessReleaseCapability), f.claudeCodeProcessNativeSidecar);
+  assert.throws(() => consumePrivateInstalledClaudeProcessReleaseCapabilityV1(
+    prepared.claudeCodeProcessReleaseCapability), /private_installed_configuration_custody_refused/u);
+  assert.equal(prepared.writesInstalledManifest, false); assert.equal(prepared.autoUpgradesManifest, false);
+  const v2 = await fixtureV2(t);
+  await assert.rejects(createPrivateInstalledConfigurationCustodyV3({ ...v2.input,
+    schema: PRIVATE_INSTALLED_CONFIGURATION_CUSTODY_V3 }), /private_installed_configuration_custody_refused/u);
+  await assert.rejects(createPrivateInstalledConfigurationCustodyV2({ ...f.input,
+    schema: PRIVATE_INSTALLED_CONFIGURATION_CUSTODY_V2 }), /private_installed_configuration_custody_refused/u);
+});
+
+test("v3 refuses omitted, extra, malformed, or architecture-drifted Claude sidecars", async t => {
+  const f = await fixtureV3(t);
+  const mutations = [
+    undefined,
+    { ...f.claudeCodeProcessNativeSidecar, extra: true },
+    { ...f.claudeCodeProcessNativeSidecar, protocol: "OTHER" },
+    { ...f.claudeCodeProcessNativeSidecar, architecture: "universal" },
+    { ...f.claudeCodeProcessNativeSidecar, releaseSha256: `sha256:${"z".repeat(64)}` },
+  ];
+  for (const claudeCodeProcessNativeSidecar of mutations) {
+    const manifest = { ...f.manifest } as Record<string, unknown>;
+    if (claudeCodeProcessNativeSidecar === undefined) delete manifest.claudeCodeProcessNativeSidecar;
+    else manifest.claudeCodeProcessNativeSidecar = claudeCodeProcessNativeSidecar;
+    const bytes = encoded(manifest); await writeFile(f.manifestPath, bytes, { mode: 0o600 });
+    await assert.rejects(createPrivateInstalledConfigurationCustodyV3({ ...f.input,
+      manifestBytes: bytes.length, manifestSha256: digest(bytes) }), /private_installed_configuration_custody_refused/u);
+  }
 });
 
 test("v2 refuses journal replacement across reread and preserves both directories", async t => {

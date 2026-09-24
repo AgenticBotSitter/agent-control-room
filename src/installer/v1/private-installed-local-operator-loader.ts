@@ -2,8 +2,8 @@ import { types } from "node:util";
 import { exactHostDataSnapshotV1 } from "../../security/host-value";
 import { capturePrivateInstalledClaudePostInstallInputV1 } from "./private-installed-claude-post-install-input";
 import { canonicalJson } from "../../security/canonical-digest";
-import { createPrivateInstalledConfigurationCustodyV2,
-  PRIVATE_INSTALLED_CONFIGURATION_CUSTODY_V2 } from
+import { createPrivateInstalledConfigurationCustodyV2, createPrivateInstalledConfigurationCustodyV3,
+  PRIVATE_INSTALLED_CONFIGURATION_CUSTODY_V2, PRIVATE_INSTALLED_CONFIGURATION_CUSTODY_V3 } from
   "./private-installed-configuration-custody";
 import { createPrivateInstalledJournalCustodyCompositionV1,
   MACOS_INSTALLATION_JOURNAL_NATIVE_SIDECAR_V1,
@@ -122,9 +122,10 @@ function captureInertData(value: unknown, active = new WeakSet<object>()): unkno
 function captureCustodyInput(value: unknown): unknown {
   const input = exact(value, ["schema", "manifestPath", "manifestBytes", "manifestSha256", "expectedOwnerUid",
     "verificationDeadlineMs", "native"]);
-  if (input.schema !== PRIVATE_INSTALLED_CONFIGURATION_CUSTODY_V2) return refused();
+  if (input.schema !== PRIVATE_INSTALLED_CONFIGURATION_CUSTODY_V2
+    && input.schema !== PRIVATE_INSTALLED_CONFIGURATION_CUSTODY_V3) return refused();
   const native = exact(input.native, ["verifyProtectedPath"]), verifyProtectedPath = callable(native.verifyProtectedPath);
-  return Object.freeze({ schema: PRIVATE_INSTALLED_CONFIGURATION_CUSTODY_V2,
+  return Object.freeze({ schema: input.schema,
     manifestPath: input.manifestPath, manifestBytes: input.manifestBytes, manifestSha256: input.manifestSha256,
     expectedOwnerUid: input.expectedOwnerUid, verificationDeadlineMs: input.verificationDeadlineMs,
     native: Object.freeze({ verifyProtectedPath }) });
@@ -272,13 +273,18 @@ PrivateInstalledLocalOperatorLoaderV1 {
     if (spent) return refused();
     spent = true;
     try {
-      const installed = await createPrivateInstalledConfigurationCustodyV2(input.installedConfigurationCustodyInput);
+      const custodySchema = (input.installedConfigurationCustodyInput as { schema?: unknown }).schema;
+      const installed = custodySchema === PRIVATE_INSTALLED_CONFIGURATION_CUSTODY_V3
+        ? await createPrivateInstalledConfigurationCustodyV3(input.installedConfigurationCustodyInput)
+        : await createPrivateInstalledConfigurationCustodyV2(input.installedConfigurationCustodyInput);
       if (installed.status !== "manifest_bound_configuration_ready") return refused();
       const prepared = await installed.custody.loadManifestBoundPrivateConfigurationData();
-      const runtime = createPrivateInstalledLocalHermesRuntimeComposerV1(prepared, input.hermesRuntimePorts);
+      const { claudeCodeProcessReleaseCapability, ...journalPrepared } = prepared as typeof prepared &
+        { claudeCodeProcessReleaseCapability?: unknown };
+      const runtime = createPrivateInstalledLocalHermesRuntimeComposerV1(journalPrepared, input.hermesRuntimePorts);
       const journalComposition = createPrivateInstalledJournalCustodyCompositionV1(Object.freeze({
         schema: PRIVATE_INSTALLED_JOURNAL_CUSTODY_COMPOSER_V1,
-        manifestBoundPreparation: prepared,
+        manifestBoundPreparation: journalPrepared,
         operationDeadlineMs: input.journalOperationDeadlineMs,
         ports: input.journalCustodyPorts,
       }));
@@ -289,7 +295,8 @@ PrivateInstalledLocalOperatorLoaderV1 {
       const activated = journalComposition.custody.constructJournal(input.stagedJournalSidecar);
       if (canonicalJson(activated.journalBinding) !== canonicalJson(prepared.journal)
         || canonicalJson(activated.nativeSidecar) !== canonicalJson(prepared.nativeSidecar)) return refused();
-      return Object.freeze({ custody: runtime.custody, journal: activated.journal });
+      return Object.freeze({ custody: runtime.custody, journal: activated.journal,
+        ...(claudeCodeProcessReleaseCapability !== undefined ? { claudeCodeProcessReleaseCapability } : {}) });
     } catch {
       return refused();
     }

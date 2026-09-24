@@ -50,7 +50,8 @@ import { consumePrivateInstalledOwnerHostInputCompositionV1,
   PRIVATE_INSTALLED_OWNER_HOST_PROVIDER_V1 } from
   "../src/installer/v1/private-installed-owner-host-input-composition";
 import { PRIVATE_INSTALLED_CONFIGURATION_MANIFEST_BOUND_PREPARATION_V1,
-  PRIVATE_INSTALLED_CONFIGURATION_CUSTODY_V2,
+  PRIVATE_INSTALLED_CLAUDE_PROCESS_SIDECAR_IDENTITY_V1,
+  PRIVATE_INSTALLED_CONFIGURATION_CUSTODY_V2, PRIVATE_INSTALLED_CONFIGURATION_CUSTODY_V3,
   PRIVATE_INSTALLED_CONFIGURATION_NATIVE_CUSTODY_V1,
   PRIVATE_INSTALLED_CONFIGURATION_NATIVE_SIDECAR_IDENTITY_V1 } from
   "../src/installer/v1/private-installed-configuration-custody";
@@ -523,7 +524,8 @@ const installedFileDigest = (value: Uint8Array) =>
   `sha256:${createHash("sha256").update(value).digest("hex")}`;
 const installedFileBytes = (value: unknown) => Buffer.from(`${canonicalJson(value)}\n`, "utf8");
 
-async function installedOperatorLoaderPackage(t: { after(fn: () => unknown): void }, f: any) {
+async function installedOperatorLoaderPackage(t: { after(fn: () => unknown): void }, f: any,
+  claudeCodeProcessNativeSidecar?: unknown) {
   const composed = installedComposerPackage(f);
   const root = await mkdtemp(join(process.cwd(), ".installed-operator-loader-"));
   t.after(() => rm(root, { recursive: true, force: true }));
@@ -543,10 +545,12 @@ async function installedOperatorLoaderPackage(t: { after(fn: () => unknown): voi
   const configurationBytes = installedFileBytes(configuration), configurationName = "operator.json";
   await writeFile(join(root, configurationName), configurationBytes, { mode: 0o600 });
   await chmod(join(root, configurationName), 0o600);
-  const manifest = { schema: PRIVATE_INSTALLED_CONFIGURATION_CUSTODY_V2, installationId: "fixture-installation",
+  const manifest = { schema: claudeCodeProcessNativeSidecar ? PRIVATE_INSTALLED_CONFIGURATION_CUSTODY_V3
+    : PRIVATE_INSTALLED_CONFIGURATION_CUSTODY_V2, installationId: "fixture-installation",
     ownerUid, configuration: { name: configurationName, bytes: configurationBytes.length,
       sha256: installedFileDigest(configurationBytes) },
-    journal: { directoryName: "installation-journal", nativeSidecar: composed.preparation.nativeSidecar } };
+    journal: { directoryName: "installation-journal", nativeSidecar: composed.preparation.nativeSidecar },
+    ...(claudeCodeProcessNativeSidecar ? { claudeCodeProcessNativeSidecar } : {}) };
   const manifestBytes = installedFileBytes(manifest), manifestPath = join(root, "installed-manifest.json");
   await writeFile(manifestPath, manifestBytes, { mode: 0o600 }); await chmod(manifestPath, 0o600);
   const protectedReads: string[] = [], factoryInputs: unknown[] = [];
@@ -558,7 +562,7 @@ async function installedOperatorLoaderPackage(t: { after(fn: () => unknown): voi
       ownerUid: request.identity.ownerUid, mode: request.identity.mode, extendedAcl: false,
       ancestorVerified: true };
   } };
-  const installedConfigurationCustodyInput = { schema: PRIVATE_INSTALLED_CONFIGURATION_CUSTODY_V2,
+  const installedConfigurationCustodyInput = { schema: manifest.schema,
     manifestPath, manifestBytes: manifestBytes.length, manifestSha256: installedFileDigest(manifestBytes),
     expectedOwnerUid: ownerUid, verificationDeadlineMs: 1_000, native };
   const stagedJournalSidecar = {
@@ -1231,7 +1235,8 @@ async function additiveClaudePackage(f: Awaited<ReturnType<typeof fixture>>, opt
       assertCurrentProcess() {}, assertCurrentDelivery() {} } } };
 }
 
-function installedClaudePortComposerFor(tuple: Awaited<ReturnType<typeof additiveClaudePackage>>) {
+async function installedClaudePortComposerFor(t: Parameters<typeof installedOperatorLoaderPackage>[0], f: any,
+  tuple: Awaited<ReturnType<typeof additiveClaudePackage>>) {
   const processConfiguration = tuple.claudePostInstall.compositionInput.installedProcessConfiguration;
   const report = tuple.claudePostInstall.admissionInput.qualificationReport;
   const sidecar = { schema: "control-room.macos-claude-code-process-native-sidecar/v1", verified: true as const,
@@ -1241,12 +1246,20 @@ function installedClaudePortComposerFor(tuple: Awaited<ReturnType<typeof additiv
     artifactManifestSha256: d("claude-bridge-artifact"), executableSha256: d("claude-bridge-helper"),
     sourceSha256: "a".repeat(64), toolchain: {}, files: [], compiles: false as const,
     downloads: false as const, installs: false as const };
+  const protectedIdentity = { schema: PRIVATE_INSTALLED_CLAUDE_PROCESS_SIDECAR_IDENTITY_V1,
+    releaseVersion: sidecar.releaseVersion, releaseSha256: sidecar.releaseSha256,
+    sidecarManifestSha256: sidecar.sidecarManifestSha256, archiveSha256: sidecar.archiveSha256,
+    artifactManifestSha256: sidecar.artifactManifestSha256, executableSha256: sidecar.executableSha256,
+    platform: sidecar.platform, architecture: sidecar.architecture, minimumMacos: "13.0" as const,
+    protocol: "ACRCCP1" as const };
+  const loaderPackage = await installedOperatorLoaderPackage(t, f, protectedIdentity);
+  const loaded = await createPrivateInstalledLocalOperatorLoaderV1(loaderPackage.input).loadInstalledConfiguration();
+  const manifestReleaseCapability = (loaded as { claudeCodeProcessReleaseCapability?: unknown })
+    .claudeCodeProcessReleaseCapability;
+  assert.ok(manifestReleaseCapability);
   return createPrivateMacosClaudeCodeInstalledPortComposerV1({
     schema: PRIVATE_MACOS_CLAUDE_CODE_INSTALLED_PORT_COMPOSER_V1,
-    manifestReleaseBinding: { releaseVersion: sidecar.releaseVersion, releaseSha256: sidecar.releaseSha256,
-      platform: sidecar.platform, architecture: sidecar.architecture,
-      sidecarManifestSha256: sidecar.sidecarManifestSha256, archiveSha256: sidecar.archiveSha256,
-      artifactManifestSha256: sidecar.artifactManifestSha256, executableSha256: sidecar.executableSha256 },
+    manifestReleaseCapability,
     verifiedSidecar: sidecar, installedProcessConfiguration: processConfiguration,
     processPortConfiguration: { schema: "control-room.macos-claude-code-process-port/v1",
       helperPath: "/private/fixture/claude-helper", helperSha256: sidecar.executableSha256,
@@ -1262,7 +1275,7 @@ function installedClaudePortComposerFor(tuple: Awaited<ReturnType<typeof additiv
 test("verified installed Claude ports enter the existing additive post-install tuple once without replacing Hermes or invoking native work", async t => {
   const f = await fixture(t), claude = await additiveClaudePackage(f), effects: string[] = [];
   const originalPorts = claude.claudePostInstall.compositionInput.ports;
-  const composed = installedClaudePortComposerFor(claude);
+  const composed = await installedClaudePortComposerFor(t, f, claude);
   const bridged = composePrivateMacosClaudeCodePostInstallV1({
     schema: PRIVATE_MACOS_CLAUDE_CODE_POST_INSTALL_BRIDGE_V1,
     claudePostInstall: claude.claudePostInstall, capability: composed.capability });
@@ -1276,7 +1289,7 @@ test("verified installed Claude ports enter the existing additive post-install t
     claudePostInstall: claude.claudePostInstall, capability: composed.capability }),
   /private_macos_claude_code_post_install_bridge_refused/u, "the capability is burned before any installation assembly");
 
-  const driftedComposer = installedClaudePortComposerFor(claude);
+  const driftedComposer = await installedClaudePortComposerFor(t, f, claude);
   const drifted = { ...claude.claudePostInstall, compositionInput: {
     ...claude.claudePostInstall.compositionInput,
     installedProcessConfiguration: { ...claude.claudePostInstall.compositionInput.installedProcessConfiguration,
