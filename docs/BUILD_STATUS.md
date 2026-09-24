@@ -82,6 +82,12 @@ It finishes the supported single-computer installation first and then extends
 that same database, scheduler and lifecycle to several computers. Older build
 plans remain architecture/history references, not competing execution queues.
 
+## Historical several-computer work — not active
+
+The following entries preserve already-reviewed source history. They are here
+for later reuse after local acceptance, not as today's work queue. A reader
+setting up one Mac can skip directly to **Source checkpoint** below.
+
 **September 24 multi-computer correction:** existing node and key rows prove
 the machine and its current key, but they do not prove the exact remote worker
 enrollment.  The existing Hermes connection registry also cannot safely be
