@@ -1,8 +1,17 @@
 # Agent Control Room build status
 
-**Status:** active source build. The product is prepared and extensively tested
-with disposable data; no Control Room installation or local worker is
-operational yet.
+**Status:** active **single-computer** source build. The product is prepared
+and extensively tested with disposable data; no Control Room installation or
+local worker is operational yet.
+
+> **Current build boundary — September 24, 2026:** finish the one-Mac product
+> before doing any more several-computer work. Active work is limited to the
+> local website/controller, the local Hermes Agent route, and the local Claude
+> Code route using one shared project, task, result, review, and correction
+> lifecycle. Older remote and Linux entries below are retained as historical
+> source evidence only. They are not active work, they do not make a local
+> worker usable, and they must not consume build capacity until the local
+> acceptance journey in `LOCAL_TO_MULTI_SYSTEM_EXECUTION_PLAN.md` is complete.
 
 **Current activation checkpoint (2026-09-23):** the protected Claude
 qualification route and the Codex current-admission read are accepted
