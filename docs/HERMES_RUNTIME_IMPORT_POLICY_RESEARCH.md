@@ -91,6 +91,34 @@ code was copied by this research.
 
 ## Next implementation decision
 
+### Restricted execution home preflight (September 24)
+
+The additive `macos-hermes-restricted-home-preflight.ts` inspects supplied
+inventories without touching a filesystem or starting Hermes. It reuses the
+native-host input join and manifest verifier, requires the fixed Python/Hermes/
+dependency roots and bootstrap files, and accepts an execution-home inventory
+containing only optional empty `logs` and `sessions` directories. Profiles,
+credentials, provider/plugin directories, symlinks and arbitrary home entries
+are refused. Recovery markers and executable Python site hooks are refused in
+the image inventory too. This describes a proposed fresh execution home; it
+does not describe or inspect the owner's existing Hermes home.
+
+Closer inspection of the exact cached source distinguishes two details that
+the original blanket policy does not: `hermes_cli/main.py` computes its inserted
+root from `realpath(parent(__file__))`, and `cli.py`'s `_AsyncHttpxDelNeuter`
+finder targets only `openai._base_client`. An immutable image containing those
+files can therefore describe that specific internal behavior without accepting
+an arbitrary module root or arbitrary hook. `_early_recovery.py` checks the
+source-root `.update-incomplete` and `.lazy-refresh-incomplete` markers before
+repairing dependencies. Their absence matters, but supplied inventory absence
+alone cannot prove they stay absent at runtime.
+
+The preflight does **not** relax the existing import policy, certify file
+contents from caller-supplied hashes, or declare launch readiness. Plugin
+entry-point metadata, other dynamic loading, native filesystem custody and the
+restricted home's real runtime behavior remain unproven. The pinned source's
+MIT attribution remains upstream; no Python source was copied or modified.
+
 A candidate policy and negative test specification are now implemented. They
 are a refusal boundary, not evidence that the fixed entry layout works. Before
 packaging can proceed, upstream must provide a supported invocation mode that
