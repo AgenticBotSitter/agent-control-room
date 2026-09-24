@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "digest": "c1412f4d590896ab91fe49ff7495cc6558e2695535e49678719586f9573f8830",
+  "digest": "916219e3647b28b1eb8f14e178cd6d15ddf44799dbe27ccaef51b0cac292ecc1",
   "entries": [
     {
       "file": "db/migrations/0001_control_room_core.sql",
@@ -507,20 +507,26 @@
       "kind": "migrate"
     },
     {
-      "file": "db/roles/production_roles.sql",
+      "file": "db/migrations/0085_remote_worker_enrollment_revisions.sql",
       "order": 85,
+      "sha256": "41e54a7d0dde0201dcb043921994da5f6371c4bde275f16bcb516ae5b2dd25d5",
+      "kind": "migrate"
+    },
+    {
+      "file": "db/roles/production_roles.sql",
+      "order": 86,
       "sha256": "21960d034062d3a86810e966748187ce2bb4aff550753a33136781d1a92c9f39",
       "kind": "grants"
     },
     {
       "file": "db/roles/production_table_grants.sql",
-      "order": 86,
+      "order": 87,
       "sha256": "be541f3041e798cfb8540cfc94b3853b978ca5d85d3f27dbeae78ba1e3ee1c83",
       "kind": "grants"
     },
     {
       "file": "db/roles/production_provision.sql",
-      "order": 87,
+      "order": 88,
       "sha256": "06b83bf15223e1e9540fc409ec7699fc2b8ad7617545a97ea06f802b70dc9887",
       "kind": "provision"
     }
