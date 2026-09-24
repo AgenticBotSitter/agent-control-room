@@ -80,7 +80,10 @@ export function createPrivateCodexCurrentAdmissionReaderV1(input: {
     const channel = bridge.codexActivationChannel();
     const activation = journal.acceptedCodexActivation(queueId);
     const delivery = journal.acceptedCodexDelivery(queueId);
-    if (!channel || !activation || !delivery || channel.grantsExecutionAuthority !== false) unavailable();
+    if (!channel) return unavailable();
+    if (!activation) return unavailable();
+    if (!delivery) return unavailable();
+    if (channel.grantsExecutionAuthority !== false) return unavailable();
     const start = activation.frame.body;
     if (activation.frame.type !== "harness.codex.dispatch.activation" || channel.tenantId !== start.tenantId
       || channel.nodeId !== start.nodeId || activation.frame.connectionId !== channel.connectionId) unavailable();
@@ -120,12 +123,14 @@ export function createPrivateCodexCurrentAdmissionReaderV1(input: {
           currentAdmissionDigest: start.currentAdmissionDigest, challengeNonce: nonce,
           startsWork: false, grantsExecutionAuthority: false,
         });
-        const request = await signer.sign({ protocol: NODE_PROTOCOL_V1, direction: "node_to_server", senderKind: "node",
+        const signed = await signer.sign({ protocol: NODE_PROTOCOL_V1, direction: "node_to_server", senderKind: "node",
           tenantId: channel.tenantId, actorId: channel.nodeId, keyId: keys.reference().keyId,
           connectionId: channel.connectionId, sequence: 1, messageId: `message:codex-admission:${randomUUID()}`,
           correlationId: `correlation:codex-admission:${randomUUID()}`,
           sentAt: new Date(now).toISOString(), expiresAt: new Date(expiresAt).toISOString(), nonce,
           type: "harness.codex.current-admission.read", body } as UnsignedNodeFrame<"harness.codex.current-admission.read">);
+        if (signed.type !== "harness.codex.current-admission.read") unavailable();
+        const request = signed as SignedNodeFrame<"harness.codex.current-admission.read">;
         issued.set(queueId, Object.freeze({ request, activationFrameDigest: body.activationFrameDigest,
           admissionDigest: body.currentAdmissionDigest, trustRevision,
           connectionId: channel.connectionId, expiresAt, nonce }));

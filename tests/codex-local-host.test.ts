@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict';
-import { generateKeyPairSync } from 'node:crypto';
+import { createHash, generateKeyPairSync, sign as cryptoSign } from 'node:crypto';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import test from 'node:test';
 import { createCodexLocalHostV1 } from '../src/harness/codex-v1/local-host';
 import type { CodexLocalInitialHostInputV1, CodexLocalRecoverHostInputV1 } from '../src/harness/codex-v1/local-host';
@@ -17,9 +20,12 @@ import { PortableNodeBridge } from '../src/node-bridge/bridge';
 import { SqliteBridgeJournal } from '../src/node-bridge/journal';
 import { consumePrivateCodexSessionCapabilityV1, createPrivateCodexSessionOwnerV1,
   PRIVATE_CODEX_SESSION_CAPABILITY_V1 } from '../src/node-bridge/private-codex-session-owner';
+import { createPrivateCodexInstalledNodeEntryV1 } from '../src/node-bridge/private-codex-installed-node-entry';
+import { PinnedApprovalTrustStore } from '../src/node-policy/v1/pinned-approval-trust';
+import { PinnedOwnerTrust } from '../src/node-policy/v1/owner-pins';
+import { SqliteNodeSecurityStateRepository } from '../src/node-policy/v1/persistent-security-state';
 import { computeArtifactBodyDigest, signArtifact } from '../src/node-policy/v1/crypto';
 import { computeEffectClaimKey } from '../src/node-policy/v1/effect-claim';
-import type { PinnedApprovalTrustStore } from '../src/node-policy/v1/pinned-approval-trust';
 import { computeNormalizedOperationDigest } from '../src/node-policy/v1/policy-evaluator';
 import { NODE_PROTOCOL_V1, NodeProtocolAuthenticator, signNodeFrame,
   type UnsignedNodeFrame } from '../src/node-protocol/v1';
@@ -136,7 +142,7 @@ async function portableActivation(recordActivation = true, keepConnected = false
     await bridge.disconnected(); dispatchHandler.close(); activationHandler.close();
   };
   if (!keepConnected) await closeBridge();
-  return { journal, body, workspaceIntent, activation,
+  return { journal, body, workspaceIntent, activation, approval, server, node,
     bridge, closeBridge, connectionAttemptId: `connection-attempt:codex-host:${fixtureId}`, clock: () => ++clock };
 }
 
@@ -346,6 +352,83 @@ test('private Codex session owner rejects structural fake bridge/journal inputs'
       assertCurrent() {} },
     clock: () => baseTime,
   }), /private_codex_session_owner_unavailable/);
+});
+
+test('installed Codex node entry turns one signed current read into one bound session capability', async t => {
+  const f = await portableActivation(true, true);
+  const directory = await mkdtemp(join(tmpdir(), 'cr-codex-installed-entry-'));
+  const root = generateKeyPairSync('ed25519');
+  const rootSpki = root.publicKey.export({ format: 'der', type: 'spki' }).toString('base64url');
+  const rootPin = { keyId: 'owner-root:test', algorithm: 'ed25519' as const, spki: rootSpki,
+    fingerprint: `sha256:${createHash('sha256').update(Buffer.from(rootSpki, 'base64url')).digest('hex')}` };
+  const security = new SqliteNodeSecurityStateRepository({ artifactDatabasePath: join(directory, 'artifacts.db'),
+    highWaterDatabasePath: join(directory, 'water.db') },
+  { tenantId: 'tenant:test', nodeId: 'node:test', nodeClass: 'personal-compute' },
+  new PinnedOwnerTrust({ ceilingProvisioningKey: rootPin, serverTrustRootKey: rootPin,
+    trustShrinkKeys: [rootPin] }), { now: () => new Date(baseTime + 3_000).toISOString() });
+  const trustBody = { schema: 'control-room.server-trust-bundle/v1' as const, tenantId: 'tenant:test',
+    nodeClass: 'personal-compute', epoch: 1, issuedAt: new Date(baseTime).toISOString(),
+    ownerRootKeyId: rootPin.keyId, keys: [{ keyId: 'server-key:test', algorithm: 'ed25519' as const,
+      spki: f.server.publicKey.export({ format: 'der', type: 'spki' }).toString('base64url'), state: 'active' as const }] };
+  await security.provisionInitialTrustBundle(signArtifact({ ...trustBody,
+    bodyDigest: computeArtifactBodyDigest(trustBody) }, root.privateKey));
+  const approvalSpki = f.approval.publicKey.export({ format: 'der', type: 'spki' }).toString('base64url');
+  const approvals = new PinnedApprovalTrustStore({ schema: 'control-room.owner-approval-pins/v1',
+    tenantId: 'tenant:test', nodeId: 'node:test', nodeClass: 'personal-compute',
+    validFrom: baseTime, validUntil: deadline,
+    keys: [{ keyId: 'approval-key:test', algorithm: 'ed25519', spki: approvalSpki,
+      fingerprint: `sha256:${createHash('sha256').update(Buffer.from(approvalSpki, 'base64url')).digest('hex')}` }] },
+  { security, clock: () => baseTime + 3_000 });
+  const keys = { reference: () => ({ contractVersion: 'control-room-node-policy/v1' as const,
+    keyId: 'node-key:test', referenceId: 'key-reference:test', provider: 'memory_test' as const,
+    mode: 'test' as const, algorithm: 'Ed25519' as const }), async availability() {
+    return { state: 'available' as const, keyReferenceId: 'key-reference:test',
+      observedAt: new Date(baseTime + 3_000).toISOString() };
+  }, async unlock() {}, async sign(bytes: Uint8Array) {
+    return new Uint8Array(cryptoSign(null, Buffer.from(bytes), f.node.privateKey));
+  }, async lock() {}, async dispose() {} };
+  t.after(async () => { approvals.close(); security.close(); await f.closeBridge(); f.journal.close();
+    await rm(directory, { recursive: true, force: true }); });
+
+  const entry = createPrivateCodexInstalledNodeEntryV1({ bridge: f.bridge, journal: f.journal,
+    security, approvals, keys, clock: () => baseTime + 3_000 });
+  assert.equal(entry.startsWork, false); assert.equal(entry.grantsExecutionAuthority, false);
+  const issued = await entry.issue(f.body.queueId);
+  await assert.rejects(entry.issue(f.body.queueId), /private_codex_installed_node_entry_unavailable/,
+    'uncertain issue is burned instead of silently duplicated');
+  const responseBody = { schema: 'control-room.codex-current-admission-read-response/v1' as const,
+    queueId: issued.request.body.queueId, projectId: issued.request.body.projectId,
+    jobId: issued.request.body.jobId, attemptId: issued.request.body.attemptId,
+    nodeId: issued.request.body.nodeId, requestMessageId: issued.request.messageId,
+    requestBodyDigest: issued.request.bodyDigest, challengeNonce: issued.request.body.challengeNonce,
+    activationFrameDigest: issued.request.body.activationFrameDigest,
+    currentAdmissionDigest: issued.request.body.currentAdmissionDigest,
+    ownerTrustRevisionDigest: sha256Digest('owner-trust:test'),
+    checkedAt: new Date(baseTime + 3_000).toISOString(), expiresAt: new Date(baseTime + 20_000).toISOString(),
+    startsWork: false as const, grantsExecutionAuthority: false as const };
+  const response = signNodeFrame({ protocol: NODE_PROTOCOL_V1, direction: 'server_to_node',
+    senderKind: 'control_room', tenantId: 'tenant:test', actorId: 'control-room:test', keyId: 'server-key:test',
+    connectionId: f.activation.connectionId, sequence: 90, messageId: 'message:installed-entry-response',
+    correlationId: 'correlation:installed-entry', causationId: issued.request.messageId,
+    sentAt: responseBody.checkedAt, expiresAt: responseBody.expiresAt,
+    nonce: 'installed_entry_response_nonce_1234567890',
+    type: 'harness.codex.current-admission.read.response', body: responseBody }, f.server.privateKey);
+  const admitted = await entry.accept(f.body.queueId, JSON.stringify(response));
+  assert.equal(admitted.startsWork, false); assert.equal(admitted.grantsExecutionAuthority, false);
+  assert.equal(admitted.binding.tenantId, 'tenant:test'); assert.equal(admitted.binding.nodeId, 'node:test');
+  const session = consumePrivateCodexSessionCapabilityV1(admitted.sessionCapability);
+  session.assertCurrent();
+  assert.throws(() => consumePrivateCodexSessionCapabilityV1(admitted.sessionCapability),
+    /private_codex_session_owner_unavailable/, 'installed session capability is one-use');
+  await assert.rejects(entry.accept(f.body.queueId, JSON.stringify(response)),
+    /private_codex_installed_node_entry_unavailable/, 'signed response cannot be replayed');
+});
+
+test('installed Codex node entry rejects structural authority substitutes before issuing', () => {
+  assert.throws(() => createPrivateCodexInstalledNodeEntryV1({
+    bridge: { codexActivationChannel() {} }, journal: {}, security: {}, approvals: {}, keys: {
+      reference() {}, async sign() { return new Uint8Array(); } },
+  } as never), /private_codex_installed_node_entry_unavailable/);
 });
 
 test('remote worker rejects missing activation, revoked session and changed binding before native start', async t => {

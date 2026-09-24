@@ -29,9 +29,11 @@ delivery transport.
   a bounded Codex node composition exist in source. A replacement remote
   session can safely reconcile an already-journaled receipt against the exact
   durable signed-send record; it cannot resend or start work. The remote route
-  is **not yet complete**: protected resolver/receipt intake and node-entry
-  composition, plus their disposable proofs, remain before a remote worker can
-  be activated.
+  is **not yet complete**: the source node-entry join now turns one signed,
+  current controller answer into one opaque session capability without exposing
+  a generic authority callback, but protected installed-input construction and
+  resolver/receipt intake, plus their disposable proofs, remain before a remote
+  worker can be activated.
 - macOS Codex execution remains fail-closed. The discarded prototype could not
   protect Codex's pathname-based private home safely. The first supported
   Codex worker is therefore the reviewed Linux route in the several-computer
@@ -110,8 +112,10 @@ database, scheduler, website, and review path.
    not sufficient provenance.
   The current source read now revalidates the complete current permit and
   exact queued evidence before it returns a non-executing signed answer.
-  The installed Codex admission/trust owner still must supply that concrete
-  current-policy port through protected node-entry composition. Until that
+  The installed Codex node-entry join now owns that concrete current-policy
+  port after one signed read and releases only a one-use session capability.
+  The outer installer still must create its bridge, journals, pin/trust stores,
+  and node signing custody from protected installed state. Until that outer
   composition exists, this source package is a release blocker—not a live node
   session or worker-ready claim.
    That provider must combine the protected local trust revision and pin with

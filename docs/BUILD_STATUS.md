@@ -10,8 +10,12 @@ source-only packages. Claude's route is fixed to its reviewed helper and
 text-only policy; Codex's signed read rechecks the live controller-side permit,
 route, profile, enrollment/pin, lease, and exact queued evidence without
 sending or starting work. Both remain preparation: the installed Claude
-verifier/manifest composition and protected Linux Codex node-entry composition
-are still required before either can be called live or worker-ready.
+verifier/manifest composition is still required. The protected Linux Codex
+node-entry join now exists in source: it owns the signed current-admission
+reader, never exposes the derived policy port, and yields only a one-use
+session capability. Its outer installer still must construct the live bridge,
+journal, trust stores, and key custody from protected installed state before
+Codex can be called live or worker-ready.
 
 The reviewed first-activation command now accepts either supported product
 mode: the website-only host or the complete agent-task host. In both cases it
@@ -37,7 +41,8 @@ broker or second queue. A replacement remote session can now return its
 already-journaled receipt only when it matches the original durable signed-send
 record; altered, expired, revoked, or wrong-worker reports are refused, and
 recovery never resends or starts work. The remote path still needs protected
-node-entry composition before it can claim a complete source journey. The first Codex
+installed-input construction and result/receipt intake before it can claim a
+complete source journey. The first Codex
 execution path uses the existing approved Codex v3/v4 permit and activation
 records; a generic remote packet is not execution authority. This remains
 source evidence, not a live worker or task execution.

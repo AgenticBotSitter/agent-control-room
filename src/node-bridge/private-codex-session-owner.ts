@@ -92,9 +92,12 @@ export function createPrivateCodexSessionOwnerV1(value: PrivateCodexSessionOwner
       try {
         localId.parse(queueId);
         const channel = bridge.codexActivationChannel();
-        if (!channel || channel.grantsExecutionAuthority !== false) unavailable();
-        const delivery = journal.acceptedCodexDelivery(queueId) ?? unavailable();
-        const activation = journal.acceptedCodexActivation(queueId) ?? unavailable();
+        if (!channel) return unavailable();
+        if (channel.grantsExecutionAuthority !== false) return unavailable();
+        const delivery = journal.acceptedCodexDelivery(queueId);
+        const activation = journal.acceptedCodexActivation(queueId);
+        if (!delivery) return unavailable();
+        if (!activation) return unavailable();
         const start = delivery.frame.body.start;
         const assertCurrent = () => {
           channel.assertCurrent();
