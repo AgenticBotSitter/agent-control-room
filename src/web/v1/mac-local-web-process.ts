@@ -13,6 +13,7 @@ import type { TaskPlanningOperation } from "./task-execution-planner";
 import type { TaskAssignmentOperation } from "./task-assignment-coordinator";
 import type { TaskApprovalOperation, TaskSubmissionOperation } from "./task-coordinator-lifecycle";
 import type { TaskRevisionOperation } from "./task-revision-operation";
+import type { MacLocalWorkerReadinessV1 } from "./mac-local-worker-readiness";
 
 export interface MacLocalWebProcessOptionsV1 {
   origin: string;
@@ -28,6 +29,9 @@ export interface MacLocalWebProcessOptionsV1 {
   approvals?: TaskApprovalOperation;
   submission?: TaskSubmissionOperation;
   revisions?: TaskRevisionOperation;
+  /** Host-generation display state built only after pinned executable
+   * verification. It is not a delivery, queue, or result authority. */
+  workerReadiness?: Pick<MacLocalWorkerReadinessV1, "read">;
   clock?: () => number;
 }
 
@@ -80,6 +84,11 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
         const issued = await sessions.issue(request, await readLocalOwnerCodeV1(request), clock());
         return Response.json({ authenticated: true, expiresAt: issued.expiresAt }, { status: 201,
           headers: { ...privateResponseHeaders, "set-cookie": issued.cookie } });
+      }
+      if (url.pathname === "/api/v1/local-workers") {
+        if (request.method !== "GET" || url.search || !options.workerReadiness) throw new WebAccessError("not_found");
+        sessions.verify(request, clock());
+        return Response.json({ workers: options.workerReadiness.read() }, { headers: privateResponseHeaders });
       }
       if (url.pathname === "/api/v1/projects") return projectHttp(request);
       if (/^\/api\/v1\/projects\/[^/]+\/tasks(?:\/|$)/.test(url.pathname)) return taskHttp(request);

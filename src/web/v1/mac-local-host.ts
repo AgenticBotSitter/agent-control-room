@@ -5,6 +5,7 @@ import type { MacLocalProtectedConfigurationV1 } from "./mac-local-protected-con
 import { createMacLocalControlRoomServiceV1 } from "./mac-local-serving";
 import { createMacLocalStartupV1 } from "./mac-local-startup";
 import type { MacLocalCanonicalTaskOperationsV1 } from "./mac-local-web-process";
+import type { MacLocalWorkerReadinessV1 } from "./mac-local-worker-readiness";
 
 type OpenedDatabase = Readonly<{ client: DatabaseClient; close(): Promise<void> }>;
 type LocalService = Readonly<{ start(): Promise<void>; close(): Promise<void>; isReady(): boolean }>;
@@ -21,6 +22,7 @@ export function createMacLocalWebServiceFromConfigurationV1(input: Readonly<{
    * local website use the same task/review/correction lifecycle as every
    * other topology; omitting them intentionally leaves those routes absent. */
   operations?: MacLocalCanonicalTaskOperationsV1;
+  workerReadiness?: Pick<MacLocalWorkerReadinessV1, "read">;
   createServer?: (options: Readonly<ServerOptions>) => Server;
   listenerTiming?: { bindMs?: number; closeMs?: number };
 }>): LocalService {
@@ -35,6 +37,7 @@ export function createMacLocalWebServiceFromConfigurationV1(input: Readonly<{
     workspaceId: configuration.workspaceId,
     database: input.database,
     ...(input.operations ? { ...input.operations } : {}),
+    ...(input.workerReadiness ? { workerReadiness: input.workerReadiness } : {}),
     assets: input.assets,
     render: input.render,
     ...(input.createServer ? { createServer: input.createServer } : {}),
@@ -62,9 +65,10 @@ export function createMacLocalProtectedHostV1(input: Readonly<{
   const startup = createMacLocalStartupV1({
     readVersion: input.readVersion,
     openDatabase: input.openDatabase,
-    createService: ({ configuration, database }) => createMacLocalWebServiceFromConfigurationV1({
+    createService: ({ configuration, database, workerReadiness }) => createMacLocalWebServiceFromConfigurationV1({
       configuration, database, assets: input.assets, render: input.render,
       ...(input.operations ? { operations: input.operations } : {}),
+      workerReadiness,
       ...(input.createServer ? { createServer: input.createServer } : {}),
       ...(input.listenerTiming ? { listenerTiming: input.listenerTiming } : {}),
     }),
