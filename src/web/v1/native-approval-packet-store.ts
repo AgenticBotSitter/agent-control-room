@@ -52,6 +52,18 @@ const claudeCodeLocalQueueApprovalSchema = z.object({
   enrollmentDigest: digestSchema, planDigest: digestSchema, acceptedBy: localId, acceptedAt: z.string().datetime(),
 }).strict();
 type ClaudeCodeLocalQueueApproval = z.infer<typeof claudeCodeLocalQueueApprovalSchema>;
+/** Codex uses the same durable queue table as the other local adapters, but
+ * its approval record and authentication purpose are deliberately distinct.
+ * A Claude or Hermes receipt must never be usable to start the local Codex
+ * CLI. */
+const codexOwnerTrustedLocalQueueApprovalSchema = z.object({
+  schema: z.literal("control-room.canonical-codex-owner-trusted-local-queue-approval/v1"),
+  tenantId: localId, projectId: localId, jobId: localId, attemptId: localId, nodeId: localId,
+  leaseId: localId, leaseEpoch: z.number().int().positive(), inputDigest: digestSchema,
+  packetDigest: digestSchema, operationDigest: digestSchema, bindingDigest: digestSchema,
+  enrollmentDigest: digestSchema, planDigest: digestSchema, acceptedBy: localId, acceptedAt: z.string().datetime(),
+}).strict();
+type CodexOwnerTrustedLocalQueueApproval = z.infer<typeof codexOwnerTrustedLocalQueueApprovalSchema>;
 type Row = { tenant_id: string; project_id: string; job_id: string; attempt_id: string; record: unknown; auth_tag: string };
 const fail = (): never => { throw new Error("native_approval_packet_unavailable"); };
 
@@ -78,6 +90,9 @@ export class NativeApprovalPacketStore {
   }
   private claudeCodeLocalTag(record: ClaudeCodeLocalQueueApproval) {
     return hmacSha256Tag(this.key, { purpose: "canonical-claude-code-local-queue-approval/v1", record });
+  }
+  private codexOwnerTrustedLocalTag(record: CodexOwnerTrustedLocalQueueApproval) {
+    return hmacSha256Tag(this.key, { purpose: "canonical-codex-owner-trusted-local-queue-approval/v1", record });
   }
   private verify(row: Row) {
     const record = recordSchema.parse(row.record), expected = Buffer.from(this.tag(record)), actual = Buffer.from(row.auth_tag);
@@ -253,6 +268,54 @@ export class NativeApprovalPacketStore {
     if (!row) return null;
     const record = claudeCodeLocalQueueApprovalSchema.parse(row.record);
     const expected = Buffer.from(this.claudeCodeLocalTag(record)), actual = Buffer.from(row.auth_tag);
+    if (actual.length !== expected.length || !timingSafeEqual(actual, expected)
+      || row.tenant_id !== record.tenantId || row.project_id !== record.projectId
+      || row.job_id !== record.jobId || row.attempt_id !== record.attemptId
+      || record.tenantId !== scope.tenantId || record.projectId !== scope.projectId
+      || record.jobId !== scope.jobId || record.attemptId !== scope.attemptId
+      || record.inputDigest !== scope.inputDigest) fail();
+    return record;
+  }
+  /** Codex has a different adapter identity, but not a different queue or
+   * database. This records only the canonical plan/lease binding needed for a
+   * later current-authority pickup; it contains no prompt, command or login. */
+  async enqueueCodexOwnerTrustedLocalInSession(tx: DatabaseSession, intent: NativeTaskQueueIntent, planDigest: string) {
+    const value = { ...intent, deliveryKind: "codex-owner-trusted-local" as const };
+    const r = z.object({ schema: z.literal("control-room.native-task-queue/v1"), tenantId: localId,
+      projectId: localId, jobId: localId, attemptId: localId, nodeId: localId, leaseId: localId,
+      leaseEpoch: z.number().int().positive(), inputDigest: digestSchema, packetDigest: digestSchema,
+      operationDigest: digestSchema, bindingDigest: digestSchema, enrollmentDigest: digestSchema,
+      deadline: z.number().int().nonnegative(), queuedAt: z.string().datetime(), queuedBy: localId,
+      deliveryKind: z.literal("codex-owner-trusted-local") }).strict().parse(value);
+    const approval = codexOwnerTrustedLocalQueueApprovalSchema.parse({
+      schema: "control-room.canonical-codex-owner-trusted-local-queue-approval/v1", tenantId: r.tenantId,
+      projectId: r.projectId, jobId: r.jobId, attemptId: r.attemptId, nodeId: r.nodeId, leaseId: r.leaseId,
+      leaseEpoch: r.leaseEpoch, inputDigest: r.inputDigest, packetDigest: r.packetDigest,
+      operationDigest: r.operationDigest, bindingDigest: r.bindingDigest, enrollmentDigest: r.enrollmentDigest,
+      planDigest: digestSchema.parse(planDigest), acceptedBy: r.queuedBy, acceptedAt: r.queuedAt,
+    });
+    const rows = await tx.query<Row>("SELECT tenant_id,project_id,job_id,attempt_id,record,auth_tag FROM control_native_approval_packets WHERE tenant_id=$1 AND job_id=$2 AND attempt_id=$3",
+      [r.tenantId, r.jobId, r.attemptId]);
+    const prior = rows.rows[0];
+    if (prior) {
+      const record = codexOwnerTrustedLocalQueueApprovalSchema.parse(prior.record);
+      const expected = Buffer.from(this.codexOwnerTrustedLocalTag(record)), actual = Buffer.from(prior.auth_tag);
+      const stable = ({ acceptedBy: _actor, acceptedAt: _at, ...saved }: CodexOwnerTrustedLocalQueueApproval) => { void _actor; void _at; return saved; };
+      if (actual.length !== expected.length || !timingSafeEqual(actual, expected)
+        || prior.tenant_id !== record.tenantId || prior.project_id !== record.projectId
+        || prior.job_id !== record.jobId || prior.attempt_id !== record.attemptId
+        || sha256Digest(stable(record)) !== sha256Digest(stable(approval))) fail();
+    } else await tx.query("INSERT INTO control_native_approval_packets(tenant_id,project_id,job_id,attempt_id,record,auth_tag) VALUES($1,$2,$3,$4,$5,$6)",
+      [r.tenantId, r.projectId, r.jobId, r.attemptId, approval, this.codexOwnerTrustedLocalTag(approval)]);
+    return enqueueNativeTaskInSession(tx, this.key, r);
+  }
+  async readCodexOwnerTrustedLocalQueueApprovalInSession(tx: DatabaseSession,
+    scope: { tenantId: string; projectId: string; jobId: string; attemptId: string; inputDigest: string }) {
+    const row = (await tx.query<Row>("SELECT tenant_id,project_id,job_id,attempt_id,record,auth_tag FROM control_native_approval_packets WHERE tenant_id=$1 AND job_id=$2 AND attempt_id=$3",
+      [scope.tenantId, scope.jobId, scope.attemptId])).rows[0];
+    if (!row) return null;
+    const record = codexOwnerTrustedLocalQueueApprovalSchema.parse(row.record);
+    const expected = Buffer.from(this.codexOwnerTrustedLocalTag(record)), actual = Buffer.from(row.auth_tag);
     if (actual.length !== expected.length || !timingSafeEqual(actual, expected)
       || row.tenant_id !== record.tenantId || row.project_id !== record.projectId
       || row.job_id !== record.jobId || row.attempt_id !== record.attemptId

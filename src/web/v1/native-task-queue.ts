@@ -14,7 +14,7 @@ const intentSchema = z.object({ schema: z.literal("control-room.native-task-queu
    * original signed native-dispatch route.  A new value must be selected only
    * after the coordinator has reconstructed the matching canonical plan.
    */
-  deliveryKind: z.enum(["native-dispatch", "hermes-021-macos-local", "claude-code-local"]).optional(),
+  deliveryKind: z.enum(["native-dispatch", "hermes-021-macos-local", "claude-code-local", "codex-owner-trusted-local"]).optional(),
   deadline: z.number().int().nonnegative(), queuedAt: z.string().datetime(), queuedBy: localId,
 }).strict();
 export type NativeTaskQueueIntent = z.infer<typeof intentSchema>;

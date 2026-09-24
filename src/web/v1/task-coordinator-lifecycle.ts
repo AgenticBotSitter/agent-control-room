@@ -4,7 +4,8 @@ import { localId } from "../../harness/v1/native-run-identifiers";
 import { TaskExecutionPlanner, type TaskPlanningOperation } from "./task-execution-planner";
 import { TaskAssignmentCoordinator, type TaskAssignmentOperation, type TaskAssignmentRoute, type NativeApprovalEnrollment,
   type CodexPermitConfiguration, type Hermes021LocalQueueDeliveryTarget, type ClaudeCodeLocalQueueDeliveryTarget,
-  type RemoteControllerWorkerQueueDeliveryTarget, type InstallationTransitionAdmissionFence } from "./task-assignment-coordinator";
+  type CodexOwnerTrustedLocalQueueDeliveryTarget, type RemoteControllerWorkerQueueDeliveryTarget,
+  type InstallationTransitionAdmissionFence } from "./task-assignment-coordinator";
 import { isInstallationTransitionAdmissionPausedV1 } from "../../harness/v1/installation-transition-store";
 import type { NativeApprovalPacketStore } from "./native-approval-packet-store";
 import { nativeTaskApprovalPacketSchema } from "../../harness/v1/native-approval-packet";
@@ -28,6 +29,7 @@ import { captureCodexResultIntakeSettingsV1, CodexResultIntakeV1,
   type CodexResultIntakeSettingsV1 } from "./codex-result-intake";
 import { deliverVerifiedHermes021LocalQueueTaskV1 } from "./hermes-021-local-queue-delivery";
 import { deliverVerifiedClaudeCodeLocalQueueTaskV1 } from "./claude-code-local-queue-delivery";
+import { deliverVerifiedCodexOwnerTrustedLocalQueueTaskV1 } from "./codex-owner-trusted-local-queue-delivery";
 import { deliverVerifiedRemoteControllerWorkerQueueTaskV1 } from "./remote-controller-worker-queue-delivery";
 import { isPrivateRemoteControllerWorkerQueueCapabilityV1,
   type PrivateRemoteControllerWorkerQueueCapabilityV1 } from
@@ -72,6 +74,9 @@ export type TaskCoordinatorConfiguration = {
   /** Installation-owned Claude route. It is optional and inert until a separate
    * process qualification and private host composition supply this callback. */
   claudeCodeLocal?: { deliver(target: ClaudeCodeLocalQueueDeliveryTarget, signal: AbortSignal): Promise<void> };
+  /** Installation-owned managed Codex CLI route. It is inert until the shared
+   * queue resolves a locally approved owner-trusted Codex task. */
+  codexOwnerTrustedLocal?: { deliver(target: CodexOwnerTrustedLocalQueueDeliveryTarget, signal: AbortSignal): Promise<void> };
   /** Optional installation-owned remote worker materializer. It is inert until
    * the shared queue worker receives a canonically leased v11 reference. The
    * browser never selects its worker, session, enrollment, or key. */
@@ -134,6 +139,10 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
     throw new Error("task_coordinator_config_invalid");
   if (input.claudeCodeLocal && !input.nativeSubmission)
     throw new Error("task_coordinator_config_invalid");
+  if (input.codexOwnerTrustedLocal && typeof input.codexOwnerTrustedLocal.deliver !== "function")
+    throw new Error("task_coordinator_config_invalid");
+  if (input.codexOwnerTrustedLocal && !input.nativeSubmission)
+    throw new Error("task_coordinator_config_invalid");
   if (input.remoteControllerWorker && (!input.nativeSubmission
     || !isPrivateRemoteControllerWorkerQueueCapabilityV1(input.remoteControllerWorker)))
     throw new Error("task_coordinator_config_invalid");
@@ -162,6 +171,8 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
   }) : undefined;
   const hermes021Local = input.hermes021Local ? Object.freeze({ deliver: input.hermes021Local.deliver.bind(input.hermes021Local) }) : undefined;
   const claudeCodeLocal = input.claudeCodeLocal ? Object.freeze({ deliver: input.claudeCodeLocal.deliver.bind(input.claudeCodeLocal) }) : undefined;
+  const codexOwnerTrustedLocal = input.codexOwnerTrustedLocal
+    ? Object.freeze({ deliver: input.codexOwnerTrustedLocal.deliver.bind(input.codexOwnerTrustedLocal) }) : undefined;
   const remoteControllerWorker = input.remoteControllerWorker
     ? Object.freeze({ materializer: input.remoteControllerWorker.materializer }) : undefined;
   const closeSubmission = input.nativeSubmission?.close?.bind(input.nativeSubmission);
@@ -462,7 +473,7 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
   return Object.freeze({ planning, assignment: assignments, ...(approvals ? { approvals } : {}), ...(quality ? { quality } : {}),
     ...(ideaCreation ? { ideaCreation } : {}),
     ...(ideaResultProjection ? { ideaResultProjection } : {}),
-    ...(nativeSubmission && (sessions || hermes021Local || claudeCodeLocal || remoteControllerWorker) ? { queueDelivery: async (ref: Parameters<ManagedNativeSessions["deliverApproved"]>[0], signal: AbortSignal) => {
+    ...(nativeSubmission && (sessions || hermes021Local || claudeCodeLocal || codexOwnerTrustedLocal || remoteControllerWorker) ? { queueDelivery: async (ref: Parameters<ManagedNativeSessions["deliverApproved"]>[0], signal: AbortSignal) => {
       const remote = await assignment.locateQueuedRemoteControllerWorkerDelivery(ref, signal);
       if (remote) {
         if (!remoteControllerWorker || signal.aborted) throw new Error("native_task_delivery_unresolved");
@@ -479,6 +490,11 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
         if (!claudeCodeLocal || signal.aborted) throw new Error("native_task_delivery_unresolved");
         return deliverVerifiedClaudeCodeLocalQueueTaskV1({ reference: ref, signal, target,
           deliver: claudeCodeLocal.deliver });
+      }
+      if (target.kind === "codex-owner-trusted-local") {
+        if (!codexOwnerTrustedLocal || signal.aborted) throw new Error("native_task_delivery_unresolved");
+        return deliverVerifiedCodexOwnerTrustedLocalQueueTaskV1({ reference: ref, signal, target,
+          deliver: codexOwnerTrustedLocal.deliver });
       }
       if (!sessions) throw new Error("native_task_delivery_unresolved");
       const result = await sessions.deliverApproved(ref, signal);

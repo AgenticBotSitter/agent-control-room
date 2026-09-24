@@ -2,6 +2,18 @@
 
 Codex appends one short entry per work package (see `CODEX_MAC_BUILD_EXECUTION.md`).
 
+- 2026-09-24 — W4 managed local Codex queue path: a saved owner-trusted local
+  Codex text-review plan can now use the same existing canonical assignment,
+  signed approval record, native submission queue, and pickup recheck as the
+  local Hermes and Claude routes. Codex has its own authenticated queue-record
+  type, so an approval recorded for Hermes or Claude cannot be reused for
+  Codex. The pickup returns only task identity to the protected host; it does
+  not contain a command, prompt, model selection, account, workspace, or
+  permission to execute. Focused Codex queue/planning checks and the TypeScript
+  check pass. This remains source-only: the final protected host composition
+  still needs to connect this verified pickup to the already-tested Codex CLI
+  execution and canonical result-publication bridge.
+
 - 2026-09-24 — W4 Hermes final-authority correction: independent source review found a narrow timing gap between Hermes's executable re-check and process launch. The runner now repeats the existing canonical authority check after that final file check and immediately before launch. A deterministic test simulates revoked work at that exact point and proves it is refused; the focused Hermes suite and TypeScript check pass. This is a source-only safety fix—no real Hermes task or service ran.
 
 - 2026-09-24 — W4 shared Hermes-and-Claude local lifecycle: the protected Mac path now has one source-only composition that attaches the existing owner-authorized Hermes queue bridge and the already-qualified, text-only Claude capability to the same existing restricted task lifecycle. It refuses a mismatched tenant or a caller-supplied replacement worker callback, and construction starts neither the queue nor either agent. Two focused disposable-role checks and the TypeScript check pass. Marvin was asked for a bounded independent design check but returned no usable verdict, so this entry records Codex's tested source evidence only. Next: give this combined lifecycle a fixed protected runtime configuration and the existing queue worker from the Mac launcher.
