@@ -109,6 +109,14 @@ rollback, an unchanged worker is not fenced, and one transition cannot clear
 another transition's fence. This records and checks a transition plan only;
 it does not publish a route, move a database, enable a worker, or start work.
 
+**September 24 owner-workflow progress:** a browser-level disposable journey
+now covers the existing project, task, review, correction, attention, worker,
+and setup screens as one owner flow. It verifies that unavailable workers and
+saved setup evidence are labeled honestly, a lost save reply holds one exact
+request for an explicit recheck, and direct reloads remain read-only. This is
+website behavior proof only; it does not sign in, launch a worker, or create a
+project outside disposable test data.
+
 The first installed Claude route is now pinned to Claude Code's `opus` alias
 instead of inheriting a desktop or command-line default. Its owner-attended
 qualification, saved process configuration, and later task execution must all
