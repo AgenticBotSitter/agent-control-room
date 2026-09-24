@@ -52,7 +52,8 @@ async function journal(tx: DatabaseSession, key: Uint8Array, tenantId: string, t
       try {
         const expected = advanceInstallationTransitionV1(prior, { expectedRevision: prior.revision, action,
         now: record.updatedAt, ...(record.evidenceDigest ? { evidenceDigest: record.evidenceDigest } : {}),
-        ...(record.failureDigest ? { failureDigest: record.failureDigest } : {}) });
+        ...(record.failureDigest ? { failureDigest: record.failureDigest } : {}),
+        ...(action === "record_drain" && record.drainStatus ? { drainStatus: record.drainStatus } : {}) });
         if (sha256Digest(expected) !== sha256Digest(record)) fail();
       } catch { fail(); }
     }

@@ -94,6 +94,11 @@ Before the new target accepts writes, rollback can return to the fenced source
 after stopping the target. Once the target accepts writes, a return requires a
 fresh verified reverse migration so history is not lost.
 
+A source-only relocation preparation record now refuses to become ready unless
+the transition is for that exact source database and scheduler and declares an
+all-drained state. A failed, rollback, or uncertain transition must be resolved
+and re-preflighted by the owner; it cannot be used to guess a cutover.
+
 ## What remains to make transitions real
 
 1. Bind every current and requested worker route into the reviewed topology

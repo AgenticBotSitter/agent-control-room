@@ -31,7 +31,10 @@ cutover plan:
 1. source and target authority fingerprints;
 2. the same release/schema identity and restricted-role proof;
 3. an exact artifact inventory and independently retained rollback checkpoint;
-4. a source-admission fence and drained-or-uncertain work evidence; and
+4. a source-admission fence and an explicitly **clean** drain. A recorded
+   uncertainty, failed transition, or rollback path cannot mark a relocation
+   ready; it must remain visible for owner resolution before a fresh preflight;
+   and
 5. the rule that exactly one target may be marked ready for a later,
    separately authorized activation.
 

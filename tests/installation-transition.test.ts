@@ -14,8 +14,11 @@ const plan = () => planInstallationTopologyV1({ databaseAuthorityDigest: digest(
 test("a worker-layout transition binds the reviewed topology and follows pause, drain, proof, commit", () => {
   let record = createInstallationTransitionV1({ transitionId: "transition:fixture", topologyPlan: plan(), now: at(0) });
   assert.deepEqual(record.affectedWorkerIds, ["worker:remote"]);
+  assert.equal(record.databaseAuthorityDigest, digest("database"));
+  assert.equal(record.schedulerAuthorityDigest, digest("scheduler"));
   for (const [action, label] of [["pause_admission", "pause"], ["record_drain", "drain"], ["verify_proofs", "proof"], ["commit", "commit"]] as const) {
-    record = advanceInstallationTransitionV1(record, { expectedRevision: record.revision, action, now: at(record.revision + 1), evidenceDigest: digest(label) });
+    record = advanceInstallationTransitionV1(record, { expectedRevision: record.revision, action, now: at(record.revision + 1), evidenceDigest: digest(label),
+      ...(action === "record_drain" ? { drainStatus: "all_drained" } : {}) });
   }
   assert.equal(record.state, "committed");
   assert.equal(record.enablesWorkers, false);
@@ -57,4 +60,8 @@ test("the transition contract rejects out-of-order, stale and forged records", (
   assert.throws(() => advanceInstallationTransitionV1(record, { expectedRevision: 0, action: "commit", now: at(1), evidenceDigest: digest("wrong") }));
   assert.throws(() => advanceInstallationTransitionV1(record, { expectedRevision: 2, action: "pause_admission", now: at(1), evidenceDigest: digest("stale") }));
   assert.throws(() => verifyInstallationTransitionV1({ ...record, enablesWorkers: true }));
+  assert.throws(() => verifyInstallationTransitionV1({ ...record, databaseAuthorityDigest: digest("other") }));
+  const paused = advanceInstallationTransitionV1(record, { expectedRevision: 0, action: "pause_admission", now: at(1), evidenceDigest: digest("pause") });
+  assert.throws(() => advanceInstallationTransitionV1(paused,
+    { expectedRevision: 1, action: "record_drain", now: at(2), evidenceDigest: digest("drain"), drainStatus: "not-a-status" }), /invalid/);
 });

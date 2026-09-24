@@ -23,6 +23,8 @@ export type DatabaseRelocationPreparationV1 = Readonly<{
   tenantId: string;
   sourceAuthorityDigest: string;
   targetAuthorityDigest: string;
+  /** The same scheduler authority remains bound through the cutover plan. */
+  schedulerAuthorityDigest: string;
   releaseDigest: string;
   databaseSchemaDigest: string;
   restrictedRoleProofDigest: string;
@@ -51,6 +53,7 @@ const materialSchema = z.object({
   tenantId: localId,
   sourceAuthorityDigest: digestSchema,
   targetAuthorityDigest: digestSchema,
+  schedulerAuthorityDigest: digestSchema,
   releaseDigest: digestSchema,
   databaseSchemaDigest: digestSchema,
   restrictedRoleProofDigest: digestSchema,
@@ -97,6 +100,7 @@ export function createDatabaseRelocationPreparationV1(input: unknown): DatabaseR
       tenantId: localId,
       sourceAuthorityDigest: digestSchema,
       targetAuthorityDigest: digestSchema,
+      schedulerAuthorityDigest: digestSchema,
       sourceReleaseDigest: digestSchema,
       targetReleaseDigest: digestSchema,
       sourceDatabaseSchemaDigest: digestSchema,
@@ -125,6 +129,9 @@ export function createDatabaseRelocationPreparationV1(input: unknown): DatabaseR
       || restoration.releaseId !== inventory.releaseId
       || restoration.databaseSchemaVersion !== inventory.databaseSchemaVersion
       || transition.state !== "drained" || transition.evidenceDigest === undefined
+      || transition.drainStatus !== "all_drained"
+      || transition.databaseAuthorityDigest !== parsed.sourceAuthorityDigest
+      || transition.schedulerAuthorityDigest !== parsed.schedulerAuthorityDigest
       || Date.parse(parsed.now) < Date.parse(transition.updatedAt)) unavailable();
     return freeze({
       schema: DATABASE_RELOCATION_PREPARATION_V1,
@@ -132,6 +139,7 @@ export function createDatabaseRelocationPreparationV1(input: unknown): DatabaseR
       tenantId: parsed.tenantId,
       sourceAuthorityDigest: parsed.sourceAuthorityDigest,
       targetAuthorityDigest: parsed.targetAuthorityDigest,
+      schedulerAuthorityDigest: parsed.schedulerAuthorityDigest,
       releaseDigest: parsed.sourceReleaseDigest,
       databaseSchemaDigest: parsed.sourceDatabaseSchemaDigest,
       restrictedRoleProofDigest: parsed.sourceRestrictedRoleProofDigest,
