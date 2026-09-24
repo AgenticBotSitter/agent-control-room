@@ -81,3 +81,29 @@ test("a revoked canonical recheck after the receipt cannot start Hermes and a re
   assert.equal(replay.state, "already_delivered");
   assert.equal(runs, 0);
 });
+
+test("an owner-authorized private port is minted once only after the final recheck", async t => {
+  const f = await nativeTaskFixture(); t.after(f.close);
+  const packet = delivery(); let minted = 0, runs = 0, rechecks = 0;
+  const config = { db: f.db, integrityKey: receiptKey, binding: localBinding,
+    policy: { assertAdmitted() {} },
+    async recheckBeforeLaunch() { rechecks++; },
+    createPrivatePort(input: { task: { prompt: string; instructions: string } }) {
+      minted++; assert.equal(input.task.prompt, packet.input.prompt);
+      assert.equal(input.task.instructions, packet.input.instructions);
+      return { async run() { runs++; return [result]; } };
+    },
+  };
+  const first = await deliverHermes021MacosLocalTaskV1(config, packet,
+    { kind: "local", workerId: localBinding.workerId }, at(2000));
+  assert.equal(first.state, "completed_delivery");
+  assert.equal(rechecks, 1);
+  assert.equal(minted, 1);
+  assert.equal(runs, 1);
+  const replay = await deliverHermes021MacosLocalTaskV1(config, packet,
+    { kind: "local", workerId: localBinding.workerId }, at(2000));
+  assert.equal(replay.state, "already_delivered");
+  assert.equal(rechecks, 1, "a replay does not reach the final recheck");
+  assert.equal(minted, 1, "a replay cannot mint another process port");
+  assert.equal(runs, 1);
+});

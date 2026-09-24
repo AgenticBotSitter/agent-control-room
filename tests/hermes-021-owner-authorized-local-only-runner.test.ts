@@ -11,6 +11,7 @@ import { createHermes021MacosOwnerAuthorizedLocalOnlyRunnerV1,
   HERMES_021_SOURCE_REVISION_V1 } from "../src/harness/hermes-021-v1";
 import { reviewHermes021MacosExecutableV1 } from "../src/harness/hermes-021-v1/reviewed-executable-identity";
 import { sha256Digest } from "../src/security/canonical-digest";
+import { createMacLocalHermesOwnerRunnerPortFactoryV1 } from "../src/web/v1/mac-local-hermes-owner-runner";
 
 const source = fileURLToPath(new URL("./fixtures/hermes-qualification-result.mjs", import.meta.url));
 
@@ -30,8 +31,11 @@ async function fixture(t: TestContext) {
     reviewedExecutableIdentity: review.record } };
 }
 
-function admitted(runner: object, input: Awaited<ReturnType<typeof fixture>>["input"]) {
-  const task = { tenantId: "tenant:fixture", projectId: "project:fixture", jobId: "job:fixture", attemptId: "attempt:fixture",
+function admitted(runner: object, input: Awaited<ReturnType<typeof fixture>>["input"], existingTask?: {
+  tenantId: string; projectId: string; jobId: string; attemptId: string; runId: string; nodeId: string;
+  prompt: string; instructions: string; deadline: number;
+}) {
+  const task = existingTask ?? { tenantId: "tenant:fixture", projectId: "project:fixture", jobId: "job:fixture", attemptId: "attempt:fixture",
     runId: "run:fixture", nodeId: "node:fixture", prompt: "x", instructions: "x", deadline: Date.now() + 30_000 };
   return { task, gate: admitHermes021MacosOwnerAuthorizedLocalOnlyTaskV1(runner, { installationId: input.installationId,
     installationPlanDigest: input.installationPlanDigest, topologyPlanDigest: input.topologyPlanDigest,
@@ -91,12 +95,29 @@ test("binds an admission gate to its originating runner and refuses a second att
     /owner_authorized_local_only_runner_refused/u);
 
   const firstPort = createHermes021MacosOwnerAuthorizedLocalOnlyPrivatePortV1(firstRunner, firstAdmission.gate);
-  const secondAdmission = admitted(firstRunner, first.input);
+  const secondAdmission = admitted(firstRunner, first.input, firstAdmission.task);
   const secondPort = createHermes021MacosOwnerAuthorizedLocalOnlyPrivatePortV1(firstRunner, secondAdmission.gate);
   // The fixture intentionally rejects ordinary work text. That uncertainty
   // still burns the attempted delivery: the runner must not make a second
   // native attempt for the same exact task.
   await assert.rejects(firstPort.run({ localServiceId: first.input.workerBinding.localServiceId, task: firstAdmission.task }));
   await assert.rejects(secondPort.run({ localServiceId: first.input.workerBinding.localServiceId, task: secondAdmission.task }),
+    /owner_authorized_local_only_runner_refused/u);
+});
+
+test("the Mac queue port factory preserves the owner runner's per-task one-use admission", async t => {
+  const f = await fixture(t);
+  const runner = createHermes021MacosOwnerAuthorizedLocalOnlyRunnerV1(f.input);
+  const factory = createMacLocalHermesOwnerRunnerPortFactoryV1({ runner, admission: {
+    installationId: f.input.installationId, installationPlanDigest: f.input.installationPlanDigest,
+    topologyPlanDigest: f.input.topologyPlanDigest, releaseDigest: f.input.releaseDigest,
+    workerBinding: f.input.workerBinding,
+  } });
+  const task = { tenantId: "tenant:fixture", projectId: "project:fixture", jobId: "job:fixture", attemptId: "attempt:fixture",
+    runId: "run:fixture", nodeId: "node:fixture", prompt: "x", instructions: "x", deadline: Date.now() + 30_000 };
+  const first = factory.createPrivatePort({ task });
+  await assert.rejects(first.run({ localServiceId: f.input.workerBinding.localServiceId, task }));
+  const second = factory.createPrivatePort({ task });
+  await assert.rejects(second.run({ localServiceId: f.input.workerBinding.localServiceId, task }),
     /owner_authorized_local_only_runner_refused/u);
 });

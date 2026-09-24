@@ -5,7 +5,7 @@ import { controllerWorkerDeliverySchemaV1, controllerWorkerRouteSchemaV1, delive
   type ControllerWorkerDeliveryV1, type ControllerWorkerRouteV1 } from "../v1/controller-worker-delivery";
 import { persistControllerWorkerDeliveryReceiptV1 } from "../v1/controller-worker-delivery-receipt-store";
 import { acceptHermes021MacosLocalDeliveryV1, hermes021MacosLocalBindingSchemaV1,
-  runAdmittedHermes021MacosLocalTaskV1, type Hermes021MacosLocalPrivatePortV1,
+  prepareHermes021MacosTaskV1, runAdmittedHermes021MacosLocalTaskV1, type Hermes021MacosLocalPrivatePortV1,
   type Hermes021MacosTaskOutcomeV1, type Hermes021MacosTaskPolicyPortV1 } from "./macos-local-worker";
 import { createHermes021MacosTerminalStageV1 } from "./terminal-result-staging";
 import type { ArtifactReadPortV1, ArtifactStoragePortV1 } from "../../node-executor/artifact-storage";
@@ -18,7 +18,12 @@ export type Hermes021MacosLocalDeliveryCompositionV1 = Readonly<{
   integrityKey: Uint8Array;
   binding: z.infer<typeof hermes021MacosLocalBindingSchemaV1>;
   policy: Hermes021MacosTaskPolicyPortV1;
-  privatePort: Hermes021MacosLocalPrivatePortV1;
+  /** Exactly one installation-owned runner shape is allowed. A prebuilt port
+   * retains compatibility with established adapters. New owner-authorized
+   * runners mint their one-use port only after the final authority recheck. */
+  privatePort?: Hermes021MacosLocalPrivatePortV1;
+  createPrivatePort?: (input: Readonly<{ delivery: ControllerWorkerDeliveryV1;
+    route: ControllerWorkerRouteV1; task: ReturnType<typeof prepareHermes021MacosTaskV1> }>) => Hermes021MacosLocalPrivatePortV1;
   /** Installation-owned canonical recheck from the assigned queue path. It
    * runs after the receipt is durable and immediately before the private
    * runner, so a revoked lease cannot cross the process boundary. */
@@ -38,7 +43,8 @@ export type Hermes021MacosLocalDeliveryCompositionV1 = Readonly<{
 export async function deliverHermes021MacosLocalTaskV1(config: Hermes021MacosLocalDeliveryCompositionV1,
   deliveryValue: unknown, routeValue: unknown, receivedAtValue: unknown, signal?: AbortSignal) {
   if (!config || !(config.integrityKey instanceof Uint8Array) || config.integrityKey.length !== 32
-    || !config.db || typeof config.db.transaction !== "function" || signal?.aborted) unavailable();
+    || !config.db || typeof config.db.transaction !== "function" || signal?.aborted
+    || (config.privatePort === undefined) === (config.createPrivatePort === undefined)) unavailable();
   const delivery = controllerWorkerDeliverySchemaV1.parse(deliveryValue);
   const route = controllerWorkerRouteSchemaV1.parse(routeValue);
   const receivedAt = instant.parse(receivedAtValue);
@@ -67,8 +73,14 @@ export async function deliverHermes021MacosLocalTaskV1(config: Hermes021MacosLoc
     await config.recheckBeforeLaunch(delivery, route, signal);
     if (signal?.aborted) unavailable();
   }
+  // Owner-authorized runners receive their one-use admission only after the
+  // durable receipt and the final current-authority recheck. A replay returns
+  // above and therefore can never mint another process port.
+  const privatePort = config.privatePort ?? config.createPrivatePort!(Object.freeze({ delivery, route,
+    task: prepareHermes021MacosTaskV1(delivery, route, binding) }));
+  if (!privatePort || typeof privatePort.run !== "function") unavailable();
   const outcome: Hermes021MacosTaskOutcomeV1 = await runAdmittedHermes021MacosLocalTaskV1(delivery, route, binding,
-    config.policy, config.privatePort, signal, terminalStage);
+    config.policy, privatePort, signal, terminalStage);
   return Object.freeze({ delivery, receipt, state: "completed_delivery" as const, outcome,
     startsWork: false as const, grantsExecutionAuthority: false as const });
 }
