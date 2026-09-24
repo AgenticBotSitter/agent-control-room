@@ -39,12 +39,14 @@ const rollbackKind = z.enum(rollbackKinds);
 export type ThreeWorkerActivationBundleComponentV1 = z.infer<typeof component>;
 type AggregateState = Binding & { generation: number; currentPlanDigest?: string };
 type SourceProof = Binding & Readonly<{ aggregate: object; component: ThreeWorkerActivationBundleComponentV1;
-  sourceSchema: string; state: "ready" | "owner_attended_action"; evidenceDigest: string }>;
+  sourceSchema: string; state: "blocked" | "owner_attended_action"; evidenceDigest: string;
+  blocker?: "reviewed_release_identity_missing" | "owner_materialization_verification_missing" }>;
 const aggregates = new WeakMap<object, AggregateState>();
 const proofs = new WeakMap<object, SourceProof>();
 
 const componentOutput = z.object({ component, sourceSchema: z.string().min(1).max(160),
-  state: z.enum(["blocked", "ready", "owner_attended_action"]), blocker: z.literal("source_proof_missing").optional(),
+  state: z.enum(["blocked", "owner_attended_action"]), blocker: z.enum(["source_proof_missing",
+    "reviewed_release_identity_missing", "owner_materialization_verification_missing"]).optional(),
   evidenceDigest: digest.optional() }).strict();
 const materialSchema = z.object({ schema: z.literal(THREE_WORKER_ACTIVATION_BUNDLE_PREFLIGHT_V1),
   installationId, releaseDigest: digest, topologyPlanDigest: digest, generation: z.number().int().positive(),
@@ -101,7 +103,12 @@ export function recordHermesThreeWorkerActivationSourceProofV1(input: Readonly<{
   return token;
 }
 
-/** Accepts only the exact report returned by the filesystem-backed release inventory. */
+/**
+ * Records exact filesystem inventory as preparation evidence only. The local
+ * inventory does not authenticate who selected or reviewed its expected
+ * bundle digest, so it must remain blocked until a separately trusted release
+ * identity binds that digest to this installation.
+ */
 export function recordVerifiedReleaseThreeWorkerActivationSourceProofV1(input: Readonly<{
   aggregate: unknown; releasePreparation: unknown;
 }>): object {
@@ -115,11 +122,15 @@ export function recordVerifiedReleaseThreeWorkerActivationSourceProofV1(input: R
   const token = Object.freeze({ schema: THREE_WORKER_ACTIVATION_SOURCE_PROOF_V1 });
   proofs.set(token, Object.freeze({ ...selected, aggregate: input.aggregate as object,
     component: "verified_release" as const, sourceSchema: definitions.verified_release.sourceSchema,
-    state: "ready" as const, evidenceDigest }));
+    state: "blocked" as const, blocker: "reviewed_release_identity_missing" as const, evidenceDigest }));
   return token;
 }
 
-/** Accepts only an exact process-local protected-configuration preparation plan. */
+/**
+ * Records an exact configuration plan as preparation evidence only. The
+ * plan performs no write and reads no protected file, so readiness requires a
+ * later owner materialization plus native on-disk verification proof.
+ */
 export function recordProtectedConfigurationThreeWorkerActivationSourceProofV1(input: Readonly<{
   aggregate: unknown; configurationPlan: unknown;
 }>): object {
@@ -133,7 +144,8 @@ export function recordProtectedConfigurationThreeWorkerActivationSourceProofV1(i
   const token = Object.freeze({ schema: THREE_WORKER_ACTIVATION_SOURCE_PROOF_V1 });
   proofs.set(token, Object.freeze({ ...selected, aggregate: input.aggregate as object,
     component: "protected_configuration" as const,
-    sourceSchema: definitions.protected_configuration.sourceSchema, state: "ready" as const, evidenceDigest }));
+    sourceSchema: definitions.protected_configuration.sourceSchema, state: "blocked" as const,
+    blocker: "owner_materialization_verification_missing" as const, evidenceDigest }));
   return token;
 }
 
@@ -150,7 +162,7 @@ function build(selected: AggregateState, aggregateToken: object, generation: num
   const components = component.options.map(name => {
     const proof = byComponent.get(name);
     return proof ? Object.freeze({ component: name, sourceSchema: proof.sourceSchema,
-      state: proof.state, evidenceDigest: proof.evidenceDigest })
+      state: proof.state, ...(proof.blocker ? { blocker: proof.blocker } : {}), evidenceDigest: proof.evidenceDigest })
       : Object.freeze({ component: name, sourceSchema: definitions[name].sourceSchema,
         state: "blocked" as const, blocker: "source_proof_missing" as const });
   }).sort((left, right) => left.component.localeCompare(right.component));
