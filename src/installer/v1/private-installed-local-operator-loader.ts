@@ -12,6 +12,17 @@ import { createPrivateInstalledJournalCustodyCompositionV1,
   "./private-installed-journal-custody-composer";
 import { createPrivateInstalledLocalHermesRuntimeComposerV1 } from
   "./private-installed-local-hermes-runtime-composer";
+import { consumePrivateInstalledClaudeProcessSidecarStagingCapabilityV1,
+  consumePrivateInstalledConfigurationNativeVerifierLoaderCapabilityV1 } from
+  "./private-installed-configuration-native-verifier-custody";
+import { retireMacosClaudeCodeProcessNativeFactoryInputV1 } from
+  "./macos-claude-code-process-native-sidecar.mjs";
+import { createPrivateMacosClaudeCodeInstalledPortComposerV1,
+  PRIVATE_MACOS_CLAUDE_CODE_INSTALLED_PORT_COMPOSER_V1 } from
+  "../../node-bridge/private-macos-claude-code-installed-port-composer";
+import { composePrivateMacosClaudeCodePostInstallV1,
+  PRIVATE_MACOS_CLAUDE_CODE_POST_INSTALL_BRIDGE_V1 } from
+  "../../node-bridge/private-macos-claude-code-post-install-bridge";
 
 /**
  * One installed-process handoff from protected v2 data to the reviewed Hermes
@@ -220,17 +231,51 @@ function captureHermesPorts(value: unknown): unknown {
       ? { claudePostInstall: capturePrivateInstalledClaudePostInstallInputV1(ports.claudePostInstall) } : {}) });
 }
 
+type ClaudeProtectedBinding = Readonly<{
+  nativeVerifierCapability: object;
+  nativeVerifier: ReturnType<typeof consumePrivateInstalledConfigurationNativeVerifierLoaderCapabilityV1>;
+  claudePostInstall: unknown;
+  processPortConfiguration: unknown;
+}>;
+
+function captureClaudeProtectedBinding(value: unknown): ClaudeProtectedBinding {
+  const binding = exact(value, ["nativeVerifierCapability", "claudePostInstall", "processPortConfiguration"]);
+  if (!binding.nativeVerifierCapability || typeof binding.nativeVerifierCapability !== "object"
+    || types.isProxy(binding.nativeVerifierCapability)) return refused();
+  const nativeVerifier = consumePrivateInstalledConfigurationNativeVerifierLoaderCapabilityV1(
+    binding.nativeVerifierCapability);
+  const tuple = exact(binding.claudePostInstall, ["admissionInput", "admissionRuntime", "compositionInput"]);
+  const composition = exact(tuple.compositionInput, ["tenantId", "installedProcessConfiguration", "execution",
+    "reviewCheckpoints", "assertCurrentProcess", "assertCurrentDelivery"]);
+  // Insert only an inert local placeholder so the established capture and
+  // post-install bridge can be reused. A caller-supplied `ports` field is not
+  // accepted at this protected boundary.
+  const claudePostInstall = capturePrivateInstalledClaudePostInstallInputV1(Object.freeze({
+    admissionInput: tuple.admissionInput, admissionRuntime: tuple.admissionRuntime,
+    compositionInput: Object.freeze({ tenantId: composition.tenantId,
+      installedProcessConfiguration: composition.installedProcessConfiguration, ports: Object.freeze({}),
+      execution: composition.execution, reviewCheckpoints: composition.reviewCheckpoints,
+      assertCurrentProcess: composition.assertCurrentProcess, assertCurrentDelivery: composition.assertCurrentDelivery }),
+  }));
+  return Object.freeze({ nativeVerifierCapability: binding.nativeVerifierCapability as object, nativeVerifier,
+    claudePostInstall,
+    processPortConfiguration: captureHermesGraph(binding.processPortConfiguration,
+      "claudeProtectedBinding.processPortConfiguration") });
+}
+
 type CapturedInput = Readonly<{
   installedConfigurationCustodyInput: unknown;
   hermesRuntimePorts: unknown;
   journalCustodyPorts: unknown;
   stagedJournalSidecar: unknown;
   journalOperationDeadlineMs: number;
+  claudeProtectedBinding?: ClaudeProtectedBinding;
 }>;
 
 function captureInput(value: unknown): CapturedInput {
-  const input = exact(value, ["schema", "installedConfigurationCustodyInput", "hermesRuntimePorts",
-    "journalCustodyPorts", "stagedJournalSidecar", "journalOperationDeadlineMs"]);
+  const input = exactHostDataSnapshotV1(value, ["schema", "installedConfigurationCustodyInput", "hermesRuntimePorts",
+    "journalCustodyPorts", "stagedJournalSidecar", "journalOperationDeadlineMs"], ["claudeProtectedBinding"]);
+  if (!input) return refused();
   if (input.schema !== PRIVATE_INSTALLED_LOCAL_OPERATOR_LOADER_V1
     || !Number.isSafeInteger(input.journalOperationDeadlineMs)
     || (input.journalOperationDeadlineMs as number) < 1
@@ -241,6 +286,8 @@ function captureInput(value: unknown): CapturedInput {
     journalCustodyPorts: captureJournalPorts(input.journalCustodyPorts),
     stagedJournalSidecar: captureStagedSidecar(input.stagedJournalSidecar),
     journalOperationDeadlineMs: input.journalOperationDeadlineMs as number,
+    ...(Object.prototype.hasOwnProperty.call(input, "claudeProtectedBinding")
+      ? { claudeProtectedBinding: captureClaudeProtectedBinding(input.claudeProtectedBinding) } : {}),
   });
 }
 
@@ -248,9 +295,10 @@ export type PrivateInstalledLocalOperatorLoaderV1 = Readonly<{
   schema: typeof PRIVATE_INSTALLED_LOCAL_OPERATOR_LOADER_V1;
   status: "owner_inputs_captured";
   loadInstalledConfiguration(): Promise<Readonly<{ custody: unknown; journal: unknown }>>;
+  retireClaudeProcessSidecar(): Promise<void>;
   performsEffectOnConstruction: false;
   readsProtectedConfigurationOnLoad: true;
-  stagesNativeSidecar: false;
+  stagesNativeSidecar: boolean;
   opensNativeSessionOnConstruction: false;
   opensDatabase: false;
   startsService: false;
@@ -269,19 +317,59 @@ PrivateInstalledLocalOperatorLoaderV1 {
   try { input = captureInput(inputValue); }
   catch { return refused(); }
   let spent = false;
+  let retainedClaudeSidecar: Awaited<ReturnType<
+    typeof consumePrivateInstalledClaudeProcessSidecarStagingCapabilityV1>> | undefined;
   const loadInstalledConfiguration = async () => {
     if (spent) return refused();
     spent = true;
+    let stagedClaude: Awaited<ReturnType<typeof consumePrivateInstalledClaudeProcessSidecarStagingCapabilityV1>> | undefined;
     try {
-      const custodySchema = (input.installedConfigurationCustodyInput as { schema?: unknown }).schema;
-      const installed = custodySchema === PRIVATE_INSTALLED_CONFIGURATION_CUSTODY_V3
-        ? await createPrivateInstalledConfigurationCustodyV3(input.installedConfigurationCustodyInput)
-        : await createPrivateInstalledConfigurationCustodyV2(input.installedConfigurationCustodyInput);
-      if (installed.status !== "manifest_bound_configuration_ready") return refused();
-      const prepared = await installed.custody.loadManifestBoundPrivateConfigurationData();
+      let prepared;
+      if (input.claudeProtectedBinding) {
+        prepared = await input.claudeProtectedBinding.nativeVerifier.custody
+          .loadManifestBoundPrivateConfigurationData();
+      } else {
+        const custodySchema = (input.installedConfigurationCustodyInput as { schema?: unknown }).schema;
+        const installed = custodySchema === PRIVATE_INSTALLED_CONFIGURATION_CUSTODY_V3
+          ? await createPrivateInstalledConfigurationCustodyV3(input.installedConfigurationCustodyInput)
+          : await createPrivateInstalledConfigurationCustodyV2(input.installedConfigurationCustodyInput);
+        if (installed.status !== "manifest_bound_configuration_ready") return refused();
+        prepared = await installed.custody.loadManifestBoundPrivateConfigurationData();
+      }
       const { claudeCodeProcessReleaseCapability, ...journalPrepared } = prepared as typeof prepared &
         { claudeCodeProcessReleaseCapability?: unknown };
-      const runtime = createPrivateInstalledLocalHermesRuntimeComposerV1(journalPrepared, input.hermesRuntimePorts);
+      let hermesRuntimePorts = input.hermesRuntimePorts;
+      if (input.claudeProtectedBinding) {
+        if (claudeCodeProcessReleaseCapability === undefined) return refused();
+        stagedClaude = await consumePrivateInstalledClaudeProcessSidecarStagingCapabilityV1(
+          input.claudeProtectedBinding.nativeVerifier.claudeProcessSidecarStagingCapability);
+        const staged = exact(stagedClaude, ["schema", "nativeArtifact", "claudeCodeProcessPortFactoryInput",
+          "stagingRoot", "staged", "compiles", "downloads", "installs"]);
+        const factory = exact(staged.claudeCodeProcessPortFactoryInput, ["helperPath", "helperSha256"]);
+        const portConfiguration = exact(input.claudeProtectedBinding.processPortConfiguration,
+          ["schema", "executablePath", "executableSha256", "executableIdentity", "workingDirectory",
+            "workingDirectoryIdentity", "workingDirectoryBindingDigest", "qualificationDigest", "ownerUid",
+            "holdDeadlineMs", "runDeadlineMs", "maximumInputBytes", "maximumOutputBytes"]);
+        const tuple = input.claudeProtectedBinding.claudePostInstall as {
+          admissionInput: { qualificationReport?: unknown }; compositionInput: { installedProcessConfiguration?: unknown };
+        };
+        const composed = createPrivateMacosClaudeCodeInstalledPortComposerV1(Object.freeze({
+          schema: PRIVATE_MACOS_CLAUDE_CODE_INSTALLED_PORT_COMPOSER_V1,
+          manifestReleaseCapability: claudeCodeProcessReleaseCapability,
+          verifiedSidecar: staged.nativeArtifact,
+          installedProcessConfiguration: tuple.compositionInput.installedProcessConfiguration,
+          processPortConfiguration: Object.freeze({ ...portConfiguration,
+            helperPath: factory.helperPath, helperSha256: factory.helperSha256 }),
+          qualificationReport: tuple.admissionInput.qualificationReport,
+        }));
+        const bridged = composePrivateMacosClaudeCodePostInstallV1(Object.freeze({
+          schema: PRIVATE_MACOS_CLAUDE_CODE_POST_INSTALL_BRIDGE_V1,
+          claudePostInstall: input.claudeProtectedBinding.claudePostInstall, capability: composed.capability,
+        }));
+        hermesRuntimePorts = Object.freeze({ ...(input.hermesRuntimePorts as Readonly<Record<string, unknown>>),
+          claudePostInstall: bridged });
+      }
+      const runtime = createPrivateInstalledLocalHermesRuntimeComposerV1(journalPrepared, hermesRuntimePorts);
       const journalComposition = createPrivateInstalledJournalCustodyCompositionV1(Object.freeze({
         schema: PRIVATE_INSTALLED_JOURNAL_CUSTODY_COMPOSER_V1,
         manifestBoundPreparation: journalPrepared,
@@ -295,16 +383,27 @@ PrivateInstalledLocalOperatorLoaderV1 {
       const activated = journalComposition.custody.constructJournal(input.stagedJournalSidecar);
       if (canonicalJson(activated.journalBinding) !== canonicalJson(prepared.journal)
         || canonicalJson(activated.nativeSidecar) !== canonicalJson(prepared.nativeSidecar)) return refused();
+      retainedClaudeSidecar = stagedClaude;
+      stagedClaude = undefined;
       return Object.freeze({ custody: runtime.custody, journal: activated.journal,
-        ...(claudeCodeProcessReleaseCapability !== undefined ? { claudeCodeProcessReleaseCapability } : {}) });
+        ...(!input.claudeProtectedBinding && claudeCodeProcessReleaseCapability !== undefined
+          ? { claudeCodeProcessReleaseCapability } : {}) });
     } catch {
+      if (stagedClaude) await retireMacosClaudeCodeProcessNativeFactoryInputV1(stagedClaude).catch(() => undefined);
       return refused();
     }
   };
+  const retireClaudeProcessSidecar = async () => {
+    const staged = retainedClaudeSidecar;
+    if (!staged) return;
+    retainedClaudeSidecar = undefined;
+    try { await retireMacosClaudeCodeProcessNativeFactoryInputV1(staged); }
+    catch { return refused(); }
+  };
   return Object.freeze({ schema: PRIVATE_INSTALLED_LOCAL_OPERATOR_LOADER_V1,
-    status: "owner_inputs_captured" as const, loadInstalledConfiguration,
+    status: "owner_inputs_captured" as const, loadInstalledConfiguration, retireClaudeProcessSidecar,
     performsEffectOnConstruction: false as const, readsProtectedConfigurationOnLoad: true as const,
-    stagesNativeSidecar: false as const, opensNativeSessionOnConstruction: false as const,
+    stagesNativeSidecar: Boolean(input.claudeProtectedBinding), opensNativeSessionOnConstruction: false as const,
     opensDatabase: false as const, startsService: false as const, startsWorker: false as const,
     invokesHermes: false as const });
 }

@@ -25,6 +25,9 @@ import {
 import {
   consumePrivateInstalledConfigurationV3PostWriteVerificationCapabilityV1,
 } from "./private-installed-configuration-v3-owner-writer";
+import {
+  stageMacosClaudeCodeProcessNativeFactoryInputV1,
+} from "./macos-claude-code-process-native-sidecar.mjs";
 
 export const PRIVATE_INSTALLED_CONFIGURATION_NATIVE_VERIFIER_CUSTODY_V1 =
   "control-room.private-installed-configuration-native-verifier-custody/v1" as const;
@@ -47,6 +50,14 @@ type Captured = Readonly<{
   manifestBytes: Buffer;
   manifestSha256: string;
 }>;
+
+type ClaudeStagingCustody = Readonly<{ sidecarRoot: string; sidecar: Readonly<Record<string, unknown>> }>;
+const claudeStagingCustodies = new WeakMap<object, ClaudeStagingCustody>();
+type LocalOperatorLoaderCustody = Readonly<{
+  custody: PrivateInstalledConfigurationNativeVerifierCustodyV1["custody"];
+  claudeProcessSidecarStagingCapability: object;
+}>;
+const localOperatorLoaderCustodies = new WeakMap<object, LocalOperatorLoaderCustody>();
 
 function refused(): never {
   const error = new Error("private_installed_configuration_native_verifier_custody_refused");
@@ -136,7 +147,40 @@ export type PrivateInstalledConfigurationNativeVerifierCustodyV1 = Readonly<{
   acceptsProtectedRootPathOverride: false;
   retainsCredentialValueInPublicConfiguration: false;
   nextReleaseBoundary: "ship_and_bind_claude_process_sidecar";
+  localOperatorLoaderCapability?: object;
 }>;
+
+/** Burns the single loader handoff minted by the genuine V3 native verifier. */
+export function consumePrivateInstalledConfigurationNativeVerifierLoaderCapabilityV1(value: unknown):
+LocalOperatorLoaderCustody {
+  if (!value || typeof value !== "object" || types.isProxy(value)) return refused();
+  const captured = localOperatorLoaderCustodies.get(value);
+  if (!captured || !localOperatorLoaderCustodies.delete(value)) return refused();
+  return captured;
+}
+
+/**
+ * Burns the launcher-derived custody before staging. A structural copy, a
+ * caller-selected root, or a failed first attempt cannot be retried.
+ */
+export async function consumePrivateInstalledClaudeProcessSidecarStagingCapabilityV1(value: unknown) {
+  if (!value || typeof value !== "object" || types.isProxy(value)) return refused();
+  const captured = claudeStagingCustodies.get(value);
+  if (!captured || !claudeStagingCustodies.delete(value)) return refused();
+  const sidecar = captured.sidecar;
+  try {
+    return await stageMacosClaudeCodeProcessNativeFactoryInputV1({
+      expectedArchiveSha256: sidecar.archiveSha256,
+      expectedArtifactManifestSha256: sidecar.artifactManifestSha256,
+      expectedExecutableSha256: sidecar.executableSha256,
+      expectedReleaseSha256: sidecar.releaseSha256,
+      expectedReleaseVersion: sidecar.releaseVersion,
+      expectedSidecarManifestSha256: sidecar.sidecarManifestSha256,
+      sidecarRoot: captured.sidecarRoot,
+      stagingParent: await realpath(tmpdir()),
+    });
+  } catch { return refused(); }
+}
 
 /**
  * Binds V3 manifest custody to one genuinely verified expanded launcher and
@@ -152,6 +196,22 @@ PrivateInstalledConfigurationNativeVerifierCustodyV1 {
     "executableSha256", "sourceSha256", "toolchain", "files", "compiles", "downloads", "installs"]);
   if (launcher.releaseManifestDigest !== captured.releaseDigest || sidecar.verified !== true
     || sidecar.protocol !== "ACRCFG1" || sidecar.platform !== "darwin") return refused();
+  let claudeProcessSidecarStagingCapability: object | undefined;
+  if (Object.prototype.hasOwnProperty.call(launcher, "claudeProcessSidecar")
+    || Object.prototype.hasOwnProperty.call(launcher, "claudeProcessSidecarRoot")) {
+    const claude = exact(launcher.claudeProcessSidecar, ["schema", "verified", "releaseVersion", "releaseSha256",
+      "platform", "architecture", "minimumMacos", "protocol", "sidecarManifestSha256", "archiveSha256",
+      "artifactManifestSha256", "executableSha256", "sourceSha256", "toolchain", "files", "compiles",
+      "downloads", "installs"]);
+    if (claude.verified !== true || claude.releaseSha256 !== captured.releaseDigest
+      || claude.platform !== "darwin" || claude.protocol !== "ACRCCP1"
+      || typeof launcher.claudeProcessSidecarRoot !== "string") return refused();
+    claudeProcessSidecarStagingCapability = Object.freeze({
+      schema: "control-room.private-installed-claude-process-sidecar-staging-capability/v1",
+    });
+    claudeStagingCustodies.set(claudeProcessSidecarStagingCapability,
+      Object.freeze({ sidecarRoot: launcher.claudeProcessSidecarRoot, sidecar: claude }));
+  }
   let spent = false;
   const custody = Object.freeze({ async loadManifestBoundPrivateConfigurationData(signal?: AbortSignal) {
     if (spent || signal !== undefined && !(signal instanceof AbortSignal)) return refused();
@@ -202,12 +262,22 @@ PrivateInstalledConfigurationNativeVerifierCustodyV1 {
       captured.configurationBytes.fill(0); captured.manifestBytes.fill(0);
     }
   } });
+  let localOperatorLoaderCapability: object | undefined;
+  if (claudeProcessSidecarStagingCapability) {
+    localOperatorLoaderCapability = Object.freeze({
+      schema: "control-room.private-installed-configuration-native-verifier-loader-capability/v1",
+    });
+    localOperatorLoaderCustodies.set(localOperatorLoaderCapability, Object.freeze({
+      custody, claudeProcessSidecarStagingCapability,
+    }));
+  }
   return Object.freeze({ schema: PRIVATE_INSTALLED_CONFIGURATION_NATIVE_VERIFIER_CUSTODY_V1,
     status: "protected_native_verifier_bound" as const, custody,
     performsEffectOnConstruction: false as const, acceptsNativeVerifierCallback: false as const,
     acceptsHelperPath: false as const, acceptsProtectedRootPathOverride: false as const,
     retainsCredentialValueInPublicConfiguration: false as const,
-    nextReleaseBoundary: "ship_and_bind_claude_process_sidecar" as const });
+    nextReleaseBoundary: "ship_and_bind_claude_process_sidecar" as const,
+    ...(localOperatorLoaderCapability ? { localOperatorLoaderCapability } : {}) });
 }
 
 /**

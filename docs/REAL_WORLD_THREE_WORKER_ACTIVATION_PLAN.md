@@ -20,11 +20,14 @@ delivery transport.
   enable ordinary work.
 - The Claude source route, bounded task policy, result publication, recovery,
   shared installation composition, and protected qualification route exist.
-  The installed-configuration native verifier is now held by an opaque,
-  launcher-minted custody rather than a caller-supplied callback or path. The
-  next release package must ship and bind the Claude process sidecar, then
-  materialize the protected v3 manifest. Real authentication compatibility,
-  owner-attended qualification, and first-task proof still follow.
+  The installed-configuration native verifier now hands its one-use, opaque
+  custody directly to the Claude sidecar binding; callers cannot substitute a
+  callback, helper path, or structurally similar handoff. The temporary helper
+  is retired after either a failed load or the shipped operator command. This
+  is still source preparation: a real release must materialize the protected
+  v3 manifest at the owner's protected location before that exact end-to-end
+  route can be proven. Real authentication compatibility, owner-attended
+  qualification, and first-task proof still follow.
 - The shared remote delivery contract, node-session bridge, canonical queued
   task selection, durable uncertain-send recovery, reconstruction-stable packet
   identity, remote correction planning, protected installation forwarding, and
@@ -99,12 +102,12 @@ returns it to the same website review flow.
 
 ## Phase 3 — Make Claude Code a second ordinary local worker
 
-1. Build on the source-complete installed-configuration verifier custody. Ship
-   the Claude process sidecar in the release, bind it to the protected v3
-   manifest, and finish the production Node binding beneath the accepted macOS
-   Claude custody helper, including helper-death recovery. Do not treat the
-   installed-configuration verifier as proof that the Claude process sidecar
-   has been shipped, installed, or qualified.
+1. Build on the source-complete installed-configuration verifier custody. The
+   production Node binding now consumes its opaque v3 handoff and retires its
+   staged helper on command exit. Materialize the protected v3 manifest in a
+   real release, then prove that exact protected-root path and helper-death
+   recovery. Do not treat source custody as proof that the Claude process
+   sidecar has been installed or qualified.
 2. Retain the fixed first route: Claude Code `opus`, supplied-text review,
    tools and add-ons disabled, and the reviewed working directory.
 3. Run the separate owner-attended installed-process qualification and save

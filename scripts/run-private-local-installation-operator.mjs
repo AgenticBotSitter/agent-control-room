@@ -118,14 +118,19 @@ export async function runPrivateLocalInstallationOperator(args, runtime = instal
       runtime.reportError("Control Room operator owner-held dependencies are unavailable; no setup action was started.");
       return 1;
     }
-    return await module.runPrivateLocalInstallationOperatorCliV1(args, {
-      loadInstalledConfiguration: loader.loadInstalledConfiguration,
-      report: runtime.report,
-      reportError: runtime.reportError,
-      signals: runtime.signals,
-      createOperator: runtime.createOperator,
-      startLifecycle: runtime.startLifecycle,
-    });
+    try {
+      return await module.runPrivateLocalInstallationOperatorCliV1(args, {
+        loadInstalledConfiguration: loader.loadInstalledConfiguration,
+        report: runtime.report,
+        reportError: runtime.reportError,
+        signals: runtime.signals,
+        createOperator: runtime.createOperator,
+        startLifecycle: runtime.startLifecycle,
+      });
+    } finally {
+      if (typeof loader.retireClaudeProcessSidecar === "function")
+        await loader.retireClaudeProcessSidecar().catch(() => undefined);
+    }
   } catch {
     runtime.reportError("Control Room operator release entry is unavailable; no setup action was started.");
     return 1;

@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { after, before, test } from "node:test";
 import { buildClaudeCodeProcessNativeArtifactV1 } from "../scripts/build-claude-code-process-native.mjs";
 import { buildMacosClaudeCodeProcessNativeSidecarManifestV1, copyVerifiedMacosClaudeCodeProcessNativeSidecarV1,
+  retireMacosClaudeCodeProcessNativeFactoryInputV1, stageMacosClaudeCodeProcessNativeFactoryInputV1,
   verifyClaudeCodeProcessNativeArtifactV1, verifyMacosClaudeCodeProcessNativeSidecarV1 } from
   "../src/installer/v1/macos-claude-code-process-native-sidecar.mjs";
 
@@ -85,6 +86,27 @@ nativeTest("copy refuses existing destination, symlinked parent, missing release
     releaseVersion: "0.1.0" }), refusal);
   const extra = await copy("extra"); await writeFile(join(extra.destinationDirectory, "unreviewed"), "extra");
   await assert.rejects(verifyMacosClaudeCodeProcessNativeSidecarV1(extra.destinationDirectory), refusal);
+});
+
+nativeTest("verified release custody stages one private helper and retires it without starting Claude", async () => {
+  const { destinationDirectory, verified } = await copy("staging");
+  const staged = await stageMacosClaudeCodeProcessNativeFactoryInputV1({
+    expectedArchiveSha256: verified.archiveSha256,
+    expectedArtifactManifestSha256: verified.artifactManifestSha256,
+    expectedExecutableSha256: verified.executableSha256,
+    expectedReleaseSha256: verified.releaseSha256,
+    expectedReleaseVersion: verified.releaseVersion,
+    expectedSidecarManifestSha256: verified.sidecarManifestSha256,
+    sidecarRoot: destinationDirectory, stagingParent: root,
+  });
+  assert.equal(staged.staged, true);
+  assert.equal(staged.claudeCodeProcessPortFactoryInput.helperSha256, verified.executableSha256);
+  assert.deepEqual((await readdir(staged.stagingRoot)).sort(),
+    ["CLAUDE_CODE_PROCESS_MANIFEST.json", "LICENSE", "NOTICE", "claude-code-process-v1"]);
+  await retireMacosClaudeCodeProcessNativeFactoryInputV1(staged);
+  await assert.rejects(readdir(staged.stagingRoot), error => error?.code === "ENOENT");
+  await assert.rejects(retireMacosClaudeCodeProcessNativeFactoryInputV1(staged), refusal,
+    "retirement cannot become a generic recursive-delete primitive");
 });
 
 test("native build refuses a noncanonical output before toolchain or filesystem effects", async () => {

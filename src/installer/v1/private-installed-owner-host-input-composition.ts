@@ -104,7 +104,8 @@ function blocked(blocker: PrivateInstalledOwnerHostInputBlockerV1): PrivateInsta
 export function preflightPrivateInstalledOwnerHostInputCompositionV1(value: unknown):
 PrivateInstalledOwnerHostInputPreflightV1 {
   const input = record(value, ["schema", "installedConfigurationCustodyInput", "stagedJournalSidecar",
-    "journalSessionFactory", "hermesRuntimePorts", "setupRuntimes", "journalOperationDeadlineMs"]);
+    "journalSessionFactory", "hermesRuntimePorts", "setupRuntimes", "journalOperationDeadlineMs",
+    "claudeProtectedBinding"]);
   if (field(input, "schema") !== PRIVATE_INSTALLED_OWNER_HOST_INPUT_COMPOSITION_V1) return refused();
   if (field(input, "installedConfigurationCustodyInput") === undefined)
     return blocked(missing.installedConfigurationCustodyInput);
@@ -112,7 +113,7 @@ PrivateInstalledOwnerHostInputPreflightV1 {
   if (field(input, "journalSessionFactory") === undefined) return blocked(missing.journalSessionFactory);
 
   const hermes = record(field(input, "hermesRuntimePorts") ?? {},
-    ["startupBase", "deliveryIntegrityKey", "assertCurrentDelivery", "claudePostInstall"]);
+    ["startupBase", "deliveryIntegrityKey", "assertCurrentDelivery"]);
   if (field(hermes, "startupBase") === undefined) return blocked(missing.hermesStartupBase);
   if (field(hermes, "deliveryIntegrityKey") === undefined) return blocked(missing.hermesDeliveryIntegrityKey);
   if (field(hermes, "assertCurrentDelivery") === undefined) return blocked(missing.hermesAssertCurrentDelivery);
@@ -132,9 +133,9 @@ PrivateInstalledOwnerHostInputPreflightV1 {
         createNativeSessionPort: field(input, "journalSessionFactory") }),
       hermesRuntimePorts: Object.freeze({ startupBase: field(hermes, "startupBase"),
         deliveryIntegrityKey: field(hermes, "deliveryIntegrityKey"),
-        assertCurrentDelivery: field(hermes, "assertCurrentDelivery"), setupRuntimes: setup,
-        ...(Object.prototype.hasOwnProperty.call(hermes, "claudePostInstall")
-          ? { claudePostInstall: field(hermes, "claudePostInstall") } : {}) }),
+        assertCurrentDelivery: field(hermes, "assertCurrentDelivery"), setupRuntimes: setup }),
+      ...(Object.prototype.hasOwnProperty.call(input, "claudeProtectedBinding")
+        ? { claudeProtectedBinding: field(input, "claudeProtectedBinding") } : {}),
       journalOperationDeadlineMs: field(input, "journalOperationDeadlineMs"),
     }));
   } catch { return refused(); }

@@ -12,9 +12,11 @@ route, profile, enrollment/pin, lease, and exact queued evidence without
 sending or starting work. Both remain preparation. The Claude installed-
 configuration verifier is now held behind an opaque, one-use custody minted
 only by exact expanded-launcher verification; callers cannot substitute a
-structural verifier, helper path, or protected root. The release still must
-ship and bind the Claude process sidecar and materialize the protected v3
-manifest before owner-attended qualification. The protected Linux Codex
+structural verifier, helper path, or protected root. The source binding now
+passes genuine v3 custody through the existing Claude composer and retires the
+staged helper on either a failed load or operator-command exit. A real release
+still must materialize the protected v3 manifest at the owner's protected
+location before owner-attended qualification. The protected Linux Codex
 node-entry join now exists in source: it owns the signed current-admission
 reader, never exposes the derived policy port, and yields only a one-use
 session capability. Its outer installer still must construct the live bridge,
@@ -141,10 +143,11 @@ older manifests are not upgraded automatically. An outer source-only custody
 now reaches that reader only through the concrete installed-configuration
 native host pinned by a freshly verified expanded launcher. The caller cannot
 supply a verifier callback, helper path, or protected-root override, and the
-public composition retains no credential value. This does **not** activate the
-Claude route: the release must next ship and bind the Claude process sidecar,
-prove real authentication compatibility, materialize manifest v3, and complete
-the owner-attended qualification.
+public composition retains no credential value. The binding consumes that
+genuine custody one time and retires the staged helper after a failed load or
+the shipped operator command. This does **not** activate the Claude route: a
+real release must materialize manifest v3, prove real authentication
+compatibility, and complete the owner-attended qualification.
 
 The matching Node adapter now owns one use of that fixed native helper and has
 also passed independent review after a correction. A verified-but-unused hold

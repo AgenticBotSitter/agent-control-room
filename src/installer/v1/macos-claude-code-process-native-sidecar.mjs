@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
-import { access, chmod, lstat, mkdir, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
+import { access, chmod, lstat, mkdir, mkdtemp, open, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
+import { release as kernelRelease } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { gunzipSync } from "node:zlib";
 
@@ -25,6 +26,7 @@ export const CLAUDE_CODE_PROCESS_NATIVE_REVIEWED_CFLAGS_V1 = Object.freeze([
 const MAX_ARCHIVE_BYTES = 64 * 1024 * 1024;
 const MAX_EXPANDED_BYTES = 128 * 1024 * 1024;
 const digestPattern = /^[a-f0-9]{64}$/u;
+const stagedClaudeSidecars = new WeakSet();
 const sha256 = bytes => createHash("sha256").update(bytes).digest("hex");
 const refused = () => { throw new Error("macos_claude_code_process_native_sidecar_refused"); };
 
@@ -247,6 +249,12 @@ function macosAtLeast(actual, minimum) {
   const a = actual.split(".").map(Number), b = minimum.split(".").map(Number);
   return a[0] > b[0] || (a[0] === b[0] && a[1] >= b[1]);
 }
+function macosVersionFromKernel(value) {
+  const match = /^(\d+)\./u.exec(value);
+  if (!match) return undefined;
+  const darwinMajor = Number(match[1]);
+  return Number.isSafeInteger(darwinMajor) && darwinMajor >= 22 ? `${darwinMajor - 9}.0` : undefined;
+}
 /** Verifies the composed sidecar without extracting it or touching an owner installation root. */
 async function verifySidecarInternal(sidecarRootInput, expectedInput = {}) {
   const expectedNames = Object.getOwnPropertyNames(expectedInput);
@@ -280,6 +288,70 @@ async function verifySidecarInternal(sidecarRootInput, expectedInput = {}) {
 
 export async function verifyMacosClaudeCodeProcessNativeSidecarV1(sidecarRootInput, expected = {}) {
   return (await verifySidecarInternal(sidecarRootInput, expected)).summary;
+}
+
+/**
+ * Materialize one already-verified helper into a private disposable directory.
+ * This is deliberately narrower than installation: it accepts only the exact
+ * release pins and sidecar root retained by the verified launcher. It neither
+ * starts the helper nor selects a Claude executable or workspace.
+ */
+export async function stageMacosClaudeCodeProcessNativeFactoryInputV1(input) {
+  const captured = exact(input, ["expectedArchiveSha256", "expectedArtifactManifestSha256",
+    "expectedExecutableSha256", "expectedReleaseSha256", "expectedReleaseVersion",
+    "expectedSidecarManifestSha256", "sidecarRoot", "stagingParent"]);
+  const expected = Object.freeze({ releaseVersion: version(captured.expectedReleaseVersion),
+    releaseSha256: digestIdentity(captured.expectedReleaseSha256),
+    sidecarManifestSha256: digestIdentity(captured.expectedSidecarManifestSha256),
+    archiveSha256: digestIdentity(captured.expectedArchiveSha256),
+    artifactManifestSha256: digestIdentity(captured.expectedArtifactManifestSha256),
+    executableSha256: digestIdentity(captured.expectedExecutableSha256) });
+  const macosVersion = process.platform === "darwin" ? macosVersionFromKernel(kernelRelease()) : undefined;
+  if (!macosVersion || !["arm64", "x64"].includes(process.arch)
+    || typeof captured.sidecarRoot !== "string" || typeof captured.stagingParent !== "string") refused();
+  const parent = await canonicalDirectory(captured.stagingParent);
+  const verified = await verifySidecarInternal(captured.sidecarRoot, {
+    architecture: process.arch, macosVersion, releaseVersion: expected.releaseVersion,
+    releaseSha256: expected.releaseSha256, sidecarManifestSha256: expected.sidecarManifestSha256,
+  });
+  const { summary: sidecar, artifactRoot: artifact } = verified;
+  for (const key of ["archiveSha256", "artifactManifestSha256", "executableSha256"])
+    if (sidecar[key] !== expected[key]) refused();
+  const staging = await mkdtemp(join(parent, ".acr-claude-code-process-sidecar-"));
+  try {
+    await chmod(staging, 0o700);
+    const stat = await lstat(staging);
+    if (!stat.isDirectory() || stat.isSymbolicLink() || (stat.mode & 0o7777) !== 0o700
+      || await realpath(staging) !== staging) refused();
+    for (const [path, content] of artifact.parsed.files) {
+      const mode = path === EXECUTABLE_NAME ? 0o700 : 0o600;
+      const handle = await open(join(staging, path), "wx", mode);
+      try { await handle.writeFile(content); await handle.sync(); } finally { await handle.close(); }
+    }
+    const helperPath = join(staging, EXECUTABLE_NAME), helper = await regular(helperPath, staging);
+    if ((helper.mode & 0o7777) !== 0o700
+      || `sha256:${sha256(await readFile(helperPath))}` !== sidecar.executableSha256) refused();
+    const result = Object.freeze({ schema: MACOS_CLAUDE_CODE_PROCESS_NATIVE_SIDECAR_V1,
+      nativeArtifact: sidecar,
+      claudeCodeProcessPortFactoryInput: Object.freeze({ helperPath, helperSha256: sidecar.executableSha256 }),
+      stagingRoot: staging, staged: true, compiles: false, downloads: false, installs: false });
+    stagedClaudeSidecars.add(result);
+    return result;
+  } catch (error) { await rm(staging, { recursive: true, force: true }); throw error; }
+}
+
+/** Retire only a directory produced by the exact stager above. */
+export async function retireMacosClaudeCodeProcessNativeFactoryInputV1(value) {
+  if (!value || typeof value !== "object" || !stagedClaudeSidecars.delete(value)) refused();
+  const staged = exact(value, ["schema", "nativeArtifact", "claudeCodeProcessPortFactoryInput", "stagingRoot",
+    "staged", "compiles", "downloads", "installs"]);
+  if (staged.schema !== MACOS_CLAUDE_CODE_PROCESS_NATIVE_SIDECAR_V1 || staged.staged !== true
+    || staged.compiles !== false || staged.downloads !== false || staged.installs !== false) refused();
+  const factory = exact(staged.claudeCodeProcessPortFactoryInput, ["helperPath", "helperSha256"]);
+  const root = await canonicalDirectory(staged.stagingRoot);
+  if (dirname(factory.helperPath) !== root || factory.helperPath !== join(root, EXECUTABLE_NAME)
+    || !root.startsWith(`${await realpath(dirname(root))}/.acr-claude-code-process-sidecar-`)) refused();
+  await rm(root, { recursive: true, force: false });
 }
 
 export async function copyVerifiedMacosClaudeCodeProcessNativeSidecarV1(input) {

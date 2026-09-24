@@ -211,7 +211,7 @@ process.stdout.write("prepared by controlled test fixture\\n");
     const operator = await import(`${pathToFileURL(join(versionRoot,
       "scripts/run-private-local-installation-operator.mjs")).href}?prepared=${encodeURIComponent(root)}`);
     await operator.verifyInstalledPreparedOperatorReleaseV1(versionRoot);
-    let preparedCustodyLoads = 0;
+    let preparedCustodyLoads = 0, preparedRetirements = 0;
     const preparedProvider = Object.freeze({
       schema: "control-room.private-installed-owner-host-provider/v1",
       status: "prepared", processLocal: true, oneUse: true, performsEffect: false,
@@ -226,7 +226,7 @@ process.stdout.write("prepared by controlled test fixture\\n");
           assert.deepEqual(input, { ownerHeld: true });
           return { status: "owner_inputs_captured", async loadInstalledConfiguration() {
             return { custody: {}, journal: {} };
-          } };
+          }, async retireClaudeProcessSidecar() { preparedRetirements++; } };
         },
         async runPrivateLocalInstallationOperatorCliV1(_args, runtime) {
           preparedCustodyLoads++; await runtime.loadInstalledConfiguration(); return 0;
@@ -236,6 +236,21 @@ process.stdout.write("prepared by controlled test fixture\\n");
       signals: new EventEmitter(), createOperator: undefined, startLifecycle: undefined,
     }), 0, "a successfully prepared extracted release reaches its fixed custody handoff");
     assert.equal(preparedCustodyLoads, 1);
+    assert.equal(preparedRetirements, 1, "the shipped command retires held sidecar staging after normal completion");
+    let failedRetirements = 0;
+    assert.equal(await operator.runPrivateLocalInstallationOperator(["status"], {
+      async verifyRelease() { await operator.verifyInstalledPreparedOperatorReleaseV1(versionRoot); },
+      async loadRelease() { return {
+        consumePrivateInstalledOwnerHostProviderV1() { return { ownerHeld: true }; },
+        createPrivateInstalledLocalOperatorLoaderV1() { return { status: "owner_inputs_captured",
+          async loadInstalledConfiguration() { return { custody: {}, journal: {} }; },
+          async retireClaudeProcessSidecar() { failedRetirements++; } }; },
+        async runPrivateLocalInstallationOperatorCliV1() { throw new Error("disposable failure"); },
+      }; },
+      async loadOwnerHeldInstalledOperatorInput() { return preparedProvider; }, report() {}, reportError() {},
+      signals: new EventEmitter(), createOperator: undefined, startLifecycle: undefined,
+    }), 1);
+    assert.equal(failedRetirements, 1, "the shipped command retires held sidecar staging after failure");
     let unavailableCliCalls = 0; const unavailableErrors = [];
     for (const command of ["status", "setup-next", "start"])
       assert.equal(await operator.runPrivateLocalInstallationOperator([command], {
@@ -268,7 +283,7 @@ process.stdout.write("prepared by controlled test fixture\\n");
     "the shipped entry no longer accepts an arbitrary callback provider");
     assert.deepEqual(operator.registerPrivateInstalledOwnerHostInputProviderV1(
       opaqueOwnerHostProvider), { status: "registered", processLocal: true, oneUse: true });
-    let consumedOwnerHostInputs = 0, registeredCliCalls = 0;
+    let consumedOwnerHostInputs = 0, registeredCliCalls = 0, registeredRetirements = 0;
     assert.equal(await operator.runPrivateLocalInstallationOperator(["status"], {
       async verifyRelease() { await operator.verifyInstalledPreparedOperatorReleaseV1(versionRoot); },
       async loadRelease() { return {
@@ -280,7 +295,7 @@ process.stdout.write("prepared by controlled test fixture\\n");
           consumedOwnerHostInputs++; assert.equal(input, opaqueOwnerHostInput);
           return { status: "owner_inputs_captured", async loadInstalledConfiguration() {
             return { custody: {}, journal: {} };
-          } };
+          }, async retireClaudeProcessSidecar() { registeredRetirements++; } };
         },
         async runPrivateLocalInstallationOperatorCliV1(_args, runtime) {
           registeredCliCalls++; await runtime.loadInstalledConfiguration(); return 0;
@@ -290,6 +305,7 @@ process.stdout.write("prepared by controlled test fixture\\n");
       createOperator: undefined, startLifecycle: undefined,
     }), 0, "the process-local registered provider reaches the shipped command without environment discovery");
     assert.equal(consumedOwnerHostInputs, 1); assert.equal(registeredCliCalls, 1);
+    assert.equal(registeredRetirements, 1);
     assert.throws(() => operator.registerPrivateInstalledOwnerHostInputProviderV1(opaqueOwnerHostProvider),
       /private_installed_owner_host_input_provider_refused/u);
     assert.equal(await operator.runPrivateLocalInstallationOperator(["status"], {
