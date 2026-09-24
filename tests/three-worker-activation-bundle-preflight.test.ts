@@ -64,6 +64,27 @@ test("structural or caller-digest proof cannot leave blocked state", () => {
   assert.equal(plan.status, "blocked");
 });
 
+test("a structural fake Hermes host cannot advance the activation preflight", async () => {
+  const workerBinding = Object.freeze({ localServiceId: "service:marvin", workerId: route.workerId,
+    expectedVersion: "0.21.3" as const, sourceRevision: HERMES_021_SOURCE_REVISION_V1 });
+  const runnerConfiguration = Object.freeze({ executablePath: "/private/fixture/hermes",
+    profile: "owner-profile-private", model: "qwen3.8:27b-long", provider: "ollama",
+    workingDirectory: "/private/fixture/work", taskClass: "text_review" as const,
+    maximumTurns: 1 as const, maximumRunBudgetSeconds: 120 });
+  let calls = 0;
+  await assert.rejects(runHermes021MacosInstallationBoundRunnerQualificationV1({
+    installationId: binding.installationId, releaseDigest: binding.releaseDigest, topologyPlan, workerBinding,
+    runnerConfiguration }, { async execute() { calls += 1; return undefined; } }),
+  /installation_bound_runner_qualification_evidence_unavailable/u);
+  assert.equal(calls, 0);
+
+  const custody = createThreeWorkerActivationBundleCustodyV1(binding);
+  const plan = composeThreeWorkerActivationBundlePreflightV1({ aggregate: custody.aggregate });
+  assert.equal(plan.status, "blocked");
+  assert.equal(plan.components.find(item => item.component === "hermes_route")?.blocker, "source_proof_missing");
+  assert.deepEqual(plan.ownerActions, []);
+});
+
 test("real Hermes producer proof updates only Hermes and invalidates old aggregate generation", async () => {
   const custody = createThreeWorkerActivationBundleCustodyV1(binding);
   const first = composeThreeWorkerActivationBundlePreflightV1({ aggregate: custody.aggregate });
