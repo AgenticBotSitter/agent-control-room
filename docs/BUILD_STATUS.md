@@ -71,6 +71,15 @@ It finishes the supported single-computer installation first and then extends
 that same database, scheduler and lifecycle to several computers. Older build
 plans remain architecture/history references, not competing execution queues.
 
+**September 24 multi-computer correction:** existing node and key rows prove
+the machine and its current key, but they do not prove the exact remote worker
+enrollment.  The existing Hermes connection registry also cannot safely be
+repurposed for that job.  The accepted next source package is one narrow,
+canonical remote-worker enrollment projection; its bounded contract and tests
+are recorded in
+[`REMOTE_WORKER_ENROLLMENT_AUTHORITY_DECISION.md`](REMOTE_WORKER_ENROLLMENT_AUTHORITY_DECISION.md).
+No live database or remote worker was changed while making that decision.
+
 The first installed Claude route is now pinned to Claude Code's `opus` alias
 instead of inheriting a desktop or command-line default. Its owner-attended
 qualification, saved process configuration, and later task execution must all

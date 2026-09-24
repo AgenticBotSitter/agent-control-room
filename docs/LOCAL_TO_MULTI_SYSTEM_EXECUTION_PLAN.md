@@ -439,6 +439,10 @@ project website an administrative entrance.
 **Model:** Sol high implementation; Astra high identity/revocation review.
 **Reuse:** existing asymmetric worker identity, enrollment, compatibility,
 capability, lease and revocation contracts.
+**Authority decision:** [`REMOTE_WORKER_ENROLLMENT_AUTHORITY_DECISION.md`](REMOTE_WORKER_ENROLLMENT_AUTHORITY_DECISION.md)
+defines the required canonical worker-enrollment projection.  Existing
+`control_nodes`/`control_node_keys` remain necessary machine/key evidence;
+the Hermes-specific connection registry is not remote-worker authority.
 **Work:**
 
 1. Enroll one worker with a unique key and installation-bound identity.
