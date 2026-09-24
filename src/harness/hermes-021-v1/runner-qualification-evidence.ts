@@ -7,6 +7,8 @@ import { HERMES_021_SOURCE_REVISION_V1, HERMES_021_VERSION_V1 } from "./connecto
 import { hermes021MacosLocalBindingSchemaV1, hermes021MacosTerminalResultSchemaV1 } from "./macos-local-worker";
 import { captureHermes021MacosSubprocessHostConfigurationV1,
   consumeHermes021MacosOwnerQualificationHostV1 } from "./subprocess-stream-json-host";
+import { captureHermes021MacosReviewedExecutableIdentityV1,
+  hermes021MacosReviewedExecutableIdentityDigestV1 } from "./reviewed-executable-identity";
 
 export const HERMES_021_MACOS_LOCAL_RUNNER_QUALIFICATION_REPORT_V1 =
   "control-room.hermes-021-macos-local-runner-qualification-report/v1" as const;
@@ -54,6 +56,7 @@ const installationBoundEvidenceSchema = z.object({
   topologyPlanDigest: digest,
   workerBindingDigest: digest,
   runnerConfigurationDigest: digest,
+  reviewedExecutableIdentityDigest: digest,
   runnerQualificationDigest: digest,
   evidenceDigest: digest,
   startsHermes: z.literal(false),
@@ -69,6 +72,7 @@ type InstallationBoundEvidenceInput = Readonly<{
   topologyPlan: unknown;
   workerBinding: unknown;
   runnerConfiguration: unknown;
+  reviewedExecutableIdentity: unknown;
   runnerQualificationReport: unknown;
 }>;
 
@@ -89,7 +93,7 @@ function exactBoundInput(value: unknown): InstallationBoundEvidenceInput {
   if (!value || typeof value !== "object" || Array.isArray(value) || types.isProxy(value)
     || Object.getPrototypeOf(value) !== Object.prototype || Object.getOwnPropertySymbols(value).length !== 0) return boundUnavailable();
   const names = ["installationId", "releaseDigest", "topologyPlan", "workerBinding", "runnerConfiguration",
-    "runnerQualificationReport"] as const;
+    "reviewedExecutableIdentity", "runnerQualificationReport"] as const;
   const actual = Object.getOwnPropertyNames(value);
   if (actual.length !== names.length || actual.some(name => !names.includes(name as typeof names[number]))) return boundUnavailable();
   for (const name of names) {
@@ -102,7 +106,8 @@ function exactBoundInput(value: unknown): InstallationBoundEvidenceInput {
 function exactProcedureInput(value: unknown): OwnerAttendedQualificationInput {
   if (!value || typeof value !== "object" || Array.isArray(value) || types.isProxy(value)
     || Object.getPrototypeOf(value) !== Object.prototype || Object.getOwnPropertySymbols(value).length !== 0) return boundUnavailable();
-  const names = ["installationId", "releaseDigest", "topologyPlan", "workerBinding", "runnerConfiguration"] as const;
+  const names = ["installationId", "releaseDigest", "topologyPlan", "workerBinding", "runnerConfiguration",
+    "reviewedExecutableIdentity"] as const;
   const actual = Object.getOwnPropertyNames(value);
   if (actual.length !== names.length || actual.some(name => !names.includes(name as typeof names[number]))) return boundUnavailable();
   for (const name of names) {
@@ -137,6 +142,7 @@ function materialFor(inputValue: unknown) {
     installationId: installationId.parse(input.installationId), releaseDigest: digest.parse(input.releaseDigest),
     topologyPlanDigest: plan.planDigest, workerBindingDigest: sha256Digest(binding),
     runnerConfigurationDigest: hermes021MacosRunnerConfigurationDigestV1(input.runnerConfiguration),
+    reviewedExecutableIdentityDigest: hermes021MacosReviewedExecutableIdentityDigestV1(input.reviewedExecutableIdentity),
     runnerQualificationDigest: qualification.evidenceDigest,
     startsHermes: false as const, grantsExecutionAuthority: false as const };
   return Object.freeze({ input, material });
@@ -171,20 +177,13 @@ export async function runHermes021MacosInstallationBoundRunnerQualificationV1(in
     if (binding.expectedVersion !== HERMES_021_VERSION_V1
       || binding.sourceRevision !== HERMES_021_SOURCE_REVISION_V1) return boundUnavailable();
     const configuration = captureHermes021MacosSubprocessHostConfigurationV1(input.runnerConfiguration);
+    const reviewedExecutableIdentity = captureHermes021MacosReviewedExecutableIdentityV1(
+      input.reviewedExecutableIdentity);
     const host = consumeHermes021MacosOwnerQualificationHostV1(ownerQualificationHostValue);
-    if (canonicalJson(host.configuration) !== canonicalJson(configuration)) return boundUnavailable();
+    if (canonicalJson(host.configuration) !== canonicalJson(configuration)
+      || canonicalJson(host.reviewedExecutableIdentity) !== canonicalJson(reviewedExecutableIdentity)) return boundUnavailable();
     const expectedText = `CONTROL_ROOM_HERMES_RUNNER_${randomBytes(16).toString("hex")}`;
-    const lines: unknown[] = [];
-    await host.execute(Object.freeze({ task: Object.freeze({ tenantId: "tenant:qualification",
-      projectId: "project:qualification", jobId: "job:qualification", attemptId: "attempt:qualification",
-      runId: "run:qualification", nodeId: "node:qualification",
-      prompt: `Reply with exactly this text and nothing else: ${expectedText}`,
-      instructions: "Use no tools and do not write files.",
-      deadline: Date.now() + configuration.maximumRunBudgetSeconds * 1_000 + 5_000 }),
-    async onLine(line) {
-      if (lines.length >= 64 || typeof line !== "string" || line.includes("\n") || line.includes("\r")) return boundUnavailable();
-      try { lines.push(JSON.parse(line)); } catch { return boundUnavailable(); }
-    } }));
+    const lines = await host.qualify(expectedText);
     const terminals = lines.map(value => hermes021MacosTerminalResultSchemaV1.safeParse(value))
       .filter(result => result.success).map(result => result.data);
     if (terminals.length !== 1) return boundUnavailable();
@@ -192,6 +191,7 @@ export async function runHermes021MacosInstallationBoundRunnerQualificationV1(in
     const report = sanitizedSuccessfulReport(terminal, expectedText);
     const bound = materialFor({ installationId: input.installationId, releaseDigest: input.releaseDigest,
       topologyPlan: plan, workerBinding: binding, runnerConfiguration: configuration,
+      reviewedExecutableIdentity,
       runnerQualificationReport: report });
     const evidence = Object.freeze(installationBoundEvidenceSchema.parse({ ...bound.material,
       evidenceDigest: sha256Digest({ purpose: "hermes-021-installation-bound-runner-qualification/v1",

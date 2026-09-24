@@ -44,6 +44,7 @@ const readinessSchema = z.object({
   workerRegistration: workerRegistrationSchema,
   workerBindingDigest: digest,
   runnerConfigurationDigest: digest,
+  reviewedExecutableIdentityDigest: digest,
   qualificationEvidenceDigest: digest,
   state: z.literal("qualification_recorded_owner_enablement_required"),
   startsHermes: z.literal(false),
@@ -64,6 +65,7 @@ export type Hermes021MacosProtectedWorkerReadinessInputV1 = Readonly<{
   topologyPlan: unknown;
   workerBinding: unknown;
   runnerConfiguration: unknown;
+  reviewedExecutableIdentity: unknown;
   runnerQualificationReport: unknown;
   runnerQualificationEvidence: unknown;
 }>;
@@ -78,7 +80,8 @@ function exactInput(value: unknown): Hermes021MacosProtectedWorkerReadinessInput
   if (!value || typeof value !== "object" || Array.isArray(value) || types.isProxy(value)
     || Object.getPrototypeOf(value) !== Object.prototype || Object.getOwnPropertySymbols(value).length !== 0) return unavailable();
   const names = ["installationId", "releaseDigest", "topologyInput", "topologyPlan", "workerBinding",
-    "runnerConfiguration", "runnerQualificationReport", "runnerQualificationEvidence"] as const;
+    "runnerConfiguration", "reviewedExecutableIdentity", "runnerQualificationReport",
+    "runnerQualificationEvidence"] as const;
   const actual = Object.getOwnPropertyNames(value);
   if (actual.length !== names.length || actual.some(name => !names.includes(name as typeof names[number]))) return unavailable();
   for (const name of names) {
@@ -119,6 +122,7 @@ Hermes021MacosProtectedWorkerReadinessV1 {
 
     const qualificationInput = { installationId: selectedInstallationId, releaseDigest: selectedReleaseDigest,
       topologyPlan, workerBinding, runnerConfiguration: input.runnerConfiguration,
+      reviewedExecutableIdentity: input.reviewedExecutableIdentity,
       runnerQualificationReport: input.runnerQualificationReport };
     const qualification = verifyHermes021MacosInstallationBoundRunnerQualificationEvidenceV1(
       input.runnerQualificationEvidence, qualificationInput);
@@ -135,6 +139,7 @@ Hermes021MacosProtectedWorkerReadinessV1 {
       workerRegistration,
       workerBindingDigest: sha256Digest(workerBinding),
       runnerConfigurationDigest: hermes021MacosRunnerConfigurationDigestV1(input.runnerConfiguration),
+      reviewedExecutableIdentityDigest: qualification.reviewedExecutableIdentityDigest,
       qualificationEvidenceDigest: qualification.evidenceDigest,
       state: "qualification_recorded_owner_enablement_required" as const,
       startsHermes: false as const, startsService: false as const, createsDatabaseEntry: false as const,

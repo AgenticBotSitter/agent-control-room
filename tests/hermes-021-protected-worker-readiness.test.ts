@@ -27,11 +27,13 @@ const runnerQualificationReport = Object.freeze({ schema: HERMES_021_MACOS_LOCAL
 async function input(configuration: Parameters<typeof createHermesOwnerQualificationHostFixture>[0] = runnerConfiguration) {
   const base = { installationId: "fixture-installation", releaseDigest: sha256Digest("release"), topologyInput,
     topologyPlan, workerBinding, runnerConfiguration: configuration };
-  const host = createHermesOwnerQualificationHostFixture(base.runnerConfiguration);
+  const fixture = await createHermesOwnerQualificationHostFixture(base.runnerConfiguration);
   const qualified = await runHermes021MacosInstallationBoundRunnerQualificationV1({
     installationId: base.installationId, releaseDigest: base.releaseDigest, topologyPlan: base.topologyPlan,
-    workerBinding: base.workerBinding, runnerConfiguration: base.runnerConfiguration }, host);
-  return { ...base, runnerQualificationReport: qualified.report, runnerQualificationEvidence: qualified.evidence };
+    workerBinding: base.workerBinding, runnerConfiguration: base.runnerConfiguration,
+    reviewedExecutableIdentity: fixture.reviewedExecutableIdentity }, fixture.host);
+  return { ...base, reviewedExecutableIdentity: fixture.reviewedExecutableIdentity,
+    runnerQualificationReport: qualified.report, runnerQualificationEvidence: qualified.evidence };
 }
 
 test("successful runner evidence becomes one redacted installation-bound readiness record without execution", async () => {
@@ -62,6 +64,8 @@ test("saved readiness refuses profile, model, provider, workspace, worker and qu
     { ...original, runnerConfiguration: { ...runnerConfiguration, model: "other-model" } },
     { ...original, runnerConfiguration: { ...runnerConfiguration, provider: "other-provider" } },
     { ...original, runnerConfiguration: { ...runnerConfiguration, workingDirectory: "/private/fixture/other-work" } },
+    { ...original, reviewedExecutableIdentity: { ...original.reviewedExecutableIdentity,
+      executableSha256: sha256Digest("substituted-executable") } },
     { ...original, workerBinding: { ...workerBinding, localServiceId: "service:other" } },
     { ...original, runnerQualificationReport: { ...runnerQualificationReport, sessionDigest: sha256Digest("other-session") } },
   ];
@@ -85,6 +89,7 @@ test("readiness creation refuses qualification evidence captured for another run
   // A post-hoc structural B-bound copy has no process-local qualification provenance.
   const fabricated = { ...selected.runnerQualificationEvidence,
     runnerConfigurationDigest: hostile.runnerQualificationEvidence.runnerConfigurationDigest,
+    reviewedExecutableIdentityDigest: hostile.runnerQualificationEvidence.reviewedExecutableIdentityDigest,
     evidenceDigest: hostile.runnerQualificationEvidence.evidenceDigest };
   assert.throws(() => createHermes021MacosProtectedWorkerReadinessV1({ ...hostile,
     runnerQualificationReport: selected.runnerQualificationReport, runnerQualificationEvidence: fabricated }),

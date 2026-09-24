@@ -26,12 +26,13 @@ async function hermesSource() {
     expectedVersion: "0.21.3" as const, sourceRevision: HERMES_021_SOURCE_REVISION_V1 });
   const runnerConfiguration = hermesOwnerQualificationConfigurationFixture({ profile: "owner-profile-private",
     model: "qwen3.8:27b-long", provider: "ollama" });
-  const host = createHermesOwnerQualificationHostFixture(runnerConfiguration);
+  const fixture = await createHermesOwnerQualificationHostFixture(runnerConfiguration);
   const qualified = await runHermes021MacosInstallationBoundRunnerQualificationV1({
     installationId: binding.installationId, releaseDigest: binding.releaseDigest, topologyPlan, workerBinding,
-    runnerConfiguration }, host);
+    runnerConfiguration, reviewedExecutableIdentity: fixture.reviewedExecutableIdentity }, fixture.host);
   const currentInput = { installationId: binding.installationId, releaseDigest: binding.releaseDigest,
     topologyInput, topologyPlan, workerBinding, runnerConfiguration,
+    reviewedExecutableIdentity: fixture.reviewedExecutableIdentity,
     runnerQualificationReport: qualified.report, runnerQualificationEvidence: qualified.evidence };
   return { currentInput, readiness: createHermes021MacosProtectedWorkerReadinessV1(currentInput) };
 }
