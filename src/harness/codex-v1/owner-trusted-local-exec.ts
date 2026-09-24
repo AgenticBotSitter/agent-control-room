@@ -68,9 +68,16 @@ function parseLine(line: string): { kind: "message"; text: string } | { kind: "c
   const record = value as Record<string, unknown>;
   if (record.type === "item.completed") {
     const item = record.item;
-    if (!item || typeof item !== "object" || Array.isArray(item) || (item as Record<string, unknown>).type !== "agent_message"
-      || typeof (item as Record<string, unknown>).text !== "string") throw new Error("malformed_jsonl");
-    return { kind: "message", text: (item as Record<string, string>).text };
+    if (!item || typeof item !== "object" || Array.isArray(item) || typeof (item as Record<string, unknown>).type !== "string")
+      throw new Error("malformed_jsonl");
+    if ((item as Record<string, unknown>).type === "agent_message") {
+      if (typeof (item as Record<string, unknown>).text !== "string") throw new Error("malformed_jsonl");
+      return { kind: "message", text: (item as Record<string, string>).text };
+    }
+    // Read-only Codex may emit a completed reasoning item before the final
+    // message. It is not result text and does not grant any extra capability.
+    if ((item as Record<string, unknown>).type === "reasoning") return undefined;
+    throw new Error("malformed_jsonl");
   }
   if (record.type === "turn.completed") {
     const usage = record.usage;

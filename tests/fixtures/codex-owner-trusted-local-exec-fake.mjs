@@ -11,6 +11,7 @@ if (prompt === "hang") {
   process.exitCode = 7;
 } else {
   const received = { args: process.argv.slice(2), env: Object.keys(process.env).sort(), prompt };
+  process.stdout.write(`${JSON.stringify({ type: "item.completed", item: { type: "reasoning" } })}\n`);
   process.stdout.write(`${JSON.stringify({ type: "item.completed", item: { type: "agent_message", text: JSON.stringify(received) } })}\n`);
   process.stdout.write(`${JSON.stringify({ type: "turn.completed", usage: { input_tokens: 3, output_tokens: 5 } })}\n`);
 }
