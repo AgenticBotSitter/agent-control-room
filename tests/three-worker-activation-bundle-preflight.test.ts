@@ -9,6 +9,7 @@ import { composeThreeWorkerActivationBundlePreflightV1, createThreeWorkerActivat
   recordHermesThreeWorkerActivationSourceProofV1, refreshThreeWorkerActivationBundlePreflightV1,
   verifyThreeWorkerActivationBundlePreflightV1 } from
   "../src/installer/v1/three-worker-activation-bundle-preflight";
+import { createHermesOwnerQualificationHostFixture } from "./helpers/hermes-owner-qualification-host";
 
 const d = (value: string) => sha256Digest(value);
 const route = Object.freeze({ kind: "local" as const, workerId: "worker:marvin",
@@ -25,12 +26,11 @@ async function hermesSource() {
   const runnerConfiguration = Object.freeze({ executablePath: "/private/fixture/hermes", profile: "owner-profile-private",
     model: "qwen3.8:27b-long", provider: "ollama", workingDirectory: "/private/fixture/work",
     taskClass: "text_review" as const, maximumTurns: 1 as const, maximumRunBudgetSeconds: 120 });
+  const fixture = createHermesOwnerQualificationHostFixture(runnerConfiguration);
   const qualified = await runHermes021MacosInstallationBoundRunnerQualificationV1({
     installationId: binding.installationId, releaseDigest: binding.releaseDigest, topologyPlan, workerBinding,
-    runnerConfiguration, ownerAttended: true }, { async execute(context) { return { type: "result" as const,
-      session_id: "session:qualified", exit_code: 0, text: context.expectedText,
-      tokens: { input: 14, output: 8, total: 22, cache_read: 0, cache_write: 0 }, duration_ms: 1_250,
-      timestamp: 1_750_000_000_000 }; } });
+    runnerConfiguration }, fixture.host);
+  fixture.close();
   const currentInput = { installationId: binding.installationId, releaseDigest: binding.releaseDigest,
     topologyInput, topologyPlan, workerBinding, runnerConfiguration,
     runnerQualificationReport: qualified.report, runnerQualificationEvidence: qualified.evidence };

@@ -5,7 +5,8 @@ import { canonicalJson, sha256Digest } from "../../security/canonical-digest";
 import { verifyInstallationTopologyPlanV1 } from "../v1/installation-topology";
 import { HERMES_021_SOURCE_REVISION_V1, HERMES_021_VERSION_V1 } from "./connector-profile";
 import { hermes021MacosLocalBindingSchemaV1, hermes021MacosTerminalResultSchemaV1 } from "./macos-local-worker";
-import { captureHermes021MacosSubprocessHostConfigurationV1 } from "./subprocess-stream-json-host";
+import { captureHermes021MacosSubprocessHostConfigurationV1,
+  consumeHermes021MacosOwnerQualificationHostV1 } from "./subprocess-stream-json-host";
 
 export const HERMES_021_MACOS_LOCAL_RUNNER_QUALIFICATION_REPORT_V1 =
   "control-room.hermes-021-macos-local-runner-qualification-report/v1" as const;
@@ -71,16 +72,7 @@ type InstallationBoundEvidenceInput = Readonly<{
   runnerQualificationReport: unknown;
 }>;
 
-type OwnerAttendedQualificationInput = Omit<InstallationBoundEvidenceInput, "runnerQualificationReport"> &
-  Readonly<{ ownerAttended: true }>;
-
-type QualificationRuntime = Readonly<{
-  execute(input: Readonly<{
-    binding: z.infer<typeof hermes021MacosLocalBindingSchemaV1>;
-    configuration: ReturnType<typeof captureHermes021MacosSubprocessHostConfigurationV1>;
-    expectedText: string;
-  }>): Promise<unknown>;
-}>;
+type OwnerAttendedQualificationInput = Omit<InstallationBoundEvidenceInput, "runnerQualificationReport">;
 
 const installationBoundEvidenceProvenance = new WeakMap<object, Readonly<{
   evidence: Hermes021MacosInstallationBoundRunnerQualificationEvidenceV1;
@@ -110,25 +102,14 @@ function exactBoundInput(value: unknown): InstallationBoundEvidenceInput {
 function exactProcedureInput(value: unknown): OwnerAttendedQualificationInput {
   if (!value || typeof value !== "object" || Array.isArray(value) || types.isProxy(value)
     || Object.getPrototypeOf(value) !== Object.prototype || Object.getOwnPropertySymbols(value).length !== 0) return boundUnavailable();
-  const names = ["installationId", "releaseDigest", "topologyPlan", "workerBinding", "runnerConfiguration",
-    "ownerAttended"] as const;
+  const names = ["installationId", "releaseDigest", "topologyPlan", "workerBinding", "runnerConfiguration"] as const;
   const actual = Object.getOwnPropertyNames(value);
   if (actual.length !== names.length || actual.some(name => !names.includes(name as typeof names[number]))) return boundUnavailable();
   for (const name of names) {
     const descriptor = Object.getOwnPropertyDescriptor(value, name);
     if (!descriptor || descriptor.enumerable !== true || !("value" in descriptor)) return boundUnavailable();
   }
-  if ((value as { ownerAttended?: unknown }).ownerAttended !== true) return boundUnavailable();
   return value as OwnerAttendedQualificationInput;
-}
-
-function captureRuntime(value: unknown): QualificationRuntime {
-  if (!value || typeof value !== "object" || Array.isArray(value) || types.isProxy(value)
-    || Object.getPrototypeOf(value) !== Object.prototype || Object.getOwnPropertySymbols(value).length !== 0) return boundUnavailable();
-  const names = Object.getOwnPropertyNames(value), descriptor = Object.getOwnPropertyDescriptor(value, "execute");
-  if (names.length !== 1 || names[0] !== "execute" || !descriptor || descriptor.enumerable !== true
-    || !("value" in descriptor) || typeof descriptor.value !== "function" || types.isProxy(descriptor.value)) return boundUnavailable();
-  return Object.freeze({ execute: (descriptor.value as QualificationRuntime["execute"]).bind(value) });
 }
 
 export function hermes021MacosRunnerConfigurationDigestV1(value: unknown): string {
@@ -181,17 +162,33 @@ function sanitizedSuccessfulReport(terminalValue: unknown, expectedText: string)
  * report or a structurally identical evidence object cannot be rebound later.
  */
 export async function runHermes021MacosInstallationBoundRunnerQualificationV1(inputValue: unknown,
-  runtimeValue: unknown): Promise<Readonly<{ report: z.infer<typeof hermes021MacosLocalRunnerQualificationReportSchemaV1>;
+  ownerQualificationHostValue: unknown): Promise<Readonly<{ report: z.infer<typeof hermes021MacosLocalRunnerQualificationReportSchemaV1>;
     evidence: Hermes021MacosInstallationBoundRunnerQualificationEvidenceV1 }>> {
   try {
-    const input = exactProcedureInput(inputValue), runtime = captureRuntime(runtimeValue);
+    const input = exactProcedureInput(inputValue);
     const plan = verifyInstallationTopologyPlanV1(input.topologyPlan);
     const binding = hermes021MacosLocalBindingSchemaV1.parse(input.workerBinding);
     if (binding.expectedVersion !== HERMES_021_VERSION_V1
       || binding.sourceRevision !== HERMES_021_SOURCE_REVISION_V1) return boundUnavailable();
     const configuration = captureHermes021MacosSubprocessHostConfigurationV1(input.runnerConfiguration);
+    const host = consumeHermes021MacosOwnerQualificationHostV1(ownerQualificationHostValue);
+    if (canonicalJson(host.configuration) !== canonicalJson(configuration)) return boundUnavailable();
     const expectedText = `CONTROL_ROOM_HERMES_RUNNER_${randomBytes(16).toString("hex")}`;
-    const terminal = await runtime.execute(Object.freeze({ binding, configuration, expectedText }));
+    const lines: unknown[] = [];
+    await host.execute(Object.freeze({ task: Object.freeze({ tenantId: "tenant:qualification",
+      projectId: "project:qualification", jobId: "job:qualification", attemptId: "attempt:qualification",
+      runId: "run:qualification", nodeId: "node:qualification",
+      prompt: `Reply with exactly this text and nothing else: ${expectedText}`,
+      instructions: "Use no tools and do not write files.",
+      deadline: Date.now() + configuration.maximumRunBudgetSeconds * 1_000 + 5_000 }),
+    async onLine(line) {
+      if (lines.length >= 64 || typeof line !== "string" || line.includes("\n") || line.includes("\r")) return boundUnavailable();
+      try { lines.push(JSON.parse(line)); } catch { return boundUnavailable(); }
+    } }));
+    const terminals = lines.map(value => hermes021MacosTerminalResultSchemaV1.safeParse(value))
+      .filter(result => result.success).map(result => result.data);
+    if (terminals.length !== 1) return boundUnavailable();
+    const terminal = terminals[0];
     const report = sanitizedSuccessfulReport(terminal, expectedText);
     const bound = materialFor({ installationId: input.installationId, releaseDigest: input.releaseDigest,
       topologyPlan: plan, workerBinding: binding, runnerConfiguration: configuration,

@@ -6,6 +6,7 @@ import { HERMES_021_MACOS_LOCAL_ADAPTER_V1, HERMES_021_MACOS_LOCAL_RUNNER_QUALIF
   runHermes021MacosInstallationBoundRunnerQualificationV1,
   verifyHermes021MacosProtectedWorkerReadinessV1 } from "../src/harness/hermes-021-v1";
 import { sha256Digest } from "../src/security/canonical-digest";
+import { createHermesOwnerQualificationHostFixture } from "./helpers/hermes-owner-qualification-host";
 
 const route = Object.freeze({ kind: "local" as const, workerId: "worker:marvin",
   adapterId: HERMES_021_MACOS_LOCAL_ADAPTER_V1, adapterRevision: HERMES_021_SOURCE_REVISION_V1 });
@@ -23,19 +24,14 @@ const runnerQualificationReport = Object.freeze({ schema: HERMES_021_MACOS_LOCAL
   inputTokens: 14, outputTokens: 8, totalTokens: 22, durationMs: 1_250,
   failureReason: "none" as const, retryRequiresFreshOwnerAuthorization: false as const });
 
-function terminal(expectedText: string, session = "session:qualified") {
-  return { type: "result" as const, session_id: session, exit_code: 0, text: expectedText,
-    tokens: { input: 14, output: 8, total: 22, cache_read: 0, cache_write: 0 }, duration_ms: 1_250,
-    timestamp: 1_750_000_000_000 };
-}
-
-async function input(configuration = runnerConfiguration) {
+async function input(configuration: Parameters<typeof createHermesOwnerQualificationHostFixture>[0] = runnerConfiguration) {
   const base = { installationId: "fixture-installation", releaseDigest: sha256Digest("release"), topologyInput,
     topologyPlan, workerBinding, runnerConfiguration: configuration };
+  const fixture = createHermesOwnerQualificationHostFixture(base.runnerConfiguration);
   const qualified = await runHermes021MacosInstallationBoundRunnerQualificationV1({
     installationId: base.installationId, releaseDigest: base.releaseDigest, topologyPlan: base.topologyPlan,
-    workerBinding: base.workerBinding, runnerConfiguration: base.runnerConfiguration,
-    ownerAttended: true }, { async execute(context) { return terminal(context.expectedText); } });
+    workerBinding: base.workerBinding, runnerConfiguration: base.runnerConfiguration }, fixture.host);
+  fixture.close();
   return { ...base, runnerQualificationReport: qualified.report, runnerQualificationEvidence: qualified.evidence };
 }
 

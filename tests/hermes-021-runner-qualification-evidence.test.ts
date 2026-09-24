@@ -7,6 +7,7 @@ import { createHermes021MacosLocalRunnerQualificationEvidenceV1,
   HERMES_021_MACOS_LOCAL_RUNNER_QUALIFICATION_REPORT_V1 } from "../src/harness/hermes-021-v1";
 import { planInstallationTopologyV1 } from "../src/harness/v1/installation-topology";
 import { sha256Digest } from "../src/security/canonical-digest";
+import { createHermesOwnerQualificationHostFixture } from "./helpers/hermes-owner-qualification-host";
 
 const passing = { schema: HERMES_021_MACOS_LOCAL_RUNNER_QUALIFICATION_REPORT_V1, qualified: true as const,
   terminalResultObserved: true as const,
@@ -35,18 +36,13 @@ test("owner-attended runner procedure alone mints evidence bound to its exact ru
   const runnerConfiguration = { executablePath: "/private/fixture/hermes", profile: "owner-profile",
     model: "owner-model", provider: "owner-provider", workingDirectory: "/private/fixture/work" };
   const input = { installationId: "fixture-installation", releaseDigest: sha256Digest("release"), topologyPlan,
-    workerBinding, runnerConfiguration, ownerAttended: true as const };
-  let calls = 0;
-  const qualified = await runHermes021MacosInstallationBoundRunnerQualificationV1(input, { async execute(context) {
-    calls++;
-    return { type: "result", session_id: "session:qualified", exit_code: 0, text: context.expectedText,
-      tokens: { input: 8, output: 4, total: 12, cache_read: 0, cache_write: 0 }, duration_ms: 250,
-      timestamp: 1_750_000_000_000 };
-  } });
+    workerBinding, runnerConfiguration };
+  const fixture = createHermesOwnerQualificationHostFixture(runnerConfiguration);
+  const qualified = await runHermes021MacosInstallationBoundRunnerQualificationV1(input, fixture.host);
   const evidence = qualified.evidence;
   const current = { installationId: input.installationId, releaseDigest: input.releaseDigest, topologyPlan,
     workerBinding, runnerConfiguration, runnerQualificationReport: qualified.report };
-  assert.equal(calls, 1);
+  assert.equal(fixture.calls(), 1);
   assert.equal(evidence.startsHermes, false);
   assert.equal(evidence.grantsExecutionAuthority, false);
   assert.deepEqual(verifyHermes021MacosInstallationBoundRunnerQualificationEvidenceV1(evidence, current), evidence);
@@ -56,4 +52,23 @@ test("owner-attended runner procedure alone mints evidence bound to its exact ru
     /installation_bound_runner_qualification_evidence_unavailable/u);
   const serialized = JSON.stringify(evidence);
   for (const secret of Object.values(runnerConfiguration)) assert.equal(serialized.includes(String(secret)), false);
+  fixture.close();
+});
+
+test("a fabricated matching terminal callback has no owner-host provenance", async () => {
+  const route = { kind: "local" as const, workerId: "worker:marvin", adapterId: HERMES_021_MACOS_LOCAL_ADAPTER_V1,
+    adapterRevision: HERMES_021_SOURCE_REVISION_V1 };
+  const topologyPlan = planInstallationTopologyV1({ databaseAuthorityDigest: sha256Digest("database"),
+    schedulerAuthorityDigest: sha256Digest("scheduler"), currentRoutes: [], requestedRoutes: [route] });
+  const runnerConfiguration = { executablePath: "/private/fixture/hermes", profile: "owner-profile",
+    model: "owner-model", provider: "owner-provider", workingDirectory: "/private/fixture/work" };
+  let calls = 0;
+  await assert.rejects(runHermes021MacosInstallationBoundRunnerQualificationV1({ installationId: "fixture-installation",
+    releaseDigest: sha256Digest("release"), topologyPlan, workerBinding: { localServiceId: "service:marvin",
+      workerId: route.workerId, expectedVersion: "0.21.3", sourceRevision: HERMES_021_SOURCE_REVISION_V1 },
+    runnerConfiguration }, { async execute(context: { expectedText: string }) { calls += 1; return { type: "result",
+      session_id: "fabricated", exit_code: 0, text: context.expectedText,
+      tokens: { input: 1, output: 1, total: 2, cache_read: 0, cache_write: 0 }, duration_ms: 1,
+      timestamp: 1 }; } }), /installation_bound_runner_qualification_evidence_unavailable/u);
+  assert.equal(calls, 0);
 });

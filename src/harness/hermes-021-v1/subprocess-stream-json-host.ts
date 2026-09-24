@@ -3,6 +3,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, normalize } from "node:path";
 import { StringDecoder } from "node:string_decoder";
+import { types } from "node:util";
 import { z } from "zod";
 import type { Hermes021MacosStreamJsonHostV1 } from "./stream-json-private-port";
 import type { Hermes021MacosTaskV1 } from "./macos-local-worker";
@@ -29,6 +30,13 @@ const configurationSchema = z.object({
   maximumRunBudgetSeconds: z.number().int().min(15).max(120).default(120),
 }).strict();
 export type Hermes021MacosSubprocessHostConfigurationV1 = z.input<typeof configurationSchema>;
+
+type CapturedConfiguration = ReturnType<typeof captureHermes021MacosSubprocessHostConfigurationV1>;
+type OwnerQualificationHost = Readonly<{
+  configuration: CapturedConfiguration;
+  execute: Hermes021MacosStreamJsonHostV1["execute"];
+}>;
+const ownerQualificationHosts = new WeakMap<object, OwnerQualificationHost>();
 
 /**
  * Parses only the installation-owned runner settings. This does not touch the
@@ -71,7 +79,7 @@ export function createHermes021MacosSubprocessStreamJsonHostV1(configurationValu
   const configuration = captureHermes021MacosSubprocessHostConfigurationV1(configurationValue);
   if (typeof launch !== "function" || typeof makeDirectory !== "function" || typeof removeDirectory !== "function"
     || typeof saveFile !== "function" || typeof now !== "function") unavailable();
-  return Object.freeze({ async execute(input: Readonly<{
+  const host = Object.freeze({ async execute(input: Readonly<{
     task: Hermes021MacosTaskV1;
     signal?: AbortSignal;
     onLine(line: string): Promise<void>;
@@ -150,4 +158,24 @@ export function createHermes021MacosSubprocessStreamJsonHostV1(configurationValu
       await removeDirectory(directory, { recursive: true, force: true });
     }
   } });
+  ownerQualificationHosts.set(host, Object.freeze({ configuration, execute: host.execute.bind(host) }));
+  return host;
+}
+
+/**
+ * Burns the concrete subprocess host's one qualification route.  A structural
+ * `{ execute }` value, copied host, Proxy, or replay has no entry in this
+ * module's private custody and cannot reach the qualification procedure.
+ *
+ * The outer owner-terminal command is responsible for resolving the selected
+ * executable and constructing this host after its attended checks.  This seam
+ * deliberately accepts no caller-supplied `ownerAttended` assertion.
+ */
+export function consumeHermes021MacosOwnerQualificationHostV1(value: unknown): OwnerQualificationHost {
+  if (!value || typeof value !== "object" || types.isProxy(value)) unavailable();
+  const token = value as object;
+  const captured = ownerQualificationHosts.get(token);
+  if (!captured) return unavailable();
+  if (!ownerQualificationHosts.delete(token)) return unavailable();
+  return captured;
 }
