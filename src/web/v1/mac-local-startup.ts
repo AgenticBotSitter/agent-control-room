@@ -1,0 +1,36 @@
+import type { DatabaseClient } from "../../persistence/database";
+import { verifyOwnerTrustedLocalEnablementV1 } from "../../harness/v1/owner-trusted-local-enablements";
+import type { MacLocalProtectedConfigurationV1 } from "./mac-local-protected-configuration";
+
+type OpenedDatabase = Readonly<{ client: DatabaseClient; close(): Promise<void> }>;
+type LocalService = Readonly<{ start(): Promise<void>; close(): Promise<void> }>;
+
+/** Explicit Mac-local startup bridge. It verifies the owner-pinned executables
+ * before opening its supplied database and transfers cleanup to the service
+ * only after construction succeeds. It has no file or environment access. */
+export function createMacLocalStartupV1(input: Readonly<{
+  openDatabase(configuration: MacLocalProtectedConfigurationV1["database"]): OpenedDatabase;
+  readVersion(executablePath: string): Promise<string>;
+  createService(input: Readonly<{ configuration: MacLocalProtectedConfigurationV1; database: OpenedDatabase }>): LocalService;
+}>) {
+  if (!input || typeof input.openDatabase !== "function" || typeof input.readVersion !== "function" || typeof input.createService !== "function")
+    throw new Error("mac_local_startup_invalid");
+  let attempted = false;
+  return Object.freeze({ async start(configuration: MacLocalProtectedConfigurationV1) {
+    if (attempted) throw new Error("mac_local_startup_already_attempted");
+    attempted = true;
+    await verifyOwnerTrustedLocalEnablementV1(configuration.enablement, input.readVersion);
+    let database: OpenedDatabase | undefined, service: LocalService | undefined;
+    try {
+      database = input.openDatabase(configuration.database);
+      if (!database || !database.client || typeof database.close !== "function") throw new Error();
+      service = input.createService({ configuration, database });
+      if (!service || typeof service.start !== "function" || typeof service.close !== "function") throw new Error();
+      await service.start();
+      return Object.freeze({ close: service.close.bind(service) });
+    } catch {
+      try { await (service?.close() ?? database?.close()); } catch { throw new Error("mac_local_startup_cleanup_uncertain"); }
+      throw new Error("mac_local_startup_failed");
+    }
+  } });
+}
