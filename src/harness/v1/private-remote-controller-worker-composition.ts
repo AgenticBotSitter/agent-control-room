@@ -50,6 +50,19 @@ type Composition = Readonly<{
 const compositions = new WeakSet<object>();
 
 /**
+ * The only remote-delivery value that may cross from the installed remote
+ * composition into generic operator assembly.  It deliberately carries no
+ * session, enrollment, resolver, receipt intake, or execution authority.
+ */
+export type PrivateRemoteControllerWorkerQueueCapabilityV1 = Readonly<{
+  materializer: Readonly<Pick<RemoteControllerWorkerMaterializerV1, "prepare" | "transmit">>;
+  startsWork: false;
+  grantsExecutionAuthority: false;
+}>;
+
+const queueCapabilities = new WeakSet<object>();
+
+/**
  * Installation-owned current enrollment fence. Identity and adapter revision
  * are immutable; the only state transition is enrolled -> revoked. The live
  * installer must drive that transition from its protected canonical
@@ -203,6 +216,33 @@ export function isPrivateRemoteControllerWorkerCompositionV1(value: unknown): va
   return !!value && typeof value === "object" && !types.isProxy(value)
     && (value as { schema?: unknown }).schema === PRIVATE_REMOTE_CONTROLLER_WORKER_COMPOSITION_V1
     && compositions.has(value as object);
+}
+
+/**
+ * Source-only custody adapter for generic operator assembly.  A caller must
+ * first hold this module's installed composition brand; structural objects,
+ * proxies, and copied compositions cannot manufacture a queue capability.
+ * The returned value retains only bound prepare/transmit methods and is inert.
+ */
+export function capturePrivateRemoteControllerWorkerQueueCapabilityV1(value: unknown):
+PrivateRemoteControllerWorkerQueueCapabilityV1 {
+  const composition = isPrivateRemoteControllerWorkerCompositionV1(value) ? value : unavailable();
+  const materializer = composition.materializer;
+  const capability = Object.freeze({ materializer: Object.freeze({
+    prepare: materializer.prepare.bind(materializer),
+    transmit: materializer.transmit.bind(materializer),
+  }), startsWork: false as const, grantsExecutionAuthority: false as const });
+  queueCapabilities.add(capability);
+  return capability;
+}
+
+/** Generic startup accepts only a capability minted by the adapter above. */
+export function isPrivateRemoteControllerWorkerQueueCapabilityV1(value: unknown):
+value is PrivateRemoteControllerWorkerQueueCapabilityV1 {
+  return !!value && typeof value === "object" && !types.isProxy(value)
+    && queueCapabilities.has(value as object)
+    && (value as { startsWork?: unknown }).startsWork === false
+    && (value as { grantsExecutionAuthority?: unknown }).grantsExecutionAuthority === false;
 }
 
 /** Stable non-secret identity for sanitized installation/readiness evidence. */

@@ -10,8 +10,12 @@ import { ControllerWorkerDeliveryIntakeHandlerV1 } from "../src/node-bridge/cont
 import { PortableNodeBridge } from "../src/node-bridge/bridge";
 import { SqliteBridgeJournal } from "../src/node-bridge/journal";
 import { computeAuthorityDigest, sha256Digest } from "../src/security";
-import { createPrivateRemoteControllerWorkerCompositionV1,
-  isPrivateRemoteControllerWorkerCompositionV1, PrivateRemoteControllerWorkerEnrollmentStateV1 } from
+import { assemblePrivateAgentTaskOperatorConfiguration } from "../src/web/v1/private-agent-task-operator-configuration";
+import { validatePrivateTaskStartupConfiguration } from "../src/web/v1/private-task-startup";
+import { operatorConfigurationScenario } from "./helpers/private-agent-task-operator-configuration";
+import { capturePrivateRemoteControllerWorkerQueueCapabilityV1, createPrivateRemoteControllerWorkerCompositionV1,
+  isPrivateRemoteControllerWorkerCompositionV1, isPrivateRemoteControllerWorkerQueueCapabilityV1,
+  PrivateRemoteControllerWorkerEnrollmentStateV1 } from
   "../src/harness/v1/private-remote-controller-worker-composition";
 import { CONTROLLER_WORKER_REMOTE_ADAPTER_V1, CONTROLLER_WORKER_REMOTE_CAPABILITY_V1,
   CONTROLLER_WORKER_REMOTE_JOB_TYPE_V1, CONTROLLER_WORKER_REMOTE_START_OPERATION_V1,
@@ -139,6 +143,29 @@ test("the protected remote composition binds one enrolled session and recovers i
   const original = build(connection.session);
   assert.equal(isPrivateRemoteControllerWorkerCompositionV1(original), true);
   assert.equal(isPrivateRemoteControllerWorkerCompositionV1({ ...original }), false, "a structural copy is not installed authority");
+  const capability = capturePrivateRemoteControllerWorkerQueueCapabilityV1(original);
+  assert.equal(isPrivateRemoteControllerWorkerQueueCapabilityV1(capability), true);
+  assert.deepEqual(Object.keys(capability).sort(), ["grantsExecutionAuthority", "materializer", "startsWork"]);
+  assert.equal(capability.startsWork, false); assert.equal(capability.grantsExecutionAuthority, false);
+  assert.equal(Object.isFrozen(capability), true); assert.equal(Object.isFrozen(capability.materializer), true);
+  assert.equal(connection.sends(), 0, "capturing custody neither sends nor starts remote work");
+  const operatorInput = operatorConfigurationScenario("full");
+  (operatorInput.settings.features as unknown as Record<string, boolean>).remoteControllerWorker = true;
+  (operatorInput.trusted as unknown as { remoteControllerWorker: unknown }).remoteControllerWorker = capability;
+  const operator = assemblePrivateAgentTaskOperatorConfiguration(operatorInput.settings, operatorInput.trusted);
+  assert.equal(operator.configuration.coordinator.remoteControllerWorker, capability,
+    "generic assembly retains the branded source-only queue capability, not its private composition");
+  assert.equal(validatePrivateTaskStartupConfiguration(operator.configuration).remoteControllerWorker, capability);
+  assert.equal(connection.sends(), 0, "assembly and validation remain non-executing");
+  for (const forged of [
+    { ...capability },
+    { materializer: capability.materializer, startsWork: false, grantsExecutionAuthority: false },
+    new Proxy(capability, {}),
+  ]) {
+    assert.equal(isPrivateRemoteControllerWorkerQueueCapabilityV1(forged), false);
+    assert.throws(() => capturePrivateRemoteControllerWorkerQueueCapabilityV1(forged), /unavailable/);
+  }
+  assert.throws(() => Object.defineProperty(capability.materializer, "prepare", { value: async () => undefined }), /TypeError/);
   const prepared = await original.materializer.prepare(c.ref);
   assert.equal(prepared.startsWork, false); assert.equal(prepared.grantsExecutionAuthority, false);
   const sent = await original.materializer.transmit(c.ref, prepared);

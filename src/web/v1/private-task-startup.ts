@@ -45,6 +45,8 @@ import { isClaudeCodePrivateInstalledDeliverCapabilityV1 } from
 import { verifyLocalClaudePostInstallAdmissionReceiptV1 } from
   "../../installer/v1/local-claude-post-install-admission";
 import { CLAUDE_CODE_LOCAL_ADAPTER_V1 } from "../../harness/claude-code-v1/task-planning-contract";
+import { isPrivateRemoteControllerWorkerQueueCapabilityV1 } from
+  "../../harness/v1/private-remote-controller-worker-composition";
 
 type OwnedQueueWorker = { close(): Promise<void>; status(): { accepting: boolean } };
 
@@ -199,18 +201,13 @@ export function validatePrivateTaskStartupConfiguration(input: PrivateTaskStartu
     const claudeCodeLocal = input.coordinator.claudeCodeLocal;
     if (claudeCodeLocal && !isClaudeCodePrivateInstalledDeliverCapabilityV1(claudeCodeLocal)) throw new Error();
     if (claudeCodeLocal && (!nativeQueue || !approvals)) throw new Error();
-    // This capability is installation-owned. Its resolver, enrollment, node
-    // session, addresses and keys stay inside the materializer; startup
-    // captures only the two queue-facing methods bound to that original
-    // receiver. Browser and generic configuration never select a remote node.
+    // Only the private remote custody adapter may supply this value. It has
+    // already discarded its resolver, enrollment, session and receipt intake.
     const remoteControllerWorker = input.coordinator.remoteControllerWorker
       ? (() => {
-        const materializer = input.coordinator.remoteControllerWorker!.materializer;
-        if (!materializer || typeof materializer.prepare !== "function" || typeof materializer.transmit !== "function") throw new Error();
-        return Object.freeze({ materializer: Object.freeze({
-          prepare: materializer.prepare.bind(materializer),
-          transmit: materializer.transmit.bind(materializer),
-        }) });
+        const capability = input.coordinator.remoteControllerWorker!;
+        if (!isPrivateRemoteControllerWorkerQueueCapabilityV1(capability)) throw new Error();
+        return capability;
       })() : undefined;
     const resultInspectionSource = input.coordinator.resultInspectionSource
       ? Object.freeze({ inspectSubmitted: input.coordinator.resultInspectionSource.inspectSubmitted.bind(input.coordinator.resultInspectionSource) }) : undefined;

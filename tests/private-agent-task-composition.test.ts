@@ -887,37 +887,30 @@ test("operator assembly builds the full artifact/result/review/Codex composition
   assert.equal(composed.configuration.coordinator.sessions!.nodes.length, 2);
 });
 
-test("protected remote materializer forwarding requires the queue pair, captures bound methods, and stays inert", async () => {
+test("generic operator refuses structural, proxied, and mutable remote materializers", () => {
   const { settings, trusted } = operatorConfigurationScenario("full");
   const features = settings.features as unknown as Record<string, boolean>;
   features.remoteControllerWorker = true;
-  const calls: string[] = [];
   const materializer = {
     marker: "captured",
-    async prepare() { calls.push(`prepare:${this.marker}`); return Object.freeze({ prepared: this.marker }); },
-    async transmit() { calls.push(`transmit:${this.marker}`); return Object.freeze({ kind: "transmitted" as const }); },
+    async prepare() { return Object.freeze({ prepared: this.marker }); },
+    async transmit() { return Object.freeze({ kind: "transmitted" as const }); },
   };
-  (trusted as unknown as { remoteControllerWorker: unknown }).remoteControllerWorker = {
-    materializer: materializer as never,
-  };
-  const composed = assemblePrivateAgentTaskOperatorConfiguration(settings, trusted);
-  const forwarded = composed.configuration.coordinator.remoteControllerWorker;
-  assert.ok(forwarded, "the server-only configuration receives the materializer capability");
-  assert.equal(Object.isFrozen(forwarded!), true);
-  assert.equal(Object.isFrozen(forwarded!.materializer), true);
-  const startup = validatePrivateTaskStartupConfiguration(composed.configuration);
-  assert.ok(startup.remoteControllerWorker,
-    "the final private startup validator preserves only the protected queue-facing capability");
-  // Replacing the caller-facing methods must not replace the captured
-  // receiver/function pair. The materializer remains opaque: its own private
-  // mutable state is not configuration input. Invoking the captured methods
-  // is still only a unit test: assembly opens no connection and starts no
-  // remote work.
-  materializer.prepare = async function () { calls.push("forged:prepare"); return Object.freeze({ prepared: "forged" }); };
-  materializer.transmit = async function () { calls.push("forged:transmit"); return Object.freeze({ kind: "transmitted" as const }); };
-  await startup.remoteControllerWorker!.materializer.prepare({} as never);
-  await startup.remoteControllerWorker!.materializer.transmit({} as never, {} as never, new AbortController().signal);
-  assert.deepEqual(calls, ["prepare:captured", "transmit:captured"]);
+  const structural = { materializer, startsWork: false, grantsExecutionAuthority: false };
+  for (const forged of [structural, { ...structural }, new Proxy(structural, {}), Object.freeze(structural)]) {
+    (trusted as unknown as { remoteControllerWorker: unknown }).remoteControllerWorker = forged;
+    assert.throws(() => assemblePrivateAgentTaskOperatorConfiguration(settings, trusted), /remoteControllerWorker_invalid/);
+  }
+  materializer.prepare = async function () { return Object.freeze({ prepared: "mutated" }); };
+  materializer.transmit = async function () { return Object.freeze({ kind: "mutated" as const }); };
+  (trusted as unknown as { remoteControllerWorker: unknown }).remoteControllerWorker = structural;
+  assert.throws(() => assemblePrivateAgentTaskOperatorConfiguration(settings, trusted), /remoteControllerWorker_invalid/);
+  const ordinaryInput = operatorConfigurationScenario("full");
+  const ordinary = assemblePrivateAgentTaskOperatorConfiguration(ordinaryInput.settings, ordinaryInput.trusted);
+  assert.throws(() => validatePrivateTaskStartupConfiguration({ ...ordinary.configuration, coordinator: {
+    ...ordinary.configuration.coordinator, remoteControllerWorker: structural as never,
+  } }), /private_task_startup_config_invalid/,
+  "a caller cannot bypass generic assembly by supplying a structural materializer to startup");
 
   const missing = operatorConfigurationScenario("full");
   (missing.settings.features as unknown as Record<string, boolean>).remoteControllerWorker = true;

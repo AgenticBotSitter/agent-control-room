@@ -28,8 +28,9 @@ import { isClaudeCodePrivateInstalledDeliverCapabilityV1 } from
   "./claude-code-private-installation-composition";
 import { verifyLocalClaudePostInstallAdmissionReceiptV1 } from
   "../../installer/v1/local-claude-post-install-admission";
-import type { RemoteControllerWorkerMaterializerV1 } from
-  "../../harness/v1/remote-controller-worker-materializer";
+import { isPrivateRemoteControllerWorkerQueueCapabilityV1,
+  type PrivateRemoteControllerWorkerQueueCapabilityV1 } from
+  "../../harness/v1/private-remote-controller-worker-composition";
 
 /** Pure operator-side assembly. This module performs no environment, filesystem,
  * network, listener, credential-store or database access: it only shapes
@@ -128,10 +129,9 @@ export type AgentTaskOperatorTrustedInputs = {
   claudeCodeLocalStartupReverification?: unknown;
   /** Exact original installation whose committed transition admitted Claude. */
   claudeCodeLocalInstallationId?: string;
-  /** Installation-owned remote materializer. It contains its own protected
-   * target resolver and authenticated session; neither can be configured in
-   * this generic operator shape. */
-  remoteControllerWorker?: { materializer: Pick<RemoteControllerWorkerMaterializerV1, "prepare" | "transmit"> };
+  /** Module-branded, installation-owned remote queue capability. Generic
+   * assembly never accepts a structural materializer or session composition. */
+  remoteControllerWorker?: PrivateRemoteControllerWorkerQueueCapabilityV1;
   /** Installation-owned authenticated result reader. It is never browser input. */
   resultInspectionSource?: TaskResultInspectionSourceV1;
   /** Verified, plan-bound evidence from an owner-run disposable local restore.
@@ -587,20 +587,14 @@ export function assemblePrivateAgentTaskOperatorConfiguration(
   // Preserve the module-private brand; rebinding into a structurally identical
   // object would deliberately turn the capability back into an invalid bare callback.
   const capturedClaude = f.claudeCodeLocal && trustedClaude ? trustedClaude : undefined;
-  // A remote materializer is deliberately opaque at this boundary. The
-  // protected provider constructs it with its resolver, enrollment and live
-  // session; the generic operator settings can only opt into a captured pair
-  // of queue-facing methods. Bind both methods now so later caller mutation
-  // cannot replace their receiver or redirect a transmission.
+  // This is the source-only custody boundary.  The private remote module has
+  // already captured the installed composition and reduced it to two bound,
+  // queue-facing methods.  A look-alike materializer must not cross into
+  // generic operator configuration.
   const trustedRemote = t.remoteControllerWorker;
-  if (f.remoteControllerWorker && (!trustedRemote || !trustedRemote.materializer
-    || typeof trustedRemote.materializer.prepare !== "function"
-    || typeof trustedRemote.materializer.transmit !== "function"))
+  if (f.remoteControllerWorker && !isPrivateRemoteControllerWorkerQueueCapabilityV1(trustedRemote))
     refuse("remoteControllerWorker_invalid");
-  const capturedRemote = f.remoteControllerWorker && trustedRemote ? Object.freeze({ materializer: Object.freeze({
-    prepare: trustedRemote.materializer.prepare.bind(trustedRemote.materializer),
-    transmit: trustedRemote.materializer.transmit.bind(trustedRemote.materializer),
-  }) }) : undefined;
+  const capturedRemote = f.remoteControllerWorker && trustedRemote ? trustedRemote : undefined;
   const trustedResultInspection = t.resultInspectionSource;
   if (trustedResultInspection !== undefined && typeof trustedResultInspection.inspectSubmitted !== "function")
     refuse("missing_trusted_input:resultInspectionSource");

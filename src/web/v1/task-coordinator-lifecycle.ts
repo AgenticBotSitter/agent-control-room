@@ -29,7 +29,9 @@ import { captureCodexResultIntakeSettingsV1, CodexResultIntakeV1,
 import { deliverVerifiedHermes021LocalQueueTaskV1 } from "./hermes-021-local-queue-delivery";
 import { deliverVerifiedClaudeCodeLocalQueueTaskV1 } from "./claude-code-local-queue-delivery";
 import { deliverVerifiedRemoteControllerWorkerQueueTaskV1 } from "./remote-controller-worker-queue-delivery";
-import type { RemoteControllerWorkerMaterializerV1 } from "../../harness/v1/remote-controller-worker-materializer";
+import { isPrivateRemoteControllerWorkerQueueCapabilityV1,
+  type PrivateRemoteControllerWorkerQueueCapabilityV1 } from
+  "../../harness/v1/private-remote-controller-worker-composition";
 import { NativeResultStore } from "../../artifacts/v1/native-results";
 import { CompletionGateStoreV1 } from "../../completion-gate/v1/store";
 import { CanonicalIdeaTaskResultProjectionServiceV1 } from "../../idea-lab/v1/canonical-result-projection";
@@ -73,7 +75,7 @@ export type TaskCoordinatorConfiguration = {
   /** Optional installation-owned remote worker materializer. It is inert until
    * the shared queue worker receives a canonically leased v11 reference. The
    * browser never selects its worker, session, enrollment, or key. */
-  remoteControllerWorker?: { materializer: Pick<RemoteControllerWorkerMaterializerV1, "prepare" | "transmit"> };
+  remoteControllerWorker?: PrivateRemoteControllerWorkerQueueCapabilityV1;
   /** Reviewed Codex permit bindings. Configuration alone starts no process or workspace. */
   codex?: CodexPermitConfiguration;
   /** Private installation journal key. It is copied at assembly and never
@@ -132,9 +134,8 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
     throw new Error("task_coordinator_config_invalid");
   if (input.claudeCodeLocal && !input.nativeSubmission)
     throw new Error("task_coordinator_config_invalid");
-  if (input.remoteControllerWorker && (!input.nativeSubmission || !input.remoteControllerWorker.materializer
-    || typeof input.remoteControllerWorker.materializer.prepare !== "function"
-    || typeof input.remoteControllerWorker.materializer.transmit !== "function"))
+  if (input.remoteControllerWorker && (!input.nativeSubmission
+    || !isPrivateRemoteControllerWorkerQueueCapabilityV1(input.remoteControllerWorker)))
     throw new Error("task_coordinator_config_invalid");
   if (input.installationTransitionAdmission && (!(input.installationTransitionAdmission.integrityKey instanceof Uint8Array)
     || input.installationTransitionAdmission.integrityKey.length !== 32
