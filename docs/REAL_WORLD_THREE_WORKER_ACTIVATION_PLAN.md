@@ -111,6 +111,11 @@ database, scheduler, website, and review path.
    owner to supply its concrete current-policy port. Until that protected
    provider exists, this source package is a release blocker—not a live node
    session or worker-ready claim.
+   That provider must combine the protected local trust revision and pin with
+   an authenticated, installation-owned read of the controller's current
+   project/job/attempt/lease/node state for the exact queue. A saved activation
+   record or local journal only proves past approval; it must never stand in
+   for the current server-side revocation check.
 2. Wire the existing bounded Codex node composition through protected
    installation/node-entry inputs. For the first Linux Codex worker, reuse the
    existing approved Codex v3/v4
