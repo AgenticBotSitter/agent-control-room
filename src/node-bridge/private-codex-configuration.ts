@@ -6,6 +6,7 @@ import { createCodexLocalHostV1, type CodexLocalInitialHostInputV1,
   type CodexLocalRecoverHostInputV1 } from '../harness/codex-v1/local-host';
 import { SqliteCodexStartJournalV1 } from '../harness/codex-v1/start-journal';
 import type { CodexNativeProcessAcquisitionV1 } from './codex-native-process';
+import type { CodexDeliveryBoundWorkspacePolicyV1 } from '../harness/codex-v1/delivery-bound-workspace-preparation';
 
 export interface PrivateCodexStatePathsV1 { bridge: string; starts: string }
 
@@ -19,6 +20,7 @@ interface PrivateCodexInitialConfigurationInputV1 {
   threadStartRequestId: number;
   turnStartRequestId: number;
   workspaceIntent: unknown;
+  workspacePolicy: CodexDeliveryBoundWorkspacePolicyV1;
   startTimeoutMs: number;
   processCleanupTimeoutMs: number;
 }
@@ -121,6 +123,7 @@ function constructPrivateCodexResourcesV1(input: PrivateCodexConfigurationInputV
       threadStartRequestId: input.threadStartRequestId, turnStartRequestId: input.turnStartRequestId,
       workspaceIntent, bridgeJournal: resources.bridge!, startJournal: resources.starts!, authority: selected.authority,
       workspacePort: selected.workspacePort, acquireProcess: selected.acquireProcess.bind(selected),
+      workspacePolicy: input.workspacePolicy,
       startTimeoutMs: input.startTimeoutMs, processCleanupTimeoutMs: input.processCleanupTimeoutMs,
       clock: selected.clock });
   })() : (() => {
@@ -164,6 +167,7 @@ export function openPrivateCodexConfigurationV1(input: PrivateCodexConfiguration
       if (failed) cleanupUncertain();
     };
     return Object.freeze({ harness: 'codex-local-v1' as const, mode: input.mode,
+      ...(input.mode === 'initial' && host.mode === 'initial' ? { bindDelivery: host.bindDelivery } : {}),
       run: host.run, close });
   } catch {
     closePrivateCodexJournalsV1(resources);
@@ -222,6 +226,7 @@ export async function openOwnedPrivateCodexConfigurationV1(input: PrivateCodexCo
     cleanupStepMs = input.mode === 'initial' ? input.processCleanupTimeoutMs
       : Math.min(10_000, input.cleanupTimeoutMs + input.processCleanupTimeoutMs);
     return Object.freeze({ harness: 'codex-local-v1' as const, mode: input.mode,
+      ...(input.mode === 'initial' && host.mode === 'initial' ? { bindDelivery: host.bindDelivery } : {}),
       async run(runSignal: AbortSignal) {
         if (closePromise || runController || !(runSignal instanceof AbortSignal) || runSignal.aborted) unavailable();
         runController = new AbortController();

@@ -34,6 +34,7 @@ import { NODE_PROTOCOL_V1, NodeProtocolAuthenticator, signNodeFrame,
 import { sha256Digest } from '../src/security/canonical-digest';
 import { CODEX_CURRENT_ADMISSION_READ_FEATURE_V1 } from '../src/harness/codex-v1/current-admission-read-contract';
 import { codexApprovalPacketDigestV1 } from '../src/web/v1/codex-task-queue';
+import { createControllerWorkerDeliveryV1 } from '../src/harness/v1/controller-worker-delivery';
 
 const baseTime = Date.parse('2026-09-13T12:00:00.000Z');
 const deadline = baseTime + 60_000;
@@ -156,6 +157,19 @@ async function portableActivation(recordActivation = true, keepConnected = false
     }, sent, connectionAttemptId: `connection-attempt:codex-host:${fixtureId}`, clock: () => ++clock };
 }
 
+function sharedDelivery(f: Awaited<ReturnType<typeof portableActivation>>) {
+  const activation = f.activation.body;
+  return createControllerWorkerDeliveryV1({
+    identity: { tenantId: activation.tenantId, nodeId: activation.nodeId, projectId: activation.projectId,
+      jobId: activation.jobId, attemptId: activation.attemptId, runId: activation.runId },
+    worker: { workerId: 'worker:codex-local', adapterId: 'codex-app-server/v1', adapterRevision: 'source-test' },
+    input: { prompt: activation.prompt, instructions: activation.instructions },
+    authorityDigest: sha256Digest('controller-authority'), connectorProfileDigest: activation.connectorProfileDigest,
+    acceptanceProfileId: 'profile:codex', acceptanceProfileDigest: sha256Digest('acceptance'),
+    issuedAt: new Date(baseTime).toISOString(), expiresAt: new Date(deadline).toISOString(),
+  });
+}
+
 function currentAdmissionRequest(f: Awaited<ReturnType<typeof portableActivation>>) {
   const start = f.activation.body;
   return { schema: 'control-room.codex-current-admission-read-request/v1' as const,
@@ -220,6 +234,7 @@ function startHost(f: Awaited<ReturnType<typeof portableActivation>>, starts: Sq
     initializedConnectionDigest: sha256Digest('codex-host-initialized'), threadStartRequestId: 10,
     turnStartRequestId: 20, workspaceIntent: f.workspaceIntent, bridgeJournal: f.journal,
     startJournal: starts, authority, workspacePort: workspacePort(f.workspaceIntent, effects),
+    workspacePolicy: { allowedPaths: ['src/**'], maximumChangedFiles: 5, maximumChangedBytes: 4096 },
     acquireProcess(binding) {
       opened++; assert.equal(binding.mode, 'initial');
       assert.equal(binding.connectionAttemptId, f.connectionAttemptId);
@@ -238,6 +253,7 @@ function startHost(f: Awaited<ReturnType<typeof portableActivation>>, starts: Sq
     },
     startTimeoutMs: 1_000, processCleanupTimeoutMs: 100, clock: f.clock };
   const host = createCodexLocalHostV1(input);
+  if (host.mode === 'initial') host.bindDelivery(sharedDelivery(f));
   return { input, host, effects, sent, opened: () => opened, closed: () => closed };
 }
 
@@ -309,7 +325,7 @@ function workerQualification() {
     qualificationMaximumAgeMs: 120_000 };
 }
 
-test('remote worker composes journaled activation, one native start, recovery and exact result return', async t => {
+test('legacy worker composition cannot bypass the shared delivery binding', async t => {
   const f = await portableActivation(), starts = new SqliteCodexStartJournalV1(':memory:', { testOnlyAllowEphemeral: true });
   t.after(() => { starts.close(); f.journal.close(); });
   const initial = startHost(f, starts), recovery = recoverHost(starts, completedResult([
@@ -332,17 +348,14 @@ test('remote worker composes journaled activation, one native start, recovery an
     } };
   const worker = createCodexWorkerCompositionV1(configuration);
   assert.equal(initial.opened(), 0); assert.equal(recovery.opened(), 0); assert.equal(sends, 0);
-  await worker.start(new AbortController().signal);
+  await assert.rejects(worker.start(new AbortController().signal), /codex_local_host_unavailable/);
   await assert.rejects(worker.start(new AbortController().signal), /unavailable/);
-  assert.equal(initial.opened(), 1);
+  assert.equal(initial.opened(), 0); assert.deepEqual(initial.effects, []);
   const reconstructed = createCodexWorkerCompositionV1(configuration);
   await assert.rejects(reconstructed.start(new AbortController().signal), /unavailable/);
-  assert.equal(initial.opened(), 1, 'durable start reservation prevents a second process after reconstruction');
+  assert.equal(initial.opened(), 0, 'an unbound legacy composition cannot acquire a process');
   await reconstructed.close();
-  assert.equal((await worker.recoverAndReturn(new AbortController().signal)).disposition, 'receipted');
-  assert.equal(recovery.opened(), 1); assert.equal(sends, 1);
-  await assert.rejects(worker.recoverAndReturn(new AbortController().signal), /unavailable/);
-  assert.equal(sends, 1);
+  assert.equal(sends, 0);
   await worker.close();
 });
 
@@ -601,6 +614,8 @@ test('portable activation starts once and recovery reads only the durable thread
     turnId: 'turn:durable-host', source: 'correlated_codex_start_receipts' });
   assert.deepEqual(initial.sent, ['initialize', 'initialized', 'thread/start', 'turn/start']);
   assert.deepEqual(initial.effects, ['create-workspace']); assert.equal(initial.opened(), 1); assert.equal(initial.closed(), 1);
+  await initial.host.close();
+  assert.deepEqual(initial.effects, ['create-workspace'], 'process-session cleanup does not clean the task workspace');
   assert.equal(started.canonicalPublicationAllowed, false); assert.equal(started.writesResult, false);
   assert.equal(starts.load(f.workspaceIntent.runId).status, 'recorded');
   assert.equal(starts.load(f.workspaceIntent.runId).cleanupVerified, true);

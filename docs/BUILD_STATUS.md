@@ -117,6 +117,15 @@ request for an explicit recheck, and direct reloads remain read-only. This is
 website behavior proof only; it does not sign in, launch a worker, or create a
 project outside disposable test data.
 
+**September 24 delivery-bound workspace progress:** the local Codex start
+path no longer discards a newly created workspace lease. Before its one-shot
+start can proceed, it binds the exact shared controller delivery, creates at
+most one journaled workspace with fixed protected limits, then rereads current
+authority. Lost creation evidence is retained for reconciliation, not retried.
+Closing the short App Server start session deliberately does not remove that
+workspace or release task capacity. This is source-only safety wiring; macOS
+Codex remains unavailable until its separate native custody requirements pass.
+
 The first installed Claude route is now pinned to Claude Code's `opus` alias
 instead of inheriting a desktop or command-line default. Its owner-attended
 qualification, saved process configuration, and later task execution must all

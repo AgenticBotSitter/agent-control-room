@@ -3,6 +3,7 @@ import { sha256Digest } from '../../security/canonical-digest';
 import { parseCodexTaskActivationV1 } from './activation-contract';
 import type { WorkspaceIntent } from '../../node-bridge/workspace-intent';
 import type { ObservableGitWorkspacePort } from './git-workspace-port';
+import type { CodexDeliveryBoundWorkspacePolicyV1 } from './delivery-bound-workspace-preparation';
 import { createCodexLocalReadCompositionV1, type CodexLocalReadAuthorityV1,
   type CodexLocalReadIdentityV1 } from './local-read-composition';
 import { createCodexLocalStartCompositionV1 } from './local-start-composition';
@@ -35,6 +36,7 @@ export interface CodexLocalInitialHostInputV1 extends CommonHostInputV1 {
   bridgeJournal: BridgeJournal;
   authority: CodexLocalStartAuthorityV1;
   workspacePort: ObservableGitWorkspacePort;
+  workspacePolicy: CodexDeliveryBoundWorkspacePolicyV1;
   acquireProcess: AcquireCodexAppServerProcessV1;
   startTimeoutMs: number;
   processCleanupTimeoutMs: number;
@@ -100,6 +102,7 @@ export function createCodexLocalHostV1(inputValue: CodexLocalHostInputV1) {
       threadStartRequestId: input.threadStartRequestId, turnStartRequestId: input.turnStartRequestId,
       workspaceIntent: input.workspaceIntent, bridgeJournal: input.bridgeJournal,
       startJournal: input.startJournal, workspacePort: input.workspacePort,
+      workspacePolicy: input.workspacePolicy,
       authority, ownedStart, clock: input.clock.bind(input),
     });
     return Object.freeze({ harness: 'codex-local-v1' as const, mode: 'initial' as const,
@@ -112,6 +115,7 @@ export function createCodexLocalHostV1(inputValue: CodexLocalHostInputV1) {
         return Object.freeze({ queueId: input.queueId, runId: input.runId,
           activationDigest: activation.activationDigest, activationFrameDigest: sha256Digest(saved.frame) });
       },
+      bindDelivery: composition.bindDelivery,
       async run(signal: AbortSignal) {
         if (attempted || !(signal instanceof AbortSignal) || signal.aborted) return unavailable();
         attempted = true;

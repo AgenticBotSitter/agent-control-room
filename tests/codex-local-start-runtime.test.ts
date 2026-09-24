@@ -17,6 +17,7 @@ import { computeNormalizedOperationDigest } from '../src/node-policy/v1/policy-e
 import { computeArtifactBodyDigest, signArtifact } from '../src/node-policy/v1/crypto.ts';
 import { NODE_PROTOCOL_V1, signNodeFrame } from '../src/node-protocol/v1/index.ts';
 import { sha256Digest } from '../src/security/canonical-digest.ts';
+import { createControllerWorkerDeliveryV1 } from '../src/harness/v1/controller-worker-delivery.ts';
 
 const baseTime = Date.parse('2026-09-12T20:00:00.000Z');
 const deadline = baseTime + 60_000;
@@ -78,6 +79,20 @@ function activationFixture() {
     type: 'harness.codex.dispatch.activation', body: activationBody }, keys.privateKey);
   return { activation, activationReceivedAt: new Date(baseTime + 1_400).toISOString(),
     currentAdmissionDigest: activationBody.currentAdmissionDigest };
+}
+
+function sharedDelivery(saved: ReturnType<typeof activationFixture>) {
+  const activation = saved.activation.body;
+  return createControllerWorkerDeliveryV1({
+    identity: { tenantId: activation.tenantId, nodeId: activation.nodeId, projectId: activation.projectId,
+      jobId: activation.jobId, attemptId: activation.attemptId, runId: activation.runId },
+    worker: { workerId: 'worker:codex-local', adapterId: 'codex-app-server/v1', adapterRevision: 'source-test' },
+    input: { prompt: activation.prompt, instructions: activation.instructions },
+    authorityDigest: sha256Digest('controller-authority'),
+    connectorProfileDigest: activation.connectorProfileDigest,
+    acceptanceProfileId: 'profile:codex', acceptanceProfileDigest: sha256Digest('acceptance'),
+    issuedAt: new Date(baseTime).toISOString(), expiresAt: new Date(deadline).toISOString(),
+  });
 }
 
 const threadResponse = (id: number, cwd = '/synthetic/project') => JSON.stringify({ id, result: {
@@ -271,8 +286,10 @@ test('fixed composition binds protected activation, workspace and durable start 
       bridgeJournal: Object.assign(bridgeJournal, {
         acceptedCodexActivation: () => ({ frame: saved.activation, receivedAt: saved.activationReceivedAt }),
       }), startJournal, workspacePort,
+      workspacePolicy: { allowedPaths: ['src/**'], maximumChangedFiles: 5, maximumChangedBytes: 4096 },
       authority: { assertCurrent: () => {}, currentAdmissionDigest: () => saved.currentAdmissionDigest },
       ownedStart, clock: () => clock++ });
+    runtime.bindDelivery(sharedDelivery(saved));
     const result = await runtime.start();
     assert.equal(result.thread.threadId, 'thr_synthetic');
     assert.equal(result.turn.turnId, 'turn_synthetic');
@@ -304,6 +321,7 @@ test('fixed composition refuses mismatched workspace intent before effects or st
       bridgeJournal: Object.assign(bridgeJournal, {
         acceptedCodexActivation: () => ({ frame: saved.activation, receivedAt: saved.activationReceivedAt }),
       }), startJournal,
+      workspacePolicy: { allowedPaths: ['src/**'], maximumChangedFiles: 5, maximumChangedBytes: 4096 },
       workspacePort: { inspectRootIdentities: async () => { effects += 1; throw new Error(); },
         observeCheckout: async () => { effects += 1; throw new Error(); },
         inspectExisting: async () => { effects += 1; throw new Error(); },
@@ -314,6 +332,7 @@ test('fixed composition refuses mismatched workspace intent before effects or st
         initializedConnectionDigest: sha256Digest('composed-mismatch'), threadStartRequestId: 10, turnStartRequestId: 20 },
         timeoutMs: 1_000, cleanupMs: 100, open: () => { opens += 1; throw new Error(); } }),
       clock: () => clock++ });
+    assert.throws(() => runtime.bindDelivery(sharedDelivery(saved)), /unavailable/);
     await assert.rejects(runtime.start(), /unavailable/);
     assert.equal(effects, 0); assert.equal(opens, 0);
     assert.equal(startJournal.load(runId).status, 'not_reserved');

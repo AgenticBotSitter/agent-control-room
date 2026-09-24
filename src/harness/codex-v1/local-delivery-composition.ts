@@ -49,7 +49,8 @@ export type CodexLocalDeliveryCompositionV1 = Readonly<{
   activationEvidence: Readonly<{ acceptedCodexActivation(queueId: string): ActivationEvidence | undefined }>;
   /** Existing one-shot initial host. The adapter has no process acquisition port. */
   host: Readonly<{ harness: 'codex-local-v1'; mode: 'initial';
-    deliveryBinding(): z.infer<typeof hostBindingSchema>; run(signal: AbortSignal): Promise<unknown> }>;
+    deliveryBinding(): z.infer<typeof hostBindingSchema>; bindDelivery(delivery: unknown): void;
+    run(signal: AbortSignal): Promise<unknown> }>;
   clock(): number;
   /** Existing non-executing controller receipt endpoint. */
   receiptPort: ControllerWorkerDeliveryPortV1;
@@ -105,7 +106,7 @@ export async function deliverCodexLocalTaskV1(config: CodexLocalDeliveryComposit
   deliveryValue: unknown, routeValue: unknown, receivedAtValue: unknown, signal?: AbortSignal) {
   if (!config || !config.db || typeof config.db.transaction !== 'function' || !(config.integrityKey instanceof Uint8Array)
     || config.integrityKey.length !== 32 || !config.host || typeof config.host.run !== 'function'
-    || typeof config.clock !== 'function' || signal?.aborted) unavailable();
+    || typeof config.host.bindDelivery !== 'function' || typeof config.clock !== 'function' || signal?.aborted) unavailable();
   const delivery = controllerWorkerDeliverySchemaV1.parse(deliveryValue);
   const route = controllerWorkerRouteSchemaV1.parse(routeValue);
   const receivedAt = z.string().datetime().refine((value: string) => new Date(value).toISOString() === value).parse(receivedAtValue);
@@ -120,6 +121,7 @@ export async function deliverCodexLocalTaskV1(config: CodexLocalDeliveryComposit
       grantsExecutionAuthority: false as const });
   }
   const { activation, frameDigest, frameExpiresAt } = activationFor(config, delivery, route, receivedAt);
+  try { config.host.bindDelivery(delivery); } catch { unavailable(); }
   let highWater = Date.parse(receivedAt);
   const fence = () => {
     const now = config.clock();

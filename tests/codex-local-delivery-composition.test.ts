@@ -59,7 +59,7 @@ function receipt(packet: ControllerWorkerDeliveryV1, receivedAt = at(2000)) {
 }
 
 function composition(f: Awaited<ReturnType<typeof nativeTaskFixture>>, packet: ControllerWorkerDeliveryV1,
-  state: { revoked: boolean; receives: number; starts: number }) {
+  state: { revoked: boolean; receives: number; starts: number; binds?: number }) {
   const frame = activation(packet);
   return { db: f.db, integrityKey, binding: { ...worker, authorityDigest, acceptanceProfileId: 'profile:codex', acceptanceProfileDigest },
     authority: { currentAdmissionDigest: () => admissionDigest, assertCurrent() { if (state.revoked) throw new Error('revoked'); } },
@@ -69,6 +69,10 @@ function composition(f: Awaited<ReturnType<typeof nativeTaskFixture>>, packet: C
     receiptPort: { async receive(value: ControllerWorkerDeliveryV1) { state.receives++; return receipt(value); } },
     clock: () => Date.parse(at(2000)),
     host: { harness: 'codex-local-v1' as const, mode: 'initial' as const,
+      bindDelivery(value: unknown) {
+        state.binds = (state.binds ?? 0) + 1;
+        assert.equal((value as ControllerWorkerDeliveryV1).deliveryDigest, packet.deliveryDigest);
+      },
       deliveryBinding() { return { queueId: frame.body.queueId, runId: frame.body.runId,
         activationDigest: frame.body.activationDigest, activationFrameDigest: sha256Digest(frame) }; },
       async run(): Promise<unknown> { state.starts++; return observation(packet); } } };
@@ -89,9 +93,11 @@ test('Codex local delivery persists the shared receipt before one injected host 
   const packet = delivery(), state = { revoked: false, receives: 0, starts: 0 }, config = composition(f, packet, state);
   const first = await deliverCodexLocalTaskV1(config, packet, { kind: 'local', workerId: worker.workerId }, at(2000));
   assert.equal(first.state, 'started_observation'); assert.equal(state.receives, 1); assert.equal(state.starts, 1);
+  assert.equal(state.binds, 1);
   state.revoked = true;
   const replay = await deliverCodexLocalTaskV1(config, packet, { kind: 'local', workerId: worker.workerId }, at(2000));
   assert.equal(replay.state, 'already_delivered'); assert.equal(state.receives, 1); assert.equal(state.starts, 1);
+  assert.equal(state.binds, 1, 'durable replay never rebinds the delivery');
 });
 
 test('wrong, changed, expired, and revoked deliveries refuse before receipt handling or host acquisition', async t => {
