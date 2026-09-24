@@ -1,10 +1,10 @@
 # Protected Linux Codex outer-installer source plan
 
 **Status:** active implementation plan. The source-only current-admission
-exchange (LCOI-2) and opaque receipt-ingress capability (LCOI-4) are now
-implemented and tested; both remain unmounted until a protected
-installed-state owner exists. No installation contract is minted by this
-document.
+exchange (LCOI-2), opaque receipt-ingress capability (LCOI-4), and
+session-owned Codex ingress (LCOI-5) are implemented and tested. All remain
+unmounted until a protected installed-state owner exists. No installation
+contract is minted by this document.
 
 This plan covers the first supported Linux Codex route only. It identifies the
 existing source that must be reused and the smallest missing composition
@@ -122,6 +122,12 @@ boolean.
 
 ### LCOI-2: reconciled Codex bridge owner
 
+**Source progress:** complete. `PortableNodeBridge` now owns the durable,
+one-send current-admission exchange and the private remote composition owns
+its receipt ingress. This section remains the mounting rule for LCOI-1: the
+future installed-state owner must create and retain those existing components,
+not recreate their transport or journal behavior.
+
 Add one bridge composition that constructs the concrete handlers and
 `PortableNodeBridge` from LCOI-1 resources. It must own the transport and one
 connection generation. Its public surface should be limited to:
@@ -160,6 +166,10 @@ no execution authority.
 
 ### LCOI-4: installed controller receipt ingress
 
+**Source progress:** complete. The private remote composition now creates the
+separate opaque, one-use receipt-ingress capability described below. LCOI-1
+must retain and mount it only for the same authenticated server session.
+
 Retain the complete value returned by
 `createPrivateRemoteControllerWorkerCompositionV1()` for the lifetime of its
 authenticated `ServerNodeSession`. Capture a second opaque startup capability
@@ -175,6 +185,11 @@ receipt may turn the queue worker's current unresolved send into delivered.
 
 ### LCOI-5: controller Codex read/result mounting
 
+**Source progress:** complete. `ServerNodeSession` now owns the branded,
+one-use mount and both protected ingress operations. LCOI-1 still must create
+the authentic installed session; it must not reintroduce this seam through a
+generic operator callback.
+
 Mount the current-admission responder and `CodexResultIntakeV1` on the same
 installed Codex `ServerNodeSession`. Require the negotiated Codex feature set,
 the same enrolled node/key/connection, the exact activation, the qualified
@@ -182,11 +197,12 @@ connector profile, and current revocation state. The current-admission answer
 and result receipt must use the server session's protected signer and bounded
 send path.
 
-#### Current source blocker (fail closed)
+#### Historical source blocker (resolved in source)
 
-LCOI-5 is not yet safe to mount from the existing ingress types.  This is a
-source-architecture blocker, not an installed-state or live-configuration
-blocker:
+Before the session-owned mount was implemented, LCOI-5 was not safe to mount
+from the old ingress types. This record explains why the solution is a private
+session mount rather than a generic callback; it is no longer an open source
+architecture blocker.
 
 1. `ServerNodeSession` owns the negotiated identity, replay protection,
    protected signer, bounded send path, activation state, and result-return
