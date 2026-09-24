@@ -20,7 +20,11 @@ import {
 } from "./macos-installed-configuration-native-sidecar.mjs";
 import {
   consumeMacosLocalLauncherInstalledConfigurationVerifierCustodyV1,
+  consumeMacosLocalLauncherInstalledConfigurationVerifierContinuationV1,
 } from "./macos-local-launcher-bundle.mjs";
+import {
+  consumePrivateInstalledConfigurationV3PostWriteVerificationCapabilityV1,
+} from "./private-installed-configuration-v3-owner-writer";
 
 export const PRIVATE_INSTALLED_CONFIGURATION_NATIVE_VERIFIER_CUSTODY_V1 =
   "control-room.private-installed-configuration-native-verifier-custody/v1" as const;
@@ -84,6 +88,14 @@ function sha256(value: Uint8Array): string {
   return `sha256:${createHash("sha256").update(value).digest("hex")}`;
 }
 
+function declaresV3Manifest(value: Uint8Array): boolean {
+  try {
+    const parsed: unknown = JSON.parse(Buffer.from(value).toString("utf8"));
+    return Boolean(parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      && (parsed as Record<string, unknown>).schema === PRIVATE_INSTALLED_CONFIGURATION_CUSTODY_V3);
+  } catch { return false; }
+}
+
 function capture(value: unknown): Captured {
   const input = exact(value, ["schema", "verifiedLauncherBundle", "installation"]);
   if (input.schema !== PRIVATE_INSTALLED_CONFIGURATION_NATIVE_VERIFIER_CUSTODY_V1
@@ -133,12 +145,8 @@ export type PrivateInstalledConfigurationNativeVerifierCustodyV1 = Readonly<{
  * verifies the fixed owner root, reads the V3 manifest, and closes the native
  * host before returning the existing opaque Claude release capability.
  */
-export function createPrivateInstalledConfigurationNativeVerifierCustodyV1(value: unknown):
+function compose(captured: Captured, launcher: Readonly<Record<string, unknown>>):
 PrivateInstalledConfigurationNativeVerifierCustodyV1 {
-  const captured = capture(value);
-  // Burn provenance during construction. A failed later read cannot be
-  // retried through a newly selected bundle, helper, or path.
-  const launcher = consumeMacosLocalLauncherInstalledConfigurationVerifierCustodyV1(captured.launcher);
   const sidecar = exact(launcher.sidecar, ["schema", "verified", "releaseVersion", "platform", "architecture",
     "minimumMacos", "protocol", "sidecarManifestSha256", "archiveSha256", "artifactManifestSha256",
     "executableSha256", "sourceSha256", "toolchain", "files", "compiles", "downloads", "installs"]);
@@ -200,4 +208,43 @@ PrivateInstalledConfigurationNativeVerifierCustodyV1 {
     acceptsHelperPath: false as const, acceptsProtectedRootPathOverride: false as const,
     retainsCredentialValueInPublicConfiguration: false as const,
     nextReleaseBoundary: "ship_and_bind_claude_process_sidecar" as const });
+}
+
+/**
+ * Legacy V2 composer. V3 reports are categorically refused because accepting
+ * a fresh report here could pair installation A with launcher B.
+ */
+export function createPrivateInstalledConfigurationNativeVerifierCustodyV1(value: unknown):
+PrivateInstalledConfigurationNativeVerifierCustodyV1 {
+  const captured = capture(value);
+  // A V3 manifest is valid only after the exact owner-writer publication
+  // capability has been minted. Refuse it before any independently selected
+  // legacy V2 launcher report can release helper custody.
+  if (declaresV3Manifest(captured.manifestBytes)) return refused();
+  const launcher = consumeMacosLocalLauncherInstalledConfigurationVerifierCustodyV1(captured.launcher);
+  if ("claudeProcessSidecar" in launcher) return refused();
+  return compose(captured, launcher);
+}
+
+/**
+ * V3 composer. Its only input is the opaque capability minted after the exact
+ * manifest was published. Both installation bytes and launcher helper custody
+ * therefore come from one original verified launcher and cannot be recombined
+ * by an ordinary caller.
+ */
+export function createPrivateInstalledConfigurationV3NativeVerifierCustodyV1(value: unknown):
+PrivateInstalledConfigurationNativeVerifierCustodyV1 {
+  const bound = consumePrivateInstalledConfigurationV3PostWriteVerificationCapabilityV1(value);
+  const captured = capture({ schema: PRIVATE_INSTALLED_CONFIGURATION_NATIVE_VERIFIER_CUSTODY_V1,
+    verifiedLauncherBundle: bound.nativeVerifierContinuation,
+    installation: {
+      installationId: bound.installationId, releaseDigest: bound.releaseDigest,
+      planDigest: bound.planDigest, protectedRootPath: bound.protectedRootPath,
+      expectedOwnerUid: bound.expectedOwnerUid, verificationDeadlineMs: bound.verificationDeadlineMs,
+      configurationBytes: bound.configurationBytes, configurationSha256: bound.configurationSha256,
+      manifestBytes: bound.manifestBytes, manifestSha256: bound.manifestSha256,
+    } });
+  const launcher = consumeMacosLocalLauncherInstalledConfigurationVerifierContinuationV1(captured.launcher);
+  if (!("claudeProcessSidecar" in launcher)) return refused();
+  return compose(captured, launcher);
 }

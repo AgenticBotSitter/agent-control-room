@@ -29,6 +29,8 @@ export const PRIVATE_INSTALLED_CONFIGURATION_V3_MATERIALIZATION_PREPARATION_V1 =
   "control-room.private-installed-configuration-v3-materialization-preparation/v1" as const;
 export const PRIVATE_INSTALLED_CONFIGURATION_V3_MATERIALIZATION_PUBLICATION_V1 =
   "control-room.private-installed-configuration-v3-materialization-publication/v1" as const;
+export const PRIVATE_INSTALLED_CONFIGURATION_V3_MATERIALIZATION_CAPABILITY_V1 =
+  "control-room.private-installed-configuration-v3-materialization-capability/v1" as const;
 
 const digestPattern = /^sha256:[a-f0-9]{64}$/u;
 const installationIdPattern = /^[a-z0-9](?:[a-z0-9-]{1,61}[a-z0-9])?$/u;
@@ -59,12 +61,32 @@ type LauncherV3Custody = Readonly<{
   releaseManifestDigest: string;
   version: string;
   claudeProcessSidecar: unknown;
+  installedConfigurationWriterContinuation: object;
 }>;
 
 type CapturedV3Materialization = Captured & Readonly<{
   v3ManifestBytes: Uint8Array;
   v3ManifestSha256: string;
   claudeProcessSidecar: PrivateInstalledClaudeProcessSidecarIdentityV1;
+  launcherWriterContinuation: object;
+}>;
+
+export type PrivateInstalledConfigurationV3MaterializationCapabilityV1 = Readonly<{
+  schema: typeof PRIVATE_INSTALLED_CONFIGURATION_V3_MATERIALIZATION_CAPABILITY_V1;
+}>;
+
+type CapturedV3MaterializationCapability = Readonly<{
+  installationId: string;
+  releaseDigest: string;
+  planDigest: string;
+  rootPath: string;
+  ownerUid: number;
+  verificationDeadlineMs: number;
+  configurationBytes: Uint8Array;
+  configurationSha256: string;
+  manifestBytes: Uint8Array;
+  manifestSha256: string;
+  launcherWriterContinuation: object;
 }>;
 
 export type PrivateInstalledConfigurationPlanV1 = Readonly<{
@@ -183,6 +205,7 @@ export type PrivateInstalledConfigurationV3MaterializationPlanV1 = Readonly<{
 }>;
 
 const capturedV3Materializations = new WeakMap<object, CapturedV3Materialization>();
+const capturedV3MaterializationCapabilities = new WeakMap<object, CapturedV3MaterializationCapability>();
 
 const capturedPlans = new WeakMap<object, Captured>();
 
@@ -407,8 +430,12 @@ export function preparePrivateInstalledConfigurationV1(value: unknown): PrivateI
 
 function launcherV3Custody(value: unknown): LauncherV3Custody {
   const custody = exact(value, ["installedConfigurationSidecar", "installationJournalSidecar",
-    "outerLauncherManifestSha256", "releaseManifestDigest", "version", "claudeProcessSidecar"]);
+    "outerLauncherManifestSha256", "releaseManifestDigest", "version", "claudeProcessSidecar",
+    "installedConfigurationWriterContinuation"]);
   if (typeof custody.version !== "string" || !releaseVersionPattern.test(custody.version)) return refused();
+  if (!custody.installedConfigurationWriterContinuation
+    || typeof custody.installedConfigurationWriterContinuation !== "object"
+    || types.isProxy(custody.installedConfigurationWriterContinuation)) return refused();
   digest(custody.outerLauncherManifestSha256); digest(custody.releaseManifestDigest);
   return custody as LauncherV3Custody;
 }
@@ -543,26 +570,60 @@ PrivateInstalledConfigurationV3MaterializationPlanV1 {
   const plan = Object.freeze({ ...material,
     planDigest: sha256Digest({ purpose: "private-installed-configuration-v3-materialization/v1", material }) });
   capturedV3Materializations.set(plan, Object.freeze({ ...captured,
-    v3ManifestBytes: Uint8Array.from(manifestBytes), v3ManifestSha256: manifestSha256, claudeProcessSidecar }));
+    v3ManifestBytes: Uint8Array.from(manifestBytes), v3ManifestSha256: manifestSha256, claudeProcessSidecar,
+    launcherWriterContinuation: launcher.installedConfigurationWriterContinuation }));
   return plan;
 }
 
-/** Burns the redacted v3 plan and releases only exact precomputed bytes and derived standard paths. */
+/** Burns the redacted v3 plan and releases one opaque, one-use materialization capability. */
 export function composePrivateInstalledConfigurationV3MaterializationPublicationV1(planValue: unknown) {
   if (!planValue || typeof planValue !== "object" || types.isProxy(planValue)) return refused();
   const captured = capturedV3Materializations.get(planValue);
   if (!captured || !capturedV3Materializations.delete(planValue)) return refused();
-  return Object.freeze({ schema: PRIVATE_INSTALLED_CONFIGURATION_V3_MATERIALIZATION_PUBLICATION_V1,
-    status: "exact_bytes_ready_for_owner_attended_write" as const, planDigest: planValue &&
-      typeof planValue === "object" && "planDigest" in planValue ? (planValue as { planDigest: string }).planDigest : refused(),
-    manifestPath: join(captured.rootPath, "installed-manifest.json"),
-    configurationPath: join(captured.rootPath, "operator.json"),
-    journalPath: join(captured.rootPath, "installation-journal"),
-    expectedOwnerUid: captured.ownerUid, configurationBytes: Uint8Array.from(captured.configurationBytes),
+  const descriptor = Object.getOwnPropertyDescriptor(planValue, "planDigest");
+  if (!descriptor || !("value" in descriptor)) return refused();
+  const planDigest = digest(descriptor.value);
+  const materializationCapability = Object.freeze({
+    schema: PRIVATE_INSTALLED_CONFIGURATION_V3_MATERIALIZATION_CAPABILITY_V1,
+  });
+  capturedV3MaterializationCapabilities.set(materializationCapability, Object.freeze({
+    installationId: captured.installationId, releaseDigest: captured.releaseDigest, planDigest,
+    rootPath: captured.rootPath, ownerUid: captured.ownerUid,
+    verificationDeadlineMs: captured.verificationDeadlineMs,
+    configurationBytes: Uint8Array.from(captured.configurationBytes),
+    configurationSha256: sha256Bytes(captured.configurationBytes),
     manifestBytes: Uint8Array.from(captured.v3ManifestBytes), manifestSha256: captured.v3ManifestSha256,
+    launcherWriterContinuation: captured.launcherWriterContinuation,
+  }));
+  return Object.freeze({ schema: PRIVATE_INSTALLED_CONFIGURATION_V3_MATERIALIZATION_PUBLICATION_V1,
+    status: "opaque_owner_materialization_ready" as const, planDigest,
+    configurationSha256: sha256Bytes(captured.configurationBytes), manifestSha256: captured.v3ManifestSha256,
+    materializationCapability,
     performsEffect: false as const, writesProtectedFiles: false as const, readsProtectedFiles: false as const,
     acceptsPath: false as const, acceptsVerifier: false as const, acceptsHelperBytes: false as const,
     acceptsConfiguration: false as const, startsService: false as const, startsWorker: false as const });
+}
+
+/**
+ * Consumed only by the protected owner writer. Exact bytes, derived paths and
+ * the same-launcher verifier continuation are released together and cannot be
+ * recombined from a second launcher report.
+ */
+export function consumePrivateInstalledConfigurationV3MaterializationCapabilityV1(value: unknown) {
+  if (!value || typeof value !== "object" || types.isProxy(value)) return refused();
+  const captured = capturedV3MaterializationCapabilities.get(value);
+  if (!captured || !capturedV3MaterializationCapabilities.delete(value)) return refused();
+  return Object.freeze({ schema: PRIVATE_INSTALLED_CONFIGURATION_V3_MATERIALIZATION_CAPABILITY_V1,
+    installationId: captured.installationId, releaseDigest: captured.releaseDigest, planDigest: captured.planDigest,
+    manifestPath: join(captured.rootPath, "installed-manifest.json"),
+    configurationPath: join(captured.rootPath, "operator.json"),
+    journalPath: join(captured.rootPath, "installation-journal"),
+    expectedOwnerUid: captured.ownerUid, verificationDeadlineMs: captured.verificationDeadlineMs,
+    configurationBytes: Uint8Array.from(captured.configurationBytes),
+    configurationSha256: captured.configurationSha256,
+    manifestBytes: Uint8Array.from(captured.manifestBytes), manifestSha256: captured.manifestSha256,
+    nativeWriterContinuation: captured.launcherWriterContinuation,
+  });
 }
 
 function nativePort(value: unknown): NativePort {

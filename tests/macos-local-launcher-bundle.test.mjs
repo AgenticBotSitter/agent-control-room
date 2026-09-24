@@ -16,10 +16,13 @@ import {
   runBoundedMacosLauncherChildV1,
   runMacosLocalLauncherBundleV1,
   consumeMacosLocalLauncherInstalledConfigurationVerifierCustodyV1,
+  consumeMacosLocalLauncherInstalledConfigurationWriterContinuationV1,
+  consumeMacosLocalLauncherInstalledConfigurationVerifierContinuationV1,
   consumeMacosLocalLauncherV3ManifestMaterializationCustodyV1,
   verifyExtractedMacosLocalLauncherBundleV1,
 } from "../src/installer/v1/macos-local-launcher-bundle.mjs";
 import { createPrivateInstalledConfigurationNativeVerifierCustodyV1,
+  createPrivateInstalledConfigurationV3NativeVerifierCustodyV1,
   PRIVATE_INSTALLED_CONFIGURATION_NATIVE_VERIFIER_CUSTODY_V1 } from
   "../src/installer/v1/private-installed-configuration-native-verifier-custody.ts";
 import { planInstallationTopologyV1 } from "../src/harness/v1/installation-topology.ts";
@@ -30,6 +33,7 @@ import { PRIVATE_INSTALLED_LOCAL_HERMES_CONFIGURATION_V1 } from
   "../src/installer/v1/private-installed-local-hermes-runtime-composer.ts";
 import {
   composePrivateInstalledConfigurationV3MaterializationPublicationV1,
+  consumePrivateInstalledConfigurationV3MaterializationCapabilityV1,
   preparePrivateInstalledConfigurationV1,
   preparePrivateInstalledConfigurationV3MaterializationV1,
   privateInstalledPostgresEndpointFingerprintV1,
@@ -140,11 +144,11 @@ function installedConfigurationSourceForLauncher(verified, mutation = {}) {
     expectedOwnerUid: 501, privateConfigurationData, nativeSidecar, databaseAuthority, verificationDeadlineMs: 5_000 };
 }
 
-async function writeClaudeProcessNativeArtifact(directory, architecture = "arm64") {
+async function writeClaudeProcessNativeArtifact(directory, architecture = "arm64", variant = "") {
   const staging = join(directory, "staging"); await mkdir(staging, { recursive: true });
   const executable = "claude-code-process-v1";
   const contents = new Map([["LICENSE", Buffer.from("fixture license\n")], ["NOTICE", Buffer.from("fixture notice\n")],
-    [executable, Buffer.from("inert Claude process fixture; never execute\n")]]);
+    [executable, Buffer.from(`inert Claude process fixture${variant}; never execute\n`)]]);
   for (const [name, bytes] of contents) await writeFile(join(staging, name), bytes,
     { mode: name === executable ? 0o755 : 0o644 });
   const files = [...contents].sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0)
@@ -360,15 +364,20 @@ test("v3 manifest preparation consumes exact launcher custody and emits only ine
   assert.doesNotMatch(redacted, /example-owner|private-authority|owner-held|\.acr-|sidecarRoot/u);
   assert.throws(() => consumeMacosLocalLauncherV3ManifestMaterializationCustodyV1(verified), refusal,
     "manifest preparation burns only its data-only launcher custody");
-  const laterVerifierCustody = consumeMacosLocalLauncherInstalledConfigurationVerifierCustodyV1(verified);
-  assert.equal(laterVerifierCustody.releaseManifestDigest, verified.releaseManifestDigest,
-    "materialization preparation preserves the separate later native-verifier custody");
+  assert.throws(() => consumeMacosLocalLauncherInstalledConfigurationVerifierCustodyV1(verified), refusal,
+    "the raw launcher cannot release verifier custody after the materialization chain begins");
   const publication = composePrivateInstalledConfigurationV3MaterializationPublicationV1(prepared);
-  assert.equal(publication.status, "exact_bytes_ready_for_owner_attended_write");
+  assert.equal(publication.status, "opaque_owner_materialization_ready");
   assert.equal(publication.performsEffect, false); assert.equal(publication.writesProtectedFiles, false);
   assert.equal(publication.acceptsPath, false); assert.equal(publication.acceptsVerifier, false);
   assert.equal(publication.acceptsHelperBytes, false); assert.equal(publication.acceptsConfiguration, false);
-  const manifest = JSON.parse(Buffer.from(publication.manifestBytes).toString("utf8"));
+  assert.equal("manifestPath" in publication, false); assert.equal("manifestBytes" in publication, false);
+  assert.throws(() => consumePrivateInstalledConfigurationV3MaterializationCapabilityV1({
+    ...publication.materializationCapability,
+  }), /refused/u, "a structural materialization capability has no authority");
+  const materialization = consumePrivateInstalledConfigurationV3MaterializationCapabilityV1(
+    publication.materializationCapability);
+  const manifest = JSON.parse(Buffer.from(materialization.manifestBytes).toString("utf8"));
   assert.equal(manifest.schema, "control-room.private-installed-configuration-custody/v3");
   assert.deepEqual(manifest.claudeCodeProcessNativeSidecar, {
     schema: "control-room.private-installed-claude-process-sidecar-identity/v1",
@@ -382,6 +391,22 @@ test("v3 manifest preparation consumes exact launcher custody and emits only ine
   });
   assert.equal(manifest.journal.nativeSidecar.outerLauncherManifestSha256,
     verified.outerLauncherManifestSha256);
+  const writerCustody = consumeMacosLocalLauncherInstalledConfigurationWriterContinuationV1(
+    materialization.nativeWriterContinuation);
+  assert.throws(() => consumeMacosLocalLauncherInstalledConfigurationVerifierContinuationV1({
+    ...writerCustody.postWriteVerifierContinuation,
+  }), refusal, "a structural post-write continuation has no verifier custody");
+  const laterVerifierCustody = consumeMacosLocalLauncherInstalledConfigurationVerifierContinuationV1(
+    writerCustody.postWriteVerifierContinuation);
+  assert.equal(laterVerifierCustody.releaseManifestDigest, verified.releaseManifestDigest);
+  assert.deepEqual(laterVerifierCustody.claudeProcessSidecar, verified.claudeCodeProcessNativeSidecar,
+    "the later verifier comes only from the exact launcher used for this manifest");
+  assert.throws(() => consumePrivateInstalledConfigurationV3MaterializationCapabilityV1(
+    publication.materializationCapability), /refused/u, "materialization capability is one-use");
+  assert.throws(() => consumeMacosLocalLauncherInstalledConfigurationWriterContinuationV1(
+    materialization.nativeWriterContinuation), refusal, "writer continuation is one-use");
+  assert.throws(() => consumeMacosLocalLauncherInstalledConfigurationVerifierContinuationV1(
+    writerCustody.postWriteVerifierContinuation), refusal, "verifier continuation is one-use");
   assert.throws(() => composePrivateInstalledConfigurationV3MaterializationPublicationV1(prepared), /refused/u,
     "exact bytes are one-use");
 });
@@ -429,6 +454,82 @@ test("v3 manifest preparation rejects look-alikes, substitutions, incomplete bin
     schema: PRIVATE_INSTALLED_CONFIGURATION_V3_MATERIALIZATION_PREPARATION_V1,
     configurationPlan: incompletePlan, verifiedLauncherBundle: incompleteReport,
   }), /refused/u, "a v2 launcher cannot materialize a v3 Claude manifest");
+});
+
+test("a same-release second launcher cannot replace the verifier continuation bound to plan A", async () => {
+  const secondArtifact = join(suiteRoot, "claude-process-second-valid");
+  await writeClaudeProcessNativeArtifact(secondArtifact, "arm64", " B");
+  const secondOutput = join(suiteRoot, "claude-bound-second-valid-output");
+  const secondAssembly = await assembleMacosLocalLauncherBundleV3({
+    ...claudeBoundInput(secondOutput), claudeCodeProcessNativeArtifactDirectory: secondArtifact,
+  });
+  const secondExtraction = join(suiteRoot, "claude-bound-second-valid-extracted"); await mkdir(secondExtraction);
+  const secondRoot = await extract(join(secondOutput, secondAssembly.archiveName), secondExtraction);
+  const reportA = await verifyExtractedMacosLocalLauncherBundleV1(claudeBoundBundleRoot);
+  const reportB = await verifyExtractedMacosLocalLauncherBundleV1(secondRoot);
+  assert.equal(reportA.releaseManifestDigest, reportB.releaseManifestDigest,
+    "the hostile case deliberately shares the portable release digest");
+  assert.notEqual(reportA.outerLauncherManifestSha256, reportB.outerLauncherManifestSha256);
+  assert.notEqual(reportA.claudeCodeProcessNativeSidecar.executableSha256,
+    reportB.claudeCodeProcessNativeSidecar.executableSha256);
+  const publicationFor = report => composePrivateInstalledConfigurationV3MaterializationPublicationV1(
+    preparePrivateInstalledConfigurationV3MaterializationV1({
+      schema: PRIVATE_INSTALLED_CONFIGURATION_V3_MATERIALIZATION_PREPARATION_V1,
+      configurationPlan: preparePrivateInstalledConfigurationV1(installedConfigurationSourceForLauncher(report)),
+      verifiedLauncherBundle: report,
+    }));
+  const publicationA = publicationFor(reportA), publicationB = publicationFor(reportB);
+  const materializationA = consumePrivateInstalledConfigurationV3MaterializationCapabilityV1(
+    publicationA.materializationCapability);
+  const materializationB = consumePrivateInstalledConfigurationV3MaterializationCapabilityV1(
+    publicationB.materializationCapability);
+  const freshReportB = await verifyExtractedMacosLocalLauncherBundleV1(secondRoot);
+  const exactOwnerRoot = join(homedir(), "Library", "Application Support", "Agent Control Room", "Protected");
+  const currentOwnerUid = typeof process.geteuid === "function" ? process.geteuid() : 501;
+  const hostileInstallation = {
+    installationId: materializationA.installationId,
+    releaseDigest: materializationA.releaseDigest,
+    planDigest: materializationA.planDigest,
+    protectedRootPath: exactOwnerRoot,
+    expectedOwnerUid: currentOwnerUid,
+    verificationDeadlineMs: materializationA.verificationDeadlineMs,
+    configurationBytes: materializationA.configurationBytes,
+    configurationSha256: materializationA.configurationSha256,
+    manifestBytes: materializationA.manifestBytes,
+    manifestSha256: materializationA.manifestSha256,
+  };
+  assert.throws(() => createPrivateInstalledConfigurationNativeVerifierCustodyV1({
+    schema: PRIVATE_INSTALLED_CONFIGURATION_NATIVE_VERIFIER_CUSTODY_V1,
+    verifiedLauncherBundle: freshReportB,
+    installation: hostileInstallation,
+  }), /native_verifier_custody_refused/u,
+  "the legacy concrete verifier refuses A bytes paired with a fresh V3 launcher B report");
+  const freshV2Report = await verifyExtractedMacosLocalLauncherBundleV1(expandedBundleRoot);
+  assert.equal(freshV2Report.releaseManifestDigest, materializationA.releaseDigest,
+    "the second hostile case uses a V2 launcher with the same portable release");
+  assert.throws(() => createPrivateInstalledConfigurationNativeVerifierCustodyV1({
+    schema: PRIVATE_INSTALLED_CONFIGURATION_NATIVE_VERIFIER_CUSTODY_V1,
+    verifiedLauncherBundle: freshV2Report, installation: hostileInstallation,
+  }), /native_verifier_custody_refused/u,
+  "a legacy V2 launcher cannot be paired with A's V3 manifest bytes");
+  assert.throws(() => createPrivateInstalledConfigurationV3NativeVerifierCustodyV1({
+    schema: "control-room.private-installed-configuration-v3-post-write-verification-capability/v1",
+  }), /owner_writer_refused/u,
+  "the V3 concrete verifier accepts only the writer-minted opaque post-write binding");
+  assert.throws(() => Object.assign(materializationA, {
+    nativeWriterContinuation: materializationB.nativeWriterContinuation,
+  }), TypeError, "the exact A bytes and A continuation cannot be recombined with B");
+  const writerA = consumeMacosLocalLauncherInstalledConfigurationWriterContinuationV1(
+    materializationA.nativeWriterContinuation);
+  const writerB = consumeMacosLocalLauncherInstalledConfigurationWriterContinuationV1(
+    materializationB.nativeWriterContinuation);
+  const verifierA = consumeMacosLocalLauncherInstalledConfigurationVerifierContinuationV1(
+    writerA.postWriteVerifierContinuation);
+  const verifierB = consumeMacosLocalLauncherInstalledConfigurationVerifierContinuationV1(
+    writerB.postWriteVerifierContinuation);
+  assert.deepEqual(verifierA.claudeProcessSidecar, reportA.claudeCodeProcessNativeSidecar);
+  assert.deepEqual(verifierB.claudeProcessSidecar, reportB.claudeCodeProcessNativeSidecar);
+  assert.notDeepEqual(verifierA.claudeProcessSidecar, verifierB.claudeProcessSidecar);
 });
 
 test("v3 refuses missing, changed, or mixed-architecture Claude helper input without publishing", async () => {

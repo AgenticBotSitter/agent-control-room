@@ -73,6 +73,12 @@ const installedConfigurationVerifierCustody = new WeakMap();
 // paths.  Keep that one-use data custody separate from the later native-
 // verifier custody so planning cannot consume or expose the verifier route.
 const v3ManifestMaterializationCustody = new WeakMap();
+const installedConfigurationWriterContinuations = new WeakMap();
+const installedConfigurationPostWriteVerifierContinuations = new WeakMap();
+export const MACOS_LOCAL_LAUNCHER_INSTALLED_CONFIGURATION_VERIFIER_CONTINUATION_V1 =
+  "control-room.macos-local-launcher-installed-configuration-verifier-continuation/v1";
+export const MACOS_LOCAL_LAUNCHER_INSTALLED_CONFIGURATION_WRITER_CONTINUATION_V1 =
+  "control-room.macos-local-launcher-installed-configuration-writer-continuation/v1";
 
 // Lazy imports preserve the exact legacy v1 layout: its extracted runtime has
 // neither new module, and must not attempt to resolve them.
@@ -349,7 +355,33 @@ export function consumeMacosLocalLauncherInstalledConfigurationVerifierCustodyV1
 export function consumeMacosLocalLauncherV3ManifestMaterializationCustodyV1(value) {
   if (!value || typeof value !== "object") refused();
   const custody = v3ManifestMaterializationCustody.get(value);
-  if (!custody || !v3ManifestMaterializationCustody.delete(value)) refused();
+  const verifier = installedConfigurationVerifierCustody.get(value);
+  if (!custody || !verifier || !v3ManifestMaterializationCustody.delete(value)
+    || !installedConfigurationVerifierCustody.delete(value)) refused();
+  const continuation = Object.freeze({
+    schema: MACOS_LOCAL_LAUNCHER_INSTALLED_CONFIGURATION_WRITER_CONTINUATION_V1,
+  });
+  installedConfigurationWriterContinuations.set(continuation, verifier);
+  return Object.freeze({ ...custody, installedConfigurationWriterContinuation: continuation });
+}
+
+/** Releases exact writer custody and rotates it into one post-write verifier continuation. */
+export function consumeMacosLocalLauncherInstalledConfigurationWriterContinuationV1(value) {
+  if (!value || typeof value !== "object") refused();
+  const custody = installedConfigurationWriterContinuations.get(value);
+  if (!custody || !installedConfigurationWriterContinuations.delete(value)) refused();
+  const postWriteVerifierContinuation = Object.freeze({
+    schema: MACOS_LOCAL_LAUNCHER_INSTALLED_CONFIGURATION_VERIFIER_CONTINUATION_V1,
+  });
+  installedConfigurationPostWriteVerifierContinuations.set(postWriteVerifierContinuation, custody);
+  return Object.freeze({ ...custody, postWriteVerifierContinuation });
+}
+
+/** Releases only original-report custody after the writer has returned this rotated capability. */
+export function consumeMacosLocalLauncherInstalledConfigurationVerifierContinuationV1(value) {
+  if (!value || typeof value !== "object") refused();
+  const custody = installedConfigurationPostWriteVerifierContinuations.get(value);
+  if (!custody || !installedConfigurationPostWriteVerifierContinuations.delete(value)) refused();
   return custody;
 }
 
