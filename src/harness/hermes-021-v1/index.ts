@@ -20,3 +20,4 @@ export * from "./runner-compatibility";
 export * from "./installation-readiness-record";
 export * from "./delivery-recovery-status";
 export * from "./protected-worker-readiness";
+export * from "./native-supervision-protocol";
