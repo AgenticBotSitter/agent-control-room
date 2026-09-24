@@ -1,79 +1,98 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { planInstallationTopologyV1 } from "../src/harness/v1/installation-topology";
+import { HERMES_021_MACOS_LOCAL_ADAPTER_V1, HERMES_021_SOURCE_REVISION_V1,
+  createHermes021MacosProtectedWorkerReadinessV1,
+  runHermes021MacosInstallationBoundRunnerQualificationV1 } from "../src/harness/hermes-021-v1";
 import { sha256Digest } from "../src/security/canonical-digest";
 import { composeThreeWorkerActivationBundlePreflightV1, createThreeWorkerActivationBundleCustodyV1,
-  recordThreeWorkerActivationEvidenceV1, recordThreeWorkerActivationRollbackEvidenceV1,
-  refreshThreeWorkerActivationBundlePreflightV1, verifyThreeWorkerActivationBundlePreflightV1 } from
+  recordHermesThreeWorkerActivationSourceProofV1, refreshThreeWorkerActivationBundlePreflightV1,
+  verifyThreeWorkerActivationBundlePreflightV1 } from
   "../src/installer/v1/three-worker-activation-bundle-preflight";
 
-const d = (name: string) => sha256Digest(name);
-function fixture() {
-  const custody = createThreeWorkerActivationBundleCustodyV1({ installationId: "control-room-one",
-    releaseDigest: d("release"), topologyPlanDigest: d("topology") });
-  const evidence = (states: Record<string, "ready" | "blocked" | "owner_attended_action"> = {}) =>
-    Object.entries(custody.evidenceIssuers).map(([name, issuer]) =>
-      recordThreeWorkerActivationEvidenceV1(issuer, states[name] ?? "ready"));
-  const rollback = Object.values(custody.rollbackIssuers).map(recordThreeWorkerActivationRollbackEvidenceV1);
-  return { custody, evidence, rollback };
+const d = (value: string) => sha256Digest(value);
+const route = Object.freeze({ kind: "local" as const, workerId: "worker:marvin",
+  adapterId: HERMES_021_MACOS_LOCAL_ADAPTER_V1, adapterRevision: HERMES_021_SOURCE_REVISION_V1 });
+const topologyInput = Object.freeze({ databaseAuthorityDigest: d("database"), schedulerAuthorityDigest: d("scheduler"),
+  currentRoutes: Object.freeze([]), requestedRoutes: Object.freeze([route]) });
+const topologyPlan = planInstallationTopologyV1(topologyInput);
+const binding = Object.freeze({ installationId: "control-room-one", releaseDigest: d("release"),
+  topologyPlanDigest: topologyPlan.planDigest });
+
+async function hermesSource() {
+  const workerBinding = Object.freeze({ localServiceId: "service:marvin", workerId: route.workerId,
+    expectedVersion: "0.21.3" as const, sourceRevision: HERMES_021_SOURCE_REVISION_V1 });
+  const runnerConfiguration = Object.freeze({ executablePath: "/private/fixture/hermes", profile: "owner-profile-private",
+    model: "qwen3.8:27b-long", provider: "ollama", workingDirectory: "/private/fixture/work",
+    taskClass: "text_review" as const, maximumTurns: 1 as const, maximumRunBudgetSeconds: 120 });
+  const qualified = await runHermes021MacosInstallationBoundRunnerQualificationV1({
+    installationId: binding.installationId, releaseDigest: binding.releaseDigest, topologyPlan, workerBinding,
+    runnerConfiguration, ownerAttended: true }, { async execute(context) { return { type: "result" as const,
+      session_id: "session:qualified", exit_code: 0, text: context.expectedText,
+      tokens: { input: 14, output: 8, total: 22, cache_read: 0, cache_write: 0 }, duration_ms: 1_250,
+      timestamp: 1_750_000_000_000 }; } });
+  const currentInput = { installationId: binding.installationId, releaseDigest: binding.releaseDigest,
+    topologyInput, topologyPlan, workerBinding, runnerConfiguration,
+    runnerQualificationReport: qualified.report, runnerQualificationEvidence: qualified.evidence };
+  return { currentInput, readiness: createHermes021MacosProtectedWorkerReadinessV1(currentInput) };
 }
 
-test("composes one redacted no-effect owner window from opaque producer evidence", () => {
-  const f = fixture();
-  const plan = composeThreeWorkerActivationBundlePreflightV1({ aggregate: f.custody.aggregate,
-    evidence: f.evidence({ hermes_route: "owner_attended_action", claude_owner_write: "owner_attended_action" }),
-    rollback: f.rollback });
-  assert.equal(plan.status, "owner_attended_action_required");
-  assert.deepEqual(plan.ownerActions, ["approve_hermes_first_task", "materialize_claude_manifest"]);
-  assert.equal(plan.generation, 1);
+test("custody alone cannot manufacture ready evidence or rollback", () => {
+  const custody = createThreeWorkerActivationBundleCustodyV1(binding);
+  assert.deepEqual(Object.keys(custody).sort(), ["aggregate", "providesGenericEvidenceIssuer",
+    "providesRollbackRecorder", "schema"]);
+  assert.equal(custody.providesGenericEvidenceIssuer, false);
+  assert.equal(custody.providesRollbackRecorder, false);
+  const plan = composeThreeWorkerActivationBundlePreflightV1({ aggregate: custody.aggregate });
+  assert.equal(plan.status, "blocked");
+  assert.equal(plan.components.filter(item => item.blocker === "source_proof_missing").length, 6);
+  assert.deepEqual(plan.rollback.missing, ["release_rollback", "database_snapshot", "private_route_snapshot",
+    "website_route_snapshot", "protected_configuration_prior_state"]);
+  assert.deepEqual(plan.ownerActions, []);
   for (const name of ["performsEffect", "readsProtectedFiles", "writesProtectedFiles", "opensDatabase", "usesNetwork",
     "startsService", "startsWorker", "invokesAgent", "accessesCredentialStore", "accessesKeychain"] as const)
     assert.equal(plan[name], false);
   assert.doesNotMatch(JSON.stringify(plan), /password|\/Users\/|postgresql:\/\/|100\.\d+\.\d+\.\d+/iu);
-  assert.deepEqual(verifyThreeWorkerActivationBundlePreflightV1(f.custody.aggregate, plan), plan);
 });
 
-test("blocked evidence dominates owner action", () => {
-  const f = fixture();
-  const plan = composeThreeWorkerActivationBundlePreflightV1({ aggregate: f.custody.aggregate,
-    evidence: f.evidence({ database_route: "blocked", claude_owner_write: "owner_attended_action" }), rollback: f.rollback });
-  assert.equal(plan.status, "blocked"); assert.deepEqual(plan.ownerActions, []);
+test("structural or caller-digest proof cannot leave blocked state", () => {
+  const custody = createThreeWorkerActivationBundleCustodyV1(binding);
+  assert.throws(() => composeThreeWorkerActivationBundlePreflightV1({ aggregate: custody.aggregate,
+    sourceProofs: [{ schema: "control-room.three-worker-activation-source-proof/v1",
+      component: "verified_release", state: "ready", evidenceDigest: d("forged") }] }), /preflight_refused/u);
+  const plan = composeThreeWorkerActivationBundlePreflightV1({ aggregate: custody.aggregate });
+  assert.equal(plan.status, "blocked");
 });
 
-test("missing, duplicate, mixed-custody, and forged evidence is refused", () => {
-  const f = fixture(), all = f.evidence(), other = fixture();
-  assert.throws(() => composeThreeWorkerActivationBundlePreflightV1({ aggregate: f.custody.aggregate,
-    evidence: all.slice(1), rollback: f.rollback }), /preflight_refused/u);
-  assert.throws(() => composeThreeWorkerActivationBundlePreflightV1({ aggregate: f.custody.aggregate,
-    evidence: [...all.slice(0, 5), all[0]], rollback: f.rollback }), /preflight_refused/u);
-  assert.throws(() => composeThreeWorkerActivationBundlePreflightV1({ aggregate: f.custody.aggregate,
-    evidence: [...all.slice(0, 5), other.evidence()[5]], rollback: f.rollback }), /preflight_refused/u);
-  assert.throws(() => composeThreeWorkerActivationBundlePreflightV1({ aggregate: f.custody.aggregate,
-    evidence: [...all.slice(0, 5), { schema: "control-room.three-worker-activation-evidence/v1",
-      evidenceDigest: d("forged") }], rollback: f.rollback }), /preflight_refused/u);
-  assert.throws(() => composeThreeWorkerActivationBundlePreflightV1({ aggregate: f.custody.aggregate,
-    evidence: all, rollback: [...f.rollback.slice(0, 4), { schema: "control-room.three-worker-activation-rollback-evidence/v1",
-      evidenceDigest: d("forged rollback") }] }), /preflight_refused/u);
+test("real Hermes producer proof updates only Hermes and invalidates old aggregate generation", async () => {
+  const custody = createThreeWorkerActivationBundleCustodyV1(binding);
+  const first = composeThreeWorkerActivationBundlePreflightV1({ aggregate: custody.aggregate });
+  const source = await hermesSource();
+  const hermesProof = recordHermesThreeWorkerActivationSourceProofV1({ aggregate: custody.aggregate, ...source });
+  const refreshed = refreshThreeWorkerActivationBundlePreflightV1({ aggregate: custody.aggregate,
+    current: first, sourceProofs: [hermesProof] });
+  assert.equal(refreshed.kind, "invalidated");
+  assert.equal(refreshed.plan.generation, 2);
+  assert.equal(refreshed.plan.status, "blocked");
+  assert.deepEqual(refreshed.plan.ownerActions, ["approve_hermes_first_task"]);
+  assert.equal(refreshed.plan.components.find(item => item.component === "hermes_route")?.state,
+    "owner_attended_action");
+  assert.throws(() => verifyThreeWorkerActivationBundlePreflightV1(custody.aggregate, first), /preflight_refused/u);
+  assert.deepEqual(verifyThreeWorkerActivationBundlePreflightV1(custody.aggregate, refreshed.plan), refreshed.plan);
 });
 
-test("exact replay is stable and refresh invalidates old generation", () => {
-  const f = fixture(), originalEvidence = f.evidence({ claude_owner_write: "owner_attended_action" });
-  const first = composeThreeWorkerActivationBundlePreflightV1({ aggregate: f.custody.aggregate,
-    evidence: originalEvidence, rollback: f.rollback });
-  const replay = refreshThreeWorkerActivationBundlePreflightV1({ aggregate: f.custody.aggregate, current: first,
-    evidence: originalEvidence, rollback: f.rollback });
+test("Hermes proof refuses a different aggregate binding", async () => {
+  const source = await hermesSource();
+  const custody = createThreeWorkerActivationBundleCustodyV1({ ...binding, releaseDigest: d("other-release") });
+  assert.throws(() => recordHermesThreeWorkerActivationSourceProofV1({ aggregate: custody.aggregate, ...source }),
+    /preflight_refused|readiness_unavailable/u);
+});
+
+test("exact replay stays current and output tampering refuses", () => {
+  const custody = createThreeWorkerActivationBundleCustodyV1(binding);
+  const first = composeThreeWorkerActivationBundlePreflightV1({ aggregate: custody.aggregate });
+  const replay = refreshThreeWorkerActivationBundlePreflightV1({ aggregate: custody.aggregate, current: first });
   assert.equal(replay.kind, "replay"); assert.equal(replay.plan.generation, 1);
-  const changed = refreshThreeWorkerActivationBundlePreflightV1({ aggregate: f.custody.aggregate, current: first,
-    evidence: f.evidence({ database_route: "blocked", claude_owner_write: "owner_attended_action" }), rollback: f.rollback });
-  assert.equal(changed.kind, "invalidated"); assert.equal(changed.plan.generation, 2);
-  assert.throws(() => verifyThreeWorkerActivationBundlePreflightV1(f.custody.aggregate, first), /preflight_refused/u);
-  assert.deepEqual(verifyThreeWorkerActivationBundlePreflightV1(f.custody.aggregate, changed.plan), changed.plan);
-});
-
-test("tampering with current output remains refused", () => {
-  const f = fixture(), plan = composeThreeWorkerActivationBundlePreflightV1({ aggregate: f.custody.aggregate,
-    evidence: f.evidence({ claude_owner_write: "owner_attended_action" }), rollback: f.rollback });
-  assert.throws(() => verifyThreeWorkerActivationBundlePreflightV1(f.custody.aggregate,
-    { ...plan, status: "ready" }), /preflight_refused/u);
-  assert.throws(() => verifyThreeWorkerActivationBundlePreflightV1(f.custody.aggregate,
-    { ...plan, planDigest: d("tampered") }), /preflight_refused/u);
+  assert.throws(() => verifyThreeWorkerActivationBundlePreflightV1(custody.aggregate,
+    { ...first, planDigest: d("tampered") }), /preflight_refused/u);
 });
