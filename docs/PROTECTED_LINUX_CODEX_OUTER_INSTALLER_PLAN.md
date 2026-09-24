@@ -27,31 +27,25 @@ caller input. Neither boundary starts Codex or makes a worker ready. The
 remaining work is protected installed-state construction and mounting at the
 real session ingress, not another transport or database.
 
+LCOI-5 is now complete in source too: a branded, one-use Codex ingress is
+captured by the authenticated `ServerNodeSession`. The session owns the
+responder, result receiver, signing, bounded sends, and immutable queued
+reference, and rechecks current canonical permission before result publication.
+It refuses replay, expiry, revocation, identity/profile/connection mismatch,
+copied capabilities, and caller-supplied receiver substitution. It remains
+unmounted until LCOI-1 can create a genuine protected Linux installation.
+
 ## Why this change is documentation only
 
-The current sources do not yet provide two provenance-bearing operations that
-an outer installer could safely compose:
+The current sources now have the needed message-level operations, but they do
+not yet have a provenance-bearing Linux installed-state owner to construct
+them. That owner must prove that the bridge, journal, trust, pin, key, session,
+responder, and receipt resources all come from one protected installation.
 
-1. `createPrivateCodexInstalledNodeEntryV1()` can issue a signed current-
-   admission request and accept the raw signed answer, but no installation-
-   owned bridge operation durably sends that exact request and routes its exact
-   response back to the entry. `PortableNodeBridge.receive()` intentionally
-   rejects that response type because it is not one of its owned intake lanes.
-   A new wrapper accepting a caller callback would therefore put the current-
-   authority check back under caller control.
-2. `createPrivateRemoteControllerWorkerCompositionV1()` already owns the
-   canonical target resolver and exact receipt intake, but generic startup
-   captures only its `prepare`/`transmit` queue capability. The receipt-intake
-   half has no installed server-session ingress. A wrapper that merely brands
-   the existing objects would still leave acknowledgement and recovery outside
-   the installed lifecycle.
-
-An isolated contract added before those operations exist could prove only that
-some concrete JavaScript objects were passed together. It could not prove that
-the signed read went over the reconciled connection, that a generic delivery
-receipt reached canonical persistence, or that every resource came from one
-protected installation. Such a contract would create a false readiness signal,
-so the safe change is documentation only.
+An outer wrapper that merely passes ordinary JavaScript objects together would
+still create a false readiness signal. It could not prove the installed source
+of those resources, so no installation capability is minted until LCOI-1 has a
+real Linux custody implementation.
 
 ## Existing source to reuse unchanged
 
