@@ -1,6 +1,7 @@
 import { lstat, readFile } from "node:fs/promises";
 import { isAbsolute, join, resolve } from "node:path";
 import { captureMacLocalProtectedConfigurationV1, type MacLocalProtectedConfigurationV1 } from "../../src/web/v1/mac-local-protected-configuration";
+import { captureMacLocalDatabaseRolesV1, type MacLocalDatabaseRolesV1 } from "../../src/web/v1/mac-local-database-roles";
 
 type Runtime = Readonly<{ lstat: typeof lstat; readFile: typeof readFile }>;
 const production: Runtime = Object.freeze({ lstat, readFile });
@@ -34,4 +35,23 @@ export async function loadMacLocalProtectedConfigurationFromRootV1(protectedRoot
     }
     return await loadMacLocalProtectedConfigurationV1(path, runtime);
   } catch { throw new Error("mac_local_protected_configuration_root_invalid"); }
+}
+
+/** Loads the fixed restricted-role file alongside mac-local.json. This retains
+ * the same non-symlink and owner-only file rules, with no environment fallback
+ * or connection side effect. */
+export async function loadMacLocalDatabaseRolesFromRootV1(protectedRoot: string,
+  runtime: Runtime = production): Promise<MacLocalDatabaseRolesV1> {
+  if (!isAbsolute(protectedRoot) || resolve(protectedRoot) !== protectedRoot) throw new Error("mac_local_database_roles_root_invalid");
+  const configRoot = join(protectedRoot, "config"), path = join(configRoot, "database-roles.json");
+  if (resolve(path) !== path) throw new Error("mac_local_database_roles_root_invalid");
+  try {
+    for (const directory of [protectedRoot, configRoot]) {
+      const entry = await runtime.lstat(directory);
+      if (!entry.isDirectory() || entry.isSymbolicLink() || (entry.mode & 0o077) !== 0) throw new Error();
+    }
+    const entry = await runtime.lstat(path);
+    if (!entry.isFile() || entry.isSymbolicLink() || (entry.mode & 0o077) !== 0 || entry.size > 64 * 1024) throw new Error();
+    return captureMacLocalDatabaseRolesV1(JSON.parse(await runtime.readFile(path, "utf8")));
+  } catch { throw new Error("mac_local_database_roles_root_invalid"); }
 }

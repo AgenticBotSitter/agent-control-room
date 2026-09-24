@@ -7,6 +7,7 @@ import { createMacLocalStartupV1 } from "./mac-local-startup";
 import type { MacLocalCanonicalTaskOperationsV1 } from "./mac-local-web-process";
 import type { MacLocalWorkerReadinessV1 } from "./mac-local-worker-readiness";
 import type { MacLocalTaskApplicationV1 } from "./mac-local-task-application";
+import type { MacLocalDatabaseRolesV1 } from "./mac-local-database-roles";
 
 type OpenedDatabase = Readonly<{ client: DatabaseClient; close(): Promise<void> }>;
 type LocalService = Readonly<{ start(): Promise<void>; close(): Promise<void>; isReady(): boolean }>;
@@ -83,7 +84,11 @@ export function createMacLocalProtectedHostV1(input: Readonly<{
     configuration: MacLocalProtectedConfigurationV1;
     database: OpenedDatabase;
     workerReadiness: MacLocalWorkerReadinessV1;
+    databaseRoles: MacLocalDatabaseRolesV1;
   }>) => Pick<MacLocalTaskApplicationV1, "operations" | "isReady" | "close"> | Promise<Pick<MacLocalTaskApplicationV1, "operations" | "isReady" | "close">>;
+  /** Reads the fixed owner-only database-role file. It is required whenever a
+   * shared task composition is configured, and is read before any pool opens. */
+  loadDatabaseRoles?: () => Promise<MacLocalDatabaseRolesV1>;
   createServer?: (options: Readonly<ServerOptions>) => Server;
   listenerTiming?: { bindMs?: number; closeMs?: number };
 }>) {
@@ -91,14 +96,16 @@ export function createMacLocalProtectedHostV1(input: Readonly<{
     || typeof input.openDatabase !== "function" || !input.assets || typeof input.assets.respond !== "function"
     || typeof input.render !== "function") throw new Error("mac_local_host_configuration_invalid");
   if (input.operations && input.createTaskApplication) throw new Error("mac_local_host_configuration_invalid");
+  if (input.createTaskApplication && typeof input.loadDatabaseRoles !== "function") throw new Error("mac_local_host_configuration_invalid");
   const startup = createMacLocalStartupV1({
     readVersion: input.readVersion,
     openDatabase: input.openDatabase,
-    createService: async ({ configuration, database, workerReadiness }) => {
+    createService: async ({ configuration, database, workerReadiness, databaseRoles }) => {
       let taskApplication: Pick<MacLocalTaskApplicationV1, "operations" | "isReady" | "close"> | undefined;
       try {
+        if (input.createTaskApplication && !databaseRoles) throw new Error("mac_local_host_configuration_invalid");
         taskApplication = input.createTaskApplication
-          ? await input.createTaskApplication({ configuration, database, workerReadiness }) : undefined;
+          ? await input.createTaskApplication({ configuration, database, workerReadiness, databaseRoles: databaseRoles! }) : undefined;
         return createMacLocalWebServiceFromConfigurationV1({
           configuration, database, assets: input.assets, render: input.render,
           ...(taskApplication ? { taskApplication } : input.operations ? { operations: input.operations } : {}),
@@ -115,5 +122,16 @@ export function createMacLocalProtectedHostV1(input: Readonly<{
       }
     },
   });
-  return Object.freeze({ async start() { return startup.start(await input.loadConfiguration()); } });
+  const sameWebConnection = (configuration: MacLocalProtectedConfigurationV1, roles: MacLocalDatabaseRolesV1) => {
+    const a = configuration.database, b = roles.web;
+    return a.host === b.host && a.port === b.port && a.database === b.database && a.username === b.username
+      && a.password === b.password && a.majorVersion === b.majorVersion
+      && JSON.stringify(a.privateEndpoint ?? null) === JSON.stringify(b.privateEndpoint ?? null);
+  };
+  return Object.freeze({ async start() {
+    const configuration = await input.loadConfiguration();
+    const databaseRoles = input.loadDatabaseRoles ? await input.loadDatabaseRoles() : undefined;
+    if (databaseRoles && !sameWebConnection(configuration, databaseRoles)) throw new Error("mac_local_host_configuration_invalid");
+    return startup.start(configuration, databaseRoles);
+  } });
 }
