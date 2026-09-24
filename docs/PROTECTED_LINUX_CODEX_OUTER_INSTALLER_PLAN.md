@@ -188,6 +188,51 @@ connector profile, and current revocation state. The current-admission answer
 and result receipt must use the server session's protected signer and bounded
 send path.
 
+#### Current source blocker (fail closed)
+
+LCOI-5 is not yet safe to mount from the existing ingress types.  This is a
+source-architecture blocker, not an installed-state or live-configuration
+blocker:
+
+1. `ServerNodeSession` owns the negotiated identity, replay protection,
+   protected signer, bounded send path, activation state, and result-return
+   state, but it has no current-admission-read intake.  Its existing
+   `acceptCodexResultReturn()` instead accepts a caller-supplied result intake
+   for each raw frame.  Retaining the result receiver outside that call would
+   turn it into a generic callback port rather than an installed-session-owned
+   capability.
+2. `createCodexCurrentAdmissionReadResponderV1()` independently authenticates
+   raw bytes and returns an unsigned response.  It cannot use the session's
+   private signer or bounded send path, and pre-authenticating the same frame
+   in the session would consume the replay record before the responder reads
+   it.  A generic raw-frame router or a second authenticator would break the
+   required single session/key/connection ownership.
+3. The only present raw-frame dispatcher is `ManagedNativeSessions`.  It is a
+   generic operator layer and exposes separate `codexResult` handling; it has
+   no current-admission route and no private holder for an exact responder and
+   result receiver.  Extending it would violate this boundary by making the
+   protected Codex pair configurable through generic operator routes.
+4. Result-return intake is scoped to the activation stored in the session, but
+   its current public intake contract does not receive the original queued
+   reference needed to re-read the permit, route, profile, enrollment/key,
+   lease, and revocation state at result time.  The responder already performs
+   that full canonical re-read for admission reads.  Reusing only its historic
+   activation digest for results would make revocation/profile changes fail
+   open.
+
+The missing smallest boundary is therefore a **branded
+`ServerNodeSession`-owned Codex ingress mount**, not a bridge, journal, or
+generic operator change.  It must capture one responder and one result
+receiver privately at construction; authenticate every inbound frame exactly
+once through the session; bind the mount to the negotiated Codex feature set,
+node key, connection generation, activation, and qualified profile; and offer
+only named current-admission-read and result-return receive operations.  The
+session must itself sign and bounded-send the admission response and result
+receipt.  Its private result channel must additionally carry the immutable
+canonical queued reference solely to a mount-owned revocation recheck before
+canonical publication.  Until that typed session seam exists, no installed
+capability is minted and no Codex work can start.
+
 ## Mandatory fail-closed tests
 
 Each future boundary requires adversarial tests before it may mint an installed
