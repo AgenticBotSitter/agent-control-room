@@ -91,6 +91,10 @@ test("preview initially renders no sample records or operational controls", () =
   const html = renderToStaticMarkup(createElement(LocalProjectWorkspace, {}));
   assert.match(html, /Loading saved data/);
   assert.match(html, /cannot assign or start agents/);
+  assert.match(html, /Reality check/);
+  assert.match(html, /Saved here:.*local project and task records/);
+  assert.match(html, /Not connected:.*production database.*scheduler.*public network access/);
+  assert.match(html, /Still required:.*owner setup and qualification/);
   assert.doesNotMatch(html, /Save proposal|Create project|Start agent|Example &lt;project&gt;/);
   assert.equal(localPreviewHref(undefined, undefined, "project:next"), "/local-preview?after=project%3Anext");
 });

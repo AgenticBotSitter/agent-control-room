@@ -106,6 +106,12 @@ export function LocalProjectWorkspace({ projectId, jobId, after, contributorDemo
   return <div className="private-shell"><main id="private-main" tabIndex={-1}>
     <div className="private-heading"><h1>{project?.title ?? "Local project preview"}</h1>
       <p>Local Control Room workboard. Projects and proposals are saved locally; it cannot assign or start agents.</p></div>
+    <section className="private-notice" aria-labelledby="local-preview-reality-title">
+      <h2 id="local-preview-reality-title">Reality check</h2>
+      <p><strong>Saved here:</strong> this preview's local project and task records.</p>
+      <p><strong>Not connected:</strong> agents, providers, the production database, the scheduler, and public network access.</p>
+      <p><strong>Still required:</strong> the separate owner setup and qualification before a real Control Room worker can receive a task.</p>
+    </section>
     {error && <p role="alert">{error}</p>}
     {uncertain && <section className="private-notice"><p>A save is unconfirmed. Keep this tab open and retry the original save before making another change.</p>
       <button disabled={pending} onClick={() => { void save(async () => {
