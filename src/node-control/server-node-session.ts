@@ -509,7 +509,9 @@ export class ServerNodeSession {
     load: (scope: Readonly<{ projectId: string; jobId: string; attemptId: string }>) => Promise<SignedNodeFrame<"controller.worker.delivery">>,
     commit: (receipt: SignedNodeFrame<"controller.worker.delivery.receipt.recovery">,
       dispatch: SignedNodeFrame<"controller.worker.delivery">, assertCurrent: () => void) => Promise<T>): Promise<T> {
-    if (!this.controllerWorkerDeliveryChannel() || !this.features.includes(CONTROLLER_WORKER_NODE_RECOVERY_FEATURE_V1)) {
+    // Recovery is a receipt/result-channel operation, not permission to send
+    // another delivery.  A recovered session may already be receipted.
+    if (!this.controllerWorkerSessionBinding() || !this.features.includes(CONTROLLER_WORKER_NODE_RECOVERY_FEATURE_V1)) {
       throw new Error("Controller worker recovery not negotiated");
     }
     return this.bounded(async () => {
@@ -526,7 +528,11 @@ export class ServerNodeSession {
         || frame.body.scope.attemptId !== identity.attemptId) throw new Error("Controller worker recovery binding mismatch");
       const assertCurrent = () => {
         const now = this.now();
-        if (this.state !== "ready" || now >= Date.parse(frame.expiresAt) || now >= Date.parse(intent.expiresAt)
+        // A recovery may be replayed after this fresh session has already
+        // accepted the same durable receipt.  Keep that narrow replay path
+        // available, but do not permit it from any unrelated session state.
+        if (!(["ready", "controller_worker_receipted"] as const).includes(this.state as "ready" | "controller_worker_receipted")
+          || now >= Date.parse(frame.expiresAt) || now >= Date.parse(intent.expiresAt)
           || Date.parse(receipt.receivedAt) < Date.parse(intent.sentAt)
           || Date.parse(receipt.receivedAt) >= Date.parse(intent.expiresAt)
           || Date.parse(receipt.receivedAt) > Date.parse(frame.sentAt)) throw new Error("Controller worker recovery expired");
@@ -534,6 +540,10 @@ export class ServerNodeSession {
       assertCurrent();
       const result = await commit(frame, intent, assertCurrent);
       assertCurrent();
+      // A replacement connection has now proved the same accepted receipt as
+      // the original connection.  It may therefore use the existing
+      // receipt-bound result-return channel; this performs no send or work.
+      this.state = "controller_worker_receipted";
       return result;
     });
   }
