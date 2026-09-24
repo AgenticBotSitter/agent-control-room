@@ -183,6 +183,7 @@ const joined = (tx: DatabaseSession): DatabaseClient => ({ query: tx.query.bind(
   transactionWithPreCommitCheck: async (work, check) => { const result = await work(tx); await check(); return result; } });
 const fail = (): never => { throw new Error("task_execution_plan_unavailable"); };
 const immutableJob = (job: JobRecord) => ({ ...job, state: "proposed", version: 0, updatedAt: job.createdAt });
+const taskExecutionPlannerDatabases = new WeakMap<object, DatabaseClient>();
 export const SCHEDULE_ASSIGNMENT_SERVICE_ACTOR_V1 = "service:schedule-assignment:v1";
 export const SCHEDULED_CONTEXT_REFERENCE_BLOCK_V1 = "control-room-scheduled-context-references/v1";
 /** Execution-compatible context binding. Empty context preserves the legacy instruction bytes;
@@ -262,6 +263,7 @@ export class TaskExecutionPlanner {
       this.revisionSource = new NativeResultSubmissionService(db, { ...revisionResults, checkpoints: this.checkpoints });
     }
     if (revisionSource) this.revisionSource = revisionSource;
+    taskExecutionPlannerDatabases.set(this, db);
   }
   private readonly localAdapterAdmission?: Readonly<{ enabledAdapters: readonly LocallyAdmittedTaskAdapter[] }>;
   private canPrepare(template: NativeTaskTemplate) {
@@ -820,4 +822,19 @@ export class TaskExecutionPlanner {
     }
     return submission.register(request);
   }
+}
+
+const registeredTaskExecutionPlannerReadInSession = TaskExecutionPlanner.prototype.readInSession;
+
+/**
+ * Protected compositions may bind only the exact planner constructed over the
+ * same concrete database client. Structural copies, subclasses, own method
+ * overrides, and planners backed by another database receive no capability.
+ */
+export function bindTaskExecutionPlannerReadInSessionV1(value: unknown, expectedDatabase: DatabaseClient):
+  Pick<TaskExecutionPlanner, "readInSession"> | undefined {
+  if (!value || typeof value !== "object" || Object.getPrototypeOf(value) !== TaskExecutionPlanner.prototype
+    || Object.getOwnPropertyDescriptor(value, "readInSession") !== undefined
+    || taskExecutionPlannerDatabases.get(value) !== expectedDatabase) return undefined;
+  return Object.freeze({ readInSession: registeredTaskExecutionPlannerReadInSession.bind(value as TaskExecutionPlanner) });
 }

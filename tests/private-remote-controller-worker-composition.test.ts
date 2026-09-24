@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import { generateKeyPairSync } from "node:crypto";
 import test from "node:test";
-import type { DatabaseClient } from "../src/persistence/database";
+import { adaptPglite, type DatabaseClient } from "../src/persistence/database";
 import { ServerNodeSession } from "../src/node-control/server-node-session";
-import { FixedWindowProtocolRateLimiter, NodeProtocolAuthenticator, signNodeFrame, type SignedNodeFrame } from "../src/node-protocol/v1";
+import { FixedWindowProtocolRateLimiter, NodeProtocolAuthenticator, signNodeFrame } from "../src/node-protocol/v1";
 import { CONTROLLER_WORKER_NODE_DELIVERY_FEATURE_V1, CONTROLLER_WORKER_NODE_RECOVERY_FEATURE_V1 } from
   "../src/harness/v1/controller-worker-node-delivery";
 import { ControllerWorkerDeliveryIntakeHandlerV1 } from "../src/node-bridge/controller-worker-delivery-handler";
@@ -16,8 +16,8 @@ import { createPrivateRemoteControllerWorkerCompositionV1,
 import { CONTROLLER_WORKER_REMOTE_ADAPTER_V1, CONTROLLER_WORKER_REMOTE_CAPABILITY_V1,
   CONTROLLER_WORKER_REMOTE_JOB_TYPE_V1, CONTROLLER_WORKER_REMOTE_START_OPERATION_V1,
   createRemoteWorkerEnrollmentV1 } from "../src/harness/v1/remote-worker-delivery";
-import type { ControllerWorkerDeliveryV1 } from "../src/harness/v1/controller-worker-delivery";
 import { TaskExecutionPlanner, type NativeTaskTemplate } from "../src/web/v1/task-execution-planner";
+import { boundPrivateDatabase } from "../src/web/v1/bounded-database";
 import { TaskAssignmentCoordinator } from "../src/web/v1/task-assignment-coordinator";
 import { FleetSignalStore } from "../src/node-fleet/v1/fleet-signal-store";
 import type { FleetSignalEnvelope } from "../src/node-fleet/v1/schemas";
@@ -25,67 +25,6 @@ import { binding, instant } from "./hermes-native-fixture";
 import { at } from "./native-task-fixture";
 import { ownerReviewFixture } from "./helpers/web-owner-review";
 import { taskDraft } from "./helpers/web-task";
-
-function receipt(delivery: ControllerWorkerDeliveryV1, workerId = delivery.worker.workerId) {
-  const material = { schema: "control-room.controller-worker-delivery-receipt/v1" as const,
-    deliveryId: delivery.deliveryId, deliveryDigest: delivery.deliveryDigest, workerId,
-    route: { kind: "remote" as const, workerId }, receivedAt: at(9_000), disposition: "accepted" as const,
-    startsWork: false as const, grantsExecutionAuthority: false as const };
-  return Object.freeze({ ...material, receiptDigest: sha256Digest(material) });
-}
-
-function installedSession(enrollmentDigest: string) {
-  const keys = generateKeyPairSync("ed25519");
-  const publicKeySpki = keys.publicKey.export({ type: "spki", format: "der" }).toString("base64url");
-  const session = new ServerNodeSession({ tenantId: binding.tenantId, nodeId: binding.nodeId,
-    nodeKeyId: "node-key:remote", serverId: "server:control-room", serverKeyId: "server-key:control-room",
-    serverPublicKeySpki: publicKeySpki, transportIdentity: "transport:private",
-    features: ["controller.worker.delivery.v1", "controller.worker.delivery.recovery.v1"],
-    maxFrameBytes: 131_072, heartbeatIntervalSeconds: 30 }, {
-    authentication: {} as never, async sign(frame) { return signNodeFrame(frame, keys.privateKey); },
-    async send() {}, clock: () => instant + 8_000,
-  });
-  let active = true, sends = 0;
-  let dispatch: SignedNodeFrame<"controller.worker.delivery"> | undefined;
-  const connectionId = `connection:fixture:${Math.random().toString(36).slice(2)}`;
-  const channel = () => active ? Object.freeze({ tenantId: binding.tenantId, nodeId: binding.nodeId,
-    nodeKeyId: "node-key:remote", connectionId, maxFrameBytes: 131_072, expiresAt: at(120_000),
-    grantsExecutionAuthority: false as const, assertCurrent() { if (!active) throw new Error("stale"); } }) : undefined;
-  Object.defineProperties(session, {
-    controllerWorkerDeliveryChannel: { value: channel },
-    controllerWorkerSessionBinding: { value: channel },
-    stageControllerWorkerDelivery: { value: async (work: (sign: (body: unknown) => unknown,
-      current: ReturnType<typeof channel>) => Promise<unknown>) => work((body: unknown) => {
-        dispatch = signNodeFrame({ protocol: "control-room-node/v1", direction: "server_to_node",
-          messageId: "message:protected-remote", correlationId: "correlation:protected-remote",
-          tenantId: binding.tenantId, actorId: "server:control-room", senderKind: "control_room",
-          keyId: "server-key:control-room", connectionId, sequence: 1, sentAt: at(8_500),
-          expiresAt: (body as { delivery: ControllerWorkerDeliveryV1 }).delivery.expiresAt,
-          nonce: "protected_remote_nonce_123456789", type: "controller.worker.delivery", body: body as never }, keys.privateKey);
-        return dispatch;
-      }, channel()) },
-    sendPreparedControllerWorkerDelivery: { value: async (work: (frame: SignedNodeFrame<"controller.worker.delivery">,
-      current: { assertCurrent(): void }) => Promise<unknown>) => {
-      await work(dispatch!, { assertCurrent() { if (!active) throw new Error("stale"); } }); sends++;
-      throw new Error("fixture_reply_lost_after_send");
-    } },
-    acceptControllerWorkerDeliveryReceipt: { value: async (raw: string | Uint8Array,
-      commit: (frame: { body: { receipt: ReturnType<typeof receipt> } }, dispatchValue: unknown,
-        current: () => void) => Promise<unknown>) => {
-      const parsed = JSON.parse(String(raw));
-      return commit({ body: { receipt: parsed.receipt } }, { body: { enrollmentDigest,
-        delivery: dispatch!.body.delivery } }, () => { if (!active) throw new Error("stale"); });
-    } },
-    recoverControllerWorkerDeliveryReceipt: { value: async (raw: string | Uint8Array,
-      load: (scope: unknown) => Promise<unknown>, commit: (frame: { body: { receipt: { receipt: ReturnType<typeof receipt> } } },
-        dispatchValue: unknown, current: () => void) => Promise<unknown>) => {
-      const parsed = JSON.parse(String(raw));
-      const stored = await load(parsed.body.scope);
-      return commit(parsed, stored, () => { if (!active) throw new Error("stale"); });
-    } },
-  });
-  return { session, sends: () => sends, dispatch: () => dispatch, stale() { active = false; } };
-}
 
 async function realInstalledConnection(enrollment: ReturnType<typeof createRemoteWorkerEnrollmentV1>, clock: () => number) {
   const serverKeys = generateKeyPairSync("ed25519"), nodeKeys = generateKeyPairSync("ed25519");
@@ -147,7 +86,7 @@ async function realInstalledConnection(enrollment: ReturnType<typeof createRemot
 }
 
 async function canonical() {
-  const f = await ownerReviewFixture();
+  const f = await ownerReviewFixture(undefined, "A useful private result.", { exactRepositorySimulation: true });
   const authority: NativeTaskTemplate["authority"] = { projectId: binding.projectId,
     allowedExecutor: "executor:protected-remote", allowedOperations: [CONTROLLER_WORKER_REMOTE_START_OPERATION_V1],
     credentialRefs: ["credential:protected-remote"], filesystemRoots: [], networkPolicy: "none",
@@ -266,11 +205,12 @@ test("the protected composition accepts an ordinary real-session receipt exactly
 });
 
 test("the private composition refuses revoked, foreign and structurally fake installation targets", async t => {
-  const c = await canonical(); t.after(c.f.close);
-  const session = installedSession(sha256Digest("placeholder")).session;
+  const c = await canonical(); t.after(c.f.close); c.advance(1_500);
   const valid = createRemoteWorkerEnrollmentV1({ workerId: "worker:protected-remote",
     adapterId: CONTROLLER_WORKER_REMOTE_ADAPTER_V1, adapterRevision: "revision:7654321",
     enrollmentId: "enrollment:protected-remote", state: "enrolled", enrolledAt: at(1_000), revokedAt: null });
+  const connection = await realInstalledConnection(valid, c.now); t.after(connection.close);
+  const session = connection.session;
   const base = { db: c.f.db as DatabaseClient, planner: c.planner, integrityKey: new Uint8Array(32).fill(61),
     tenantId: binding.tenantId, nodeId: binding.nodeId, workerId: valid.workerId,
     connectorProfileDigest: c.connectorProfileDigest,
@@ -284,6 +224,27 @@ test("the private composition refuses revoked, foreign and structurally fake ins
     nodeId: "node:foreign" })), /unavailable/);
   await assert.rejects(Promise.resolve().then(() => createPrivateRemoteControllerWorkerCompositionV1({ ...base,
     session: {} as ServerNodeSession })), /unavailable/);
+  const fakeDb = Object.freeze({ ...c.f.db }) as DatabaseClient;
+  await assert.rejects(Promise.resolve().then(() => createPrivateRemoteControllerWorkerCompositionV1({ ...base,
+    db: fakeDb })), /unavailable/, "a structural database copy is not protected storage authority");
+  const structuralReceiver = {
+    async query<T>() { return { rows: [] as T[] }; },
+    async transaction<T>(work: (tx: typeof structuralReceiver) => Promise<T>) { return work(structuralReceiver); },
+  };
+  const genericAdaptedFake = adaptPglite(structuralReceiver);
+  await assert.rejects(Promise.resolve().then(() => createPrivateRemoteControllerWorkerCompositionV1({ ...base,
+    db: genericAdaptedFake })), /unavailable/,
+  "the generic PGlite adapter cannot mint protected database authority for a structural fake");
+  const genericBoundFake = boundPrivateDatabase({ async acquire() { return {
+    async query<T>() { return { rows: [] as T[] }; }, release() {},
+  }; }, async terminate() {} });
+  t.after(genericBoundFake.close);
+  await assert.rejects(Promise.resolve().then(() => createPrivateRemoteControllerWorkerCompositionV1({ ...base,
+    db: genericBoundFake.client })), /unavailable/,
+  "the generic bounded-driver factory cannot mint protected PostgreSQL authority for a structural fake");
+  const fakePlanner = Object.freeze({ readInSession: c.planner.readInSession.bind(c.planner) }) as TaskExecutionPlanner;
+  await assert.rejects(Promise.resolve().then(() => createPrivateRemoteControllerWorkerCompositionV1({ ...base,
+    planner: fakePlanner })), /unavailable/, "a structural planner copy is not canonical planning authority");
   class ForgedEnrollmentState extends PrivateRemoteControllerWorkerEnrollmentStateV1 {
     override current() { return valid; }
   }
@@ -291,4 +252,8 @@ test("the private composition refuses revoked, foreign and structurally fake ins
   forged.revoke(revoked);
   await assert.rejects(Promise.resolve().then(() => createPrivateRemoteControllerWorkerCompositionV1({ ...base,
     enrollmentState: forged })), /unavailable/, "a subclass cannot override the current revocation fence");
+  const genuineBinding = session.controllerWorkerSessionBinding.bind(session);
+  Object.defineProperty(session, "controllerWorkerSessionBinding", { configurable: true, value: genuineBinding });
+  await assert.rejects(Promise.resolve().then(() => createPrivateRemoteControllerWorkerCompositionV1(base)), /unavailable/,
+    "a real authenticated session with an own method override is not installed session authority");
 });

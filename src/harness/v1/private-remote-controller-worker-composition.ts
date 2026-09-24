@@ -1,7 +1,8 @@
 import { types } from "node:util";
-import type { DatabaseClient } from "../../persistence/database";
+import { isRepositorySimulationDatabaseClientV1, type DatabaseClient } from "../../persistence/database";
 import { ServerNodeSession } from "../../node-control/server-node-session";
-import type { TaskExecutionPlanner } from "../../web/v1/task-execution-planner";
+import { bindTaskExecutionPlannerReadInSessionV1, TaskExecutionPlanner } from "../../web/v1/task-execution-planner";
+import { isPrivatePgDatabaseClientV1 } from "../../web/v1/private-pg-database";
 import { sha256Digest } from "../../security/canonical-digest";
 import { RemoteControllerWorkerMaterializerV1,
   type RemoteControllerWorkerMaterializationReferenceV1 } from "./remote-controller-worker-materializer";
@@ -13,6 +14,25 @@ export const PRIVATE_REMOTE_CONTROLLER_WORKER_COMPOSITION_V1 =
 
 const digest = /^sha256:[a-f0-9]{64}$/;
 const unavailable = (): never => { throw new Error("private_remote_controller_worker_composition_unavailable"); };
+const sessionMethods = ["controllerWorkerDeliveryChannel", "controllerWorkerSessionBinding",
+  "stageControllerWorkerDelivery", "sendPreparedControllerWorkerDelivery",
+  "acceptControllerWorkerDeliveryReceipt", "recoverControllerWorkerDeliveryReceipt"] as const;
+const sessionChannel = ServerNodeSession.prototype.controllerWorkerDeliveryChannel;
+const sessionBinding = ServerNodeSession.prototype.controllerWorkerSessionBinding;
+const sessionStage = ServerNodeSession.prototype.stageControllerWorkerDelivery;
+const sessionSend = ServerNodeSession.prototype.sendPreparedControllerWorkerDelivery;
+const sessionAccept = ServerNodeSession.prototype.acceptControllerWorkerDeliveryReceipt;
+const sessionRecover = ServerNodeSession.prototype.recoverControllerWorkerDeliveryReceipt;
+
+function isConcreteDatabaseClient(value: unknown): value is DatabaseClient {
+  return isPrivatePgDatabaseClientV1(value) || isRepositorySimulationDatabaseClientV1(value);
+}
+
+function isExactInstalledSession(value: unknown): value is ServerNodeSession {
+  return !!value && typeof value === "object" && !types.isProxy(value)
+    && Object.getPrototypeOf(value) === ServerNodeSession.prototype
+    && sessionMethods.every(name => Object.getOwnPropertyDescriptor(value, name) === undefined);
+}
 
 type Composition = Readonly<{
   schema: typeof PRIVATE_REMOTE_CONTROLLER_WORKER_COMPOSITION_V1;
@@ -70,7 +90,7 @@ export class PrivateRemoteControllerWorkerEnrollmentStateV1 {
  */
 export function createPrivateRemoteControllerWorkerCompositionV1(value: {
   db: DatabaseClient;
-  planner: Pick<TaskExecutionPlanner, "readInSession">;
+  planner: TaskExecutionPlanner;
   integrityKey: Uint8Array;
   tenantId: string;
   nodeId: string;
@@ -83,10 +103,9 @@ export function createPrivateRemoteControllerWorkerCompositionV1(value: {
 }): Composition {
   try {
     if (!value || typeof value !== "object" || types.isProxy(value)
-      || !value.db || typeof value.db.transaction !== "function"
-      || !value.planner || typeof value.planner.readInSession !== "function"
+      || !isConcreteDatabaseClient(value.db)
       || !(value.integrityKey instanceof Uint8Array) || value.integrityKey.length !== 32
-      || !(value.session instanceof ServerNodeSession)
+      || !isExactInstalledSession(value.session)
       || !(value.enrollmentState instanceof PrivateRemoteControllerWorkerEnrollmentStateV1)
       || types.isProxy(value.enrollmentState)
       || Object.getPrototypeOf(value.enrollmentState) !== PrivateRemoteControllerWorkerEnrollmentStateV1.prototype
@@ -103,18 +122,19 @@ export function createPrivateRemoteControllerWorkerCompositionV1(value: {
       || enrollment.adapterId !== CONTROLLER_WORKER_REMOTE_ADAPTER_V1
       || !value.supportedAdapterRevisions.includes(enrollment.adapterRevision)) unavailable();
     const session = value.session;
-    const channelFor = session.controllerWorkerDeliveryChannel.bind(session);
-    const bindingFor = session.controllerWorkerSessionBinding.bind(session);
-    const stage = session.stageControllerWorkerDelivery.bind(session);
-    const send = session.sendPreparedControllerWorkerDelivery.bind(session);
-    const accept = session.acceptControllerWorkerDeliveryReceipt.bind(session);
-    const recover = session.recoverControllerWorkerDeliveryReceipt.bind(session);
+    const channelFor = sessionChannel.bind(session);
+    const bindingFor = sessionBinding.bind(session);
+    const stage = sessionStage.bind(session);
+    const send = sessionSend.bind(session);
+    const accept = sessionAccept.bind(session);
+    const recover = sessionRecover.bind(session);
     const channel = channelFor() ?? unavailable();
     channel.assertCurrent();
     if (channel.tenantId !== value.tenantId || channel.nodeId !== value.nodeId
       || channel.grantsExecutionAuthority !== false) unavailable();
 
-    const db = value.db, planner = value.planner;
+    const db = value.db;
+    const planner = bindTaskExecutionPlannerReadInSessionV1(value.planner, db) ?? unavailable();
     const integrityKey = Uint8Array.from(value.integrityKey), tenantId = value.tenantId,
       nodeId = value.nodeId, workerId = value.workerId,
       connectorProfileDigest = value.connectorProfileDigest,

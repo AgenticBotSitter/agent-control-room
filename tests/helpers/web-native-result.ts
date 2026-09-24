@@ -25,8 +25,8 @@ function runRunDigest(runId: string, tag: string, prefix: "sha256" | "hmac-sha25
   return `${prefix}:${hex}`;
 }
 
-export async function webNativeResultFixture() {
-  const f = await nativeTaskFixture(), scope = { tenantId: binding.tenantId, workspaceId: "workspace:test" };
+export async function webNativeResultFixture(options: { exactRepositorySimulation?: true } = {}) {
+  const f = await nativeTaskFixture(options), scope = { tenantId: binding.tenantId, workspaceId: "workspace:test" };
   await f.db.query("INSERT INTO workspaces(id,tenant_id,display_name) VALUES('workspace:test','tenant:test','Result fixture')");
   await new SecurityStore(f.db).bootstrapOwner({ tenantId: scope.tenantId, provider: trust.issuer, subject: "test-owner",
     identityId: "identity:test", grantId: "grant:test", displayName: "Synthetic owner", verifiedAt: at(-60_000), expiresAt: at(600_000), now: at() });

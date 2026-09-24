@@ -3,7 +3,7 @@ import { readFile, readdir } from "node:fs/promises";
 import { resolve } from "node:path";
 import { PGlite } from "@electric-sql/pglite";
 import { CanonicalStore } from "../src/persistence/canonical-store";
-import { adaptPglite } from "../src/persistence/database";
+import { adaptPglite, createRepositorySimulationDatabaseV1 } from "../src/persistence/database";
 import { DOMAIN_CONTRACT_VERSION, type JobRecord, type NodeRecord, type RequestRecord, type WorkflowRecord } from "../src/domain/v1";
 import { computeAuthorityDigest, sha256Digest } from "../src/security";
 import { HarnessRunStoreV1 } from "../src/harness/v1/store";
@@ -25,13 +25,16 @@ export function snapshot(patch: Partial<NativeSnapshot> = {}): NativeSnapshot {
 export const observation = (patch: Partial<NativeSnapshot> = {}) => nativeTaskObservation(snapshot(patch), registration.nativeTask!);
 
 export async function nativeTaskFixture(pgliteOptions: { dataDir?: string; inputDigest?: string;
-  authority?: JobRecord["authority"]; jobType?: string; requiredCapability?: string } = {}) {
-  const raw = new PGlite(pgliteOptions.dataDir);
+  authority?: JobRecord["authority"]; jobType?: string; requiredCapability?: string;
+  exactRepositorySimulation?: true } = {}) {
+  const repositorySimulation = pgliteOptions.exactRepositorySimulation
+    ? await createRepositorySimulationDatabaseV1({ testOnly: true }) : undefined;
+  const raw = repositorySimulation ?? new PGlite(pgliteOptions.dataDir);
   for (const name of (await readdir(resolve("db/migrations"))).filter(name => name.endsWith(".sql")).sort()) {
     await raw.exec(await readFile(resolve("db/migrations", name), "utf8"));
   }
   await raw.query(`INSERT INTO tenants(id,display_name) VALUES ('tenant:test','Synthetic task'),('tenant:other','Other')`);
-  const db = adaptPglite(raw), canonical = new CanonicalStore(db);
+  const db = repositorySimulation?.client ?? adaptPglite(raw as PGlite), canonical = new CanonicalStore(db);
   const common = { contractVersion: DOMAIN_CONTRACT_VERSION, tenantId: "tenant:test", version: 0, createdAt: at(-60_000), updatedAt: at(-60_000) } as const;
   const request: RequestRecord = { ...common, kind: "request", id: "request:test", projectId: binding.projectId,
     title: "Native evidence fixture", objective: "Record synthetic native observations without executing work", state: "draft", priority: 50,
