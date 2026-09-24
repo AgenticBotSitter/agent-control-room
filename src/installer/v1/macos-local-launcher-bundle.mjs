@@ -37,11 +37,14 @@ export const MACOS_LOCAL_LAUNCHER_BUNDLE_V1 =
   "control-room.macos-local-launcher-bundle/v1";
 export const MACOS_LOCAL_LAUNCHER_BUNDLE_V2 =
   "control-room.macos-local-launcher-bundle/v2";
+export const MACOS_LOCAL_LAUNCHER_BUNDLE_V3 =
+  "control-room.macos-local-launcher-bundle/v3";
 
 const MANIFEST_NAME = "MACOS_LAUNCHER_MANIFEST.json";
 const COMMAND_NAME = "Open Agent Control Room.command";
 const FIXED_FILE_COUNT = 19;
 const EXPANDED_FILE_COUNT = 31;
+const CLAUDE_BOUND_FILE_COUNT = 36;
 const MAX_FILE_BYTES = 1024 * 1024 * 1024;
 const MAX_OUTPUT_BYTES = 1024 * 1024;
 const digestPattern = /^[a-f0-9]{64}$/u;
@@ -51,12 +54,15 @@ const NATIVE_SIDECAR_DIRECTORY = "native/protected-directory";
 const JOURNAL_NATIVE_SIDECAR_DIRECTORY = "native/installation-journal";
 const CONFIGURATION_NATIVE_SIDECAR_DIRECTORY = "native/installed-configuration";
 const SERVICE_NATIVE_SIDECAR_DIRECTORY = "native/macos-service";
+const CLAUDE_PROCESS_NATIVE_SIDECAR_DIRECTORY = "native/claude-code-process";
 const SERVICE_EXECUTABLE = `${SERVICE_NATIVE_SIDECAR_DIRECTORY}/macos-service-v1`;
 const RUNTIME_FILES = Object.freeze(["local-launcher-core.mjs", "local-release-assembly.mjs", "local-release-stager.mjs",
   "local-setup-launcher-supervisor.mjs", "macos-installation-journal-native-sidecar.mjs",
   "macos-local-launcher-bundle.mjs", "macos-protected-directory-native-sidecar.mjs"]);
 const EXPANDED_RUNTIME_FILES = Object.freeze([...RUNTIME_FILES,
   "macos-installed-configuration-native-sidecar.mjs", "macos-service-native-sidecar.mjs"]);
+const CLAUDE_BOUND_RUNTIME_FILES = Object.freeze([...EXPANDED_RUNTIME_FILES,
+  "macos-claude-code-process-native-sidecar.mjs"]);
 
 // A verified launcher report is also the process-local provenance token for
 // its installed-configuration verifier.  Keeping the private path and full
@@ -70,6 +76,10 @@ async function expandedSidecarModules() {
   const [configuration, service] = await Promise.all([import("./macos-installed-configuration-native-sidecar.mjs"),
     import("./macos-service-native-sidecar.mjs")]);
   return { configuration, service };
+}
+
+async function claudeProcessSidecarModule() {
+  return import("./macos-claude-code-process-native-sidecar.mjs");
 }
 
 const refused = (reason = "macos_local_launcher_bundle_refused") => {
@@ -117,11 +127,13 @@ function parseManifest(bytes) {
   const value = JSON.parse(bytes.toString("utf8"));
   if (!value || typeof value !== "object" || Array.isArray(value)
     || Object.keys(value).sort().join(",") !== "fileCount,files,node,platform,product,schema,version"
-    || ![MACOS_LOCAL_LAUNCHER_BUNDLE_V1, MACOS_LOCAL_LAUNCHER_BUNDLE_V2].includes(value.schema)
+    || ![MACOS_LOCAL_LAUNCHER_BUNDLE_V1, MACOS_LOCAL_LAUNCHER_BUNDLE_V2,
+      MACOS_LOCAL_LAUNCHER_BUNDLE_V3].includes(value.schema)
     || value.product !== "agent-control-room"
     || value.platform !== "darwin" || value.node !== ">=22.13.0" || !versionPattern.test(value.version)
     || !Array.isArray(value.files) || value.files.length !== value.fileCount
-    || value.files.length !== (value.schema === MACOS_LOCAL_LAUNCHER_BUNDLE_V2 ? EXPANDED_FILE_COUNT : FIXED_FILE_COUNT)) refused();
+    || value.files.length !== (value.schema === MACOS_LOCAL_LAUNCHER_BUNDLE_V3 ? CLAUDE_BOUND_FILE_COUNT
+      : value.schema === MACOS_LOCAL_LAUNCHER_BUNDLE_V2 ? EXPANDED_FILE_COUNT : FIXED_FILE_COUNT)) refused();
   const paths = value.files.map(entry => {
     if (!entry || typeof entry !== "object" || Array.isArray(entry)
       || Object.keys(entry).sort().join(",") !== "bytes,mode,path,sha256"
@@ -152,7 +164,7 @@ async function listTree(root) {
         await walk(path, name);
       } else if (entry.isFile()) files.push(name);
       else refused();
-      if (files.length > EXPANDED_FILE_COUNT + 1) refused();
+      if (files.length > CLAUDE_BOUND_FILE_COUNT + 1) refused();
     }
   }
   await walk(root);
@@ -171,10 +183,12 @@ function expectedDirectories(paths) {
   return result;
 }
 
-function expectedBundleMembers(version, architecture, expanded = false) {
+function expectedBundleMembers(version, architecture, bundleLevel = 1) {
+  const expanded = bundleLevel >= 2, claudeBound = bundleLevel >= 3;
   const paths = [COMMAND_NAME, "release/SHA256SUMS", `release/agent-control-room-${version}.manifest.json`,
     `release/agent-control-room-${version}.tar.gz`,
-    ...(expanded ? EXPANDED_RUNTIME_FILES : RUNTIME_FILES).map(name => `runtime/${name}`),
+    ...(claudeBound ? CLAUDE_BOUND_RUNTIME_FILES : expanded ? EXPANDED_RUNTIME_FILES : RUNTIME_FILES)
+      .map(name => `runtime/${name}`),
     `${NATIVE_SIDECAR_DIRECTORY}/MACOS_PROTECTED_DIRECTORY_SIDECAR.json`,
     `${NATIVE_SIDECAR_DIRECTORY}/PROTECTED_DIRECTORY_MANIFEST.json`, `${NATIVE_SIDECAR_DIRECTORY}/SHA256SUMS`,
     `${NATIVE_SIDECAR_DIRECTORY}/agent-control-room-protected-directory-darwin-${architecture}.tar.gz`,
@@ -191,9 +205,16 @@ function expectedBundleMembers(version, architecture, expanded = false) {
       `${SERVICE_NATIVE_SIDECAR_DIRECTORY}/MACOS_SERVICE_NATIVE_MANIFEST.json`,
       `${SERVICE_NATIVE_SIDECAR_DIRECTORY}/MACOS_SERVICE_NATIVE_SIDECAR.json`,
       `${SERVICE_NATIVE_SIDECAR_DIRECTORY}/SHA256SUMS`, SERVICE_EXECUTABLE,
+      ...(claudeBound ? [
+        `${CLAUDE_PROCESS_NATIVE_SIDECAR_DIRECTORY}/CLAUDE_CODE_PROCESS_MANIFEST.json`,
+        `${CLAUDE_PROCESS_NATIVE_SIDECAR_DIRECTORY}/MACOS_CLAUDE_CODE_PROCESS_SIDECAR.json`,
+        `${CLAUDE_PROCESS_NATIVE_SIDECAR_DIRECTORY}/SHA256SUMS`,
+        `${CLAUDE_PROCESS_NATIVE_SIDECAR_DIRECTORY}/agent-control-room-claude-code-process-darwin-${architecture}.tar.gz`,
+      ] : []),
     ] : [])]
     .sort();
-  if (paths.length !== (expanded ? EXPANDED_FILE_COUNT : FIXED_FILE_COUNT) || new Set(paths).size !== paths.length) refused();
+  const count = claudeBound ? CLAUDE_BOUND_FILE_COUNT : expanded ? EXPANDED_FILE_COUNT : FIXED_FILE_COUNT;
+  if (paths.length !== count || new Set(paths).size !== paths.length) refused();
   return paths.map(path => Object.freeze({ path,
     mode: path === COMMAND_NAME || expanded && path === SERVICE_EXECUTABLE ? "0755" : "0644" }));
 }
@@ -206,7 +227,9 @@ export async function verifyExtractedMacosLocalLauncherBundleV1(bundleRootInput)
   const manifestStat = await regularFile(manifestPath, bundleRoot, 64 * 1024);
   if ((manifestStat.mode & 0o7777) !== 0o644) refused();
   const manifestBytes = await readFile(manifestPath), manifest = parseManifest(manifestBytes);
-  const expanded = manifest.schema === MACOS_LOCAL_LAUNCHER_BUNDLE_V2;
+  const bundleLevel = manifest.schema === MACOS_LOCAL_LAUNCHER_BUNDLE_V3 ? 3
+    : manifest.schema === MACOS_LOCAL_LAUNCHER_BUNDLE_V2 ? 2 : 1;
+  const expanded = bundleLevel >= 2, claudeBound = bundleLevel >= 3;
   const tree = await listTree(bundleRoot);
   const expectedFiles = [...manifest.files.map(entry => entry.path), MANIFEST_NAME].sort();
   const expectedDirs = expectedDirectories(expectedFiles);
@@ -239,7 +262,7 @@ export async function verifyExtractedMacosLocalLauncherBundleV1(bundleRootInput)
   } catch { refused(); }
   if (protectedDirectoryNativeSidecar.architecture !== installationJournalNativeSidecar.architecture
     || installationJournalNativeSidecar.sidecarManifestSha256 !== `sha256:${journalSidecarManifest.sha256}`) refused();
-  let installedConfigurationNativeSidecar, macosServiceNativeSidecar;
+  let installedConfigurationNativeSidecar, macosServiceNativeSidecar, claudeCodeProcessNativeSidecar;
   if (expanded) {
     try {
       const { configuration, service } = await expandedSidecarModules();
@@ -252,29 +275,46 @@ export async function verifyExtractedMacosLocalLauncherBundleV1(bundleRootInput)
       ]);
     } catch { refused(); }
   }
+  if (claudeBound) {
+    try {
+      const claude = await claudeProcessSidecarModule();
+      claudeCodeProcessNativeSidecar = await claude.verifyMacosClaudeCodeProcessNativeSidecarV1(
+        join(bundleRoot, CLAUDE_PROCESS_NATIVE_SIDECAR_DIRECTORY), {
+          releaseVersion: manifest.version, releaseSha256: `sha256:${releaseManifest.sha256}`,
+          architecture: installationJournalNativeSidecar.architecture,
+        });
+    } catch { refused(); }
+  }
   for (const [sidecar, path] of [
     [installationJournalNativeSidecar, `${JOURNAL_NATIVE_SIDECAR_DIRECTORY}/MACOS_INSTALLATION_JOURNAL_SIDECAR.json`],
     ...(expanded ? [
       [installedConfigurationNativeSidecar, `${CONFIGURATION_NATIVE_SIDECAR_DIRECTORY}/MACOS_INSTALLED_CONFIGURATION_SIDECAR.json`],
       [macosServiceNativeSidecar, `${SERVICE_NATIVE_SIDECAR_DIRECTORY}/MACOS_SERVICE_NATIVE_SIDECAR.json`],
+      ...(claudeBound ? [[claudeCodeProcessNativeSidecar,
+        `${CLAUDE_PROCESS_NATIVE_SIDECAR_DIRECTORY}/MACOS_CLAUDE_CODE_PROCESS_SIDECAR.json`]] : []),
     ] : []),
   ]) {
     const member = manifest.files.find(entry => entry.path === path);
     if (!member || sidecar.sidecarManifestSha256 !== `sha256:${member.sha256}`) refused();
   }
-  const expectedMembers = expectedBundleMembers(manifest.version, installationJournalNativeSidecar.architecture, expanded);
+  const expectedMembers = expectedBundleMembers(manifest.version, installationJournalNativeSidecar.architecture, bundleLevel);
   if (manifest.files.some((entry, index) => entry.path !== expectedMembers[index].path
     || entry.mode !== expectedMembers[index].mode)) refused();
   const report = Object.freeze({ schema: manifest.schema, verified: true, version: manifest.version, fileCount: manifest.fileCount,
     outerLauncherManifestSha256: `sha256:${sha256(manifestBytes)}`,
     releaseManifestDigest: `sha256:${releaseManifest.sha256}`, protectedDirectoryNativeSidecar,
     installationJournalNativeSidecar,
-    ...(expanded ? { installedConfigurationNativeSidecar, macosServiceNativeSidecar } : {}) });
+    ...(expanded ? { installedConfigurationNativeSidecar, macosServiceNativeSidecar } : {}),
+    ...(claudeBound ? { claudeCodeProcessNativeSidecar } : {}) });
   if (expanded) installedConfigurationVerifierCustody.set(report, Object.freeze({
     sidecarRoot: join(bundleRoot, CONFIGURATION_NATIVE_SIDECAR_DIRECTORY),
     sidecar: installedConfigurationNativeSidecar,
     releaseManifestDigest: report.releaseManifestDigest,
     version: report.version,
+    ...(claudeBound ? {
+      claudeProcessSidecarRoot: join(bundleRoot, CLAUDE_PROCESS_NATIVE_SIDECAR_DIRECTORY),
+      claudeProcessSidecar: claudeCodeProcessNativeSidecar,
+    } : {}),
   }));
   return report;
 }
@@ -436,13 +476,22 @@ export async function runMacosLocalLauncherBundleV1(input, dependencies = {}) {
         releaseVersion: verified.version, architecture, macosVersion,
       }),
     ]);
-    if (verified.schema === MACOS_LOCAL_LAUNCHER_BUNDLE_V2) {
+    if (verified.schema === MACOS_LOCAL_LAUNCHER_BUNDLE_V2
+      || verified.schema === MACOS_LOCAL_LAUNCHER_BUNDLE_V3) {
       const { configuration, service } = await expandedSidecarModules();
       await configuration.verifyMacosInstalledConfigurationNativeSidecarV1(
         join(bundleRoot, CONFIGURATION_NATIVE_SIDECAR_DIRECTORY), { releaseVersion: verified.version, architecture, macosVersion });
       await service.verifyMacosServiceNativeSidecarV1(join(bundleRoot, SERVICE_NATIVE_SIDECAR_DIRECTORY), {
         releaseVersion: verified.version, architecture, releaseSha256: verified.releaseManifestDigest,
       });
+      if (verified.schema === MACOS_LOCAL_LAUNCHER_BUNDLE_V3) {
+        const claude = await claudeProcessSidecarModule();
+        await claude.verifyMacosClaudeCodeProcessNativeSidecarV1(
+          join(bundleRoot, CLAUDE_PROCESS_NATIVE_SIDECAR_DIRECTORY), {
+            releaseVersion: verified.version, releaseSha256: verified.releaseManifestDigest,
+            architecture, macosVersion,
+          });
+      }
     }
   } catch { refused("macos_local_launcher_unsupported_platform"); }
   const home = input.homeDirectory ?? homedir();
@@ -484,7 +533,10 @@ export async function runMacosLocalLauncherBundleV1(input, dependencies = {}) {
   return Object.freeze({ ...report, outerLauncherManifestSha256: verified.outerLauncherManifestSha256,
     protectedDirectoryNativeSidecar, installationJournalNativeSidecar,
     ...(verified.schema === MACOS_LOCAL_LAUNCHER_BUNDLE_V2
-      ? { installedConfigurationNativeSidecar, macosServiceNativeSidecar } : {}) });
+      || verified.schema === MACOS_LOCAL_LAUNCHER_BUNDLE_V3
+      ? { installedConfigurationNativeSidecar, macosServiceNativeSidecar } : {}),
+    ...(verified.schema === MACOS_LOCAL_LAUNCHER_BUNDLE_V3
+      ? { claudeCodeProcessNativeSidecar: verified.claudeCodeProcessNativeSidecar } : {}) });
 }
 
 async function assertAbsent(path) {
@@ -519,17 +571,24 @@ exit "$status"
 
 /** Creates the single deterministic GitHub Release asset for the macOS source-only launcher. */
 export async function assembleMacosLocalLauncherBundleV1(input) {
-  return assembleMacosLocalLauncherBundle(input, false);
+  return assembleMacosLocalLauncherBundle(input, 1);
 }
 
 /** Copies and binds all four reviewed native sidecars without activating any. */
 export async function assembleMacosLocalLauncherBundleV2(input) {
-  return assembleMacosLocalLauncherBundle(input, true);
+  return assembleMacosLocalLauncherBundle(input, 2);
 }
 
-async function assembleMacosLocalLauncherBundle(input, expanded) {
+/** Adds the release-bound Claude process helper without installing or invoking it. */
+export async function assembleMacosLocalLauncherBundleV3(input) {
+  return assembleMacosLocalLauncherBundle(input, 3);
+}
+
+async function assembleMacosLocalLauncherBundle(input, bundleLevel) {
+  const expanded = bundleLevel >= 2, claudeBound = bundleLevel >= 3;
   const keys = ["journalNativeArtifactDirectory", "nativeArtifactDirectory", "outputDirectory", "releaseDirectory", "sourceRoot",
-    ...(expanded ? ["installedConfigurationNativeArtifactDirectory", "macosServiceNativeArtifactDirectory"] : [])];
+    ...(expanded ? ["installedConfigurationNativeArtifactDirectory", "macosServiceNativeArtifactDirectory"] : []),
+    ...(claudeBound ? ["claudeCodeProcessNativeArtifactDirectory"] : [])];
   if (!input || typeof input !== "object" || Array.isArray(input)
     || Object.keys(input).sort().join(",") !== keys.sort().join(",")) refused();
   for (const key of keys) {
@@ -544,8 +603,9 @@ async function assembleMacosLocalLauncherBundle(input, expanded) {
   // member is staged. Copying re-verifies the sources and must reproduce these
   // exact bounded identities, closing substitution and mixed-architecture gaps.
   const modules = expanded ? await expandedSidecarModules() : undefined;
+  const claude = claudeBound ? await claudeProcessSidecarModule() : undefined;
   let expectedProtectedDirectoryArtifact, expectedInstallationJournalArtifact,
-    expectedConfigurationArtifact, expectedServiceArtifact;
+    expectedConfigurationArtifact, expectedServiceArtifact, expectedClaudeProcessArtifact;
   try {
     [expectedProtectedDirectoryArtifact, expectedInstallationJournalArtifact] = await Promise.all([
       verifyProtectedDirectoryNativeArtifactV1(input.nativeArtifactDirectory),
@@ -555,8 +615,11 @@ async function assembleMacosLocalLauncherBundle(input, expanded) {
       modules.configuration.verifyInstalledConfigurationNativeArtifactV1(input.installedConfigurationNativeArtifactDirectory),
       modules.service.verifyMacosServiceNativeArtifactV1(input.macosServiceNativeArtifactDirectory),
     ]);
+    if (claudeBound) expectedClaudeProcessArtifact = await claude.verifyClaudeCodeProcessNativeArtifactV1(
+      input.claudeCodeProcessNativeArtifactDirectory);
   } catch { refused(); }
-  if ([expectedInstallationJournalArtifact, ...(expanded ? [expectedConfigurationArtifact, expectedServiceArtifact] : [])]
+  if ([expectedInstallationJournalArtifact, ...(expanded ? [expectedConfigurationArtifact, expectedServiceArtifact] : []),
+    ...(claudeBound ? [expectedClaudeProcessArtifact] : [])]
     .some(artifact => artifact.architecture !== expectedProtectedDirectoryArtifact.architecture)) refused();
   const validation = await mkdtemp(join(outputParent, ".macos-launcher-validation-"));
   try {
@@ -578,7 +641,7 @@ async function assembleMacosLocalLauncherBundle(input, expanded) {
         await copyFile(source, destination, fsConstants.COPYFILE_EXCL);
         await chmod(destination, 0o644);
       }
-      for (const name of expanded ? EXPANDED_RUNTIME_FILES : RUNTIME_FILES) {
+      for (const name of claudeBound ? CLAUDE_BOUND_RUNTIME_FILES : expanded ? EXPANDED_RUNTIME_FILES : RUNTIME_FILES) {
         const source = join(sourceRoot, "src", "installer", "v1", name);
         await regularFile(source, sourceRoot);
         const destination = join(bundleRoot, "runtime", name);
@@ -586,7 +649,7 @@ async function assembleMacosLocalLauncherBundle(input, expanded) {
         await chmod(destination, 0o644);
       }
       let protectedDirectoryNativeSidecar, installationJournalNativeSidecar,
-        installedConfigurationNativeSidecar, macosServiceNativeSidecar;
+        installedConfigurationNativeSidecar, macosServiceNativeSidecar, claudeCodeProcessNativeSidecar;
       try {
         protectedDirectoryNativeSidecar = await copyVerifiedMacosProtectedDirectoryNativeSidecarV1({
           artifactDirectory: input.nativeArtifactDirectory, destinationDirectory: join(bundleRoot, NATIVE_SIDECAR_DIRECTORY),
@@ -606,6 +669,11 @@ async function assembleMacosLocalLauncherBundle(input, expanded) {
             destinationDirectory: join(bundleRoot, SERVICE_NATIVE_SIDECAR_DIRECTORY),
             releaseVersion: staged.version, releaseSha256: staged.releaseManifestDigest,
           });
+          if (claudeBound) claudeCodeProcessNativeSidecar = await claude.copyVerifiedMacosClaudeCodeProcessNativeSidecarV1({
+            artifactDirectory: input.claudeCodeProcessNativeArtifactDirectory,
+            destinationDirectory: join(bundleRoot, CLAUDE_PROCESS_NATIVE_SIDECAR_DIRECTORY),
+            releaseVersion: staged.version, releaseSha256: staged.releaseManifestDigest,
+          });
         }
       } catch { refused(); }
       for (const [actual, expected] of [[protectedDirectoryNativeSidecar, expectedProtectedDirectoryArtifact],
@@ -616,19 +684,23 @@ async function assembleMacosLocalLauncherBundle(input, expanded) {
       }
       if (expanded) for (const key of ["architecture", "sourceSha256", "artifactManifestSha256", "executableSha256"])
         if (macosServiceNativeSidecar[key] !== expectedServiceArtifact[key]) refused();
+      if (claudeBound) for (const key of ["architecture", "sourceSha256", "archiveSha256",
+        "artifactManifestSha256", "executableSha256"])
+        if (claudeCodeProcessNativeSidecar[key] !== expectedClaudeProcessArtifact[key]) refused();
       if (protectedDirectoryNativeSidecar.architecture !== installationJournalNativeSidecar.architecture) refused();
       await writeFile(join(bundleRoot, COMMAND_NAME), commandBytes(), { flag: "wx", mode: 0o755 });
       await chmod(join(bundleRoot, COMMAND_NAME), 0o755);
       const tree = await listTree(bundleRoot);
       const expectedMembers = new Map(expectedBundleMembers(staged.version,
-        protectedDirectoryNativeSidecar.architecture, expanded).map(entry => [entry.path, entry.mode]));
+        protectedDirectoryNativeSidecar.architecture, bundleLevel).map(entry => [entry.path, entry.mode]));
       const rows = [];
       for (const path of tree.files.sort()) {
         const bytes = await readFile(join(bundleRoot, path));
         rows.push(Object.freeze({ path, bytes: bytes.byteLength, sha256: sha256(bytes),
           mode: expectedMembers.get(path) }));
       }
-      const schema = expanded ? MACOS_LOCAL_LAUNCHER_BUNDLE_V2 : MACOS_LOCAL_LAUNCHER_BUNDLE_V1;
+      const schema = claudeBound ? MACOS_LOCAL_LAUNCHER_BUNDLE_V3
+        : expanded ? MACOS_LOCAL_LAUNCHER_BUNDLE_V2 : MACOS_LOCAL_LAUNCHER_BUNDLE_V1;
       const manifest = Object.freeze({ schema, product: "agent-control-room",
         version: staged.version, platform: "darwin", node: ">=22.13.0", fileCount: rows.length,
         files: Object.freeze(rows) });
@@ -647,6 +719,7 @@ async function assembleMacosLocalLauncherBundle(input, expanded) {
         outerLauncherManifestSha256: verified.outerLauncherManifestSha256,
         protectedDirectoryNativeSidecar, installationJournalNativeSidecar,
         ...(expanded ? { installedConfigurationNativeSidecar, macosServiceNativeSidecar } : {}),
+        ...(claudeBound ? { claudeCodeProcessNativeSidecar } : {}),
         nodePrerequisite: ">=22.13.0", installsNode: false, publishes: false, signs: false });
     } finally {
       await rm(work, { recursive: true, force: true });

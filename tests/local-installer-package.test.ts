@@ -16,12 +16,14 @@ async function release(t: import("node:test").TestContext) {
   await Promise.all(paths.map(path => mkdir(join(root, path), { recursive: true })));
   const files: Record<string, string> = {
     "deploy/operator-config.mjs": "export const createConfiguration = () => ({});\n",
+    "deploy/agent-task-operator-config.mjs": "export const createConfiguration = () => ({});\n",
     "dist-vps/client/favicon.svg": "<svg/>\n",
     "dist-vps/client/vinext-client-entry-manifest.json": "{}\n",
     "dist-vps/server/index.js": "export default {};\n",
     "dist-vps/server/runtime.js": "export {};\n",
     "dist-vps/server/serving.js": "export {};\n",
     "dist-vps/server/taskApplication.js": "export {};\n",
+    "dist-vps/server/agentTaskOperator.js": "export {};\n",
     "dist-vps/server/privateLocalInstallationOperatorCli.js": fixtureOperatorCli,
     "package.json": JSON.stringify({ name: "control-room", version: "0.1.0", packageManager: "pnpm@11.19.0", engines: { node: ">=22.13.0" } }),
     "pnpm-lock.yaml": "lockfileVersion: '9.0'\n",

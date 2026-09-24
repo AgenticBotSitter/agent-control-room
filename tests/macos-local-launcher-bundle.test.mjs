@@ -12,6 +12,7 @@ import { assembleLocalReleaseV1, createDeterministicTarGzipV1 } from "../src/ins
 import {
   assembleMacosLocalLauncherBundleV1,
   assembleMacosLocalLauncherBundleV2,
+  assembleMacosLocalLauncherBundleV3,
   runBoundedMacosLauncherChildV1,
   runMacosLocalLauncherBundleV1,
   consumeMacosLocalLauncherInstalledConfigurationVerifierCustodyV1,
@@ -26,6 +27,8 @@ import { INSTALLATION_JOURNAL_NATIVE_REVIEWED_CFLAGS_V1 } from
 import { PROTECTED_DIRECTORY_NATIVE_REVIEWED_CFLAGS_V1 } from "../src/installer/v1/macos-protected-directory-native-sidecar.mjs";
 import { INSTALLED_CONFIGURATION_NATIVE_REVIEWED_CFLAGS_V1 } from "../src/installer/v1/macos-installed-configuration-native-sidecar.mjs";
 import { MACOS_SERVICE_NATIVE_REVIEWED_CFLAGS_V1 } from "../src/installer/v1/macos-service-native-sidecar.mjs";
+import { CLAUDE_CODE_PROCESS_NATIVE_REVIEWED_CFLAGS_V1 } from
+  "../src/installer/v1/macos-claude-code-process-native-sidecar.mjs";
 
 const run = promisify(execFile);
 const repository = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -33,6 +36,7 @@ const refusal = { message: "macos_local_launcher_bundle_refused" };
 const sha256 = bytes => createHash("sha256").update(bytes).digest("hex");
 let suiteRoot, releaseDirectory, nativeArtifactDirectory, journalNativeArtifactDirectory, bundleRoot, assembled;
 let installedConfigurationNativeArtifactDirectory, macosServiceNativeArtifactDirectory, expandedBundleRoot, expandedAssembled;
+let claudeCodeProcessNativeArtifactDirectory, claudeBoundBundleRoot, claudeBoundAssembled;
 
 // Deliberately inert bytes: packaging tests never compile or execute native helpers.
 async function writeExpandedNativeArtifact(directory, kind, architecture = "arm64") {
@@ -72,6 +76,37 @@ async function writeExpandedNativeArtifact(directory, kind, architecture = "arm6
 function expandedInput(outputDirectory) {
   return { sourceRoot: repository, releaseDirectory, nativeArtifactDirectory, journalNativeArtifactDirectory,
     installedConfigurationNativeArtifactDirectory, macosServiceNativeArtifactDirectory, outputDirectory };
+}
+
+function claudeBoundInput(outputDirectory) {
+  return { ...expandedInput(outputDirectory), claudeCodeProcessNativeArtifactDirectory };
+}
+
+async function writeClaudeProcessNativeArtifact(directory, architecture = "arm64") {
+  const staging = join(directory, "staging"); await mkdir(staging, { recursive: true });
+  const executable = "claude-code-process-v1";
+  const contents = new Map([["LICENSE", Buffer.from("fixture license\n")], ["NOTICE", Buffer.from("fixture notice\n")],
+    [executable, Buffer.from("inert Claude process fixture; never execute\n")]]);
+  for (const [name, bytes] of contents) await writeFile(join(staging, name), bytes,
+    { mode: name === executable ? 0o755 : 0o644 });
+  const files = [...contents].sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0)
+    .map(([path, bytes]) => ({ path, bytes: bytes.length, sha256: sha256(bytes),
+      mode: path === executable ? "0755" : "0644" }));
+  const manifest = { schema: "control-room.claude-code-process-native-artifact/v1", platform: "darwin", architecture,
+    minimumMacos: "13.0", protocol: "ACRCCP1", sourceSha256: "d".repeat(64),
+    toolchain: { compiler: "Apple clang version 16.0.0", sdkVersion: "16.0",
+      flags: [...CLAUDE_CODE_PROCESS_NATIVE_REVIEWED_CFLAGS_V1] }, files, ownerQualified: false };
+  const manifestName = "CLAUDE_CODE_PROCESS_MANIFEST.json";
+  const manifestBytes = Buffer.from(`${JSON.stringify(manifest, null, 2)}\n`);
+  await writeFile(join(staging, manifestName), manifestBytes, { mode: 0o644 });
+  const root = `agent-control-room-claude-code-process-darwin-${architecture}`;
+  const archive = await createDeterministicTarGzipV1(staging, root,
+    [...files.map(({ path, mode }) => ({ path, mode })), { path: manifestName, mode: "0644" }]);
+  await mkdir(directory, { recursive: true });
+  await writeFile(join(directory, manifestName), manifestBytes, { mode: 0o644 });
+  await writeFile(join(directory, `${root}.tar.gz`), archive, { mode: 0o644 });
+  await writeFile(join(directory, "SHA256SUMS"), `${sha256(archive)}  ${root}.tar.gz\n`, { mode: 0o644 });
+  await rm(staging, { recursive: true, force: true });
 }
 
 async function writeNativeArtifact(directory, architecture = "arm64") {
@@ -144,6 +179,12 @@ before(async () => {
   expandedAssembled = await assembleMacosLocalLauncherBundleV2(expandedInput(join(suiteRoot, "expanded-output")));
   const expandedExtraction = join(suiteRoot, "expanded-extracted"); await mkdir(expandedExtraction);
   expandedBundleRoot = await extract(join(suiteRoot, "expanded-output", expandedAssembled.archiveName), expandedExtraction);
+  claudeCodeProcessNativeArtifactDirectory = join(suiteRoot, "claude-process-artifact");
+  await writeClaudeProcessNativeArtifact(claudeCodeProcessNativeArtifactDirectory);
+  claudeBoundAssembled = await assembleMacosLocalLauncherBundleV3(
+    claudeBoundInput(join(suiteRoot, "claude-bound-output")));
+  const claudeExtraction = join(suiteRoot, "claude-bound-extracted"); await mkdir(claudeExtraction);
+  claudeBoundBundleRoot = await extract(join(suiteRoot, "claude-bound-output", claudeBoundAssembled.archiveName), claudeExtraction);
 });
 
 after(async () => {
@@ -204,6 +245,74 @@ test("expanded v2 deterministically binds four inert sidecars and both extracted
     const extractedModule = await import(pathToFileURL(join(root, "runtime/macos-local-launcher-bundle.mjs")).href);
     assert.equal((await extractedModule.verifyExtractedMacosLocalLauncherBundleV1(root)).verified, true);
   }
+});
+
+test("v3 ships one exact release-bound Claude process sidecar without installing or invoking it", async () => {
+  const second = await assembleMacosLocalLauncherBundleV3(
+    claudeBoundInput(join(suiteRoot, "claude-bound-second")));
+  assert.equal(second.archiveSha256, claudeBoundAssembled.archiveSha256);
+  assert.equal(second.schema, "control-room.macos-local-launcher-bundle/v3");
+  assert.deepEqual(second.claudeCodeProcessNativeSidecar, claudeBoundAssembled.claudeCodeProcessNativeSidecar);
+  const verified = await verifyExtractedMacosLocalLauncherBundleV1(claudeBoundBundleRoot);
+  assert.equal(second.claudeCodeProcessNativeSidecar.releaseSha256, verified.releaseManifestDigest);
+  assert.equal(second.claudeCodeProcessNativeSidecar.protocol, "ACRCCP1");
+  assert.equal(second.claudeCodeProcessNativeSidecar.architecture, "arm64");
+  assert.equal(second.claudeCodeProcessNativeSidecar.installs, false);
+  assert.equal(second.claudeCodeProcessNativeSidecar.compiles, false);
+  assert.equal(second.claudeCodeProcessNativeSidecar.downloads, false);
+  assert.equal(verified.schema, "control-room.macos-local-launcher-bundle/v3");
+  assert.equal(verified.fileCount, 36);
+  assert.deepEqual(verified.claudeCodeProcessNativeSidecar, second.claudeCodeProcessNativeSidecar);
+  const manifest = JSON.parse(await readFile(join(claudeBoundBundleRoot, "MACOS_LAUNCHER_MANIFEST.json"), "utf8"));
+  assert.deepEqual(manifest.files.filter(file => file.path.startsWith("native/claude-code-process/"))
+    .map(file => file.path), [
+    "native/claude-code-process/CLAUDE_CODE_PROCESS_MANIFEST.json",
+    "native/claude-code-process/MACOS_CLAUDE_CODE_PROCESS_SIDECAR.json",
+    "native/claude-code-process/SHA256SUMS",
+    "native/claude-code-process/agent-control-room-claude-code-process-darwin-arm64.tar.gz",
+  ]);
+  assert.deepEqual(manifest.files.filter(file => file.path.startsWith("native/claude-code-process/"))
+    .map(file => file.mode), ["0644", "0644", "0644", "0644"]);
+  const releaseCustody = consumeMacosLocalLauncherInstalledConfigurationVerifierCustodyV1(verified);
+  assert.equal(releaseCustody.claudeProcessSidecarRoot,
+    join(claudeBoundBundleRoot, "native/claude-code-process"));
+  assert.deepEqual(releaseCustody.claudeProcessSidecar, second.claudeCodeProcessNativeSidecar);
+});
+
+test("v3 refuses missing, changed, or mixed-architecture Claude helper input without publishing", async () => {
+  const changed = join(suiteRoot, "claude-process-changed");
+  await writeClaudeProcessNativeArtifact(changed);
+  await writeFile(join(changed, "agent-control-room-claude-code-process-darwin-arm64.tar.gz"), "changed\n");
+  const mixed = join(suiteRoot, "claude-process-x64"); await writeClaudeProcessNativeArtifact(mixed, "x64");
+  for (const [name, value] of [["missing", undefined], ["changed", changed], ["mixed", mixed]]) {
+    const outputDirectory = join(suiteRoot, `claude-${name}-output`);
+    const input = { ...claudeBoundInput(outputDirectory), claudeCodeProcessNativeArtifactDirectory: value };
+    if (value === undefined) delete input.claudeCodeProcessNativeArtifactDirectory;
+    await assert.rejects(assembleMacosLocalLauncherBundleV3(input), refusal);
+    await assert.rejects(access(outputDirectory), error => error?.code === "ENOENT");
+  }
+});
+
+test("v3 verifier refuses mixed release/helper bytes before any installation-root effect", async () => {
+  const destination = join(suiteRoot, "claude-bound-mutated"); await mkdir(destination);
+  const root = await extract(join(suiteRoot, "claude-bound-output", claudeBoundAssembled.archiveName), destination);
+  const path = join(root, "native/claude-code-process/MACOS_CLAUDE_CODE_PROCESS_SIDECAR.json");
+  const sidecar = JSON.parse(await readFile(path, "utf8"));
+  sidecar.releaseSha256 = `sha256:${"f".repeat(64)}`;
+  const bytes = Buffer.from(`${JSON.stringify(sidecar, null, 2)}\n`); await writeFile(path, bytes);
+  const outerPath = join(root, "MACOS_LAUNCHER_MANIFEST.json");
+  const outer = JSON.parse(await readFile(outerPath, "utf8"));
+  const entry = outer.files.find(file => file.path === "native/claude-code-process/MACOS_CLAUDE_CODE_PROCESS_SIDECAR.json");
+  entry.bytes = bytes.length; entry.sha256 = sha256(bytes);
+  await writeFile(outerPath, `${JSON.stringify(outer, null, 2)}\n`);
+  await assert.rejects(verifyExtractedMacosLocalLauncherBundleV1(root), refusal);
+  const installRoot = join(destination, "must-not-exist"); let calls = 0;
+  await assert.rejects(runMacosLocalLauncherBundleV1({ bundleRoot: root, homeDirectory: suiteRoot, installRoot }, {
+    platform: "darwin", architecture: "arm64", nodeVersion: "22.13.0", macosVersion: "13.0",
+    runner: async () => { calls += 1; },
+  }), refusal);
+  assert.equal(calls, 0);
+  await assert.rejects(access(installRoot), error => error?.code === "ENOENT");
 });
 
 test("expanded verification mints one opaque concrete configuration-verifier custody and rejects look-alikes", async () => {
@@ -468,9 +577,10 @@ test("refuses unsupported systems and old Node before writing an installation ro
   await assert.rejects(lstat(join(home, "Library")), error => error?.code === "ENOENT");
 });
 
-for (const expanded of [false, true]) test(`composes the ${expanded ? "expanded" : "legacy"} stager with one stable installation identity without effects`, async () => {
-  const launchBundleRoot = expanded ? expandedBundleRoot : bundleRoot;
-  const installRoot = join(suiteRoot, `private-install-${expanded}`), journalRoot = join(suiteRoot, `private-journal-${expanded}`);
+for (const level of [1, 2, 3]) test(`composes the ${level === 1 ? "legacy" : level === 2 ? "expanded" : "Claude-bound"} stager with one stable installation identity without effects`, async () => {
+  const expanded = level >= 2, claudeBound = level >= 3;
+  const launchBundleRoot = claudeBound ? claudeBoundBundleRoot : expanded ? expandedBundleRoot : bundleRoot;
+  const installRoot = join(suiteRoot, `private-install-${level}`), journalRoot = join(suiteRoot, `private-journal-${level}`);
   const launcherHome = join(suiteRoot, "launcher-home");
   await mkdir(installRoot, { mode: 0o700 }); await mkdir(journalRoot, { mode: 0o700 });
   const calls = [], supervisors = [];
@@ -516,13 +626,15 @@ for (const expanded of [false, true]) test(`composes the ${expanded ? "expanded"
   assert.equal(report.installationJournalNativeSidecar.executableSha256,
     assembled.installationJournalNativeSidecar.executableSha256);
   assert.equal(report.productionAcceptanceComplete, false);
-  assert.equal(report.schema, `control-room.macos-local-launcher-bundle/v${expanded ? 2 : 1}`);
+  assert.equal(report.schema, `control-room.macos-local-launcher-bundle/v${level}`);
   assert.equal(report.outerLauncherManifestSha256,
-    (expanded ? expandedAssembled : assembled).outerLauncherManifestSha256);
+    (claudeBound ? claudeBoundAssembled : expanded ? expandedAssembled : assembled).outerLauncherManifestSha256);
   if (expanded) {
     assert.deepEqual(report.installedConfigurationNativeSidecar, expandedAssembled.installedConfigurationNativeSidecar);
     assert.deepEqual(report.macosServiceNativeSidecar, expandedAssembled.macosServiceNativeSidecar);
   }
+  if (claudeBound) assert.deepEqual(report.claudeCodeProcessNativeSidecar,
+    claudeBoundAssembled.claudeCodeProcessNativeSidecar);
   assert.equal(calls.length, 3);
   assert.match(calls[0].args[0], /versions\/0\.1\.0\/scripts\/prepare-local-installation\.mjs$/u);
   assert.match(calls[1].args[0], /versions\/0\.1\.0\/scripts\/launch-local-setup\.mjs$/u);
@@ -721,4 +833,22 @@ test("assembler CLI selects expanded v2 only with both new native artifact input
   assert.equal(report.schema, "control-room.macos-local-launcher-bundle/v2");
   assert.equal(report.archiveSha256, expandedAssembled.archiveSha256);
   assert.equal(report.outerLauncherManifestSha256, expandedAssembled.outerLauncherManifestSha256);
+});
+
+test("assembler CLI selects v3 only when the complete Claude-bound input set is present", async () => {
+  const outputDirectory = join(suiteRoot, "claude-bound-cli-output");
+  const base = [join(repository, "scripts/assemble-macos-local-launcher.mjs"),
+    "--source-root", repository, "--release-directory", releaseDirectory,
+    "--native-artifact-directory", nativeArtifactDirectory,
+    "--journal-native-artifact-directory", journalNativeArtifactDirectory,
+    "--output-directory", outputDirectory];
+  const expanded = ["--installed-configuration-native-artifact-directory", installedConfigurationNativeArtifactDirectory,
+    "--macos-service-native-artifact-directory", macosServiceNativeArtifactDirectory];
+  const claude = ["--claude-code-process-native-artifact-directory", claudeCodeProcessNativeArtifactDirectory];
+  await assert.rejects(run(process.execPath, [...base, ...claude], { cwd: repository }), error => error?.code === 2);
+  const report = JSON.parse((await run(process.execPath, [...base, ...expanded, ...claude], { cwd: repository })).stdout);
+  assert.equal(report.schema, "control-room.macos-local-launcher-bundle/v3");
+  assert.equal(report.archiveSha256, claudeBoundAssembled.archiveSha256);
+  assert.equal(report.claudeCodeProcessNativeSidecar.releaseSha256,
+    (await verifyExtractedMacosLocalLauncherBundleV1(claudeBoundBundleRoot)).releaseManifestDigest);
 });
