@@ -11,6 +11,21 @@ historical evidence.
 service, a native agent run, network exposure, DNS changes, deployment, or
 destructive cleanup.
 
+## Active execution boundary
+
+**Until the local acceptance journey below is complete, only the `This
+computer` track is active.**  Work on remote enrollment, remote delivery,
+cross-computer recovery, controller relocation, and topology migration is
+deferred.  Those packages may remain as previously accepted source evidence,
+but they must not consume the active build capacity or be presented as progress
+toward a working local installation.
+
+The immediate objective is one Mac installation with its own local controller
+components, Hermes Agent and Claude Code workers, and a truthful local website.
+Codex Desktop remains the local lead/operator rather than a managed worker on
+macOS.  The `Several computers` track begins only after that local journey has
+completed its real, owner-attended acceptance evidence.
+
 ## The outcome
 
 Agent Control Room is one product with two installation choices:

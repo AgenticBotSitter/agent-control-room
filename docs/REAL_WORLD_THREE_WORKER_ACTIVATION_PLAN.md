@@ -7,6 +7,12 @@ three-worker installation is operational yet.
 authority, one scheduler, and the same task/result/review/correction lifecycle
 for Hermes Agent, Claude Code, and Codex.
 
+**Current execution order:** finish the single-Mac Hermes and Claude worker
+journey first.  The remote Codex/Linux material in this document is retained as
+future architecture only; it is not active implementation work until the local
+journey has been proved end to end.  Codex Desktop is the local lead/operator,
+not a managed macOS worker.
+
 This plan does not create a second local product. Local and remote workers use
 the same controller delivery record. A worker's location changes only the
 delivery transport.
@@ -120,6 +126,10 @@ returns it to the same website review flow.
 database, scheduler, website, and review path.
 
 ## Phase 4 — Add Codex through the supported Linux route
+
+**Deferred:** do not begin this phase until Phases 1–3 have a completed local
+acceptance journey.  It is included here so the shared product boundary is
+clear, not to authorize parallel remote implementation.
 
 1. Complete the protected resolver, receipt-intake, and node-entry composition
    for the existing recovered remote-delivery protocol. The completed recovery
