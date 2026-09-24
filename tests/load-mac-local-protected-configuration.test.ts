@@ -7,7 +7,7 @@ import { sha256Digest } from "../src/security";
 import { LOCAL_OWNER_SESSION_PROFILE_V1 } from "../src/web/v1/local-owner-session";
 import { MAC_LOCAL_PROTECTED_CONFIGURATION_V1 } from "../src/web/v1/mac-local-protected-configuration";
 import { OWNER_TRUSTED_LOCAL_ENABLEMENT_V1 } from "../src/harness/v1/owner-trusted-local-enablements";
-import { loadMacLocalProtectedConfigurationV1 } from "../scripts/mac-local/load-protected-configuration";
+import { loadMacLocalProtectedConfigurationFromRootV1, loadMacLocalProtectedConfigurationV1 } from "../scripts/mac-local/load-protected-configuration";
 
 const root = await mkdtemp(join(tmpdir(), "acr-mac-local-config-"));
 const value = { schema: MAC_LOCAL_PROTECTED_CONFIGURATION_V1, port: 3210, workspaceId: "workspace:mac-local",
@@ -24,4 +24,17 @@ test("refuses loose permissions, a symlink-shaped file, bad JSON, and relative p
   await assert.rejects(loadMacLocalProtectedConfigurationV1(await file(0o644)));
   await assert.rejects(loadMacLocalProtectedConfigurationV1(await file(0o600, "{")));
   await assert.rejects(loadMacLocalProtectedConfigurationV1("relative.json"));
+});
+
+test("the fixed loader reads only the protected config/mac-local.json location", async () => {
+  const protectedRoot = await mkdtemp(join(root, "Protected-"));
+  const config = join(protectedRoot, "config");
+  await (await import("node:fs/promises")).mkdir(config, { recursive: true, mode: 0o700 });
+  await writeFile(join(config, "mac-local.json"), JSON.stringify(value), { mode: 0o600 });
+  await chmod(join(config, "mac-local.json"), 0o600);
+  const loaded = await loadMacLocalProtectedConfigurationFromRootV1(protectedRoot);
+  assert.equal(loaded.workspaceId, "workspace:mac-local");
+  await chmod(config, 0o755);
+  await assert.rejects(loadMacLocalProtectedConfigurationFromRootV1(protectedRoot));
+  await assert.rejects(loadMacLocalProtectedConfigurationFromRootV1("relative"));
 });
