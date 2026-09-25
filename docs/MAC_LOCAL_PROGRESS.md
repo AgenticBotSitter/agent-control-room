@@ -317,3 +317,5 @@ Codex appends one short entry per work package (see `CODEX_MAC_BUILD_EXECUTION.m
   Control Room task, database operation, or service was started.
   Marvin independently reviewed the sanitized correction diff through the
   updated Hermes route and returned `VERDICT: APPROVE`.
+- 2026-09-24 — REAL W1/W6 preflight: the temporary loopback site started, local owner sign-in and the three-worker readiness view worked against the real database, but project creation was correctly refused because the installation had no first local owner record; the temporary site and tunnel were stopped, and no task was started.
+- 2026-09-24 — SOURCE W1 repair: the provisioner now prepares one fixed, idempotent local owner bootstrap using the existing tenant, workspace, identity and wildcard-owner-grant records; 10 focused checks pass, while the repository-wide type check still has unrelated pre-existing failures and this security-sensitive change awaits an independent Claude verdict before a real rerun.
