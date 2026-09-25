@@ -324,8 +324,8 @@ These replace the conflicting parts of sections 6 and 7. None of them changes
     owner's existing sign-in for that CLI.
 - Hermes needs `networkPolicy: "allowlist"` with exactly one `allowedNetworkDestinations` entry: the
   canonical HTTPS origin of the model provider endpoint that the owner's chosen Hermes profile uses.
-  - Record it in `task-runtime.json` as `hermes.destination`, validated with
-    `parseCanonicalHttpsDestination`. Add it as a required `--hermes-destination` argument to
+  - Record it in `task-runtime.json` as `hermes.destination` in canonical form, `https://<host>:<port>`
+    with an explicit port and no path, validated with `parseCanonicalHttpsDestination`. Add it as a required `--hermes-destination` argument to
     `mac:prepare-task-runtime`.
   - The file hasn't been created on the real Mac yet, so the v1 schema can still change.
   - Codex reads the origin from the non-secret base-URL field of the `cr` profile's provider

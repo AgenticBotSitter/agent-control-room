@@ -1,11 +1,12 @@
 // Creates <protected>/config/task-runtime.json once, with fresh role keys and the owner's chosen Hermes
 // run settings. An existing valid file is kept unchanged; an invalid one is refused. Prints no key.
 // Usage: pnpm mac:prepare-task-runtime -- --protected-root ABS_PATH --hermes-profile P --hermes-provider P --hermes-model M
+//          --hermes-destination https://HOST:PORT   (the provider origin the chosen Hermes profile uses)
 import { realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { createMacLocalTaskRuntimeFileV1 } from "../../src/web/v1/mac-local-task-runtime";
 
-const flags = ["--protected-root", "--hermes-profile", "--hermes-provider", "--hermes-model"] as const;
+const flags = ["--protected-root", "--hermes-profile", "--hermes-provider", "--hermes-model", "--hermes-destination"] as const;
 
 export function parsePrepareTaskRuntimeArgumentsV1(args: readonly string[]) {
   const values = args[0] === "--" ? args.slice(1) : args;
@@ -18,7 +19,7 @@ export function parsePrepareTaskRuntimeArgumentsV1(args: readonly string[]) {
   }
   if (found.size !== flags.length) throw new Error("mac_local_task_runtime_arguments_refused");
   return { protectedRoot: found.get("--protected-root")!, hermes: { profile: found.get("--hermes-profile")!,
-    provider: found.get("--hermes-provider")!, model: found.get("--hermes-model")! } };
+    provider: found.get("--hermes-provider")!, model: found.get("--hermes-model")!, destination: found.get("--hermes-destination")! } };
 }
 
 /** Compares real file paths, not a URL path: a checkout path with a space (URL-encoded as %20)
