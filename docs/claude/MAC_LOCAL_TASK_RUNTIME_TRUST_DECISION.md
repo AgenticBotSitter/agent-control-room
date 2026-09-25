@@ -343,6 +343,91 @@ These replace the conflicting parts of sections 6 and 7. None of them changes
   - an aborted signal is refused before `prepare()`;
   - a lease revoked between the two checks isn't acknowledged.
 
+## 10. First-start decisions (answers PACKAGE4_FIRST_START_DECISION_NEEDED.md, 2026-09-25)
+
+**1. Zero projects: start the website without the task host.**
+- When the tenant has no active project, `mac:up` starts the existing website-only host.
+  It does not construct the task provider. The status page and `GET /api/v1/local-workers`
+  must say, truthfully, that task workers are **not started**:
+  "create your first project, then run `mac:down && mac:up`". They must not report
+  workers as ready or operational.
+- Once at least one active project exists, `mac:up` starts the full task host (section 4's
+  restart-per-new-project limitation).
+- There is no fake or placeholder project, and no relaxation of `TaskExecutionPlanner`.
+- The project creation time comes from `control_manual_project_heads.created_at`, joined to
+  `projects`. That is approved.
+- The owner guide states the first-start sequence. `mac:up` prints the same instruction when
+  it starts website-only.
+- **Follow-up (not package 4):** remove both the restart and the ~5-project cap by resolving a
+  project's templates per request. The coordinator already constructs a planner per call.
+  Track this as its own package, with an Opus review. The owner intends years of use, so the
+  cap must not become permanent.
+
+**2. The Hermes destination is `https://opencode.ai:443`.**
+- Source (non-secret): Hermes's own provider table (`hermes_cli/auth.py`) gives `opencode-go`
+  the base URL `https://opencode.ai/zen/go/v1`. The `OPENCODE_GO_BASE_URL` override is
+  commented out in the main Hermes environment file and absent from the `cr` profile.
+  Claude read the variable's name and origin only, never a credential value.
+- Codex runs `mac:prepare-task-runtime --hermes-profile cr --hermes-provider opencode-go
+  --hermes-model space-bunny-free --hermes-destination https://opencode.ai:443`.
+- If the owner later sets `OPENCODE_GO_BASE_URL`, Hermes tasks fail closed on the allowlist
+  until the prepare step is re-run. That is acceptable. Record it in the owner guide.
+
+**3. Storage telemetry: approve a real, bounded measurement.**
+- Each telemetry refresh calls `fs.statfs` on the protected artifact directory
+  (`<protected>/runtime/artifacts`) and reports `bavail * bsize` as
+  `availableStorageBytes: { quality: "observed", value }`.
+- This is a real observation of the same volume the results are written to.
+- If `statfs` fails, report `quality: "unavailable"` with no value, so assignment refuses.
+  Never estimate or default a value.
+- It uses one syscall per refresh interval and needs no new authority or permission.
+- `evaluateFleetEligibility` and `requiredScratchBytes: 0` are unchanged.
+- Add one test proving that a failed `statfs` refuses assignment.
+
+**4a. Node fingerprint: stable across re-pins.**
+- Each worker node's `softwareFingerprint` becomes
+  `sha256Digest({ purpose: "mac-local-worker-node", nodeId, workerId, adapterId })`.
+  This is the worker's identity, not its executable version.
+- Version currency is already enforced where it matters: `adapterRevision` changes on
+  `mac:repin`, so `assertCurrent` fails in-flight deliveries (section 6).
+- A differing existing row is still refused. With the stable fingerprint, a difference now
+  means a different layout or tampering, never a routine CLI update.
+
+**4b. Unspendable key trust root: add a protected Mac-side pin.**
+- The canonical database is on the VPS. Other local processes and roles share that server,
+  so the database alone is not the whole trust root.
+- When `mac:bootstrap-owner` creates the three key rows, it also writes their public key
+  fingerprints to `<protected>/config/node-keys.json` (0600, exact keys, schema-versioned).
+- At provider start, each `control_node_keys` row for the three worker nodes must match that
+  file exactly. Refuse to start on:
+  - a missing file while the rows exist;
+  - rows missing while the file exists;
+  - any mismatch.
+- The first bootstrap creates both. Do not auto-repair either side; a mismatch is a
+  stop-and-report.
+- This detects a restored or pre-seeded *different* key. Migration 0008's immutability
+  trigger remains the in-database protection.
+
+**5. Database role isolation: accepted limitation for W7, with a fix package required.**
+- Finding confirmed: the provisioner grants the broad `control_room_application` to all four
+  local logins. `mac:check-database` proves identity and connectivity only.
+- Why this is not a W7 blocker:
+  - all four passwords live in one protected root, read by the one host;
+  - per-login separation today would contain bugs, not an attacker who holds the Mac host;
+  - the narrow roles are not all proven on real PostgreSQL
+    (`native_queue_worker_roles.sql` is marked PGlite-only and needs a dedicated queue schema).
+- Required now:
+  - `mac:check-database` output and the owner guide say "connectivity", never
+    "least privilege";
+  - `MAC_LOCAL_EVIDENCE.md` records this limitation.
+- **Package 5 (required before calling the live system least-privilege):**
+  - map `web` → `control_room_private_web`, `coordinator` → `control_room_task_coordinator`,
+    `results` → `control_room_native_results`, and `queue_worker` →
+    `control_room_native_queue_worker` once that role is proven on PG17;
+  - remove `control_room_application` from those logins;
+  - add denied-write probes to `mac:check-database`;
+  - rehearse the full journey first, then apply live as a VPS-local step, with an Opus review.
+
 ## 9. Review and done
 
 - Split the work into packages of no more than about 800 lines, in this order:
