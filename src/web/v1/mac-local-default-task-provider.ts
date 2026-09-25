@@ -58,7 +58,6 @@ export const createTaskApplication: MacLocalTaskProviderV1["createTaskApplicatio
   const tenantId = configuration.localOwnerSession.tenantId;
   const workspaceId = configuration.workspaceId;
   const runtime = await loadMacLocalTaskRuntimeFromRootV1(protectedRoot);
-  await checkMacLocalNodeKeyPinV1(input.database.client, protectedRoot, configuration);
   const rows = await input.database.client.query<{ project_id: string; created_at: string | Date }>(
     `SELECT p.id AS project_id,h.created_at FROM projects p
       JOIN control_manual_project_heads h ON h.tenant_id=p.tenant_id AND h.project_id=p.id
@@ -85,14 +84,19 @@ export const createTaskApplication: MacLocalTaskProviderV1["createTaskApplicatio
   let refreshTimer: ReturnType<typeof setInterval> | undefined;
   let refreshInFlight: Promise<void> | undefined;
   try {
+    // The node keys are readable by the coordinator login only (section 12.D);
+    // the web login correctly has no access to them.
+    await checkMacLocalNodeKeyPinV1(readPool.client, protectedRoot, configuration);
     checkpoints = await openMacLocalRollbackCheckpointStoreV1(protectedRoot);
     const keys = runtime.keys;
-    const reviewGate = new CompletionGateStoreV1(readPool.client, keys.review, checkpoints);
     // First-owner provisioning is an explicit one-time operator action. The
     // ordinary host must never initialize the review authority on startup.
     const existing = await readPool.client.query("SELECT revision FROM control_completion_gate_integrity WHERE tenant_id=$1", [tenantId]);
     if (existing.rows.length !== 1) throw new Error("mac_local_first_owner_setup_missing");
-    for (const profile of built.profiles) await reviewGate.registerProfile(profile);
+    // Only the web login may add the fixed owner-review profile (migration 0086
+    // admits exactly that shape); the coordinator's guard refuses every profile.
+    const profileGate = new CompletionGateStoreV1(input.database.client, keys.review, checkpoints);
+    for (const profile of built.profiles) await profileGate.registerProfile(profile);
     const planning = { template: built.templates[0]!, additionalTemplates: built.templates.slice(1),
       integrityKey: keys.planning, reviewIntegrityKey: keys.review, checkpoints,
       localAdapterAdmission: { enabledAdapters: [HERMES_LOCAL_ADAPTER_V1, CLAUDE_CODE_LOCAL_ADAPTER_V1,

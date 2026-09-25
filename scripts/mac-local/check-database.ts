@@ -1,4 +1,5 @@
-import { createPrivatePostgresDatabase, type PrivatePostgresConfiguration } from "../../src/web/v1/private-postgres";
+import { Client } from "pg";
+import { createPrivatePostgresDatabase, privatePostgresOptions, type PrivatePostgresConfiguration } from "../../src/web/v1/private-postgres";
 import { loadMacLocalDatabaseRolesFromRootV1 } from "./load-protected-configuration";
 import { loadMacLocalProtectedConfigurationFromRootV1 } from "../../src/web/v1/mac-local-protected-loader";
 import { macLocalOwnerIdentityIdV1 } from "../../src/web/v1/mac-local-owner-bootstrap";
@@ -13,19 +14,44 @@ type Runtime = Readonly<{
   openDatabase: (configuration: PrivatePostgresConfiguration) => OpenedDatabase;
   verify: Readonly<Record<RoleName, (db: OpenedDatabase, configuration: PrivatePostgresConfiguration,
     scope: { tenantId: string; workspaceId: string; ownerIdentityId: string; issuer: string }) => Promise<void>>>;
+  /** "denied" only when PostgreSQL itself refuses the statement for lack of
+   * privilege (SQLSTATE 42501); "allowed" when it runs; "error" otherwise. */
+  deniedWrite: (configuration: PrivatePostgresConfiguration, statement: string) => Promise<"denied" | "allowed" | "error">;
   report: (line: string) => void;
 }>;
+
+/** The private database adapter deliberately hides every driver error, so the
+ * denied-write probe uses its own short-lived plain connection with the same
+ * validated address, credentials and TLS policy, and reads only the SQLSTATE. */
+async function deniedWriteV1(configuration: PrivatePostgresConfiguration, statement: string): Promise<"denied" | "allowed" | "error"> {
+  const options = privatePostgresOptions(configuration);
+  const client = new Client({ host: options.host, port: options.port, database: options.database, user: options.username,
+    password: options.password, ssl: options.ssl === false ? false : options.ssl, connectionTimeoutMillis: 5_000,
+    statement_timeout: 5_000, query_timeout: 5_000, application_name: "control-room-mac-check" });
+  try {
+    await client.connect();
+    await client.query(statement);
+    return "allowed";
+  } catch (error) {
+    return typeof error === "object" && error !== null && (error as { code?: unknown }).code === "42501" ? "denied" : "error";
+  } finally {
+    await client.end().catch(() => {});
+  }
+}
 
 const production: Runtime = Object.freeze({
   loadRoles: loadMacLocalDatabaseRolesFromRootV1,
   loadConfiguration: loadMacLocalProtectedConfigurationFromRootV1,
   openDatabase: createPrivatePostgresDatabase,
   verify: {
-    web: (db, config, scope) => verifyPrivateDatabase(db.client, config, scope, Date.now()),
+    // Same queue option the task host passes to all three (private-task-startup.ts): the
+    // fixed queue schema exists, and web/results must hold no rights in it.
+    web: (db, config, scope) => verifyPrivateDatabase(db.client, config, scope, Date.now(), { nativeQueue: true }),
     coordinator: (db, config, scope) => verifyTaskCoordinatorDatabase(db.client, config, scope, Date.now(), { nativeQueue: true }),
-    results: (db, config, scope) => verifyNativeResultDatabase(db.client, config, scope, Date.now()),
+    results: (db, config, scope) => verifyNativeResultDatabase(db.client, config, scope, Date.now(), { nativeQueue: true }),
     queueWorker: (db, config) => verifyNativeQueueWorkerDatabase(db.client, config),
   },
+  deniedWrite: deniedWriteV1,
   report: line => process.stdout.write(`${line}\n`),
 });
 
@@ -63,12 +89,9 @@ export async function checkMacLocalDatabaseV1(protectedRoot: string, runtime: Ru
       if (identity?.role_ok !== true) throw new Error("database_check_refused");
       await database.client.query("SELECT 1");
       await runtime.verify[name](database, configuration, scope);
-      try {
-        await database.client.query(deniedProbe[name]);
-        throw new Error("database_check_unexpected_write_grant");
-      } catch (error) {
-        if (!(error instanceof Error) || !/permission denied/iu.test(error.message)) throw error;
-      }
+      const probe = await runtime.deniedWrite(configuration, deniedProbe[name]);
+      if (probe === "allowed") throw new Error("database_check_unexpected_write_grant");
+      if (probe !== "denied") throw new Error("database_check_probe_failed");
       runtime.report(`${name} least privilege: ok`);
     } catch {
       exitCode = 1;

@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "digest": "d6030cf07a69278538ca4ee2356df8d6f6b70ef540e46fcf0ce8ba0617c2ae4a",
+  "digest": "16953696abad35c6f02da570c80f268e6ed64477950957a47cf6e780834d7f86",
   "entries": [
     {
       "file": "db/migrations/0001_control_room_core.sql",
@@ -513,20 +513,26 @@
       "kind": "migrate"
     },
     {
-      "file": "db/roles/production_roles.sql",
+      "file": "db/migrations/0086_mac_local_owner_review_profile.sql",
       "order": 86,
+      "sha256": "37591ee635909898885c4b68934fd06d576c129a37e5c50e2472e57c6c9fd6fe",
+      "kind": "migrate"
+    },
+    {
+      "file": "db/roles/production_roles.sql",
+      "order": 87,
       "sha256": "21960d034062d3a86810e966748187ce2bb4aff550753a33136781d1a92c9f39",
       "kind": "grants"
     },
     {
       "file": "db/roles/production_table_grants.sql",
-      "order": 87,
+      "order": 88,
       "sha256": "be541f3041e798cfb8540cfc94b3853b978ca5d85d3f27dbeae78ba1e3ee1c83",
       "kind": "grants"
     },
     {
       "file": "db/roles/production_provision.sql",
-      "order": 88,
+      "order": 89,
       "sha256": "06b83bf15223e1e9540fc409ec7699fc2b8ad7617545a97ea06f802b70dc9887",
       "kind": "provision"
     }

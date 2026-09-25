@@ -15,9 +15,9 @@ export async function verifyPrivateIdeaAdapter(db: DatabaseClient, scope: { tena
   if (rows.length !== 1 || rows[0].valid !== true) throw new Error("private_idea_adapter_unavailable");
 }
 
-// Generated from public migrations 0001-0084, including generic external-content
+// Generated from public migrations 0001-0086, including generic external-content
 // migrations 0025/0026. Catalog query below; not a mutable database marker.
-export const privateWebSchemaDigest = "2923816c63e462829ce6c9bcbda55ea8c2fa4b84b8725260b32686dacfd671ec";
+export const privateWebSchemaDigest = "faadab42c6b8f044a17fe40b9e86d0270c26458698416fcf4cbb079e5f6da195";
 export const privateWebReadTables = ["control_identities", "control_role_grants", "workspaces", "control_web_sessions",
   "tenants", "control_idempotency",
   "control_schedules", "control_schedule_occurrences",
@@ -173,20 +173,31 @@ const sessionUpdates: Record<string, readonly string[]> = {
 
 /** Structural fingerprint, independent of OIDs, owners, ACLs and row data. PG17 is the pinned target.
  * Effective permissions are checked separately. Any migrated schema change needs a new reviewed digest.
+ * The production migration ledger (`control_room_schema_migrations`, created by
+ * deploy/postgres/apply-migrations.mjs and owned by the schema owner) is not part of the application
+ * schema: its columns, constraints and indexes are omitted, as deploy/postgres/evidence.mjs already
+ * does. Only that exact schema-owner-owned table is omitted; triggers on it still count, and a
+ * look-alike with any other owner or kind changes the digest.
  */
 export async function readPrivateWebSchemaDigest(db: DatabaseSession) {
   const result = await db.query<{ kind: string; name: string; definition: string }>(`
+    WITH ledger AS (SELECT c.oid FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+      WHERE n.nspname='public' AND c.relname='control_room_schema_migrations' AND c.relkind='r'
+        AND pg_get_userbyid(c.relowner)='control_room_schema_owner')
     SELECT * FROM (SELECT 'column' AS kind, c.relname || '.' || a.attname AS name,
       json_build_array(c.relkind,a.attnum,format_type(a.atttypid,a.atttypmod),a.attnotnull,
         pg_get_expr(d.adbin,d.adrelid),a.attidentity,a.attgenerated,c.relrowsecurity,c.relforcerowsecurity)::text AS definition
     FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace JOIN pg_attribute a ON a.attrelid=c.oid
     LEFT JOIN pg_attrdef d ON d.adrelid=c.oid AND d.adnum=a.attnum
     WHERE n.nspname='public' AND a.attnum>0 AND NOT a.attisdropped AND c.relkind IN ('r','p','v','m','S','f')
+      AND c.oid IS DISTINCT FROM (SELECT oid FROM ledger)
     UNION ALL SELECT 'constraint', c.relname || '.' || x.conname,
       json_build_array(pg_get_constraintdef(x.oid),x.convalidated)::text
     FROM pg_constraint x JOIN pg_class c ON c.oid=x.conrelid JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public'
+      AND c.oid IS DISTINCT FROM (SELECT oid FROM ledger)
     UNION ALL SELECT 'index', c.relname, pg_get_indexdef(c.oid)
     FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relkind='i'
+      AND NOT EXISTS (SELECT 1 FROM pg_index i WHERE i.indexrelid=c.oid AND i.indrelid=(SELECT oid FROM ledger))
     UNION ALL SELECT 'trigger', c.relname || '.' || t.tgname,
       json_build_array(pg_get_triggerdef(t.oid),t.tgenabled)::text
     FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid JOIN pg_namespace n ON n.oid=c.relnamespace

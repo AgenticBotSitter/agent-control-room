@@ -377,6 +377,20 @@ exit "$status"`;
   });
 }
 
+/** The protected `mac-local.json` record the provisioner writes. Pure: it
+ * validates the record exactly as the loader will read it back, and stores the
+ * plain enablement material. The enablement digest is derived on every load,
+ * never stored. */
+export function captureProvisionedMacLocalConfigurationV1({ database, ownerCode, workers }) {
+  const enablementMaterial = Object.freeze({ schema: OWNER_TRUSTED_LOCAL_ENABLEMENT_V1, mode: "mac-local", nodeId: "mac-1", workers });
+  const macLocal = { schema: MAC_LOCAL_PROTECTED_CONFIGURATION_V1, port: 3210, workspaceId: "workspace:mac-local",
+    localOwnerSession: { schema: LOCAL_OWNER_SESSION_PROFILE_V1, origin: "http://127.0.0.1:3210", tenantId: "tenant:mac-local",
+      provider: "local-owner", subject: "owner:local", ownerCodeDigest: sha256Digest({ ownerCode }), sessionSeconds: 28_800 },
+    database, enablement: enablementMaterial };
+  captureMacLocalProtectedConfigurationV1(JSON.parse(JSON.stringify(macLocal)));
+  return macLocal;
+}
+
 export async function provisionMacLocalDatabaseV1(options) {
   if (options.repointOnly) return repointOnly(options);
   const protectedRoot = requireAbsolute(options.protectedRoot, "provision_protected_root_required");
@@ -417,13 +431,7 @@ export async function provisionMacLocalDatabaseV1(options) {
   const roles = captureMacLocalDatabaseRolesV1({ schema: MAC_LOCAL_DATABASE_ROLES_V1, web: role(roleNames.web), coordinator: role(roleNames.coordinator),
     results: role(roleNames.results), queueWorker: role(roleNames.queueWorker) });
   const ownerCode = await privateText(join(configRoot, "owner-sign-in.txt"), newPassword);
-  const enablementMaterial = Object.freeze({ schema: OWNER_TRUSTED_LOCAL_ENABLEMENT_V1, mode: "mac-local", nodeId: "mac-1", workers });
-  // Store the plain record the loader accepts; the enablement digest is derived on every load, never stored.
-  const macLocal = { schema: MAC_LOCAL_PROTECTED_CONFIGURATION_V1, port: 3210, workspaceId: "workspace:mac-local",
-    localOwnerSession: { schema: LOCAL_OWNER_SESSION_PROFILE_V1, origin: "http://127.0.0.1:3210", tenantId: "tenant:mac-local",
-      provider: "local-owner", subject: "owner:local", ownerCodeDigest: sha256Digest({ ownerCode }), sessionSeconds: 28_800 },
-    database, enablement: enablementMaterial };
-  captureMacLocalProtectedConfigurationV1(JSON.parse(JSON.stringify(macLocal)));
+  const macLocal = captureProvisionedMacLocalConfigurationV1({ database, ownerCode, workers });
   if (!options.dryRun) {
     await writePrivate(join(configRoot, "database-roles.json"), `${JSON.stringify(roles)}\n`);
     await writePrivate(join(configRoot, "mac-local.json"), `${JSON.stringify(macLocal)}\n`);

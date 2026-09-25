@@ -23,6 +23,7 @@ async function fixture() {
 
 function runtime(lines: string[], options: { roleOk?: boolean; fail?: boolean } = {}) {
   return {
+    deniedWrite: async () => "denied" as const,
     loadRoles: async () => roles,
     loadConfiguration: async () => ({ localOwnerSession: { tenantId: "tenant:mac-local", provider: "local-owner" },
       workspaceId: "workspace:mac-local" }),
@@ -32,7 +33,6 @@ function runtime(lines: string[], options: { roleOk?: boolean; fail?: boolean } 
       client: { query: async (sql: string) => {
         if (options.fail) throw new Error("private detail");
         if (sql.includes("current_user")) return { rows: [{ role_ok: options.roleOk ?? true }] };
-        if (sql.includes("WHERE false")) throw new Error("permission denied for table");
         return { rows: [] };
       } }, close: async () => {}, isAvailable: () => true,
     }),
@@ -62,7 +62,6 @@ test("continues checking other roles after one read-only connection refusal", as
       client: { query: async (sql: string) => {
         if (configuration.username === "control_room_results") throw new Error("private detail");
         if (sql.includes("current_user")) return { rows: [{ role_ok: true }] };
-        if (sql.includes("WHERE false")) throw new Error("permission denied for table");
         return { rows: [] };
       } }, close: async () => {}, isAvailable: () => true,
     } as never;
@@ -88,20 +87,25 @@ test("the protected role file remains loadable only with owner-only permissions"
 
 test("refuses a newly allowed forbidden write even when the privilege checker is mocked green", async () => {
   const lines: string[] = [];
-  const value = runtime(lines);
-  value.openDatabase = () => ({ client: { query: async (sql: string) =>
-    ({ rows: sql.includes("current_user") ? [{ role_ok: true }] : [] }) }, close: async () => {} }) as never;
+  const value = { ...runtime(lines), deniedWrite: async () => "allowed" as const };
   assert.equal(await checkMacLocalDatabaseV1("/protected", value), 1);
   assert.deepEqual(lines, ["web", "coordinator", "results", "queueWorker"].map(name => `${name} database_check_refused`));
 });
 
-test("refuses a non-permission database failure during a denied-write probe", async () => {
+test("each role's probe is a write outside its grants, sent with that role's own connection", async () => {
+  const lines: string[] = [], probes: string[] = [];
+  const value = { ...runtime(lines), deniedWrite: async (configuration: typeof roles.web, statement: string) => {
+    probes.push(`${configuration.username}: ${statement}`); return "denied" as const; } };
+  assert.equal(await checkMacLocalDatabaseV1("/protected", value), 0);
+  assert.deepEqual(probes, [
+    "control_room_web: DELETE FROM tenants WHERE false",
+    "control_room_coordinator: UPDATE control_jobs SET result_lock=result_lock WHERE false",
+    "control_room_results: UPDATE control_jobs SET state=state WHERE false",
+    "control_room_queue_worker: UPDATE control_room_queue.queue SET name=name WHERE false"]);
+});
+
+test("refuses when the denied-write probe cannot reach a verdict", async () => {
   const lines: string[] = [];
-  const value = runtime(lines);
-  value.openDatabase = () => ({ client: { query: async (sql: string) => {
-    if (sql.includes("current_user")) return { rows: [{ role_ok: true }] };
-    if (sql.includes("WHERE false")) throw new Error("connection reset");
-    return { rows: [] };
-  } }, close: async () => {} }) as never;
-  assert.equal(await checkMacLocalDatabaseV1("/protected", value), 1);
+  assert.equal(await checkMacLocalDatabaseV1("/protected", { ...runtime(lines), deniedWrite: async () => "error" as const }), 1);
+  assert.deepEqual(lines, ["web", "coordinator", "results", "queueWorker"].map(name => `${name} database_check_refused`));
 });
