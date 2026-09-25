@@ -5,30 +5,37 @@ import { CODEX_OWNER_TRUSTED_LOCAL_ADAPTER_V1 } from "../../harness/codex-v1/own
 import { HERMES_LOCAL_ADAPTER_V1 } from "../../harness/hermes-local-v1/task-planning-contract";
 import { CLAUDE_CODE_LOCAL_ADAPTER_V1 } from "../../harness/claude-code-v1/task-planning-contract";
 import { DOMAIN_CONTRACT_VERSION, nodeRecordSchema } from "../../domain/v1";
+import { generateKeyPairSync } from "node:crypto";
+import { publicKeyFingerprint } from "../../node-protocol/v1";
 
 export const macLocalOwnerIdentityIdV1 = (tenantId: string) => `identity:${tenantId}:owner`;
 export const macLocalOwnerGrantIdV1 = (tenantId: string) => `grant:${tenantId}:owner`;
 
-/** The owner's local queue needs a node for fleet readiness, but never a remote
- * enrollment key. A conflicting node is evidence of drift, not something to repair. */
+/** Each local worker has its own assignment route. Its public identity key is
+ * recorded so the coordinator can assign, but the private half is never exported
+ * or retained. No remote party can therefore authenticate as this local worker. */
 export async function seedMacLocalNodeV1(db: DatabaseClient, configuration: MacLocalProtectedConfigurationV1,
   clock: () => number = Date.now): Promise<"created" | "already_present"> {
   const tenantId = configuration.localOwnerSession.tenantId;
-  const nodeId = configuration.enablement.nodeId;
-  const staticFields = {
-    contractVersion: DOMAIN_CONTRACT_VERSION, kind: "node" as const, id: nodeId, tenantId,
-    displayName: "Mac local", state: "active" as const, version: 1,
-    platform: "macos" as const, architecture: "local", identityKeyId: `local-owner:${nodeId}`,
-    hardwareFingerprint: sha256Digest({ purpose: "mac-local-node", nodeId }),
-    softwareFingerprint: configuration.enablement.enablementDigest,
-    policyVersion: "mac-local/v1", minimumProtocolVersion: "local-only",
-  };
+  const workers = ["hermes", "claude", "codex"] as const;
   return db.transaction(async tx => {
+    let created = false;
+    for (const worker of workers) {
+    const nodeId = `${configuration.enablement.nodeId}.${worker}`;
+    const staticFields = {
+      contractVersion: DOMAIN_CONTRACT_VERSION, kind: "node" as const, id: nodeId, tenantId,
+      displayName: `Mac local ${worker}`, state: "active" as const, version: 1,
+      platform: "macos" as const, architecture: "local", identityKeyId: `local-owner:${nodeId}`,
+      hardwareFingerprint: sha256Digest({ purpose: "mac-local-node", nodeId }),
+      softwareFingerprint: configuration.enablement.enablementDigest,
+      policyVersion: "mac-local/v1", minimumProtocolVersion: "local-only",
+    };
     const existing = (await tx.query<{ tenant_id: string; state: string; version: number;
       identity_key_id: string; payload: unknown; created_at: Date | string; updated_at: Date | string }>(
       "SELECT tenant_id,state,version,identity_key_id,payload,created_at,updated_at FROM control_nodes WHERE id=$1 FOR UPDATE", [nodeId])).rows[0];
-    const keys = (await tx.query<{ id: string }>("SELECT id FROM control_node_keys WHERE node_id=$1", [nodeId])).rows;
-    if (keys.length) throw new Error("mac_local_node_conflict");
+    const keys = (await tx.query<{ id: string; tenant_id: string; algorithm: string; state: string; valid_until: unknown;
+      public_key_spki: string; fingerprint: string }>(
+      "SELECT id,tenant_id,algorithm,state,valid_until,public_key_spki,fingerprint FROM control_node_keys WHERE node_id=$1", [nodeId])).rows;
     if (existing) {
       const payload = nodeRecordSchema.safeParse(existing.payload);
       const expected = { ...staticFields, enrolledAt: payload.success ? payload.data.enrolledAt : undefined,
@@ -38,15 +45,27 @@ export async function seedMacLocalNodeV1(db: DatabaseClient, configuration: MacL
         || existing.identity_key_id !== staticFields.identityKeyId
         || sha256Digest(payload.data) !== sha256Digest(expected)
         || new Date(existing.created_at).toISOString() !== payload.data.createdAt
-        || new Date(existing.updated_at).toISOString() !== payload.data.updatedAt)
+        || new Date(existing.updated_at).toISOString() !== payload.data.updatedAt
+        || keys.length !== 1 || keys[0]?.id !== staticFields.identityKeyId || keys[0]?.tenant_id !== tenantId
+        || keys[0]?.algorithm !== "ed25519" || keys[0]?.state !== "active" || keys[0]?.valid_until !== null
+        || publicKeyFingerprint(keys[0]?.public_key_spki ?? "") !== keys[0]?.fingerprint)
         throw new Error("mac_local_node_conflict");
-      return "already_present";
+      continue;
     }
+    if (keys.length) throw new Error("mac_local_node_conflict");
     const now = new Date(clock()).toISOString();
     const node = nodeRecordSchema.parse({ ...staticFields, enrolledAt: now, createdAt: now, updatedAt: now });
+    const pair = generateKeyPairSync("ed25519");
+    const publicSpki = pair.publicKey.export({ format: "der", type: "spki" }).toString("base64url");
+    // Deliberately never export, return, persist or log pair.privateKey.
     await tx.query(`INSERT INTO control_nodes(id,tenant_id,state,version,identity_key_id,payload,created_at,updated_at)
       VALUES($1,$2,'active',1,$3,$4::jsonb,$5,$5)`, [nodeId, tenantId, node.identityKeyId, JSON.stringify(node), now]);
-    return "created";
+    await tx.query(`INSERT INTO control_node_keys(id,tenant_id,node_id,algorithm,public_key_spki,fingerprint,state,valid_from,created_at)
+      VALUES($1,$2,$3,'ed25519',$4,$5,'active',$6,$6)`,
+    [node.identityKeyId, tenantId, nodeId, publicSpki, publicKeyFingerprint(publicSpki), now]);
+    created = true;
+    }
+    return created ? "created" : "already_present";
   });
 }
 

@@ -4,6 +4,7 @@ import { claudeCodeLocalQueueTargetToDispatchReferenceV1 } from "./claude-code-l
 import type { ClaudeCodeLocalQueueDeliveryTarget } from "./task-assignment-coordinator";
 
 const unavailable = (): never => { throw new Error("claude_owner_trusted_local_executor_unavailable"); };
+const unresolved = (): never => { throw new Error("claude_owner_trusted_local_queue_delivery_unresolved"); };
 
 /** The Mac-local Claude route uses the same one-shot CLI bridge as the other
  * local agents. The VPS installed-process route has a different authority
@@ -27,7 +28,8 @@ export function createClaudeOwnerTrustedLocalQueueExecutorV1(input: Readonly<{
     const receivedAt = new Date(clock()).toISOString();
     if (!z.string().datetime().safeParse(receivedAt).success) unavailable();
     const outcome = await input.delivery.deliver(prepared.delivery, prepared.route, receivedAt, signal);
-    if (!outcome || outcome.state !== "published" || signal.aborted) unavailable();
+    if (!outcome || outcome.state !== "published" || signal.aborted) unresolved();
+    await input.preparation.assertCurrent(reference, prepared);
     return Object.freeze({ disposition: "delivered" as const });
   } });
 }

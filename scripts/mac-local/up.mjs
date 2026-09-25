@@ -20,7 +20,7 @@ export function providerFileBody(modulePath) {
 }
 
 export function missingTaskRuntimeInstruction(root) {
-  return `task settings missing: run pnpm mac:prepare-task-runtime -- --protected-root ${JSON.stringify(root)} --hermes-profile cr --hermes-provider opencode-go --hermes-model space-bunny-free`;
+  return `task settings missing: run pnpm mac:prepare-task-runtime -- --protected-root ${JSON.stringify(root)} --hermes-profile cr --hermes-provider opencode-go --hermes-model space-bunny-free --hermes-destination <approved-https-origin>`;
 }
 
 const log = line => console.log(`mac:up ${line}`);

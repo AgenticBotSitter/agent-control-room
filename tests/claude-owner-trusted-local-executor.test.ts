@@ -19,7 +19,7 @@ test("Mac-local Claude queue delivery rechecks authority and requires published 
     delivery: { async deliver() { events.push("deliver"); return { state: "published" }; } },
   });
   assert.deepEqual(await executor.deliver(target, new AbortController().signal), { disposition: "delivered" });
-  assert.deepEqual(events, ["prepare", "current", "deliver"]);
+  assert.deepEqual(events, ["prepare", "current", "deliver", "current"]);
 
   const refused = createClaudeOwnerTrustedLocalQueueExecutorV1({ tenantId,
     preparation: { async prepare() { return prepared as never; }, async assertCurrent() { throw new Error("revoked"); } },
@@ -31,5 +31,28 @@ test("Mac-local Claude queue delivery rechecks authority and requires published 
     preparation: { async prepare() { return prepared as never; }, async assertCurrent() {} },
     delivery: { async deliver() { return { state: "failed" }; } },
   });
-  await assert.rejects(unresolved.deliver(target, new AbortController().signal), /unavailable/);
+  await assert.rejects(unresolved.deliver(target, new AbortController().signal), /queue_delivery_unresolved/);
+});
+
+test("Mac-local Claude refuses an already-aborted signal before preparation", async () => {
+  let preparedCount = 0;
+  const executor = createClaudeOwnerTrustedLocalQueueExecutorV1({ tenantId,
+    preparation: { async prepare() { preparedCount++; return prepared as never; }, async assertCurrent() {} },
+    delivery: { async deliver() { return { state: "published" }; } },
+  });
+  const controller = new AbortController(); controller.abort();
+  await assert.rejects(executor.deliver(target, controller.signal), /executor_unavailable/);
+  assert.equal(preparedCount, 0);
+});
+
+test("Mac-local Claude does not acknowledge a lease revoked during delivery", async () => {
+  let checks = 0;
+  const executor = createClaudeOwnerTrustedLocalQueueExecutorV1({ tenantId,
+    preparation: { async prepare() { return prepared as never; }, async assertCurrent() {
+      if (++checks === 2) throw new Error("lease_revoked");
+    } },
+    delivery: { async deliver() { return { state: "published" }; } },
+  });
+  await assert.rejects(executor.deliver(target, new AbortController().signal), /lease_revoked/);
+  assert.equal(checks, 2);
 });

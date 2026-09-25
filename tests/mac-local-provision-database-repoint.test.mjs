@@ -106,5 +106,5 @@ test("mac:up and mac:down runtime state no longer includes a local database tunn
 
 test("mac:up reports the exact one-time Hermes settings command without embedding secrets", () => {
   assert.equal(missingTaskRuntimeInstruction("/private/Control Room"),
-    'task settings missing: run pnpm mac:prepare-task-runtime -- --protected-root "/private/Control Room" --hermes-profile cr --hermes-provider opencode-go --hermes-model space-bunny-free');
+    'task settings missing: run pnpm mac:prepare-task-runtime -- --protected-root "/private/Control Room" --hermes-profile cr --hermes-provider opencode-go --hermes-model space-bunny-free --hermes-destination <approved-https-origin>');
 });
