@@ -1,5 +1,6 @@
-// Starts the Mac-local stack in the fixed order: repin, tunnel, database check, owner bootstrap,
-// task provider, task host. Repeat-safe: a running stack is left alone.
+// Starts the Mac-local stack in the fixed order: repin, database check, owner bootstrap,
+// task provider, task host. The database connection is direct over the protected Tailscale route.
+// Repeat-safe: a running stack is left alone.
 // Usage: pnpm mac:up -- --protected-root ABS_PATH   (or CONTROL_ROOM_PROTECTED_ROOT)
 import { spawn } from "node:child_process";
 import { closeSync, constants, existsSync, fstatSync, openSync } from "node:fs";
@@ -7,8 +8,7 @@ import { mkdir, readFile, rename, writeFile, chmod } from "node:fs/promises";
 import { connect } from "node:net";
 import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { alive, hostCommand, protectedRootFromArguments, readPid, readTunnel, repoRoot, runtimePaths, stopRecorded,
-  tunnelCommand } from "./stack.mjs";
+import { alive, hostCommand, protectedRootFromArguments, readPid, repoRoot, runtimePaths, stopRecorded } from "./stack.mjs";
 
 const PROVIDER_MODULE = "dist-vps/server/macLocalDefaultTaskProvider.js";
 
@@ -99,45 +99,25 @@ async function main() {
   await chmod(paths.runtime, 0o700);
   if (!existsSync(join(repoRoot, "dist-vps/server/macLocalHost.js"))) fail("release build missing: run pnpm build first");
 
-  log("1/6 repin");
+  log("1/5 repin");
   const repin = await run(["--import", "tsx", "scripts/mac-local/repin-workers.mjs", "--protected-root", root]);
   if (repin === 1) log("repin blocked for a worker: it will show unavailable");
   else if (repin !== 0) fail(`repin exit ${repin}: protected configuration is unsafe`);
 
-  log("2/6 tunnel");
-  let tunnel;
-  try { tunnel = await readTunnel(root); }
-  catch { fail("tunnel.json must be private (0600) and valid, with the database on 127.0.0.1 at its localPort"); }
-  if (!tunnel) log("no tunnel.json: database is reached directly (rehearsal)");
-  else if (await portOpen(tunnel.localPort)) {
-    // Reuse only the tunnel this stack started for these exact settings; never an unknown listener.
-    const recorded = await readPid(paths.tunnelPid);
-    if (!recorded || !alive(recorded, tunnelCommand(tunnel)))
-      fail(`port ${tunnel.localPort} is held by a process mac:up did not start for this tunnel.json: stop it, `
-        + "or remove tunnel.json to use an externally managed tunnel");
-    log(`tunnel already up (pid ${recorded})`);
-  } else {
-    // A previous tunnel that never opened its forward is stopped before a new one starts.
-    await stopRecorded(paths.tunnelPid, tunnelCommand(tunnel), 5);
-    const pid = await startAndWait(tunnelCommand(tunnel), paths.tunnelLog, paths.tunnelPid,
-      () => portOpen(tunnel.localPort), 20, "tunnel");
-    log(`tunnel up (pid ${pid})`);
-  }
-
-  log("3/6 database");
+  log("2/5 database");
   if (await run(["--import", "tsx", "scripts/mac-local/check-database.ts", root]) !== 0) fail("database check failed");
 
-  log("4/6 owner");
+  log("3/5 owner");
   if (await run(["--import", "tsx", "scripts/mac-local/bootstrap-owner.ts", root]) !== 0) fail("owner bootstrap failed");
 
-  log("5/6 task provider");
+  log("4/5 task provider");
   const module = join(repoRoot, PROVIDER_MODULE);
   if (!existsSync(module)) fail(`${PROVIDER_MODULE} missing: run pnpm build`);
   const body = providerFileBody(module);
   const current = existsSync(paths.provider) ? await readFile(paths.provider, "utf8") : undefined;
   if (current !== body) { await writePrivate(paths.provider, body); log("task provider written"); }
 
-  log("6/6 task host");
+  log("5/5 task host");
   await stopRecorded(paths.hostPid, hostCommand(root), 45);
   const pid = await startAndWait(hostCommand(root), paths.hostLog, paths.hostPid, () => portOpen(mac.port), 90, "task host");
   log(`running: http://127.0.0.1:${mac.port} (pid ${pid})`);

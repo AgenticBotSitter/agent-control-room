@@ -6,13 +6,15 @@
  * PostgreSQL logins, applies the immutable migration ledger, and records the
  * Mac's private configuration beneath the owner-only Protected directory.
  *
- * Secrets travel to the VPS over SSH standard input and are never printed or
- * placed in command arguments. Re-runs reuse the protected password files,
- * so a retry converges rather than silently changing installed credentials.
+ * The initial provision path sends secrets to the VPS over SSH standard input
+ * and never prints or places them in command arguments. The repoint-only path
+ * reads the local Tailscale route and changes no password or remote state.
+ * Re-runs reuse protected password files, so provisioning converges.
  */
 import { randomBytes } from "node:crypto";
 import { chmod, lstat, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { isAbsolute, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
 import { promisify } from "node:util";
 import { execFile } from "node:child_process";
@@ -23,7 +25,9 @@ import { captureMacLocalDatabaseRolesV1, MAC_LOCAL_DATABASE_ROLES_V1 } from "../
 import { LOCAL_OWNER_SESSION_PROFILE_V1 } from "../../src/web/v1/local-owner-session";
 import { OWNER_TRUSTED_LOCAL_ENABLEMENT_V1 } from "../../src/harness/v1/owner-trusted-local-enablements";
 import { pinnedVersionLine } from "./executable-version.mjs";
-import { capturePrivatePostgresEndpointPolicyV2, privatePostgresEndpointFingerprintV1 } from "../../src/web/v1/private-postgres-endpoint";
+import { capturePrivatePostgresEndpointPolicyV2, isSupportedPrivatePostgresHostV1,
+  privatePostgresEndpointFingerprintV1, PRIVATE_POSTGRES_ENDPOINT_V2 } from "../../src/web/v1/private-postgres-endpoint";
+import { validatePrivatePostgresConfiguration } from "../../src/web/v1/private-postgres";
 
 const exec = promisify(execFile);
 const roleNames = Object.freeze({ web: "control_room_web", coordinator: "control_room_coordinator",
@@ -33,6 +37,7 @@ const bootstrapRoles = Object.freeze({ migrator: "control_room_migrator", applic
 const passwordPattern = /^[A-Za-z0-9_-]{32,}$/u;
 const privateMode = 0o700;
 const privateFileMode = 0o600;
+const repoRoot = fileURLToPath(new URL("../../", import.meta.url));
 // A database provision is intentionally bounded. SSH itself has a connection
 // deadline below; this covers a connected remote command that stalls while
 // fetching, preparing dependencies, or applying the ledger. The VPS command
@@ -41,7 +46,8 @@ const privateFileMode = 0o600;
 const remoteProvisionTimeoutMs = 5 * 60_000;
 
 function usage() {
-  return "Usage: pnpm mac:provision-database --protected-root ABSOLUTE_PATH --ssh-target USER@HOST --database-host HOST [--database-port 5432] [--endpoint-policy-file ABSOLUTE_PATH] [--remote-worktree ABSOLUTE_PATH] [--vps-only] [--dry-run]";
+  return "Usage: pnpm mac:provision-database --protected-root ABSOLUTE_PATH --ssh-target USER@HOST --database-host HOST [--database-port 5432] [--endpoint-policy-file ABSOLUTE_PATH] [--remote-worktree ABSOLUTE_PATH] [--vps-only] [--dry-run]\n"
+    + "   or: pnpm mac:provision-database --repoint-only --protected-root ABSOLUTE_PATH";
 }
 
 function argument(args, name, fallback) {
@@ -89,6 +95,107 @@ async function writePrivate(path, content) {
   } finally {
     try { await unlink(temporary); } catch {}
   }
+}
+
+async function readProtectedJson(path) {
+  const entry = await lstat(path);
+  if (!entry.isFile() || entry.isSymbolicLink() || (entry.mode & 0o077) !== 0) throw new Error("provision_protected_file_refused");
+  return JSON.parse(await readFile(path, "utf8"));
+}
+
+export function macLocalRouteFromTailscaleStatusV1(status, evidenceText) {
+  const selfTags = status?.Self?.Tags;
+  if (!Array.isArray(selfTags) || !selfTags.includes("tag:general") || !selfTags.includes("tag:control-room-client"))
+    throw new Error("provision_mac_client_tag_missing");
+  const peers = Object.values(status?.Peer ?? {}).filter(peer => Array.isArray(peer?.Tags)
+    && peer.Tags.includes("tag:control-room-vps"));
+  if (peers.length !== 1 || peers[0]?.Online !== true) throw new Error("provision_vps_peer_refused");
+  const peer = peers[0];
+  const host = (peer.TailscaleIPs ?? []).find(value => isSupportedPrivatePostgresHostV1(value) && value !== "127.0.0.1");
+  const serverName = typeof peer.DNSName === "string" ? peer.DNSName.replace(/\.$/u, "") : "";
+  if (!host || !serverName) throw new Error("provision_vps_peer_refused");
+  const start = evidenceText.indexOf("## VPS evidence");
+  const end = evidenceText.indexOf("## Live acceptance", start + 1);
+  if (start < 0 || end <= start) throw new Error("provision_route_evidence_refused");
+  const evidence = evidenceText.slice(start, end).replace(/\r\n/gu, "\n").trim();
+  return Object.freeze({ host, port: 5432, serverName,
+    privateRouteEvidenceDigest: sha256Digest({ purpose: "control-room.accepted-vps-postgres-route-evidence/v1", evidence }) });
+}
+
+export function parseRepointArgumentsV1(args) {
+  const values = args[0] === "--" ? args.slice(1) : args;
+  let protectedRoot;
+  for (let index = 0; index < values.length; index += 1) {
+    const value = values[index];
+    if (value === "--repoint-only") continue;
+    if (value === "--protected-root" && protectedRoot === undefined
+      && values[index + 1] !== undefined && !values[index + 1].startsWith("--")) {
+      protectedRoot = values[index + 1];
+      index += 1;
+      continue;
+    }
+    throw new Error("provision_repoint_arguments_refused");
+  }
+  if (protectedRoot === undefined) throw new Error("provision_repoint_arguments_refused");
+  return protectedRoot;
+}
+
+async function repointOnly({ protectedRoot: suppliedRoot, route }) {
+  const protectedRoot = requireAbsolute(suppliedRoot, "provision_protected_root_required");
+  const configRoot = join(protectedRoot, "config");
+  await privateDirectory(protectedRoot);
+  await privateDirectory(configRoot);
+  const routeKeys = ["host", "port", "serverName", "privateRouteEvidenceDigest"];
+  if (!route || typeof route !== "object" || Array.isArray(route)
+    || Object.keys(route).length !== routeKeys.length || routeKeys.some(key => !Object.hasOwn(route, key))
+    || Object.keys(route).some(key => !routeKeys.includes(key))
+    || !isSupportedPrivatePostgresHostV1(route.host) || route.host === "127.0.0.1" || route.port !== 5432
+    || typeof route.serverName !== "string" || !/^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/u.test(route.serverName)
+    || typeof route.privateRouteEvidenceDigest !== "string" || !/^sha256:[a-f0-9]{64}$/u.test(route.privateRouteEvidenceDigest))
+    throw new Error("provision_route_config_refused");
+
+  const policyInput = { schema: PRIVATE_POSTGRES_ENDPOINT_V2, routeKind: "tailscale",
+    endpointFingerprint: privatePostgresEndpointFingerprintV1({ host: route.host, port: 5432,
+      database: "control_room", majorVersion: 17 }), privateRouteEvidenceDigest: route.privateRouteEvidenceDigest,
+    serverIdentity: { serverName: route.serverName } };
+  const endpoint = capturePrivatePostgresEndpointPolicyV2({ host: route.host, port: 5432,
+    database: "control_room", majorVersion: 17 }, policyInput);
+  if (!endpoint) throw new Error("provision_route_config_refused");
+
+  const macPath = join(configRoot, "mac-local.json"), rolesPath = join(configRoot, "database-roles.json");
+  const macOriginal = await readProtectedJson(macPath);
+  const rolesOriginal = await readProtectedJson(rolesPath);
+  const mac = captureMacLocalProtectedConfigurationV1(macOriginal);
+  const roles = captureMacLocalDatabaseRolesV1(rolesOriginal);
+  if (mac.database.database !== "control_room" || mac.database.username !== roleNames.web
+    || roles.schema !== MAC_LOCAL_DATABASE_ROLES_V1
+    || roles.web.username !== roleNames.web || roles.coordinator.username !== roleNames.coordinator
+    || roles.results.username !== roleNames.results || roles.queueWorker.username !== roleNames.queueWorker
+    || [roles.web, roles.coordinator, roles.results, roles.queueWorker].some(role => role.database !== "control_room"))
+    throw new Error("provision_existing_configuration_refused");
+
+  const update = configuration => validatePrivatePostgresConfiguration({ ...configuration, host: route.host, port: 5432,
+    privateEndpoint: endpoint });
+  const nextMacDatabase = update(mac.database);
+  const nextRoleConfigurations = { web: update(roles.web), coordinator: update(roles.coordinator),
+    results: update(roles.results), queueWorker: update(roles.queueWorker) };
+  captureMacLocalProtectedConfigurationV1({ ...macOriginal, database: nextMacDatabase });
+  captureMacLocalDatabaseRolesV1({ ...rolesOriginal, ...nextRoleConfigurations });
+  const nextMac = { ...macOriginal, database: nextMacDatabase };
+  const nextRoles = { ...rolesOriginal, ...nextRoleConfigurations };
+  const staged = [];
+  try {
+    for (const [path, value] of [[macPath, nextMac], [rolesPath, nextRoles]]) {
+      const temporary = `${path}.new-${process.pid}-${randomBytes(8).toString("hex")}`;
+      await writeFile(temporary, `${JSON.stringify(value)}\n`, { encoding: "utf8", mode: privateFileMode, flag: "wx" });
+      await chmod(temporary, privateFileMode);
+      staged.push({ path, temporary });
+    }
+    for (const item of staged) await rename(item.temporary, item.path);
+  } finally {
+    for (const item of staged) { try { await unlink(item.temporary); } catch {} }
+  }
+  return Object.freeze({ repointed: true });
 }
 
 function newPassword() { return randomBytes(32).toString("base64url"); }
@@ -276,6 +383,7 @@ exit "$status"`;
 }
 
 export async function provisionMacLocalDatabaseV1(options) {
+  if (options.repointOnly) return repointOnly(options);
   const protectedRoot = requireAbsolute(options.protectedRoot, "provision_protected_root_required");
   const databaseHost = options.databaseHost;
   const databasePort = options.databasePort ?? 5432;
@@ -330,11 +438,22 @@ export async function provisionMacLocalDatabaseV1(options) {
 
 if (process.argv[1] === new URL(import.meta.url).pathname) {
   try {
-    const args = process.argv.slice(2), dryRun = args.includes("--dry-run"), vpsOnly = args.includes("--vps-only");
-    const result = await provisionMacLocalDatabaseV1({ protectedRoot: argument(args, "--protected-root"), sshTarget: argument(args, "--ssh-target"),
-      databaseHost: argument(args, "--database-host"), databasePort: Number(argument(args, "--database-port", "5432")),
-      endpointPolicyFile: argument(args, "--endpoint-policy-file", undefined), remoteWorktree: argument(args, "--remote-worktree", "/root/agent-control-room"), dryRun, vpsOnly });
-    process.stdout.write(`${JSON.stringify({ provisioned: result.provisioned, workers: result.workers })}\n`);
+    const args = process.argv.slice(2), dryRun = args.includes("--dry-run"), vpsOnly = args.includes("--vps-only"), repointOnly = args.includes("--repoint-only");
+    if (repointOnly) {
+      const protectedRoot = parseRepointArgumentsV1(args);
+      let status;
+      try { status = JSON.parse((await exec("tailscale", ["status", "--json"], { encoding: "utf8", timeout: 10_000, maxBuffer: 2 * 1024 * 1024 })).stdout); }
+      catch { throw new Error("provision_tailscale_status_refused"); }
+      const evidenceText = await readFile(join(repoRoot, "docs/claude/SECURE_DB_ROUTE.md"), "utf8");
+      const route = macLocalRouteFromTailscaleStatusV1(status, evidenceText);
+      const result = await provisionMacLocalDatabaseV1({ repointOnly: true, protectedRoot, route });
+      process.stdout.write(`${JSON.stringify({ repointed: result.repointed })}\n`);
+    } else {
+      const result = await provisionMacLocalDatabaseV1({ protectedRoot: argument(args, "--protected-root"), sshTarget: argument(args, "--ssh-target"),
+        databaseHost: argument(args, "--database-host"), databasePort: Number(argument(args, "--database-port", "5432")),
+        endpointPolicyFile: argument(args, "--endpoint-policy-file", undefined), remoteWorktree: argument(args, "--remote-worktree", "/root/agent-control-room"), dryRun, vpsOnly });
+      process.stdout.write(`${JSON.stringify({ provisioned: result.provisioned, workers: result.workers })}\n`);
+    }
   } catch (error) {
     process.stderr.write(`${error instanceof Error && error.message.startsWith("provision_") ? error.message : usage()}\n`);
     process.exitCode = 1;
