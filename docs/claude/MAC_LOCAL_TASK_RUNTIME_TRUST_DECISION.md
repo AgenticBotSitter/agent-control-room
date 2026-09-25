@@ -282,7 +282,68 @@ exists.
 - The owner's current choice is on record (profile `cr`, provider `opencode-go`, model
   `space-bunny-free`), so Codex may run the prepare step with those values. Add them to the owner guide.
 
-## 8. Review and done
+## 8. Contract-conflict decisions (answers PACKAGE4_SECTION7_CONTRACT_CONFLICT.md, 2026-09-25)
+
+These replace the conflicting parts of sections 6 and 7. None of them changes
+`TaskAssignmentCoordinator`, the remote node protocol, or any existing check.
+
+**A. One node per worker (replaces "three routes on `mac-1`").**
+- The enablement record's `nodeId: "mac-1"` stays the machine identity.
+- Assignment uses three local node rows, one per worker: `mac-1.hermes`, `mac-1.claude` and
+  `mac-1.codex`.
+- There's one route per worker node, so `validateTaskAssignmentRoutes` keeps its one-route-per-node rule.
+- The dispatch preparations never compare the attempt's node with the enablement's; they use
+  `attempt.nodeId`. So a worker's deliveries carry its own node.
+- Fleet signals are recorded per worker node: a capability pass while that worker is ready, plus
+  telemetry.
+
+**B. An unspendable identity key (replaces "no `control_node_keys` row").**
+- `mac:bootstrap-owner` creates, for each worker node, one `control_node_keys` row
+  (`algorithm: ed25519`, `state: active`, no `valid_until`).
+- Its public key comes from a key pair generated in memory whose **private key is never exported,
+  written, logged or returned**. The function returns only the public SPKI and fingerprint, and the
+  private key object is dropped.
+- The node row's `identityKeyId` names that key.
+- The existing assignment key check then passes unchanged, and no one can ever sign a frame as the node.
+- Keep Codex's remote-frame refusal test and extend it: a frame signed by a freshly generated key is
+  refused for every worker node.
+- Idempotent: an existing matching row is kept, and a differing one is refused.
+- A "dummy" signing key would be one someone could use. This one can't be used, by construction, which
+  is why it differs from the forbidden option.
+
+**C. Profile ids per project (replaces the single `profile:mac-local-owner-review`).**
+- The id is `profile:mac-local-owner-review:<projectId>`, or, if the id grammar or length doesn't allow
+  that, `profile:mac-local-owner-review:` plus the first 32 hex characters of `sha256(projectId)`.
+- Everything else in section 7.2 is unchanged.
+
+**D. Template credential and network fields.**
+- `credentialRefs` is exactly one fixed label per adapter: `credential:owner-cli:hermes`,
+  `credential:owner-cli:claude-code` or `credential:owner-cli:codex`.
+  - It's a label, not a secret.
+  - It names the grant the owner already made in critical path decision 3: each agent runs with the
+    owner's existing sign-in for that CLI.
+- Hermes needs `networkPolicy: "allowlist"` with exactly one `allowedNetworkDestinations` entry: the
+  canonical HTTPS origin of the model provider endpoint that the owner's chosen Hermes profile uses.
+  - Record it in `task-runtime.json` as `hermes.destination`, validated with
+    `parseCanonicalHttpsDestination`. Add it as a required `--hermes-destination` argument to
+    `mac:prepare-task-runtime`.
+  - The file hasn't been created on the real Mac yet, so the v1 schema can still change.
+  - Codex reads the origin from the non-secret base-URL field of the `cr` profile's provider
+    configuration. It reads no credential field; if the origin can't be read without touching a
+    credential, it asks the owner.
+  - Don't make up a destination.
+- Claude and Codex keep `networkPolicy: "none"` with no destinations, as the planner requires.
+
+**E. The Claude queue executor must mirror Codex's exactly (review finding from Marvin).**
+- Call `preparation.assertCurrent(reference, prepared)` again **after** `delivery.deliver` returns
+  `published`, before returning `delivered`.
+- Throw the distinct `*_queue_delivery_unresolved` error when publication isn't confirmed, as
+  `codex-owner-trusted-local-executor.ts` does. Don't use `unavailable`, which means "never ran".
+- Add Marvin's two tests (commit `e1e928ef` on `codex/mac-w3-p4`):
+  - an aborted signal is refused before `prepare()`;
+  - a lease revoked between the two checks isn't acknowledged.
+
+## 9. Review and done
 
 - Split the work into packages of no more than about 800 lines, in this order:
   1. fence A plus fence B helper and tests;
