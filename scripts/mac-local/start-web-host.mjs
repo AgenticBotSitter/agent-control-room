@@ -53,6 +53,38 @@ export async function startMacLocalWebHost(input, runtime = {}) {
   return host.start();
 }
 
+/** Starts the same protected host with the one fixed owner-held task provider.
+ * This is intentionally a separate command from `mac:host`: invoking the
+ * website does not also activate a queue or a local agent. */
+export async function startMacLocalTaskHost(input, runtime = {}) {
+  if (!input || typeof input.protectedRoot !== "string") throw new Error("mac_local_web_host_arguments_invalid");
+  const releaseRoot = new URL("../../dist-vps/server/", import.meta.url);
+  const load = runtime.load ?? (path => import(path));
+  const [hostModule, loaderModule, providerModule, postgresModule, servingModule, rendererModule] = await Promise.all([
+    load(new URL("macLocalHost.js", releaseRoot).href), load(new URL("macLocalProtectedLoader.js", releaseRoot).href),
+    load(new URL("macLocalTaskProvider.js", releaseRoot).href), load(new URL("privatePostgres.js", releaseRoot).href),
+    load(new URL("serving.js", releaseRoot).href), load(new URL("index.js", releaseRoot).href),
+  ]);
+  if (typeof hostModule.createMacLocalProtectedHostV1 !== "function" || typeof loaderModule.loadMacLocalProtectedConfigurationFromRootV1 !== "function"
+    || typeof loaderModule.loadMacLocalDatabaseRolesFromRootV1 !== "function" || typeof providerModule.loadMacLocalTaskProviderFromRootV1 !== "function"
+    || typeof postgresModule.createPrivatePostgresDatabase !== "function" || typeof servingModule.loadPrivateClientAssets !== "function"
+    || typeof rendererModule.default !== "function") throw new Error("mac_local_web_host_release_invalid");
+  const [assets, provider] = await Promise.all([
+    servingModule.loadPrivateClientAssets(fileURLToPath(new URL("../../dist-vps/client", import.meta.url))),
+    providerModule.loadMacLocalTaskProviderFromRootV1(input.protectedRoot),
+  ]);
+  const host = hostModule.createMacLocalProtectedHostV1({
+    loadConfiguration: () => loaderModule.loadMacLocalProtectedConfigurationFromRootV1(input.protectedRoot),
+    loadDatabaseRoles: () => loaderModule.loadMacLocalDatabaseRolesFromRootV1(input.protectedRoot),
+    readVersion: runtime.readVersion ?? readPinnedMacExecutableVersion,
+    openDatabase: postgresModule.createPrivatePostgresDatabase,
+    createTaskApplication: provider.createTaskApplication,
+    startQueueWorker: provider.startQueueWorker,
+    assets, render: rendererModule.default,
+  });
+  return host.start();
+}
+
 async function main() {
   const parsed = parseMacLocalWebHostArguments(process.argv.slice(2));
   if (parsed.help) {

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { parseMacLocalWebHostArguments, readPinnedMacExecutableVersion } from "../scripts/mac-local/start-web-host.mjs";
+import { parseMacLocalWebHostArguments, readPinnedMacExecutableVersion, startMacLocalTaskHost } from "../scripts/mac-local/start-web-host.mjs";
 
 test("Mac local web host launcher accepts only the owner-attended fixed protected root", () => {
   assert.deepEqual(parseMacLocalWebHostArguments(["--owner-attended", "--protected-root", "/Library/Application Support/Agent Control Room"]),
@@ -22,4 +22,30 @@ test("Mac local web host reads a bounded exact executable version without shell 
   assert.deepEqual(seen[0][1], ["--version"]);
   await assert.rejects(() => readPinnedMacExecutableVersion("/usr/local/bin/example", { execFile: async () => ({ stdout: "bad\nvalue" }) }),
     /mac_local_executable_version_unavailable/);
+});
+
+test("task host requires the fixed release provider and does not accept a caller callback", async () => {
+  const loaded = [];
+  const task = { async close() {}, isReady: () => true };
+  const result = await startMacLocalTaskHost({ protectedRoot: "/protected" }, {
+    readVersion: async () => "pinned",
+    load: async path => {
+      loaded.push(path.split("/").at(-1));
+      if (path.endsWith("macLocalHost.js")) return { createMacLocalProtectedHostV1: input => ({
+        async start() { return input.createTaskApplication && input.startQueueWorker ? task : assert.fail("task callbacks missing"); },
+      }) };
+      if (path.endsWith("macLocalProtectedLoader.js")) return {
+        loadMacLocalProtectedConfigurationFromRootV1: async () => ({}), loadMacLocalDatabaseRolesFromRootV1: async () => ({}),
+      };
+      if (path.endsWith("macLocalTaskProvider.js")) return { loadMacLocalTaskProviderFromRootV1: async () => ({
+        createTaskApplication: async () => ({}), startQueueWorker: async () => ({}),
+      }) };
+      if (path.endsWith("privatePostgres.js")) return { createPrivatePostgresDatabase: () => ({}) };
+      if (path.endsWith("serving.js")) return { loadPrivateClientAssets: async () => ({ respond() {} }) };
+      if (path.endsWith("index.js")) return { default() {} };
+      throw new Error(`unexpected ${path}`);
+    },
+  });
+  assert.equal(result, task);
+  assert.deepEqual(loaded.sort(), ["index.js", "macLocalHost.js", "macLocalProtectedLoader.js", "macLocalTaskProvider.js", "privatePostgres.js", "serving.js"].sort());
 });

@@ -2,6 +2,19 @@
 
 Codex appends one short entry per work package (see `CODEX_MAC_BUILD_EXECUTION.md`).
 
+- 2026-09-24 — W3/W4 protected task-host handoff: the release now has a
+  separate, owner-attended task-host command that loads only one fixed,
+  owner-only `runtime/task-provider.mjs` below the protected directory. That
+  provider supplies the existing shared task lifecycle and existing queue
+  worker to the same Mac host; the ordinary website command cannot activate
+  them. Loose file permissions, links, substituted modules, missing lifecycle
+  callbacks, and caller-provided worker callbacks are refused. Twenty-one
+  focused host/provider/release checks, TypeScript, the release build, and an
+  import of the compiled entries pass. The real owner-held provider has not
+  been written or run, and no database, listener, queue, or agent was started.
+  Next: use the existing three-agent composition to define that provider's
+  narrow configuration contract and exercise it against disposable services.
+
 - 2026-09-24 — P0 local source scan: the 683 commits ahead of `origin/main`
   were checked for common cloud-key, private-key, GitHub-token, generic secret,
   and private-tailnet-address patterns without printing source or values. No
