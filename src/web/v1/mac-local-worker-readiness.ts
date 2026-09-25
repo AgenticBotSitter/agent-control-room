@@ -1,4 +1,4 @@
-import { captureOwnerTrustedLocalEnablementV1, type OwnerTrustedLocalEnablementV1 } from "../../harness/v1/owner-trusted-local-enablements";
+import { captureLoadedOwnerTrustedLocalEnablementV1, type OwnerTrustedLocalEnablementV1 } from "../../harness/v1/owner-trusted-local-enablements";
 
 export type MacLocalWorkerReadinessV1 = Readonly<{
   /** Read-only display state. It neither grants delivery nor starts a worker. */
@@ -28,7 +28,7 @@ const refused = (): never => { throw new Error("mac_local_worker_readiness_inval
  */
 export function createMacLocalWorkerReadinessV1(enablementValue: unknown,
   verifiedValue: Readonly<{ nodeId: "mac-1"; enabledWorkerIds: readonly string[]; unavailableWorkerIds: readonly string[] }>): MacLocalWorkerReadinessV1 {
-  const enablement = captureOwnerTrustedLocalEnablementV1(enablementValue);
+  const enablement = captureLoadedOwnerTrustedLocalEnablementV1(enablementValue);
   if (!verifiedValue || verifiedValue.nodeId !== "mac-1" || !Array.isArray(verifiedValue.enabledWorkerIds)
     || !Array.isArray(verifiedValue.unavailableWorkerIds)) refused();
   // Every enabled worker must be accounted for exactly once: verified or unavailable.

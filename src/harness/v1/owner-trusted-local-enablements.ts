@@ -79,6 +79,17 @@ export function captureOwnerTrustedLocalEnablementV1(value: unknown): OwnerTrust
   return Object.freeze({ ...material, enablementDigest: sha256Digest(material) });
 }
 
+/** Accept either plain protected-file material or the digest-bearing value
+ * returned by that file's loader. A supplied digest is verified before it is
+ * discarded and recomputed, so it cannot become readiness evidence itself. */
+export function captureLoadedOwnerTrustedLocalEnablementV1(value: unknown): OwnerTrustedLocalEnablementV1 {
+  const raw = plain(value);
+  if (!Object.hasOwn(raw, "enablementDigest")) return captureOwnerTrustedLocalEnablementV1(raw);
+  ownerTrustedLocalEnablementDigestV1(raw);
+  return captureOwnerTrustedLocalEnablementV1({ schema: raw.schema, mode: raw.mode,
+    nodeId: raw.nodeId, workers: raw.workers });
+}
+
 /** Startup uses a narrowly injected version reader. This check does not start
  * a task and has no fallback: a missing executable or changed version leaves
  * that worker unavailable rather than silently selecting another CLI. One
@@ -87,7 +98,12 @@ export function captureOwnerTrustedLocalEnablementV1(value: unknown): OwnerTrust
 export async function verifyOwnerTrustedLocalEnablementV1(enablementValue: unknown,
   readVersion: (executablePath: string) => Promise<string>): Promise<Readonly<{ nodeId: "mac-1";
     enabledWorkerIds: readonly string[]; unavailableWorkerIds: readonly string[] }>> {
-  const enablement = captureOwnerTrustedLocalEnablementV1(enablementValue);
+  // A protected configuration loader returns the captured form, which carries
+  // the digest it derived. Verify that digest, then recover the same plain
+  // material accepted from an on-disk configuration. This keeps the startup
+  // boundary compatible with its own validated loader output without treating
+  // a caller-supplied digest as readiness evidence.
+  const enablement = captureLoadedOwnerTrustedLocalEnablementV1(enablementValue);
   if (typeof readVersion !== "function") refused();
   const enabled: string[] = [], unavailable: string[] = [];
   for (const worker of enablement.workers) {

@@ -3,6 +3,7 @@ import test from "node:test";
 import { sha256Digest } from "../src/security";
 import { createMacLocalStartupV1 } from "../src/web/v1/mac-local-startup";
 import { MAC_LOCAL_PROTECTED_CONFIGURATION_V1 } from "../src/web/v1/mac-local-protected-configuration";
+import { captureMacLocalProtectedConfigurationV1 } from "../src/web/v1/mac-local-protected-configuration";
 import { LOCAL_OWNER_SESSION_PROFILE_V1 } from "../src/web/v1/local-owner-session";
 import { OWNER_TRUSTED_LOCAL_ENABLEMENT_V1 } from "../src/harness/v1/owner-trusted-local-enablements";
 
@@ -29,5 +30,15 @@ test("one updated CLI leaves that worker unavailable while the others start", as
     createService() { return { async start() {}, async close() {} }; } });
   const running = await startup.start(two);
   assert.deepEqual(running.workerReadiness.read().map(worker => worker.state), ["ready", "unavailable"]);
+  await running.close();
+});
+
+test("starts from the same digest-bearing configuration returned by the protected loader", async () => {
+  const loaded = captureMacLocalProtectedConfigurationV1(config);
+  const startup = createMacLocalStartupV1({ async readVersion() { return "codex test"; },
+    openDatabase() { return { client: {} as never, async close() {} }; },
+    createService() { return { async start() {}, async close() {} }; } });
+  const running = await startup.start(loaded);
+  assert.deepEqual(running.workerReadiness.read().map(worker => worker.state), ["ready"]);
   await running.close();
 });
