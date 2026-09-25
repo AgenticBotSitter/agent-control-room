@@ -49,6 +49,35 @@ the Mac.
 Do not re-open the policy. If a future update needs another machine on the
 route, add the same approved client tag to that machine and nothing else.
 
+## 3. W1 checks 7, 8 and 9 — owner or VPS operator
+
+**Status (2026-09-25): pending. Check 4 and check 5 now pass, so only these
+three remain for Phase 1 to close.**
+
+**Check 7 — the leak test, and the one that matters most.** From the phone or
+the PC (not the Mac), try to connect to the VPS on the database port. It must
+**fail**. If it connects, the client tag is not the only path in and the
+database is exposed off the Mac, which fails the whole route design. Report
+only "connected" or "refused/timeout".
+
+**Check 8 — restarts and sleep.** Three drills, then `mac:check-database` after
+each, which must still print `ok` for all four roles:
+1. Put the Mac to sleep and wake it, then run `pnpm mac:check-database <protected-root>`.
+2. Restart PostgreSQL on the VPS.
+3. Restart Tailscale on the VPS.
+Steps 2 and 3 are VPS-operator actions and cannot be run from the Mac. If you
+cannot reach the VPS operator, say so and this stays pending rather than
+being marked passed.
+
+**Check 9 — certificate renewal.** The VPS operator force-runs the certificate
+renewal job. `mac:check-database` must still pass afterwards **with no
+configuration change on the Mac**. If it only passes after editing the Mac's
+protected files, that is a real defect, not a workaround.
+
+Do not paste a password, access key, database address, MagicDNS name,
+certificate, or terminal output here. Reporting the outcome of each drill in
+one word is enough.
+
 Do not paste a password, access key, database address, certificate, or
 terminal output here.
 
