@@ -89,3 +89,20 @@ system checks. A row is only meaningful when its `#` and its `Worker` agree.
 This file is done only when all 15 worker rows and both system rows hold real
 observed data, the owner guide exists, and the final review diff carries a real
 `VERDICT: APPROVE`. Until then it is a skeleton: 17 rows, 0 filled.
+
+## Preconditions observed without a running stack (2026-09-25)
+
+These are **not** W7 rows. No task has been run, so every row above stays
+empty. This section records only what was directly observed, so a later W7 run
+does not have to re-establish it.
+
+| Observation | Command | Result |
+|---|---|---|
+| Direct database route is reachable for all four roles | `pnpm mac:check-database <protected-root>` | exit 0; `web`, `coordinator`, `results`, `queueWorker` each `ok` |
+| The Mac starts no tunnel process | no `ssh`/`autossh` process present; route is direct Tailscale | confirmed, no tunnel in use |
+| mac-local provider artifact is still absent | `ls dist-vps/server/macLocalDefaultTaskProvider.js` | `No such file or directory` - the known `mac:up` blocker, owned by package 4 |
+
+The first row matters for check 6: check 6 is only meaningful once the route is
+shown to be up and then deliberately down, because "unavailable" cannot be
+distinguished from "never worked" without both states. That down-state
+transition is still unrun and needs the owner or VPS operator.
