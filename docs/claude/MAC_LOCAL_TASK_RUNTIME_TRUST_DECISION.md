@@ -22,11 +22,14 @@ must pass **both** fences, and each fence fails closed.
 3. Require **all** of the following:
    - `current.delivery.identity.runId === delivery.identity.runId`. The run id is derived from the
      lease id plus the plan digest, so a replaced lease or plan fails here.
-   - `current.delivery.deliveryId === delivery.deliveryId`.
-   - `authorityDigest`, `connectorProfileDigest`, `acceptanceProfileId`, `acceptanceProfileDigest`
-     and `expiresAt` are equal.
+   - `worker`, `input`, `inputDigest`, `authorityDigest`, `connectorProfileDigest`, `acceptanceProfileId`,
+     `acceptanceProfileDigest` and `expiresAt` are equal.
    - `canonicalJson(current.route) === canonicalJson(route)`.
-   - Do **not** compare `issuedAt`, because it changes on every call.
+   - Do **not** compare `issuedAt`, `deliveryId` or `deliveryDigest`. Every `prepare()` stamps
+     `issuedAt` with the current time, and the other two are derived from it, so they change on every
+     call. (Correction, same day: an earlier draft said to compare `deliveryId`, which would refuse
+     every real task. The helper built on 2026-09-25 compared `deliveryDigest`, with the same effect;
+     its tests passed only because they froze the clock.)
 4. Build one shared helper, `src/harness/v1/owner-trusted-local-cli-assert-current.ts`. Give it the
    preparation instance as a parameter. Use it for all three agents. Do not write three copies.
 
@@ -45,6 +48,11 @@ per critical-path decision 5.
 - A delivery for worker X is sent to worker Y's bridge: refused.
 
 ## 2. `receiptPort`: in-process, not an authority
+
+**Status:** already built as `src/harness/v1/owner-trusted-local-cli-receipt-port.ts` (commit `cc4c59fa`)
+and reviewed against this section: it grants nothing and mints only the standard receipt. The binding
+check below is done by the delivery bridge's own `validate()` before the port is called, so the port
+itself refuses only a non-local route or a worker mismatch.
 
 - It's a same-process loopback `ControllerWorkerDeliveryPortV1`. It returns
   `disposition: "accepted"` only if all of these hold:
