@@ -58,4 +58,11 @@ GRANT INSERT ON control_completion_gate_records TO control_room_task_coordinator
 GRANT UPDATE (coordinator_lock) ON control_harness_runs TO control_room_task_coordinator;
 GRANT UPDATE (web_lock) ON control_completion_gate_records TO control_room_task_coordinator;
 GRANT UPDATE (revision, record_count, state_digest, state_auth_tag) ON control_completion_gate_integrity TO control_room_task_coordinator;
+-- Mac-local readiness signals only; migration 0087's guard confines these to the
+-- local worker nodes and to capability/telemetry, and keeps history append-only.
+GRANT SELECT, INSERT ON control_node_fleet_signals TO control_room_task_coordinator;
+GRANT UPDATE (coordinator_lock) ON control_node_fleet_signals TO control_room_task_coordinator;
+GRANT INSERT ON control_node_fleet_current TO control_room_task_coordinator;
+GRANT UPDATE (signal_sequence, fingerprint, trust, observed_at, expires_at, payload)
+  ON control_node_fleet_current TO control_room_task_coordinator;
 COMMIT;

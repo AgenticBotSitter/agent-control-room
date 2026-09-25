@@ -255,7 +255,14 @@ stackMayBeUp = false;
 const taskHost = invoke(upArgs);
 assert.equal(taskHost.status, 0, taskHost.stderr || taskHost.stdout);
 stackMayBeUp = true;
-const workersResponse = await fetch(new URL("/api/v1/local-workers", origin), { headers: { cookie } });
+// A local owner session does not survive a host restart; sign in again.
+const resumed = await fetch(new URL("/api/v1/local-owner-session", origin), {
+  method: "POST", headers: { origin, "content-type": "application/json" }, body: JSON.stringify({ ownerCode }),
+});
+assert.equal(resumed.status, 201, "owner sign-in after the task-host restart should succeed");
+const taskHostCookie = (resumed.headers.get("set-cookie") ?? "").split(";", 1)[0];
+assert.ok(taskHostCookie.startsWith("control_room_local_owner="));
+const workersResponse = await fetch(new URL("/api/v1/local-workers", origin), { headers: { cookie: taskHostCookie } });
 assert.equal(workersResponse.status, 200);
 const workersBody = await workersResponse.json();
 assert.equal(workersBody.workers?.length, 3);

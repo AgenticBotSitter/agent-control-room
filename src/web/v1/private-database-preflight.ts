@@ -15,9 +15,9 @@ export async function verifyPrivateIdeaAdapter(db: DatabaseClient, scope: { tena
   if (rows.length !== 1 || rows[0].valid !== true) throw new Error("private_idea_adapter_unavailable");
 }
 
-// Generated from public migrations 0001-0086, including generic external-content
+// Generated from public migrations 0001-0087, including generic external-content
 // migrations 0025/0026. Catalog query below; not a mutable database marker.
-export const privateWebSchemaDigest = "faadab42c6b8f044a17fe40b9e86d0270c26458698416fcf4cbb079e5f6da195";
+export const privateWebSchemaDigest = "1a6f4d08764cbf8abd41e492693a7097aa89b3f3552b146fe86b78de2aaca413";
 export const privateWebReadTables = ["control_identities", "control_role_grants", "workspaces", "control_web_sessions",
   "tenants", "control_idempotency",
   "control_schedules", "control_schedule_occurrences",
@@ -93,7 +93,7 @@ const newsCoordinatorUpdates: Record<string, readonly string[]> = {
 const coordinatorReads = ["tenants", "workspaces", "control_identities", "control_role_grants", "control_web_sessions",
   "projects", "control_manual_project_heads", "control_requests", "control_workflows", "control_jobs",
   "control_attempts", "control_leases", "control_task_execution_plans", "control_nodes", "control_node_keys",
-  "control_node_fleet_current", "control_job_dependencies", "control_transition_events", "control_outbox",
+  "control_node_fleet_current", "control_node_fleet_signals", "control_job_dependencies", "control_transition_events", "control_outbox",
   "control_installation_transition_revisions",
   "audit_events", "control_audit_chain_heads", "control_completion_gate_integrity", "control_completion_gate_records", "control_native_approval_packets", "control_native_task_queue", "control_native_delivery_preparations", "control_native_delivery_envelopes", "control_native_transmission_intents", "control_native_delivery_receipts",
   "control_codex_delivery_envelopes", "control_codex_transmission_intents", "control_codex_delivery_receipts", "control_codex_activation_transmission_intents", "control_worker_delivery_receipts",
@@ -111,11 +111,12 @@ const coordinatorInserts = new Set(["control_web_sessions", "control_requests", 
   "control_project_coordination_proposals", "control_project_coordination_operation_receipts",
   "control_project_coordination_operation_jobs", "control_action_inbox", "control_work_resources",
   "control_attempt_resource_admissions", "control_attempt_resource_scopes", "control_job_dependencies",
-  "control_installation_transition_revisions"]);
+  "control_installation_transition_revisions", "control_node_fleet_signals", "control_node_fleet_current"]);
 const coordinatorUpdates: Record<string, readonly string[]> = {
   ...Object.fromEntries(["control_requests", "control_workflows", "control_jobs", "control_attempts", "control_leases"]
     .map(table => [table, ["state", "version", "payload", "updated_at"]])),
-  ...Object.fromEntries(["tenants", "control_nodes", "control_node_keys", "control_manual_project_heads", "projects"].map(table => [table, ["coordinator_lock"]])),
+  ...Object.fromEntries(["tenants", "control_nodes", "control_node_keys", "control_manual_project_heads", "projects", "control_node_fleet_signals"].map(table => [table, ["coordinator_lock"]])),
+  control_node_fleet_current: ["signal_sequence", "fingerprint", "trust", "observed_at", "expires_at", "payload"],
   ...Object.fromEntries(["control_identities", "control_role_grants", "workspaces", "control_completion_gate_integrity"].map(table => [table, ["web_lock"]])),
   control_web_sessions: ["revoked_at"], control_audit_chain_heads: ["head_hash", "event_count", "updated_at"],
   control_harness_runs: ["coordinator_lock"], control_completion_gate_records: ["web_lock"],
