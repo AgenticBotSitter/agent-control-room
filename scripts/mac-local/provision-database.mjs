@@ -254,6 +254,7 @@ async function runRemoteProvision({ sshTarget, remoteWorktree, passwords }) {
 process.on('uncaughtException', reportError); process.on('unhandledRejection', reportError);
 import { applyMigrations } from './deploy/postgres/apply-migrations.mjs';
 import { connectTarget } from './deploy/postgres/evidence.mjs';
+import { provisionMacLocalNarrowRolesV1 } from './scripts/mac-local/narrow-role-provision.mjs';
 const input = await new Promise((resolve, reject) => {
   let body = ''; process.stdin.setEncoding('utf8');
   process.stdin.on('data', part => { body += part; if (body.length > 16 * 1024) reject(new Error('input_too_large')); });
@@ -277,13 +278,7 @@ await applyMigrations({ bootstrapTarget, migrateTarget, env: {
 const client = connectTarget(bootstrapTarget); await client.connect();
 try {
   process.stderr.write('provision_stage:local-roles\n');
-  for (const [name, password] of Object.entries(value.local)) {
-    const existing = await client.query('SELECT 1 FROM pg_roles WHERE rolname=$1', [name]);
-    if (existing.rows.length === 0)
-      await client.query('CREATE ROLE ' + name + ' LOGIN INHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS');
-    await client.query('ALTER ROLE ' + name + ' PASSWORD ' + client.escapeLiteral(password));
-    await client.query('GRANT control_room_application TO ' + name);
-  }
+  await provisionMacLocalNarrowRolesV1(client, value.local);
   process.stdout.write('control_room_provisioned\n');
 } finally { await client.end(); }`;
   // /opt/data is deliberately root-only on the VPS. The restricted PostgreSQL

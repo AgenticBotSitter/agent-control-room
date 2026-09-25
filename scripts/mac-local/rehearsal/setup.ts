@@ -52,29 +52,37 @@ const bootstrapTarget = `host=127.0.0.1 port=${port} dbname=control_room user=po
 await applyMigrations({ bootstrapTarget,
   migrateTarget: `host=127.0.0.1 port=${port} dbname=control_room user=control_room_migrator password=${secrets.migrator}`,
   env: { CONTROL_ROOM_MIGRATOR_PASSWORD: secrets.migrator, CONTROL_ROOM_APP_PASSWORD: secrets.application, CONTROL_ROOM_SCHEDULER_PASSWORD: secrets.scheduler } });
-const client = connectTarget(bootstrapTarget); await client.connect();
+const psql = (database: string, file: string) => execFileSync("psql", ["-h", "127.0.0.1", "-p", String(port), "-U", "postgres", "-d", database,
+  "-v", "ON_ERROR_STOP=1", "-f", new URL(file, import.meta.url).pathname], bounded);
+// Match the reviewed package-5 sequence against this fresh disposable cluster.
+// applyMigrations installs the production roles as part of bootstrap; rerunning
+// this idempotent file here makes the rehearsal's ordering explicit.
+psql("control_room", "../../../db/roles/production_roles.sql");
+// The fixed pg-boss schema/queue is installed offline before either queue role.
+const queueClient = connectTarget(bootstrapTarget); await queueClient.connect();
 try {
-  // Rehearsal-only queue installation. Production queue setup remains a
-  // separate, reviewed database operation; application startup never migrates.
-  await client.query(getConstructionPlans("control_room_queue"));
-  const boss = new PgBoss({ db: { executeSql: (sql, values) => client.query(sql, values) },
+  await queueClient.query(getConstructionPlans("control_room_queue"));
+  const boss = new PgBoss({ db: { executeSql: (sql, values) => queueClient.query(sql, values) },
     schema: "control_room_queue", backend: "postgres", migrate: false, createSchema: false,
     supervise: false, schedule: false, useListenNotify: false });
   await boss.start();
   try { await boss.createQueue("native-task-delivery", { retryLimit: 0 }); }
   finally { await boss.stop({ graceful: false }); }
-  for (const [name, password] of Object.entries(local)) {
-    if ((await client.query("SELECT 1 FROM pg_roles WHERE rolname=$1", [name])).rows.length === 0)
-      await client.query(`CREATE ROLE ${name} LOGIN INHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS`);
-    await client.query(`ALTER ROLE ${name} PASSWORD ${client.escapeLiteral(password)}`);
-    await client.query(`GRANT control_room_application TO ${name}`);
+} finally { await queueClient.end(); }
+psql("control_room", "../../../db/roles/private_web_database.sql");
+for (const file of ["private_web_roles.sql", "task_coordinator_roles.sql", "native_queue_producer_roles.sql",
+  "native_results_roles.sql", "native_queue_worker_roles.sql"])
+  psql("control_room", `../../../db/roles/${file}`);
+const membership = connectTarget(bootstrapTarget); await membership.connect();
+try {
+  const roleByLogin: Record<string, string> = { control_room_web: "control_room_private_web",
+    control_room_coordinator: "control_room_task_coordinator", control_room_results: "control_room_native_results",
+    control_room_queue_worker: "control_room_native_queue_worker" };
+  for (const [login, password] of Object.entries(local)) {
+    await membership.query(`CREATE ROLE ${login} LOGIN INHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD ${membership.escapeLiteral(password)}`);
+    await membership.query(`GRANT ${roleByLogin[login]} TO ${login}`);
   }
-  await client.query(`GRANT USAGE ON SCHEMA control_room_queue TO control_room_coordinator,control_room_queue_worker`);
-  await client.query(`GRANT SELECT ON control_room_queue.version,control_room_queue.queue TO control_room_coordinator,control_room_queue_worker`);
-  await client.query(`GRANT UPDATE(name) ON control_room_queue.queue TO control_room_coordinator`);
-  await client.query(`GRANT SELECT,INSERT ON control_room_queue.job,control_room_queue.job_common TO control_room_coordinator`);
-  await client.query(`GRANT SELECT,INSERT,UPDATE,DELETE ON control_room_queue.job,control_room_queue.job_common TO control_room_queue_worker`);
-} finally { await client.end(); }
+} finally { await membership.end(); }
 
 const home = homedir(), claudeRoot = join(home, "Library/Application Support/Claude/claude-code");
 const claudeVersion = readdirSync(claudeRoot).filter(v => /^\d+\.\d+\.\d+$/u.test(v))
@@ -103,4 +111,4 @@ captureMacLocalProtectedConfigurationV1(JSON.parse(JSON.stringify(macLocal)));
 for (const [file, body] of [["mac-local.json", JSON.stringify(macLocal)], ["database-roles.json", JSON.stringify(roles)], ["owner-sign-in.txt", ownerCode]])
   writeFileSync(join(config, file), `${body}\n`, { mode: 0o600 });
 console.log(`rehearsal database ready on 127.0.0.1:${port}; protected root ${root}`);
-console.log(`next: pnpm mac:check-database ${root} && pnpm mac:bootstrap-owner ${root}`);
+console.log(`next: pnpm mac:bootstrap-owner ${root} && pnpm mac:check-database ${root}`);
