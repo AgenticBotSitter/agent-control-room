@@ -22,11 +22,14 @@ must pass **both** fences, and each fence fails closed.
 3. Require **all** of the following:
    - `current.delivery.identity.runId === delivery.identity.runId`. The run id is derived from the
      lease id plus the plan digest, so a replaced lease or plan fails here.
-   - `current.delivery.deliveryId === delivery.deliveryId`.
-   - `authorityDigest`, `connectorProfileDigest`, `acceptanceProfileId`, `acceptanceProfileDigest`
-     and `expiresAt` are equal.
+   - `worker`, `input`, `inputDigest`, `authorityDigest`, `connectorProfileDigest`, `acceptanceProfileId`,
+     `acceptanceProfileDigest` and `expiresAt` are equal.
    - `canonicalJson(current.route) === canonicalJson(route)`.
-   - Do **not** compare `issuedAt`, because it changes on every call.
+   - Do **not** compare `issuedAt`, `deliveryId` or `deliveryDigest`. Every `prepare()` stamps
+     `issuedAt` with the current time, and the other two are derived from it, so they change on every
+     call. (Correction, same day: an earlier draft said to compare `deliveryId`, which would refuse
+     every real task. The helper built on 2026-09-25 compared `deliveryDigest`, with the same effect;
+     its tests passed only because they froze the clock.)
 4. Build one shared helper, `src/harness/v1/owner-trusted-local-cli-assert-current.ts`. Give it the
    preparation instance as a parameter. Use it for all three agents. Do not write three copies.
 
@@ -46,6 +49,11 @@ per critical-path decision 5.
 
 ## 2. `receiptPort`: in-process, not an authority
 
+**Status:** already built as `src/harness/v1/owner-trusted-local-cli-receipt-port.ts` (commit `cc4c59fa`)
+and reviewed against this section: it grants nothing and mints only the standard receipt. The binding
+check below is done by the delivery bridge's own `validate()` before the port is called, so the port
+itself refuses only a non-local route or a worker mismatch.
+
 - It's a same-process loopback `ControllerWorkerDeliveryPortV1`. It returns
   `disposition: "accepted"` only if all of these hold:
   - `route.kind === "local"`;
@@ -62,16 +70,23 @@ per critical-path decision 5.
 - Leave `MacLocalProtectedConfigurationV1` at its six keys.
 - Add a separate owner-only, data-only file: `Protected/config/task-runtime.json` (0600, not a
   symlink), schema `control-room.mac-local-task-runtime/v1`, validated with an exact-keys check.
-- It holds only independent 32-byte keys, base64url-encoded, one per existing consumer. Codex lists the
-  exact set from the constructors, following the pattern in `private-task-startup.ts`:
-  - delivery receipt integrity;
-  - harness run store;
-  - planner integrity and planner review;
-  - durable result integrity and result review;
-  - native approvals.
+- It holds six 32-byte keys, base64url-encoded, **one per role**: `planning`, `review`, `harness`,
+  `results`, `approvals` and `deliveryReceipt`. No two roles share a key. (Correction, same day: an
+  earlier draft said one independent key per consumer. That would make startup refuse, because the
+  existing code requires some consumers to share a key: `validateTaskQualityKeys` insists that the
+  quality key equals the planner's review key and the website review key, that the quality harness
+  key equals the website harness key, and that the quality results key equals the website results key.)
+  The provider maps each role to its consumers:
+  - `planning`: the planner's `integrityKey`;
+  - `review`: the planner's `reviewIntegrityKey`, `quality.integrityKey`, the website review key and the
+    durable result review key;
+  - `harness`: the run store (`runIntegrityKey`), `quality.harnessIntegrityKey` and the website harness key;
+  - `results`: the durable result `integrityKey`, `quality.results.integrityKey` and the website results key;
+  - `approvals`: `NativeApprovalPacketStore`;
+  - `deliveryReceipt`: the CLI bridge's receipt `integrityKey`.
 - It also holds the protected Hermes run settings: profile, provider and model. These are data, not a
   source pin.
-- Keys are generated once, by `bootstrap-owner` or the rehearsal setup, with `crypto.randomBytes(32)`.
+- Keys are generated once, by `pnpm mac:prepare-task-runtime` (built in package 3), with `crypto.randomBytes(32)`.
   - Any two identical keys → refuse.
   - A key of the wrong length → refuse.
   - The file exists but is invalid → refuse. Never regenerate over it.
@@ -100,7 +115,50 @@ per critical-path decision 5.
 - **Build entry:** add `macLocalDefaultTaskProvider` to `vite.vps.config.ts`, so that `up.mjs`'s
   existing `dist-vps/server/macLocalDefaultTaskProvider.js` path exists.
 
-## 5. Review and done
+## 5. Rollback checkpoint: a protected file on the Mac (decided 2026-09-25)
+
+The review system (`CompletionGateStoreV1`, the planner and the result services) needs an
+`AwaitableRollbackCheckpointStoreV1`. Its contract says the checkpoint must be stored **outside the
+database it protects**, so that restoring an old copy of the database is detected, not silently accepted.
+The only production implementation is the etcd store, which this deployment doesn't run. The in-memory
+store is test-only and must not be used.
+
+**Decision:** a protected checkpoint file on the Mac, `<protected>/state/rollback-checkpoints.json`.
+The database it protects is the VPS PostgreSQL, so this file is on a different machine. That's the
+independent placement the contract asks for, and the etcd store exists to provide.
+
+- **Store rules:**
+  - `read` returns the scope's checkpoint.
+  - `initialize` succeeds only for an absent scope at revision 1.
+  - `advance` is a compare-and-swap: the stored checkpoint's digest must equal the expected digest,
+    the scope must match, and the revision must be exactly one higher. Anything else throws.
+- **Durability:** each write goes to a new private temporary file, is fsynced, is renamed over the
+  target, and the directory is fsynced before the call returns. A failed write leaves the old file intact.
+- **One writer:**
+  - Calls are serialized inside the process.
+  - An exclusive lock file holds the owning process id. A lock held by a live process refuses.
+  - A lock left by a dead process is taken over, so a launchd crash-restart recovers.
+- **Protection:** the directory is 0700 and the file 0600, with no symlinks. Content never appears in
+  an error.
+- **Failure is closed.** The review system initializes a checkpoint only for an empty review history,
+  and every later read and write must match it. So each of these makes reviews refuse, never
+  silently continue:
+  - the file is lost while the database has state;
+  - a Mac backup restores an older copy of the file;
+  - the VPS database is restored to an earlier point.
+- **Backup and restore rules:**
+  1. Don't restore `rollback-checkpoints.json` by itself from a Mac backup.
+  2. The M8 drill restores into a scratch database and never touches this file.
+  3. A real VPS disaster recovery, or a lost or rolled-back checkpoint file, needs an owner-attended
+     re-anchor: re-read the restored database's integrity row and re-initialize the checkpoint from it,
+     after the owner confirms in an attached Terminal that the restore was intended. That command is
+     **not** part of W7. Until it exists, recovery is a Claude-reviewed manual procedure, and the
+     site stays refusing, which is the safe state.
+- **Accepted limit:** this protects against a rollback or restore on the VPS side. Like the rest of the
+  owner-trusted local model (critical path decision 3), it doesn't defend against a malicious process
+  running as the owner on the Mac, which could edit both the file and the keys.
+
+## 6. Review and done
 
 - Split the work into packages of no more than about 800 lines, in this order:
   1. fence A plus fence B helper and tests;
