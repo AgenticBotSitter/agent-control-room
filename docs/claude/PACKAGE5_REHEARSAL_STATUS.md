@@ -96,11 +96,11 @@ approval. Remaining evidence includes the positive VPS CLI Unix-peer path, a
 real lifecycle advance followed by missing-checkpoint refusals, and resolution
 of the three role preflight failures before checking fake-worker readiness.
 
-Source inspection suggests one concrete cause requiring a separate lead
-decision: `privateWebSchemaDigest` and the preflight table/permission maps
-identify migrations 0001–0084, while this rehearsal applies migration 0085.
-The preflight deliberately reports one generic refusal, so the digest has not
-yet been isolated as the sole failing condition. The package-5 instruction
+Source inspection and a read-only catalog comparison confirmed one cause
+requiring a separate lead decision: `privateWebSchemaDigest` differs from the
+actual structural digest after migration 0085. The preflight table/permission
+maps also describe migrations 0001–0084. The preflight deliberately reports
+one generic refusal, so additional failures have not been ruled out. The package-5 instruction
 forbids changing any preflight; this branch does not change or bypass it.
 Claude must approve the separately reviewed schema/preflight update before
 full 12.F2 can pass.

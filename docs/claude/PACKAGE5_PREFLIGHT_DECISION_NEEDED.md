@@ -9,9 +9,11 @@ web, coordinator and results each reported `private_database_preflight_failed`;
 queue-worker passed. All four logins authenticated as their expected roles.
 No task host or worker started. Source inspection shows that the structural
 schema digest and permission maps in `private-database-preflight.ts` describe
-migrations 0001–0084, while the rehearsal applies migration 0085. This is a
-probable cause, not proven to be the only one because that preflight gives a
-single fail-closed error. The package-5 direction forbids changing preflights,
+migrations 0001–0084, while the rehearsal applies migration 0085. A read-only
+check on the preserved disposable cluster confirmed that the actual structural
+digest differs from the compiled constant. This is a proven preflight failure,
+but may not be the only one because that preflight gives a single fail-closed
+error. The package-5 direction forbids changing preflights,
 so this branch has not changed or bypassed them.
 
 Claude decision requested: own a separate, reviewed update to the existing
