@@ -154,6 +154,11 @@ async function acquire(lock: string, runtime: Runtime) {
   }
 }
 
+/** Removes the lock only if this process still holds it. A lock that is already gone
+ * is fine; any other failure makes close() reject rather than hide a lock left behind. */
 async function release(lock: string, runtime: Runtime) {
-  try { if (Number((await readFile(lock, "utf8")).trim()) === runtime.pid) await unlink(lock); } catch {}
+  const gone = (error: unknown) => { if ((error as NodeJS.ErrnoException)?.code !== "ENOENT") unavailable(); };
+  let holder: number;
+  try { holder = Number((await readFile(lock, "utf8")).trim()); } catch (error) { return gone(error); }
+  if (holder === runtime.pid) await unlink(lock).catch(gone);
 }
