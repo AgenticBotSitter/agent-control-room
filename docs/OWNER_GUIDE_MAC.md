@@ -1,9 +1,16 @@
 # Owner Guide: Running the Control Room on One Mac (DRAFT)
 
-> **DRAFT — NOT YET PROVEN AGAINST THE REAL DATABASE.** No live run of this stack has been
-> performed. Every command in sections 1 and 2 is **unproven**: none has been executed against
-> the real production database. The output strings quoted below are read from the scripts in
-> this branch, not from a captured run.
+> **PARTLY PROVEN. Read section 9 before you rely on anything here.**
+>
+> The database route is **real and working**: the four database roles were verified against the
+> live database on 2026-09-25, and a deliberately wrong server name was confirmed to be refused
+> with no password in any output. The commands and output strings in sections 1 and 2 are still
+> read from the scripts in this branch rather than captured from a full run of the stack.
+>
+> The stack itself has **never been started**, because the mac-local task provider is not built
+> yet. Until it is, starting the system will stop with `release build missing` or
+> `<module> missing: run pnpm build`. Section 9 lists every known limitation, including the
+> parts of the journey that are routed but cannot work.
 > The repository is public: nothing here contains secrets, addresses, or private paths.
 
 Run every `pnpm` command from the repository root, on the Mac that holds the workers.
@@ -114,7 +121,66 @@ key, certificate, or database address into chat, a ticket, or this repository.
 ## 8. Owner-only actions
 
 Anything a bot cannot do is listed in `docs/OWNER_ACTIONS.md`. Read that file rather than
-repeating it here. The currently open item is the Tailscale client tag on this Mac — an
-owner-attended, one-time action. Do not edit the policy again unless its current contents show
-the grant is missing. Never paste a password, access key, database address, certificate, or
-terminal output into `docs/OWNER_ACTIONS.md`.
+repeating it here. Never paste a password, access key, database address, MagicDNS name,
+certificate, or terminal output into that file.
+
+The Tailscale client tag and the access-policy grant are both **done**. Do not re-open either
+one; if a future update needs another machine on the route, give that machine the same approved
+client tag and change nothing else.
+
+What is still open is the set of drills in `OWNER_ACTIONS.md` item 3: the phone-or-PC port test,
+a Mac sleep and wake, the VPS-side PostgreSQL and Tailscale restarts, and a forced certificate
+renewal. Those are not setup steps; they are the checks that prove the route survives real
+interruptions.
+
+## 9. Known limitations (read before you rely on this)
+
+Nothing in this section is a bug report; it is the honest state of the
+single-Mac Control Room on 2026-09-25. Each item says what you can and
+cannot do today.
+
+### 9.1 You cannot start the system yet
+
+`pnpm mac:up` does not complete. The task host needs a build artifact that
+no build step currently produces, so it stops with a "missing: run pnpm
+build" message even after a successful build. This is missing source, not a
+misconfiguration, and it is being worked on. Sections 2 and 4 describe the
+intended behaviour once that lands.
+
+### 9.2 The database is proven; the website on top of it is not
+
+| Part | State |
+| --- | --- |
+| Direct route to the database | **Working.** All four roles verified. |
+| Wrong server name refused, no password echoed | **Working.** |
+| Sign-in, projects, creating a project or a task | Covered by automated tests against a disposable database. **Not** yet run by you on the real one. |
+| Assigning, approving, accepting, requesting changes, planning | **Routed but unusable.** The page exists and answers "service unavailable", because the operation behind it is not installed. |
+| Cancelling a running task | **Not available at all.** There is no cancel action anywhere in the local product. A task that is running cannot be stopped from the website. |
+| Automatic service at login | **Not built.** Starting is a manual command for now. |
+
+The two rows that matter most to an owner expecting a normal product: you
+cannot cancel a task, and several review steps are not usable. Do not plan
+around a workflow that needs either.
+
+### 9.3 The three workers are not equally proven
+
+Only Codex, Claude and Hermes are supported, and each is verified at startup
+by finding its pinned executable. A worker that cannot be verified shows
+`unavailable` and is given no work; the others carry on. A worker can also be
+`ready` and still `not_proven`, which simply means it has not published a
+result yet. Neither state is a fault report.
+
+### 9.4 One Mac, one owner, loopback only
+
+The site is served on the loopback address on this Mac only. It is not
+published to the network, and it is not reachable from your phone. The
+database is reached over a private connection to the one remote machine
+holding it, and the database port is not open to your other devices.
+
+### 9.5 What still has to be proved by a person
+
+Three checks need you rather than an agent, and they are listed in
+`docs/OWNER_ACTIONS.md` item 3: a port test from your phone or PC (which
+must fail), a sleep and wake on this Mac, and remote restarts of the
+database and the private connection. Until those are done, the route has not
+been shown to survive a real interruption.
