@@ -2,6 +2,13 @@
 
 Codex appends one short entry per work package (see `CODEX_MAC_BUILD_EXECUTION.md`).
 
+- 2026-09-24 — P0 local source scan: the 683 commits ahead of `origin/main`
+  were checked for common cloud-key, private-key, GitHub-token, generic secret,
+  and private-tailnet-address patterns without printing source or values. No
+  matches were found. This is a narrow hygiene scan, not a claim that a public
+  release is ready; the branch is still local-only and has not been pushed or
+  merged.
+
 - 2026-09-24 — W3 real local website launcher: the compiled release now
   contains the Mac-local host, protected configuration reader, PostgreSQL
   adapter, and private-app assets required to start the real loopback website
