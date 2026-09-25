@@ -2,6 +2,10 @@
 
 Codex appends one short entry per work package (see `CODEX_MAC_BUILD_EXECUTION.md`).
 
+- SOURCE 2026-09-24 — repaired the Mac provisioner's remote success detector so harmless SSH wrapper output cannot turn a completed VPS database setup into a false failure; syntax, marker cases, dry run, type-check, and whitespace verification pass. The secure Mac-to-VPS route remains the next real W1 proof.
+
+- REAL 2026-09-24 — the existing VPS `control_room` database now has the full 85-entry migration ledger and all four fixed Mac-local login roles. The Mac-to-VPS TLS route and its four-role connection check are still pending, so no website, queue, or agent is represented as running.
+
 - 2026-09-24 — Codex local-runner cancellation fence: the managed, read-only
   Codex command runner now checks cancellation again after its asynchronous
   empty-work-folder inspection and before it can spawn a process. A focused

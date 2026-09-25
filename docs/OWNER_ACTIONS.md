@@ -2,10 +2,18 @@
 
 Only steps the bots cannot do. Each item is numbered and copy-paste ready.
 
-There is no owner action required to continue the Mac-local source build. The
-owner approved the sanitized Claude review on 2026-09-24; it was completed and
-approved without receiving credentials, protected configuration, database
-values, or private-machine details.
+## Current status: no owner action needed for the database setup itself
+
+The owner-approved Tailscale SSH connection is working. Control Room's
+database migrations and four restricted Mac-local login accounts are already
+present on the VPS. The remaining W1 work is a secure, Mac-to-VPS database
+connection that Codex must build and verify: a private Tailscale route, a
+trusted database certificate, and a Mac-only network rule. The website must
+not be represented as connected until its four real login checks pass.
+
+Do not paste a password, access key, database address, certificate, or
+terminal output here. A new owner step will appear in this document only if
+the secure network rule cannot be completed with the existing authorization.
 
 ## Optional: let Marvin perform free independent source reviews
 
