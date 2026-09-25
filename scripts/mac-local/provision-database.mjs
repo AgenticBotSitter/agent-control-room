@@ -32,6 +32,10 @@ const bootstrapRoles = Object.freeze({ migrator: "control_room_migrator", applic
 const passwordPattern = /^[A-Za-z0-9_-]{32,}$/u;
 const privateMode = 0o700;
 const privateFileMode = 0o600;
+// A database provision is intentionally bounded. SSH itself has a connection
+// deadline below; this covers a connected remote command that stalls while
+// fetching, preparing dependencies, or applying the ledger.
+const remoteProvisionTimeoutMs = 5 * 60_000;
 
 function usage() {
   return "Usage: pnpm mac:provision-database --protected-root ABSOLUTE_PATH --ssh-target USER@HOST --database-host HOST [--database-port 5432] [--endpoint-policy-file ABSOLUTE_PATH] [--remote-worktree ABSOLUTE_PATH] [--vps-only] [--dry-run]";
@@ -134,7 +138,7 @@ async function runRemoteProvision({ sshTarget, remoteWorktree, passwords }) {
   // The secrets are JSON on stdin, not process arguments or a remote file.
   const source = String.raw`const reportError = error => {
   const code = error && typeof error === 'object' && typeof error.code === 'string' ? error.code : error?.name === 'Error' ? 'ERROR' : 'UNKNOWN';
-  process.stderr.write('provision_error:' + code + '\\n'); process.exitCode = 1;
+  process.stderr.write('provision_error:' + code + '\n'); process.exitCode = 1;
 };
 process.on('uncaughtException', reportError); process.on('unhandledRejection', reportError);
 import { applyMigrations } from './deploy/postgres/apply-migrations.mjs';
@@ -147,13 +151,13 @@ const input = await new Promise((resolve, reject) => {
 const value = JSON.parse(input);
 const bootstrapTarget = 'host=/var/run/postgresql dbname=control_room user=postgres';
 const migrateTarget = 'host=127.0.0.1 port=5432 dbname=control_room user=control_room_migrator password=' + value.migrator;
-process.stderr.write('provision_stage:bootstrap-passwords\\n');
+process.stderr.write('provision_stage:bootstrap-passwords\n');
 const bootstrap = connectTarget(bootstrapTarget); await bootstrap.connect();
 try {
   for (const [name, password] of Object.entries({ control_room_migrator: value.migrator, control_room_app: value.application, control_room_scheduler: value.scheduler }))
     await bootstrap.query('ALTER ROLE ' + name + ' PASSWORD ' + bootstrap.escapeLiteral(password));
 } finally { await bootstrap.end(); }
-process.stderr.write('provision_stage:migrations\\n');
+process.stderr.write('provision_stage:migrations\n');
 await applyMigrations({ bootstrapTarget, migrateTarget, env: {
   CONTROL_ROOM_MIGRATOR_PASSWORD: value.migrator,
   CONTROL_ROOM_APP_PASSWORD: value.application,
@@ -161,7 +165,7 @@ await applyMigrations({ bootstrapTarget, migrateTarget, env: {
 }});
 const client = connectTarget(bootstrapTarget); await client.connect();
 try {
-  process.stderr.write('provision_stage:local-roles\\n');
+  process.stderr.write('provision_stage:local-roles\n');
   for (const [name, password] of Object.entries(value.local)) {
     const existing = await client.query('SELECT 1 FROM pg_roles WHERE rolname=$1', [name]);
     if (existing.rows.length === 0)
@@ -169,7 +173,7 @@ try {
     await client.query('ALTER ROLE ' + name + ' PASSWORD ' + client.escapeLiteral(password));
     await client.query('GRANT control_room_application TO ' + name);
   }
-  process.stdout.write('control_room_provisioned\\n');
+  process.stdout.write('control_room_provisioned\n');
 } finally { await client.end(); }`;
   const stage = `/opt/data/control-room-provision-${randomBytes(12).toString("hex")}`;
   const sourceBase64 = Buffer.from(source, "utf8").toString("base64");
@@ -195,11 +199,25 @@ runuser -u postgres -- node "$stage/.control-room-provision.mjs"`;
       remote],
     { stdio: ["pipe", "pipe", "pipe"] });
     let stderr = "", stdout = "";
+    let settled = false;
+    let timer;
+    const finish = (callback, value) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      callback(value);
+    };
+    const fail = error => {
+      // Ending the local SSH client ends its remote command as well. This is
+      // a one-shot setup helper, so a deadline must never leave it running.
+      if (!child.killed) child.kill("SIGKILL");
+      finish(rejectPromise, error);
+    };
     child.stdout.on("data", chunk => { stdout += String(chunk); });
     child.stderr.on("data", chunk => { stderr += String(chunk); });
-    child.once("error", rejectPromise);
+    child.once("error", fail);
     child.once("close", code => {
-      if (code === 0 && finalProvisionMarker(stdout) === "control_room_provisioned") resolvePromise();
+      if (code === 0 && finalProvisionMarker(stdout) === "control_room_provisioned") finish(resolvePromise);
       else {
         const stageMatch = /provision_stage:([a-z-]+)/g;
         let stage = "unknown", match;
@@ -211,10 +229,15 @@ runuser -u postgres -- node "$stage/.control-room-provision.mjs"`;
           : /password authentication failed|no pg_hba\.conf entry/i.test(stderr) ? "postgres_authentication_refused"
           : /Cannot find module|ERR_MODULE_NOT_FOUND/i.test(stderr) ? "remote_runtime_unavailable"
           : "remote_execution_refused";
-        rejectPromise(new Error(`provision_${reason}:${stage}`));
+        finish(rejectPromise, new Error(`provision_${reason}:${stage}`));
       }
     });
-    child.stdin.end(JSON.stringify(passwords));
+    // A broken SSH pipe can otherwise emit an unhandled error after stdin is
+    // written, making a failed provision look like a hung installer.
+    child.stdin.once("error", error => fail(new Error(`provision_ssh_stdin_refused:${error.code ?? "unknown"}`)));
+    timer = setTimeout(() => fail(new Error("provision_ssh_timeout")), remoteProvisionTimeoutMs);
+    try { child.stdin.end(JSON.stringify(passwords)); }
+    catch (error) { fail(new Error(`provision_ssh_stdin_refused:${error?.code ?? "unknown"}`)); }
   });
 }
 
@@ -261,7 +284,7 @@ export async function provisionMacLocalDatabaseV1(options) {
   const macLocal = captureMacLocalProtectedConfigurationV1({ schema: MAC_LOCAL_PROTECTED_CONFIGURATION_V1, port: 3210, workspaceId: "workspace:mac-local",
     localOwnerSession: { schema: LOCAL_OWNER_SESSION_PROFILE_V1, origin: "http://127.0.0.1:3210", tenantId: "tenant:mac-local",
       provider: "local-owner", subject: "owner:local", ownerCodeDigest: sha256Digest({ ownerCode }), sessionSeconds: 28_800 },
-    database, enablement: { ...enablementMaterial, enablementDigest: sha256Digest(enablementMaterial) } });
+    database, enablement: enablementMaterial });
   if (!options.dryRun) {
     await writePrivate(join(configRoot, "database-roles.json"), `${JSON.stringify(roles)}\n`);
     await writePrivate(join(configRoot, "mac-local.json"), `${JSON.stringify(macLocal)}\n`);
