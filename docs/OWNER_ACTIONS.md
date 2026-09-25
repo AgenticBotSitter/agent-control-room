@@ -2,18 +2,17 @@
 
 Only steps the bots cannot do. Each item is numbered and copy-paste ready.
 
-## Current status: no owner action needed for the database setup itself
+## Current status: no owner action needed for the private database route
 
-The owner-approved Tailscale SSH connection is working. Control Room's
-database migrations and four restricted Mac-local login accounts are already
-present on the VPS. The remaining W1 work is a secure, Mac-to-VPS database
-connection that Codex must build and verify: a private Tailscale route, a
-trusted database certificate, and a Mac-only network rule. The website must
-not be represented as connected until its four real login checks pass.
+The owner-approved private SSH connection is used as a loopback-only database
+tunnel on this Mac. That keeps PostgreSQL bound to the VPS loopback address,
+does not open a new database port on the tailnet or internet, and does not
+require a Tailscale administrator-console change. The tunnel and the four
+restricted database logins still have to pass their real checks before the
+website is represented as connected.
 
 Do not paste a password, access key, database address, certificate, or
-terminal output here. A new owner step will appear in this document only if
-the secure network rule cannot be completed with the existing authorization.
+terminal output here.
 
 ## Optional: let Marvin perform free independent source reviews
 
