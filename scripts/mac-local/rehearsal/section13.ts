@@ -10,6 +10,11 @@ import { Client } from "pg";
 import { connectTarget } from "../../../deploy/postgres/evidence.mjs";
 import { sha256Digest } from "../../../src/security/canonical-digest";
 import { applyMacLocalFirstOwnerV1 } from "../first-owner-vps.mjs";
+import { loadMacLocalTaskRuntimeFromRootV1 } from "../../../src/web/v1/mac-local-task-runtime";
+import { openMacLocalRollbackCheckpointStoreV1 } from "../../../src/web/v1/mac-local-rollback-checkpoint-store";
+import { CompletionGateStoreV1 } from "../../../src/completion-gate/v1/store";
+import { createMacLocalOwnerReviewProfileV1 } from "../../../src/web/v1/mac-local-owner-review-profile";
+import { createPrivatePostgresDatabase } from "../../../src/web/v1/private-postgres";
 import { serviceInstalled } from "../service.mjs";
 
 const [arg] = process.argv.slice(2);
@@ -186,6 +191,44 @@ try {
   await fault.end();
   await rename(checkpointSaved, checkpointFile);
 }
+
+// A genuine completion-gate mutation after the first-owner handoff: create
+// one disposable project, register its profile through the reviewed store,
+// then remove the independent checkpoint and prove neither command repairs it.
+const realProjectId = "project:section13-checkpoint";
+const advanceAdmin = connectTarget(target);
+await advanceAdmin.connect();
+try {
+  await advanceAdmin.query(`INSERT INTO projects(id,tenant_id,workspace_id,adapter_id,source_record_id,source_version,
+    title,description,normalized_state,domain_state,health,authority_mode,observed_at,payload,updated_at)
+    VALUES($1,$2,$3,$4,$1,'1','Disposable completion advance','No worker task',
+      'planned','manual_project_active','healthy','control_room_native',$5,'{}'::jsonb,$5)`,
+  [realProjectId, manifest.tenant.id, manifest.workspace.id, manifest.adapters[0].id, manifest.createdAt]);
+  await advanceAdmin.query(`INSERT INTO control_manual_project_heads(tenant_id,project_id,lifecycle,version,created_at,updated_at)
+    VALUES($1,$2,'active',1,$3,$3)`, [manifest.tenant.id, realProjectId, manifest.createdAt]);
+} finally { await advanceAdmin.end(); }
+const taskRuntime = await loadMacLocalTaskRuntimeFromRootV1(protectedRoot);
+// No reviewed application login may insert profiles: coordinator, results and
+// web triggers each reject that record kind. Use the throwaway cluster's
+// postgres login only to exercise the store's advanced-state/checkpoint logic.
+const advancePool = createPrivatePostgresDatabase({ ...roleMap.web, username: "postgres",
+  password: roleMap.web.password });
+const advanceCheckpoints = await openMacLocalRollbackCheckpointStoreV1(protectedRoot);
+try {
+  const gate = new CompletionGateStoreV1(advancePool.client, taskRuntime.keys.review, advanceCheckpoints);
+  const profile = createMacLocalOwnerReviewProfileV1({ tenantId: manifest.tenant.id, projectId: realProjectId,
+    ownerIdentityId: manifest.identity.id, projectCreatedAt: manifest.createdAt });
+  await gate.registerProfile(profile);
+  await gate.verifyProvisionedTenantV1(manifest.tenant.id);
+} finally {
+  await advanceCheckpoints.close();
+  await advancePool.close();
+}
+await rename(checkpointFile, checkpointSaved);
+try {
+  assert.notEqual(complete().status, 0, "finisher must refuse a real advanced tenant without its checkpoint");
+  assert.notEqual(invoke(upArgs).status, 0, "mac:up must refuse a real advanced tenant without its checkpoint");
+} finally { await rename(checkpointSaved, checkpointFile); }
 
 // Prove read-only readiness with fake version-reporting executables. Create a
 // project so mac:up constructs the task provider, but intentionally submit no

@@ -66,13 +66,17 @@ The run passed the no-setup `mac:up` refusal; manifest generation with worker
 ids and completion-gate genesis; first injected VPS transaction and identical
 repeat (14 rows kept); altered manifest-id refusal; tampered node-key pin refusal;
 altered genesis-tag and wrong manifest-digest receipt refusals; successful and
-repeated Mac completion; and the advanced-integrity/missing-checkpoint refusal
-for both completion and `mac:up`. The advanced-state case used explicit
-revision fault injection after checkpoint creation and restored the disposable
-state afterward; it did not advance the tenant through a real completion-gate
-lifecycle operation. The node-key negative temporarily disabled the immutable-key
-trigger inside the throwaway cluster, then restored the original fingerprint
-and re-enabled the trigger.
+repeated Mac completion; and an advanced-integrity/missing-checkpoint refusal
+for the finisher. `mac:up` also refused, but the separate preflight failure
+means its checkpoint-specific refusal is not yet proven. It also created a
+disposable project and used `CompletionGateStoreV1.registerProfile` to make a
+real revision/count advance,
+then removed the checkpoint and confirmed the finisher refused to recreate it.
+That profile insert used the disposable cluster's `postgres` role because no
+reviewed application login permits profile records. It tests store/checkpoint
+behavior, not an available runtime authority path. The node-key negative
+temporarily disabled the immutable-key trigger inside the throwaway cluster,
+then restored the original fingerprint and re-enabled the trigger.
 
 The rehearsal called the VPS transaction's injected-client function only after
 proving that the client was connected as the disposable cluster's `postgres`
@@ -93,7 +97,8 @@ verifiers failed. The cluster was stopped and no task host or task started.
 The three ready-worker listing and pending-review task journey therefore remain
 unproven. Do not treat this as complete 12.F2/section 13 acceptance or as merge
 approval. Remaining evidence includes the positive VPS CLI Unix-peer path, a
-real lifecycle advance followed by missing-checkpoint refusals, and resolution
+positive lifecycle advance under a reviewed non-superuser authority, proof that
+`mac:up` refuses specifically for a missing advanced checkpoint, and resolution
 of the three role preflight failures before checking fake-worker readiness.
 
 Source inspection and a read-only catalog comparison confirmed one cause
@@ -104,3 +109,11 @@ one generic refusal, so additional failures have not been ruled out. The package
 forbids changing any preflight; this branch does not change or bypass it.
 Claude must approve the separately reviewed schema/preflight update before
 full 12.F2 can pass.
+
+The added real profile advance exposed a separate authority gap: migration 0054
+limits coordinator inserts to service verification, migration 0055 limits the
+results role to targets/revisions, and migration 0053 limits web inserts to
+reviews/findings/verifications. None permits an acceptance profile, although
+the task provider currently registers profiles through the coordinator store.
+Claude must choose a reviewed role/architecture change; switching to the web
+pool alone is not supported by the current grants and triggers.

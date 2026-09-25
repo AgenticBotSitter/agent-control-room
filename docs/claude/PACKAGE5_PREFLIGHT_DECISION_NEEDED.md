@@ -25,3 +25,21 @@ completion-gate advance with missing-checkpoint refusal and a three-worker
 fake-executable task journey to pending review exactly once. The positive
 Unix-socket `postgres` CLI path is also unproven on this Mac and requires
 VPS-local owner/operator qualification, not a Mac TCP substitute.
+
+The task journey also lacks an existing end-to-end fake-executable harness.
+The website flow is project → proposal → plan → assignment → signed owner
+approval → submission → result. Adapter-unit fixtures exist, but the local
+provider uses the production process adapters and has no test-only launch
+injection. A disposable wrapper with a matching pinned version may cover
+worker execution, but approval still needs a valid, test-only signed packet.
+Claude should specify or review that rehearsal seam; do not bypass approval
+or change the production trust contract merely to make a green test.
+
+A separate real advance attempt exposed a second product issue: the task
+provider registers owner review profiles using its coordinator read pool, but
+the reviewed insert guards reject profile writes for coordinator, results,
+and private-web roles. Queue-worker has no profile insert grant. No existing
+narrow Mac login can make that provider call. This branch has not widened a
+role or bypassed a guard. Claude must decide the explicit one-time profile
+registration authority and corresponding provider behavior before task-host
+startup can be claimed.
