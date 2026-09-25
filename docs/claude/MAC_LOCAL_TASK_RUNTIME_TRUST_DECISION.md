@@ -115,7 +115,133 @@ itself refuses only a non-local route or a worker mismatch.
 - **Build entry:** add `macLocalDefaultTaskProvider` to `vite.vps.config.ts`, so that `up.mjs`'s
   existing `dist-vps/server/macLocalDefaultTaskProvider.js` path exists.
 
-## 5. Review and done
+## 5. Rollback checkpoint: a protected file on the Mac (decided 2026-09-25)
+
+The review system (`CompletionGateStoreV1`, the planner and the result services) needs an
+`AwaitableRollbackCheckpointStoreV1`. Its contract says the checkpoint must be stored **outside the
+database it protects**, so that restoring an old copy of the database is detected, not silently accepted.
+The only production implementation is the etcd store, which this deployment doesn't run. The in-memory
+store is test-only and must not be used.
+
+**Decision:** a protected checkpoint file on the Mac, `<protected>/state/rollback-checkpoints.json`.
+The database it protects is the VPS PostgreSQL, so this file is on a different machine. That's the
+independent placement the contract asks for, and the etcd store exists to provide.
+
+- **Store rules:**
+  - `read` returns the scope's checkpoint.
+  - `initialize` succeeds only for an absent scope at revision 1.
+  - `advance` is a compare-and-swap: the stored checkpoint's digest must equal the expected digest,
+    the scope must match, and the revision must be exactly one higher. Anything else throws.
+- **Durability:** each write goes to a new private temporary file, is fsynced, is renamed over the
+  target, and the directory is fsynced before the call returns. A failed write leaves the old file intact.
+- **One writer:**
+  - Calls are serialized inside the process.
+  - An exclusive lock file holds the owning process id. A lock held by a live process refuses.
+  - A lock left by a dead process is taken over, so a launchd crash-restart recovers.
+- **Protection:** the directory is 0700 and the file 0600, with no symlinks. Content never appears in
+  an error.
+- **Failure is closed.** The review system initializes a checkpoint only for an empty review history,
+  and every later read and write must match it. So each of these makes reviews refuse, never
+  silently continue:
+  - the file is lost while the database has state;
+  - a Mac backup restores an older copy of the file;
+  - the VPS database is restored to an earlier point.
+- **Backup and restore rules:**
+  1. Don't restore `rollback-checkpoints.json` by itself from a Mac backup.
+  2. The M8 drill restores into a scratch database and never touches this file.
+  3. A real VPS disaster recovery, or a lost or rolled-back checkpoint file, needs an owner-attended
+     re-anchor: re-read the restored database's integrity row and re-initialize the checkpoint from it,
+     after the owner confirms in an attached Terminal that the restore was intended. That command is
+     **not** part of W7. Until it exists, recovery is a Claude-reviewed manual procedure, and the
+     site stays refusing, which is the safe state.
+- **Accepted limit:** this protects against a rollback or restore on the VPS side. Like the rest of the
+  owner-trusted local model (critical path decision 3), it doesn't defend against a malicious process
+  running as the owner on the Mac, which could edit both the file and the keys.
+
+## 6. Package 4 composition map (answers Marvin's four questions, 2026-09-25)
+
+Nothing here is a new authority. Every field comes from protected configuration that already exists,
+from `task-runtime.json`, or from an existing class. Follow
+`tests/codex-owner-trusted-local-queue.test.ts`, which is the **local** agent pattern. Don't follow
+`tests/helpers/private-agent-task-composition.ts`: that's the remote-node (VPS) pattern with signed
+node enrollments.
+
+**The provider's call.** `createTaskApplication({ configuration, database, workerReadiness, databaseRoles, protectedRoot })`
+calls `createMacLocalCurrentThreeAgentTaskApplicationV1` with:
+
+- `web`: `{ tenantId: configuration.localOwnerSession.tenantId, workspaceId: configuration.workspaceId, tasks, database }`.
+  - **Tenant (question 4):** the task lifecycle's tenant **is** the website's local owner tenant.
+    The composition already refuses any mismatch between web, coordinator and Hermes.
+  - `tasks` carries the same review, harness and results keys as the quality configuration below.
+- `databaseRoles` and `openDatabase`: passed through. **Pools (question 4):**
+  `createMacLocalRestrictedTaskApplicationV1` already opens the coordinator and results roles and closes
+  them on failure. The provider doesn't open those two pools for the lifecycle.
+- `coordinator` (**question 1: a new object built by the provider**, with no pools):
+  - `scope: { tenantId, workspaceId }` (as above);
+  - `planning`:
+    - `template` and `additionalTemplates`: three per active project, capped at 16 (section 4);
+    - `integrityKey: keys.planning`, `reviewIntegrityKey: keys.review`, `checkpoints:` the section 5 store;
+    - `localAdapterAdmission: { enabledAdapters: [the three local adapter ids] }`;
+  - `routes`: one per worker. Each takes `nodeId` from `enablement.nodeId`, `executorId` from its
+    template's `authority.allowedExecutor`, and `capabilityProbeId` from the adapter's capability
+    constant, with `maxConcurrentTasks: 1`, `requiredScratchBytes: 0`, and `leaseSeconds` at least the
+    adapter deadline;
+  - `approvals: { enrollments: [], store: new NativeApprovalPacketStore(keys.approvals, []) }`. Local
+    agents enqueue through their own `enqueue*OwnerTrustedLocalTask` path, as in the Codex local-queue
+    test, so no owner-signed remote approval packet is involved;
+  - `quality`:
+    - `integrityKey: keys.review`, `harnessIntegrityKey: keys.harness`,
+      `results.integrityKey: keys.results`;
+    - `checkpoints:` the same store, `scenarios: []`;
+  - `nativeQueue: true`, and `nativeSubmission` from `preparePgBossNativeTaskSubmission` (the
+    `installed-native-queue.ts` pattern). The host's existing `startQueueWorker` runs the queue worker.
+- `hermes`, `claude`, `codex`: one queue executor each (see below).
+
+**Dispatch preparations (question 2): built in the provider**, one per agent:
+- `CodexOwnerTrustedLocalDispatchPreparationV1`, `ClaudeCodeLocalDispatchPreparationV1` and
+  `HermesLocalDispatchPreparationV1`.
+- Each takes a **provider-owned** read pool opened with `openDatabase(databaseRoles.coordinator)`,
+  closed in the returned `close()`.
+- Each takes a **read-only** `TaskExecutionPlanner` built with the same templates and keys (it's only
+  used for `readInSession`).
+- Each takes `{ workerId, adapterRevision }` from the enablement record. `adapterRevision` is the
+  worker's `sha256Digest({ executablePath, recordedVersion })`, so a re-pin changes the revision and an
+  in-flight delivery then fails `assertCurrent`, as intended.
+
+**The per-worker base (question 3):**
+- `db`: the provider-owned coordinator pool; `integrityKey: keys.deliveryReceipt`;
+  `binding: { workerId, adapterId, adapterRevision }`;
+- `receiptPort: createOwnerTrustedLocalCliReceiptPortV1()`;
+- `assertCurrent: createOwnerTrustedLocalCliAssertCurrentV1(db, preparation, workerReadiness)`;
+- `publish: createOwnerTrustedLocalCliPublishV1(...)`:
+  - `runIntegrityKey: keys.harness`, publication integrity `keys.results` and review `keys.review`;
+  - local artifact storage under `<protected>/runtime/artifacts` (0700);
+  - `registerRun`: the existing `codexOwnerTrustedLocalRunRegistrationV1`,
+    `hermesLocalRunRegistrationV1` or `ClaudeCodeLocalRunRegistrationV1`.
+
+Then `createOwnerTrustedLocal{Codex,Claude,Hermes}DeliveryV1(base, executor, execution configuration)`
+(Hermes uses `task-runtime.json`'s `hermes` settings), wrapped by the queue executors:
+- `createCodexOwnerTrustedLocalQueueExecutorV1` and `createHermesLocalQueueExecutorV1`, which exist.
+- **Claude is the one missing piece of code.** `createClaudeCodeLocalQueueExecutorV1` runs the heavier
+  VPS `executeAssignedClaudeCodeLocalTaskV1` path. Add a mirror of the Codex executor,
+  `createClaudeOwnerTrustedLocalQueueExecutorV1({ tenantId, preparation, delivery })`, using
+  `claudeCodeLocalQueueTargetToDispatchReferenceV1`. Don't reuse the VPS executor for mac-local.
+
+**Fleet signals (not yet on anyone's list):**
+- `TaskAssignmentCoordinator.assign` needs a recent `telemetry` signal and a `capability` pass for the
+  node before it assigns.
+- On the Mac, the host records them through `FleetSignalStore.ingestAuthenticated`: one `capability`
+  pass per **ready** worker (from the existing pinned-executable verification) and one `telemetry`
+  signal.
+- It refreshes them on an interval shorter than their expiry, and stops refreshing a worker that
+  becomes unready, so assignment then refuses it.
+- This derives only from existing readiness. If assignment needs anything beyond that, stop and ask.
+
+**Wiring order in `mac:up`:** `mac:prepare-task-runtime` (idempotent), then the provider. On a fresh
+install, call `CompletionGateStoreV1.provisionTenant` once; it refuses by itself if review state already
+exists.
+
+## 7. Review and done
 
 - Split the work into packages of no more than about 800 lines, in this order:
   1. fence A plus fence B helper and tests;
