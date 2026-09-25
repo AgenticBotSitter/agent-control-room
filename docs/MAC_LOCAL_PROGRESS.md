@@ -4,7 +4,7 @@ Codex appends one short entry per work package (see `CODEX_MAC_BUILD_EXECUTION.m
 
 - REAL 2026-09-24 — the loopback-only SSH database tunnel accepted a local connection, but the first protected-configuration run stopped before writing its JSON files because Hermes reports a multi-line version banner and the generic version reader wrongly required one line. Seven protected password files exist; no database map, owner code, website, queue, or agent was created or started.
 
-- SOURCE 2026-09-24 — superseded route note: the earlier plan for a Tailscale administrator-console rule was replaced by the loopback-only SSH tunnel. No Tailscale administrator change is required for the Mac-local route.
+- SOURCE 2026-09-24 — **SUPERSEDED twice; kept for history. Do not act on this line.** It was first superseded by the loopback-only SSH tunnel, and that tunnel is now superseded in turn. `docs/claude/SECURE_DB_ROUTE.md` revision 3.1 and this file's later entries are the current route: the Mac uses a direct tagged Tailscale connection, and the earlier statement that "no Tailscale administrator change is required" is **no longer true** — the owner did apply a tag owner plus one grant, and the Mac's client tag is now in effect.
 
 - SOURCE 2026-09-24 — repaired the Mac provisioner's remote success detector so harmless SSH wrapper output cannot turn a completed VPS database setup into a false failure; syntax, marker cases, dry run, type-check, and whitespace verification pass. The secure Mac-to-VPS route remains the next real W1 proof.
 
