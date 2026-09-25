@@ -408,25 +408,91 @@ These replace the conflicting parts of sections 6 and 7. None of them changes
 - This detects a restored or pre-seeded *different* key. Migration 0008's immutability
   trigger remains the in-database protection.
 
-**5. Database role isolation: accepted limitation for W7, with a fix package required.**
+**5. Database role isolation. SUPERSEDED by section 11: it is a W7 blocker, not a limitation.**
 - Finding confirmed: the provisioner grants the broad `control_room_application` to all four
   local logins. `mac:check-database` proves identity and connectivity only.
-- Why this is not a W7 blocker:
-  - all four passwords live in one protected root, read by the one host;
-  - per-login separation today would contain bugs, not an attacker who holds the Mac host;
-  - the narrow roles are not all proven on real PostgreSQL
-    (`native_queue_worker_roles.sql` is marked PGlite-only and needs a dedicated queue schema).
-- Required now:
-  - `mac:check-database` output and the owner guide say "connectivity", never
-    "least privilege";
-  - `MAC_LOCAL_EVIDENCE.md` records this limitation.
-- **Package 5 (required before calling the live system least-privilege):**
-  - map `web` → `control_room_private_web`, `coordinator` → `control_room_task_coordinator`,
-    `results` → `control_room_native_results`, and `queue_worker` →
-    `control_room_native_queue_worker` once that role is proven on PG17;
-  - remove `control_room_application` from those logins;
-  - add denied-write probes to `mac:check-database`;
-  - rehearse the full journey first, then apply live as a VPS-local step, with an Opus review.
+- *(Withdrawn. The original rationale, "not a W7 blocker", was wrong. The preflights already
+  require exact per-login roles. See section 11.)*
+
+## 11. Package 5: exact database roles (decided 2026-09-25 after the package 4 rehearsal)
+
+**Correction to 10.5.** Claude called broad membership an acceptable W7 limitation. That was
+wrong. The existing preflights already require each login to inherit **exactly one** narrow
+role (`verifySession`: exactly two member roles, the login and its role). The queue-worker
+preflight (`verifyPgBossNativeWorkerPermissions`) also requires exact queue-table privileges.
+The package 4 rehearsal therefore stopped at `native_queue_worker_start_failed`, which is
+correct. Codex was right not to weaken it. **No preflight changes in package 5.**
+
+The pattern already exists. Real-PostgreSQL tests (`tests/postgres-production-*.test.mjs`,
+`tests/vps-built-*.test.mjs`, `scripts/test-pg17-restore.ts`) apply the narrow role files.
+Package 5 wires the Mac-local provisioning into that pattern. It invents no new grants.
+
+**A. Mapping, one narrow role per login, no `control_room_application`:**
+
+| Login | Inherits only | Role file(s) |
+|---|---|---|
+| `control_room_web` | `control_room_private_web` | `private_web_roles.sql` |
+| `control_room_coordinator` | `control_room_task_coordinator` | `task_coordinator_roles.sql` + `native_queue_producer_roles.sql` |
+| `control_room_results` | `control_room_native_results` | `native_results_roles.sql` |
+| `control_room_queue_worker` | `control_room_native_queue_worker` | `native_queue_worker_roles.sql` |
+
+- Order:
+  1. migrations;
+  2. `production_roles.sql`;
+  3. the offline pg-boss 12.30.0 install of `control_room_queue` with the fixed
+     `native-task-delivery` queue (the same offline step the rehearsal fixture now uses;
+     startup never creates it);
+  4. the four role files;
+  5. login membership.
+- The role files say "fresh role only". Make the VPS-local provision step idempotent by
+  **checking and refusing**, not by re-running blindly:
+  - an existing narrow role whose effective privileges differ from the file's is a
+    stop-and-report;
+  - a login that already has any extra membership (for example `control_room_application`)
+    gets it revoked only in the reviewed live step (C). The provisioner never silently
+    rewrites membership.
+- `mac:check-database` adds, per login, the matching existing preflight
+  (`verifyPrivateWebDatabase`-equivalent / coordinator / results /
+  `verifyNativeQueueWorkerDatabase`). It also adds one denied write per login: a statement
+  outside its grants must fail with `permission denied`. Output says "least privilege: ok"
+  only after those pass.
+
+**B. Rehearsal (disposable real PG17, Mac):**
+- fresh cluster → A's order;
+- all four preflights pass with no fixture shortcuts; `mac:up` with one project;
+- `/api/v1/local-workers` lists three ready workers;
+- one harmless task per worker reaches pending review exactly once;
+- negative tests: re-grant `control_room_application` to one login and prove its preflight
+  refuses; drop one queue grant and prove the queue-worker preflight refuses.
+- This also qualifies `native_queue_worker_roles.sql` and `native_queue_producer_roles.sql`
+  on real PostgreSQL. Update their "PGlite only / unqualified" header comments with the
+  test that proves it.
+
+**C. Live (VPS, only after B passes and an Opus review):**
+1. Read-only audit first (VPS operator, sanitized): which of the four narrow NOLOGIN roles
+   exist; each local login's memberships; whether `control_room_queue` exists.
+2. Then one VPS-local, transactional script:
+   - install the queue schema if absent;
+   - create the missing narrow roles from the files;
+   - `GRANT <narrow> TO <login>`, then `REVOKE control_room_application FROM <login>`.
+3. Nothing else changes: not other projects' roles, not `pg_hba`, not the migrator,
+   application or scheduler logins.
+4. Rollback is the reverse membership change. The narrow roles stay; they are inert
+   without members.
+5. Then the Mac runs `mac:check-database` over the direct route (W1). It must print least
+   privilege ok for all four.
+
+**D. Result inspection (package 6, separate):** after package 5, prove with one test per
+agent that owner review can inspect, accept and request a revision on each current run shape.
+The run records come from `codexOwnerTrustedLocalRunRegistrationV1`,
+`ClaudeCodeLocalRunRegistrationV1` and `hermesLocalRunRegistrationV1` via
+`createOwnerTrustedLocalCliPublishV1`. Fix the inspection source only where a test shows a
+refusal. Don't widen what it accepts beyond those three shapes. Opus review.
+
+**Model/effort:**
+- package 5 A+B: Codex Terra, high effort (security-relevant grants);
+- the review and the live step C: Opus-class, high effort;
+- package 6: Terra medium, with an Opus review of the diff.
 
 ## 9. Review and done
 
