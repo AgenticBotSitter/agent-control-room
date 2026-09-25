@@ -2,6 +2,17 @@
 
 Codex appends one short entry per work package (see `CODEX_MAC_BUILD_EXECUTION.md`).
 
+- 2026-09-24 — current Hermes website-planning route: a task selected for the
+  update-aware `hermes` worker now receives its own current-Hermes plan and
+  correction-plan records, rather than being represented as the historical
+  Hermes 0.21 worker. The saved records retain a digest of the qualified
+  installed build, not a source-pinned version, and use the same existing
+  proposal, review, and correction lifecycle as Claude and Codex. A focused
+  disposable-data test proves the website planner offers it only when the
+  local installation admits it and labels the prepared worker as Hermes.
+  Ten focused tests, TypeScript, and the whitespace check pass. Queue pickup
+  is the next package; no website, database, worker, or service ran here.
+
 - 2026-09-24 — version-independent local worker identity: the active Mac
   product now identifies Marvin's worker as `hermes`, rather than embedding a
   Hermes release number in its host configuration or readiness panel. Older
