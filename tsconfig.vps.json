@@ -29,6 +29,8 @@
     "src/web/v1/installed-native-queue.ts",
     "src/persistence/pg-boss-schema-inspection.ts",
     "src/web/v1/private-task-host.ts",
+    "src/web/v1/private-agent-task-operator-configuration.ts",
+    "src/web/v1/mac-local-protected-loader.ts",
     "src/project-adapters/news/v1/article-extraction-runtime.mjs"
   ],
   "exclude": ["node_modules", "dist-vps", ".next"]

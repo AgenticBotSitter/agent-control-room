@@ -2,6 +2,17 @@
 
 Codex appends one short entry per work package (see `CODEX_MAC_BUILD_EXECUTION.md`).
 
+- 2026-09-24 — W3 release-owned protected configuration loader: the fixed
+  owner-only Mac configuration and four-role database-map reader is now part
+  of the compiled Control Room release, rather than existing only in a source
+  script. It still reads no environment values, opens no database, and starts
+  no listener or worker. The release build configuration now type-checks every
+  declared server entry; that exposed and corrected a strict typing gap in the
+  existing local-worker record parser. Three protected-loader checks, six
+  release-profile checks, TypeScript, and the whitespace check pass. Next:
+  reuse this release entry in the protected Mac host launcher, then supply the
+  existing canonical task lifecycle from the single protected configuration.
+
 - 2026-09-24 — W5 real local product-route foundation: after loopback owner
   sign-in, the Mac-local server now reaches the installed project catalogue,
   one authorized project, its task list, and one authorized task-detail page.

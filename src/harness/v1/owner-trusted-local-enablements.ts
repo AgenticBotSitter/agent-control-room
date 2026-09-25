@@ -43,21 +43,32 @@ function exact(value: unknown, keys: readonly string[]): Record<string, unknown>
   return record;
 }
 
+function captureWorker(value: unknown): Readonly<{
+  workerId: string; kind: OwnerTrustedLocalWorkerKindV1; executablePath: string; recordedVersion: string;
+}> {
+  const item = exact(value, ["workerId", "kind", "executablePath", "recordedVersion"]);
+  const id = item.workerId, kind = item.kind, executablePath = item.executablePath, recordedVersion = item.recordedVersion;
+  if (typeof id !== "string" || !workerId.test(id)
+    || (kind !== "codex" && kind !== "hermes-021" && kind !== "claude-code")
+    || !safePath(executablePath) || typeof recordedVersion !== "string" || !safeVersion.test(recordedVersion)) refused();
+  return Object.freeze({ workerId: id, kind, executablePath, recordedVersion }) as Readonly<{
+    workerId: string; kind: OwnerTrustedLocalWorkerKindV1; executablePath: string; recordedVersion: string;
+  }>;
+}
+
 /** Captures the simple, owner-accepted local trust record. It intentionally
  * grants neither delivery nor execution: a caller must still hold a current
  * canonical queue delivery before it may use a listed executable. */
 export function captureOwnerTrustedLocalEnablementV1(value: unknown): OwnerTrustedLocalEnablementV1 {
   const record = exact(value, ["schema", "mode", "nodeId", "workers"]);
+  const rawWorkers = record.workers;
   if (record.schema !== OWNER_TRUSTED_LOCAL_ENABLEMENT_V1 || record.mode !== "mac-local" || record.nodeId !== "mac-1"
-    || !Array.isArray(record.workers) || record.workers.length < 1 || record.workers.length > 3) refused();
-  const workers = record.workers.map(value => {
-    const item = exact(value, ["workerId", "kind", "executablePath", "recordedVersion"]);
-    if (typeof item.workerId !== "string" || !workerId.test(item.workerId)
-      || (item.kind !== "codex" && item.kind !== "hermes-021" && item.kind !== "claude-code")
-      || !safePath(item.executablePath) || typeof item.recordedVersion !== "string" || !safeVersion.test(item.recordedVersion)) refused();
-    return Object.freeze({ workerId: item.workerId, kind: item.kind, executablePath: item.executablePath,
-      recordedVersion: item.recordedVersion }) as const;
-  });
+    || !Array.isArray(rawWorkers) || rawWorkers.length < 1 || rawWorkers.length > 3) refused();
+  // Keep the explicit assignment: TypeScript cannot retain the array proof
+  // from the compound validation above when this parser is a release build
+  // entry under strict mode.
+  const rawWorkerList: unknown[] = Array.isArray(rawWorkers) ? rawWorkers : refused();
+  const workers = rawWorkerList.map(captureWorker);
   if (new Set(workers.map(worker => worker.workerId)).size !== workers.length
     || new Set(workers.map(worker => worker.kind)).size !== workers.length) refused();
   const material = Object.freeze({ schema: OWNER_TRUSTED_LOCAL_ENABLEMENT_V1, mode: "mac-local" as const,

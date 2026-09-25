@@ -7,7 +7,7 @@ import { sha256Digest } from "../src/security";
 import { LOCAL_OWNER_SESSION_PROFILE_V1 } from "../src/web/v1/local-owner-session";
 import { MAC_LOCAL_PROTECTED_CONFIGURATION_V1 } from "../src/web/v1/mac-local-protected-configuration";
 import { OWNER_TRUSTED_LOCAL_ENABLEMENT_V1 } from "../src/harness/v1/owner-trusted-local-enablements";
-import { loadMacLocalProtectedConfigurationFromRootV1, loadMacLocalProtectedConfigurationV1 } from "../scripts/mac-local/load-protected-configuration";
+import { loadMacLocalProtectedConfigurationFromRootV1, loadMacLocalProtectedConfigurationV1 } from "../src/web/v1/mac-local-protected-loader";
 
 const root = await mkdtemp(join(tmpdir(), "acr-mac-local-config-"));
 const value = { schema: MAC_LOCAL_PROTECTED_CONFIGURATION_V1, port: 3210, workspaceId: "workspace:mac-local",

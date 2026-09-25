@@ -28,6 +28,7 @@ export default defineConfig({
       localSetupHost: "src/installer/v1/local-setup-host.ts",
       localInstallationPlanBootstrap: "src/installer/v1/local-installation-plan-bootstrap.ts",
       privateLocalInstallationOperatorCli: "src/installer/v1/private-local-installation-operator-cli.ts",
+      macLocalProtectedLoader: "src/web/v1/mac-local-protected-loader.ts",
     } } } },
   },
   plugins: [vinext({ appDir: "private-app", rscOutDir: "dist-vps/server", ssrOutDir: "dist-vps/server/ssr" }), {
