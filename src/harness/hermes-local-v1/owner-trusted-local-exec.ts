@@ -112,7 +112,17 @@ export function createOwnerTrustedLocalHermesExecV1(dependencies: Readonly<{ spa
       };
       const accept = (raw: string) => {
         if (raw.length === 0 || stop) return;
-        const parsed = terminal.safeParse(JSON.parse(raw.endsWith("\r") ? raw.slice(0, -1) : raw));
+        const line = raw.endsWith("\r") ? raw.slice(0, -1) : raw;
+        // Hermes emits non-terminal system/text frames and, in the current
+        // CLI, one plain session label even in quiet stream mode. They are
+        // observational only. Accept neither as a result; reject every other
+        // non-JSON line so a changed output protocol cannot look successful.
+        if (/^session_id: [A-Za-z0-9_-]{8,180}$/u.test(line)) return;
+        let frame: unknown;
+        try { frame = JSON.parse(line); } catch { return terminate("failed"); }
+        if (!frame || typeof frame !== "object" || Array.isArray(frame)) return terminate("failed");
+        if ((frame as { type?: unknown }).type !== "result") return;
+        const parsed = terminal.safeParse(frame);
         if (!parsed.success || result !== undefined || parsed.data.exit_code !== 0 || parsed.data.tokens.total < parsed.data.tokens.input + parsed.data.tokens.output)
           return terminate("failed");
         result = parsed.data;
@@ -120,7 +130,7 @@ export function createOwnerTrustedLocalHermesExecV1(dependencies: Readonly<{ spa
       const receive = (chunk: Buffer) => {
         if (settled) return; bytes += chunk.byteLength; if (bytes > MAX_OUTPUT_BYTES) return terminate("failed");
         remainder += decoder.write(chunk); const lines = remainder.split("\n"); remainder = lines.pop() ?? "";
-        for (const line of lines) { try { accept(line); } catch { terminate("failed"); } }
+        for (const line of lines) accept(line);
       };
       const stderr = (chunk: Buffer) => { bytes += chunk.byteLength; if (bytes > MAX_OUTPUT_BYTES) terminate("failed"); };
       const cancel = () => terminate("canceled");
@@ -130,7 +140,7 @@ export function createOwnerTrustedLocalHermesExecV1(dependencies: Readonly<{ spa
       child.stdout.on("error", () => terminate("failed")); child.stderr.on("error", () => terminate("failed"));
       child.stdout.on("data", receive); child.stderr.on("data", stderr);
       child.once("close", code => {
-        const trailing = remainder + decoder.end(); if (trailing) { try { accept(trailing); } catch { stop = "failed"; } }
+        const trailing = remainder + decoder.end(); if (trailing) accept(trailing);
         if (stop) { if (!groupExists(child)) final(stopped()); return; }
         if (groupExists(child)) { stop = "failed"; if (!groupSignal(child, "SIGKILL")) return final(failed("cleanup_uncertain", "process_group_unavailable"));
           killer = setTimeout(() => groupExists(child) ? final(failed("cleanup_uncertain", "process_group_still_running")) : final(stopped()), KILL_CONFIRM_MS); return; }

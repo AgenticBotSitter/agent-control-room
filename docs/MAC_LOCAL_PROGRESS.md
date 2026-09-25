@@ -2,6 +2,17 @@
 
 Codex appends one short entry per work package (see `CODEX_MAC_BUILD_EXECUTION.md`).
 
+- 2026-09-24 — real local Hermes runner proof: after the stream parser was
+  corrected for the current Hermes Agent's documented progress frames, Marvin
+  completed one harmless text-only task through the new Control Room runner
+  and returned the exact requested result. The run used the protected `cr`
+  profile with model `space-bunny-free` and provider `opencode-go`, in an
+  empty temporary folder with tools disabled. It returned measured token use
+  and did not contact the Control Room database, website, or a background
+  service. The next integration step is to have the protected host supply the
+  already-existing receipt/current-authority/publisher closures for this
+  runner.
+
 - 2026-09-24 — current Hermes shared-delivery bridge: the new update-aware
   Hermes runner is now available through the same durable Control Room receipt
   and publication bridge as the local Claude and Codex runners. It does not

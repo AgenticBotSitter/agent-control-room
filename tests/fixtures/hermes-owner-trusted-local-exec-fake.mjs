@@ -16,6 +16,9 @@ if (prompt === "hang") {
   child.unref();
 } else {
   const received = { args: process.argv.slice(2), env: Object.keys(process.env).sort(), prompt };
+  process.stdout.write(`${JSON.stringify({ type: "system", subtype: "init" })}\n`);
+  process.stdout.write(`${JSON.stringify({ type: "text", text: "progress only" })}\n`);
+  process.stdout.write("session_id: 00000000_00000000\n");
   process.stdout.write(`${JSON.stringify({ type: "result", session_id: "session:fake", exit_code: 0,
     text: JSON.stringify(received), tokens: { input: 2, output: 3, total: 5, cache_read: 0, cache_write: 0 }, duration_ms: 1, timestamp: 1 })}\n`);
 }
