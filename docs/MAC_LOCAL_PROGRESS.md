@@ -2,6 +2,8 @@
 
 Codex appends one short entry per work package (see `CODEX_MAC_BUILD_EXECUTION.md`).
 
+- REAL 2026-09-25 — reviewed and merged Claude's provider branch through 4460f2a5 (the checkpoint close() fix and the package 4 composition map). The close() fix: an `ENOENT` on the lock is tolerated as released, but any other read or unlink error now rejects instead of hiding a lock left behind; the Opus gate could not verify that `unavailable()` throws rather than returns, which was the difference between a real fix and a swallowed no-op, so it was checked directly and confirmed. Checkpoint store 9/9, the other provider suites 18/18, `tsc` clean, gate `VERDICT: APPROVE` with no blocking defects. The composition map is design text only: no secrets, hosts or private paths, and it claims no readiness. Every class it names was spot-checked in the tree, and all exist except `createClaudeOwnerTrustedLocalQueueExecutorV1`, which it correctly identifies as the one piece of new code. Package 4 remains unbuilt.
+
 - REAL 2026-09-25 — Codex independently re-ran Phase 1 check 4 from the Mac host with network access: `web`, `coordinator`, `results`, and `queueWorker` all returned `ok`, exit 0; no credential or endpoint values were printed. Checks 5, 6, and 10 remain covered by the existing evidence below; checks 7–9 remain owner/VPS-operator actions.
 - SOURCE 2026-09-25 — reviewed and merged the launchd user-agent source package into `claude/mac-local-integration`; its focused suite passed 8/8 and the direct TypeScript check passed. The persistent service was not installed; that remains owner-gated.
 
