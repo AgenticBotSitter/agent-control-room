@@ -88,8 +88,10 @@ export const createTaskApplication: MacLocalTaskProviderV1["createTaskApplicatio
     checkpoints = await openMacLocalRollbackCheckpointStoreV1(protectedRoot);
     const keys = runtime.keys;
     const reviewGate = new CompletionGateStoreV1(readPool.client, keys.review, checkpoints);
+    // First-owner provisioning is an explicit one-time operator action. The
+    // ordinary host must never initialize the review authority on startup.
     const existing = await readPool.client.query("SELECT revision FROM control_completion_gate_integrity WHERE tenant_id=$1", [tenantId]);
-    if (existing.rows.length === 0) await reviewGate.provisionTenant(tenantId);
+    if (existing.rows.length !== 1) throw new Error("mac_local_first_owner_setup_missing");
     for (const profile of built.profiles) await reviewGate.registerProfile(profile);
     const planning = { template: built.templates[0]!, additionalTemplates: built.templates.slice(1),
       integrityKey: keys.planning, reviewIntegrityKey: keys.review, checkpoints,

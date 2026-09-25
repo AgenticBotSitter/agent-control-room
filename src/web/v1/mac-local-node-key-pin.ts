@@ -17,7 +17,8 @@ async function privateDirectory(path: string) {
 /** The VPS public keys are pinned in a private file on the Mac. No signing key is
  * exported. First creation is explicit; a later missing file is never repaired. */
 export async function checkMacLocalNodeKeyPinV1(db: DatabaseClient, root: string,
-  configuration: MacLocalProtectedConfigurationV1, initialize = false): Promise<void> {
+  configuration: MacLocalProtectedConfigurationV1, initialize = false,
+  receiptFingerprints?: Readonly<Record<string, string>>): Promise<void> {
   if (!isAbsolute(root) || resolve(root) !== root) refused();
   const directory = join(root, "config"), file = join(directory, "node-keys.json");
   await privateDirectory(root);
@@ -33,7 +34,8 @@ export async function checkMacLocalNodeKeyPinV1(db: DatabaseClient, root: string
     const key = rows.find(row => row.node_id === nodeId);
     if (!key || key.id !== `local-owner:${nodeId}` || key.tenant_id !== configuration.localOwnerSession.tenantId
       || key.state !== "active" || key.algorithm !== "ed25519" || key.valid_until !== null
-      || publicKeyFingerprint(key.public_key_spki) !== key.fingerprint) refused();
+      || publicKeyFingerprint(key.public_key_spki) !== key.fingerprint
+      || receiptFingerprints && receiptFingerprints[nodeId] !== key.fingerprint) refused();
     fingerprints[nodeId] = key.fingerprint;
   }
   const expected = { schema: MAC_LOCAL_NODE_KEYS_V1, fingerprints };

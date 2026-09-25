@@ -29,3 +29,26 @@ not an independent repeat of the PostgreSQL proof.
 Opus review is pending. The local Claude CLI returned `Not logged in`; a
 missing verdict is not approval. Real role-file headers still correctly say
 that full PostgreSQL qualification is pending.
+
+## Section 12 follow-up
+
+The non-secret first-owner manifest, receipt-bound public-key pin, and
+read-only repeat-start checks are now source-built with focused tests. The
+ordinary task provider no longer initializes completion-gate integrity at
+startup. These changes have not been exercised as a complete three-worker
+rehearsal. The VPS one-time command is not built or run: section 12 requires
+it to create an authenticated review-integrity row while its shareable
+manifest deliberately excludes the Mac-held review key and its independent
+rollback-checkpoint file. The manifest also lacks the worker IDs needed to
+reproduce the existing node software fingerprints. See
+`PACKAGE5_SECTION12_CONTRACT_GAPS.md`; these are lead decisions, not permission
+to widen a database role or move a secret through the manifest. No live
+database or Tailnet change occurred.
+
+The safe disposable section-12 negative check was run on a fresh PostgreSQL
+17 cluster with no first-owner setup. `mac:up` exited 1 with the required
+`first-owner setup has not been run; see OWNER_GUIDE_MAC.md` message after
+the four database checks refused the missing owner binding. No task host or
+worker started. The disposable cluster was stopped and `pg_ctl status`
+reported no server running. Its data directory was retained for
+investigation; no live database was contacted.

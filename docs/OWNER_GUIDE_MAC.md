@@ -12,6 +12,13 @@
 > `<module> missing: run pnpm build`. Section 9 lists every known limitation, including the
 > parts of the journey that are routed but cannot work.
 > The repository is public: nothing here contains secrets, addresses, or private paths.
+>
+> **Package 5 update (not ready to run):** `mac:up` no longer creates the first
+> owner. A separate one-time VPS setup must establish the owner, three worker
+> identities and review integrity before startup. That setup is still blocked
+> on the precise key/checkpoint decision in
+> `docs/claude/PACKAGE5_SECTION12_CONTRACT_GAPS.md`. Do not run a fresh install
+> from this branch or treat the command sequence below as an accepted install.
 
 Run every `pnpm` command from the repository root, on the Mac that holds the workers.
 
@@ -36,7 +43,8 @@ reused. Step 3 changes no password and no remote state — it only re-reads the 
 pnpm mac:up -- --protected-root <protected-root>
 ```
 
-Starts in a fixed order: repin workers, check database, bootstrap owner, write task provider,
+Starts in a fixed order: check database, verify the previously installed owner,
+repin workers, write task provider,
 start task host. The database is reached directly over the private route; **no tunnel process is
 started**. Running it twice is safe — a second run reports `already running (pid ...)`.
 
@@ -102,7 +110,9 @@ but has not yet done any work. "Proven" only ever appears after you accept a res
 | Is the site loading? | open `http://127.0.0.1:3210` | sign-in page |
 | Anything left running? | `ps -axo pid,pgid,command \| grep -E "codex\|claude\|hermes"` | nothing left over after a stop |
 
-`mac:check-database` is read-only. It never writes, never retries, and prints no configuration. It proves account identity and connectivity, not least-privilege database access. Package 5 will narrow the role grants and add denied-write checks before that claim can be made.
+`mac:check-database` performs the four restricted-login preflights and
+zero-row denied-write probes. It must pass before `mac:up` continues, but the
+new one-time owner setup is still unproven. It prints no configuration.
 
 On a new installation with no active project, `mac:up` starts the website only. The worker page truthfully says task workers are not started. Create your first project on the website, then run `mac:down && mac:up` to start the task host. During this phase, a project created later also needs that restart; the provider supports at most 16 templates (about five projects). Both limits require a follow-up package, not a silent drop. If the selected Hermes profile later sets `OPENCODE_GO_BASE_URL`, Hermes tasks fail closed because the saved network allowlist still names `https://opencode.ai:443`. The preparation command creates the protected task-runtime file once; rerunning it does not update an existing file. Stop Hermes task use and ask for a reviewed recovery procedure. Do not edit the protected file by hand or assume rerunning preparation changes its destination.
 Any line ending `database_check_refused` means that role is not reachable.

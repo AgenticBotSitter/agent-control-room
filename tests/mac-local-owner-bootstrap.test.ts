@@ -75,6 +75,9 @@ test("bootstraps one unspendable identity per local worker and refuses remote fr
   const root = await mkdtemp(join(tmpdir(), "acr-node-pin-"));
   t.after(() => rm(root, { recursive: true, force: true }));
   await mkdir(join(root, "config"), { mode: 0o700 });
+  await assert.rejects(checkMacLocalNodeKeyPinV1(fixture.client, root, config, true,
+    { "mac-1.hermes": "sha256:" + "f".repeat(64) }), /mac_local_node_key_pin_mismatch/);
+  await assert.rejects(readFile(join(root, "config", "node-keys.json"), "utf8"), { code: "ENOENT" });
   await checkMacLocalNodeKeyPinV1(fixture.client, root, config, true);
   await checkMacLocalNodeKeyPinV1(fixture.client, root, config);
   const pinFile = join(root, "config", "node-keys.json");

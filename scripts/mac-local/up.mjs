@@ -1,4 +1,4 @@
-// Starts the Mac-local stack in the fixed order: repin, database check, owner bootstrap,
+// Starts the Mac-local stack in the fixed order: database check, owner verification, repin,
 // task provider, task host. The database connection is direct over the protected Tailscale route.
 // Repeat-safe: a running stack is left alone.
 // Once the launchd user agent is installed (first time: --install-service), the task host runs as that
@@ -98,6 +98,25 @@ async function main() {
   const paths = runtimePaths(root);
   const mac = JSON.parse(await readFile(join(root, "config/mac-local.json"), "utf8"));
   const service = args.includes("--install-service") || await serviceInstalled();
+  await mkdir(paths.runtime, { recursive: true, mode: 0o700 });
+  await chmod(paths.runtime, 0o700);
+  if (!existsSync(join(root, "config/task-runtime.json")))
+    fail(missingTaskRuntimeInstruction(root));
+  if (!existsSync(join(repoRoot, "dist-vps/server/macLocalHost.js"))) fail("release build missing: run pnpm build first");
+
+  log("1/5 database");
+  if (await run(["--import", "tsx", "scripts/mac-local/check-database.ts", root]) !== 0) {
+    const binding = await run(["--import", "tsx", "scripts/mac-local/bootstrap-owner.ts", root]);
+    if (binding === 2) fail("first-owner setup has not been run; see OWNER_GUIDE_MAC.md");
+    fail("database check failed");
+  }
+
+  log("2/5 first-owner binding");
+  const binding = await run(["--import", "tsx", "scripts/mac-local/bootstrap-owner.ts", root]);
+  if (binding === 2)
+    fail("first-owner setup has not been run; see OWNER_GUIDE_MAC.md");
+  if (binding !== 0) fail("first-owner binding verification failed");
+
   const hostPid = await readPid(paths.hostPid);
   if (!service && hostPid && alive(hostPid, hostCommand(root))) {
     // A host that is alive but not serving is a failure, never "already running".
@@ -111,22 +130,11 @@ async function main() {
       log(`already running as a launchd user agent (pid ${pid})`); return;
     }
   }
-  await mkdir(paths.runtime, { recursive: true, mode: 0o700 });
-  await chmod(paths.runtime, 0o700);
-  if (!existsSync(join(root, "config/task-runtime.json")))
-    fail(missingTaskRuntimeInstruction(root));
-  if (!existsSync(join(repoRoot, "dist-vps/server/macLocalHost.js"))) fail("release build missing: run pnpm build first");
 
-  log("1/5 repin");
+  log("3/5 repin");
   const repin = await run(["--import", "tsx", "scripts/mac-local/repin-workers.mjs", "--protected-root", root]);
   if (repin === 1) log("repin blocked for a worker: it will show unavailable");
   else if (repin !== 0) fail(`repin exit ${repin}: protected configuration is unsafe`);
-
-  log("2/5 database");
-  if (await run(["--import", "tsx", "scripts/mac-local/check-database.ts", root]) !== 0) fail("database check failed");
-
-  log("3/5 owner");
-  if (await run(["--import", "tsx", "scripts/mac-local/bootstrap-owner.ts", root]) !== 0) fail("owner bootstrap failed");
 
   log("4/5 task provider");
   const module = join(repoRoot, PROVIDER_MODULE);
