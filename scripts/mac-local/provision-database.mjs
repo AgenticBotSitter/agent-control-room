@@ -34,7 +34,9 @@ const privateMode = 0o700;
 const privateFileMode = 0o600;
 // A database provision is intentionally bounded. SSH itself has a connection
 // deadline below; this covers a connected remote command that stalls while
-// fetching, preparing dependencies, or applying the ledger.
+// fetching, preparing dependencies, or applying the ledger. The VPS command
+// has a slightly shorter independent deadline so a dropped SSH client cannot
+// leave a second password-changing provision running remotely.
 const remoteProvisionTimeoutMs = 5 * 60_000;
 
 function usage() {
@@ -193,7 +195,18 @@ chown -R postgres:postgres "$stage"
 printf 'provision_stage:runner\\n' >&2
 printf '%s' ${JSON.stringify(sourceBase64)} | base64 -d > "$stage/.control-room-provision.mjs"
 chown postgres:postgres "$stage/.control-room-provision.mjs"
-runuser -u postgres -- node "$stage/.control-room-provision.mjs"`;
+if ! command -v timeout >/dev/null 2>&1; then
+  printf 'provision_error:TIMEOUT_UNAVAILABLE\\n' >&2
+  exit 1
+fi
+set +e
+timeout --kill-after=10s 280s runuser -u postgres -- node "$stage/.control-room-provision.mjs"
+status=$?
+set -e
+if [ "$status" -eq 124 ] || [ "$status" -eq 137 ]; then
+  printf 'provision_error:TIMEOUT\\n' >&2
+fi
+exit "$status"`;
   await new Promise((resolvePromise, rejectPromise) => {
     const child = spawn("ssh", ["-o", "BatchMode=yes", "-o", "ConnectTimeout=15", sshTarget,
       remote],
@@ -208,8 +221,9 @@ runuser -u postgres -- node "$stage/.control-room-provision.mjs"`;
       callback(value);
     };
     const fail = error => {
-      // Ending the local SSH client ends its remote command as well. This is
-      // a one-shot setup helper, so a deadline must never leave it running.
+      // This stops the local transport. The remote command has its own,
+      // shorter timeout; both deadlines are required because a noninteractive
+      // SSH disconnect alone does not guarantee a remote child is reaped.
       if (!child.killed) child.kill("SIGKILL");
       finish(rejectPromise, error);
     };

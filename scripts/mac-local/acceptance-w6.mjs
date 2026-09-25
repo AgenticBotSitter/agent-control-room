@@ -19,7 +19,9 @@ const ownerCode = readFileSync(join(protectedRoot, "config/owner-sign-in.txt"), 
 
 const results = [];
 const check = (name, ok, detail = "") => { results.push({ name, ok }); console.log(`${ok ? "PASS" : "FAIL"} ${name}${detail ? ` — ${detail}` : ""}`); return ok; };
-const call = (path, init = {}) => fetch(new URL(path, origin), { redirect: "manual", ...init });
+const call = (path, init = {}) => fetch(new URL(path, origin), {
+  redirect: "manual", signal: AbortSignal.timeout(5_000), ...init,
+});
 const post = (path, body, extra = {}) => call(path, { method: "POST",
   headers: { "content-type": "application/json", origin, ...extra }, body: JSON.stringify(body) });
 
@@ -74,8 +76,9 @@ check("project readable", (await readBack(session.cookie)).status === 200);
 
 if (restart) {
   try {
-    execFileSync("pnpm", ["mac:down"], { stdio: "inherit" });
-    execFileSync("pnpm", ["mac:up"], { stdio: "inherit" });
+    const bounded = { stdio: "inherit", timeout: 90_000, killSignal: "SIGKILL" };
+    execFileSync("pnpm", ["mac:down"], bounded);
+    execFileSync("pnpm", ["mac:up"], bounded);
     check("mac:down then mac:up ran", true);
   } catch (error) { check("mac:down then mac:up ran", false, String(error.message).split("\n")[0]); }
   check("site back within 90 s", await waitForSite(90));
