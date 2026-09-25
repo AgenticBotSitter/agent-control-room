@@ -177,7 +177,11 @@ try {
   }
   process.stdout.write('control_room_provisioned\n');
 } finally { await client.end(); }`;
-  const stage = `/opt/data/control-room-provision-${randomBytes(12).toString("hex")}`;
+  // /opt/data is deliberately root-only on the VPS. The restricted PostgreSQL
+  // account cannot traverse it even after this child directory is chowned, so
+  // stage the non-secret source tree beneath the system temporary directory.
+  // The outer EXIT/signal trap removes it after every attempt.
+  const stage = `/var/tmp/control-room-provision-${randomBytes(12).toString("hex")}`;
   const sourceBase64 = Buffer.from(source, "utf8").toString("base64");
   const remoteBody = String.raw`set -eu
 printf 'provision_stage:fetch\\n' >&2
