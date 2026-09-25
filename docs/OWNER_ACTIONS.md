@@ -26,39 +26,28 @@ needs the same approved client tag.
 
 ## 2. Confirm the tailnet policy really allows the Mac to reach the database
 
-**Status (2026-09-25): BLOCKING. The database check cannot pass until this is answered.**
+**Status (2026-09-25): RESOLVED. No further action needed on the grant.**
 
-The Mac was re-pointed successfully (it printed only `{"repointed":true}` and no
-address or password), and the four roles were written to the database address and
-port with the v2 endpoint policy. The Mac's own Tailscale tags are correct
-(`tag:control-room-client` and `tag:general` both present) and the database host
-peer answers a tailnet ping in about 40ms. But a TCP connection to the database
-port on that peer times out, while the same peer's SSH and HTTPS ports connect
-immediately.
+The owner applied the single rule letting `tag:control-room-client` reach
+`tag:control-room-vps` on the database port only. Verified from the Mac
+afterwards: the database port connects, and `mac:check-database` returned
+`ok` for all four roles. Check 4 of `MAC_LOCAL_FINISH_PLAN.md` Phase 1 is
+therefore a REAL pass, not a pending item.
 
-That pattern means the connection is being dropped by the tailnet access policy,
-not refused by the database and not rejected by authentication. No password was
-ever sent, so this is not a credential problem and nothing was restored or
-changed to work around it.
+The earlier diagnosis in this file is kept in the progress log rather than
+here, because it is now history: the port was being dropped by the tailnet
+policy, and adding the one rule fixed it. No SSH fallback was used, and no
+password was moved or changed to make the connection work.
 
-**What the owner needs to check, in the Tailscale admin console, on the policy
-file (not the device page):**
+**Recorded for check 3 (owner-attested, not machine-verified):** the policy
+diff is one new rule, from `tag:control-room-client` to
+`tag:control-room-vps` on `tcp:5432`, with all existing rules unchanged. This
+is the owner's attestation. It has not been machine-verified against the
+served policy file, because the tailnet admin console is not reachable from
+the Mac.
 
-1. Does the `grants` (or `acls`) list actually contain the single entry that lets
-   `tag:control-room-client` reach `tag:control-room-vps` on the database port
-   only? Quote the entry shape, not the host.
-2. Is there another rule that matches `tag:general` and is evaluated first? Tailscale
-   grants are allow-only, so a rule that matches without naming that port drops the
-   packet instead of rejecting it.
-3. Was the change saved into the policy that the tailnet is actually serving, and
-   has the VPS host re-fetched it?
-
-If the grant is genuinely present and still blocked, the next thing to check is
-whether the database is listening only on loopback on the VPS side, since the
-accepted VPS evidence says it is loopback-only.
-
-**Report back only the answer and the rule shape. Never paste the policy file,
-an address, a MagicDNS name, a certificate, or a password here.**
+Do not re-open the policy. If a future update needs another machine on the
+route, add the same approved client tag to that machine and nothing else.
 
 Do not paste a password, access key, database address, certificate, or
 terminal output here.
