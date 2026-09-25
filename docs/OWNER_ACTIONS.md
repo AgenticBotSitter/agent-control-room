@@ -4,25 +4,20 @@ Only steps the bots cannot do. Each item is numbered and copy-paste ready.
 
 ## 1. Confirm the Mac's effective Tailscale tag
 
-**Status (2026-09-25):** the owner reports that the policy grant and Mac tag
-were applied. However, the Mac's last successful local status read showed
-`tag:general` but not `tag:control-room-client`. The protected database files
-are therefore still pointed at the old loopback tunnel address. No route or
-database change was made. Do not edit the policy again unless its current
-contents show the grant is missing.
+**Status (2026-09-25): RESOLVED. No action needed.**
 
-Before the Mac database can be re-pointed, the owner needs to make the already
-approved tag assignment visible to the running Tailscale client (for example,
-refresh the Mac's Tailscale status after confirming the assignment in the
-admin console). Keep `tag:general`; do not change the phone, PC, or VPS. Then
-ask Codex to rerun the no-SSH `--repoint-only` step. If the client still does
-not show the tag, stop and report the mismatch rather than restoring SSH or
-changing the policy.
+The Mac's Tailscale client now reports both `tag:control-room-client` and
+`tag:general`, verified from the Mac itself. The database files were
+re-pointed afterwards and the four-role check passes, so the tag is doing
+its job.
 
-After the tag is effective, no further Tailscale changes are needed for
-updates, migrations, or certificate renewals. A future Control Room computer
-needs the same approved client tag.
+This item previously said the tag was not visible to the client and that the
+database was still pointed at the old address. That is now history; see item
+2 for the policy rule that completed the route.
 
+Do not re-apply or re-check the tag unless a later update actually fails to
+reach the database. Keep `tag:general` on this Mac. A future Control Room
+computer needs the same approved client tag and no other change.
 
 ## 2. Confirm the tailnet policy really allows the Mac to reach the database
 
