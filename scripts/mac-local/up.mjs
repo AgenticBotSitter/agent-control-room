@@ -1,7 +1,9 @@
 // Starts the Mac-local stack in the fixed order: repin, database check, owner bootstrap,
 // task provider, task host. The database connection is direct over the protected Tailscale route.
 // Repeat-safe: a running stack is left alone.
-// Usage: pnpm mac:up -- --protected-root ABS_PATH   (or CONTROL_ROOM_PROTECTED_ROOT)
+// Once the launchd user agent is installed (first time: --install-service), the task host runs as that
+// agent, so it starts at login and restarts after a crash. Without it, the host is a detached child.
+// Usage: pnpm mac:up -- --protected-root ABS_PATH [--install-service]   (or CONTROL_ROOM_PROTECTED_ROOT)
 import { spawn } from "node:child_process";
 import { closeSync, constants, existsSync, fstatSync, openSync } from "node:fs";
 import { mkdir, readFile, rename, writeFile, chmod } from "node:fs/promises";
@@ -9,6 +11,7 @@ import { connect } from "node:net";
 import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { alive, hostCommand, protectedRootFromArguments, readPid, repoRoot, runtimePaths, stopRecorded } from "./stack.mjs";
+import { installOrRefreshService, plistPath, serviceInstalled, servicePid, serviceUpToDate } from "./service.mjs";
 
 const PROVIDER_MODULE = "dist-vps/server/macLocalDefaultTaskProvider.js";
 
@@ -85,15 +88,24 @@ async function startAndWait(command, logPath, pidPath, ready, seconds, what) {
 }
 
 async function main() {
-  const root = protectedRootFromArguments(process.argv.slice(2));
+  const args = process.argv.slice(2);
+  const root = protectedRootFromArguments(args);
   if (!root) fail("--protected-root ABSOLUTE_PATH (or CONTROL_ROOM_PROTECTED_ROOT) is required", 2);
   const paths = runtimePaths(root);
   const mac = JSON.parse(await readFile(join(root, "config/mac-local.json"), "utf8"));
+  const service = args.includes("--install-service") || await serviceInstalled();
   const hostPid = await readPid(paths.hostPid);
-  if (hostPid && alive(hostPid, hostCommand(root))) {
+  if (!service && hostPid && alive(hostPid, hostCommand(root))) {
     // A host that is alive but not serving is a failure, never "already running".
     if (await portOpen(mac.port)) { log(`already running (pid ${hostPid})`); return; }
     fail("task host is running but not serving: run pnpm mac:down first");
+  }
+  if (service) {
+    const { pid } = await servicePid();
+    if (pid && alive(pid, hostCommand(root)) && await portOpen(mac.port)
+      && await serviceUpToDate({ protectedRoot: root, logPath: paths.hostLog, env: process.env })) {
+      log(`already running as a launchd user agent (pid ${pid})`); return;
+    }
   }
   await mkdir(paths.runtime, { recursive: true, mode: 0o700 });
   await chmod(paths.runtime, 0o700);
@@ -117,10 +129,31 @@ async function main() {
   const current = existsSync(paths.provider) ? await readFile(paths.provider, "utf8") : undefined;
   if (current !== body) { await writePrivate(paths.provider, body); log("task provider written"); }
 
+  if (service) return startService(root, paths, mac.port);
   log("5/5 task host");
   await stopRecorded(paths.hostPid, hostCommand(root), 45);
   const pid = await startAndWait(hostCommand(root), paths.hostLog, paths.hostPid, () => portOpen(mac.port), 90, "task host");
   log(`running: http://127.0.0.1:${mac.port} (pid ${pid})`);
+}
+
+/** Service mode: launchd owns the host process. A host that mac:up once started directly is
+ * stopped first; the launchd-started host is never signalled here, only reloaded through launchctl. */
+async function startService(root, paths, port) {
+  log("5/5 task host (launchd user agent)");
+  const { loaded } = await servicePid();
+  if (!loaded && await stopRecorded(paths.hostPid, hostCommand(root), 45) === "still_running")
+    fail("a directly started task host would not stop: run pnpm mac:down first");
+  const state = await installOrRefreshService({ protectedRoot: root, logPath: paths.hostLog, env: process.env });
+  log(`service ${state}: ${plistPath().split("/").slice(-3).join("/")}`);
+  let pid;
+  const ready = await waitFor(async () => {
+    pid = (await servicePid()).pid;
+    return pid !== undefined && alive(pid, hostCommand(root)) && await portOpen(port);
+  }, 90);
+  if (!ready) fail(`task host did not start within 90s (see ${paths.hostLog.split("/").slice(-2).join("/")})`);
+  // mac:down and the acceptance checks read the same pid file as before.
+  await writePrivate(paths.hostPid, `${pid}\n`);
+  log(`running: http://127.0.0.1:${port} (pid ${pid})`);
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
