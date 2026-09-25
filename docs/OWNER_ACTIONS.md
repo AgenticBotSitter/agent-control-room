@@ -15,7 +15,19 @@ owner decision before it may receive even the sanitized public Control Room
 source for a bounded review. This is optional: Codex can continue building
 locally without it.
 
-Reply in this chat with the following sentence if you want those reviews:
+The owner authorized sanitized-source reviews on 2026-09-24. The dedicated
+`cr` profile was verified as free of the unrelated default-profile instructions,
+but it currently has no usable OpenCode Go credential for the selected
+`space-bunny-free` model. Codex did not fall back to another model or reuse the
+unrelated default profile.
+
+When ready, configure the existing OpenCode Go credential for the existing
+`cr` profile through Hermes's normal credential setup. Do not put a key in this
+repository or paste it into chat. Once that profile reports the provider as
+available, Marvin may perform the already-authorized bounded reviews.
+
+For future owners, reply in this chat with the following sentence if you want
+those reviews:
 
 > I authorize sharing sanitized Agent Control Room source with Marvin through OpenCode Go for bounded build reviews and source maps. Do not share credentials, protected configuration, private paths, or production data.
 
