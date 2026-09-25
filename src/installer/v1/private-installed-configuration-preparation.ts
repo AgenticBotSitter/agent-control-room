@@ -12,7 +12,7 @@ import { PRIVATE_INSTALLED_CONFIGURATION_CUSTODY_V2,
   "./private-installed-configuration-custody";
 import { PRIVATE_INSTALLED_LOCAL_HERMES_CONFIGURATION_V1 } from
   "./private-installed-local-hermes-runtime-composer";
-import { capturePrivatePostgresEndpointPolicyV1 } from "../../web/v1/private-postgres-endpoint";
+import { capturePrivatePostgresEndpointPolicyV2 } from "../../web/v1/private-postgres-endpoint";
 import { consumeMacosLocalLauncherV3ManifestMaterializationCustodyV1 } from
   "./macos-local-launcher-bundle.mjs";
 
@@ -357,7 +357,7 @@ function capture(inputValue: unknown) {
   if (privateInstalledPostgresEndpointFingerprintV1({ host: database.host, port: database.port,
     database: database.database, majorVersion: database.majorVersion }) !== authority.endpointFingerprint) return refused();
   if (database.privateEndpoint !== undefined) {
-    const endpoint = capturePrivatePostgresEndpointPolicyV1({ host: database.host,
+    const endpoint = capturePrivatePostgresEndpointPolicyV2({ host: database.host,
       port: database.port as number, database: database.database, majorVersion: database.majorVersion }, database.privateEndpoint);
     if (!endpoint || endpoint.privateRouteEvidenceDigest !== authority.privateRouteEvidenceDigest) return refused();
   }

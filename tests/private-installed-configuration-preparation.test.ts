@@ -17,7 +17,7 @@ import { preflightPrivateInstalledOwnerHostInputCompositionV1,
   PRIVATE_INSTALLED_OWNER_HOST_INPUT_COMPOSITION_V1 } from
   "../src/installer/v1/private-installed-owner-host-input-composition";
 import { sha256Digest } from "../src/security/canonical-digest";
-import { PRIVATE_POSTGRES_ENDPOINT_V1 } from "../src/web/v1/private-postgres-endpoint";
+import { PRIVATE_POSTGRES_ENDPOINT_V2 } from "../src/web/v1/private-postgres-endpoint";
 
 const d = (value: unknown) => sha256Digest(value);
 const root = "/Users/example-owner/Library/Application Support/Agent Control Room/Protected";
@@ -90,10 +90,10 @@ test("private TLS endpoint policy is bound to the same reviewed private-route ev
   const database = input.privateConfigurationData.database;
   input.databaseAuthority.endpointFingerprint = privateInstalledPostgresEndpointFingerprintV1({
     host: database.host, port: database.port, database: database.database, majorVersion: database.majorVersion });
-  const policy = { schema: PRIVATE_POSTGRES_ENDPOINT_V1, routeKind: "tailscale" as const,
+  const policy = { schema: PRIVATE_POSTGRES_ENDPOINT_V2, routeKind: "tailscale" as const,
     endpointFingerprint: input.databaseAuthority.endpointFingerprint,
     privateRouteEvidenceDigest: input.databaseAuthority.privateRouteEvidenceDigest,
-    serverIdentity: { serverName: "synthetic-db.example.invalid", certificateSha256: d("certificate") } };
+    serverIdentity: { serverName: "synthetic-db.example.invalid" } };
   Object.assign(database, { privateEndpoint: policy });
   const plan = preparePrivateInstalledConfigurationV1(input);
   assert.equal(plan.status, "configuration_plan_ready");

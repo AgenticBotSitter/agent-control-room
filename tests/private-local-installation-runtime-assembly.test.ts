@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { chmod, lstat, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { PRIVATE_POSTGRES_ENDPOINT_V1, privatePostgresEndpointFingerprintV1 } from
+import { PRIVATE_POSTGRES_ENDPOINT_V2, privatePostgresEndpointFingerprintV1 } from
   "../src/web/v1/private-postgres-endpoint";
 import test from "node:test";
 import { createArtifactBackupInventoryV1, verifyRestoredArtifactBackupInventoryV1 } from
@@ -424,9 +424,9 @@ test("installed remote authority preserves one TLS and route binding across ever
   const f = await fixture(t), input = installedComposerPackage(f);
   const config = input.preparation.privateConfigurationData;
   config.database.host = "100.101.102.103";
-  const policy = { schema: PRIVATE_POSTGRES_ENDPOINT_V1, routeKind: "tailscale" as const,
+  const policy = { schema: PRIVATE_POSTGRES_ENDPOINT_V2, routeKind: "tailscale" as const,
     endpointFingerprint: privatePostgresEndpointFingerprintV1(config.database), privateRouteEvidenceDigest: d("private route"),
-    serverIdentity: { serverName: "synthetic-db.example.invalid", certificateSha256: d("peer certificate") } };
+    serverIdentity: { serverName: "synthetic-db.example.invalid" } };
   Object.assign(config.database, { privateEndpoint: policy });
   const { installedManifestBindingDigest: _binding, ...configurationWithoutBinding } = config;
   config.installedManifestBindingDigest = d({ purpose: "private-installed-local-hermes-configuration-binding/v1",

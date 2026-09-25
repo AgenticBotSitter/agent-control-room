@@ -6,10 +6,9 @@ import { createPrivatePgDatabase, bindPrivatePgPool } from "../src/web/v1/privat
 import { EventEmitter } from "node:events";
 import { fixturePreparationPostgresOptions } from "../src/web/v1/private-fixture-preparation";
 import { createRehearsalProbe } from "../src/web/v1/private-rehearsal-probe";
-import { createHash } from "node:crypto";
 import type { PeerCertificate } from "node:tls";
 import { validatePrivatePostgresConfiguration } from "../src/web/v1/private-postgres";
-import { PRIVATE_POSTGRES_ENDPOINT_V1, privatePostgresEndpointFingerprintV1 } from
+import { PRIVATE_POSTGRES_ENDPOINT_V2, privatePostgresEndpointFingerprintV1 } from
   "../src/web/v1/private-postgres-endpoint";
 
 const require = createRequire(import.meta.url);
@@ -115,19 +114,19 @@ test("checked-out error quarantines the database and close waits for client end"
 
 function remoteConfiguration() {
   const endpoint = { ...config, host: "100.101.102.103" };
-  return { ...endpoint, privateEndpoint: { schema: PRIVATE_POSTGRES_ENDPOINT_V1, routeKind: "tailscale" as const,
+  return { ...endpoint, privateEndpoint: { schema: PRIVATE_POSTGRES_ENDPOINT_V2, routeKind: "tailscale" as const,
     endpointFingerprint: privatePostgresEndpointFingerprintV1(endpoint),
     privateRouteEvidenceDigest: `sha256:${"a".repeat(64)}`,
-    serverIdentity: { serverName: "synthetic-database.example.invalid",
-      certificateSha256: `sha256:${createHash("sha256").update("synthetic certificate").digest("hex")}` } } };
+    serverIdentity: { serverName: "synthetic-database.example.invalid" } } };
 }
 
-test("direct private pg routing pins the numeric address and verified TLS identity without DNS", () => {
+test("direct private pg routing uses numeric address with verified TLS identity without DNS", () => {
   const input = remoteConfiguration(), options = privatePgOptions(input), client = new Client(options);
   assert.equal(client.connectionParameters.host, "100.101.102.103");
   assert.equal(client.connectionParameters.ssl.servername, input.privateEndpoint.serverIdentity.serverName);
   assert.equal(client.connectionParameters.ssl.rejectUnauthorized, true);
   assert.equal(client.connectionParameters.ssl.minVersion, "TLSv1.2");
+  assert.equal(client.connectionParameters.ssl.ca, undefined);
   assert.equal(client.connectionParameters.sslnegotiation, "postgres");
   assert.equal(Object.isFrozen(options.ssl), true);
   const captured = validatePrivatePostgresConfiguration(input);
@@ -153,19 +152,17 @@ test("private endpoints reject public, alternate loopback, ambiguous, DNS and un
   assert.throws(() => privatePgOptions(loopbackWithPolicy), /invalid_private_database_endpoint/u);
 });
 
-test("private TLS validates the declared hostname and exact certificate with sanitized failures", () => {
+test("private TLS validates the declared hostname and accepts renewed certificates", () => {
   const options = privatePgOptions(remoteConfiguration());
   assert.notEqual(options.ssl, false);
   if (!options.ssl || !options.ssl.checkServerIdentity) throw new Error("missing TLS verifier");
-  const certificate = { subjectaltname: "DNS:synthetic-database.example.invalid",
-    raw: Buffer.from("synthetic certificate") } as PeerCertificate;
+  const certificate = { subjectaltname: "DNS:synthetic-database.example.invalid" } as PeerCertificate;
   assert.equal(options.ssl.checkServerIdentity("100.101.102.103", certificate), undefined);
   assert.equal(options.ssl.checkServerIdentity("100.101.102.103", { ...certificate,
-    subjectaltname: "DNS:foreign.example.invalid" })?.message, "private_database_server_identity_refused");
+    raw: Buffer.from("renewed certificate") }), undefined);
   assert.equal(options.ssl.checkServerIdentity("100.101.102.103", { ...certificate,
-    raw: Buffer.from("different certificate") })?.message, "private_database_server_identity_refused");
-  assert.equal(options.ssl.checkServerIdentity("100.101.102.103", { subjectaltname: certificate.subjectaltname } as PeerCertificate)
-    ?.message, "private_database_server_identity_refused");
+    subjectaltname: "DNS:foreign.example.invalid" })?.message, "private_database_server_identity_refused");
+  assert.equal(options.ssl.rejectUnauthorized, true, "Node validates the certificate chain independently");
 });
 
 test("private endpoint capture refuses executable properties, unbound proof and TLS downgrade", () => {
@@ -183,6 +180,12 @@ test("private endpoint capture refuses executable properties, unbound proof and 
   assert.throws(() => privatePgOptions(downgrade), /invalid_private_database_config/u);
   const invalidServerName = remoteConfiguration(); invalidServerName.privateEndpoint.serverIdentity.serverName = "localhost";
   assert.throws(() => privatePgOptions(invalidServerName));
+  const oldPolicy = remoteConfiguration(); oldPolicy.privateEndpoint.schema = "control-room.private-postgres-endpoint/v1" as
+    typeof PRIVATE_POSTGRES_ENDPOINT_V2;
+  assert.throws(() => privatePgOptions(oldPolicy), /invalid_private_database_endpoint/u);
+  const stalePin = remoteConfiguration(); Object.assign(stalePin.privateEndpoint.serverIdentity,
+    { certificateSha256: `sha256:${"b".repeat(64)}` });
+  assert.throws(() => privatePgOptions(stalePin), /invalid_private_database_endpoint/u);
 });
 
 test("remote pool remains lazy and closes without a connection or credentials discovery", async () => {

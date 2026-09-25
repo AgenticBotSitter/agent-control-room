@@ -23,7 +23,7 @@ import { captureMacLocalDatabaseRolesV1, MAC_LOCAL_DATABASE_ROLES_V1 } from "../
 import { LOCAL_OWNER_SESSION_PROFILE_V1 } from "../../src/web/v1/local-owner-session";
 import { OWNER_TRUSTED_LOCAL_ENABLEMENT_V1 } from "../../src/harness/v1/owner-trusted-local-enablements";
 import { pinnedVersionLine } from "./executable-version.mjs";
-import { PRIVATE_POSTGRES_ENDPOINT_V1, privatePostgresEndpointFingerprintV1 } from "../../src/web/v1/private-postgres-endpoint";
+import { capturePrivatePostgresEndpointPolicyV2, privatePostgresEndpointFingerprintV1 } from "../../src/web/v1/private-postgres-endpoint";
 
 const exec = promisify(execFile);
 const roleNames = Object.freeze({ web: "control_room_web", coordinator: "control_room_coordinator",
@@ -127,9 +127,14 @@ async function endpointPolicy(host, port, database, path) {
   if (!entry.isFile() || entry.isSymbolicLink() || (entry.mode & 0o077) !== 0) throw new Error("provision_endpoint_policy_refused");
   const parsed = JSON.parse(await readFile(source, "utf8"));
   const endpointFingerprint = privatePostgresEndpointFingerprintV1({ host, port, database, majorVersion: 17 });
-  if (!parsed || typeof parsed !== "object" || parsed.schema !== PRIVATE_POSTGRES_ENDPOINT_V1
-    || parsed.endpointFingerprint !== endpointFingerprint) throw new Error("provision_endpoint_policy_refused");
-  return parsed;
+  if (!parsed || typeof parsed !== "object" || parsed.endpointFingerprint !== endpointFingerprint)
+    throw new Error("provision_endpoint_policy_refused");
+  try {
+    const policy = capturePrivatePostgresEndpointPolicyV2({ host, port, database, majorVersion: 17 }, parsed);
+    if (!policy) throw new Error("provision_endpoint_policy_refused");
+    return policy;
+  }
+  catch { throw new Error("provision_endpoint_policy_refused"); }
 }
 
 async function runRemoteProvision({ sshTarget, remoteWorktree, passwords }) {
