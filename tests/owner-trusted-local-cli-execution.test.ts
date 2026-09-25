@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { createOwnerTrustedLocalClaudeExecutionAdapterV1, createOwnerTrustedLocalCodexExecutionAdapterV1,
   ownerTrustedLocalCliPromptV1 } from "../src/harness/v1/owner-trusted-local-cli-execution";
+import { createOwnerTrustedLocalHermesExecutionAdapterV1 } from "../src/harness/hermes-local-v1";
 
 const configuration = { executablePath: "/Applications/Control Room/bin/agent", workingDirectory: "/private/tmp/acr-empty-task", deadlineMs: 60_000 };
 const delivery = { input: { instructions: "Read the supplied task only.", prompt: "Summarize the approved evidence." } };
@@ -29,6 +30,17 @@ test("the Claude adapter maps an unsafe direct outcome to a non-publishable fail
   } }, configuration);
   const result = await adapter.execute({ delivery, signal: new AbortController().signal });
   assert.deepEqual(result, { kind: "failed", reason: "cleanup_uncertain:process_group_still_running" });
+});
+
+test("the Hermes adapter keeps the selected model/provider in protected configuration", async () => {
+  let observed: unknown;
+  const adapter = createOwnerTrustedLocalHermesExecutionAdapterV1({ async execute(input) {
+    observed = input; return { status: "completed" as const, text: "hermes text", usage: { inputTokens: 1, outputTokens: 2, totalTokens: 3 } };
+  } }, { ...configuration, profile: "cr", model: "space-bunny-free", provider: "opencode-go" });
+  const result = await adapter.execute({ delivery, signal: new AbortController().signal });
+  assert.deepEqual(result, { kind: "completed", text: "hermes text" });
+  assert.deepEqual(observed, { ...configuration, profile: "cr", model: "space-bunny-free", provider: "opencode-go",
+    prompt: ownerTrustedLocalCliPromptV1(delivery.input), signal: (observed as { signal: AbortSignal }).signal });
 });
 
 test("the execution adapters refuse a canceled call without contacting a CLI", async () => {

@@ -2,6 +2,19 @@
 
 Codex appends one short entry per work package (see `CODEX_MAC_BUILD_EXECUTION.md`).
 
+- 2026-09-24 — local Hermes reusable text runner: a current Hermes build can
+  now run one bounded, text-only task through the same local delivery shape
+  already used by Control Room's Claude and Codex routes. Its protected worker
+  configuration supplies the profile, model, and provider; none are hardcoded
+  in source. It starts in an empty task folder with tools disabled, a minimal
+  environment, a time limit, and process-group cleanup. The existing shared
+  receipt, authority recheck, and result-publication bridge remain responsible
+  for task lifecycle. Twelve focused checks and TypeScript pass. Fake-process
+  tests prove malformed output, cancellation, a timeout, and a leaked child
+  cannot become a successful result. No live Control Room task, database, or
+  background service was started. Next: bind this adapter to the protected
+  local host configuration and existing canonical publisher.
+
 - 2026-09-24 — current local Hermes compatibility foundation: Control Room
   now captures the version and full local source revision reported by whatever
   Hermes build is installed on this Mac. Normal updates are not refused or
