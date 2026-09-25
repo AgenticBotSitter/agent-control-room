@@ -93,44 +93,11 @@ async function writePrivate(path, content) {
 
 function newPassword() { return randomBytes(32).toString("base64url"); }
 
-/** Build precisely the plain JSON document the provisioner writes. Keeping
- * this separate makes it possible to prove that a dry-run's prospective
- * output survives the same JSON round trip and loader capture used at start. */
-export function captureProvisionedMacLocalConfigurationV1({ database, ownerCode, workers }) {
-  const enablement = Object.freeze({ schema: OWNER_TRUSTED_LOCAL_ENABLEMENT_V1,
-    mode: "mac-local", nodeId: "mac-1", workers });
-  const plain = { schema: MAC_LOCAL_PROTECTED_CONFIGURATION_V1, port: 3210,
-    workspaceId: "workspace:mac-local", localOwnerSession: {
-      schema: LOCAL_OWNER_SESSION_PROFILE_V1, origin: "http://127.0.0.1:3210",
-      tenantId: "tenant:mac-local", provider: "local-owner", subject: "owner:local",
-      ownerCodeDigest: sha256Digest({ ownerCode }), sessionSeconds: 28_800 },
-    database, enablement };
-  // This is deliberately a serialized copy: it is exactly what the protected
-  // file loader receives, not an in-memory object with derived fields.
-  captureMacLocalProtectedConfigurationV1(JSON.parse(JSON.stringify(plain)));
-  return Object.freeze(plain);
-}
-
-/** The local installation has one deliberately fixed first owner.  This is
- * installation data, not browser input: a later page sign-in may only use the
- * same provider and subject.  Keeping the values here lets the remote
- * provisioner seed the normal tenant/workspace/identity/grant tables without
- * adding a Mac-only authorization shortcut. */
-export function captureMacLocalInstallationBootstrapV1() {
-  const provider = "local-owner", subject = "owner:local";
-  return Object.freeze({ tenantId: "tenant:mac-local", workspaceId: "workspace:mac-local",
-    tenantDisplayName: "Agent Control Room", workspaceDisplayName: "This Mac",
-    identityId: "identity:mac-local-owner", grantId: "grant:mac-local-owner",
-    displayName: "Local owner", provider, subject,
-    subjectDigest: sha256Digest({ provider, subject }) });
-}
-
 /** CLI version commands sometimes include ordinary installation details after
  * their version. Capture one bounded, printable version-looking line rather
  * than treating a current multi-line CLI as a source-version incompatibility. */
 export function recordedExecutableVersion(stdout) {
-  try { return pinnedVersionLine(stdout); }
-  catch { throw new Error("provision_invalid_executable_version"); }
+  try { return pinnedVersionLine(stdout); } catch { throw new Error("provision_invalid_executable_version"); }
 }
 
 /** The SSH transport or a local account wrapper can add harmless lines before
@@ -165,7 +132,7 @@ async function endpointPolicy(host, port, database, path) {
   return parsed;
 }
 
-async function runRemoteProvision({ sshTarget, remoteWorktree, passwords, bootstrap }) {
+async function runRemoteProvision({ sshTarget, remoteWorktree, passwords }) {
   // Root's SSH account runs the PostgreSQL owner command locally on the VPS.
   // The secrets are JSON on stdin, not process arguments or a remote file.
   const source = String.raw`const reportError = error => {
@@ -181,9 +148,6 @@ const input = await new Promise((resolve, reject) => {
   process.stdin.once('error', reject); process.stdin.once('end', () => resolve(body));
 });
 const value = JSON.parse(input);
-const localBootstrap = value.bootstrap;
-if (!localBootstrap || typeof localBootstrap !== 'object' || Object.keys(localBootstrap).sort().join(',') !== 'displayName,grantId,identityId,provider,subjectDigest,tenantDisplayName,tenantId,workspaceDisplayName,workspaceId'
-  || !Object.values(localBootstrap).every(entry => typeof entry === 'string' && entry.length > 0)) throw new Error('bootstrap_invalid');
 const bootstrapTarget = 'host=/var/run/postgresql dbname=control_room user=postgres';
 const migrateTarget = 'host=127.0.0.1 port=5432 dbname=control_room user=control_room_migrator password=' + value.migrator;
 process.stderr.write('provision_stage:bootstrap-passwords\n');
@@ -208,32 +172,6 @@ try {
     await client.query('ALTER ROLE ' + name + ' PASSWORD ' + client.escapeLiteral(password));
     await client.query('GRANT control_room_application TO ' + name);
   }
-  process.stderr.write('provision_stage:local-owner\n');
-  await client.query('BEGIN');
-  try {
-    const tenant = (await client.query('SELECT display_name FROM tenants WHERE id=$1 FOR UPDATE', [localBootstrap.tenantId])).rows;
-    if (tenant.length === 0) await client.query('INSERT INTO tenants(id,display_name) VALUES($1,$2)', [localBootstrap.tenantId, localBootstrap.tenantDisplayName]);
-    else if (tenant.length !== 1 || tenant[0].display_name !== localBootstrap.tenantDisplayName) throw new Error('bootstrap_tenant_refused');
-    const workspace = (await client.query('SELECT tenant_id,display_name FROM workspaces WHERE id=$1 FOR UPDATE', [localBootstrap.workspaceId])).rows;
-    if (workspace.length === 0) await client.query('INSERT INTO workspaces(id,tenant_id,display_name) VALUES($1,$2,$3)', [localBootstrap.workspaceId, localBootstrap.tenantId, localBootstrap.workspaceDisplayName]);
-    else if (workspace.length !== 1 || workspace[0].tenant_id !== localBootstrap.tenantId || workspace[0].display_name !== localBootstrap.workspaceDisplayName) throw new Error('bootstrap_workspace_refused');
-    const identities = (await client.query('SELECT id,auth_provider,auth_subject_digest,state FROM control_identities WHERE tenant_id=$1 FOR UPDATE', [localBootstrap.tenantId])).rows;
-    const now = new Date().toISOString();
-    if (identities.length === 0) {
-      await client.query('INSERT INTO control_identities(id,tenant_id,actor_type,display_name,auth_provider,auth_subject_digest,state,created_at,updated_at) VALUES($1,$2,\'human\',$3,$4,$5,\'active\',$6,$6)', [localBootstrap.identityId, localBootstrap.tenantId, localBootstrap.displayName, localBootstrap.provider, localBootstrap.subjectDigest, now]);
-      await client.query('INSERT INTO control_role_grants(id,tenant_id,identity_id,role_key,allowed_actions,project_ids,risk_ceiling,allow_external_effects,require_strong_factor,created_at,updated_at) VALUES($1,$2,$3,\'owner\',\'["*"]\'::jsonb,\'["*"]\'::jsonb,\'critical\',true,false,$4,$4)', [localBootstrap.grantId, localBootstrap.tenantId, localBootstrap.identityId, now]);
-    } else {
-      const identity = identities[0];
-      if (identities.length !== 1 || identity.id !== localBootstrap.identityId || identity.auth_provider !== localBootstrap.provider || identity.auth_subject_digest !== localBootstrap.subjectDigest || identity.state !== 'active') throw new Error('bootstrap_identity_refused');
-      const grants = (await client.query('SELECT id,identity_id,role_key,allowed_actions,project_ids,risk_ceiling,allow_external_effects,require_strong_factor,revoked_at FROM control_role_grants WHERE tenant_id=$1 FOR UPDATE', [localBootstrap.tenantId])).rows;
-      const grant = grants[0];
-      if (grants.length !== 1 || grant.id !== localBootstrap.grantId || grant.identity_id !== localBootstrap.identityId || grant.role_key !== 'owner'
-        || JSON.stringify(grant.allowed_actions) !== '["*"]' || JSON.stringify(grant.project_ids) !== '["*"]'
-        || grant.risk_ceiling !== 'critical' || grant.allow_external_effects !== true || grant.require_strong_factor !== false || grant.revoked_at !== null)
-        throw new Error('bootstrap_grant_refused');
-    }
-    await client.query('COMMIT');
-  } catch (error) { try { await client.query('ROLLBACK'); } catch {} throw error; }
   process.stdout.write('control_room_provisioned\n');
 } finally { await client.end(); }`;
   // /opt/data is deliberately root-only on the VPS. The restricted PostgreSQL
@@ -354,8 +292,7 @@ export async function provisionMacLocalDatabaseV1(options) {
   if (options.vpsOnly) {
     if (!options.dryRun) await runRemoteProvision({ sshTarget: options.sshTarget, remoteWorktree: options.remoteWorktree,
       passwords: { migrator: allPasswords.migrator, application: allPasswords.application, scheduler: allPasswords.scheduler,
-        local: Object.fromEntries(Object.entries(roleNames).map(([key, name]) => [name, allPasswords[key]])) },
-      bootstrap: captureMacLocalInstallationBootstrapV1() });
+        local: Object.fromEntries(Object.entries(roleNames).map(([key, name]) => [name, allPasswords[key]])) } });
     return Object.freeze({ provisioned: !options.dryRun, protectedRoot, workers: [] });
   }
   const workers = await Promise.all(["codex", "claude", "hermes"].map(async kind => {
@@ -365,15 +302,20 @@ export async function provisionMacLocalDatabaseV1(options) {
   }));
   if (!options.dryRun) await runRemoteProvision({ sshTarget: options.sshTarget, remoteWorktree: options.remoteWorktree,
     passwords: { migrator: allPasswords.migrator, application: allPasswords.application, scheduler: allPasswords.scheduler,
-      local: Object.fromEntries(Object.entries(roleNames).map(([key, name]) => [name, allPasswords[key]])) },
-    bootstrap: captureMacLocalInstallationBootstrapV1() });
+      local: Object.fromEntries(Object.entries(roleNames).map(([key, name]) => [name, allPasswords[key]])) } });
   const database = Object.freeze({ host: databaseHost, port: databasePort, database: "control_room", username: roleNames.web,
     password: allPasswords.web, majorVersion: 17, ...(endpoint ? { privateEndpoint: endpoint } : {}) });
   const role = username => Object.freeze({ ...database, username, password: allPasswords[Object.keys(roleNames).find(key => roleNames[key] === username)] });
   const roles = captureMacLocalDatabaseRolesV1({ schema: MAC_LOCAL_DATABASE_ROLES_V1, web: role(roleNames.web), coordinator: role(roleNames.coordinator),
     results: role(roleNames.results), queueWorker: role(roleNames.queueWorker) });
   const ownerCode = await privateText(join(configRoot, "owner-sign-in.txt"), newPassword);
-  const macLocal = captureProvisionedMacLocalConfigurationV1({ database, ownerCode, workers });
+  const enablementMaterial = Object.freeze({ schema: OWNER_TRUSTED_LOCAL_ENABLEMENT_V1, mode: "mac-local", nodeId: "mac-1", workers });
+  // Store the plain record the loader accepts; the enablement digest is derived on every load, never stored.
+  const macLocal = { schema: MAC_LOCAL_PROTECTED_CONFIGURATION_V1, port: 3210, workspaceId: "workspace:mac-local",
+    localOwnerSession: { schema: LOCAL_OWNER_SESSION_PROFILE_V1, origin: "http://127.0.0.1:3210", tenantId: "tenant:mac-local",
+      provider: "local-owner", subject: "owner:local", ownerCodeDigest: sha256Digest({ ownerCode }), sessionSeconds: 28_800 },
+    database, enablement: enablementMaterial };
+  captureMacLocalProtectedConfigurationV1(JSON.parse(JSON.stringify(macLocal)));
   if (!options.dryRun) {
     await writePrivate(join(configRoot, "database-roles.json"), `${JSON.stringify(roles)}\n`);
     await writePrivate(join(configRoot, "mac-local.json"), `${JSON.stringify(macLocal)}\n`);

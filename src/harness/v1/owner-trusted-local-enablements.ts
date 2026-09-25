@@ -63,7 +63,9 @@ function captureWorker(value: unknown): Readonly<{
  * grants neither delivery nor execution: a caller must still hold a current
  * canonical queue delivery before it may use a listed executable. */
 export function captureOwnerTrustedLocalEnablementV1(value: unknown): OwnerTrustedLocalEnablementV1 {
-  const record = exact(value, ["schema", "mode", "nodeId", "workers"]);
+  // A previously captured record carries its derived digest; accept it only when the digest still matches.
+  const captured = Object.hasOwn(plain(value), "enablementDigest");
+  const record = exact(value, captured ? ["schema", "mode", "nodeId", "workers", "enablementDigest"] : ["schema", "mode", "nodeId", "workers"]);
   const rawWorkers = record.workers;
   if (record.schema !== OWNER_TRUSTED_LOCAL_ENABLEMENT_V1 || record.mode !== "mac-local" || record.nodeId !== "mac-1"
     || !Array.isArray(rawWorkers) || rawWorkers.length < 1 || rawWorkers.length > 3) refused();
@@ -76,7 +78,9 @@ export function captureOwnerTrustedLocalEnablementV1(value: unknown): OwnerTrust
     || new Set(workers.map(worker => worker.kind)).size !== workers.length) refused();
   const material = Object.freeze({ schema: OWNER_TRUSTED_LOCAL_ENABLEMENT_V1, mode: "mac-local" as const,
     nodeId: "mac-1" as const, workers: Object.freeze(workers) });
-  return Object.freeze({ ...material, enablementDigest: sha256Digest(material) });
+  const enablementDigest = sha256Digest(material);
+  if (captured && record.enablementDigest !== enablementDigest) refused();
+  return Object.freeze({ ...material, enablementDigest });
 }
 
 /** Accept either plain protected-file material or the digest-bearing value

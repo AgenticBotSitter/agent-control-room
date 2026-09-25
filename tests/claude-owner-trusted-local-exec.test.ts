@@ -31,7 +31,7 @@ test("runs only the reviewed Mac-local Claude arguments and exposes no inherited
   const received = JSON.parse(result.text) as { args: string[]; env: string[]; prompt: string };
   assert.deepEqual(received.args, captured.args); assert.equal(received.prompt, "hello");
   assert.equal(received.env.includes("SECRET_SHOULD_NOT_LEAK"), false);
-  assert.deepEqual(Object.keys(captured.env ?? {}).sort(), ["HOME", "LANG", "PATH", "TMPDIR"]);
+  assert.deepEqual(Object.keys(captured.env ?? {}).sort(), ["HOME", "LANG", "LOGNAME", "PATH", "TMPDIR", "USER"]);
   assert.equal(result.usageReported, true); assert.deepEqual(await readdir(cwd), []);
 });
 

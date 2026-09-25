@@ -34,3 +34,13 @@ test("a missing or version-drifted executable leaves only that worker unavailabl
   const checked = await verifyOwnerTrustedLocalEnablementV1({ ...valid, workers: [valid.workers[0]] }, async () => "codex 0.155.0");
   assert.deepEqual(checked, { nodeId: "mac-1", enabledWorkerIds: ["worker:codex"], unavailableWorkerIds: [] });
 });
+
+test("accepts an already captured record only while its digest still matches", async () => {
+  const captured = captureOwnerTrustedLocalEnablementV1(valid);
+  assert.deepEqual(captureOwnerTrustedLocalEnablementV1(JSON.parse(JSON.stringify(captured))), captured);
+  const checked = await verifyOwnerTrustedLocalEnablementV1(captured, async path => path.includes("Codex") ? "codex 0.155.0" : "hermes 0.21.3");
+  assert.deepEqual(checked.enabledWorkerIds, ["worker:codex", "worker:marvin"]);
+  assert.throws(() => captureOwnerTrustedLocalEnablementV1({ ...captured, enablementDigest: `sha256:${"0".repeat(64)}` }));
+  const swapped = { ...captured, workers: [{ ...captured.workers[0], executablePath: "/tmp/other-codex" }, captured.workers[1]] };
+  assert.throws(() => captureOwnerTrustedLocalEnablementV1(swapped));
+});

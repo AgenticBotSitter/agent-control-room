@@ -6,6 +6,7 @@ import { sha256Digest } from "../src/security";
 import { LOCAL_OWNER_SESSION_PROFILE_V1 } from "../src/web/v1/local-owner-session";
 import { createMacLocalControlRoomServiceV1 } from "../src/web/v1/mac-local-serving";
 import { createPrivateOwnerBootstrapCommand } from "../src/web/v1/private-owner-bootstrap";
+import { handlePrivateWebRequest } from "../src/web/v1/private-process";
 import { closePrivateOwnerBootstrapConformanceDatabase, conformanceNow, conformanceSubject,
   privateOwnerBootstrapFixture } from "./helpers/private-owner-bootstrap-conformance";
 
@@ -33,5 +34,22 @@ test("Mac-local service is inert until explicit start and binds only its selecte
   assert.equal(bound?.host, "127.0.0.1"); assert.equal(bound?.port, 3210);
   assert.equal(bound?.exclusive, true); assert.equal(bound?.backlog, 64); assert.ok(bound?.signal instanceof AbortSignal);
   assert.equal(service.isReady(), true);
+
+  // The page middleware path: nothing renders without a verified owner session.
+  let rendered = 0;
+  const render = () => { rendered++; return new Response("page"); };
+  const anonymous = await handlePrivateWebRequest(new Request(`${origin}/projects`), render);
+  assert.equal(anonymous.status, 401); assert.equal(rendered, 0);
+  const wrong = await handlePrivateWebRequest(new Request(`${origin}/api/v1/local-owner-session`, { method: "POST",
+    headers: { "content-type": "application/json", origin }, body: JSON.stringify({ ownerCode: `${ownerCode}x` }) }), render);
+  assert.equal(wrong.status, 401); assert.equal(wrong.headers.get("set-cookie"), null);
+  const signed = await handlePrivateWebRequest(new Request(`${origin}/api/v1/local-owner-session`, { method: "POST",
+    headers: { "content-type": "application/json", origin }, body: JSON.stringify({ ownerCode }) }), render);
+  assert.equal(signed.status, 201);
+  const cookie = (signed.headers.get("set-cookie") ?? "").split(";", 1)[0]!;
+  const page = await handlePrivateWebRequest(new Request(`${origin}/projects`, { headers: { cookie } }), render);
+  assert.equal(page.status, 200); assert.equal(rendered, 1);
+  assert.equal(await page.text(), "page");
+
   await service.close(); assert.equal(service.isReady(), false);
 });

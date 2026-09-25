@@ -91,8 +91,13 @@ const replay = await post("/api/v1/projects", { title, summary: "Created by acce
 const replayId = /"projectId"\s*:\s*"(project:[^"]+)"/.exec(await replay.text())?.[1];
 check("create replay is idempotent", replay.status === 200 && replayId === projectId, `status ${replay.status}`);
 
-const readBack = async cookie => projectId
-  ? call(`/api/v1/projects/${encodeURIComponent(projectId)}`, { headers: { cookie } }) : { status: 0 };
+// The owner reads a project through the catalog API and the project page.
+const readBack = async cookie => {
+  if (!projectId) return { status: 0 };
+  const list = await call("/api/v1/projects", { headers: { cookie } });
+  if (!list.ok || !(await list.text()).includes(`"${projectId}"`)) return { status: list.ok ? 404 : list.status };
+  return call(`/projects/${encodeURIComponent(projectId)}`, { headers: { cookie } });
+};
 check("project readable", (await readBack(session.cookie)).status === 200);
 
 if (restart) {
