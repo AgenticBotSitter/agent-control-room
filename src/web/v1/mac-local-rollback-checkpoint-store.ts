@@ -57,8 +57,8 @@ export async function openMacLocalRollbackCheckpointStoreV1(protectedRoot: strin
       return unavailable();
     }
     try {
+      if ((await privateEntry(file, "file")).size > MAX_FILE_BYTES) unavailable();
       const text = await readFile(file, "utf8");
-      if (Buffer.byteLength(text, "utf8") > MAX_FILE_BYTES) unavailable();
       const value = JSON.parse(text) as Record<string, unknown>;
       if (!value || typeof value !== "object" || Array.isArray(value) || Object.keys(value).length !== 2
         || value.schema !== MAC_LOCAL_ROLLBACK_CHECKPOINTS_V1 || !value.checkpoints || typeof value.checkpoints !== "object"
@@ -118,20 +118,32 @@ export async function openMacLocalRollbackCheckpointStoreV1(protectedRoot: strin
 }
 
 /** One live holder at a time. A lock left by a dead process (a crash that launchd
- * restarts) is taken over; a live holder, including a second host, is refused. */
+ * restarts) is taken over; a live holder, including a second host, is refused.
+ * The takeover itself is exclusive (a `.takeover` file created with `wx`), and the
+ * lock is only removed if it is still the same file whose holder was found dead,
+ * so two processes starting together can never both end up holding it. A crash
+ * that leaves a takeover file or an empty lock behind fails closed; the operator
+ * removes it after confirming no host is running. */
 async function acquire(lock: string, runtime: Runtime) {
-  for (let attempt = 0; attempt < 2; attempt++) {
-    try {
-      const handle = await open(lock, "wx", 0o600);
-      try { await handle.writeFile(`${runtime.pid}\n`, "utf8"); await handle.sync(); } finally { await handle.close(); }
-      return;
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException)?.code !== "EEXIST" || attempt > 0) unavailable();
-      let holder = NaN;
-      try { await privateEntry(lock, "file"); holder = Number((await readFile(lock, "utf8")).trim()); } catch { unavailable(); }
-      if (!Number.isSafeInteger(holder) || holder < 1 || holder === runtime.pid || runtime.alive(holder)) unavailable();
-      await unlink(lock).catch(unavailable);
-    }
+  const create = async () => {
+    const handle = await open(lock, "wx", 0o600);
+    try { await handle.writeFile(`${runtime.pid}\n`, "utf8"); await handle.sync(); } finally { await handle.close(); }
+  };
+  try { await create(); return; }
+  catch (error) { if ((error as NodeJS.ErrnoException)?.code !== "EEXIST") unavailable(); }
+  const takeover = `${lock}.takeover`;
+  const guard = await open(takeover, "wx", 0o600).catch(unavailable);
+  try {
+    const before = await privateEntry(lock, "file").catch(unavailable);
+    const holder = Number((await readFile(lock, "utf8").catch(unavailable)).trim());
+    if (!Number.isSafeInteger(holder) || holder < 1 || holder === runtime.pid || runtime.alive(holder)) unavailable();
+    const after = await privateEntry(lock, "file").catch(unavailable);
+    if (after.ino !== before.ino || after.dev !== before.dev) unavailable();
+    await unlink(lock).catch(unavailable);
+    await create().catch(unavailable);
+  } finally {
+    await guard.close().catch(() => {});
+    await unlink(takeover).catch(() => {});
   }
 }
 

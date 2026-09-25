@@ -49,7 +49,7 @@ test("every non-matching write is refused and leaves the file unchanged", async 
   await store.close();
 });
 
-test("a file rolled back to an older copy is detected, not accepted", async t => {
+test("a rolled-back file is returned as-is, and the caller's compare-and-swap refuses to build on it", async t => {
   const r = await root(t), file = join(r, "state/rollback-checkpoints.json"), old = join(r, "old.json");
   const store = await openMacLocalRollbackCheckpointStoreV1(r);
   await store.initialize(checkpoint(1));
@@ -57,6 +57,8 @@ test("a file rolled back to an older copy is detected, not accepted", async t =>
   await store.advance(rollbackCheckpointDigestV1(checkpoint(1)), checkpoint(2));
   await copyFile(old, file);
   await chmod(file, 0o600);
+  // The store itself returns the older copy; detection is the caller's digest comparison.
+  assert.equal((await store.read(scope))?.revision, 1);
   // The caller (the review system) still holds revision 2 as current state.
   await assert.rejects(store.advance(rollbackCheckpointDigestV1(checkpoint(2)), checkpoint(3)), /conflict/u);
   await store.close();
@@ -112,4 +114,20 @@ test("an aborted signal and a closed store both refuse", async t => {
   assert.equal(await store.read(scope), undefined);
   await store.close();
   await assert.rejects(store.read(scope), /unavailable/u);
+});
+
+test("two processes taking over the same dead lock at once: exactly one wins", async t => {
+  const r = await root(t);
+  await mkdir(join(r, "state"), { mode: 0o700 });
+  await writeFile(join(r, "state/rollback-checkpoints.lock"), "424243\n", { mode: 0o600 });
+  for (let round = 0; round < 20; round++) {
+    const results = await Promise.allSettled([
+      openMacLocalRollbackCheckpointStoreV1(r, { pid: 900001, alive: pid => pid === 900002 }),
+      openMacLocalRollbackCheckpointStoreV1(r, { pid: 900002, alive: pid => pid === 900001 }),
+    ]);
+    const won = results.filter(item => item.status === "fulfilled");
+    assert.equal(won.length, 1, `round ${round}: exactly one holder`);
+    await (won[0] as PromiseFulfilledResult<Awaited<ReturnType<typeof openMacLocalRollbackCheckpointStoreV1>>>).value.close();
+    await writeFile(join(r, "state/rollback-checkpoints.lock"), "424243\n", { mode: 0o600 });
+  }
 });
