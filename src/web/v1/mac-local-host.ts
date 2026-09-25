@@ -51,6 +51,7 @@ export function createMacLocalWebServiceFromConfigurationV1(input: Readonly<{
     database: input.database,
     ...(taskApplication ? { ...taskApplication.operations } : input.operations ? { ...input.operations } : {}),
     ...(input.workerReadiness ? { workerReadiness: input.workerReadiness } : {}),
+    taskWorkersStarted: Boolean(taskApplication),
     assets: input.assets,
     render: input.render,
     ...(input.createServer ? { createServer: input.createServer } : {}),

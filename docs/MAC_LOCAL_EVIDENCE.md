@@ -2,6 +2,8 @@
 
 Status: SKELETON. No check has been run. Every evidence cell is empty.
 
+Database limitation (section 10 decision): the four current Mac-local database logins inherit broad application rights. `mac:check-database` establishes connectivity and login identity only; it does **not** prove that one role is barred from another role's writes. Package 5 must narrow those grants and add denied-write probes before the installation can claim least privilege. No live grant change or privilege acceptance is recorded here.
+
 This file is a shape only. It records nothing until a run fills it.
 
 **No check in this file has been run. Every cell under the column headings is empty

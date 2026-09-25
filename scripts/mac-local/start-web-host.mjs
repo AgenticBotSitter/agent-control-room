@@ -59,6 +59,26 @@ export async function startMacLocalTaskHost(input, runtime = {}) {
   if (!input || typeof input.protectedRoot !== "string") throw new Error("mac_local_web_host_arguments_invalid");
   const releaseRoot = new URL("../../dist-vps/server/", import.meta.url);
   const load = runtime.load ?? (path => import(path));
+  // A new installation has no project template. Start the real website so the
+  // owner can create the first project, but never construct a task worker.
+  const [firstLoader, firstPostgres] = await Promise.all([
+    load(new URL("macLocalProtectedLoader.js", releaseRoot).href),
+    load(new URL("privatePostgres.js", releaseRoot).href),
+  ]);
+  const firstConfiguration = await firstLoader.loadMacLocalProtectedConfigurationFromRootV1(input.protectedRoot);
+  const firstDatabase = firstPostgres.createPrivatePostgresDatabase(firstConfiguration.database);
+  let activeProjects;
+  try {
+    const rows = await firstDatabase.client.query(`SELECT p.id FROM projects p
+      JOIN control_manual_project_heads h ON h.project_id=p.id AND h.tenant_id=p.tenant_id
+      WHERE p.tenant_id=$1 AND p.workspace_id=$2 AND h.lifecycle='active' LIMIT 1`,
+    [firstConfiguration.localOwnerSession.tenantId, firstConfiguration.workspaceId]);
+    activeProjects = rows.rows.length;
+  } finally { await firstDatabase.close(); }
+  if (activeProjects === 0) {
+    console.log("Control Room website-only: create your first project, then run mac:down && mac:up. Task workers are not started.");
+    return startMacLocalWebHost(input, runtime);
+  }
   const [hostModule, loaderModule, providerModule, postgresModule, queueModule, servingModule, rendererModule] = await Promise.all([
     load(new URL("macLocalHost.js", releaseRoot).href), load(new URL("macLocalProtectedLoader.js", releaseRoot).href),
     load(new URL("macLocalTaskProvider.js", releaseRoot).href), load(new URL("privatePostgres.js", releaseRoot).href),

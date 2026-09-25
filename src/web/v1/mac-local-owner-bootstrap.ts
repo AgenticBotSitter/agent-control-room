@@ -18,16 +18,24 @@ export async function seedMacLocalNodeV1(db: DatabaseClient, configuration: MacL
   clock: () => number = Date.now): Promise<"created" | "already_present"> {
   const tenantId = configuration.localOwnerSession.tenantId;
   const workers = ["hermes", "claude", "codex"] as const;
+  const workerRecords = workers.map(kind => {
+    const adapterKind = kind === "claude" ? "claude-code" : kind;
+    const worker = configuration.enablement.workers.find(item => item.kind === adapterKind);
+    if (!worker) throw new Error("mac_local_node_conflict");
+    return { kind, workerId: worker.workerId, adapterId: kind === "claude" ? CLAUDE_CODE_LOCAL_ADAPTER_V1
+      : kind === "hermes" ? HERMES_LOCAL_ADAPTER_V1 : CODEX_OWNER_TRUSTED_LOCAL_ADAPTER_V1 };
+  });
   return db.transaction(async tx => {
     let created = false;
-    for (const worker of workers) {
-    const nodeId = `${configuration.enablement.nodeId}.${worker}`;
+    for (const worker of workerRecords) {
+    const nodeId = `${configuration.enablement.nodeId}.${worker.kind}`;
     const staticFields = {
       contractVersion: DOMAIN_CONTRACT_VERSION, kind: "node" as const, id: nodeId, tenantId,
-      displayName: `Mac local ${worker}`, state: "active" as const, version: 1,
+      displayName: `Mac local ${worker.kind}`, state: "active" as const, version: 1,
       platform: "macos" as const, architecture: "local", identityKeyId: `local-owner:${nodeId}`,
       hardwareFingerprint: sha256Digest({ purpose: "mac-local-node", nodeId }),
-      softwareFingerprint: configuration.enablement.enablementDigest,
+      softwareFingerprint: sha256Digest({ purpose: "mac-local-worker-node", nodeId,
+        workerId: worker.workerId, adapterId: worker.adapterId }),
       policyVersion: "mac-local/v1", minimumProtocolVersion: "local-only",
     };
     const existing = (await tx.query<{ tenant_id: string; state: string; version: number;

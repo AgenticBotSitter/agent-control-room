@@ -4,6 +4,7 @@ import { isAbsolute, resolve } from "node:path";
 import { loadMacLocalProtectedConfigurationFromRootV1 } from "../../src/web/v1/mac-local-protected-loader";
 import { createPrivatePostgresDatabase } from "../../src/web/v1/private-postgres";
 import { bootstrapMacLocalOwnerV1, seedMacLocalAdapterRegistryV1, seedMacLocalNodeV1 } from "../../src/web/v1/mac-local-owner-bootstrap";
+import { checkMacLocalNodeKeyPinV1 } from "../../src/web/v1/mac-local-node-key-pin";
 
 const root = process.argv[2];
 if (!root || process.argv.length !== 3 || !isAbsolute(root) || resolve(root) !== root) {
@@ -28,7 +29,9 @@ if (ownerOk) {
     // synthetic tenant that exercises the owner-bootstrap logic in tests.
     await database.client.transaction(tx => seedMacLocalAdapterRegistryV1(tx, configuration.localOwnerSession.tenantId));
     console.log("adapter registry seeded");
-    console.log(`local node ${await seedMacLocalNodeV1(database.client, configuration)}`);
+    const seeded = await seedMacLocalNodeV1(database.client, configuration);
+    await checkMacLocalNodeKeyPinV1(database.client, root, configuration, seeded === "created");
+    console.log(`local node ${seeded}; protected public-key pin verified`);
   } catch (error) {
     console.error(`adapter registry seed failed: ${error instanceof Error ? error.message : "unknown"}`);
     process.exitCode = 1;

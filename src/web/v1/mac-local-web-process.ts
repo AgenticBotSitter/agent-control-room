@@ -32,6 +32,8 @@ export interface MacLocalWebProcessOptionsV1 {
   /** Host-generation display state built only after pinned executable
    * verification. It is not a delivery, queue, or result authority. */
   workerReadiness?: Pick<MacLocalWorkerReadinessV1, "read">;
+  /** A website-only first start verifies CLI versions but has no task workers. */
+  taskWorkersStarted?: boolean;
   clock?: () => number;
 }
 
@@ -133,7 +135,10 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
       if (url.pathname === "/api/v1/local-workers") {
         if (request.method !== "GET" || url.search || !options.workerReadiness) throw new WebAccessError("not_found");
         sessions.verify(request, clock());
-        return Response.json({ workers: options.workerReadiness.read() }, { headers: privateResponseHeaders });
+        return Response.json({ taskWorkersStarted: options.taskWorkersStarted === true,
+          ...(options.taskWorkersStarted === true ? {} : { instruction: "create your first project, then run mac:down && mac:up" }),
+          workers: options.workerReadiness.read().map(worker => options.taskWorkersStarted === true ? worker
+            : { ...worker, state: "unavailable", proof: "not_proven" }) }, { headers: privateResponseHeaders });
       }
       if (url.pathname === "/api/v1/projects") return projectHttp(request);
       if (/^\/api\/v1\/projects\/[^/]+\/tasks(?:\/|$)/.test(url.pathname)) return taskHttp(request);

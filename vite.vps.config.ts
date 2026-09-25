@@ -32,6 +32,7 @@ export default defineConfig({
       macLocalHost: "src/web/v1/mac-local-host.ts",
       privatePostgres: "src/web/v1/private-postgres.ts",
       macLocalTaskProvider: "src/web/v1/mac-local-task-provider.ts",
+      macLocalDefaultTaskProvider: "src/web/v1/mac-local-default-task-provider.ts",
     } } } },
   },
   plugins: [vinext({ appDir: "private-app", rscOutDir: "dist-vps/server", ssrOutDir: "dist-vps/server/ssr" }), {

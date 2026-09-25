@@ -21,7 +21,8 @@ test("the real Mac-local wrapper signs in locally and reaches the existing proje
     localOwnerSession: { schema: LOCAL_OWNER_SESSION_PROFILE_V1, origin, tenantId: fixture.configuration.tenantId,
       provider: fixture.trust.issuer, subject: conformanceSubject, ownerCodeDigest: sha256Digest({ ownerCode }), sessionSeconds: 900 },
     database: { client: fixture.client, close: async () => {} }, clock: () => conformanceNow,
-    workerReadiness: { read: () => [{ kind: "hermes-021" as const, state: "ready" as const, proof: "not_proven" as const }] } });
+    workerReadiness: { read: () => [{ kind: "hermes-021" as const, state: "ready" as const, proof: "not_proven" as const }] },
+    taskWorkersStarted: true });
   const request = (path: string, init: RequestInit = {}) => new Request(`${origin}${path}`, init);
   assert.equal((await app.handle(request("/api/v1/projects"), () => new Response("unused"))).status, 401);
   const signedIn = await app.handle(request("/api/v1/local-owner-session", { method: "POST", headers: {
@@ -29,7 +30,8 @@ test("the real Mac-local wrapper signs in locally and reaches the existing proje
   assert.equal(signedIn.status, 201);
   const cookie = signedIn.headers.get("set-cookie"); assert.ok(cookie);
   const workers = await app.handle(request("/api/v1/local-workers", { headers: { cookie: cookie! } }), () => new Response("unused"));
-  assert.equal(workers.status, 200); assert.deepEqual(await workers.json(), { workers: [{ kind: "hermes-021", state: "ready", proof: "not_proven" }] });
+  assert.equal(workers.status, 200); assert.deepEqual(await workers.json(), { taskWorkersStarted: true,
+    workers: [{ kind: "hermes-021", state: "ready", proof: "not_proven" }] });
   const projects = await app.handle(request("/api/v1/projects", { headers: { cookie: cookie! } }), () => new Response("unused"));
   assert.equal(projects.status, 200);
   assert.match(await projects.text(), /projects/);

@@ -3,6 +3,7 @@
 // Never points at the VPS. Usage: pnpm mac:rehearsal up|down ABSOLUTE_DIR [--port 15499]
 import { execFileSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
+import { PgBoss, getConstructionPlans } from "pg-boss";
 import { existsSync, mkdirSync, readdirSync, writeFileSync, chmodSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
@@ -53,12 +54,26 @@ await applyMigrations({ bootstrapTarget,
   env: { CONTROL_ROOM_MIGRATOR_PASSWORD: secrets.migrator, CONTROL_ROOM_APP_PASSWORD: secrets.application, CONTROL_ROOM_SCHEDULER_PASSWORD: secrets.scheduler } });
 const client = connectTarget(bootstrapTarget); await client.connect();
 try {
+  // Rehearsal-only queue installation. Production queue setup remains a
+  // separate, reviewed database operation; application startup never migrates.
+  await client.query(getConstructionPlans("control_room_queue"));
+  const boss = new PgBoss({ db: { executeSql: (sql, values) => client.query(sql, values) },
+    schema: "control_room_queue", backend: "postgres", migrate: false, createSchema: false,
+    supervise: false, schedule: false, useListenNotify: false });
+  await boss.start();
+  try { await boss.createQueue("native-task-delivery", { retryLimit: 0 }); }
+  finally { await boss.stop({ graceful: false }); }
   for (const [name, password] of Object.entries(local)) {
     if ((await client.query("SELECT 1 FROM pg_roles WHERE rolname=$1", [name])).rows.length === 0)
       await client.query(`CREATE ROLE ${name} LOGIN INHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS`);
     await client.query(`ALTER ROLE ${name} PASSWORD ${client.escapeLiteral(password)}`);
     await client.query(`GRANT control_room_application TO ${name}`);
   }
+  await client.query(`GRANT USAGE ON SCHEMA control_room_queue TO control_room_coordinator,control_room_queue_worker`);
+  await client.query(`GRANT SELECT ON control_room_queue.version,control_room_queue.queue TO control_room_coordinator,control_room_queue_worker`);
+  await client.query(`GRANT UPDATE(name) ON control_room_queue.queue TO control_room_coordinator`);
+  await client.query(`GRANT SELECT,INSERT ON control_room_queue.job,control_room_queue.job_common TO control_room_coordinator`);
+  await client.query(`GRANT SELECT,INSERT,UPDATE,DELETE ON control_room_queue.job,control_room_queue.job_common TO control_room_queue_worker`);
 } finally { await client.end(); }
 
 const home = homedir(), claudeRoot = join(home, "Library/Application Support/Claude/claude-code");

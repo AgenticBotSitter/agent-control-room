@@ -23,7 +23,7 @@ Run every `pnpm` command from the repository root, on the Mac that holds the wor
 | 2 | Create the database and protected configuration | Agent, at your request | `pnpm mac:provision-database -- --protected-root <protected-root> --ssh-target <user@host> --database-host <host> --remote-worktree <absolute-path>` — **unproven** |
 | 3 | Point the Mac at the current database route | Agent | `pnpm mac:provision-database -- --repoint-only --protected-root <protected-root>` — **unproven** |
 | 4 | Build once | Agent | `pnpm build` |
-| 5 | Prepare the protected task keys and Hermes choice once | Agent, using the owner's recorded choice and verified provider origin | `pnpm mac:prepare-task-runtime -- --protected-root <protected-root> --hermes-profile cr --hermes-provider opencode-go --hermes-model space-bunny-free --hermes-destination <approved-https-origin>` |
+| 5 | Prepare the protected task keys and Hermes choice once | Agent, using the owner's recorded choice and verified provider origin | `pnpm mac:prepare-task-runtime -- --protected-root <protected-root> --hermes-profile cr --hermes-provider opencode-go --hermes-model space-bunny-free --hermes-destination https://opencode.ai:443` |
 | 6 | Start (see section 2) | Owner or agent | `pnpm mac:up` |
 
 Step 2 is a one-shot installer. It sends secrets over SSH on standard input, never as command
@@ -98,11 +98,13 @@ but has not yet done any work. "Proven" only ever appears after you accept a res
 | Check | Command | Good result |
 |-------|---------|-------------|
 | Is the task host up? | `pnpm mac:up -- --protected-root <protected-root>` | `already running (pid ...)` |
-| Is the database reachable? | `pnpm mac:check-database <protected-root>` | four lines, one per role: `web ok`, `coordinator ok`, `results ok`, `queueWorker ok` |
+| Is the database reachable? | `pnpm mac:check-database <protected-root>` | four lines, one per role, ending in `connectivity ok (privilege isolation not checked)` |
 | Is the site loading? | open `http://127.0.0.1:3210` | sign-in page |
 | Anything left running? | `ps -axo pid,pgid,command \| grep -E "codex\|claude\|hermes"` | nothing left over after a stop |
 
-`mac:check-database` is read-only. It never writes, never retries, and prints no configuration.
+`mac:check-database` is read-only. It never writes, never retries, and prints no configuration. It proves account identity and connectivity, not least-privilege database access. Package 5 will narrow the role grants and add denied-write checks before that claim can be made.
+
+On a new installation with no active project, `mac:up` starts the website only. The worker page truthfully says task workers are not started. Create your first project on the website, then run `mac:down && mac:up` to start the task host. During this phase, a project created later also needs that restart; the provider supports at most 16 templates (about five projects). Both limits require a follow-up package, not a silent drop. If the selected Hermes profile later sets `OPENCODE_GO_BASE_URL`, Hermes tasks fail closed because the saved network allowlist still names `https://opencode.ai:443`. The preparation command creates the protected task-runtime file once; rerunning it does not update an existing file. Stop Hermes task use and ask for a reviewed recovery procedure. Do not edit the protected file by hand or assume rerunning preparation changes its destination.
 Any line ending `database_check_refused` means that role is not reachable.
 
 ## 7. When something is not working

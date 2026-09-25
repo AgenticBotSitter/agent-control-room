@@ -32,7 +32,12 @@ export function createMacLocalStartupV1(input: Readonly<{
       if (!service || typeof service.start !== "function" || typeof service.close !== "function") throw new Error();
       await service.start();
       return Object.freeze({ close: service.close.bind(service), workerReadiness });
-    } catch {
+    } catch (error) {
+      // Keep a bounded, non-secret diagnostic when the composed host refuses
+      // startup. Raw driver messages can contain connection details.
+      const code = error instanceof Error && /^[a-z][a-z0-9_]{2,80}$/u.test(error.message)
+        ? error.message : "unclassified_failure";
+      console.error(`mac-local-startup: ${code}`);
       try { await (service?.close() ?? database?.close()); } catch { throw new Error("mac_local_startup_cleanup_uncertain"); }
       throw new Error("mac_local_startup_failed");
     }

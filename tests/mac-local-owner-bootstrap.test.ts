@@ -1,11 +1,19 @@
 import assert from "node:assert/strict";
 import test, { after } from "node:test";
 import { generateKeyPairSync } from "node:crypto";
+import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { bootstrapMacLocalOwnerV1, seedMacLocalNodeV1 } from "../src/web/v1/mac-local-owner-bootstrap";
 import { DatabaseNodeKeyResolver, DatabaseReplayGuard, FixedWindowProtocolRateLimiter,
   NODE_PROTOCOL_V1, NodeProtocolAuthenticator, signNodeFrame } from "../src/node-protocol/v1";
 import { captureOwnerTrustedLocalEnablementV1, OWNER_TRUSTED_LOCAL_ENABLEMENT_V1 } from "../src/harness/v1/owner-trusted-local-enablements";
 import { createPrivateOwnerBootstrapCommand } from "../src/web/v1/private-owner-bootstrap";
+import { sha256Digest } from "../src/security";
+import { CODEX_OWNER_TRUSTED_LOCAL_ADAPTER_V1 } from "../src/harness/codex-v1/owner-trusted-local-task-planning-contract";
+import { HERMES_LOCAL_ADAPTER_V1 } from "../src/harness/hermes-local-v1/task-planning-contract";
+import { CLAUDE_CODE_LOCAL_ADAPTER_V1 } from "../src/harness/claude-code-v1/task-planning-contract";
+import { checkMacLocalNodeKeyPinV1 } from "../src/web/v1/mac-local-node-key-pin";
 import type { MacLocalProtectedConfigurationV1 } from "../src/web/v1/mac-local-protected-configuration";
 import { closePrivateOwnerBootstrapConformanceDatabase, conformanceNow,
   privateOwnerBootstrapFixture } from "./helpers/private-owner-bootstrap-conformance";
@@ -55,12 +63,27 @@ test("refuses when the owner matches but the configured workspace is not in the 
 test("bootstraps one unspendable identity per local worker and refuses remote frames", async t => {
   const fixture = await privateOwnerBootstrapFixture({ fresh: "mac-node-a" }); t.after(fixture.close);
   const enablement = captureOwnerTrustedLocalEnablementV1({ schema: OWNER_TRUSTED_LOCAL_ENABLEMENT_V1,
-    mode: "mac-local", nodeId: "mac-1", workers: [{ workerId: "worker:local", kind: "codex",
-      executablePath: "/private/tmp/fixture-codex", recordedVersion: "fixture-version" }] });
+    mode: "mac-local", nodeId: "mac-1", workers: [
+      { workerId: "worker:hermes", kind: "hermes", executablePath: "/private/tmp/fixture-hermes", recordedVersion: "fixture-version" },
+      { workerId: "worker:claude", kind: "claude-code", executablePath: "/private/tmp/fixture-claude", recordedVersion: "fixture-version" },
+      { workerId: "worker:codex", kind: "codex", executablePath: "/private/tmp/fixture-codex", recordedVersion: "fixture-version" },
+    ] });
   const config = { ...local("tenant:mac-node-a", "workspace:mac-node-a"), enablement };
   await bootstrapMacLocalOwnerV1(fixture.client, config, clock);
   assert.equal(await seedMacLocalNodeV1(fixture.client, config, clock), "created");
   assert.equal(await seedMacLocalNodeV1(fixture.client, config, clock), "already_present");
+  const root = await mkdtemp(join(tmpdir(), "acr-node-pin-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await mkdir(join(root, "config"), { mode: 0o700 });
+  await checkMacLocalNodeKeyPinV1(fixture.client, root, config, true);
+  await checkMacLocalNodeKeyPinV1(fixture.client, root, config);
+  const pinFile = join(root, "config", "node-keys.json");
+  const pinned = JSON.parse(await readFile(pinFile, "utf8"));
+  pinned.fingerprints["mac-1.codex"] = "sha256:" + "f".repeat(64);
+  await writeFile(pinFile, `${JSON.stringify(pinned)}\n`, { mode: 0o600 });
+  await assert.rejects(checkMacLocalNodeKeyPinV1(fixture.client, root, config), /mac_local_node_key_pin_mismatch/);
+  await rm(pinFile);
+  await assert.rejects(checkMacLocalNodeKeyPinV1(fixture.client, root, config), /mac_local_node_key_pin_mismatch/);
   const now = new Date(conformanceNow).toISOString();
   const authenticator = new NodeProtocolAuthenticator(new DatabaseNodeKeyResolver(fixture.client),
     new DatabaseReplayGuard(fixture.client), new FixedWindowProtocolRateLimiter(100, 60));
@@ -69,7 +92,10 @@ test("bootstraps one unspendable identity per local worker and refuses remote fr
     const row = (await fixture.client.query<{ payload: { platform: string; softwareFingerprint: string } }>(
       "SELECT payload FROM control_nodes WHERE id=$1", [nodeId])).rows[0];
     assert.equal(row?.payload.platform, "macos");
-    assert.equal(row?.payload.softwareFingerprint, enablement.enablementDigest);
+    const adapterId = worker === "hermes" ? HERMES_LOCAL_ADAPTER_V1
+      : worker === "claude" ? CLAUDE_CODE_LOCAL_ADAPTER_V1 : CODEX_OWNER_TRUSTED_LOCAL_ADAPTER_V1;
+    assert.equal(row?.payload.softwareFingerprint, sha256Digest({ purpose: "mac-local-worker-node", nodeId,
+      workerId: `worker:${worker}`, adapterId }));
     const keys = await fixture.client.query("SELECT id FROM control_node_keys WHERE node_id=$1", [nodeId]);
     assert.deepEqual(keys.rows.map((key: { id: string }) => key.id), [keyId]);
     const frame = signNodeFrame({ protocol: NODE_PROTOCOL_V1, direction: "node_to_server", senderKind: "node",

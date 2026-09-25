@@ -20,7 +20,7 @@ export function providerFileBody(modulePath) {
 }
 
 export function missingTaskRuntimeInstruction(root) {
-  return `task settings missing: run pnpm mac:prepare-task-runtime -- --protected-root ${JSON.stringify(root)} --hermes-profile cr --hermes-provider opencode-go --hermes-model space-bunny-free --hermes-destination <approved-https-origin>`;
+  return `task settings missing: run pnpm mac:prepare-task-runtime -- --protected-root ${JSON.stringify(root)} --hermes-profile cr --hermes-provider opencode-go --hermes-model space-bunny-free --hermes-destination https://opencode.ai:443`;
 }
 
 const log = line => console.log(`mac:up ${line}`);
@@ -130,10 +130,11 @@ async function main() {
 
   log("4/5 task provider");
   const module = join(repoRoot, PROVIDER_MODULE);
-  if (!existsSync(module)) fail(`${PROVIDER_MODULE} missing: run pnpm build`);
-  const body = providerFileBody(module);
-  const current = existsSync(paths.provider) ? await readFile(paths.provider, "utf8") : undefined;
-  if (current !== body) { await writePrivate(paths.provider, body); log("task provider written"); }
+  if (existsSync(module)) {
+    const body = providerFileBody(module);
+    const current = existsSync(paths.provider) ? await readFile(paths.provider, "utf8") : undefined;
+    if (current !== body) { await writePrivate(paths.provider, body); log("task provider written"); }
+  } else log("task provider absent; only a zero-project website can start");
 
   if (service) return startService(root, paths, mac.port);
   log("5/5 task host");

@@ -42,7 +42,9 @@ type Runtime = Readonly<{
   lstat: typeof lstat;
   load(path: string): Promise<unknown>;
 }>;
-const production: Runtime = Object.freeze({ lstat, load: path => import(pathToFileURL(path).href) });
+// The path is checked below against the fixed protected-root file. Keep this
+// import native: the release bundler cannot enumerate an owner-held module.
+const production: Runtime = Object.freeze({ lstat, load: path => import(/* @vite-ignore */ pathToFileURL(path).href) });
 
 /** A real `import()` namespace carries exactly one own symbol, the standard
  * `Symbol.toStringTag` of "Module". Any other symbol is refused. */

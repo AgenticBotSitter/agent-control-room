@@ -36,7 +36,7 @@ export async function checkMacLocalDatabaseV1(protectedRoot: string, runtime: Ru
         "SELECT current_user=$1 AND session_user=$1 AS role_ok", [configuration.username])).rows[0];
       if (identity?.role_ok !== true) throw new Error("database_check_refused");
       await database.client.query("SELECT 1");
-      runtime.report(`${name} ok`);
+      runtime.report(`${name} connectivity ok (privilege isolation not checked)`);
     } catch {
       exitCode = 1;
       runtime.report(`${name} ${refusal()}`);

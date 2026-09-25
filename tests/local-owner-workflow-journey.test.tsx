@@ -82,10 +82,20 @@ test("owner can follow the saved local workflow without a false live-worker clai
 
   const workers = renderToStaticMarkup(createElement(LocalWorkerRouteStatus, { state: "available", setup: {
     localCapabilities: [{ ...localHarnessCapabilitiesV1[2]!, state: "not_available" }],
-  } as never }));
+  } as never, taskWorkerStatus: { state: "available", value: { taskWorkersStarted: true,
+    workers: [{ kind: "codex", state: "ready", proof: "not_proven" }] } } }));
   assert.match(workers, /Codex/);
   assert.match(workers, /Not available on this computer/);
   assert.match(workers, /not a live process monitor/);
+
+  const firstStart = renderToStaticMarkup(createElement(LocalWorkerRouteStatus, { state: "available", setup: {
+    localCapabilities: [{ ...localHarnessCapabilitiesV1[2]!, state: "owner_enablement_required" }],
+  } as never, taskWorkerStatus: { state: "available", value: { taskWorkersStarted: false,
+    instruction: "create your first project, then run mac:down && mac:up",
+    workers: [{ kind: "codex", state: "unavailable", proof: "not_proven" }] } } }));
+  assert.match(firstStart, /Task workers are not started/);
+  assert.match(firstStart, /create your first project, then run mac:down &amp;&amp; mac:up/);
+  assert.doesNotMatch(firstStart, /Status: Ready for owner enablement|operational/);
 
   const setup = renderToStaticMarkup(createElement(SetupWorkspace));
   assert.match(setup, /public release and live installation do not/);

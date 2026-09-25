@@ -38,7 +38,8 @@ function runtime(lines: string[], options: { roleOk?: boolean; fail?: boolean } 
 test("checks each fixed Mac-local role without printing any protected connection value", async () => {
   const lines: string[] = [];
   assert.equal(await checkMacLocalDatabaseV1("/protected", runtime(lines)), 0);
-  assert.deepEqual(lines, ["web ok", "coordinator ok", "results ok", "queueWorker ok"]);
+  assert.deepEqual(lines, ["web", "coordinator", "results", "queueWorker"].map(name =>
+    `${name} connectivity ok (privilege isolation not checked)`));
   assert.equal(lines.join("\n").includes("test-password"), false);
 });
 
@@ -63,7 +64,8 @@ test("continues checking other roles after one read-only connection refusal", as
   };
   assert.equal(await checkMacLocalDatabaseV1("/protected", testRuntime), 1);
   assert.deepEqual(opened, ["control_room_web", "control_room_coordinator", "control_room_results", "control_room_queue_worker"]);
-  assert.deepEqual(lines, ["web ok", "coordinator ok", "results database_check_refused", "queueWorker ok"]);
+  assert.deepEqual(lines, ["web", "coordinator", "results", "queueWorker"].map(name =>
+    name === "results" ? "results database_check_refused" : `${name} connectivity ok (privilege isolation not checked)`));
 });
 
 test("the protected role file remains loadable only with owner-only permissions", async t => {
