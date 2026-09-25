@@ -2,6 +2,15 @@
 
 Codex appends one short entry per work package (see `CODEX_MAC_BUILD_EXECUTION.md`).
 
+- 2026-09-24 — W4 local Codex queue-to-runner bridge: the verified queue
+  locator now reaches only a freshly reconstructed Codex delivery and the
+  protected host-owned fixed CLI/result bridge. It refuses unexpected model
+  fields, a changed locator, cancellation, and any outcome that did not reach
+  the existing canonical result publisher. It still starts no real Codex
+  process in tests. Focused executor, queue, and TypeScript checks pass. Next:
+  the protected host must supply the real fixed CLI policy, authority fence,
+  receipt port, and publisher closures.
+
 - 2026-09-24 — W4 local Codex current-delivery reconstruction: after the
   shared queue returns its small Codex locator, the local host can now rebuild
   the exact current project, task, lease, worker binding, deadline, and review
