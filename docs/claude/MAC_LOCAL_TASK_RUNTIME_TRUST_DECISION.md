@@ -592,6 +592,94 @@ Negative checks:
 "Not logged in". Package 5 therefore has **no** review verdict yet. The required Opus review will
 be run by Claude in a separate session that didn't write the code, and recorded with its log.
 
+## 13. Section 12 contract gaps (answers PACKAGE5_SECTION12_CONTRACT_GAPS.md, 2026-09-25)
+
+**Gap 1: completion-gate genesis. The Mac precomputes it; the checkpoint is written only after
+commit.**
+
+The genesis integrity row is a pure function of the tenant id and `keys.review`:
+- `revision: 1`, `recordCount: 0`;
+- `stateDigest = sha256Digest({ tenantId, records: [] })`;
+- `stateAuthTag = hmacSha256Tag(keys.review, { module: "completion-gate", tenantId, revision: 1,
+  recordCount: 0, stateDigest })`.
+
+That is exactly what `provisionTenant` computes for an empty tenant (`store.ts:119`). A MAC tag
+over public values is not secret: the same tag sits in the database, readable by roles. So it may
+travel in the manifest, and the key never leaves the Mac.
+
+- **Store API (additive; `provisionTenant` unchanged):**
+  - `CompletionGateStoreV1.genesisIntegrityV1(tenantId)` returns
+    `{ revision, recordCount, stateDigest, stateAuthTag }` using the store's own private
+    helpers;
+  - `completeProvisionedTenantV1(tenantId)` is the Mac-side finisher (below).
+  - A unit test proves that `genesisIntegrityV1` equals the row `provisionTenant` writes, for
+    the same key and tenant.
+- **Manifest (amends 12.B):** add `completionGateGenesis: { revision, recordCount, stateDigest,
+  stateAuthTag }`. `assertNoSecretMaterial` still applies. The tag is not key material.
+- **VPS command (12.C):** inserts that row verbatim, in the same transaction. Repeat run:
+  - an existing identical row is kept;
+  - any difference, including a higher revision, is kept untouched and reported
+    (`completion_gate_state_advanced`);
+  - it never rewrites a row.
+- **Mac finisher (extends 12.D):** rename the D command `mac:complete-first-owner`. After the
+  key pin passes, it runs `completeProvisionedTenantV1` through the coordinator login:
+  1. It reads the integrity row. It **refuses** if the row is missing, or if revision ≠ 1,
+     count ≠ 0, the digest differs, or the tag fails verification with `keys.review`.
+  2. It checks the completion-gate records for the tenant are empty.
+  3. Only then does it `checkpointInitialize` the revision 1 checkpoint.
+  4. If a checkpoint already exists: keep it when it's identical; refuse when it differs.
+
+  This command writes no database rows.
+- **Why it's recoverable and fails closed:**
+  - the checkpoint is written only **after** the VPS transaction has committed and been
+    verified, so no orphaned checkpoint can exist;
+  - a crash after commit and before the checkpoint is fixed by re-running
+    `mac:complete-first-owner`;
+  - `mac:up` refuses while either the pin or the checkpoint is missing;
+  - it never trust-on-first-use accepts a later revision. A revision > 1 with no checkpoint
+    is a stop-and-report.
+- The coordinator role needs `SELECT` on `control_completion_gate_integrity` and
+  `control_completion_gate_records`. If the reviewed role file lacks either, stop and report;
+  don't add it silently.
+- Keep Codex's removal of automatic completion-gate initialization from the task provider.
+
+**Gap 2: worker ids go in the manifest.**
+- Amend 12.B: `nodes` is an exact array of three `{ nodeId, workerId, adapterId }` entries,
+  taken from protected enablement. These are public ids, not secrets.
+- The VPS computes `softwareFingerprint` with the unchanged 10.4a formula, and `mac:up`
+  verifies against enablement as before.
+- Don't infer a worker id from a node id, and don't put derived fingerprints in the manifest.
+
+**Gap 3: time fields, comparison policy and receipt.**
+- **Time:** every row the VPS command creates uses the manifest's `createdAt` for
+  `created_at`, `updated_at` and `enrolled_at`. The rows are therefore reproducible.
+- **Repeat comparison:**
+  - *identity* columns must match exactly: ids, tenant and workspace bindings, names,
+    subject digest, adapter ids, node platform, policy version, hardware and software
+    fingerprints, and key algorithm, public material and fingerprint;
+  - *operational* columns (`updated_at`, `version`, any `*_lock`, `state`, `last_seen*`) are
+    not compared, because the running system legitimately changes them. They are
+    reported;
+  - the exact identity and operational column lists live in code, one constant per table,
+    with a test that fails if a table gains a column that isn't classified.
+- **Receipt:** exact keys:
+  `{ schema: "control-room.mac-local-first-owner-receipt/v1", manifestDigest, tenantId, created,
+  kept, fingerprints: { [nodeId]: digest } }`.
+  - `manifestDigest = sha256Digest(manifest)` binds the receipt to its input;
+  - `mac:complete-first-owner` refuses a receipt whose `manifestDigest` or `tenantId` doesn't
+    match the manifest the Mac generated. The Mac keeps a copy of the manifest in
+    `<protected>/config`.
+  - `created + kept` must equal the fixed row total.
+
+**Rehearsal (amends 12.F2):**
+- step 4 becomes `mac:complete-first-owner`;
+- extra negative checks:
+  - a manifest with an altered genesis tag, so the finisher refuses;
+  - a receipt with the wrong `manifestDigest`, so the finisher refuses;
+  - re-running the finisher, which keeps the checkpoint;
+  - deleting the checkpoint after the tenant has advanced, so the finisher refuses and
+    `mac:up` refuses.
+
 ## 9. Review and done
 
 - Split the work into packages of no more than about 800 lines, in this order:
