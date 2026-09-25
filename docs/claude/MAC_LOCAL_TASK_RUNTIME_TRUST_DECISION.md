@@ -22,11 +22,14 @@ must pass **both** fences, and each fence fails closed.
 3. Require **all** of the following:
    - `current.delivery.identity.runId === delivery.identity.runId`. The run id is derived from the
      lease id plus the plan digest, so a replaced lease or plan fails here.
-   - `current.delivery.deliveryId === delivery.deliveryId`.
-   - `authorityDigest`, `connectorProfileDigest`, `acceptanceProfileId`, `acceptanceProfileDigest`
-     and `expiresAt` are equal.
+   - `worker`, `input`, `inputDigest`, `authorityDigest`, `connectorProfileDigest`, `acceptanceProfileId`,
+     `acceptanceProfileDigest` and `expiresAt` are equal.
    - `canonicalJson(current.route) === canonicalJson(route)`.
-   - Do **not** compare `issuedAt`, because it changes on every call.
+   - Do **not** compare `issuedAt`, `deliveryId` or `deliveryDigest`. Every `prepare()` stamps
+     `issuedAt` with the current time, and the other two are derived from it, so they change on every
+     call. (Correction, same day: an earlier draft said to compare `deliveryId`, which would refuse
+     every real task. The helper built on 2026-09-25 compared `deliveryDigest`, with the same effect;
+     its tests passed only because they froze the clock.)
 4. Build one shared helper, `src/harness/v1/owner-trusted-local-cli-assert-current.ts`. Give it the
    preparation instance as a parameter. Use it for all three agents. Do not write three copies.
 
@@ -46,6 +49,11 @@ per critical-path decision 5.
 
 ## 2. `receiptPort`: in-process, not an authority
 
+**Status:** already built as `src/harness/v1/owner-trusted-local-cli-receipt-port.ts` (commit `cc4c59fa`)
+and reviewed against this section: it grants nothing and mints only the standard receipt. The binding
+check below is done by the delivery bridge's own `validate()` before the port is called, so the port
+itself refuses only a non-local route or a worker mismatch.
+
 - It's a same-process loopback `ControllerWorkerDeliveryPortV1`. It returns
   `disposition: "accepted"` only if all of these hold:
   - `route.kind === "local"`;
@@ -62,16 +70,23 @@ per critical-path decision 5.
 - Leave `MacLocalProtectedConfigurationV1` at its six keys.
 - Add a separate owner-only, data-only file: `Protected/config/task-runtime.json` (0600, not a
   symlink), schema `control-room.mac-local-task-runtime/v1`, validated with an exact-keys check.
-- It holds only independent 32-byte keys, base64url-encoded, one per existing consumer. Codex lists the
-  exact set from the constructors, following the pattern in `private-task-startup.ts`:
-  - delivery receipt integrity;
-  - harness run store;
-  - planner integrity and planner review;
-  - durable result integrity and result review;
-  - native approvals.
+- It holds six 32-byte keys, base64url-encoded, **one per role**: `planning`, `review`, `harness`,
+  `results`, `approvals` and `deliveryReceipt`. No two roles share a key. (Correction, same day: an
+  earlier draft said one independent key per consumer. That would make startup refuse, because the
+  existing code requires some consumers to share a key: `validateTaskQualityKeys` insists that the
+  quality key equals the planner's review key and the website review key, that the quality harness
+  key equals the website harness key, and that the quality results key equals the website results key.)
+  The provider maps each role to its consumers:
+  - `planning`: the planner's `integrityKey`;
+  - `review`: the planner's `reviewIntegrityKey`, `quality.integrityKey`, the website review key and the
+    durable result review key;
+  - `harness`: the run store (`runIntegrityKey`), `quality.harnessIntegrityKey` and the website harness key;
+  - `results`: the durable result `integrityKey`, `quality.results.integrityKey` and the website results key;
+  - `approvals`: `NativeApprovalPacketStore`;
+  - `deliveryReceipt`: the CLI bridge's receipt `integrityKey`.
 - It also holds the protected Hermes run settings: profile, provider and model. These are data, not a
   source pin.
-- Keys are generated once, by `bootstrap-owner` or the rehearsal setup, with `crypto.randomBytes(32)`.
+- Keys are generated once, by `pnpm mac:prepare-task-runtime` (built in package 3), with `crypto.randomBytes(32)`.
   - Any two identical keys → refuse.
   - A key of the wrong length → refuse.
   - The file exists but is invalid → refuse. Never regenerate over it.
