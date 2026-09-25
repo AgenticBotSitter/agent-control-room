@@ -2,6 +2,15 @@
 
 Codex appends one short entry per work package (see `CODEX_MAC_BUILD_EXECUTION.md`).
 
+- 2026-09-24 — W4 local Codex current-delivery reconstruction: after the
+  shared queue returns its small Codex locator, the local host can now rebuild
+  the exact current project, task, lease, worker binding, deadline, and review
+  profile from the authority database before execution. This is a read-only
+  safety fence: it cannot queue, run Codex, or publish a result. The focused
+  Codex queue/reconstruction test and the TypeScript check pass. Next: join
+  this reconstructed delivery to the already-tested fixed Codex CLI runner and
+  existing canonical result publisher from the protected Mac host.
+
 - 2026-09-24 — W4 three-agent lifecycle composition: the existing restricted
   Mac task lifecycle can now carry the independently fenced Hermes, Claude,
   and managed Codex local routes together. They retain one authority database,

@@ -7,6 +7,7 @@ import { TaskExecutionPlanner, type NativeTaskTemplate } from "../src/web/v1/tas
 import { TaskAssignmentCoordinator } from "../src/web/v1/task-assignment-coordinator";
 import { NativeApprovalPacketStore } from "../src/web/v1/native-approval-packet-store";
 import { deliverVerifiedCodexOwnerTrustedLocalQueueTaskV1 } from "../src/web/v1/codex-owner-trusted-local-queue-delivery";
+import { CodexOwnerTrustedLocalDispatchPreparationV1 } from "../src/harness/codex-v1/owner-trusted-local-dispatch-preparation";
 import { FleetSignalStore } from "../src/node-fleet/v1/fleet-signal-store";
 import type { FleetSignalEnvelope } from "../src/node-fleet/v1/schemas";
 import type { NativeTaskSubmission } from "../src/persistence/native-task-submission";
@@ -73,6 +74,14 @@ test("a managed local Codex plan uses the shared approval queue and exposes only
       delivered++; assert.equal(target.startsWork, false); assert.equal(target.grantsExecutionAuthority, false);
     } });
   assert.equal(delivered, 1, "the queue forwards only the rechecked locator; it does not start Codex itself");
+  const preparation = new CodexOwnerTrustedLocalDispatchPreparationV1(f.db, planner,
+    { workerId: "worker:codex-local", adapterRevision: "source-123" }, () => instant + 9_000);
+  const dispatchReference = { tenantId: binding.tenantId, projectId: binding.projectId, jobId: planned.receipt.jobId,
+    attemptId: assigned.receipt.attemptId, leaseId: assigned.receipt.leaseId, inputDigest: planned.receipt.inputDigest };
+  const dispatch = await preparation.prepare(dispatchReference);
+  assert.equal(dispatch.delivery.worker.adapterId, CODEX_OWNER_TRUSTED_LOCAL_ADAPTER_V1);
+  assert.equal(dispatch.route.kind, "local");
+  await preparation.assertCurrent(dispatchReference, dispatch);
   const replay = await queuedCoordinator.enqueueCodexOwnerTrustedLocalTask(f.identity, binding.projectId, planned.receipt.jobId,
     planned.receipt.inputDigest, new AbortController().signal);
   assert.equal(replay.replayed, true);
