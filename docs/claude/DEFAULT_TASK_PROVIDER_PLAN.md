@@ -340,3 +340,58 @@ Codex, items 5–7 above are flagged for a Codex pass (or at minimum a review
 before merge) rather than a solo Claude decision, even though I now have a
 concrete, correct-as-far-as-verified design for all of them. Items 1–4 are
 safe to build solo with the usual review gate.
+
+## Update: items 1–3 built and tested; the `adapter_registry` gap confirmed
+
+Built and unit/integration-tested (rehearsal not yet re-run, but `pnpm check`
+and the affected `node --test` files are green):
+
+- `src/harness/v1/owner-trusted-local-cli-receipt-port.ts` — the loopback
+  `receiptPort`. Pure, no DB.
+- `src/harness/v1/owner-trusted-local-cli-assert-current.ts` — the generic
+  `assertCurrent(delivery, route, signal)` for the CLI bridge, built by
+  re-deriving the reference from `delivery.identity` + a fresh lookup of the
+  attempt's active lease, then re-running the *existing*
+  `*DispatchPreparationV1.prepare()` and comparing delivery/route digests. It
+  duplicates none of the lease/job/attempt logic. Proven against a real
+  Postgres-backed fixture (`ownerReviewFixture` + `TaskExecutionPlanner` +
+  `TaskAssignmentCoordinator`, same as `tests/codex-owner-trusted-local-queue.test.ts`)
+  to both succeed on a live lease and fail closed once it expires.
+- `src/harness/codex-v1/owner-trusted-local-run-registration.ts` and
+  `src/harness/hermes-local-v1/local-run-registration.ts` — mechanical
+  mirrors of `ClaudeCodeLocalRunRegistrationV1`, except `harnessVersion` is a
+  caller-supplied parameter (from the live pinned-executable record) rather
+  than a source-level constant, since Codex/Hermes are allowed to auto-update
+  and get re-pinned, unlike Claude's fixed CLI version pin.
+
+**Confirmed, not yet built: `adapter_registry` seeding is a real, separate
+gap that also affects Claude, not just Codex/Hermes.** Traced
+`publishDurableResultV1`'s `verifyRecordedIdentity`
+(`durable-result-publication.ts:296-350`) — it requires a row in
+`adapter_registry` keyed by `(tenant_id, id=adapter_id)` with `authority_mode
+IN ('control_room_native','source_scheduled','advisory')` (DDL:
+`db/migrations/0001_control_room_core.sql:15-30`). `control_harness_runs.adapter_id`
+(`db/migrations/0020_cr7_harness_runs.sql:10`) has **no foreign key** to
+`adapter_registry` — so `HarnessRunStoreV1.create()` succeeds fine without
+this row (confirmed by reading `store.ts`'s `create()` in full: no
+`adapter_registry` reference anywhere), but the *publish* step still fails
+without it. No migration or bootstrap code seeds this row for
+`connector:claude-code-local` / `connector:codex-owner-trusted-local-v1` /
+`connector:hermes-macos-local-v1` anywhere in the repo (only a *different*,
+per-tenant "manual project" adapter row is seeded on demand, in
+`project-service.ts:202`, using the same `INSERT ... ON CONFLICT DO NOTHING`
+pattern I'd copy). This means: even Claude's own already-built local pipeline
+has probably never been exercised all the way through a real `publish`, only
+through `probe-adapters.ts` (which calls the raw exec adapter directly, no
+queue/publish involved) — REHEARSAL_FINDINGS' "W6 acceptance passes" did not
+include a real end-to-end task through review. **Next concrete step:** add a
+one-time seed of 3 `adapter_registry` rows (`authority_mode:
+'control_room_native'`, mirroring the manual-project INSERT shape) to
+`bootstrap-owner.ts`/`bootstrapMacLocalOwnerV1`, guarded by `ON CONFLICT DO
+NOTHING` the same way. This is the smallest unblocking change and is
+infrastructure-shaped (same category as the owner/tenant/workspace bootstrap
+I already built), not a new authority decision — the `authority_mode` value
+and column shape are copied verbatim from the existing reviewed pattern, not
+invented. Still worth a quick Codex glance before merge given it's a schema
+INSERT touching a shared table, but this is now a small, well-scoped change,
+not an open architecture question.
