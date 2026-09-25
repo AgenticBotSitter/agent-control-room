@@ -181,3 +181,5 @@ Codex appends one short entry per work package (see `CODEX_MAC_BUILD_EXECUTION.m
   Control Room capability. The installed CLI accepted the fixed no-tools form,
   and 18 focused Hermes/three-agent checks plus the TypeScript check pass. No
   Control Room task, database operation, or service was started.
+  Marvin independently reviewed the sanitized correction diff through the
+  updated Hermes route and returned `VERDICT: APPROVE`.
