@@ -4,6 +4,13 @@
 
 ## W6: `pnpm mac:up`
 
+When you build `mac:up`, make it run `pnpm mac:repin --protected-root <protected root>` before starting the hosts:
+
+- Exit 0: pins are current, or were updated to the same vendor install.
+- Exit 1: one worker's CLI moved outside its known install location. Start anyway. That worker shows unavailable, and the others keep working.
+- Exit 2: the protected config is missing, unreadable or unsafe. **Do not start.**
+- Log its output, because it records every version change.
+
 Run:
 
 ```

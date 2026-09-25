@@ -27,13 +27,16 @@ const refused = (): never => { throw new Error("mac_local_worker_readiness_inval
  * verification instead of trusting an old health observation.
  */
 export function createMacLocalWorkerReadinessV1(enablementValue: unknown,
-  verifiedValue: Readonly<{ nodeId: "mac-1"; enabledWorkerIds: readonly string[] }>): MacLocalWorkerReadinessV1 {
+  verifiedValue: Readonly<{ nodeId: "mac-1"; enabledWorkerIds: readonly string[]; unavailableWorkerIds: readonly string[] }>): MacLocalWorkerReadinessV1 {
   const enablement = captureOwnerTrustedLocalEnablementV1(enablementValue);
   if (!verifiedValue || verifiedValue.nodeId !== "mac-1" || !Array.isArray(verifiedValue.enabledWorkerIds)
-    || verifiedValue.enabledWorkerIds.length !== enablement.workers.length
-    || new Set(verifiedValue.enabledWorkerIds).size !== verifiedValue.enabledWorkerIds.length
-    || verifiedValue.enabledWorkerIds.some(id => !enablement.workers.some(worker => worker.workerId === id))) refused();
-  const failed = new Set<string>(), proven = new Set<string>();
+    || !Array.isArray(verifiedValue.unavailableWorkerIds)) refused();
+  // Every enabled worker must be accounted for exactly once: verified or unavailable.
+  const accounted = [...verifiedValue.enabledWorkerIds, ...verifiedValue.unavailableWorkerIds];
+  if (verifiedValue.enabledWorkerIds.length < 1 || accounted.length !== enablement.workers.length
+    || new Set(accounted).size !== accounted.length
+    || accounted.some(id => !enablement.workers.some(worker => worker.workerId === id))) refused();
+  const failed = new Set<string>(verifiedValue.unavailableWorkerIds), proven = new Set<string>();
   const worker = (id: string): OwnerTrustedLocalEnablementV1["workers"][number] => {
     if (typeof id !== "string") refused();
     const value = enablement.workers.find(item => item.workerId === id);

@@ -25,9 +25,12 @@ test("refuses paths, unknown fields, duplicate workers, and non-Mac node records
   ]) assert.throws(() => captureOwnerTrustedLocalEnablementV1(changed));
 });
 
-test("refuses a missing or version-drifted executable before a worker can be enabled", async () => {
-  await assert.rejects(verifyOwnerTrustedLocalEnablementV1(valid, async path => path.includes("Codex") ? "codex 0.155.0" : "hermes 0.21.2"));
+test("a missing or version-drifted executable leaves only that worker unavailable", async () => {
+  const drifted = await verifyOwnerTrustedLocalEnablementV1(valid, async path => path.includes("Codex") ? "codex 0.155.0" : "hermes 0.21.2");
+  assert.deepEqual(drifted, { nodeId: "mac-1", enabledWorkerIds: ["worker:codex"], unavailableWorkerIds: ["worker:marvin"] });
+  const missing = await verifyOwnerTrustedLocalEnablementV1(valid, async path => { if (path.includes("hermes")) throw new Error("not found"); return "codex 0.155.0"; });
+  assert.deepEqual(missing.unavailableWorkerIds, ["worker:marvin"]);
   await assert.rejects(verifyOwnerTrustedLocalEnablementV1(valid, async () => { throw new Error("not found"); }));
   const checked = await verifyOwnerTrustedLocalEnablementV1({ ...valid, workers: [valid.workers[0]] }, async () => "codex 0.155.0");
-  assert.deepEqual(checked, { nodeId: "mac-1", enabledWorkerIds: ["worker:codex"] });
+  assert.deepEqual(checked, { nodeId: "mac-1", enabledWorkerIds: ["worker:codex"], unavailableWorkerIds: [] });
 });

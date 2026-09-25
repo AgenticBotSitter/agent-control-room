@@ -20,3 +20,14 @@ test("does not open the database when worker verification fails", async () => {
   const startup = createMacLocalStartupV1({ async readVersion() { return "changed"; }, openDatabase() { opened = true; return {} as never; }, createService() { throw new Error("must_not_create"); } });
   await assert.rejects(startup.start(config)); assert.equal(opened, false);
 });
+
+test("one updated CLI leaves that worker unavailable while the others start", async () => {
+  const two = { ...config, enablement: { ...config.enablement, workers: [...config.enablement.workers,
+    { workerId: "worker:claude", kind: "claude-code", executablePath: "/bin/claude", recordedVersion: "claude test" }] } } as never;
+  const startup = createMacLocalStartupV1({ async readVersion(path) { return path === "/bin/codex" ? "codex test" : "claude updated"; },
+    openDatabase() { return { client: {} as never, async close() {} }; },
+    createService() { return { async start() {}, async close() {} }; } });
+  const running = await startup.start(two);
+  assert.deepEqual(running.workerReadiness.read().map(worker => worker.state), ["ready", "unavailable"]);
+  await running.close();
+});

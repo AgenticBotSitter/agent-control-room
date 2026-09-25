@@ -92,6 +92,7 @@
     "check:database:vps": "node --import tsx scripts/check-mac-vps-database.ts",
     "mac:check-database": "node --import tsx scripts/mac-local/check-database.ts",
     "mac:provision-database": "node --import tsx scripts/mac-local/provision-database.mjs",
+    "mac:repin": "node --import tsx scripts/mac-local/repin-workers.mjs",
     "mac:host": "node scripts/mac-local/start-web-host.mjs",
     "mac:tasks": "node scripts/mac-local/start-task-host.mjs",
     "db:ledger": "node scripts/generate-migration-ledger.mjs",

@@ -22,6 +22,7 @@ import { captureMacLocalProtectedConfigurationV1 } from "../../src/web/v1/mac-lo
 import { captureMacLocalDatabaseRolesV1, MAC_LOCAL_DATABASE_ROLES_V1 } from "../../src/web/v1/mac-local-database-roles";
 import { LOCAL_OWNER_SESSION_PROFILE_V1 } from "../../src/web/v1/local-owner-session";
 import { OWNER_TRUSTED_LOCAL_ENABLEMENT_V1 } from "../../src/harness/v1/owner-trusted-local-enablements";
+import { pinnedVersionLine } from "./executable-version.mjs";
 import { PRIVATE_POSTGRES_ENDPOINT_V1, privatePostgresEndpointFingerprintV1 } from "../../src/web/v1/private-postgres-endpoint";
 
 const exec = promisify(execFile);
@@ -90,11 +91,7 @@ function newPassword() { return randomBytes(32).toString("base64url"); }
  * their version. Capture one bounded, printable version-looking line rather
  * than treating a current multi-line CLI as a source-version incompatibility. */
 export function recordedExecutableVersion(stdout) {
-  const lines = stdout.split(/\r?\n/u).map(line => line.trim()).filter(Boolean);
-  const version = lines.find(line => /(?:^|\s)(?:v?\d+\.\d+|version\b)/iu.test(line));
-  if (!version || version.length > 240 || /[\u0000-\u001f\u007f]/u.test(version))
-    throw new Error("provision_invalid_executable_version");
-  return version;
+  try { return pinnedVersionLine(stdout); } catch { throw new Error("provision_invalid_executable_version"); }
 }
 
 /** The SSH transport or a local account wrapper can add harmless lines before
@@ -258,10 +255,12 @@ export async function provisionMacLocalDatabaseV1(options) {
     results: role(roleNames.results), queueWorker: role(roleNames.queueWorker) });
   const ownerCode = await privateText(join(configRoot, "owner-sign-in.txt"), newPassword);
   const enablementMaterial = Object.freeze({ schema: OWNER_TRUSTED_LOCAL_ENABLEMENT_V1, mode: "mac-local", nodeId: "mac-1", workers });
-  const macLocal = captureMacLocalProtectedConfigurationV1({ schema: MAC_LOCAL_PROTECTED_CONFIGURATION_V1, port: 3210, workspaceId: "workspace:mac-local",
+  // Store the plain record the loader accepts; the enablement digest is derived on every load, never stored.
+  const macLocal = { schema: MAC_LOCAL_PROTECTED_CONFIGURATION_V1, port: 3210, workspaceId: "workspace:mac-local",
     localOwnerSession: { schema: LOCAL_OWNER_SESSION_PROFILE_V1, origin: "http://127.0.0.1:3210", tenantId: "tenant:mac-local",
       provider: "local-owner", subject: "owner:local", ownerCodeDigest: sha256Digest({ ownerCode }), sessionSeconds: 28_800 },
-    database, enablement: { ...enablementMaterial, enablementDigest: sha256Digest(enablementMaterial) } });
+    database, enablement: enablementMaterial };
+  captureMacLocalProtectedConfigurationV1(JSON.parse(JSON.stringify(macLocal)));
   if (!options.dryRun) {
     await writePrivate(join(configRoot, "database-roles.json"), `${JSON.stringify(roles)}\n`);
     await writePrivate(join(configRoot, "mac-local.json"), `${JSON.stringify(macLocal)}\n`);

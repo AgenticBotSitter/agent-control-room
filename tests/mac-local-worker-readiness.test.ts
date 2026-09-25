@@ -7,7 +7,7 @@ const enablement = { schema: OWNER_TRUSTED_LOCAL_ENABLEMENT_V1, mode: "mac-local
   workers: [{ workerId: "worker:codex", kind: "codex" as const, executablePath: "/bin/codex", recordedVersion: "codex test" },
     { workerId: "worker:hermes", kind: "hermes-021" as const, executablePath: "/bin/hermes", recordedVersion: "hermes test" },
     { workerId: "worker:claude", kind: "claude-code" as const, executablePath: "/bin/claude", recordedVersion: "claude test" }] };
-const verified = { nodeId: "mac-1" as const, enabledWorkerIds: ["worker:codex", "worker:hermes", "worker:claude"] };
+const verified = { nodeId: "mac-1" as const, enabledWorkerIds: ["worker:codex", "worker:hermes", "worker:claude"], unavailableWorkerIds: [] };
 
 test("shows only startup-verified workers as ready and requires a saved-result observation for proven", () => {
   const readiness = createMacLocalWorkerReadinessV1(enablement, verified);
@@ -30,9 +30,21 @@ test("a failed worker cannot return to ready in the same host generation", () =>
 
 test("rejects a partial, duplicate, foreign, or wrong-node startup claim", () => {
   for (const invalid of [
+    { nodeId: "mac-1" as const, enabledWorkerIds: ["worker:codex"], unavailableWorkerIds: [] },
     { nodeId: "mac-1" as const, enabledWorkerIds: ["worker:codex"] },
-    { nodeId: "mac-1" as const, enabledWorkerIds: ["worker:codex", "worker:codex", "worker:claude"] },
-    { nodeId: "mac-1" as const, enabledWorkerIds: ["worker:codex", "worker:hermes", "worker:other"] },
-    { nodeId: "node:other" as const, enabledWorkerIds: verified.enabledWorkerIds },
+    { nodeId: "mac-1" as const, enabledWorkerIds: [], unavailableWorkerIds: ["worker:codex", "worker:hermes", "worker:claude"] },
+    { nodeId: "mac-1" as const, enabledWorkerIds: ["worker:codex", "worker:claude"], unavailableWorkerIds: ["worker:codex"] },
+    { nodeId: "mac-1" as const, enabledWorkerIds: ["worker:codex", "worker:codex", "worker:claude"], unavailableWorkerIds: [] },
+    { nodeId: "mac-1" as const, enabledWorkerIds: ["worker:codex", "worker:hermes", "worker:other"], unavailableWorkerIds: [] },
+    { nodeId: "node:other" as const, enabledWorkerIds: verified.enabledWorkerIds, unavailableWorkerIds: [] },
   ]) assert.throws(() => createMacLocalWorkerReadinessV1(enablement, invalid as never), /mac_local_worker_readiness_invalid/);
+});
+
+test("a worker that failed startup verification starts unavailable and cannot become proven", () => {
+  const readiness = createMacLocalWorkerReadinessV1(enablement,
+    { nodeId: "mac-1", enabledWorkerIds: ["worker:codex", "worker:hermes"], unavailableWorkerIds: ["worker:claude"] });
+  assert.equal(readiness.isReady("worker:codex"), true);
+  assert.equal(readiness.isReady("worker:claude"), false);
+  readiness.recordPublishedResult("worker:claude");
+  assert.deepEqual(readiness.read()[2], { kind: "claude-code", state: "unavailable", proof: "not_proven" });
 });

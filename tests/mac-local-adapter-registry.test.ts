@@ -31,7 +31,7 @@ function fixture() {
     workerId: `worker:${harness}`, adapterId: LOCAL_ADAPTER_IDS_V1[harness], adapterRevision: "revision:test",
     async deliver(delivery) { calls.push(delivery.worker.workerId); return { harness, state: "delegated" as const }; },
   };
-  const readiness = createMacLocalWorkerReadinessV1(enablement, { nodeId: "mac-1", enabledWorkerIds: ["worker:codex", "worker:hermes", "worker:claude"] });
+  const readiness = createMacLocalWorkerReadinessV1(enablement, { nodeId: "mac-1", enabledWorkerIds: ["worker:codex", "worker:hermes", "worker:claude"], unavailableWorkerIds: [] });
   return { registry: { enablement, readiness, adapters }, readiness, calls };
 }
 
