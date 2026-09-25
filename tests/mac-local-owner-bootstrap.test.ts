@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import test, { after } from "node:test";
+import { generateKeyPairSync } from "node:crypto";
 import { bootstrapMacLocalOwnerV1, seedMacLocalNodeV1 } from "../src/web/v1/mac-local-owner-bootstrap";
-import { DatabaseNodeKeyResolver } from "../src/node-protocol/v1/persistence";
+import { DatabaseNodeKeyResolver, DatabaseReplayGuard, FixedWindowProtocolRateLimiter,
+  NODE_PROTOCOL_V1, NodeProtocolAuthenticator, signNodeFrame } from "../src/node-protocol/v1";
 import { captureOwnerTrustedLocalEnablementV1, OWNER_TRUSTED_LOCAL_ENABLEMENT_V1 } from "../src/harness/v1/owner-trusted-local-enablements";
 import { createPrivateOwnerBootstrapCommand } from "../src/web/v1/private-owner-bootstrap";
 import type { MacLocalProtectedConfigurationV1 } from "../src/web/v1/mac-local-protected-configuration";
@@ -69,6 +71,19 @@ test("bootstraps a local node once without a remote authentication key", async t
   const remoteKey = await new DatabaseNodeKeyResolver(fixture.client).resolve({ tenantId: config.localOwnerSession.tenantId,
     actorId: "mac-1", senderKind: "node", keyId: "local-owner:mac-1" });
   assert.equal(remoteKey, undefined);
+  const now = new Date(conformanceNow).toISOString();
+  const frame = signNodeFrame({ protocol: NODE_PROTOCOL_V1, direction: "node_to_server", senderKind: "node",
+    tenantId: config.localOwnerSession.tenantId, actorId: "mac-1", keyId: "local-owner:mac-1",
+    connectionId: "connection:local-test", sequence: 1, messageId: "message:local-test",
+    correlationId: "correlation:local-test", nonce: "local_node_forged_nonce_1234567890123456",
+    sentAt: now, expiresAt: new Date(conformanceNow + 60_000).toISOString(), type: "connection.hello",
+    body: { supportedProtocols: [NODE_PROTOCOL_V1], features: ["harness.native.snapshot.v1"],
+      requestedMaxFrameBytes: 16_384, lastAcknowledgedServerSequence: 0, unresolvedAttemptIds: [] } },
+  generateKeyPairSync("ed25519").privateKey);
+  const authenticator = new NodeProtocolAuthenticator(new DatabaseNodeKeyResolver(fixture.client),
+    new DatabaseReplayGuard(fixture.client), new FixedWindowProtocolRateLimiter(100, 60));
+  await assert.rejects(authenticator.verify(JSON.stringify(frame), { expectedDirection: "node_to_server",
+    receivedAt: now, transportIdentity: "transport:local-test" }), /unauthenticated/);
   await fixture.client.query("UPDATE control_nodes SET payload=jsonb_set(payload,'{softwareFingerprint}',to_jsonb($2::text)) WHERE id=$1",
     ["mac-1", "sha256:" + "f".repeat(64)]);
   await assert.rejects(seedMacLocalNodeV1(fixture.client, config, clock), /mac_local_node_conflict/);
