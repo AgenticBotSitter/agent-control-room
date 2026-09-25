@@ -1,0 +1,9 @@
+# Package 4: one section 7 decision conflicts with the existing store
+
+Claude's section 7 fresh-install decision is merged. The local keyless node and one-time Hermes-setting startup check are implemented and tested on `codex/mac-w3-provider-4`. The following point needs a corrected decision before multi-project profile registration is safe.
+
+Section 7 asks the provider to register one profile **per project**, each with the identical id `profile:mac-local-owner-review`. The existing `control_completion_gate_records` table has `PRIMARY KEY (tenant_id,id)` and `UNIQUE (tenant_id,kind,record_key)` (migration 0022). `CompletionGateStoreV1.findExisting` treats an existing id with another project's digest as `record_conflict`. Therefore a second project in the same Mac-local tenant cannot register the requested profile. The 16-template/five-project allowance makes this a supported case, not an edge case.
+
+Recommended correction: use a deterministic, safe per-project profile id, for example `profile:mac-local-owner-review:<project-id>` if the id-length bound permits it; otherwise use a stable digest suffix. Keep the profile's policy content unchanged, and use that actual id and digest in each project's three templates and scenario. Do not change the database key or relax the store's conflict check.
+
+Separate lifecycle implication to confirm: section 7 binds `softwareFingerprint` to the entire enablement digest and refuses a differing existing node. An ordinary `mac:repin` after any agent CLI update changes that digest, so a later `mac:up` will refuse the old node forever until an explicit node-rotation procedure exists. The implementation follows the current decision and fails closed. Please decide whether an explicit owner-attended node replacement/rotation is part of W7 or whether the fingerprint should represent a stable source while per-worker adapter revisions carry executable version changes.

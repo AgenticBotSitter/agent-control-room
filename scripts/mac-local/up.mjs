@@ -19,6 +19,10 @@ export function providerFileBody(modulePath) {
   return `export { schema, workerKinds, createTaskApplication } from ${JSON.stringify(pathToFileURL(modulePath).href)};\n`;
 }
 
+export function missingTaskRuntimeInstruction(root) {
+  return `task settings missing: run pnpm mac:prepare-task-runtime -- --protected-root ${JSON.stringify(root)} --hermes-profile cr --hermes-provider opencode-go --hermes-model space-bunny-free`;
+}
+
 const log = line => console.log(`mac:up ${line}`);
 const fail = (line, code = 1) => { console.error(`mac:up FAILED ${line}`); process.exit(code); };
 
@@ -109,6 +113,8 @@ async function main() {
   }
   await mkdir(paths.runtime, { recursive: true, mode: 0o700 });
   await chmod(paths.runtime, 0o700);
+  if (!existsSync(join(root, "config/task-runtime.json")))
+    fail(missingTaskRuntimeInstruction(root));
   if (!existsSync(join(repoRoot, "dist-vps/server/macLocalHost.js"))) fail("release build missing: run pnpm build first");
 
   log("1/5 repin");

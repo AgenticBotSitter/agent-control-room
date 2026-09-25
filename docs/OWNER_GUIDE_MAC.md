@@ -23,7 +23,8 @@ Run every `pnpm` command from the repository root, on the Mac that holds the wor
 | 2 | Create the database and protected configuration | Agent, at your request | `pnpm mac:provision-database -- --protected-root <protected-root> --ssh-target <user@host> --database-host <host> --remote-worktree <absolute-path>` — **unproven** |
 | 3 | Point the Mac at the current database route | Agent | `pnpm mac:provision-database -- --repoint-only --protected-root <protected-root>` — **unproven** |
 | 4 | Build once | Agent | `pnpm build` |
-| 5 | Start (see section 2) | Owner or agent | `pnpm mac:up` |
+| 5 | Prepare the protected task keys and Hermes choice once | Agent, using the owner's recorded choice | `pnpm mac:prepare-task-runtime -- --protected-root <protected-root> --hermes-profile cr --hermes-provider opencode-go --hermes-model space-bunny-free` |
+| 6 | Start (see section 2) | Owner or agent | `pnpm mac:up` |
 
 Step 2 is a one-shot installer. It sends secrets over SSH on standard input, never as command
 arguments, and never prints them. Re-running it converges: existing protected password files are

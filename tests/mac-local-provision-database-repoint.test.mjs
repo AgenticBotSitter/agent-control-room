@@ -10,6 +10,7 @@ import { LOCAL_OWNER_SESSION_PROFILE_V1 } from "../src/web/v1/local-owner-sessio
 import { OWNER_TRUSTED_LOCAL_ENABLEMENT_V1 } from "../src/harness/v1/owner-trusted-local-enablements.ts";
 import { MAC_LOCAL_DATABASE_ROLES_V1 } from "../src/web/v1/mac-local-database-roles.ts";
 import { runtimePaths } from "../scripts/mac-local/stack.mjs";
+import { missingTaskRuntimeInstruction } from "../scripts/mac-local/up.mjs";
 
 const roleNames = { web: "control_room_web", coordinator: "control_room_coordinator",
   results: "control_room_results", queueWorker: "control_room_queue_worker" };
@@ -101,4 +102,9 @@ test("repoint CLI accepts the package-manager separator and refuses extra argume
 
 test("mac:up and mac:down runtime state no longer includes a local database tunnel", () => {
   assert.deepEqual(Object.keys(runtimePaths("/protected")).sort(), ["hostLog", "hostPid", "provider", "runtime"]);
+});
+
+test("mac:up reports the exact one-time Hermes settings command without embedding secrets", () => {
+  assert.equal(missingTaskRuntimeInstruction("/private/Control Room"),
+    'task settings missing: run pnpm mac:prepare-task-runtime -- --protected-root "/private/Control Room" --hermes-profile cr --hermes-provider opencode-go --hermes-model space-bunny-free');
 });
