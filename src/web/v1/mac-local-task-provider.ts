@@ -30,6 +30,7 @@ export type MacLocalTaskProviderV1 = Readonly<{
    * deployment. The fixed list is checked again against verified host state. */
   workerKinds: readonly MacLocalWorkerKindV1[];
   createTaskApplication(input: Readonly<{
+    protectedRoot: string;
     configuration: MacLocalProtectedConfigurationV1;
     database: OpenedDatabase;
     workerReadiness: MacLocalWorkerReadinessV1;

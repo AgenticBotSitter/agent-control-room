@@ -26,19 +26,24 @@ test("Mac local web host reads a bounded exact executable version without shell 
 
 test("task host requires the fixed release provider and does not accept a caller callback", async () => {
   const loaded = [];
+  let providerInput;
   const task = { async close() {}, isReady: () => true };
   const result = await startMacLocalTaskHost({ protectedRoot: "/protected" }, {
     readVersion: async () => "pinned",
     load: async path => {
       loaded.push(path.split("/").at(-1));
       if (path.endsWith("macLocalHost.js")) return { createMacLocalProtectedHostV1: input => ({
-        async start() { return input.createTaskApplication && input.startQueueWorker ? task : assert.fail("task callbacks missing"); },
+        async start() {
+          if (!input.startQueueWorker) assert.fail("task callbacks missing");
+          await input.createTaskApplication({ workerReadiness: {}, configuration: {}, database: {}, databaseRoles: {} });
+          return task;
+        },
       }) };
       if (path.endsWith("macLocalProtectedLoader.js")) return {
         loadMacLocalProtectedConfigurationFromRootV1: async () => ({}), loadMacLocalDatabaseRolesFromRootV1: async () => ({}),
       };
       if (path.endsWith("macLocalTaskProvider.js")) return { loadMacLocalTaskProviderFromRootV1: async () => ({
-        workerKinds: ["hermes-021", "claude-code", "codex"], createTaskApplication: async () => ({}),
+        workerKinds: ["hermes", "claude-code", "codex"], createTaskApplication: async input => { providerInput = input; return {}; },
       }), requireMacLocalThreeAgentReadinessV1() {} };
       if (path.endsWith("privatePostgres.js")) return { createPrivatePostgresDatabase: () => ({}) };
       if (path.endsWith("nativeQueueFactories.js")) return { createInstalledNativeQueueFactories: () => ({ startNativeWorker: async () => ({}) }) };
@@ -48,5 +53,6 @@ test("task host requires the fixed release provider and does not accept a caller
     },
   });
   assert.equal(result, task);
+  assert.equal(providerInput.protectedRoot, "/protected");
   assert.deepEqual(loaded.sort(), ["index.js", "macLocalHost.js", "macLocalProtectedLoader.js", "macLocalTaskProvider.js", "nativeQueueFactories.js", "privatePostgres.js", "serving.js"].sort());
 });

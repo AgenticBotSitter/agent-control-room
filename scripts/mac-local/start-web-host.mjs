@@ -80,9 +80,9 @@ export async function startMacLocalTaskHost(input, runtime = {}) {
     loadDatabaseRoles: () => loaderModule.loadMacLocalDatabaseRolesFromRootV1(input.protectedRoot),
     readVersion: runtime.readVersion ?? readPinnedMacExecutableVersion,
     openDatabase: postgresModule.createPrivatePostgresDatabase,
-    createTaskApplication: async input => {
-      providerModule.requireMacLocalThreeAgentReadinessV1(provider, input.workerReadiness);
-      return provider.createTaskApplication(input);
+    createTaskApplication: async hostInput => {
+      providerModule.requireMacLocalThreeAgentReadinessV1(provider, hostInput.workerReadiness);
+      return provider.createTaskApplication({ ...hostInput, protectedRoot: input.protectedRoot });
     },
     startQueueWorker: queueModule.createInstalledNativeQueueFactories({
       openWorkerDatabase: postgresModule.createPrivatePostgresDatabase,
