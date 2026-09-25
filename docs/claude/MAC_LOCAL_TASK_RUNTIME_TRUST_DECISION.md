@@ -241,7 +241,48 @@ Then `createOwnerTrustedLocal{Codex,Claude,Hermes}DeliveryV1(base, executor, exe
 install, call `CompletionGateStoreV1.provisionTenant` once; it refuses by itself if review state already
 exists.
 
-## 7. Review and done
+## 7. Fresh-install decisions (answers PACKAGE4_FRESH_INSTALL_FINDINGS.md, 2026-09-25)
+
+**1. The local node record.**
+- `mac:bootstrap-owner` also creates, idempotently, one `control_nodes` row for `enablement.nodeId`:
+  - `state: 'active'`, `platform: "macos"`, `policyVersion: "mac-local/v1"`;
+  - `identityKeyId: "local-owner:<nodeId>"`;
+  - `hardwareFingerprint = sha256Digest({ purpose: "mac-local-node", nodeId })`;
+  - `softwareFingerprint = ` the enablement record's digest.
+- No raw hardware or host identity goes in.
+- It creates **no** `control_node_keys` row, no enrollment challenge and no grant. The node therefore has
+  no key, so the remote node protocol can never authenticate a frame as this node. Package 4 needs a
+  test that proves a remote frame for this node is refused.
+- An existing row that matches is kept. One that differs is refused, not overwritten.
+- This row only lets `FleetSignalStore` record the readiness-derived signals from section 6. It grants
+  nothing on its own.
+
+**2. Review profiles for each project.**
+- When the provider builds a project's three templates, it also registers one fixed local profile per
+  project, if it's absent, with `CompletionGateStoreV1.registerProfile`:
+  - `id: "profile:mac-local-owner-review"`, `name: "Owner review"`, `targetKind: "document"`;
+  - `requiredVerificationScenarioIds: ["scenario:mac-local-text"]`, `minimumIndependentReviews: 1`;
+  - `reviewerSeparation: { actor: true }` with every other field false;
+  - `verificationRequiresProducerSeparation: true`, `minimumRisk: "low"`, `maximumRevisionRounds: 3`;
+  - `automaticLowRiskDisposition: false`, so the owner's accept is always required;
+  - `createdBy:` the local owner principal, `createdAt:` the project's own creation time.
+- The content is deterministic, so its digest is the same on every restart.
+- An existing profile with the same id and a different digest is refused.
+- `quality.scenarios` gets the one matching `AutomaticDocumentScenario`, `scenario:mac-local-text`:
+  non-empty UTF-8 text within the result size cap. Copy the descriptor shape from
+  `tests/helpers/native-quality-completion.ts`.
+- This sits within section 4's limit of three templates per project, 16 in total, with a restart needed
+  for a new project.
+
+**3. Hermes settings on first run.**
+- `mac:up` doesn't take the settings.
+- `mac:prepare-task-runtime` is a separate one-time setup step, before the first `mac:up`.
+- If `task-runtime.json` is missing, `mac:up` fails with the exact prepare command to run. It never
+  generates the file itself, and a valid existing file is untouched.
+- The owner's current choice is on record (profile `cr`, provider `opencode-go`, model
+  `space-bunny-free`), so Codex may run the prepare step with those values. Add them to the owner guide.
+
+## 8. Review and done
 
 - Split the work into packages of no more than about 800 lines, in this order:
   1. fence A plus fence B helper and tests;
