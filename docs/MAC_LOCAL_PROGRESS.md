@@ -2,6 +2,15 @@
 
 Codex appends one short entry per work package (see `CODEX_MAC_BUILD_EXECUTION.md`).
 
+- 2026-09-24 — W4 three-agent activation gate: the protected task-host command
+  now requires exactly the three intended local worker kinds—Hermes, Claude,
+  and Codex—and checks that each passed the host generation's pinned
+  executable verification before the shared task composition can be created.
+  A website-only host may still start for setup without workers, but task mode
+  cannot silently degrade into a partial installation. Sixteen focused host
+  and provider checks, TypeScript, and the whitespace check pass. This is
+  source evidence only; it did not start a queue, database, website, or agent.
+
 - 2026-09-24 — W3/W4 protected task-host handoff: the release now has a
   separate, owner-attended task-host command that loads only one fixed,
   owner-only `runtime/task-provider.mjs` below the protected directory. That

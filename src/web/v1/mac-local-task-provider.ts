@@ -8,6 +8,8 @@ import type { NativeQueueWorkerStartupConfiguration } from "./native-queue-worke
 import type { DatabaseClient } from "../../persistence/database";
 
 export const MAC_LOCAL_TASK_PROVIDER_V1 = "control-room.mac-local-task-provider/v1" as const;
+export const MAC_LOCAL_THREE_AGENT_KINDS_V1 = Object.freeze(["hermes-021", "claude-code", "codex"] as const);
+type MacLocalWorkerKindV1 = typeof MAC_LOCAL_THREE_AGENT_KINDS_V1[number];
 
 type OpenedDatabase = Readonly<{ client: DatabaseClient; close(): Promise<void> }>;
 type TaskApplication = Readonly<{
@@ -24,6 +26,9 @@ type QueueWorker = Readonly<{ close(): Promise<void>; status(): { accepting: boo
  * database, review path, or agent protocol. */
 export type MacLocalTaskProviderV1 = Readonly<{
   schema: typeof MAC_LOCAL_TASK_PROVIDER_V1;
+  /** The task host is the three-agent product path, not a partial local
+   * deployment. The fixed list is checked again against verified host state. */
+  workerKinds: readonly MacLocalWorkerKindV1[];
   createTaskApplication(input: Readonly<{
     configuration: MacLocalProtectedConfigurationV1;
     database: OpenedDatabase;
@@ -44,13 +49,35 @@ function captureProvider(value: unknown): MacLocalTaskProviderV1 {
     || (Object.getPrototypeOf(value) !== Object.prototype && Object.getPrototypeOf(value) !== null)
     || Object.getOwnPropertySymbols(value).length !== 0) throw new Error("mac_local_task_provider_invalid");
   const record = value as Record<string, unknown>, names = Object.getOwnPropertyNames(value);
-  if (names.length !== 3 || !names.includes("schema") || !names.includes("createTaskApplication") || !names.includes("startQueueWorker")
+  if (names.length !== 4 || !names.includes("schema") || !names.includes("workerKinds") || !names.includes("createTaskApplication") || !names.includes("startQueueWorker")
     || record.schema !== MAC_LOCAL_TASK_PROVIDER_V1 || typeof record.createTaskApplication !== "function"
-    || typeof record.startQueueWorker !== "function") throw new Error("mac_local_task_provider_invalid");
+    || typeof record.startQueueWorker !== "function" || !sameThreeWorkerKinds(record.workerKinds)) throw new Error("mac_local_task_provider_invalid");
   return Object.freeze({ schema: MAC_LOCAL_TASK_PROVIDER_V1,
+    workerKinds: MAC_LOCAL_THREE_AGENT_KINDS_V1,
     createTaskApplication: record.createTaskApplication as MacLocalTaskProviderV1["createTaskApplication"],
     startQueueWorker: record.startQueueWorker as MacLocalTaskProviderV1["startQueueWorker"],
   });
+}
+
+function sameThreeWorkerKinds(value: unknown): value is readonly MacLocalWorkerKindV1[] {
+  return Array.isArray(value) && value.length === MAC_LOCAL_THREE_AGENT_KINDS_V1.length
+    && new Set(value).size === value.length
+    && MAC_LOCAL_THREE_AGENT_KINDS_V1.every(kind => value.includes(kind));
+}
+
+/** A task host cannot silently become a one- or two-agent deployment. This
+ * check uses host-generation executable verification only; a prior result is
+ * not required to call an installed worker ready. */
+export function requireMacLocalThreeAgentReadinessV1(provider: MacLocalTaskProviderV1,
+  workerReadiness: Pick<MacLocalWorkerReadinessV1, "read">): void {
+  if (!provider || !workerReadiness || typeof workerReadiness.read !== "function" || !sameThreeWorkerKinds(provider.workerKinds))
+    throw new Error("mac_local_task_provider_invalid");
+  const current = workerReadiness.read();
+  if (!Array.isArray(current) || current.length !== MAC_LOCAL_THREE_AGENT_KINDS_V1.length
+    || new Set(current.map(item => item.kind)).size !== current.length
+    || current.some(item => item.state !== "ready")
+    || !MAC_LOCAL_THREE_AGENT_KINDS_V1.every(kind => current.some(item => item.kind === kind)))
+    throw new Error("mac_local_three_agent_readiness_required");
 }
 
 /** The task provider is always the one owner-held file below the protected

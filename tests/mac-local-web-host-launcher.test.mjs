@@ -38,8 +38,8 @@ test("task host requires the fixed release provider and does not accept a caller
         loadMacLocalProtectedConfigurationFromRootV1: async () => ({}), loadMacLocalDatabaseRolesFromRootV1: async () => ({}),
       };
       if (path.endsWith("macLocalTaskProvider.js")) return { loadMacLocalTaskProviderFromRootV1: async () => ({
-        createTaskApplication: async () => ({}), startQueueWorker: async () => ({}),
-      }) };
+        workerKinds: ["hermes-021", "claude-code", "codex"], createTaskApplication: async () => ({}), startQueueWorker: async () => ({}),
+      }), requireMacLocalThreeAgentReadinessV1() {} };
       if (path.endsWith("privatePostgres.js")) return { createPrivatePostgresDatabase: () => ({}) };
       if (path.endsWith("serving.js")) return { loadPrivateClientAssets: async () => ({ respond() {} }) };
       if (path.endsWith("index.js")) return { default() {} };

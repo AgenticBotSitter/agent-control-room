@@ -67,6 +67,7 @@ export async function startMacLocalTaskHost(input, runtime = {}) {
   ]);
   if (typeof hostModule.createMacLocalProtectedHostV1 !== "function" || typeof loaderModule.loadMacLocalProtectedConfigurationFromRootV1 !== "function"
     || typeof loaderModule.loadMacLocalDatabaseRolesFromRootV1 !== "function" || typeof providerModule.loadMacLocalTaskProviderFromRootV1 !== "function"
+    || typeof providerModule.requireMacLocalThreeAgentReadinessV1 !== "function"
     || typeof postgresModule.createPrivatePostgresDatabase !== "function" || typeof servingModule.loadPrivateClientAssets !== "function"
     || typeof rendererModule.default !== "function") throw new Error("mac_local_web_host_release_invalid");
   const [assets, provider] = await Promise.all([
@@ -78,7 +79,10 @@ export async function startMacLocalTaskHost(input, runtime = {}) {
     loadDatabaseRoles: () => loaderModule.loadMacLocalDatabaseRolesFromRootV1(input.protectedRoot),
     readVersion: runtime.readVersion ?? readPinnedMacExecutableVersion,
     openDatabase: postgresModule.createPrivatePostgresDatabase,
-    createTaskApplication: provider.createTaskApplication,
+    createTaskApplication: async input => {
+      providerModule.requireMacLocalThreeAgentReadinessV1(provider, input.workerReadiness);
+      return provider.createTaskApplication(input);
+    },
     startQueueWorker: provider.startQueueWorker,
     assets, render: rendererModule.default,
   });
