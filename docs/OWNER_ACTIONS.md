@@ -2,14 +2,30 @@
 
 Only steps the bots cannot do. Each item is numbered and copy-paste ready.
 
-## Current status: no owner action needed for the private database route
+## 1. One-time Tailscale ACL edit for the private database route
 
-The owner-approved private SSH connection is used as a loopback-only database
-tunnel on this Mac. That keeps PostgreSQL bound to the VPS loopback address,
-does not open a new database port on the tailnet or internet, and does not
-require a Tailscale administrator-console change. The tunnel and the four
-restricted database logins still have to pass their real checks before the
-website is represented as connected.
+**Status (2026-09-25):** needed. Revision 1 of `docs/claude/SECURE_DB_ROUTE.md`
+assumed no owner action was needed here; live testing showed the Mac's tagged
+device identity is not covered by the existing Tailscale SSH rule, so the
+route was redesigned (see revision 2 in that file). The new route still keeps
+PostgreSQL bound to the VPS loopback address and still never opens the
+database port itself on the tailnet — but it does need one small, one-time
+Tailscale admin-console change, because that policy file can only be edited
+by a signed-in administrator.
+
+What to do: sign in to the Tailscale admin console, open the ACL policy file,
+and add **one** line granting `tag:general` (the Mac) TCP access to
+`tag:control-room-vps` (the VPS) on the one new dedicated port Codex has set
+up for the restricted database-only SSH forwarding account — Codex will give
+you the exact port number to paste at that point, since it is not fixed by
+this document. Do **not** touch the existing `ssh` policy stanza, and do not
+grant access to port 5432 itself — the new rule targets only the new
+forwarding port.
+
+Everything else in the one-time setup (the dedicated VPS account, its SSH key
+restrictions, the launchd tunnel on the Mac) is something Codex can do
+without the owner. This is the one step that needs an owner's Tailscale
+admin session.
 
 Do not paste a password, access key, database address, certificate, or
 terminal output here.
