@@ -8,7 +8,9 @@ export const MAC_LOCAL_ROLLBACK_CHECKPOINTS_V1 = "control-room.mac-local-rollbac
 
 const conflict = (): never => { throw new Error("mac_local_rollback_checkpoint_conflict"); };
 const unavailable = (): never => { throw new Error("mac_local_rollback_checkpoint_unavailable"); };
-const scopePattern = /^[A-Za-z0-9:._-]{3,240}$/u;
+// Every real scope is "<kind>:<id>" (for example completion-gate:<tenant>), so no scope can be
+// "__proto__", "constructor" or a checkpoint field name.
+const scopePattern = /^(?=.{3,240}$)[A-Za-z0-9._-]+:[A-Za-z0-9:._-]+$/u;
 const MAX_FILE_BYTES = 256 * 1024;
 
 type Runtime = Readonly<{ pid: number; alive(pid: number): boolean }>;
@@ -63,7 +65,8 @@ export async function openMacLocalRollbackCheckpointStoreV1(protectedRoot: strin
       if (!value || typeof value !== "object" || Array.isArray(value) || Object.keys(value).length !== 2
         || value.schema !== MAC_LOCAL_ROLLBACK_CHECKPOINTS_V1 || !value.checkpoints || typeof value.checkpoints !== "object"
         || Array.isArray(value.checkpoints)) unavailable();
-      const out: Record<string, RollbackCheckpointV1> = {};
+      // No prototype, so an untrusted key can never reach an inherited property.
+      const out: Record<string, RollbackCheckpointV1> = Object.create(null);
       for (const [scope, item] of Object.entries(value.checkpoints as Record<string, unknown>)) {
         const checkpoint = parseRollbackCheckpointV1(item);
         if (!scopePattern.test(scope) || checkpoint.scope !== scope) unavailable();

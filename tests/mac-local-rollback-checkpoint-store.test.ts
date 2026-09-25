@@ -82,7 +82,8 @@ test("tampered, readable-by-others or symlinked files are refused without echoin
   await store.initialize(checkpoint(1));
   const valid = await readFile(file, "utf8");
   const wrongScope = valid.replace(`"scope":"${scope}"`, `"scope":"completion-gate:tenant:other"`);
-  for (const content of ["not json", wrongScope, "{\"schema\":\"x\",\"checkpoints\":{}}\n"]) {
+  const protoKey = `{"schema":"control-room.mac-local-rollback-checkpoints/v1","checkpoints":{"__proto__":${JSON.stringify({ ...checkpoint(1), scope: "__proto__" })}}}\n`;
+  for (const content of ["not json", wrongScope, "{\"schema\":\"x\",\"checkpoints\":{}}\n", protoKey]) {
     await writeFile(file, content, { mode: 0o600 });
     await assert.rejects(store.read(scope), error => error instanceof Error && error.message === "mac_local_rollback_checkpoint_unavailable");
   }
@@ -98,6 +99,10 @@ test("tampered, readable-by-others or symlinked files are refused without echoin
 
 test("an open is refused for a relative root or a non-private protected root", async t => {
   await assert.rejects(openMacLocalRollbackCheckpointStoreV1("relative/root"), /unavailable/u);
+  const r0 = await root(t), s0 = await openMacLocalRollbackCheckpointStoreV1(r0);
+  for (const bad of ["__proto__", "constructor", "revision", "no-colon-scope"])
+    await assert.rejects(s0.read(bad), /unavailable/u);
+  await s0.close();
   const r = await root(t);
   await chmod(r, 0o755);
   await assert.rejects(openMacLocalRollbackCheckpointStoreV1(r), /unavailable/u);
