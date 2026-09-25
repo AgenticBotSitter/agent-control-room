@@ -18,6 +18,10 @@ Codex appends one short entry per work package (see `CODEX_MAC_BUILD_EXECUTION.m
 
 - SOURCE 2026-09-24 — shared startup support was merged and independently approved: a changed local CLI now appears unavailable rather than preventing the site from opening, while the owner can deliberately re-pin a recognized vendor update before each start. The next package is the start/stop service; no service has been installed yet.
 
+- REAL 2026-09-24 — a temporary loopback-only SSH tunnel carried successful real checks for all four restricted database accounts, then was stopped; the same check failed afterward as required, proving there is no silent direct fallback. No website, queue, worker, or persistent service was started.
+
+- SOURCE 2026-09-24 — the Claude review gate now waits for its terminal output to flush before returning its final verdict; a live Sonnet review printed and approved that change, so a valid review can no longer be silently lost by the caller.
+
 - 2026-09-24 — Codex local-runner cancellation fence: the managed, read-only
   Codex command runner now checks cancellation again after its asynchronous
   empty-work-folder inspection and before it can spawn a process. A focused

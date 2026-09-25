@@ -35,24 +35,26 @@ async function readStdin() {
   return body;
 }
 
-function finish(code, verdict, detail, raw) {
+async function finish(code, verdict, detail, raw, text = "") {
   const dir = join(process.cwd(), ".relay/logs");
   mkdirSync(dir, { recursive: true });
   const log = join(dir, `claude-review-${new Date().toISOString().replace(/[:.]/g, "-")}.log`);
   writeFileSync(log, raw ?? "");
-  process.stdout.write(`VERDICT: ${verdict}\n${detail ? `detail: ${detail}\n` : ""}log: ${log}\n`);
-  process.exit(code);
+  const output = `${text ? `${text}\n\n` : ""}VERDICT: ${verdict}\n${detail ? `detail: ${detail}\n` : ""}log: ${log}\n`;
+  await new Promise((resolve, reject) => process.stdout.write(output, error => error ? reject(error) : resolve()));
+  process.exitCode = code;
 }
 
-const diff = base ? execFileSync("git", ["diff", `${base}...HEAD`], { encoding: "utf8", maxBuffer: 64 << 20 }) : await readStdin();
-if (!diff.trim()) finish(2, "NONE", "empty diff: pass a diff on stdin or use --base <ref>; include untracked files with `git add -N` first");
-if (Buffer.byteLength(diff) > MAX_DIFF_BYTES)
-  finish(2, "NONE", `diff is ${Buffer.byteLength(diff)} bytes (limit ${MAX_DIFF_BYTES}); split it by package or directory and review each part`);
+async function main() {
+  const diff = base ? execFileSync("git", ["diff", `${base}...HEAD`], { encoding: "utf8", maxBuffer: 64 << 20 }) : await readStdin();
+  if (!diff.trim()) return finish(2, "NONE", "empty diff: pass a diff on stdin or use --base <ref>; include untracked files with `git add -N` first");
+  if (Buffer.byteLength(diff) > MAX_DIFF_BYTES)
+    return finish(2, "NONE", `diff is ${Buffer.byteLength(diff)} bytes (limit ${MAX_DIFF_BYTES}); split it by package or directory and review each part`);
 
-const claude = findClaude();
-if (!claude || !existsSync(claude)) finish(2, "NONE", "claude CLI not found; set CLAUDE_BIN to its absolute path");
+  const claude = findClaude();
+  if (!claude || !existsSync(claude)) return finish(2, "NONE", "claude CLI not found; set CLAUDE_BIN to its absolute path");
 
-const prompt = `You are the security and correctness reviewer for Agent Control Room (public repo).
+  const prompt = `You are the security and correctness reviewer for Agent Control Room (public repo).
 Governing plan: docs/CODEX_MAC_BUILD_EXECUTION.md. Review the diff below.
 Check for: secrets, tailnet hosts/IPs or private paths in committed content; weakened trust boundaries;
 self-declared readiness or proofs not tied to real evidence; fake/placeholder tests presented as proof;
@@ -65,23 +67,26 @@ The LAST line of your reply must be exactly "VERDICT: APPROVE" or "VERDICT: CHAN
 ${diff}
 --- DIFF END ---`;
 
-const child = spawn(claude, ["-p", "--model", model, "--tools", "", "--no-session-persistence",
-  "--setting-sources", "", "--output-format", "json"], { stdio: ["pipe", "pipe", "pipe"] });
-let out = "", err = "";
-child.stdout.on("data", d => { out += d; });
-child.stderr.on("data", d => { err += d; });
-const timer = setTimeout(() => child.kill("SIGKILL"), TIMEOUT_MS);
-child.stdin.end(prompt);
-const exitCode = await new Promise(resolve => child.on("close", resolve));
-clearTimeout(timer);
-const raw = `exit=${exitCode}\n--- stderr ---\n${err}\n--- stdout ---\n${out}\n`;
+  const child = spawn(claude, ["-p", "--model", model, "--tools", "", "--no-session-persistence",
+    "--setting-sources", "", "--output-format", "json"], { stdio: ["pipe", "pipe", "pipe"] });
+  let out = "", err = "";
+  child.stdout.on("data", d => { out += d; });
+  child.stderr.on("data", d => { err += d; });
+  const timer = setTimeout(() => child.kill("SIGKILL"), TIMEOUT_MS);
+  child.stdin.end(prompt);
+  const exitCode = await new Promise(resolve => child.on("close", resolve));
+  clearTimeout(timer);
+  const raw = `exit=${exitCode}\n--- stderr ---\n${err}\n--- stdout ---\n${out}\n`;
 
-let result;
-try { result = JSON.parse(out); } catch { finish(2, "NONE", `CLI output was not JSON (exit ${exitCode}); first stderr line: ${err.split("\n")[0] || "none"}`, raw); }
-if (result.is_error) finish(2, "NONE", `CLI error: ${String(result.result ?? result.subtype ?? "unknown").slice(0, 300)}`, raw);
-const text = String(result.result ?? "");
-const verdicts = [...text.matchAll(/^\s*\**VERDICT:\s*(APPROVE|CHANGES)\**\s*$/gim)];
-if (verdicts.length === 0) finish(2, "NONE", "reply had no VERDICT line; treat as not approved", raw);
-const verdict = verdicts.at(-1)[1].toUpperCase();
-process.stdout.write(`${text}\n\n`);
-finish(verdict === "APPROVE" ? 0 : 1, verdict, "", raw);
+  let result;
+  try { result = JSON.parse(out); }
+  catch { return finish(2, "NONE", `CLI output was not JSON (exit ${exitCode}); first stderr line: ${err.split("\n")[0] || "none"}`, raw); }
+  if (result.is_error) return finish(2, "NONE", `CLI error: ${String(result.result ?? result.subtype ?? "unknown").slice(0, 300)}`, raw);
+  const text = String(result.result ?? "");
+  const verdicts = [...text.matchAll(/^\s*\**VERDICT:\s*(APPROVE|CHANGES)\**\s*$/gim)];
+  if (verdicts.length === 0) return finish(2, "NONE", "reply had no VERDICT line; treat as not approved", raw);
+  const verdict = verdicts.at(-1)[1].toUpperCase();
+  return finish(verdict === "APPROVE" ? 0 : 1, verdict, "", raw, text);
+}
+
+await main();
