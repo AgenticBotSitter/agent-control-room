@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { chmod, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { spawnSync } from "node:child_process";
+import { chmod, mkdir, mkdtemp, readdir, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -81,4 +82,26 @@ test("the prepare command takes exactly its four flags, with or without the pnpm
   assert.deepEqual(parsePrepareTaskRuntimeArgumentsV1(args), parsePrepareTaskRuntimeArgumentsV1(["--", ...args]));
   for (const bad of [args.slice(0, 6), [...args, "--extra", "x"], [...args.slice(0, 7), "--"], [...args, "--hermes-model", "n"]])
     assert.throws(() => parsePrepareTaskRuntimeArgumentsV1(bad), /arguments_refused/u);
+});
+
+test("the prepare command really runs when its path contains a space, and fails loudly on bad arguments", async t => {
+  const outer = await mkdtemp(join(tmpdir(), "acr task runtime "));
+  t.after(() => rm(outer, { recursive: true, force: true }));
+  const repo = join(outer, "Agent Control Room");
+  await symlink(process.cwd(), repo);
+  const result = spawnSync(process.execPath, ["--import", "tsx", join(repo, "scripts/mac-local/prepare-task-runtime.ts"), "--unknown", "x"],
+    { cwd: process.cwd(), encoding: "utf8" });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /mac_local_task_runtime_arguments_refused/u);
+});
+
+test("a concurrent creator that wins the race is reported as existing, and no temporary file is left", async t => {
+  const root = await protectedRoot(t), file = join(root, "config/task-runtime.json");
+  const { link, lstat: realLstat, readFile: realRead, writeFile: realWrite, unlink } = await import("node:fs/promises");
+  const { randomBytes } = await import("node:crypto");
+  const runtime = { lstat: realLstat, readFile: realRead, writeFile: realWrite, unlink, randomBytes, pid: 7,
+    link: async (from: string, to: string) => { await writeFile(to, `${JSON.stringify(valid())}\n`, { mode: 0o600 }); return link(from, to); } };
+  assert.equal(await createMacLocalTaskRuntimeFileV1(root, hermes, runtime as never), "existing");
+  assert.deepEqual(await readdir(join(root, "config")), ["task-runtime.json"], "no temporary file is left behind");
+  assert.equal(JSON.parse(await readFile(file, "utf8")).keys.planning, valid().keys.planning);
 });

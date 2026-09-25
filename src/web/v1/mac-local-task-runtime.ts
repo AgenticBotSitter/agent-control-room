@@ -106,15 +106,18 @@ export async function createMacLocalTaskRuntimeFileV1(protectedRoot: string, her
     const body = { schema: MAC_LOCAL_TASK_RUNTIME_V1, keys, hermes: settings };
     captureMacLocalTaskRuntimeV1(body);
     const temporary = `${file}.new-${runtime.pid}-${Buffer.from(runtime.randomBytes(8)).toString("hex")}`;
-    await runtime.writeFile(temporary, `${JSON.stringify(body)}\n`, { encoding: "utf8", mode: 0o600, flag: "wx" });
+    let outcome: "created" | "existing" = "created";
     try {
+      // Inside the try, so a partial write never leaves key material behind.
+      await runtime.writeFile(temporary, `${JSON.stringify(body)}\n`, { encoding: "utf8", mode: 0o600, flag: "wx" });
       // link() refuses an existing target, so a concurrent creator can never be overwritten.
       await runtime.link(temporary, file);
     } catch (linkError) {
       if ((linkError as NodeJS.ErrnoException)?.code !== "EEXIST") throw linkError;
+      outcome = "existing";
     } finally { await runtime.unlink(temporary).catch(() => {}); }
     await loadMacLocalTaskRuntimeFromRootV1(protectedRoot, runtime);
-    return "created";
+    return outcome;
   }
   await loadMacLocalTaskRuntimeFromRootV1(protectedRoot, runtime);
   return "existing";
