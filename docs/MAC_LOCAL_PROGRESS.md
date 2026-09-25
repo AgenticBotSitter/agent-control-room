@@ -2,6 +2,25 @@
 
 Codex appends one short entry per work package (see `CODEX_MAC_BUILD_EXECUTION.md`).
 
+- 2026-09-24 — current Hermes three-agent host assembly: the protected local
+  task-host validator now accepts the update-aware Hermes route alongside the
+  already existing Claude and Codex routes. A new inert composition joins all
+  three to the same controller lifecycle and existing queue; it refuses a
+  caller-provided Hermes callback and starts neither a queue nor an agent.
+  This avoids treating ordinary Hermes updates as a failure of the retired
+  0.21 installer proof. Five focused current-Hermes/composition checks and
+  TypeScript pass. The remaining work is protected runtime configuration and
+  the real local website journey; no database, website, service, or live task
+  was started.
+
+- 2026-09-24 — current Hermes protected-startup admission: the protected task
+  startup validator recognizes the update-aware local Hermes delivery route
+  and requires the existing approved queue and approval store. It remains
+  separate from historical Hermes 0.21 proof records, so a normal Hermes
+  update requires a new qualification rather than a source change. Four
+  focused current-Hermes/startup checks and TypeScript pass. No worker,
+  website, database, or service was started.
+
 - 2026-09-24 — current Hermes runner handoff: the shared queue can now turn
   one verified current-Hermes locator into the existing controller delivery
   packet, recheck it immediately before launch, and accept queue success only
