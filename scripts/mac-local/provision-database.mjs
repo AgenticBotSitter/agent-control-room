@@ -195,16 +195,22 @@ chown postgres:postgres "$stage/.control-room-provision.mjs"
 runuser -u postgres -- node "$stage/.control-room-provision.mjs"`;
   const remoteBodyBase64 = Buffer.from(remoteBody, "utf8").toString("base64");
   const remote = String.raw`set -eu
+umask 077
 stage=${JSON.stringify(stage)}
 export stage
-cleanup() { git -C ${JSON.stringify(remoteWorktree)} worktree remove --force "$stage" >/dev/null 2>&1 || true; }
+body=$(mktemp "\${TMPDIR:-/tmp}/control-room-provision.XXXXXX")
+cleanup() {
+  rm -f "$body"
+  git -C ${JSON.stringify(remoteWorktree)} worktree remove --force "$stage" >/dev/null 2>&1 || true
+}
 trap cleanup EXIT
 if ! command -v timeout >/dev/null 2>&1; then
   printf 'provision_error:TIMEOUT_UNAVAILABLE\\n' >&2
   exit 1
 fi
+printf '%s' ${JSON.stringify(remoteBodyBase64)} | base64 -d > "$body"
 set +e
-printf '%s' ${JSON.stringify(remoteBodyBase64)} | base64 -d | timeout --kill-after=10s 280s /bin/bash -s
+timeout --kill-after=10s 280s /bin/bash "$body"
 status=$?
 set -e
 if [ "$status" -eq 124 ] || [ "$status" -eq 137 ]; then
