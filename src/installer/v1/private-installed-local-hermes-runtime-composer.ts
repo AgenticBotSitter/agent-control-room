@@ -23,7 +23,7 @@ import { canonicalJson, sha256Digest } from "../../security/canonical-digest";
 import { capturePrivateArtifactStorageConfigurationV1 } from "../../web/v1/private-artifact-storage";
 import { createPrivatePostgresDatabase, validatePrivatePostgresConfiguration,
   type PrivatePostgresConfiguration } from "../../web/v1/private-postgres";
-import { capturePrivatePostgresEndpointPolicyV1, privatePostgresEndpointPolicyDigestV1 } from
+import { capturePrivatePostgresEndpointPolicyV2, privatePostgresEndpointPolicyDigestV2 } from
   "../../web/v1/private-postgres-endpoint";
 import { installPrivateApplication } from "../../web/v1/private-process";
 import { createInstalledNativeQueueFactories } from "../../web/v1/installed-native-queue";
@@ -218,7 +218,7 @@ function databaseIdentity(value: PrivatePostgresConfiguration) {
   const parsed = validatePrivatePostgresConfiguration(value);
   return Object.freeze({ host: parsed.host, port: parsed.port, database: parsed.database,
     username: parsed.username, majorVersion: parsed.majorVersion,
-    endpointPolicyDigest: privatePostgresEndpointPolicyDigestV1(parsed.privateEndpoint) });
+    endpointPolicyDigest: privatePostgresEndpointPolicyDigestV2(parsed.privateEndpoint) });
 }
 
 function createDeferredDatabase(): Readonly<{ client: DatabaseClient; bind(value: unknown): void }> {
@@ -347,7 +347,7 @@ function parseConfiguration(value: unknown, prepared: ReturnType<typeof parsePre
   const agentSource = exact((captureStageMap(config.setupSources)).agent_readiness, ["schema"]);
   if (agentSource.schema !== PRIVATE_INSTALLED_LOCAL_HERMES_AGENT_SOURCE_V1) return refused();
   const databaseInput = databaseIdentitySchema.parse(config.database);
-  const privateEndpoint = capturePrivatePostgresEndpointPolicyV1(databaseInput, databaseInput.privateEndpoint);
+  const privateEndpoint = capturePrivatePostgresEndpointPolicyV2(databaseInput, databaseInput.privateEndpoint);
   const database = Object.freeze({ ...databaseInput, privateEndpoint });
   const roles = Object.values(database.roles);
   if (new Set(roles).size !== roles.length) return refused();
@@ -379,7 +379,7 @@ function assertDatabaseBindings(config: ReturnType<typeof parseConfiguration>, s
   for (const [name, value] of Object.entries(actual)) {
     if (value.host !== expected.host || value.port !== expected.port || value.database !== expected.database
       || value.majorVersion !== expected.majorVersion
-      || value.endpointPolicyDigest !== privatePostgresEndpointPolicyDigestV1(expected.privateEndpoint)
+      || value.endpointPolicyDigest !== privatePostgresEndpointPolicyDigestV2(expected.privateEndpoint)
       || value.username !== expected.roles[name as keyof typeof expected.roles]) return refused();
   }
   if (c.queueWorker!.concurrency !== expected.queueConcurrency) return refused();

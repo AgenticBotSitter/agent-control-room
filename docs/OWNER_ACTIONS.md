@@ -2,14 +2,26 @@
 
 Only steps the bots cannot do. Each item is numbered and copy-paste ready.
 
-## Current status: no owner action needed for the private database route
+## 1. Confirm the Mac's effective Tailscale tag
 
-The owner-approved private SSH connection is used as a loopback-only database
-tunnel on this Mac. That keeps PostgreSQL bound to the VPS loopback address,
-does not open a new database port on the tailnet or internet, and does not
-require a Tailscale administrator-console change. The tunnel and the four
-restricted database logins still have to pass their real checks before the
-website is represented as connected.
+**Status (2026-09-25):** the owner reports that the policy grant and Mac tag
+were applied. However, the Mac's last successful local status read showed
+`tag:general` but not `tag:control-room-client`. The protected database files
+are therefore still pointed at the old loopback tunnel address. No route or
+database change was made. Do not edit the policy again unless its current
+contents show the grant is missing.
+
+Before the Mac database can be re-pointed, the owner needs to make the already
+approved tag assignment visible to the running Tailscale client (for example,
+refresh the Mac's Tailscale status after confirming the assignment in the
+admin console). Keep `tag:general`; do not change the phone, PC, or VPS. Then
+ask Codex to rerun the no-SSH `--repoint-only` step. If the client still does
+not show the tag, stop and report the mismatch rather than restoring SSH or
+changing the policy.
+
+After the tag is effective, no further Tailscale changes are needed for
+updates, migrations, or certificate renewals. A future Control Room computer
+needs the same approved client tag.
 
 Do not paste a password, access key, database address, certificate, or
 terminal output here.

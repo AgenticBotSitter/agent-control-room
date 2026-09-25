@@ -1,7 +1,7 @@
 import { localId } from "../../harness/v1/native-run-identifiers";
 import { captureLocalAdapterInstallationPortsV1, type LocalAdapterInstallationPortsV1 } from "../../harness/v1/local-adapter-installation";
 import { createPrivatePostgresDatabase, validatePrivatePostgresConfiguration, type PrivatePostgresConfiguration } from "./private-postgres";
-import { privatePostgresEndpointPolicyDigestV1 } from "./private-postgres-endpoint";
+import { privatePostgresEndpointPolicyDigestV2 } from "./private-postgres-endpoint";
 import { verifyPrivateDatabase, verifyTaskCoordinatorDatabase, verifyNativeResultDatabase, verifyNativeEvidenceDatabase, verifyNativeSessionDatabase, verifyIdeaCreationDatabase, verifyIdeaRuntimeDatabase, verifyPrivateIdeaAdapter } from "./private-database-preflight";
 import { z } from "zod";
 import { ideaParticipantSchemaV1 } from "../../idea-lab/v1/schemas";
@@ -276,10 +276,10 @@ export function validatePrivateTaskStartupConfiguration(input: PrivateTaskStartu
     const news = input.news ? captureNewsStartupConfiguration(input.news, web,
       [web.database, database, resultDatabase, evidence?.database, sessions?.database, queueWorker?.database,
         ideaCreation?.database, ideaRuntime?.database].filter((value): value is PrivatePostgresConfiguration => !!value)) : undefined;
-    const endpointPolicyDigest = privatePostgresEndpointPolicyDigestV1(database.privateEndpoint);
+    const endpointPolicyDigest = privatePostgresEndpointPolicyDigestV2(database.privateEndpoint);
     if ([web.database, resultDatabase, evidence?.database, sessions?.database, queueWorker?.database,
       ideaCreation?.database, ideaRuntime?.database].some(value => value
-        && privatePostgresEndpointPolicyDigestV1(value.privateEndpoint) !== endpointPolicyDigest)) throw new Error();
+        && privatePostgresEndpointPolicyDigestV2(value.privateEndpoint) !== endpointPolicyDigest)) throw new Error();
     return { web, preparedLocalAdapters, database, planning, routes, approvals, codex, installationTransitionAdmission, quality, revisionPlanning, resultInspectionSource, resultDatabase, evidence, sessions,
       codexResultReturn, nativeHttp, nativeQueue, nativeQueueRecovery, queueWorker, hermes021Local, hermesLocal, remoteControllerWorker,
       hermes021LocalStartupReverification, claudeCodeLocalStartupReverification,

@@ -1,13 +1,13 @@
 import { createPrivatePgDatabase } from "./private-pg-database";
-import { capturePrivatePostgresEndpointPolicyV1, privatePostgresTlsOptionsV1,
-  type PrivatePostgresEndpointPolicyV1 } from "./private-postgres-endpoint";
+import { capturePrivatePostgresEndpointPolicyV2, privatePostgresTlsOptionsV2,
+  type PrivatePostgresEndpointPolicyV2 } from "./private-postgres-endpoint";
 import { exactHostDataSnapshotV1 } from "../../security/host-value";
 
 export interface PrivatePostgresConfiguration {
-  /** One primary, reached on exact loopback or a pinned private TLS endpoint. */
+  /** One primary, reached on exact loopback or a validated private TLS endpoint. */
   host: string; port: number; database: string; username: string; password: string;
   majorVersion: 17;
-  privateEndpoint?: PrivatePostgresEndpointPolicyV1;
+  privateEndpoint?: PrivatePostgresEndpointPolicyV2;
 }
 export function validatePrivatePostgresConfiguration(input: PrivatePostgresConfiguration) {
   const captured = exactHostDataSnapshotV1(input, ["host", "port", "database", "username", "password", "majorVersion"],
@@ -20,7 +20,7 @@ export function validatePrivatePostgresConfiguration(input: PrivatePostgresConfi
     || !/^[a-z][a-z0-9_]{0,62}$/.test(input.username) || input.username === "control_room_private_web"
     || typeof input.password !== "string" || input.password.length < 1 || input.password.length > 4096 || input.password.includes("\0"))
     throw new Error("invalid_private_database_config");
-  const privateEndpoint = capturePrivatePostgresEndpointPolicyV1(input, input.privateEndpoint);
+  const privateEndpoint = capturePrivatePostgresEndpointPolicyV2(input, input.privateEndpoint);
   return Object.freeze({ host: input.host, port: input.port, database: input.database,
     username: input.username, password: input.password, majorVersion: input.majorVersion,
     ...(privateEndpoint ? { privateEndpoint } : {}) });
@@ -30,7 +30,7 @@ export function validatePrivatePostgresConfiguration(input: PrivatePostgresConfi
 export function privatePostgresOptions(input: PrivatePostgresConfiguration) {
   const config = validatePrivatePostgresConfiguration(input);
   return { host: config.host, port: config.port, database: config.database, username: config.username,
-    password: config.password, ssl: privatePostgresTlsOptionsV1(config.privateEndpoint), max: 8, connect_timeout: 5, idle_timeout: 20,
+    password: config.password, ssl: privatePostgresTlsOptionsV2(config.privateEndpoint), max: 8, connect_timeout: 5, idle_timeout: 20,
     max_lifetime: 1800, max_pipeline: 1, backoff: false as const, keep_alive: 60, prepare: false, debug: false as const,
     fetch_types: false, publications: "alltables", target_session_attrs: "primary" as const,
     onnotice: () => {}, connection: { application_name: "control-room-private-web", search_path: "pg_catalog, public",

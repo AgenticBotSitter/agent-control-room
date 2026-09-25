@@ -30,7 +30,7 @@ type Binding = Readonly<z.infer<typeof bindingSchema>>;
 const definitions = Object.freeze({
   verified_release: Object.freeze({ sourceSchema: "control-room.local-installation-package-preparation/v1" }),
   protected_configuration: Object.freeze({ sourceSchema: "control-room.private-installed-configuration-preparation/v1" }),
-  database_route: Object.freeze({ sourceSchema: "control-room.private-postgres-endpoint/v1" }),
+  database_route: Object.freeze({ sourceSchema: "control-room.private-postgres-endpoint/v2" }),
   scheduler_result_storage: Object.freeze({ sourceSchema: "control-room.agent-task-operator-settings/v1" }),
   hermes_route: Object.freeze({ sourceSchema: "control-room.hermes-021-macos-protected-worker-readiness/v1" }),
   claude_owner_write: Object.freeze({
