@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { link, lstat, readFile, unlink, writeFile } from "node:fs/promises";
 import { isAbsolute, join, resolve } from "node:path";
+import { parseCanonicalHttpsDestination } from "../../node-policy/v1/network-target-guard";
 
 export const MAC_LOCAL_TASK_RUNTIME_V1 = "control-room.mac-local-task-runtime/v1" as const;
 
@@ -12,7 +13,9 @@ export const MAC_LOCAL_TASK_RUNTIME_KEY_ROLES_V1 = Object.freeze([
 ] as const);
 type KeyRole = typeof MAC_LOCAL_TASK_RUNTIME_KEY_ROLES_V1[number];
 
-export type MacLocalHermesRunSettingsV1 = Readonly<{ profile: string; provider: string; model: string }>;
+/** `destination` is the canonical HTTPS origin (`https://<host>:<port>`) of the model provider the
+ * owner's chosen Hermes profile uses: the one network destination its task template may declare. */
+export type MacLocalHermesRunSettingsV1 = Readonly<{ profile: string; provider: string; model: string; destination: string }>;
 
 /** Owner-only, data-only runtime material for the mac-local task provider
  * (docs/claude/MAC_LOCAL_TASK_RUNTIME_TRUST_DECISION.md section 3). It never
@@ -44,9 +47,12 @@ function decodeKey(value: unknown): Uint8Array {
 }
 
 function hermesSettings(value: unknown): MacLocalHermesRunSettingsV1 {
-  const record = exactKeys(value, ["profile", "provider", "model"]);
+  const record = exactKeys(value, ["profile", "provider", "model", "destination"]);
   if (![record.profile, record.provider, record.model].every(item => typeof item === "string" && identifier.test(item))) invalid();
-  return Object.freeze({ profile: record.profile as string, provider: record.provider as string, model: record.model as string });
+  if (typeof record.destination !== "string") invalid();
+  try { parseCanonicalHttpsDestination(record.destination as string); } catch { invalid(); }
+  return Object.freeze({ profile: record.profile as string, provider: record.provider as string, model: record.model as string,
+    destination: record.destination as string });
 }
 
 /** Validates parsed file content. Refuses unknown or missing fields, a

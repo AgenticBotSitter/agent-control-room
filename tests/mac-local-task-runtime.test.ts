@@ -8,7 +8,7 @@ import { captureMacLocalTaskRuntimeV1, createMacLocalTaskRuntimeFileV1, loadMacL
   MAC_LOCAL_TASK_RUNTIME_KEY_ROLES_V1, MAC_LOCAL_TASK_RUNTIME_V1 } from "../src/web/v1/mac-local-task-runtime";
 import { parsePrepareTaskRuntimeArgumentsV1 } from "../scripts/mac-local/prepare-task-runtime";
 
-const hermes = { profile: "cr", provider: "opencode-go", model: "space-bunny-free" };
+const hermes = { profile: "cr", provider: "opencode-go", model: "space-bunny-free", destination: "https://models.example.invalid:443" };
 
 async function protectedRoot(t: { after(fn: () => unknown): void }) {
   const root = await mkdtemp(join(tmpdir(), "acr-task-runtime-"));
@@ -52,7 +52,13 @@ test("capture refuses shared keys, wrong lengths, non-canonical encodings, and e
   const missingKey = valid(); delete (missingKey.keys as Record<string, string>).approvals;
   const extraTop = { ...valid(), comment: "x" };
   const badHermes = { ...valid(), hermes: { ...hermes, model: "has space" } };
-  for (const value of [shared, short, padded, extraKey, missingKey, extraTop, badHermes, { ...valid(), schema: "v0" }])
+  const plainHttp = { ...valid(), hermes: { ...hermes, destination: "http://models.example.invalid:80" } };
+  const noPort = { ...valid(), hermes: { ...hermes, destination: "https://models.example.invalid" } };
+  const withPath = { ...valid(), hermes: { ...hermes, destination: "https://models.example.invalid:443/v1" } };
+  const { destination: _omitted, ...noDestination } = hermes;
+  const missingDestination = { ...valid(), hermes: noDestination };
+  for (const value of [shared, short, padded, extraKey, missingKey, extraTop, badHermes, plainHttp, noPort, withPath,
+    missingDestination, { ...valid(), schema: "v0" }])
     assert.throws(() => captureMacLocalTaskRuntimeV1(value), /mac_local_task_runtime_invalid/u);
 });
 
@@ -76,11 +82,12 @@ test("loading refuses a readable-by-others file, a symlink, or a non-private dir
 });
 
 test("the prepare command takes exactly its four flags, with or without the pnpm separator", () => {
-  const args = ["--protected-root", "/p", "--hermes-profile", "cr", "--hermes-provider", "opencode-go", "--hermes-model", "m"];
+  const args = ["--protected-root", "/p", "--hermes-profile", "cr", "--hermes-provider", "opencode-go", "--hermes-model", "m",
+    "--hermes-destination", "https://models.example.invalid:443"];
   assert.deepEqual(parsePrepareTaskRuntimeArgumentsV1(["--", ...args]),
-    { protectedRoot: "/p", hermes: { profile: "cr", provider: "opencode-go", model: "m" } });
+    { protectedRoot: "/p", hermes: { profile: "cr", provider: "opencode-go", model: "m", destination: "https://models.example.invalid:443" } });
   assert.deepEqual(parsePrepareTaskRuntimeArgumentsV1(args), parsePrepareTaskRuntimeArgumentsV1(["--", ...args]));
-  for (const bad of [args.slice(0, 6), [...args, "--extra", "x"], [...args.slice(0, 7), "--"], [...args, "--hermes-model", "n"]])
+  for (const bad of [args.slice(0, 8), [...args, "--extra", "x"], [...args.slice(0, 9), "--"], [...args, "--hermes-model", "n"]])
     assert.throws(() => parsePrepareTaskRuntimeArgumentsV1(bad), /arguments_refused/u);
 });
 
