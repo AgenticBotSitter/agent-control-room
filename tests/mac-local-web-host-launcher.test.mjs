@@ -38,14 +38,15 @@ test("task host requires the fixed release provider and does not accept a caller
         loadMacLocalProtectedConfigurationFromRootV1: async () => ({}), loadMacLocalDatabaseRolesFromRootV1: async () => ({}),
       };
       if (path.endsWith("macLocalTaskProvider.js")) return { loadMacLocalTaskProviderFromRootV1: async () => ({
-        workerKinds: ["hermes-021", "claude-code", "codex"], createTaskApplication: async () => ({}), startQueueWorker: async () => ({}),
+        workerKinds: ["hermes-021", "claude-code", "codex"], createTaskApplication: async () => ({}),
       }), requireMacLocalThreeAgentReadinessV1() {} };
       if (path.endsWith("privatePostgres.js")) return { createPrivatePostgresDatabase: () => ({}) };
+      if (path.endsWith("nativeQueueFactories.js")) return { createInstalledNativeQueueFactories: () => ({ startNativeWorker: async () => ({}) }) };
       if (path.endsWith("serving.js")) return { loadPrivateClientAssets: async () => ({ respond() {} }) };
       if (path.endsWith("index.js")) return { default() {} };
       throw new Error(`unexpected ${path}`);
     },
   });
   assert.equal(result, task);
-  assert.deepEqual(loaded.sort(), ["index.js", "macLocalHost.js", "macLocalProtectedLoader.js", "macLocalTaskProvider.js", "privatePostgres.js", "serving.js"].sort());
+  assert.deepEqual(loaded.sort(), ["index.js", "macLocalHost.js", "macLocalProtectedLoader.js", "macLocalTaskProvider.js", "nativeQueueFactories.js", "privatePostgres.js", "serving.js"].sort());
 });

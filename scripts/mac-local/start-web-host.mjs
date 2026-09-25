@@ -60,15 +60,17 @@ export async function startMacLocalTaskHost(input, runtime = {}) {
   if (!input || typeof input.protectedRoot !== "string") throw new Error("mac_local_web_host_arguments_invalid");
   const releaseRoot = new URL("../../dist-vps/server/", import.meta.url);
   const load = runtime.load ?? (path => import(path));
-  const [hostModule, loaderModule, providerModule, postgresModule, servingModule, rendererModule] = await Promise.all([
+  const [hostModule, loaderModule, providerModule, postgresModule, queueModule, servingModule, rendererModule] = await Promise.all([
     load(new URL("macLocalHost.js", releaseRoot).href), load(new URL("macLocalProtectedLoader.js", releaseRoot).href),
     load(new URL("macLocalTaskProvider.js", releaseRoot).href), load(new URL("privatePostgres.js", releaseRoot).href),
+    load(new URL("nativeQueueFactories.js", releaseRoot).href),
     load(new URL("serving.js", releaseRoot).href), load(new URL("index.js", releaseRoot).href),
   ]);
   if (typeof hostModule.createMacLocalProtectedHostV1 !== "function" || typeof loaderModule.loadMacLocalProtectedConfigurationFromRootV1 !== "function"
     || typeof loaderModule.loadMacLocalDatabaseRolesFromRootV1 !== "function" || typeof providerModule.loadMacLocalTaskProviderFromRootV1 !== "function"
     || typeof providerModule.requireMacLocalThreeAgentReadinessV1 !== "function"
-    || typeof postgresModule.createPrivatePostgresDatabase !== "function" || typeof servingModule.loadPrivateClientAssets !== "function"
+    || typeof postgresModule.createPrivatePostgresDatabase !== "function" || typeof queueModule.createInstalledNativeQueueFactories !== "function"
+    || typeof servingModule.loadPrivateClientAssets !== "function"
     || typeof rendererModule.default !== "function") throw new Error("mac_local_web_host_release_invalid");
   const [assets, provider] = await Promise.all([
     servingModule.loadPrivateClientAssets(fileURLToPath(new URL("../../dist-vps/client", import.meta.url))),
@@ -83,7 +85,9 @@ export async function startMacLocalTaskHost(input, runtime = {}) {
       providerModule.requireMacLocalThreeAgentReadinessV1(provider, input.workerReadiness);
       return provider.createTaskApplication(input);
     },
-    startQueueWorker: provider.startQueueWorker,
+    startQueueWorker: queueModule.createInstalledNativeQueueFactories({
+      openWorkerDatabase: postgresModule.createPrivatePostgresDatabase,
+    }).startNativeWorker,
     assets, render: rendererModule.default,
   });
   return host.start();

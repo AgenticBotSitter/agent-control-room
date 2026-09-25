@@ -2,6 +2,14 @@
 
 Codex appends one short entry per work package (see `CODEX_MAC_BUILD_EXECUTION.md`).
 
+- 2026-09-24 — W3/W4 queue reuse correction: the protected task provider no
+  longer accepts or starts a queue-worker callback. The Mac task host now
+  starts only the release-owned, existing PostgreSQL queue factory after the
+  website and canonical task composition are ready. This removes the last
+  provider-level path to a second scheduler or queue. Sixteen focused checks,
+  TypeScript, and the whitespace check pass. No queue, database, website, or
+  agent was started by this source package.
+
 - 2026-09-24 — W4 three-agent activation gate: the protected task-host command
   now requires exactly the three intended local worker kinds—Hermes, Claude,
   and Codex—and checks that each passed the host generation's pinned
