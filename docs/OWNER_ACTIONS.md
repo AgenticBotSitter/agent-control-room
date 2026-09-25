@@ -2,30 +2,33 @@
 
 Only steps the bots cannot do. Each item is numbered and copy-paste ready.
 
-## 1. One-time Tailscale ACL edit for the private database route
+## 1. One-time Tailscale change for the private database route
 
-**Status (2026-09-25):** needed. Revision 1 of `docs/claude/SECURE_DB_ROUTE.md`
-assumed no owner action was needed here; live testing showed the Mac's tagged
-device identity is not covered by the existing Tailscale SSH rule, so the
-route was redesigned (see revision 2 in that file). The new route still keeps
-PostgreSQL bound to the VPS loopback address and still never opens the
-database port itself on the tailnet — but it does need one small, one-time
-Tailscale admin-console change, because that policy file can only be edited
-by a signed-in administrator.
+**Status (2026-09-25):** needed, owner-approved plan (`docs/claude/SECURE_DB_ROUTE.md`
+revision 3). Do this after Codex says the VPS side is ready. Two parts, once:
 
-What to do: sign in to the Tailscale admin console, open the ACL policy file,
-and add **one** line granting `tag:general` (the Mac) TCP access to
-`tag:control-room-vps` (the VPS) on the one new dedicated port Codex has set
-up for the restricted database-only SSH forwarding account — Codex will give
-you the exact port number to paste at that point, since it is not fixed by
-this document. Do **not** touch the existing `ssh` policy stanza, and do not
-grant access to port 5432 itself — the new rule targets only the new
-forwarding port.
+1. **Tailscale admin console → Access controls.** Make two small additions
+   and leave everything else, especially the `ssh` section, exactly as it is:
+   - Inside the existing `"tagOwners": { ... }` block, add this line:
+     ```json
+     "tag:control-room-client": ["autogroup:admin"],
+     ```
+   - Inside the existing `"grants": [ ... ]` list, add this entry:
+     ```json
+     { "src": ["tag:control-room-client"], "dst": ["tag:control-room-vps"], "ip": ["tcp:5432"] },
+     ```
+     If your file has an `"acls": [ ... ]` list instead of `"grants"`, add this
+     entry there instead:
+     ```json
+     { "action": "accept", "src": ["tag:control-room-client"], "dst": ["tag:control-room-vps:5432"] },
+     ```
+   The console checks the file when you save; if it reports an error, don't
+   force it, and tell Claude or Codex what it says.
+2. **Machines → the Mac mini → Edit ACL tags.** Add `tag:control-room-client`.
+   **Keep `tag:general`.** Do not change the phone, PC, or VPS.
 
-Everything else in the one-time setup (the dedicated VPS account, its SSH key
-restrictions, the launchd tunnel on the Mac) is something Codex can do
-without the owner. This is the one step that needs an owner's Tailscale
-admin session.
+After this, no further Tailscale changes are needed for updates, migrations,
+or certificate renewals. A future Control Room computer needs only step 2.
 
 Do not paste a password, access key, database address, certificate, or
 terminal output here.

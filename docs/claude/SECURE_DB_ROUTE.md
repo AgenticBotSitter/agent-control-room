@@ -1,215 +1,169 @@
 # Secure Mac-to-VPS database route (W1)
 
-**From:** Claude (lead). **To:** Codex. **Date:** 2026-09-24, revised 2026-09-25.
-**Status:** revision 2. Revision 1 (below, kept for the record) is wrong — its
-central assumption did not hold under live testing. This is the resolved
-design. Nothing in this file has been applied yet: no Tailscale policy,
-PostgreSQL, or service change exists on any host.
-
-## What live testing found (2026-09-25)
-
-Revision 1 assumed the Mac could already SSH to the VPS over Tailscale, and
-proposed reusing that connection. Live testing disproved it: the Mac carries
-`tag:general`, the VPS carries `tag:control-room-vps`, and the existing
-Tailscale SSH ACL rule is scoped to `autogroup:member` with a browser
-recheck. A tagged device is never covered by that rule — signing out and back
-in on the Mac does not remove the tag and would not have helped. The working
-SSH access Codex used for provisioning was the owner's own attended session,
-not something the Mac itself can reach unattended. Separately, a `check`-mode
-Tailscale SSH rule requires periodic interactive reauthentication in a
-browser, which a launchd background service can never satisfy — so even if
-the ACL had covered the tag, revision 1's "run it as a launchd agent" plan
-would still have stalled the first time the recheck window lapsed.
-
-Two proposals followed. Codex proposed a one-time dedicated Mac identity and
-a private, restricted SSH endpoint limited to forwarding into PostgreSQL. The
-review response (Opus) correctly flagged that "no shell" is not the same as
-"can only reach PostgreSQL" — an OpenSSH account with forwarding enabled and
-no server-side destination restriction can forward to anything the VPS can
-reach, not just `127.0.0.1:5432` — and proposed opening PostgreSQL directly
-to a dedicated tag instead.
-
-The direct-tailnet-PostgreSQL option is not a technical tradeoff to
-re-litigate here: the owner has already directed that PostgreSQL stay
-unreachable directly over the tailnet, and that directive is not this
-document's to override. So the shape has to be Codex's: SSH-mediated, not a
-raw database listener. Opus's finding about "no shell" being insufficient is
-correct and real, and revision 1 didn't address it either (it reused a
-general-purpose provisioning account with no destination restriction at
-all). This revision keeps Codex's SSH-endpoint shape and closes the gap Opus
-found with the standard OpenSSH mechanism built for exactly this: a
-restricted `authorized_keys` entry.
+**From:** Claude (lead). **To:** Codex. **Date:** 2026-09-25.
+**Status:** revision 3, **owner-approved 2026-09-25**. Supersedes revisions 1
+and 2 (history at the end). Nothing here has been applied yet.
 
 ## Decision
 
-A dedicated, restricted-purpose OpenSSH listener on the VPS, reached over a
-**second, narrow Tailscale network ACL grant that is not the `ssh` policy
-stanza at all** — so the existing `autogroup:member`/recheck rule, the
-existing provisioning SSH access, and the website's Serve route are all
-completely untouched. This is deliberately not Tailscale SSH: Tailscale SSH's
-identity/recheck layer is what blocked revision 1 and is structurally
-unsuited to an unattended agent regardless of ACL scope. The new path
-authenticates the ordinary way — an ed25519 keypair OpenSSH already knows how
-to restrict — and Tailscale's job here is purely the encrypted network path,
-the same job it already does for the working SSH and HTTPS routes.
+The Mac reaches the VPS's PostgreSQL **directly over Tailscale**, restricted
+to one dedicated tag, with PostgreSQL's own TLS and SCRAM passwords. There is
+no SSH tunnel and no Mac background service. This is the route
+`docs/PRIVATE_POSTGRES_TAILSCALE_SERVE_ACTIVATION.md` already designed and
+`src/web/v1/private-postgres-endpoint.ts` already supports, with one code
+change (below) so that it survives certificate renewal.
 
-### One-time setup
+### Why (the owner's requirement governs this choice)
 
-1. **VPS: dedicated system account.** Create a service account with no login
-   shell (e.g. `nologin`), e.g. `crtunnel` — no interactive password, no
-   sudo, no group membership beyond its own. Codex picks the exact name per
-   VPS convention.
-2. **Mac: dedicated keypair.** Generate a fresh ed25519 keypair for this
-   account only. The private key lives unencrypted under the Mac's existing
-   owner-only protected root (`0600`, same directory class as the four
-   Postgres role password files `provision-database.mjs` already writes) —
-   it has to be unencrypted because nothing is present to type a passphrase
-   when launchd restarts the tunnel. Filesystem permissions plus the Mac's
-   disk encryption are the protection, exactly as they already are for the
-   role passwords.
-3. **VPS: restricted `authorized_keys` entry.** Install the public key for
-   `crtunnel` with:
-   ```
-   restrict,port-forwarding,permitopen="127.0.0.1:5432" ssh-ed25519 AAAA... crtunnel@mac-local
-   ```
-   `restrict` (OpenSSH ≥7.2) disables PTY, X11 forwarding, agent forwarding,
-   and remote/dynamic port forwarding in one flag. `port-forwarding`
-   re-enables *local* forwarding only. `permitopen` is the fix for the gap
-   Opus flagged: the server refuses to open any destination through this key
-   except exactly `127.0.0.1:5432`, no matter what the client asks for.
-4. **VPS: a second sshd listener, not a change to the existing one.** Bind a
-   second sshd instance to a distinct, non-22 port with its own minimal
-   config (`Include` drop-in), scoped to the `crtunnel` account only,
-   `PasswordAuthentication no`. Using a separate listener — not a `Match
-   User` block bolted onto the existing sshd on port 22 — keeps this
-   entirely additive: the existing sshd config, the existing SSH access, and
-   the existing "ssh" ACL stanza never get touched or diffed.
-5. **Tailscale: one added network ACL line, not a change to the `ssh`
-   stanza.** Grant `tag:general` → `tag:control-room-vps:<the new port>`,
-   TCP only, and nothing else. This is a plain `acls` grant, not the `ssh`
-   policy block revision 1 depended on — it carries no `autogroup:member`
-   requirement and no recheck. One line, one diff, reviewable on its own.
-6. **Mac: launchd user agent.** Same shape as revision 1 already specified:
-   ```
-   ssh -N -o BatchMode=yes -o ExitOnForwardFailure=yes \
-       -o ServerAliveInterval=15 -o ServerAliveCountMax=3 \
-       -i <protected-key-path> -p <new-port> \
-       -L 127.0.0.1:15432:127.0.0.1:5432 crtunnel@<vps-tailnet-name>
-   ```
-   `KeepAlive` true, `ThrottleInterval` 10, started by `mac:up` before the
-   task host, stopped by `mac:down`.
-7. **Mac-local configuration is unchanged from revision 1:** `host
-   127.0.0.1`, `port 15432`, no endpoint policy file. **No source change is
-   needed** — `src/web/v1/private-postgres-endpoint.ts:27` and `:42` already
-   accept `127.0.0.1` with no policy, and `provision-database.mjs`
-   (`endpointPolicy`) already skips the policy file for `127.0.0.1`.
+The owner wants a system that runs for years, through upgrades and new
+machines, with no owner action after a single one-time setup. Measured
+against that goal:
 
-### Why this meets every constraint the owner gave
+- **Fewest moving parts.** No tunnel process to die on sleep, no SSH keys to
+  rotate, no per-machine launchd agent. The application's normal database
+  pool handles reconnection.
+- **Adding a machine** needs only the tag plus its protected role
+  credentials, and no VPS change.
+- **Tagged devices have no Tailscale key expiry**, so there is no periodic
+  re-login. The browser recheck stays on the owner's own SSH access only.
+- **Protection:** only devices carrying the new tag can reach the port, and
+  the connection is WireGuard, plus PostgreSQL TLS, plus a per-role SCRAM
+  password.
 
-- **PostgreSQL stays unreachable directly over the tailnet** — the ACL grant
-  targets the new SSH port only, never 5432, and `permitopen` re-confirms it
-  server-side even if the client tried.
-- **No automatic root access** — `crtunnel` is a fresh, unprivileged, no-shell
-  account touching nothing but its own forwarded socket.
-- **Set up once, reconnects automatically** — key-based auth, no browser
-  recheck, no human in the loop after step 1–6; launchd handles sleep/restart
-  recovery the same way revision 1 already planned.
-- **No tag changes, no owner clicks for routine work** — the Mac keeps
-  `tag:general` permanently; the one ACL edit is a one-time setup step, not a
-  per-session action.
-- **Existing SSH and the website are preserved** — nothing in steps 1–5
-  touches the existing sshd config, the existing `ssh` ACL stanza, the
-  existing provisioning account, or the HTTPS Serve route.
+Revision 2 claimed an owner directive against this route. **No such
+directive exists.** The owner did not make it. That sentence was repeated
+from a relayed message without checking, and is withdrawn.
 
-### Updates and migrations afterward
+### Current tailnet facts (owner-supplied, 2026-09-25)
 
-Nothing new. The tunnel is already up (via `mac:up`) before any deploy or
-migration runs. Migrations use the existing migrator role over the same
-`127.0.0.1:15432` path — `permitopen` only ever reaches the one socket
-PostgreSQL already listens on, so role separation (migrator vs. app vs.
-results vs. queue worker) is enforced by PostgreSQL itself, exactly as today,
-not by the tunnel.
+- Mac: `tag:general`. VPS: `tag:control-room-vps`, with Tailscale SSH
+  enabled. The owner's phone and PC also carry `tag:general`.
+- Because `tag:general` is shared with the phone and PC, the database grant
+  must use a **new dedicated tag**, `tag:control-room-client`.
+- The Mac **keeps `tag:general` and gains `tag:control-room-client`**. A
+  device may hold several tags. Removing `tag:general` could silently cut
+  whatever that tag already grants the Mac, such as website access.
+- Tailscale client versions are all ≥ 1.102, which supports persistent TCP
+  Serve.
 
-### Restart and credential-expiry handling
+## Required code change (Codex, before any live step)
 
-launchd's `KeepAlive`/`ThrottleInterval` restarts the tunnel after sleep,
-network loss, or process death — unchanged from revision 1. The key does not
-expire on a schedule; rotate it deliberately: generate a new keypair, add the
-new public key as a second `authorized_keys` line alongside the old one,
-swap the protected private-key file on the Mac, restart the LaunchAgent,
-confirm the tunnel reconnects, then delete the old `authorized_keys` line.
-Zero downtime, no owner action required mid-rotation.
+`privatePostgresTlsOptionsV1` currently requires a publicly trusted chain
+**and** pins the exact leaf certificate (`certificateSha256`). The
+certificates Tailscale issues (`tailscale cert`, Let's Encrypt) renew about
+every 60–90 days. Each renewal would change the leaf, break every connection,
+and require a protected-configuration edit. That is exactly the recurring
+intervention the owner ruled out.
 
-### Rollback
+Change it to **standard verification**: keep `rejectUnauthorized: true`,
+`minVersion: TLSv1.2`, the separate `servername` (the VPS's MagicDNS name),
+and `checkServerIdentity` against that name. Keep the numeric-IP routing
+rule and no custom trust root. **Remove the exact-leaf pin.** Version the
+policy (`private-postgres-endpoint/v2`, without `certificateSha256`) and
+refuse v1 policies so that no stale pin lingers. Update the endpoint tests.
+Justification: device admission is already authenticated by WireGuard and
+the ACL. TLS with standard chain and name validation remains the
+defense-in-depth layer. The pin added breakage and no protection this
+threat model needs.
 
-Unload and remove the LaunchAgent; delete the `crtunnel` `authorized_keys`
-entry (or the account); remove the one added Tailscale ACL line; stop the
-second sshd listener. None of that touches the existing SSH account, the
-existing `ssh` ACL stanza, or the website's Serve route — rollback here
-cannot regress either of the two things the owner said must keep working.
+## One-time setup
+
+**Codex, on the VPS (harmless before the ACL exists, because nothing can reach it yet):**
+
+1. Inspect how PostgreSQL runs (host service or container), its config
+   paths, and every current local consumer and role that uses it. Record the
+   inventory, sanitized.
+2. Issue the machine certificate with `tailscale cert` for the VPS's MagicDNS
+   name. Install the cert and key where PostgreSQL reads them, with the key
+   `0600` and owned by the PostgreSQL user. Set `ssl = on`.
+3. Install a **systemd timer** (daily) that re-runs `tailscale cert`. It
+   reloads PostgreSQL only if the file changed; PostgreSQL re-reads SSL
+   files on reload. It logs one line on success or failure. This is the
+   only new persistent unit, and it is authorized by this owner-approved
+   plan.
+4. Add the persistent raw TCP Serve mapping:
+   `tailscale serve --bg --tcp 5432 tcp://127.0.0.1:5432`.
+   **Never run `tailscale serve reset`**, and do not change the existing
+   HTTPS Serve route. Capture `tailscale serve status` before and after.
+5. `pg_hba`: Serve proxies from loopback, so for the four Mac-local roles
+   require `hostssl ... 127.0.0.1/32 scram-sha-256`, and reject non-SSL
+   `host` for those roles. Leave the other consumers' rules as they are,
+   per the step-1 inventory.
+6. PostgreSQL stays bound to loopback only.
+
+**Owner, once (see `docs/OWNER_ACTIONS.md` item 1):**
+
+7. In the Tailscale policy file: add `tag:control-room-client` to
+   `tagOwners`, and add one grant from `tag:control-room-client` to
+   `tag:control-room-vps` on `tcp:5432`. Do not touch the `ssh` section.
+8. Add `tag:control-room-client` to the Mac (keeping `tag:general`).
+
+**Codex, on the Mac:**
+
+9. Re-run the provisioner with `--database-host <VPS Tailscale IPv4>
+   --database-port 5432 --endpoint-policy-file <protected v2 policy>`. The
+   policy's `serverName` is the VPS MagicDNS name. Then run
+   `pnpm mac:check-database`.
+10. Remove any tunnel/launchd pieces that `mac:up`/`mac:down` gained for
+    revisions 1–2. `mac:up` needs no network process.
+
+## Afterward: updates, migrations, new machines
+
+- **Upgrades/deploys:** nothing touches Tailscale, the certificate, or
+  `pg_hba`.
+- **Migrations:** they run as today, as the migrator role over the same
+  route. Role separation is enforced by PostgreSQL.
+- **Certificate renewal:** automatic (step 3). No configuration change,
+  because nothing is pinned.
+- **New machine:** the owner adds `tag:control-room-client` to it once.
+  Codex provisions its protected credentials.
+- **Failure behavior:** if the route is down, database checks fail. There is
+  no fallback route.
+
+## Rollback (bounded, never touches SSH or the website)
+
+`tailscale serve --tcp 5432 off` (that mapping only). The owner removes the
+grant and the Mac's extra tag. Restore the captured `pg_hba`/`ssl` config and
+reload. Disable the renewal timer. Rotate the four Mac-local role passwords.
+Verify that 5432 is unreachable from the tailnet.
 
 ## Rules
 
-- The SSH target, tailnet names, ports, and addresses go in the protected
-  configuration or the launchd plist under the owner's home. They never go in
-  the repo.
-- Do not add a fallback to any other route. If the tunnel is down, database
-  checks must fail.
+- IPs, MagicDNS names, and certificate material live only in the protected
+  configuration. They never go in the repo.
+- No fallback route and no plaintext retry.
 
-## Verification (Codex runs these; each must be REAL output in `MAC_LOCAL_PROGRESS.md`, with hosts and ports redacted)
+## Live acceptance (REAL output in `MAC_LOCAL_PROGRESS.md`, hosts redacted)
 
-1. **VPS listener:** the new sshd port is bound only where the tailnet
-   interface reaches it, not the public internet. Check with `ss -ltn`.
-2. **`authorized_keys` restriction:** the `crtunnel` line reads exactly
-   `restrict,port-forwarding,permitopen="127.0.0.1:5432"` — no PTY, no
-   agent/X11 forwarding, no remote/dynamic forwarding, no other destination.
-3. **ACL diff:** the Tailscale policy change is exactly one added `acls`
-   line; the existing `ssh` stanza and the website's rules are byte-for-byte
-   unchanged. Diff the policy JSON before/after.
-4. **Non-interactive auth:** from the Mac, `ssh -o BatchMode=yes ... -p
-   <new-port> crtunnel@<vps>` succeeds with zero prompts.
-5. **Tunnel:** start it (by hand first, then via launchd). `nc -z 127.0.0.1
-   15432` succeeds.
-6. **`permitopen` actually holds:** attempt a *different* forwarded
-   destination through the same key (e.g. `-L 127.0.0.1:19999:127.0.0.1:22`)
-   and confirm the server refuses it. This is the live proof that the gap
-   Opus flagged is closed, not just documented.
-7. **VPS `pg_hba`:** the four Mac-local roles may connect from `127.0.0.1/32`
-   with `scram-sha-256` only. No `trust` for them.
-8. **Roles:** run the provisioner with `--database-host 127.0.0.1
-   --database-port 15432` (no policy file). Then `pnpm mac:check-database`
-   prints ok for all four roles.
-9. **Fails closed:** stop the tunnel, and `mac:check-database` fails. It must
-   not hang and must not report ok.
-10. **Recovers:** kill the ssh process, and launchd restarts it within about
-    15 s. `mac:check-database` is ok again.
-11. **No exposure:** from another tailnet device, or from the Mac to the VPS
-    tailnet address directly, port 5432 is closed, and the new SSH port is
-    closed to any tag other than `tag:general`.
-12. **Nothing else regressed:** the existing owner/provisioning SSH access
-    and the existing website route both still pass their own health checks,
-    unchanged, before and after.
+1. VPS: PostgreSQL is listening on loopback only (`ss -ltn`).
+2. `tailscale serve status`: the new TCP 5432 mapping is present, and the
+   HTTPS route is byte-identical to before.
+3. Policy diff: only the new tag owner and the one grant were added. The
+   `ssh` section is unchanged.
+4. Mac: `pnpm mac:check-database` passes for all four roles over the
+   direct route.
+5. Wrong-name or untrusted certificate: the connection refuses, with no
+   plaintext retry (a focused test plus one live wrong-`serverName` attempt).
+6. A non-SSL connection attempt by a Mac-local role is refused by `pg_hba`.
+7. The phone or PC (`tag:general` only) cannot connect to VPS:5432.
+8. Mac sleep/wake, a VPS PostgreSQL restart, and a VPS Tailscale restart all
+   recover without intervention. `mac:check-database` passes after each.
+9. Renewal drill: force-run the timer, confirm PostgreSQL reloaded, and
+   confirm `mac:check-database` still passes with no config change.
+10. The existing owner SSH to the VPS and the website both pass their checks
+    before and after.
 
-W1 is done when 1–12 all pass.
+W1 is done when 1–10 pass.
 
 ---
 
-## Revision 1 (2026-09-24) — superseded, kept for the record
+## History
 
-Use an **SSH local port forward over the Tailscale SSH connection that already works**, run by a launchd user agent on the Mac:
-
-```
-ssh -N -o BatchMode=yes -o ExitOnForwardFailure=yes \
-    -o ServerAliveInterval=15 -o ServerAliveCountMax=3 \
-    -L 127.0.0.1:15432:127.0.0.1:5432 <ssh-target>
-```
-
-**Why this was wrong:** it assumed the Mac's own Tailscale SSH access already
-worked unattended. It didn't — see "What live testing found" above. The
-"known limit, accepted for the single-Mac phase" note below correctly
-anticipated needing a dedicated no-shell forwarding account eventually; that
-need turned out to be immediate, not deferred, and revision 2 is that
-account, built with the destination restriction (`permitopen`) revision 1
-never specified.
-
-Known limit, accepted for the single-Mac phase: the tunnel logs in as the same SSH account used for provisioning. For the multi-machine phase, switch to a dedicated no-shell forwarding account, or to the direct Tailscale route with the certificate policy the code already supports. That later switch is a configuration change only.
+- **Revision 1 (2026-09-24):** SSH tunnel over the owner's existing Tailscale
+  SSH. Wrong: the tagged Mac is not covered by the `autogroup:member` /
+  browser-recheck SSH rule, and a recheck can never be satisfied unattended.
+- **Revision 2 (2026-09-25, same day, withdrawn):** a dedicated restricted
+  OpenSSH forwarding account (`restrict,port-forwarding,permitopen`) on a
+  second sshd port. It was technically sound, but it rested on a nonexistent
+  owner directive. It also carried more long-term moving parts (per-machine
+  keys and tunnel agents) than the owner's run-for-years goal tolerates.
