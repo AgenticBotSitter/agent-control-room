@@ -86,6 +86,17 @@ async function writePrivate(path, content) {
 
 function newPassword() { return randomBytes(32).toString("base64url"); }
 
+/** CLI version commands sometimes include ordinary installation details after
+ * their version. Capture one bounded, printable version-looking line rather
+ * than treating a current multi-line CLI as a source-version incompatibility. */
+export function recordedExecutableVersion(stdout) {
+  const lines = stdout.split(/\r?\n/u).map(line => line.trim()).filter(Boolean);
+  const version = lines.find(line => /(?:^|\s)(?:v?\d+\.\d+|version\b)/iu.test(line));
+  if (!version || version.length > 240 || /[\u0000-\u001f\u007f]/u.test(version))
+    throw new Error("provision_invalid_executable_version");
+  return version;
+}
+
 /** The SSH transport or a local account wrapper can add harmless lines before
  * the remote program's success marker. The marker must still be the final
  * non-empty line: output after it would mean we cannot safely identify the
@@ -99,8 +110,7 @@ async function findExecutable(name) {
   const configured = process.env[`CONTROL_ROOM_${name.toUpperCase().replaceAll("-", "_")}_EXECUTABLE`];
   const candidate = configured || (await exec("/usr/bin/which", [name], { encoding: "utf8" })).stdout.trim();
   if (!isAbsolute(candidate)) throw new Error(`provision_missing_${name}_executable`);
-  const version = (await exec(candidate, ["--version"], { encoding: "utf8", timeout: 10_000 })).stdout.trim();
-  if (!version || version.length > 240 || /[\u0000-\u001f\u007f]/u.test(version)) throw new Error(`provision_invalid_${name}_version`);
+  const version = recordedExecutableVersion((await exec(candidate, ["--version"], { encoding: "utf8", timeout: 10_000 })).stdout);
   return Object.freeze({ executablePath: candidate, recordedVersion: version });
 }
 
