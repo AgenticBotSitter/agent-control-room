@@ -4,11 +4,15 @@ Codex appends one short entry per work package (see `CODEX_MAC_BUILD_EXECUTION.m
 
 - REAL 2026-09-24 — the loopback-only SSH database tunnel accepted a local connection, but the first protected-configuration run stopped before writing its JSON files because Hermes reports a multi-line version banner and the generic version reader wrongly required one line. Seven protected password files exist; no database map, owner code, website, queue, or agent was created or started.
 
-- SOURCE 2026-09-24 — read-only VPS verification confirmed the database is ready but the raw private database route is absent; the Tailscale admin console is signed out, so the required Mac-only access rule cannot be inspected or safely changed yet. One sign-in-only owner step is recorded in OWNER_ACTIONS.md.
+- SOURCE 2026-09-24 — superseded route note: the earlier plan for a Tailscale administrator-console rule was replaced by the loopback-only SSH tunnel. No Tailscale administrator change is required for the Mac-local route.
 
 - SOURCE 2026-09-24 — repaired the Mac provisioner's remote success detector so harmless SSH wrapper output cannot turn a completed VPS database setup into a false failure; syntax, marker cases, dry run, type-check, and whitespace verification pass. The secure Mac-to-VPS route remains the next real W1 proof.
 
 - REAL 2026-09-24 — the existing VPS `control_room` database now has the full 85-entry migration ledger and all four fixed Mac-local login roles. The Mac-to-VPS TLS route and its four-role connection check are still pending, so no website, queue, or agent is represented as running.
+
+- REAL 2026-09-24 — the private loopback SSH route accepted the real installer; it refreshed the dedicated database safely and wrote protected Mac configuration for Codex, Claude, and Hermes. The read-only check printed `ok` for all four restricted runtime accounts. No website, queue, or agent has started; W1 still needs its tunnel-loss and restart proofs.
+
+- REAL 2026-09-24 — the VPS database listener and loopback tunnel checks passed, but a direct private-network port check unexpectedly connected. No route was changed; W1 is not complete until that exposure is explained or removed without disturbing the existing website route.
 
 - 2026-09-24 — Codex local-runner cancellation fence: the managed, read-only
   Codex command runner now checks cancellation again after its asynchronous
