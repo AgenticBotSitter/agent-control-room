@@ -85,6 +85,9 @@ export async function openMacLocalRollbackCheckpointStoreV1(protectedRoot: strin
         await handle.sync();
       } finally { await handle.close(); }
       await rename(temporary, file);
+      // If the directory sync below fails, the new file may already be in place but its
+      // durability is unconfirmed, so the call still reports unavailable. A retry then hits
+      // the compare-and-swap conflict instead of writing twice; nothing is silently repaired.
       const dir = await open(directory, "r");
       try { await dir.sync(); } finally { await dir.close(); }
     } catch {
@@ -121,8 +124,9 @@ export async function openMacLocalRollbackCheckpointStoreV1(protectedRoot: strin
 }
 
 /** One live holder at a time. A lock left by a dead process (a crash that launchd
- * restarts) is taken over; a live holder, including a second host, is refused.
- * The takeover itself is exclusive (a `.takeover` file created with `wx`), and the
+ * restarts) is taken over; a live holder, including a second task host on this Mac,
+ * is refused. Liveness is a local process-table check, so this is single-machine
+ * only: the protected directory must never be shared between machines. The takeover itself is exclusive (a `.takeover` file created with `wx`), and the
  * lock is only removed if it is still the same file whose holder was found dead,
  * so two processes starting together can never both end up holding it. A crash
  * that leaves a takeover file or an empty lock behind fails closed; the operator
