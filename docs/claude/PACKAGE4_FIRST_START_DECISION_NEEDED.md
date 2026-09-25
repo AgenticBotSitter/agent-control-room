@@ -12,6 +12,10 @@ Please decide one first-start route that preserves the existing single lifecycle
 
 The `cr` profile has a non-secret `providers.ollama.base_url`, but no `providers.opencode-go.base_url` field. The current owner choice is `opencode-go` / `space-bunny-free`, so the Ollama URL is not its destination. Section 8.D says to ask the owner if the origin cannot be read without a credential and not invent one. `mac:prepare-task-runtime` now requires an approved canonical HTTPS origin; `mac:up` and the owner guide show the required argument. No protected task-runtime file was created.
 
+## Readiness-only fleet telemetry cannot authorize assignment
+
+Section 6 says the host derives fleet signals only from existing pinned-executable readiness and stops if assignment needs anything else. `evaluateFleetEligibility` requires `telemetry.payload.availableStorageBytes.quality === "observed"` even when `requiredScratchBytes` is zero (`src/node-fleet/v1/eligibility.ts`). Executable readiness does not measure available storage, and reporting a made-up observed value would be false evidence. Please approve a bounded, real local storage measurement for the protected artifact/work area, or another explicit resolution; do not change the existing assignment check or pretend readiness is a storage probe.
+
 ## Existing-node drift remains a product choice
 
 The node record uses the whole enablement digest as `softwareFingerprint`, and section 8.B requires a differing existing row to be refused. A normal `mac:repin` after any CLI update changes that digest; `seedMacLocalNodeV1` then refuses startup even if only one worker changed. Please decide an owner-attended key/node rotation or whether the node fingerprint should be stable across worker version updates. Do not silently overwrite the row.
