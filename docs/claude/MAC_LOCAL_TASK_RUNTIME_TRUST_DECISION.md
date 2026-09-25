@@ -158,7 +158,90 @@ independent placement the contract asks for, and the etcd store exists to provid
   owner-trusted local model (critical path decision 3), it doesn't defend against a malicious process
   running as the owner on the Mac, which could edit both the file and the keys.
 
-## 6. Review and done
+## 6. Package 4 composition map (answers Marvin's four questions, 2026-09-25)
+
+Nothing here is a new authority. Every field comes from protected configuration that already exists,
+from `task-runtime.json`, or from an existing class. Follow
+`tests/codex-owner-trusted-local-queue.test.ts`, which is the **local** agent pattern. Don't follow
+`tests/helpers/private-agent-task-composition.ts`: that's the remote-node (VPS) pattern with signed
+node enrollments.
+
+**The provider's call.** `createTaskApplication({ configuration, database, workerReadiness, databaseRoles, protectedRoot })`
+calls `createMacLocalCurrentThreeAgentTaskApplicationV1` with:
+
+- `web`: `{ tenantId: configuration.localOwnerSession.tenantId, workspaceId: configuration.workspaceId, tasks, database }`.
+  - **Tenant (question 4):** the task lifecycle's tenant **is** the website's local owner tenant.
+    The composition already refuses any mismatch between web, coordinator and Hermes.
+  - `tasks` carries the same review, harness and results keys as the quality configuration below.
+- `databaseRoles` and `openDatabase`: passed through. **Pools (question 4):**
+  `createMacLocalRestrictedTaskApplicationV1` already opens the coordinator and results roles and closes
+  them on failure. The provider doesn't open those two pools for the lifecycle.
+- `coordinator` (**question 1: a new object built by the provider**, with no pools):
+  - `scope: { tenantId, workspaceId }` (as above);
+  - `planning`:
+    - `template` and `additionalTemplates`: three per active project, capped at 16 (section 4);
+    - `integrityKey: keys.planning`, `reviewIntegrityKey: keys.review`, `checkpoints:` the section 5 store;
+    - `localAdapterAdmission: { enabledAdapters: [the three local adapter ids] }`;
+  - `routes`: one per worker. Each takes `nodeId` from `enablement.nodeId`, `executorId` from its
+    template's `authority.allowedExecutor`, and `capabilityProbeId` from the adapter's capability
+    constant, with `maxConcurrentTasks: 1`, `requiredScratchBytes: 0`, and `leaseSeconds` at least the
+    adapter deadline;
+  - `approvals: { enrollments: [], store: new NativeApprovalPacketStore(keys.approvals, []) }`. Local
+    agents enqueue through their own `enqueue*OwnerTrustedLocalTask` path, as in the Codex local-queue
+    test, so no owner-signed remote approval packet is involved;
+  - `quality`:
+    - `integrityKey: keys.review`, `harnessIntegrityKey: keys.harness`,
+      `results.integrityKey: keys.results`;
+    - `checkpoints:` the same store, `scenarios: []`;
+  - `nativeQueue: true`, and `nativeSubmission` from `preparePgBossNativeTaskSubmission` (the
+    `installed-native-queue.ts` pattern). The host's existing `startQueueWorker` runs the queue worker.
+- `hermes`, `claude`, `codex`: one queue executor each (see below).
+
+**Dispatch preparations (question 2): built in the provider**, one per agent:
+- `CodexOwnerTrustedLocalDispatchPreparationV1`, `ClaudeCodeLocalDispatchPreparationV1` and
+  `HermesLocalDispatchPreparationV1`.
+- Each takes a **provider-owned** read pool opened with `openDatabase(databaseRoles.coordinator)`,
+  closed in the returned `close()`.
+- Each takes a **read-only** `TaskExecutionPlanner` built with the same templates and keys (it's only
+  used for `readInSession`).
+- Each takes `{ workerId, adapterRevision }` from the enablement record. `adapterRevision` is the
+  worker's `sha256Digest({ executablePath, recordedVersion })`, so a re-pin changes the revision and an
+  in-flight delivery then fails `assertCurrent`, as intended.
+
+**The per-worker base (question 3):**
+- `db`: the provider-owned coordinator pool; `integrityKey: keys.deliveryReceipt`;
+  `binding: { workerId, adapterId, adapterRevision }`;
+- `receiptPort: createOwnerTrustedLocalCliReceiptPortV1()`;
+- `assertCurrent: createOwnerTrustedLocalCliAssertCurrentV1(db, preparation, workerReadiness)`;
+- `publish: createOwnerTrustedLocalCliPublishV1(...)`:
+  - `runIntegrityKey: keys.harness`, publication integrity `keys.results` and review `keys.review`;
+  - local artifact storage under `<protected>/runtime/artifacts` (0700);
+  - `registerRun`: the existing `codexOwnerTrustedLocalRunRegistrationV1`,
+    `hermesLocalRunRegistrationV1` or `ClaudeCodeLocalRunRegistrationV1`.
+
+Then `createOwnerTrustedLocal{Codex,Claude,Hermes}DeliveryV1(base, executor, execution configuration)`
+(Hermes uses `task-runtime.json`'s `hermes` settings), wrapped by the queue executors:
+- `createCodexOwnerTrustedLocalQueueExecutorV1` and `createHermesLocalQueueExecutorV1`, which exist.
+- **Claude is the one missing piece of code.** `createClaudeCodeLocalQueueExecutorV1` runs the heavier
+  VPS `executeAssignedClaudeCodeLocalTaskV1` path. Add a mirror of the Codex executor,
+  `createClaudeOwnerTrustedLocalQueueExecutorV1({ tenantId, preparation, delivery })`, using
+  `claudeCodeLocalQueueTargetToDispatchReferenceV1`. Don't reuse the VPS executor for mac-local.
+
+**Fleet signals (not yet on anyone's list):**
+- `TaskAssignmentCoordinator.assign` needs a recent `telemetry` signal and a `capability` pass for the
+  node before it assigns.
+- On the Mac, the host records them through `FleetSignalStore.ingestAuthenticated`: one `capability`
+  pass per **ready** worker (from the existing pinned-executable verification) and one `telemetry`
+  signal.
+- It refreshes them on an interval shorter than their expiry, and stops refreshing a worker that
+  becomes unready, so assignment then refuses it.
+- This derives only from existing readiness. If assignment needs anything beyond that, stop and ask.
+
+**Wiring order in `mac:up`:** `mac:prepare-task-runtime` (idempotent), then the provider. On a fresh
+install, call `CompletionGateStoreV1.provisionTenant` once; it refuses by itself if review state already
+exists.
+
+## 7. Review and done
 
 - Split the work into packages of no more than about 800 lines, in this order:
   1. fence A plus fence B helper and tests;

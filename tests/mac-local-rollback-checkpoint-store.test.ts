@@ -136,3 +136,11 @@ test("two processes taking over the same dead lock at once: exactly one wins", a
     await writeFile(join(r, "state/rollback-checkpoints.lock"), "424243\n", { mode: 0o600 });
   }
 });
+
+test("close rejects when its lock cannot be removed, instead of hiding a lock left behind", async t => {
+  const r = await root(t);
+  const store = await openMacLocalRollbackCheckpointStoreV1(r);
+  await chmod(join(r, "state"), 0o500);
+  await assert.rejects(store.close(), /unavailable/u);
+  await chmod(join(r, "state"), 0o700);
+});
