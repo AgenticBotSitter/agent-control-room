@@ -28,6 +28,7 @@ import type { ArtifactReadPortV1, ArtifactStoragePortV1 } from "../../node-execu
 import { captureCodexResultIntakeSettingsV1, CodexResultIntakeV1,
   type CodexResultIntakeSettingsV1 } from "./codex-result-intake";
 import { deliverVerifiedHermes021LocalQueueTaskV1 } from "./hermes-021-local-queue-delivery";
+import { deliverVerifiedHermesLocalQueueTaskV1 } from "./hermes-local-queue-delivery";
 import { deliverVerifiedClaudeCodeLocalQueueTaskV1 } from "./claude-code-local-queue-delivery";
 import { deliverVerifiedCodexOwnerTrustedLocalQueueTaskV1 } from "./codex-owner-trusted-local-queue-delivery";
 import { deliverVerifiedRemoteControllerWorkerQueueTaskV1 } from "./remote-controller-worker-queue-delivery";
@@ -71,6 +72,10 @@ export type TaskCoordinatorConfiguration = {
    * callback is the only route allowed to reach the private runner.
    */
   hermes021Local?: { deliver(target: Hermes021LocalQueueDeliveryTarget, signal: AbortSignal): Promise<void> };
+  /** Installation-owned current Hermes route. Its runner configuration is
+   * protected and per-build-qualified; constructing this callback starts no
+   * worker or process. */
+  hermesLocal?: { deliver(target: import("./task-assignment-coordinator").HermesLocalQueueDeliveryTarget, signal: AbortSignal): Promise<void> };
   /** Installation-owned Claude route. It is optional and inert until a separate
    * process qualification and private host composition supply this callback. */
   claudeCodeLocal?: { deliver(target: ClaudeCodeLocalQueueDeliveryTarget, signal: AbortSignal): Promise<void> };
@@ -135,6 +140,10 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
     throw new Error("task_coordinator_config_invalid");
   if (input.hermes021Local && !input.nativeSubmission)
     throw new Error("task_coordinator_config_invalid");
+  if (input.hermesLocal && typeof input.hermesLocal.deliver !== "function")
+    throw new Error("task_coordinator_config_invalid");
+  if (input.hermesLocal && !input.nativeSubmission)
+    throw new Error("task_coordinator_config_invalid");
   if (input.claudeCodeLocal && typeof input.claudeCodeLocal.deliver !== "function")
     throw new Error("task_coordinator_config_invalid");
   if (input.claudeCodeLocal && !input.nativeSubmission)
@@ -170,6 +179,7 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
     ...(input.nativeSubmission.recoverUnsentInSession ? { recoverUnsentInSession: input.nativeSubmission.recoverUnsentInSession.bind(input.nativeSubmission) } : {}),
   }) : undefined;
   const hermes021Local = input.hermes021Local ? Object.freeze({ deliver: input.hermes021Local.deliver.bind(input.hermes021Local) }) : undefined;
+  const hermesLocal = input.hermesLocal ? Object.freeze({ deliver: input.hermesLocal.deliver.bind(input.hermesLocal) }) : undefined;
   const claudeCodeLocal = input.claudeCodeLocal ? Object.freeze({ deliver: input.claudeCodeLocal.deliver.bind(input.claudeCodeLocal) }) : undefined;
   const codexOwnerTrustedLocal = input.codexOwnerTrustedLocal
     ? Object.freeze({ deliver: input.codexOwnerTrustedLocal.deliver.bind(input.codexOwnerTrustedLocal) }) : undefined;
@@ -473,7 +483,7 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
   return Object.freeze({ planning, assignment: assignments, ...(approvals ? { approvals } : {}), ...(quality ? { quality } : {}),
     ...(ideaCreation ? { ideaCreation } : {}),
     ...(ideaResultProjection ? { ideaResultProjection } : {}),
-    ...(nativeSubmission && (sessions || hermes021Local || claudeCodeLocal || codexOwnerTrustedLocal || remoteControllerWorker) ? { queueDelivery: async (ref: Parameters<ManagedNativeSessions["deliverApproved"]>[0], signal: AbortSignal) => {
+    ...(nativeSubmission && (sessions || hermes021Local || hermesLocal || claudeCodeLocal || codexOwnerTrustedLocal || remoteControllerWorker) ? { queueDelivery: async (ref: Parameters<ManagedNativeSessions["deliverApproved"]>[0], signal: AbortSignal) => {
       const remote = await assignment.locateQueuedRemoteControllerWorkerDelivery(ref, signal);
       if (remote) {
         if (!remoteControllerWorker || signal.aborted) throw new Error("native_task_delivery_unresolved");
@@ -485,6 +495,10 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
         if (!hermes021Local || signal.aborted) throw new Error("native_task_delivery_unresolved");
         return deliverVerifiedHermes021LocalQueueTaskV1({ reference: ref, signal, target,
           deliver: hermes021Local.deliver });
+      }
+      if (target.kind === "hermes-local") {
+        if (!hermesLocal || signal.aborted) throw new Error("native_task_delivery_unresolved");
+        return deliverVerifiedHermesLocalQueueTaskV1({ reference: ref, signal, target, deliver: hermesLocal.deliver });
       }
       if (target.kind === "claude-code-local") {
         if (!claudeCodeLocal || signal.aborted) throw new Error("native_task_delivery_unresolved");

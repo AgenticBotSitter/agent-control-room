@@ -2,6 +2,16 @@
 
 Codex appends one short entry per work package (see `CODEX_MAC_BUILD_EXECUTION.md`).
 
+- 2026-09-24 — current Hermes queue route: the update-aware Hermes plan now
+  uses the existing approved work queue and its existing protected receipt
+  store. It is a separate, tagged route from the historical 0.21 evidence,
+  so an old receipt cannot start the current installed build. A focused
+  disposable-data journey proves plan, assignment, queueing, pickup, and
+  refusal of a changed queue proof. The queue callback is now available for
+  the protected current-Hermes runner; its final host composition remains the
+  next package. Two focused queue/planning tests, TypeScript, and whitespace
+  checks pass. No database, website, worker, or service was started.
+
 - 2026-09-24 — current Hermes website-planning route: a task selected for the
   update-aware `hermes` worker now receives its own current-Hermes plan and
   correction-plan records, rather than being represented as the historical

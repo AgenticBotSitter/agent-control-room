@@ -42,6 +42,16 @@ const hermes021QueueApprovalSchema = z.object({
   enrollmentDigest: digestSchema, planDigest: digestSchema, acceptedBy: localId, acceptedAt: z.string().datetime(),
 }).strict();
 type Hermes021QueueApproval = z.infer<typeof hermes021QueueApprovalSchema>;
+/** Update-aware current Hermes receipt. It deliberately has its own tag and
+ * record name, so an old pinned-Hermes receipt can never start this route. */
+const hermesLocalQueueApprovalSchema = z.object({
+  schema: z.literal("control-room.canonical-hermes-local-queue-approval/v1"),
+  tenantId: localId, projectId: localId, jobId: localId, attemptId: localId, nodeId: localId,
+  leaseId: localId, leaseEpoch: z.number().int().positive(), inputDigest: digestSchema,
+  packetDigest: digestSchema, operationDigest: digestSchema, bindingDigest: digestSchema,
+  enrollmentDigest: digestSchema, planDigest: digestSchema, acceptedBy: localId, acceptedAt: z.string().datetime(),
+}).strict();
+type HermesLocalQueueApproval = z.infer<typeof hermesLocalQueueApprovalSchema>;
 /** Same existing receipt table and queue, but a distinct tagged record for the
  * local Claude contract. It cannot be confused with Hermes evidence. */
 const claudeCodeLocalQueueApprovalSchema = z.object({
@@ -87,6 +97,9 @@ export class NativeApprovalPacketStore {
   private tag(record: Record) { return hmacSha256Tag(this.key, { purpose: "canonical-native-approval-packet/v1", record }); }
   private hermes021Tag(record: Hermes021QueueApproval) {
     return hmacSha256Tag(this.key, { purpose: "canonical-hermes-021-local-queue-approval/v1", record });
+  }
+  private hermesLocalTag(record: HermesLocalQueueApproval) {
+    return hmacSha256Tag(this.key, { purpose: "canonical-hermes-local-queue-approval/v1", record });
   }
   private claudeCodeLocalTag(record: ClaudeCodeLocalQueueApproval) {
     return hmacSha256Tag(this.key, { purpose: "canonical-claude-code-local-queue-approval/v1", record });
@@ -221,6 +234,53 @@ export class NativeApprovalPacketStore {
     if (!row) return null;
     const record = hermes021QueueApprovalSchema.parse(row.record);
     const expected = Buffer.from(this.hermes021Tag(record)), actual = Buffer.from(row.auth_tag);
+    if (actual.length !== expected.length || !timingSafeEqual(actual, expected)
+      || row.tenant_id !== record.tenantId || row.project_id !== record.projectId
+      || row.job_id !== record.jobId || row.attempt_id !== record.attemptId
+      || record.tenantId !== scope.tenantId || record.projectId !== scope.projectId
+      || record.jobId !== scope.jobId || record.attemptId !== scope.attemptId
+      || record.inputDigest !== scope.inputDigest) fail();
+    return record;
+  }
+  /** The same durable queue and approval table, with a distinct authenticated
+   * record for a current, per-build-qualified local Hermes installation. */
+  async enqueueHermesLocalInSession(tx: DatabaseSession, intent: NativeTaskQueueIntent, planDigest: string) {
+    const value = { ...intent, deliveryKind: "hermes-macos-local" as const };
+    const r = z.object({ schema: z.literal("control-room.native-task-queue/v1"), tenantId: localId,
+      projectId: localId, jobId: localId, attemptId: localId, nodeId: localId, leaseId: localId,
+      leaseEpoch: z.number().int().positive(), inputDigest: digestSchema, packetDigest: digestSchema,
+      operationDigest: digestSchema, bindingDigest: digestSchema, enrollmentDigest: digestSchema,
+      deadline: z.number().int().nonnegative(), queuedAt: z.string().datetime(), queuedBy: localId,
+      deliveryKind: z.literal("hermes-macos-local") }).strict().parse(value);
+    const approval = hermesLocalQueueApprovalSchema.parse({
+      schema: "control-room.canonical-hermes-local-queue-approval/v1", tenantId: r.tenantId,
+      projectId: r.projectId, jobId: r.jobId, attemptId: r.attemptId, nodeId: r.nodeId, leaseId: r.leaseId,
+      leaseEpoch: r.leaseEpoch, inputDigest: r.inputDigest, packetDigest: r.packetDigest,
+      operationDigest: r.operationDigest, bindingDigest: r.bindingDigest, enrollmentDigest: r.enrollmentDigest,
+      planDigest: digestSchema.parse(planDigest), acceptedBy: r.queuedBy, acceptedAt: r.queuedAt,
+    });
+    const rows = await tx.query<Row>("SELECT tenant_id,project_id,job_id,attempt_id,record,auth_tag FROM control_native_approval_packets WHERE tenant_id=$1 AND job_id=$2 AND attempt_id=$3",
+      [r.tenantId, r.jobId, r.attemptId]);
+    const prior = rows.rows[0];
+    if (prior) {
+      const record = hermesLocalQueueApprovalSchema.parse(prior.record);
+      const expected = Buffer.from(this.hermesLocalTag(record)), actual = Buffer.from(prior.auth_tag);
+      const stable = ({ acceptedBy: _actor, acceptedAt: _at, ...saved }: HermesLocalQueueApproval) => { void _actor; void _at; return saved; };
+      if (actual.length !== expected.length || !timingSafeEqual(actual, expected)
+        || prior.tenant_id !== record.tenantId || prior.project_id !== record.projectId
+        || prior.job_id !== record.jobId || prior.attempt_id !== record.attemptId
+        || sha256Digest(stable(record)) !== sha256Digest(stable(approval))) fail();
+    } else await tx.query("INSERT INTO control_native_approval_packets(tenant_id,project_id,job_id,attempt_id,record,auth_tag) VALUES($1,$2,$3,$4,$5,$6)",
+      [r.tenantId, r.projectId, r.jobId, r.attemptId, approval, this.hermesLocalTag(approval)]);
+    return enqueueNativeTaskInSession(tx, this.key, r);
+  }
+  async readHermesLocalQueueApprovalInSession(tx: DatabaseSession,
+    scope: { tenantId: string; projectId: string; jobId: string; attemptId: string; inputDigest: string }) {
+    const row = (await tx.query<Row>("SELECT tenant_id,project_id,job_id,attempt_id,record,auth_tag FROM control_native_approval_packets WHERE tenant_id=$1 AND job_id=$2 AND attempt_id=$3",
+      [scope.tenantId, scope.jobId, scope.attemptId])).rows[0];
+    if (!row) return null;
+    const record = hermesLocalQueueApprovalSchema.parse(row.record);
+    const expected = Buffer.from(this.hermesLocalTag(record)), actual = Buffer.from(row.auth_tag);
     if (actual.length !== expected.length || !timingSafeEqual(actual, expected)
       || row.tenant_id !== record.tenantId || row.project_id !== record.projectId
       || row.job_id !== record.jobId || row.attempt_id !== record.attemptId
