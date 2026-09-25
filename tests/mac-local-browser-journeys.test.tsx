@@ -48,10 +48,10 @@
 
 import assert from "node:assert/strict";
 import test, { after, before, describe, type TestContext } from "node:test";
-import { execFile } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
 import { promisify } from "node:util";
-import { existsSync } from "node:fs";
-import { mkdtemp, mkdir, rm } from "node:fs/promises";
+import { existsSync, readFileSync } from "node:fs";
+import { mkdtemp, mkdir, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -144,10 +144,56 @@ async function startCluster(): Promise<Cluster> {
   return { run, data, socket, pgCtl: join(PG_BIN!, "pg_ctl"), fixturePassword };
 }
 
+/** Stop the cluster and prove it is gone before the data directory is removed.
+ *
+ * A swallowed stop failure used to be followed by `rm` anyway, which could
+ * delete the socket and data directory out from under a still-running
+ * postmaster, leave an unreaped process and a bound port behind, and make the
+ * next run fail with an unrelated-looking EADDRINUSE. Teardown now fails
+ * loudly instead: it falls back to the recorded postmaster pid, verifies the
+ * process is gone, and only then removes the directory. */
 async function stopCluster(target: Cluster) {
-  await exec(target.pgCtl, ["-D", target.data, "-m", "immediate", "-w", "-t", "60", "stop"],
-    { timeout: 120_000, maxBuffer: 1 << 26, encoding: "utf8" }).catch(() => {});
+  const stopped = await exec(target.pgCtl, ["-D", target.data, "-m", "immediate", "-w", "-t", "60", "stop"],
+    { timeout: 120_000, maxBuffer: 1 << 26, encoding: "utf8" }).then(() => true,
+      (error: Error) => { stopFailure = error; return false; });
+  if (!stopped) {
+    // pg_ctl writes postmaster.pid into the data directory; use it as the fallback.
+    const pidFile = join(target.data, "postmaster.pid");
+    let pid: number | undefined;
+    try { pid = Number((await readFile(pidFile, "utf8")).split("\n")[0]?.trim()); } catch { pid = undefined; }
+    if (Number.isSafeInteger(pid) && pid > 1) {
+      try { process.kill(pid, "SIGKILL"); } catch { /* already gone */ }
+    }
+    // Give the kernel a moment to release the listening socket.
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      if (!(await isPostmasterAlive(pid))) break;
+      await new Promise(resolve => setTimeout(resolve, 250));
+    }
+    if (await isPostmasterAlive(pid))
+      throw new Error(`disposable_cluster_stop_failed: ${stopFailure?.message ?? "postmaster still alive"}`);
+  }
+  if (await isPostmasterAlive(await readPostmasterPid(target)))
+    throw new Error("disposable_cluster_survived_teardown");
   await rm(target.run, { recursive: true, force: true });
+}
+
+let stopFailure: Error | undefined;
+
+async function readPostmasterPid(target: Cluster): Promise<number | undefined> {
+  try { const raw = (await readFile(join(target.data, "postmaster.pid"), "utf8")).split("\n")[0]?.trim();
+    return Number.isSafeInteger(Number(raw)) && Number(raw) > 1 ? Number(raw) : undefined; }
+  catch { return undefined; }
+}
+
+/** A pid is only "alive" if it exists AND is the postgres postmaster, so a
+ * recycled pid belonging to something else can never be reported as ours. */
+function isPostmasterAlive(pid: number | undefined): boolean {
+  if (!Number.isSafeInteger(pid) || pid <= 1) return false;
+  try { process.kill(pid, 0); } catch { return false; }
+  try {
+    const command = execFileSync("/bin/ps", ["-o", "command=", "-p", String(pid)], { encoding: "utf8" });
+    return /\bpostgres\b/u.test(command);
+  } catch { return false; }
 }
 
 before(async () => { if (PG_AVAILABLE) cluster = await startCluster(); });
