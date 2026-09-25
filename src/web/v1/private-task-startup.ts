@@ -82,7 +82,7 @@ export type PrivateTaskStartupConfiguration = {
   artifactStorage?: PrivateArtifactStorageConfigurationV1;
   /** Optional inert installation-owned adapters; never mounted in the queue or browser. */
   preparedLocalAdapters?: LocalAdapterInstallationPortsV1;
-  coordinator: Pick<TaskCoordinatorConfiguration, "planning" | "routes" | "approvals" | "quality" | "revisionPlanning" | "resultInspectionSource" | "nativeHttp" | "hermes021Local" | "claudeCodeLocal" | "remoteControllerWorker"> & {
+  coordinator: Pick<TaskCoordinatorConfiguration, "planning" | "routes" | "approvals" | "quality" | "revisionPlanning" | "resultInspectionSource" | "nativeHttp" | "hermes021Local" | "hermesLocal" | "claudeCodeLocal" | "remoteControllerWorker"> & {
     codex?: CodexPermitConfiguration;
     /** Private transition-journal key for coordinator-only admission checks. */
     installationTransitionAdmission?: { integrityKey: Uint8Array; workers: readonly { nodeId: string; workerId: string }[] };
@@ -198,6 +198,13 @@ export function validatePrivateTaskStartupConfiguration(input: PrivateTaskStartu
       ? Object.freeze({ deliver: input.coordinator.hermes021Local.deliver.bind(input.coordinator.hermes021Local) }) : undefined;
     if (hermes021Local && (!nativeQueue || !approvals)) throw new Error();
     if (hermes021Local) requireReadyLocalHermesInstallation(web);
+    // Current Hermes is bound to its owner-held, per-qualification profile by
+    // the composed queue executor. It intentionally does not inherit the
+    // retired 0.21 installation proof, which would make ordinary upstream
+    // Hermes updates look like an unsafe downgrade.
+    const hermesLocal = input.coordinator.hermesLocal
+      ? Object.freeze({ deliver: input.coordinator.hermesLocal.deliver.bind(input.coordinator.hermesLocal) }) : undefined;
+    if (hermesLocal && (!nativeQueue || !approvals)) throw new Error();
     const claudeCodeLocal = input.coordinator.claudeCodeLocal;
     if (claudeCodeLocal && !isClaudeCodePrivateInstalledDeliverCapabilityV1(claudeCodeLocal)) throw new Error();
     if (claudeCodeLocal && (!nativeQueue || !approvals)) throw new Error();
@@ -211,11 +218,11 @@ export function validatePrivateTaskStartupConfiguration(input: PrivateTaskStartu
       })() : undefined;
     const resultInspectionSource = input.coordinator.resultInspectionSource
       ? Object.freeze({ inspectSubmitted: input.coordinator.resultInspectionSource.inspectSubmitted.bind(input.coordinator.resultInspectionSource) }) : undefined;
-    if (resultInspectionSource && (!quality || !resultDatabase || (!hermes021Local && !claudeCodeLocal))) throw new Error();
+    if (resultInspectionSource && (!quality || !resultDatabase || (!hermes021Local && !hermesLocal && !claudeCodeLocal))) throw new Error();
     const w = input.coordinator.queueWorker;
     const queueWorker = w ? { database: validatePrivatePostgresConfiguration(w.database), concurrency: w.concurrency ?? 1 } : undefined;
     if (remoteControllerWorker && (!nativeQueue || !queueWorker)) throw new Error();
-    if (queueWorker && (!nativeQueue || (!sessions && !hermes021Local && !claudeCodeLocal && !remoteControllerWorker) || queueWorker.database.host !== database.host
+    if (queueWorker && (!nativeQueue || (!sessions && !hermes021Local && !hermesLocal && !claudeCodeLocal && !remoteControllerWorker) || queueWorker.database.host !== database.host
       || queueWorker.database.port !== database.port || queueWorker.database.database !== database.database
       || [web.database.username, database.username, resultDatabase!.username, evidence!.database.username,
         ...(sessions ? [sessions.database.username] : [])].includes(queueWorker.database.username)
@@ -274,7 +281,7 @@ export function validatePrivateTaskStartupConfiguration(input: PrivateTaskStartu
       ideaCreation?.database, ideaRuntime?.database].some(value => value
         && privatePostgresEndpointPolicyDigestV1(value.privateEndpoint) !== endpointPolicyDigest)) throw new Error();
     return { web, preparedLocalAdapters, database, planning, routes, approvals, codex, installationTransitionAdmission, quality, revisionPlanning, resultInspectionSource, resultDatabase, evidence, sessions,
-      codexResultReturn, nativeHttp, nativeQueue, nativeQueueRecovery, queueWorker, hermes021Local, remoteControllerWorker,
+      codexResultReturn, nativeHttp, nativeQueue, nativeQueueRecovery, queueWorker, hermes021Local, hermesLocal, remoteControllerWorker,
       hermes021LocalStartupReverification, claudeCodeLocalStartupReverification,
       claudeCodeLocalInstallationId: input.coordinator.claudeCodeLocalInstallationId,
       claudeCodeLocal, ideaCreation, ideaRuntime, news, artifactStorage };
@@ -547,7 +554,7 @@ export function createPrivateTaskBootstrap(dependencies: {
         scope: { tenantId: config.web.tenantId, workspaceId: config.web.workspaceId }, database: coordinator,
         planning: config.planning, routes: config.routes, approvals: config.approvals, quality: config.quality,
         resultInspectionSource: config.resultInspectionSource,
-        hermes021Local: config.hermes021Local,
+        hermes021Local: config.hermes021Local, hermesLocal: config.hermesLocal,
         claudeCodeLocal: config.claudeCodeLocal,
         remoteControllerWorker: config.remoteControllerWorker,
         codex: config.codex,
