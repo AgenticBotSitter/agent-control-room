@@ -340,6 +340,75 @@ fence (like Claude's `assertCurrentDelivery`), which is a broader design
 change to the whole bridge, not specific to this piece — leaving it for a
 Codex architecture call rather than solving it solo here.
 
+## Update: templates are per-project, not global — changes the remaining shape
+
+Traced `TaskExecutionPlanner.plan()`/`selectTemplate()`
+(`task-execution-planner.ts:367-380,484-512`) to resolve how task templates
+work with more than one project. Finding: a `NativeTaskTemplate`'s
+`authority.projectId` is checked for an **exact match** against the task's
+real project id (`task-execution-planner.ts:512`:
+`template.authority.projectId !== projectId` → refused). The planner groups
+its fixed `template` + `additionalTemplates` list into a
+`Map<projectId, template[]>` (`this.projectTemplates`) once, at
+construction — **there is no method to register a template after
+construction.** Total templates are capped at 16
+(`captureNativeTaskTemplates`: `additionalTemplates` max 15, plus the
+primary `template`).
+
+This means, for mac-local's 3 local adapters: every project that will ever
+use Hermes/Claude/Codex needs its own 3 templates, all present in the
+planner's list **at the moment `createTaskApplication()` is called** (i.e.
+at `mac:up` startup) — not creatable later without rebuilding the whole task
+application. Concretely, the default provider's `createTaskApplication`
+needs to: read the tenant's active projects, build 3 templates per project
+(`authority.projectId` = that project), and pass them all in. A new project
+created after `mac:up` starts would need `mac:down && mac:up` to get task
+templates — acceptable for the "one project, three tasks" W6/W7 acceptance
+bar, worth calling out explicitly rather than silently, and bounds mac-local
+to roughly 5 concurrently-templated projects before hitting the 16 cap
+(a real, if distant, ceiling worth Codex knowing about).
+
+Each template also needs a **registered acceptance profile**
+(`completionAcceptanceProfileSchemaV1`, via `CompletionGateStoreV1.registerProfile`)
+matching its `acceptanceProfileId`/`acceptanceProfileDigest` — confirmed by
+building one directly to get `tests/owner-trusted-local-cli-publish.test.ts`
+passing. For mac-local this likely means: one fixed, owner-approved
+acceptance profile per project (or one shared profile reused across all
+three adapters within a project), registered at project-creation time
+alongside the templates.
+
+## Where I'm stopping the solo build for now
+
+Everything from here touches the exact area Codex is independently
+converging on tonight (their own `TASK_PROVIDER_IMPLEMENTATION_GAP.md` on
+`claude/mac-local-integration` reaches the same "needs one release-owned
+task-runtime composition, protected config extension" conclusion). The
+remaining pieces — enumerating active projects and building their templates,
+extending `MacLocalProtectedConfigurationV1` with the ~5 new 32-byte keys
+this needs (planning integrity/review, run-store, durable-result
+integrity/review — `HarnessRunStoreV1`, `TaskExecutionPlanner`, and
+`DurableResultPublicationConfigurationV1` each want their own, per the
+existing VPS pattern in `private-task-startup.ts`), wiring routes (3 static
+local entries, one per adapter — cheap, low-risk, not yet built),
+constructing the structurally-required-but-inert `approvals` object
+(`NativeApprovalPacketStore` with an empty trust list — proven safe to build
+by `tests/codex-owner-trusted-local-queue.test.ts`'s own pattern), wiring
+`nativeSubmission` via `preparePgBossNativeTaskSubmission` with a real
+`pg-boss` import, and finally assembling
+`mac-local-default-task-provider.ts` itself plus its `vite.vps.config.ts`
+entry — all sit on top of a schema decision (the protected-config shape)
+that Codex is actively drafting in parallel right now. I did not touch
+`mac-local-protected-configuration.ts` to avoid two independently-designed,
+incompatible shapes needing reconciliation later, which is a worse outcome
+than either of us finishing it alone.
+
+**What is safe and done, regardless of how that schema settles:** every
+piece in this doc above this section — `receiptPort`, `assertCurrent`, the
+Codex/Hermes run-registration mirrors, `adapter_registry` seeding, and the
+generic `publish()` — is a standalone function parameterized by whatever
+config it's given. None of it needs to change no matter which of us (or
+neither) writes the final protected-config shape.
+
 ## Recommendation given the above
 
 This is no longer a same-night, one-pass build. Concretely remaining, in
