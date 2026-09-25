@@ -196,21 +196,53 @@ Run these from the integration checkout.
 4. **Claude final gate (one Claude session, Opus):**
    - Input: the evidence file, M6's report, and a summary of the W2–W4 diffs.
    - Output: ACCEPT or NOT READY.
-5. On ACCEPT, open one PR from `claude/mac-local-integration` into `main`. **Do not merge it.**
+5. On ACCEPT, proceed to Phase 6. Do not open the final PR yet.
 
-**Done when:** all 15 worker rows and 2 system rows are real, Claude returns ACCEPT, and the PR is open.
+**Done when:** all 15 worker rows and 2 system rows are real and Claude returns ACCEPT.
+
+## Phase 6: W8 per-task model selection
+
+Start only after the Phase 5 Claude gate returns ACCEPT. Follow
+`docs/claude/W8_MODEL_SELECTION.md` exactly:
+
+1. Store a per-worker model/effort allowlist in the protected owner-trusted
+   enablement record, scoped per node and validated against the installed CLI
+   at startup. The task/browser request is never an allowlist source.
+2. Add optional model and effort to the task draft. Validate both against the
+   selected worker's allowlist; reject a non-allowlisted choice with HTTP 400
+   before starting anything. Omitted values use that worker's configured
+   defaults.
+3. Store the selected model and effort with the task/run evidence and display
+   them on task and result pages. A result without its model is incomplete.
+4. Map choices to fixed argument arrays only: Claude `--model <m>` (use
+   `--effort` only after checking installed `--help`), Codex `-m <m>` and
+   `-c model_reasoning_effort=<e>`, and Hermes profile provider/model. Never
+   concatenate user-controlled command strings.
+5. Default Claude to Sonnet and show the note “uses more of your Claude limit”
+   when Opus is selected. A correction task inherits the original model and
+   effort unless the owner changes them.
+6. Test one non-default-model task per worker through the real website, verify
+   that the run evidence records the selected model, and prove that a tampered
+   non-allowlisted request is rejected with HTTP 400 without starting a worker.
+   Obtain approval from `claude-review.mjs` for the package.
+
+**Done when:** one task per worker runs on a non-default model through the real
+website; run evidence records the selected model; tampered model requests are
+rejected before execution; and Claude review returns APPROVE. Only then open one
+final PR from `claude/mac-local-integration` into `main`. Do not merge it.
 
 ## Owner actions across the whole plan (the only things the owner does)
 
 1. Phase 1: try port 5432 from the phone or PC and report whether it connected (check 7).
 2. Phase 1: if Codex can't reach the VPS operator, relay the VPS restart and renewal drills (checks 8–9).
 3. Phase 4: say "yes" to the launchd user-agent install, then do one logout/login.
-4. Phase 5: review and merge the final PR.
+4. After Phase 6: review and merge the final PR.
 
 ## Budget
 
-- **Claude:** about 5 calls in total:
+- **Claude:** about 6 calls in total:
   - reviews of any sign-in, host or loader change (Phases 2–4);
-  - the Phase 5 final gate.
+  - the Phase 5 final gate;
+  - review of W8 model selection (Phase 6).
 - **Marvin:** unlimited within its lanes.
 - **Codex:** does everything else.
