@@ -56,6 +56,7 @@
     "test:build:demo": "pnpm run build:demo && node --import tsx --test tests/contributor-demo-build.test.mjs",
     "test:browser:private": "pnpm build && node --import tsx scripts/private-browser-acceptance.mjs && node --import tsx scripts/private-uncertain-save-browser-acceptance.mjs && node --import tsx scripts/private-result-review-browser-acceptance.mjs && node --import tsx scripts/private-revision-browser-acceptance.mjs && node --import tsx scripts/private-accessibility-browser-acceptance.mjs && node --import tsx scripts/private-two-configuration-browser-acceptance.mjs",
     "test:product-browser": "node --test tests/browser/workspace/product-browser-journeys.test.mjs",
+    "test:mac-local-browser-journeys": "node --import tsx --test tests/mac-local-browser-journeys.test.tsx",
     "release:local:assemble": "node scripts/assemble-local-release.mjs",
     "release:local:assemble:macos": "node scripts/assemble-macos-local-launcher.mjs",
     "release:local:stage": "node scripts/stage-local-release.mjs",
