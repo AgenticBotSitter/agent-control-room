@@ -3,6 +3,7 @@ import { readdir } from "node:fs/promises";
 import { isAbsolute, normalize } from "node:path";
 import { StringDecoder } from "node:string_decoder";
 import { types } from "node:util";
+import { userInfo } from "node:os";
 import { createClaudeCodeStreamDecoderV1 } from "./stream-json-decode";
 
 const MAX_PROMPT_BYTES = 64 * 1024;
@@ -10,11 +11,14 @@ const MAX_OUTPUT_BYTES = 1024 * 1024;
 const KILL_AFTER_MS = 5_000;
 const KILL_CONFIRM_MS = 50;
 const SYSTEM_PATH = "/usr/bin:/bin";
+const localUser = userInfo().username;
 
 /** These are the Mac-local CLI arguments reviewed in Packet B. They are
  * intentionally separate from the legacy installed-admission arguments. */
+// Sonnet is pinned because the CLI default is Opus, which spends the owner's limited
+// Opus allowance on every task. Per-task model choice is W8.
 export const OWNER_TRUSTED_LOCAL_CLAUDE_ARGS_V1 = Object.freeze([
-  "-p", "--output-format", "stream-json", "--verbose", "--tools", "",
+  "-p", "--model", "sonnet", "--output-format", "stream-json", "--verbose", "--tools", "",
   "--strict-mcp-config", "--setting-sources", "", "--no-session-persistence",
   "--disable-slash-commands",
 ] as const);
@@ -90,7 +94,9 @@ export function createOwnerTrustedLocalClaudeExecV1(dependencies: Readonly<{ spa
       child = launch(input.executablePath, OWNER_TRUSTED_LOCAL_CLAUDE_ARGS_V1, {
         cwd: input.workingDirectory, detached: true, shell: false, windowsHide: true,
         stdio: ["pipe", "pipe", "pipe"], env: Object.freeze({ HOME: process.env.HOME ?? "", PATH: SYSTEM_PATH,
-          LANG: process.env.LANG ?? "en_US.UTF-8", TMPDIR: process.env.TMPDIR ?? "/tmp" }),
+          LANG: process.env.LANG ?? "en_US.UTF-8", TMPDIR: process.env.TMPDIR ?? "/tmp",
+          // The CLI finds the owner's sign-in in the login Keychain by account name.
+          USER: localUser, LOGNAME: localUser }),
       });
     } catch { return failed("failed", "spawn_refused"); }
     if (!child.stdin || !child.stdout || !child.stderr) {

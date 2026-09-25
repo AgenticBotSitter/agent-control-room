@@ -58,3 +58,34 @@ W6 is not done until `mac:tasks` starts in rehearsal and `/api/v1/local-workers`
 4. `mac:bootstrap-owner`
 5. Write or check the task-provider file
 6. Start `mac:tasks`
+
+## Real agent adapters (probe, 2026-09-24)
+
+`node --import tsx scripts/mac-local/probe-adapters.ts <protected root> [codex|claude-code|hermes]` runs each pinned CLI through its real adapter, with no database. It runs three scenarios:
+
+- a one-word task
+- a cancel after 1 second
+- a 1-second deadline
+
+After each cancel or deadline, it checks that nothing survives in the agent's process group.
+
+| Agent | Complete | Cancel | Deadline | Leftover processes |
+|---|---|---|---|---|
+| Codex | PASS | PASS | PASS | none |
+| Claude | PASS (after fixes) | PASS | PASS | none |
+| Hermes | **blocked by provider** | PASS | PASS | none |
+
+Claude fixes on this branch. Without them, every real Claude task would have failed:
+
+1. **Not logged in.** The adapter's environment had no `USER`, and the CLI finds the owner's sign-in in the login Keychain by account name. `USER` and `LOGNAME` now come from the OS account.
+2. **Unknown line types.** The current CLI emits `rate_limit_event` on every run, and `system`/`thinking_tokens` whenever Sonnet thinks. Both are now accepted as content-free `informational` frames, with the same session and ordering rules as other lines. Other unknown types are still refused.
+3. **Normal finish read as failure.** The current CLI reports `terminal_reason: "completed"` on success, and the decoder treated any terminal reason as a failure. `completed` now succeeds, and every other reason still fails.
+4. **Opus by default.** The CLI default model is Opus, which would spend the owner's limited Opus allowance on every task. The worker now pins `--model sonnet` until W8 adds a per-task choice.
+
+**Hermes (owner or Codex decision, not code):** the `cr` profile has no working model right now.
+
+- Its default, `stealth/ox-alpha` on OpenRouter, was retired (404).
+- The OpenRouter account has no credits (402).
+- The free Nous model fails to sign in under `cr`, and the MiniMax fallback is rate-limited.
+
+Pick one working provider and model for Marvin, set it in the `cr` profile and in the Hermes enablement, then re-run the probe with `PROBE_HERMES_PROVIDER` / `PROBE_HERMES_MODEL`.

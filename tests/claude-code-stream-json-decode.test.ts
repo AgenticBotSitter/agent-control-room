@@ -859,3 +859,40 @@ test("a successful publication returns shared evidence bound to the published by
     bridgeInput({ terminalFrameRawLine: tampered })), /.*/);
   assert.deepEqual(calls, { db: 0, storage: 0, reservations: 0 });
 });
+
+const rateLimitLine = (sessionId = SESSION) =>
+  JSON.stringify({ type: "rate_limit_event", session_id: sessionId, uuid: "00000000-0000-4000-8000-00000000ab03", rate_limit_info: {} });
+
+test("accepts the current CLI's rate-limit status line only inside the same session, between init and result", () => {
+  const ok = decodeClaudeCodeStreamJsonLinesV1([initLine(), assistantLine(), rateLimitLine(), resultLine()]);
+  assert.deepEqual(ok.map(frame => frame.kind), ["init", "assistant_turn", "informational", "result"]);
+  const reason = (lines: string[]) => decodeClaudeCodeStreamJsonLinesV1(lines)
+    .find(frame => frame.kind === "decode_error") as { reasonCode?: string } | undefined;
+  assert.equal(reason([rateLimitLine(), initLine(), resultLine()])?.reasonCode, "init_frame_not_first");
+  assert.equal(reason([initLine(), resultLine(), rateLimitLine()])?.reasonCode, "frame_after_terminal");
+  assert.equal(reason([initLine(), rateLimitLine(OTHER_SESSION), resultLine()])?.reasonCode, "session_id_mismatch");
+  assert.equal(reason([initLine(), JSON.stringify({ type: "tool_progress", session_id: SESSION }), resultLine()])?.reasonCode, "unknown_frame_type");
+});
+
+test("a normal finish reported as terminal_reason completed succeeds; any other reason fails", () => {
+  const outcome = (reason: string) => (decodeClaudeCodeStreamJsonLinesV1([initLine(), resultLine({ terminal_reason: reason })])
+    .find(frame => frame.kind === "result") as ClaudeCodeResultFrameV1).outcome;
+  assert.equal(outcome("completed"), "succeeded");
+  for (const reason of ["max_turns", "error", "cancelled", "something_new"]) assert.equal(outcome(reason), "failed");
+  const errored = decodeClaudeCodeStreamJsonLinesV1([initLine(), resultLine({ terminal_reason: "completed", is_error: true })])
+    .find(frame => frame.kind === "result") as ClaudeCodeResultFrameV1;
+  assert.equal(errored.outcome, "failed");
+});
+
+test("accepts thinking progress lines after init and still rejects other system subtypes", () => {
+  const thinking = (sessionId = SESSION) => JSON.stringify({ type: "system", subtype: "thinking_tokens", session_id: sessionId,
+    uuid: "00000000-0000-4000-8000-00000000ab04", estimated_tokens: 10, estimated_tokens_delta: 10 });
+  const frames = decodeClaudeCodeStreamJsonLinesV1([initLine(), thinking(), assistantLine(), resultLine()]);
+  assert.deepEqual(frames.map(frame => frame.kind), ["init", "informational", "assistant_turn", "result"]);
+  const reason = (lines: string[]) => (decodeClaudeCodeStreamJsonLinesV1(lines)
+    .find(frame => frame.kind === "decode_error") as { reasonCode?: string } | undefined)?.reasonCode;
+  assert.equal(reason([thinking(), initLine(), resultLine()]), "init_frame_not_first");
+  assert.equal(reason([initLine(), thinking(OTHER_SESSION), resultLine()]), "session_id_mismatch");
+  assert.equal(reason([initLine(), JSON.stringify({ type: "system", subtype: "compact_boundary", session_id: SESSION }), resultLine()]),
+    "unsupported_system_subtype");
+});
