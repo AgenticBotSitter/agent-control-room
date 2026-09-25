@@ -16,15 +16,16 @@ source for a bounded review. This is optional: Codex can continue building
 locally without it.
 
 The owner authorized sanitized-source reviews on 2026-09-24. The dedicated
-`cr` profile was verified as free of the unrelated default-profile instructions,
-but it currently has no usable OpenCode Go credential for the selected
-`space-bunny-free` model. Codex did not fall back to another model or reuse the
-unrelated default profile.
+`cr` profile has no separate OpenCode Go entry, so Hermes correctly reads the
+existing main Hermes credential pool as its read-only fallback. On that date,
+the profile reported OpenCode Go as logged in and a minimal Marvin connection
+check succeeded with `space-bunny-free`.
 
-When ready, configure the existing OpenCode Go credential for the existing
-`cr` profile through Hermes's normal credential setup. Do not put a key in this
-repository or paste it into chat. Once that profile reports the provider as
-available, Marvin may perform the already-authorized bounded reviews.
+**No additional key, key copy, or chat message is needed.** Do not put a key
+in this repository or paste it into chat. If the existing Hermes sign-in is
+ever removed or expires, restore it through Hermes's normal sign-in flow; the
+`cr` profile should continue to inherit it unless the owner deliberately adds
+a profile-specific credential.
 
 For future owners, reply in this chat with the following sentence if you want
 those reviews:
