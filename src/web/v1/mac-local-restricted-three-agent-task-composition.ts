@@ -1,9 +1,9 @@
-import { createMacLocalHermesOwnerRunnerQueueDeliveryV1 } from "./mac-local-hermes-owner-runner";
+import { createHermes021LocalSubprocessQueueExecutorV1 } from "./hermes-021-local-subprocess-executor";
 import { createMacLocalRestrictedTaskApplicationV1 } from "./mac-local-restricted-task-composition";
 import { createMacLocalTaskApplicationV1 } from "./mac-local-task-application";
 import type { TaskCoordinatorConfiguration } from "./task-coordinator-lifecycle";
 
-type HermesDeliveryInput = Parameters<typeof createMacLocalHermesOwnerRunnerQueueDeliveryV1>[0];
+type HermesDeliveryInput = Parameters<typeof createHermes021LocalSubprocessQueueExecutorV1>[0];
 
 /**
  * Combines the three owner-trusted Mac worker routes into one existing,
@@ -22,11 +22,16 @@ export async function createMacLocalRestrictedThreeAgentTaskApplicationV1(
     || typeof input.codex.deliver !== "function")
     throw new Error("mac_local_restricted_three_agent_task_composition_invalid");
   const { hermes, claude, codex, ...restricted } = input;
+  const legacyHermes = hermes as Record<string, unknown>;
   if (hermes.tenantId !== restricted.web?.tenantId || hermes.tenantId !== restricted.coordinator?.scope?.tenantId
     || restricted.coordinator?.hermes021Local !== undefined || restricted.coordinator?.claudeCodeLocal !== undefined
-    || restricted.coordinator?.codexOwnerTrustedLocal !== undefined)
+    || restricted.coordinator?.codexOwnerTrustedLocal !== undefined
+    // The Mac path owns a fixed local subprocess configuration. Do not revive
+    // the older admission/runner handoff here: it adds a second custody path
+    // and prevents the installed provider from reconstructing after restart.
+    || "runner" in legacyHermes || "admission" in legacyHermes)
     throw new Error("mac_local_restricted_three_agent_task_composition_invalid");
-  const hermesDelivery = createMacLocalHermesOwnerRunnerQueueDeliveryV1(hermes);
+  const hermesDelivery = createHermes021LocalSubprocessQueueExecutorV1(hermes);
   return createMacLocalRestrictedTaskApplicationV1(restricted, {
     createTaskApplication: value => createMacLocalTaskApplicationV1({ ...value,
       coordinator: Object.freeze({ ...value.coordinator, hermes021Local: hermesDelivery,
