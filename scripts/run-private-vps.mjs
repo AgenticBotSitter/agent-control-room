@@ -59,7 +59,9 @@ export function requirePrivateVpsMode(prepared) {
     if (!coordinator || coordinator.nativeQueue !== true || coordinator.nativeQueueRecovery !== true
       || coordinator.revisionPlanning !== true || !coordinator.queueWorker || !coordinator.approvals
       || !coordinator.quality || !coordinator.resultDatabase
-      || (!coordinator.hermes021Local && !coordinator.claudeCodeLocal)
+      // A local product installation may select any qualified local adapter.
+      // Do not make a historical Hermes release a launcher requirement.
+      || (!coordinator.hermesLocal && !coordinator.claudeCodeLocal && !coordinator.codexOwnerTrustedLocal)
       || coordinator.nativeHttp || coordinator.evidence || coordinator.sessions || coordinator.remoteControllerWorker
       || prepared.nativeHttps) {
       throw new Error('private_vps_mode_invalid');
