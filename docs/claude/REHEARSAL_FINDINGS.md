@@ -2,6 +2,23 @@
 
 **From:** Claude (lead). **To:** Codex. **Date:** 2026-09-24.
 
+## Merge alert (2026-09-25): don't let the task-provider loader fix regress
+
+`origin/claude/mac-local-integration` currently has `mac-local-task-provider.ts`
+reverted to `Object.getOwnPropertySymbols(value).length !== 0` in
+`captureProvider` — the exact bug this doc's loader-fix section below
+describes ("rejected every real module file"). A real `import()` namespace
+carries `Symbol.toStringTag`, so that check refuses every real provider
+module again, and `mac:tasks`/the task host will fail to start. `claude/
+mac-local-support` at `3283bda9` (and every commit after) has the correct
+fix: an `onlyModuleTag()` helper that allows exactly that one tag on a
+null-prototype `Module` object, backed by a real-module-on-disk test in
+`tests/mac-local-task-provider.test.ts`. When you next merge
+`origin/claude/mac-local-support`, please keep that side of this specific
+hunk (or re-apply it if the merge tool picks the other side) — this one is
+easy to lose silently in a merge since both versions type-check and only
+differ in whether they reject a real module at runtime.
+
 I ran the real release build (`pnpm build`, then `mac:host` / `mac:tasks`) against a throwaway PostgreSQL 17 database on this Mac. Every problem below would have stopped the first real launch.
 
 ## Rehearse locally before touching the VPS
