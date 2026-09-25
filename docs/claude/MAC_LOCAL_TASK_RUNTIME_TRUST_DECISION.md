@@ -494,6 +494,104 @@ refusal. Don't widen what it accepts beyond those three shapes. Opus review.
 - the review and the live step C: Opus-class, high effort;
 - package 6: Terra medium, with an Opus review of the diff.
 
+## 12. First-owner setup under exact roles (answers PACKAGE5_FIRST_OWNER_DECISION_NEEDED.md, 2026-09-25)
+
+**Decision: first-owner setup is a one-time, VPS-local step run as `postgres` over the Unix socket.
+The Mac never holds an installer credential, and `mac:up` never writes owner rows.**
+
+This follows the existing precedent. `scripts/bootstrap-private-vps-owner.mjs` is an explicit,
+one-time production write command with a separately approved connection and no automatic retry.
+It also matches where privileged database work already runs after W1: migrations are applied
+VPS-local as `postgres` (SECURE_DB_ROUTE "Migrations"), never from the Mac. Rejected options:
+- the migrator on every `mac:up`, which makes an installer credential routine;
+- granting the web role `INSERT` on `tenants`;
+- seeding rows in tests.
+
+**A. What moves into the one-time setup.** Everything the narrow roles cannot and should not do
+at first install, in one transaction:
+- `tenants`, `workspaces`, the owner identity and its role grant (from
+  `bootstrapMacLocalOwnerV1`);
+- the three `adapter_registry` rows;
+- the three worker `control_nodes` rows and their unspendable `control_node_keys` rows (8.B).
+  The key pair is generated in memory and the private key is dropped, on the VPS;
+- `CompletionGateStoreV1.provisionTenant`;
+- anything else the package 5 rehearsal shows a narrow role is refused at first start. List
+  each addition in the rehearsal report. Don't widen a narrow role to avoid adding it here.
+
+**B. Inputs: a non-secret manifest from the Mac.**
+- New command: `mac:first-owner-manifest <protected-root> <out-file>`. It writes a
+  schema-versioned JSON (`control-room.mac-local-first-owner-manifest/v1`) with only:
+  - tenant, workspace, identity and grant ids;
+  - display names;
+  - the owner subject digest;
+  - adapter ids and the three worker node ids;
+  - `createdAt`.
+- `assertNoSecretMaterial` is applied, the keys are exact, and nothing else goes in: no
+  password, host, key or path.
+- The owner hands the file to the VPS operator (for example through R2). It's safe to share.
+
+**C. The VPS command.** `scripts/mac-local/first-owner-vps.mjs --manifest <file>`, run from the
+Mac-local integration branch worktree on the VPS, as `runuser -u postgres` over the socket:
+- one bounded transaction;
+- **check and refuse** on any existing row that differs (tenant, workspace, identity, adapter,
+  node, key). Matching rows are kept. Nothing is ever overwritten;
+- no automatic retry. On uncertainty it prints the same "do not automatically retry" message as
+  the VPS precedent;
+- output: a receipt with row counts, created or kept, and the three **public** key
+  fingerprints. They are public, not secret.
+
+**D. The Mac's key pin (updates 10.4b).**
+- New one-time command: `mac:pin-node-keys <protected-root>`, run by Codex right after C.
+- It reads the three key rows through the coordinator login (read-only) and compares them with
+  the fingerprints in C's receipt, supplied as an argument or file. Only if all three match does
+  it write `<protected>/config/node-keys.json`.
+- It is never run automatically. `mac:up` refuses when the pin is missing, as 10.4b already
+  requires.
+
+**E. Repeat starts (`mac:up`).** Order:
+1. `mac:check-database`: the preflights and denied-write probes. These already need the owner
+   binding, so on a fresh install they fail until C has run. That is correct.
+2. A read-only binding verification through the narrow roles:
+   - tenant, workspace, owner identity and grant, adapters, nodes and keys all exist;
+   - they match the protected configuration;
+   - the keys match the pin.
+3. The website or task host.
+
+- `bootstrap-owner.ts` becomes verify-only, or is removed from `mac:up`. No write path remains in
+  `mac:up`.
+- A missing binding prints: "first-owner setup has not been run; see OWNER_GUIDE_MAC.md". It
+  does not attempt setup.
+
+**F. Installer secrets leave the Mac.**
+- After W1 and package 5 go live, the Mac's protected root keeps only the four local-login
+  passwords.
+- The migrator, application and scheduler passwords were generated on the Mac for the old SSH
+  provisioning flow. They aren't needed there: VPS-local work uses `postgres` peer auth.
+- In the 11.C live step:
+  - the VPS operator rotates those three passwords VPS-side (nothing on the VPS runs the
+    Control Room app, per the W1 inventory);
+  - Codex then removes the Mac copies.
+- This is not a deletion of anything in use. Record it in `MAC_LOCAL_EVIDENCE.md`.
+
+**F2. Rehearsal (extends 11.B).** On a fresh disposable PG17:
+1. roles;
+2. `mac:first-owner-manifest`;
+3. C, run locally as the cluster superuser, standing in for the VPS `postgres` peer;
+4. `mac:pin-node-keys`;
+5. `mac:up` passes all preflights;
+6. three ready workers;
+7. one task per worker reaches pending review exactly once.
+
+Negative checks:
+- running C twice keeps every row;
+- C with one altered manifest id refuses;
+- `mac:up` without C refuses with the setup message;
+- a tampered key row fails the pin.
+
+**Review note.** Codex's run of `claude-review.mjs` did not produce a verdict: it returned
+"Not logged in". Package 5 therefore has **no** review verdict yet. The required Opus review will
+be run by Claude in a separate session that didn't write the code, and recorded with its log.
+
 ## 9. Review and done
 
 - Split the work into packages of no more than about 800 lines, in this order:
