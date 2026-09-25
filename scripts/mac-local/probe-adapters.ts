@@ -14,8 +14,9 @@ import { createOwnerTrustedLocalHermesExecV1 } from "../../src/harness/hermes-lo
 const [root, ...only] = process.argv.slice(2);
 if (!root) { console.error("usage: probe-adapters.ts ABS_PROTECTED_ROOT [kinds...]"); process.exit(2); }
 const configuration = await loadMacLocalProtectedConfigurationFromRootV1(root);
-const hermesProfile = { profile: process.env.PROBE_HERMES_PROFILE ?? "cr", model: process.env.PROBE_HERMES_MODEL ?? "stealth/ox-alpha",
-  provider: process.env.PROBE_HERMES_PROVIDER ?? "openrouter" };
+// Owner-selected model for Marvin (Hermes): space-bunny-free on OpenCode Go.
+const hermesProfile = { profile: process.env.PROBE_HERMES_PROFILE ?? "cr", model: process.env.PROBE_HERMES_MODEL ?? "space-bunny-free",
+  provider: process.env.PROBE_HERMES_PROVIDER ?? "opencode-go" };
 
 const QUICK = "Reply with exactly the single word: ok";
 const LONG = "Write the numbers from 1 to 3000, one per line, each followed by a short original sentence. Do not stop early.";

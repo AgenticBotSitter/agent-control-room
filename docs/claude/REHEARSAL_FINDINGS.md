@@ -73,7 +73,7 @@ After each cancel or deadline, it checks that nothing survives in the agent's pr
 |---|---|---|---|---|
 | Codex | PASS | PASS | PASS | none |
 | Claude | PASS (after fixes) | PASS | PASS | none |
-| Hermes | **blocked by provider** | PASS | PASS | none |
+| Hermes | PASS (`space-bunny-free` on `opencode-go`) | PASS | PASS | none |
 
 Claude fixes on this branch. Without them, every real Claude task would have failed:
 
@@ -82,10 +82,7 @@ Claude fixes on this branch. Without them, every real Claude task would have fai
 3. **Normal finish read as failure.** The current CLI reports `terminal_reason: "completed"` on success, and the decoder treated any terminal reason as a failure. `completed` now succeeds, and every other reason still fails.
 4. **Opus by default.** The CLI default model is Opus, which would spend the owner's limited Opus allowance on every task. The worker now pins `--model sonnet` until W8 adds a per-task choice.
 
-**Hermes (owner or Codex decision, not code):** the `cr` profile has no working model right now.
+**Hermes model (owner decision, 2026-09-24):** Marvin uses **`space-bunny-free` on provider `opencode-go`**. The `cr` profile's old default (`stealth/ox-alpha` on OpenRouter) is retired, and that OpenRouter account has no credits.
 
-- Its default, `stealth/ox-alpha` on OpenRouter, was retired (404).
-- The OpenRouter account has no credits (402).
-- The free Nous model fails to sign in under `cr`, and the MiniMax fallback is rate-limited.
-
-Pick one working provider and model for Marvin, set it in the `cr` profile and in the Hermes enablement, then re-run the probe with `PROBE_HERMES_PROVIDER` / `PROBE_HERMES_MODEL`.
+- Set the Hermes worker's model and provider to these values in the protected configuration.
+- Update the `cr` profile default to match, so manual runs agree with the worker.
