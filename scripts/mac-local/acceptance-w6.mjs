@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // W6 acceptance against the real running Mac-local site. Exit 0 only if every check passes.
 // Usage: node scripts/mac-local/acceptance-w6.mjs --protected-root ABS_PATH [--origin URL] [--restart]
-import { execFileSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
@@ -15,13 +15,33 @@ if (!protectedRoot || !isAbsolute(protectedRoot)) {
   console.error("usage: --protected-root ABSOLUTE_PATH (or CONTROL_ROOM_PROTECTED_ROOT)");
   process.exit(2);
 }
-const ownerCode = readFileSync(join(protectedRoot, "config/owner-sign-in.txt"), "utf8").trim();
+let ownerCode;
+try { ownerCode = readFileSync(join(protectedRoot, "config/owner-sign-in.txt"), "utf8").trim(); }
+catch { console.error("protected owner sign-in code is unavailable"); process.exit(2); }
 
 const results = [];
 const check = (name, ok, detail = "") => { results.push({ name, ok }); console.log(`${ok ? "PASS" : "FAIL"} ${name}${detail ? ` — ${detail}` : ""}`); return ok; };
-const call = (path, init = {}) => fetch(new URL(path, origin), { redirect: "manual", ...init });
+const call = (path, init = {}) => fetch(new URL(path, origin), {
+  redirect: "manual", signal: AbortSignal.timeout(5_000), ...init,
+});
 const post = (path, body, extra = {}) => call(path, { method: "POST",
   headers: { "content-type": "application/json", origin, ...extra }, body: JSON.stringify(body) });
+
+async function runBoundedPnpm(script) {
+  const child = spawn("pnpm", [script], { detached: true, stdio: "ignore" });
+  let timer;
+  const outcome = await new Promise((resolve, reject) => {
+    child.once("error", reject);
+    child.once("close", (code, signal) => resolve({ code, signal, timedOut: false }));
+    timer = setTimeout(() => {
+      try { process.kill(-child.pid, "SIGKILL"); } catch {}
+      resolve({ code: null, signal: "SIGKILL", timedOut: true });
+    }, 90_000);
+  });
+  clearTimeout(timer);
+  if (outcome.timedOut) throw new Error("timeout");
+  if (outcome.code !== 0) throw new Error(outcome.signal ? `signal ${outcome.signal}` : `exit ${outcome.code}`);
+}
 
 async function signIn() {
   const res = await post("/api/v1/local-owner-session", { ownerCode });
@@ -41,20 +61,23 @@ const reachable = await waitForSite(5);
 if (!check("site reachable on loopback", reachable, origin)) process.exit(1);
 
 const wrong = await post("/api/v1/local-owner-session", { ownerCode: `${ownerCode}x` });
-check("wrong owner code refused", wrong.status >= 400 && !wrong.headers.get("set-cookie"), `status ${wrong.status}`);
+check("wrong owner code refused", wrong.status === 401 && !wrong.headers.get("set-cookie"), `status ${wrong.status}`);
 
 const anon = await call("/api/v1/projects");
 check("projects refused without session", anon.status === 401 || anon.status === 403, `status ${anon.status}`);
 
 const forged = await post("/api/v1/local-owner-session", { ownerCode }, { origin: "http://evil.example" });
-check("sign-in refused from foreign origin", forged.status >= 400 && !forged.headers.get("set-cookie"), `status ${forged.status}`);
+check("sign-in refused from foreign origin", forged.status === 403 && !forged.headers.get("set-cookie"), `status ${forged.status}`);
 
 let session = await signIn();
 check("owner sign-in issues session", session.status === 201 && session.cookie.startsWith("control_room_local_owner="), `status ${session.status}`);
 
 const workers = await call("/api/v1/local-workers", { headers: { cookie: session.cookie } });
 let workerSummary = `status ${workers.status}`;
-if (workers.ok) workerSummary = JSON.stringify((await workers.json()).workers ?? []).slice(0, 400);
+if (workers.ok) {
+  const body = await workers.json();
+  workerSummary = `worker count ${Array.isArray(body?.workers) ? body.workers.length : "unknown"}`;
+}
 check("worker readiness readable", workers.ok, workerSummary);
 
 const key = randomUUID();
@@ -74,10 +97,13 @@ check("project readable", (await readBack(session.cookie)).status === 200);
 
 if (restart) {
   try {
-    execFileSync("pnpm", ["mac:down"], { stdio: "inherit" });
-    execFileSync("pnpm", ["mac:up"], { stdio: "inherit" });
+    await runBoundedPnpm("mac:down");
+    await runBoundedPnpm("mac:up");
     check("mac:down then mac:up ran", true);
-  } catch (error) { check("mac:down then mac:up ran", false, String(error.message).split("\n")[0]); }
+  } catch (error) {
+    const detail = error?.message === "timeout" ? "timeout" : "command failed";
+    check("mac:down then mac:up ran", false, detail);
+  }
   check("site back within 90 s", await waitForSite(90));
   session = await signIn();
   check("sign-in after restart", session.status === 201, `status ${session.status}`);

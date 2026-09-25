@@ -6,7 +6,6 @@ import test from "node:test";
 import { MAC_LOCAL_DATABASE_ROLES_V1 } from "../src/web/v1/mac-local-database-roles";
 import { checkMacLocalDatabaseV1 } from "../scripts/mac-local/check-database";
 
-const digest = "a".repeat(64);
 const connection = (username: string) => ({ host: "127.0.0.1", port: 5432, database: "control_room", username,
   password: `${username}-test-password`, majorVersion: 17 as const });
 const roles = Object.freeze({ schema: MAC_LOCAL_DATABASE_ROLES_V1, web: connection("control_room_web"),
@@ -25,13 +24,11 @@ async function fixture() {
 function runtime(lines: string[], options: { roleOk?: boolean; fail?: boolean } = {}) {
   return {
     loadRoles: async () => roles,
-    readFile: async () => JSON.stringify({ entries: [{ file: "db/migrations/1.sql", sha256: digest, order: 1 }] }),
     report: (line: string) => lines.push(line),
     openDatabase: () => ({
       client: { query: async (sql: string) => {
         if (options.fail) throw new Error("private detail");
         if (sql.includes("current_user")) return { rows: [{ role_ok: options.roleOk ?? true }] };
-        if (sql.includes("control_room_schema_migrations")) return { rows: [{ filename: "db/migrations/1.sql", digest: `sha256:${digest}`, ledger_order: 1 }] };
         return { rows: [] };
       } }, close: async () => {}, isAvailable: () => true,
     }),
@@ -60,7 +57,6 @@ test("continues checking other roles after one read-only connection refusal", as
       client: { query: async (sql: string) => {
         if (configuration.username === "control_room_results") throw new Error("private detail");
         if (sql.includes("current_user")) return { rows: [{ role_ok: true }] };
-        if (sql.includes("control_room_schema_migrations")) return { rows: [{ filename: "db/migrations/1.sql", digest: `sha256:${digest}`, ledger_order: 1 }] };
         return { rows: [] };
       } }, close: async () => {}, isAvailable: () => true,
     } as never;
