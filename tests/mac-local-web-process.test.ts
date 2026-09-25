@@ -46,9 +46,21 @@ test("the real Mac-local wrapper signs in locally and reaches the existing proje
   const proposed = await app.handle(request(`/api/v1/projects/${encodeURIComponent(projectId)}/tasks`, { method: "POST", headers: {
     cookie: cookie!, origin, "content-type": "application/json", "idempotency-key": "mac-local-task-proposal-001" },
   body: JSON.stringify({ title: "Local text task", instructions: "Return a harmless short answer." }) }), () => new Response("unused"));
-  assert.equal(proposed.status, 201, await proposed.text());
+  assert.equal(proposed.status, 201);
+  const proposedReceipt = await proposed.json() as { receipt: { jobId: string } };
   const shell = await app.handle(request("/projects", { headers: { cookie: cookie! } }), () => new Response("real shell"));
   assert.equal(shell.status, 200); assert.equal(await shell.text(), "real shell");
+  const projectShell = await app.handle(request(`/projects/${encodeURIComponent(projectId)}`, { headers: { cookie: cookie! } }),
+    () => new Response("real project shell"));
+  assert.equal(projectShell.status, 200); assert.equal(await projectShell.text(), "real project shell");
+  const taskShell = await app.handle(request(`/projects/${encodeURIComponent(projectId)}/tasks`, { headers: { cookie: cookie! } }),
+    () => new Response("real task shell"));
+  assert.equal(taskShell.status, 200); assert.equal(await taskShell.text(), "real task shell");
+  const detailShell = await app.handle(request(`/projects/${encodeURIComponent(projectId)}/tasks/${encodeURIComponent(proposedReceipt.receipt.jobId)}`,
+    { headers: { cookie: cookie! } }), () => new Response("real task detail shell"));
+  assert.equal(detailShell.status, 200); assert.equal(await detailShell.text(), "real task detail shell");
+  const fakePreview = await app.handle(request("/local-preview", { headers: { cookie: cookie! } }), () => new Response("must not render"));
+  assert.equal(fakePreview.status, 404);
   await app.close();
 });
 

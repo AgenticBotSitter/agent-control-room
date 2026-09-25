@@ -2,6 +2,19 @@
 
 Codex appends one short entry per work package (see `CODEX_MAC_BUILD_EXECUTION.md`).
 
+- 2026-09-24 — W5 real local product-route foundation: after loopback owner
+  sign-in, the Mac-local server now reaches the installed project catalogue,
+  one authorized project, its task list, and one authorized task-detail page.
+  It checks the existing project/task permissions before rendering, rejects
+  malformed or cross-project route identifiers, and redirects the local home
+  route to the real project catalogue. The old repository-fake `/local-preview`
+  route remains unavailable in this host mode. Four focused Mac-local web
+  checks, TypeScript, and the whitespace check pass. This is still source-only:
+  it does not start a listener, use the VPS database, or run an agent. Next:
+  make the existing installed private-app renderer and assets available to this
+  already-verified route boundary, then wire the shared task composition into
+  the protected startup path.
+
 - 2026-09-24 — W4 local Codex queue-to-runner bridge: the verified queue
   locator now reaches only a freshly reconstructed Codex delivery and the
   protected host-owned fixed CLI/result bridge. It refuses unexpected model

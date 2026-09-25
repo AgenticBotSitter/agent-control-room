@@ -70,6 +70,51 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
   });
   let closed: Promise<void> | undefined;
 
+  /** The Mac-local host deliberately exposes only the working project/task
+   * journey.  The broader private product has screens that depend on optional
+   * hosted services; sending an owner to one of those screens would make an
+   * unavailable service look like a live local capability. */
+  async function renderProductRoute(identity: ReturnType<typeof sessions.verify>, url: URL,
+    render: () => Promise<Response> | Response): Promise<Response> {
+    const routeId = (value: string) => {
+      if (!/^[A-Za-z0-9%:_-]{1,600}$/.test(value)) throw new WebAccessError("not_found");
+      let decoded: string;
+      try { decoded = decodeURIComponent(value); } catch { throw new WebAccessError("not_found"); }
+      if (!/^[A-Za-z0-9:_-]{1,200}$/.test(decoded)) throw new WebAccessError("not_found");
+      return decoded;
+    };
+    if (url.pathname === "/") {
+      if (url.search) throw new WebAccessError("invalid_request");
+      await projects.authorizeCatalog(identity);
+      return Response.redirect(new URL("/projects", options.origin), 303);
+    }
+    if (url.pathname === "/projects") {
+      if (url.search) throw new WebAccessError("invalid_request");
+      await projects.authorizeCatalog(identity);
+      return render();
+    }
+    const taskDetail = /^\/projects\/([^/]+)\/tasks\/([^/]+)$/.exec(url.pathname);
+    if (taskDetail) {
+      if (url.search) throw new WebAccessError("invalid_request");
+      await tasks.detail(identity, routeId(taskDetail[1]), routeId(taskDetail[2]));
+      return render();
+    }
+    const taskList = /^\/projects\/([^/]+)\/tasks$/.exec(url.pathname);
+    if (taskList) {
+      const values = [...url.searchParams.entries()];
+      if (values.some(([name]) => name !== "after") || values.length > 1) throw new WebAccessError("invalid_request");
+      await tasks.list(identity, routeId(taskList[1]), url.searchParams.get("after") ?? undefined);
+      return render();
+    }
+    const project = /^\/projects\/([^/]+)$/.exec(url.pathname);
+    if (project) {
+      if (url.search) throw new WebAccessError("invalid_request");
+      await projects.getView(identity, routeId(project[1]));
+      return render();
+    }
+    throw new WebAccessError("not_found");
+  }
+
   async function handle(request: Request, render: () => Promise<Response> | Response): Promise<Response> {
     try {
       const url = new URL(request.url);
@@ -93,14 +138,10 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
       if (url.pathname === "/api/v1/projects") return projectHttp(request);
       if (/^\/api\/v1\/projects\/[^/]+\/tasks(?:\/|$)/.test(url.pathname)) return taskHttp(request);
       const identity = sessions.verify(request, clock());
-      if (["/", "/projects"].includes(url.pathname)) {
-        if (request.method !== "GET" || url.search) throw new WebAccessError("invalid_request");
-        await projects.authorizeCatalog(identity);
-        const response = await render();
-        for (const [name, value] of Object.entries(privateResponseHeaders)) response.headers.set(name, value);
-        return response;
-      }
-      throw new WebAccessError("not_found");
+      if (request.method !== "GET") throw new WebAccessError("invalid_request");
+      const response = await renderProductRoute(identity, url, render);
+      for (const [name, value] of Object.entries(privateResponseHeaders)) response.headers.set(name, value);
+      return response;
     } catch (error) { return webFailure(error); }
   }
 
