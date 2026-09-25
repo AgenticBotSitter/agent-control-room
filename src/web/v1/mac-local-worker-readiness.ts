@@ -3,7 +3,7 @@ import { captureOwnerTrustedLocalEnablementV1, type OwnerTrustedLocalEnablementV
 export type MacLocalWorkerReadinessV1 = Readonly<{
   /** Read-only display state. It neither grants delivery nor starts a worker. */
   read(): readonly Readonly<{
-    kind: "codex" | "hermes-021" | "claude-code";
+    kind: "codex" | "hermes" | "hermes-021" | "claude-code";
     state: "ready" | "unavailable";
     proof: "not_proven" | "proven";
   }>[];

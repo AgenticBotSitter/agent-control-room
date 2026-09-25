@@ -5,7 +5,10 @@ import { sha256Digest } from "../../security/canonical-digest";
 export const OWNER_TRUSTED_LOCAL_ENABLEMENT_V1 =
   "control-room.owner-trusted-local-enablement/v1" as const;
 
-export type OwnerTrustedLocalWorkerKindV1 = "codex" | "hermes-021" | "claude-code";
+/** `hermes` is the update-aware product worker. `hermes-021` remains only so
+ * historical source evidence can still be read; it is not the Mac product's
+ * selected worker identity. */
+export type OwnerTrustedLocalWorkerKindV1 = "codex" | "hermes" | "hermes-021" | "claude-code";
 
 export type OwnerTrustedLocalEnablementV1 = Readonly<{
   schema: typeof OWNER_TRUSTED_LOCAL_ENABLEMENT_V1;
@@ -49,7 +52,7 @@ function captureWorker(value: unknown): Readonly<{
   const item = exact(value, ["workerId", "kind", "executablePath", "recordedVersion"]);
   const id = item.workerId, kind = item.kind, executablePath = item.executablePath, recordedVersion = item.recordedVersion;
   if (typeof id !== "string" || !workerId.test(id)
-    || (kind !== "codex" && kind !== "hermes-021" && kind !== "claude-code")
+    || (kind !== "codex" && kind !== "hermes" && kind !== "hermes-021" && kind !== "claude-code")
     || !safePath(executablePath) || typeof recordedVersion !== "string" || !safeVersion.test(recordedVersion)) refused();
   return Object.freeze({ workerId: id, kind, executablePath, recordedVersion }) as Readonly<{
     workerId: string; kind: OwnerTrustedLocalWorkerKindV1; executablePath: string; recordedVersion: string;

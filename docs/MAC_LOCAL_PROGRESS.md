@@ -2,6 +2,15 @@
 
 Codex appends one short entry per work package (see `CODEX_MAC_BUILD_EXECUTION.md`).
 
+- 2026-09-24 — version-independent local worker identity: the active Mac
+  product now identifies Marvin's worker as `hermes`, rather than embedding a
+  Hermes release number in its host configuration or readiness panel. Older
+  `hermes-021` source remains only for historical compatibility evidence. The
+  current update-aware qualification record controls whether the `hermes`
+  worker is available after an update. Fourteen focused local-host checks and
+  TypeScript pass. No worker, database, or website was started by this source
+  change.
+
 - 2026-09-24 — real local Hermes runner proof: after the stream parser was
   corrected for the current Hermes Agent's documented progress frames, Marvin
   completed one harmless text-only task through the new Control Room runner

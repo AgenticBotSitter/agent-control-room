@@ -12,7 +12,7 @@ const at = "2026-09-24T20:00:00.000Z";
 const enablement = Object.freeze({ schema: OWNER_TRUSTED_LOCAL_ENABLEMENT_V1, mode: "mac-local" as const, nodeId: "mac-1" as const,
   workers: [
     { workerId: "worker:codex", kind: "codex" as const, executablePath: "/Applications/Codex", recordedVersion: "codex test" },
-    { workerId: "worker:hermes", kind: "hermes-021" as const, executablePath: "/usr/local/bin/hermes", recordedVersion: "hermes test" },
+    { workerId: "worker:hermes", kind: "hermes" as const, executablePath: "/usr/local/bin/hermes", recordedVersion: "hermes test" },
     { workerId: "worker:claude", kind: "claude-code" as const, executablePath: "/usr/local/bin/claude", recordedVersion: "claude test" },
   ],
 });

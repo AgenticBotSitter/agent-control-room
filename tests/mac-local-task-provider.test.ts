@@ -27,18 +27,18 @@ test("refuses loose, substituted, or malformed local task providers", async () =
   await assert.rejects(loadMacLocalTaskProviderFromRootV1("/protected", { ...base,
     async lstat(path: string) { return path.endsWith("task-provider.mjs") ? file(0o644) : directory(); } }), /mac_local_task_provider_invalid/);
   await assert.rejects(loadMacLocalTaskProviderFromRootV1("/protected", { ...base,
-    async load() { return { schema: MAC_LOCAL_TASK_PROVIDER_V1, workerKinds: ["hermes-021"], createTaskApplication() {} }; } }), /mac_local_task_provider_invalid/);
+    async load() { return { schema: MAC_LOCAL_TASK_PROVIDER_V1, workerKinds: ["hermes"], createTaskApplication() {} }; } }), /mac_local_task_provider_invalid/);
 });
 
 test("three-agent task host requires all three freshly verified local worker kinds", () => {
   const read = () => [
-    { kind: "hermes-021", state: "ready", proof: "not_proven" },
+    { kind: "hermes", state: "ready", proof: "not_proven" },
     { kind: "claude-code", state: "ready", proof: "not_proven" },
     { kind: "codex", state: "ready", proof: "not_proven" },
   ] as const;
   requireMacLocalThreeAgentReadinessV1(provider, { read });
   assert.throws(() => requireMacLocalThreeAgentReadinessV1(provider, { read: () => [
-    { kind: "hermes-021", state: "ready", proof: "not_proven" },
+    { kind: "hermes", state: "ready", proof: "not_proven" },
     { kind: "claude-code", state: "unavailable", proof: "not_proven" },
     { kind: "codex", state: "ready", proof: "not_proven" },
   ] }), /mac_local_three_agent_readiness_required/);

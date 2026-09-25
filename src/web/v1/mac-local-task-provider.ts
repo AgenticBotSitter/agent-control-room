@@ -7,7 +7,8 @@ import type { MacLocalWorkerReadinessV1 } from "./mac-local-worker-readiness";
 import type { DatabaseClient } from "../../persistence/database";
 
 export const MAC_LOCAL_TASK_PROVIDER_V1 = "control-room.mac-local-task-provider/v1" as const;
-export const MAC_LOCAL_THREE_AGENT_KINDS_V1 = Object.freeze(["hermes-021", "claude-code", "codex"] as const);
+/** Product worker identities are harness names, not an upstream release. */
+export const MAC_LOCAL_THREE_AGENT_KINDS_V1 = Object.freeze(["hermes", "claude-code", "codex"] as const);
 type MacLocalWorkerKindV1 = typeof MAC_LOCAL_THREE_AGENT_KINDS_V1[number];
 
 type OpenedDatabase = Readonly<{ client: DatabaseClient; close(): Promise<void> }>;

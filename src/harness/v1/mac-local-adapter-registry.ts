@@ -13,7 +13,7 @@ const refused = (): never => { throw new Error("mac_local_adapter_registry_unava
 const instant = z.string().datetime().refine(value => new Date(value).toISOString() === value);
 
 const kindForHarness: Readonly<Record<Harness, OwnerTrustedLocalWorkerKindV1>> = Object.freeze({
-  codex: "codex", hermes: "hermes-021", claude: "claude-code",
+  codex: "codex", hermes: "hermes", claude: "claude-code",
 });
 
 /**
@@ -40,7 +40,7 @@ export type MacLocalAdapterRegistryV1 = Readonly<{
 
 function harnessFor(kind: OwnerTrustedLocalWorkerKindV1): Harness {
   if (kind === "codex") return "codex";
-  if (kind === "hermes-021") return "hermes";
+  if (kind === "hermes" || kind === "hermes-021") return "hermes";
   return "claude";
 }
 
