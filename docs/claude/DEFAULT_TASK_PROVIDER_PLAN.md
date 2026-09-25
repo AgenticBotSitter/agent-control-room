@@ -296,22 +296,118 @@ scratch:
   for mac-local specifically, which is exactly a "normative contract" change
   under AGENTS.md's Codex-owned category (adapter registry entries define
   authority_mode/contract_version — architecture, not local process control).
-- **`connectorProfileDigest` semantics look self-consistent but were not
-  fully verified.** `nativeTaskTemplateSchema`'s `superRefine`
-  (`task-execution-planner.ts:59-73`) appears to require
-  `connectorProfileDigest === undefined` in the *template* for
-  `codexLocal`/`hermesLocal`/`claude` (with a separate, additional check at
-  line 67 requiring it to equal `CLAUDE_CODE_CONNECTOR_PROFILE_DIGEST_V1`
-  specifically for claude — these two conditions read as contradictory on a
-  fast pass and need a careful, dedicated re-read of the exact ternary
-  structure before writing the codex/hermes-local templates). Plan-creation
-  code then does `connectorProfileDigest: template.connectorProfileDigest`
-  uniformly for every adapter (lines ~528-534, ~775-781), so whatever the
-  template says flows straight into the stored plan and eventually the
-  delivery. Get this exactly right by reading `task-execution-planner.ts`
-  lines 33-115 slowly, line by line, before writing any mac-local template —
-  a wrong digest here fails closed at delivery time (good) but wastes a full
-  rehearsal cycle per mistake (slow to iterate).
+- **`connectorProfileDigest` semantics — resolved.** Re-read
+  `task-execution-planner.ts:70-75`'s nested ternary slowly (my first pass
+  above misparsed it, inverting the condition). Corrected reading: the
+  ternary's branches are *error* conditions (they call `addIssue` when true),
+  so for `codexLocal`/`hermesLocal`/`claude` the requirement is
+  `connectorProfileDigest` **must be defined** (present) and
+  `workspaceIntentDigest` must be undefined — the exact opposite of what I
+  wrote earlier. Only `hermesNative` requires `connectorProfileDigest`
+  undefined. Line 67 adds one further constraint *specific to Claude only*:
+  its digest must equal the fixed constant `CLAUDE_CODE_CONNECTOR_PROFILE_DIGEST_V1`;
+  Codex and Hermes have no such fixed-constant requirement — any valid digest
+  the template author (me) picks is fine, confirmed by
+  `tests/codex-owner-trusted-local-queue.test.ts:27`'s
+  `connectorProfileDigest: sha256Digest("mac-local-codex-profile")`, an
+  arbitrary literal. No contradiction, no blocker — templates for
+  codex-owner-trusted-local and hermes-local can be written now.
+
+## Update: generic `publish()` built and proven end-to-end
+
+`src/harness/v1/owner-trusted-local-cli-publish.ts` — `createOwnerTrustedLocalCliPublishV1({db,
+runIntegrityKey, publication, registerRun})` returns the `publish({delivery,
+receipt, text, signal})` closure the CLI bridge needs. Registers the run
+(`HarnessRunStoreV1.create`, replay-safe), re-derives `workflowId` from
+`control_jobs` (never trusts a caller-supplied one — `ControllerWorkerDeliveryV1`
+doesn't carry it), builds the `DurableResultBindingV1`, and hands off to the
+existing `publishDurableResultV1` + `DurableResultReviewSubmissionServiceV1`
+— no second store or review path. Proven against real Postgres in
+`tests/owner-trusted-local-cli-publish.test.ts`: a fresh publish writes a
+`control_native_artifact_receipts` row and a `control_native_review_plans`
+row, and a same-input replay does not create a second run record.
+
+**Known, accepted limitation (review-flagged, not fixed):** the
+`assertAuthority` callback I pass to `publishDurableResultV1` only checks
+`signal.aborted`, not live authority/revocation state, so a revocation that
+lands *while* the multi-step publish transaction is in flight isn't caught
+mid-flight. This is not a regression I introduced: the CLI bridge itself
+(`deliverOwnerTrustedLocalCliTaskV1`) has the identical shape — it calls the
+real `assertCurrent` (DB re-derivation) once, immediately before calling
+`publish`, then never again during the publish call. Closing this fully
+would mean giving the bridge a genuinely synchronous, in-memory revocation
+fence (like Claude's `assertCurrentDelivery`), which is a broader design
+change to the whole bridge, not specific to this piece — leaving it for a
+Codex architecture call rather than solving it solo here.
+
+## Update: templates are per-project, not global — changes the remaining shape
+
+Traced `TaskExecutionPlanner.plan()`/`selectTemplate()`
+(`task-execution-planner.ts:367-380,484-512`) to resolve how task templates
+work with more than one project. Finding: a `NativeTaskTemplate`'s
+`authority.projectId` is checked for an **exact match** against the task's
+real project id (`task-execution-planner.ts:512`:
+`template.authority.projectId !== projectId` → refused). The planner groups
+its fixed `template` + `additionalTemplates` list into a
+`Map<projectId, template[]>` (`this.projectTemplates`) once, at
+construction — **there is no method to register a template after
+construction.** Total templates are capped at 16
+(`captureNativeTaskTemplates`: `additionalTemplates` max 15, plus the
+primary `template`).
+
+This means, for mac-local's 3 local adapters: every project that will ever
+use Hermes/Claude/Codex needs its own 3 templates, all present in the
+planner's list **at the moment `createTaskApplication()` is called** (i.e.
+at `mac:up` startup) — not creatable later without rebuilding the whole task
+application. Concretely, the default provider's `createTaskApplication`
+needs to: read the tenant's active projects, build 3 templates per project
+(`authority.projectId` = that project), and pass them all in. A new project
+created after `mac:up` starts would need `mac:down && mac:up` to get task
+templates — acceptable for the "one project, three tasks" W6/W7 acceptance
+bar, worth calling out explicitly rather than silently, and bounds mac-local
+to roughly 5 concurrently-templated projects before hitting the 16 cap
+(a real, if distant, ceiling worth Codex knowing about).
+
+Each template also needs a **registered acceptance profile**
+(`completionAcceptanceProfileSchemaV1`, via `CompletionGateStoreV1.registerProfile`)
+matching its `acceptanceProfileId`/`acceptanceProfileDigest` — confirmed by
+building one directly to get `tests/owner-trusted-local-cli-publish.test.ts`
+passing. For mac-local this likely means: one fixed, owner-approved
+acceptance profile per project (or one shared profile reused across all
+three adapters within a project), registered at project-creation time
+alongside the templates.
+
+## Where I'm stopping the solo build for now
+
+Everything from here touches the exact area Codex is independently
+converging on tonight (their own `TASK_PROVIDER_IMPLEMENTATION_GAP.md` on
+`claude/mac-local-integration` reaches the same "needs one release-owned
+task-runtime composition, protected config extension" conclusion). The
+remaining pieces — enumerating active projects and building their templates,
+extending `MacLocalProtectedConfigurationV1` with the ~5 new 32-byte keys
+this needs (planning integrity/review, run-store, durable-result
+integrity/review — `HarnessRunStoreV1`, `TaskExecutionPlanner`, and
+`DurableResultPublicationConfigurationV1` each want their own, per the
+existing VPS pattern in `private-task-startup.ts`), wiring routes (3 static
+local entries, one per adapter — cheap, low-risk, not yet built),
+constructing the structurally-required-but-inert `approvals` object
+(`NativeApprovalPacketStore` with an empty trust list — proven safe to build
+by `tests/codex-owner-trusted-local-queue.test.ts`'s own pattern), wiring
+`nativeSubmission` via `preparePgBossNativeTaskSubmission` with a real
+`pg-boss` import, and finally assembling
+`mac-local-default-task-provider.ts` itself plus its `vite.vps.config.ts`
+entry — all sit on top of a schema decision (the protected-config shape)
+that Codex is actively drafting in parallel right now. I did not touch
+`mac-local-protected-configuration.ts` to avoid two independently-designed,
+incompatible shapes needing reconciliation later, which is a worse outcome
+than either of us finishing it alone.
+
+**What is safe and done, regardless of how that schema settles:** every
+piece in this doc above this section — `receiptPort`, `assertCurrent`, the
+Codex/Hermes run-registration mirrors, `adapter_registry` seeding, and the
+generic `publish()` — is a standalone function parameterized by whatever
+config it's given. None of it needs to change no matter which of us (or
+neither) writes the final protected-config shape.
 
 ## Recommendation given the above
 
@@ -395,3 +491,21 @@ and column shape are copied verbatim from the existing reviewed pattern, not
 invented. Still worth a quick Codex glance before merge given it's a schema
 INSERT touching a shared table, but this is now a small, well-scoped change,
 not an open architecture question.
+
+**DONE (2026-09-25):** built as `seedMacLocalAdapterRegistryV1`
+(`src/web/v1/mac-local-owner-bootstrap.ts`), called from
+`scripts/mac-local/bootstrap-owner.ts` after the owner bootstrap succeeds.
+One real finding while building it: `adapter_registry.id` turned out to be a
+**global** primary key (not per-tenant — the `UNIQUE(tenant_id,id)`
+constraint added in migration 0007 sits alongside it, not instead of it), so
+a naive `ON CONFLICT DO NOTHING` would silently no-op if these fixed ids
+were ever claimed by a different tenant. Fixed to fail closed instead (read
+back the row after insert, throw `mac_local_owner_bootstrap_conflict` on a
+tenant mismatch) and deliberately kept it *out* of `bootstrapMacLocalOwnerV1`
+itself, since that function is exercised by tests against many disposable,
+unrelated tenant ids sharing one database — fine for tenant/workspace/owner
+logic, fatal for a genuinely global-singleton seed. Verified end-to-end
+against the running rehearsal database (port 15511): `SELECT * FROM
+adapter_registry` shows all three rows for `tenant:mac-local`, and a second
+`mac:bootstrap-owner` run is a clean no-op. Reviewed (APPROVE) and pushed at
+`76ea7519`.
