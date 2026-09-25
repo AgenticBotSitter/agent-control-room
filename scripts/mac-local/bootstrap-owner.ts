@@ -12,6 +12,9 @@ import { HERMES_LOCAL_ADAPTER_V1 } from "../../src/harness/hermes-local-v1/task-
 import { CLAUDE_CODE_LOCAL_ADAPTER_V1 } from "../../src/harness/claude-code-v1/task-planning-contract";
 import { macLocalOwnerIdentityIdV1, macLocalOwnerGrantIdV1 } from "../../src/web/v1/mac-local-owner-bootstrap";
 import { checkMacLocalNodeKeyPinV1 } from "../../src/web/v1/mac-local-node-key-pin";
+import { loadMacLocalTaskRuntimeFromRootV1 } from "../../src/web/v1/mac-local-task-runtime";
+import { readMacLocalRollbackCheckpointWithoutWriterV1 } from "../../src/web/v1/mac-local-rollback-checkpoint-store";
+import { CompletionGateStoreV1 } from "../../src/completion-gate/v1/store";
 
 const refusal = "first-owner setup has not been run; see OWNER_GUIDE_MAC.md";
 const missing = (): never => { throw new Error("first_owner_binding_missing"); };
@@ -109,6 +112,17 @@ export async function verifyMacLocalOwnerBindingV1(root: string): Promise<void> 
         || publicKeyFingerprint(key.public_key_spki) !== key.fingerprint) conflict();
     }
     try { await checkMacLocalNodeKeyPinV1(coordinator.client, root, configuration); }
+    catch { conflict(); }
+    // The VPS row alone is insufficient: the Mac must retain its independent
+    // checkpoint. Ordinary startup may verify it, never recreate it.
+    const taskRuntime = await loadMacLocalTaskRuntimeFromRootV1(root);
+    const checkpoints = {
+      read: (scope: string) => readMacLocalRollbackCheckpointWithoutWriterV1(root, scope),
+      initialize: async () => { throw new Error("startup_write_refused"); },
+      advance: async () => { throw new Error("startup_write_refused"); },
+    };
+    try { await new CompletionGateStoreV1(coordinator.client, taskRuntime.keys.review, checkpoints)
+      .verifyProvisionedTenantV1(tenantId); }
     catch { conflict(); }
   } finally {
     await Promise.all([web.close(), coordinator.close()]);

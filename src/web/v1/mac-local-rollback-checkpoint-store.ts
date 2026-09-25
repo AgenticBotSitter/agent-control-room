@@ -20,6 +20,29 @@ const production: Runtime = Object.freeze({ pid: process.pid, alive(pid: number)
 
 export type MacLocalRollbackCheckpointStoreV1 = AwaitableRollbackCheckpointStoreV1 & Readonly<{ close(): Promise<void> }>;
 
+/** Verify an existing checkpoint without taking the single-writer lock or
+ * creating directories. Used by the read-only first-owner startup check. */
+export async function readMacLocalRollbackCheckpointWithoutWriterV1(protectedRoot: string, scope: string): Promise<RollbackCheckpointV1 | undefined> {
+  if (typeof protectedRoot !== "string" || !isAbsolute(protectedRoot) || resolve(protectedRoot) !== protectedRoot
+    || !scopePattern.test(scope)) unavailable();
+  const directory = join(protectedRoot, "state"), file = join(directory, "rollback-checkpoints.json");
+  await privateEntry(protectedRoot, "directory").catch(unavailable);
+  await privateEntry(directory, "directory").catch(unavailable);
+  const entry = await privateEntry(file, "file").catch(unavailable);
+  if (entry.size > MAX_FILE_BYTES) unavailable();
+  try {
+    const value = JSON.parse(await readFile(file, "utf8")) as Record<string, unknown>;
+    if (!value || typeof value !== "object" || Array.isArray(value) || Object.keys(value).length !== 2
+      || value.schema !== MAC_LOCAL_ROLLBACK_CHECKPOINTS_V1 || !value.checkpoints || typeof value.checkpoints !== "object"
+      || Array.isArray(value.checkpoints)) unavailable();
+    const records = value.checkpoints as Record<string, unknown>;
+    for (const [key, raw] of Object.entries(records)) {
+      if (!scopePattern.test(key) || parseRollbackCheckpointV1(raw).scope !== key) unavailable();
+    }
+    return records[scope] ? parseRollbackCheckpointV1(records[scope]) : undefined;
+  } catch { return unavailable(); }
+}
+
 async function privateEntry(path: string, kind: "directory" | "file") {
   const entry = await lstat(path);
   if (entry.isSymbolicLink() || (kind === "directory" ? !entry.isDirectory() : !entry.isFile())

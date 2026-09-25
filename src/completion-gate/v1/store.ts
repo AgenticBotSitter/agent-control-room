@@ -112,6 +112,59 @@ export class CompletionGateStoreV1 {
     try{hmacSha256Tag(integrityKey,{purpose:"completion-gate-key-check"});this.integrityKey=new Uint8Array(integrityKey);this.checkpointRead=checkpointStore.read.bind(checkpointStore);this.checkpointInitialize=checkpointStore.initialize.bind(checkpointStore);this.checkpointAdvance=checkpointStore.advance.bind(checkpointStore);}catch{throw new CompletionGateErrorV1("integrity_failed");}
   }
 
+  /** Pure first-owner genesis. Its authenticated tag may be carried in a
+   * shareable manifest; the integrity key itself never leaves this store. */
+  static genesisIntegrityForKeyV1(tenantId:string,integrityKey:Uint8Array):Readonly<{revision:1;recordCount:0;stateDigest:string;stateAuthTag:string}>{
+    if(typeof tenantId!=="string"||!tenantId)throw new CompletionGateErrorV1("scope_mismatch");
+    const revision=1,recordCount=0,stateDigest=sha256Digest({tenantId,records:[]});
+    try{return Object.freeze({revision,recordCount,stateDigest,
+      stateAuthTag:hmacSha256Tag(integrityKey,{module:"completion-gate",tenantId,revision,recordCount,stateDigest})});}
+    catch{throw new CompletionGateErrorV1("integrity_failed");}
+  }
+  genesisIntegrityV1(tenantId:string):Readonly<{revision:1;recordCount:0;stateDigest:string;stateAuthTag:string}>{
+    return CompletionGateStoreV1.genesisIntegrityForKeyV1(tenantId,this.integrityKey);
+  }
+
+  /** Complete a committed, empty genesis row using independent checkpoint
+   * storage. This is an explicit one-time Mac-side step, never normal startup. */
+  async completeProvisionedTenantV1(tenantId:string):Promise<"created"|"already_present">{
+    const genesis=this.genesisIntegrityV1(tenantId);
+    const row=await this.db.transaction(async tx=>{
+      const integrity=(await tx.query<CompletionIntegrityRow>(
+        "SELECT tenant_id,revision,record_count,state_digest,state_auth_tag FROM control_completion_gate_integrity WHERE tenant_id=$1",[tenantId])).rows;
+      const records=(await tx.query<{count:string}>(
+        "SELECT count(*)::text AS count FROM control_completion_gate_records WHERE tenant_id=$1",[tenantId])).rows[0];
+      if(integrity.length!==1||integrity[0]?.tenant_id!==tenantId||Number(integrity[0]?.revision)!==genesis.revision
+        ||Number(integrity[0]?.record_count)!==genesis.recordCount||integrity[0]?.state_digest!==genesis.stateDigest
+        ||!sameTag(integrity[0]?.state_auth_tag??"",genesis.stateAuthTag)||records?.count!=="0")
+        throw new CompletionGateErrorV1("integrity_failed");
+      return integrity[0];
+    });
+    const expected=this.checkpoint(tenantId,genesis.revision,genesis.recordCount,genesis.stateDigest,row.state_auth_tag);
+    const existing=await this.readCheckpoint(tenantId);
+    if(existing){
+      if(rollbackCheckpointDigestV1(existing)!==rollbackCheckpointDigestV1(expected))
+        throw new CompletionGateErrorV1("integrity_failed");
+      return "already_present";
+    }
+    await this.checkpointOperation(signal=>this.checkpointInitialize(expected,signal));
+    return "created";
+  }
+
+  /** Startup verification only: never creates a missing checkpoint. */
+  async verifyProvisionedTenantV1(tenantId:string):Promise<void>{
+    await this.db.transaction(async tx=>{
+      const rows=(await tx.query<CompletionIntegrityRow>(
+        "SELECT tenant_id,revision,record_count,state_digest,state_auth_tag FROM control_completion_gate_integrity WHERE tenant_id=$1",[tenantId])).rows;
+      if(rows.length!==1||rows[0]?.tenant_id!==tenantId)throw new CompletionGateErrorV1("integrity_failed");
+      await this.assertCheckpoint(tenantId,rows[0]);
+      const computed=await this.computedTenantState(tx,tenantId);
+      if(computed.recordCount!==Number(rows[0].record_count)||computed.stateDigest!==rows[0].state_digest
+        ||!sameTag(this.tenantStateTag(tenantId,Number(rows[0].revision),computed.recordCount,computed.stateDigest),rows[0].state_auth_tag))
+        throw new CompletionGateErrorV1("integrity_failed");
+    });
+  }
+
   async provisionTenant(tenantId:string):Promise<void>{
     await this.db.transaction(async(tx)=>{const tenant=await tx.query<{id:string}>("SELECT id FROM tenants WHERE id=$1 FOR UPDATE",[tenantId]);if(!tenant.rows[0])throw new CompletionGateErrorV1("scope_mismatch");
       const existing=await tx.query<CompletionIntegrityRow>("SELECT * FROM control_completion_gate_integrity WHERE tenant_id=$1 FOR UPDATE",[tenantId]);const computed=await this.computedTenantState(tx,tenantId);

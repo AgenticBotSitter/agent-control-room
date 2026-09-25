@@ -52,3 +52,55 @@ the four database checks refused the missing owner binding. No task host or
 worker started. The disposable cluster was stopped and `pg_ctl status`
 reported no server running. Its data directory was retained for
 investigation; no live database was contacted.
+
+## Section 13 disposable rehearsal
+
+The focused first-owner and section 13 rehearsal passed on a fresh PostgreSQL
+17 cluster bound only to loopback, rooted in a disposable temporary directory.
+Before any first-owner transaction, it
+verified the exact cluster data directory and PostgreSQL version, then opened
+the coordinator login and confirmed `SELECT` on both completion-gate tables.
+No grants were changed.
+
+The run passed the no-setup `mac:up` refusal; manifest generation with worker
+ids and completion-gate genesis; first injected VPS transaction and identical
+repeat (14 rows kept); altered manifest-id refusal; tampered node-key pin refusal;
+altered genesis-tag and wrong manifest-digest receipt refusals; successful and
+repeated Mac completion; and the advanced-integrity/missing-checkpoint refusal
+for both completion and `mac:up`. The advanced-state case used explicit
+revision fault injection after checkpoint creation and restored the disposable
+state afterward; it did not advance the tenant through a real completion-gate
+lifecycle operation. The node-key negative temporarily disabled the immutable-key
+trigger inside the throwaway cluster, then restored the original fingerprint
+and re-enabled the trigger.
+
+The rehearsal called the VPS transaction's injected-client function only after
+proving that the client was connected as the disposable cluster's `postgres`
+role and that the server data directory matched the rehearsal root. The VPS
+CLI's refusal for a non-`postgres` OS user passed with its generic error. The
+positive Unix-socket peer-authentication path was not run on this Mac.
+
+The rehearsal script's `finally` stopped PostgreSQL, and a separate
+`pg_ctl status` confirmed no server remained. The initial sandbox attempt was
+blocked by shared-memory permission; the same setup and rehearsal then passed
+under the approved scoped execution. No live database or Tailnet was contacted.
+
+The positive worker-readiness attempt reached `mac:up` but stopped before host
+startup: the web, coordinator and results preflights returned
+`private_database_preflight_failed`; the queue-worker preflight passed. A
+read-only diagnostic confirmed each role login worked, then those three role
+verifiers failed. The cluster was stopped and no task host or task started.
+The three ready-worker listing and pending-review task journey therefore remain
+unproven. Do not treat this as complete 12.F2/section 13 acceptance or as merge
+approval. Remaining evidence includes the positive VPS CLI Unix-peer path, a
+real lifecycle advance followed by missing-checkpoint refusals, and resolution
+of the three role preflight failures before checking fake-worker readiness.
+
+Source inspection suggests one concrete cause requiring a separate lead
+decision: `privateWebSchemaDigest` and the preflight table/permission maps
+identify migrations 0001–0084, while this rehearsal applies migration 0085.
+The preflight deliberately reports one generic refusal, so the digest has not
+yet been isolated as the sole failing condition. The package-5 instruction
+forbids changing any preflight; this branch does not change or bypass it.
+Claude must approve the separately reviewed schema/preflight update before
+full 12.F2 can pass.

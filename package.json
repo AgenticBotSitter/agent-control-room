@@ -99,7 +99,7 @@
     "mac:repin": "node --import tsx scripts/mac-local/repin-workers.mjs",
     "mac:bootstrap-owner": "node --import tsx scripts/mac-local/bootstrap-owner.ts",
     "mac:first-owner-manifest": "node --import tsx scripts/mac-local/first-owner-manifest.mjs",
-    "mac:pin-node-keys": "node --import tsx scripts/mac-local/pin-node-keys.mjs",
+    "mac:complete-first-owner": "node --import tsx scripts/mac-local/complete-first-owner.mjs",
     "mac:rehearsal": "node --import tsx scripts/mac-local/rehearsal/setup.ts",
     "mac:host": "node scripts/mac-local/start-web-host.mjs",
     "mac:tasks": "node scripts/mac-local/start-task-host.mjs",

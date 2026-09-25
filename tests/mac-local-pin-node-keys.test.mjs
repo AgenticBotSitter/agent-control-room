@@ -5,7 +5,8 @@ import { MAC_LOCAL_FIRST_OWNER_RECEIPT_V1, parseMacLocalFirstOwnerReceiptV1,
 
 const nodeIds = ["mac-1.hermes", "mac-1.claude", "mac-1.codex"];
 const fingerprints = Object.fromEntries(nodeIds.map((id, index) => [id, `sha256:${String(index + 1).repeat(64)}`]));
-const receipt = { schema: MAC_LOCAL_FIRST_OWNER_RECEIPT_V1, created: 8, kept: 0, fingerprints };
+const receipt = { schema: MAC_LOCAL_FIRST_OWNER_RECEIPT_V1, manifestDigest: "sha256:" + "a".repeat(64),
+  tenantId: "tenant:mac-local", created: 14, kept: 0, fingerprints };
 const configuration = { enablement: { nodeId: "mac-1" } };
 
 function runtime(rows = nodeIds.map(node_id => ({ node_id, fingerprint: fingerprints[node_id] }))) {
