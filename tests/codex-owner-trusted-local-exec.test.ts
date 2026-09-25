@@ -45,6 +45,17 @@ test("rejects a task before spawning when it is already canceled", async () => {
   assert.deepEqual(result, { status: "canceled", reason: "aborted_before_spawn" });
 });
 
+test("rechecks cancellation after asynchronous directory inspection and never spawns", async () => {
+  const controller = new AbortController(); let spawned = false;
+  const blocked = createOwnerTrustedLocalCodexExecV1({
+    async readDirectory() { controller.abort(); return []; },
+    spawn() { spawned = true; throw new Error("must_not_spawn"); },
+  });
+  assert.deepEqual(await blocked.execute(input(await taskDirectory(), "hello", 10_000, controller.signal)),
+    { status: "canceled", reason: "aborted_before_spawn" });
+  assert.equal(spawned, false);
+});
+
 test("requires the caller-provided task directory to be empty", async () => {
   const cwd = await taskDirectory(); await chmod(cwd, 0o700); await writeFile(join(cwd, "not-empty"), "x");
   const result = await adapter().execute(input(cwd, "hello"));

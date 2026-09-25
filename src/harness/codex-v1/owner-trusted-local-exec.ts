@@ -105,6 +105,10 @@ export function createOwnerTrustedLocalCodexExecV1(dependencies: Readonly<{ spaw
     if (input.signal?.aborted) return failed("canceled", "aborted_before_spawn");
     try { if ((await list(input.workingDirectory)).length !== 0) return failed("failed", "working_directory_not_empty"); }
     catch { return failed("failed", "working_directory_unavailable"); }
+    // Directory inspection is asynchronous. A cancellation that arrives while
+    // it is in flight must fence the process boundary, not merely the earlier
+    // input validation.
+    if (input.signal?.aborted) return failed("canceled", "aborted_before_spawn");
     const args = Object.freeze(["exec", "--json", "--sandbox", "read-only", "--ephemeral", "--skip-git-repo-check",
       "--color", "never", "-C", input.workingDirectory, "-"]);
     let child: ChildProcess;
