@@ -2,6 +2,16 @@
 
 Codex appends one short entry per work package (see `CODEX_MAC_BUILD_EXECUTION.md`).
 
+- 2026-09-24 — current local Hermes compatibility foundation: Control Room
+  now records the exact Hermes Agent build currently installed on this Mac as
+  a distinct connector identity, including its full locally verified source
+  revision. The new verifier accepts only that observed build and rejects a
+  changed release, source revision, or malformed version; it does not broaden
+  or relabel the existing Hermes 0.21 connector. Two focused checks and
+  TypeScript pass. This package did not start Hermes through Control Room,
+  connect to the database, open a website, or change Hermes itself. Next:
+  compose this pinned identity with the existing shared queue and result path.
+
 - 2026-09-24 — W3/W4 queue reuse correction: the protected task provider no
   longer accepts or starts a queue-worker callback. The Mac task host now
   starts only the release-owned, existing PostgreSQL queue factory after the
