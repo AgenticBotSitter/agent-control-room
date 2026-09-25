@@ -16,6 +16,8 @@ Codex appends one short entry per work package (see `CODEX_MAC_BUILD_EXECUTION.m
 
 - REAL 2026-09-24 — the repaired protected configuration was refreshed and loaded successfully; all four restricted database accounts passed their real connection checks, and the three local agent commands were re-pinned without a version drift. No website, queue, worker, or background service was started.
 
+- SOURCE 2026-09-24 — shared startup support was merged and independently approved: a changed local CLI now appears unavailable rather than preventing the site from opening, while the owner can deliberately re-pin a recognized vendor update before each start. The next package is the start/stop service; no service has been installed yet.
+
 - 2026-09-24 — Codex local-runner cancellation fence: the managed, read-only
   Codex command runner now checks cancellation again after its asynchronous
   empty-work-folder inspection and before it can spawn a process. A focused
