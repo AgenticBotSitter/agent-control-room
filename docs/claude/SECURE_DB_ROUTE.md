@@ -3,7 +3,22 @@
 **From:** Claude (lead). **To:** Codex. **Date:** 2026-09-25.
 **Status:** revision 3.1, **owner-approved 2026-09-25**. Supersedes revisions 1
 and 2 (history at the end). Revision 3.1 folds in the VPS operator's read-only
-inventory (see "VPS facts"). Nothing has been changed on the VPS yet.
+inventory (see "VPS facts").
+
+**Progress (2026-09-25):** VPS steps 1–6 are **done and accepted**. Claude
+reviewed the VPS operator's report; key outputs are quoted, sanitized, under
+"VPS evidence" below. Certificate verify OK; non-SSL
+connections refused; SSL connections reach SCRAM; the HTTPS route is
+byte-identical; loopback-only; renewal job ran OK via the scheduler. Every
+TCP `pg_hba` rule is `scram-sha-256` or `reject`. The superuser has no
+password.
+
+Accepted residual: the tagged Mac can also attempt the VPS's other
+password roles over the route, and those roles don't require TLS (the
+traffic is still WireGuard-encrypted). This is the same exposure those roles
+already have to local VPS processes. Narrowing it later would need a
+dedicated proxy. **Next:** owner steps 7–8, then Codex steps 9–10 and the
+acceptance checks.
 
 ## Decision
 
@@ -169,6 +184,34 @@ Verify that 5432 is unreachable from the tailnet.
 - IPs, MagicDNS names, and certificate material live only in the protected
   configuration. They never go in the repo.
 - No fallback route and no plaintext retry.
+
+## VPS evidence (2026-09-25, VPS operator's report, sanitized)
+
+The operator's full report is held privately by the owner, because it
+contains host details. These are its outputs for each check:
+
+```
+step 2  openssl s_client -starttls postgres ... -verify_hostname <name>
+        subject=CN=<name>
+        Verify return code: 0 (ok)            NotAfter 2026-11-21 (Let's Encrypt)
+step 5a four roles: control_room_{coordinator,queue_worker,results,web}|t   (SCRAM verifiers)
+step 5c sslmode=disable  -> FATAL: pg_hba.conf rejects connection ... no encryption
+        verify-full      -> FATAL: password authentication failed (deliberately wrong password)
+        pg_hba_file_rules errors: empty
+step 3  manual run and scheduler run -> pg-cert-renew ok: unchanged   (daily 03:17 UTC)
+step 4  HTTPS_ROUTE_UNCHANGED
+        5432: {'TCPForward': '127.0.0.1:5432'}
+        ss: LISTEN 127.0.0.1:5432, [::1]:5432 only
+        website checks: identical status codes before and after
+host rules (all TCP): 119 hostssl control_room <four roles> 127.0.0.1 scram-sha-256
+                      120 host all <four roles> 127.0.0.1 reject
+                      128/130 host all all 127.0.0.1 / ::1 scram-sha-256
+                      134/135 host replication all 127.0.0.1 / ::1 scram-sha-256
+login roles: the only superuser (postgres) has no password; all others are
+             non-superuser with SCRAM passwords
+other consumers: two other projects' databases and the watchdog OK; no
+                 Control Room app server runs on the VPS
+```
 
 ## Live acceptance (REAL output in `MAC_LOCAL_PROGRESS.md`, hosts redacted)
 

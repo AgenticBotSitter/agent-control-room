@@ -5,7 +5,7 @@ Only steps the bots cannot do. Each item is numbered and copy-paste ready.
 ## 1. One-time Tailscale change for the private database route
 
 **Status (2026-09-25):** needed, owner-approved plan (`docs/claude/SECURE_DB_ROUTE.md`
-revision 3). Do this after Codex says the VPS side is ready. Two parts, once:
+revision 3.1). **The VPS side is ready (2026-09-25); do this now.** Two parts, once:
 
 1. **Tailscale admin console → Access controls.** Make two small additions
    and leave everything else, especially the `ssh` section, exactly as it is:
