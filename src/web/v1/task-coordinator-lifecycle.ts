@@ -46,7 +46,10 @@ export type TaskApprovalOperation = Readonly<{ tenantId: string; workspaceId: st
   read: TaskAssignmentCoordinator["readNativeApproval"] }>;
 export type TaskSubmissionOperation = Readonly<{ tenantId: string; workspaceId: string;
   enqueue: TaskAssignmentCoordinator["enqueueNativeTask"]; read: TaskAssignmentCoordinator["readNativeTaskQueue"];
-  readDelivery?: TaskAssignmentCoordinator["readNativeDeliveryStatus"] }>;
+  readDelivery?: TaskAssignmentCoordinator["readNativeDeliveryStatus"];
+  /** Mac-local-only confirm-what-you-saw read. Absent on the remote,
+   * signed-packet submission surface. */
+  preview?: TaskAssignmentCoordinator["previewMacLocalTask"] }>;
 /**
  * A narrow trusted-control-plane operation. The private web process performs
  * authentication and authorization before it may invoke this operation. The
@@ -446,6 +449,33 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
       return run(() => assignment.enqueueNativeTask(actor, projectId, jobId, inputDigest, packetDigest, signal));
     },
   }) : undefined;
+  /**
+   * The Mac-local counterpart of `submission`. Its `enqueue` reaches only the
+   * three owner-trusted local adapters (dispatched by the stored job's type,
+   * inside `TaskAssignmentCoordinator.enqueueMacLocalTask`); the remote,
+   * signed-packet `enqueueNativeTask` is never wired into this object, so it
+   * cannot be reached from a Mac-local composition that uses this field
+   * instead of `submission`. `read`/`readDelivery` are the same generic
+   * queue/delivery readers `submission` already uses — the local adapters
+   * share the same durable queue table, so no separate reader is needed.
+   */
+  const macLocalSubmission = nativeSubmission ? Object.freeze({ ...scope,
+    readDelivery: (identity: Parameters<TaskAssignmentCoordinator["readNativeDeliveryStatus"]>[0], projectId: string, jobId: string, digest: string) => {
+      const actor = { ...identity };
+      return run(() => assignment.readNativeDeliveryStatus(actor, projectId, jobId, digest));
+    },
+    read: (...args: Parameters<TaskAssignmentCoordinator["readNativeTaskQueue"]>) => run(() => assignment.readNativeTaskQueue(...args)),
+    preview: (...args: Parameters<TaskAssignmentCoordinator["previewMacLocalTask"]>) => {
+      const [identity, projectId, jobId, inputDigest] = args;
+      const actor = { ...identity };
+      return run(() => assignment.previewMacLocalTask(actor, projectId, jobId, inputDigest));
+    },
+    enqueue: (...args: Parameters<TaskAssignmentCoordinator["enqueueMacLocalTask"]>) => {
+      const [identity, projectId, jobId, inputDigest, packetDigest, signal] = args;
+      const actor = { ...identity };
+      return run(() => assignment.enqueueMacLocalTask(actor, projectId, jobId, inputDigest, packetDigest, signal));
+    },
+  }) : undefined;
   const queueRecovery = nativeSubmission?.recoverUnsentInSession ? Object.freeze({ ...scope,
     verify: (value: Parameters<TaskAssignmentCoordinator["verifyRecoveredQueueDelivery"]>[0], ordinal: number, signal: AbortSignal) => {
       const ref = nativeTaskSubmissionReferenceSchema.parse(value);
@@ -516,6 +546,7 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
       return { disposition: "delivered" as const };
     } } : {}),
     ...(submission ? { submission } : {}),
+    ...(macLocalSubmission ? { macLocalSubmission } : {}),
     ...(sessions && nativeSubmission?.recoverUnsentInSession ? {
       queueAttention: Object.freeze({ ...scope, read: sessions.queueAttention.bind(sessions) }),
     } : {}),

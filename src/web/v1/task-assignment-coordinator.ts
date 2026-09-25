@@ -20,6 +20,7 @@ import { prepareNativeTaskApprovalWithLease } from "../../harness/v1/native-task
 import type { NativeApprovalPacketStore } from "./native-approval-packet-store";
 import { nativeTaskApprovalPacketSchema } from "../../harness/v1/native-approval-packet";
 import { readNativeTaskQueueIntentInSession, type NativeTaskQueueIntent, type NativeTaskQueueScope } from "./native-task-queue";
+import { macLocalQueueIntentPacketDigestV1 } from "./mac-local-queue-intent-digest";
 import type { ServerNodeSession } from "../../node-control/server-node-session";
 import { assertSynchronousFence } from "../../security/synchronous-fence";
 import { CODEX_APP_SERVER_CAPABILITY, CODEX_APP_SERVER_JOB_TYPE } from "../../harness/codex-v1/delivery-contract";
@@ -750,12 +751,55 @@ export class TaskAssignmentCoordinator {
         startsWork: false as const, grantsExecutionAuthority: false as const }) satisfies Hermes021LocalQueueDeliveryTarget;
     });
   }
+  /** Shared read-only derivation for the Hermes-local queue intent. Used by
+   * both `previewHermesLocalTask` (no write) and `enqueueHermesLocalTask`
+   * (write), so the packet digest the owner is shown is exactly the one that
+   * would be queued. Runs inside the caller's transaction and takes the same
+   * `FOR UPDATE` locks the write path already relied on. */
+  private async hermesLocalPreparedIntent(tx: DatabaseSession, projectId: string, jobId: string, expectedInputDigest: string) {
+    const job = await this.job(tx, projectId, jobId), plan = await this.planner.readInSession(tx, jobId), stored = await this.stored(tx, job);
+    if (!plan || !stored || plan.tenantId !== this.scope.tenantId || plan.projectId !== projectId
+      || job.inputDigest !== expectedInputDigest || job.jobType !== HERMES_LOCAL_JOB_TYPE_V1
+      || job.requiredCapability !== HERMES_LOCAL_CAPABILITY_V1
+      || (plan.schema !== "control-room.task-execution-plan/v15" && plan.schema !== "control-room.task-execution-plan/v16")) conflict();
+    const route = this.routes.find(value => value.nodeId === stored.lease.nodeId);
+    const now = this.clock(), deadline = Math.min(Date.parse(stored.lease.expiresAt), Date.parse(job.authority.expiresAt));
+    if (!route || route.executorId !== job.authority.allowedExecutor || route.capabilityProbeId !== HERMES_LOCAL_CAPABILITY_V1
+      || !Number.isSafeInteger(now) || now < 0 || now >= deadline) conflict();
+    const packetDigest = macLocalQueueIntentPacketDigestV1({ schema: "control-room.hermes-macos-local-queue-intent/v1",
+      planDigest: sha256Digest(plan), authorityDigest: job.authority.digest, tenantId: this.scope.tenantId,
+      projectId, jobId, attemptId: stored.attempt.id, leaseId: stored.lease.id, leaseEpoch: stored.lease.epoch,
+      nodeId: route.nodeId, executorId: route.executorId, capability: route.capabilityProbeId,
+      connectorProfileDigest: plan.connectorProfileDigest });
+    return { plan, job, stored, route, now, deadline, packetDigest };
+  }
+  /** Read-only confirm-what-you-saw preview: the exact `packetDigest` a
+   * matching `enqueueHermesLocalTask` call would produce right now. Queues
+   * nothing and requires the same owner-only authority as the enqueue. */
+  async previewHermesLocalTask(identity: VerifiedWebIdentity, projectId: string, jobId: string, expectedInputDigest: string) {
+    localId.parse(projectId); localId.parse(jobId); digestSchema.parse(expectedInputDigest);
+    if (!this.approvalStore || !this.nativeTaskSubmission) conflict();
+    return new WebSessionAuthority(this.db, this.scope, this.clock, "task").authenticated(identity, async (tx, actor) => {
+      actor.require("tasks.read", projectId); actor.require("tasks.approve", projectId, true);
+      await tx.query("SELECT id FROM tenants WHERE id=$1 FOR UPDATE", [this.scope.tenantId]);
+      await tx.query("SELECT project_id FROM control_manual_project_heads WHERE tenant_id=$1 AND project_id=$2 FOR UPDATE",
+        [this.scope.tenantId, projectId]);
+      const project = await this.projects.getViewInSession(tx, actor, projectId);
+      if (project.lifecycle !== "active" || project.origin !== "ordinary") conflict();
+      const { packetDigest } = await this.hermesLocalPreparedIntent(tx, projectId, jobId, expectedInputDigest);
+      return Object.freeze({ projectId, jobId, packetDigest });
+    });
+  }
   /** Queues a current, per-build-qualified Hermes task through the same
    * existing pg-boss queue and approval table. It creates no command, runner,
-   * credential, or second scheduling mechanism. */
+   * credential, or second scheduling mechanism. An optional `expectedPacketDigest`
+   * is compared, in this same transaction, against the freshly derived digest
+   * before the write; a mismatch refuses instead of queuing a different intent
+   * than the one the caller confirmed. */
   async enqueueHermesLocalTask(identity: VerifiedWebIdentity, projectId: string, jobId: string,
-    expectedInputDigest: string, signal: AbortSignal) {
+    expectedInputDigest: string, signal: AbortSignal, expectedPacketDigest?: string) {
     localId.parse(projectId); localId.parse(jobId); digestSchema.parse(expectedInputDigest);
+    if (expectedPacketDigest !== undefined) digestSchema.parse(expectedPacketDigest);
     if (!this.approvalStore || !this.nativeTaskSubmission || !(signal instanceof AbortSignal) || signal.aborted) conflict();
     const store = this.approvalStore;
     return new WebSessionAuthority(this.db, this.scope, this.clock, "task").authenticated(identity, async (tx, actor) => {
@@ -765,20 +809,9 @@ export class TaskAssignmentCoordinator {
         [this.scope.tenantId, projectId]);
       const project = await this.projects.getViewInSession(tx, actor, projectId);
       if (project.lifecycle !== "active" || project.origin !== "ordinary") conflict();
-      const job = await this.job(tx, projectId, jobId), plan = await this.planner.readInSession(tx, jobId), stored = await this.stored(tx, job);
-      if (!plan || !stored || plan.tenantId !== this.scope.tenantId || plan.projectId !== projectId
-        || job.inputDigest !== expectedInputDigest || job.jobType !== HERMES_LOCAL_JOB_TYPE_V1
-        || job.requiredCapability !== HERMES_LOCAL_CAPABILITY_V1
-        || (plan.schema !== "control-room.task-execution-plan/v15" && plan.schema !== "control-room.task-execution-plan/v16")) conflict();
-      const route = this.routes.find(value => value.nodeId === stored.lease.nodeId);
-      const now = this.clock(), deadline = Math.min(Date.parse(stored.lease.expiresAt), Date.parse(job.authority.expiresAt));
-      if (!route || route.executorId !== job.authority.allowedExecutor || route.capabilityProbeId !== HERMES_LOCAL_CAPABILITY_V1
-        || !Number.isSafeInteger(now) || now < 0 || now >= deadline || signal.aborted) conflict();
-      const packetDigest = sha256Digest({ schema: "control-room.hermes-macos-local-queue-intent/v1",
-        planDigest: sha256Digest(plan), authorityDigest: job.authority.digest, tenantId: this.scope.tenantId,
-        projectId, jobId, attemptId: stored.attempt.id, leaseId: stored.lease.id, leaseEpoch: stored.lease.epoch,
-        nodeId: route.nodeId, executorId: route.executorId, capability: route.capabilityProbeId,
-        connectorProfileDigest: plan.connectorProfileDigest });
+      const { plan, job, stored, route, now, deadline, packetDigest } = await this.hermesLocalPreparedIntent(tx, projectId, jobId, expectedInputDigest);
+      if (signal.aborted) conflict();
+      if (expectedPacketDigest !== undefined && packetDigest !== expectedPacketDigest) conflict();
       const intent: NativeTaskQueueIntent = {
         schema: "control-room.native-task-queue/v1", tenantId: this.scope.tenantId, projectId, jobId,
         attemptId: stored.attempt.id, nodeId: route.nodeId, leaseId: stored.lease.id, leaseEpoch: stored.lease.epoch,
@@ -851,12 +884,50 @@ export class TaskAssignmentCoordinator {
         startsWork: false as const, grantsExecutionAuthority: false as const }) satisfies HermesLocalQueueDeliveryTarget;
     });
   }
+  /** Shared read-only derivation for the Claude Code local queue intent; see
+   * `hermesLocalPreparedIntent` for why this must be the one formula both the
+   * preview and the write consult. */
+  private async claudeCodeLocalPreparedIntent(tx: DatabaseSession, projectId: string, jobId: string, expectedInputDigest: string) {
+    const job = await this.job(tx, projectId, jobId), plan = await this.planner.readInSession(tx, jobId), stored = await this.stored(tx, job);
+    if (!plan || !stored || plan.tenantId !== this.scope.tenantId || plan.projectId !== projectId
+      || job.inputDigest !== expectedInputDigest || job.jobType !== CLAUDE_CODE_LOCAL_JOB_TYPE_V1
+      || job.requiredCapability !== CLAUDE_CODE_LOCAL_CAPABILITY_V1
+      || (plan.schema !== "control-room.task-execution-plan/v9" && plan.schema !== "control-room.task-execution-plan/v10")
+      || plan.adapter !== CLAUDE_CODE_LOCAL_ADAPTER_V1 || plan.connectorProfileDigest !== CLAUDE_CODE_CONNECTOR_PROFILE_DIGEST_V1) conflict();
+    const route = this.routes.find(value => value.nodeId === stored.lease.nodeId);
+    const now = this.clock(), deadline = Math.min(Date.parse(stored.lease.expiresAt), Date.parse(job.authority.expiresAt));
+    if (!route || route.executorId !== job.authority.allowedExecutor || route.capabilityProbeId !== CLAUDE_CODE_LOCAL_CAPABILITY_V1
+      || !Number.isSafeInteger(now) || now < 0 || now >= deadline) conflict();
+    const packetDigest = macLocalQueueIntentPacketDigestV1({ schema: "control-room.claude-code-local-queue-intent/v1", planDigest: sha256Digest(plan),
+      authorityDigest: job.authority.digest, tenantId: this.scope.tenantId, projectId, jobId, attemptId: stored.attempt.id,
+      leaseId: stored.lease.id, leaseEpoch: stored.lease.epoch, nodeId: route.nodeId, executorId: route.executorId,
+      capability: route.capabilityProbeId, connectorProfileDigest: plan.connectorProfileDigest });
+    return { plan, job, stored, route, now, deadline, packetDigest };
+  }
+  /** Read-only confirm-what-you-saw preview for the Claude Code local path. */
+  async previewClaudeCodeLocalTask(identity: VerifiedWebIdentity, projectId: string, jobId: string, expectedInputDigest: string) {
+    localId.parse(projectId); localId.parse(jobId); digestSchema.parse(expectedInputDigest);
+    if (!this.approvalStore || !this.nativeTaskSubmission) conflict();
+    return new WebSessionAuthority(this.db, this.scope, this.clock, "task").authenticated(identity, async (tx, actor) => {
+      actor.require("tasks.read", projectId); actor.require("tasks.approve", projectId, true);
+      await tx.query("SELECT id FROM tenants WHERE id=$1 FOR UPDATE", [this.scope.tenantId]);
+      await tx.query("SELECT project_id FROM control_manual_project_heads WHERE tenant_id=$1 AND project_id=$2 FOR UPDATE",
+        [this.scope.tenantId, projectId]);
+      const project = await this.projects.getViewInSession(tx, actor, projectId);
+      if (project.lifecycle !== "active" || project.origin !== "ordinary") conflict();
+      const { packetDigest } = await this.claudeCodeLocalPreparedIntent(tx, projectId, jobId, expectedInputDigest);
+      return Object.freeze({ projectId, jobId, packetDigest });
+    });
+  }
   /** Queues one already-assigned Claude text review through the existing
    * protected pg-boss channel. This records no process setting and starts no
-   * Claude process; pickup must reconstruct all current authority again. */
+   * Claude process; pickup must reconstruct all current authority again. An
+   * optional `expectedPacketDigest` is checked, in this same transaction,
+   * before the write. */
   async enqueueClaudeCodeLocalTask(identity: VerifiedWebIdentity, projectId: string, jobId: string,
-    expectedInputDigest: string, signal: AbortSignal) {
+    expectedInputDigest: string, signal: AbortSignal, expectedPacketDigest?: string) {
     localId.parse(projectId); localId.parse(jobId); digestSchema.parse(expectedInputDigest);
+    if (expectedPacketDigest !== undefined) digestSchema.parse(expectedPacketDigest);
     if (!this.approvalStore || !this.nativeTaskSubmission || !(signal instanceof AbortSignal) || signal.aborted) conflict();
     const store = this.approvalStore;
     return new WebSessionAuthority(this.db, this.scope, this.clock, "task").authenticated(identity, async (tx, actor) => {
@@ -866,20 +937,9 @@ export class TaskAssignmentCoordinator {
         [this.scope.tenantId, projectId]);
       const project = await this.projects.getViewInSession(tx, actor, projectId);
       if (project.lifecycle !== "active" || project.origin !== "ordinary") conflict();
-      const job = await this.job(tx, projectId, jobId), plan = await this.planner.readInSession(tx, jobId), stored = await this.stored(tx, job);
-      if (!plan || !stored || plan.tenantId !== this.scope.tenantId || plan.projectId !== projectId
-        || job.inputDigest !== expectedInputDigest || job.jobType !== CLAUDE_CODE_LOCAL_JOB_TYPE_V1
-        || job.requiredCapability !== CLAUDE_CODE_LOCAL_CAPABILITY_V1
-        || (plan.schema !== "control-room.task-execution-plan/v9" && plan.schema !== "control-room.task-execution-plan/v10")
-        || plan.adapter !== CLAUDE_CODE_LOCAL_ADAPTER_V1 || plan.connectorProfileDigest !== CLAUDE_CODE_CONNECTOR_PROFILE_DIGEST_V1) conflict();
-      const route = this.routes.find(value => value.nodeId === stored.lease.nodeId);
-      const now = this.clock(), deadline = Math.min(Date.parse(stored.lease.expiresAt), Date.parse(job.authority.expiresAt));
-      if (!route || route.executorId !== job.authority.allowedExecutor || route.capabilityProbeId !== CLAUDE_CODE_LOCAL_CAPABILITY_V1
-        || !Number.isSafeInteger(now) || now < 0 || now >= deadline || signal.aborted) conflict();
-      const packetDigest = sha256Digest({ schema: "control-room.claude-code-local-queue-intent/v1", planDigest: sha256Digest(plan),
-        authorityDigest: job.authority.digest, tenantId: this.scope.tenantId, projectId, jobId, attemptId: stored.attempt.id,
-        leaseId: stored.lease.id, leaseEpoch: stored.lease.epoch, nodeId: route.nodeId, executorId: route.executorId,
-        capability: route.capabilityProbeId, connectorProfileDigest: plan.connectorProfileDigest });
+      const { plan, job, stored, route, now, deadline, packetDigest } = await this.claudeCodeLocalPreparedIntent(tx, projectId, jobId, expectedInputDigest);
+      if (signal.aborted) conflict();
+      if (expectedPacketDigest !== undefined && packetDigest !== expectedPacketDigest) conflict();
       const intent: NativeTaskQueueIntent = { schema: "control-room.native-task-queue/v1", tenantId: this.scope.tenantId,
         projectId, jobId, attemptId: stored.attempt.id, nodeId: route.nodeId, leaseId: stored.lease.id, leaseEpoch: stored.lease.epoch,
         inputDigest: expectedInputDigest, packetDigest, operationDigest: job.authority.digest,
@@ -942,12 +1002,48 @@ export class TaskAssignmentCoordinator {
           startsWork: false as const, grantsExecutionAuthority: false as const }) satisfies ClaudeCodeLocalQueueDeliveryTarget;
       });
   }
+  /** Shared read-only derivation for the Codex owner-trusted local queue
+   * intent; see `hermesLocalPreparedIntent` for why this must be the one
+   * formula both the preview and the write consult. */
+  private async codexOwnerTrustedLocalPreparedIntent(tx: DatabaseSession, projectId: string, jobId: string, expectedInputDigest: string) {
+    const job = await this.job(tx, projectId, jobId), plan = await this.planner.readInSession(tx, jobId), stored = await this.stored(tx, job);
+    if (!plan || !stored || plan.tenantId !== this.scope.tenantId || plan.projectId !== projectId
+      || job.inputDigest !== expectedInputDigest || job.jobType !== CODEX_OWNER_TRUSTED_LOCAL_JOB_TYPE_V1
+      || job.requiredCapability !== CODEX_OWNER_TRUSTED_LOCAL_CAPABILITY_V1
+      || (plan.schema !== "control-room.task-execution-plan/v13" && plan.schema !== "control-room.task-execution-plan/v14")
+      || plan.adapter !== CODEX_OWNER_TRUSTED_LOCAL_ADAPTER_V1) conflict();
+    const route = this.routes.find(value => value.nodeId === stored.lease.nodeId);
+    const now = this.clock(), deadline = Math.min(Date.parse(stored.lease.expiresAt), Date.parse(job.authority.expiresAt));
+    if (!route || route.executorId !== job.authority.allowedExecutor || route.capabilityProbeId !== CODEX_OWNER_TRUSTED_LOCAL_CAPABILITY_V1
+      || !Number.isSafeInteger(now) || now < 0 || now >= deadline) conflict();
+    const packetDigest = macLocalQueueIntentPacketDigestV1({ schema: "control-room.codex-owner-trusted-local-queue-intent/v1", planDigest: sha256Digest(plan),
+      authorityDigest: job.authority.digest, tenantId: this.scope.tenantId, projectId, jobId, attemptId: stored.attempt.id,
+      leaseId: stored.lease.id, leaseEpoch: stored.lease.epoch, nodeId: route.nodeId, executorId: route.executorId,
+      capability: route.capabilityProbeId, connectorProfileDigest: plan.connectorProfileDigest });
+    return { plan, job, stored, route, now, deadline, packetDigest };
+  }
+  /** Read-only confirm-what-you-saw preview for the Codex owner-trusted local path. */
+  async previewCodexOwnerTrustedLocalTask(identity: VerifiedWebIdentity, projectId: string, jobId: string, expectedInputDigest: string) {
+    localId.parse(projectId); localId.parse(jobId); digestSchema.parse(expectedInputDigest);
+    if (!this.approvalStore || !this.nativeTaskSubmission) conflict();
+    return new WebSessionAuthority(this.db, this.scope, this.clock, "task").authenticated(identity, async (tx, actor) => {
+      actor.require("tasks.read", projectId); actor.require("tasks.approve", projectId, true);
+      await tx.query("SELECT id FROM tenants WHERE id=$1 FOR UPDATE", [this.scope.tenantId]);
+      await tx.query("SELECT project_id FROM control_manual_project_heads WHERE tenant_id=$1 AND project_id=$2 FOR UPDATE",
+        [this.scope.tenantId, projectId]);
+      const project = await this.projects.getViewInSession(tx, actor, projectId);
+      if (project.lifecycle !== "active" || project.origin !== "ordinary") conflict();
+      const { packetDigest } = await this.codexOwnerTrustedLocalPreparedIntent(tx, projectId, jobId, expectedInputDigest);
+      return Object.freeze({ projectId, jobId, packetDigest });
+    });
+  }
   /** Queues one assigned owner-trusted local Codex text task through the same
    * protected pg-boss submission. The saved record is adapter-specific and
    * contains no executable path, prompt, account, workspace, or model choice. */
   async enqueueCodexOwnerTrustedLocalTask(identity: VerifiedWebIdentity, projectId: string, jobId: string,
-    expectedInputDigest: string, signal: AbortSignal) {
+    expectedInputDigest: string, signal: AbortSignal, expectedPacketDigest?: string) {
     localId.parse(projectId); localId.parse(jobId); digestSchema.parse(expectedInputDigest);
+    if (expectedPacketDigest !== undefined) digestSchema.parse(expectedPacketDigest);
     if (!this.approvalStore || !this.nativeTaskSubmission || !(signal instanceof AbortSignal) || signal.aborted) conflict();
     const store = this.approvalStore;
     return new WebSessionAuthority(this.db, this.scope, this.clock, "task").authenticated(identity, async (tx, actor) => {
@@ -957,20 +1053,9 @@ export class TaskAssignmentCoordinator {
         [this.scope.tenantId, projectId]);
       const project = await this.projects.getViewInSession(tx, actor, projectId);
       if (project.lifecycle !== "active" || project.origin !== "ordinary") conflict();
-      const job = await this.job(tx, projectId, jobId), plan = await this.planner.readInSession(tx, jobId), stored = await this.stored(tx, job);
-      if (!plan || !stored || plan.tenantId !== this.scope.tenantId || plan.projectId !== projectId
-        || job.inputDigest !== expectedInputDigest || job.jobType !== CODEX_OWNER_TRUSTED_LOCAL_JOB_TYPE_V1
-        || job.requiredCapability !== CODEX_OWNER_TRUSTED_LOCAL_CAPABILITY_V1
-        || (plan.schema !== "control-room.task-execution-plan/v13" && plan.schema !== "control-room.task-execution-plan/v14")
-        || plan.adapter !== CODEX_OWNER_TRUSTED_LOCAL_ADAPTER_V1 || signal.aborted) conflict();
-      const route = this.routes.find(value => value.nodeId === stored.lease.nodeId);
-      const now = this.clock(), deadline = Math.min(Date.parse(stored.lease.expiresAt), Date.parse(job.authority.expiresAt));
-      if (!route || route.executorId !== job.authority.allowedExecutor || route.capabilityProbeId !== CODEX_OWNER_TRUSTED_LOCAL_CAPABILITY_V1
-        || !Number.isSafeInteger(now) || now < 0 || now >= deadline || signal.aborted) conflict();
-      const packetDigest = sha256Digest({ schema: "control-room.codex-owner-trusted-local-queue-intent/v1", planDigest: sha256Digest(plan),
-        authorityDigest: job.authority.digest, tenantId: this.scope.tenantId, projectId, jobId, attemptId: stored.attempt.id,
-        leaseId: stored.lease.id, leaseEpoch: stored.lease.epoch, nodeId: route.nodeId, executorId: route.executorId,
-        capability: route.capabilityProbeId, connectorProfileDigest: plan.connectorProfileDigest });
+      const { plan, job, stored, route, now, deadline, packetDigest } = await this.codexOwnerTrustedLocalPreparedIntent(tx, projectId, jobId, expectedInputDigest);
+      if (signal.aborted) conflict();
+      if (expectedPacketDigest !== undefined && packetDigest !== expectedPacketDigest) conflict();
       const intent: NativeTaskQueueIntent = { schema: "control-room.native-task-queue/v1", tenantId: this.scope.tenantId,
         projectId, jobId, attemptId: stored.attempt.id, nodeId: route.nodeId, leaseId: stored.lease.id, leaseEpoch: stored.lease.epoch,
         inputDigest: expectedInputDigest, packetDigest, operationDigest: job.authority.digest,
@@ -988,6 +1073,51 @@ export class TaskAssignmentCoordinator {
         safeMetadata: { packetDigest }, occurredAt: intent.queuedAt });
       return Object.freeze({ ...queued, startsWork: false as const, grantsExecutionAuthority: false as const });
     });
+  }
+  /** Server-side job-type discriminator for the Mac-local submission
+   * operation. It reads the stored job's type from the database itself —
+   * never from a request field — the same way `locateQueuedHarnessDelivery`
+   * already discriminates for pickup. Only the three owner-trusted local
+   * adapters resolve; any remote/native/Codex-app-server job type, or any
+   * job whose input digest does not match, refuses. It reads nothing before
+   * the same owner-only session check the local methods apply. */
+  private async macLocalJobKind(identity: VerifiedWebIdentity, projectId: string, jobId: string, expectedInputDigest: string) {
+    localId.parse(projectId); localId.parse(jobId); digestSchema.parse(expectedInputDigest);
+    return new WebSessionAuthority(this.db, this.scope, this.clock, "task").authenticated(identity, async (tx, actor) => {
+      actor.require("tasks.read", projectId); actor.require("tasks.approve", projectId, true);
+      await tx.query("SELECT id FROM tenants WHERE id=$1 FOR UPDATE", [this.scope.tenantId]);
+      await tx.query("SELECT project_id FROM control_manual_project_heads WHERE tenant_id=$1 AND project_id=$2 FOR UPDATE",
+        [this.scope.tenantId, projectId]);
+      const job = await this.job(tx, projectId, jobId), plan = await this.planner.readInSession(tx, jobId);
+      if (!plan || plan.tenantId !== this.scope.tenantId || plan.projectId !== projectId || job.inputDigest !== expectedInputDigest) conflict();
+      if (job.jobType === HERMES_LOCAL_JOB_TYPE_V1
+        && (plan.schema === "control-room.task-execution-plan/v15" || plan.schema === "control-room.task-execution-plan/v16")) return "hermes-local" as const;
+      if (job.jobType === CLAUDE_CODE_LOCAL_JOB_TYPE_V1
+        && (plan.schema === "control-room.task-execution-plan/v9" || plan.schema === "control-room.task-execution-plan/v10")) return "claude-code-local" as const;
+      if (job.jobType === CODEX_OWNER_TRUSTED_LOCAL_JOB_TYPE_V1
+        && (plan.schema === "control-room.task-execution-plan/v13" || plan.schema === "control-room.task-execution-plan/v14")) return "codex-owner-trusted-local" as const;
+      return conflict();
+    });
+  }
+  /** Read-only Mac-local confirm-what-you-saw preview. Dispatches by the
+   * stored job's type, never by a caller-supplied kind. */
+  async previewMacLocalTask(identity: VerifiedWebIdentity, projectId: string, jobId: string, expectedInputDigest: string) {
+    const kind = await this.macLocalJobKind(identity, projectId, jobId, expectedInputDigest);
+    if (kind === "hermes-local") return this.previewHermesLocalTask(identity, projectId, jobId, expectedInputDigest);
+    if (kind === "claude-code-local") return this.previewClaudeCodeLocalTask(identity, projectId, jobId, expectedInputDigest);
+    return this.previewCodexOwnerTrustedLocalTask(identity, projectId, jobId, expectedInputDigest);
+  }
+  /** The Mac-local submission operation's only enqueue entry point. It
+   * dispatches by the stored job's type to the matching owner-trusted local
+   * enqueue method; the remote, signed-packet `enqueueNativeTask` path is
+   * never reachable from here. Any other job type is `conflict`. */
+  async enqueueMacLocalTask(identity: VerifiedWebIdentity, projectId: string, jobId: string, expectedInputDigest: string,
+    expectedPacketDigest: string, signal: AbortSignal) {
+    digestSchema.parse(expectedPacketDigest);
+    const kind = await this.macLocalJobKind(identity, projectId, jobId, expectedInputDigest);
+    if (kind === "hermes-local") return this.enqueueHermesLocalTask(identity, projectId, jobId, expectedInputDigest, signal, expectedPacketDigest);
+    if (kind === "claude-code-local") return this.enqueueClaudeCodeLocalTask(identity, projectId, jobId, expectedInputDigest, signal, expectedPacketDigest);
+    return this.enqueueCodexOwnerTrustedLocalTask(identity, projectId, jobId, expectedInputDigest, signal, expectedPacketDigest);
   }
   /** Reconstructs and rechecks a Codex local queue pickup. It deliberately
    * returns only task identity: the protected host, never the browser or this

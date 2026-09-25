@@ -68,9 +68,23 @@ export function createTaskHttpHandler(options: { origin: string; trust?: AccessT
           if (!options.submission) throw new Error("task_submission_not_configured");
           const receipt = await options.submission.read(identity, projectId, jobId, digest.data);
           const delivery = await options.submission.readDelivery?.(identity, projectId, jobId, digest.data);
+          // The preview is only meaningful before anything is queued; once a
+          // receipt exists, showing a preview digest for a job that already
+          // has a queued intent would be misleading, not merely redundant.
+          // Before the task is assigned (leased to a route) a preview cannot
+          // be derived yet; that is an ordinary, expected read state, not a
+          // failure, so a `conflict` from `preview` here is swallowed rather
+          // than propagated, exactly like an absent `readDelivery` result. A
+          // reader who may not approve (`access_denied`) simply sees no preview.
+          let preview: Awaited<ReturnType<NonNullable<typeof options.submission.preview>>> | undefined;
+          if (!receipt && options.submission.preview) {
+            try { preview = await options.submission.preview(identity, projectId, jobId, digest.data); }
+            catch (error) { if (!(error instanceof WebAccessError) || !["conflict", "access_denied"].includes(error.code)) throw error; }
+          }
           const value = taskSubmissionReadSchema.parse({ projectId, jobId, inputDigest: digest.data, receipt,
-            ...(delivery ? { delivery } : {}) });
+            ...(delivery ? { delivery } : {}), ...(preview ? { preview } : {}) });
           if (receipt && (receipt.projectId !== projectId || receipt.jobId !== jobId)) throw new Error("task_submission_scope_mismatch");
+          if (preview && (preview.projectId !== projectId || preview.jobId !== jobId)) throw new Error("task_submission_scope_mismatch");
           return Response.json(value, { headers: privateResponseHeaders });
         }
         if (url.search) throw new WebAccessError("invalid_request");

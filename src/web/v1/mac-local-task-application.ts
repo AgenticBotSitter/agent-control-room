@@ -70,7 +70,10 @@ export async function createMacLocalTaskApplicationV1(input: MacLocalTaskApplica
       planning: lifecycle.planning,
       assignment: lifecycle.assignment,
       ...(lifecycle.approvals ? { approvals: lifecycle.approvals } : {}),
-      ...(lifecycle.submission ? { submission: lifecycle.submission } : {}),
+      // Deliberately `macLocalSubmission`, never `lifecycle.submission`: the
+      // latter's `enqueue` is the remote, signed-packet `enqueueNativeTask`
+      // path, which the Mac-local site must never be able to reach.
+      ...(lifecycle.macLocalSubmission ? { submission: lifecycle.macLocalSubmission } : {}),
       ...(lifecycle.revisions ? { revisions: lifecycle.revisions } : {}),
       ...(ownerReviews ? { ownerReviews } : {}),
       ...(ownerVerifications ? { ownerVerifications } : {}),
