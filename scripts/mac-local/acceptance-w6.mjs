@@ -43,20 +43,23 @@ const reachable = await waitForSite(5);
 if (!check("site reachable on loopback", reachable, origin)) process.exit(1);
 
 const wrong = await post("/api/v1/local-owner-session", { ownerCode: `${ownerCode}x` });
-check("wrong owner code refused", wrong.status >= 400 && !wrong.headers.get("set-cookie"), `status ${wrong.status}`);
+check("wrong owner code refused", wrong.status === 401 && !wrong.headers.get("set-cookie"), `status ${wrong.status}`);
 
 const anon = await call("/api/v1/projects");
 check("projects refused without session", anon.status === 401 || anon.status === 403, `status ${anon.status}`);
 
 const forged = await post("/api/v1/local-owner-session", { ownerCode }, { origin: "http://evil.example" });
-check("sign-in refused from foreign origin", forged.status >= 400 && !forged.headers.get("set-cookie"), `status ${forged.status}`);
+check("sign-in refused from foreign origin", forged.status === 403 && !forged.headers.get("set-cookie"), `status ${forged.status}`);
 
 let session = await signIn();
 check("owner sign-in issues session", session.status === 201 && session.cookie.startsWith("control_room_local_owner="), `status ${session.status}`);
 
 const workers = await call("/api/v1/local-workers", { headers: { cookie: session.cookie } });
 let workerSummary = `status ${workers.status}`;
-if (workers.ok) workerSummary = JSON.stringify((await workers.json()).workers ?? []).slice(0, 400);
+if (workers.ok) {
+  const body = await workers.json();
+  workerSummary = `worker count ${Array.isArray(body?.workers) ? body.workers.length : "unknown"}`;
+}
 check("worker readiness readable", workers.ok, workerSummary);
 
 const key = randomUUID();

@@ -179,10 +179,7 @@ try {
 } finally { await client.end(); }`;
   const stage = `/opt/data/control-room-provision-${randomBytes(12).toString("hex")}`;
   const sourceBase64 = Buffer.from(source, "utf8").toString("base64");
-  const remote = String.raw`set -eu
-stage=${JSON.stringify(stage)}
-cleanup() { git -C ${JSON.stringify(remoteWorktree)} worktree remove --force "$stage" >/dev/null 2>&1 || true; }
-trap cleanup EXIT
+  const remoteBody = String.raw`set -eu
 printf 'provision_stage:fetch\\n' >&2
 git -C ${JSON.stringify(remoteWorktree)} fetch --quiet origin claude/mac-local-integration
 printf 'provision_stage:worktree\\n' >&2
@@ -195,12 +192,19 @@ chown -R postgres:postgres "$stage"
 printf 'provision_stage:runner\\n' >&2
 printf '%s' ${JSON.stringify(sourceBase64)} | base64 -d > "$stage/.control-room-provision.mjs"
 chown postgres:postgres "$stage/.control-room-provision.mjs"
+runuser -u postgres -- node "$stage/.control-room-provision.mjs"`;
+  const remoteBodyBase64 = Buffer.from(remoteBody, "utf8").toString("base64");
+  const remote = String.raw`set -eu
+stage=${JSON.stringify(stage)}
+export stage
+cleanup() { git -C ${JSON.stringify(remoteWorktree)} worktree remove --force "$stage" >/dev/null 2>&1 || true; }
+trap cleanup EXIT
 if ! command -v timeout >/dev/null 2>&1; then
   printf 'provision_error:TIMEOUT_UNAVAILABLE\\n' >&2
   exit 1
 fi
 set +e
-timeout --kill-after=10s 280s runuser -u postgres -- node "$stage/.control-room-provision.mjs"
+printf '%s' ${JSON.stringify(remoteBodyBase64)} | base64 -d | timeout --kill-after=10s 280s /bin/bash -s
 status=$?
 set -e
 if [ "$status" -eq 124 ] || [ "$status" -eq 137 ]; then
