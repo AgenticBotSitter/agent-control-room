@@ -2,6 +2,16 @@
 
 Codex appends one short entry per work package (see `CODEX_MAC_BUILD_EXECUTION.md`).
 
+- 2026-09-24 — current Hermes runner handoff: the shared queue can now turn
+  one verified current-Hermes locator into the existing controller delivery
+  packet, recheck it immediately before launch, and accept queue success only
+  after the existing result publisher reports a saved result. A replay receipt
+  is not treated as a new successful run. The protected host still owns the
+  executable, chosen model/provider, authority recheck, and result publisher;
+  none are task input. Four focused queue/runner tests, TypeScript, and
+  whitespace checks pass. This is source integration only: no service, site,
+  database, or live task ran.
+
 - 2026-09-24 — current Hermes queue route: the update-aware Hermes plan now
   uses the existing approved work queue and its existing protected receipt
   store. It is a separate, tagged route from the historical 0.21 evidence,

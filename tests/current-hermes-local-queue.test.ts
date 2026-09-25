@@ -3,6 +3,7 @@ import test from "node:test";
 import { computeAuthorityDigest, sha256Digest } from "../src/security";
 import { HERMES_LOCAL_ADAPTER_V1, HERMES_LOCAL_CAPABILITY_V1, HERMES_LOCAL_JOB_TYPE_V1,
   HERMES_LOCAL_START_OPERATION_V1 } from "../src/harness/hermes-local-v1";
+import { HermesLocalDispatchPreparationV1 } from "../src/harness/hermes-local-v1";
 import { TaskExecutionPlanner, type NativeTaskTemplate } from "../src/web/v1/task-execution-planner";
 import { TaskAssignmentCoordinator } from "../src/web/v1/task-assignment-coordinator";
 import { NativeApprovalPacketStore } from "../src/web/v1/native-approval-packet-store";
@@ -69,6 +70,14 @@ test("the current Hermes plan uses the existing approval queue and refuses a cha
   const target = await queuedCoordinator.locateApprovedHermesLocalQueueDelivery(references[0]!, new AbortController().signal);
   assert.equal(target.kind, "hermes-local");
   assert.equal(target.leaseId, assigned.receipt.leaseId);
+  const preparation = new HermesLocalDispatchPreparationV1(f.db, planner, {
+    workerId: authority.allowedExecutor, adapterRevision: "b50bb77e" }, () => instant + 8_000);
+  const prepared = await preparation.prepare({ tenantId: binding.tenantId, projectId: binding.projectId,
+    jobId: target.task.jobId, attemptId: target.task.attemptId, leaseId: target.leaseId, inputDigest: target.task.inputDigest });
+  assert.equal(prepared.delivery.worker.adapterId, HERMES_LOCAL_ADAPTER_V1);
+  assert.equal(prepared.delivery.connectorProfileDigest, template.connectorProfileDigest);
+  await preparation.assertCurrent({ tenantId: binding.tenantId, projectId: binding.projectId,
+    jobId: target.task.jobId, attemptId: target.task.attemptId, leaseId: target.leaseId, inputDigest: target.task.inputDigest }, prepared);
   const shared = await queuedCoordinator.locateQueuedHarnessDelivery(references[0]!, new AbortController().signal);
   assert.equal(shared.kind, "hermes-local");
   await assert.rejects(() => queuedCoordinator.locateApprovedHermesLocalQueueDelivery({ ...references[0]!, packetDigest: sha256Digest("changed") }, new AbortController().signal));
