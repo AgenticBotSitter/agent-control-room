@@ -97,6 +97,8 @@
     "mac:rehearsal": "node --import tsx scripts/mac-local/rehearsal/setup.ts",
     "mac:host": "node scripts/mac-local/start-web-host.mjs",
     "mac:tasks": "node scripts/mac-local/start-task-host.mjs",
+    "mac:up": "node scripts/mac-local/up.mjs",
+    "mac:down": "node scripts/mac-local/down.mjs",
     "db:ledger": "node scripts/generate-migration-ledger.mjs",
     "test:postgres-production": "node --test tests/postgres-production-ledger.test.mjs && PG_BIN=\"${PG_BIN:-/usr/lib/postgresql/17/bin}\" node --import tsx --test --test-concurrency=1 tests/postgres-production-lifecycle.test.mjs tests/postgres-production-coordination.test.mjs",
     "test:windows-preparation": "node --test tests/windows-preparation.test.mjs",

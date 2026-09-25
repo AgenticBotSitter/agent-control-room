@@ -28,7 +28,8 @@ const post = (path, body, extra = {}) => call(path, { method: "POST",
   headers: { "content-type": "application/json", origin, ...extra }, body: JSON.stringify(body) });
 
 async function runBoundedPnpm(script) {
-  const child = spawn("pnpm", [script], { detached: true, stdio: "ignore" });
+  const child = spawn("pnpm", [script], { detached: true, stdio: "ignore",
+    env: { ...process.env, CONTROL_ROOM_PROTECTED_ROOT: protectedRoot } });
   let timer;
   const outcome = await new Promise((resolve, reject) => {
     child.once("error", reject);
