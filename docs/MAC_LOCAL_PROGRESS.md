@@ -2,6 +2,16 @@
 
 Codex appends one short entry per work package (see `CODEX_MAC_BUILD_EXECUTION.md`).
 
+- 2026-09-24 — current Hermes shared-delivery bridge: the new update-aware
+  Hermes runner is now available through the same durable Control Room receipt
+  and publication bridge as the local Claude and Codex runners. It does not
+  introduce another queue, scheduler, database, or task lifecycle. Sixteen
+  focused checks and TypeScript pass; they prove a task stopped before launch
+  does not run, a replay does not run twice, and a cancelled or revoked task
+  cannot save a result. This remains source proof only: the protected host
+  configuration still needs to bind the worker to the real database and
+  website before a live owner task can be run.
+
 - 2026-09-24 — local Hermes reusable text runner: a current Hermes build can
   now run one bounded, text-only task through the same local delivery shape
   already used by Control Room's Claude and Codex routes. Its protected worker

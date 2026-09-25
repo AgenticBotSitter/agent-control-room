@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { createOwnerTrustedLocalClaudeExecutionAdapterV1, createOwnerTrustedLocalCodexExecutionAdapterV1,
   ownerTrustedLocalCliPromptV1 } from "../src/harness/v1/owner-trusted-local-cli-execution";
+import { createOwnerTrustedLocalHermesDeliveryV1 } from "../src/harness/v1/owner-trusted-local-cli-composition";
 import { createOwnerTrustedLocalHermesExecutionAdapterV1 } from "../src/harness/hermes-local-v1";
 
 const configuration = { executablePath: "/Applications/Control Room/bin/agent", workingDirectory: "/private/tmp/acr-empty-task", deadlineMs: 60_000 };
@@ -41,6 +42,17 @@ test("the Hermes adapter keeps the selected model/provider in protected configur
   assert.deepEqual(result, { kind: "completed", text: "hermes text" });
   assert.deepEqual(observed, { ...configuration, profile: "cr", model: "space-bunny-free", provider: "opencode-go",
     prompt: ownerTrustedLocalCliPromptV1(delivery.input), signal: (observed as { signal: AbortSignal }).signal });
+});
+
+test("the shared composition exposes Hermes through the same durable delivery shape", async () => {
+  const base = { db: { transaction() { throw new Error("not_called"); } }, integrityKey: new Uint8Array(32),
+    binding: { workerId: "worker:marvin", adapterId: "connector:hermes.macos-local.v1", adapterRevision: "b50bb77e" },
+    receiptPort: { async receive() { throw new Error("not_called"); } }, async assertCurrent() {},
+    async publish() {} };
+  const composed = createOwnerTrustedLocalHermesDeliveryV1(base as never, { async execute() {
+    return { status: "completed" as const, text: "ok", usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 } };
+  } }, { ...configuration, profile: "cr", model: "space-bunny-free", provider: "opencode-go" });
+  assert.equal(typeof composed.deliver, "function");
 });
 
 test("the execution adapters refuse a canceled call without contacting a CLI", async () => {
