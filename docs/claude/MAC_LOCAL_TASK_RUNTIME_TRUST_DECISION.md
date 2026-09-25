@@ -680,6 +680,60 @@ travel in the manifest, and the key never leaves the Mac.
   - deleting the checkpoint after the tenant has advanced, so the finisher refuses and
     `mac:up` refuses.
 
+## 14. Local task approval and submission (Claude review, 2026-09-25)
+
+**Finding 1: no signed approval packet is needed for Mac-local tasks. Don't build a test-only
+signer.**
+- The three local approve paths, `TaskAssignmentCoordinator.enqueueHermesLocalTask`,
+  `enqueueClaudeCodeLocalTask` and `enqueueCodexOwnerTrustedLocalTask`, authorize through the
+  owner's website session (`WebSessionAuthority`) and `actor.require("tasks.approve", projectId,
+  true)`. The `true` means owner-only.
+- The local owner session is the owner. It uses a loopback origin, the owner code and an
+  in-memory session. That is the approval, and it is the intended trust model (critical path
+  decision 3: the owner's own agents on the owner's own Mac).
+- Signed native approval packets belong to the **remote** path (`enqueueNativeTask`,
+  `enqueueCodexTask`), which the provider deliberately configures with `enrollments: []`.
+
+**Finding 2 (blocker): the website cannot submit a Mac-local task at all.**
+- `task-http.ts` submission calls `lifecycle.submission.enqueue`, which is
+  `enqueueNativeTask`: the remote, signed-packet path.
+- With `enrollments: []` it can never succeed. Nothing in `src` calls the three local enqueue
+  methods.
+- So even with every role correct, the owner could not start a task. This is why no end-to-end
+  local journey exists.
+
+**Decision: a Mac-local submission operation. The same route shape, with no new authority.**
+- In the Mac-local task application, `submission.enqueue` dispatches **by the stored job's type**
+  (never by a request field): Hermes local, Claude Code local, or Codex owner-trusted local go to
+  the matching `enqueue*LocalTask`. Any other type is `conflict`.
+- The remote path is not reachable from Mac-local.
+- **Confirm what you saw.** Each local enqueue derives `packetDigest` server-side from the plan,
+  authority, attempt, lease and route. Add a read-only `preview` to the same operation, returning
+  that exact `packetDigest` for the current lease. The UI shows it and posts it back as
+  `expectedPacketDigest`. The enqueue refuses unless it matches, as `expectedInputDigest` already
+  works.
+  - Either expose each local method's digest computation as a pure helper, or return the digest
+    from a read in the same session.
+  - Don't duplicate the formula in the route.
+- `submission.read` and `readDelivery` stay as they are; the local deliveries already have
+  `locate*` readers.
+- **Tests:**
+  - one per agent: owner session, preview, submit, then queued exactly once, with a replay
+    returning the same receipt;
+  - a mismatched `expectedPacketDigest` is refused;
+  - a non-owner or missing session is refused;
+  - a remote job type on Mac-local is refused;
+  - dispatch ignores any client-supplied kind.
+
+**Then the Package 5 journey (section 9's done condition):**
+- on disposable PG17 with exact roles: project, proposal, plan, assignment, then preview and
+  submit per agent;
+- the worker runs a **fake pinned executable**. The rehearsal already builds `fake-workers` and
+  pins their versions, so it runs the production process adapters with a test executable, not a
+  code seam;
+- the result reaches pending review exactly once per agent;
+- record the evidence in `PACKAGE5_REHEARSAL_STATUS.md`.
+
 ## 9. Review and done
 
 - Split the work into packages of no more than about 800 lines, in this order:
