@@ -2,6 +2,15 @@
 
 Codex appends one short entry per work package (see `CODEX_MAC_BUILD_EXECUTION.md`).
 
+- 2026-09-24 — Codex local-runner cancellation fence: the managed, read-only
+  Codex command runner now checks cancellation again after its asynchronous
+  empty-work-folder inspection and before it can spawn a process. A focused
+  test cancels at exactly that boundary and proves no process starts. The
+  matching Claude runner already had the same protection. Seventeen focused
+  Claude/Codex runner and shared-delivery checks plus TypeScript pass. This is
+  source-only safety work: no Control Room site, database, queue, or agent was
+  started.
+
 - 2026-09-24 — current Hermes three-agent host assembly: the protected local
   task-host validator now accepts the update-aware Hermes route alongside the
   already existing Claude and Codex routes. A new inert composition joins all
