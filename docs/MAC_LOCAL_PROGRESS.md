@@ -173,3 +173,11 @@ Codex appends one short entry per work package (see `CODEX_MAC_BUILD_EXECUTION.m
   the TypeScript check pass. This is source-only: it does not start Hermes,
   contact the database, or deliver a real task. Next: assemble the protected
   runtime provider that supplies the fixed Hermes, Claude, and Codex inputs.
+- 2026-09-24 — W4 Hermes text-only policy correction: a live read-only check
+  against the updated installed Hermes CLI confirmed that `--toolsets` is an
+  enable list. The local Control Room runner now passes an explicit empty
+  toolset, rather than naming `bot_room`; it also skips injected rules. This
+  prevents inherited Hermes tools from becoming part of the first text-only
+  Control Room capability. The installed CLI accepted the fixed no-tools form,
+  and 18 focused Hermes/three-agent checks plus the TypeScript check pass. No
+  Control Room task, database operation, or service was started.

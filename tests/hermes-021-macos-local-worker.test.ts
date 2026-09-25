@@ -212,7 +212,7 @@ test("Marvin's completed JSON report becomes shared inert result evidence", () =
 test("the first owner qualification is text-only, bounded, and never retried", async () => {
   const calls: unknown[] = [];
   const qualification = { ...task, qualificationId: "qualification:marvin", mode: "text_only" as const,
-    toolset: "bot_room" as const, maximumTurns: 1 as const, maximumRunBudgetSeconds: 120 as const,
+    toolset: "none" as const, maximumTurns: 1 as const, maximumRunBudgetSeconds: 120 as const,
     sourceTag: "control-room-local-qualification" as const };
   const outcome = await runHermes021MacosTextOnlyQualificationV1(binding, qualification, {
     async runTextOnlyQualification(input) { calls.push(input); return [result()]; },

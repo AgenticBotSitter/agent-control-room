@@ -24,6 +24,8 @@ test("local Hermes subprocess host uses fixed argv and a private task file", asy
   const host = createHermes021MacosSubprocessStreamJsonHostV1(configuration, (file, args, options) => {
     assert.equal(file, configuration.executablePath);
     assert.deepEqual(args.slice(0, 6), ["-p", "cr", "chat", "--query-file", "/private/tmp/control-room-hermes-task-fixture/task.txt", "--format"]);
+    assert.deepEqual(args.slice(6, 10), ["stream-json", "--toolsets", "", "--ignore-rules"]);
+    assert.equal(args.includes("bot_room"), false);
     assert.equal(args.includes("--model"), true); assert.equal(args.at(-3), "qwen3.8:27b-long");
     assert.equal(args.at(-1), "ollama"); assert.equal(options.shell, false); assert.equal(options.cwd, configuration.workingDirectory);
     assert.deepEqual(options.env, { NODE_ENV: "production", PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: process.env.HOME ?? "" });

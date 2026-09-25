@@ -15,7 +15,7 @@ const qualificationTaskSchema = hermes021MacosTaskSchemaV1.extend({
   qualificationId: id,
   /** The first live check has no tools, one turn, and a bounded runtime. */
   mode: z.literal("text_only"),
-  toolset: z.literal("bot_room"),
+  toolset: z.literal("none"),
   maximumTurns: z.literal(1),
   maximumRunBudgetSeconds: z.literal(120),
   sourceTag: z.literal("control-room-local-qualification"),

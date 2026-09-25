@@ -211,7 +211,9 @@ function createHost(configurationValue: unknown, launch: Launch, makeDirectory: 
       // the remaining controller window rather than a stale setup timestamp.
       const timeoutMilliseconds = Math.min(configuredMilliseconds, remaining());
       const args = Object.freeze(["-p", configuration.profile, "chat", "--query-file", queryFile,
-        "--format", "stream-json", "--toolsets", "bot_room", "--ignore-rules", "--max-turns",
+        // Hermes treats --toolsets as an enable list. An explicit empty value
+        // is the only fixed argv form that cannot inherit a configured toolset.
+        "--format", "stream-json", "--toolsets", "", "--ignore-rules", "--max-turns",
         String(configuration.maximumTurns), "--run-budget", String(configuration.maximumRunBudgetSeconds),
         "--source", "control-room-local-worker", "--in", configuration.workingDirectory,
         "--model", configuration.model, "--provider", configuration.provider]);
