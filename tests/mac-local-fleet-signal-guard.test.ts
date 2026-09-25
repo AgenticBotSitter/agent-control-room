@@ -28,15 +28,21 @@ async function seed() {
   return pg;
 }
 
-const signal = (pg: PGlite, nodeId: string, kind: string, sequence: number) => pg.query(
+type Overrides = Partial<{ trust: string; expiresAt: string; source: string; nodeInPayload: string; sequenceInPayload: number }>;
+const envelope = (nodeId: string, kind: string, sequence: number, o: Overrides = {}) => ({
+  schemaVersion: "1.0.0", tenantId: "tenant:a", nodeId: o.nodeInPayload ?? nodeId, sequence: o.sequenceInPayload ?? sequence,
+  observedAt: NOW, expiresAt: o.expiresAt ?? LATER, trust: o.trust ?? "reported", fingerprint: digest("b"), kind,
+  source: o.source ?? (kind === "telemetry" ? "telemetry_port" : "probe_runner"), payload: {} });
+const signal = (pg: PGlite, nodeId: string, kind: string, sequence: number, o: Overrides = {}) => pg.query(
   `INSERT INTO control_node_fleet_signals(tenant_id,node_id,signal_kind,signal_sequence,payload_digest,fingerprint,trust,observed_at,expires_at,payload,recorded_at)
-   VALUES('tenant:a',$1,$2,$3,$4,$5,'verified',$6,$7,'{}'::jsonb,$6)`, [nodeId, kind, sequence, digest("a"), digest("b"), NOW, LATER]);
-const current = (pg: PGlite, nodeId: string, kind: string, sequence: number) => pg.query(
+   VALUES('tenant:a',$1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$7)`,
+  [nodeId, kind, sequence, digest("a"), digest("b"), o.trust ?? "reported", NOW, o.expiresAt ?? LATER, JSON.stringify(envelope(nodeId, kind, sequence, o))]);
+const current = (pg: PGlite, nodeId: string, kind: string, sequence: number, o: Overrides = {}) => pg.query(
   `INSERT INTO control_node_fleet_current(tenant_id,node_id,signal_kind,signal_subject_id,signal_sequence,fingerprint,trust,observed_at,expires_at,payload)
-   VALUES('tenant:a',$1,$2,'node',$3,$4,'verified',$5,$6,'{}'::jsonb)
+   VALUES('tenant:a',$1,$2,'node',$3,$4,$5,$6,$7,$8::jsonb)
    ON CONFLICT (tenant_id,node_id,signal_kind,signal_subject_id) DO UPDATE SET signal_sequence=EXCLUDED.signal_sequence,
      fingerprint=EXCLUDED.fingerprint,trust=EXCLUDED.trust,observed_at=EXCLUDED.observed_at,expires_at=EXCLUDED.expires_at,payload=EXCLUDED.payload`,
-  [nodeId, kind, sequence, digest("b"), NOW, LATER]);
+  [nodeId, kind, sequence, digest("b"), o.trust ?? "reported", NOW, o.expiresAt ?? LATER, JSON.stringify(envelope(nodeId, kind, sequence, o))]);
 
 test("the coordinator records and refreshes a Mac-local worker's readiness signals", async t => {
   const pg = await seed(); t.after(() => pg.close());
@@ -69,4 +75,31 @@ test("the coordinator cannot rewrite or delete signal history", async t => {
   await assert.rejects(pg.query("UPDATE control_node_fleet_signals SET coordinator_lock=false WHERE node_id='mac-1.codex'"), /fleet signal rejected/);
   await assert.rejects(pg.query("UPDATE control_node_fleet_signals SET trust='blocked'"), /permission denied/);
   await assert.rejects(pg.query("DELETE FROM control_node_fleet_signals"), /permission denied/);
+});
+
+test("history signals are host-reported, short-lived, sequential, and match their stored envelope", async t => {
+  const pg = await seed(); t.after(() => pg.close());
+  for (const [name, attempt] of [
+    ["verified trust", () => signal(pg, "mac-1.codex", "capability", 1, { trust: "verified" })],
+    ["a lifetime over five minutes", () => signal(pg, "mac-1.codex", "capability", 1, { expiresAt: "2026-09-25T12:06:00.000Z" })],
+    ["an envelope for another node", () => signal(pg, "mac-1.codex", "capability", 1, { nodeInPayload: "remote-1" })],
+    ["an envelope with another sequence", () => signal(pg, "mac-1.codex", "capability", 1, { sequenceInPayload: 2 })],
+    ["the wrong source", () => signal(pg, "mac-1.codex", "telemetry", 1, { source: "probe_runner" })],
+    ["a skipped sequence", () => signal(pg, "mac-1.codex", "capability", 2)],
+  ] as const) await assert.rejects(attempt(), /fleet signal rejected/, name);
+  const rows = await pg.query<{ n: number }>("SELECT count(*)::int AS n FROM control_node_fleet_signals");
+  assert.equal(rows.rows[0]?.n, 0);
+});
+
+test("the live row is only ever a newer copy of an appended history row", async t => {
+  const pg = await seed(); t.after(() => pg.close());
+  await assert.rejects(current(pg, "mac-1.codex", "capability", 1), /fleet signal rejected/, "no history yet");
+  await signal(pg, "mac-1.codex", "capability", 1); await signal(pg, "mac-1.codex", "capability", 2);
+  await current(pg, "mac-1.codex", "capability", 2);
+  await assert.rejects(current(pg, "mac-1.codex", "capability", 1), /fleet signal rejected/, "moving backwards");
+  await assert.rejects(pg.query("UPDATE control_node_fleet_current SET trust='verified'"), /fleet signal rejected/, "trust rewrite");
+  await assert.rejects(pg.query(`UPDATE control_node_fleet_current SET signal_sequence=3,
+    expires_at=expires_at + interval '30 days'`), /fleet signal rejected/, "expiry rewrite");
+  await assert.rejects(pg.query(`UPDATE control_node_fleet_current SET signal_sequence=3,
+    payload=jsonb_set(payload,'{sequence}','3')`), /fleet signal rejected/, "payload rewrite");
 });

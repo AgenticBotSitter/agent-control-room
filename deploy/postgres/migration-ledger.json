@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "digest": "0c98ddd1ded3a344d197f2b340022f4753c1d7a06aca79fd003494760689a565",
+  "digest": "ac075b97aa1f6204a3a669d728b2eb5659c94b829d028d5e71db6cbe40580fd9",
   "entries": [
     {
       "file": "db/migrations/0001_control_room_core.sql",
@@ -521,7 +521,7 @@
     {
       "file": "db/migrations/0087_mac_local_fleet_signals.sql",
       "order": 87,
-      "sha256": "37b39fb940b6005ec13e1cc6870aea6bb1af73e8c1ec1483d7ed10ffb5074cf3",
+      "sha256": "73ffb817e2c097f765a832f03a91b8841c4d229b9f726d379b8362da7f54d7b3",
       "kind": "migrate"
     },
     {

@@ -17,7 +17,7 @@ export async function verifyPrivateIdeaAdapter(db: DatabaseClient, scope: { tena
 
 // Generated from public migrations 0001-0087, including generic external-content
 // migrations 0025/0026. Catalog query below; not a mutable database marker.
-export const privateWebSchemaDigest = "1a6f4d08764cbf8abd41e492693a7097aa89b3f3552b146fe86b78de2aaca413";
+export const privateWebSchemaDigest = "1f2d79fd49a1bac0e8f440c069509e16102c99d1dfcde617378c6cfd945c6da0";
 export const privateWebReadTables = ["control_identities", "control_role_grants", "workspaces", "control_web_sessions",
   "tenants", "control_idempotency",
   "control_schedules", "control_schedule_occurrences",
@@ -203,6 +203,11 @@ export async function readPrivateWebSchemaDigest(db: DatabaseSession) {
       json_build_array(pg_get_triggerdef(t.oid),t.tgenabled)::text
     FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid JOIN pg_namespace n ON n.oid=c.relnamespace
       WHERE n.nspname='public' AND NOT t.tgisinternal
+    UNION ALL SELECT 'policy', c.relname || '.' || p.polname,
+      json_build_array(p.polcmd,p.polpermissive,
+        ARRAY(SELECT CASE r WHEN 0 THEN 'public' ELSE pg_get_userbyid(r)::text END FROM unnest(p.polroles) r ORDER BY 1),
+        pg_get_expr(p.polqual,p.polrelid),pg_get_expr(p.polwithcheck,p.polrelid))::text
+    FROM pg_policy p JOIN pg_class c ON c.oid=p.polrelid JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public'
     UNION ALL SELECT 'function', p.proname || '(' || pg_get_function_identity_arguments(p.oid) || ')', pg_get_functiondef(p.oid)
     FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='public') manifest
     ORDER BY kind COLLATE "C", name COLLATE "C"`);
