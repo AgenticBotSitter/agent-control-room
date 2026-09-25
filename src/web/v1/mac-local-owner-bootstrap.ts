@@ -1,9 +1,47 @@
-import type { DatabaseClient } from "../../persistence/database";
+import type { DatabaseClient, DatabaseSession } from "../../persistence/database";
 import { SecurityStore, sha256Digest } from "../../security";
 import type { MacLocalProtectedConfigurationV1 } from "./mac-local-protected-configuration";
+import { CODEX_OWNER_TRUSTED_LOCAL_ADAPTER_V1 } from "../../harness/codex-v1/owner-trusted-local-task-planning-contract";
+import { HERMES_LOCAL_ADAPTER_V1 } from "../../harness/hermes-local-v1/task-planning-contract";
+import { CLAUDE_CODE_LOCAL_ADAPTER_V1 } from "../../harness/claude-code-v1/task-planning-contract";
 
 export const macLocalOwnerIdentityIdV1 = (tenantId: string) => `identity:${tenantId}:owner`;
 export const macLocalOwnerGrantIdV1 = (tenantId: string) => `grant:${tenantId}:owner`;
+
+/**
+ * Fixed, tenant-scoped rows for the three owner-trusted local harness
+ * adapters. `durable-result-publication.ts`'s identity verification reads
+ * this row before it will publish any result for that adapter; without it,
+ * every local task's result stays stuck at "receipt accepted, never
+ * published" no matter how correctly everything upstream ran. Idempotent:
+ * safe to call every time `mac:up` bootstraps the owner.
+ *
+ * `adapter_registry.id` is a global primary key, not a per-tenant one (a
+ * later migration adds a `UNIQUE(tenant_id,id)` alongside it, but never
+ * changes the primary key). These three adapter ids are fixed, source-level
+ * constants, so this insert can succeed for at most one tenant, system-wide,
+ * for the lifetime of the database. That is safe for the one real Mac-local
+ * tenant this ever runs against in production, but a silent `ON CONFLICT DO
+ * NOTHING` would mask a genuine problem if it ever collided with a different
+ * tenant (a stale row from another environment, or a misconfigured tenant
+ * id). Fail closed instead: adopt only a row that already belongs to this
+ * exact tenant.
+ *
+ * Deliberately not called from `bootstrapMacLocalOwnerV1` itself: that
+ * function is also exercised in tests against many disposable, unrelated
+ * tenant ids sharing one database, which is fine for the tenant/workspace/
+ * owner logic but not for a genuinely global-singleton id. Call this
+ * separately, after the owner bootstrap, from the real `mac:up` flow only.
+ */
+export async function seedMacLocalAdapterRegistryV1(tx: DatabaseSession, tenantId: string): Promise<void> {
+  for (const adapterId of [CODEX_OWNER_TRUSTED_LOCAL_ADAPTER_V1, HERMES_LOCAL_ADAPTER_V1, CLAUDE_CODE_LOCAL_ADAPTER_V1]) {
+    await tx.query(`INSERT INTO adapter_registry(id,tenant_id,source_system,contract_version,authority_mode,status,redaction_policy_version,cursor_retention_days)
+      VALUES($1,$2,'control-room-mac-local','1.0.0','control_room_native','online','v1',30) ON CONFLICT (id) DO NOTHING`,
+    [adapterId, tenantId]);
+    const owner = (await tx.query<{ tenant_id: string }>("SELECT tenant_id FROM adapter_registry WHERE id=$1", [adapterId])).rows[0];
+    if (owner?.tenant_id !== tenantId) throw new Error("mac_local_owner_bootstrap_conflict");
+  }
+}
 
 /**
  * Creates the fixed Mac-local tenant, workspace and owner once. Re-running is a

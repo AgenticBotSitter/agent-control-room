@@ -3,7 +3,7 @@
 import { isAbsolute, resolve } from "node:path";
 import { loadMacLocalProtectedConfigurationFromRootV1 } from "../../src/web/v1/mac-local-protected-loader";
 import { createPrivatePostgresDatabase } from "../../src/web/v1/private-postgres";
-import { bootstrapMacLocalOwnerV1 } from "../../src/web/v1/mac-local-owner-bootstrap";
+import { bootstrapMacLocalOwnerV1, seedMacLocalAdapterRegistryV1 } from "../../src/web/v1/mac-local-owner-bootstrap";
 
 const root = process.argv[2];
 if (!root || process.argv.length !== 3 || !isAbsolute(root) || resolve(root) !== root) {
@@ -12,9 +12,25 @@ if (!root || process.argv.length !== 3 || !isAbsolute(root) || resolve(root) !==
 }
 const configuration = await loadMacLocalProtectedConfigurationFromRootV1(root);
 const database = createPrivatePostgresDatabase(configuration.database);
+let ownerOk = false;
 try {
   console.log(`owner ${await bootstrapMacLocalOwnerV1(database.client, configuration)}`);
+  ownerOk = true;
 } catch (error) {
   console.error(`owner bootstrap failed: ${error instanceof Error ? error.message : "unknown"}`);
   process.exitCode = 1;
-} finally { await database.close(); }
+}
+if (ownerOk) {
+  try {
+    // Idempotent, but kept separate from bootstrapMacLocalOwnerV1: adapter_registry.id
+    // is a global (not per-tenant) primary key for these three fixed adapter ids, so
+    // this seed is meaningful only for the one real Mac-local tenant, not every
+    // synthetic tenant that exercises the owner-bootstrap logic in tests.
+    await database.client.transaction(tx => seedMacLocalAdapterRegistryV1(tx, configuration.localOwnerSession.tenantId));
+    console.log("adapter registry seeded");
+  } catch (error) {
+    console.error(`adapter registry seed failed: ${error instanceof Error ? error.message : "unknown"}`);
+    process.exitCode = 1;
+  }
+}
+await database.close();
