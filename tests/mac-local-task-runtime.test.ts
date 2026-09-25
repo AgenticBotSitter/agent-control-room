@@ -81,7 +81,7 @@ test("loading refuses a readable-by-others file, a symlink, or a non-private dir
   await assert.rejects(loadMacLocalTaskRuntimeFromRootV1("relative/root"), /mac_local_task_runtime_invalid/u);
 });
 
-test("the prepare command takes exactly its four flags, with or without the pnpm separator", () => {
+test("the prepare command takes exactly its five flags, with or without the pnpm separator", () => {
   const args = ["--protected-root", "/p", "--hermes-profile", "cr", "--hermes-provider", "opencode-go", "--hermes-model", "m",
     "--hermes-destination", "https://models.example.invalid:443"];
   assert.deepEqual(parsePrepareTaskRuntimeArgumentsV1(["--", ...args]),
