@@ -1,8 +1,9 @@
 # Secure Mac-to-VPS database route (W1)
 
 **From:** Claude (lead). **To:** Codex. **Date:** 2026-09-25.
-**Status:** revision 3, **owner-approved 2026-09-25**. Supersedes revisions 1
-and 2 (history at the end). Nothing here has been applied yet.
+**Status:** revision 3.1, **owner-approved 2026-09-25**. Supersedes revisions 1
+and 2 (history at the end). Revision 3.1 folds in the VPS operator's read-only
+inventory (see "VPS facts"). Nothing has been changed on the VPS yet.
 
 ## Decision
 
@@ -46,6 +47,21 @@ from a relayed message without checking, and is withdrawn.
 - Tailscale client versions are all ≥ 1.102, which supports persistent TCP
   Serve.
 
+### VPS facts (VPS operator's read-only inventory, 2026-09-25)
+
+- PostgreSQL 17 runs as a host process with **no systemd**: PID 1 is not an
+  init system. A watchdog script under the existing Hermes cron supervises it.
+  That cron is the established pattern for recurring jobs on this host.
+- PostgreSQL listens on loopback only. `ssl` is already `on`, using the
+  distribution's self-signed ("snakeoil") certificate.
+- The existing Serve map is a single tailnet-only HTTPS route on `:443`.
+- Other local consumers exist (other projects' roles and other Control Room
+  roles). Their `pg_hba` rules must not change.
+- `main`'s `src/web/v1/private-postgres.ts` still forces loopback and
+  `ssl: false`. **The VPS must run the Mac-local integration branch**, which has
+  the TLS-capable client (`private-postgres-endpoint.ts`). This is not a new
+  code change.
+
 ## Required code change (Codex, before any live step)
 
 `privatePostgresTlsOptionsV1` currently requires a publicly trusted chain
@@ -76,19 +92,29 @@ threat model needs.
 2. Issue the machine certificate with `tailscale cert` for the VPS's MagicDNS
    name. Install the cert and key where PostgreSQL reads them, with the key
    `0600` and owned by the PostgreSQL user. Set `ssl = on`.
-3. Install a **systemd timer** (daily) that re-runs `tailscale cert`. It
-   reloads PostgreSQL only if the file changed; PostgreSQL re-reads SSL
-   files on reload. It logs one line on success or failure. This is the
-   only new persistent unit, and it is authorized by this owner-approved
-   plan.
+3. Add **one daily renewal job to the existing Hermes cron** (there is no
+   systemd on this host). It re-runs `tailscale cert`, compares the digest,
+   and reloads PostgreSQL (`SELECT pg_reload_conf()` as `postgres` over the
+   local socket) only if the certificate changed. It holds an exclusive
+   lock (`flock -n`, so a second run exits at once), bounds each command
+   with `timeout` (60 s for `tailscale cert`, 15 s for the reload), and logs
+   one line on success or failure. This is the only new recurring job, and this
+   owner-approved plan authorizes it.
 4. Add the persistent raw TCP Serve mapping:
-   `tailscale serve --bg --tcp 5432 tcp://127.0.0.1:5432`.
-   **Never run `tailscale serve reset`**, and do not change the existing
-   HTTPS Serve route. Capture `tailscale serve status` before and after.
-5. `pg_hba`: Serve proxies from loopback, so for the four Mac-local roles
-   require `hostssl ... 127.0.0.1/32 scram-sha-256`, and reject non-SSL
-   `host` for those roles. Leave the other consumers' rules as they are,
-   per the step-1 inventory.
+   `tailscale serve --bg --tcp=5432 tcp://127.0.0.1:5432`.
+   **Never run `tailscale serve reset`.** Capture
+   `tailscale serve status --json` before and after. The `:443` entry must be
+   byte-identical afterward. If it differs at all, immediately run
+   `tailscale serve --tcp=5432 off`, confirm `:443` is back, and stop.
+5. `pg_hba`: Serve proxies from loopback. For exactly these four roles,
+   `control_room_web`, `control_room_coordinator`, `control_room_results`
+   and `control_room_queue_worker` (the `roleNames` in
+   `scripts/mac-local/provision-database.mjs`), add
+   `hostssl control_room <role> 127.0.0.1/32 scram-sha-256` and a following
+   `host control_room <role> 127.0.0.1/32 reject`. Put both above any broader
+   rule. Leave every other role's rules exactly as they are, including the
+   migrator, application, scheduler and GitHub broker roles and the other
+   projects' roles.
 6. PostgreSQL stays bound to loopback only.
 
 **Owner, once (see `docs/OWNER_ACTIONS.md` item 1):**
@@ -100,10 +126,15 @@ threat model needs.
 
 **Codex, on the Mac:**
 
-9. Re-run the provisioner with `--database-host <VPS Tailscale IPv4>
-   --database-port 5432 --endpoint-policy-file <protected v2 policy>`. The
-   policy's `serverName` is the VPS MagicDNS name. Then run
-   `pnpm mac:check-database`.
+9. **Re-point without SSH.** The existing provisioner reaches the VPS over
+   `ssh`, which is the path the tagged Mac cannot use (revision 1's failure).
+   Add a provisioner mode, `--repoint-only`, that makes no SSH call. It keeps
+   the four role passwords already in the protected root and rewrites only
+   host (the VPS Tailscale IPv4), port `5432`, and the v2 endpoint policy
+   (`serverName` = the VPS MagicDNS name). Then run `pnpm mac:check-database`.
+   If authentication fails because the Mac's stored passwords no longer match
+   the VPS, stop and report. Do not move passwords through chat, and do not
+   restore SSH as a workaround.
 10. Remove any tunnel/launchd pieces that `mac:up`/`mac:down` gained for
     revisions 1–2. `mac:up` needs no network process.
 
@@ -111,8 +142,14 @@ threat model needs.
 
 - **Upgrades/deploys:** nothing touches Tailscale, the certificate, or
   `pg_hba`.
-- **Migrations:** they run as today, as the migrator role over the same
-  route. Role separation is enforced by PostgreSQL.
+- **Migrations:** the ledger is applied **on the VPS**, as `postgres` over
+  the local socket (the provisioner's remote body today). After W1, the VPS
+  operator runs that step locally on the VPS. No SSH from the Mac and no
+  Tailscale change are involved. Follow-up for Codex: split that remote body
+  into a VPS-local command.
+- **Password rotation:** a role can change its own password over the route
+  (`ALTER ROLE CURRENT_USER PASSWORD ...`, then update the protected root).
+  Follow-up for Codex: no SSH is needed.
 - **Certificate renewal:** automatic (step 3). No configuration change,
   because nothing is pinned.
 - **New machine:** the owner adds `tag:control-room-client` to it once.
@@ -122,9 +159,9 @@ threat model needs.
 
 ## Rollback (bounded, never touches SSH or the website)
 
-`tailscale serve --tcp 5432 off` (that mapping only). The owner removes the
+`tailscale serve --tcp=5432 off` (that mapping only). The owner removes the
 grant and the Mac's extra tag. Restore the captured `pg_hba`/`ssl` config and
-reload. Disable the renewal timer. Rotate the four Mac-local role passwords.
+reload. Remove the renewal cron job. Rotate the four Mac-local role passwords.
 Verify that 5432 is unreachable from the tailnet.
 
 ## Rules
@@ -148,7 +185,7 @@ Verify that 5432 is unreachable from the tailnet.
 7. The phone or PC (`tag:general` only) cannot connect to VPS:5432.
 8. Mac sleep/wake, a VPS PostgreSQL restart, and a VPS Tailscale restart all
    recover without intervention. `mac:check-database` passes after each.
-9. Renewal drill: force-run the timer, confirm PostgreSQL reloaded, and
+9. Renewal drill: force-run the renewal job, confirm PostgreSQL reloaded, and
    confirm `mac:check-database` still passes with no config change.
 10. The existing owner SSH to the VPS and the website both pass their checks
     before and after.
@@ -158,6 +195,13 @@ W1 is done when 1–10 pass.
 ---
 
 ## History
+
+- **Revision 3.1 (2026-09-25):** adds the VPS inventory. Changes: renewal runs
+  on the existing Hermes cron (the host has no systemd); uses the `--tcp=5432`
+  flag form with a guard on the `:443` route; names the four roles and gives
+  exact `pg_hba` lines; re-points the Mac without SSH (`--repoint-only`);
+  corrects the migrations note (migrations run VPS-local, not over this
+  route).
 
 - **Revision 1 (2026-09-24):** SSH tunnel over the owner's existing Tailscale
   SSH. Wrong: the tagged Mac is not covered by the `autogroup:member` /
