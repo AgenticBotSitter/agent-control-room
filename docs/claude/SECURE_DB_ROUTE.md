@@ -143,13 +143,20 @@ threat model needs.
 
 9. **Re-point without SSH.** The existing provisioner reaches the VPS over
    `ssh`, which is the path the tagged Mac cannot use (revision 1's failure).
-   Add a provisioner mode, `--repoint-only`, that makes no SSH call. It keeps
+   Run `pnpm mac:provision-database -- --repoint-only --protected-root <protected-root>`.
+   This `--repoint-only` mode makes no SSH call. It keeps
    the four role passwords already in the protected root and rewrites only
    host (the VPS Tailscale IPv4), port `5432`, and the v2 endpoint policy
    (`serverName` = the VPS MagicDNS name). Then run `pnpm mac:check-database`.
    If authentication fails because the Mac's stored passwords no longer match
    the VPS, stop and report. Do not move passwords through chat, and do not
-   restore SSH as a workaround.
+   restore SSH as a workaround. The command discovers one online
+   `tag:control-room-vps` peer from the Mac's current Tailscale status and
+   requires the Mac to retain `tag:general` while also showing
+   `tag:control-room-client`. It derives the route evidence digest from this
+   document's accepted VPS evidence section, writes only the database host,
+   port, and v2 endpoint policy in the two protected database config files,
+   and prints no address, name, or password.
 10. Remove any tunnel/launchd pieces that `mac:up`/`mac:down` gained for
     revisions 1–2. `mac:up` needs no network process.
 

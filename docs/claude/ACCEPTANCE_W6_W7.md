@@ -50,7 +50,7 @@ Two checks for the whole system:
 
 | # | Check | Pass means |
 |---|-------|-----------|
-| 6 | Tunnel loss | Stopping the database tunnel makes the site report unavailable. There is no fake success. It recovers when the tunnel is back. |
+| 6 | Database route loss | When the direct private database route is unavailable, the site reports unavailable; it recovers when the route returns. The Mac starts no tunnel process. |
 | 7 | Backup and restore | A dump of `control_room` restores into a scratch database, and the project and task counts match |
 
 Before writing a table row, always check that nothing leftover is still running: `ps -axo pid,pgid,command | grep -E "codex|claude|hermes"`.

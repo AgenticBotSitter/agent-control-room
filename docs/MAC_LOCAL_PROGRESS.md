@@ -2,6 +2,9 @@
 
 Codex appends one short entry per work package (see `CODEX_MAC_BUILD_EXECUTION.md`).
 
+- REAL 2026-09-25 — VPS route evidence accepted by Claude: check 1 passed (PostgreSQL loopback-only), check 2 passed (TCP Serve forwards to loopback and the HTTPS route is unchanged), and check 6 passed (plaintext role access is rejected). The certificate renewal job also ran unchanged, but check 9 is incomplete until the Mac database check passes after renewal. Website status codes were unchanged before/after; the SSH portion of check 10 is not verified. The exact repoint invocation, including pnpm's `--` separator, now reaches the safe Mac-tag check and refuses because current Tailscale status shows `tag:general` but not `tag:control-room-client`. Protected config remains on loopback port 15432 with no v2 endpoint policy; PostgreSQL was not contacted. Check 3's policy diff and checks 4–5, 7–8, and full check 10 remain unverified. Check 7 requires the owner to try port 5432 from the phone or PC.
+- REAL 2026-09-25 — after removing tunnel support from `mac:up`/`mac:down`, a read-only Mac check found no old tunnel configuration, PID/log files, matching SSH tunnel process, or tunnel LaunchAgent. No SSH tunnel was restored or changed.
+
 - REAL 2026-09-24 — the loopback-only SSH database tunnel accepted a local connection, but the first protected-configuration run stopped before writing its JSON files because Hermes reports a multi-line version banner and the generic version reader wrongly required one line. Seven protected password files exist; no database map, owner code, website, queue, or agent was created or started.
 
 - SOURCE 2026-09-24 — read-only VPS verification confirmed the database is ready but the raw private database route is absent; the Tailscale admin console is signed out, so the required Mac-only access rule cannot be inspected or safely changed yet. One sign-in-only owner step is recorded in OWNER_ACTIONS.md.

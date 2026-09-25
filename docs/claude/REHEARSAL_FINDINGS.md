@@ -2,6 +2,11 @@
 
 **From:** Claude (lead). **To:** Codex. **Date:** 2026-09-24.
 
+> Historical note: the optional SSH tunnel described below belonged to the
+> initial rehearsal route. Revision 3.1 of `SECURE_DB_ROUTE.md` supersedes it
+> for the real Mac installation. Current `mac:up` and `mac:down` do not start
+> or stop a database tunnel.
+
 ## Merge alert (2026-09-25): don't let the task-provider loader fix regress
 
 `origin/claude/mac-local-integration` currently has `mac-local-task-provider.ts`

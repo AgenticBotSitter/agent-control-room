@@ -2,33 +2,26 @@
 
 Only steps the bots cannot do. Each item is numbered and copy-paste ready.
 
-## 1. One-time Tailscale change for the private database route
+## 1. Confirm the Mac's effective Tailscale tag
 
-**Status (2026-09-25):** needed, owner-approved plan (`docs/claude/SECURE_DB_ROUTE.md`
-revision 3.1). **The VPS side is ready (2026-09-25); do this now.** Two parts, once:
+**Status (2026-09-25):** the owner reports that the policy grant and Mac tag
+were applied. However, the Mac's last successful local status read showed
+`tag:general` but not `tag:control-room-client`. The protected database files
+are therefore still pointed at the old loopback tunnel address. No route or
+database change was made. Do not edit the policy again unless its current
+contents show the grant is missing.
 
-1. **Tailscale admin console → Access controls.** Make two small additions
-   and leave everything else, especially the `ssh` section, exactly as it is:
-   - Inside the existing `"tagOwners": { ... }` block, add this line:
-     ```json
-     "tag:control-room-client": ["autogroup:admin"],
-     ```
-   - Inside the existing `"grants": [ ... ]` list, add this entry:
-     ```json
-     { "src": ["tag:control-room-client"], "dst": ["tag:control-room-vps"], "ip": ["tcp:5432"] },
-     ```
-     If your file has an `"acls": [ ... ]` list instead of `"grants"`, add this
-     entry there instead:
-     ```json
-     { "action": "accept", "src": ["tag:control-room-client"], "dst": ["tag:control-room-vps:5432"] },
-     ```
-   The console checks the file when you save; if it reports an error, don't
-   force it, and tell Claude or Codex what it says.
-2. **Machines → the Mac mini → Edit ACL tags.** Add `tag:control-room-client`.
-   **Keep `tag:general`.** Do not change the phone, PC, or VPS.
+Before the Mac database can be re-pointed, the owner needs to make the already
+approved tag assignment visible to the running Tailscale client (for example,
+refresh the Mac's Tailscale status after confirming the assignment in the
+admin console). Keep `tag:general`; do not change the phone, PC, or VPS. Then
+ask Codex to rerun the no-SSH `--repoint-only` step. If the client still does
+not show the tag, stop and report the mismatch rather than restoring SSH or
+changing the policy.
 
-After this, no further Tailscale changes are needed for updates, migrations,
-or certificate renewals. A future Control Room computer needs only step 2.
+After the tag is effective, no further Tailscale changes are needed for
+updates, migrations, or certificate renewals. A future Control Room computer
+needs the same approved client tag.
 
 Do not paste a password, access key, database address, certificate, or
 terminal output here.
