@@ -46,6 +46,8 @@ async function finish(code, verdict, detail, raw, text = "") {
 }
 
 async function main() {
+  if (base && execFileSync("git", ["status", "--porcelain"], { encoding: "utf8" }).trim())
+    return finish(2, "NONE", "working tree is dirty; commit or remove changes before reviewing BASE...HEAD");
   const diff = base ? execFileSync("git", ["diff", `${base}...HEAD`], { encoding: "utf8", maxBuffer: 64 << 20 }) : await readStdin();
   if (!diff.trim()) return finish(2, "NONE", "empty diff: pass a diff on stdin or use --base <ref>; include untracked files with `git add -N` first");
   if (Buffer.byteLength(diff) > MAX_DIFF_BYTES)
