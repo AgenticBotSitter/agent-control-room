@@ -115,7 +115,50 @@ itself refuses only a non-local route or a worker mismatch.
 - **Build entry:** add `macLocalDefaultTaskProvider` to `vite.vps.config.ts`, so that `up.mjs`'s
   existing `dist-vps/server/macLocalDefaultTaskProvider.js` path exists.
 
-## 5. Review and done
+## 5. Rollback checkpoint: a protected file on the Mac (decided 2026-09-25)
+
+The review system (`CompletionGateStoreV1`, the planner and the result services) needs an
+`AwaitableRollbackCheckpointStoreV1`. Its contract says the checkpoint must be stored **outside the
+database it protects**, so that restoring an old copy of the database is detected, not silently accepted.
+The only production implementation is the etcd store, which this deployment doesn't run. The in-memory
+store is test-only and must not be used.
+
+**Decision:** a protected checkpoint file on the Mac, `<protected>/state/rollback-checkpoints.json`.
+The database it protects is the VPS PostgreSQL, so this file is on a different machine. That's the
+independent placement the contract asks for, and the etcd store exists to provide.
+
+- **Store rules:**
+  - `read` returns the scope's checkpoint.
+  - `initialize` succeeds only for an absent scope at revision 1.
+  - `advance` is a compare-and-swap: the stored checkpoint's digest must equal the expected digest,
+    the scope must match, and the revision must be exactly one higher. Anything else throws.
+- **Durability:** each write goes to a new private temporary file, is fsynced, is renamed over the
+  target, and the directory is fsynced before the call returns. A failed write leaves the old file intact.
+- **One writer:**
+  - Calls are serialized inside the process.
+  - An exclusive lock file holds the owning process id. A lock held by a live process refuses.
+  - A lock left by a dead process is taken over, so a launchd crash-restart recovers.
+- **Protection:** the directory is 0700 and the file 0600, with no symlinks. Content never appears in
+  an error.
+- **Failure is closed.** The review system initializes a checkpoint only for an empty review history,
+  and every later read and write must match it. So each of these makes reviews refuse, never
+  silently continue:
+  - the file is lost while the database has state;
+  - a Mac backup restores an older copy of the file;
+  - the VPS database is restored to an earlier point.
+- **Backup and restore rules:**
+  1. Don't restore `rollback-checkpoints.json` by itself from a Mac backup.
+  2. The M8 drill restores into a scratch database and never touches this file.
+  3. A real VPS disaster recovery, or a lost or rolled-back checkpoint file, needs an owner-attended
+     re-anchor: re-read the restored database's integrity row and re-initialize the checkpoint from it,
+     after the owner confirms in an attached Terminal that the restore was intended. That command is
+     **not** part of W7. Until it exists, recovery is a Claude-reviewed manual procedure, and the
+     site stays refusing, which is the safe state.
+- **Accepted limit:** this protects against a rollback or restore on the VPS side. Like the rest of the
+  owner-trusted local model (critical path decision 3), it doesn't defend against a malicious process
+  running as the owner on the Mac, which could edit both the file and the keys.
+
+## 6. Review and done
 
 - Split the work into packages of no more than about 800 lines, in this order:
   1. fence A plus fence B helper and tests;
