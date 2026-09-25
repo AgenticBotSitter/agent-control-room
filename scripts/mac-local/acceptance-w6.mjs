@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // W6 acceptance against the real running Mac-local site. Exit 0 only if every check passes.
 // Usage: node scripts/mac-local/acceptance-w6.mjs --protected-root ABS_PATH [--origin URL] [--restart]
-import { execFileSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
@@ -15,7 +15,9 @@ if (!protectedRoot || !isAbsolute(protectedRoot)) {
   console.error("usage: --protected-root ABSOLUTE_PATH (or CONTROL_ROOM_PROTECTED_ROOT)");
   process.exit(2);
 }
-const ownerCode = readFileSync(join(protectedRoot, "config/owner-sign-in.txt"), "utf8").trim();
+let ownerCode;
+try { ownerCode = readFileSync(join(protectedRoot, "config/owner-sign-in.txt"), "utf8").trim(); }
+catch { console.error("protected owner sign-in code is unavailable"); process.exit(2); }
 
 const results = [];
 const check = (name, ok, detail = "") => { results.push({ name, ok }); console.log(`${ok ? "PASS" : "FAIL"} ${name}${detail ? ` — ${detail}` : ""}`); return ok; };
@@ -24,6 +26,22 @@ const call = (path, init = {}) => fetch(new URL(path, origin), {
 });
 const post = (path, body, extra = {}) => call(path, { method: "POST",
   headers: { "content-type": "application/json", origin, ...extra }, body: JSON.stringify(body) });
+
+async function runBoundedPnpm(script) {
+  const child = spawn("pnpm", [script], { detached: true, stdio: "ignore" });
+  let timer;
+  const outcome = await new Promise((resolve, reject) => {
+    child.once("error", reject);
+    child.once("close", (code, signal) => resolve({ code, signal, timedOut: false }));
+    timer = setTimeout(() => {
+      try { process.kill(-child.pid, "SIGKILL"); } catch {}
+      resolve({ code: null, signal: "SIGKILL", timedOut: true });
+    }, 90_000);
+  });
+  clearTimeout(timer);
+  if (outcome.timedOut) throw new Error("timeout");
+  if (outcome.code !== 0) throw new Error(outcome.signal ? `signal ${outcome.signal}` : `exit ${outcome.code}`);
+}
 
 async function signIn() {
   const res = await post("/api/v1/local-owner-session", { ownerCode });
@@ -79,13 +97,11 @@ check("project readable", (await readBack(session.cookie)).status === 200);
 
 if (restart) {
   try {
-    const bounded = { stdio: ["ignore", "ignore", "pipe"], timeout: 90_000, killSignal: "SIGKILL" };
-    execFileSync("pnpm", ["mac:down"], bounded);
-    execFileSync("pnpm", ["mac:up"], bounded);
+    await runBoundedPnpm("mac:down");
+    await runBoundedPnpm("mac:up");
     check("mac:down then mac:up ran", true);
   } catch (error) {
-    const detail = error?.signal ? `signal ${error.signal}`
-      : Number.isInteger(error?.status) ? `exit ${error.status}` : "command failed";
+    const detail = error?.message === "timeout" ? "timeout" : "command failed";
     check("mac:down then mac:up ran", false, detail);
   }
   check("site back within 90 s", await waitForSite(90));

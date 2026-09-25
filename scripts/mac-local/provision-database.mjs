@@ -204,6 +204,9 @@ cleanup() {
   git -C ${JSON.stringify(remoteWorktree)} worktree remove --force "$stage" >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
+trap 'cleanup; exit 129' HUP
+trap 'cleanup; exit 130' INT
+trap 'cleanup; exit 143' TERM
 if ! command -v timeout >/dev/null 2>&1; then
   printf 'provision_error:TIMEOUT_UNAVAILABLE\\n' >&2
   exit 1
@@ -211,7 +214,7 @@ fi
 body=$(mktemp /tmp/control-room-provision.XXXXXX)
 printf '%s' ${JSON.stringify(remoteBodyBase64)} | base64 -d > "$body"
 set +e
-timeout --kill-after=10s 280s /bin/bash "$body"
+timeout --kill-after=10s 260s /bin/bash "$body"
 status=$?
 set -e
 if [ "$status" -eq 124 ] || [ "$status" -eq 137 ]; then
@@ -306,6 +309,8 @@ export async function provisionMacLocalDatabaseV1(options) {
     results: role(roleNames.results), queueWorker: role(roleNames.queueWorker) });
   const ownerCode = await privateText(join(configRoot, "owner-sign-in.txt"), newPassword);
   const enablementMaterial = Object.freeze({ schema: OWNER_TRUSTED_LOCAL_ENABLEMENT_V1, mode: "mac-local", nodeId: "mac-1", workers });
+  // The capture function creates and validates the digest from this material;
+  // callers must not supply a digest that could claim to describe itself.
   const macLocal = captureMacLocalProtectedConfigurationV1({ schema: MAC_LOCAL_PROTECTED_CONFIGURATION_V1, port: 3210, workspaceId: "workspace:mac-local",
     localOwnerSession: { schema: LOCAL_OWNER_SESSION_PROFILE_V1, origin: "http://127.0.0.1:3210", tenantId: "tenant:mac-local",
       provider: "local-owner", subject: "owner:local", ownerCodeDigest: sha256Digest({ ownerCode }), sessionSeconds: 28_800 },
