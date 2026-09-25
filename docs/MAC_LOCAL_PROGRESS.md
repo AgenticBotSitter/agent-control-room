@@ -2,6 +2,20 @@
 
 Codex appends one short entry per work package (see `CODEX_MAC_BUILD_EXECUTION.md`).
 
+- 2026-09-24 — W3 real local website launcher: the compiled release now
+  contains the Mac-local host, protected configuration reader, PostgreSQL
+  adapter, and private-app assets required to start the real loopback website
+  through one owner-attended command. The command accepts only the fixed
+  protected-root location, validates every owner-pinned executable before it
+  opens the one authority database, and starts no queue or agent. It is
+  intentionally the website-only step: the later task composition remains the
+  sole route for Hermes, Claude, and Codex. TypeScript, eleven focused
+  launcher/configuration/release checks, the release build, and an import of
+  the compiled host entry pass. No protected configuration was read, database
+  connection opened, listener started, or agent run. Next: put the existing
+  protected task composition behind this same launcher rather than creating a
+  separate local product path.
+
 - 2026-09-24 — W3 release-owned protected configuration loader: the fixed
   owner-only Mac configuration and four-role database-map reader is now part
   of the compiled Control Room release, rather than existing only in a source

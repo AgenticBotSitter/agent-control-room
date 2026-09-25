@@ -34,11 +34,11 @@ export function createMacLocalWorkerReadinessV1(enablementValue: unknown,
     || new Set(verifiedValue.enabledWorkerIds).size !== verifiedValue.enabledWorkerIds.length
     || verifiedValue.enabledWorkerIds.some(id => !enablement.workers.some(worker => worker.workerId === id))) refused();
   const failed = new Set<string>(), proven = new Set<string>();
-  const worker = (id: string) => {
+  const worker = (id: string): OwnerTrustedLocalEnablementV1["workers"][number] => {
     if (typeof id !== "string") refused();
     const value = enablement.workers.find(item => item.workerId === id);
     if (!value) refused();
-    return value;
+    return value as OwnerTrustedLocalEnablementV1["workers"][number];
   };
   const ready = (id: string) => !failed.has(worker(id).workerId);
   return Object.freeze({

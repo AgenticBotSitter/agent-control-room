@@ -91,6 +91,7 @@
     "db:verify": "node scripts/verify-migration-ledger.mjs",
     "check:database:vps": "node --import tsx scripts/check-mac-vps-database.ts",
     "mac:check-database": "node --import tsx scripts/mac-local/check-database.ts",
+    "mac:host": "node scripts/mac-local/start-web-host.mjs",
     "db:ledger": "node scripts/generate-migration-ledger.mjs",
     "test:postgres-production": "node --test tests/postgres-production-ledger.test.mjs && PG_BIN=\"${PG_BIN:-/usr/lib/postgresql/17/bin}\" node --import tsx --test --test-concurrency=1 tests/postgres-production-lifecycle.test.mjs tests/postgres-production-coordination.test.mjs",
     "test:windows-preparation": "node --test tests/windows-preparation.test.mjs",
