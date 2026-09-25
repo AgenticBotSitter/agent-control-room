@@ -43,10 +43,18 @@ type Runtime = Readonly<{
 }>;
 const production: Runtime = Object.freeze({ lstat, load: path => import(pathToFileURL(path).href) });
 
+/** A real `import()` namespace carries exactly one own symbol, the standard
+ * `Symbol.toStringTag` of "Module". Any other symbol is refused. */
+function onlyModuleTag(value: object): boolean {
+  const symbols = Object.getOwnPropertySymbols(value);
+  return symbols.length === 0 || (symbols.length === 1 && symbols[0] === Symbol.toStringTag
+    && Object.getPrototypeOf(value) === null && (value as Record<symbol, unknown>)[Symbol.toStringTag] === "Module");
+}
+
 function captureProvider(value: unknown): MacLocalTaskProviderV1 {
   if (!value || typeof value !== "object" || Array.isArray(value)
     || (Object.getPrototypeOf(value) !== Object.prototype && Object.getPrototypeOf(value) !== null)
-    || Object.getOwnPropertySymbols(value).length !== 0) throw new Error("mac_local_task_provider_invalid");
+    || !onlyModuleTag(value)) throw new Error("mac_local_task_provider_invalid");
   const record = value as Record<string, unknown>, names = Object.getOwnPropertyNames(value);
   if (names.length !== 3 || !names.includes("schema") || !names.includes("workerKinds") || !names.includes("createTaskApplication")
     || record.schema !== MAC_LOCAL_TASK_PROVIDER_V1 || typeof record.createTaskApplication !== "function"

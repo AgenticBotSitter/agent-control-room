@@ -86,3 +86,22 @@ Claude fixes on this branch. Without them, every real Claude task would have fai
 
 - Set the Hermes worker's model and provider to these values in the protected configuration.
 - Update the `cr` profile default to match, so manual runs agree with the worker.
+
+## `mac:up` / `mac:down` (built, 2026-09-24)
+
+`pnpm mac:up -- --protected-root <root>` (or `CONTROL_ROOM_PROTECTED_ROOT`) runs the order above and leaves the task host running in the background. Logs and pid files go in `<root>/runtime/` (0700; files 0600). `pnpm mac:down` stops the host (SIGTERM, 45 s drain, then kill), then the tunnel.
+
+- **Tunnel.** It is optional and owner-held, in `<root>/config/tunnel.json` (0600):
+
+  ```json
+  {"schema":"control-room.mac-local-tunnel/v1","sshTarget":"user@host","localPort":15432,"remotePort":5432}
+  ```
+
+  The database in `mac-local.json` must be `127.0.0.1` on `localPort`. Without this file, `mac:up` assumes the database is reachable directly (rehearsal, or a tunnel managed elsewhere). With the file, `mac:up` reuses only a tunnel it started itself for those exact settings, and refuses any other listener on the port.
+- **Safety.**
+  - A recorded pid is signalled only if its full command line exactly matches what `mac:up` started for this protected root.
+  - A failed start stops its own child.
+  - A host that is alive but not serving is reported as a failure.
+- **If `tunnel.json` becomes invalid while a tunnel is running,** `mac:down` leaves that pid alone and exits 1. Stop it by hand.
+- **Known tension.** The task host needs all three agents `ready` (`requireMacLocalThreeAgentReadinessV1`). So a repin result of "blocked" for one agent still stops `mac:tasks`, even though the website alone would start with that agent shown as unavailable. The owner decides whether the task host should run with two agents.
+- **Fixed the same day.** The task-provider loader rejected every real module file: a real `import()` result carries `Symbol.toStringTag`, and the loader refused any symbol. It now allows exactly that one tag, and a test loads a real module from disk.
