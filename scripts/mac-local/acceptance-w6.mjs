@@ -79,11 +79,15 @@ check("project readable", (await readBack(session.cookie)).status === 200);
 
 if (restart) {
   try {
-    const bounded = { stdio: "inherit", timeout: 90_000, killSignal: "SIGKILL" };
+    const bounded = { stdio: ["ignore", "ignore", "pipe"], timeout: 90_000, killSignal: "SIGKILL" };
     execFileSync("pnpm", ["mac:down"], bounded);
     execFileSync("pnpm", ["mac:up"], bounded);
     check("mac:down then mac:up ran", true);
-  } catch (error) { check("mac:down then mac:up ran", false, String(error.message).split("\n")[0]); }
+  } catch (error) {
+    const detail = error?.signal ? `signal ${error.signal}`
+      : Number.isInteger(error?.status) ? `exit ${error.status}` : "command failed";
+    check("mac:down then mac:up ran", false, detail);
+  }
   check("site back within 90 s", await waitForSite(90));
   session = await signIn();
   check("sign-in after restart", session.status === 201, `status ${session.status}`);

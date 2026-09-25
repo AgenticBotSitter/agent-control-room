@@ -198,7 +198,7 @@ runuser -u postgres -- node "$stage/.control-room-provision.mjs"`;
 umask 077
 stage=${JSON.stringify(stage)}
 export stage
-body=$(mktemp "\${TMPDIR:-/tmp}/control-room-provision.XXXXXX")
+body=""
 cleanup() {
   rm -f "$body"
   git -C ${JSON.stringify(remoteWorktree)} worktree remove --force "$stage" >/dev/null 2>&1 || true
@@ -208,6 +208,7 @@ if ! command -v timeout >/dev/null 2>&1; then
   printf 'provision_error:TIMEOUT_UNAVAILABLE\\n' >&2
   exit 1
 fi
+body=$(mktemp /tmp/control-room-provision.XXXXXX)
 printf '%s' ${JSON.stringify(remoteBodyBase64)} | base64 -d > "$body"
 set +e
 timeout --kill-after=10s 280s /bin/bash "$body"
