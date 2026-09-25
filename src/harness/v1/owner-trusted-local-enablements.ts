@@ -81,17 +81,23 @@ export function captureOwnerTrustedLocalEnablementV1(value: unknown): OwnerTrust
 
 /** Startup uses a narrowly injected version reader. This check does not start
  * a task and has no fallback: a missing executable or changed version leaves
- * the worker unavailable rather than silently selecting another CLI. */
+ * that worker unavailable rather than silently selecting another CLI. One
+ * updated CLI must not take down the other workers, so only a startup where no
+ * worker verifies is refused. */
 export async function verifyOwnerTrustedLocalEnablementV1(enablementValue: unknown,
-  readVersion: (executablePath: string) => Promise<string>): Promise<Readonly<{ nodeId: "mac-1"; enabledWorkerIds: readonly string[] }>> {
+  readVersion: (executablePath: string) => Promise<string>): Promise<Readonly<{ nodeId: "mac-1";
+    enabledWorkerIds: readonly string[]; unavailableWorkerIds: readonly string[] }>> {
   const enablement = captureOwnerTrustedLocalEnablementV1(enablementValue);
   if (typeof readVersion !== "function") refused();
+  const enabled: string[] = [], unavailable: string[] = [];
   for (const worker of enablement.workers) {
     let observed: unknown;
-    try { observed = await readVersion(worker.executablePath); } catch { refused(); }
-    if (observed !== worker.recordedVersion) refused();
+    try { observed = await readVersion(worker.executablePath); } catch { observed = undefined; }
+    (observed === worker.recordedVersion ? enabled : unavailable).push(worker.workerId);
   }
-  return Object.freeze({ nodeId: "mac-1" as const, enabledWorkerIds: Object.freeze(enablement.workers.map(worker => worker.workerId)) });
+  if (enabled.length === 0) refused();
+  return Object.freeze({ nodeId: "mac-1" as const, enabledWorkerIds: Object.freeze(enabled),
+    unavailableWorkerIds: Object.freeze(unavailable) });
 }
 
 export function ownerTrustedLocalEnablementDigestV1(value: unknown): string {

@@ -2,16 +2,9 @@ import { execFile as execFileCallback } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import { isAbsolute, resolve } from "node:path";
+import { pinnedVersionLine } from "./executable-version.mjs";
 
 const execFile = promisify(execFileCallback);
-
-function recordedExecutableVersion(stdout) {
-  const lines = stdout.split(/\r?\n/u).map(line => line.trim()).filter(Boolean);
-  const version = lines.find(line => /(?:^|\s)(?:v?\d+\.\d+|version\b)/iu.test(line));
-  if (!version || version.length > 240 || /[\u0000-\u001f\u007f]/u.test(version))
-    throw new Error("mac_local_executable_version_unavailable");
-  return version;
-}
 
 /** Parse only the owner-attended, fixed-root website launch form.  The task
  * lifecycle and queue are deliberately not accepted here: this is the first
@@ -33,7 +26,7 @@ export async function readPinnedMacExecutableVersion(executablePath, runtime = {
       windowsHide: true, timeout: 5_000, killSignal: "SIGKILL", maxBuffer: 4_096,
       encoding: "utf8", env: { PATH: "/usr/bin:/bin", HOME: process.env.HOME ?? "", NODE_ENV: "production" },
     });
-    return recordedExecutableVersion(result.stdout);
+    return pinnedVersionLine(result.stdout);
   } catch { throw new Error("mac_local_executable_version_unavailable"); }
 }
 

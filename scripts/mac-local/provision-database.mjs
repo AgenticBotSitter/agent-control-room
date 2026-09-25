@@ -22,6 +22,7 @@ import { captureMacLocalProtectedConfigurationV1 } from "../../src/web/v1/mac-lo
 import { captureMacLocalDatabaseRolesV1, MAC_LOCAL_DATABASE_ROLES_V1 } from "../../src/web/v1/mac-local-database-roles";
 import { LOCAL_OWNER_SESSION_PROFILE_V1 } from "../../src/web/v1/local-owner-session";
 import { OWNER_TRUSTED_LOCAL_ENABLEMENT_V1 } from "../../src/harness/v1/owner-trusted-local-enablements";
+import { pinnedVersionLine } from "./executable-version.mjs";
 import { PRIVATE_POSTGRES_ENDPOINT_V1, privatePostgresEndpointFingerprintV1 } from "../../src/web/v1/private-postgres-endpoint";
 
 const exec = promisify(execFile);
@@ -92,15 +93,30 @@ async function writePrivate(path, content) {
 
 function newPassword() { return randomBytes(32).toString("base64url"); }
 
+/** Build precisely the plain JSON document the provisioner writes. Keeping
+ * this separate makes it possible to prove that a dry-run's prospective
+ * output survives the same JSON round trip and loader capture used at start. */
+export function captureProvisionedMacLocalConfigurationV1({ database, ownerCode, workers }) {
+  const enablement = Object.freeze({ schema: OWNER_TRUSTED_LOCAL_ENABLEMENT_V1,
+    mode: "mac-local", nodeId: "mac-1", workers });
+  const plain = { schema: MAC_LOCAL_PROTECTED_CONFIGURATION_V1, port: 3210,
+    workspaceId: "workspace:mac-local", localOwnerSession: {
+      schema: LOCAL_OWNER_SESSION_PROFILE_V1, origin: "http://127.0.0.1:3210",
+      tenantId: "tenant:mac-local", provider: "local-owner", subject: "owner:local",
+      ownerCodeDigest: sha256Digest({ ownerCode }), sessionSeconds: 28_800 },
+    database, enablement };
+  // This is deliberately a serialized copy: it is exactly what the protected
+  // file loader receives, not an in-memory object with derived fields.
+  captureMacLocalProtectedConfigurationV1(JSON.parse(JSON.stringify(plain)));
+  return Object.freeze(plain);
+}
+
 /** CLI version commands sometimes include ordinary installation details after
  * their version. Capture one bounded, printable version-looking line rather
  * than treating a current multi-line CLI as a source-version incompatibility. */
 export function recordedExecutableVersion(stdout) {
-  const lines = stdout.split(/\r?\n/u).map(line => line.trim()).filter(Boolean);
-  const version = lines.find(line => /(?:^|\s)(?:v?\d+\.\d+|version\b)/iu.test(line));
-  if (!version || version.length > 240 || /[\u0000-\u001f\u007f]/u.test(version))
-    throw new Error("provision_invalid_executable_version");
-  return version;
+  try { return pinnedVersionLine(stdout); }
+  catch { throw new Error("provision_invalid_executable_version"); }
 }
 
 /** The SSH transport or a local account wrapper can add harmless lines before
@@ -312,13 +328,7 @@ export async function provisionMacLocalDatabaseV1(options) {
   const roles = captureMacLocalDatabaseRolesV1({ schema: MAC_LOCAL_DATABASE_ROLES_V1, web: role(roleNames.web), coordinator: role(roleNames.coordinator),
     results: role(roleNames.results), queueWorker: role(roleNames.queueWorker) });
   const ownerCode = await privateText(join(configRoot, "owner-sign-in.txt"), newPassword);
-  const enablementMaterial = Object.freeze({ schema: OWNER_TRUSTED_LOCAL_ENABLEMENT_V1, mode: "mac-local", nodeId: "mac-1", workers });
-  // The capture function creates and validates the digest from this material;
-  // callers must not supply a digest that could claim to describe itself.
-  const macLocal = captureMacLocalProtectedConfigurationV1({ schema: MAC_LOCAL_PROTECTED_CONFIGURATION_V1, port: 3210, workspaceId: "workspace:mac-local",
-    localOwnerSession: { schema: LOCAL_OWNER_SESSION_PROFILE_V1, origin: "http://127.0.0.1:3210", tenantId: "tenant:mac-local",
-      provider: "local-owner", subject: "owner:local", ownerCodeDigest: sha256Digest({ ownerCode }), sessionSeconds: 28_800 },
-    database, enablement: enablementMaterial });
+  const macLocal = captureProvisionedMacLocalConfigurationV1({ database, ownerCode, workers });
   if (!options.dryRun) {
     await writePrivate(join(configRoot, "database-roles.json"), `${JSON.stringify(roles)}\n`);
     await writePrivate(join(configRoot, "mac-local.json"), `${JSON.stringify(macLocal)}\n`);
