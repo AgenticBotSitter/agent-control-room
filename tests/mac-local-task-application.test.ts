@@ -36,6 +36,7 @@ test("Mac-local task composition reuses the canonical operations without startin
   assert.equal(typeof app.operations.approvals?.prepare, "function");
   assert.equal(typeof app.operations.ownerReviews?.record, "function");
   assert.equal(app.operations.ownerVerifications, undefined, "manual verification remains unavailable until explicitly configured");
+  assert.equal(app.taskReadKeys?.results, tasks.results, "the host must pass the same result reader to the local website");
   assert.equal(app.queueDelivery, undefined, "constructing the local website must not start or imply a queue worker");
   assert.ok(!f.trace.includes("queue-start"));
 

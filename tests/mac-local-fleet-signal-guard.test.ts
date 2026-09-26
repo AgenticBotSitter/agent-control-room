@@ -14,11 +14,13 @@ async function seed() {
   for (const file of (await readdir("db/migrations")).filter(f => f.endsWith(".sql")).sort())
     await pg.exec(await readFile(`db/migrations/${file}`, "utf8"));
   await pg.exec("INSERT INTO tenants(id,display_name) VALUES('tenant:a','A')");
-  const node = async (id: string, payload: Record<string, unknown>) => pg.query(
+  const node = async (id: string, payload: Record<string, unknown>, state = "active") => pg.query(
     `INSERT INTO control_nodes(id,tenant_id,state,version,identity_key_id,payload,created_at,updated_at)
-     VALUES($1,'tenant:a','active',1,$2,$3::jsonb,$4,$4)`,
-    [id, `key:${id}`, JSON.stringify({ id, tenantId: "tenant:a", state: "active", version: 1, identityKeyId: `key:${id}`, ...payload }), NOW]);
+     VALUES($1,'tenant:a',$5,1,$2,$3::jsonb,$4,$4)`,
+    [id, `key:${id}`, JSON.stringify({ id, tenantId: "tenant:a", state, version: 1, identityKeyId: `key:${id}`, ...payload }), NOW, state]);
   await node("mac-1.codex", { platform: "macos", policyVersion: "mac-local/v1", minimumProtocolVersion: "local-only" });
+  await node("mac-1.extra", { platform: "macos", policyVersion: "mac-local/v1", minimumProtocolVersion: "local-only" });
+  await node("mac-1.hermes", { platform: "macos", policyVersion: "mac-local/v1", minimumProtocolVersion: "local-only" }, "revoked");
   await node("remote-1", { platform: "linux", policyVersion: "remote/v1", minimumProtocolVersion: "1" });
   await pg.exec(await readFile("db/roles/task_coordinator_roles.sql", "utf8"));
   await pg.exec(`CREATE ROLE coordinator_login_test LOGIN INHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
@@ -59,6 +61,14 @@ test("the coordinator cannot signal for a remote node", async t => {
   const pg = await seed(); t.after(() => pg.close());
   await assert.rejects(signal(pg, "remote-1", "capability", 1), /fleet signal rejected/);
   await assert.rejects(current(pg, "remote-1", "telemetry", 1), /fleet signal rejected/);
+});
+
+test("the coordinator cannot signal for an extra local-looking or revoked worker node", async t => {
+  const pg = await seed(); t.after(() => pg.close());
+  for (const id of ["mac-1.extra", "mac-1.hermes"]) {
+    await assert.rejects(signal(pg, id, "capability", 1), /fleet signal rejected/);
+    await assert.rejects(current(pg, id, "telemetry", 1), /fleet signal rejected/);
+  }
 });
 
 test("the coordinator cannot record discovery or benchmark signals", async t => {

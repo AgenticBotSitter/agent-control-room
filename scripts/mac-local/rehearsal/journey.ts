@@ -15,8 +15,6 @@ import { connectTarget } from "../../../deploy/postgres/evidence.mjs";
 import { sha256Digest } from "../../../src/security/canonical-digest";
 import { applyMacLocalFirstOwnerV1 } from "../first-owner-vps.mjs";
 import { serviceInstalled } from "../service.mjs";
-import { nativeTaskSubmissionReferenceSchema } from "../../../src/persistence/native-task-submission";
-import { nativeTaskSubmissionId } from "../../../src/persistence/pg-boss-native-task-submission";
 
 const [arg] = process.argv.slice(2);
 if (!arg || process.argv.length !== 3 || !isAbsolute(arg) || resolve(arg) !== arg) {
@@ -282,28 +280,6 @@ async function main() {
       reviewStatus = body.reviews[0]?.status;
       return items === 1 && reviewStatus === "pending";
     }, 55);
-    if (!polled) {
-      const deliveryRead = await fetch(new URL(`/api/v1/projects/${idOf(projectId)}/tasks/${idOf(jobId)}/submission?inputDigest=${assignedInputDigest}`, origin),
-        { headers: { cookie } });
-      process.stderr.write(`${agent.kind} diagnostic submission read: ${deliveryRead.status} ${await deliveryRead.text()}\n`);
-      const diag = new Client({ host: "127.0.0.1", port: config.database.port,
-        database: "control_room", user: "postgres", connectionTimeoutMillis: 5_000, statement_timeout: 5_000 });
-      await diag.connect();
-      try {
-        const jobRows = (await diag.query(`SELECT id,name,state,policy,retry_limit,retry_count,dead_letter,
-          data,left(output::text,800) AS output FROM control_room_queue.job ORDER BY id DESC LIMIT 3`)).rows;
-        for (const row of jobRows) process.stderr.write(`${agent.kind} diagnostic job row: ${JSON.stringify(row)}\n`);
-        const queueRow = (await diag.query(`SELECT * FROM control_room_queue.queue WHERE name='native-task-delivery'`)).rows;
-        process.stderr.write(`${agent.kind} diagnostic queue row: ${JSON.stringify(queueRow)}\n`);
-        if (jobRows[0]) {
-          try {
-            const reference = nativeTaskSubmissionReferenceSchema.parse(jobRows[0].data);
-            const computedId = nativeTaskSubmissionId(reference);
-            process.stderr.write(`${agent.kind} diagnostic identify: jobRowId=${jobRows[0].id} computedId=${computedId} match=${computedId === jobRows[0].id}\n`);
-          } catch (error) { process.stderr.write(`${agent.kind} diagnostic reference check failed: ${(error as Error).message}\n`); }
-        }
-      } finally { await diag.end(); }
-    }
     assert.ok(polled, `${agent.kind}: expected exactly one result reaching pending review within the bounded timeout (items=${items}, reviewStatus=${reviewStatus})`);
     outcomes[agent.kind] = { jobId: jobId.slice(0, 24), packetDigest: packetDigest.slice(0, 19), queueId: submittedBody.queueId.slice(0, 24), items, reviewStatus };
   }

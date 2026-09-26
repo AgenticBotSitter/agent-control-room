@@ -59,9 +59,13 @@ BEGIN
       OR NEW.payload->'automaticLowRiskDisposition' IS DISTINCT FROM 'false'::jsonb
       OR NEW.payload->'createdBy'->>'actorType' IS DISTINCT FROM 'human'
       OR (SELECT count(*) FROM jsonb_object_keys(NEW.payload->'createdBy')) IS DISTINCT FROM 2
-      -- The author is a human identity of this same tenant.
+      -- The author must still be the active owner of this tenant.
       OR NOT EXISTS (SELECT 1 FROM control_identities i WHERE i.tenant_id=NEW.tenant_id
-        AND i.id=NEW.payload->'createdBy'->>'actorId' AND i.actor_type='human')) THEN
+        AND i.id=NEW.payload->'createdBy'->>'actorId' AND i.actor_type='human' AND i.state='active'
+        AND EXISTS (SELECT 1 FROM control_role_grants g WHERE g.tenant_id=i.tenant_id
+          AND g.identity_id=i.id AND g.role_key='owner' AND g.revoked_at IS NULL
+          AND (g.expires_at IS NULL OR g.expires_at > clock_timestamp())
+          AND (g.project_ids ? '*' OR g.project_ids ? NEW.project_id)))) THEN
       RAISE EXCEPTION 'private quality insert rejected';
     END IF;
   END IF;

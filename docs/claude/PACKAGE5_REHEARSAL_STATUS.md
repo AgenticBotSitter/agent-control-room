@@ -1,5 +1,29 @@
 # Package 5 rehearsal status
 
+## Package 6b follow-up, 2026-09-25 (disposable Mac-local proof)
+
+The isolated PostgreSQL 17 rehearsal on loopback port 15541 passed the full
+three-agent website/API journey after the local website was given the same
+read-only result and review capabilities as its task application. Hermes,
+Claude Code, and Codex each produced exactly one durable result with review
+status `pending`; submitting the same task again returned the same receipt and
+did not enqueue a second job. The clean, final run had no diagnostic database
+dumps or temporary error logging. The rehearsal script stopped its disposable
+database after completion. These were fake pinned executables, not live agent
+commands, and no VPS database or Tailscale setting was touched.
+
+The separate section 13 first-owner rehearsal also passed on a fresh disposable
+PostgreSQL 17 cluster. The updated migration guards rejected a same-tenant
+non-owner and revoked owner grant for the fixed review profile, and rejected
+revoked or extra local-looking fleet nodes. Focused tests passed (28/28), as
+did TypeScript and the 92-entry migration-ledger check. The branch has no
+`pnpm lint` script or ESLint configuration, so lint was unavailable rather
+than reported as passing. The changes await Claude's review; nothing here
+claims a live installation or a main-branch merge.
+
+The remaining sections below record earlier checkpoints and limitations;
+their older incomplete status is superseded only by the specific proofs above.
+
 This branch is incomplete and must not be merged to integration or main.
 No live PostgreSQL database or Tailnet setting was changed.
 

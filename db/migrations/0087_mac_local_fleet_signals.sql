@@ -24,7 +24,9 @@ BEGIN
       RAISE EXCEPTION 'task coordinator fleet signal rejected';
     END IF;
     IF NEW.signal_kind NOT IN ('capability','telemetry')
+      OR NEW.node_id NOT IN ('mac-1.hermes','mac-1.claude','mac-1.codex')
       OR NOT EXISTS (SELECT 1 FROM control_nodes n WHERE n.tenant_id=NEW.tenant_id AND n.id=NEW.node_id
+        AND n.state='active'
         AND n.payload->>'platform'='macos' AND n.payload->>'policyVersion'='mac-local/v1'
         AND n.payload->>'minimumProtocolVersion'='local-only') THEN
       RAISE EXCEPTION 'task coordinator fleet signal rejected';

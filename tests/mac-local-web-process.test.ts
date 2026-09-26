@@ -21,6 +21,8 @@ test("the real Mac-local wrapper signs in locally and reaches the existing proje
     localOwnerSession: { schema: LOCAL_OWNER_SESSION_PROFILE_V1, origin, tenantId: fixture.configuration.tenantId,
       provider: fixture.trust.issuer, subject: conformanceSubject, ownerCodeDigest: sha256Digest({ ownerCode }), sessionSeconds: 900 },
     database: { client: fixture.client, close: async () => {} }, clock: () => conformanceNow,
+    taskReadKeys: { harnessIntegrityKey: new Uint8Array(32).fill(1),
+      results: { integrityKey: new Uint8Array(32).fill(2), storageClass: "local", storage: { read: async () => undefined } } },
     workerReadiness: { read: () => [{ kind: "hermes-021" as const, state: "ready" as const, proof: "not_proven" as const }] },
     taskWorkersStarted: true });
   const request = (path: string, init: RequestInit = {}) => new Request(`${origin}${path}`, init);
@@ -61,6 +63,11 @@ test("the real Mac-local wrapper signs in locally and reaches the existing proje
   const detailShell = await app.handle(request(`/projects/${encodeURIComponent(projectId)}/tasks/${encodeURIComponent(proposedReceipt.receipt.jobId)}`,
     { headers: { cookie: cookie! } }), () => new Response("real task detail shell"));
   assert.equal(detailShell.status, 200); assert.equal(await detailShell.text(), "real task detail shell");
+  const results = await app.handle(request(`/api/v1/projects/${encodeURIComponent(projectId)}/tasks/${encodeURIComponent(proposedReceipt.receipt.jobId)}/results`,
+    { headers: { cookie: cookie! } }), () => new Response("unused"));
+  assert.equal(results.status, 200);
+  assert.equal((await results.json() as { resultSource: string }).resultSource, "configured",
+    "the local website must receive the task application's result-read capability");
   const fakePreview = await app.handle(request("/local-preview", { headers: { cookie: cookie! } }), () => new Response("must not render"));
   assert.equal(fakePreview.status, 404);
   await app.close();

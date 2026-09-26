@@ -5,7 +5,7 @@ import { captureLocalOwnerSessionProfileV1, LocalOwnerSessionServiceV1, readLoca
   renderLocalOwnerSignInPageV1, type LocalOwnerSessionProfileV1 } from "./local-owner-session";
 import { WebProjectService } from "./project-service";
 import { createProjectHttpHandler } from "./project-http";
-import { WebTaskService } from "./task-service";
+import { WebTaskService, type WebTaskKeys } from "./task-service";
 import { createTaskHttpHandler } from "./task-http";
 import type { WebTaskReviewService } from "./task-review-service";
 import type { WebTaskVerificationService } from "./task-verification-service";
@@ -29,6 +29,9 @@ export interface MacLocalWebProcessOptionsV1 {
   approvals?: TaskApprovalOperation;
   submission?: TaskSubmissionOperation;
   revisions?: TaskRevisionOperation;
+  /** Read capabilities from the same host-owned task application as the
+   * submission operations. Without them, a published result looks absent. */
+  taskReadKeys?: Pick<WebTaskKeys, "harnessIntegrityKey" | "results" | "reviews">;
   /** Host-generation display state built only after pinned executable
    * verification. It is not a delivery, queue, or result authority. */
   workerReadiness?: Pick<MacLocalWorkerReadinessV1, "read">;
@@ -59,7 +62,7 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
   const projects = new WebProjectService(options.database.client,
     { tenantId: profile.tenantId, workspaceId: options.workspaceId }, clock);
   const tasks = new WebTaskService(options.database.client,
-    { tenantId: profile.tenantId, workspaceId: options.workspaceId }, clock);
+    { tenantId: profile.tenantId, workspaceId: options.workspaceId }, clock, options.taskReadKeys);
   const projectHttp = createProjectHttpHandler({ origin: options.origin, localOwnerSession: sessions, service: projects, clock });
   const taskHttp = createTaskHttpHandler({ origin: options.origin, localOwnerSession: sessions, service: tasks, clock,
     ...(options.ownerReviews ? { ownerReviews: options.ownerReviews } : {}),
