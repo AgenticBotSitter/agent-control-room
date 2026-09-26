@@ -98,11 +98,30 @@ export class DurableLocalResultInspectionServiceV1 implements TaskResultInspecti
 
   async inspectSubmitted(tx: DatabaseSession, tenantIdValue: string, runIdValue: string): Promise<SubmittedTaskResultInspectionV1> {
     const tenantId = id.parse(tenantIdValue), runId = id.parse(runIdValue);
+    // Use the run only as an untrusted locator until the parent rows are locked.
+    // The publisher takes job/attempt FK locks before run/receipt/plan locks;
+    // taking these in the reverse order creates a PostgreSQL deadlock.
+    const locator = (await tx.query<{ job_id: string; attempt_id: string; node_id: string }>(
+      "SELECT job_id,attempt_id,node_id FROM control_harness_runs WHERE tenant_id=$1 AND id=$2",
+      [tenantId, runId])).rows[0];
+    if (!locator) return unavailable();
+    const jobRow = (await tx.query<JobRow>(`SELECT payload,state,version,project_id FROM control_jobs
+      WHERE tenant_id=$1 AND id=$2 FOR UPDATE`, [tenantId, locator.job_id])).rows[0];
+    const attemptRow = (await tx.query<AttemptRow>(`SELECT payload,state,version,job_id,node_id FROM control_attempts
+      WHERE tenant_id=$1 AND id=$2 FOR UPDATE`, [tenantId, locator.attempt_id])).rows[0];
+    if (!jobRow || !attemptRow) return unavailable();
+    const job = jobRecordSchema.parse(jobRow.payload), attempt = attemptRecordSchema.parse(attemptRow.payload);
+    const leaseRow = (await tx.query<LeaseRow>(`SELECT payload,state,version,job_id,attempt_id,node_id,epoch,expires_at FROM control_leases
+      WHERE tenant_id=$1 AND attempt_id=$2 AND job_id=$3 AND node_id=$4 AND epoch=$5 FOR UPDATE`,
+    [tenantId, locator.attempt_id, locator.job_id, locator.node_id, attempt.leaseEpoch])).rows[0];
+    if (!leaseRow) return unavailable();
+    const lease = leaseRecordSchema.parse(leaseRow.payload);
     const locked = await tx.query("SELECT id FROM control_harness_runs WHERE tenant_id=$1 AND id=$2 FOR UPDATE", [tenantId, runId]);
     if (locked.rows.length !== 1) return unavailable();
     const inspected = await new HarnessRunStoreV1(joined(tx), this.harnessKey).inspect(tenantId, runId);
     if (!inspected) return unavailable();
     const { run, events } = inspected;
+    if (run.jobId !== locator.job_id || run.attemptId !== locator.attempt_id || run.nodeId !== locator.node_id) return unavailable();
     const hermes = run.adapterId === HERMES_021_MACOS_LOCAL_ADAPTER_V1 && run.harness === "hermes"
       && run.connectorProfileDigest === HERMES_021_MACOS_CONNECTOR_PROFILE_DIGEST_V1;
     const claude = run.adapterId === CLAUDE_CODE_LOCAL_ADAPTER_V1 && run.harness === "claude"
@@ -148,17 +167,6 @@ export class DurableLocalResultInspectionServiceV1 implements TaskResultInspecti
         || run.createdAt !== delivery.receipt.receivedAt) return unavailable();
     }
 
-    const jobRow = (await tx.query<JobRow>(`SELECT payload,state,version,project_id FROM control_jobs
-      WHERE tenant_id=$1 AND id=$2 FOR UPDATE`, [tenantId, run.jobId])).rows[0];
-    const attemptRow = (await tx.query<AttemptRow>(`SELECT payload,state,version,job_id,node_id FROM control_attempts
-      WHERE tenant_id=$1 AND id=$2 FOR UPDATE`, [tenantId, run.attemptId])).rows[0];
-    if (!jobRow || !attemptRow) return unavailable();
-    const job = jobRecordSchema.parse(jobRow.payload), attempt = attemptRecordSchema.parse(attemptRow.payload);
-    const leaseRow = (await tx.query<LeaseRow>(`SELECT payload,state,version,job_id,attempt_id,node_id,epoch,expires_at FROM control_leases
-      WHERE tenant_id=$1 AND attempt_id=$2 AND job_id=$3 AND node_id=$4 AND epoch=$5 FOR UPDATE`,
-    [tenantId, run.attemptId, run.jobId, run.nodeId, attempt.leaseEpoch])).rows[0];
-    if (!leaseRow) return unavailable();
-    const lease = leaseRecordSchema.parse(leaseRow.payload);
     if (job.tenantId !== tenantId || job.id !== run.jobId || job.projectId !== run.projectId || job.state !== jobRow.state
       || job.version !== Number(jobRow.version) || jobRow.project_id !== job.projectId || job.authority.digest !== run.authorityDigest
       || job.inputDigest !== delivery.delivery.inputDigest || attempt.tenantId !== tenantId || attempt.id !== run.attemptId

@@ -210,7 +210,7 @@ export const createTaskApplication: MacLocalTaskProviderV1["createTaskApplicatio
         if (!qualityFailureReported) process.stderr.write("mac_local_quality_sweep_unavailable\n");
         qualityFailureReported = true;
       }).finally(() => { qualityInFlight = undefined; });
-    }, 15_000);
+    }, 2_000);
     qualityTimer.unref();
     const refreshInput = { db: readPool.client, tenantId, protectedRoot, readiness: workerReadiness,
       workers: workers.map(value => ({ kind: value.kind, workerId: value.worker.workerId,

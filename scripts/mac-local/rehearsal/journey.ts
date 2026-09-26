@@ -372,6 +372,43 @@ async function main() {
 
   process.stdout.write(`Package 6b journey: PASS ${JSON.stringify(outcomes)}\n`);
 
+  // Exercise the publisher's implicit FK parent-before-child order against a
+  // simultaneous reader. The conformance test above pins the real reader's
+  // SQL lock sequence; this PG17 collision proves that order has no 40P01.
+  const collisionRow = (await coordinator.query<{ job_id: string; run_id: string; attempt_id: string; node_id: string; epoch: number }>(`
+    SELECT r.job_id,r.id AS run_id,r.attempt_id,r.node_id,a.lease_epoch AS epoch
+    FROM control_harness_runs r JOIN control_attempts a ON a.tenant_id=r.tenant_id AND a.id=r.attempt_id
+    JOIN control_native_review_plans p ON p.tenant_id=r.tenant_id AND p.run_id=r.id
+    WHERE r.tenant_id=$1 ORDER BY r.id LIMIT 1`, [config.localOwnerSession.tenantId])).rows[0];
+  assert.ok(collisionRow, "collision proof requires a saved result");
+  const collisionConnection = () => new Client({ host: roleMap.coordinator.host, port: roleMap.coordinator.port,
+    database: roleMap.coordinator.database, user: roleMap.coordinator.username, password: roleMap.coordinator.password,
+    connectionTimeoutMillis: 5_000, statement_timeout: 5_000 });
+  const publisher = collisionConnection(), reader = collisionConnection();
+  await Promise.all([publisher.connect(), reader.connect()]);
+  try {
+    await publisher.query("BEGIN"); await reader.query("BEGIN");
+    await publisher.query("SELECT id FROM control_jobs WHERE id=$1 FOR KEY SHARE", [collisionRow.job_id]);
+    const read = (async () => {
+      await reader.query("SELECT id FROM control_jobs WHERE id=$1 FOR UPDATE", [collisionRow.job_id]);
+      await reader.query("SELECT id FROM control_attempts WHERE id=$1 FOR UPDATE", [collisionRow.attempt_id]);
+      await reader.query("SELECT id FROM control_leases WHERE attempt_id=$1 AND node_id=$2 AND epoch=$3 FOR UPDATE",
+        [collisionRow.attempt_id, collisionRow.node_id, collisionRow.epoch]);
+      await reader.query("SELECT id FROM control_harness_runs WHERE id=$1 FOR UPDATE", [collisionRow.run_id]);
+      await reader.query("SELECT run_id FROM control_native_artifact_receipts WHERE run_id=$1 FOR UPDATE", [collisionRow.run_id]);
+      await reader.query("SELECT run_id FROM control_native_review_plans WHERE run_id=$1 FOR UPDATE", [collisionRow.run_id]);
+    })();
+    await new Promise(resolve => setTimeout(resolve, 100));
+    await publisher.query("SELECT run_id FROM control_native_review_plans WHERE run_id=$1 FOR UPDATE", [collisionRow.run_id]);
+    await publisher.query("COMMIT");
+    await read;
+    await reader.query("COMMIT");
+  } finally {
+    await Promise.allSettled([publisher.query("ROLLBACK"), reader.query("ROLLBACK")]);
+    await Promise.allSettled([publisher.end(), reader.end()]);
+  }
+  process.stdout.write("Package 6b parent-before-child PG17 collision: PASS (no deadlock)\n");
+
   const finalDown = invoke(["scripts/mac-local/down.mjs", "--protected-root", protectedRoot]);
   assert.equal(finalDown.status, 0, finalDown.stderr || finalDown.stdout);
   stackMayBeUp = false;

@@ -15,10 +15,22 @@ On a fresh disposable PG17 cluster at loopback port 15541, the website journey
 passed for all three fake pinned executables. Hermes' changes-requested result
 stayed incomplete; Claude's and Codex's owner-accepted results became completed
 exactly once, with one result and one owner review each. Submission, owner-review,
-and completion replays added no second record. The earlier 2-second quality
-poll collided with task delivery and produced a database deadlock; a 15-second
-poll passed the full journey. This is a rehearsal timing change, not a relaxed
-verification check. A failed CLI run remains covered by the separate
+and completion replays added no second record. Marvin's independent review
+showed that the 15-second poll only masked a parent/child lock-order inversion.
+The reader now locks job, attempt and lease before run, receipt and plan,
+matching the publisher's foreign-key order. The normal 2-second poll is
+restored and a reader-query-order test passes. **This is not yet an accepted
+fix:** a fresh full PG17 journey at the normal interval still failed before
+Claude reached pending review. PostgreSQL reported a second deadlock, between
+`SELECT * FROM control_completion_gate_integrity ... FOR UPDATE` and
+`INSERT INTO control_transition_events` in a concurrent task transition.
+The earlier parent/child cycle is gone, but the complete workflow remains red.
+The new PG17 collision assertion at the end of the journey has not run because
+the journey stops first. The exact remaining decision is whether to impose one
+canonical order for completion-integrity and task-transition locks across the
+existing quality/publication transactions, or to serialize these operations
+inside the Mac-local host. Neither should be replaced with a longer timer or
+a skipped check. No new grant or role is proposed. A failed CLI run remains covered by the separate
 `owner-trusted-local-cli-delivery` regression: it records failure and publishes
 no result. No live database, agent, or Tailscale setting was changed.
 
@@ -27,7 +39,7 @@ review-plan and artifact-receipt tables, already authorized by the owner and
 recorded in trust-decision section 15. The structural digest and migration
 ledger were regenerated and verified. The production TypeScript check, Vite
 build, and focused conformance/publisher tests passed. This branch awaits Marvin's
-independent review; it is not merged or live.
+further deadlock repair and then Claude review; it is not merged or live.
 
 ## Package 6 follow-up decision request, 2026-09-25 — direct binding is not valid
 
