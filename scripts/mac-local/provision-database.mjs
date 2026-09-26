@@ -28,6 +28,8 @@ import { pinnedVersionLine } from "./executable-version.mjs";
 import { capturePrivatePostgresEndpointPolicyV2, isSupportedPrivatePostgresHostV1,
   privatePostgresEndpointFingerprintV1, PRIVATE_POSTGRES_ENDPOINT_V2 } from "../../src/web/v1/private-postgres-endpoint";
 import { validatePrivatePostgresConfiguration } from "../../src/web/v1/private-postgres";
+import { macGrantCatalogSqlV1, macRolePlan } from "./database-upgrade-grants.mjs";
+import { planMacDatabaseUpgradeSnapshotV1 } from "./database-upgrade-remote.mjs";
 
 const exec = promisify(execFile);
 const roleNames = Object.freeze({ web: "control_room_web", coordinator: "control_room_coordinator",
@@ -47,7 +49,8 @@ const remoteProvisionTimeoutMs = 5 * 60_000;
 
 function usage() {
   return "Usage: pnpm mac:provision-database --protected-root ABSOLUTE_PATH --ssh-target USER@HOST --database-host HOST [--database-port 5432] [--endpoint-policy-file ABSOLUTE_PATH] [--remote-worktree ABSOLUTE_PATH] [--vps-only] [--dry-run]\n"
-    + "   or: pnpm mac:provision-database --repoint-only --protected-root ABSOLUTE_PATH";
+    + "   or: pnpm mac:provision-database --repoint-only --protected-root ABSOLUTE_PATH\n"
+    + "   or: pnpm mac:provision-database --upgrade --protected-root ABSOLUTE_PATH --ssh-target USER@HOST [--remote-worktree ABSOLUTE_PATH] [--dry-run]";
 }
 
 function argument(args, name, fallback) {
@@ -101,6 +104,21 @@ async function readProtectedJson(path) {
   const entry = await lstat(path);
   if (!entry.isFile() || entry.isSymbolicLink() || (entry.mode & 0o077) !== 0) throw new Error("provision_protected_file_refused");
   return JSON.parse(await readFile(path, "utf8"));
+}
+
+async function readPrivatePassword(path) {
+  const entry = await lstat(path);
+  if (!entry.isFile() || entry.isSymbolicLink() || (entry.mode & 0o077) !== 0)
+    throw new Error("upgrade_protected_password_refused");
+  const value = (await readFile(path, "utf8")).trim();
+  if (!passwordPattern.test(value)) throw new Error("upgrade_protected_password_refused");
+  return value;
+}
+
+async function existingPrivateDirectory(path) {
+  const entry = await lstat(path);
+  if (!entry.isDirectory() || entry.isSymbolicLink() || (entry.mode & 0o077) !== 0)
+    throw new Error("upgrade_protected_directory_refused");
 }
 
 export function macLocalRouteFromTailscaleStatusV1(status, evidenceText) {
@@ -312,6 +330,7 @@ cleanup() {
   rm -f "$body"
   git -C ${JSON.stringify(remoteWorktree)} worktree remove --force "$stage" >/dev/null 2>&1 || true
 }
+
 trap cleanup EXIT
 trap 'cleanup; exit 129' HUP
 trap 'cleanup; exit 130' INT
@@ -378,6 +397,192 @@ exit "$status"`;
   });
 }
 
+function upgradeOptions(options) {
+  const protectedRoot = requireAbsolute(options.protectedRoot, "upgrade_protected_root_required");
+  const remoteWorktree = options.remoteWorktree ?? "/root/agent-control-room";
+  if (!/^[A-Za-z0-9_.@-]{1,253}$/u.test(options.sshTarget ?? "")) throw new Error("upgrade_ssh_target_refused");
+  if (!isAbsolute(remoteWorktree) || resolve(remoteWorktree) !== remoteWorktree
+    || !/^\/[A-Za-z0-9_./-]+$/u.test(remoteWorktree)) throw new Error("upgrade_remote_worktree_refused");
+  return { protectedRoot, remoteWorktree, sshTarget: options.sshTarget };
+}
+
+export function macDatabaseUpgradeReadOnlySqlV1() {
+  const principals = [...Object.keys(macRolePlan), ...Object.values(macRolePlan)];
+  const names = `ARRAY[${principals.map(name => `'${name}'`).join(",")}]::text[]`;
+  const grants = macGrantCatalogSqlV1.replaceAll("$1::text[]", names);
+  const sql = `BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY;
+SELECT json_build_object(
+  'applied', (SELECT coalesce(json_agg(row_to_json(x)), '[]'::json) FROM
+    (SELECT filename,digest,ledger_order FROM control_room_schema_migrations ORDER BY ledger_order) x),
+  'roles', (SELECT coalesce(json_agg(row_to_json(x)), '[]'::json) FROM
+    (SELECT rolname,rolcanlogin,rolinherit,rolsuper,rolcreatedb,rolcreaterole,rolreplication,rolbypassrls
+      FROM pg_roles WHERE rolname=ANY(${names}) ORDER BY rolname) x),
+  'memberships', (SELECT coalesce(json_agg(row_to_json(x)), '[]'::json) FROM
+    (SELECT member.rolname AS member,parent.rolname AS parent,auth.admin_option,auth.inherit_option,auth.set_option
+      FROM pg_auth_members auth JOIN pg_roles member ON member.oid=auth.member
+      JOIN pg_roles parent ON parent.oid=auth.roleid
+      WHERE member.rolname=ANY(${names}) ORDER BY member.rolname,parent.rolname) x),
+  'defaultAcl', (SELECT count(*)::int FROM pg_default_acl d
+    CROSS JOIN LATERAL aclexplode(d.defaclacl) a JOIN pg_roles r ON r.oid=a.grantee
+    WHERE r.rolname=ANY(${names})),
+  'grants', (SELECT coalesce(json_agg(row_to_json(x)), '[]'::json) FROM (${grants}) x)
+)::text;
+COMMIT;`;
+  return sql;
+}
+
+async function runRemoteUpgradeReadOnly({ sshTarget }) {
+  // One repeatable-read transaction, explicitly READ ONLY. This path does not
+  // fetch Git, install packages, stage files, or write to PostgreSQL on the
+  // VPS. It uses the Mac's reviewed source to compute the exact diff.
+  const sql = macDatabaseUpgradeReadOnlySqlV1();
+  const output = await new Promise((resolvePromise, rejectPromise) => {
+    const child = spawn("ssh", ["-o", "BatchMode=yes", "-o", "ConnectTimeout=15", sshTarget,
+      "runuser -u postgres -- psql -X -A -t -v ON_ERROR_STOP=1 -d control_room"],
+    { stdio: ["pipe", "pipe", "pipe"] });
+    let stdout = "", settled = false;
+    const finish = (callback, value) => {
+      if (settled) return;
+      settled = true; clearTimeout(timer); callback(value);
+    };
+    const timer = setTimeout(() => { child.kill("SIGKILL"); finish(rejectPromise, new Error("upgrade_read_only_timeout")); }, 30_000);
+    child.stdout.on("data", chunk => { stdout += String(chunk); if (stdout.length > 1024 * 1024) child.kill("SIGKILL"); });
+    child.stderr.on("data", () => {});
+    child.once("error", () => finish(rejectPromise, new Error("upgrade_read_only_ssh_refused")));
+    child.stdin.once("error", () => { child.kill("SIGKILL"); finish(rejectPromise, new Error("upgrade_read_only_stdin_refused")); });
+    child.once("close", code => code === 0 ? finish(resolvePromise, stdout)
+      : finish(rejectPromise, new Error("upgrade_read_only_query_refused")));
+    child.stdin.end(sql);
+  });
+  try {
+    const json = output.split(/\r?\n/u).find(line => line.startsWith("{"));
+    return await planMacDatabaseUpgradeSnapshotV1(JSON.parse(json));
+  } catch { throw new Error("upgrade_read_only_report_refused"); }
+}
+
+async function runRemoteUpgrade({ sshTarget, remoteWorktree, dryRun, migratorPassword, publisherPassword,
+  sourceRef = "codex/mac-db-upgrade" }) {
+  if (!["codex/mac-db-upgrade", "main"].includes(sourceRef)) throw new Error("upgrade_source_refused");
+  const expectedHead = (await exec("git", ["rev-parse", "HEAD"], { cwd: repoRoot, encoding: "utf8" })).stdout.trim();
+  const dirty = (await exec("git", ["status", "--porcelain"], { cwd: repoRoot, encoding: "utf8" })).stdout;
+  if (!/^[a-f0-9]{40}$/u.test(expectedHead) || dirty) throw new Error("upgrade_source_checkout_refused");
+  // Fetch main as the authority for migrations and roles. Until this upgrade
+  // code merges, stage the review branch and refuse if its database sources
+  // differ from main. The staged source is removed on every exit path.
+  const stage = `/var/tmp/control-room-upgrade-${randomBytes(12).toString("hex")}`;
+  const remoteBody = String.raw`set -eu
+umask 077
+stage=${JSON.stringify(stage)}
+checkout=${JSON.stringify(remoteWorktree)}
+cleanup() { git -C "$checkout" worktree remove --force "$stage" >/dev/null 2>&1 || true; }
+trap cleanup EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
+git -C "$checkout" fetch --quiet origin main
+main_head=$(git -C "$checkout" rev-parse FETCH_HEAD)
+git -C "$checkout" fetch --quiet origin ${sourceRef}
+test "$(git -C "$checkout" rev-parse FETCH_HEAD)" = ${expectedHead}
+git -C "$checkout" diff --quiet "$main_head" FETCH_HEAD -- db/roles db/migrations deploy/postgres/migration-ledger.json
+git -C "$checkout" worktree add --quiet --detach "$stage" FETCH_HEAD
+cd "$stage"
+CI=true pnpm install --frozen-lockfile --offline --ignore-scripts >/dev/null
+chown -R postgres:postgres "$stage"
+timeout --kill-after=10s 260s runuser -u postgres -- node "$stage/scripts/mac-local/database-upgrade-remote.mjs"`;
+  // Decode into a shell argument so bash -c retains SSH stdin for the JSON
+  // password envelope. Piping the script to bash would consume that channel.
+  const remote = `body=$(printf '%s' '${Buffer.from(remoteBody, "utf8").toString("base64")}' | base64 -d); exec /bin/bash -c "$body"`;
+  return new Promise((resolvePromise, rejectPromise) => {
+    const child = spawn("ssh", ["-o", "BatchMode=yes", "-o", "ConnectTimeout=15", sshTarget, remote],
+      { stdio: ["pipe", "pipe", "pipe"] });
+    let stdout = "", stderr = "", settled = false;
+    const timer = setTimeout(() => {
+      child.kill("SIGKILL"); finish(rejectPromise, new Error("upgrade_ssh_timeout"));
+    }, remoteProvisionTimeoutMs);
+    const finish = (callback, value) => {
+      if (settled) return;
+      settled = true; clearTimeout(timer); callback(value);
+    };
+    child.stdout.on("data", chunk => { stdout += String(chunk); if (stdout.length > 1024 * 1024) child.kill("SIGKILL"); });
+    child.stderr.on("data", chunk => { stderr += String(chunk).slice(0, 20_000); });
+    child.once("error", () => finish(rejectPromise, new Error("upgrade_ssh_unavailable")));
+    child.stdin.once("error", () => {
+      child.kill("SIGKILL"); finish(rejectPromise, new Error("upgrade_ssh_stdin_refused"));
+    });
+    child.once("close", code => {
+      if (code !== 0) {
+        const specific = /upgrade_error:([a-zA-Z0-9_]+)/u.exec(stderr)?.[1];
+        finish(rejectPromise, new Error(specific ? `upgrade_remote_${specific}` : "upgrade_remote_refused"));
+        return;
+      }
+      try {
+        const lines = stdout.trim().split(/\r?\n/u);
+        const report = JSON.parse(lines.at(-1));
+        if (!report || typeof report !== "object" || Array.isArray(report)
+          || !("pendingMigrations" in (report.before ?? report))) throw new Error("invalid");
+        finish(resolvePromise, report);
+      } catch { finish(rejectPromise, new Error("upgrade_remote_report_refused")); }
+    });
+    child.stdin.end(JSON.stringify(dryRun ? { dryRun: true }
+      : { dryRun: false, migratorPassword, publisherPassword }));
+  });
+}
+
+export async function upgradeMacLocalDatabaseV1(options) {
+  const { protectedRoot, remoteWorktree, sshTarget } = upgradeOptions(options);
+  const configRoot = join(protectedRoot, "config"), passwordRoot = join(configRoot, "database-passwords");
+  await existingPrivateDirectory(protectedRoot);
+  await existingPrivateDirectory(configRoot);
+  await existingPrivateDirectory(passwordRoot);
+  const mac = await readProtectedJson(join(configRoot, "mac-local.json"));
+  captureMacLocalProtectedConfigurationV1(mac);
+  const roleFile = join(configRoot, "database-roles.json");
+  const oldRoles = await readProtectedJson(roleFile);
+  const existingNames = ["schema", "web", "coordinator", "results", "queueWorker"];
+  const names = Object.keys(oldRoles);
+  if (oldRoles.schema !== MAC_LOCAL_DATABASE_ROLES_V1 || names.some(key => ![...existingNames, "publisher"].includes(key))
+    || existingNames.some(key => !Object.hasOwn(oldRoles, key))) throw new Error("upgrade_role_config_refused");
+  const entries = Object.entries({ web: roleNames.web, coordinator: roleNames.coordinator,
+    results: roleNames.results, queueWorker: roleNames.queueWorker });
+  const sameEndpoint = role => role.host === mac.database.host && role.port === mac.database.port
+    && role.database === mac.database.database && role.majorVersion === mac.database.majorVersion
+    && JSON.stringify(role.privateEndpoint ?? null) === JSON.stringify(mac.database.privateEndpoint ?? null);
+  for (const [key, username] of entries) {
+    const role = validatePrivatePostgresConfiguration(oldRoles[key]);
+    if (role.username !== username || role.database !== "control_room" || !sameEndpoint(role)
+      || role.password !== await readPrivatePassword(join(passwordRoot, `${username}.txt`)))
+      throw new Error("upgrade_role_config_refused");
+  }
+  if (oldRoles.web.password !== mac.database.password || oldRoles.web.username !== mac.database.username
+    || JSON.stringify(oldRoles.web.privateEndpoint ?? null) !== JSON.stringify(mac.database.privateEndpoint ?? null))
+    throw new Error("upgrade_role_config_refused");
+  if (oldRoles.publisher) {
+    const publisher = validatePrivatePostgresConfiguration(oldRoles.publisher);
+    if (publisher.username !== roleNames.publisher || publisher.database !== "control_room" || !sameEndpoint(publisher)
+      || publisher.password !== await readPrivatePassword(join(passwordRoot, `${roleNames.publisher}.txt`)))
+      throw new Error("upgrade_role_config_refused");
+    captureMacLocalDatabaseRolesV1(oldRoles);
+  }
+  const inspect = options.runRemote ?? (request => request.dryRun
+    ? runRemoteUpgradeReadOnly(request) : runRemoteUpgrade(request));
+  const before = await inspect({ sshTarget, remoteWorktree, dryRun: true, sourceRef: options.sourceRef });
+  if (options.dryRun) return before;
+  const missingPublisher = before.createRoles.includes(roleNames.publisher);
+  const publisherFile = join(passwordRoot, `${roleNames.publisher}.txt`);
+  let publisherPassword;
+  if (missingPublisher) publisherPassword = await privateText(publisherFile, newPassword);
+  else publisherPassword = await readPrivatePassword(publisherFile);
+  const migratorPassword = await readPrivatePassword(join(passwordRoot, `${bootstrapRoles.migrator}.txt`));
+  const result = await inspect({ sshTarget, remoteWorktree, dryRun: false, migratorPassword,
+    publisherPassword, sourceRef: options.sourceRef });
+  const publisher = validatePrivatePostgresConfiguration({ ...oldRoles.web,
+    username: roleNames.publisher, password: publisherPassword });
+  const nextRoles = { ...oldRoles, publisher };
+  captureMacLocalDatabaseRolesV1(nextRoles);
+  await writePrivate(roleFile, `${JSON.stringify(nextRoles)}\n`);
+  return result;
+}
+
 /** The protected `mac-local.json` record the provisioner writes. Pure: it
  * validates the record exactly as the loader will read it back, and stores the
  * plain enablement material. The enablement digest is derived on every load,
@@ -442,8 +647,26 @@ export async function provisionMacLocalDatabaseV1(options) {
 
 if (process.argv[1] === new URL(import.meta.url).pathname) {
   try {
-    const args = process.argv.slice(2), dryRun = args.includes("--dry-run"), vpsOnly = args.includes("--vps-only"), repointOnly = args.includes("--repoint-only");
-    if (repointOnly) {
+    const supplied = process.argv.slice(2);
+    const args = supplied[0] === "--" ? supplied.slice(1) : supplied;
+    const dryRun = args.includes("--dry-run"), vpsOnly = args.includes("--vps-only"),
+      repointOnly = args.includes("--repoint-only"), upgrade = args.includes("--upgrade");
+    if (upgrade) {
+      const consumed = new Set();
+      for (let index = 0; index < args.length; index += 1) {
+        const flag = args[index];
+        if (!["--upgrade", "--dry-run", "--protected-root", "--ssh-target", "--remote-worktree"].includes(flag)
+          || consumed.has(flag)) throw new Error("upgrade_arguments_refused");
+        consumed.add(flag);
+        if (["--protected-root", "--ssh-target", "--remote-worktree"].includes(flag)) index += 1;
+      }
+      if (vpsOnly || repointOnly || !consumed.has("--protected-root") || !consumed.has("--ssh-target"))
+        throw new Error("upgrade_arguments_refused");
+      const result = await upgradeMacLocalDatabaseV1({ protectedRoot: argument(args, "--protected-root"),
+        sshTarget: argument(args, "--ssh-target"), remoteWorktree: argument(args, "--remote-worktree", "/root/agent-control-room"),
+        dryRun });
+      process.stdout.write(`${JSON.stringify(result)}\n`);
+    } else if (repointOnly) {
       const protectedRoot = parseRepointArgumentsV1(args);
       let status;
       try { status = JSON.parse((await exec("tailscale", ["status", "--json"], { encoding: "utf8", timeout: 10_000, maxBuffer: 2 * 1024 * 1024 })).stdout); }
@@ -459,7 +682,7 @@ if (process.argv[1] === new URL(import.meta.url).pathname) {
       process.stdout.write(`${JSON.stringify({ provisioned: result.provisioned, workers: result.workers })}\n`);
     }
   } catch (error) {
-    process.stderr.write(`${error instanceof Error && error.message.startsWith("provision_") ? error.message : usage()}\n`);
+    process.stderr.write(`${error instanceof Error && /^(?:provision_|upgrade_)/u.test(error.message) ? error.message : usage()}\n`);
     process.exitCode = 1;
   }
 }
