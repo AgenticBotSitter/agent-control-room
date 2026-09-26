@@ -1,6 +1,6 @@
 import { createServer } from "node:http";
 import type { IncomingMessage, Server, ServerOptions, ServerResponse } from "node:http";
-import { createPrivateNodeHandler, privateHttpLimits } from "./private-node-handler";
+import { createMacLocalNodeHandler, createPrivateNodeHandler, privateHttpLimits } from "./private-node-handler";
 import { privateResponseHeaders } from "./http-common";
 export { loadPrivateClientAssets } from "./private-assets";
 export { createPrivateNodeHandler } from "./private-node-handler";
@@ -24,6 +24,7 @@ type GitHubBrokerBridge = Readonly<{
   handle(request: IncomingMessage, response: ServerResponse): Promise<void>;
   close(): Promise<void>;
 }>;
+type LocalSetupBridge = GitHubBrokerBridge;
 
 /** Inert until explicit start(). Tests inject a server with no sockets.
  * Start is a physical effect and requires the separate approved deployment/rehearsal packet.
@@ -33,6 +34,12 @@ type GitHubBrokerBridge = Readonly<{
  */
 export function createPrivateNodeService(options: Parameters<typeof createPrivateNodeHandler>[0] & ListenerOptions) {
   return createLoopbackService(options, () => createPrivateNodeHandler(options));
+}
+
+/** Inert real Mac-local listener. It cannot be configured with a hosted origin
+ * and must still be explicitly started by trusted composition. */
+export function createMacLocalNodeService(options: Parameters<typeof createMacLocalNodeHandler>[0] & ListenerOptions) {
+  return createLoopbackService(options, () => createMacLocalNodeHandler(options));
 }
 
 /** Owns an already assembled disposable demo bridge, never a production runtime.
@@ -48,6 +55,11 @@ export function createContributorDemoService(bridge: RequestBridge & { origin: s
 /** Inert private GitHub broker listener. It shares the reviewed loopback-only
  * lifecycle but is never started by importing or constructing it. */
 export function createGitHubBrokerLoopbackService(bridge: GitHubBrokerBridge, options: ListenerOptions) {
+  return createLoopbackService(options, () => bridge as RequestBridge);
+}
+
+/** Dedicated first-run wrapper over the same reviewed loopback lifecycle. */
+export function createLocalSetupLoopbackService(bridge: LocalSetupBridge, options: ListenerOptions) {
   return createLoopbackService(options, () => bridge as RequestBridge);
 }
 

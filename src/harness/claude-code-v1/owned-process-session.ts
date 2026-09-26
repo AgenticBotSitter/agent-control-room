@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { digestSchema, localId } from "../v1/native-run-identifiers";
 import { sha256Digest } from "../../security/canonical-digest";
+import { dataMethodV1, dataPropertyValueV1, isHostProxyV1 } from "../../security/host-value";
 import { CLAUDE_CODE_MAX_LINE_BYTES_V1 } from "./stream-json-decode";
 
 export const CLAUDE_CODE_SESSION_DISPOSITION_SCHEMA_V1 =
@@ -22,6 +23,7 @@ export type ClaudeCodeProcessBindingV1 = z.infer<typeof bindingSchema>;
 
 export interface ClaudeCodeProcessBytePortV1 {
   /** Resolves only after the bytes are accepted and any backpressure has cleared. */
+  writeStdin(bytes: Uint8Array, signal: AbortSignal): Promise<void>;
   readStdout(signal: AbortSignal): Promise<Uint8Array | undefined>;
   readStderr(signal: AbortSignal): Promise<Uint8Array | undefined>;
   closeStdin(signal: AbortSignal): Promise<void>;
@@ -85,16 +87,19 @@ const startedBindings = new Set<string>();
 const MAX_TRACKED_BINDINGS = 65_536;
 
 function validatePort(value: ClaudeCodeProcessBytePortV1): ClaudeCodeProcessBytePortV1 {
-  if (!value || typeof value !== "object" || typeof value.readStdout !== "function"
-    || typeof value.readStderr !== "function" || typeof value.closeStdin !== "function"
-    || typeof value.terminate !== "function" || !value.exited
-    || typeof (value.exited as Promise<unknown>).then !== "function") throw unavailable();
+  if (!value || typeof value !== "object" || isHostProxyV1(value)) throw unavailable();
+  const writeStdin = dataMethodV1(value, "writeStdin"), readStdout = dataMethodV1(value, "readStdout");
+  const readStderr = dataMethodV1(value, "readStderr"), closeStdin = dataMethodV1(value, "closeStdin");
+  const terminate = dataMethodV1(value, "terminate"), exited = dataPropertyValueV1(value, "exited");
+  if (!writeStdin || !readStdout || !readStderr || !closeStdin || !terminate || !exited
+    || isHostProxyV1(exited) || !dataMethodV1(exited, "then")) throw unavailable();
   return Object.freeze({
-    readStdout: value.readStdout.bind(value),
-    readStderr: value.readStderr.bind(value),
-    closeStdin: value.closeStdin.bind(value),
-    terminate: value.terminate.bind(value),
-    exited: Promise.resolve(value.exited),
+    writeStdin: (bytes: Uint8Array, signal: AbortSignal) => Reflect.apply(writeStdin, value, [bytes, signal]) as Promise<void>,
+    readStdout: (signal: AbortSignal) => Reflect.apply(readStdout, value, [signal]) as Promise<Uint8Array | undefined>,
+    readStderr: (signal: AbortSignal) => Reflect.apply(readStderr, value, [signal]) as Promise<Uint8Array | undefined>,
+    closeStdin: (signal: AbortSignal) => Reflect.apply(closeStdin, value, [signal]) as Promise<void>,
+    terminate: (signal: AbortSignal) => Reflect.apply(terminate, value, [signal]) as Promise<void>,
+    exited: Promise.resolve(exited as Promise<Readonly<{ code: number | null; signal: string | null }>>),
   });
 }
 
@@ -125,33 +130,43 @@ type LineWaiter = {
  */
 export function createClaudeCodeOwnedProcessSessionV1(input: {
   binding: ClaudeCodeProcessBindingV1;
+  /** Exact immutable task bytes already bound into the controller delivery.
+   * Legacy source-only result bridges may omit this; installed-process delivery must not. */
+  initialInput?: Uint8Array;
   signal: AbortSignal;
   acquire: AcquireClaudeCodeProcessV1;
   cleanupMs: number;
 }): OwnedClaudeCodeProcessSessionV1 {
   const binding = Object.freeze(bindingSchema.parse(input.binding));
   if (!(input.signal instanceof AbortSignal) || input.signal.aborted
+    || input.initialInput !== undefined && (!(input.initialInput instanceof Uint8Array)
+      || input.initialInput.byteLength < 1 || input.initialInput.byteLength > 49_152)
     || !Number.isSafeInteger(input.cleanupMs) || input.cleanupMs < 1 || input.cleanupMs > 5_000
-    || typeof input.acquire !== "function") throw unavailable();
+    || typeof input.acquire !== "function" || isHostProxyV1(input.acquire)) throw unavailable();
+  const initialInput = input.initialInput ? Uint8Array.from(input.initialInput) : new Uint8Array(0);
 
   const bindingKey = sha256Digest(binding);
   if (startedBindings.has(bindingKey)) throw duplicateBinding();
   if (startedBindings.size >= MAX_TRACKED_BINDINGS) throw unavailable();
   startedBindings.add(bindingKey);
 
-  const operation = new AbortController(), readers = new AbortController();
+  const operation = new AbortController(), readers = new AbortController(), stdinCloser = new AbortController();
   let owner: OwnedClaudeCodeProcessV1;
   try {
     owner = input.acquire(binding, operation.signal);
-    if (!owner || typeof owner !== "object" || typeof owner.close !== "function"
-      || !owner.ready || typeof (owner.ready as Promise<unknown>).then !== "function") throw unavailable();
+    if (!owner || typeof owner !== "object" || isHostProxyV1(owner)) throw unavailable();
   } catch { throw unavailable(); }
-  const ownerReady = Promise.resolve(owner.ready), ownerClose = owner.close.bind(owner);
+  const ownerReadyValue = dataPropertyValueV1(owner, "ready"), ownerCloseMethod = dataMethodV1(owner, "close");
+  if (!ownerReadyValue || isHostProxyV1(ownerReadyValue) || !dataMethodV1(ownerReadyValue, "then") || !ownerCloseMethod)
+    throw unavailable();
+  const ownerReady = Promise.resolve(ownerReadyValue as Promise<ClaudeCodeProcessBytePortV1>);
+  const ownerClose = () => Reflect.apply(ownerCloseMethod, owner, []) as Promise<void>;
   void ownerReady.catch(() => {});
 
   let port: ClaudeCodeProcessBytePortV1 | undefined;
   let stdoutPump: Promise<void> | undefined, stderrPump: Promise<void> | undefined;
   let exit: Promise<Readonly<{ code: number | null; signal: string | null }>> | undefined;
+  let inputWrite: Promise<void> | undefined, closeStdinPromise: Promise<void> | undefined;
   let closing = false, closed = false, fatal = false;
   let exitMalformed = false, exitEvidence = false, cleanupUncertain = false;
   let terminalResultConfirmed = false;
@@ -239,6 +254,22 @@ export function createClaudeCodeOwnedProcessSessionV1(input: {
     } catch { if (!closing) fail(); throw unavailable(); }
   };
 
+  const boundedStartupStep = async <T>(work: Promise<T>, controller?: AbortController): Promise<T> => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      return await Promise.race([work, new Promise<never>((_, reject) => {
+        timer = setTimeout(() => { controller?.abort(); reject(unavailable()); }, input.cleanupMs);
+      })]);
+    } finally { clearTimeout(timer); controller?.abort(); }
+  };
+
+  const closeStdinOnce = (selected: ClaudeCodeProcessBytePortV1): Promise<void> => {
+    if (closeStdinPromise) return closeStdinPromise;
+    closeStdinPromise = Promise.resolve(selected.closeStdin(stdinCloser.signal));
+    void closeStdinPromise.catch(() => {});
+    return closeStdinPromise;
+  };
+
   const readLine = async (signal: AbortSignal): Promise<string | undefined> => {
     if (!(signal instanceof AbortSignal) || signal.aborted || closed || fatal) throw unavailable();
     if (lines.length) {
@@ -281,14 +312,17 @@ export function createClaudeCodeOwnedProcessSessionV1(input: {
       };
       let uncertain = false;
       if (port) {
-        const closeSignal = new AbortController();
-        try { await step(Promise.resolve(port.closeStdin(closeSignal.signal)), Math.max(1, Math.floor(input.cleanupMs / 4))); }
-        catch { closeSignal.abort(); uncertain = true; }
+        if (inputWrite) {
+          try { await step(Promise.resolve(inputWrite), Math.max(1, Math.floor(input.cleanupMs / 4))); }
+          catch { uncertain = true; }
+        }
+        try { await step(closeStdinOnce(port), Math.max(1, Math.floor(input.cleanupMs / 4))); }
+        catch { uncertain = true; }
         const terminateSignal = new AbortController();
         try { await step(Promise.resolve(port.terminate(terminateSignal.signal))); }
         catch { terminateSignal.abort(); uncertain = true; }
         try {
-          const pending = [stdoutPump, stderrPump, exit].filter(Boolean) as Promise<unknown>[];
+          const pending = [inputWrite, closeStdinPromise, stdoutPump, stderrPump, exit].filter(Boolean) as Promise<unknown>[];
           const settled = await step(Promise.allSettled(pending));
           const stdoutIndex = pending.indexOf(stdoutPump!);
           const stderrIndex = pending.indexOf(stderrPump!);
@@ -305,10 +339,12 @@ export function createClaudeCodeOwnedProcessSessionV1(input: {
       try { await step(Promise.resolve().then(ownerClose)); } catch { uncertain = true; }
       readers.abort();
       buffered.fill(0);
+      initialInput.fill(0);
       buffered = new Uint8Array(0);
       lines.splice(0);
       queuedBytes = 0;
       input.signal.removeEventListener("abort", stop);
+      stdinCloser.abort();
       closed = true;
       cleanupUncertain = uncertain;
       if (uncertain) throw cleanupUncertainError();
@@ -321,9 +357,19 @@ export function createClaudeCodeOwnedProcessSessionV1(input: {
     return closingPromise;
   };
 
-  const ready = ownerReady.then(value => {
+  const ready = ownerReady.then(async value => {
     if (closing || closed) throw unavailable();
     port = validatePort(value);
+    const inputSignal = AbortSignal.any([input.signal, operation.signal]);
+    if (initialInput.byteLength) {
+      inputWrite = Promise.resolve(port.writeStdin(Uint8Array.from(initialInput), inputSignal));
+      void inputWrite.catch(() => {});
+      await boundedStartupStep(inputWrite);
+      if (inputSignal.aborted || closing || closed || fatal) throw unavailable();
+    }
+    await boundedStartupStep(closeStdinOnce(port), stdinCloser);
+    if (inputSignal.aborted || closing || closed || fatal) throw unavailable();
+    initialInput.fill(0);
     stdoutPump = pumpStdout(port); void stdoutPump.catch(() => {});
     stderrPump = pumpStderr(port); void stderrPump.catch(() => {});
     exit = Promise.resolve(port.exited).then(observed => {

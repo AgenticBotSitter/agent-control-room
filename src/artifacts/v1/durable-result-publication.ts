@@ -234,6 +234,8 @@ export interface DurableResultBindingV1 {
    */
   harness: string;
   connectorProfileDigest: string;
+  /** Current canonical authority recorded when this run was admitted. */
+  authorityDigest?: string;
   snapshotDigest?: string; snapshotVersion?: number;
   publicationContractDigest?: string; terminalEvidenceDigest?: string;
   threadId?: string; turnId?: string; itemId?: string;
@@ -248,12 +250,25 @@ export interface DurableResultPublicationConfigurationV1 {
   storageClass: "local" | "r2";
   storageIoMs?: number;
   /**
-   * Reservation persistence. The PostgreSQL adapter for the dedicated
-   * neutral sibling table is lead-owned and pending; until it lands,
-   * callers inject the in-memory port (tests, local runs). The publisher
-   * never touches a reservation table directly.
+   * Reservation persistence. The production adapter targets the dedicated
+   * neutral sibling table; tests may inject an in-memory port, which is not
+   * durable across restart. The publisher never touches a reservation table
+   * directly.
    */
   reservations: NeutralReservationPort;
+  /**
+   * Optional, installation-owned bridge into the existing owner-review gate.
+   * The publisher first commits the durable receipt and review plan. This
+   * bridge then re-reads both records and registers the derived pending target.
+   * A failure leaves the result durable but unresolved; a caller must recover
+   * the review submission, never rerun the worker merely to recreate it.
+   */
+  reviewSubmission?: DurableResultReviewSubmissionPortV1;
+}
+
+/** Deliberately small capability injected only by trusted server composition. */
+export interface DurableResultReviewSubmissionPortV1 {
+  submit: (tenantId: string, runId: string) => Promise<{ target: CompletionReviewTargetV1 }>;
 }
 
 type NeutralReservationRow = NeutralReservationRowV1;
@@ -299,7 +314,10 @@ async function verifyRecordedIdentity(tx: DatabaseSession, binding: DurableResul
   const jobRow = (await tx.query<{ workflow_id: string; authority_digest: string }>(
     "SELECT workflow_id,authority_digest FROM control_jobs WHERE tenant_id=$1 AND id=$2",
     [binding.tenantId, binding.jobId])).rows[0];
-  if (!jobRow || jobRow.workflow_id !== binding.workflowId) throw new Error("durable_result_identity_mismatch");
+  if (!jobRow || jobRow.workflow_id !== binding.workflowId
+    || binding.authorityDigest !== undefined && jobRow.authority_digest !== binding.authorityDigest) {
+    throw new Error("durable_result_identity_mismatch");
+  }
 
   const attemptRow = (await tx.query<{ job_id: string; node_id: string }>(
     "SELECT job_id,node_id FROM control_attempts WHERE tenant_id=$1 AND id=$2",
@@ -326,18 +344,8 @@ async function verifyRecordedIdentity(tx: DatabaseSession, binding: DurableResul
   const payload = payloadRow?.payload as { connectorProfileDigest?: string; authorityDigest?: string } | undefined;
   if (!payload || payload.connectorProfileDigest !== binding.connectorProfileDigest)
     throw new Error("durable_result_identity_mismatch");
-  // Terminal evidence anchor: native binds the snapshot digest; codex
-  // binds the publication contract + terminal evidence digest. If the
-  // binding carries any of these, at least one must match the recorded
-  // payload's authority digest (the recorded digest is the digest the
-  // connector profile / harness attested at admission time).
-  const evidenceAnchors: string[] = [];
-  if (binding.snapshotDigest !== undefined) evidenceAnchors.push(binding.snapshotDigest);
-  if (binding.publicationContractDigest !== undefined) evidenceAnchors.push(binding.publicationContractDigest);
-  if (binding.terminalEvidenceDigest !== undefined) evidenceAnchors.push(binding.terminalEvidenceDigest);
   const recordedAuthority = payload?.authorityDigest;
-  if (evidenceAnchors.length > 0 && (recordedAuthority === undefined
-    || !evidenceAnchors.includes(recordedAuthority)))
+  if (binding.authorityDigest !== undefined && recordedAuthority !== binding.authorityDigest)
     throw new Error("durable_result_identity_mismatch");
 }
 
@@ -504,6 +512,13 @@ async function ensureNeutralReviewPlan(tx: DatabaseSession, reviewKey: Uint8Arra
   return expected;
 }
 
+async function registerPendingOwnerReviewV1(config: DurableResultPublicationConfigurationV1,
+  binding: DurableResultBindingV1, expected: CompletionReviewTargetV1): Promise<void> {
+  if (!config.reviewSubmission) return;
+  const submitted = await config.reviewSubmission.submit(binding.tenantId, binding.runId);
+  if (!submitted || sha256Digest(submitted.target) !== sha256Digest(expected)) unavailable();
+}
+
 /**
  * Harness-neutral durable text-result publication. Reserves the exact result
  * before writing bytes, verifies stored bytes, records one protected receipt
@@ -587,7 +602,12 @@ export async function publishDurableResultV1(config: DurableResultPublicationCon
     return { kind: "replay" as const, receipt, target: durableReviewTargetV1(plan, receipt) };
   }, assertAuthority);
 
-  if (acquired.kind === "replay") { assertAuthority(); return { receipt: acquired.receipt, target: acquired.target, replayed: true }; }
+  if (acquired.kind === "replay") {
+    assertAuthority();
+    await registerPendingOwnerReviewV1(config, binding, acquired.target);
+    assertAuthority();
+    return { receipt: acquired.receipt, target: acquired.target, replayed: true };
+  }
   if (ioState.storageUncertain) {
     await markUncertain("storage_port_previously_uncertain");
     throw new Error("durable_result_storage_uncertain");
@@ -647,6 +667,8 @@ export async function publishDurableResultV1(config: DurableResultPublicationCon
     return { receipt, target: durableReviewTargetV1(plan, receipt) };
   }, assertAuthority);
   assertAuthority();
+  await registerPendingOwnerReviewV1(config, binding, captured.target);
+  assertAuthority();
   return { receipt: captured.receipt, target: captured.target, replayed: false };
 }
 
@@ -675,15 +697,32 @@ export function reconcileDurableResultReservationCrashV1(value: unknown) {
   } catch { return unavailable(); }
 }
 
-/** Exact verified read of one neutral result. It acquires no bytes beyond the stored record. */
-export async function readDurableResultV1(tx: DatabaseSession, key: Uint8Array, storageClass: "local" | "r2",
-  readBytes: (artifactId: string, signal?: AbortSignal) => Promise<Uint8Array | undefined>,
-  tenantId: string, projectId: string, jobId: string, artifactId: string) {
+/** Exact verified durable receipt metadata. It does not acquire artifact bytes. */
+export async function readDurableResultReceiptV1(tx: DatabaseSession, key: Uint8Array, storageClass: "local" | "r2",
+  tenantId: string, projectId: string, jobId: string, artifactId: string): Promise<DurableResultReceiptV1 | undefined> {
   const row = (await tx.query<NeutralReceiptRow>(`SELECT ${neutralSelection}
     WHERE r.tenant_id=$1 AND r.project_id=$2 AND r.job_id=$3 AND r.artifact_id=$4`,
   [tenantId, projectId, jobId, artifactId])).rows[0];
   if (!row) return undefined;
-  const { receipt } = verifyNeutralReceiptRow(row, key, storageClass);
+  return verifyNeutralReceiptRow(row, key, storageClass).receipt;
+}
+
+/** Bounded verified durable receipt metadata for one task. It does not acquire artifact bytes. */
+export async function listDurableResultReceiptsV1(tx: DatabaseSession, key: Uint8Array, storageClass: "local" | "r2",
+  tenantId: string, projectId: string, jobId: string): Promise<{ receipts: DurableResultReceiptV1[]; additionalResultsOmitted: boolean }> {
+  const rows = (await tx.query<NeutralReceiptRow>(`SELECT ${neutralSelection}
+    WHERE r.tenant_id=$1 AND r.project_id=$2 AND r.job_id=$3
+    ORDER BY r.artifact_id COLLATE "C" LIMIT 51`, [tenantId, projectId, jobId])).rows;
+  return { receipts: rows.slice(0, 50).map(row => verifyNeutralReceiptRow(row, key, storageClass).receipt),
+    additionalResultsOmitted: rows.length > 50 };
+}
+
+/** Exact verified read of one neutral result. It acquires bytes only after authenticating its receipt. */
+export async function readDurableResultV1(tx: DatabaseSession, key: Uint8Array, storageClass: "local" | "r2",
+  readBytes: (artifactId: string, signal?: AbortSignal) => Promise<Uint8Array | undefined>,
+  tenantId: string, projectId: string, jobId: string, artifactId: string) {
+  const receipt = await readDurableResultReceiptV1(tx, key, storageClass, tenantId, projectId, jobId, artifactId);
+  if (!receipt) return undefined;
   const bytes = await readBytes(artifactId);
   if (!bytes) throw new Error("durable_result_content_unavailable");
   return { receipt, text: checkedResultBytes(bytes, receipt).text };

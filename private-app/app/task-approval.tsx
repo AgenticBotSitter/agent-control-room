@@ -4,7 +4,7 @@ import { BrowserRequestError } from "../../src/web/v1/browser-client";
 import { approvalErrorMessage } from "../../src/web/v1/task-approval-browser-client";
 import type { TaskApprovalRead, TaskApprovalReview } from "../../src/web/v1/task-approval-wire";
 import type { TaskDetail } from "../../src/web/v1/task-wire";
-import { PrivateTaskSubmission } from "./task-submission";
+import { PrivateMacLocalTaskSubmission, PrivateTaskSubmission } from "./task-submission";
 import { createApprovalEditor, retainApprovalEditor, attachApprovalFile, type TaskApprovalEditor } from "../../src/web/v1/task-approval-editor";
 import { createTaskExecutionWorkspace, type TaskExecutionWorkspace } from "../../src/web/v1/task-execution-workspace";
 
@@ -110,5 +110,6 @@ export function PrivateTaskApproval({ detail, workspace: suppliedWorkspace }: { 
     fileName={current ? file?.name ?? "" : ""} pending={pending} uncertain={client.hasPending()}
     onReview={() => { void action("review"); }} onCheck={() => { void action("check"); }} onSave={() => { void action("save"); }}
     onFile={selected => { void choose(selected); }} />
-    <TaskApprovalSubmission detail={detail} checked={checked} state={state} workspace={workspace} /></>;
+    <TaskApprovalSubmission detail={detail} checked={checked} state={state} workspace={workspace} />
+    {!(current && state?.receipt) && <PrivateMacLocalTaskSubmission detail={detail} />}</>;
 }

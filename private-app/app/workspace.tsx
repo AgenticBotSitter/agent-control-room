@@ -13,6 +13,9 @@ import { ConfiguredTimestamp } from "./configured-timestamp";
 import { useProductConfiguration, useProductModule } from "./product-configuration";
 import { ProjectScheduleStatusPanel } from "./schedule-status";
 import { ProjectModuleAvailability } from "./project-module-availability";
+import { useInstallationTopology } from "./installation-topology";
+import { InstallationTopologySummary } from "./installation-topology-summary";
+import { ProjectAgentWorkspace } from "./project-agent-workspace";
 
 /** Browser-side canonical JSON: stable across equivalent object key ordering. Mirrors the
  * server's canonical-digest implementation so the template-selection key the browser sends
@@ -65,7 +68,22 @@ function useProductTemplateOptions(): readonly { templateId: string; displayName
   }, [configuration, digest]);
 }
 
-export type ProjectSection = "overview" | "inbox" | "agents" | "automations" | "settings";
+export type ProjectSection = "overview" | "agents" | "automations" | "settings";
+
+/**
+ * Local route setup belongs to the installation, not to the selected project.
+ * Keep that distinction visible where an owner is looking for project agents:
+ * these cards never claim eligibility, capacity, current work, or permission
+ * to assign this project's task.
+ */
+export function ProjectAgentInstallationStatus({ topology }: { topology: ReturnType<typeof useInstallationTopology> }) {
+  if (topology.state !== "available" || topology.setup?.mode !== "this_computer") return null;
+  return <section className="private-panel" aria-labelledby="project-local-agent-setup-title">
+    <h2 id="project-local-agent-setup-title">Local worker setup on this computer</h2>
+    <p>Installation-scoped setup status only — it is not this project’s agent eligibility, available capacity, current work, or permission to assign a task.</p>
+    <InstallationTopologySummary setup={topology.setup} status={topology.state} />
+  </section>;
+}
 
 export function ProjectSaveRecovery({ pending, onRetry }: { pending: boolean; onRetry: () => void }) {
   return <section className="private-notice" aria-label="Unconfirmed project save">
@@ -93,6 +111,7 @@ export function PrivateProjectWorkspace({ projectId, section = "overview", after
   projectId?: string; section?: ProjectSection; after?: string; lifecycleFilter?: WebProject["lifecycle"];
 }) {
   const sessionObservations = useProductModule("sessionObservations");
+  const installationTopology = useInstallationTopology();
   const templateOptions = useProductTemplateOptions();
   const [client] = useState(() => createProjectBrowserClient());
   const [projects, setProjects] = useState<ProjectView[]>([]);
@@ -224,17 +243,9 @@ export function PrivateProjectWorkspace({ projectId, section = "overview", after
             <p className="private-note">Saved revision {project.version} · <ConfiguredTimestamp value={project.updatedAt} prefix="Updated" /></p>
           </section>}
           <ProjectModuleAvailability presentation={project.presentation} />
-          {section === "inbox" && <section className="private-panel"><h2>Project inbox</h2>
-            <p>Open the saved attention list and choose an item from this project. The list reports missing checks and uncertain work instead of claiming an all-clear.</p>
-            <a className="private-action-link" href="/needs-me">Open needs attention</a>
-            <p className="private-note">Project-specific decisions remain on each task page. Opening the inbox does not approve, retry or start work.</p>
-          </section>}
-          {section === "agents" && <><section className="private-panel"><h2>Project agents</h2>
-            <p>Saved connection records and optional session observations show what can be verified. They do not grant a worker permission to take work.</p>
-            <p className="private-note">Project-specific eligibility, capabilities, available slots, current work and usage are unavailable here.
-              Cancel and resume are not supported from this page.</p>
-            <a className="private-action-link" href="/workers">Open all worker connections</a>
-          </section>{sessionObservations && <SessionObservations projectId={projectId} />}</>}
+          {section === "agents" && <><ProjectAgentWorkspace projectId={projectId} />
+            <ProjectAgentInstallationStatus topology={installationTopology} />
+          {sessionObservations && <SessionObservations projectId={projectId} />}</>}
           {section === "automations" && <ProjectScheduleStatusPanel projectId={projectId} />}
           {section === "settings" && <section className="private-panel"><h2>Project status</h2>
             <p className="private-summary">{project.summary || "No summary added."}</p>
@@ -251,8 +262,9 @@ export function PrivateProjectWorkspace({ projectId, section = "overview", after
           </section>}
           {section === "overview" && <><ProjectOverviewActivity key={projectId} projectId={projectId} />
             <section className="private-panel"><h2>Worker availability</h2>
-              <p>Project-specific eligibility, capabilities, available slots and current work are unavailable in this view.</p>
+              <p>Open Project agents to compare task-specific eligibility with separately recorded availability, capacity, connections, and current project work.</p>
               <a className="private-action-link" href={`/projects/${encodeURIComponent(projectId)}/agents`}>Open project agents</a>
+              <a className="private-action-link" href={`/workboard?projectId=${encodeURIComponent(projectId)}`}>Open Control Room workboard</a>
             </section>
             {sessionObservations && <SessionObservations projectId={projectId} />}</>}
         </>}

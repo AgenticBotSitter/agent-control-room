@@ -110,6 +110,7 @@ test("a worker row that reports no capacity of its own is excluded and named, ne
   assert.deepEqual(view.capacity.evidence === "measured" ? view.capacity.value : undefined,
     { availableSlots: 1, totalSlots: 2, reportingWorkers: 1 });
   const html = renderToStaticMarkup(createElement(OperatorCapacityWorkspace, { view }));
+  assert.match(html, /capability verified/);
   assert.match(html, /excluded from every total because that row reports no capacity of its own/);
   assert.match(html, /no capacity reported by this row/);
   assert.match(html, /Every self-reported row is inside the freshness window/);

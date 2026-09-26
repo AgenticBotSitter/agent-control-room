@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test, { after } from "node:test";
 import type { DatabaseClient, DatabaseSession } from "../src/persistence/database";
 import { sha256Digest } from "../src/security";
+import { GATEWAY_ASSERTION_PROVIDER_PROFILE_SCHEMA_V1 } from "../src/web/v1/access-verifier";
 import { createPrivateOwnerBootstrapCommand } from "../src/web/v1/private-owner-bootstrap";
 import { afterCommitUncertain, conformanceAudience, conformanceEmail, conformanceIssuer, conformanceNow, conformanceSubject,
   closePrivateOwnerBootstrapConformanceDatabase, privateOwnerBootstrapFixture,
@@ -10,7 +11,7 @@ import { afterCommitUncertain, conformanceAudience, conformanceEmail, conformanc
 after(closePrivateOwnerBootstrapConformanceDatabase);
 
 test("one pinned synthetic owner succeeds once; replay, concurrency, and a second owner cannot replace it", async t => {
-  const f = await privateOwnerBootstrapFixture(); t.after(f.close);
+  const f = await privateOwnerBootstrapFixture({ fresh: "one-owner" }); t.after(f.close);
   const command = createPrivateOwnerBootstrapCommand({ openDatabase: f.openDatabase(), clock: () => conformanceNow });
   const input = { configuration: f.configuration, database: f.database, trust: f.trust, assertion: f.assertion };
   const [first, concurrent] = await Promise.allSettled([command(input), command({ ...input })]);
@@ -31,6 +32,65 @@ test("one pinned synthetic owner succeeds once; replay, concurrency, and a secon
     "SELECT id,auth_subject_digest FROM control_identities WHERE tenant_id=$1", [f.configuration.tenantId]);
   assert.deepEqual(rows.rows, [{ id: f.configuration.identityId,
     auth_subject_digest: f.configuration.expectedOwnerSubjectDigest }]);
+});
+
+test("a fresh approved tenant and workspace are created only inside the one-owner transaction", async t => {
+  const f = await privateOwnerBootstrapFixture({ fresh: "fresh-one" }); t.after(f.close);
+  const command = createPrivateOwnerBootstrapCommand({ openDatabase: f.openDatabase(), clock: () => conformanceNow });
+  const input = { configuration: f.configuration, database: f.database, trust: f.trust, assertion: f.assertion };
+  const output = await command(input);
+  assert.equal(output.ownerCreated, true);
+  assert.deepEqual(await f.counts(), { identities: 1, grants: 1 });
+  const tenant = await f.client.query<{ id: string; display_name: string }>(
+    "SELECT id,display_name FROM tenants WHERE id=$1", [f.configuration.tenantId]);
+  const workspace = await f.client.query<{ id: string; tenant_id: string; display_name: string }>(
+    "SELECT id,tenant_id,display_name FROM workspaces WHERE id=$1", [f.configuration.workspaceId]);
+  assert.deepEqual(tenant.rows, [{ id: f.configuration.tenantId, display_name: f.configuration.tenantDisplayName }]);
+  assert.deepEqual(workspace.rows, [{ id: f.configuration.workspaceId, tenant_id: f.configuration.tenantId,
+    display_name: f.configuration.workspaceDisplayName }]);
+});
+
+test("an existing root cannot be adopted even when its ordinary display names match", async t => {
+  const f = await privateOwnerBootstrapFixture(); t.after(f.close);
+  const command = createPrivateOwnerBootstrapCommand({ openDatabase: f.openDatabase(), clock: () => conformanceNow });
+  await assert.rejects(command({ configuration: f.configuration, database: f.database, trust: f.trust,
+    assertion: f.assertion }), { message: "private_owner_bootstrap_failed" });
+  assert.deepEqual(await f.counts(), { identities: 0, grants: 0 });
+});
+
+test("a fresh bootstrap refuses an existing workspace owned by another tenant and rolls back its new tenant", async t => {
+  const f = await privateOwnerBootstrapFixture({ fresh: "collision" }); t.after(f.close);
+  const command = createPrivateOwnerBootstrapCommand({ openDatabase: f.openDatabase(), clock: () => conformanceNow });
+  await assert.rejects(command({ configuration: { ...f.configuration, workspaceId: "workspace:bootstrap" },
+    database: f.database, trust: f.trust, assertion: f.assertion }), { message: "private_owner_bootstrap_failed" });
+  assert.deepEqual(await f.counts(), { identities: 0, grants: 0 });
+  const tenant = await f.client.query("SELECT id FROM tenants WHERE id=$1", [f.configuration.tenantId]);
+  assert.deepEqual(tenant.rows, []);
+});
+
+test("concurrent fresh first-owner attempts create one root and one owner", async t => {
+  const f = await privateOwnerBootstrapFixture({ fresh: "concurrent" }); t.after(f.close);
+  const make = () => createPrivateOwnerBootstrapCommand({ openDatabase: f.openDatabase(), clock: () => conformanceNow });
+  const input = { configuration: f.configuration, database: f.database, trust: f.trust, assertion: f.assertion };
+  const results = await Promise.allSettled([make()(input), make()(input)]);
+  assert.equal(results.filter(value => value.status === "fulfilled").length, 1);
+  assert.deepEqual(await f.counts(), { identities: 1, grants: 1 });
+});
+
+test("a precommit failure rolls back a newly created root with its owner", async t => {
+  const f = await privateOwnerBootstrapFixture({ fresh: "rollback" }); t.after(f.close);
+  const failing: DatabaseClient = { query: f.client.query.bind(f.client), transaction: f.client.transaction.bind(f.client),
+    async transactionWithPreCommitCheck(work, check) {
+      return f.client.transactionWithPreCommitCheck(work, async () => { await check(); throw new Error("synthetic_precommit_failure"); });
+    } };
+  const command = createPrivateOwnerBootstrapCommand({ openDatabase: f.openDatabase(failing), clock: () => conformanceNow });
+  await assert.rejects(command({ configuration: f.configuration, database: f.database, trust: f.trust,
+    assertion: f.assertion }), { message: "private_owner_bootstrap_failed" });
+  assert.deepEqual(await f.counts(), { identities: 0, grants: 0 });
+  const tenant = await f.client.query("SELECT id FROM tenants WHERE id=$1", [f.configuration.tenantId]);
+  const workspace = await f.client.query("SELECT id FROM workspaces WHERE id=$1", [f.configuration.workspaceId]);
+  assert.deepEqual(tenant.rows, []);
+  assert.deepEqual(workspace.rows, []);
 });
 
 test("wrong target, assertion, abort, and time regression refuse before inappropriate writes", async t => {
@@ -60,9 +120,25 @@ test("wrong target, assertion, abort, and time regression refuse before inapprop
   }
 });
 
+test("an explicitly selected generic gateway profile keeps its selected assertion header end to end", async t => {
+  const f = await privateOwnerBootstrapFixture({ fresh: "gateway-profile" }); t.after(f.close);
+  const gatewayAssertionProfile = {
+    schema: GATEWAY_ASSERTION_PROVIDER_PROFILE_SCHEMA_V1, profileId: "rs256_gateway_assertion" as const,
+    algorithm: "RS256" as const, assertionHeader: "x-owner-gateway-assertion",
+    claimContract: "standard_gateway_subject" as const, subjectClaim: "sub" as const,
+    audienceClaim: "aud" as const, issuerClaim: "iss" as const,
+    mfaPolicy: "gateway_policy_external" as const,
+  };
+  const command = createPrivateOwnerBootstrapCommand({ openDatabase: f.openDatabase(), clock: () => conformanceNow });
+  const output = await command({ configuration: f.configuration, database: f.database, trust: f.trust,
+    assertion: f.assertion, gatewayAssertionProfile });
+  assert.equal(output.ownerCreated, true);
+  assert.deepEqual(await f.counts(), { identities: 1, grants: 1 });
+});
+
 test("uncertain commit and failed cleanup are never success or permission to retry", async t => {
   for (const mode of ["commit", "cleanup"] as const) await t.test(mode, async t => {
-    const f = await privateOwnerBootstrapFixture(); t.after(f.close);
+    const f = await privateOwnerBootstrapFixture({ fresh: `uncertain-${mode}` }); t.after(f.close);
     const base = mode === "commit" ? afterCommitUncertain(f.client) : f.client;
     let closes = 0, transactions = 0;
     const selected: DatabaseClient = { query: base.query.bind(base), transaction: base.transaction.bind(base),
@@ -88,7 +164,7 @@ test("uncertain commit and failed cleanup are never success or permission to ret
 });
 
 test("persisted and returned evidence excludes raw identity and credential material", async t => {
-  const f = await privateOwnerBootstrapFixture(); t.after(f.close);
+  const f = await privateOwnerBootstrapFixture({ fresh: "evidence" }); t.after(f.close);
   const output = await createPrivateOwnerBootstrapCommand({ openDatabase: f.openDatabase(), clock: () => conformanceNow })({
     configuration: f.configuration, database: f.database, trust: f.trust, assertion: f.assertion });
   const persisted = await f.client.query("SELECT * FROM control_identities WHERE tenant_id=$1", [f.configuration.tenantId]);

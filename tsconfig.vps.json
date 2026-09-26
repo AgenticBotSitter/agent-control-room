@@ -19,6 +19,9 @@
     "src/config/v1/product-configuration.ts",
     "src/web/v1/private-serving.ts",
     "src/github-app/v1/private-service.ts",
+    "src/installer/v1/local-setup-host.ts",
+    "src/installer/v1/local-installation-plan-bootstrap.ts",
+    "src/installer/v1/private-local-installation-operator-cli.ts",
     "src/web/v1/private-database-rehearsal.ts",
     "src/web/v1/private-fixture-preparation.ts",
     "src/web/v1/private-task-application.ts",
@@ -26,6 +29,11 @@
     "src/web/v1/installed-native-queue.ts",
     "src/persistence/pg-boss-schema-inspection.ts",
     "src/web/v1/private-task-host.ts",
+    "src/web/v1/private-agent-task-operator-configuration.ts",
+    "src/web/v1/mac-local-protected-loader.ts",
+    "src/web/v1/mac-local-host.ts",
+    "src/web/v1/private-postgres.ts",
+    "src/web/v1/mac-local-task-provider.ts",
     "src/project-adapters/news/v1/article-extraction-runtime.mjs"
   ],
   "exclude": ["node_modules", "dist-vps", ".next"]

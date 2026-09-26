@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "digest": "ed34f89b11bbc86dc77b1a43f37f8f39cd4a6641cf5ef6429da050fd90ace074",
+  "digest": "f53de7002f941b77481235d7702caefc2e902ee788d35919ac0da65e340b463d",
   "entries": [
     {
       "file": "db/migrations/0001_control_room_core.sql",
@@ -477,20 +477,86 @@
       "kind": "migrate"
     },
     {
-      "file": "db/roles/production_roles.sql",
+      "file": "db/migrations/0080_unified_worker_delivery_receipts.sql",
       "order": 80,
+      "sha256": "f70999ab2f034fb140f500b938de476479b6178453577d93e120d7a8e7325bce",
+      "kind": "migrate"
+    },
+    {
+      "file": "db/migrations/0081_idea_lab_canonical_task_links.sql",
+      "order": 81,
+      "sha256": "5f2c41bde9fe29c0fcb299a206260d1acbf3d1d449bfcfcced5e104155989f43",
+      "kind": "migrate"
+    },
+    {
+      "file": "db/migrations/0082_worktree_change_audit_plans.sql",
+      "order": 82,
+      "sha256": "1ca0b5a17372118577b9def6ff66672132180ac5faca6299019497e32c2384c2",
+      "kind": "migrate"
+    },
+    {
+      "file": "db/migrations/0083_worktree_change_audit_records.sql",
+      "order": 83,
+      "sha256": "1862233e90d1261ac4098cd5c4f062db3ad9b44f470a02b8d788f9fe77ca4a68",
+      "kind": "migrate"
+    },
+    {
+      "file": "db/migrations/0084_installation_transition_revisions.sql",
+      "order": 84,
+      "sha256": "c0c69a4f5bf5230262278fbc2b36b9ce81bce88c04bac5e2d36572ef93446ba8",
+      "kind": "migrate"
+    },
+    {
+      "file": "db/migrations/0085_remote_worker_enrollment_revisions.sql",
+      "order": 85,
+      "sha256": "198f9781887930fe6601551725f421134cc319a68bc8d3e5fe40ac27f9d72b7d",
+      "kind": "migrate"
+    },
+    {
+      "file": "db/migrations/0086_mac_local_owner_review_profile.sql",
+      "order": 86,
+      "sha256": "f23d3b0277272d4349ebf452d6679c99f8fb32f5a4dc27e665185996cb979f9d",
+      "kind": "migrate"
+    },
+    {
+      "file": "db/migrations/0087_mac_local_fleet_signals.sql",
+      "order": 87,
+      "sha256": "55487112da40d81e6b4b08891100b571531daab96e60b55a21e03f1e46a8beb9",
+      "kind": "migrate"
+    },
+    {
+      "file": "db/migrations/0088_mac_local_delivery_receipt_lock.sql",
+      "order": 88,
+      "sha256": "573cee22f0483ff158be66c9125801d69c937d45474270641d4c82958216f677",
+      "kind": "migrate"
+    },
+    {
+      "file": "db/migrations/0089_mac_local_result_publisher_locks.sql",
+      "order": 89,
+      "sha256": "56696d5c44d35aaa8f25791142477e4adcc0d68c70574da6321ebc2d5e0c0e6f",
+      "kind": "migrate"
+    },
+    {
+      "file": "db/migrations/0090_mac_local_quality_read_locks.sql",
+      "order": 90,
+      "sha256": "beb022b476ea96aaa11e7bbf7dbf391693f42d8aff2da1227aa45dc4b97a2f1c",
+      "kind": "migrate"
+    },
+    {
+      "file": "db/roles/production_roles.sql",
+      "order": 91,
       "sha256": "21960d034062d3a86810e966748187ce2bb4aff550753a33136781d1a92c9f39",
       "kind": "grants"
     },
     {
       "file": "db/roles/production_table_grants.sql",
-      "order": 81,
+      "order": 92,
       "sha256": "be541f3041e798cfb8540cfc94b3853b978ca5d85d3f27dbeae78ba1e3ee1c83",
       "kind": "grants"
     },
     {
       "file": "db/roles/production_provision.sql",
-      "order": 82,
+      "order": 93,
       "sha256": "06b83bf15223e1e9540fc409ec7699fc2b8ad7617545a97ea06f802b70dc9887",
       "kind": "provision"
     }

@@ -1,24 +1,40 @@
 import assert from 'node:assert/strict';
-import { generateKeyPairSync } from 'node:crypto';
+import { createHash, generateKeyPairSync, sign as cryptoSign } from 'node:crypto';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import test from 'node:test';
 import { createCodexLocalHostV1 } from '../src/harness/codex-v1/local-host';
-import { buildCodexTaskActivationV1, CODEX_ACTIVATION_FEATURE } from '../src/harness/codex-v1/activation-contract';
+import type { CodexLocalInitialHostInputV1, CodexLocalRecoverHostInputV1 } from '../src/harness/codex-v1/local-host';
+import { createCodexWorkerCompositionV1 } from '../src/node-bridge/codex-worker-composition';
+import { createCodexPhysicalQualificationReceiptBodyV1 } from '../src/harness/codex-v1/result-publication-contract';
+import { buildCodexTaskActivationV1, CODEX_ACTIVATION_FEATURE, parseCodexTaskActivationV1 } from '../src/harness/codex-v1/activation-contract';
 import { CODEX_START_OPERATION, codexTaskDispatchBodySchemaV1,
   codexTaskPayloadDigestV1, codexTaskRunIdV1 } from '../src/harness/codex-v1/delivery-contract';
 import { CODEX_APP_SERVER_READ_CONTRACT,
-  CODEX_APP_SERVER_START_CONTRACT } from '../src/harness/codex-v1/schema-contract';
+  CODEX_APP_SERVER_START_CONTRACT, CODEX_APP_SERVER_RESULT_CONTRACT } from '../src/harness/codex-v1/schema-contract';
 import { SqliteCodexStartJournalV1 } from '../src/harness/codex-v1/start-journal';
 import { CodexActivationIntakeHandlerV1 } from '../src/node-bridge/codex-activation-handler';
 import { CodexDispatchIntakeHandlerV1 } from '../src/node-bridge/codex-dispatch-handler';
 import { PortableNodeBridge } from '../src/node-bridge/bridge';
 import { SqliteBridgeJournal } from '../src/node-bridge/journal';
+import { consumePrivateCodexSessionCapabilityV1, createPrivateCodexSessionOwnerV1,
+  PRIVATE_CODEX_SESSION_CAPABILITY_V1 } from '../src/node-bridge/private-codex-session-owner';
+import { createPrivateCodexInstalledNodeEntryV1 } from '../src/node-bridge/private-codex-installed-node-entry';
+import { PinnedApprovalTrustStore } from '../src/node-policy/v1/pinned-approval-trust';
+import { PinnedOwnerTrust } from '../src/node-policy/v1/owner-pins';
+import { SqliteNodeSecurityStateRepository } from '../src/node-policy/v1/persistent-security-state';
+import { EncryptedFileNodePrivateKeyStore, InjectedUnwrapSecretSource,
+  sealEncryptedPrivateKey } from '../src/node-policy/v1/encrypted-file-key-store';
 import { computeArtifactBodyDigest, signArtifact } from '../src/node-policy/v1/crypto';
 import { computeEffectClaimKey } from '../src/node-policy/v1/effect-claim';
-import type { PinnedApprovalTrustStore } from '../src/node-policy/v1/pinned-approval-trust';
 import { computeNormalizedOperationDigest } from '../src/node-policy/v1/policy-evaluator';
 import { NODE_PROTOCOL_V1, NodeProtocolAuthenticator, signNodeFrame,
   type UnsignedNodeFrame } from '../src/node-protocol/v1';
 import { sha256Digest } from '../src/security/canonical-digest';
+import { CODEX_CURRENT_ADMISSION_READ_FEATURE_V1, codexCurrentAdmissionReadRequestSchemaV1 } from '../src/harness/codex-v1/current-admission-read-contract';
+import { codexApprovalPacketDigestV1 } from '../src/web/v1/codex-task-queue';
+import { createControllerWorkerDeliveryV1 } from '../src/harness/v1/controller-worker-delivery';
 
 const baseTime = Date.parse('2026-09-13T12:00:00.000Z');
 const deadline = baseTime + 60_000;
@@ -36,7 +52,7 @@ function intent() {
     revision: 'a'.repeat(40) };
 }
 
-async function portableActivation() {
+async function portableActivation(recordActivation = true, keepConnected = false) {
   const fixtureId = ++fixtureSequence;
   const workspaceIntent = intent();
   const approval = generateKeyPairSync('ed25519'), server = generateKeyPairSync('ed25519');
@@ -87,7 +103,7 @@ async function portableActivation() {
     currentAdmissionDigest: () => admissionDigest, assertCurrent() {},
   }, () => clock);
   const sent: string[] = [];
-  const features = ['harness.codex.dispatch.v1', CODEX_ACTIVATION_FEATURE];
+  const features = ['harness.codex.dispatch.v1', CODEX_ACTIVATION_FEATURE, CODEX_CURRENT_ADMISSION_READ_FEATURE_V1];
   let id = 0;
   const bridge = new PortableNodeBridge({ tenantId: start.tenantId, nodeId: start.nodeId,
     keyId: 'node-key:test', features }, journal,
@@ -96,7 +112,11 @@ async function portableActivation() {
     publicKeySpki: serverSpki, state: 'active', principalState: 'active',
     validFrom: new Date(baseTime - 1_000).toISOString() }; } }, journal, { async consume() {} }),
   () => `codex-host-bridge-${++id}`, undefined, undefined, dispatchHandler, activationHandler);
-  const transport = { async send(value: string) { sent.push(value); }, async close() {} };
+  let admissionResponder: ((request: Record<string, unknown>) => void) | undefined;
+  const transport = { async send(value: string) {
+    sent.push(value); const parsed = JSON.parse(value) as Record<string, unknown>;
+    if (parsed.type === 'harness.codex.current-admission.read') admissionResponder?.(parsed);
+  }, async close() {} };
   const at = new Date(clock).toISOString();
   await bridge.open(transport, { now: at, transportIdentity: 'transport:codex-host' });
   const hello = JSON.parse(sent[0]!) as { messageId: string; connectionId: string };
@@ -122,12 +142,61 @@ async function portableActivation() {
     currentAdmissionDigest: admissionDigest, receiptReceivedAt, activatedAt,
     activationExpiresAt: new Date(deadline).toISOString() });
   const activation = frame(4, 'harness.codex.dispatch.activation', activationBody, activatedAt, receipt.messageId);
-  await bridge.receive(JSON.stringify(activation), activatedAt);
-  await bridge.receive(JSON.stringify(activation), activatedAt);
-  assert.equal(journal.acceptedCodexActivation(body.queueId)?.frame.body.runId, workspaceIntent.runId);
-  await bridge.disconnected(); dispatchHandler.close(); activationHandler.close();
-  return { journal, body, workspaceIntent, activation,
-    connectionAttemptId: `connection-attempt:codex-host:${fixtureId}`, clock: () => ++clock };
+  if (recordActivation) {
+    await bridge.receive(JSON.stringify(activation), activatedAt);
+    await bridge.receive(JSON.stringify(activation), activatedAt);
+    assert.equal(journal.acceptedCodexActivation(body.queueId)?.frame.body.runId, workspaceIntent.runId);
+  }
+  const closeBridge = async () => {
+    await bridge.disconnected(); dispatchHandler.close(); activationHandler.close();
+  };
+  if (!keepConnected) await closeBridge();
+  return { journal, body, workspaceIntent, activation, approval, server, node,
+    bridge, closeBridge, setAdmissionResponder(value: (request: Record<string, unknown>) => void) {
+      admissionResponder = value;
+    }, sent, connectionAttemptId: `connection-attempt:codex-host:${fixtureId}`, clock: () => ++clock };
+}
+
+function sharedDelivery(f: Awaited<ReturnType<typeof portableActivation>>) {
+  const activation = parseCodexTaskActivationV1(f.activation.body);
+  return createControllerWorkerDeliveryV1({
+    identity: { tenantId: activation.tenantId, nodeId: activation.nodeId, projectId: activation.projectId,
+      jobId: activation.jobId, attemptId: activation.attemptId, runId: activation.runId },
+    worker: { workerId: 'worker:codex-local', adapterId: 'codex-app-server/v1', adapterRevision: 'source-test' },
+    input: { prompt: activation.prompt, instructions: activation.instructions },
+    authorityDigest: sha256Digest('controller-authority'), connectorProfileDigest: activation.connectorProfileDigest,
+    acceptanceProfileId: 'profile:codex', acceptanceProfileDigest: sha256Digest('acceptance'),
+    issuedAt: new Date(baseTime).toISOString(), expiresAt: new Date(deadline).toISOString(),
+  });
+}
+
+function currentAdmissionRequest(f: Awaited<ReturnType<typeof portableActivation>>) {
+  const start = parseCodexTaskActivationV1(f.activation.body);
+  return { schema: 'control-room.codex-current-admission-read-request/v1' as const,
+    queueId: start.queueId, projectId: start.projectId, jobId: start.jobId, attemptId: start.attemptId,
+    nodeId: start.nodeId, inputDigest: start.inputDigest, packetDigest: codexApprovalPacketDigestV1(f.body),
+    activationFrameDigest: sha256Digest(f.activation), currentAdmissionDigest: start.currentAdmissionDigest,
+    challengeNonce: 'A'.repeat(43), startsWork: false as const, grantsExecutionAuthority: false as const };
+}
+
+function currentAdmissionResponse(f: Awaited<ReturnType<typeof portableActivation>>,
+  request: ReturnType<typeof signNodeFrame>, change: { causationId?: string; expiresAt?: string } = {}) {
+  const body = codexCurrentAdmissionReadRequestSchemaV1.parse(request.body);
+  const checkedAt = new Date(baseTime + 3_000).toISOString();
+  const responseBody = { schema: 'control-room.codex-current-admission-read-response/v1' as const,
+    queueId: body.queueId, projectId: body.projectId, jobId: body.jobId, attemptId: body.attemptId,
+    nodeId: body.nodeId, requestMessageId: request.messageId, requestBodyDigest: request.bodyDigest,
+    challengeNonce: body.challengeNonce, activationFrameDigest: body.activationFrameDigest,
+    currentAdmissionDigest: body.currentAdmissionDigest, ownerTrustRevisionDigest: sha256Digest('owner-trust:test'),
+    checkedAt, expiresAt: change.expiresAt ?? new Date(baseTime + 20_000).toISOString(),
+    startsWork: false as const, grantsExecutionAuthority: false as const };
+  return signNodeFrame({ protocol: NODE_PROTOCOL_V1, direction: 'server_to_node', senderKind: 'control_room',
+    tenantId: 'tenant:test', actorId: 'control-room:test', keyId: 'server-key:test',
+    connectionId: request.connectionId, sequence: 5, messageId: 'message:current-admission-response',
+    correlationId: request.correlationId, causationId: change.causationId ?? request.messageId,
+    sentAt: checkedAt, expiresAt: responseBody.expiresAt,
+    nonce: 'current_admission_response_nonce_123456789',
+    type: 'harness.codex.current-admission.read.response', body: responseBody }, f.server.privateKey);
 }
 
 const threadResponse = (id: number, cwd: string) => JSON.stringify({ id, result: {
@@ -160,11 +229,12 @@ function startHost(f: Awaited<ReturnType<typeof portableActivation>>, starts: Sq
   let opened = 0, closed = 0;
   const authority = { currentAdmissionDigest: () => admissionDigest,
     assertCurrent() { if (options.revoked?.()) throw new Error('revoked'); } };
-  const host = createCodexLocalHostV1({ mode: 'initial', runId: f.workspaceIntent.runId,
+  const input: CodexLocalInitialHostInputV1 = { mode: 'initial', runId: f.workspaceIntent.runId,
     queueId: f.body.queueId, connectionAttemptId: f.connectionAttemptId,
     initializedConnectionDigest: sha256Digest('codex-host-initialized'), threadStartRequestId: 10,
     turnStartRequestId: 20, workspaceIntent: f.workspaceIntent, bridgeJournal: f.journal,
     startJournal: starts, authority, workspacePort: workspacePort(f.workspaceIntent, effects),
+    workspacePolicy: { allowedPaths: ['src/**'], maximumChangedFiles: 5, maximumChangedBytes: 4096 },
     acquireProcess(binding) {
       opened++; assert.equal(binding.mode, 'initial');
       assert.equal(binding.connectionAttemptId, f.connectionAttemptId);
@@ -181,15 +251,17 @@ function startHost(f: Awaited<ReturnType<typeof portableActivation>>, starts: Sq
       async terminate() { resolveStdoutEnd(undefined); resolveExit({ code: null, signal: 'SIGTERM' }); }, exited }),
       async close() { closed++; await options.close?.(); } };
     },
-    startTimeoutMs: 1_000, processCleanupTimeoutMs: 100, clock: f.clock });
-  return { host, effects, sent, opened: () => opened, closed: () => closed };
+    startTimeoutMs: 1_000, processCleanupTimeoutMs: 100, clock: f.clock };
+  const host = createCodexLocalHostV1(input);
+  if (host.mode === 'initial') host.bindDelivery(sharedDelivery(f));
+  return { input, host, effects, sent, opened: () => opened, closed: () => closed };
 }
 
 function recoverHost(starts: SqliteCodexStartJournalV1, rawResult: unknown,
   options: { revoked?: boolean; close?: () => Promise<void> } = {}) {
   let opened = 0, closed = 0, reads = 0;
   const responses = ['{"id":1,"result":{}}', JSON.stringify({ id: 2, result: rawResult })];
-  const host = createCodexLocalHostV1({ mode: 'recover', runId: intent().runId, startJournal: starts,
+  const input: CodexLocalRecoverHostInputV1 = { mode: 'recover', runId: intent().runId, startJournal: starts,
     connectionAttemptId: 'connection-attempt:codex-host-recover',
     initializedConnectionDigest: sha256Digest('codex-host-recover-initialized'),
     authority: { assertCurrent() { if (options.revoked) throw new Error('revoked'); } },
@@ -209,8 +281,9 @@ function recoverHost(starts: SqliteCodexStartJournalV1, rawResult: unknown,
       async readStderr() { return undefined; }, async closeStdin() {},
       async terminate() { resolveStdoutEnd(undefined); resolveExit({ code: null, signal: 'SIGTERM' }); }, exited }),
       async close() { closed++; await options.close?.(); } };
-    }, readTimeoutMs: 1_000, cleanupTimeoutMs: 200, processCleanupTimeoutMs: 100 });
-  return { host, opened: () => opened, closed: () => closed };
+    }, readTimeoutMs: 1_000, cleanupTimeoutMs: 200, processCleanupTimeoutMs: 100 };
+  const host = createCodexLocalHostV1(input);
+  return { input, host, opened: () => opened, closed: () => closed };
 }
 
 function completedResult(items: unknown[], itemsView: 'full' | 'summary' = 'full') {
@@ -218,17 +291,334 @@ function completedResult(items: unknown[], itemsView: 'full' | 'summary' = 'full
     turns: [{ id: 'turn:durable-host', status: 'completed', itemsView, items }] } };
 }
 
+function workerQualification() {
+  const keys = generateKeyPairSync('ed25519');
+  const evidence = <T extends object>(material: T) => ({ ...material, evidenceDigest: sha256Digest(material) });
+  const body = createCodexPhysicalQualificationReceiptBodyV1({
+    schema: 'control-room.codex-physical-qualification-receipt/v1', qualificationId: 'qualification:test',
+    qualificationSignerKeyId: 'qualification-key:test', tenantId: 'tenant:test', nodeId: 'node:test',
+    connectorProfileId: 'profile:codex:test', connectorProfileDigest: sha256Digest('profile'),
+    exactPackage: { adapterId: 'codex-app-server/v1', packageName: CODEX_APP_SERVER_READ_CONTRACT.package,
+      packageVersion: CODEX_APP_SERVER_READ_CONTRACT.version,
+      generatedSchemaBundleSha256: CODEX_APP_SERVER_READ_CONTRACT.generatedBundleSha256,
+      threadStartParamsSchemaSha256: CODEX_APP_SERVER_START_CONTRACT.threadStart.paramsSchemaSha256,
+      threadStartResponseSchemaSha256: CODEX_APP_SERVER_START_CONTRACT.threadStart.responseSchemaSha256,
+      turnStartParamsSchemaSha256: CODEX_APP_SERVER_START_CONTRACT.turnStart.paramsSchemaSha256,
+      turnStartResponseSchemaSha256: CODEX_APP_SERVER_START_CONTRACT.turnStart.responseSchemaSha256,
+      threadReadResponseSchemaSha256: CODEX_APP_SERVER_RESULT_CONTRACT.threadReadResponseSchemaSha256,
+      agentMessageSourceSha256: CODEX_APP_SERVER_RESULT_CONTRACT.agentMessageSourceSha256 },
+    qualifiedAt: new Date(baseTime - 60_000).toISOString(),
+    start: evidence({ evidenceId: 'evidence:start', processAttemptId: 'process:start',
+      connectionAttemptId: 'connection:start', initializedConnectionDigest: sha256Digest('init:start'),
+      threadId: 'thread:qualification', turnId: 'turn:qualification', startObserved: true, cleanupVerified: true }),
+    restartRead: evidence({ evidenceId: 'evidence:restart', processAttemptId: 'process:restart',
+      connectionAttemptId: 'connection:restart', initializedConnectionDigest: sha256Digest('init:restart'),
+      threadId: 'thread:qualification', turnId: 'turn:qualification', itemId: 'item:qualification',
+      restartObserved: true, exactReadObserved: true, cleanupVerified: true }),
+    oneFreshProcessPerAttempt: true, sameDurableThreadObserved: true, sameDurableTurnObserved: true,
+    terminalCleanupVerified: true, processReuseObserved: false, retryObserved: false,
+    canonicalPublicationAllowed: false, completionVerified: false, grantsExecutionAuthority: false,
+    permitsRetry: false, permitsResume: false, permitsThreadRead: false,
+  });
+  return { qualificationReceipt: signArtifact(body, keys.privateKey),
+    qualificationPublicKeySpki: keys.publicKey.export({ type: 'spki', format: 'der' }).toString('base64url'),
+    qualificationMaximumAgeMs: 120_000 };
+}
+
+test('legacy worker composition cannot bypass the shared delivery binding', async t => {
+  const f = await portableActivation(), starts = new SqliteCodexStartJournalV1(':memory:', { testOnlyAllowEphemeral: true });
+  t.after(() => { starts.close(); f.journal.close(); });
+  const initial = startHost(f, starts), recovery = recoverHost(starts, completedResult([
+    { type: 'agentMessage', id: 'item:final', phase: 'final_answer', text: 'Worker result.' },
+  ]));
+  let sends = 0;
+  const configuration: Parameters<typeof createCodexWorkerCompositionV1>[0] = { initial: initial.input, recovery: recovery.input,
+    binding: { tenantId: 'tenant:test', nodeId: 'node:test', enrollmentDigest: sha256Digest('enrollment'),
+      connectorProfileDigest: sha256Digest('profile'), activationFrameDigest: sha256Digest(f.activation) },
+    assertSessionCurrent() {}, result: { ...workerQualification(), bridgeEvidence: f.journal,
+      bridge: { async sendCodexResultReturn(queueId, body) {
+        sends++;
+        assert.equal(queueId, f.body.queueId);
+        assert.equal(body.identity.runId, f.workspaceIntent.runId);
+        assert.equal(body.publication.result.text, 'Worker result.');
+        // Transport receipt authentication belongs to PortableNodeBridge and
+        // is independently covered by codex-result-sender.test.ts.
+        return { testReceipt: true } as never;
+      } },
+    } };
+  const worker = createCodexWorkerCompositionV1(configuration);
+  assert.equal(initial.opened(), 0); assert.equal(recovery.opened(), 0); assert.equal(sends, 0);
+  await assert.rejects(worker.start(new AbortController().signal), /codex_local_host_unavailable/);
+  await assert.rejects(worker.start(new AbortController().signal), /unavailable/);
+  assert.equal(initial.opened(), 0); assert.deepEqual(initial.effects, []);
+  const reconstructed = createCodexWorkerCompositionV1(configuration);
+  await assert.rejects(reconstructed.start(new AbortController().signal), /unavailable/);
+  assert.equal(initial.opened(), 0, 'an unbound legacy composition cannot acquire a process');
+  await reconstructed.close();
+  assert.equal(sends, 0);
+  await worker.close();
+});
+
+test('private Codex session owner mints one capability only from reconciled bridge and journal evidence', async t => {
+  const f = await portableActivation(true, true);
+  t.after(async () => { await f.closeBridge(); f.journal.close(); });
+  let admission = admissionDigest, trustRevision = 'trust-revision:1', revoked = false;
+  const owner = createPrivateCodexSessionOwnerV1({ bridge: f.bridge, journal: f.journal,
+    currentPolicy: {
+      currentAdmissionDigest() { return admission; },
+      currentServerTrustRevision() { return trustRevision; },
+      assertCurrent() { if (revoked) throw new Error('revoked'); },
+    },
+    clock: () => baseTime + 3_000,
+  });
+  assert.equal(owner.schema, 'control-room.private-codex-session-owner/v1');
+  assert.equal(owner.startsWork, false);
+  const minted = owner.mint(f.body.queueId);
+  assert.equal(minted.schema, PRIVATE_CODEX_SESSION_CAPABILITY_V1);
+  assert.equal(minted.binding.tenantId, 'tenant:test');
+  assert.equal(minted.binding.nodeId, 'node:test');
+  assert.equal(minted.binding.enrollmentDigest, sha256Digest('enrollment'));
+  assert.throws(() => owner.mint(f.body.queueId), /private_codex_session_owner_unavailable/,
+    'a queue/session is burned at mint even before its capability is consumed');
+  const session = consumePrivateCodexSessionCapabilityV1(minted.capability);
+  session.assertCurrent();
+  trustRevision = 'trust-revision:2';
+  assert.throws(() => session.assertCurrent(), /private_codex_session_owner_unavailable/,
+    'a changed protected trust state invalidates the captured session');
+  assert.throws(() => consumePrivateCodexSessionCapabilityV1(minted.capability), /private_codex_session_owner_unavailable/,
+    'a capability cannot be replayed');
+  revoked = true;
+  assert.throws(() => owner.mint(f.body.queueId), /private_codex_session_owner_unavailable/,
+    'minting rechecks the protected revocation fence');
+  revoked = false;
+  admission = sha256Digest('other-admission');
+  assert.throws(() => owner.mint(f.body.queueId), /private_codex_session_owner_unavailable/,
+    'a stale current-admission digest cannot mint a session');
+});
+
+test('private Codex session owner rejects structural fake bridge/journal inputs', () => {
+  assert.throws(() => createPrivateCodexSessionOwnerV1({
+    bridge: { codexActivationChannel() { return { assertCurrent() {} }; } } as never,
+    journal: { acceptedCodexDelivery() {}, acceptedCodexActivation() {} } as never,
+    currentPolicy: { currentAdmissionDigest() { return admissionDigest; }, currentServerTrustRevision() { return 'trust-revision:1'; },
+      assertCurrent() {} },
+    clock: () => baseTime,
+  }), /private_codex_session_owner_unavailable/);
+});
+
+test('installed Codex node entry turns one signed current read into one bound session capability', async t => {
+  const f = await portableActivation(true, true);
+  const directory = await mkdtemp(join(tmpdir(), 'cr-codex-installed-entry-'));
+  const root = generateKeyPairSync('ed25519');
+  const rootSpki = root.publicKey.export({ format: 'der', type: 'spki' }).toString('base64url');
+  const rootPin = { keyId: 'owner-root:test', algorithm: 'ed25519' as const, spki: rootSpki,
+    fingerprint: `sha256:${createHash('sha256').update(Buffer.from(rootSpki, 'base64url')).digest('hex')}` };
+  const security = new SqliteNodeSecurityStateRepository({ artifactDatabasePath: join(directory, 'artifacts.db'),
+    highWaterDatabasePath: join(directory, 'water.db') },
+  { tenantId: 'tenant:test', nodeId: 'node:test', nodeClass: 'personal-compute' },
+  new PinnedOwnerTrust({ ceilingProvisioningKey: rootPin, serverTrustRootKey: rootPin,
+    trustShrinkKeys: [rootPin] }), { now: () => new Date(baseTime + 3_000).toISOString() });
+  const trustBody = { schema: 'control-room.server-trust-bundle/v1' as const, tenantId: 'tenant:test',
+    nodeClass: 'personal-compute', epoch: 1, issuedAt: new Date(baseTime).toISOString(),
+    ownerRootKeyId: rootPin.keyId, keys: [{ keyId: 'server-key:test', algorithm: 'ed25519' as const,
+      spki: f.server.publicKey.export({ format: 'der', type: 'spki' }).toString('base64url'), state: 'active' as const }] };
+  await security.provisionInitialTrustBundle(signArtifact({ ...trustBody,
+    bodyDigest: computeArtifactBodyDigest(trustBody) }, root.privateKey));
+  const approvalSpki = f.approval.publicKey.export({ format: 'der', type: 'spki' }).toString('base64url');
+  const approvals = new PinnedApprovalTrustStore({ schema: 'control-room.owner-approval-pins/v1',
+    tenantId: 'tenant:test', nodeId: 'node:test', nodeClass: 'personal-compute',
+    validFrom: baseTime, validUntil: deadline,
+    keys: [{ keyId: 'approval-key:test', algorithm: 'ed25519', spki: approvalSpki,
+      fingerprint: `sha256:${createHash('sha256').update(Buffer.from(approvalSpki, 'base64url')).digest('hex')}` }] },
+  { security, clock: () => baseTime + 3_000 });
+  const reference = { contractVersion: 'control-room-node-policy/v1' as const,
+    keyId: 'node-key:test', referenceId: 'key-reference:test', provider: 'encrypted_file' as const,
+    mode: 'encrypted_file' as const, algorithm: 'Ed25519' as const };
+  const wrappingKey = Buffer.alloc(32, 7), envelope = sealEncryptedPrivateKey({ privateKey: f.node.privateKey,
+    reference, wrappingKey });
+  const keys = new EncryptedFileNodePrivateKeyStore(reference,
+    { now: () => new Date(baseTime + 3_000).toISOString() },
+    { async availability() { return 'available' as const; }, async load() { return envelope; } },
+    new InjectedUnwrapSecretSource('platform_secret', async () => Uint8Array.from(wrappingKey)));
+  await keys.unlock();
+  t.after(async () => { approvals.close(); security.close(); await keys.dispose(); await f.closeBridge(); f.journal.close();
+    await rm(directory, { recursive: true, force: true }); });
+
+  assert.throws(() => createPrivateCodexInstalledNodeEntryV1({ bridge: f.bridge, journal: f.journal,
+    security, approvals, keys: { reference: () => reference,
+      async sign(bytes: Uint8Array) { return new Uint8Array(cryptoSign(null, Buffer.from(bytes), f.node.privateKey)); } } as never,
+    clock: () => baseTime + 3_000 }), /private_codex_installed_node_entry_unavailable/,
+  'a fake signing port is rejected even when every other protected input is genuine');
+
+  const entry = createPrivateCodexInstalledNodeEntryV1({ bridge: f.bridge, journal: f.journal,
+    security, approvals, keys, clock: () => baseTime + 3_000 });
+  assert.equal(entry.startsWork, false); assert.equal(entry.grantsExecutionAuthority, false);
+  f.setAdmissionResponder(requestValue => {
+    const request = requestValue as unknown as ReturnType<typeof signNodeFrame>;
+    const requestBody = codexCurrentAdmissionReadRequestSchemaV1.parse(request.body);
+    const responseBody = { schema: 'control-room.codex-current-admission-read-response/v1' as const,
+      queueId: requestBody.queueId, projectId: requestBody.projectId,
+      jobId: requestBody.jobId, attemptId: requestBody.attemptId,
+      nodeId: requestBody.nodeId, requestMessageId: request.messageId,
+      requestBodyDigest: request.bodyDigest, challengeNonce: requestBody.challengeNonce,
+      activationFrameDigest: requestBody.activationFrameDigest,
+      currentAdmissionDigest: requestBody.currentAdmissionDigest,
+      ownerTrustRevisionDigest: sha256Digest('owner-trust:test'),
+      checkedAt: new Date(baseTime + 3_000).toISOString(), expiresAt: new Date(baseTime + 20_000).toISOString(),
+      startsWork: false as const, grantsExecutionAuthority: false as const };
+    const response = signNodeFrame({ protocol: NODE_PROTOCOL_V1, direction: 'server_to_node',
+      senderKind: 'control_room', tenantId: 'tenant:test', actorId: 'control-room:test', keyId: 'server-key:test',
+      connectionId: request.connectionId, sequence: 5, messageId: 'message:installed-entry-response',
+      correlationId: request.correlationId, causationId: request.messageId,
+      sentAt: responseBody.checkedAt, expiresAt: responseBody.expiresAt,
+      nonce: 'installed_entry_response_nonce_1234567890',
+      type: 'harness.codex.current-admission.read.response', body: responseBody }, f.server.privateKey);
+    queueMicrotask(() => { void f.bridge.receive(JSON.stringify(response), responseBody.checkedAt); });
+  });
+  const admitted = await entry.exchange(f.body.queueId, new AbortController().signal);
+  await assert.rejects(entry.exchange(f.body.queueId, new AbortController().signal),
+    /private_codex_installed_node_entry_unavailable/,
+    'completed exchange is burned instead of silently duplicated');
+  assert.equal(admitted.startsWork, false); assert.equal(admitted.grantsExecutionAuthority, false);
+  assert.equal(admitted.binding.tenantId, 'tenant:test'); assert.equal(admitted.binding.nodeId, 'node:test');
+  const session = consumePrivateCodexSessionCapabilityV1(admitted.sessionCapability);
+  session.assertCurrent();
+  assert.throws(() => consumePrivateCodexSessionCapabilityV1(admitted.sessionCapability),
+    /private_codex_session_owner_unavailable/, 'installed session capability is one-use');
+});
+
+test('installed Codex node entry rejects structural authority substitutes before issuing', () => {
+  assert.throws(() => createPrivateCodexInstalledNodeEntryV1({
+    bridge: { codexActivationChannel() {} }, journal: {}, security: {}, approvals: {}, keys: {
+      reference() {}, async sign() { return new Uint8Array(); } },
+  } as never), /private_codex_installed_node_entry_unavailable/);
+});
+
+test('bridge-owned Codex admission exchange rejects cross-causation, stale, duplicate and oversized responses', async t => {
+  await t.test('altered queue binding before send', async t => {
+    const f = await portableActivation(true, true);
+    t.after(async () => { await f.closeBridge(); f.journal.close(); });
+    await assert.rejects(f.bridge.exchangeCodexCurrentAdmission({ ...currentAdmissionRequest(f), jobId: 'job:other' },
+      new Date(baseTime + 3_000).toISOString(), new Date(baseTime + 20_000).toISOString(),
+      new AbortController().signal, 50));
+    assert.equal(f.sent.filter(value => JSON.parse(value).type === 'harness.codex.current-admission.read').length, 0);
+  });
+
+  await t.test('cross-causation', async t => {
+    const f = await portableActivation(true, true);
+    t.after(async () => { await f.closeBridge(); f.journal.close(); });
+    f.setAdmissionResponder(value => {
+      const response = currentAdmissionResponse(f, value as unknown as ReturnType<typeof signNodeFrame>,
+        { causationId: 'message:unrelated-request' });
+      queueMicrotask(() => { void f.bridge.receive(JSON.stringify(response), response.body.checkedAt).catch(() => {}); });
+    });
+    await assert.rejects(f.bridge.exchangeCodexCurrentAdmission(currentAdmissionRequest(f),
+      new Date(baseTime + 3_000).toISOString(), new Date(baseTime + 20_000).toISOString(),
+      new AbortController().signal, 50));
+  });
+
+  await t.test('stale response', async t => {
+    const f = await portableActivation(true, true);
+    t.after(async () => { await f.closeBridge(); f.journal.close(); });
+    f.setAdmissionResponder(value => {
+      const response = currentAdmissionResponse(f, value as unknown as ReturnType<typeof signNodeFrame>,
+        { expiresAt: new Date(baseTime + 4_000).toISOString() });
+      queueMicrotask(() => { void f.bridge.receive(JSON.stringify(response),
+        new Date(baseTime + 5_000).toISOString()).catch(() => {}); });
+    });
+    await assert.rejects(f.bridge.exchangeCodexCurrentAdmission(currentAdmissionRequest(f),
+      new Date(baseTime + 3_000).toISOString(), new Date(baseTime + 20_000).toISOString(),
+      new AbortController().signal, 50));
+  });
+
+  await t.test('oversized response', async t => {
+    const f = await portableActivation(true, true);
+    t.after(async () => { await f.closeBridge(); f.journal.close(); });
+    f.setAdmissionResponder(() => queueMicrotask(() => {
+      void f.bridge.receive('x'.repeat(131_073), new Date(baseTime + 3_000).toISOString()).catch(() => {});
+    }));
+    await assert.rejects(f.bridge.exchangeCodexCurrentAdmission(currentAdmissionRequest(f),
+      new Date(baseTime + 3_000).toISOString(), new Date(baseTime + 20_000).toISOString(),
+      new AbortController().signal, 50));
+  });
+
+  await t.test('duplicate response and lost reply do not create another send', async t => {
+    const f = await portableActivation(true, true);
+    t.after(async () => { await f.closeBridge(); f.journal.close(); });
+    let response: ReturnType<typeof signNodeFrame> | undefined;
+    f.setAdmissionResponder(value => {
+      response = currentAdmissionResponse(f, value as unknown as ReturnType<typeof signNodeFrame>);
+      queueMicrotask(() => { void f.bridge.receive(JSON.stringify(response),
+        new Date(baseTime + 3_000).toISOString()).catch(() => {}); });
+    });
+    await f.bridge.exchangeCodexCurrentAdmission(currentAdmissionRequest(f),
+      new Date(baseTime + 3_000).toISOString(), new Date(baseTime + 20_000).toISOString(),
+      new AbortController().signal, 50);
+    await assert.rejects(f.bridge.receive(JSON.stringify(response), new Date(baseTime + 3_000).toISOString()));
+    assert.equal(f.sent.filter(value => JSON.parse(value).type === 'harness.codex.current-admission.read').length, 1);
+  });
+
+  await t.test('lost response burns the queue and stays non-executing', async t => {
+    const f = await portableActivation(true, true);
+    t.after(async () => { await f.closeBridge(); f.journal.close(); });
+    await assert.rejects(f.bridge.exchangeCodexCurrentAdmission(currentAdmissionRequest(f),
+      new Date(baseTime + 3_000).toISOString(), new Date(baseTime + 20_000).toISOString(),
+      new AbortController().signal, 5));
+    assert.equal(f.sent.filter(value => JSON.parse(value).type === 'harness.codex.current-admission.read').length, 1);
+    await assert.rejects(f.bridge.exchangeCodexCurrentAdmission(currentAdmissionRequest(f),
+      new Date(baseTime + 3_000).toISOString(), new Date(baseTime + 20_000).toISOString(),
+      new AbortController().signal, 5));
+    assert.equal(f.sent.filter(value => JSON.parse(value).type === 'harness.codex.current-admission.read').length, 1);
+  });
+});
+
+test('remote worker rejects missing activation, revoked session and changed binding before native start', async t => {
+  for (const failure of ['missing-activation', 'revoked', 'wrong-node', 'wrong-enrollment'] as const) {
+    await t.test(failure, async t => {
+      const f = await portableActivation(failure !== 'missing-activation'), starts = new SqliteCodexStartJournalV1(':memory:', { testOnlyAllowEphemeral: true });
+      t.after(() => { starts.close(); f.journal.close(); });
+      const initial = startHost(f, starts), recovery = recoverHost(starts, completedResult([]));
+      if (failure === 'missing-activation') {
+        assert.ok(f.journal.acceptedCodexDelivery(f.body.queueId), 'an authenticated dispatch receipt exists');
+        assert.equal(f.journal.acceptedCodexActivation(f.body.queueId), undefined);
+      }
+      const worker = createCodexWorkerCompositionV1({ initial: initial.input, recovery: recovery.input,
+        binding: { tenantId: 'tenant:test', nodeId: failure === 'wrong-node' ? 'node:other' : 'node:test',
+          enrollmentDigest: sha256Digest(failure === 'wrong-enrollment' ? 'other' : 'enrollment'),
+          connectorProfileDigest: sha256Digest('profile'), activationFrameDigest: sha256Digest(f.activation) },
+        assertSessionCurrent() { if (failure === 'revoked') throw new Error('revoked'); },
+        result: { ...workerQualification(), bridgeEvidence: f.journal,
+          bridge: { async sendCodexResultReturn() { throw new Error('must not send'); } } },
+      });
+      await assert.rejects(worker.start(new AbortController().signal));
+      assert.equal(initial.opened(), 0); assert.deepEqual(initial.effects, []);
+      await worker.close();
+    });
+  }
+});
+
 test('portable activation starts once and recovery reads only the durable thread/turn as a noncanonical observation', async t => {
   const f = await portableActivation(), starts = new SqliteCodexStartJournalV1(':memory:', { testOnlyAllowEphemeral: true });
   t.after(() => { starts.close(); f.journal.close(); });
   const initial = startHost(f, starts);
+  assert.equal(initial.host.mode, 'initial');
+  if (initial.host.mode !== 'initial') throw new Error('expected initial host');
+  const activationEvidence = f.journal.acceptedCodexActivation(f.body.queueId)!;
+  assert.deepEqual(initial.host.deliveryBinding(), { queueId: f.body.queueId,
+    runId: f.workspaceIntent.runId, activationDigest: activationEvidence.frame.body.activationDigest,
+    activationFrameDigest: sha256Digest(activationEvidence.frame) });
+  assert.equal(initial.opened(), 0, 'reading host binding cannot acquire a process');
+  assert.deepEqual(initial.effects, []);
   const started = await initial.host.run(new AbortController().signal);
   assert.deepEqual(started.identity, { runId: f.workspaceIntent.runId, threadId: 'thread:durable-host',
     turnId: 'turn:durable-host', source: 'correlated_codex_start_receipts' });
   assert.deepEqual(initial.sent, ['initialize', 'initialized', 'thread/start', 'turn/start']);
   assert.deepEqual(initial.effects, ['create-workspace']); assert.equal(initial.opened(), 1); assert.equal(initial.closed(), 1);
+  await initial.host.close();
+  assert.deepEqual(initial.effects, ['create-workspace'], 'process-session cleanup does not clean the task workspace');
   assert.equal(started.canonicalPublicationAllowed, false); assert.equal(started.writesResult, false);
   assert.equal(starts.load(f.workspaceIntent.runId).status, 'recorded');
+  assert.equal(starts.load(f.workspaceIntent.runId).cleanupVerified, true);
   const recovery = recoverHost(starts, completedResult([
     { type: 'agentMessage', id: 'item:commentary', phase: 'commentary', text: 'ignore me' },
     { type: 'reasoning', id: 'item:reasoning', text: 'do not expose' },

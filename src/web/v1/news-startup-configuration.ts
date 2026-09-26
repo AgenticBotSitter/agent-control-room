@@ -1,6 +1,7 @@
 import { timingSafeEqual } from "node:crypto";
 import { captureNewsDiscoveryConfiguration } from "./news-discovery-integration";
 import { validatePrivatePostgresConfiguration, type PrivatePostgresConfiguration } from "./private-postgres";
+import { privatePostgresEndpointPolicyDigestV2 } from "./private-postgres-endpoint";
 import type { AbsCurrentSourceAuthority } from "../../project-adapters/news/v1/current-source-authority";
 import type { PinnedFetchDependencies } from "../../vendor/control-center/pinned-fetch";
 
@@ -23,7 +24,8 @@ export function captureNewsStartupConfiguration(input: NewsStartupConfiguration,
   const databases = [input.coordinatorDatabase, input.ingestionDatabase, input.workerDatabase].map(validatePrivatePostgresConfiguration);
   const all = [...existing, ...databases], primary = existing[0];
   if (!primary || configuration.tenantId !== web.tenantId || configuration.workspaceId !== web.workspaceId
-    || all.some(db => db.host !== primary.host || db.port !== primary.port || db.database !== primary.database)
+    || all.some(db => db.host !== primary.host || db.port !== primary.port || db.database !== primary.database
+      || privatePostgresEndpointPolicyDigestV2(db.privateEndpoint) !== privatePostgresEndpointPolicyDigestV2(primary.privateEndpoint))
     || new Set(all.map(db => db.username)).size !== all.length
     || !(input.integrityKey instanceof Uint8Array) || input.integrityKey.length !== 32
     || !web.news || !timingSafeEqual(input.integrityKey, web.news.integrityKey)

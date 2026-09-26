@@ -5,6 +5,14 @@ import { installPrivateWebProcess, type PrivateWebProcessOptions } from "./priva
 import { captureGatewayAssertionProviderProfileV1, captureWebOrigins } from "./access-verifier";
 import { captureHerdrReaders } from "./herdr-service";
 import { parseProductConfigurationV1 } from "../../config/v1/product-configuration";
+import { verifyInstallationTopologyPlanV1 } from "../../harness/v1/installation-topology";
+import { verifyInstallationReadinessV1 } from "../../harness/v1/installation-readiness";
+import { verifyInstallationTransitionV1 } from "../../harness/v1/installation-transition";
+import { localBackupRestoreEvidenceDigestForInstallationPlanV1, verifyLocalBackupRestoreReadinessV1 } from "../../harness/v1/local-backup-restore-readiness";
+import { verifyCodexMacosCustodyReadinessV1 } from "../../harness/codex-v1/macos-custody-readiness";
+import { verifyClaudeCodeLocalProcessReadinessV1 } from "../../harness/claude-code-v1/local-process-readiness";
+import { verifyLocalSupervisorReadinessV1 } from "../../harness/v1/local-supervisor-readiness";
+import { verifyInstallationPlanV1 } from "../../installer/v1/installation-plan";
 export { createAccessKeyLoader, createStaticAccessKeyLoader } from "./access-key-cache";
 export { createOwnerBootstrapCeremonyV1 } from "./owner-bootstrap-ceremony";
 
@@ -25,6 +33,38 @@ export function validatePrivateStartupConfiguration(input: PrivateStartupConfigu
       .some(name => name in input)) throw new Error();
     if (!Number.isSafeInteger(input.maxSessionSeconds) || input.maxSessionSeconds < 1 || input.maxSessionSeconds > 604800
       || typeof input.loadKeys !== "function") throw new Error();
+    if (input.operatorSurface !== undefined && typeof input.operatorSurface.read !== "function") throw new Error();
+    const installationTopologyPlan = input.installationTopologyPlan === undefined ? undefined
+      : verifyInstallationTopologyPlanV1(input.installationTopologyPlan);
+    const installationReadiness = input.installationReadiness === undefined ? undefined
+      : verifyInstallationReadinessV1(input.installationReadiness);
+    const installationTransition = input.installationTransition === undefined ? undefined
+      : verifyInstallationTransitionV1(input.installationTransition);
+    const installationPlan = input.installationPlan === undefined ? undefined
+      : verifyInstallationPlanV1(input.installationPlan);
+    const localBackupRestoreReadiness = input.localBackupRestoreReadiness === undefined ? undefined
+      : verifyLocalBackupRestoreReadinessV1(input.localBackupRestoreReadiness);
+    if (localBackupRestoreReadiness !== undefined) {
+      if (!installationTopologyPlan || !installationReadiness) throw new Error();
+      const evidenceDigest = localBackupRestoreEvidenceDigestForInstallationPlanV1(
+        installationTopologyPlan,
+        localBackupRestoreReadiness,
+      );
+      const recorded = installationReadiness.proofs.find((proof) => proof.proof === "backup_restore");
+      if (recorded?.state !== "passed" || recorded.evidenceDigest !== evidenceDigest) throw new Error();
+    }
+    const codexMacosCustodyReadiness = input.codexMacosCustodyReadiness === undefined ? undefined
+      : verifyCodexMacosCustodyReadinessV1(input.codexMacosCustodyReadiness);
+    const claudeCodeLocalProcessReadiness = input.claudeCodeLocalProcessReadiness === undefined ? undefined
+      : verifyClaudeCodeLocalProcessReadinessV1(input.claudeCodeLocalProcessReadiness);
+    const localSupervisorReadiness = input.localSupervisorReadiness === undefined ? undefined
+      : verifyLocalSupervisorReadinessV1(input.localSupervisorReadiness);
+    if (installationReadiness && (!installationTopologyPlan || installationReadiness.planDigest !== installationTopologyPlan.planDigest)) throw new Error();
+    if (installationTransition && (!installationTopologyPlan || installationTransition.planDigest !== installationTopologyPlan.planDigest)) throw new Error();
+    if (installationPlan && (!installationTopologyPlan || installationPlan.topologyPlanDigest !== installationTopologyPlan.planDigest)) throw new Error();
+    if (codexMacosCustodyReadiness && (!installationTopologyPlan || codexMacosCustodyReadiness.planDigest !== installationTopologyPlan.planDigest)) throw new Error();
+    if (claudeCodeLocalProcessReadiness && (!installationTopologyPlan || claudeCodeLocalProcessReadiness.planDigest !== installationTopologyPlan.planDigest)) throw new Error();
+    if (localSupervisorReadiness && (!installationTopologyPlan || localSupervisorReadiness.planDigest !== installationTopologyPlan.planDigest)) throw new Error();
     return Object.freeze({ origin: exactOrigin(input.origin), issuer: exactOrigin(input.issuer), audience: reference(input.audience),
       ...(sites[1] ? { secondaryAccess: sites[1] } : {}),
       ...(input.gatewayAssertionProfile === undefined ? {} : {
@@ -36,6 +76,14 @@ export function validatePrivateStartupConfiguration(input: PrivateStartupConfigu
       ...(input.ideaProjects ? { ideaProjects: { integrityKey: key(input.ideaProjects.integrityKey) } } : {}),
       ...(input.news ? { news: { integrityKey: key(input.news.integrityKey) } } : {}),
       ...(input.productConfiguration === undefined ? {} : { productConfiguration: parseProductConfigurationV1(input.productConfiguration) }),
+      ...(installationTopologyPlan === undefined ? {} : { installationTopologyPlan }),
+      ...(installationReadiness === undefined ? {} : { installationReadiness }),
+      ...(installationTransition === undefined ? {} : { installationTransition }),
+      ...(installationPlan === undefined ? {} : { installationPlan }),
+      ...(localBackupRestoreReadiness === undefined ? {} : { localBackupRestoreReadiness }),
+      ...(codexMacosCustodyReadiness === undefined ? {} : { codexMacosCustodyReadiness }),
+      ...(claudeCodeLocalProcessReadiness === undefined ? {} : { claudeCodeLocalProcessReadiness }),
+      ...(localSupervisorReadiness === undefined ? {} : { localSupervisorReadiness }),
       ...(input.tasks ? { tasks: { harnessIntegrityKey: key(input.tasks.harnessIntegrityKey),
         ...(input.tasks.results ? { results: { ...input.tasks.results, integrityKey: key(input.tasks.results.integrityKey) } } : {}),
         ...(input.tasks.reviews ? { reviews: { ...input.tasks.reviews, integrityKey: key(input.tasks.reviews.integrityKey) } } : {}),
@@ -43,6 +91,7 @@ export function validatePrivateStartupConfiguration(input: PrivateStartupConfigu
         ...(input.tasks.manualVerificationScenarios ? { manualVerificationScenarios: input.tasks.manualVerificationScenarios.map(value => ({ ...value })) } : {}) } } : {}),
       ...(input.connections ? { connections: { registryIntegrityKey: key(input.connections.registryIntegrityKey),
         ...(input.connections.telemetryIntegrityKey ? { telemetryIntegrityKey: key(input.connections.telemetryIntegrityKey) } : {}) } } : {}),
+      ...(input.operatorSurface ? { operatorSurface: { read: input.operatorSurface.read.bind(input.operatorSurface) } } : {}),
     });
   } catch { throw new Error("private_startup_config_invalid"); }
 }

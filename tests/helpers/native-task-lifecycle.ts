@@ -14,13 +14,19 @@ import { resolvePinnedApprovalKey } from "../../src/node-policy/v1/pinned-approv
 import { NativeResultSubmissionService } from "../../src/completion-gate/v1/native-result-submission";
 import { NativeTaskResultService } from "../../src/node-control/native-task-result-service";
 import { sha256Digest } from "../../src/security";
+import { createControllerWorkerDeliveryV1, deliverControllerWorkerPacketV1,
+  type ControllerWorkerDeliveryReceiptV1 } from "../../src/harness/v1/controller-worker-delivery";
 import { response, statusBody } from "../hermes-native-fixture";
 import type { TaskSourcePreparation } from "./task-assignment";
 
 /** Explicit in-process wiring, not a mounted runtime: real controllers/stores with synthetic
  * owner keys, qualification and native transport. All assertions use the newly planned job;
  * the reused fixture also contains unrelated pre-existing result/review records. */
-export async function nativeTaskLifecycleFixture(configuration: { serverFeatures?: string[]; prepareSource?: TaskSourcePreparation } = {}) {
+export async function nativeTaskLifecycleFixture(configuration: {
+  serverFeatures?: string[]; prepareSource?: TaskSourcePreparation;
+  /** Test-only physical placement around the existing signed native delivery. */
+  topologyRoute?: "local" | "remote";
+} = {}) {
   const f = await canonicalApprovalStorageFixture(configuration.prepareSource);
   const local = await nativeStartAuthorityFixture(undefined, f.prepared.enrollment, f.assignmentFixture);
   assert.equal(sha256Digest(local.prepared.binding), sha256Digest(f.prepared.binding));
@@ -56,13 +62,45 @@ export async function nativeTaskLifecycleFixture(configuration: { serverFeatures
     while (incoming.length) await session.receive(incoming.shift()!);
   }
   assert.ok(session.nativeDeliveryChannel()); assert.equal(outgoing.length + incoming.length, 0);
+  const registration = nativeTaskRegistration(f.prepared.binding, f.args[3],
+    f.prepared.request.leaseId, f.prepared.request.leaseEpoch, timestamp());
+  const plan = await f.planner.read(f.args[2]);
+  if (!plan || (plan.schema !== "control-room.task-execution-plan/v1" && plan.schema !== "control-room.task-execution-plan/v2"))
+    throw new Error("missing_native_lifecycle_plan");
   await f.save();
   await f.coordinator.enqueueNativeTask(...f.args, sha256Digest(f.packet), f.abort.signal);
-  await f.coordinator.stageQueuedNativeDelivery(...f.args, sha256Digest(f.packet), session, f.abort.signal);
-  await f.coordinator.transmitQueuedNativeDelivery(...f.args, sha256Digest(f.packet), session, f.abort.signal);
-  const dispatch = JSON.parse(outgoing[0]) as SignedNodeFrame<"harness.native.dispatch">;
-  await bridge.receive(outgoing.shift()!, timestamp());
-  const receipt = await f.store.receiveDeliveryReceipt(f.db, session, incoming.shift()!, f.abort.signal);
+  let dispatch!: SignedNodeFrame<"harness.native.dispatch">;
+  const transmitNative = async () => {
+    await f.coordinator.stageQueuedNativeDelivery(...f.args, sha256Digest(f.packet), session, f.abort.signal);
+    await f.coordinator.transmitQueuedNativeDelivery(...f.args, sha256Digest(f.packet), session, f.abort.signal);
+    dispatch = JSON.parse(outgoing[0]) as SignedNodeFrame<"harness.native.dispatch">;
+    await bridge.receive(outgoing.shift()!, timestamp());
+    return f.store.receiveDeliveryReceipt(f.db, session, incoming.shift()!, f.abort.signal);
+  };
+  let receipt: Awaited<ReturnType<typeof transmitNative>>;
+  let topology: { deliveryId: string; deliveryDigest: string; route: "local" | "remote" } | undefined;
+  if (configuration.topologyRoute) {
+    const route = { kind: configuration.topologyRoute, workerId: `worker:${f.prepared.request.nodeId}` } as const;
+    const delivery = createControllerWorkerDeliveryV1({
+      identity: { tenantId: registration.tenantId, projectId: registration.projectId, jobId: registration.jobId,
+        attemptId: registration.attemptId, runId: registration.id, nodeId: registration.nodeId },
+      worker: { workerId: route.workerId, adapterId: "connector:native-lifecycle-test", adapterRevision: "0000000" },
+      input: plan.input, authorityDigest: plan.job.authority.digest,
+      connectorProfileDigest: sha256Digest("native-lifecycle-test-profile/v1"),
+      acceptanceProfileId: plan.acceptanceProfileId, acceptanceProfileDigest: plan.acceptanceProfileDigest,
+      issuedAt: timestamp(), expiresAt: new Date(f.prepared.start.deadline).toISOString(),
+    });
+    const sharedReceipt = await deliverControllerWorkerPacketV1({ async receive(packet, receivedRoute) {
+      if (packet.deliveryDigest !== delivery.deliveryDigest || receivedRoute.kind !== route.kind) throw new Error("topology_delivery_mismatch");
+      receipt = await transmitNative();
+      const material = { schema: "control-room.controller-worker-delivery-receipt/v1" as const,
+        deliveryId: packet.deliveryId, deliveryDigest: packet.deliveryDigest, workerId: receivedRoute.workerId,
+        route: receivedRoute, receivedAt: timestamp(), disposition: "accepted" as const,
+        startsWork: false as const, grantsExecutionAuthority: false as const };
+      return { ...material, receiptDigest: sha256Digest(material) } satisfies ControllerWorkerDeliveryReceiptV1;
+    } }, delivery, route, f.abort.signal);
+    topology = { deliveryId: sharedReceipt.deliveryId, deliveryDigest: sharedReceipt.deliveryDigest, route: route.kind };
+  } else receipt = await transmitNative();
   const config = { queueId: dispatch.body.queueId, enrollment: f.prepared.enrollment, serverActorId: "server:test" };
   const dependencies = { deliveries: journal, runs: local.journal, approvals: f.approvals,
     security: { currentServerTrustRevision: () => f.native.trust.currentServerTrustRevision(),
@@ -77,8 +115,6 @@ export async function nativeTaskLifecycleFixture(configuration: { serverFeatures
     } } };
   const prepare = () => prepareNativeExecutionHandoff(config, dependencies, f.abort.signal);
   const handoff = await prepare();
-  const registration = nativeTaskRegistration(f.prepared.binding, f.args[3],
-    f.prepared.request.leaseId, f.prepared.request.leaseEpoch, timestamp());
   const submission = new NativeResultSubmissionService(f.db, f.ownerConfig);
   const results = new NativeTaskResultService(f.auth, f.runs, f.results, submission);
   const options = () => ({ receivedAt: timestamp(), transportIdentity: "transport:lifecycle",
@@ -101,7 +137,7 @@ export async function nativeTaskLifecycleFixture(configuration: { serverFeatures
     return { raw, body, stored };
   }
   return { f, local, handoff, prepare, registration, submission, results, options, register, publish, queueSnapshot,
-    journal, receipt, sent, session, outgoing,
+    journal, receipt: receipt!, topology, sent, session, outgoing,
     acknowledgeSnapshot: async () => { await bridge.receive(outgoing.shift()!, timestamp()); },
     loseNextAcknowledgement: () => { loseAcknowledgement = true; },
     setResult: (value: string) => { resultText = value; },

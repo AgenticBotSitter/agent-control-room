@@ -51,6 +51,8 @@ import assert from "node:assert/strict";
 import { mkdir, readFile, realpath } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { isAbsolute, resolve, sep } from "node:path";
+import { planInstallationTopologyV1 } from "../src/harness/v1/installation-topology.ts";
+import { sha256Digest } from "../src/security/canonical-digest.ts";
 
 const requireFromRepo = createRequire(resolve("package.json"));
 let playwright;
@@ -108,12 +110,26 @@ const deliveredFlags = new WeakMap();
 let dropMode = undefined; // "request" -> abort before delivery; "response" -> abort after delivery
 const cleanupErrors = [];
 let completionEvidenceIncomplete = false;
+let setupReadMode = "normal";
+let unavailableInventory = false;
+const setupResponses = [];
 
 async function installProtectedRequestRouting(ctx, ownerJwt) {
   await ctx.route("**/*", async route => {
     const browserRequest = route.request();
     const url = new URL(browserRequest.url());
     if (url.origin !== origin) { await route.abort("blockedbyclient"); return; }
+    // Deliberate read failures use the existing interception boundary. Prepared
+    // responses still come from the real protected application handler.
+    if (url.pathname === "/api/v1/installation-readiness" && setupReadMode !== "normal") {
+      await route.fulfill({ status: setupReadMode === "malformed" ? 200 : 503,
+        contentType: "application/json", body: setupReadMode === "malformed" ? '{"setup":{}}' : '{"error":"unavailable"}' });
+      return;
+    }
+    if (unavailableInventory && url.pathname === "/api/v1/connections") {
+      await route.fulfill({ status: 503, contentType: "application/json", body: '{"error":"unavailable"}' });
+      return;
+    }
     const headers = new Headers(browserRequest.headers());
     headers.set("cf-access-jwt-assertion", ownerJwt);
     headers.set("accept", headers.get("accept") ?? "text/html");
@@ -141,6 +157,7 @@ async function installProtectedRequestRouting(ctx, ownerJwt) {
       return;
     }
     const responseBody = browserRequest.method() === "HEAD" ? Buffer.alloc(0) : Buffer.from(await response.arrayBuffer());
+    if (url.pathname === "/api/v1/installation-readiness") setupResponses.push(responseBody.toString("utf8"));
     await route.fulfill({ status: response.status, headers: Object.fromEntries(response.headers), body: responseBody });
   });
 }
@@ -251,9 +268,12 @@ try {
   const resultPreviewLiteral = "A useful synthetic document with an explicit result.";
   fixture = await nativeQualityCompletionFixture(resultText);
   startup = await taskStartupFixture(fixture.f.assignmentFixture);
+  const localPlan = planInstallationTopologyV1({ databaseAuthorityDigest: sha256Digest("browser-private-database"),
+    schedulerAuthorityDigest: sha256Digest("browser-private-scheduler"), currentRoutes: [],
+    requestedRoutes: [{ kind: "local", workerId: "worker:browser-private-canary", adapterId: "connector:browser-private-canary", adapterRevision: "0000001" }] });
   const installedApplication = await createPrivateTaskBootstrap({ clock: fixture.f.clock,
     install: installPrivateApplication, openDatabase: startup.openDatabase })
-    .start({ ...startup.config, coordinator: { ...startup.config.coordinator,
+    .start({ ...startup.config, web: { ...startup.config.web, installationTopologyPlan: localPlan }, coordinator: { ...startup.config.coordinator,
       quality: { ...fixture.f.ownerConfig, scenarios: [fixture.scenario] }, revisionPlanning: true } });
   check("bootstrap runtime exposes revision preparation on the public product UI",
     installedApplication.isReady() && Boolean(installedApplication.revisions));
@@ -274,6 +294,8 @@ try {
   context = await browser.newContext({ viewport: { width: 360, height: 844 } });
   await installProtectedRequestRouting(context, ownerJwt);
   let page = await context.newPage();
+  const browserErrors = [];
+  page.on("pageerror", error => browserErrors.push(error.message));
 
   // ------ Home page, narrow focus probe --------------------------------------
   await page.goto(`${origin}/`, { waitUntil: "domcontentloaded" });
@@ -309,6 +331,44 @@ try {
   await page.getByRole("heading", { name: "Acceptance task" }).waitFor();
   check("deep link to alpha task loads after reload",
     new URL(page.url()).pathname === alphaTaskPath, new URL(page.url()).pathname);
+
+  // One truthful local journey: setup proof is not worker enablement. This
+  // reuses the same app/database and adds no task/provider/process simulator.
+  const readOnlyPosts = posts.length;
+  setupReadMode = "missing";
+  await page.goto(`${origin}/settings`, { waitUntil: "domcontentloaded" });
+  await page.getByText("Installation setup status is unavailable", { exact: false }).waitFor();
+  check("unavailable setup offers no agent start action", await page.getByRole("button", { name: /start.*(agent|hermes|claude|codex)/i }).count() === 0);
+  setupReadMode = "normal";
+  await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+  await page.getByRole("heading", { name: "Hermes Agent", exact: true }).waitFor();
+  await page.getByRole("heading", { name: "Claude Code", exact: true }).waitFor();
+  await page.getByRole("heading", { name: "Codex", exact: true }).waitFor();
+  check("prepared setup does not claim live agents", /none of the statuses below means an agent is running/.test(await page.locator("main").innerText()));
+  check("prepared Codex remains unavailable on Mac", /Not available on this Mac yet/.test(await page.locator("main").innerText()));
+  for (const failure of ["error", "malformed"]) {
+    setupReadMode = failure;
+    await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+    await page.getByText("Installation setup status is unavailable", { exact: false }).waitFor();
+    check(`${failure} refresh removes previous setup success`, await page.getByRole("heading", { name: "Hermes Agent", exact: true }).count() === 0);
+    setupReadMode = "normal";
+    await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+    await page.getByRole("heading", { name: "Hermes Agent", exact: true }).waitFor();
+  }
+  const privateCanary = /worker:browser-private-canary|connector:browser-private-canary|sha256:|\/fixture\/|\/private\/|\/Users\//;
+  check("prepared readiness payload and displayed setup redact private material", setupResponses.length > 0
+    && setupResponses.every(body => !privateCanary.test(body)) && !privateCanary.test(await page.locator("main").innerText()));
+  unavailableInventory = true;
+  await page.goto(`${origin}/workers`, { waitUntil: "domcontentloaded" });
+  await page.getByRole("heading", { name: "Connection inventory unavailable" }).waitFor();
+  check("failed worker inventory is not reported as an empty fleet", !/0 workers|No workers connected|No connections found/i.test(await page.locator("main").innerText()));
+  for (const [path, heading] of [[alphaPath, "Browser acceptance alpha"], [alphaTaskPath, "Acceptance task"], ["/needs-me", "Needs Me"]]) {
+    await page.goto(`${origin}${path}`, { waitUntil: "domcontentloaded" });
+    await page.getByRole("heading", { name: heading, exact: true }).waitFor();
+  }
+  check("local setup and unavailable-worker navigation issue no protected writes", posts.length === readOnlyPosts);
+  check("local setup journey has no uncaught browser errors", browserErrors.length === 0);
+  unavailableInventory = false;
 
   // ------ Second project (beta): isolation under navigation --------------------
   await page.goto(`${origin}/projects`, { waitUntil: "domcontentloaded" });

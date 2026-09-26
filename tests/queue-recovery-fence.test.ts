@@ -74,3 +74,25 @@ test('ready-node recovery rolls back transaction and audit when its final fence 
   assert.equal((await f.db.query('SELECT * FROM synthetic_ready_recovery')).rows.length, 1);
   assert.equal((await f.db.query("SELECT * FROM audit_events WHERE action='native.queue.unsent_recovered'")).rows.length, 1);
 });
+
+test('queue recovery refuses once a route-neutral worker receipt exists', async t => {
+  const f = await canonicalApprovalStorageFixture();
+  t.after(f.close);
+  await f.save();
+  const queued = await f.coordinator.enqueueNativeTask(...f.args, sha256Digest(f.packet), f.abort.signal);
+  await f.db.query(`INSERT INTO control_worker_delivery_receipts
+    (tenant_id,project_id,job_id,attempt_id,record,auth_tag) VALUES($1,$2,$3,$4,$5::jsonb,$6)`,
+  [f.prepared.request.tenantId, f.prepared.request.projectId, f.prepared.request.jobId,
+    f.prepared.request.attemptId, JSON.stringify({ schema: 'fixture-receipt' }), `hmac-sha256:${'0'.repeat(64)}`]);
+  let recoveryCalls = 0;
+  const coordinator = f.create(f.db, {
+    async enqueueInSession() { throw new Error('unexpected enqueue'); },
+    async recoverUnsentInSession() { recoveryCalls++; return true; },
+  });
+  const reference = { schema: 'control-room.native-task-submission/v1' as const,
+    tenantId: f.prepared.request.tenantId, projectId: f.prepared.request.projectId,
+    jobId: f.prepared.request.jobId, attemptId: f.prepared.request.attemptId,
+    queueId: queued.queueId, inputDigest: f.prepared.inputDigest, packetDigest: queued.packetDigest };
+  await assert.rejects(coordinator.recoverNeverStagedQueueDelivery(reference, f.abort.signal));
+  assert.equal(recoveryCalls, 0);
+});

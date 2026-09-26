@@ -61,7 +61,7 @@ export async function closePrivateOwnerBootstrapConformanceDatabase() {
   if (current) await current.raw.close();
 }
 
-export async function privateOwnerBootstrapFixture() {
+export async function privateOwnerBootstrapFixture(options: { fresh?: boolean | string } = {}) {
   if (leased) throw new Error("offline_auth_fixture_already_leased");
   const { raw, client } = await sharedDatabase();
   await client.query("DELETE FROM control_web_sessions WHERE tenant_id='tenant:bootstrap'");
@@ -69,9 +69,11 @@ export async function privateOwnerBootstrapFixture() {
   await client.query("DELETE FROM control_identities WHERE tenant_id='tenant:bootstrap'");
   leased = true;
   const key = syntheticSigningKey(), trust = syntheticAccessTrust(key);
+  const suffix = typeof options.fresh === "string" ? options.fresh : options.fresh ? "fresh" : "bootstrap";
   const configuration: PrivateOwnerBootstrapConfiguration = {
-    databaseName: "template1", tenantId: "tenant:bootstrap", workspaceId: "workspace:bootstrap",
-    identityId: "identity:synthetic-owner", grantId: "grant:synthetic-owner", displayName: "Synthetic owner",
+    databaseName: "template1", tenantId: `tenant:${suffix}`, workspaceId: `workspace:${suffix}`,
+    tenantDisplayName: "Synthetic tenant", workspaceDisplayName: "Synthetic workspace",
+    identityId: `identity:synthetic-owner-${suffix}`, grantId: `grant:synthetic-owner-${suffix}`, displayName: "Synthetic owner",
     expectedOwnerSubjectDigest: sha256Digest({ provider: conformanceIssuer, subject: conformanceSubject }),
   };
   const database: PrivatePostgresConfiguration = { host: "127.0.0.1", port: 5432, database: "template1",

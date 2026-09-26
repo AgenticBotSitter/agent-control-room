@@ -1,0 +1,231 @@
+# Real-world three-worker activation plan
+
+> **Superseded for execution — September 24, 2026:** follow [`MAC_LOCAL_CRITICAL_PATH.md`](MAC_LOCAL_CRITICAL_PATH.md). Codex is a managed Mac worker (no Linux); the authority is the existing VPS PostgreSQL (no Mac database); workers use the explicit owner-trusted local CLI model. This document remains architecture/history.
+
+**Status:** execution plan; source and disposable tests are substantial, but no
+three-worker installation is operational yet.
+
+**Goal:** operate one Agent Control Room with one website, one PostgreSQL
+authority, one scheduler, and the same task/result/review/correction lifecycle
+for Hermes Agent, Claude Code, and Codex.
+
+**Current execution order:** finish the single-Mac Hermes and Claude worker
+journey first.  The remote Codex/Linux material in this document is retained as
+future architecture only; it is not active implementation work until the local
+journey has been proved end to end.  Codex Desktop is the local lead/operator,
+not a managed macOS worker.
+
+This plan does not create a second local product. Local and remote workers use
+the same controller delivery record. A worker's location changes only the
+delivery transport.
+
+## Honest current position
+
+- The private website and complete agent-task host have a reviewed startup
+  boundary, but still need protected real configuration and live activation.
+- The local Hermes runner has passed the owner's text-only and exact-runner
+  qualifications. That proves the bridge can reach Hermes; it does not yet
+  enable ordinary work.
+- The Claude source route, bounded task policy, result publication, recovery,
+  shared installation composition, and protected qualification route exist.
+  The installed-configuration native verifier now hands its one-use, opaque
+  custody directly to the Claude sidecar binding; callers cannot substitute a
+  callback, helper path, or structurally similar handoff. The temporary helper
+  is retired after either a failed load or the shipped operator command. This
+  is still source preparation: a real release must materialize the protected
+  v3 manifest at the owner's protected location before that exact end-to-end
+  route can be proven. Real authentication compatibility, owner-attended
+  qualification, and first-task proof still follow.
+- The shared remote delivery contract, node-session bridge, canonical queued
+  task selection, durable uncertain-send recovery, reconstruction-stable packet
+  identity, remote correction planning, protected installation forwarding, and
+  a bounded Codex node composition exist in source. A replacement remote
+  session can safely reconcile an already-journaled receipt against the exact
+  durable signed-send record; it cannot resend or start work. The remote route
+  is **not yet complete**: the source node-entry join now turns one signed,
+  current controller answer into one opaque session capability without exposing
+  a generic authority callback, but protected installed-input construction and
+  resolver/receipt intake, plus their disposable proofs, remain before a remote
+  worker can be activated.
+- macOS Codex execution remains fail-closed. The discarded prototype could not
+  protect Codex's pathname-based private home safely. The first supported
+  Codex worker is therefore the reviewed Linux route in the several-computer
+  installation. The Codex desktop on the Mac can remain the lead/operator, but
+  must not be described as a managed Control Room worker.
+
+## Phase 1 — Activate the common installation foundation
+
+Complete one bounded activation session rather than a chain of unrelated
+owner approvals:
+
+1. Capture rollback evidence for the current VPS PostgreSQL, private routing,
+   existing website route, and selected release.
+2. Finish the private PostgreSQL route: trusted server certificate, restricted
+   Control Room login, encrypted database-only access, Mac-to-VPS tailnet rule,
+   and the raw private forwarding rule. Preserve the existing private website
+   route and keep public database access closed.
+3. Assemble the protected operator configuration outside the repository. It
+   supplies the exact database, scheduler, protected result storage, owner,
+   Hermes route, and later Claude route without exposing secrets or private
+   paths in source or browser data.
+4. Run migrations and restricted-role checks, then prove database and result
+   backup/restore into disposable targets.
+5. Install the one unprivileged Mac background service and start the complete
+   agent-task host. Confirm the private website reports actual saved evidence,
+   not simulated or inferred readiness.
+
+The database-route source remains deliberately blocked in the current source.
+The redacted aggregate contract now names the three exact proofs, but it has no
+generic evidence recorder: a protected owner-runner still has to issue opaque,
+process-local capabilities after checking the **current** private-route
+authorization, observing and pinning the actual TLS peer certificate, and
+completing the exact restricted-role database preflight. Caller-supplied
+digests, endpoint policy objects, or structurally matching evidence must never
+advance this gate. The protected composition now consumes the exact post-write
+installed-configuration capability and exposes only a one-use owner-attended
+boundary, but it remains explicitly blocked until a reviewed native route
+observer can produce those three process-local capabilities; it does not
+connect, inspect, or mint evidence by itself.
+
+**Owner involvement:** one attended activation window to unlock the protected
+credential stores and approve any operating-system prompts. All preflight,
+backup, configuration, verification, rollback preparation, and post-checks
+must be assembled before that window.
+
+## Phase 2 — Make Hermes Agent an ordinary worker
+
+1. Convert the already successful qualifications into the protected,
+   installation-bound readiness records.
+2. Bind the exact approved Hermes profile, model/provider policy, safe working
+   directory, fixed text-review capability, and result staging to one worker
+   registration.
+3. Enable the route only after the common installation, service, and recovery
+   evidence agree.
+4. Run one harmless owner-approved task. Prove one delivery, one saved result,
+   ordinary owner review, one requested correction, restart recovery, and no
+   automatic retry after uncertainty.
+
+**Done when:** Marvin receives ordinary Control Room work automatically and
+returns it to the same website review flow.
+
+## Phase 3 — Make Claude Code a second ordinary local worker
+
+1. Build on the source-complete installed-configuration verifier custody. The
+   production Node binding now consumes its opaque v3 handoff and retires its
+   staged helper on command exit. Materialize the protected v3 manifest in a
+   real release, then prove that exact protected-root path and helper-death
+   recovery. Do not treat source custody as proof that the Claude process
+   sidecar has been installed or qualified.
+2. Retain the fixed first route: Claude Code `opus`, supplied-text review,
+   tools and add-ons disabled, and the reviewed working directory.
+3. Run the separate owner-attended installed-process qualification and save
+   only its sanitized installation-bound evidence.
+4. Run one harmless task beside Hermes. Prove independent delivery and result
+   records, cancellation, restart recovery, owner review, and a correction
+   without reopening either completed task.
+
+**Done when:** Marvin and Claude can work concurrently through one controller,
+database, scheduler, website, and review path.
+
+## Phase 4 — Add Codex through the supported Linux route
+
+**Deferred:** do not begin this phase until Phases 1–3 have a completed local
+acceptance journey.  It is included here so the shared product boundary is
+clear, not to authorize parallel remote implementation.
+
+1. Complete the protected resolver, receipt-intake, and node-entry composition
+   for the existing recovered remote-delivery protocol. The completed recovery
+   path retains signed node and enrollment binding and never reinterprets a
+   receipt as an execution permit or resends a task. Do not add another broker,
+   scheduler, or database.
+   The node-entry part must begin with a real authenticated-session owner that
+   creates a non-forgeable, one-use capability after bridge reconciliation and
+   retains the real revocation fence privately. Matching identifier strings,
+   ordinary callbacks, TypeScript-private fields, or a type-only wrapper are
+   not sufficient provenance.
+  The current source read now revalidates the complete current permit and
+  exact queued evidence before it returns a non-executing signed answer.
+  The installed Codex node-entry join now owns that concrete current-policy
+  port after one signed read and releases only a one-use session capability.
+  The outer installer still must create its bridge, journals, pin/trust stores,
+  and node signing custody from protected installed state. Until that outer
+  composition exists, this source package is a release blocker—not a live node
+  session or worker-ready claim.
+   That provider must combine the protected local trust revision and pin with
+   an authenticated, installation-owned read of the controller's current
+   project/job/attempt/lease/node state for the exact queue. A saved activation
+   record or local journal only proves past approval; it must never stand in
+   for the current server-side revocation check.
+2. Wire the existing bounded Codex node composition through protected
+   installation/node-entry inputs. For the first Linux Codex worker, reuse the
+   existing approved Codex v3/v4
+   task, permit, activation, and result-return lifecycle. Add only a shared
+   remote delivery wrapper for that already-approved task; a generic remote
+   receipt is never execution permission. Generic v11 source plans and v12
+   correction plans remain gated until they have an equally complete
+   harness-authority bridge.
+3. Assemble the protected resolver and receipt-intake composition for an
+   enrolled remote worker using the existing canonical task and PostgreSQL
+   receipt paths.
+4. Enroll one Linux Codex worker with an exact compatible adapter and private
+   certificate identity.
+5. Prove delivery to only that worker, result return, correction, disconnect
+   uncertainty, exact reconnect reconciliation, revocation, and incompatible
+   version refusal.
+4. Show Hermes, Claude, and Codex work in the same project and owner review
+   pages, with location presented as deployment information rather than a
+   different product lifecycle.
+
+**Done when:** all three worker types can receive different Control Room tasks
+and return reviewable results. The Codex desktop may still lead and review the
+build, but the managed Codex execution in this milestone runs through Linux.
+
+## Phase 5 — Optional future macOS Codex worker
+
+Reopen only after a supported mechanism can protect Codex's private home by an
+inherited directory handle or an equivalent owner-approved safety design. Any
+new implementation must also prove suspended launch, exact running-code
+identity, complete descendant retirement, bounded cancellation, stream
+backpressure, and a fresh independent security review. Until then, the UI must
+show local macOS Codex as unavailable rather than simulated.
+
+## One final acceptance journey
+
+The installation is operational only after one sanitized proof records all of
+the following:
+
+1. one approved PostgreSQL authority and one scheduler;
+2. private website access and restricted database access;
+3. Hermes and Claude local worker qualification and harmless real tasks;
+4. one enrolled Linux Codex worker and harmless real task;
+5. three separate results entering the same pending-review flow exactly once;
+6. one accepted result and one correction round;
+7. controller restart plus remote disconnect/reconnect without duplicate work;
+8. worker revocation and incompatible-version refusal; and
+9. verified disposable database and result restoration plus tested rollback.
+
+Missing evidence is reported as prepared or partially proven, never as live.
+
+## Work that Codex can complete before the owner window
+
+- finish the Claude production binding and focused failure tests;
+- finish canonical remote task-to-worker dispatch and receipt persistence;
+- assemble the protected configuration schema and one-shot activation
+  transaction without storing secrets;
+- prepare exact preflight, rollback, health, and acceptance checks;
+- keep the website's worker and task status tied only to canonical evidence;
+- publish and independently review substantial source packages.
+
+## What the owner will ultimately need to do
+
+The owner should receive one short activation checklist, not repeated prompts:
+
+1. be present for the bundled Mac/VPS activation window and approve the named
+   credential-store or operating-system prompts;
+2. complete any required Claude and Linux Codex login once, without sharing
+   credentials with Control Room; and
+3. approve the three harmless first tasks and inspect their results in the
+   website.
+
+No additional owner action should be requested until the source, preflight,
+rollback, and validation package for that action is ready.

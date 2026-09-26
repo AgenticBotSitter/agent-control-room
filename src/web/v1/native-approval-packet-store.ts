@@ -8,7 +8,8 @@ import { nativeTaskApprovalPacketSchema } from "../../harness/v1/native-approval
 import { createNativeApprovalIntake } from "../../harness/v1/native-approval-intake";
 import type { prepareNativeTaskApproval } from "../../harness/v1/native-task-approval-binding";
 import type { NativeEnrollment } from "../../harness/v1/native-run-contracts";
-import { enqueueNativeTaskInSession, readNativeTaskQueueInSession, readNativeTaskQueueIntentInSession, type NativeTaskQueueScope } from "./native-task-queue";
+import { enqueueNativeTaskInSession, readNativeTaskQueueInSession, readNativeTaskQueueIntentInSession,
+  type NativeTaskQueueIntent, type NativeTaskQueueScope } from "./native-task-queue";
 import { persistNativeDeliveryPreparation, readNativeDeliveryPreparationReceipt, readNativeDeliveryPreparationInSession } from "./native-delivery-preparation";
 import { assertNativeDeliveryEnvelopeAbsent, persistNativeDeliveryEnvelope, readNativeDeliveryEnvelopeReceipt } from "./native-delivery-envelope";
 import type { ServerNodeSession, NativeEnvelopeChannel } from "../../node-control/server-node-session";
@@ -27,6 +28,52 @@ const recordSchema = z.object({ schema: z.literal("control-room.canonical-native
   acceptedBy: localId, acceptedAt: z.string().datetime(),
 }).strict();
 type Record = z.infer<typeof recordSchema>;
+/**
+ * A deliberately narrow sibling record for the pinned local Hermes contract.
+ * The shared queue has a foreign key to this table, so every queued harness
+ * must leave durable, HMAC-protected approval evidence.  This is not an old
+ * native approval packet and never contains a Hermes command or credential.
+ */
+const hermes021QueueApprovalSchema = z.object({
+  schema: z.literal("control-room.canonical-hermes-021-local-queue-approval/v1"),
+  tenantId: localId, projectId: localId, jobId: localId, attemptId: localId, nodeId: localId,
+  leaseId: localId, leaseEpoch: z.number().int().positive(), inputDigest: digestSchema,
+  packetDigest: digestSchema, operationDigest: digestSchema, bindingDigest: digestSchema,
+  enrollmentDigest: digestSchema, planDigest: digestSchema, acceptedBy: localId, acceptedAt: z.string().datetime(),
+}).strict();
+type Hermes021QueueApproval = z.infer<typeof hermes021QueueApprovalSchema>;
+/** Update-aware current Hermes receipt. It deliberately has its own tag and
+ * record name, so an old pinned-Hermes receipt can never start this route. */
+const hermesLocalQueueApprovalSchema = z.object({
+  schema: z.literal("control-room.canonical-hermes-local-queue-approval/v1"),
+  tenantId: localId, projectId: localId, jobId: localId, attemptId: localId, nodeId: localId,
+  leaseId: localId, leaseEpoch: z.number().int().positive(), inputDigest: digestSchema,
+  packetDigest: digestSchema, operationDigest: digestSchema, bindingDigest: digestSchema,
+  enrollmentDigest: digestSchema, planDigest: digestSchema, acceptedBy: localId, acceptedAt: z.string().datetime(),
+}).strict();
+type HermesLocalQueueApproval = z.infer<typeof hermesLocalQueueApprovalSchema>;
+/** Same existing receipt table and queue, but a distinct tagged record for the
+ * local Claude contract. It cannot be confused with Hermes evidence. */
+const claudeCodeLocalQueueApprovalSchema = z.object({
+  schema: z.literal("control-room.canonical-claude-code-local-queue-approval/v1"),
+  tenantId: localId, projectId: localId, jobId: localId, attemptId: localId, nodeId: localId,
+  leaseId: localId, leaseEpoch: z.number().int().positive(), inputDigest: digestSchema,
+  packetDigest: digestSchema, operationDigest: digestSchema, bindingDigest: digestSchema,
+  enrollmentDigest: digestSchema, planDigest: digestSchema, acceptedBy: localId, acceptedAt: z.string().datetime(),
+}).strict();
+type ClaudeCodeLocalQueueApproval = z.infer<typeof claudeCodeLocalQueueApprovalSchema>;
+/** Codex uses the same durable queue table as the other local adapters, but
+ * its approval record and authentication purpose are deliberately distinct.
+ * A Claude or Hermes receipt must never be usable to start the local Codex
+ * CLI. */
+const codexOwnerTrustedLocalQueueApprovalSchema = z.object({
+  schema: z.literal("control-room.canonical-codex-owner-trusted-local-queue-approval/v1"),
+  tenantId: localId, projectId: localId, jobId: localId, attemptId: localId, nodeId: localId,
+  leaseId: localId, leaseEpoch: z.number().int().positive(), inputDigest: digestSchema,
+  packetDigest: digestSchema, operationDigest: digestSchema, bindingDigest: digestSchema,
+  enrollmentDigest: digestSchema, planDigest: digestSchema, acceptedBy: localId, acceptedAt: z.string().datetime(),
+}).strict();
+type CodexOwnerTrustedLocalQueueApproval = z.infer<typeof codexOwnerTrustedLocalQueueApprovalSchema>;
 type Row = { tenant_id: string; project_id: string; job_id: string; attempt_id: string; record: unknown; auth_tag: string };
 const fail = (): never => { throw new Error("native_approval_packet_unavailable"); };
 
@@ -48,6 +95,18 @@ export class NativeApprovalPacketStore {
     }
   }
   private tag(record: Record) { return hmacSha256Tag(this.key, { purpose: "canonical-native-approval-packet/v1", record }); }
+  private hermes021Tag(record: Hermes021QueueApproval) {
+    return hmacSha256Tag(this.key, { purpose: "canonical-hermes-021-local-queue-approval/v1", record });
+  }
+  private hermesLocalTag(record: HermesLocalQueueApproval) {
+    return hmacSha256Tag(this.key, { purpose: "canonical-hermes-local-queue-approval/v1", record });
+  }
+  private claudeCodeLocalTag(record: ClaudeCodeLocalQueueApproval) {
+    return hmacSha256Tag(this.key, { purpose: "canonical-claude-code-local-queue-approval/v1", record });
+  }
+  private codexOwnerTrustedLocalTag(record: CodexOwnerTrustedLocalQueueApproval) {
+    return hmacSha256Tag(this.key, { purpose: "canonical-codex-owner-trusted-local-queue-approval/v1", record });
+  }
   private verify(row: Row) {
     const record = recordSchema.parse(row.record), expected = Buffer.from(this.tag(record)), actual = Buffer.from(row.auth_tag);
     if (expected.length !== actual.length || !timingSafeEqual(expected, actual)
@@ -128,6 +187,202 @@ export class NativeApprovalPacketStore {
       deadline: prepared.start.deadline, queuedAt: new Date(this.clock()).toISOString(), queuedBy: actorId,
     });
     verified.assertFresh(); return { receipt, assertFresh: verified.assertFresh };
+  }
+  /**
+   * Shared queue storage for the newer local Hermes contract.  The caller has
+   * already reconstructed and locked its canonical plan, lease and current
+   * owner permission; this helper supplies only the existing queue HMAC.  It
+   * deliberately cannot create or reinterpret a legacy signed approval.
+   */
+  async enqueueHermes021LocalInSession(tx: DatabaseSession, intent: NativeTaskQueueIntent, planDigest: string) {
+    const value = { ...intent, deliveryKind: "hermes-021-macos-local" as const };
+    const r = z.object({ schema: z.literal("control-room.native-task-queue/v1"), tenantId: localId,
+      projectId: localId, jobId: localId, attemptId: localId, nodeId: localId, leaseId: localId,
+      leaseEpoch: z.number().int().positive(), inputDigest: digestSchema, packetDigest: digestSchema,
+      operationDigest: digestSchema, bindingDigest: digestSchema, enrollmentDigest: digestSchema,
+      deadline: z.number().int().nonnegative(), queuedAt: z.string().datetime(), queuedBy: localId,
+      deliveryKind: z.literal("hermes-021-macos-local") }).strict().parse(value);
+    const approval = hermes021QueueApprovalSchema.parse({
+      schema: "control-room.canonical-hermes-021-local-queue-approval/v1", tenantId: r.tenantId,
+      projectId: r.projectId, jobId: r.jobId, attemptId: r.attemptId, nodeId: r.nodeId, leaseId: r.leaseId,
+      leaseEpoch: r.leaseEpoch, inputDigest: r.inputDigest, packetDigest: r.packetDigest,
+      operationDigest: r.operationDigest, bindingDigest: r.bindingDigest, enrollmentDigest: r.enrollmentDigest,
+      planDigest: digestSchema.parse(planDigest), acceptedBy: r.queuedBy, acceptedAt: r.queuedAt,
+    });
+    const rows = await tx.query<Row>("SELECT tenant_id,project_id,job_id,attempt_id,record,auth_tag FROM control_native_approval_packets WHERE tenant_id=$1 AND job_id=$2 AND attempt_id=$3",
+      [r.tenantId, r.jobId, r.attemptId]);
+    const prior = rows.rows[0];
+    if (prior) {
+      const record = hermes021QueueApprovalSchema.parse(prior.record);
+      const expected = Buffer.from(this.hermes021Tag(record)), actual = Buffer.from(prior.auth_tag);
+      const stable = ({ acceptedBy: _actor, acceptedAt: _at, ...value }: Hermes021QueueApproval) => { void _actor; void _at; return value; };
+      if (actual.length !== expected.length || !timingSafeEqual(actual, expected)
+        || prior.tenant_id !== record.tenantId || prior.project_id !== record.projectId
+        || prior.job_id !== record.jobId || prior.attempt_id !== record.attemptId
+        || sha256Digest(stable(record)) !== sha256Digest(stable(approval))) fail();
+    } else await tx.query("INSERT INTO control_native_approval_packets(tenant_id,project_id,job_id,attempt_id,record,auth_tag) VALUES($1,$2,$3,$4,$5,$6)",
+      [r.tenantId, r.projectId, r.jobId, r.attemptId, approval, this.hermes021Tag(approval)]);
+    return enqueueNativeTaskInSession(tx, this.key, r);
+  }
+  /** Verified historical local-Hermes queue evidence.  It is intentionally
+   * separate from `readInSession`, which understands only the legacy signed
+   * native packet format.  A caller must still recheck current authority. */
+  async readHermes021LocalQueueApprovalInSession(tx: DatabaseSession,
+    scope: { tenantId: string; projectId: string; jobId: string; attemptId: string; inputDigest: string }) {
+    const row = (await tx.query<Row>("SELECT tenant_id,project_id,job_id,attempt_id,record,auth_tag FROM control_native_approval_packets WHERE tenant_id=$1 AND job_id=$2 AND attempt_id=$3",
+      [scope.tenantId, scope.jobId, scope.attemptId])).rows[0];
+    if (!row) return null;
+    const record = hermes021QueueApprovalSchema.parse(row.record);
+    const expected = Buffer.from(this.hermes021Tag(record)), actual = Buffer.from(row.auth_tag);
+    if (actual.length !== expected.length || !timingSafeEqual(actual, expected)
+      || row.tenant_id !== record.tenantId || row.project_id !== record.projectId
+      || row.job_id !== record.jobId || row.attempt_id !== record.attemptId
+      || record.tenantId !== scope.tenantId || record.projectId !== scope.projectId
+      || record.jobId !== scope.jobId || record.attemptId !== scope.attemptId
+      || record.inputDigest !== scope.inputDigest) fail();
+    return record;
+  }
+  /** The same durable queue and approval table, with a distinct authenticated
+   * record for a current, per-build-qualified local Hermes installation. */
+  async enqueueHermesLocalInSession(tx: DatabaseSession, intent: NativeTaskQueueIntent, planDigest: string) {
+    const value = { ...intent, deliveryKind: "hermes-macos-local" as const };
+    const r = z.object({ schema: z.literal("control-room.native-task-queue/v1"), tenantId: localId,
+      projectId: localId, jobId: localId, attemptId: localId, nodeId: localId, leaseId: localId,
+      leaseEpoch: z.number().int().positive(), inputDigest: digestSchema, packetDigest: digestSchema,
+      operationDigest: digestSchema, bindingDigest: digestSchema, enrollmentDigest: digestSchema,
+      deadline: z.number().int().nonnegative(), queuedAt: z.string().datetime(), queuedBy: localId,
+      deliveryKind: z.literal("hermes-macos-local") }).strict().parse(value);
+    const approval = hermesLocalQueueApprovalSchema.parse({
+      schema: "control-room.canonical-hermes-local-queue-approval/v1", tenantId: r.tenantId,
+      projectId: r.projectId, jobId: r.jobId, attemptId: r.attemptId, nodeId: r.nodeId, leaseId: r.leaseId,
+      leaseEpoch: r.leaseEpoch, inputDigest: r.inputDigest, packetDigest: r.packetDigest,
+      operationDigest: r.operationDigest, bindingDigest: r.bindingDigest, enrollmentDigest: r.enrollmentDigest,
+      planDigest: digestSchema.parse(planDigest), acceptedBy: r.queuedBy, acceptedAt: r.queuedAt,
+    });
+    const rows = await tx.query<Row>("SELECT tenant_id,project_id,job_id,attempt_id,record,auth_tag FROM control_native_approval_packets WHERE tenant_id=$1 AND job_id=$2 AND attempt_id=$3",
+      [r.tenantId, r.jobId, r.attemptId]);
+    const prior = rows.rows[0];
+    if (prior) {
+      const record = hermesLocalQueueApprovalSchema.parse(prior.record);
+      const expected = Buffer.from(this.hermesLocalTag(record)), actual = Buffer.from(prior.auth_tag);
+      const stable = ({ acceptedBy: _actor, acceptedAt: _at, ...saved }: HermesLocalQueueApproval) => { void _actor; void _at; return saved; };
+      if (actual.length !== expected.length || !timingSafeEqual(actual, expected)
+        || prior.tenant_id !== record.tenantId || prior.project_id !== record.projectId
+        || prior.job_id !== record.jobId || prior.attempt_id !== record.attemptId
+        || sha256Digest(stable(record)) !== sha256Digest(stable(approval))) fail();
+    } else await tx.query("INSERT INTO control_native_approval_packets(tenant_id,project_id,job_id,attempt_id,record,auth_tag) VALUES($1,$2,$3,$4,$5,$6)",
+      [r.tenantId, r.projectId, r.jobId, r.attemptId, approval, this.hermesLocalTag(approval)]);
+    return enqueueNativeTaskInSession(tx, this.key, r);
+  }
+  async readHermesLocalQueueApprovalInSession(tx: DatabaseSession,
+    scope: { tenantId: string; projectId: string; jobId: string; attemptId: string; inputDigest: string }) {
+    const row = (await tx.query<Row>("SELECT tenant_id,project_id,job_id,attempt_id,record,auth_tag FROM control_native_approval_packets WHERE tenant_id=$1 AND job_id=$2 AND attempt_id=$3",
+      [scope.tenantId, scope.jobId, scope.attemptId])).rows[0];
+    if (!row) return null;
+    const record = hermesLocalQueueApprovalSchema.parse(row.record);
+    const expected = Buffer.from(this.hermesLocalTag(record)), actual = Buffer.from(row.auth_tag);
+    if (actual.length !== expected.length || !timingSafeEqual(actual, expected)
+      || row.tenant_id !== record.tenantId || row.project_id !== record.projectId
+      || row.job_id !== record.jobId || row.attempt_id !== record.attemptId
+      || record.tenantId !== scope.tenantId || record.projectId !== scope.projectId
+      || record.jobId !== scope.jobId || record.attemptId !== scope.attemptId
+      || record.inputDigest !== scope.inputDigest) fail();
+    return record;
+  }
+  /** Claude uses the same durable queue and table family as Hermes, with a
+   * different authenticated record type so a receipt cannot cross adapters. */
+  async enqueueClaudeCodeLocalInSession(tx: DatabaseSession, intent: NativeTaskQueueIntent, planDigest: string) {
+    const value = { ...intent, deliveryKind: "claude-code-local" as const };
+    const r = z.object({ schema: z.literal("control-room.native-task-queue/v1"), tenantId: localId,
+      projectId: localId, jobId: localId, attemptId: localId, nodeId: localId, leaseId: localId,
+      leaseEpoch: z.number().int().positive(), inputDigest: digestSchema, packetDigest: digestSchema,
+      operationDigest: digestSchema, bindingDigest: digestSchema, enrollmentDigest: digestSchema,
+      deadline: z.number().int().nonnegative(), queuedAt: z.string().datetime(), queuedBy: localId,
+      deliveryKind: z.literal("claude-code-local") }).strict().parse(value);
+    const approval = claudeCodeLocalQueueApprovalSchema.parse({
+      schema: "control-room.canonical-claude-code-local-queue-approval/v1", tenantId: r.tenantId,
+      projectId: r.projectId, jobId: r.jobId, attemptId: r.attemptId, nodeId: r.nodeId, leaseId: r.leaseId,
+      leaseEpoch: r.leaseEpoch, inputDigest: r.inputDigest, packetDigest: r.packetDigest,
+      operationDigest: r.operationDigest, bindingDigest: r.bindingDigest, enrollmentDigest: r.enrollmentDigest,
+      planDigest: digestSchema.parse(planDigest), acceptedBy: r.queuedBy, acceptedAt: r.queuedAt,
+    });
+    const rows = await tx.query<Row>("SELECT tenant_id,project_id,job_id,attempt_id,record,auth_tag FROM control_native_approval_packets WHERE tenant_id=$1 AND job_id=$2 AND attempt_id=$3",
+      [r.tenantId, r.jobId, r.attemptId]);
+    const prior = rows.rows[0];
+    if (prior) {
+      const record = claudeCodeLocalQueueApprovalSchema.parse(prior.record);
+      const expected = Buffer.from(this.claudeCodeLocalTag(record)), actual = Buffer.from(prior.auth_tag);
+      const stable = ({ acceptedBy: _actor, acceptedAt: _at, ...value }: ClaudeCodeLocalQueueApproval) => { void _actor; void _at; return value; };
+      if (actual.length !== expected.length || !timingSafeEqual(actual, expected)
+        || prior.tenant_id !== record.tenantId || prior.project_id !== record.projectId
+        || prior.job_id !== record.jobId || prior.attempt_id !== record.attemptId
+        || sha256Digest(stable(record)) !== sha256Digest(stable(approval))) fail();
+    } else await tx.query("INSERT INTO control_native_approval_packets(tenant_id,project_id,job_id,attempt_id,record,auth_tag) VALUES($1,$2,$3,$4,$5,$6)",
+      [r.tenantId, r.projectId, r.jobId, r.attemptId, approval, this.claudeCodeLocalTag(approval)]);
+    return enqueueNativeTaskInSession(tx, this.key, r);
+  }
+  async readClaudeCodeLocalQueueApprovalInSession(tx: DatabaseSession,
+    scope: { tenantId: string; projectId: string; jobId: string; attemptId: string; inputDigest: string }) {
+    const row = (await tx.query<Row>("SELECT tenant_id,project_id,job_id,attempt_id,record,auth_tag FROM control_native_approval_packets WHERE tenant_id=$1 AND job_id=$2 AND attempt_id=$3",
+      [scope.tenantId, scope.jobId, scope.attemptId])).rows[0];
+    if (!row) return null;
+    const record = claudeCodeLocalQueueApprovalSchema.parse(row.record);
+    const expected = Buffer.from(this.claudeCodeLocalTag(record)), actual = Buffer.from(row.auth_tag);
+    if (actual.length !== expected.length || !timingSafeEqual(actual, expected)
+      || row.tenant_id !== record.tenantId || row.project_id !== record.projectId
+      || row.job_id !== record.jobId || row.attempt_id !== record.attemptId
+      || record.tenantId !== scope.tenantId || record.projectId !== scope.projectId
+      || record.jobId !== scope.jobId || record.attemptId !== scope.attemptId
+      || record.inputDigest !== scope.inputDigest) fail();
+    return record;
+  }
+  /** Codex has a different adapter identity, but not a different queue or
+   * database. This records only the canonical plan/lease binding needed for a
+   * later current-authority pickup; it contains no prompt, command or login. */
+  async enqueueCodexOwnerTrustedLocalInSession(tx: DatabaseSession, intent: NativeTaskQueueIntent, planDigest: string) {
+    const value = { ...intent, deliveryKind: "codex-owner-trusted-local" as const };
+    const r = z.object({ schema: z.literal("control-room.native-task-queue/v1"), tenantId: localId,
+      projectId: localId, jobId: localId, attemptId: localId, nodeId: localId, leaseId: localId,
+      leaseEpoch: z.number().int().positive(), inputDigest: digestSchema, packetDigest: digestSchema,
+      operationDigest: digestSchema, bindingDigest: digestSchema, enrollmentDigest: digestSchema,
+      deadline: z.number().int().nonnegative(), queuedAt: z.string().datetime(), queuedBy: localId,
+      deliveryKind: z.literal("codex-owner-trusted-local") }).strict().parse(value);
+    const approval = codexOwnerTrustedLocalQueueApprovalSchema.parse({
+      schema: "control-room.canonical-codex-owner-trusted-local-queue-approval/v1", tenantId: r.tenantId,
+      projectId: r.projectId, jobId: r.jobId, attemptId: r.attemptId, nodeId: r.nodeId, leaseId: r.leaseId,
+      leaseEpoch: r.leaseEpoch, inputDigest: r.inputDigest, packetDigest: r.packetDigest,
+      operationDigest: r.operationDigest, bindingDigest: r.bindingDigest, enrollmentDigest: r.enrollmentDigest,
+      planDigest: digestSchema.parse(planDigest), acceptedBy: r.queuedBy, acceptedAt: r.queuedAt,
+    });
+    const rows = await tx.query<Row>("SELECT tenant_id,project_id,job_id,attempt_id,record,auth_tag FROM control_native_approval_packets WHERE tenant_id=$1 AND job_id=$2 AND attempt_id=$3",
+      [r.tenantId, r.jobId, r.attemptId]);
+    const prior = rows.rows[0];
+    if (prior) {
+      const record = codexOwnerTrustedLocalQueueApprovalSchema.parse(prior.record);
+      const expected = Buffer.from(this.codexOwnerTrustedLocalTag(record)), actual = Buffer.from(prior.auth_tag);
+      const stable = ({ acceptedBy: _actor, acceptedAt: _at, ...saved }: CodexOwnerTrustedLocalQueueApproval) => { void _actor; void _at; return saved; };
+      if (actual.length !== expected.length || !timingSafeEqual(actual, expected)
+        || prior.tenant_id !== record.tenantId || prior.project_id !== record.projectId
+        || prior.job_id !== record.jobId || prior.attempt_id !== record.attemptId
+        || sha256Digest(stable(record)) !== sha256Digest(stable(approval))) fail();
+    } else await tx.query("INSERT INTO control_native_approval_packets(tenant_id,project_id,job_id,attempt_id,record,auth_tag) VALUES($1,$2,$3,$4,$5,$6)",
+      [r.tenantId, r.projectId, r.jobId, r.attemptId, approval, this.codexOwnerTrustedLocalTag(approval)]);
+    return enqueueNativeTaskInSession(tx, this.key, r);
+  }
+  async readCodexOwnerTrustedLocalQueueApprovalInSession(tx: DatabaseSession,
+    scope: { tenantId: string; projectId: string; jobId: string; attemptId: string; inputDigest: string }) {
+    const row = (await tx.query<Row>("SELECT tenant_id,project_id,job_id,attempt_id,record,auth_tag FROM control_native_approval_packets WHERE tenant_id=$1 AND job_id=$2 AND attempt_id=$3",
+      [scope.tenantId, scope.jobId, scope.attemptId])).rows[0];
+    if (!row) return null;
+    const record = codexOwnerTrustedLocalQueueApprovalSchema.parse(row.record);
+    const expected = Buffer.from(this.codexOwnerTrustedLocalTag(record)), actual = Buffer.from(row.auth_tag);
+    if (actual.length !== expected.length || !timingSafeEqual(actual, expected)
+      || row.tenant_id !== record.tenantId || row.project_id !== record.projectId
+      || row.job_id !== record.jobId || row.attempt_id !== record.attemptId
+      || record.tenantId !== scope.tenantId || record.projectId !== scope.projectId
+      || record.jobId !== scope.jobId || record.attemptId !== scope.attemptId
+      || record.inputDigest !== scope.inputDigest) fail();
+    return record;
   }
   readQueueInSession(tx: DatabaseSession, scope: NativeTaskQueueScope) {
     return readNativeTaskQueueInSession(tx, this.key, scope);

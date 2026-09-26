@@ -16,25 +16,39 @@ import type { WebNewsCollectionPlanning } from "./news-collection-planning";
 import type { WebNewsCollectionAdmission } from "./news-collection-admission";
 import { projectWorkspaceSafeIdSchemaV1 } from "../../project-workspace/v1";
 import { WebIdeaService } from "./idea-service";
+import { WebIdeaRoundProposalOperation, ideaRoundProposalInputSchema } from "./idea-round-proposal-operation";
 import type { IdeaCreateOperation } from "./idea-create-operation";
 import { createTaskHttpHandler } from "./task-http";
 import { WebTaskReviewService } from "./task-review-service";
 import { WebTaskVerificationService } from "./task-verification-service";
 import type { TaskPlanningOperation } from "./task-execution-planner";
 import type { TaskAssignmentOperation } from "./task-assignment-coordinator";
-import type { TaskApprovalOperation, TaskSubmissionOperation } from "./task-coordinator-lifecycle";
+import type { IdeaCanonicalResultProjectionOperation, TaskApprovalOperation, TaskSubmissionOperation } from "./task-coordinator-lifecycle";
 import type { TaskRevisionOperation } from "./task-revision-operation";
 import type { QueueAttentionSource } from "./queue-attention-wire";
 import { taskPlanningReceiptSchema } from "./task-planning-wire";
 import { taskAttentionPageSchema } from "./task-attention-wire";
 import { taskDeliveryStatusSchema } from "./task-delivery-wire";
+import { taskProjectAgentOptionsSchema } from "./task-project-agents-wire";
 import { newsCollectionStatusSchema, newsCollectionHistorySchema } from "./news-collection-status-wire";
 import { ideaCreationOptionsSchema } from "./idea-wire";
 import { parseProductConfigurationV1, type ProductConfigurationV1 } from "../../config/v1/product-configuration";
+import { verifyInstallationTopologyPlanV1, type InstallationTopologyPlanV1 } from "../../harness/v1/installation-topology";
+import { verifyInstallationReadinessV1, type InstallationReadinessV1 } from "../../harness/v1/installation-readiness";
+import { verifyInstallationTransitionV1, type InstallationTransitionV1 } from "../../harness/v1/installation-transition";
+import { createInstallationSetupViewV1 } from "../../harness/v1/installation-setup-view";
+import { localBackupRestoreEvidenceDigestForInstallationPlanV1 } from "../../harness/v1/local-backup-restore-readiness";
+import { verifyCodexMacosCustodyReadinessV1, type CodexMacosCustodyReadinessV1 } from "../../harness/codex-v1/macos-custody-readiness";
+import { verifyClaudeCodeLocalProcessReadinessV1, type ClaudeCodeLocalProcessReadinessV1 } from "../../harness/claude-code-v1/local-process-readiness";
+import { verifyLocalSupervisorReadinessV1, type LocalSupervisorReadinessV1 } from "../../harness/v1/local-supervisor-readiness";
 import { WebSessionAuthority } from "./session-authority";
 import { readProjectScheduleStatus } from "../../schedules/read-service";
 import { ProjectCoordinationHttpService, type ProjectCoordinationCanonicalStoreAdapter } from "./project-coordination-http";
 import { createCoordinationHttpHandler } from "./coordination-http";
+import { IdeaLabErrorV1 } from "../../idea-lab/v1/errors";
+import { parseOperatorSurfaceSnapshotV1, type OperatorSurfaceSnapshotV1 } from "../../operator-surfaces/v1";
+import { verifyInstallationPlanV1, type InstallationPlanV1 } from "../../installer/v1/installation-plan";
+import { createInstallationPlanViewV1 } from "../../installer/v1/installation-plan-view";
 
 export interface PrivateWebProcessOptions {
   origin: string; issuer: string; audience: string; tenantId: string; workspaceId: string;
@@ -53,6 +67,22 @@ export interface PrivateWebProcessOptions {
   herdrObservations?: readonly HerdrObservationReader[];
   /** Portable presentation/module selection. It cannot grant runtime authority or alter resource limits. */
   productConfiguration?: Readonly<ProductConfigurationV1>;
+  /** Read-only setup status for one-computer or several-computer installation. It cannot start workers. */
+  installationTopologyPlan?: Readonly<InstallationTopologyPlanV1>;
+  /** Optional non-secret proof outcomes for that exact setup plan. This process only presents them. */
+  installationReadiness?: Readonly<InstallationReadinessV1>;
+  /** Optional read-only transition record for this exact reviewed setup plan. */
+  installationTransition?: Readonly<InstallationTransitionV1>;
+  /** Optional verified installation-plan revision supplied by trusted composition. Only its redacted progress reaches the browser. */
+  installationPlan?: Readonly<InstallationPlanV1>;
+  /** Installation-owned, verified disposable restore evidence. Its contents are never sent to the browser. */
+  localBackupRestoreReadiness?: unknown;
+  /** Optional opaque Mac Codex custody proof record. It is display-only and cannot enable Codex. */
+  codexMacosCustodyReadiness?: Readonly<CodexMacosCustodyReadinessV1>;
+  /** Optional opaque Claude local-process proof record. It is display-only and cannot enable Claude. */
+  claudeCodeLocalProcessReadiness?: Readonly<ClaudeCodeLocalProcessReadinessV1>;
+  /** Optional opaque local service-supervision proof. It is display-only and cannot start a service. */
+  localSupervisorReadiness?: Readonly<LocalSupervisorReadinessV1>;
   /** Explicit operations from the trusted collector composition. This process does
    * not create readers, worker pools, schedules or collection authority. */
   newsCollections?: readonly { tenantId: string; workspaceId: string; projectId: string; sourceId: string;
@@ -60,12 +90,23 @@ export interface PrivateWebProcessOptions {
     admission: Pick<WebNewsCollectionAdmission, "approve"> }[];
   /** Existing enrollment/signal keys, supplied privately. Absence is unavailable, not an empty roster. */
   connections?: WebConnectionKeys;
+  /**
+   * A server-owned, read-only capacity projection. The web process neither
+   * builds the projection nor receives a database, scheduler, or worker
+   * control handle through this port. Omission remains an honest unavailable
+   * view rather than an empty fleet.
+   */
+  operatorSurface?: { read: (input: {
+    tenantId: string; actorId: string; grantedAt: string; now: string;
+  }) => Promise<OperatorSurfaceSnapshotV1> };
   /** Existing harness evidence verification key. No key means progress is unavailable, not no runs. */
   tasks?: Omit<WebTaskKeys, "ideaIntegrityKey"> & { harnessIntegrityKey: Uint8Array };
   /** Trusted control-plane operation only. No planner key, privileged pool or native adapter is
    * given to the web SQL service. Its resource lifecycle is owned by the supplying composition. */
   planning?: TaskPlanningOperation;
   ideaCreation?: IdeaCreateOperation;
+  /** Server-only conversion of one accepted ordinary task result into an Idea Lab contribution. */
+  ideaResultProjection?: IdeaCanonicalResultProjectionOperation;
   /** Narrow optional coordinator operations; resource ownership remains in trusted composition. */
   assignment?: TaskAssignmentOperation;
   approvals?: TaskApprovalOperation;
@@ -98,6 +139,54 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
   const clock = options.clock ?? Date.now;
   const productConfiguration = options.productConfiguration === undefined ? undefined
     : parseProductConfigurationV1(options.productConfiguration);
+  const installationTopologyPlan = options.installationTopologyPlan === undefined ? undefined
+    : verifyInstallationTopologyPlanV1(options.installationTopologyPlan);
+  const installationReadiness = options.installationReadiness === undefined ? undefined
+    : verifyInstallationReadinessV1(options.installationReadiness);
+  const installationTransition = options.installationTransition === undefined ? undefined
+    : verifyInstallationTransitionV1(options.installationTransition);
+  const installationPlan = options.installationPlan === undefined ? undefined
+    : verifyInstallationPlanV1(options.installationPlan);
+  const localBackupRestoreVerified = options.localBackupRestoreReadiness === undefined ? false : (() => {
+    if (!installationTopologyPlan) throw new Error("invalid_private_app_config");
+    try {
+      const evidenceDigest = localBackupRestoreEvidenceDigestForInstallationPlanV1(
+        installationTopologyPlan,
+        options.localBackupRestoreReadiness,
+      );
+      const recorded = installationReadiness?.proofs.find((proof) => proof.proof === "backup_restore");
+      if (recorded?.state !== "passed" || recorded.evidenceDigest !== evidenceDigest) {
+        throw new Error("backup_restore_readiness_mismatch");
+      }
+      return true;
+    } catch { throw new Error("invalid_private_app_config"); }
+  })();
+  const codexMacosCustodyReadiness = options.codexMacosCustodyReadiness === undefined ? undefined
+    : verifyCodexMacosCustodyReadinessV1(options.codexMacosCustodyReadiness);
+  const claudeCodeLocalProcessReadiness = options.claudeCodeLocalProcessReadiness === undefined ? undefined
+    : verifyClaudeCodeLocalProcessReadinessV1(options.claudeCodeLocalProcessReadiness);
+  const localSupervisorReadiness = options.localSupervisorReadiness === undefined ? undefined
+    : verifyLocalSupervisorReadinessV1(options.localSupervisorReadiness);
+  if (installationReadiness && (!installationTopologyPlan || installationReadiness.planDigest !== installationTopologyPlan.planDigest))
+    throw new Error("invalid_private_app_config");
+  if (installationTransition && (!installationTopologyPlan || installationTransition.planDigest !== installationTopologyPlan.planDigest))
+    throw new Error("invalid_private_app_config");
+  if (installationPlan && (!installationTopologyPlan || installationPlan.topologyPlanDigest !== installationTopologyPlan.planDigest))
+    throw new Error("invalid_private_app_config");
+  if (codexMacosCustodyReadiness && (!installationTopologyPlan || codexMacosCustodyReadiness.planDigest !== installationTopologyPlan.planDigest))
+    throw new Error("invalid_private_app_config");
+  if (claudeCodeLocalProcessReadiness && (!installationTopologyPlan || claudeCodeLocalProcessReadiness.planDigest !== installationTopologyPlan.planDigest))
+    throw new Error("invalid_private_app_config");
+  if (localSupervisorReadiness && (!installationTopologyPlan || localSupervisorReadiness.planDigest !== installationTopologyPlan.planDigest))
+    throw new Error("invalid_private_app_config");
+  const installationSetupView = installationTopologyPlan === undefined ? undefined : createInstallationSetupViewV1({
+    plan: installationTopologyPlan, ...(installationReadiness ? { readiness: installationReadiness } : {}),
+    localBackupRestoreVerified, ...(codexMacosCustodyReadiness ? { codexMacosCustodyReadiness } : {}),
+    ...(claudeCodeLocalProcessReadiness ? { claudeCodeLocalProcessReadiness } : {}),
+    ...(localSupervisorReadiness ? { localSupervisorReadiness } : {}),
+    ...(installationTransition ? { transition: installationTransition } : {}),
+  });
+  const installationPlanView = installationPlan === undefined ? undefined : createInstallationPlanViewV1(installationPlan);
   const moduleEnabled = (name: keyof ProductConfigurationV1["modules"]) =>
     productConfiguration === undefined || productConfiguration.modules[name];
   const sites = captureWebOrigins({ origin: options.origin, audience: options.audience }, options.secondaryAccess);
@@ -128,27 +217,42 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
     ...(options.ideaCreation.decide ? { decide: options.ideaCreation.decide.bind(options.ideaCreation) } : {}),
     ...(options.ideaCreation.synthesize ? { synthesize: options.ideaCreation.synthesize.bind(options.ideaCreation) } : {}),
     ...(options.ideaCreation.start ? { start: options.ideaCreation.start.bind(options.ideaCreation) } : {}) }) : undefined;
+  if (options.ideaResultProjection && (options.ideaResultProjection.tenantId !== options.tenantId
+    || options.ideaResultProjection.workspaceId !== options.workspaceId || typeof options.ideaResultProjection.project !== "function"
+    || !options.ideaProjects)) throw new Error("idea_result_projection_config_invalid");
+  const ideaResultProjection = options.ideaResultProjection ? Object.freeze({
+    project: options.ideaResultProjection.project.bind(options.ideaResultProjection),
+  }) : undefined;
   if (options.queueAttention && (options.queueAttention.tenantId !== options.tenantId
     || options.queueAttention.workspaceId !== options.workspaceId || typeof options.queueAttention.read !== "function"))
     throw new Error("invalid_private_app_config");
   const queueAttention = options.queueAttention ? Object.freeze({ tenantId: options.tenantId,
     workspaceId: options.workspaceId, read: options.queueAttention.read.bind(options.queueAttention) }) : undefined;
+  if (options.operatorSurface && typeof options.operatorSurface.read !== "function") throw new Error("invalid_private_app_config");
+  const operatorSurface = options.operatorSurface ? Object.freeze({
+    read: options.operatorSurface.read.bind(options.operatorSurface),
+  }) : undefined;
   if (options.planning && (options.planning.tenantId !== options.tenantId || options.planning.workspaceId !== options.workspaceId
     || typeof options.planning.plan !== "function" || options.planning.readSaved !== undefined && typeof options.planning.readSaved !== "function"
-    || options.planning.supportsProject !== undefined && typeof options.planning.supportsProject !== "function")) throw new Error("invalid_private_app_config");
+    || options.planning.readPreparedWorker !== undefined && typeof options.planning.readPreparedWorker !== "function"
+    || options.planning.readConfiguredLocalRoute !== undefined && typeof options.planning.readConfiguredLocalRoute !== "function"
+    || options.planning.supportsProject !== undefined && typeof options.planning.supportsProject !== "function"
+    || options.planning.templatesForProject !== undefined && typeof options.planning.templatesForProject !== "function")) throw new Error("invalid_private_app_config");
   const planning = options.planning ? Object.freeze({ plan: options.planning.plan.bind(options.planning),
-    supportsProject: options.planning.supportsProject?.bind(options.planning),
-    readSaved: options.planning.readSaved?.bind(options.planning) }) : undefined;
+    supportsProject: options.planning.supportsProject?.bind(options.planning), templatesForProject: options.planning.templatesForProject?.bind(options.planning),
+    readSaved: options.planning.readSaved?.bind(options.planning), readPreparedWorker: options.planning.readPreparedWorker?.bind(options.planning),
+    readConfiguredLocalRoute: options.planning.readConfiguredLocalRoute?.bind(options.planning) }) : undefined;
   if (options.revisions && (options.revisions.tenantId !== options.tenantId || options.revisions.workspaceId !== options.workspaceId
     || typeof options.revisions.plan !== "function")) throw new Error("invalid_private_app_config");
   const revisions = options.revisions ? Object.freeze({ tenantId: options.tenantId, workspaceId: options.workspaceId,
     plan: options.revisions.plan.bind(options.revisions) }) : undefined;
   if (options.assignment && (options.assignment.tenantId !== options.tenantId || options.assignment.workspaceId !== options.workspaceId
-    || [options.assignment.assign, options.assignment.expire, options.assignment.options].some(method => typeof method !== "function")))
+    || [options.assignment.assign, options.assignment.expire, options.assignment.options, options.assignment.projectOptions]
+      .some(method => typeof method !== "function")))
     throw new Error("invalid_private_app_config");
   const assignment = options.assignment ? Object.freeze({ tenantId: options.tenantId, workspaceId: options.workspaceId,
     assign: options.assignment.assign.bind(options.assignment), expire: options.assignment.expire.bind(options.assignment),
-    options: options.assignment.options.bind(options.assignment) }) : undefined;
+    options: options.assignment.options.bind(options.assignment), projectOptions: options.assignment.projectOptions.bind(options.assignment) }) : undefined;
   const drainMs = options.drainMs ?? 30_000;
   if (options.approvals && (options.approvals.tenantId !== options.tenantId || options.approvals.workspaceId !== options.workspaceId
     || [options.approvals.prepare, options.approvals.store, options.approvals.read].some(method => typeof method !== "function")))
@@ -173,14 +277,26 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
     { tenantId: options.tenantId, workspaceId: options.workspaceId }, clock, options.connections);
   const tasks = new WebTaskService(options.database.client, { tenantId: options.tenantId, workspaceId: options.workspaceId }, clock,
     { ...options.tasks, ideaIntegrityKey: options.ideaProjects?.integrityKey });
+  // This is a task-planning bridge only. It is deliberately composed from the
+  // same private web database and ordinary task service, not from a provider
+  // runtime or a second Idea Lab worker system.
+  const ideaRoundProposal = options.ideaCreation && options.ideaProjects
+    ? new WebIdeaRoundProposalOperation(options.database.client, { tenantId: options.tenantId, workspaceId: options.workspaceId },
+      options.ideaProjects.integrityKey, tasks, clock, ideaResultProjection) : undefined;
   const news = new WebNewsService(options.database.client, { tenantId: options.tenantId, workspaceId: options.workspaceId },
     { integrityKey: options.news?.integrityKey, ideaIntegrityKey: options.ideaProjects?.integrityKey }, clock);
   const herdr = new WebHerdrService(options.database.client, { tenantId: options.tenantId, workspaceId: options.workspaceId },
     options.herdrObservations ?? [], clock, options.ideaProjects?.integrityKey);
   const ideas = new WebIdeaService(options.database.client, { tenantId: options.tenantId, workspaceId: options.workspaceId },
-    options.ideaProjects?.integrityKey, clock, !!ideaCreation, !!ideaCreation?.stop, !!ideaCreation?.decide, !!ideaCreation?.start, !!ideaCreation?.synthesize);
+    options.ideaProjects?.integrityKey, clock, !!ideaCreation, !!ideaCreation?.stop, !!ideaCreation?.decide,
+    !!ideaRoundProposal || !!ideaCreation?.start, !!ideaCreation?.synthesize, !!ideaResultProjection);
   const productConfigurationAuthority = new WebSessionAuthority(options.database.client,
     { tenantId: options.tenantId, workspaceId: options.workspaceId }, clock, "workspace_configuration");
+  // The browser is authenticated against the private-web database. The actual
+  // projection uses its separately verified result-role operation below; this
+  // avoids granting the web role direct result or Idea contribution writes.
+  const ideaProjectionAuthority = new WebSessionAuthority(options.database.client,
+    { tenantId: options.tenantId, workspaceId: options.workspaceId }, clock, "idea_lab_session");
   const scheduleAuthority = new WebSessionAuthority(options.database.client,
     { tenantId: options.tenantId, workspaceId: options.workspaceId }, clock);
   const coordination = options.coordination
@@ -228,6 +344,49 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
               return Response.json(productConfiguration, { headers: privateResponseHeaders });
             });
           }
+          if (url.pathname === "/api/v1/installation-topology") {
+            if (request.method !== "GET" || url.search) throw new WebAccessError("invalid_request");
+            if (!installationSetupView) throw new WebAccessError("not_found");
+            return await productConfigurationAuthority.authenticated(identity, async (_, actor) => {
+              actor.require("projects.read", undefined, true);
+              return Response.json({ setup: installationSetupView }, { headers: privateResponseHeaders });
+            });
+          }
+          if (url.pathname === "/api/v1/installation-readiness") {
+            if (request.method !== "GET" || url.search) throw new WebAccessError("invalid_request");
+            if (!installationSetupView) throw new WebAccessError("not_found");
+            return await productConfigurationAuthority.authenticated(identity, async (_, actor) => {
+              actor.require("projects.read", undefined, true);
+              return Response.json({ setup: installationSetupView },
+                { headers: privateResponseHeaders });
+            });
+          }
+          if (url.pathname === "/api/v1/installation-plan") {
+            if (request.method !== "GET" || url.search) throw new WebAccessError("invalid_request");
+            if (!installationPlanView) throw new WebAccessError("not_found");
+            return await productConfigurationAuthority.authenticated(identity, async (_, actor) => {
+              actor.require("projects.read", undefined, true);
+              return Response.json({ plan: installationPlanView }, { headers: privateResponseHeaders });
+            });
+          }
+          if (url.pathname === "/api/v1/operator-surface") {
+            if (request.method !== "GET" || url.search) throw new WebAccessError("invalid_request");
+            if (!operatorSurface) throw new WebAccessError("not_found");
+            const scope = await productConfigurationAuthority.authenticated(identity, async (_, actor) => {
+              // This is an owner-visible read of already-recorded facts. It
+              // does not schedule, assign, reserve, or authorize work.
+              actor.require("projects.read", undefined, true);
+              return Object.freeze({ tenantId: options.tenantId, actorId: actor.id, grantedAt: actor.now, now: actor.now });
+            });
+            // Authenticate and complete the access recheck before asking the
+            // separately owned read source for its snapshot. Holding the web
+            // transaction open while another database client reads canonical
+            // records can deadlock a local single-database installation; this
+            // endpoint has no mutation that needs one combined transaction.
+            const snapshot = parseOperatorSurfaceSnapshotV1(await operatorSurface.read(scope));
+            if (snapshot.tenantId !== options.tenantId) throw new Error("operator_surface_scope_mismatch");
+            return Response.json({ snapshot }, { headers: privateResponseHeaders });
+          }
           const observations = /^\/api\/v1\/projects\/([^/]+)\/observations$/.exec(url.pathname);
           if (observations) {
             if (request.method !== "GET" || url.search) throw new WebAccessError("invalid_request");
@@ -261,6 +420,45 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
             let sessionId: string; try { sessionId = decodeURIComponent(ideaStart[1]); } catch { throw new WebAccessError("invalid_request"); }
             const result = await ideaCreation.start(identity, sessionId, await readBoundedJson(request.body, 2048));
             return Response.json(result, { status: result.replayed ? 200 : 201, headers: privateResponseHeaders });
+          }
+          const ideaRoundProposalRoute = /^\/api\/v1\/ideas\/([^/]+)\/rounds\/([1-3])\/proposals$/.exec(url.pathname);
+          if (ideaRoundProposalRoute) {
+            if (!moduleEnabled("ideaLab")) throw new WebAccessError("not_found");
+            if (request.method !== "POST" || url.search || !request.body
+              || request.headers.get("content-type")?.split(";")[0].trim().toLowerCase() !== "application/json") throw new WebAccessError("invalid_request");
+            if (!ideaRoundProposal) throw new Error("idea_round_proposal_not_configured");
+            let sessionId: string; try { sessionId = decodeURIComponent(ideaRoundProposalRoute[1]); } catch { throw new WebAccessError("invalid_request"); }
+            const value = ideaRoundProposalInputSchema.safeParse(await readBoundedJson(request.body, 2048));
+            if (!value.success || value.data.round !== Number(ideaRoundProposalRoute[2])) throw new WebAccessError("invalid_request");
+            const result = await ideaRoundProposal.propose(identity, sessionId, value.data);
+            return Response.json(result, { status: result.receipts.every(receipt => receipt.replayed) ? 200 : 201, headers: privateResponseHeaders });
+          }
+          const ideaResultProjectionRoute = /^\/api\/v1\/ideas\/([^/]+)\/tasks\/([^/]+)\/contribution$/.exec(url.pathname);
+          if (ideaResultProjectionRoute) {
+            if (!moduleEnabled("ideaLab")) throw new WebAccessError("not_found");
+            // There is intentionally no JSON body: all result, review and
+            // verification facts are reread from canonical stores server-side.
+            if (request.method !== "POST" || url.search || request.body) throw new WebAccessError("invalid_request");
+            if (!ideaResultProjection) throw new Error("idea_result_projection_not_configured");
+            let sessionId: string, taskKey: string;
+            try { sessionId = decodeURIComponent(ideaResultProjectionRoute[1]); taskKey = decodeURIComponent(ideaResultProjectionRoute[2]); }
+            catch { throw new WebAccessError("invalid_request"); }
+            return await ideaProjectionAuthority.authenticated(identity, async (_, actor) => {
+              actor.require("idea_lab.session_read", undefined, true);
+              // This existing owner action authorizes a deliberate discussion
+              // transition, but does not authorize an agent run or acceptance.
+              actor.require("idea_lab.panel_start", undefined, true);
+              try {
+                const result = await ideaResultProjection.project(sessionId, taskKey);
+                return Response.json({ sessionId, taskKey, contribution: result.contribution, replayed: result.replayed,
+                  startsWork: false }, { status: result.replayed ? 200 : 201, headers: privateResponseHeaders });
+              } catch (error) {
+                // Do not let private result/review state distinguish a missing,
+                // malformed, unaccepted, or competing result at this boundary.
+                if (error instanceof IdeaLabErrorV1) throw new WebAccessError("conflict");
+                throw error;
+              }
+            });
           }
           const ideaDecision = /^\/api\/v1\/ideas\/([^/]+)\/decision$/.exec(url.pathname);
           if (ideaDecision) {
@@ -475,8 +673,34 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
             try { projectId = decodeURIComponent(projectFiles[1]); } catch { throw new WebAccessError("invalid_request"); }
             return Response.json(await tasks.projectFiles(identity, projectId), { headers: privateResponseHeaders });
           }
+          const projectAgents = /^\/api\/v1\/projects\/([^/]+)\/agents$/.exec(url.pathname);
+          if (projectAgents) {
+            if (request.method !== "GET" || url.search) throw new WebAccessError("invalid_request");
+            let projectId: string;
+            try { projectId = decodeURIComponent(projectAgents[1]); } catch { throw new WebAccessError("invalid_request"); }
+            if (!catalogProjectIdSchema.safeParse(projectId).success) throw new WebAccessError("invalid_request");
+            if (assignment) return Response.json(taskProjectAgentOptionsSchema.parse(
+              await assignment.projectOptions(identity, projectId)), { headers: privateResponseHeaders });
+            await tasks.authorize(identity, projectId);
+            return Response.json(taskProjectAgentOptionsSchema.parse({
+              projectId, eligibilitySource: "not_configured", workers: [], tasksExamined: 0,
+              additionalTasksOmitted: false, candidateEvidence: "configured_routes_only",
+              observedAt: new Date(clock()).toISOString(), startsWork: false,
+              grantsAssignmentAuthority: false, grantsExecutionAuthority: false,
+            }), { headers: privateResponseHeaders });
+          }
+          const projectAttention = /^\/api\/v1\/projects\/([^/]+)\/(inbox|reviews)$/.exec(url.pathname);
+          if (projectAttention) {
+            if (request.method !== "GET" || [...url.searchParams.keys()].some(key => key !== "after")
+              || url.searchParams.getAll("after").length > 1) throw new WebAccessError("invalid_request");
+            let projectId: string;
+            try { projectId = decodeURIComponent(projectAttention[1]); } catch { throw new WebAccessError("invalid_request"); }
+            return Response.json(await tasks.projectAttention(identity, projectId, projectAttention[2] as "inbox" | "reviews",
+              url.searchParams.get("after") ?? undefined), { headers: privateResponseHeaders });
+          }
           if (/^\/api\/v1\/projects\/[^/]+\/tasks(?:\/|$)/.test(url.pathname))
-            return await createTaskHttpHandler({ origin: site.origin, trust, service: tasks, ownerReviews, ownerVerifications, planning, assignment, approvals, submission, revisions, clock })(request);
+            return await createTaskHttpHandler({ origin: site.origin, trust, service: tasks, ownerReviews, ownerVerifications,
+              planning, assignment, approvals, submission, revisions, gatewayAssertionProfile, clock })(request);
           if (url.pathname === "/api/v1/connections") {
             if (request.method !== "GET" || url.search) throw new WebAccessError("invalid_request");
             return Response.json(await connections.read(identity), { headers: privateResponseHeaders });
@@ -497,12 +721,13 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
               origin: site.origin,
               trust,
               service: coordination,
+              gatewayAssertionProfile,
               clock,
               isCoordinationEnabled: () => coordination.isEnabled(),
               inflight: coordinationInflight,
             })(request);
           }
-          return await createProjectHttpHandler({ origin: site.origin, trust, service, clock })(request);
+          return await createProjectHttpHandler({ origin: site.origin, trust, service, gatewayAssertionProfile, clock })(request);
         }
         if (request.method !== "GET" && request.method !== "HEAD") throw new WebAccessError("invalid_request");
         const taskPage = /^\/projects\/([^/]+)\/tasks(?:\/([^/]+))?$/.exec(url.pathname);

@@ -1,4 +1,5 @@
 import { validatePrivatePostgresConfiguration, type PrivatePostgresConfiguration } from "./private-postgres";
+import { privatePostgresTlsOptionsV2 } from "./private-postgres-endpoint";
 
 /** Explicit startup parameters for the selected pg transport. No URL parsing or
  * ambient credential selection. Primary/version qualification remains mandatory
@@ -8,7 +9,7 @@ export function privatePgOptions(input: PrivatePostgresConfiguration) {
   return Object.freeze({
     host: config.host, port: config.port, database: config.database,
     user: config.username, password: config.password,
-    ssl: false, sslnegotiation: "postgres", client_encoding: "UTF8",
+    ssl: privatePostgresTlsOptionsV2(config.privateEndpoint), sslnegotiation: "postgres", client_encoding: "UTF8",
     // A nonempty string overrides PGREPLICATION; PostgreSQL accepts 'false'.
     replication: "false",
     application_name: "control-room-private-web",

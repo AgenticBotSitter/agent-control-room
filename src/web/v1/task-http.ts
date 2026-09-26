@@ -1,4 +1,5 @@
-import { createAccessVerifier, requireSameOrigin, WebAccessError, type AccessTrust } from "./access-verifier";
+import { createAccessVerifier, requireSameOrigin, WebAccessError, type AccessTrust, type GatewayAssertionProviderProfileV1 } from "./access-verifier";
+import type { LocalOwnerSessionServiceV1 } from "./local-owner-session";
 import { privateResponseHeaders, readBoundedJson, webFailure } from "./http-common";
 import type { WebTaskService } from "./task-service";
 import type { WebTaskReviewService } from "./task-review-service";
@@ -17,15 +18,29 @@ import { taskApprovalHttp } from "./task-approval-http";
 import type { TaskRevisionOperation } from "./task-revision-operation";
 import { taskRevisionCommandSchema, taskRevisionRequestSchema } from "./task-revision-wire";
 import { sha256Digest } from "../../security";
+import { taskDetailSchema } from "./task-wire";
+import { observeTaskLocalRoute, type TrustedConfiguredLocalRoute } from "./task-local-route-observation";
 
-export function createTaskHttpHandler(options: { origin: string; trust: AccessTrust; service: WebTaskService;
-  ownerReviews?: WebTaskReviewService; ownerVerifications?: WebTaskVerificationService; planning?: Pick<TaskPlanningOperation, "plan" | "readSaved" | "supportsProject">;
-  assignment?: TaskAssignmentOperation; approvals?: TaskApprovalOperation; submission?: TaskSubmissionOperation; revisions?: TaskRevisionOperation; clock?: () => number }) {
-  const verify = createAccessVerifier(options.trust);
+export function createTaskHttpHandler(options: { origin: string; trust?: AccessTrust; service: WebTaskService;
+  ownerReviews?: WebTaskReviewService; ownerVerifications?: WebTaskVerificationService; planning?: Pick<TaskPlanningOperation, "plan" | "readSaved" | "readPreparedWorker" | "readConfiguredLocalRoute" | "supportsProject" | "templatesForProject">;
+  assignment?: TaskAssignmentOperation; approvals?: TaskApprovalOperation; submission?: TaskSubmissionOperation; revisions?: TaskRevisionOperation;
+  /** Trusted process selection; the browser cannot choose a header/provider. */
+  gatewayAssertionProfile?: GatewayAssertionProviderProfileV1; clock?: () => number;
+  /** Explicit loopback-only owner-session service; never a generic injected verifier. */
+  localOwnerSession?: LocalOwnerSessionServiceV1 }) {
+  const localOwnerSession = options.localOwnerSession;
+  if (localOwnerSession && (localOwnerSession.profile.origin !== options.origin || new URL(options.origin).protocol !== "http:"))
+    throw new Error("task_http_local_owner_config_invalid");
+  if (localOwnerSession && (options.trust !== undefined || options.gatewayAssertionProfile !== undefined))
+    throw new Error("task_http_authentication_modes_conflict");
+  const verify = localOwnerSession ? undefined : options.trust === undefined ? undefined
+    : createAccessVerifier(options.trust, options.gatewayAssertionProfile);
+  if (!localOwnerSession && !verify) throw new Error("task_http_authentication_not_configured");
   return async (request: Request): Promise<Response> => {
     try {
-      requireSameOrigin(request, options.origin);
-      const identity = verify(request, (options.clock ?? Date.now)());
+      if (localOwnerSession) localOwnerSession.assertLocalRequest(request, !["GET", "HEAD"].includes(request.method));
+      else requireSameOrigin(request, options.origin);
+      const identity = localOwnerSession ? localOwnerSession.verify(request, (options.clock ?? Date.now)()) : verify!(request, (options.clock ?? Date.now)());
       const url = new URL(request.url);
       const absRoute = /^\/api\/v1\/projects\/([^/]+)\/tasks\/from-news$/.exec(url.pathname);
       if (absRoute) {
@@ -53,9 +68,23 @@ export function createTaskHttpHandler(options: { origin: string; trust: AccessTr
           if (!options.submission) throw new Error("task_submission_not_configured");
           const receipt = await options.submission.read(identity, projectId, jobId, digest.data);
           const delivery = await options.submission.readDelivery?.(identity, projectId, jobId, digest.data);
+          // The preview is only meaningful before anything is queued; once a
+          // receipt exists, showing a preview digest for a job that already
+          // has a queued intent would be misleading, not merely redundant.
+          // Before the task is assigned (leased to a route) a preview cannot
+          // be derived yet; that is an ordinary, expected read state, not a
+          // failure, so a `conflict` from `preview` here is swallowed rather
+          // than propagated, exactly like an absent `readDelivery` result. A
+          // reader who may not approve (`access_denied`) simply sees no preview.
+          let preview: Awaited<ReturnType<NonNullable<typeof options.submission.preview>>> | undefined;
+          if (!receipt && options.submission.preview) {
+            try { preview = await options.submission.preview(identity, projectId, jobId, digest.data); }
+            catch (error) { if (!(error instanceof WebAccessError) || !["conflict", "access_denied"].includes(error.code)) throw error; }
+          }
           const value = taskSubmissionReadSchema.parse({ projectId, jobId, inputDigest: digest.data, receipt,
-            ...(delivery ? { delivery } : {}) });
+            ...(delivery ? { delivery } : {}), ...(preview ? { preview } : {}) });
           if (receipt && (receipt.projectId !== projectId || receipt.jobId !== jobId)) throw new Error("task_submission_scope_mismatch");
+          if (preview && (preview.projectId !== projectId || preview.jobId !== jobId)) throw new Error("task_submission_scope_mismatch");
           return Response.json(value, { headers: privateResponseHeaders });
         }
         if (url.search) throw new WebAccessError("invalid_request");
@@ -163,7 +192,8 @@ export function createTaskHttpHandler(options: { origin: string; trust: AccessTr
           const value = authorized.availability === "available" && options.planning?.supportsProject
             && options.planning.supportsProject(projectId) !== true ? { ...authorized, availability: "not_configured" as const } : authorized;
           const savedPlan = await options.planning?.readSaved?.(identity, projectId, jobId);
-          return Response.json(taskPlanningOptionsSchema.parse({ ...value,
+          const templates = options.planning?.templatesForProject?.(projectId);
+          return Response.json(taskPlanningOptionsSchema.parse({ ...value, ...(templates !== undefined ? { templates } : {}),
             ...(savedPlan !== undefined ? { savedPlan, ...(savedPlan ? { availability: "already_planned" } : {}) } : {}) }),
           { headers: privateResponseHeaders });
         }
@@ -177,7 +207,7 @@ export function createTaskHttpHandler(options: { origin: string; trust: AccessTr
           throw new Error("task_planning_not_configured");
         }
         // Source uniqueness, not a browser-selected key, reconciles this exact plan after a lost reply.
-        const result = taskPlanningCommandSchema.parse(await options.planning.plan(identity, projectId, jobId, draft.data.expectedInputDigest));
+        const result = taskPlanningCommandSchema.parse(await options.planning.plan(identity, projectId, jobId, draft.data.expectedInputDigest, draft.data.templateId));
         if (result.receipt.projectId !== projectId || result.receipt.sourceJobId !== jobId
           || result.receipt.sourceInputDigest !== draft.data.expectedInputDigest || result.receipt.jobId === jobId) throw new Error("task_plan_scope_mismatch");
         return Response.json(result, { status: result.replayed ? 200 : 201, headers: privateResponseHeaders });
@@ -212,9 +242,15 @@ export function createTaskHttpHandler(options: { origin: string; trust: AccessTr
         try { artifactId = route[4] ? decodeURIComponent(route[4]) : undefined; } catch { throw new WebAccessError("invalid_request"); }
         return Response.json(await options.service.results(identity, projectId, jobId, artifactId), { headers: privateResponseHeaders });
       }
-      if (jobId && request.method === "GET")
-        return Response.json({ ...await options.service.detail(identity, projectId, jobId),
-          dispatch: options.submission ? "configured" : "not_connected" }, { headers: privateResponseHeaders });
+      if (jobId && request.method === "GET") {
+        const detail = await options.service.detail(identity, projectId, jobId);
+        const preparedFor = await options.planning?.readPreparedWorker?.(identity, projectId, jobId);
+        const configuredLocalRoute = await options.planning?.readConfiguredLocalRoute?.(identity, projectId, jobId) as TrustedConfiguredLocalRoute | undefined;
+        const withPreparedRoute = { ...detail, preparedFor: preparedFor ?? null };
+        return Response.json(taskDetailSchema.parse({ ...withPreparedRoute,
+          localRouteObservation: observeTaskLocalRoute(withPreparedRoute, configuredLocalRoute),
+          dispatch: options.submission ? "configured" : "not_connected" }), { headers: privateResponseHeaders });
+      }
       if (!jobId && request.method === "POST") {
         if (request.headers.get("content-type")?.split(";")[0].trim() !== "application/json" || !request.body)
           throw new WebAccessError("invalid_request");

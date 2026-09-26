@@ -15,7 +15,7 @@ const flag = (name, fallback) => {
 
 /**
  * @param {{ rootDir?: string, ledgerPath?: string }} [options]
- * @returns {Promise<{ files: number, digest: string }>}
+ * @returns {Promise<{ files: number, digest: string, entries: readonly { file: string, order: number, sha256: string, kind: string }[] }>}
  */
 export async function verifyMigrationLedger({ rootDir = root, ledgerPath } = {}) {
   const committed = JSON.parse(await readFile(ledgerPath ?? join(rootDir, "deploy/postgres/migration-ledger.json"), "utf8"));
@@ -35,7 +35,8 @@ export async function verifyMigrationLedger({ rootDir = root, ledgerPath } = {})
     assert.equal(current.sha256, pinned.sha256, `migration_ledger_altered:${current.file}`);
   }
   assert.equal(ledgerDigest(entries), committed.digest, "migration_ledger_digest");
-  return { files: entries.length, digest: committed.digest };
+  return { files: entries.length, digest: committed.digest,
+    entries: Object.freeze(entries.map(entry => Object.freeze({ ...entry, kind: entry.kind ?? "migrate" }))) };
 }
 
 const invoked = resolve(process.argv[1] ?? "") === fileURLToPath(import.meta.url);

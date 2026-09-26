@@ -5,7 +5,14 @@ import { nativeTaskSnapshotBodySchema } from "../../harness/v1/native-observatio
 import { nativeTaskDispatchBodySchema, nativeTaskDispatchReceiptBodySchema } from "../../harness/v1/native-delivery";
 import { codexTaskDispatchBodySchemaV1, codexTaskDispatchReceiptBodySchemaV1 } from "../../harness/codex-v1/delivery-contract";
 import { codexTaskActivationBodySchemaV1 } from "../../harness/codex-v1/activation-contract";
+import { codexCurrentAdmissionReadRequestSchemaV1, codexCurrentAdmissionReadResponseSchemaV1 }
+  from "../../harness/codex-v1/current-admission-read-contract";
 import { codexResultReturnBodySchemaV1, codexResultReturnReceiptBodySchemaV1 } from "../../harness/codex-v1/result-return";
+import { assertControllerWorkerNodeDispatchFrameV1, assertControllerWorkerNodeReceiptFrameV1,
+  controllerWorkerNodeDispatchBodySchemaV1, controllerWorkerNodeDispatchReceiptBodySchemaV1,
+  controllerWorkerNodeReceiptRecoverySchemaV1 } from "../../harness/v1/controller-worker-node-delivery";
+import { assertControllerWorkerResultReturnFrameV1, controllerWorkerProgressReturnBodySchemaV1,
+  controllerWorkerTerminalReturnBodySchemaV1 } from "../../harness/v1/controller-worker-result-return";
 import { canonicalFilesystemPathSchema, canonicalNetworkDestinationSchema } from "../../node-policy/v1/schemas";
 import { computeAuthorityDigest, sha256Digest } from "../../security";
 import { CONNECTION_ENROLLMENT_DELIVERY_ID_MAX_LENGTH, CONNECTION_ENROLLMENT_DELIVERY_ID_MIN_LENGTH,
@@ -366,8 +373,19 @@ export const signedNodeFrameSchema = z.discriminatedUnion("type", [
   frame("harness.codex.dispatch", codexTaskDispatchBodySchemaV1, { direction: "server_to_node", senderKind: "control_room" }),
   frame("harness.codex.dispatch.receipt", codexTaskDispatchReceiptBodySchemaV1, { direction: "node_to_server", senderKind: "node" }),
   frame("harness.codex.dispatch.activation", codexTaskActivationBodySchemaV1, { direction: "server_to_node", senderKind: "control_room" }),
+  frame("harness.codex.current-admission.read", codexCurrentAdmissionReadRequestSchemaV1,
+    { direction: "node_to_server", senderKind: "node" }),
+  frame("harness.codex.current-admission.read.response", codexCurrentAdmissionReadResponseSchemaV1,
+    { direction: "server_to_node", senderKind: "control_room" }),
   frame("harness.codex.result.return", codexResultReturnBodySchemaV1, { direction: "node_to_server", senderKind: "node" }),
   frame("harness.codex.result.return.receipt", codexResultReturnReceiptBodySchemaV1, { direction: "server_to_node", senderKind: "control_room" }),
+  frame("controller.worker.delivery", controllerWorkerNodeDispatchBodySchemaV1, { direction: "server_to_node", senderKind: "control_room" }),
+  frame("controller.worker.delivery.receipt", controllerWorkerNodeDispatchReceiptBodySchemaV1, { direction: "node_to_server", senderKind: "node" }),
+  frame("controller.worker.delivery.receipt.recovery", controllerWorkerNodeReceiptRecoverySchemaV1, { direction: "node_to_server", senderKind: "node" }),
+  frame("controller.worker.result.progress", controllerWorkerProgressReturnBodySchemaV1,
+    { direction: "node_to_server", senderKind: "node" }),
+  frame("controller.worker.result.terminal", controllerWorkerTerminalReturnBodySchemaV1,
+    { direction: "node_to_server", senderKind: "node" }),
   frame("job.cancel", cancelRequest),
   frame("job.cancel.ack", cancelAck),
   frame("node.reconciliation.request", reconciliationRequest),
@@ -385,6 +403,18 @@ export const signedNodeFrameSchema = z.discriminatedUnion("type", [
     if (value.tenantId !== r.tenantId || Date.parse(value.expiresAt) > value.body.start.deadline
       || Date.parse(value.sentAt) < Date.parse(value.body.packet.approval.body.issuedAt))
       context.addIssue({ code: "custom", message: "native dispatch frame scope or deadline mismatch" });
+  }
+  if (value.type === "controller.worker.delivery") {
+    try { assertControllerWorkerNodeDispatchFrameV1(value); }
+    catch { context.addIssue({ code: "custom", path: ["body"], message: "controller worker delivery frame binding mismatch" }); }
+  }
+  if (value.type === "controller.worker.delivery.receipt") {
+    try { assertControllerWorkerNodeReceiptFrameV1(value); }
+    catch { context.addIssue({ code: "custom", path: ["body"], message: "controller worker delivery receipt frame binding mismatch" }); }
+  }
+  if (value.type === "controller.worker.result.progress" || value.type === "controller.worker.result.terminal") {
+    try { assertControllerWorkerResultReturnFrameV1(value); }
+    catch { context.addIssue({ code: "custom", path: ["body"], message: "controller worker result return frame binding mismatch" }); }
   }
   if (value.type === "harness.native.dispatch.receipt") {
     if (value.body.tenantId !== value.tenantId || value.body.nodeId !== value.actorId
@@ -451,5 +481,5 @@ export const signedNodeFrameSchema = z.discriminatedUnion("type", [
   }
 });
 
-export const nodeToServerTypes = new Set(["connection.hello", "connection.enrollment.deliver", "node.heartbeat", "node.fleet.signal", "job.offer.decision", "job.event", "harness.native.snapshot", "harness.native.dispatch.receipt", "harness.codex.dispatch.receipt", "harness.codex.result.return", "job.cancel.ack", "node.reconciliation.report", "node.operation.ack", "protocol.ack", "protocol.error"]);
-export const serverToNodeTypes = new Set(["connection.accepted", "job.offer", "job.lease.grant", "job.lease.renewed", "job.cancel", "harness.native.dispatch", "harness.codex.dispatch", "harness.codex.dispatch.activation", "harness.codex.result.return.receipt", "node.reconciliation.request", "node.operation.request", "protocol.ack", "protocol.error"]);
+export const nodeToServerTypes = new Set(["connection.hello", "connection.enrollment.deliver", "node.heartbeat", "node.fleet.signal", "job.offer.decision", "job.event", "harness.native.snapshot", "harness.native.dispatch.receipt", "harness.codex.dispatch.receipt", "harness.codex.current-admission.read", "harness.codex.result.return", "controller.worker.delivery.receipt", "controller.worker.delivery.receipt.recovery", "controller.worker.result.progress", "controller.worker.result.terminal", "job.cancel.ack", "node.reconciliation.report", "node.operation.ack", "protocol.ack", "protocol.error"]);
+export const serverToNodeTypes = new Set(["connection.accepted", "job.offer", "job.lease.grant", "job.lease.renewed", "job.cancel", "harness.native.dispatch", "harness.codex.dispatch", "harness.codex.dispatch.activation", "harness.codex.current-admission.read.response", "harness.codex.result.return.receipt", "controller.worker.delivery", "node.reconciliation.request", "node.operation.request", "protocol.ack", "protocol.error"]);

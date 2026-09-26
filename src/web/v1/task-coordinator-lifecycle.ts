@@ -3,13 +3,17 @@ import { nativeTaskSubmissionReferenceSchema, type NativeTaskSubmission } from "
 import { localId } from "../../harness/v1/native-run-identifiers";
 import { TaskExecutionPlanner, type TaskPlanningOperation } from "./task-execution-planner";
 import { TaskAssignmentCoordinator, type TaskAssignmentOperation, type TaskAssignmentRoute, type NativeApprovalEnrollment,
-  type CodexPermitConfiguration } from "./task-assignment-coordinator";
+  type CodexPermitConfiguration, type Hermes021LocalQueueDeliveryTarget, type ClaudeCodeLocalQueueDeliveryTarget,
+  type CodexOwnerTrustedLocalQueueDeliveryTarget, type RemoteControllerWorkerQueueDeliveryTarget,
+  type InstallationTransitionAdmissionFence } from "./task-assignment-coordinator";
+import { isInstallationTransitionAdmissionPausedV1 } from "../../harness/v1/installation-transition-store";
 import type { NativeApprovalPacketStore } from "./native-approval-packet-store";
 import { nativeTaskApprovalPacketSchema } from "../../harness/v1/native-approval-packet";
 import { TaskQualityCoordinator, taskQualityRequestSchema, taskQualitySweepRequestSchema, type TaskQualityConfiguration, type TaskQualityOperation } from "./task-quality-coordinator";
 import { timingSafeEqual } from "node:crypto";
 import { TaskCoordinatorInterruption } from "./task-coordinator-interruption";
 import { taskRevisionRequestSchema } from "./task-revision-wire";
+import type { TaskResultInspectionSourceV1 } from "../../completion-gate/v1/task-result-inspection";
 import { TaskResultCoordinator, taskResultRequestSchema, type TaskResultOperation } from "./task-result-coordinator";
 import { NativeEvidenceReceiver, captureNativeEvidenceInput, captureNativeEvidenceSettings, nativeEvidenceRegistrationSchema, type NativeEvidenceSettings } from "./native-evidence-receiver";
 import { ManagedNativeSessions, captureManagedNativeSessionSettings, type ManagedNativeSessionSettings } from "./managed-native-sessions";
@@ -23,13 +27,37 @@ import { CodexCanonicalResultPublisherV1 } from "../../artifacts/v1/codex-result
 import type { ArtifactReadPortV1, ArtifactStoragePortV1 } from "../../node-executor/artifact-storage";
 import { captureCodexResultIntakeSettingsV1, CodexResultIntakeV1,
   type CodexResultIntakeSettingsV1 } from "./codex-result-intake";
+import { deliverVerifiedHermes021LocalQueueTaskV1 } from "./hermes-021-local-queue-delivery";
+import { deliverVerifiedHermesLocalQueueTaskV1 } from "./hermes-local-queue-delivery";
+import { deliverVerifiedClaudeCodeLocalQueueTaskV1 } from "./claude-code-local-queue-delivery";
+import { deliverVerifiedCodexOwnerTrustedLocalQueueTaskV1 } from "./codex-owner-trusted-local-queue-delivery";
+import { deliverVerifiedRemoteControllerWorkerQueueTaskV1 } from "./remote-controller-worker-queue-delivery";
+import { isPrivateRemoteControllerWorkerQueueCapabilityV1,
+  type PrivateRemoteControllerWorkerQueueCapabilityV1 } from
+  "../../harness/v1/private-remote-controller-worker-composition";
+import { NativeResultStore } from "../../artifacts/v1/native-results";
+import { CompletionGateStoreV1 } from "../../completion-gate/v1/store";
+import { CanonicalIdeaTaskResultProjectionServiceV1 } from "../../idea-lab/v1/canonical-result-projection";
+import { IdeaLabCanonicalTaskLinkStoreV1 } from "../../idea-lab/v1/canonical-task-link-store";
+import { IdeaLabProjectRegistryStoreV1 } from "../../idea-lab/v1/store";
 
 export type TaskApprovalOperation = Readonly<{ tenantId: string; workspaceId: string;
   prepare: TaskAssignmentCoordinator["prepareNativeApproval"]; store: TaskAssignmentCoordinator["storeNativeApproval"];
   read: TaskAssignmentCoordinator["readNativeApproval"] }>;
 export type TaskSubmissionOperation = Readonly<{ tenantId: string; workspaceId: string;
   enqueue: TaskAssignmentCoordinator["enqueueNativeTask"]; read: TaskAssignmentCoordinator["readNativeTaskQueue"];
-  readDelivery?: TaskAssignmentCoordinator["readNativeDeliveryStatus"] }>;
+  readDelivery?: TaskAssignmentCoordinator["readNativeDeliveryStatus"];
+  /** Mac-local-only confirm-what-you-saw read. Absent on the remote,
+   * signed-packet submission surface. */
+  preview?: TaskAssignmentCoordinator["previewMacLocalTask"] }>;
+/**
+ * A narrow trusted-control-plane operation. The private web process performs
+ * authentication and authorization before it may invoke this operation. The
+ * browser supplies only an already-linked Idea task key; it never supplies a
+ * result, review, verification, or evidence record.
+ */
+export type IdeaCanonicalResultProjectionOperation = Readonly<{ tenantId: string; workspaceId: string;
+  project: (sessionId: string, taskKey: string) => Promise<{ contribution: { contributionId: string; contributionDigest: string }; replayed: boolean }> }>;
 
 export type TaskCoordinatorDatabase = Readonly<{ client: DatabaseClient; close: () => Promise<void>; isAvailable: () => boolean }>;
 export type TaskCoordinatorConfiguration = {
@@ -40,10 +68,38 @@ export type TaskCoordinatorConfiguration = {
    * after construction; drained and stopped before the underlying pool closes.
    * Never derived from an HTTP request or enabled implicitly by approval storage. */
   nativeSubmission?: NativeTaskSubmission & { close?: () => Promise<void> };
+  /**
+   * Installation-owned local Hermes delivery composition. It is optional and
+   * inert: merely configuring it does not invoke Hermes.  When the existing
+   * queue worker picks a canonically verified Hermes-0.21 local task, this
+   * callback is the only route allowed to reach the private runner.
+   */
+  hermes021Local?: { deliver(target: Hermes021LocalQueueDeliveryTarget, signal: AbortSignal): Promise<void> };
+  /** Installation-owned current Hermes route. Its runner configuration is
+   * protected and per-build-qualified; constructing this callback starts no
+   * worker or process. */
+  hermesLocal?: { deliver(target: import("./task-assignment-coordinator").HermesLocalQueueDeliveryTarget, signal: AbortSignal): Promise<void> };
+  /** Installation-owned Claude route. It is optional and inert until a separate
+   * process qualification and private host composition supply this callback. */
+  claudeCodeLocal?: { deliver(target: ClaudeCodeLocalQueueDeliveryTarget, signal: AbortSignal): Promise<void> };
+  /** Installation-owned managed Codex CLI route. It is inert until the shared
+   * queue resolves a locally approved owner-trusted Codex task. */
+  codexOwnerTrustedLocal?: { deliver(target: CodexOwnerTrustedLocalQueueDeliveryTarget, signal: AbortSignal): Promise<void> };
+  /** Optional installation-owned remote worker materializer. It is inert until
+   * the shared queue worker receives a canonically leased v11 reference. The
+   * browser never selects its worker, session, enrollment, or key. */
+  remoteControllerWorker?: PrivateRemoteControllerWorkerQueueCapabilityV1;
   /** Reviewed Codex permit bindings. Configuration alone starts no process or workspace. */
   codex?: CodexPermitConfiguration;
+  /** Private installation journal key. It is copied at assembly and never
+   * mounted in a route, template, browser operation, queue item, or worker. */
+  installationTransitionAdmission?: { integrityKey: Uint8Array; workers: readonly { nodeId: string; workerId: string }[] };
   quality?: TaskQualityConfiguration;
   revisionPlanning?: true;
+  /** Installation-owned, authenticated result reader for a supported local adapter.
+   * It is a read-only bridge into the existing review, correction and capacity
+   * lifecycle; it cannot create a second scheduler, result store or authority. */
+  resultInspectionSource?: TaskResultInspectionSourceV1;
   /** An already verified, separately owned bounded control-plane pool. Never the private-web login. */
   database: TaskCoordinatorDatabase;
   /** Non-executing Idea writer, independently verified with the fixed creation role. */
@@ -63,6 +119,10 @@ export type TaskCoordinatorConfiguration = {
  * listener, credential loading, approval or dispatch. The supplying bootstrap must verify the pool.
  */
 export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfiguration) {
+  // Direct Idea Lab provider execution is retained only by isolated legacy
+  // fixtures. Production composition must create ordinary participant tasks
+  // and use the shared delivery, result, review, and correction lifecycle.
+  if (input.ideaRuntime !== undefined) throw new Error("task_coordinator_config_invalid");
   const scope = Object.freeze({ tenantId: localId.parse(input.scope.tenantId), workspaceId: localId.parse(input.scope.workspaceId) });
   const maxActive = input.maxActive ?? 8, drainMs = input.drainMs ?? 30_000, closeMs = input.closeMs ?? 5000;
   for (const [value, ceiling] of [[maxActive, 8], [drainMs, 30_000], [closeMs, 5000]])
@@ -79,10 +139,55 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
   if (input.nativeSubmission && (!input.approvals || typeof input.nativeSubmission.enqueueInSession !== "function"
     || input.nativeSubmission.recoverUnsentInSession !== undefined && typeof input.nativeSubmission.recoverUnsentInSession !== "function"))
     throw new Error("task_coordinator_config_invalid");
+  if (input.hermes021Local && typeof input.hermes021Local.deliver !== "function")
+    throw new Error("task_coordinator_config_invalid");
+  if (input.hermes021Local && !input.nativeSubmission)
+    throw new Error("task_coordinator_config_invalid");
+  if (input.hermesLocal && typeof input.hermesLocal.deliver !== "function")
+    throw new Error("task_coordinator_config_invalid");
+  if (input.hermesLocal && !input.nativeSubmission)
+    throw new Error("task_coordinator_config_invalid");
+  if (input.claudeCodeLocal && typeof input.claudeCodeLocal.deliver !== "function")
+    throw new Error("task_coordinator_config_invalid");
+  if (input.claudeCodeLocal && !input.nativeSubmission)
+    throw new Error("task_coordinator_config_invalid");
+  if (input.codexOwnerTrustedLocal && typeof input.codexOwnerTrustedLocal.deliver !== "function")
+    throw new Error("task_coordinator_config_invalid");
+  if (input.codexOwnerTrustedLocal && !input.nativeSubmission)
+    throw new Error("task_coordinator_config_invalid");
+  if (input.remoteControllerWorker && (!input.nativeSubmission
+    || !isPrivateRemoteControllerWorkerQueueCapabilityV1(input.remoteControllerWorker)))
+    throw new Error("task_coordinator_config_invalid");
+  if (input.installationTransitionAdmission && (!(input.installationTransitionAdmission.integrityKey instanceof Uint8Array)
+    || input.installationTransitionAdmission.integrityKey.length !== 32
+    || !Array.isArray(input.installationTransitionAdmission.workers)
+    || input.installationTransitionAdmission.workers.length !== input.routes.length)) throw new Error("task_coordinator_config_invalid");
+  const transitionAdmissionKey = input.installationTransitionAdmission
+    ? Uint8Array.from(input.installationTransitionAdmission.integrityKey) : undefined;
+  const transitionWorkers = input.installationTransitionAdmission ? (() => {
+    const values = input.installationTransitionAdmission!.workers.map(value => Object.freeze({
+      nodeId: localId.parse(value.nodeId), workerId: localId.parse(value.workerId) }));
+    if (new Set(values.map(value => value.nodeId)).size !== values.length || new Set(values.map(value => value.workerId)).size !== values.length
+      || values.some(value => !input.routes.some(route => route.nodeId === value.nodeId))) throw new Error("task_coordinator_config_invalid");
+    return new Map(values.map(value => [value.nodeId, value.workerId]));
+  })() : undefined;
+  const transitionAdmission: InstallationTransitionAdmissionFence | undefined = input.installationTransitionAdmission
+    ? Object.freeze({ isPausedInSession: (tx, tenantId, nodeId) => {
+      const workerId = transitionWorkers!.get(nodeId);
+      if (!workerId) throw new Error("installation_transition_unavailable");
+      return isInstallationTransitionAdmissionPausedV1(tx, transitionAdmissionKey!, { tenantId, workerId });
+    } }) : undefined;
   const nativeSubmission = input.nativeSubmission ? Object.freeze({
     enqueueInSession: input.nativeSubmission.enqueueInSession.bind(input.nativeSubmission),
     ...(input.nativeSubmission.recoverUnsentInSession ? { recoverUnsentInSession: input.nativeSubmission.recoverUnsentInSession.bind(input.nativeSubmission) } : {}),
   }) : undefined;
+  const hermes021Local = input.hermes021Local ? Object.freeze({ deliver: input.hermes021Local.deliver.bind(input.hermes021Local) }) : undefined;
+  const hermesLocal = input.hermesLocal ? Object.freeze({ deliver: input.hermesLocal.deliver.bind(input.hermesLocal) }) : undefined;
+  const claudeCodeLocal = input.claudeCodeLocal ? Object.freeze({ deliver: input.claudeCodeLocal.deliver.bind(input.claudeCodeLocal) }) : undefined;
+  const codexOwnerTrustedLocal = input.codexOwnerTrustedLocal
+    ? Object.freeze({ deliver: input.codexOwnerTrustedLocal.deliver.bind(input.codexOwnerTrustedLocal) }) : undefined;
+  const remoteControllerWorker = input.remoteControllerWorker
+    ? Object.freeze({ materializer: input.remoteControllerWorker.materializer }) : undefined;
   const closeSubmission = input.nativeSubmission?.close?.bind(input.nativeSubmission);
   const capture = (resource: TaskCoordinatorDatabase) => {
     if (!resource || typeof resource.close !== "function" || typeof resource.isAvailable !== "function"
@@ -95,11 +200,14 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
     .some(resource => resource && resource.client === input.ideaCreation!.database.client))
     throw new Error("task_coordinator_config_invalid");
   const ideaPool = input.ideaCreation ? capture(input.ideaCreation.database) : undefined;
-  if (input.ideaRuntime && (!ideaPool || typeof input.ideaRuntime.close !== "function"
+  // Legacy direct-runtime assembly remains below only to preserve isolated
+  // fixture compatibility. The entry guard above prevents it in production.
+  const legacyIdeaRuntime = (input as { ideaRuntime?: TaskCoordinatorConfiguration["ideaRuntime"] }).ideaRuntime;
+  if (legacyIdeaRuntime && (!ideaPool || typeof legacyIdeaRuntime.close !== "function"
     || [input.database, input.resultDatabase, input.evidence?.database, input.sessions?.database, input.ideaCreation?.database]
-      .some(resource => resource?.client === input.ideaRuntime!.database.client))) throw new Error("task_coordinator_config_invalid");
-  const ideaRuntimePool = input.ideaRuntime ? capture(input.ideaRuntime.database) : undefined;
-  const closeIdeaRuntime = input.ideaRuntime?.close.bind(input.ideaRuntime);
+      .some(resource => resource?.client === legacyIdeaRuntime.database.client))) throw new Error("task_coordinator_config_invalid");
+  const ideaRuntimePool = legacyIdeaRuntime ? capture(legacyIdeaRuntime.database) : undefined;
+  const closeIdeaRuntime = legacyIdeaRuntime?.close.bind(legacyIdeaRuntime);
   const evidenceSettings = input.evidence ? captureNativeEvidenceSettings(input.evidence) : undefined;
   if (evidenceSettings && (evidenceSettings.storage.storageClass !== input.quality!.results.storageClass
     || !timingSafeEqual(evidenceSettings.storage.integrityKey, input.quality!.results.integrityKey)))
@@ -159,11 +267,15 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
     input.ideaCreation!.integrityKey, input.ideaCreation!.participants, input.clock) : undefined;
   const ideaDecision = ideaPool ? new WebIdeaDecisionOperation(guardedDatabase(ideaPool), scope,
     input.ideaCreation!.integrityKey, input.clock) : undefined;
+  let ideaProjectionService: CanonicalIdeaTaskResultProjectionServiceV1 | undefined;
   const ideaSynthesis = ideaPool ? new WebIdeaSynthesisOperation(guardedDatabase(ideaPool), scope,
-    input.ideaCreation!.integrityKey, input.clock) : undefined;
+    input.ideaCreation!.integrityKey, input.clock, { project: async (sessionId, taskKey) => {
+      if (!ideaProjectionService) throw new Error("idea_result_projection_not_configured");
+      return ideaProjectionService.project({ tenantId: scope.tenantId, workspaceId: scope.workspaceId, sessionId, taskKey });
+    } }) : undefined;
   const ideaStart = (() => {
     if (!ideaRuntimePool) return undefined;
-    const source = input.ideaRuntime!.runtime;
+    const source = legacyIdeaRuntime!.runtime;
     if (source.driver.mode !== "hermes_bot_mode_filtered") throw new Error("task_coordinator_config_invalid");
     const resolve = source.resolve.bind(source), invoke = source.driver.invoke.bind(source.driver),
       verify = source.evidenceAuthority.verify.bind(source.evidenceAuthority), consume = source.admissionAuthority.consume.bind(source.admissionAuthority);
@@ -177,14 +289,26 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
       }, input.clock);
   })();
   // Constructors validate and snapshot immutable templates, keys, route records and scope without SQL.
-  const planner = new TaskExecutionPlanner(db, scope, input.planning, input.clock, input.revisionPlanning ? input.quality : undefined);
+  const planner = new TaskExecutionPlanner(db, scope, input.planning, input.clock,
+    input.revisionPlanning ? input.quality : undefined, input.resultInspectionSource);
   const assignment = new TaskAssignmentCoordinator(db, scope, planner, input.routes, input.clock,
-    input.approvals?.enrollments, input.approvals?.store, nativeSubmission, input.codex);
+    input.approvals?.enrollments, input.approvals?.store, nativeSubmission, input.codex, transitionAdmission);
   if (input.quality && (input.quality.integrityKey.length !== input.planning.reviewIntegrityKey.length
     || !timingSafeEqual(input.quality.integrityKey, input.planning.reviewIntegrityKey)))
     throw new Error("task_coordinator_config_invalid");
-  const qualityCoordinator = input.quality ? new TaskQualityCoordinator(db, scope, input.quality, input.clock) : undefined;
+  const qualityCoordinator = input.quality ? new TaskQualityCoordinator(db, scope, input.quality, input.clock, input.resultInspectionSource) : undefined;
   const resultCoordinator = resultPool ? new TaskResultCoordinator(guardedDatabase(resultPool), scope, input.planning, input.quality!, input.clock) : undefined;
+  // Result projection deliberately runs through the fixed native-result role,
+  // after private-web authentication. It does not use the web role to write
+  // Idea records and it does not reuse the legacy Idea provider runtime.
+  ideaProjectionService = ideaPool && resultPool && input.quality
+    ? new CanonicalIdeaTaskResultProjectionServiceV1(guardedDatabase(resultPool),
+      new IdeaLabProjectRegistryStoreV1(guardedDatabase(resultPool), input.ideaCreation!.integrityKey),
+      new IdeaLabCanonicalTaskLinkStoreV1(guardedDatabase(resultPool), input.ideaCreation!.integrityKey),
+      new NativeResultStore(guardedDatabase(resultPool), input.quality.harnessIntegrityKey, input.quality.results),
+      new CompletionGateStoreV1(guardedDatabase(resultPool), input.quality.integrityKey, input.quality.checkpoints,
+        () => new Date((input.clock ?? Date.now)()).toISOString()), input.planning.reviewIntegrityKey,
+      () => new Date((input.clock ?? Date.now)()).toISOString()) : undefined;
   const receiver = evidencePool ? new NativeEvidenceReceiver(guardedDatabase(evidencePool), {
     ...evidenceSettings!, scope, harnessIntegrityKey: input.quality!.harnessIntegrityKey,
     results: { ...scope, register: resultCoordinator!.register.bind(resultCoordinator), submit: resultCoordinator!.submit.bind(resultCoordinator) },
@@ -256,6 +380,13 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
       return run(() => ideaService.create(actor, request.data, key));
     },
   }) : undefined;
+  const ideaResultProjection: IdeaCanonicalResultProjectionOperation | undefined = ideaProjectionService ? Object.freeze({ ...scope,
+    project: (sessionId, taskKey) => run(async () => {
+      const saved = await ideaProjectionService.project({ tenantId: scope.tenantId, workspaceId: scope.workspaceId, sessionId, taskKey });
+      return { contribution: { contributionId: saved.contribution.contributionId, contributionDigest: saved.contribution.contributionDigest },
+        replayed: saved.replayed };
+    }),
+  }) : undefined;
   const sessions = sessionPool ? new ManagedNativeSessions(guardedDatabase(sessionPool), sessionSettings!, scope, {
     queue: nativeSubmission ? { locate: assignment.locateQueuedHarnessDelivery.bind(assignment),
       ...(nativeSubmission.recoverUnsentInSession ? { ready: assignment.recoverForReadyNode.bind(assignment) } : {}),
@@ -274,9 +405,18 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
     isReady: () => { try { check(); return !closing && !invalid; } catch { return false; } }, clock: input.clock }) : undefined;
   const planning: TaskPlanningOperation = Object.freeze({ ...scope, plan: (...args) => run(() => planner.plan(...args)),
     supportsProject: projectId => { check(); return !closing && planner.supportsProject(projectId); },
+    templatesForProject: projectId => { check(); return !closing ? planner.templatesForProject(projectId) : []; },
     readSaved: (identity, projectId, sourceJobId) => {
       const actor = { ...identity };
       return run(() => planner.readSaved(actor, projectId, sourceJobId));
+    },
+    readPreparedWorker: (identity, projectId, jobId) => {
+      const actor = { ...identity };
+      return run(() => planner.readPreparedWorker(actor, projectId, jobId));
+    },
+    readConfiguredLocalRoute: (identity, projectId, jobId) => {
+      const actor = { ...identity };
+      return run(() => planner.readConfiguredLocalRoute(actor, projectId, jobId));
     } });
   const revisions = input.revisionPlanning ? Object.freeze({ ...scope,
     plan: (identity: Parameters<TaskExecutionPlanner["revise"]>[0], projectId: string, sourceJobId: string,
@@ -287,7 +427,8 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
   }) : undefined;
   const assignments: TaskAssignmentOperation = Object.freeze({ ...scope,
     assign: (...args) => run(() => assignment.assign(...args)), expire: (...args) => run(() => assignment.expire(...args)),
-    options: (...args) => run(() => assignment.options(...args)) });
+    options: (...args) => run(() => assignment.options(...args)),
+    projectOptions: (...args) => run(() => assignment.projectOptions(...args)) });
   const approvals: TaskApprovalOperation | undefined = input.approvals ? Object.freeze({ ...scope,
     prepare: (...args: Parameters<TaskApprovalOperation["prepare"]>) => run(() => assignment.prepareNativeApproval(...args)),
     read: (...args: Parameters<TaskApprovalOperation["read"]>) => run(() => assignment.readNativeApproval(...args)),
@@ -306,6 +447,33 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
       const [identity, projectId, jobId, inputDigest, packetDigest, signal] = args;
       const actor = { ...identity };
       return run(() => assignment.enqueueNativeTask(actor, projectId, jobId, inputDigest, packetDigest, signal));
+    },
+  }) : undefined;
+  /**
+   * The Mac-local counterpart of `submission`. Its `enqueue` reaches only the
+   * three owner-trusted local adapters (dispatched by the stored job's type,
+   * inside `TaskAssignmentCoordinator.enqueueMacLocalTask`); the remote,
+   * signed-packet `enqueueNativeTask` is never wired into this object, so it
+   * cannot be reached from a Mac-local composition that uses this field
+   * instead of `submission`. `read`/`readDelivery` are the same generic
+   * queue/delivery readers `submission` already uses — the local adapters
+   * share the same durable queue table, so no separate reader is needed.
+   */
+  const macLocalSubmission = nativeSubmission ? Object.freeze({ ...scope,
+    readDelivery: (identity: Parameters<TaskAssignmentCoordinator["readNativeDeliveryStatus"]>[0], projectId: string, jobId: string, digest: string) => {
+      const actor = { ...identity };
+      return run(() => assignment.readNativeDeliveryStatus(actor, projectId, jobId, digest));
+    },
+    read: (...args: Parameters<TaskAssignmentCoordinator["readNativeTaskQueue"]>) => run(() => assignment.readNativeTaskQueue(...args)),
+    preview: (...args: Parameters<TaskAssignmentCoordinator["previewMacLocalTask"]>) => {
+      const [identity, projectId, jobId, inputDigest] = args;
+      const actor = { ...identity };
+      return run(() => assignment.previewMacLocalTask(actor, projectId, jobId, inputDigest));
+    },
+    enqueue: (...args: Parameters<TaskAssignmentCoordinator["enqueueMacLocalTask"]>) => {
+      const [identity, projectId, jobId, inputDigest, packetDigest, signal] = args;
+      const actor = { ...identity };
+      return run(() => assignment.enqueueMacLocalTask(actor, projectId, jobId, inputDigest, packetDigest, signal));
     },
   }) : undefined;
   const queueRecovery = nativeSubmission?.recoverUnsentInSession ? Object.freeze({ ...scope,
@@ -344,12 +512,41 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
   }) : undefined;
   return Object.freeze({ planning, assignment: assignments, ...(approvals ? { approvals } : {}), ...(quality ? { quality } : {}),
     ...(ideaCreation ? { ideaCreation } : {}),
-    ...(nativeSubmission && sessions ? { queueDelivery: async (ref: Parameters<ManagedNativeSessions["deliverApproved"]>[0], signal: AbortSignal) => {
+    ...(ideaResultProjection ? { ideaResultProjection } : {}),
+    ...(nativeSubmission && (sessions || hermes021Local || hermesLocal || claudeCodeLocal || codexOwnerTrustedLocal || remoteControllerWorker) ? { queueDelivery: async (ref: Parameters<ManagedNativeSessions["deliverApproved"]>[0], signal: AbortSignal) => {
+      const remote = await assignment.locateQueuedRemoteControllerWorkerDelivery(ref, signal);
+      if (remote) {
+        if (!remoteControllerWorker || signal.aborted) throw new Error("native_task_delivery_unresolved");
+        return deliverVerifiedRemoteControllerWorkerQueueTaskV1({ reference: ref, signal, target: remote,
+          materializer: remoteControllerWorker.materializer });
+      }
+      const target = await assignment.locateQueuedHarnessDelivery(ref, signal);
+      if (target.kind === "hermes-021-local") {
+        if (!hermes021Local || signal.aborted) throw new Error("native_task_delivery_unresolved");
+        return deliverVerifiedHermes021LocalQueueTaskV1({ reference: ref, signal, target,
+          deliver: hermes021Local.deliver });
+      }
+      if (target.kind === "hermes-local") {
+        if (!hermesLocal || signal.aborted) throw new Error("native_task_delivery_unresolved");
+        return deliverVerifiedHermesLocalQueueTaskV1({ reference: ref, signal, target, deliver: hermesLocal.deliver });
+      }
+      if (target.kind === "claude-code-local") {
+        if (!claudeCodeLocal || signal.aborted) throw new Error("native_task_delivery_unresolved");
+        return deliverVerifiedClaudeCodeLocalQueueTaskV1({ reference: ref, signal, target,
+          deliver: claudeCodeLocal.deliver });
+      }
+      if (target.kind === "codex-owner-trusted-local") {
+        if (!codexOwnerTrustedLocal || signal.aborted) throw new Error("native_task_delivery_unresolved");
+        return deliverVerifiedCodexOwnerTrustedLocalQueueTaskV1({ reference: ref, signal, target,
+          deliver: codexOwnerTrustedLocal.deliver });
+      }
+      if (!sessions) throw new Error("native_task_delivery_unresolved");
       const result = await sessions.deliverApproved(ref, signal);
       if (!result.transmissionRecorded || !result.deliveryConfirmed) throw new Error("native_task_delivery_unresolved");
       return { disposition: "delivered" as const };
     } } : {}),
     ...(submission ? { submission } : {}),
+    ...(macLocalSubmission ? { macLocalSubmission } : {}),
     ...(sessions && nativeSubmission?.recoverUnsentInSession ? {
       queueAttention: Object.freeze({ ...scope, read: sessions.queueAttention.bind(sessions) }),
     } : {}),

@@ -4,6 +4,73 @@ import { createTaskSubmissionBrowserClient } from "../../src/web/v1/task-submiss
 import { BrowserRequestError } from "../../src/web/v1/browser-client";
 import type { z } from "zod";
 import type { taskDeliveryStatusSchema } from "../../src/web/v1/task-delivery-wire";
+import type { TaskDetail } from "../../src/web/v1/task-wire";
+import type { taskSubmissionReadSchema } from "../../src/web/v1/task-submission-wire";
+
+type SubmissionRead = z.infer<typeof taskSubmissionReadSchema>;
+
+/** The Mac-local path is selected only by a fresh server preview, never by a browser setting. */
+export function PrivateMacLocalTaskSubmission({ detail }: { detail: TaskDetail }) {
+  const [client] = useState(() => createTaskSubmissionBrowserClient());
+  const [read, setRead] = useState<SubmissionRead>();
+  const [status, setStatus] = useState<"checking" | "ready" | "recorded" | "not_ready" | "uncertain">("checking");
+  const [pending, setPending] = useState(false);
+  const busy = useRef(false), generation = useRef(0);
+  const { projectId, jobId } = detail.task, inputDigest = detail.inputDigest;
+  useEffect(() => {
+    const current = ++generation.current; let live = true;
+    setRead(undefined); setStatus("checking");
+    void client.read(projectId, jobId, inputDigest).then(value => {
+      if (!live || current !== generation.current) return;
+      setRead(value); setStatus(value.receipt ? "recorded" : value.preview && !client.hasPending() ? "ready" : client.hasPending() ? "uncertain" : "not_ready");
+    }).catch(() => { if (live && current === generation.current) setStatus(client.hasPending() ? "uncertain" : "not_ready"); });
+    return () => { live = false; };
+  }, [client, projectId, jobId, inputDigest]);
+  async function check() {
+    if (busy.current) return;
+    busy.current = true; setPending(true); setStatus("checking"); setRead(undefined);
+    const current = ++generation.current;
+    try {
+      const value = await client.read(projectId, jobId, inputDigest);
+      if (current === generation.current) {
+        setRead(value); setStatus(value.receipt ? "recorded" : value.preview && !client.hasPending() ? "ready" : client.hasPending() ? "uncertain" : "not_ready");
+      }
+    } catch { if (current === generation.current) setStatus(client.hasPending() ? "uncertain" : "not_ready"); }
+    finally { busy.current = false; setPending(false); }
+  }
+  async function submit() {
+    const expected = read?.preview?.packetDigest;
+    if (!expected || status !== "ready" || busy.current || client.hasPending()) return;
+    busy.current = true; setPending(true); setRead(undefined); setStatus("checking");
+    const current = ++generation.current;
+    try {
+      // Re-read immediately before posting. A vanished or changed preview is not permission to submit.
+      const fresh = await client.read(projectId, jobId, inputDigest);
+      if (!fresh.preview || fresh.receipt || fresh.preview.packetDigest !== expected) {
+        if (current === generation.current) { setRead(fresh); setStatus(fresh.receipt ? "recorded" : "not_ready"); }
+        return;
+      }
+      await client.submit(projectId, jobId, inputDigest, expected);
+      const recorded = await client.read(projectId, jobId, inputDigest, expected);
+      if (current === generation.current) { setRead(recorded); setStatus(recorded.receipt ? "recorded" : "uncertain"); }
+    } catch { if (current === generation.current) setStatus(client.hasPending() ? "uncertain" : "not_ready"); }
+    finally { busy.current = false; setPending(false); }
+  }
+  // Hosted reads have no preview; keep their existing signed-approval UI unchanged.
+  if (status === "not_ready" && !read?.receipt) return null;
+  if (status === "checking" && !read && !pending) return null;
+  return <section className="private-panel" aria-label="Mac-local task submission"><h2>Submit local task</h2>
+    {read?.preview && status === "ready" && <><p>Agent: {detail.preparedFor ?? "assigned worker"} · Task: {detail.task.title}</p>
+      <p>What will run: {detail.instructions}</p><p>Preview: {read.preview.packetDigest.slice(0, 19)}…</p>
+      <button type="button" disabled={pending} onClick={() => { void submit(); }}>Submit task</button></>}
+    {status === "recorded" && read?.receipt && <><p role="status">Submission recorded at {read.receipt.queuedAt}. This does not confirm that an agent has started or finished.</p>
+      <p>Receipt: {read.receipt.queueId}</p></>}
+    {status === "uncertain" && <p role="alert">Submission could not be confirmed. Check its receipt; do not resubmit.</p>}
+    {status === "not_ready" && <p role="status">This task is not ready to submit. Check again after it is assigned.</p>}
+    {read?.delivery && <p>Delivery: {read.delivery.state}. Checked {read.delivery.observedAt}.</p>}
+    <button type="button" disabled={pending} onClick={() => { void check(); }}>Check submission</button>
+  </section>;
+}
 
 export function PrivateTaskSubmission({ projectId, jobId, inputDigest, packetDigest, client: suppliedClient }: {
   projectId: string; jobId: string; inputDigest: string; packetDigest: string; client?: ReturnType<typeof createTaskSubmissionBrowserClient>;

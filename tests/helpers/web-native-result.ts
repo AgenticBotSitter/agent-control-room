@@ -25,8 +25,8 @@ function runRunDigest(runId: string, tag: string, prefix: "sha256" | "hmac-sha25
   return `${prefix}:${hex}`;
 }
 
-export async function webNativeResultFixture() {
-  const f = await nativeTaskFixture(), scope = { tenantId: binding.tenantId, workspaceId: "workspace:test" };
+export async function webNativeResultFixture(options: { exactRepositorySimulation?: true } = {}) {
+  const f = await nativeTaskFixture(options), scope = { tenantId: binding.tenantId, workspaceId: "workspace:test" };
   await f.db.query("INSERT INTO workspaces(id,tenant_id,display_name) VALUES('workspace:test','tenant:test','Result fixture')");
   await new SecurityStore(f.db).bootstrapOwner({ tenantId: scope.tenantId, provider: trust.issuer, subject: "test-owner",
     identityId: "identity:test", grantId: "grant:test", displayName: "Synthetic owner", verifiedAt: at(-60_000), expiresAt: at(600_000), now: at() });
@@ -74,9 +74,9 @@ export async function webNativeResultFixture() {
       runTag = runRunDigest(runId, "run-tag-", "hmac-sha256");
     await f.db.query(`INSERT INTO control_jobs(id,tenant_id,workflow_id,project_id,state,version,priority,required_capability,authority_digest,payload,created_at,updated_at)
       VALUES ($1,'tenant:test','workflow:test',$2,'leased',2,50,'capability:fixture',$3,$4,$5,$5)`,
-      [jobId, binding.projectId, keyDigest, JSON.stringify({
+      [jobId, binding.projectId, authorityDigest, JSON.stringify({
         id: jobId, kind: "job", state: "leased", jobType: "hermes-native-evidence-fixture", version: 2,
-        priority: 50, tenantId: binding.tenantId, authority: { digest: keyDigest, maxRisk: "low",
+        priority: 50, tenantId: binding.tenantId, authority: { digest: authorityDigest, maxRisk: "low",
           expiresAt: at(600_000), projectId: binding.projectId, effectPolicy: "none", networkPolicy: "none",
           credentialRefs: [], allowedExecutor: "executor:fixture", filesystemRoots: [], allowedOperations: ["operation:fixture"],
           maxDurationSeconds: 600, maxConcurrentEffects: 0, allowedNetworkDestinations: [] },

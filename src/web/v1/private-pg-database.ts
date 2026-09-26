@@ -4,12 +4,25 @@ import { createPrivatePgDriver } from "./private-pg-driver";
 import { privatePgOptions } from "./private-pg-options";
 import { qualifyPrivatePgSession } from "./private-pg-qualification";
 import type { PrivatePostgresConfiguration } from "./private-postgres";
+import type { DatabaseClient } from "../../persistence/database";
+import { isHostProxyV1 } from "../../security/host-value";
+
+const privatePgDatabaseClients = new WeakSet<object>();
+
+/** True only for the application client created around this module's real pg Pool. */
+export function isPrivatePgDatabaseClientV1(value: unknown): value is DatabaseClient {
+  return !!value && typeof value === "object" && !isHostProxyV1(value)
+    && privatePgDatabaseClients.has(value) && Object.isFrozen(value)
+    && Object.getPrototypeOf(value) === Object.prototype;
+}
 
 /** Explicit construction boundary. Pool construction is lazy; no credentials are
  * discovered and no server is contacted by importing this module. */
 export function createPrivatePgDatabase(config: PrivatePostgresConfiguration) {
   const pool = new Pool(privatePgOptions(config));
-  return bindPrivatePgPool(pool);
+  const database = bindPrivatePgPool(pool);
+  privatePgDatabaseClients.add(database.client);
+  return database;
 }
 
 /** Attach lifecycle observers before any checkout can begin. The pool's end

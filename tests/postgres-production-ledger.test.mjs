@@ -17,7 +17,7 @@ const ROOT = new URL("..", import.meta.url).pathname;
 
 test("committed ledger matches the working tree", async () => {
   const result = await verifyMigrationLedger({ rootDir: ROOT });
-  assert.equal(result.files, 82);
+  assert.equal(result.files, 88);
   assert.match(result.digest, /^[a-f0-9]{64}$/);
 });
 
@@ -74,7 +74,7 @@ test("ledger refuses altered, missing, extra and reordered files", async t => {
 test("operator tools are inert without explicit targets", async () => {
   const planned = await applyMigrations({});
   assert.equal(planned.planned, true);
-  assert.equal(planned.files, 82);
+  assert.equal(planned.files, 88);
   const backup = await backupDatabase({});
   assert.equal(backup.planned, true);
   const restore = await restoreDatabase({});
@@ -149,7 +149,7 @@ test("migration CLI refuses the removed single-target form and partial pairs", a
   // No flags: effect-free plan, exit 0, no connection attempted.
   const plan = JSON.parse((await cli([])).stdout);
   assert.equal(plan.planned, true);
-  assert.equal(plan.files, 82);
+  assert.equal(plan.files, 88);
   // The documented single --target form never worked: loud refusal, non-zero exit.
   await assert.rejects(cli(["--target", "host=/none dbname=x user=y"]), /migration_removed_flag/);
   // Partial pairs are refused before any connection.

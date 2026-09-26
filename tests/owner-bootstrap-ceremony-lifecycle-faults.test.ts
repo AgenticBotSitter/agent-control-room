@@ -7,7 +7,7 @@ test("durable lifecycle claim and completion timeouts become terminal uncertaint
     const base = syntheticLifecycle();
     const lifecycle = kind === "claim" ? { ...base, claim: () => new Promise<void>(() => {}) }
       : { ...base, complete: () => new Promise<void>(() => {}) };
-    const x = await prepared(undefined, lifecycle); t.after(() => x.raw.close());
+    const x = await prepared(undefined, lifecycle, { controlDeadlineMs: 20 }); t.after(() => x.raw.close());
     let closes = 0;
     if (kind === "claim") {
       await assert.rejects(x.ceremony.arm(x.attempt({ async close() { closes++; } })), /control_uncertain/);
