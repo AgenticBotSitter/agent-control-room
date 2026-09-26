@@ -100,6 +100,35 @@ test("the workflow routes malformed embedded commands so the controller can expl
   assert.match(formatClaimResult({ status: "ignored" }, body), /CLAIM COMMAND NOT APPLIED/);
 });
 
+test("prose-only claim mentions produce neither API work nor a format reply", async () => {
+  for (const header of ["CLAIM REQUEST", "CLAIM RENEW", "CLAIM SUBMIT", "CLAIM RELEASE"]) {
+    for (const body of [`We discussed ${header} in the handbook.`, `Use \`${header}\` only when ready.`,
+      `Progress update\nThe ${header} command remains unchanged.`]) {
+      const api = fakeApi();
+      const result = await runClaimController({ event: event(body), repository, api });
+      assert.equal(parseClaimCommand(body), undefined);
+      assert.deepEqual(result, { status: "ignored" });
+      assert.equal(api.calls.length, 0);
+      assert.equal(formatClaimResult(result, body), undefined, body);
+    }
+  }
+});
+
+test("malformed command lines still receive header-specific format help", () => {
+  for (const header of ["CLAIM REQUEST", "CLAIM RENEW", "CLAIM SUBMIT", "CLAIM RELEASE"]) {
+    for (const body of [`${header} extra\nworker-id: worker:test-01`,
+      `<!-- hidden prefix -->\n${header}\nworker-id: worker:test-01\nextra: value`,
+      `Intro\r\n${header}\r\nworker-id: worker:test-01`]) {
+      assert.equal(parseClaimCommand(body), undefined);
+      const reply = formatClaimResult({ status: "ignored" }, body);
+      assert.match(reply, /CLAIM COMMAND NOT APPLIED/);
+      assert.ok(reply.includes(`\n${header}\nworker-id: YOUR-STABLE-WORKER-ID`));
+    }
+  }
+  for (const body of [undefined, null, 42, "", "CLAIM REQUESTED is not a command"])
+    assert.equal(formatClaimResult({ status: "ignored" }, body), undefined);
+});
+
 test("one ready issue receives one accepted marker, current main base and a label-safe transition", async () => {
   const api = fakeApi();
   const result = await runClaimController({ event: event(), repository, api });
