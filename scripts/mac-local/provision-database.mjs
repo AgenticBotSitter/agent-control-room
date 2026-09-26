@@ -451,7 +451,8 @@ async function runRemoteUpgradeReadOnly({ sshTarget }) {
     child.once("error", () => finish(rejectPromise, new Error("upgrade_read_only_ssh_refused")));
     child.stdin.once("error", () => { child.kill("SIGKILL"); finish(rejectPromise, new Error("upgrade_read_only_stdin_refused")); });
     child.once("close", code => code === 0 ? finish(resolvePromise, stdout)
-      : finish(rejectPromise, new Error("upgrade_read_only_query_refused")));
+      : finish(rejectPromise, new Error(code === 255 ? "upgrade_read_only_ssh_refused"
+        : "upgrade_read_only_query_refused")));
     child.stdin.end(sql);
   });
   try {
@@ -460,15 +461,12 @@ async function runRemoteUpgradeReadOnly({ sshTarget }) {
   } catch { throw new Error("upgrade_read_only_report_refused"); }
 }
 
-async function runRemoteUpgrade({ sshTarget, remoteWorktree, dryRun, migratorPassword, publisherPassword,
-  sourceRef = "codex/mac-db-upgrade" }) {
-  if (!["codex/mac-db-upgrade", "main"].includes(sourceRef)) throw new Error("upgrade_source_refused");
+async function runRemoteUpgrade({ sshTarget, remoteWorktree, dryRun, migratorPassword, publisherPassword }) {
   const expectedHead = (await exec("git", ["rev-parse", "HEAD"], { cwd: repoRoot, encoding: "utf8" })).stdout.trim();
   const dirty = (await exec("git", ["status", "--porcelain"], { cwd: repoRoot, encoding: "utf8" })).stdout;
   if (!/^[a-f0-9]{40}$/u.test(expectedHead) || dirty) throw new Error("upgrade_source_checkout_refused");
-  // Fetch main as the authority for migrations and roles. Until this upgrade
-  // code merges, stage the review branch and refuse if its database sources
-  // differ from main. The staged source is removed on every exit path.
+  // Fetch only main as the authority for migrations and roles. The staged
+  // source is removed on every exit path.
   const stage = `/var/tmp/control-room-upgrade-${randomBytes(12).toString("hex")}`;
   const remoteBody = String.raw`set -eu
 umask 077
@@ -481,7 +479,7 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 git -C "$checkout" fetch --quiet origin main
 main_head=$(git -C "$checkout" rev-parse FETCH_HEAD)
-git -C "$checkout" fetch --quiet origin ${sourceRef}
+git -C "$checkout" fetch --quiet origin main
 test "$(git -C "$checkout" rev-parse FETCH_HEAD)" = ${expectedHead}
 git -C "$checkout" diff --quiet "$main_head" FETCH_HEAD -- db/roles db/migrations deploy/postgres/migration-ledger.json
 git -C "$checkout" worktree add --quiet --detach "$stage" FETCH_HEAD
@@ -565,7 +563,7 @@ export async function upgradeMacLocalDatabaseV1(options) {
   }
   const inspect = options.runRemote ?? (request => request.dryRun
     ? runRemoteUpgradeReadOnly(request) : runRemoteUpgrade(request));
-  const before = await inspect({ sshTarget, remoteWorktree, dryRun: true, sourceRef: options.sourceRef });
+  const before = await inspect({ sshTarget, remoteWorktree, dryRun: true });
   if (options.dryRun) return before;
   const missingPublisher = before.createRoles.includes(roleNames.publisher);
   const publisherFile = join(passwordRoot, `${roleNames.publisher}.txt`);
@@ -574,7 +572,7 @@ export async function upgradeMacLocalDatabaseV1(options) {
   else publisherPassword = await readPrivatePassword(publisherFile);
   const migratorPassword = await readPrivatePassword(join(passwordRoot, `${bootstrapRoles.migrator}.txt`));
   const result = await inspect({ sshTarget, remoteWorktree, dryRun: false, migratorPassword,
-    publisherPassword, sourceRef: options.sourceRef });
+    publisherPassword });
   const publisher = validatePrivatePostgresConfiguration({ ...oldRoles.web,
     username: roleNames.publisher, password: publisherPassword });
   const nextRoles = { ...oldRoles, publisher };

@@ -60,6 +60,7 @@ test("upgrade dry run changes no protected file; real convergence adds only publ
   let live = false, calls = 0;
   const runRemote = async request => {
     calls += 1;
+    assert.equal(request.sourceRef, undefined, "upgrade cannot select a review branch");
     if (request.dryRun) return live ? { pendingMigrations: [], createRoles: [],
       membership: { missing: [], extra: [] }, grants: { missing: [], extra: [] } } : initial;
     assert.equal(request.migratorPassword, values.control_room_migrator);
