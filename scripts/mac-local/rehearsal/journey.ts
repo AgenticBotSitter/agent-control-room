@@ -330,9 +330,44 @@ async function main() {
     assert.equal(afterOptions.canReview, false);
     assert.equal(afterOptions.availability, "already_reviewed");
     assert.equal(afterOptions.ownReview?.reviewId, recorded.receipt.reviewId);
+    const taskUrl = new URL(`/api/v1/projects/${idOf(projectId)}/tasks/${idOf(jobId)}`, origin);
+    let taskState = "", attemptState = "";
+    if (decision === "accepted") {
+      const completed = await waitFor(async () => {
+        const taskResponse = await fetch(taskUrl, { headers: { cookie } });
+        if (taskResponse.status !== 200) return false;
+        const taskBody = await taskResponse.json() as { task: { state: string }; attempts: { state: string }[] };
+        taskState = taskBody.task.state; attemptState = taskBody.attempts[0]?.state ?? "";
+        if (taskState !== "succeeded" || attemptState !== "succeeded") return false;
+        const resultsResponse = await fetch(new URL(`/api/v1/projects/${idOf(projectId)}/tasks/${idOf(jobId)}/results`, origin),
+          { headers: { cookie } });
+        if (resultsResponse.status !== 200) return false;
+        after = await resultsResponse.json() as NonNullable<typeof pendingPage>;
+        return after.items.length === 1 && after.reviews.length === 1
+          && after.reviews[0]?.reviews.length === 1 && after.reviews[0]?.reviews[0]?.decision === "accepted";
+      }, 55);
+      assert.ok(completed, `${agent.kind}: accepted result must complete exactly once through the Mac-local quality sweep (task=${taskState}, attempt=${attemptState})`);
+      assert.equal(after.reviews[0]?.status, "ready", `${agent.kind}: verified accepted result must reach ready`);
+      // Observe the canonical terminal state again. A replayed automatic sweep must not add a second result, review, or attempt.
+      const stableTask = await requireOk(await fetch(taskUrl, { headers: { cookie } }), 200, `${agent.kind} completed task replay`) as
+        { task: { state: string }; attempts: { state: string }[] };
+      const stableResults = await requireOk(await fetch(new URL(`/api/v1/projects/${idOf(projectId)}/tasks/${idOf(jobId)}/results`, origin),
+        { headers: { cookie } }), 200, `${agent.kind} completed result replay`) as NonNullable<typeof pendingPage>;
+      assert.equal(stableTask.task.state, "succeeded");
+      assert.equal(stableTask.attempts[0]?.state, "succeeded");
+      assert.equal(stableResults.items.length, 1);
+      assert.equal(stableResults.reviews.length, 1);
+      assert.equal(stableResults.reviews[0]?.reviews.length, 1);
+    } else {
+      const unchangedTask = await requireOk(await fetch(taskUrl, { headers: { cookie } }), 200, `${agent.kind} changes-requested task`) as
+        { task: { state: string } };
+      taskState = unchangedTask.task.state;
+      assert.notEqual(taskState, "succeeded", `${agent.kind}: changes-requested result must not complete`);
+      assert.equal(after.reviews[0]?.status, "changes_requested");
+    }
     outcomes[agent.kind] = { jobId: jobId.slice(0, 24), packetDigest: packetDigest.slice(0, 19),
       queueId: submittedBody.queueId.slice(0, 24), items, reviewStatus: after.reviews[0]?.status,
-      ownerDecision: decision, reviewCount: after.reviews[0]?.reviews.length };
+      ownerDecision: decision, reviewCount: after.reviews[0]?.reviews.length, taskState, attemptState };
   }
 
   process.stdout.write(`Package 6b journey: PASS ${JSON.stringify(outcomes)}\n`);

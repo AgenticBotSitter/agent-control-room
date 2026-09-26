@@ -42,6 +42,9 @@ export type OwnerTrustedLocalCliDeliveryV1 = Readonly<{
    * publisher. This bridge neither creates a result record nor a second store. */
   publish(input: Readonly<{ delivery: ControllerWorkerDeliveryV1; receipt: ControllerWorkerDeliveryReceiptV1;
     text: string; signal: AbortSignal }>): Promise<void>;
+  /** Records an observed failed process without creating a result. */
+  recordFailure(input: Readonly<{ delivery: ControllerWorkerDeliveryV1; receipt: ControllerWorkerDeliveryReceiptV1;
+    signal: AbortSignal }>): Promise<void>;
 }>;
 
 function validBinding(binding: unknown): binding is OwnerTrustedLocalCliDeliveryBindingV1 {
@@ -57,7 +60,7 @@ function validate(config: OwnerTrustedLocalCliDeliveryV1, delivery: ControllerWo
   if (!config || !config.db || typeof config.db.transaction !== "function" || !(config.integrityKey instanceof Uint8Array)
     || config.integrityKey.length !== 32 || !validBinding(config.binding) || !config.receiptPort
     || typeof config.receiptPort.receive !== "function" || typeof config.assertCurrent !== "function"
-    || typeof config.execute !== "function" || typeof config.publish !== "function" || route.kind !== "local"
+    || typeof config.execute !== "function" || typeof config.publish !== "function" || typeof config.recordFailure !== "function" || route.kind !== "local"
     || route.workerId !== config.binding.workerId || delivery.worker.workerId !== config.binding.workerId
     || delivery.worker.adapterId !== config.binding.adapterId || delivery.worker.adapterRevision !== config.binding.adapterRevision) unavailable();
 }
@@ -113,8 +116,11 @@ export async function deliverOwnerTrustedLocalCliTaskV1(config: OwnerTrustedLoca
     if (signal.aborted) return Object.freeze({ delivery, receipt, state: "delivery_cancelled" as const,
       startsWork: false as const, grantsExecutionAuthority: false as const });
     const execution = result(await config.execute(Object.freeze({ delivery, receipt, signal })));
-    if (execution.kind === "failed") return Object.freeze({ delivery, receipt, state: "execution_failed" as const,
-      reason: execution.reason, startsWork: false as const, grantsExecutionAuthority: false as const });
+    if (execution.kind === "failed") {
+      await config.recordFailure(Object.freeze({ delivery, receipt, signal }));
+      return Object.freeze({ delivery, receipt, state: "execution_failed" as const,
+        reason: execution.reason, startsWork: false as const, grantsExecutionAuthority: false as const });
+    }
     // A text CLI can run for minutes. Re-check cancellation and the existing
     // canonical lease immediately before publication; an earlier pre-spawn
     // check is never permission to publish a result after revocation.

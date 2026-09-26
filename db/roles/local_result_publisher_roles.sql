@@ -31,7 +31,7 @@ GRANT SELECT ON control_jobs, control_attempts, adapter_registry,
   control_durable_result_write_reservations, control_native_review_plans,
   audit_events, control_audit_chain_heads
   TO control_room_local_result_publisher;
-GRANT INSERT ON control_harness_runs, control_artifact_manifests, control_native_artifact_receipts,
+GRANT INSERT ON control_harness_runs, control_harness_run_events, control_artifact_manifests, control_native_artifact_receipts,
   control_durable_result_write_reservations, control_native_review_plans,
   audit_events, control_audit_chain_heads
   TO control_room_local_result_publisher;
@@ -39,6 +39,8 @@ GRANT INSERT ON control_harness_runs, control_artifact_manifests, control_native
 -- before every insert (replay check); ensureNeutralReviewPlan does the same on
 -- control_native_review_plans. Neither table is ever really updated by this role.
 GRANT UPDATE (publisher_lock) ON control_harness_runs TO control_room_local_result_publisher;
+GRANT UPDATE (state,last_sequence,run_digest,run_auth_tag,payload,updated_at,last_observed_at)
+  ON control_harness_runs TO control_room_local_result_publisher;
 GRANT UPDATE (publisher_lock) ON control_native_review_plans TO control_room_local_result_publisher;
 -- The durable reservation port genuinely mutates these five columns
 -- (DurableReservationPostgresPort.compareAndSwap); identity and created_at stay immutable.

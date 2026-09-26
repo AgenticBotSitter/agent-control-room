@@ -2,6 +2,8 @@ import { z } from "zod";
 import type { DatabaseClient } from "../../persistence/database";
 import { HarnessRunStoreV1 } from "./store";
 import type { HarnessRunV1 } from "./types";
+import type { HarnessRunState } from "./types";
+import { sha256Digest } from "../../security";
 import { controllerWorkerDeliverySchemaV1, controllerWorkerDeliveryReceiptSchemaV1 } from "./controller-worker-delivery";
 import { publishDurableResultV1, type DurableResultBindingV1,
   type DurableResultPublicationConfigurationV1 } from "../../artifacts/v1/durable-result-publication";
@@ -47,24 +49,52 @@ async function workflowIdForJob(db: DatabaseClient, tenantId: string, jobId: str
  * format: `publishDurableResultV1` and its `reviewSubmission` are the same
  * ones the private/Claude local paths already use.
  */
-export function createOwnerTrustedLocalCliPublishV1(config: OwnerTrustedLocalCliPublishConfigurationV1) {
+export function createOwnerTrustedLocalCliLifecycleV1(config: OwnerTrustedLocalCliPublishConfigurationV1) {
   if (!config || !config.db || !(config.runIntegrityKey instanceof Uint8Array) || config.runIntegrityKey.length !== 32
     || !config.publication || typeof config.registerRun !== "function") unavailable();
   const runs = new HarnessRunStoreV1(config.db, config.runIntegrityKey);
-  return async function publish(input: Readonly<{ delivery: unknown; receipt: unknown; text: string; signal: AbortSignal }>): Promise<void> {
+  async function record(input: Readonly<{ delivery: unknown; receipt: unknown; signal: AbortSignal }>, terminal: "succeeded" | "failed") {
     if (!input || !(input.signal instanceof AbortSignal) || input.signal.aborted) unavailable();
     const delivery = controllerWorkerDeliverySchemaV1.parse(input.delivery);
     const receipt = controllerWorkerDeliveryReceiptSchemaV1.parse(input.receipt);
-    const body = text.parse(input.text);
     if (receipt.deliveryId !== delivery.deliveryId || receipt.deliveryDigest !== delivery.deliveryDigest) unavailable();
-
     const run = config.registerRun(delivery, receipt.receivedAt);
     if (run.id !== delivery.identity.runId || run.tenantId !== delivery.identity.tenantId
       || run.projectId !== delivery.identity.projectId || run.jobId !== delivery.identity.jobId
       || run.attemptId !== delivery.identity.attemptId || run.nodeId !== delivery.identity.nodeId) unavailable();
     if (input.signal.aborted) unavailable();
-    await runs.create(run);
-    if (input.signal.aborted) unavailable();
+    // `create` is deliberately strict about changed projections. Reconstruct the
+    // registration from an authenticated existing run on a retry, rather than
+    // attempting to register its already-terminal projection a second time.
+    const existing = await runs.get(run.tenantId, run.id);
+    if (!existing) await runs.create(run);
+    else {
+      const initial: HarnessRunV1 = { ...existing, state: "discovered", cancelState: run.cancelState,
+        updatedAt: existing.createdAt, lastObservedAt: existing.createdAt };
+      delete initial.startedAt; delete initial.finishedAt; delete initial.safeReasonCode;
+      if (sha256Digest(initial) !== sha256Digest(run)) unavailable();
+    }
+    for (const state of (terminal === "succeeded" ? ["starting", "running", "succeeded"] : ["failed"]) as HarnessRunState[]) {
+      if (input.signal.aborted) unavailable();
+      const snapshot = await runs.inspect(run.tenantId, run.id);
+      if (!snapshot) unavailable();
+      const prior = snapshot.events.find(event => event.payload.category === "lifecycle" && event.payload.state === state);
+      if (prior) continue;
+      if (snapshot.run.state === terminal) unavailable();
+      const occurredAt = new Date(Math.max(Date.now(), Date.parse(snapshot.run.lastObservedAt))).toISOString();
+      await runs.append({ schemaVersion: "control-room-harness-event/v1", tenantId: run.tenantId, runId: run.id,
+        sequence: snapshot.events.length + 1, occurredAt, source: "adapter",
+        sourceEventKeyDigest: sha256Digest({ runId: run.id, localCliOutcome: state }),
+        payload: { category: "lifecycle", state,
+          ...(state === "failed" ? { reasonCode: "local_cli_execution_failed" } : {}) } });
+    }
+    const current = await runs.get(run.tenantId, run.id);
+    if (current?.state !== terminal) unavailable();
+    return { delivery, receipt, run };
+  }
+  async function publish(input: Readonly<{ delivery: unknown; receipt: unknown; text: string; signal: AbortSignal }>): Promise<void> {
+    const body = text.parse(input.text);
+    const { delivery, receipt, run } = await record(input, "succeeded");
 
     const workflowId = await workflowIdForJob(config.db, delivery.identity.tenantId, delivery.identity.jobId);
     if (input.signal.aborted) unavailable();
@@ -80,4 +110,9 @@ export function createOwnerTrustedLocalCliPublishV1(config: OwnerTrustedLocalCli
     await publishDurableResultV1(config.publication, { binding, bytes, receivedAt: receipt.receivedAt,
       assertAuthority: () => { if (input.signal.aborted) unavailable(); } });
   };
+  return Object.freeze({ publish, recordFailure: (input: Readonly<{ delivery: unknown; receipt: unknown; signal: AbortSignal }>) => record(input, "failed").then(() => {}) });
+}
+
+export function createOwnerTrustedLocalCliPublishV1(config: OwnerTrustedLocalCliPublishConfigurationV1) {
+  return createOwnerTrustedLocalCliLifecycleV1(config).publish;
 }

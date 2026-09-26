@@ -180,11 +180,11 @@ const publisherReads = ["workspaces", "control_identities", "control_role_grants
   "control_harness_runs", "control_harness_run_events", "control_artifact_manifests", "control_native_artifact_receipts",
   "control_durable_result_write_reservations", "control_native_review_plans",
   "audit_events", "control_audit_chain_heads"];
-const publisherInserts = new Set(["control_harness_runs", "control_artifact_manifests", "control_native_artifact_receipts",
+const publisherInserts = new Set(["control_harness_runs", "control_harness_run_events", "control_artifact_manifests", "control_native_artifact_receipts",
   "control_durable_result_write_reservations", "control_native_review_plans",
   "audit_events", "control_audit_chain_heads"]);
 const publisherUpdates: Record<string, readonly string[]> = {
-  control_harness_runs: ["publisher_lock"], control_native_review_plans: ["publisher_lock"],
+  control_harness_runs: ["publisher_lock", "state", "last_sequence", "run_digest", "run_auth_tag", "payload", "updated_at", "last_observed_at"], control_native_review_plans: ["publisher_lock"],
   control_durable_result_write_reservations: ["state", "contract_digest", "reservation", "auth_tag", "updated_at"],
   control_audit_chain_heads: ["head_hash", "event_count", "updated_at"],
 };

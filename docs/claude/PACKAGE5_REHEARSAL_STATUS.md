@@ -1,5 +1,40 @@
 # Package 5 rehearsal status
 
+## Package 6 lifecycle amendment investigation, 2026-09-25 — blocked, not accepted
+
+The owner-approved local publisher grant was applied only in the disposable PG17
+rehearsal on loopback port 15541. The publisher now has event INSERT and the
+seven run UPDATE columns matching `native_evidence_roles.sql`; its exact
+preflight map and denied-write probe were updated. The run store records
+`starting → running → succeeded` from the observed successful CLI result before
+durable publication, or `failed` without publication on an observed process
+failure. Focused publisher, bridge, replay, and role tests passed (15/15),
+TypeScript passed, and the migration ledger verified unchanged. The ledger
+tracks migration/production-role files, not this Mac-only role file; no schema
+or migration changed, so there is no new structural digest to generate.
+
+The full three-agent journey did **not** pass: after an owner acceptance, the
+Claude job remained `leased`. Read-only inspection of the disposable database
+confirmed the Claude and Hermes runs were `succeeded`, each with three signed
+lifecycle events, so the original run-state blocker is fixed. Temporary
+diagnostics in the quality sweep reported `native_review_submission_unavailable`
+and were removed. `TaskQualityCoordinator.sweep` calls
+`NativeResultSubmissionService.inspectSubmitted` via `inspectSubmitted`
+(`src/web/v1/task-quality-coordinator.ts`), but its `bound` method explicitly
+rejects any run without `nativeTask`
+(`src/completion-gate/v1/native-result-submission.ts`). The Mac-local CLI runs
+are deliberately not native-task runs. Therefore the existing native quality
+pipeline cannot verify or complete them simply by enabling a timer. The
+experimental timer was removed; no weakened check, extra grant, migration, or
+live system change was made. The disposable website and database were stopped.
+
+**Claude decision needed:** specify the existing durable-result/local completion
+service path to compose for non-native Mac-local runs, or authorize a new
+strictly bound local quality adapter. Do not make `NativeResultSubmissionService`
+accept non-native runs by deleting its `nativeTask` guard. The extended journey
+contains the desired completion assertions and remains red until that path is
+wired. No acceptance or merge should be inferred from the passing focused tests.
+
 ## Package 6 completion investigation, 2026-09-25 (stopped at authority boundary)
 
 The intended Mac-local path is automatic structural verification, **not**

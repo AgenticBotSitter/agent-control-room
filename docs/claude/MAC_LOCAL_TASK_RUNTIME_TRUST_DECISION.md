@@ -749,6 +749,17 @@ signer.**
 
 ## 15. Fifth Mac login: local result publisher (owner decision 2026-09-25)
 
+**Owner-approved lifecycle amendment, 2026-09-25:** The local result publisher
+also receives `INSERT` on `control_harness_run_events` and `UPDATE` of exactly
+`state,last_sequence,run_digest,run_auth_tag,payload,updated_at,last_observed_at`
+on `control_harness_runs`, matching the established native evidence login.
+These writes let `HarnessRunStoreV1.append` authenticate the observed local CLI
+transition before durable result publication. A failed process records `failed`
+and publishes no result. This does not change the verifier's succeeded-run
+candidate requirement or grant writes to jobs, attempts, leases, or review
+authority. The prior narrower grant description below is historical; this
+amendment supersedes only its run-event and run-update statements.
+
 - **Why.** The first real per-agent journey found that `createOwnerTrustedLocalCliPublishV1`
   (registers the ordinary run, then reads the job's `workflowId`) and `publishDurableResultV1`
   (reserves the result, writes the artifact manifest and receipt, and writes the neutral review

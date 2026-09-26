@@ -25,7 +25,7 @@ import { HermesLocalDispatchPreparationV1 } from "../../harness/hermes-local-v1/
 import { createOwnerTrustedLocalCliReceiptPortV1 } from "../../harness/v1/owner-trusted-local-cli-receipt-port";
 import { ownerTrustedLocalHarnessVersionV1 } from "../../harness/v1/owner-trusted-local-enablements";
 import { createOwnerTrustedLocalCliAssertCurrentV1 } from "../../harness/v1/owner-trusted-local-cli-assert-current";
-import { createOwnerTrustedLocalCliPublishV1 } from "../../harness/v1/owner-trusted-local-cli-publish";
+import { createOwnerTrustedLocalCliLifecycleV1 } from "../../harness/v1/owner-trusted-local-cli-publish";
 import { createOwnerTrustedLocalCodexDeliveryV1, createOwnerTrustedLocalClaudeDeliveryV1,
   createOwnerTrustedLocalHermesDeliveryV1 } from "../../harness/v1/owner-trusted-local-cli-composition";
 import { createOwnerTrustedLocalCodexExecV1 } from "../../harness/codex-v1/owner-trusted-local-exec";
@@ -131,14 +131,15 @@ export const createTaskApplication: MacLocalTaskProviderV1["createTaskApplicatio
       storage, storageClass: "local" as const, reservations: createDurableReservationPostgresPortV1(), reviewSubmission };
     const common = (index: number, registerRun: Parameters<typeof createOwnerTrustedLocalCliPublishV1>[0]["registerRun"]) => {
       const selected = workers[index]!;
+      const lifecycle = createOwnerTrustedLocalCliLifecycleV1({ db: publisherPool.client,
+        runIntegrityKey: keys.harness, publication, registerRun });
       return { db: readPool.client, integrityKey: keys.deliveryReceipt,
         binding: { workerId: selected.worker.workerId, adapterId: selected.adapterId,
           adapterRevision: sha256Digest({ executablePath: selected.worker.executablePath,
             recordedVersion: selected.worker.recordedVersion }).slice("sha256:".length) },
         receiptPort: createOwnerTrustedLocalCliReceiptPortV1(),
         assertCurrent: createOwnerTrustedLocalCliAssertCurrentV1(readPool.client, prepared[index]!, workerReadiness),
-        publish: createOwnerTrustedLocalCliPublishV1({ db: publisherPool.client,
-          runIntegrityKey: keys.harness, publication, registerRun }) };
+        publish: lifecycle.publish, recordFailure: lifecycle.recordFailure };
     };
     // Derived once at startup, so an unusable pinned version line refuses here, not per task.
     const hermesHarnessVersion = ownerTrustedLocalHarnessVersionV1(workers[0]!.worker.recordedVersion);

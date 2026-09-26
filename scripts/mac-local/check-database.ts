@@ -62,7 +62,7 @@ const deniedProbe: Readonly<Record<RoleName, string>> = Object.freeze({
   web: "DELETE FROM tenants WHERE false",
   coordinator: "UPDATE control_jobs SET result_lock=result_lock WHERE false",
   results: "UPDATE control_jobs SET state=state WHERE false",
-  publisher: "UPDATE control_harness_runs SET state=state WHERE false",
+  publisher: "UPDATE control_harness_runs SET native_session_key_digest=native_session_key_digest WHERE false",
   queueWorker: "UPDATE control_room_queue.queue SET name=name WHERE false",
 });
 

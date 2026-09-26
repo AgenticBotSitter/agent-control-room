@@ -57,11 +57,14 @@ test("publishes the CLI's completed text through the existing durable result and
   const { f, publish, delivery, receipt } = await setup(t, "run:cli-publish-a");
   await publish({ delivery, receipt, text: "The task completed successfully.", signal: new AbortController().signal });
 
-  const run = await f.db.query<{ id: string; harness: string; adapter_id: string }>(
-    "SELECT id,harness,adapter_id FROM control_harness_runs WHERE tenant_id=$1 AND id=$2", [binding.tenantId, delivery.identity.runId]);
+  const run = await f.db.query<{ id: string; harness: string; adapter_id: string; state: string }>(
+    "SELECT id,harness,adapter_id,state FROM control_harness_runs WHERE tenant_id=$1 AND id=$2", [binding.tenantId, delivery.identity.runId]);
   assert.equal(run.rows[0]?.id, delivery.identity.runId);
   assert.equal(run.rows[0]?.harness, "codex");
   assert.equal(run.rows[0]?.adapter_id, "connector:codex-owner-trusted-local-v1");
+  assert.equal(run.rows[0]?.state, "succeeded");
+  const events = await f.db.query<{ state: string }>("SELECT payload->'payload'->>'state' AS state FROM control_harness_run_events WHERE tenant_id=$1 AND run_id=$2 ORDER BY sequence", [binding.tenantId, delivery.identity.runId]);
+  assert.deepEqual(events.rows.map(row => row.state), ["starting", "running", "succeeded"]);
 
   const receiptRow = await f.db.query<{ artifact_id: string }>(
     "SELECT artifact_id FROM control_native_artifact_receipts WHERE tenant_id=$1 AND run_id=$2", [binding.tenantId, delivery.identity.runId]);
@@ -78,6 +81,8 @@ test("replays cleanly on a retry with the exact same text, and refuses an aborte
   const run = await f.db.query<{ id: string }>("SELECT id FROM control_harness_runs WHERE tenant_id=$1 AND id=$2",
     [binding.tenantId, delivery.identity.runId]);
   assert.equal(run.rows.length, 1, "a replay does not create a second run record");
+  const events = await f.db.query<{ n: number }>("SELECT count(*)::int AS n FROM control_harness_run_events WHERE tenant_id=$1 AND run_id=$2", [binding.tenantId, delivery.identity.runId]);
+  assert.equal(events.rows[0]?.n, 3, "a replay does not add lifecycle events");
 
   const controller = new AbortController(); controller.abort();
   await assert.rejects(publish({ delivery, receipt, text: "unreachable", signal: controller.signal }));

@@ -24,17 +24,18 @@ function accepted(value: ControllerWorkerDeliveryV1) {
   return { ...material, receiptDigest: sha256Digest(material) };
 }
 
-function config(db: Awaited<ReturnType<typeof nativeTaskFixture>>["db"], state: { checks: number; executions: number; publishes: number; revoke?: boolean; fail?: boolean }) {
+function config(db: Awaited<ReturnType<typeof nativeTaskFixture>>["db"], state: { checks: number; executions: number; publishes: number; failures: number; revoke?: boolean; fail?: boolean }) {
   return { db, integrityKey: key, binding: worker,
     receiptPort: { async receive(value: ControllerWorkerDeliveryV1) { return accepted(value); } },
     async assertCurrent() { state.checks++; if (state.revoke) throw new Error("lease_revoked"); },
     async execute() { state.executions++; return state.fail ? { kind: "failed" as const, reason: "cli_failed" } : { kind: "completed" as const, text: "bounded local result" }; },
+    async recordFailure() { state.failures++; },
     async publish() { state.publishes++; },
   };
 }
 
 test("one local CLI delivery publishes once and restart replay does not execute or publish again", async t => {
-  const f = await nativeTaskFixture(); t.after(f.close); const state = { checks: 0, executions: 0, publishes: 0 };
+  const f = await nativeTaskFixture(); t.after(f.close); const state = { checks: 0, executions: 0, publishes: 0, failures: 0 };
   const first = await deliverOwnerTrustedLocalCliTaskV1(config(f.db, state), packet(), { kind: "local", workerId: worker.workerId }, at(2000));
   assert.equal(first.state, "published"); assert.equal(state.executions, 1); assert.equal(state.publishes, 1);
   const replay = await deliverOwnerTrustedLocalCliTaskV1(config(f.db, state), packet(), { kind: "local", workerId: worker.workerId }, at(2000));
@@ -42,7 +43,7 @@ test("one local CLI delivery publishes once and restart replay does not execute 
 });
 
 test("a post-receipt revocation cannot reach a local CLI and its replay stays fenced", async t => {
-  const f = await nativeTaskFixture(); t.after(f.close); const state = { checks: 0, executions: 0, publishes: 0, revoke: false };
+  const f = await nativeTaskFixture(); t.after(f.close); const state = { checks: 0, executions: 0, publishes: 0, failures: 0, revoke: false };
   const value = config(f.db, state); value.assertCurrent = async () => { state.checks++; if (state.checks === 2) throw new Error("lease_revoked"); };
   const first = await deliverOwnerTrustedLocalCliTaskV1(value, packet(), { kind: "local", workerId: worker.workerId }, at(2000));
   assert.equal(first.state, "delivery_uncertain"); assert.equal(state.executions, 0);
@@ -50,16 +51,17 @@ test("a post-receipt revocation cannot reach a local CLI and its replay stays fe
   assert.equal(replay.state, "already_delivered"); assert.equal(state.executions, 0);
 });
 
-test("a local CLI failure records no false result and a restart cannot rerun it", async t => {
-  const f = await nativeTaskFixture(); t.after(f.close); const state = { checks: 0, executions: 0, publishes: 0, fail: true };
+test("a local CLI failure records failed once, publishes nothing, and is never verified or completed", async t => {
+  const f = await nativeTaskFixture(); t.after(f.close); const state = { checks: 0, executions: 0, publishes: 0, failures: 0, fail: true };
   const first = await deliverOwnerTrustedLocalCliTaskV1(config(f.db, state), packet(), { kind: "local", workerId: worker.workerId }, at(2000));
-  assert.equal(first.state, "execution_failed"); assert.equal(state.publishes, 0);
+  assert.equal(first.state, "execution_failed"); assert.equal(state.failures, 1); assert.equal(state.publishes, 0);
   const replay = await deliverOwnerTrustedLocalCliTaskV1(config(f.db, state), packet(), { kind: "local", workerId: worker.workerId }, at(2000));
-  assert.equal(replay.state, "already_delivered"); assert.equal(state.executions, 1);
+  assert.equal(replay.state, "already_delivered"); assert.equal(state.executions, 1); assert.equal(state.failures, 1);
+  assert.equal(state.publishes, 0);
 });
 
 test("a lease revoked while a local CLI runs cannot publish its returned text", async t => {
-  const f = await nativeTaskFixture(); t.after(f.close); const state = { checks: 0, executions: 0, publishes: 0 };
+  const f = await nativeTaskFixture(); t.after(f.close); const state = { checks: 0, executions: 0, publishes: 0, failures: 0 };
   const value = config(f.db, state); value.assertCurrent = async () => {
     state.checks++; if (state.checks === 3) throw new Error("lease_revoked");
   };
@@ -70,7 +72,7 @@ test("a lease revoked while a local CLI runs cannot publish its returned text", 
 });
 
 test("cancellation during a local CLI cannot publish its returned text", async t => {
-  const f = await nativeTaskFixture(); t.after(f.close); const state = { checks: 0, executions: 0, publishes: 0 };
+  const f = await nativeTaskFixture(); t.after(f.close); const state = { checks: 0, executions: 0, publishes: 0, failures: 0 };
   const aborter = new AbortController(), value = config(f.db, state);
   value.execute = async () => { state.executions++; aborter.abort(); return { kind: "completed" as const, text: "late text" }; };
   const result = await deliverOwnerTrustedLocalCliTaskV1(value, packet(), { kind: "local", workerId: worker.workerId }, at(2000), aborter.signal);
@@ -78,14 +80,14 @@ test("cancellation during a local CLI cannot publish its returned text", async t
 });
 
 test("a cancelled local delivery cannot start a CLI or publish a result", async t => {
-  const f = await nativeTaskFixture(); t.after(f.close); const state = { checks: 0, executions: 0, publishes: 0 };
+  const f = await nativeTaskFixture(); t.after(f.close); const state = { checks: 0, executions: 0, publishes: 0, failures: 0 };
   const aborter = new AbortController(); aborter.abort();
   const result = await deliverOwnerTrustedLocalCliTaskV1(config(f.db, state), packet(), { kind: "local", workerId: worker.workerId }, at(2000), aborter.signal);
   assert.equal(result.state, "delivery_cancelled"); assert.equal(state.checks, 0); assert.equal(state.executions, 0); assert.equal(state.publishes, 0);
 });
 
 test("a live receipt port stamping a later receivedAt still records and publishes once", async t => {
-  const f = await nativeTaskFixture(); t.after(f.close); const state = { checks: 0, executions: 0, publishes: 0 };
+  const f = await nativeTaskFixture(); t.after(f.close); const state = { checks: 0, executions: 0, publishes: 0, failures: 0 };
   const value = config(f.db, state);
   value.receiptPort = { async receive(packetValue: ControllerWorkerDeliveryV1) {
     const material = { ...accepted(packetValue), receivedAt: at(2005) }; delete (material as { receiptDigest?: string }).receiptDigest;

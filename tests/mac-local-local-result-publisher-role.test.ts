@@ -156,7 +156,7 @@ test("the publisher role registers the run and publishes a durable result throug
     restricted.transaction(tx => deniedInSession(tx, sql, params));
   assert.equal(await probe("UPDATE control_jobs SET state=state WHERE tenant_id=$1 AND id=$2", [binding.tenantId, jobId]), true);
   assert.equal(await probe("UPDATE control_attempts SET state=state WHERE tenant_id=$1 AND id=$2", [binding.tenantId, attemptId]), true);
-  assert.equal(await probe("UPDATE control_harness_runs SET state=state WHERE tenant_id=$1 AND id=$2", [binding.tenantId, "run:publisher-role-a"]), true);
+  assert.equal(await probe("UPDATE control_harness_runs SET native_session_key_digest=native_session_key_digest WHERE tenant_id=$1 AND id=$2", [binding.tenantId, "run:publisher-role-a"]), true);
   assert.equal(await probe("INSERT INTO control_native_task_queue DEFAULT VALUES"), true);
   assert.equal(await probe(
     "INSERT INTO control_completion_gate_records(id,tenant_id,project_id,kind,record_key,subject_id,record_digest,record_auth_tag,payload,occurred_at) " +

@@ -24,7 +24,7 @@ function receipt(value: ControllerWorkerDeliveryV1) {
 function base(f: Awaited<ReturnType<typeof nativeTaskFixture>>, workerId: string, adapterId: string, state: { published: number }) {
   return { db: f.db, integrityKey: key, binding: { workerId, adapterId, adapterRevision: "00570550" },
     receiptPort: { async receive(value: ControllerWorkerDeliveryV1) { return receipt(value); } },
-    async assertCurrent() {}, async publish() { state.published++; } };
+    async assertCurrent() {}, async publish() { state.published++; }, async recordFailure() {} };
 }
 
 test("the composed Codex delivery reaches the common receipt and publisher exactly once", async t => {

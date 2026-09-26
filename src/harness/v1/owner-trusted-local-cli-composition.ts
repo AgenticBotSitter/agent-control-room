@@ -12,7 +12,7 @@ type Configuration = Readonly<{ executablePath: string; workingDirectory: string
 function captureBase(value: unknown): Base {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("owner_trusted_local_cli_composition_unavailable");
   const record = value as Record<string, unknown>;
-  if (Object.keys(record).length !== 6 || ["db", "integrityKey", "binding", "receiptPort", "assertCurrent", "publish"].some(key => !Object.hasOwn(record, key)))
+  if (Object.keys(record).length !== 7 || ["db", "integrityKey", "binding", "receiptPort", "assertCurrent", "publish", "recordFailure"].some(key => !Object.hasOwn(record, key)))
     throw new Error("owner_trusted_local_cli_composition_unavailable");
   return value as Base;
 }
