@@ -37,7 +37,8 @@ GRANT INSERT ON control_harness_runs, control_harness_run_events, control_artifa
   TO control_room_local_result_publisher;
 -- HarnessRunStoreV1.create() takes `SELECT ... FOR UPDATE` on control_harness_runs
 -- before every insert (replay check); ensureNeutralReviewPlan does the same on
--- control_native_review_plans. Neither table is ever really updated by this role.
+-- control_native_review_plans. Review plans are never really updated by this role;
+-- harness runs are, only to record a CLI run outcome (the column list below).
 GRANT UPDATE (publisher_lock) ON control_harness_runs TO control_room_local_result_publisher;
 GRANT UPDATE (state,last_sequence,run_digest,run_auth_tag,payload,updated_at,last_observed_at)
   ON control_harness_runs TO control_room_local_result_publisher;
