@@ -12,6 +12,7 @@ test("opens only the existing restricted controller and results roles for the Ma
     web: configuration.web.database,
     coordinator: configuration.coordinator.database,
     results: configuration.coordinator.resultDatabase!,
+    publisher: { ...configuration.coordinator.database, username: "publisher_test" },
     queueWorker: { ...configuration.coordinator.database, username: "worker_test" },
   } as const;
   const application = await createMacLocalRestrictedTaskApplicationV1({

@@ -13,7 +13,7 @@ import { runtimePaths } from "../scripts/mac-local/stack.mjs";
 import { missingTaskRuntimeInstruction } from "../scripts/mac-local/up.mjs";
 
 const roleNames = { web: "control_room_web", coordinator: "control_room_coordinator",
-  results: "control_room_results", queueWorker: "control_room_queue_worker" };
+  results: "control_room_results", publisher: "control_room_publisher", queueWorker: "control_room_queue_worker" };
 
 async function fixture(t) {
   const root = await mkdtemp(join(tmpdir(), "acr-repoint-test-"));

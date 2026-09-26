@@ -15,9 +15,9 @@ export async function verifyPrivateIdeaAdapter(db: DatabaseClient, scope: { tena
   if (rows.length !== 1 || rows[0].valid !== true) throw new Error("private_idea_adapter_unavailable");
 }
 
-// Generated from public migrations 0001-0088, including generic external-content
+// Generated from public migrations 0001-0089, including generic external-content
 // migrations 0025/0026. Catalog query below; not a mutable database marker.
-export const privateWebSchemaDigest = "42a186823520ad0e91cb7c99e9995395c68ced68536836e3986abee22b49b00a";
+export const privateWebSchemaDigest = "0c78630c1efb1c29d9e5854b386f5a48eab21e7a710a00263f0ada8b38efbfef";
 export const privateWebReadTables = ["control_identities", "control_role_grants", "workspaces", "control_web_sessions",
   "tenants", "control_idempotency",
   "control_schedules", "control_schedule_occurrences",
@@ -141,6 +141,7 @@ const resultInserts = new Set(["control_native_review_plans", "control_completio
 const resultUpdates: Record<string, readonly string[]> = {
   control_jobs: ["result_lock"], control_harness_runs: ["coordinator_lock"], projects: ["coordinator_lock"],
   control_completion_gate_records: ["web_lock"],
+  control_native_review_plans: ["results_lock"], control_native_artifact_receipts: ["results_lock"],
   control_completion_gate_integrity: ["web_lock", "revision", "record_count", "state_digest", "state_auth_tag"],
   control_audit_chain_heads: ["head_hash", "event_count", "updated_at"],
 };
@@ -170,6 +171,22 @@ const sessionReads = ["workspaces", "control_identities", "control_role_grants",
 const sessionInserts = new Set(["node_protocol_connections", "node_protocol_replay"]);
 const sessionUpdates: Record<string, readonly string[]> = {
   node_protocol_connections: ["last_sequence", "last_message_id", "updated_at"], node_protocol_replay: ["replay_lock"],
+};
+/** Fifth Mac-local login (owner decision 2026-09-25): exactly the rights
+ * `createOwnerTrustedLocalCliPublishV1` (run registration + `workflowIdForJob`)
+ * and `publishDurableResultV1` (with the durable reservation Postgres port)
+ * execute in one transaction. Review-tray registration stays on `results`. */
+const publisherReads = ["workspaces", "control_identities", "control_role_grants", "control_jobs", "control_attempts", "adapter_registry",
+  "control_harness_runs", "control_harness_run_events", "control_artifact_manifests", "control_native_artifact_receipts",
+  "control_durable_result_write_reservations", "control_native_review_plans",
+  "audit_events", "control_audit_chain_heads"];
+const publisherInserts = new Set(["control_harness_runs", "control_artifact_manifests", "control_native_artifact_receipts",
+  "control_durable_result_write_reservations", "control_native_review_plans",
+  "audit_events", "control_audit_chain_heads"]);
+const publisherUpdates: Record<string, readonly string[]> = {
+  control_harness_runs: ["publisher_lock"], control_native_review_plans: ["publisher_lock"],
+  control_durable_result_write_reservations: ["state", "contract_digest", "reservation", "auth_tag", "updated_at"],
+  control_audit_chain_heads: ["head_hash", "event_count", "updated_at"],
 };
 
 /** Structural fingerprint, independent of OIDs, owners, ACLs and row data. PG17 is the pinned target.
@@ -267,6 +284,13 @@ export async function verifyNativeEvidenceDatabase(db: DatabaseClient, config: P
   return verifyDatabase(db, config, scope, now, "evidence", queue);
 }
 
+/** Fifth Mac-local login: the local result publisher. It cannot plan, dispatch,
+ * accept quality, or register the review tray (that stays on `results`). */
+export async function verifyLocalResultPublisherDatabase(db: DatabaseClient, config: PrivatePostgresConfiguration,
+  scope: { tenantId: string; workspaceId: string; ownerIdentityId: string; issuer: string }, now: number, queue?: NativeQueueDatabaseOption) {
+  return verifyDatabase(db, config, scope, now, "publisher", queue);
+}
+
 export async function verifyNativeSessionDatabase(db: DatabaseClient, config: PrivatePostgresConfiguration,
   scope: { tenantId: string; workspaceId: string; ownerIdentityId: string; issuer: string }, now: number, queue?: NativeQueueDatabaseOption) {
   return verifyDatabase(db, config, scope, now, "sessions", queue);
@@ -312,14 +336,14 @@ async function verifySession(tx: DatabaseSession, config: PrivatePostgresConfigu
 }
 
 async function verifyDatabase(db: DatabaseClient, config: PrivatePostgresConfiguration,
-  scope: { tenantId: string; workspaceId: string; ownerIdentityId: string; issuer: string }, now: number, kind: "web" | "coordinator" | "results" | "evidence" | "sessions" | "ideas" | "ideaRuntime" | "newsIngestion" | "newsCoordinator", queue?: NativeQueueDatabaseOption | NewsQueueDatabaseOption) {
+  scope: { tenantId: string; workspaceId: string; ownerIdentityId: string; issuer: string }, now: number, kind: "web" | "coordinator" | "results" | "evidence" | "publisher" | "sessions" | "ideas" | "ideaRuntime" | "newsIngestion" | "newsCoordinator", queue?: NativeQueueDatabaseOption | NewsQueueDatabaseOption) {
   const feedProducer = kind === "newsCoordinator" && !!queue && "newsQueue" in queue && queue.newsQueue === true;
   const withQueue = feedProducer || !!queue && "nativeQueue" in queue && queue.nativeQueue === true;
   const recovery = kind === "coordinator" && !!queue && "nativeQueueRecovery" in queue && queue.nativeQueueRecovery === true;
-  const role = { web: "control_room_private_web", coordinator: "control_room_task_coordinator", results: "control_room_native_results", evidence: "control_room_native_evidence", sessions: "control_room_native_sessions", ideas: "control_room_idea_creation", ideaRuntime: "control_room_idea_runtime", newsIngestion: "control_room_news_ingestion", newsCoordinator: "control_room_news_coordinator" }[kind];
-  const allowedReads = kind === "newsCoordinator" ? newsCoordinatorReads : kind === "newsIngestion" ? newsIngestionReads : kind === "ideaRuntime" ? ideaRuntimeReads : kind === "ideas" ? ideaCreationReads : kind === "sessions" ? sessionReads : kind === "evidence" ? evidenceReads : kind === "results" ? resultReads : kind === "coordinator" ? coordinatorReads : privateWebReadTables;
-  const allowedInserts = kind === "newsCoordinator" ? newsCoordinatorInserts : kind === "newsIngestion" ? newsIngestionInserts : kind === "ideaRuntime" ? ideaRuntimeInserts : kind === "ideas" ? ideaCreationInserts : kind === "sessions" ? sessionInserts : kind === "evidence" ? evidenceInserts : kind === "results" ? resultInserts : kind === "coordinator" ? coordinatorInserts : inserts;
-  const allowedUpdates = kind === "newsCoordinator" ? newsCoordinatorUpdates : kind === "newsIngestion" ? newsIngestionUpdates : kind === "ideaRuntime" ? ideaRuntimeUpdates : kind === "ideas" ? ideaCreationUpdates : kind === "sessions" ? sessionUpdates : kind === "evidence" ? evidenceUpdates : kind === "results" ? resultUpdates : kind === "coordinator" ? coordinatorUpdates : updates;
+  const role = { web: "control_room_private_web", coordinator: "control_room_task_coordinator", results: "control_room_native_results", evidence: "control_room_native_evidence", publisher: "control_room_local_result_publisher", sessions: "control_room_native_sessions", ideas: "control_room_idea_creation", ideaRuntime: "control_room_idea_runtime", newsIngestion: "control_room_news_ingestion", newsCoordinator: "control_room_news_coordinator" }[kind];
+  const allowedReads = kind === "newsCoordinator" ? newsCoordinatorReads : kind === "newsIngestion" ? newsIngestionReads : kind === "ideaRuntime" ? ideaRuntimeReads : kind === "ideas" ? ideaCreationReads : kind === "sessions" ? sessionReads : kind === "publisher" ? publisherReads : kind === "evidence" ? evidenceReads : kind === "results" ? resultReads : kind === "coordinator" ? coordinatorReads : privateWebReadTables;
+  const allowedInserts = kind === "newsCoordinator" ? newsCoordinatorInserts : kind === "newsIngestion" ? newsIngestionInserts : kind === "ideaRuntime" ? ideaRuntimeInserts : kind === "ideas" ? ideaCreationInserts : kind === "sessions" ? sessionInserts : kind === "publisher" ? publisherInserts : kind === "evidence" ? evidenceInserts : kind === "results" ? resultInserts : kind === "coordinator" ? coordinatorInserts : inserts;
+  const allowedUpdates = kind === "newsCoordinator" ? newsCoordinatorUpdates : kind === "newsIngestion" ? newsIngestionUpdates : kind === "ideaRuntime" ? ideaRuntimeUpdates : kind === "ideas" ? ideaCreationUpdates : kind === "sessions" ? sessionUpdates : kind === "publisher" ? publisherUpdates : kind === "evidence" ? evidenceUpdates : kind === "results" ? resultUpdates : kind === "coordinator" ? coordinatorUpdates : updates;
   try {
     await db.transaction(async tx => {
       await verifySession(tx, config, role);

@@ -31,7 +31,7 @@ import { validatePrivatePostgresConfiguration } from "../../src/web/v1/private-p
 
 const exec = promisify(execFile);
 const roleNames = Object.freeze({ web: "control_room_web", coordinator: "control_room_coordinator",
-  results: "control_room_results", queueWorker: "control_room_queue_worker" });
+  results: "control_room_results", publisher: "control_room_publisher", queueWorker: "control_room_queue_worker" });
 const bootstrapRoles = Object.freeze({ migrator: "control_room_migrator", application: "control_room_app",
   scheduler: "control_room_scheduler" });
 const passwordPattern = /^[A-Za-z0-9_-]{32,}$/u;
@@ -170,15 +170,16 @@ async function repointOnly({ protectedRoot: suppliedRoot, route }) {
   if (mac.database.database !== "control_room" || mac.database.username !== roleNames.web
     || roles.schema !== MAC_LOCAL_DATABASE_ROLES_V1
     || roles.web.username !== roleNames.web || roles.coordinator.username !== roleNames.coordinator
-    || roles.results.username !== roleNames.results || roles.queueWorker.username !== roleNames.queueWorker
-    || [roles.web, roles.coordinator, roles.results, roles.queueWorker].some(role => role.database !== "control_room"))
+    || roles.results.username !== roleNames.results || roles.publisher.username !== roleNames.publisher
+    || roles.queueWorker.username !== roleNames.queueWorker
+    || [roles.web, roles.coordinator, roles.results, roles.publisher, roles.queueWorker].some(role => role.database !== "control_room"))
     throw new Error("provision_existing_configuration_refused");
 
   const update = configuration => validatePrivatePostgresConfiguration({ ...configuration, host: route.host, port: 5432,
     privateEndpoint: endpoint });
   const nextMacDatabase = update(mac.database);
   const nextRoleConfigurations = { web: update(roles.web), coordinator: update(roles.coordinator),
-    results: update(roles.results), queueWorker: update(roles.queueWorker) };
+    results: update(roles.results), publisher: update(roles.publisher), queueWorker: update(roles.queueWorker) };
   captureMacLocalProtectedConfigurationV1({ ...macOriginal, database: nextMacDatabase });
   captureMacLocalDatabaseRolesV1({ ...rolesOriginal, ...nextRoleConfigurations });
   const nextMac = { ...macOriginal, database: nextMacDatabase };
@@ -429,7 +430,7 @@ export async function provisionMacLocalDatabaseV1(options) {
     password: allPasswords.web, majorVersion: 17, ...(endpoint ? { privateEndpoint: endpoint } : {}) });
   const role = username => Object.freeze({ ...database, username, password: allPasswords[Object.keys(roleNames).find(key => roleNames[key] === username)] });
   const roles = captureMacLocalDatabaseRolesV1({ schema: MAC_LOCAL_DATABASE_ROLES_V1, web: role(roleNames.web), coordinator: role(roleNames.coordinator),
-    results: role(roleNames.results), queueWorker: role(roleNames.queueWorker) });
+    results: role(roleNames.results), publisher: role(roleNames.publisher), queueWorker: role(roleNames.queueWorker) });
   const ownerCode = await privateText(join(configRoot, "owner-sign-in.txt"), newPassword);
   const macLocal = captureProvisionedMacLocalConfigurationV1({ database, ownerCode, workers });
   if (!options.dryRun) {

@@ -20,6 +20,7 @@ const databaseRoles = Object.freeze({
   web: configuration.database,
   coordinator: { ...configuration.database, username: "control_room_coordinator", password: "coordinator-test" },
   results: { ...configuration.database, username: "control_room_results", password: "results-test" },
+  publisher: { ...configuration.database, username: "control_room_publisher", password: "publisher-test" },
   queueWorker: { ...configuration.database, username: "control_room_queue_worker", password: "queue-worker-test" },
 });
 

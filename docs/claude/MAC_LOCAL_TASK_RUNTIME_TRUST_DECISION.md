@@ -746,3 +746,49 @@ signer.**
   - `mac:up` starts;
   - `GET /api/v1/local-workers` lists all three workers as ready;
   - one fake-executable task per worker reaches pending review exactly once.
+
+## 15. Fifth Mac login: local result publisher (owner decision 2026-09-25)
+
+- **Why.** The first real per-agent journey found that `createOwnerTrustedLocalCliPublishV1`
+  (registers the ordinary run, then reads the job's `workflowId`) and `publishDurableResultV1`
+  (reserves the result, writes the artifact manifest and receipt, and writes the neutral review
+  plan) run as **one transaction**. Every existing login (web, coordinator, results, evidence)
+  fits only part of that transaction, and none may be widened to cover the rest without also
+  granting it capabilities it has no other reason to hold. So Mac-local gets a fifth login,
+  `publisher`, inheriting a new role, `control_room_local_result_publisher`, scoped to exactly
+  this one transaction.
+- **What it can do (`db/roles/local_result_publisher_roles.sql`):**
+  - plain `SELECT` on `control_jobs`, `control_attempts` and `adapter_registry` (identity checks,
+    no locking);
+  - `SELECT`, `INSERT`, and `UPDATE (publisher_lock)` on `control_harness_runs` — the lock column
+    exists only so `SELECT ... FOR UPDATE` (the replay check before every insert) is permitted;
+    the column's own `CHECK (publisher_lock IS FALSE)` means it can never actually change, and the
+    role has no privilege on any other column of that table;
+  - `SELECT`, `INSERT`, and `UPDATE (publisher_lock)` on `control_native_review_plans` for the
+    same reason (its own append-only trigger already blocks every real update);
+  - `SELECT` and `INSERT` on `control_artifact_manifests` and `control_native_artifact_receipts`;
+  - `SELECT`, `INSERT`, and a real `UPDATE (state, contract_digest, reservation, auth_tag,
+    updated_at)` on `control_durable_result_write_reservations` — the same five columns the
+    existing evidence role already updates on this table, because the reservation state machine
+    genuinely changes those columns;
+  - `SELECT`, `INSERT`, and a real `UPDATE (head_hash, event_count, updated_at)` on
+    `control_audit_chain_heads`, plus `SELECT`/`INSERT` on `audit_events` — the same audit-append
+    shape every other role already has.
+  - It cannot write `control_jobs`, `control_attempts`, `control_completion_gate_records`, the
+    native task queue, or anything else outside that list. No existing trigger guard restricting
+    `control_room_native_evidence` or `control_room_native_results` applies to any table this role
+    writes, so no guard migration was needed alongside migration 0089 (the two inert lock
+    columns).
+  - `DurableResultReviewSubmissionServiceV1` (the review-tray registration that follows, in its
+    own later transaction) is **not** part of this role. It stays on the existing `results` login
+    (`control_room_native_results`), because that login is the review authority and must not gain
+    a second one. **Review-tray locks (owner-approved 2026-09-25):** that service locks the plan and
+    the artifact receipt with `SELECT ... FOR UPDATE`, which needs a column UPDATE privilege.
+    Migration 0089 adds inert CHECK-false `results_lock` columns to both tables, and the results
+    role gets UPDATE on that column only. Same pattern as every other `*_lock` column: no real
+    column becomes writable.
+- **VPS `pg_hba.conf`:** the VPS needs exactly one more `hostssl ... scram-sha-256` line for the
+  new `publisher` login, in the same pattern as the other four Mac-local logins. No host, IP, or
+  path is recorded here.
+- **Nothing else changed.** `web`, `coordinator`, `results`, `evidence`, and `queueWorker` keep
+  the exact rights they already had.

@@ -10,7 +10,8 @@ test("composes Hermes, Claude, and managed Codex into one restricted task lifecy
   const app = await createMacLocalRestrictedThreeAgentTaskApplicationV1({
     web: { tenantId: c.web.tenantId, workspaceId: c.web.workspaceId, tasks: c.web.tasks, database: f.openDatabase(c.web.database) },
     databaseRoles: { schema: MAC_LOCAL_DATABASE_ROLES_V1, web: c.web.database, coordinator: c.coordinator.database,
-      results: c.coordinator.resultDatabase!, queueWorker: { ...c.coordinator.database, username: "worker_test" } },
+      results: c.coordinator.resultDatabase!, publisher: { ...c.coordinator.database, username: "publisher_test" },
+      queueWorker: { ...c.coordinator.database, username: "worker_test" } },
     openDatabase: role => f.openDatabase(role),
     coordinator: { scope: { tenantId: c.web.tenantId, workspaceId: c.web.workspaceId }, planning: c.coordinator.planning,
       routes: c.coordinator.routes, approvals: c.coordinator.approvals, quality: c.coordinator.quality,

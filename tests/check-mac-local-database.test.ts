@@ -10,7 +10,7 @@ const connection = (username: string) => ({ host: "127.0.0.1", port: 5432, datab
   password: `${username}-test-password`, majorVersion: 17 as const });
 const roles = Object.freeze({ schema: MAC_LOCAL_DATABASE_ROLES_V1, web: connection("control_room_web"),
   coordinator: connection("control_room_coordinator"), results: connection("control_room_results"),
-  queueWorker: connection("control_room_queue_worker") });
+  publisher: connection("control_room_publisher"), queueWorker: connection("control_room_queue_worker") });
 
 async function fixture() {
   const root = await mkdtemp(join(tmpdir(), "acr-mac-local-check-"));
@@ -27,7 +27,7 @@ function runtime(lines: string[], options: { roleOk?: boolean; fail?: boolean } 
     loadRoles: async () => roles,
     loadConfiguration: async () => ({ localOwnerSession: { tenantId: "tenant:mac-local", provider: "local-owner" },
       workspaceId: "workspace:mac-local" }),
-    verify: Object.fromEntries(["web", "coordinator", "results", "queueWorker"].map(name => [name, async () => {}])),
+    verify: Object.fromEntries(["web", "coordinator", "results", "publisher", "queueWorker"].map(name => [name, async () => {}])),
     report: (line: string) => lines.push(line),
     openDatabase: () => ({
       client: { query: async (sql: string) => {
@@ -42,7 +42,7 @@ function runtime(lines: string[], options: { roleOk?: boolean; fail?: boolean } 
 test("checks each fixed Mac-local role without printing any protected connection value", async () => {
   const lines: string[] = [];
   assert.equal(await checkMacLocalDatabaseV1("/protected", runtime(lines)), 0);
-  assert.deepEqual(lines, ["web", "coordinator", "results", "queueWorker"].map(name =>
+  assert.deepEqual(lines, ["web", "coordinator", "results", "publisher", "queueWorker"].map(name =>
     `${name} least privilege: ok`));
   assert.equal(lines.join("\n").includes("test-password"), false);
 });
@@ -67,8 +67,8 @@ test("continues checking other roles after one read-only connection refusal", as
     } as never;
   };
   assert.equal(await checkMacLocalDatabaseV1("/protected", testRuntime), 1);
-  assert.deepEqual(opened, ["control_room_web", "control_room_coordinator", "control_room_results", "control_room_queue_worker"]);
-  assert.deepEqual(lines, ["web", "coordinator", "results", "queueWorker"].map(name =>
+  assert.deepEqual(opened, ["control_room_web", "control_room_coordinator", "control_room_results", "control_room_publisher", "control_room_queue_worker"]);
+  assert.deepEqual(lines, ["web", "coordinator", "results", "publisher", "queueWorker"].map(name =>
     name === "results" ? "results database_check_refused" : `${name} least privilege: ok`));
 });
 
@@ -89,7 +89,7 @@ test("refuses a newly allowed forbidden write even when the privilege checker is
   const lines: string[] = [];
   const value = { ...runtime(lines), deniedWrite: async () => "allowed" as const };
   assert.equal(await checkMacLocalDatabaseV1("/protected", value), 1);
-  assert.deepEqual(lines, ["web", "coordinator", "results", "queueWorker"].map(name => `${name} database_check_refused`));
+  assert.deepEqual(lines, ["web", "coordinator", "results", "publisher", "queueWorker"].map(name => `${name} database_check_refused`));
 });
 
 test("each role's probe is a write outside its grants, sent with that role's own connection", async () => {
@@ -101,11 +101,12 @@ test("each role's probe is a write outside its grants, sent with that role's own
     "control_room_web: DELETE FROM tenants WHERE false",
     "control_room_coordinator: UPDATE control_jobs SET result_lock=result_lock WHERE false",
     "control_room_results: UPDATE control_jobs SET state=state WHERE false",
+    "control_room_publisher: UPDATE control_harness_runs SET state=state WHERE false",
     "control_room_queue_worker: UPDATE control_room_queue.queue SET name=name WHERE false"]);
 });
 
 test("refuses when the denied-write probe cannot reach a verdict", async () => {
   const lines: string[] = [];
   assert.equal(await checkMacLocalDatabaseV1("/protected", { ...runtime(lines), deniedWrite: async () => "error" as const }), 1);
-  assert.deepEqual(lines, ["web", "coordinator", "results", "queueWorker"].map(name => `${name} database_check_refused`));
+  assert.deepEqual(lines, ["web", "coordinator", "results", "publisher", "queueWorker"].map(name => `${name} database_check_refused`));
 });

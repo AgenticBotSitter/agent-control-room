@@ -10,7 +10,8 @@ const connection = (username: string) => ({ host: "127.0.0.1", port: 5432, datab
   username, password: `${username}-test-password`, majorVersion: 17 as const });
 const roles = Object.freeze({ schema: MAC_LOCAL_DATABASE_ROLES_V1,
   web: connection("control_room_web"), coordinator: connection("control_room_coordinator"),
-  results: connection("control_room_results"), queueWorker: connection("control_room_queue_worker") });
+  results: connection("control_room_results"), publisher: connection("control_room_publisher"),
+  queueWorker: connection("control_room_queue_worker") });
 
 test("captures restricted roles for exactly one authority database", () => {
   const captured = captureMacLocalDatabaseRolesV1(roles);

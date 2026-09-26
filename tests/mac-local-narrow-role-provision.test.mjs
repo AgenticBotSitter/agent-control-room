@@ -3,7 +3,7 @@ import test from "node:test";
 import { provisionMacLocalNarrowRolesV1 } from "../scripts/mac-local/narrow-role-provision.mjs";
 
 const passwords = Object.fromEntries(["control_room_web", "control_room_coordinator",
-  "control_room_results", "control_room_queue_worker"].map(name => [name, "test-only-not-a-secret"]));
+  "control_room_results", "control_room_publisher", "control_room_queue_worker"].map(name => [name, "test-only-not-a-secret"]));
 
 test("existing narrow roles are refused before any write or password change", async () => {
   const statements = [];

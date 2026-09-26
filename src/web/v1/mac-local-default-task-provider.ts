@@ -79,6 +79,13 @@ export const createTaskApplication: MacLocalTaskProviderV1["createTaskApplicatio
   for (const path of Object.values(work)) await ensurePrivateDirectory(path);
 
   const readPool = createPrivatePostgresDatabase(databaseRoles.coordinator);
+  // The durable publish path (run registration + publishDurableResultV1, including the
+  // durable reservation and the neutral review plan) is one transaction that no existing
+  // login fits; it runs under the fifth Mac login (docs/claude/MAC_LOCAL_TASK_RUNTIME_TRUST_DECISION.md
+  // section 15). Review-tray registration is a separate, later transaction and stays on
+  // the existing results login, which is the review authority.
+  const publisherPool = createPrivatePostgresDatabase(databaseRoles.publisher);
+  const resultsPool = createPrivatePostgresDatabase(databaseRoles.results);
   let checkpoints: Awaited<ReturnType<typeof openMacLocalRollbackCheckpointStoreV1>> | undefined;
   let submission: Awaited<ReturnType<typeof preparePgBossNativeTaskSubmission>> | undefined;
   let application: Awaited<ReturnType<typeof createMacLocalCurrentThreeAgentTaskApplicationV1>> | undefined;
@@ -118,9 +125,9 @@ export const createTaskApplication: MacLocalTaskProviderV1["createTaskApplicatio
         : value.kind === "claude-code" ? new ClaudeCodeLocalDispatchPreparationV1(readPool.client, planner, config)
           : new CodexOwnerTrustedLocalDispatchPreparationV1(readPool.client, planner, config);
     });
-    const reviewSubmission = new DurableResultReviewSubmissionServiceV1(readPool.client, {
+    const reviewSubmission = new DurableResultReviewSubmissionServiceV1(resultsPool.client, {
       integrityKey: keys.results, reviewIntegrityKey: keys.review, checkpoints, storageClass: "local", storage });
-    const publication = { db: readPool.client, integrityKey: keys.results, reviewKey: keys.review,
+    const publication = { db: publisherPool.client, integrityKey: keys.results, reviewKey: keys.review,
       storage, storageClass: "local" as const, reservations: createDurableReservationPostgresPortV1(), reviewSubmission };
     const common = (index: number, registerRun: Parameters<typeof createOwnerTrustedLocalCliPublishV1>[0]["registerRun"]) => {
       const selected = workers[index]!;
@@ -130,7 +137,7 @@ export const createTaskApplication: MacLocalTaskProviderV1["createTaskApplicatio
             recordedVersion: selected.worker.recordedVersion }).slice("sha256:".length) },
         receiptPort: createOwnerTrustedLocalCliReceiptPortV1(),
         assertCurrent: createOwnerTrustedLocalCliAssertCurrentV1(readPool.client, prepared[index]!, workerReadiness),
-        publish: createOwnerTrustedLocalCliPublishV1({ db: readPool.client,
+        publish: createOwnerTrustedLocalCliPublishV1({ db: publisherPool.client,
           runIntegrityKey: keys.harness, publication, registerRun }) };
     };
     // Derived once at startup, so an unusable pinned version line refuses here, not per task.
@@ -187,14 +194,16 @@ export const createTaskApplication: MacLocalTaskProviderV1["createTaskApplicatio
     return Object.freeze({ ...owned, async close() {
       if (refreshTimer) clearInterval(refreshTimer);
       await refreshInFlight?.catch(() => {});
-      const results = await Promise.allSettled([owned.close(), readPool.close(), checkpoints.close()]);
+      const results = await Promise.allSettled([owned.close(), readPool.close(), publisherPool.close(),
+        resultsPool.close(), checkpoints.close()]);
       if (results.some(result => result.status === "rejected")) throw new Error("mac_local_task_provider_cleanup_uncertain");
     } });
   } catch (error) {
     if (refreshTimer) clearInterval(refreshTimer);
     await refreshInFlight?.catch(() => {});
     const results = await Promise.allSettled([application?.close(), !application && submission?.close(),
-      readPool.close(), checkpoints?.close()].filter((value): value is Promise<unknown> => !!value));
+      readPool.close(), publisherPool.close(), resultsPool.close(),
+      checkpoints?.close()].filter((value): value is Promise<unknown> => !!value));
     if (results.some(result => result.status === "rejected")) throw new Error("mac_local_task_provider_cleanup_uncertain");
     throw error;
   }
