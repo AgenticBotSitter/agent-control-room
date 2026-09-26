@@ -14,7 +14,9 @@ const statusForCapability = {
 
 type LocalTaskWorkerStatus = Readonly<{ taskWorkersStarted: boolean; instruction?: string;
   workers: readonly Readonly<{ kind: string; state: string; proof: string }>[] }>;
-type TaskWorkerReadState = { state: "loading" } | { state: "available"; value: LocalTaskWorkerStatus } | { state: "unavailable" };
+/** Exported so a composing surface can pass a resolved read (or a test's
+ * stand-in) instead of forcing the panel back into its loading branch. */
+export type TaskWorkerReadState = { state: "loading" } | { state: "available"; value: LocalTaskWorkerStatus } | { state: "unavailable" };
 
 function isLocalTaskWorkerStatus(value: unknown): value is LocalTaskWorkerStatus {
   if (typeof value !== "object" || value === null) return false;

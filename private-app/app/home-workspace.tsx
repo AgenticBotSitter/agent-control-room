@@ -14,7 +14,7 @@ import { ConfiguredTimestamp } from "./configured-timestamp";
 import { taskResultHrefV1 } from "./task-results";
 import { useInstallationTopology } from "./installation-topology";
 import { InstallationTopologySummary } from "./installation-topology-summary";
-import { LocalWorkerRouteStatus } from "./local-worker-route-status";
+import { LocalWorkerRouteStatus, type TaskWorkerReadState } from "./local-worker-route-status";
 import { PrivateOperatorCapacityWorkspace } from "./operator-capacity-workspace";
 
 type ReadState<T> = { state: "loading" } | { state: "ready"; value: T } | { state: "unavailable" };
@@ -98,10 +98,17 @@ export function HomeDashboard({ data }: { data: HomeDashboardState }) {
  * together on Home. Both are backed by the same protected, redacted read;
  * neither is a live process or availability check.
  */
-export function HomeInstallationStatus({ topology }: { topology: ReturnType<typeof useInstallationTopology> }) {
+/** The route panel reads task-worker state itself unless a caller supplies a
+ * resolved read. Passing it through here keeps the home panel's three saved
+ * route states assertable without waiting on a live `/api/v1/local-workers`
+ * read, and lets a page that already holds the read avoid a second one. */
+export function HomeInstallationStatus({ topology, taskWorkerStatus }: {
+  topology: ReturnType<typeof useInstallationTopology>;
+  taskWorkerStatus?: TaskWorkerReadState;
+}) {
   return <>
     <InstallationTopologySummary setup={topology.setup} status={topology.state} />
-    <LocalWorkerRouteStatus setup={topology.setup} state={topology.state} />
+    <LocalWorkerRouteStatus setup={topology.setup} state={topology.state} taskWorkerStatus={taskWorkerStatus} />
   </>;
 }
 
