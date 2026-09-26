@@ -23,6 +23,7 @@ import { CodexOwnerTrustedLocalDispatchPreparationV1 } from "../../harness/codex
 import { ClaudeCodeLocalDispatchPreparationV1 } from "../../harness/claude-code-v1/dispatch-preparation";
 import { HermesLocalDispatchPreparationV1 } from "../../harness/hermes-local-v1/dispatch-preparation";
 import { createOwnerTrustedLocalCliReceiptPortV1 } from "../../harness/v1/owner-trusted-local-cli-receipt-port";
+import { ownerTrustedLocalHarnessVersionV1 } from "../../harness/v1/owner-trusted-local-enablements";
 import { createOwnerTrustedLocalCliAssertCurrentV1 } from "../../harness/v1/owner-trusted-local-cli-assert-current";
 import { createOwnerTrustedLocalCliPublishV1 } from "../../harness/v1/owner-trusted-local-cli-publish";
 import { createOwnerTrustedLocalCodexDeliveryV1, createOwnerTrustedLocalClaudeDeliveryV1,
@@ -132,10 +133,13 @@ export const createTaskApplication: MacLocalTaskProviderV1["createTaskApplicatio
         publish: createOwnerTrustedLocalCliPublishV1({ db: readPool.client,
           runIntegrityKey: keys.harness, publication, registerRun }) };
     };
+    // Derived once at startup, so an unusable pinned version line refuses here, not per task.
+    const hermesHarnessVersion = ownerTrustedLocalHarnessVersionV1(workers[0]!.worker.recordedVersion);
+    const codexHarnessVersion = ownerTrustedLocalHarnessVersionV1(workers[2]!.worker.recordedVersion);
     const hermes = { tenantId,
       preparation: prepared[0] as HermesLocalDispatchPreparationV1,
       delivery: createOwnerTrustedLocalHermesDeliveryV1(common(0, (value, time) =>
-        hermesLocalRunRegistrationV1(value, time, workers[0]!.worker.recordedVersion)),
+        hermesLocalRunRegistrationV1(value, time, hermesHarnessVersion)),
       createOwnerTrustedLocalHermesExecV1(), { executablePath: workers[0]!.worker.executablePath,
         profile: runtime.hermes.profile, provider: runtime.hermes.provider, model: runtime.hermes.model,
         workingDirectory: work.hermes, deadlineMs: 120_000 }) };
@@ -147,7 +151,7 @@ export const createTaskApplication: MacLocalTaskProviderV1["createTaskApplicatio
     const codex = createCodexOwnerTrustedLocalQueueExecutorV1({ tenantId,
       preparation: prepared[2] as CodexOwnerTrustedLocalDispatchPreparationV1,
       delivery: createOwnerTrustedLocalCodexDeliveryV1(common(2, (value, time) =>
-        codexOwnerTrustedLocalRunRegistrationV1(value, time, workers[2]!.worker.recordedVersion)),
+        codexOwnerTrustedLocalRunRegistrationV1(value, time, codexHarnessVersion)),
       createOwnerTrustedLocalCodexExecV1(), { executablePath: workers[2]!.worker.executablePath,
         workingDirectory: work.codex, deadlineMs: 120_000 }) });
     submission = await preparePgBossNativeTaskSubmission(PgBoss, readPool.client, { backend: "postgres", recovery: true });

@@ -103,3 +103,10 @@ test("the live row is only ever a newer copy of an appended history row", async 
   await assert.rejects(pg.query(`UPDATE control_node_fleet_current SET signal_sequence=3,
     payload=jsonb_set(payload,'{sequence}','3')`), /fleet signal rejected/, "payload rewrite");
 });
+
+test("the coordinator may lock a worker delivery receipt but never change one (0088)", async t => {
+  const pg = await seed(); t.after(() => pg.close());
+  await pg.query("SELECT tenant_id FROM control_worker_delivery_receipts WHERE false FOR UPDATE");
+  await assert.rejects(pg.query("UPDATE control_worker_delivery_receipts SET record=record WHERE false"), /permission denied/);
+  await assert.rejects(pg.query("DELETE FROM control_worker_delivery_receipts WHERE false"), /permission denied/);
+});

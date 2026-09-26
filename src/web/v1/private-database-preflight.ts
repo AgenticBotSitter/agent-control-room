@@ -15,9 +15,9 @@ export async function verifyPrivateIdeaAdapter(db: DatabaseClient, scope: { tena
   if (rows.length !== 1 || rows[0].valid !== true) throw new Error("private_idea_adapter_unavailable");
 }
 
-// Generated from public migrations 0001-0087, including generic external-content
+// Generated from public migrations 0001-0088, including generic external-content
 // migrations 0025/0026. Catalog query below; not a mutable database marker.
-export const privateWebSchemaDigest = "1f2d79fd49a1bac0e8f440c069509e16102c99d1dfcde617378c6cfd945c6da0";
+export const privateWebSchemaDigest = "42a186823520ad0e91cb7c99e9995395c68ced68536836e3986abee22b49b00a";
 export const privateWebReadTables = ["control_identities", "control_role_grants", "workspaces", "control_web_sessions",
   "tenants", "control_idempotency",
   "control_schedules", "control_schedule_occurrences",
@@ -119,7 +119,7 @@ const coordinatorUpdates: Record<string, readonly string[]> = {
   control_node_fleet_current: ["signal_sequence", "fingerprint", "trust", "observed_at", "expires_at", "payload"],
   ...Object.fromEntries(["control_identities", "control_role_grants", "workspaces", "control_completion_gate_integrity"].map(table => [table, ["web_lock"]])),
   control_web_sessions: ["revoked_at"], control_audit_chain_heads: ["head_hash", "event_count", "updated_at"],
-  control_harness_runs: ["coordinator_lock"], control_completion_gate_records: ["web_lock"],
+  control_harness_runs: ["coordinator_lock"], control_worker_delivery_receipts: ["coordinator_lock"], control_completion_gate_records: ["web_lock"],
   control_project_coordinator_heads: ["coordinator_lock"],
   control_project_coordination_proposals: ["coordinator_lock"],
   control_project_delegation_policies: ["coordinator_lock"],

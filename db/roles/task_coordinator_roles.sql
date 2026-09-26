@@ -56,6 +56,7 @@ GRANT UPDATE (revoked_at) ON control_web_sessions TO control_room_task_coordinat
 GRANT UPDATE (head_hash, event_count, updated_at) ON control_audit_chain_heads TO control_room_task_coordinator;
 GRANT INSERT ON control_completion_gate_records TO control_room_task_coordinator;
 GRANT UPDATE (coordinator_lock) ON control_harness_runs TO control_room_task_coordinator;
+GRANT UPDATE (coordinator_lock) ON control_worker_delivery_receipts TO control_room_task_coordinator;
 GRANT UPDATE (web_lock) ON control_completion_gate_records TO control_room_task_coordinator;
 GRANT UPDATE (revision, record_count, state_digest, state_auth_tag) ON control_completion_gate_integrity TO control_room_task_coordinator;
 -- Mac-local readiness signals only; migration 0087's guard confines these to the

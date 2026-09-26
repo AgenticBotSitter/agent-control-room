@@ -99,8 +99,12 @@ export async function deliverOwnerTrustedLocalCliTaskV1(config: OwnerTrustedLoca
     if (signal.aborted) return Object.freeze({ delivery, state: "delivery_cancelled" as const,
       startsWork: false as const, grantsExecutionAuthority: false as const });
     const receipt = await deliverControllerWorkerPacketV1(config.receiptPort, delivery, route, signal);
+    // The receipt port stamps its own, later, receivedAt. The record is written
+    // after that receipt exists, so it is recorded at the later of the two; the
+    // store still refuses any record that precedes its receipt.
+    const recordedAt = Date.parse(receipt.receivedAt) > Date.parse(when) ? receipt.receivedAt : when;
     const persisted = await config.db.transaction(tx => persistControllerWorkerDeliveryReceiptV1(tx, config.integrityKey,
-      delivery, receipt, when));
+      delivery, receipt, recordedAt));
     if (persisted.replayed) return Object.freeze({ delivery, receipt: persisted.receipt, state: "already_delivered" as const,
       startsWork: false as const, grantsExecutionAuthority: false as const });
     if (receipt.disposition !== "accepted") return Object.freeze({ delivery, receipt, state: "receipt_rejected" as const,

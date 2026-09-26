@@ -128,3 +128,15 @@ export function ownerTrustedLocalEnablementDigestV1(value: unknown): string {
   if (record.enablementDigest !== enablement.enablementDigest) refused();
   return enablement.enablementDigest;
 }
+
+/** The pinned record keeps the executable's full `--version` line (for example
+ * `codex-cli 0.46.0`), which is what readiness compares. A harness run record
+ * needs only the version token, so take the first dotted version number from
+ * that same line, or the line itself when it is already a bare token. */
+export function ownerTrustedLocalHarnessVersionV1(recordedVersion: string): string {
+  const token = /^[a-zA-Z0-9][a-zA-Z0-9._+-]*$/u;
+  const found = /(?:^|[\s(])v?(\d+(?:\.\d+)+[0-9A-Za-z.+-]*)/u.exec(recordedVersion)?.[1];
+  const value = found ?? recordedVersion;
+  if (value.length > 80 || !token.test(value)) refused();
+  return value;
+}
