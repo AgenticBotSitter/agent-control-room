@@ -123,6 +123,10 @@ const refuses = (value: unknown) => assert.throws(
 
 test("the installed Claude port is bound to one exact manifest, sidecar, fixed policy and qualification without launching", async t => {
   const input = await fixture(t), before = structuredClone(input);
+  if (process.platform !== "darwin") {
+    refuses(input);
+    return;
+  }
   const result = createPrivateMacosClaudeCodeInstalledPortComposerV1(input);
   assert.deepEqual(input, before);
   assert.equal(result.status, "installed_port_bound");
@@ -139,6 +143,10 @@ test("the installed Claude port is bound to one exact manifest, sidecar, fixed p
 
 test("the protected release and installed-port capabilities are one-use and never become a generic retry path", async t => {
   const input = await fixture(t), releaseCapability = input.manifestReleaseCapability;
+  if (process.platform !== "darwin") {
+    refuses(input);
+    return;
+  }
   const result = createPrivateMacosClaudeCodeInstalledPortComposerV1(input);
   consumePrivateMacosClaudeCodeInstalledProcessHostPortsV1(result.capability);
   assert.throws(() => consumePrivateMacosClaudeCodeInstalledProcessHostPortsV1(result.capability),
