@@ -3,11 +3,11 @@
 These are root commands **on the VPS**, not commands for the Mac. This file
 contains no host address, password, or verifier. The tagged Mac has no VPS SSH
 access; do not grant it SSH to make this upgrade easier. Do not run the apply
-step until Claude has reviewed the source, the owner has approved the live
-plan, and the pending migrations have an approved VPS-local restricted-migrator
-procedure. Never paste a password or SCRAM verifier into GitHub or a log.
+step until Claude has reviewed the printed plan and the owner has said "go".
+Never paste a password or SCRAM verifier into GitHub or a log. The owner may
+relay the verifier privately by chat; it cannot be used to log in by itself.
 
-## 1. Verify the source and inspect migrator use
+## 1. Verify the source
 
 From the existing VPS checkout, with no running work using that checkout:
 
@@ -22,73 +22,64 @@ git rev-parse HEAD
 git rev-parse origin/main
 ```
 
-The two commits must match. Stop if any command fails. Inspect the live
-migrator role before changing migration execution or its password:
+The two commits must match. Stop if any command fails. The approved local
+migration path preserves the existing migrator role and password; it uses a
+Unix-socket operator session that assumes the restricted migrator identity
+before migration SQL. Do not rotate any existing login password.
 
-```sh
-runuser -u postgres -- psql -X -A -t -v ON_ERROR_STOP=1 -d control_room \
-  -c "SELECT usename, application_name, count(*) FROM pg_stat_activity WHERE usename='control_room_migrator' GROUP BY usename, application_name ORDER BY application_name"
-rg -l 'control_room_migrator' deploy/postgres src/installer scripts/mac-local db/roles
-```
+## 2. Print the read-only plan for Claude and the owner
 
-The source inventory includes the owner-tool host, private installer,
-provisioner, and rehearsal. Report any unexpected live migrator session or
-consumer to Claude. **Do not rotate the migrator password.** The proposed
-password-free path is a separate local peer-authenticated operator session
-that assumes the existing restricted migrator identity before migration SQL;
-it is not yet approved or implemented.
-
-## 2. Produce a read-only snapshot
-
-Run this only after the reviewed upgrade source is on `main`. The snapshot
-contains role names, grants, and ledger rows, but no passwords. Keep it
-private anyway. A missing package in the offline cache is a stop, not
-permission to download on the VPS.
+Run this only after the reviewed upgrade source is on `main`. A missing
+package in the offline cache is a stop, not permission to download on the VPS.
+The plan contains only migration filenames and role/grant differences.
 
 ```sh
 STAGE=$(mktemp -d /var/tmp/control-room-db-upgrade.XXXXXX)
 git clone --no-local --depth 1 --branch main "file://$PWD" "$STAGE/source"
 test "$(git -C "$STAGE/source" rev-parse HEAD)" = "$(git rev-parse HEAD)"
 CI=true pnpm --dir "$STAGE/source" install --frozen-lockfile --offline --ignore-scripts
-node --import tsx "$STAGE/source/scripts/mac-local/database-upgrade-snapshot.mjs" --print > "$STAGE/snapshot.json"
-node -e 'const s=require(process.argv[1]); if(s.schema!=="control-room.mac-database-upgrade-snapshot/v1"||!s.mainCommit||!Array.isArray(s.snapshot.applied))process.exit(1); console.log("read-only snapshot: ok",s.mainCommit)' "$STAGE/snapshot.json"
+chown -R postgres:postgres "$STAGE/source"
+chown postgres:postgres "$STAGE"
+MAIN=$(git -C "$STAGE/source" rev-parse HEAD)
+runuser -u postgres -- node "$STAGE/source/scripts/mac-local/database-upgrade-remote.mjs" \
+  --plan --expected-main "$MAIN" | tee "$STAGE/plan.json"
 ```
 
-Transfer **only** `snapshot.json` to an absolute file path on the Mac through
-an owner-approved private file channel. Do not use GitHub or chat for the file.
-The Mac then runs `pnpm mac:provision-database -- --upgrade --dry-run
---snapshot-file ABS` from the same clean `main` commit. This reads the file
-only; it does not contact the VPS.
+Send the printed, non-secret plan and digest to Claude for review. Wait for
+Claude's assessment and the owner's explicit "go". If approval is delayed,
+the later apply command will recompute the plan and refuse if anything changed.
+Keep the exact `STAGE` path in private operator notes; if the shell closes,
+restore that exact path manually rather than selecting a directory by glob.
+The optional Mac `--upgrade --dry-run --snapshot-file ABS` remains available,
+but it is not part of this operator sequence.
 
-## 3. Apply — hold until the migration decision and owner approval
+## 3. One guarded apply after the owner says "go"
 
 The Mac runs `--upgrade --prepare` and privately hands Johnny5 only the
 expected main commit and a SCRAM-SHA-256 verifier. The verifier is not the
 plaintext password, but treat it as sensitive provisioning material. Confirm
-its commit equals the two commits checked above. If the snapshot plan shows
-pending migrations, **stop**: the current VPS-local apply deliberately refuses
-them. Do not run schema migrations as the `postgres` superuser and do not ask
-the Mac for the migrator password.
-
-After the restricted migration procedure has been reviewed, approved, and
-run, repeat step 2. Only when the new snapshot shows no pending migrations,
-and the owner has approved the live grant changes, run from the staged clone:
+its commit equals `MAIN`. Keep the staged clone and approved `plan.json` from
+step 2. The next command compares the plan digest before any write, applies
+pending migrations as the restricted migrator through a local peer session,
+then creates the publisher and reconciles grants in one operator run. It
+refuses unless the final plan is empty. It never takes or changes the existing
+migrator password.
 
 ```sh
-chown -R postgres:postgres "$STAGE/source"
+PLAN_DIGEST=$(node -e 'const p=require(process.argv[1]); if(!/^sha256:[a-f0-9]{64}$/.test(p.digest))process.exit(1); process.stdout.write(p.digest)' "$STAGE/plan.json")
 read -r -s -p 'Paste the SCRAM verifier privately: ' CR_VERIFIER
 printf '\n'
 printf '%s\n' "$CR_VERIFIER" | runuser -u postgres -- node \
   "$STAGE/source/scripts/mac-local/database-upgrade-remote.mjs" \
-  --apply --expected-main "$(git rev-parse HEAD)"
+  --apply --expected-main "$MAIN" --expected-plan-digest "$PLAN_DIGEST"
 unset CR_VERIFIER
 ```
 
 The verifier goes through standard input, never an argument or file. The
-command refuses a dirty/wrong source, pending migrations, unexpected existing
+command refuses a dirty/wrong source, a changed plan, unexpected existing
 roles, or grant non-convergence. It does not alter existing login passwords.
-After the command reports an empty after-plan, repeat step 2 and transfer a
-new snapshot. The Mac owner runs `--upgrade --finish` only after the publisher
-login authenticates over the existing private PostgreSQL route. Keep the
-staged checkout and snapshot until Claude has accepted the evidence; then
-remove only this exact temporary directory through the normal cleanup flow.
+Check that the printed `after` object has no pending migrations, missing roles,
+memberships, or grant differences. The Mac runs `--upgrade --finish` only
+after the publisher login authenticates over the existing private PostgreSQL
+route. Keep the staged checkout and plan until Claude accepts the evidence;
+then remove only this exact temporary directory through normal cleanup.
