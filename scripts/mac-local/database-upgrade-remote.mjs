@@ -2,13 +2,16 @@
  * SELECTs only. Secrets arrive on stdin for the real upgrade and never appear
  * in the report, process arguments, or a remote file. */
 import { createHash } from "node:crypto";
+import { execFileSync } from "node:child_process";
 import { readFile } from "node:fs/promises";
-import { applyMigrations } from "../../deploy/postgres/apply-migrations.mjs";
+import { fileURLToPath } from "node:url";
 import { connectTarget } from "../../deploy/postgres/evidence.mjs";
 import { applyMacGrantDiffV1, diffMacGrantsV1, macRolePlan, readDesiredMacGrantsV1,
   readMacGrantCatalogV1, macGrantRowsToSetV1, macGrantCatalogSqlV1 } from "./database-upgrade-grants.mjs";
+import { checkedPostgresScramVerifierV1 } from "./database-upgrade-scram.mjs";
 
 const bootstrapTarget = "host=/var/run/postgresql dbname=control_room user=postgres";
+const repoRoot = fileURLToPath(new URL("../../", import.meta.url));
 const principals = [...Object.keys(macRolePlan), ...Object.values(macRolePlan)];
 const migrationLedger = new URL("../../deploy/postgres/migration-ledger.json", import.meta.url);
 const sha256 = bytes => createHash("sha256").update(bytes).digest("hex");
@@ -85,19 +88,13 @@ export async function inspectMacDatabaseUpgradeV1({ client }) {
   return report(client);
 }
 
-export async function applyMacDatabaseUpgradeV1({ publisherPassword, migratorPassword, client,
-  applyPending = applyMigrations, bootstrapConnection = bootstrapTarget,
-  migrateConnection = `host=127.0.0.1 port=5432 dbname=control_room user=control_room_migrator password=${migratorPassword}` }) {
-  if (typeof publisherPassword !== "string" || publisherPassword.length < 32
-    || typeof migratorPassword !== "string" || migratorPassword.length < 32)
-    throw new Error("upgrade_password_input_refused");
+export async function applyMacDatabaseUpgradeV1({ publisherVerifier, client }) {
+  checkedPostgresScramVerifierV1(publisherVerifier);
   const before = await report(client);
-  // Existing logins retain their passwords. A missing publisher login is the
-  // only role that may be created by this upgrade.
+  // Migration execution needs a separately approved VPS-local restricted
+  // migrator path. Do not silently run pending DDL as postgres.
+  if (before.pendingMigrations.length) throw new Error("upgrade_pending_migrations_need_decision");
   if (before.createRoles.some(role => !role.includes("publisher"))) throw new Error("upgrade_existing_role_missing");
-  await applyPending({ bootstrapTarget: bootstrapConnection,
-    migrateTarget: migrateConnection,
-    env: {} });
   await client.query("BEGIN");
   try {
     const state = roleState(await databaseSnapshot(client));
@@ -106,7 +103,7 @@ export async function applyMacDatabaseUpgradeV1({ publisherPassword, migratorPas
         NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS`);
     if (!state.found.has("control_room_publisher")) {
       await client.query(`CREATE ROLE control_room_publisher LOGIN INHERIT NOSUPERUSER NOCREATEDB
-        NOCREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD ${client.escapeLiteral(publisherPassword)}`);
+        NOCREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD ${client.escapeLiteral(publisherVerifier)}`);
     }
     const current = await readMacGrantCatalogV1(client);
     const desired = await readDesiredMacGrantsV1();
@@ -131,22 +128,29 @@ export async function applyMacDatabaseUpgradeV1({ publisherPassword, migratorPas
   }
 }
 
-if (process.argv[1] === new URL(import.meta.url).pathname) {
-  let input = "";
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
   try {
+    const args = process.argv.slice(2);
+    if (args.length !== 3 || args[0] !== "--apply" || args[1] !== "--expected-main"
+      || !/^[a-f0-9]{40}$/u.test(args[2])) throw new Error("upgrade_input_refused");
+    const git = params => execFileSync("git", ["-C", repoRoot, ...params],
+      { encoding: "utf8", timeout: 10_000 }).trim();
+    if (git(["rev-parse", "HEAD"]) !== args[2]
+      || git(["rev-parse", "refs/remotes/origin/main"]) !== args[2]
+      || git(["status", "--porcelain"])) throw new Error("upgrade_main_checkout_refused");
+    let input = "";
     for await (const chunk of process.stdin) {
-      input += chunk;
-      if (input.length > 4096) throw new Error("upgrade_input_refused");
+      input += String(chunk);
+      if (input.length > 300) throw new Error("upgrade_verifier_input_refused");
     }
-    const request = JSON.parse(input);
-    if (Object.keys(request).sort().join(",") !== (request.dryRun
-      ? "dryRun" : "dryRun,migratorPassword,publisherPassword")) throw new Error("upgrade_input_refused");
+    const verifier = checkedPostgresScramVerifierV1(input.trim());
     const client = connectTarget(bootstrapTarget);
     await client.connect();
     try {
-      const result = request.dryRun ? await inspectMacDatabaseUpgradeV1({ client })
-        : await applyMacDatabaseUpgradeV1({ client, migratorPassword: request.migratorPassword,
-          publisherPassword: request.publisherPassword });
+      const identity = (await client.query("SELECT current_user, session_user, rolsuper FROM pg_roles WHERE rolname=current_user")).rows[0];
+      if (identity?.current_user !== "postgres" || identity?.session_user !== "postgres"
+        || identity?.rolsuper !== true) throw new Error("upgrade_operator_identity_refused");
+      const result = await applyMacDatabaseUpgradeV1({ client, publisherVerifier: verifier });
       process.stdout.write(`${JSON.stringify(result)}\n`);
     } finally { await client.end(); }
   } catch (error) {

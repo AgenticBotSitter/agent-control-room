@@ -2,33 +2,39 @@
 
 ## Scope
 
-`pnpm mac:provision-database -- --upgrade --protected-root ABS --ssh-target USER@HOST`
-upgrades the existing dedicated `control_room` PostgreSQL 17 database. The owner
-approval covers review and a read-only dry run only. Do not run the mutating
-form on the VPS until the owner separately approves the reviewed output.
+The original SSH-based design was superseded by Claude's decision: the tagged
+Mac must not receive VPS SSH access, and no plaintext password is relayed to
+Johnny5. The current upgrade is a three-part handoff: a VPS-local read-only
+snapshot, Mac-local plan/prepare, then VPS-local apply followed by Mac-local
+finish. See `docs/JOHNNY5_DB_ROUTE_STEPS.md` for the operator sequence.
 
-The upgrade fetches only `main` on the VPS and stages that exact commit. It
-refuses unless the Mac command is running from the same clean `main` commit.
+The owner approval covers source work and disposable rehearsal, not a live
+upgrade. No VPS change may run before the offline plan, Claude review, and
+owner approval. The VPS-local apply also refuses while migrations are pending:
+the password-free restricted-migrator path is a separate security decision.
+An attempted source patch for that peer-authenticated path was stopped by the
+workspace safety review before it changed any file. No bypass was attempted.
+
+The operator stages only the exact `origin/main` commit on the VPS. Mac modes
+require a clean local `main` checkout at the same commit.
 Dependency preparation uses `CI=true pnpm install --frozen-lockfile --offline
 --ignore-scripts`. A missing cached package stops the run; there is no network
 fallback for package installation. The source worktree is temporary.
 
-`--dry-run` sends one repeatable-read, read-only SQL transaction over SSH.
-It reads PostgreSQL's migration ledger, role attributes, memberships, and
-direct table, column, schema, database, and function grants. It prints the
-pending migration filenames and exact role/grant differences, without passwords.
-It makes no PostgreSQL or protected-root changes, and does no VPS Git fetch,
-source staging, or package installation.
+The VPS snapshot command reads the migration ledger, role attributes,
+memberships, and direct grants in one repeatable-read, read-only transaction.
+It prints JSON with no password. The Mac's `--upgrade --dry-run --snapshot-file
+ABS` validates that snapshot against the checked-out main commit and computes
+the exact migration, role, membership, and grant plan without network access.
 
-The mutating command applies the pending ledger migrations through the existing
-restricted migrator. It reconciles the five Mac roles against the checked in
-role files. The four existing login passwords are never altered. The missing
-publisher login alone gets a locally generated password, kept in the protected
-Mac root and sent over the existing SSH stdin channel. After remote success,
-only `config/database-roles.json` is rewritten to add `publisher` with the
-same private endpoint policy as the other roles. `mac-local.json` and the
-owner sign-in file are never written. A retry retains the new password and
-should report no remaining differences.
+The Mac's `--prepare` generates a new publisher password under Protected and
+prints only its SCRAM-SHA-256 verifier and expected main commit. Treat even the
+verifier as sensitive provisioning material; never put it in GitHub or a log.
+The VPS-local command receives that verifier on stdin, creates only the missing
+publisher login, and reconciles grants. The four existing passwords remain
+untouched. `--finish` authenticates the publisher through the approved private
+PostgreSQL route before adding its entry to `database-roles.json`; it never
+writes `mac-local.json` or the owner sign-in file.
 
 ## Evidence before live dry run
 
@@ -37,11 +43,17 @@ should report no remaining differences.
   a negative probe.
 - The same read-only SQL used for the VPS dry run returned the exact plan from
   that disposable cluster and left its catalog unchanged.
-- Upgrade applied migrations 0086–0090 and removed the extra grant.
+- In the disposable rehearsal only, the existing restricted migrator applied
+  migrations 0086–0090 before the new VPS-local role/grant step removed the
+  extra grant. Production will refuse pending migrations until the peer-local
+  migrator route is separately reviewed and approved.
 - Roles, memberships, and direct table and column grants matched an independent
   fresh HEAD provision exactly. The second upgrade had no role or grant diff.
-- Local tests confirmed the dry run did not change protected files; the real
-  path added only the publisher password and `database-roles.json` entry.
+- Local tests confirmed the offline plan did not change protected files;
+  prepare added only the publisher password and protected preparation record,
+  while finish added only its `database-roles.json` entry after verification.
+- The disposable PostgreSQL 17 test proved a publisher login created from
+  the Mac-derived SCRAM verifier accepts the Mac password.
 - The old dependency lockfile lacked one package in the local cache. The
   automatic approval review rejected networked installation in that disposable
   checkout. The rehearsal used the exact 0085 SQL and migration files with the
@@ -49,17 +61,15 @@ should report no remaining differences.
 
 ## Live read-only attempt
 
-The owner-authorized `--upgrade --dry-run` was attempted on 2026-09-26. It
-stopped at the private SSH gate: the tailnet policy refused SSH before the
-read-only SQL could run. An independent `SELECT 1` over the same route was
-refused identically. No VPS database, files, or grants were changed. Do not
-alter SSH policy or use a different route as part of this review; the live
-grant report remains pending an approved route.
+The original SSH dry run was attempted on 2026-09-26 and refused by the
+intentional tailnet policy before SQL ran. An independent `SELECT 1` over SSH
+was also refused. This prompted the local-only design above; no VPS database,
+file, grant, or SSH policy was changed. A VPS-local snapshot remains pending.
 
 ## Review focus
 
-Check the source pin, read-only dry-run behavior, ACL catalog coverage, strict
-role attributes and membership comparison, password preservation, and the
-transaction boundary around grant changes. Inspect the remote command for
-secret exposure and unintended effects. The live dry run requires an approved
-private route; do not mistake the SSH refusal for an empty grant plan.
+Check the exact-main pin on both hosts, read-only snapshot, offline plan,
+SCRAM derivation, publisher authentication before finish, ACL catalog
+coverage, password preservation, and transaction boundary around grant
+changes. The remaining migration runner decision is explicit; do not mistake
+the SSH refusal for an empty grant plan or a reason to restore SSH.
