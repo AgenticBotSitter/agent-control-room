@@ -1,5 +1,45 @@
 # Package 5 rehearsal status
 
+## Package 6 completion investigation, 2026-09-25 (stopped at authority boundary)
+
+The intended Mac-local path is automatic structural verification, **not**
+owner-manual verification. The fixed owner-review profile requires
+`scenario:mac-local-text` and producer/verifier separation
+(`src/web/v1/mac-local-owner-review-profile.ts:18-34`). The Mac provider
+registers exactly that automatic scenario with the existing quality
+coordinator (`src/web/v1/mac-local-default-task-provider.ts:175-180`). The
+manual website verification service is constructed only when
+`manualVerificationScenarios` is supplied
+(`src/web/v1/mac-local-task-application.ts:65-69`), which this provider does
+not do. The existing quality coordinator calls
+`NativeResultVerificationService` and then the completion service
+(`src/web/v1/task-quality-coordinator.ts:164-183`). The structure verifier is
+deterministic and has a service identity distinct from the agent producer
+(`src/completion-gate/v1/native-result-verification.ts:61-69`).
+
+A temporary Mac-provider quality sweep and extended three-agent journey were
+tested on fresh disposable PostgreSQL 17 clusters at `127.0.0.1:15541` with
+fake pinned executables. TypeScript and production build passed. The journey
+**did not pass**: an accepted Claude result stayed leased, with zero
+verifications. Read-only inspection of the disposable database showed both
+saved result runs still in `discovered`, while the quality sweep intentionally
+selects only `r.state='succeeded'`
+(`src/web/v1/task-quality-coordinator.ts:107-113`). The local publisher only
+creates the run and publishes the result; it records no authenticated
+`starting`/`running`/`succeeded` run events
+(`src/harness/v1/owner-trusted-local-cli-publish.ts:65-81`). The publisher
+login has only an inert lock-column update, not the state/event writes needed
+by `HarnessRunStoreV1.append`
+(`db/roles/local_result_publisher_roles.sql:29-42`,
+`src/harness/v1/store.ts:151-169`).
+
+The temporary sweep, journey extension and diagnostics were removed after
+the negative proof. No candidate-state check was loosened; no grant, role,
+review rule, live database, Tailscale setting or real agent was changed. The
+disposable clusters were stopped. Claude must decide the authenticated
+run-terminalization authority before this package can safely complete. Do
+not treat owner acceptance as completed work in the meantime.
+
 ## Package 6 owner review, 2026-09-25 (disposable Mac-local proof)
 
 Starting from Claude's `d8196a20` base, the authenticated website API opened
