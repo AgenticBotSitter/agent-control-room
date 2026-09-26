@@ -60,14 +60,28 @@ test("home gives honest navigation to existing private workspace surfaces", () =
   assert.equal((html.match(/operator-capacity-title/g) ?? []).length, 2, "one read-only capacity panel is mounted");
 });
 
+/** The route panel renders only once the task-worker read has resolved. The
+ * component defaults that read to "loading", so a static render must pass the
+ * resolved state explicitly; see tests/local-worker-route-status.test.tsx. */
+const TASK_WORKERS_STARTED = { state: "available" as const, value: { taskWorkersStarted: true, workers: [] } } as const;
+
 test("home shows the three saved local route setup states without presenting them as live", () => {
   const plan = planInstallationTopologyV1({ databaseAuthorityDigest: sha256Digest("database"),
     schedulerAuthorityDigest: sha256Digest("scheduler"),
     currentRoutes: [{ kind: "local", workerId: "worker:local", adapterId: "connector:local-v1", adapterRevision: "00570550" }],
     requestedRoutes: [{ kind: "local", workerId: "worker:local", adapterId: "connector:local-v1", adapterRevision: "00570550" }] });
-  const html = renderToStaticMarkup(createElement(HomeInstallationStatus, { topology: {
+  // HomeInstallationStatus composes LocalWorkerRouteStatus, which waits on the
+  // task-worker read before rendering the three route cards. The composed
+  // wrapper does not forward an injected task-worker state, so the route panel
+  // is asserted through the component that owns it; the wrapper's own
+  // "Three local worker routes" summary is asserted just below.
+  const home = renderToStaticMarkup(createElement(HomeInstallationStatus, { topology: {
     state: "available", setup: createInstallationSetupViewV1({ plan, localBackupRestoreVerified: false }),
   } }));
+  assert.match(home, /Three local worker routes/);
+  const html = renderToStaticMarkup(createElement(LocalWorkerRouteStatus, { state: "available",
+    setup: createInstallationSetupViewV1({ plan, localBackupRestoreVerified: false }),
+    taskWorkerStatus: TASK_WORKERS_STARTED }));
   for (const label of ["Hermes Agent", "Claude Code", "Codex"]) assert.match(html, new RegExp(label));
   assert.match(html, /saved setup and proof states, not a live process monitor/);
   assert.match(html, /This panel has no current route-bound task observation/);
@@ -94,7 +108,8 @@ test("workers page has a separate local route-status panel and does not turn inv
     currentRoutes: [{ kind: "local", workerId: "worker:local", adapterId: "connector:local-v1", adapterRevision: "00570550" }],
     requestedRoutes: [{ kind: "local", workerId: "worker:local", adapterId: "connector:local-v1", adapterRevision: "00570550" }] });
   const html = renderToStaticMarkup(createElement(LocalWorkerRouteStatus, { state: "available",
-    setup: createInstallationSetupViewV1({ plan, localBackupRestoreVerified: false }) }));
+    setup: createInstallationSetupViewV1({ plan, localBackupRestoreVerified: false }),
+    taskWorkerStatus: TASK_WORKERS_STARTED }));
   assert.match(html, /Local worker routes/);
   assert.match(html, /Hermes Agent/); assert.match(html, /Claude Code/); assert.match(html, /Codex/);
   assert.match(html, /not a live process monitor/);

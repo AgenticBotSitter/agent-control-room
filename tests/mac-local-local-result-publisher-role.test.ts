@@ -1,26 +1,36 @@
 // Fifth Mac-local login (owner decision 2026-09-25,
 // docs/claude/MAC_LOCAL_TASK_RUNTIME_TRUST_DECISION.md section 15). Proves the
 // real PostgreSQL grants in db/roles/local_result_publisher_roles.sql are
-// exactly enough for createOwnerTrustedLocalCliPublishV1 (run registration +
-// workflowIdForJob) and publishDurableResultV1 (with the durable reservation
-// Postgres port) to complete their one transaction, and that the role cannot
-// write jobs, attempts, the completion gate, or the native task queue.
+// exactly enough for the production publish path to complete, and that the role
+// cannot write jobs, attempts, the completion gate, or the native task queue.
+//
+// This file calls the real code. It never re-implements a statement that
+// production also runs: the run registration goes through the reviewed
+// `hermesLocalRunRegistrationV1` and `HarnessRunStoreV1.create`, and the
+// workflow-id read through the publish composition's own `workflowIdForJob`, all
+// by way of `createOwnerTrustedLocalCliPublishV1`. A previous version pasted
+// those two statements by hand, so a change to production SQL could leave the
+// test still green while the real path broke.
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import type { PGlite } from "@electric-sql/pglite";
-import { publishDurableResultV1, type DurableResultBindingV1 } from "../src/artifacts/v1/durable-result-publication";
+import { createOwnerTrustedLocalCliPublishV1 } from "../src/harness/v1/owner-trusted-local-cli-publish";
+import { createControllerWorkerDeliveryV1, type ControllerWorkerDeliveryV1 } from "../src/harness/v1/controller-worker-delivery";
+import { hermesLocalRunRegistrationV1 } from "../src/harness/hermes-local-v1/local-run-registration";
+import { HERMES_LOCAL_ADAPTER_V1 } from "../src/harness/hermes-local-v1/task-planning-contract";
+import { DurableResultReviewSubmissionServiceV1 } from "../src/completion-gate/v1/durable-result-review-submission";
+import { CompletionGateStoreV1, type CompletionAcceptanceProfileV1 } from "../src/completion-gate/v1";
 import { createDurableReservationPostgresPortV1 } from "../src/artifacts/v1/neutral-reservation-postgres";
+import { seedMacLocalAdapterRegistryV1 } from "../src/web/v1/mac-local-owner-bootstrap";
 import type { DatabaseClient, DatabaseSession } from "../src/persistence/database";
 import { InMemoryArtifactStorage } from "../src/node-executor/artifact-storage";
+import { sha256Digest } from "../src/security";
 import { binding } from "./hermes-native-fixture";
+import { at } from "./native-task-fixture";
 import { webNativeResultFixture } from "./helpers/web-native-result";
 
-// Matches webNativeResultFixture's own internal digest helper (real SHA-256,
-// not hermes-native-fixture's naive `digit.repeat(64)`), so values here agree
-// with what `provisionRun` already stored on the harness run's payload.
-const digest = (seed = "a") => `sha256:${createHash("sha256").update(`durable-test:${seed}`).digest("hex")}`;
+const HARNESS_VERSION = "2026.9.25";
 
 /** Same shape as the vps-built-native-evidence.test.mjs restricted pool: every
  * statement runs on the real PGlite connection, but only after
@@ -38,10 +48,10 @@ function restrictedClient(db: DatabaseClient, login: string): DatabaseClient {
   return client;
 }
 
-async function installPublisherRole(raw: PGlite, login: string) {
-  await raw.exec(await readFile("db/roles/local_result_publisher_roles.sql", "utf8"));
+async function installRole(raw: PGlite, file: string, role: string, login: string) {
+  await raw.exec(await readFile(`db/roles/${file}`, "utf8"));
   await raw.exec(`CREATE ROLE ${login} LOGIN INHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
-    GRANT control_room_local_result_publisher TO ${login};`);
+    GRANT ${role} TO ${login};`);
 }
 
 /** Denied-write probe: PostgreSQL's own SQLSTATE for a missing privilege. */
@@ -55,47 +65,88 @@ async function deniedInSession(session: DatabaseSession, sql: string, params: re
   }
 }
 
-test("the local result publisher role can publish a durable result end to end and nothing else", async t => {
+/** The exact packet the real bridge hands the publish closure. */
+function delivery(runId: string, jobId: string, attemptId: string, workerId: string,
+  authorityDigest: string, profile: CompletionAcceptanceProfileV1, reviewKey: Uint8Array) {
+  return createControllerWorkerDeliveryV1({
+    identity: { tenantId: binding.tenantId, projectId: binding.projectId, jobId, attemptId, runId, nodeId: binding.nodeId },
+    worker: { workerId, adapterId: HERMES_LOCAL_ADAPTER_V1, adapterRevision: "source-123" },
+    input: { prompt: "Reply with exactly the single word: ok", instructions: "Return plain text only." },
+    authorityDigest, connectorProfileDigest: sha256Digest("publisher-role-connector"),
+    acceptanceProfileId: profile.id, acceptanceProfileDigest: sha256Digest(profile),
+    issuedAt: at(0), expiresAt: at(120_000),
+  });
+}
+
+function accepted(packet: ControllerWorkerDeliveryV1, receivedAt: string) {
+  const material = { schema: "control-room.controller-worker-delivery-receipt/v1" as const,
+    deliveryId: packet.deliveryId, deliveryDigest: packet.deliveryDigest, workerId: packet.worker.workerId,
+    route: { kind: "local" as const, workerId: packet.worker.workerId }, receivedAt,
+    disposition: "accepted" as const, startsWork: false as const, grantsExecutionAuthority: false as const };
+  return { ...material, receiptDigest: sha256Digest(material) };
+}
+
+/** The reviewed per-agent run registration, exactly as the real compositions
+ * pass it: it derives every run field from the delivery packet. */
+const registerRun = (packet: unknown, createdAt: string) =>
+  hermesLocalRunRegistrationV1(packet, createdAt, HARNESS_VERSION);
+
+/** Mirrors the reviewed owner-trusted-local-cli-publish.test.ts setup: the
+ * fixture's own harness row describes a synthetic manual adapter, so it is
+ * removed and the Mac-local adapter registry seeded instead, letting the
+ * publisher login register the real owner-trusted local run. */
+async function setup(t: { after(fn: () => unknown): void }, runId: string) {
   const f = await webNativeResultFixture();
   t.after(f.close);
-  const runId = "run:publisher-role-a", jobId = `job:${runId}`, attemptId = `attempt:${runId}`;
-  await f.provisionRun(runId, jobId, attemptId, digest("5"));
-  await installPublisherRole(f.raw, "publisher_login_test_a");
+  const jobId = `job:${runId}`, attemptId = `attempt:${runId}`;
+  const authorityDigest = sha256Digest("publisher-role-authority");
+  await f.provisionRun(runId, jobId, attemptId, authorityDigest);
+  await f.db.query("DELETE FROM control_harness_runs WHERE tenant_id=$1 AND id=$2", [binding.tenantId, runId]);
+  await f.db.transaction(tx => seedMacLocalAdapterRegistryV1(tx, binding.tenantId));
+
+  const profile: CompletionAcceptanceProfileV1 = {
+    schemaVersion: "control-room-completion-gate/v1", id: `profile:${runId}`,
+    tenantId: binding.tenantId, projectId: binding.projectId, name: "Publisher role result quality",
+    targetKind: "document", requiredVerificationScenarioIds: ["scenario:content"], minimumIndependentReviews: 1,
+    reviewerSeparation: { actor: true, worker: false, agentProfile: false, harness: false, modelFamily: false },
+    verificationRequiresProducerSeparation: true, minimumRisk: "low", maximumRevisionRounds: 2,
+    automaticLowRiskDisposition: false, createdBy: { actorId: "identity:test", actorType: "human" }, createdAt: at() };
+  await f.reviewStore.registerProfile(profile);
+  return { f, jobId, attemptId, profile, authorityDigest };
+}
+
+
+test("the publisher role registers the run and publishes a durable result through the real path", async t => {
+  const { f, jobId, attemptId, profile, authorityDigest } = await setup(t, "run:publisher-role-a");
+  await installRole(f.raw, "local_result_publisher_roles.sql", "control_room_local_result_publisher", "publisher_login_test_a");
   const restricted = restrictedClient(f.db, "publisher_login_test_a");
-
-  // workflowIdForJob's exact statement.
-  const jobRow = await restricted.query<{ workflow_id: string }>(
-    "SELECT workflow_id FROM control_jobs WHERE tenant_id=$1 AND id=$2", [binding.tenantId, jobId]);
-  assert.equal(jobRow.rows[0]?.workflow_id, "workflow:test");
-
   const storage = new InMemoryArtifactStorage();
-  const config = { db: restricted, integrityKey: f.resultKey, reviewKey: f.reviewKey, storage,
-    storageClass: "local" as const, reservations: createDurableReservationPostgresPortV1() };
-  const publishBinding: DurableResultBindingV1 = { tenantId: binding.tenantId, projectId: binding.projectId,
-    jobId, attemptId, runId, nodeId: binding.nodeId, workflowId: "workflow:test", harness: "hermes",
-    connectorProfileDigest: digest("c"), acceptanceProfileId: "profile:test", acceptanceProfileDigest: digest("9") };
-  const receivedAt = new Date(1_800_100_000_000).toISOString();
-  const first = await publishDurableResultV1(config,
-    { binding: publishBinding, bytes: new TextEncoder().encode("Published entirely as the publisher role."),
-      receivedAt, assertAuthority: () => {} });
-  assert.equal(first.replayed, false);
-  assert.equal(first.receipt.runId, runId);
+  const publish = createOwnerTrustedLocalCliPublishV1({
+    db: restricted, runIntegrityKey: f.harnessKey, registerRun,
+    publication: { db: restricted, integrityKey: f.resultKey, reviewKey: f.reviewKey, storage,
+      storageClass: "local" as const, reservations: createDurableReservationPostgresPortV1() },
+  });
+  const packet = delivery("run:publisher-role-a", jobId, attemptId, "worker:publisher:mac-1",
+    authorityDigest, profile, f.reviewKey);
+  const signal = new AbortController().signal;
+  await publish({ delivery: packet, receipt: accepted(packet, at(2_000)),
+    text: "Published entirely as the publisher role.", signal });
 
-  // Exact replay, still entirely under the publisher role (exercises every
-  // FOR UPDATE lock and the review-plan SELECT/INSERT a second time).
-  const replay = await publishDurableResultV1(config,
-    { binding: publishBinding, bytes: new TextEncoder().encode("Published entirely as the publisher role."),
-      receivedAt, assertAuthority: () => {} });
-  assert.equal(replay.replayed, true);
-  assert.deepEqual(replay.receipt, first.receipt);
-
-  // Recorded outside the restricted session, proving the writes really landed.
+  // Recorded outside the restricted session, proving the real path's writes landed.
+  assert.equal((await f.db.query("SELECT 1 AS present FROM control_harness_runs WHERE tenant_id=$1 AND id=$2",
+    [binding.tenantId, "run:publisher-role-a"])).rows.length, 1);
   assert.equal((await f.db.query("SELECT 1 AS present FROM control_durable_result_write_reservations WHERE tenant_id=$1 AND run_id=$2",
-    [binding.tenantId, runId])).rows.length, 1);
+    [binding.tenantId, "run:publisher-role-a"])).rows.length, 1);
   assert.equal((await f.db.query("SELECT 1 AS present FROM control_native_review_plans WHERE tenant_id=$1 AND run_id=$2",
-    [binding.tenantId, runId])).rows.length, 1);
+    [binding.tenantId, "run:publisher-role-a"])).rows.length, 1);
   assert.equal((await f.db.query("SELECT 1 AS present FROM control_native_artifact_receipts WHERE tenant_id=$1 AND run_id=$2",
-    [binding.tenantId, runId])).rows.length, 1);
+    [binding.tenantId, "run:publisher-role-a"])).rows.length, 1);
+
+  // Replaying the same delivery stays idempotent through the real path.
+  await publish({ delivery: packet, receipt: accepted(packet, at(2_000)),
+    text: "Published entirely as the publisher role.", signal });
+  assert.equal((await f.db.query("SELECT count(*)::int AS n FROM control_native_artifact_receipts WHERE tenant_id=$1 AND run_id=$2",
+    [binding.tenantId, "run:publisher-role-a"])).rows[0]?.n, 1);
 
   // Negative probes: none of these belong to the publisher role. Each runs in
   // its own transaction — a denied statement aborts the whole transaction, so
@@ -105,64 +156,66 @@ test("the local result publisher role can publish a durable result end to end an
     restricted.transaction(tx => deniedInSession(tx, sql, params));
   assert.equal(await probe("UPDATE control_jobs SET state=state WHERE tenant_id=$1 AND id=$2", [binding.tenantId, jobId]), true);
   assert.equal(await probe("UPDATE control_attempts SET state=state WHERE tenant_id=$1 AND id=$2", [binding.tenantId, attemptId]), true);
-  assert.equal(await probe("UPDATE control_harness_runs SET state=state WHERE tenant_id=$1 AND id=$2", [binding.tenantId, runId]), true);
+  assert.equal(await probe("UPDATE control_harness_runs SET state=state WHERE tenant_id=$1 AND id=$2", [binding.tenantId, "run:publisher-role-a"]), true);
   assert.equal(await probe("INSERT INTO control_native_task_queue DEFAULT VALUES"), true);
   assert.equal(await probe(
     "INSERT INTO control_completion_gate_records(id,tenant_id,project_id,kind,record_key,subject_id,record_digest,record_auth_tag,payload,occurred_at) " +
     "VALUES('target:x',$1,$2,'target','key:x','subject:x',$3,$4,'{}'::jsonb,now())",
-    [binding.tenantId, binding.projectId, digest("e"), `hmac-sha256:${"e".repeat(64)}`]), true);
-  assert.equal(await probe("DELETE FROM control_native_review_plans WHERE tenant_id=$1 AND run_id=$2", [binding.tenantId, runId]), true);
+    [binding.tenantId, binding.projectId, sha256Digest("e"), `hmac-sha256:${"e".repeat(64)}`]), true);
+  assert.equal(await probe("DELETE FROM control_native_review_plans WHERE tenant_id=$1 AND run_id=$2", [binding.tenantId, "run:publisher-role-a"]), true);
 });
 
-test("the local result publisher role's FOR UPDATE lock on a fresh run permits its own registration insert", async t => {
-  const f = await webNativeResultFixture();
-  t.after(f.close);
-  const runId = "run:publisher-role-b", jobId = `job:${runId}`, attemptId = `attempt:${runId}`;
-  const now = new Date(1_800_200_000_000).toISOString();
-  const authorityDigest = digest("5");
-  const adapterId = (await f.db.query<{ id: string }>("SELECT id FROM adapter_registry LIMIT 1")).rows[0]!.id;
-  // A leased job/attempt with no pre-existing harness run — matches exactly
-  // what HarnessRunStoreV1.create() requires before it inserts one. Same
-  // shape webNativeResultFixture's own provisionRun() uses (it always also
-  // inserts the harness run itself; here that row is deliberately left for
-  // the publisher role to insert).
-  await f.db.query(`INSERT INTO control_jobs(id,tenant_id,workflow_id,project_id,state,version,priority,required_capability,authority_digest,payload,created_at,updated_at)
-    VALUES ($1,$2,'workflow:test',$3,'leased',2,50,'capability:fixture',$4,$5,$6,$6)`,
-    [jobId, binding.tenantId, binding.projectId, authorityDigest, JSON.stringify({
-      id: jobId, kind: "job", state: "leased", jobType: "publisher-role-fixture", version: 2,
-      priority: 50, tenantId: binding.tenantId, authority: { digest: authorityDigest, maxRisk: "low",
-        expiresAt: new Date(Date.parse(now) + 600_000).toISOString(), projectId: binding.projectId, effectPolicy: "none",
-        networkPolicy: "none", credentialRefs: [], allowedExecutor: "executor:fixture", filesystemRoots: [],
-        allowedOperations: ["operation:fixture"], maxDurationSeconds: 600, maxConcurrentEffects: 0, allowedNetworkDestinations: [] },
-      createdAt: now, projectId: binding.projectId, updatedAt: now, workflowId: "workflow:test",
-      inputDigest: digest("1"), retryPolicy: { maxAttempts: 1, backoffSeconds: 1, retryAfterOrphan: false,
-        ambiguousEffectPolicy: "attention", retryableFailureCodes: [] }, specVersion: "1.0.0",
-      contractVersion: "control-room-domain/v1", dependsOnJobIds: [], requiredCapability: "capability:fixture",
-    }), now]);
-  await f.db.query(`INSERT INTO control_attempts(id,tenant_id,job_id,attempt_number,state,version,worker_id,node_id,lease_epoch,payload,created_at,updated_at)
-    VALUES ($1,$2,$3,1,'leased',1,NULL,$4,1,$5,$6,$6)`,
-    [attemptId, binding.tenantId, jobId, binding.nodeId, JSON.stringify({
-      id: attemptId, kind: "attempt", jobId, state: "leased", nodeId: binding.nodeId, version: 1,
-      tenantId: binding.tenantId, createdAt: now, offeredAt: now, updatedAt: now,
-      leaseEpoch: 1, attemptNumber: 1, contractVersion: "control-room-domain/v1",
-    }), now]);
-  await installPublisherRole(f.raw, "publisher_login_test_b");
+test("the publisher role's own run registration is idempotent, not a second row", async t => {
+  const { f, jobId, attemptId, profile, authorityDigest } = await setup(t, "run:publisher-role-b");
+  await installRole(f.raw, "local_result_publisher_roles.sql", "control_room_local_result_publisher", "publisher_login_test_b");
   const restricted = restrictedClient(f.db, "publisher_login_test_b");
-
-  await restricted.transaction(async tx => {
-    const existing = await tx.query("SELECT id FROM control_harness_runs WHERE tenant_id=$1 AND id=$2 FOR UPDATE", [binding.tenantId, runId]);
-    assert.equal(existing.rows.length, 0);
-    await tx.query(`INSERT INTO control_harness_runs (id,tenant_id,project_id,job_id,attempt_id,node_id,adapter_id,harness,native_session_key_digest,parent_run_id,revision_of_run_id,state,run_digest,run_auth_tag,payload,created_at,updated_at,last_observed_at)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,'hermes',$8,NULL,NULL,'discovered',$9,$10,$11::jsonb,$12,$12,$12)`,
-      [runId, binding.tenantId, binding.projectId, jobId, attemptId, binding.nodeId, adapterId,
-        digest("2"), digest("3"), `hmac-sha256:${"e".repeat(64)}`, JSON.stringify({
-          id: runId, jobId, state: "discovered", nodeId: binding.nodeId, harness: "hermes",
-          tenantId: binding.tenantId, adapterId, attemptId, createdAt: now, projectId: binding.projectId,
-          resumable: false, updatedAt: now, cancelState: "not_requested", schemaVersion: "control-room-harness/v1",
-          adapterVersion: "1.0.0", harnessVersion: "2026.9.25", lastObservedAt: now,
-          nativeSessionKeyDigest: digest("2"), connectorProfileDigest: digest("c"), authorityDigest,
-        }), now]);
+  const publish = createOwnerTrustedLocalCliPublishV1({
+    db: restricted, runIntegrityKey: f.harnessKey, registerRun,
+    publication: { db: restricted, integrityKey: f.resultKey, reviewKey: f.reviewKey,
+      storage: new InMemoryArtifactStorage(), storageClass: "local" as const,
+      reservations: createDurableReservationPostgresPortV1() },
   });
-  assert.equal((await f.db.query("SELECT 1 AS present FROM control_harness_runs WHERE tenant_id=$1 AND id=$2",
-    [binding.tenantId, runId])).rows.length, 1);
+  const packet = delivery("run:publisher-role-b", jobId, attemptId, "worker:publisher:mac-2",
+    authorityDigest, profile, f.reviewKey);
+  const signal = new AbortController().signal;
+  await publish({ delivery: packet, receipt: accepted(packet, at(2_000)), text: "First registration.", signal });
+  assert.equal((await f.db.query("SELECT count(*)::int AS n FROM control_harness_runs WHERE tenant_id=$1 AND id=$2",
+    [binding.tenantId, "run:publisher-role-b"])).rows[0]?.n, 1);
+  // A second publish of the same delivery replays instead of inserting again.
+  await publish({ delivery: packet, receipt: accepted(packet, at(2_000)), text: "First registration.", signal });
+  assert.equal((await f.db.query("SELECT count(*)::int AS n FROM control_harness_runs WHERE tenant_id=$1 AND id=$2",
+    [binding.tenantId, "run:publisher-role-b"])).rows[0]?.n, 1);
+});
+
+test("the native results role submits a published result for review through the real service", async t => {
+  const { f, jobId, attemptId, profile, authorityDigest } = await setup(t, "run:publisher-role-c");
+  await installRole(f.raw, "local_result_publisher_roles.sql", "control_room_local_result_publisher", "publisher_login_test_c");
+  await installRole(f.raw, "native_results_roles.sql", "control_room_native_results", "results_login_test_c");
+  const asPublisher = restrictedClient(f.db, "publisher_login_test_c");
+  const asResults = restrictedClient(f.db, "results_login_test_c");
+  const storage = new InMemoryArtifactStorage();
+
+  // Publish as the publisher login first: the review submission reads the
+  // receipt back rather than trusting anything the publisher returned.
+  const publish = createOwnerTrustedLocalCliPublishV1({
+    db: asPublisher, runIntegrityKey: f.harnessKey, registerRun,
+    publication: { db: asPublisher, integrityKey: f.resultKey, reviewKey: f.reviewKey, storage,
+      storageClass: "local" as const, reservations: createDurableReservationPostgresPortV1() },
+  });
+  const packet = delivery("run:publisher-role-c", jobId, attemptId, "worker:publisher:mac-3",
+    authorityDigest, profile, f.reviewKey);
+  await publish({ delivery: packet, receipt: accepted(packet, at(2_000)),
+    text: "Ready for review.", signal: new AbortController().signal });
+
+  // Now the native-results login registers the pending review target.
+  const service = new DurableResultReviewSubmissionServiceV1(asResults, { integrityKey: f.resultKey,
+    reviewIntegrityKey: f.reviewKey, checkpoints: f.checkpoints, storageClass: "local", storage });
+  const submitted = await service.submit(binding.tenantId, "run:publisher-role-c");
+  assert.equal(submitted.replayed, false);
+  assert.equal((await f.db.query("SELECT count(*)::int AS n FROM control_completion_gate_records WHERE tenant_id=$1 AND kind='target'",
+    [binding.tenantId])).rows[0]?.n, 1);
+  const replay = await service.submit(binding.tenantId, "run:publisher-role-c");
+  assert.equal(replay.replayed, true);
+  assert.equal((await f.db.query("SELECT count(*)::int AS n FROM control_completion_gate_records WHERE tenant_id=$1 AND kind='target'",
+    [binding.tenantId])).rows[0]?.n, 1);
 });
