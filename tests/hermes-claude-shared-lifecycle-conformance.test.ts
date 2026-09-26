@@ -249,6 +249,20 @@ test("Hermes and Claude run concurrently through one durable lifecycle without c
     [hermesReview.artifact_id, claudeReview.artifact_id].sort());
   assert.deepEqual([inspectedHermes.execution.leaseId, inspectedClaude.execution.leaseId].sort(),
     [hermesAssigned.receipt.leaseId, claudeAssigned.receipt.leaseId].sort());
+  const unauthenticated = new DurableLocalResultInspectionServiceV1(f.db, {
+    integrityKey: f.resultKey, reviewIntegrityKey: f.reviewKey, harnessIntegrityKey: f.harnessKey,
+    deliveryIntegrityKeys: { hermes: new Uint8Array(32).fill(67), claude: new Uint8Array(32).fill(68) },
+    checkpoints: f.checkpoints, storageClass: "local", storage: f.storage,
+  });
+  await assert.rejects(f.db.transaction(tx => unauthenticated.inspectSubmitted(tx, binding.tenantId, hermesReview.run_id)),
+    /unavailable/, "a delivery signed by another key cannot become a reviewable result");
+  const mismatchedBytes = new DurableLocalResultInspectionServiceV1(f.db, {
+    integrityKey: f.resultKey, reviewIntegrityKey: f.reviewKey, harnessIntegrityKey: f.harnessKey,
+    deliveryIntegrityKeys: { hermes: new Uint8Array(32).fill(65) }, checkpoints: f.checkpoints,
+    storageClass: "local", storage: { read: async () => new TextEncoder().encode("different result") },
+  });
+  await assert.rejects(f.db.transaction(tx => mismatchedBytes.inspectSubmitted(tx, binding.tenantId, hermesReview.run_id)),
+    /unavailable/, "stored bytes that do not match the authenticated receipt are refused");
   const [routedHermes, routedClaude] = await Promise.all([
     f.db.transaction(tx => routedInspection.inspectSubmitted(tx, binding.tenantId, hermesReview.run_id)),
     f.db.transaction(tx => routedInspection.inspectSubmitted(tx, binding.tenantId, claudeReview.run_id)),

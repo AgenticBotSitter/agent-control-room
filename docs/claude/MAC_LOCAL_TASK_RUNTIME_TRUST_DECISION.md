@@ -760,6 +760,16 @@ candidate requirement or grant writes to jobs, attempts, leases, or review
 authority. The prior narrower grant description below is historical; this
 amendment supersedes only its run-event and run-update statements.
 
+**Owner-approved hold-only amendment, 2026-09-25:** The Mac-local quality
+reader's existing authenticated durable-result path locks both
+`control_native_artifact_receipts` and `control_native_review_plans` with
+`SELECT ... FOR UPDATE`. Migration 0090 adds an inert CHECK-false
+`coordinator_lock` column to each table, and the coordinator role receives
+UPDATE on only those two columns. The receipt remains append-only and the
+review-plan trigger remains unchanged. No real evidence column or review
+decision becomes writable by the coordinator. The preflight map, migration
+ledger, and structural schema digest must match this exact change.
+
 - **Why.** The first real per-agent journey found that `createOwnerTrustedLocalCliPublishV1`
   (registers the ordinary run, then reads the job's `workflowId`) and `publishDurableResultV1`
   (reserves the result, writes the artifact manifest and receipt, and writes the neutral review

@@ -5,6 +5,7 @@ import { sha256Digest } from "../../security";
 import { PersistentLocalArtifactStorageV1 } from "../../artifacts/v1/persistent-local-storage";
 import { createDurableReservationPostgresPortV1 } from "../../artifacts/v1/neutral-reservation-postgres";
 import { DurableResultReviewSubmissionServiceV1 } from "../../completion-gate/v1/durable-result-review-submission";
+import { DurableLocalResultInspectionServiceV1 } from "../../completion-gate/v1/durable-local-result-inspection";
 import { CompletionGateStoreV1 } from "../../completion-gate/v1/store";
 import { preparePgBossNativeTaskSubmission } from "../../persistence/pg-boss-native-task-submission";
 import { NativeApprovalPacketStore } from "./native-approval-packet-store";
@@ -91,6 +92,8 @@ export const createTaskApplication: MacLocalTaskProviderV1["createTaskApplicatio
   let application: Awaited<ReturnType<typeof createMacLocalCurrentThreeAgentTaskApplicationV1>> | undefined;
   let refreshTimer: ReturnType<typeof setInterval> | undefined;
   let refreshInFlight: Promise<void> | undefined;
+  let qualityTimer: ReturnType<typeof setInterval> | undefined;
+  let qualityInFlight: Promise<void> | undefined;
   try {
     // The node keys are readable by the coordinator login only (section 12.D);
     // the web login correctly has no access to them.
@@ -127,6 +130,10 @@ export const createTaskApplication: MacLocalTaskProviderV1["createTaskApplicatio
     });
     const reviewSubmission = new DurableResultReviewSubmissionServiceV1(resultsPool.client, {
       integrityKey: keys.results, reviewIntegrityKey: keys.review, checkpoints, storageClass: "local", storage });
+    const resultInspectionSource = new DurableLocalResultInspectionServiceV1(readPool.client, {
+      integrityKey: keys.results, reviewIntegrityKey: keys.review, harnessIntegrityKey: keys.harness,
+      deliveryIntegrityKeys: { ownerTrustedLocal: keys.deliveryReceipt }, checkpoints,
+      storageClass: "local", storage });
     const publication = { db: publisherPool.client, integrityKey: keys.results, reviewKey: keys.review,
       storage, storageClass: "local" as const, reservations: createDurableReservationPostgresPortV1(), reviewSubmission };
     const common = (index: number, registerRun: Parameters<typeof createOwnerTrustedLocalCliPublishV1>[0]["registerRun"]) => {
@@ -174,6 +181,7 @@ export const createTaskApplication: MacLocalTaskProviderV1["createTaskApplicatio
           ownerReviews: { integrityKey: keys.review, checkpoints } } },
       databaseRoles, openDatabase: createPrivatePostgresDatabase,
       coordinator: { scope: { tenantId, workspaceId }, planning, routes: built.routes,
+        resultInspectionSource,
         approvals: { enrollments: [], store: new NativeApprovalPacketStore(keys.approvals, []) },
         nativeSubmission: submission, revisionPlanning: true,
         quality: { integrityKey: keys.review, harnessIntegrityKey: keys.harness, checkpoints,
@@ -181,6 +189,29 @@ export const createTaskApplication: MacLocalTaskProviderV1["createTaskApplicatio
           scenarios: built.profiles.map(createMacLocalTextScenarioV1) } },
       hermes, claude, codex,
     });
+    // A local host tick invokes the existing canonical quality operation; it
+    // creates no second review authority or scheduler.
+    let qualityFailureReported = false;
+    const sweepQuality = async () => {
+      if (!application?.quality) throw new Error("mac_local_quality_unavailable");
+      for (const project of projects) {
+        let afterRunId: string | undefined;
+        do {
+          const page = await application.quality.sweep({ projectId: project.projectId,
+            ...(afterRunId ? { afterRunId } : {}) }, new AbortController().signal);
+          afterRunId = page.nextRunId ?? undefined;
+          if (page.items.some(item => item.status === "unavailable")) throw new Error("mac_local_quality_reconciliation_unavailable");
+        } while (afterRunId);
+      }
+    };
+    qualityTimer = setInterval(() => {
+      if (qualityInFlight) return;
+      qualityInFlight = sweepQuality().then(() => { qualityFailureReported = false; }).catch(() => {
+        if (!qualityFailureReported) process.stderr.write("mac_local_quality_sweep_unavailable\n");
+        qualityFailureReported = true;
+      }).finally(() => { qualityInFlight = undefined; });
+    }, 15_000);
+    qualityTimer.unref();
     const refreshInput = { db: readPool.client, tenantId, protectedRoot, readiness: workerReadiness,
       workers: workers.map(value => ({ kind: value.kind, workerId: value.worker.workerId,
         nodeId: value.route.nodeId, capabilityProbeId: value.route.capabilityProbeId })) };
@@ -194,14 +225,18 @@ export const createTaskApplication: MacLocalTaskProviderV1["createTaskApplicatio
     const owned = application;
     return Object.freeze({ ...owned, async close() {
       if (refreshTimer) clearInterval(refreshTimer);
+      if (qualityTimer) clearInterval(qualityTimer);
       await refreshInFlight?.catch(() => {});
+      await qualityInFlight?.catch(() => {});
       const results = await Promise.allSettled([owned.close(), readPool.close(), publisherPool.close(),
         resultsPool.close(), checkpoints.close()]);
       if (results.some(result => result.status === "rejected")) throw new Error("mac_local_task_provider_cleanup_uncertain");
     } });
   } catch (error) {
     if (refreshTimer) clearInterval(refreshTimer);
+    if (qualityTimer) clearInterval(qualityTimer);
     await refreshInFlight?.catch(() => {});
+    await qualityInFlight?.catch(() => {});
     const results = await Promise.allSettled([application?.close(), !application && submission?.close(),
       readPool.close(), publisherPool.close(), resultsPool.close(),
       checkpoints?.close()].filter((value): value is Promise<unknown> => !!value));

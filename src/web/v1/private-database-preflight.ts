@@ -17,7 +17,7 @@ export async function verifyPrivateIdeaAdapter(db: DatabaseClient, scope: { tena
 
 // Generated from public migrations 0001-0089, including generic external-content
 // migrations 0025/0026. Catalog query below; not a mutable database marker.
-export const privateWebSchemaDigest = "5429d58dd2e1b5e3144a240e5385a6b1ba37eaaab20fbaab860f4c4a8611aa0f";
+export const privateWebSchemaDigest = "5d8a7993c3fa423dbac20510e602848ce1c0c720a151fd5ac0928d72129ffab4";
 export const privateWebReadTables = ["control_identities", "control_role_grants", "workspaces", "control_web_sessions",
   "tenants", "control_idempotency",
   "control_schedules", "control_schedule_occurrences",
@@ -120,6 +120,7 @@ const coordinatorUpdates: Record<string, readonly string[]> = {
   ...Object.fromEntries(["control_identities", "control_role_grants", "workspaces", "control_completion_gate_integrity"].map(table => [table, ["web_lock"]])),
   control_web_sessions: ["revoked_at"], control_audit_chain_heads: ["head_hash", "event_count", "updated_at"],
   control_harness_runs: ["coordinator_lock"], control_worker_delivery_receipts: ["coordinator_lock"], control_completion_gate_records: ["web_lock"],
+  control_native_artifact_receipts: ["coordinator_lock"], control_native_review_plans: ["coordinator_lock"],
   control_project_coordinator_heads: ["coordinator_lock"],
   control_project_coordination_proposals: ["coordinator_lock"],
   control_project_delegation_policies: ["coordinator_lock"],

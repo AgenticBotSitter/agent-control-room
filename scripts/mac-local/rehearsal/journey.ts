@@ -316,7 +316,7 @@ async function main() {
     const reviewReplay = await requireOk(await writeReview(), 200, `${agent.kind} owner review replay`) as typeof recorded;
     assert.equal(reviewReplay.replayed, true);
     assert.deepEqual(reviewReplay.receipt, recorded.receipt, `${agent.kind}: exact replay must not record another review`);
-    const after = await requireOk(await fetch(new URL(`/api/v1/projects/${idOf(projectId)}/tasks/${idOf(jobId)}/results`, origin),
+    let after = await requireOk(await fetch(new URL(`/api/v1/projects/${idOf(projectId)}/tasks/${idOf(jobId)}/results`, origin),
       { headers: { cookie } }), 200, `${agent.kind} reviewed result`) as NonNullable<typeof pendingPage>;
     assert.equal(after.items.length, 1, `${agent.kind}: result must remain singular after review`);
     assert.equal(after.reviews.length, 1, `${agent.kind}: target must remain singular after review`);

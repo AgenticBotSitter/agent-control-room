@@ -1,5 +1,34 @@
 # Package 5 rehearsal status
 
+## Package 6 strict Mac-local reader proof, 2026-09-25
+
+Claude conditionally authorized a full authenticated reader for the three current
+Mac-local CLI adapters, with no skipped checks, real-column grants, new logins,
+or changes to the candidate filter and review profile. The new composition
+uses the existing durable review-plan reader, authenticated harness-run and
+delivery-receipt readers, saved result byte verification, and completion-gate
+snapshot. The publisher binds the receipt time to the observed terminal run
+event. No request field can assert completion. Mismatched stored bytes and a
+delivery authenticated with the wrong key are both refused in focused tests.
+
+On a fresh disposable PG17 cluster at loopback port 15541, the website journey
+passed for all three fake pinned executables. Hermes' changes-requested result
+stayed incomplete; Claude's and Codex's owner-accepted results became completed
+exactly once, with one result and one owner review each. Submission, owner-review,
+and completion replays added no second record. The earlier 2-second quality
+poll collided with task delivery and produced a database deadlock; a 15-second
+poll passed the full journey. This is a rehearsal timing change, not a relaxed
+verification check. A failed CLI run remains covered by the separate
+`owner-trusted-local-cli-delivery` regression: it records failure and publishes
+no result. No live database, agent, or Tailscale setting was changed.
+
+The only new privileges are inert CHECK-false `coordinator_lock` updates on the
+review-plan and artifact-receipt tables, already authorized by the owner and
+recorded in trust-decision section 15. The structural digest and migration
+ledger were regenerated and verified. The production TypeScript check, Vite
+build, and focused conformance/publisher tests passed. This branch awaits Marvin's
+independent review; it is not merged or live.
+
 ## Package 6 follow-up decision request, 2026-09-25 — direct binding is not valid
 
 Claude directed Mac-local quality to use the pluggable `resultInspectionSource`

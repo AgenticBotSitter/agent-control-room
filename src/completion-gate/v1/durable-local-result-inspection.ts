@@ -8,10 +8,12 @@ import { HarnessRunStoreV1 } from "../../harness/v1/store";
 import { readControllerWorkerDeliveryReceiptV1 } from "../../harness/v1/controller-worker-delivery-receipt-store";
 import { HERMES_021_MACOS_LOCAL_ADAPTER_V1, HERMES_021_MACOS_CONNECTOR_PROFILE_DIGEST_V1 } from "../../harness/hermes-021-v1";
 import { CLAUDE_CODE_LOCAL_ADAPTER_V1, CLAUDE_CODE_CONNECTOR_PROFILE_DIGEST_V1 } from "../../harness/claude-code-v1";
+import { HERMES_LOCAL_ADAPTER_V1 } from "../../harness/hermes-local-v1/task-planning-contract";
+import { CODEX_OWNER_TRUSTED_LOCAL_ADAPTER_V1 } from "../../harness/codex-v1/owner-trusted-local-task-planning-contract";
+import { DurableResultReviewSubmissionServiceV1 } from "./durable-result-review-submission";
 import { CompletionGateStoreV1 } from "./store";
 import { completionAcceptanceProfileSchemaV1 } from "./schemas";
-import { durableReviewTargetV1, verifyDurableResultReviewPlanV1, verifyReviewPlanAgainstReceiptV1,
-  type DurableResultReviewPlanRowV1 } from "./durable-result-review-plan";
+import { durableReviewTargetV1, verifyReviewPlanAgainstReceiptV1 } from "./durable-result-review-plan";
 import type { SubmittedTaskResultInspectionV1, TaskResultInspectionSourceV1 } from "./task-result-inspection";
 
 const id = z.string().min(3).max(180).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/);
@@ -19,7 +21,6 @@ const joined = (tx: DatabaseSession): DatabaseClient => ({ query: tx.query.bind(
   transactionWithPreCommitCheck: async (work, check) => { const result = await work(tx); await check(); return result; } });
 const unavailable = (): never => { throw new Error("durable_local_result_inspection_unavailable"); };
 
-type ReceiptLocator = { project_id: string; job_id: string; attempt_id: string; artifact_id: string };
 type JobRow = { payload: unknown; state: string; version: number; project_id: string };
 type AttemptRow = { payload: unknown; state: string; version: number; job_id: string; node_id: string };
 type LeaseRow = { payload: unknown; state: string; version: number; job_id: string; attempt_id: string; node_id: string; epoch: number; expires_at: string | Date };
@@ -30,7 +31,7 @@ export type DurableLocalResultInspectionConfigurationV1 = Readonly<{
   harnessIntegrityKey: Uint8Array;
   /** Only locally enrolled adapters need a key. An absent adapter is refused,
    * never downgraded to an unsigned or shared receipt check. */
-  deliveryIntegrityKeys: Readonly<{ hermes?: Uint8Array; claude?: Uint8Array }>;
+  deliveryIntegrityKeys: Readonly<{ hermes?: Uint8Array; claude?: Uint8Array; ownerTrustedLocal?: Uint8Array }>;
   checkpoints: AwaitableRollbackCheckpointStoreV1;
   storageClass: "local" | "r2";
   storage: ArtifactReadPortV1;
@@ -47,6 +48,7 @@ export class DurableLocalResultInspectionServiceV1 implements TaskResultInspecti
   private readonly harnessKey: Uint8Array;
   private readonly hermesDeliveryKey?: Uint8Array;
   private readonly claudeDeliveryKey?: Uint8Array;
+  private readonly ownerTrustedLocalDeliveryKey?: Uint8Array;
   private readonly checkpoints: AwaitableRollbackCheckpointStoreV1;
   private readonly readBytes: ArtifactReadPortV1["read"];
   private readonly storageClass: "local" | "r2";
@@ -54,7 +56,8 @@ export class DurableLocalResultInspectionServiceV1 implements TaskResultInspecti
   private readonly extensionConfiguration: DurableLocalResultInspectionConfigurationV1;
 
   constructor(private readonly db: DatabaseClient, config: DurableLocalResultInspectionConfigurationV1) {
-    const deliveryKeys = [config.deliveryIntegrityKeys?.hermes, config.deliveryIntegrityKeys?.claude]
+    const deliveryKeys = [config.deliveryIntegrityKeys?.hermes, config.deliveryIntegrityKeys?.claude,
+      config.deliveryIntegrityKeys?.ownerTrustedLocal]
       .filter((key): key is Uint8Array => key !== undefined);
     for (const key of [config.integrityKey, config.reviewIntegrityKey, config.harnessIntegrityKey, ...deliveryKeys]) {
       if (!(key instanceof Uint8Array) || key.length !== 32) unavailable();
@@ -68,6 +71,7 @@ export class DurableLocalResultInspectionServiceV1 implements TaskResultInspecti
     this.harnessKey = Uint8Array.from(config.harnessIntegrityKey);
     this.hermesDeliveryKey = config.deliveryIntegrityKeys.hermes && Uint8Array.from(config.deliveryIntegrityKeys.hermes);
     this.claudeDeliveryKey = config.deliveryIntegrityKeys.claude && Uint8Array.from(config.deliveryIntegrityKeys.claude);
+    this.ownerTrustedLocalDeliveryKey = config.deliveryIntegrityKeys.ownerTrustedLocal && Uint8Array.from(config.deliveryIntegrityKeys.ownerTrustedLocal);
     this.checkpoints = Object.freeze({ read: config.checkpoints.read.bind(config.checkpoints),
       advance: config.checkpoints.advance.bind(config.checkpoints), initialize: config.checkpoints.initialize.bind(config.checkpoints) });
     this.readBytes = config.storage.read.bind(config.storage);
@@ -78,6 +82,7 @@ export class DurableLocalResultInspectionServiceV1 implements TaskResultInspecti
       deliveryIntegrityKeys: Object.freeze({
         ...(config.deliveryIntegrityKeys.hermes ? { hermes: Uint8Array.from(config.deliveryIntegrityKeys.hermes) } : {}),
         ...(config.deliveryIntegrityKeys.claude ? { claude: Uint8Array.from(config.deliveryIntegrityKeys.claude) } : {}),
+        ...(config.deliveryIntegrityKeys.ownerTrustedLocal ? { ownerTrustedLocal: Uint8Array.from(config.deliveryIntegrityKeys.ownerTrustedLocal) } : {}),
       }), checkpoints: this.checkpoints, storageClass: this.storageClass,
       storage: Object.freeze({ read: this.readBytes }) });
   }
@@ -102,27 +107,31 @@ export class DurableLocalResultInspectionServiceV1 implements TaskResultInspecti
       && run.connectorProfileDigest === HERMES_021_MACOS_CONNECTOR_PROFILE_DIGEST_V1;
     const claude = run.adapterId === CLAUDE_CODE_LOCAL_ADAPTER_V1 && run.harness === "claude"
       && run.connectorProfileDigest === CLAUDE_CODE_CONNECTOR_PROFILE_DIGEST_V1;
+    const current = this.ownerTrustedLocalDeliveryKey && (
+      run.adapterId === HERMES_LOCAL_ADAPTER_V1 && run.harness === "hermes"
+      || run.adapterId === CLAUDE_CODE_LOCAL_ADAPTER_V1 && run.harness === "claude"
+      || run.adapterId === CODEX_OWNER_TRUSTED_LOCAL_ADAPTER_V1 && run.harness === "codex");
     const terminal = events.at(-1);
-    if ((!hermes && !claude) || run.nativeTask || run.resumable || run.state !== "succeeded"
+    if ((!hermes && !claude && !current) || run.nativeTask || run.remoteTask || run.resumable || run.state !== "succeeded"
       || !run.startedAt || !run.finishedAt || !terminal || terminal.payload.category !== "lifecycle"
       || terminal.payload.state !== "succeeded" || Date.parse(run.finishedAt) < Date.parse(run.startedAt)) return unavailable();
 
-    const locator = (await tx.query<ReceiptLocator>(`SELECT project_id,job_id,attempt_id,artifact_id
-      FROM control_native_artifact_receipts WHERE tenant_id=$1 AND run_id=$2 FOR UPDATE`, [tenantId, runId])).rows[0];
-    if (!locator || locator.project_id !== run.projectId || locator.job_id !== run.jobId || locator.attempt_id !== run.attemptId) return unavailable();
-    const reviewRow = (await tx.query<DurableResultReviewPlanRowV1>(`SELECT * FROM control_native_review_plans
-      WHERE tenant_id=$1 AND run_id=$2 FOR UPDATE`, [tenantId, runId])).rows[0];
-    if (!reviewRow) return unavailable();
-    const plan = verifyDurableResultReviewPlanV1(this.reviewKey, reviewRow);
+    const submitted = await new DurableResultReviewSubmissionServiceV1(joined(tx), {
+      integrityKey: this.resultKey, reviewIntegrityKey: this.reviewKey, checkpoints: this.checkpoints,
+      storageClass: this.storageClass, storage: { read: this.readBytes },
+    }).inspectSubmitted(tx, tenantId, runId);
+    const { plan } = submitted;
+    if (submitted.receipt.projectId !== run.projectId || submitted.receipt.jobId !== run.jobId
+      || submitted.receipt.attemptId !== run.attemptId || submitted.receipt.nodeId !== run.nodeId) return unavailable();
     const result = await readDurableResultV1(tx, this.resultKey, this.storageClass, this.readBytes,
-      tenantId, run.projectId, run.jobId, locator.artifact_id);
+      tenantId, run.projectId, run.jobId, submitted.receipt.artifactId);
     if (!result || result.receipt.attemptId !== run.attemptId || result.receipt.nodeId !== run.nodeId
       || result.receipt.connectorProfileDigest !== run.connectorProfileDigest
       || result.receipt.receivedAt !== run.finishedAt || !result.receipt.terminalEvidenceDigest) return unavailable();
     verifyReviewPlanAgainstReceiptV1(plan, result.receipt);
     if (plan.terminalEvidenceDigest !== result.receipt.terminalEvidenceDigest || plan.plannedAt > result.receipt.receivedAt) return unavailable();
 
-    const deliveryKey = hermes ? this.hermesDeliveryKey : this.claudeDeliveryKey;
+    const deliveryKey = current ? this.ownerTrustedLocalDeliveryKey : hermes ? this.hermesDeliveryKey : this.claudeDeliveryKey;
     if (!deliveryKey) return unavailable();
     const delivery = await readControllerWorkerDeliveryReceiptV1(tx, deliveryKey,
       { tenantId, projectId: run.projectId, jobId: run.jobId, attemptId: run.attemptId });
@@ -131,6 +140,13 @@ export class DurableLocalResultInspectionServiceV1 implements TaskResultInspecti
       || delivery.delivery.authorityDigest !== run.authorityDigest || delivery.delivery.acceptanceProfileId !== plan.acceptanceProfileId
       || delivery.delivery.acceptanceProfileDigest !== plan.acceptanceProfileDigest
       || !["accepted", "duplicate"].includes(delivery.receipt.disposition)) return unavailable();
+    if (current) {
+      const purpose = run.adapterId === HERMES_LOCAL_ADAPTER_V1 ? "hermes-local-run-binding/v1"
+        : run.adapterId === CLAUDE_CODE_LOCAL_ADAPTER_V1 ? "claude-code-local-run-binding/v1"
+          : "codex-owner-trusted-local-run-binding/v1";
+      if (run.nativeSessionKeyDigest !== sha256Digest({ purpose, deliveryDigest: delivery.delivery.deliveryDigest })
+        || run.createdAt !== delivery.receipt.receivedAt) return unavailable();
+    }
 
     const jobRow = (await tx.query<JobRow>(`SELECT payload,state,version,project_id FROM control_jobs
       WHERE tenant_id=$1 AND id=$2 FOR UPDATE`, [tenantId, run.jobId])).rows[0];

@@ -90,24 +90,28 @@ export function createOwnerTrustedLocalCliLifecycleV1(config: OwnerTrustedLocalC
     }
     const current = await runs.get(run.tenantId, run.id);
     if (current?.state !== terminal) unavailable();
-    return { delivery, receipt, run };
+    return { delivery, receipt, run: current };
   }
   async function publish(input: Readonly<{ delivery: unknown; receipt: unknown; text: string; signal: AbortSignal }>): Promise<void> {
     const body = text.parse(input.text);
-    const { delivery, receipt, run } = await record(input, "succeeded");
+    const { delivery, run } = await record(input, "succeeded");
 
     const workflowId = await workflowIdForJob(config.db, delivery.identity.tenantId, delivery.identity.jobId);
+    const terminal = (await runs.inspect(run.tenantId, run.id))?.events.at(-1);
+    if (!terminal || terminal.payload.category !== "lifecycle" || terminal.payload.state !== "succeeded") unavailable();
     if (input.signal.aborted) unavailable();
     const binding: DurableResultBindingV1 = { tenantId: delivery.identity.tenantId, projectId: delivery.identity.projectId,
       jobId: delivery.identity.jobId, attemptId: delivery.identity.attemptId, runId: delivery.identity.runId,
       nodeId: delivery.identity.nodeId, workflowId, harness: run.harness, connectorProfileDigest: delivery.connectorProfileDigest,
       authorityDigest: delivery.authorityDigest, acceptanceProfileId: delivery.acceptanceProfileId,
-      acceptanceProfileDigest: delivery.acceptanceProfileDigest };
+      acceptanceProfileDigest: delivery.acceptanceProfileDigest,
+      terminalEvidenceDigest: sha256Digest(terminal) };
     const bytes = new TextEncoder().encode(body);
     // A signal that aborts after this point no longer cancels anything: the
     // bridge has already committed to publishing this exact text, the same
     // way the reviewed durable publisher's own callers behave.
-    await publishDurableResultV1(config.publication, { binding, bytes, receivedAt: receipt.receivedAt,
+    if (!run.finishedAt) unavailable();
+    await publishDurableResultV1(config.publication, { binding, bytes, receivedAt: run.finishedAt,
       assertAuthority: () => { if (input.signal.aborted) unavailable(); } });
   };
   return Object.freeze({ publish, recordFailure: (input: Readonly<{ delivery: unknown; receipt: unknown; signal: AbortSignal }>) => record(input, "failed").then(() => {}) });
