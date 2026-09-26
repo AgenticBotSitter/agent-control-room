@@ -9,10 +9,13 @@ import { applyMigrations } from "../deploy/postgres/apply-migrations.mjs";
 import { connectTarget } from "../deploy/postgres/evidence.mjs";
 import { applyMacDatabaseUpgradeV1, inspectMacDatabaseUpgradeV1 } from
   "../scripts/mac-local/database-upgrade-remote.mjs";
-import { macDatabaseUpgradeReadOnlySqlV1 } from "../scripts/mac-local/provision-database.mjs";
+import { macDatabaseUpgradeReadOnlySqlV1, planMacDatabaseUpgradeFromFileV1 } from
+  "../scripts/mac-local/provision-database.mjs";
+import { captureMacUpgradeSnapshotV1 } from "../scripts/mac-local/database-upgrade-snapshot.mjs";
 import { planMacDatabaseUpgradeSnapshotV1 } from "../scripts/mac-local/database-upgrade-remote.mjs";
 import { macRolePlan, readMacGrantCatalogV1 } from "../scripts/mac-local/database-upgrade-grants.mjs";
 import { provisionMacLocalNarrowRolesV1 } from "../scripts/mac-local/narrow-role-provision.mjs";
+import { postgresScramVerifierV1 } from "../scripts/mac-local/database-upgrade-scram.mjs";
 
 const oldRoot = "/private/tmp/acr-db-0085";
 const headRoot = resolve(new URL("../", import.meta.url).pathname);
@@ -102,13 +105,23 @@ test("0085 PostgreSQL 17 installation upgrades to exactly fresh HEAD roles, with
   { input: macDatabaseUpgradeReadOnlySqlV1(), encoding: "utf8", timeout: 30_000 });
   const readOnlySnapshot = JSON.parse(raw.split(/\r?\n/u).find(line => line.startsWith("{")));
   assert.deepEqual(await planMacDatabaseUpgradeSnapshotV1(readOnlySnapshot), plan);
+  const snapshotFile = join(root, "snapshot.json"), mainCommit = "a".repeat(40);
+  await writeFile(snapshotFile, JSON.stringify(captureMacUpgradeSnapshotV1(mainCommit, raw)));
+  assert.deepEqual(await planMacDatabaseUpgradeFromFileV1(snapshotFile, mainCommit), plan);
   assert.equal(plan.pendingMigrations.length, 5);
   assert.ok(plan.createRoles.includes("control_room_publisher"));
   assert.ok(plan.grants.extra.some(item => item.includes("control_room_private_web|table|public.control_jobs||DELETE|plain")));
   assert.deepEqual(await snapshot(oldClient), prior, "dry run does not change PostgreSQL");
-  const request = { client: oldClient, publisherPassword: "q".repeat(40), migratorPassword: oldSecrets.migrator,
-    bootstrapConnection: connection(old.port), migrateConnection: migrator(old.port, oldSecrets.migrator) };
+  const publisherPassword = "q".repeat(40);
+  const request = { client: oldClient, publisherVerifier: postgresScramVerifierV1(publisherPassword) };
+  await assert.rejects(applyMacDatabaseUpgradeV1(request), /upgrade_pending_migrations_need_decision/u);
+  await applyMigrations({ rootDir: headRoot, bootstrapTarget: connection(old.port),
+    migrateTarget: migrator(old.port, oldSecrets.migrator), env: {} });
   await applyMacDatabaseUpgradeV1(request);
+  const publisher = connectTarget(`host=127.0.0.1 port=${old.port} dbname=control_room user=control_room_publisher password=${publisherPassword}`);
+  await publisher.connect();
+  assert.equal((await publisher.query("SELECT current_user AS role")).rows[0].role, "control_room_publisher");
+  await publisher.end();
   const upgraded = await snapshot(oldClient);
   const repeat = await applyMacDatabaseUpgradeV1(request);
   assert.deepEqual(repeat.before.grants, { extra: [], missing: [] });

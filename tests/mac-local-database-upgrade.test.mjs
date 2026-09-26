@@ -4,7 +4,11 @@ import { mkdtemp, mkdir, readFile, writeFile, stat, rm } from "node:fs/promises"
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { captureProvisionedMacLocalConfigurationV1,
-  upgradeMacLocalDatabaseV1 } from "../scripts/mac-local/provision-database.mjs";
+  prepareMacLocalDatabaseUpgradeV1, finishMacLocalDatabaseUpgradeV1,
+  planMacDatabaseUpgradeFromFileV1 } from "../scripts/mac-local/provision-database.mjs";
+import { captureMacUpgradeSnapshotV1 } from "../scripts/mac-local/database-upgrade-snapshot.mjs";
+import { checkedPostgresScramVerifierV1, postgresScramVerifierV1 } from
+  "../scripts/mac-local/database-upgrade-scram.mjs";
 import { desiredMacGrantsV1, diffMacGrantsV1, readDesiredMacGrantsV1 } from
   "../scripts/mac-local/database-upgrade-grants.mjs";
 import { MAC_LOCAL_DATABASE_ROLES_V1, captureMacLocalDatabaseRolesV1 } from
@@ -26,7 +30,16 @@ test("grant plan covers the source role files and detects additions and extras e
     /upgrade_grant_source_refused/u);
 });
 
-test("upgrade dry run changes no protected file; real convergence adds only publisher and preserves old passwords and owner config", async t => {
+test("offline plan rejects a mismatched main commit and malformed snapshot", async t => {
+  const root = await mkdtemp(join(tmpdir(), "mac-db-snapshot-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const path = join(root, "snapshot.json"), commit = "a".repeat(40);
+  await writeFile(path, JSON.stringify(captureMacUpgradeSnapshotV1(commit, "{}\n")));
+  await assert.rejects(planMacDatabaseUpgradeFromFileV1(path, "b".repeat(40)), /upgrade_snapshot_commit_refused/u);
+  await assert.rejects(planMacDatabaseUpgradeFromFileV1(path, commit), /upgrade_snapshot_content_refused/u);
+});
+
+test("prepare and finish preserve old passwords and owner config; only verified publisher is added", async t => {
   const root = await mkdtemp(join(tmpdir(), "mac-db-upgrade-"));
   t.after(() => rm(root, { recursive: true, force: true }));
   const config = join(root, "config"), passwords = join(config, "database-passwords");
@@ -53,27 +66,22 @@ test("upgrade dry run changes no protected file; real convergence adds only publ
   await writeFile(roleFile, JSON.stringify(oldRoles), { mode: 0o600 });
   const macBefore = await readFile(macFile);
   const rolesBefore = await readFile(roleFile);
-  const initial = { pendingMigrations: ["db/migrations/0086_mac_local_owner_review_profile.sql"],
-    createRoles: ["control_room_local_result_publisher", "control_room_publisher"],
-    membership: { missing: ["control_room_publisher|control_room_local_result_publisher"], extra: [] },
-    grants: { missing: [], extra: [] } };
-  let live = false, calls = 0;
-  const runRemote = async request => {
-    calls += 1;
-    assert.equal(request.sourceRef, undefined, "upgrade cannot select a review branch");
-    if (request.dryRun) return live ? { pendingMigrations: [], createRoles: [],
-      membership: { missing: [], extra: [] }, grants: { missing: [], extra: [] } } : initial;
-    assert.equal(request.migratorPassword, values.control_room_migrator);
-    assert.match(request.publisherPassword, /^[A-Za-z0-9_-]{32,}$/u);
-    live = true;
-    return { upgraded: true, before: initial, after: { pendingMigrations: [], createRoles: [],
-      membership: { missing: [], extra: [] }, grants: { missing: [], extra: [] } } };
-  };
-  const options = { protectedRoot: root, sshTarget: "root@example", remoteWorktree: "/root/agent-control-room", runRemote };
-  assert.deepEqual(await upgradeMacLocalDatabaseV1({ ...options, dryRun: true }), initial);
-  assert.deepEqual(await readFile(roleFile), rolesBefore);
+  const mainCommit = "a".repeat(40), options = { protectedRoot: root, mainCommit };
   await assert.rejects(readFile(join(passwords, "control_room_publisher.txt")), { code: "ENOENT" });
-  await upgradeMacLocalDatabaseV1(options);
+  const prepared = await prepareMacLocalDatabaseUpgradeV1(options);
+  assert.equal(prepared.mainCommit, mainCommit);
+  checkedPostgresScramVerifierV1(prepared.verifier);
+  assert.deepEqual(await readFile(roleFile), rolesBefore);
+  let verified = 0;
+  await assert.rejects(finishMacLocalDatabaseUpgradeV1({ ...options, verifyPublisher: async () => {
+    throw new Error("publisher_not_live");
+  } }), /publisher_not_live/u);
+  assert.deepEqual(await readFile(roleFile), rolesBefore);
+  await finishMacLocalDatabaseUpgradeV1({ ...options, verifyPublisher: async publisher => {
+    verified += 1;
+    assert.equal(publisher.username, "control_room_publisher");
+    assert.equal(publisher.password, (await readFile(join(passwords, "control_room_publisher.txt"), "utf8")).trim());
+  } });
   const changed = JSON.parse(await readFile(roleFile, "utf8"));
   const validated = captureMacLocalDatabaseRolesV1(changed);
   assert.equal(validated.publisher.username, "control_room_publisher");
@@ -81,7 +89,15 @@ test("upgrade dry run changes no protected file; real convergence adds only publ
   assert.equal((await stat(join(passwords, "control_room_publisher.txt"))).mode & 0o077, 0);
   for (const [key, name] of Object.entries(roleNames)) assert.deepEqual(changed[key], oldRoles[key], name);
   assert.deepEqual(await readFile(macFile), macBefore);
-  await upgradeMacLocalDatabaseV1(options);
-  assert.equal(calls, 5);
+  await finishMacLocalDatabaseUpgradeV1({ ...options, verifyPublisher: async () => { verified += 1; } });
+  assert.equal(verified, 2);
   assert.deepEqual(await readFile(macFile), macBefore);
+});
+
+test("SCRAM verifier is deterministic for a fixed salt and rejects malformed material", () => {
+  const password = "p".repeat(40), salt = Buffer.alloc(16, 7);
+  const first = postgresScramVerifierV1(password, salt);
+  assert.equal(first, postgresScramVerifierV1(password, salt));
+  assert.equal(checkedPostgresScramVerifierV1(first), first);
+  assert.throws(() => checkedPostgresScramVerifierV1("SCRAM-SHA-256$4096:bad$bad:bad"), /upgrade_scram_verifier_refused/u);
 });
