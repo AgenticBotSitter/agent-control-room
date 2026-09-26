@@ -10,7 +10,7 @@ import { hermesLocalTaskExecutionPlanSchemaV15, hermesLocalTaskExecutionPlanSche
 const id = z.string().min(3).max(180).regex(/^[a-zA-Z0-9][a-zA-Z0-9._:-]*$/);
 const digest = z.string().regex(/^sha256:[a-f0-9]{64}$/);
 const revision = z.string().regex(/^[a-f0-9]{8,64}$/);
-const unavailable = (): never => { throw new Error("hermes_local_dispatch_preparation_unavailable"); };
+function unavailable(): never { throw new Error("hermes_local_dispatch_preparation_unavailable"); }
 
 export type HermesLocalDispatchReferenceV1 = Readonly<{
   tenantId: string; projectId: string; jobId: string; attemptId: string; leaseId: string; inputDigest: string;

@@ -12,8 +12,19 @@ import { advanceRemoteWorkerEnrollmentInStoreV1 } from "../src/harness/v1/remote
 import { binding } from "./hermes-native-fixture";
 import { at } from "./native-task-fixture";
 import { sha256Digest } from "../src/security";
+import { signedNodeFrameSchema } from "../src/node-protocol/v1";
+import { controllerWorkerDeliveryReceiptSchemaV1 } from "../src/harness/v1/controller-worker-delivery";
 import { canonicalCapabilityDigest, canonicalReleaseBindingDigest, canonicalRemoteWorkerFixture,
   enrollCanonicalRemoteWorker, realInstalledConnection } from "./helpers/canonical-remote-worker";
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === "object" && !Array.isArray(value);
+}
+
+function record(value: unknown): Record<string, unknown> {
+  if (!isRecord(value)) throw new Error("expected_record");
+  return value;
+}
 
 test("two canonical remote workers are receipt-isolated and reconnect only recovers the original durable receipt", async t => {
   const c = await canonicalRemoteWorkerFixture(); t.after(c.f.close); c.advance(1_500);
@@ -58,7 +69,7 @@ test("two canonical remote workers are receipt-isolated and reconnect only recov
   assert.deepEqual(reconstructedPrepared, preparedA, "controller reconstruction retains only worker A's durable packet");
   const ingressA = capturePrivateRemoteControllerWorkerReceiptIngressCapabilityV1(reconstructedA);
   const recoveredRaw = await connectionA.recovery(sent.transmission.queueId);
-  const recovered = await ingressA.recover(recoveredRaw) as { replayed: boolean; startsWork: boolean; grantsExecutionAuthority: boolean };
+  const recovered = record(await ingressA.recover(recoveredRaw));
   assert.deepEqual({ replayed: recovered.replayed, startsWork: recovered.startsWork,
     grantsExecutionAuthority: recovered.grantsExecutionAuthority },
   { replayed: false, startsWork: false, grantsExecutionAuthority: false });
@@ -68,7 +79,9 @@ test("two canonical remote workers are receipt-isolated and reconnect only recov
   // A replacement connection which proved the original receipt is eligible to
   // return receipt-bound evidence.  The evidence remains inert at this stage.
   c.advance(1);
-  const recoveredReceipt = recovered.receipt as { receiptDigest: string; deliveryId: string; deliveryDigest: string };
+  const lostReceiptFrame = signedNodeFrameSchema.parse(JSON.parse(lostReceipt));
+  if (lostReceiptFrame.type !== "controller.worker.delivery.receipt") throw new Error("expected_delivery_receipt_frame");
+  const recoveredReceipt = controllerWorkerDeliveryReceiptSchemaV1.parse(lostReceiptFrame.body.receipt);
   const recoveredProgress = createControllerWorkerProgressReturnV1({
     identity: { ...preparedA.delivery.identity, workerId: workerA.workerId },
     deliveryReceipt: recoveredReceipt, enrollmentDigest: workerA.enrollmentDigest,
@@ -78,7 +91,7 @@ test("two canonical remote workers are receipt-isolated and reconnect only recov
   const recoveredResultIngress = capturePrivateRemoteControllerWorkerResultIngressCapabilityV1(reconstructedA);
   const recoveredProgressResult = await recoveredResultIngress.receive(await connectionA.result(
     "controller.worker.result.progress", recoveredProgress));
-  assert.equal(recoveredProgressResult.kind, "progress", "recovered receipt enables only the existing inert result channel");
+  assert.equal(record(recoveredProgressResult).kind, "progress", "recovered receipt enables only the existing inert result channel");
 
   const row = await c.f.db.transaction(tx => advanceRemoteWorkerEnrollmentInStoreV1(tx, new Uint8Array(32).fill(61), {
     tenantId: binding.tenantId, workerId: workerA.workerId, expectedRevision: 0, state: "draining",
@@ -182,16 +195,18 @@ test("an enrolled remote worker returns receipt-bound inert evidence without a s
     startedAt: base.occurredAt, safeReasonCode: null });
   const ingress = capturePrivateRemoteControllerWorkerResultIngressCapabilityV1(controller);
   const progressResult = await ingress.receive(await connection.result("controller.worker.result.progress", progress));
-  assert.deepEqual({ kind: progressResult.kind, recordsCompletion: progressResult.recordsCompletion,
-    publishesResult: progressResult.publishesResult, releasesCapacity: progressResult.releasesCapacity },
+  const progressRecord = record(progressResult);
+  assert.deepEqual({ kind: progressRecord.kind, recordsCompletion: progressRecord.recordsCompletion,
+    publishesResult: progressRecord.publishesResult, releasesCapacity: progressRecord.releasesCapacity },
   { kind: "progress", recordsCompletion: false, publishesResult: false, releasesCapacity: false });
   const terminalRaw = await connection.result("controller.worker.result.terminal", terminal);
   const terminalResult = await ingress.receive(terminalRaw);
-  assert.deepEqual({ kind: terminalResult.kind, replayed: terminalResult.replayed,
-    recordsCompletion: terminalResult.recordsCompletion, permitsRetry: terminalResult.permitsRetry },
+  const terminalRecord = record(terminalResult);
+  assert.deepEqual({ kind: terminalRecord.kind, replayed: terminalRecord.replayed,
+    recordsCompletion: terminalRecord.recordsCompletion, permitsRetry: terminalRecord.permitsRetry },
   { kind: "terminal", replayed: false, recordsCompletion: false, permitsRetry: false });
   const replay = await ingress.receive(terminalRaw);
-  assert.equal(replay.replayed, true, "an exact lost terminal acknowledgement is inertly replayed");
+  assert.equal(record(replay).replayed, true, "an exact lost terminal acknowledgement is inertly replayed");
   await assert.rejects(ingress.receive(await connection.result("controller.worker.result.progress", progress)), /unavailable/,
     "progress cannot follow a terminal record");
   await assert.rejects((ingress.receive as (this: object, raw: string) => Promise<unknown>).call({}, terminalRaw), /unavailable/,

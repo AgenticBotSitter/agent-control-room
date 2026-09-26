@@ -251,7 +251,7 @@ export function createPrivateFirstOwnerCeremonyAdapterV1(input: AdapterInputV1):
   if (typeof input.acquireOwnerAttendedControlAttempt !== "function") return fail();
   const acquire = input.acquireOwnerAttendedControlAttempt;
   const cleanupDeadlineMs = input.cleanupDeadlineMs;
-  let state: "idle" | "running" | "complete" | "closed" = "idle";
+  const state: { value: "idle" | "running" | "complete" | "closed" } = { value: "idle" };
   let resolveCompletion: ((value: PrivateFirstOwnerCeremonyCompletionV1) => void) | undefined;
   let rejectCompletion: (() => void) | undefined;
   const completionPromise = new Promise<PrivateFirstOwnerCeremonyCompletionV1>((resolve, reject) => {
@@ -263,18 +263,19 @@ export function createPrivateFirstOwnerCeremonyAdapterV1(input: AdapterInputV1):
   const isBootstrapOnly = () => {
     try { return ceremonyIsBootstrapOnly(); } catch { return fail(); }
   };
+  const isClosed = () => state.value === "closed";
 
   const adapter: PrivateFirstOwnerCeremonyAdapterV1 = {
     schema: PRIVATE_FIRST_OWNER_CEREMONY_ADAPTER_V1,
     async route(request) {
-      if (state === "closed") return Response.json({ error: "owner_bootstrap_unavailable" }, { status: 503 });
+      if (isClosed()) return Response.json({ error: "owner_bootstrap_unavailable" }, { status: 503 });
       let response: Response | undefined;
-      try { response = await ceremonyRoute(request); } catch { if (state === "running") rejectCompletion?.(); return fail(); }
+      try { response = await ceremonyRoute(request); } catch { if (state.value === "running") rejectCompletion?.(); return fail(); }
       // close() is a permanent adapter fence. A request that began before
       // close but returns afterward must not tell the browser that bootstrap
       // succeeded: the runner has already made the outcome owner attention.
-      if (state === "closed") return Response.json({ error: "owner_bootstrap_unavailable" }, { status: 503 });
-      if (state === "running" && response instanceof Response) {
+      if (isClosed()) return Response.json({ error: "owner_bootstrap_unavailable" }, { status: 503 });
+      if (state.value === "running" && response instanceof Response) {
         let pathname = "";
         try { pathname = new URL(request.url).pathname; } catch { return response; }
         if (request.method === "POST" && pathname === "/api/v1/owner-bootstrap" && response.status === 201) {
@@ -282,23 +283,23 @@ export function createPrivateFirstOwnerCeremonyAdapterV1(input: AdapterInputV1):
             const completed = exactCompletion(await boundedJson(response.clone()));
             // The body can arrive after cleanup. Recheck after every await
             // before turning an owner-visible response into completion.
-            if (state === "closed") return Response.json({ error: "owner_bootstrap_unavailable" }, { status: 503 });
+            if (isClosed()) return Response.json({ error: "owner_bootstrap_unavailable" }, { status: 503 });
             if (isBootstrapOnly() !== false) return fail();
-            if (state === "closed") return Response.json({ error: "owner_bootstrap_unavailable" }, { status: 503 });
-            state = "complete"; resolveCompletion?.(completed);
+            if (isClosed()) return Response.json({ error: "owner_bootstrap_unavailable" }, { status: 503 });
+            state.value = "complete"; resolveCompletion?.(completed);
           } catch {
-            if (state === "closed") return Response.json({ error: "owner_bootstrap_unavailable" }, { status: 503 });
+            if (isClosed()) return Response.json({ error: "owner_bootstrap_unavailable" }, { status: 503 });
             rejectCompletion?.();
           }
         }
       }
-      if (state === "closed") return Response.json({ error: "owner_bootstrap_unavailable" }, { status: 503 });
+      if (isClosed()) return Response.json({ error: "owner_bootstrap_unavailable" }, { status: 503 });
       return response;
     },
     async runRetainedOwnerBootstrapCeremony(context) {
       assertContext(context, binding);
-      if (state !== "idle" || context.signal.aborted || isBootstrapOnly() !== true) return fail();
-      state = "running";
+      if (state.value !== "idle" || context.signal.aborted || isBootstrapOnly() !== true) return fail();
+      state.value = "running";
       let armed: Readonly<Record<string, unknown>>;
       try {
         const attempt = await acquire(context);
@@ -315,7 +316,7 @@ export function createPrivateFirstOwnerCeremonyAdapterV1(input: AdapterInputV1):
     },
     async verifyExistingOwner(context) {
       assertContext(context, binding);
-      if (state !== "complete" || context.signal.aborted || typeof context.ceremonyOutcomeDigest !== "string") return fail();
+      if (state.value !== "complete" || context.signal.aborted || typeof context.ceremonyOutcomeDigest !== "string") return fail();
       const expectedOutcome = sha256Digest({ purpose: "private-first-owner-ceremony-outcome/v1",
         installationId: binding.installationId, requestDigest: context.requestDigest,
         completion: exactCompletion({ schema: "control-room.owner-bootstrap-complete/v1", ownerCreated: true,
@@ -345,7 +346,7 @@ export function createPrivateFirstOwnerCeremonyAdapterV1(input: AdapterInputV1):
     async cleanupRetainedOwnerBootstrapCeremony(context) {
       assertContext(context, binding);
       if (context.scope !== "retained_owner_bootstrap_ceremony") return fail();
-      state = "closed"; rejectCompletion?.();
+      state.value = "closed"; rejectCompletion?.();
       let timer: ReturnType<typeof setTimeout> | undefined;
       try {
         await Promise.race([ceremonyClose(), new Promise<never>((_, reject) => {

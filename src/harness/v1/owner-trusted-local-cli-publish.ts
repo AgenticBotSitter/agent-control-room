@@ -8,7 +8,7 @@ import { controllerWorkerDeliverySchemaV1, controllerWorkerDeliveryReceiptSchema
 import { publishDurableResultV1, type DurableResultBindingV1,
   type DurableResultPublicationConfigurationV1 } from "../../artifacts/v1/durable-result-publication";
 
-const unavailable = (): never => { throw new Error("owner_trusted_local_cli_publish_unavailable"); };
+function unavailable(): never { throw new Error("owner_trusted_local_cli_publish_unavailable"); }
 const id = z.string().min(3).max(180).regex(/^[a-zA-Z0-9][a-zA-Z0-9._:-]*$/);
 const text = z.string().min(1).refine(value => Buffer.byteLength(value, "utf8") <= 65_536);
 
@@ -77,7 +77,7 @@ export function createOwnerTrustedLocalCliLifecycleV1(config: OwnerTrustedLocalC
     for (const state of (terminal === "succeeded" ? ["starting", "running", "succeeded"] : ["failed"]) as HarnessRunState[]) {
       if (input.signal.aborted) unavailable();
       const snapshot = await runs.inspect(run.tenantId, run.id);
-      if (!snapshot) unavailable();
+      if (!snapshot) return unavailable();
       const prior = snapshot.events.find(event => event.payload.category === "lifecycle" && event.payload.state === state);
       if (prior) continue;
       if (snapshot.run.state === terminal) unavailable();
@@ -89,7 +89,7 @@ export function createOwnerTrustedLocalCliLifecycleV1(config: OwnerTrustedLocalC
           ...(state === "failed" ? { reasonCode: "local_cli_execution_failed" } : {}) } });
     }
     const current = await runs.get(run.tenantId, run.id);
-    if (current?.state !== terminal) unavailable();
+    if (!current || current.state !== terminal) return unavailable();
     return { delivery, receipt, run: current };
   }
   async function publish(input: Readonly<{ delivery: unknown; receipt: unknown; text: string; signal: AbortSignal }>): Promise<void> {

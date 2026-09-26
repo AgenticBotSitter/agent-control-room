@@ -3,8 +3,11 @@ import { chmod, mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import type { DatabaseClient, DatabaseSession } from "../src/persistence/database";
+import { LOCAL_OWNER_SESSION_PROFILE_V1 } from "../src/web/v1/local-owner-session";
+import { sha256Digest } from "../src/security";
 import { MAC_LOCAL_DATABASE_ROLES_V1 } from "../src/web/v1/mac-local-database-roles";
-import { checkMacLocalDatabaseV1 } from "../scripts/mac-local/check-database";
+import { checkMacLocalDatabaseV1, type MacLocalDatabaseCheckRuntimeV1 } from "../scripts/mac-local/check-database";
 
 const connection = (username: string) => ({ host: "127.0.0.1", port: 5432, database: "control_room", username,
   password: `${username}-test-password`, majorVersion: 17 as const });
@@ -21,22 +24,41 @@ async function fixture() {
   return root;
 }
 
-function runtime(lines: string[], options: { roleOk?: boolean; fail?: boolean } = {}) {
+function runtime(lines: string[], options: { roleOk?: boolean; fail?: boolean; failUsername?: string;
+  onOpen?: (username: string) => void } = {}): MacLocalDatabaseCheckRuntimeV1 {
+  const verify: MacLocalDatabaseCheckRuntimeV1["verify"] = {
+    web: async () => {}, coordinator: async () => {}, results: async () => {}, publisher: async () => {}, queueWorker: async () => {},
+  };
   return {
     deniedWrite: async () => "denied" as const,
     loadRoles: async () => roles,
-    loadConfiguration: async () => ({ localOwnerSession: { tenantId: "tenant:mac-local", provider: "local-owner" },
+    loadConfiguration: async () => ({ localOwnerSession: { schema: LOCAL_OWNER_SESSION_PROFILE_V1,
+      origin: "http://127.0.0.1:3210", tenantId: "tenant:mac-local", provider: "local-owner", subject: "owner:local",
+      ownerCodeDigest: sha256Digest({ fixture: "owner-code" }), sessionSeconds: 900 },
       workspaceId: "workspace:mac-local" }),
-    verify: Object.fromEntries(["web", "coordinator", "results", "publisher", "queueWorker"].map(name => [name, async () => {}])),
+    verify,
     report: (line: string) => lines.push(line),
-    openDatabase: () => ({
-      client: { query: async (sql: string) => {
+    openDatabase: configuration => {
+      options.onOpen?.(configuration.username);
+      const client: DatabaseClient = {
+        query: async <T = Record<string, unknown>>(sql: string, _params?: unknown[]): Promise<{ rows: T[] }> => {
         if (options.fail) throw new Error("private detail");
-        if (sql.includes("current_user")) return { rows: [{ role_ok: options.roleOk ?? true }] };
+        if (configuration.username === options.failUsername) throw new Error("private detail");
+        if (sql === "SELECT current_user=$1 AND session_user=$1 AS role_ok") {
+          // The check's only projected row is the explicit role_ok alias.
+          const row = { role_ok: options.roleOk ?? true };
+          return { rows: [row as T] };
+        }
         return { rows: [] };
-      } }, close: async () => {}, isAvailable: () => true,
-    }),
-  } as never;
+      },
+        async transaction<T>(work: (tx: DatabaseSession) => Promise<T>) { return work(client); },
+        async transactionWithPreCommitCheck<T>(work: (tx: DatabaseSession) => Promise<T>, check: () => void | Promise<void>) {
+          const result = await work(client); await check(); return result;
+        },
+      };
+      return { client, close: async () => {}, isAvailable: () => true };
+    },
+  };
 }
 
 test("checks each fixed Mac-local role without printing any protected connection value", async () => {
@@ -55,17 +77,7 @@ test("reports a single refusal for an unreadable protected role map", async () =
 
 test("continues checking other roles after one read-only connection refusal", async () => {
   const lines: string[] = [], opened: string[] = [];
-  const testRuntime = runtime(lines);
-  testRuntime.openDatabase = (configuration: typeof roles.web) => {
-    opened.push(configuration.username);
-    return {
-      client: { query: async (sql: string) => {
-        if (configuration.username === "control_room_results") throw new Error("private detail");
-        if (sql.includes("current_user")) return { rows: [{ role_ok: true }] };
-        return { rows: [] };
-      } }, close: async () => {}, isAvailable: () => true,
-    } as never;
-  };
+  const testRuntime = runtime(lines, { failUsername: "control_room_results", onOpen: username => opened.push(username) });
   assert.equal(await checkMacLocalDatabaseV1("/protected", testRuntime), 1);
   assert.deepEqual(opened, ["control_room_web", "control_room_coordinator", "control_room_results", "control_room_publisher", "control_room_queue_worker"]);
   assert.deepEqual(lines, ["web", "coordinator", "results", "publisher", "queueWorker"].map(name =>

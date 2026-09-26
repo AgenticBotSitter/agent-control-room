@@ -3,6 +3,7 @@ import { execFile, spawn } from "node:child_process";
 import childProcess from "node:child_process";
 import { createHash } from "node:crypto";
 import { constants } from "node:fs";
+import type { BigIntStats, Stats } from "node:fs";
 import { chmod, link, lstat, mkdir, mkdtemp, open, readFile, readdir, realpath, rm, symlink, unlink,
   writeFile } from "node:fs/promises";
 import fsPromises from "node:fs/promises";
@@ -28,7 +29,7 @@ const flags = ["-std=c11", "-O2", "-Wall", "-Wextra", "-Werror", "-Wconversion",
   "-fstack-protector-strong", "-D_FORTIFY_SOURCE=2", "-mmacosx-version-min=13.0"];
 
 async function compile(output: string, input = source, additions: string[] = []) {
-  const environment = { PATH: "/usr/bin:/bin", LANG: "C", LC_ALL: "C", TMPDIR: await realpath(tmpdir()) };
+  const environment = { PATH: "/usr/bin:/bin", LANG: "C", LC_ALL: "C", TMPDIR: await realpath(tmpdir()), NODE_ENV: "test" as const };
   const sdk = (await run("/usr/bin/xcrun", ["--sdk", "macosx", "--show-sdk-path"],
     { env: environment })).stdout.trim();
   await run("/usr/bin/clang", [...flags, ...additions, "-isysroot", sdk, input.pathname, "-o", output],
@@ -50,12 +51,15 @@ function baseFrame(operation: 1 | 2, deadline: number, values: { path?: string; 
 }
 function invoke(executable: string, input: Buffer, descriptor?: number) {
   return new Promise<{ code: number | null; signal: NodeJS.Signals | null; stdout: Buffer; stderr: Buffer }>((resolve, reject) => {
-    const child = spawn(executable, [], { shell: false, cwd: "/", env: { PATH: "/usr/bin:/bin", LANG: "C", LC_ALL: "C" },
+    const child = spawn(executable, [], { shell: false, cwd: "/", env: { PATH: "/usr/bin:/bin", LANG: "C", LC_ALL: "C", NODE_ENV: "test" },
       stdio: ["pipe", "pipe", "pipe", descriptor === undefined ? "ignore" : descriptor] });
+    const stdin = child.stdin, stdoutStream = child.stdout, stderrStream = child.stderr;
+    if (!stdin || !stdoutStream || !stderrStream) { child.kill(); reject(new Error("native_helper_pipes_unavailable")); return; }
     const stdout: Buffer[] = [], stderr: Buffer[] = [];
-    child.stdout.on("data", chunk => stdout.push(Buffer.from(chunk))); child.stderr.on("data", chunk => stderr.push(Buffer.from(chunk)));
-    child.on("error", reject); child.on("close", (code, signal) => resolve({ code, signal,
-      stdout: Buffer.concat(stdout), stderr: Buffer.concat(stderr) })); child.stdin.end(input);
+    stdoutStream.on("data", (chunk: Buffer) => stdout.push(Buffer.from(chunk)));
+    stderrStream.on("data", (chunk: Buffer) => stderr.push(Buffer.from(chunk)));
+    child.on("error", reject); child.on("close", (code: number | null, signal: NodeJS.Signals | null) => resolve({ code, signal,
+      stdout: Buffer.concat(stdout), stderr: Buffer.concat(stderr) })); stdin.end(input);
   });
 }
 async function disposableRoot(t: TestContext) {
@@ -98,10 +102,17 @@ function processAbsent(pid: number) {
   catch (error) { return (error as NodeJS.ErrnoException).code === "ESRCH"; }
 }
 function nativeRequest(kind: "ancestor" | "manifest" | "configuration" | "journal", descriptor: number,
-  stat: Awaited<ReturnType<Awaited<ReturnType<typeof open>>["stat"]>>, signal = new AbortController().signal) {
+  stat: Stats | BigIntStats, signal = new AbortController().signal) {
+  const safeNumber = (value: number | bigint): number => {
+    if (typeof value === "number") return value;
+    const converted = Number(value);
+    if (!Number.isSafeInteger(converted) || BigInt(converted) !== value) throw new Error("filesystem_identity_not_safely_representable");
+    return converted;
+  };
   return { schema: PRIVATE_INSTALLED_CONFIGURATION_NATIVE_CUSTODY_V1, kind, descriptor,
-    identity: { device: stat.dev, inode: stat.ino, ownerUid: stat.uid, mode: stat.mode & 0o7777, size: stat.size,
-      linkCount: stat.nlink, modifiedMs: stat.mtimeMs, changedMs: stat.ctimeMs }, signal };
+    identity: { device: safeNumber(stat.dev), inode: safeNumber(stat.ino), ownerUid: safeNumber(stat.uid),
+      mode: safeNumber(stat.mode) & 0o7777, size: safeNumber(stat.size), linkCount: safeNumber(stat.nlink),
+      modifiedMs: safeNumber(stat.mtimeMs), changedMs: safeNumber(stat.ctimeMs) }, signal };
 }
 
 macosTest("native publication makes one complete protected root visible and never replaces it", async t => {

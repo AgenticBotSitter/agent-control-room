@@ -3,13 +3,15 @@ import test from "node:test";
 import { createControllerWorkerDeliveryV1 } from "../src/harness/v1/controller-worker-delivery";
 import { captureMacLocalAdapterRegistryV1, deliverMacLocalAdapterV1,
   type MacLocalAdapterRegistryV1 } from "../src/harness/v1/mac-local-adapter-registry";
-import { OWNER_TRUSTED_LOCAL_ENABLEMENT_V1 } from "../src/harness/v1/owner-trusted-local-enablements";
+import { captureOwnerTrustedLocalEnablementV1, OWNER_TRUSTED_LOCAL_ENABLEMENT_V1 } from "../src/harness/v1/owner-trusted-local-enablements";
 import { LOCAL_ADAPTER_IDS_V1 } from "../src/harness/v1/local-adapter-installation";
 import { sha256Digest } from "../src/security/canonical-digest";
 import { createMacLocalWorkerReadinessV1 } from "../src/web/v1/mac-local-worker-readiness";
 
 const at = "2026-09-24T20:00:00.000Z";
-const enablement = Object.freeze({ schema: OWNER_TRUSTED_LOCAL_ENABLEMENT_V1, mode: "mac-local" as const, nodeId: "mac-1" as const,
+type Harness = keyof typeof LOCAL_ADAPTER_IDS_V1;
+type Adapter = NonNullable<MacLocalAdapterRegistryV1["adapters"]["codex"]>;
+const enablement = captureOwnerTrustedLocalEnablementV1({ schema: OWNER_TRUSTED_LOCAL_ENABLEMENT_V1, mode: "mac-local", nodeId: "mac-1",
   workers: [
     { workerId: "worker:codex", kind: "codex" as const, executablePath: "/Applications/Codex", recordedVersion: "codex test" },
     { workerId: "worker:hermes", kind: "hermes" as const, executablePath: "/usr/local/bin/hermes", recordedVersion: "hermes test" },
@@ -26,7 +28,7 @@ function packet(harness: keyof typeof LOCAL_ADAPTER_IDS_V1, revision = "revision
 }
 function fixture() {
   const calls: string[] = [];
-  const adapters: MacLocalAdapterRegistryV1["adapters"] = {};
+  const adapters: Partial<Record<Harness, Adapter>> = {};
   for (const harness of Object.keys(LOCAL_ADAPTER_IDS_V1) as Array<keyof typeof LOCAL_ADAPTER_IDS_V1>) adapters[harness] = {
     workerId: `worker:${harness}`, adapterId: LOCAL_ADAPTER_IDS_V1[harness], adapterRevision: "revision:test",
     async deliver(delivery) { calls.push(delivery.worker.workerId); return { harness, state: "delegated" as const }; },

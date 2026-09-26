@@ -6,10 +6,10 @@ import type { DatabaseClient, DatabaseSession } from "../src/persistence/databas
 
 test("fleet sequence advances when PostgreSQL returns BIGINT as a string", async () => {
   const writes: string[] = [];
-  const session: DatabaseSession = { async query(statement) {
-    if (statement.includes("FROM control_nodes")) return { rows: [{ id: "node:one" }] };
+  const session: DatabaseSession = { async query<T = Record<string, unknown>>(statement: string): Promise<{ rows: T[] }> {
+    if (statement.includes("FROM control_nodes")) return { rows: [{ id: "node:one" } as T] };
     if (statement.includes("SELECT payload_digest")) return { rows: [] };
-    if (statement.includes("SELECT signal_sequence")) return { rows: [{ signal_sequence: "1" }] };
+    if (statement.includes("SELECT signal_sequence")) return { rows: [{ signal_sequence: "1" } as T] };
     if (statement.startsWith("INSERT INTO control_node_fleet_")) { writes.push(statement); return { rows: [] }; }
     throw new Error("unexpected_query");
   } };

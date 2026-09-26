@@ -100,7 +100,8 @@ test("bootstraps one unspendable identity per local worker and refuses remote fr
     assert.equal(row?.payload.softwareFingerprint, sha256Digest({ purpose: "mac-local-worker-node", nodeId,
       workerId: `worker:${worker}`, adapterId }));
     const keys = await fixture.client.query("SELECT id FROM control_node_keys WHERE node_id=$1", [nodeId]);
-    assert.deepEqual(keys.rows.map((key: { id: string }) => key.id), [keyId]);
+    assert.ok(keys.rows.every(key => typeof key.id === "string"));
+    assert.deepEqual(keys.rows.map(key => key.id), [keyId]);
     const frame = signNodeFrame({ protocol: NODE_PROTOCOL_V1, direction: "node_to_server", senderKind: "node",
       tenantId: config.localOwnerSession.tenantId, actorId: nodeId, keyId,
       connectionId: `connection:local-${worker}`, sequence: 1, messageId: `message:local-${worker}`,

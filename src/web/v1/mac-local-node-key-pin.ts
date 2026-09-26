@@ -6,7 +6,7 @@ import type { MacLocalProtectedConfigurationV1 } from "./mac-local-protected-con
 
 export const MAC_LOCAL_NODE_KEYS_V1 = "control-room.mac-local-node-keys/v1" as const;
 const kinds = ["hermes", "claude", "codex"] as const;
-const refused = (): never => { throw new Error("mac_local_node_key_pin_mismatch"); };
+function refused(): never { throw new Error("mac_local_node_key_pin_mismatch"); }
 
 async function privateDirectory(path: string) {
   const entry = await lstat(path).catch(refused);

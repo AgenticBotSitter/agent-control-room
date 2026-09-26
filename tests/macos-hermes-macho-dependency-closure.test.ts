@@ -175,6 +175,6 @@ test("refuses a missing or duplicated executable dylinker and hostile caller dat
   let calls = 0; const hostile = fixture() as unknown as Record<string, unknown>;
   Object.defineProperty(hostile, "architecture", { enumerable: true, get() { calls += 1; return "arm64"; } });
   assert.throws(() => validate(hostile), refusal); assert.equal(calls, 0);
-  const symbolic = fixture(); symbolic.images[Symbol("hidden")] = true as never;
+  const symbolic = fixture(); Object.defineProperty(symbolic.images, Symbol("hidden"), { value: true });
   assert.throws(() => validate(symbolic), refusal);
 });

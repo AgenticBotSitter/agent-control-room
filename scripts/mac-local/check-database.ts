@@ -8,9 +8,10 @@ import { verifyPrivateDatabase, verifyTaskCoordinatorDatabase, verifyNativeResul
 
 type OpenedDatabase = ReturnType<typeof createPrivatePostgresDatabase>;
 type RoleName = "web" | "coordinator" | "results" | "publisher" | "queueWorker";
-type Runtime = Readonly<{
+export type MacLocalDatabaseCheckRuntimeV1 = Readonly<{
   loadRoles: typeof loadMacLocalDatabaseRolesFromRootV1;
-  loadConfiguration: typeof loadMacLocalProtectedConfigurationFromRootV1;
+  loadConfiguration: (protectedRoot: string) => Promise<Pick<Awaited<ReturnType<typeof loadMacLocalProtectedConfigurationFromRootV1>>,
+    "localOwnerSession" | "workspaceId">>;
   openDatabase: (configuration: PrivatePostgresConfiguration) => OpenedDatabase;
   verify: Readonly<Record<RoleName, (db: OpenedDatabase, configuration: PrivatePostgresConfiguration,
     scope: { tenantId: string; workspaceId: string; ownerIdentityId: string; issuer: string }) => Promise<void>>>;
@@ -39,7 +40,7 @@ async function deniedWriteV1(configuration: PrivatePostgresConfiguration, statem
   }
 }
 
-const production: Runtime = Object.freeze({
+const production: MacLocalDatabaseCheckRuntimeV1 = Object.freeze({
   loadRoles: loadMacLocalDatabaseRolesFromRootV1,
   loadConfiguration: loadMacLocalProtectedConfigurationFromRootV1,
   openDatabase: createPrivatePostgresDatabase,
@@ -69,7 +70,8 @@ const deniedProbe: Readonly<Record<RoleName, string>> = Object.freeze({
 /** Read-only privilege and connectivity check for the five fixed Mac-local
  * accounts. Every denied probe has a false predicate, so even an incorrectly
  * granted account cannot change rows. Never prints configuration. */
-export async function checkMacLocalDatabaseV1(protectedRoot: string, runtime: Runtime = production): Promise<number> {
+export async function checkMacLocalDatabaseV1(protectedRoot: string,
+  runtime: MacLocalDatabaseCheckRuntimeV1 = production): Promise<number> {
   let roles: Awaited<ReturnType<typeof loadMacLocalDatabaseRolesFromRootV1>>;
   let scope: { tenantId: string; workspaceId: string; ownerIdentityId: string; issuer: string };
   try {

@@ -891,7 +891,8 @@ test("generic operator refuses structural, proxied, and mutable remote materiali
   const { settings, trusted } = operatorConfigurationScenario("full");
   const features = settings.features as unknown as Record<string, boolean>;
   features.remoteControllerWorker = true;
-  const materializer = {
+  const materializer: { marker: string; prepare(): Promise<Readonly<{ prepared: string }>>;
+    transmit(): Promise<Readonly<{ kind: "transmitted" | "mutated" }>> } = {
     marker: "captured",
     async prepare() { return Object.freeze({ prepared: this.marker }); },
     async transmit() { return Object.freeze({ kind: "transmitted" as const }); },

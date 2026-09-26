@@ -8,6 +8,7 @@ import { DurableResultReviewSubmissionServiceV1 } from "../../completion-gate/v1
 import { DurableLocalResultInspectionServiceV1 } from "../../completion-gate/v1/durable-local-result-inspection";
 import { CompletionGateStoreV1 } from "../../completion-gate/v1/store";
 import { preparePgBossNativeTaskSubmission } from "../../persistence/pg-boss-native-task-submission";
+import type { DatabaseClient } from "../../persistence/database";
 import { NativeApprovalPacketStore } from "./native-approval-packet-store";
 import { TaskExecutionPlanner } from "./task-execution-planner";
 import { createPrivatePostgresDatabase } from "./private-postgres";
@@ -26,7 +27,7 @@ import { HermesLocalDispatchPreparationV1 } from "../../harness/hermes-local-v1/
 import { createOwnerTrustedLocalCliReceiptPortV1 } from "../../harness/v1/owner-trusted-local-cli-receipt-port";
 import { ownerTrustedLocalHarnessVersionV1 } from "../../harness/v1/owner-trusted-local-enablements";
 import { createOwnerTrustedLocalCliAssertCurrentV1 } from "../../harness/v1/owner-trusted-local-cli-assert-current";
-import { createOwnerTrustedLocalCliLifecycleV1 } from "../../harness/v1/owner-trusted-local-cli-publish";
+import { createOwnerTrustedLocalCliLifecycleV1, createOwnerTrustedLocalCliPublishV1 } from "../../harness/v1/owner-trusted-local-cli-publish";
 import { createOwnerTrustedLocalCodexDeliveryV1, createOwnerTrustedLocalClaudeDeliveryV1,
   createOwnerTrustedLocalHermesDeliveryV1 } from "../../harness/v1/owner-trusted-local-cli-composition";
 import { createOwnerTrustedLocalCodexExecV1 } from "../../harness/codex-v1/owner-trusted-local-exec";
@@ -40,6 +41,23 @@ import { createClaudeOwnerTrustedLocalQueueExecutorV1 } from "./claude-owner-tru
 import { HERMES_LOCAL_ADAPTER_V1 } from "../../harness/hermes-local-v1/task-planning-contract";
 import { CLAUDE_CODE_LOCAL_ADAPTER_V1 } from "../../harness/claude-code-v1/task-planning-contract";
 import { CODEX_OWNER_TRUSTED_LOCAL_ADAPTER_V1 } from "../../harness/codex-v1/owner-trusted-local-task-planning-contract";
+import type { OwnerTrustedLocalEnablementV1 } from "../../harness/v1/owner-trusted-local-enablements";
+import type { TaskAssignmentRoute } from "./task-assignment-coordinator";
+
+type SelectedWorker = Readonly<{ kind: "hermes" | "claude-code" | "codex";
+  worker: OwnerTrustedLocalEnablementV1["workers"][number]; route: TaskAssignmentRoute; adapterId: string }>;
+
+function withAvailability(opened: Readonly<{ client: DatabaseClient; close(): Promise<void> }>) {
+  let closed = false;
+  return Object.freeze({ client: opened.client, isAvailable: () => !closed, async close() {
+    closed = true;
+    await opened.close();
+  } });
+}
+
+function openCoordinatorDatabase(configuration: Parameters<typeof createPrivatePostgresDatabase>[0]) {
+  return withAvailability(createPrivatePostgresDatabase(configuration));
+}
 
 export const schema = MAC_LOCAL_TASK_PROVIDER_V1;
 export const workerKinds = MAC_LOCAL_THREE_AGENT_KINDS_V1;
@@ -98,7 +116,8 @@ export const createTaskApplication: MacLocalTaskProviderV1["createTaskApplicatio
     // The node keys are readable by the coordinator login only (section 12.D);
     // the web login correctly has no access to them.
     await checkMacLocalNodeKeyPinV1(readPool.client, protectedRoot, configuration);
-    checkpoints = await openMacLocalRollbackCheckpointStoreV1(protectedRoot);
+    const checkpointStore = await openMacLocalRollbackCheckpointStoreV1(protectedRoot);
+    checkpoints = checkpointStore;
     const keys = runtime.keys;
     // First-owner provisioning is an explicit one-time operator action. The
     // ordinary host must never initialize the review authority on startup.
@@ -108,16 +127,17 @@ export const createTaskApplication: MacLocalTaskProviderV1["createTaskApplicatio
     // admits exactly that shape); the coordinator's guard refuses every profile.
     const profileGate = new CompletionGateStoreV1(input.database.client, keys.review, checkpoints);
     for (const profile of built.profiles) await profileGate.registerProfile(profile);
-    const planning = { template: built.templates[0]!, additionalTemplates: built.templates.slice(1),
-      integrityKey: keys.planning, reviewIntegrityKey: keys.review, checkpoints,
+    const planning: ConstructorParameters<typeof TaskExecutionPlanner>[2] = { template: built.templates[0]!, additionalTemplates: built.templates.slice(1),
+      integrityKey: keys.planning, reviewIntegrityKey: keys.review, checkpoints: checkpointStore,
       localAdapterAdmission: { enabledAdapters: [HERMES_LOCAL_ADAPTER_V1, CLAUDE_CODE_LOCAL_ADAPTER_V1,
-        CODEX_OWNER_TRUSTED_LOCAL_ADAPTER_V1] } } as const;
+        CODEX_OWNER_TRUSTED_LOCAL_ADAPTER_V1] } };
     const planner = new TaskExecutionPlanner(readPool.client, { tenantId, workspaceId }, planning);
-    const workers = (["hermes", "claude", "codex"] as const).map(kind => {
-      const worker = configuration.enablement.workers.find(value => value.kind === (kind === "claude" ? "claude-code" : kind));
+    const workers: SelectedWorker[] = (["hermes", "claude", "codex"] as const).map(kind => {
+      const workerKind: "hermes" | "claude-code" | "codex" = kind === "claude" ? "claude-code" : kind;
+      const worker = configuration.enablement.workers.find(value => value.kind === workerKind);
       const route = built.routes.find(value => value.nodeId === `${configuration.enablement.nodeId}.${kind}`);
       if (!worker || !route) throw new Error("mac_local_worker_missing");
-      return { kind: worker.kind, worker, route, adapterId: kind === "hermes" ? HERMES_LOCAL_ADAPTER_V1
+      return { kind: workerKind, worker, route, adapterId: kind === "hermes" ? HERMES_LOCAL_ADAPTER_V1
         : kind === "claude" ? CLAUDE_CODE_LOCAL_ADAPTER_V1 : CODEX_OWNER_TRUSTED_LOCAL_ADAPTER_V1 };
     });
     const prepared = workers.map(value => {
@@ -129,10 +149,10 @@ export const createTaskApplication: MacLocalTaskProviderV1["createTaskApplicatio
           : new CodexOwnerTrustedLocalDispatchPreparationV1(readPool.client, planner, config);
     });
     const reviewSubmission = new DurableResultReviewSubmissionServiceV1(resultsPool.client, {
-      integrityKey: keys.results, reviewIntegrityKey: keys.review, checkpoints, storageClass: "local", storage });
+      integrityKey: keys.results, reviewIntegrityKey: keys.review, checkpoints: checkpointStore, storageClass: "local", storage });
     const resultInspectionSource = new DurableLocalResultInspectionServiceV1(readPool.client, {
       integrityKey: keys.results, reviewIntegrityKey: keys.review, harnessIntegrityKey: keys.harness,
-      deliveryIntegrityKeys: { ownerTrustedLocal: keys.deliveryReceipt }, checkpoints,
+      deliveryIntegrityKeys: { ownerTrustedLocal: keys.deliveryReceipt }, checkpoints: checkpointStore,
       storageClass: "local", storage });
     const publication = { db: publisherPool.client, integrityKey: keys.results, reviewKey: keys.review,
       storage, storageClass: "local" as const, reservations: createDurableReservationPostgresPortV1(), reviewSubmission };
@@ -163,31 +183,37 @@ export const createTaskApplication: MacLocalTaskProviderV1["createTaskApplicatio
       delivery: createOwnerTrustedLocalClaudeDeliveryV1(common(1, ClaudeCodeLocalRunRegistrationV1),
         createOwnerTrustedLocalClaudeExecV1(), { executablePath: workers[1]!.worker.executablePath,
           workingDirectory: work.claude, deadlineMs: 120_000 }) });
+    const voidClaude = Object.freeze({ async deliver(target: Parameters<typeof claude.deliver>[0], signal: AbortSignal): Promise<void> {
+      await claude.deliver(target, signal);
+    } });
     const codex = createCodexOwnerTrustedLocalQueueExecutorV1({ tenantId,
       preparation: prepared[2] as CodexOwnerTrustedLocalDispatchPreparationV1,
       delivery: createOwnerTrustedLocalCodexDeliveryV1(common(2, (value, time) =>
         codexOwnerTrustedLocalRunRegistrationV1(value, time, codexHarnessVersion)),
       createOwnerTrustedLocalCodexExecV1(), { executablePath: workers[2]!.worker.executablePath,
         workingDirectory: work.codex, deadlineMs: 120_000 }) });
+    const voidCodex = Object.freeze({ async deliver(target: Parameters<typeof codex.deliver>[0], signal: AbortSignal): Promise<void> {
+      await codex.deliver(target, signal);
+    } });
     submission = await preparePgBossNativeTaskSubmission(PgBoss, readPool.client, { backend: "postgres", recovery: true });
     await refreshMacLocalFleetSignalsV1({ db: readPool.client, tenantId, protectedRoot,
       readiness: workerReadiness, workers: workers.map(value => ({ kind: value.kind, workerId: value.worker.workerId,
         nodeId: value.route.nodeId, capabilityProbeId: value.route.capabilityProbeId })) });
     application = await createMacLocalCurrentThreeAgentTaskApplicationV1({
-      web: { tenantId, workspaceId, database: input.database,
+      web: { tenantId, workspaceId, database: withAvailability(input.database),
         tasks: { harnessIntegrityKey: keys.harness,
           results: { integrityKey: keys.results, storageClass: "local", storage },
-          reviews: { integrityKey: keys.review, checkpoints },
-          ownerReviews: { integrityKey: keys.review, checkpoints } } },
-      databaseRoles, openDatabase: createPrivatePostgresDatabase,
+          reviews: { integrityKey: keys.review, checkpoints: checkpointStore },
+          ownerReviews: { integrityKey: keys.review, checkpoints: checkpointStore } } },
+      databaseRoles, openDatabase: openCoordinatorDatabase,
       coordinator: { scope: { tenantId, workspaceId }, planning, routes: built.routes,
         resultInspectionSource,
         approvals: { enrollments: [], store: new NativeApprovalPacketStore(keys.approvals, []) },
         nativeSubmission: submission, revisionPlanning: true,
-        quality: { integrityKey: keys.review, harnessIntegrityKey: keys.harness, checkpoints,
+        quality: { integrityKey: keys.review, harnessIntegrityKey: keys.harness, checkpoints: checkpointStore,
           results: { integrityKey: keys.results, storageClass: "local", storage },
           scenarios: built.profiles.map(createMacLocalTextScenarioV1) } },
-      hermes, claude, codex,
+      hermes, claude: voidClaude, codex: voidCodex,
     });
     // A local host tick invokes the existing canonical quality operation; it
     // creates no second review authority or scheduler.
@@ -229,7 +255,7 @@ export const createTaskApplication: MacLocalTaskProviderV1["createTaskApplicatio
       await refreshInFlight?.catch(() => {});
       await qualityInFlight?.catch(() => {});
       const results = await Promise.allSettled([owned.close(), readPool.close(), publisherPool.close(),
-        resultsPool.close(), checkpoints.close()]);
+        resultsPool.close(), checkpointStore.close()]);
       if (results.some(result => result.status === "rejected")) throw new Error("mac_local_task_provider_cleanup_uncertain");
     } });
   } catch (error) {
@@ -237,9 +263,11 @@ export const createTaskApplication: MacLocalTaskProviderV1["createTaskApplicatio
     if (qualityTimer) clearInterval(qualityTimer);
     await refreshInFlight?.catch(() => {});
     await qualityInFlight?.catch(() => {});
-    const results = await Promise.allSettled([application?.close(), !application && submission?.close(),
-      readPool.close(), publisherPool.close(), resultsPool.close(),
-      checkpoints?.close()].filter((value): value is Promise<unknown> => !!value));
+    const cleanup: Promise<unknown>[] = [readPool.close(), publisherPool.close(), resultsPool.close()];
+    if (application) cleanup.push(application.close());
+    else if (submission) cleanup.push(submission.close());
+    if (checkpoints) cleanup.push(checkpoints.close());
+    const results = await Promise.allSettled(cleanup);
     if (results.some(result => result.status === "rejected")) throw new Error("mac_local_task_provider_cleanup_uncertain");
     throw error;
   }

@@ -6,6 +6,8 @@ import { CONTROLLER_WORKER_NODE_DELIVERY_FEATURE_V1, CONTROLLER_WORKER_NODE_RECO
   "../../src/harness/v1/controller-worker-node-delivery";
 import { CONTROLLER_WORKER_RESULT_RETURN_FEATURE_V1 } from
   "../../src/harness/v1/controller-worker-result-return";
+import { controllerWorkerProgressReturnBodySchemaV1, controllerWorkerTerminalReturnBodySchemaV1 } from
+  "../../src/harness/v1/controller-worker-result-return";
 import { ControllerWorkerDeliveryIntakeHandlerV1 } from "../../src/node-bridge/controller-worker-delivery-handler";
 import { PortableNodeBridge } from "../../src/node-bridge/bridge";
 import { SqliteBridgeJournal } from "../../src/node-bridge/journal";
@@ -81,12 +83,19 @@ export async function realInstalledConnection(enrollment: ReturnType<typeof crea
     async result<T extends "controller.worker.result.progress" | "controller.worker.result.terminal">(
       type: T, body: NodeMessageBodyMap[T]) {
       const sentAt = new Date(clock()).toISOString();
-      const frame = await signNodeFrame({ protocol: NODE_PROTOCOL_V1, direction: "node_to_server",
-        senderKind: "node", messageId: `message:result:${++resultSequence}`,
+      const common = { protocol: NODE_PROTOCOL_V1, direction: "node_to_server" as const,
+        senderKind: "node" as const, messageId: `message:result:${++resultSequence}`,
         correlationId: body.deliveryReceipt.deliveryId, tenantId: binding.tenantId,
         actorId: binding.nodeId, keyId: "key:test", connectionId: activeConnectionId,
         sequence: resultSequence, sentAt, expiresAt: new Date(clock() + 30_000).toISOString(),
-        nonce: `nonce_result_${resultSequence}_x`, type, body }, nodeKeys.privateKey);
+        nonce: `nonce_result_${resultSequence}_x` };
+      if (type === "controller.worker.result.progress") {
+        const progress = controllerWorkerProgressReturnBodySchemaV1.parse(body);
+        const frame = await signNodeFrame<"controller.worker.result.progress">({ ...common, type, body: progress }, nodeKeys.privateKey);
+        return JSON.stringify(frame);
+      }
+      const terminal = controllerWorkerTerminalReturnBodySchemaV1.parse(body);
+      const frame = await signNodeFrame<"controller.worker.result.terminal">({ ...common, type, body: terminal }, nodeKeys.privateKey);
       return JSON.stringify(frame);
     },
     async close() { session.disconnect(); await bridge.close(); handler.close(); journal.close(); },

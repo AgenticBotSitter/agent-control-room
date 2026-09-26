@@ -40,7 +40,7 @@ export type OwnerTrustedLocalClaudeExecV1 = Readonly<{
 
 type Spawn = (file: string, args: readonly string[], options: Readonly<{
   cwd: string; detached: true; shell: false; windowsHide: true;
-  stdio: readonly ["pipe", "pipe", "pipe"]; env: Readonly<Record<string, string>>;
+  stdio: ["pipe", "pipe", "pipe"]; env: Readonly<Record<string, string>>;
 }>) => ChildProcess;
 type ReadDirectory = (path: string) => Promise<readonly string[]>;
 

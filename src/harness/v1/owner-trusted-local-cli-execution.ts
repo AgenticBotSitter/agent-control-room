@@ -18,7 +18,7 @@ function safeConfiguration(value: unknown): value is Readonly<{ executablePath: 
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
   const record = value as Record<string, unknown>;
   return Object.keys(record).length === 3 && safePath(record.executablePath) && safePath(record.workingDirectory)
-    && Number.isSafeInteger(record.deadlineMs) && typeof record.deadlineMs === "number"
+    && typeof record.deadlineMs === "number" && Number.isSafeInteger(record.deadlineMs)
     && record.deadlineMs >= 100 && record.deadlineMs <= 3_600_000;
 }
 
@@ -44,13 +44,13 @@ function mapped(result: Readonly<{ status: string; text?: string; reason?: strin
   if ((result.status === "failed" || result.status === "canceled" || result.status === "timed_out" || result.status === "cleanup_uncertain")
     && typeof result.reason === "string" && result.reason.length >= 1 && result.reason.length <= 240)
     return Object.freeze({ kind: "failed" as const, reason: `${result.status}:${result.reason}` });
-  invalid();
+  return invalid();
 }
 
 function capture(executor: Readonly<{ execute(input: Readonly<{ executablePath: string; prompt: string; workingDirectory: string;
   deadlineMs: number; signal: AbortSignal }>): Promise<Readonly<{ status: string; text?: string; reason?: string }>> }>,
   configuration: unknown): OwnerTrustedLocalCliExecutionAdapterV1 {
-  if (!executor || typeof executor.execute !== "function" || !safeConfiguration(configuration)) invalid();
+  if (!executor || typeof executor.execute !== "function" || !safeConfiguration(configuration)) return invalid();
   const fixed = Object.freeze({ ...configuration });
   return Object.freeze({ async execute(input: ExecutionInput) {
     if (!input || typeof input !== "object" || !(input.signal instanceof AbortSignal) || input.signal.aborted) invalid();

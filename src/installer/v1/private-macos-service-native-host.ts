@@ -46,6 +46,9 @@ const integerPattern = /^(?:0|[1-9][0-9]{0,19})$/u;
 const maximumHelperBytes = 16 * 1024 * 1024;
 const maximumDefinitionBytes = 256 * 1024;
 const responseBytes = 96;
+const uint64Maximum = BigInt("18446744073709551615");
+const one = BigInt(1), zero = BigInt(0);
+const unsafeHelperModeMask = BigInt("0o6022"), executableModeBit = BigInt("0o100");
 
 function sanitized(kind: "refused" | "uncertain"): Error {
   const error = new Error(`private_macos_service_native_host_${kind}`);
@@ -72,7 +75,7 @@ function digest(value: unknown): string {
   return value;
 }
 function uint64(value: unknown): string {
-  if (typeof value !== "string" || !integerPattern.test(value) || BigInt(value) > 0xffff_ffff_ffff_ffffn) return refuse();
+  if (typeof value !== "string" || !integerPattern.test(value) || BigInt(value) > uint64Maximum) return refuse();
   return value;
 }
 function identity(value: unknown): Identity {
@@ -194,7 +197,7 @@ async function cleanIdentityOwnedStaging(staging: PartialStaging): Promise<boole
     if (entries.length === 1 && staging.executable && entries[0] === "macos-service-v1") {
       if (!staging.executableIdentity) return false;
       const executable = await lstat(staging.executable, { bigint: true });
-      if (!executable.isFile() || executable.isSymbolicLink() || executable.nlink !== 1n
+      if (!executable.isFile() || executable.isSymbolicLink() || executable.nlink !== one
         || executable.dev !== staging.executableIdentity.dev || executable.ino !== staging.executableIdentity.ino) return false;
       await unlink(staging.executable);
     } else if (entries.length !== 0) return false;
@@ -216,9 +219,9 @@ async function checkedHelper(configuration: Configuration): Promise<Buffer> {
     }
     handle = await open(configuration.helperPath, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
     const before = await handle.stat({ bigint: true });
-    if (!before.isFile() || before.nlink !== 1n || ![0n, BigInt(configuration.ownerUid)].includes(before.uid)
-      || (before.mode & 0o6022n) !== 0n || (before.mode & 0o100n) === 0n
-      || before.size < 1n || before.size > BigInt(maximumHelperBytes)) return refuse();
+    if (!before.isFile() || before.nlink !== one || ![zero, BigInt(configuration.ownerUid)].includes(before.uid)
+      || (before.mode & unsafeHelperModeMask) !== zero || (before.mode & executableModeBit) === zero
+      || before.size < one || before.size > BigInt(maximumHelperBytes)) return refuse();
     const bytes = Buffer.alloc(Number(before.size));
     let offset = 0;
     while (offset < bytes.length) {
@@ -249,7 +252,7 @@ async function stageHelper(configuration: Configuration,
     const directoryStat = await lstat(staging.directory, { bigint: true });
     if (!directoryStat.isDirectory() || directoryStat.isSymbolicLink() || directoryStat.uid !== BigInt(configuration.ownerUid)
       || directoryStat.dev !== createdDirectory.dev || directoryStat.ino !== createdDirectory.ino
-      || (directoryStat.mode & 0o7777n) !== 0o700n || (await readdir(staging.directory)).length !== 0) throw sanitized("uncertain");
+      || (directoryStat.mode & BigInt("0o7777")) !== BigInt("0o700") || (await readdir(staging.directory)).length !== 0) throw sanitized("uncertain");
     staging.executable = join(staging.directory, "macos-service-v1");
     handle = await open(staging.executable, constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW
       | constants.O_RDWR | constants.O_NONBLOCK, 0o500);
@@ -271,8 +274,8 @@ async function stageHelper(configuration: Configuration,
     }
     const named = await lstat(staging.executable, { bigint: true });
     const entries = await readdir(staging.directory);
-    if (!stat.isFile() || stat.nlink !== 1n || stat.uid !== BigInt(configuration.ownerUid)
-      || (stat.mode & 0o7777n) !== 0o500n || named.dev !== stat.dev || named.ino !== stat.ino
+    if (!stat.isFile() || stat.nlink !== one || stat.uid !== BigInt(configuration.ownerUid)
+      || (stat.mode & BigInt("0o7777")) !== BigInt("0o500") || named.dev !== stat.dev || named.ino !== stat.ino
       || stat.dev !== createdExecutable.dev || stat.ino !== createdExecutable.ino
       || entries.length !== 1 || entries[0] !== "macos-service-v1"
       || `sha256:${createHash("sha256").update(observed).digest("hex")}` !== configuration.helperSha256) throw sanitized("uncertain");
@@ -290,7 +293,7 @@ async function removeStaged(staged: Staged): Promise<void> {
   const executable = await lstat(staged.executable, { bigint: true });
   if (!directory.isDirectory() || directory.isSymbolicLink() || directory.dev !== staged.directoryDevice
     || directory.ino !== staged.directoryInode || executable.isSymbolicLink() || !executable.isFile()
-    || executable.nlink !== 1n || executable.dev !== staged.executableDevice || executable.ino !== staged.executableInode
+    || executable.nlink !== one || executable.dev !== staged.executableDevice || executable.ino !== staged.executableInode
     || (await readdir(staged.directory)).length !== 1) return uncertain();
   await unlink(staged.executable); await rmdir(staged.directory);
 }
@@ -415,8 +418,9 @@ function parseResponse(bytes: Buffer, configuration: Configuration): HelperResul
     sha256: `sha256:${bytes.subarray(64, 96).toString("hex")}` });
   if (definition && (!Number.isSafeInteger(definition.size) || definition.size < 1
     || definition.size > maximumDefinitionBytes)) return uncertain();
-  return Object.freeze({ outcome: outcomeCode === 1 ? "succeeded" : "failed_before_effect",
-    state: (["", "not_installed", "stopped", "running", "unknown"] as const)[stateCode]!, definition });
+  const state = stateCode === 1 ? "not_installed" : stateCode === 2 ? "stopped"
+    : stateCode === 3 ? "running" : stateCode === 4 ? "unknown" : uncertain();
+  return Object.freeze({ outcome: outcomeCode === 1 ? "succeeded" : "failed_before_effect", state, definition });
 }
 
 /** Creates the exact runtime host. The helper is release-hash checked and

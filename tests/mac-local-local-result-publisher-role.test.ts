@@ -48,7 +48,7 @@ function restrictedClient(db: DatabaseClient, login: string): DatabaseClient {
   return client;
 }
 
-async function installRole(raw: PGlite, file: string, role: string, login: string) {
+async function installRole(raw: { exec(statement: string): Promise<unknown> }, file: string, role: string, login: string) {
   await raw.exec(await readFile(`db/roles/${file}`, "utf8"));
   await raw.exec(`CREATE ROLE ${login} LOGIN INHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
     GRANT ${role} TO ${login};`);

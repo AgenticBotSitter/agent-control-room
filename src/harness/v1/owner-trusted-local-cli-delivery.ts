@@ -9,7 +9,7 @@ import { persistControllerWorkerDeliveryReceiptV1, readControllerWorkerDeliveryR
 import { canonicalJson, sha256Digest } from "../../security/canonical-digest";
 
 const text = z.string().min(1).refine(value => Buffer.byteLength(value, "utf8") <= 65_536);
-const unavailable = (): never => { throw new Error("owner_trusted_local_cli_delivery_unavailable"); };
+function unavailable(): never { throw new Error("owner_trusted_local_cli_delivery_unavailable"); }
 
 /** The narrow result shape deliberately loses provider-specific fields.  The
  * installation-owned publisher below is responsible for projecting this text
@@ -72,7 +72,7 @@ function result(value: unknown): OwnerTrustedLocalCliExecutionV1 {
     return Object.freeze({ kind: "completed" as const, text: text.parse(candidate.text) });
   if (candidate.kind === "failed" && Object.keys(candidate).length === 2 && typeof candidate.reason === "string"
     && candidate.reason.length >= 1 && candidate.reason.length <= 240) return Object.freeze({ kind: "failed" as const, reason: candidate.reason });
-  unavailable();
+  return unavailable();
 }
 
 /**

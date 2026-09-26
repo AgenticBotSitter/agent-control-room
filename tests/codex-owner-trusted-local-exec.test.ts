@@ -14,7 +14,7 @@ async function taskDirectory() { return await mkdtemp(join(root, "task-")); }
 function adapter(capture?: { file?: string; args?: readonly string[]; env?: Readonly<Record<string, string>> }) {
   return createOwnerTrustedLocalCodexExecV1({ spawn: (file, args, options) => {
     if (capture) { capture.file = file; capture.args = args; capture.env = options.env; }
-    return spawn(process.execPath, [fake, ...args], options);
+    return spawn(process.execPath, [fake, ...args], { ...options, env: { ...options.env, NODE_ENV: "test" } });
   } });
 }
 function input(workingDirectory: string, prompt = "hello", deadlineMs = 10_000, signal?: AbortSignal) {

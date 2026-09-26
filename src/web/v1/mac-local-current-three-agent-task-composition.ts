@@ -27,9 +27,12 @@ export async function createMacLocalCurrentThreeAgentTaskApplicationV1(
     || restricted.coordinator?.claudeCodeLocal !== undefined || restricted.coordinator?.codexOwnerTrustedLocal !== undefined)
     throw new Error("mac_local_current_three_agent_task_composition_invalid");
   const hermesLocal = createHermesLocalQueueExecutorV1(hermes);
+  const voidHermesLocal = Object.freeze({ async deliver(target: Parameters<typeof hermesLocal.deliver>[0], signal: AbortSignal): Promise<void> {
+    await hermesLocal.deliver(target, signal);
+  } });
   return createMacLocalRestrictedTaskApplicationV1(restricted, {
     createTaskApplication: value => createMacLocalTaskApplicationV1({ ...value,
-      coordinator: Object.freeze({ ...value.coordinator, hermesLocal, claudeCodeLocal: claude,
+      coordinator: Object.freeze({ ...value.coordinator, hermesLocal: voidHermesLocal, claudeCodeLocal: claude,
         codexOwnerTrustedLocal: codex }),
     }),
   });

@@ -6,8 +6,8 @@ import { join } from "node:path";
 import { MAC_LOCAL_TASK_PROVIDER_V1, MAC_LOCAL_THREE_AGENT_KINDS_V1, loadMacLocalTaskProviderFromRootV1,
   requireMacLocalThreeAgentReadinessV1 } from "../src/web/v1/mac-local-task-provider";
 
-const directory = (mode = 0o700) => ({ isDirectory: () => true, isSymbolicLink: () => false, mode, size: 0 });
-const file = (mode = 0o600, size = 100) => ({ isFile: () => true, isSymbolicLink: () => false, mode, size });
+const directory = (mode = 0o700) => ({ isDirectory: () => true, isFile: () => false, isSymbolicLink: () => false, mode, size: 0 });
+const file = (mode = 0o600, size = 100) => ({ isDirectory: () => false, isFile: () => true, isSymbolicLink: () => false, mode, size });
 const provider = Object.freeze({ schema: MAC_LOCAL_TASK_PROVIDER_V1,
   workerKinds: MAC_LOCAL_THREE_AGENT_KINDS_V1,
   async createTaskApplication() { return { operations: {}, isReady: () => true, async close() {} }; },
@@ -25,12 +25,12 @@ test("loads only the fixed, owner-only local task provider path", async () => {
 
 test("refuses loose, substituted, or malformed local task providers", async () => {
   const base = { async lstat(path: string) { return path.endsWith("task-provider.mjs") ? file() : directory(); },
-    async load() { return provider; } };
+    async load(_path: string) { return provider; } };
   await assert.rejects(loadMacLocalTaskProviderFromRootV1("relative", base), /mac_local_task_provider_root_invalid/);
   await assert.rejects(loadMacLocalTaskProviderFromRootV1("/protected", { ...base,
     async lstat(path: string) { return path.endsWith("task-provider.mjs") ? file(0o644) : directory(); } }), /mac_local_task_provider_invalid/);
   await assert.rejects(loadMacLocalTaskProviderFromRootV1("/protected", { ...base,
-    async load() { return { schema: MAC_LOCAL_TASK_PROVIDER_V1, workerKinds: ["hermes"], createTaskApplication() {} }; } }), /mac_local_task_provider_invalid/);
+    async load(_path: string) { return { schema: MAC_LOCAL_TASK_PROVIDER_V1, workerKinds: ["hermes"], createTaskApplication() {} }; } }), /mac_local_task_provider_invalid/);
 });
 
 test("loads a real on-disk provider module, whose namespace carries the Module tag", async t => {

@@ -27,7 +27,7 @@ export type OwnerTrustedLocalCodexExecV1 = Readonly<{
 
 type Spawn = (file: string, args: readonly string[], options: Readonly<{
   cwd: string; detached: true; shell: false; windowsHide: true;
-  stdio: readonly ["pipe", "pipe", "pipe"]; env: Readonly<Record<string, string>>;
+  stdio: ["pipe", "pipe", "pipe"]; env: Readonly<Record<string, string>>;
 }>) => ChildProcess;
 type ReadDirectory = (path: string) => Promise<readonly string[]>;
 
@@ -47,7 +47,8 @@ function safeInput(input: unknown): input is Parameters<OwnerTrustedLocalCodexEx
   return Object.keys(value).every(key => ["executablePath", "prompt", "workingDirectory", "deadlineMs", "signal"].includes(key))
     && safePath(value.executablePath) && safePath(value.workingDirectory)
     && typeof value.prompt === "string" && Buffer.byteLength(value.prompt, "utf8") <= MAX_PROMPT_BYTES
-    && Number.isSafeInteger(value.deadlineMs) && value.deadlineMs >= 100 && value.deadlineMs <= 3_600_000
+    && typeof value.deadlineMs === "number" && Number.isSafeInteger(value.deadlineMs)
+    && value.deadlineMs >= 100 && value.deadlineMs <= 3_600_000
     && (value.signal === undefined || value.signal instanceof AbortSignal);
 }
 
@@ -124,6 +125,7 @@ export function createOwnerTrustedLocalCodexExecV1(dependencies: Readonly<{ spaw
       processGroupSignal(child, "SIGKILL");
       return failed("cleanup_uncertain", "stdio_unavailable");
     }
+    const stdin = child.stdin, stdoutStream = child.stdout, stderrStream = child.stderr;
     return await new Promise<OwnerTrustedLocalCodexExecResultV1>(resolve => {
       let settled = false, bytes = 0, stdout = "", resultText: string | undefined, terminal = false;
       let usage: { inputTokens?: number; outputTokens?: number } | undefined;
@@ -178,8 +180,8 @@ export function createOwnerTrustedLocalCodexExecV1(dependencies: Readonly<{ spaw
       const deadline = setTimeout(() => terminate("timed_out"), input.deadlineMs);
       input.signal?.addEventListener("abort", cancel, { once: true });
       child.on("error", () => terminate("failed"));
-      child.stdin.on("error", () => terminate("failed")); child.stdout.on("error", () => terminate("failed")); child.stderr.on("error", () => terminate("failed"));
-      child.stdout.on("data", receive); child.stderr.on("data", receiveStderr);
+      stdin.on("error", () => terminate("failed")); stdoutStream.on("error", () => terminate("failed")); stderrStream.on("error", () => terminate("failed"));
+      stdoutStream.on("data", receive); stderrStream.on("data", receiveStderr);
       child.once("close", code => {
         if (stdout.length) {
           try {
@@ -211,7 +213,7 @@ export function createOwnerTrustedLocalCodexExecV1(dependencies: Readonly<{ spaw
         if (code !== 0 || !terminal || resultText === undefined) return finish(failed("failed", "process_or_output_refused"));
         finish(Object.freeze({ status: "completed" as const, text: resultText, ...(usage ? { usage: Object.freeze(usage) } : {}) }));
       });
-      try { child.stdin.end(input.prompt, "utf8"); } catch { terminate("failed"); }
+      try { stdin.end(input.prompt, "utf8"); } catch { terminate("failed"); }
     });
   } });
 }

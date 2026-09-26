@@ -3,8 +3,7 @@ import { admitHermes021MacosOwnerAuthorizedLocalOnlyTaskV1,
   hermes021MacosLocalBindingSchemaV1,
   type Hermes021MacosAssignedTaskExecutionV1,
   type Hermes021MacosLocalDeliveryCompositionV1,
-  type Hermes021MacosLocalPrivatePortV1,
-  type Hermes021MacosTaskV1 } from "../../harness/hermes-021-v1";
+  type Hermes021MacosLocalPrivatePortV1 } from "../../harness/hermes-021-v1";
 import type { DurableResultPublicationConfigurationV1 } from "../../artifacts/v1/durable-result-publication";
 import type { ControllerWorkerDeliveryV1 } from "../../harness/v1/controller-worker-delivery";
 import { createHermes021LocalQueueExecutorV1 } from "./hermes-021-local-executor";
@@ -15,6 +14,7 @@ type DeliveryWithoutPrivatePort = Omit<Hermes021MacosLocalDeliveryCompositionV1,
 type ExecutionWithoutPrivatePort = Omit<Hermes021MacosAssignedTaskExecutionV1, "delivery"> & Readonly<{
   delivery: DeliveryWithoutPrivatePort;
 }>;
+type PrivatePortInput = Parameters<NonNullable<Hermes021MacosLocalDeliveryCompositionV1["createPrivatePort"]>>[0];
 
 type OwnerRunnerAdmission = Readonly<{
   installationId: string;
@@ -33,8 +33,7 @@ type OwnerRunnerAdmission = Readonly<{
 export function createMacLocalHermesOwnerRunnerPortFactoryV1(input: Readonly<{
   runner: unknown;
   admission: OwnerRunnerAdmission;
-}>): Readonly<{ createPrivatePort(input: Readonly<{ task: Hermes021MacosTaskV1;
-  recheckBeforeSpawn?: () => Promise<void> }>): Hermes021MacosLocalPrivatePortV1 }> {
+}>): Readonly<{ createPrivatePort(input: PrivatePortInput): Hermes021MacosLocalPrivatePortV1 }> {
   if (!input || !input.runner || !input.admission) unavailable();
   const admission = input.admission;
   const workerBinding = hermes021MacosLocalBindingSchemaV1.parse(admission.workerBinding);
@@ -74,8 +73,8 @@ export function createMacLocalHermesOwnerRunnerQueueDeliveryV1(input: Readonly<{
   if (!input || !input.execution?.delivery || !input.results || typeof input.assertAuthority !== "function") unavailable();
   const factory = createMacLocalHermesOwnerRunnerPortFactoryV1({ runner: input.runner, admission: input.admission });
   const execution: Hermes021MacosAssignedTaskExecutionV1 = Object.freeze({ ...input.execution,
-    delivery: Object.freeze({ ...input.execution.delivery, createPrivatePort: ({ task, recheckBeforeSpawn }) =>
-      factory.createPrivatePort({ task, recheckBeforeSpawn }) }),
+    delivery: Object.freeze({ ...input.execution.delivery, createPrivatePort: (value: PrivatePortInput) =>
+      factory.createPrivatePort(value) }),
   });
   return createHermes021LocalQueueExecutorV1({ tenantId: input.tenantId, execution, results: input.results,
     assertAuthority: input.assertAuthority });

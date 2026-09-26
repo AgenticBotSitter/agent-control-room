@@ -25,9 +25,12 @@ export async function createMacLocalRestrictedHermesClaudeTaskApplicationV1(
     || restricted.coordinator?.hermes021Local !== undefined || restricted.coordinator?.claudeCodeLocal !== undefined)
     throw new Error("mac_local_restricted_hermes_claude_task_composition_invalid");
   const hermesDelivery = createMacLocalHermesOwnerRunnerQueueDeliveryV1(hermes);
+  const voidHermesDelivery = Object.freeze({ async deliver(target: Parameters<typeof hermesDelivery.deliver>[0], signal: AbortSignal): Promise<void> {
+    await hermesDelivery.deliver(target, signal);
+  } });
   return createMacLocalRestrictedTaskApplicationV1(restricted, {
     createTaskApplication: value => createMacLocalTaskApplicationV1({ ...value,
-      coordinator: Object.freeze({ ...value.coordinator, hermes021Local: hermesDelivery, claudeCodeLocal: claude }),
+      coordinator: Object.freeze({ ...value.coordinator, hermes021Local: voidHermesDelivery, claudeCodeLocal: claude }),
     }),
   });
 }

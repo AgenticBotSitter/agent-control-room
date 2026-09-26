@@ -9,7 +9,7 @@ type Harness = keyof typeof LOCAL_ADAPTER_IDS_V1;
 type Deliver = (delivery: ControllerWorkerDeliveryV1, route: ControllerWorkerRouteV1,
   receivedAt: string, signal?: AbortSignal) => Promise<unknown>;
 
-const refused = (): never => { throw new Error("mac_local_adapter_registry_unavailable"); };
+function refused(): never { throw new Error("mac_local_adapter_registry_unavailable"); }
 const instant = z.string().datetime().refine(value => new Date(value).toISOString() === value);
 
 const kindForHarness: Readonly<Record<Harness, OwnerTrustedLocalWorkerKindV1>> = Object.freeze({

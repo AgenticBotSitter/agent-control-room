@@ -25,7 +25,10 @@ const installLocations = Object.freeze([
       .sort((a, b) => b.localeCompare(a, undefined, { numeric: true }));
     return versions.map(v => join(claudeRoot, v, "claude.app/Contents/MacOS/claude")).filter(p => existsSync(p));
   } },
-  { kind: "codex", root: "/Applications/ChatGPT.app/Contents/Resources/", current: async () => ["/Applications/ChatGPT.app/Contents/Resources/codex"] },
+  { kind: "codex", root: "/Applications/ChatGPT.app/Contents/Resources/", current: async () => [
+    "/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex",
+    "/Applications/ChatGPT.app/Contents/Resources/codex",
+  ].filter(p => existsSync(p)) },
   { kind: "codex", root: join(home, ".codex/plugins/.plugin-appserver/"), current: async () => [join(home, ".codex/plugins/.plugin-appserver/codex")] },
   { kind: "hermes", root: join(home, ".hermes/hermes-agent/venv/bin/"), current: async () => [join(home, ".hermes/hermes-agent/venv/bin/hermes")] },
   { kind: "hermes-021", root: join(home, ".hermes/hermes-agent/venv/bin/"), current: async () => [join(home, ".hermes/hermes-agent/venv/bin/hermes")] },

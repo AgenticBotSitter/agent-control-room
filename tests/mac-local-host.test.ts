@@ -8,12 +8,13 @@ import { MAC_LOCAL_PROTECTED_CONFIGURATION_V1 } from "../src/web/v1/mac-local-pr
 import { MAC_LOCAL_DATABASE_ROLES_V1 } from "../src/web/v1/mac-local-database-roles";
 import { LOCAL_OWNER_SESSION_PROFILE_V1 } from "../src/web/v1/local-owner-session";
 import { OWNER_TRUSTED_LOCAL_ENABLEMENT_V1 } from "../src/harness/v1/owner-trusted-local-enablements";
+import { captureMacLocalProtectedConfigurationV1 } from "../src/web/v1/mac-local-protected-configuration";
 
-const configuration = { schema: MAC_LOCAL_PROTECTED_CONFIGURATION_V1, port: 3210, workspaceId: "workspace:mac-local",
+const configuration = captureMacLocalProtectedConfigurationV1({ schema: MAC_LOCAL_PROTECTED_CONFIGURATION_V1, port: 3210, workspaceId: "workspace:mac-local",
   localOwnerSession: { schema: LOCAL_OWNER_SESSION_PROFILE_V1, origin: "http://127.0.0.1:3210", tenantId: "tenant:mac-local",
     provider: "local", subject: "owner", ownerCodeDigest: sha256Digest({ ownerCode: "long local test owner code" }), sessionSeconds: 900 },
   database: { host: "127.0.0.1", port: 5432, database: "control_room", username: "control_room_web", password: "test", majorVersion: 17 },
-  enablement: { schema: OWNER_TRUSTED_LOCAL_ENABLEMENT_V1, mode: "mac-local", nodeId: "mac-1", workers: [{ workerId: "worker:codex", kind: "codex", executablePath: "/bin/codex", recordedVersion: "codex test" }] } } as const;
+  enablement: { schema: OWNER_TRUSTED_LOCAL_ENABLEMENT_V1, mode: "mac-local", nodeId: "mac-1", workers: [{ workerId: "worker:codex", kind: "codex", executablePath: "/bin/codex", recordedVersion: "codex test" }] } });
 
 const databaseRoles = Object.freeze({
   schema: MAC_LOCAL_DATABASE_ROLES_V1,
@@ -34,7 +35,7 @@ test("loads then verifies workers before it opens the authority database", async
     async loadConfiguration() { trace.push("load"); return configuration; },
     async readVersion() { trace.push("version"); return "codex test"; },
     openDatabase() { trace.push("database"); return { client: {} as never, async close() { trace.push("database-close"); } }; },
-    assets: { async respond() { return undefined; } },
+    assets: { count: 0, digest: "test", respond() { return undefined; } },
     render() { return new Response("local"); },
     createServer: () => server, listenerTiming: { bindMs: 100, closeMs: 100 },
   });
@@ -49,7 +50,7 @@ test("does not open the database when the pinned worker changes", async () => {
   let opened = false;
   const host = createMacLocalProtectedHostV1({
     async loadConfiguration() { return configuration; }, async readVersion() { return "changed"; },
-    openDatabase() { opened = true; return {} as never; }, assets: { async respond() { return undefined; } },
+    openDatabase() { opened = true; return {} as never; }, assets: { count: 0, digest: "test", respond() { return undefined; } },
     render() { return new Response("local"); },
   });
   await assert.rejects(host.start());
@@ -74,7 +75,7 @@ test("protected Mac startup creates the shared task lifecycle only after worker 
       assert.deepEqual(workerReadiness.read(), [{ kind: "codex", state: "ready", proof: "not_proven" }]);
       return { operations: {}, isReady: () => true, async close() { trace.push("task-close"); } };
     },
-    assets: { async respond() { return undefined; } }, render() { return new Response("local"); },
+    assets: { count: 0, digest: "test", respond() { return undefined; } }, render() { return new Response("local"); },
     createServer: () => server, listenerTiming: { bindMs: 100, closeMs: 100 },
   });
   const running = await host.start();
@@ -90,7 +91,7 @@ test("a protected Mac host refuses mismatched web role configuration before open
     async loadDatabaseRoles() { return { ...databaseRoles, web: { ...databaseRoles.web, username: "wrong_web" } }; },
     async readVersion() { return "codex test"; },
     openDatabase() { opened = true; return {} as never; },
-    assets: { async respond() { return undefined; } }, render() { return new Response("local"); },
+    assets: { count: 0, digest: "test", respond() { return undefined; } }, render() { return new Response("local"); },
   });
   await assert.rejects(host.start(), /mac_local_host_configuration_invalid/);
   assert.equal(opened, false);
@@ -105,7 +106,7 @@ test("a Mac-local host owns the shared task composition and fails ready when tha
   const service = createMacLocalWebServiceFromConfigurationV1({
     configuration,
     database: { client: {} as never, async close() { databaseCloses++; } },
-    assets: { async respond() { return undefined; } },
+    assets: { count: 0, digest: "test", respond() { return undefined; } },
     render() { return new Response("local"); },
     createServer: () => server, listenerTiming: { bindMs: 100, closeMs: 100 },
     taskApplication: {
@@ -125,7 +126,7 @@ test("a Mac-local host owns the shared task composition and fails ready when tha
 test("a Mac-local host refuses operations from a different controller lifecycle", () => {
   assert.throws(() => createMacLocalWebServiceFromConfigurationV1({
     configuration, database: { client: {} as never, async close() {} },
-    assets: { async respond() { return undefined; } }, render() { return new Response("local"); },
+    assets: { count: 0, digest: "test", respond() { return undefined; } }, render() { return new Response("local"); },
     operations: {}, taskApplication: { operations: {}, isReady: () => true, async close() {} },
   }), /mac_local_host_configuration_invalid/);
 });
@@ -133,7 +134,7 @@ test("a Mac-local host refuses operations from a different controller lifecycle"
 test("a protected Mac host refuses bare operations mixed with a task-application factory", () => {
   assert.throws(() => createMacLocalProtectedHostV1({
     async loadConfiguration() { return configuration; }, async readVersion() { return "codex test"; },
-    openDatabase() { return {} as never; }, assets: { async respond() { return undefined; } }, render() { return new Response("local"); },
+    openDatabase() { return {} as never; }, assets: { count: 0, digest: "test", respond() { return undefined; } }, render() { return new Response("local"); },
     operations: {}, createTaskApplication: async () => ({ operations: {}, isReady: () => true, async close() {} }),
   }), /mac_local_host_configuration_invalid/);
 });
@@ -149,14 +150,14 @@ test("starts the existing queue worker only after the loopback site is listening
     openDatabase() { return { client: {} as never, async close() { trace.push("database-close"); } }; },
     async loadDatabaseRoles() { return databaseRoles; },
     async createTaskApplication() { return { operations: {}, isReady: () => true, async close() { trace.push("task-close"); },
-      async queueDelivery() {}, queueRecovery: { async verify() {} } }; },
+      async queueDelivery() { return { disposition: "delivered" as const }; } }; },
     async startQueueWorker(value) {
       trace.push("queue-start");
       assert.equal(value.database.username, "control_room_queue_worker");
       assert.equal(value.application.loginNames.includes("control_room_web"), true);
       return { status: () => ({ accepting: true }), async close() { trace.push("queue-close"); } };
     },
-    assets: { async respond() { return undefined; } }, render() { return new Response("local"); },
+    assets: { count: 0, digest: "test", respond() { return undefined; } }, render() { return new Response("local"); },
     createServer: () => server, listenerTiming: { bindMs: 100, closeMs: 100 },
   });
   const running = await host.start();
@@ -168,7 +169,7 @@ test("starts the existing queue worker only after the loopback site is listening
 test("refuses a queue-worker factory without the task lifecycle it delivers", () => {
   assert.throws(() => createMacLocalProtectedHostV1({
     async loadConfiguration() { return configuration; }, async readVersion() { return "codex test"; },
-    openDatabase() { return {} as never; }, assets: { async respond() { return undefined; } }, render() { return new Response("local"); },
+    openDatabase() { return {} as never; }, assets: { count: 0, digest: "test", respond() { return undefined; } }, render() { return new Response("local"); },
     async startQueueWorker() { return { status: () => ({ accepting: true }), async close() {} }; },
   }), /mac_local_host_configuration_invalid/);
 });
@@ -183,9 +184,9 @@ test("closes a rejected queue worker before it closes the local site", async () 
     async loadConfiguration() { return configuration; }, async readVersion() { return "codex test"; },
     openDatabase() { return { client: {} as never, async close() {} }; },
     async loadDatabaseRoles() { return databaseRoles; },
-    async createTaskApplication() { return { operations: {}, isReady: () => true, async close() {}, async queueDelivery() {} }; },
+    async createTaskApplication() { return { operations: {}, isReady: () => true, async close() {}, async queueDelivery() { return { disposition: "delivered" as const }; } }; },
     async startQueueWorker() { return { status: () => ({ accepting: false }), async close() { trace.push("worker-close"); } }; },
-    assets: { async respond() { return undefined; } }, render() { return new Response("local"); },
+    assets: { count: 0, digest: "test", respond() { return undefined; } }, render() { return new Response("local"); },
     createServer: () => server, listenerTiming: { bindMs: 100, closeMs: 100 },
   });
   await assert.rejects(host.start(), /mac_local_startup_failed/);

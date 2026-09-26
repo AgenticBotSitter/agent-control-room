@@ -12,7 +12,7 @@ export async function measureMacLocalArtifactStorageV1(protectedRoot: string,
   try {
     const result = await measure(join(protectedRoot, "runtime", "artifacts"), { bigint: true });
     const bytes = result.bavail * result.bsize;
-    if (bytes < 0n || bytes > BigInt(Number.MAX_SAFE_INTEGER)) return { quality: "unavailable" };
+    if (bytes < BigInt(0) || bytes > BigInt(Number.MAX_SAFE_INTEGER)) return { quality: "unavailable" };
     return { quality: "observed", value: Number(bytes) };
   } catch { return { quality: "unavailable" }; }
 }

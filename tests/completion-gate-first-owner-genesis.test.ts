@@ -10,9 +10,9 @@ const key = new Uint8Array(32).fill(37);
 test("manifest genesis exactly equals the integrity row provisionTenant creates", async () => {
   let inserted: unknown[] | undefined;
   const db: DatabaseClient = {
-    query: async () => ({ rows: [] }),
-    transaction: async work => work({ query: async (sql, params = []) => {
-      if (sql.startsWith("SELECT id FROM tenants")) return { rows: [{ id: tenantId }] };
+    query: async <T = Record<string, unknown>>(): Promise<{ rows: T[] }> => ({ rows: [] }),
+    transaction: async work => work({ query: async <T = Record<string, unknown>>(sql: string, params: unknown[] = []): Promise<{ rows: T[] }> => {
+      if (sql.startsWith("SELECT id FROM tenants")) return { rows: [{ id: tenantId } as T] };
       if (sql.startsWith("INSERT INTO control_completion_gate_integrity")) { inserted = params; return { rows: [] }; }
       return { rows: [] };
     } }),
@@ -34,10 +34,10 @@ test("Mac finisher verifies the committed row and creates its independent checkp
   const checkpoints = new InMemoryRollbackCheckpointStoreV1({ testOnly: true });
   let row: Record<string, unknown> | undefined, records = "0";
   const db: DatabaseClient = {
-    query: async () => ({ rows: [] }),
-    transaction: async work => work({ query: async sql => {
-      if (sql.includes("FROM control_completion_gate_integrity")) return { rows: row ? [row] : [] };
-      if (sql.includes("FROM control_completion_gate_records")) return { rows: sql.includes("count(*)") ? [{ count: records }] : [] };
+    query: async <T = Record<string, unknown>>(): Promise<{ rows: T[] }> => ({ rows: [] }),
+    transaction: async work => work({ query: async <T = Record<string, unknown>>(sql: string): Promise<{ rows: T[] }> => {
+      if (sql.includes("FROM control_completion_gate_integrity")) return { rows: (row ? [row] : []) as T[] };
+      if (sql.includes("FROM control_completion_gate_records")) return { rows: (sql.includes("count(*)") ? [{ count: records }] : []) as T[] };
       throw new Error("unexpected_query");
     } }),
     transactionWithPreCommitCheck: async (work, check) => {

@@ -8,7 +8,7 @@ import { createCodexLocalHostV1 } from '../src/harness/codex-v1/local-host';
 import type { CodexLocalInitialHostInputV1, CodexLocalRecoverHostInputV1 } from '../src/harness/codex-v1/local-host';
 import { createCodexWorkerCompositionV1 } from '../src/node-bridge/codex-worker-composition';
 import { createCodexPhysicalQualificationReceiptBodyV1 } from '../src/harness/codex-v1/result-publication-contract';
-import { buildCodexTaskActivationV1, CODEX_ACTIVATION_FEATURE } from '../src/harness/codex-v1/activation-contract';
+import { buildCodexTaskActivationV1, CODEX_ACTIVATION_FEATURE, parseCodexTaskActivationV1 } from '../src/harness/codex-v1/activation-contract';
 import { CODEX_START_OPERATION, codexTaskDispatchBodySchemaV1,
   codexTaskPayloadDigestV1, codexTaskRunIdV1 } from '../src/harness/codex-v1/delivery-contract';
 import { CODEX_APP_SERVER_READ_CONTRACT,
@@ -32,7 +32,7 @@ import { computeNormalizedOperationDigest } from '../src/node-policy/v1/policy-e
 import { NODE_PROTOCOL_V1, NodeProtocolAuthenticator, signNodeFrame,
   type UnsignedNodeFrame } from '../src/node-protocol/v1';
 import { sha256Digest } from '../src/security/canonical-digest';
-import { CODEX_CURRENT_ADMISSION_READ_FEATURE_V1 } from '../src/harness/codex-v1/current-admission-read-contract';
+import { CODEX_CURRENT_ADMISSION_READ_FEATURE_V1, codexCurrentAdmissionReadRequestSchemaV1 } from '../src/harness/codex-v1/current-admission-read-contract';
 import { codexApprovalPacketDigestV1 } from '../src/web/v1/codex-task-queue';
 import { createControllerWorkerDeliveryV1 } from '../src/harness/v1/controller-worker-delivery';
 
@@ -158,7 +158,7 @@ async function portableActivation(recordActivation = true, keepConnected = false
 }
 
 function sharedDelivery(f: Awaited<ReturnType<typeof portableActivation>>) {
-  const activation = f.activation.body;
+  const activation = parseCodexTaskActivationV1(f.activation.body);
   return createControllerWorkerDeliveryV1({
     identity: { tenantId: activation.tenantId, nodeId: activation.nodeId, projectId: activation.projectId,
       jobId: activation.jobId, attemptId: activation.attemptId, runId: activation.runId },
@@ -171,7 +171,7 @@ function sharedDelivery(f: Awaited<ReturnType<typeof portableActivation>>) {
 }
 
 function currentAdmissionRequest(f: Awaited<ReturnType<typeof portableActivation>>) {
-  const start = f.activation.body;
+  const start = parseCodexTaskActivationV1(f.activation.body);
   return { schema: 'control-room.codex-current-admission-read-request/v1' as const,
     queueId: start.queueId, projectId: start.projectId, jobId: start.jobId, attemptId: start.attemptId,
     nodeId: start.nodeId, inputDigest: start.inputDigest, packetDigest: codexApprovalPacketDigestV1(f.body),
@@ -181,7 +181,7 @@ function currentAdmissionRequest(f: Awaited<ReturnType<typeof portableActivation
 
 function currentAdmissionResponse(f: Awaited<ReturnType<typeof portableActivation>>,
   request: ReturnType<typeof signNodeFrame>, change: { causationId?: string; expiresAt?: string } = {}) {
-  const body = request.body as ReturnType<typeof currentAdmissionRequest>;
+  const body = codexCurrentAdmissionReadRequestSchemaV1.parse(request.body);
   const checkedAt = new Date(baseTime + 3_000).toISOString();
   const responseBody = { schema: 'control-room.codex-current-admission-read-response/v1' as const,
     queueId: body.queueId, projectId: body.projectId, jobId: body.jobId, attemptId: body.attemptId,
@@ -455,7 +455,7 @@ test('installed Codex node entry turns one signed current read into one bound se
   assert.equal(entry.startsWork, false); assert.equal(entry.grantsExecutionAuthority, false);
   f.setAdmissionResponder(requestValue => {
     const request = requestValue as unknown as ReturnType<typeof signNodeFrame>;
-    const requestBody = request.body as Record<string, string>;
+    const requestBody = codexCurrentAdmissionReadRequestSchemaV1.parse(request.body);
     const responseBody = { schema: 'control-room.codex-current-admission-read-response/v1' as const,
       queueId: requestBody.queueId, projectId: requestBody.projectId,
       jobId: requestBody.jobId, attemptId: requestBody.attemptId,

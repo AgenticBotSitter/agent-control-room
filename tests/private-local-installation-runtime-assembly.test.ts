@@ -913,11 +913,21 @@ test("installed operator reports ready and reaches the exact first injected star
   assert.equal(status.status, "ready", JSON.stringify(status));
   if (status.status === "ready") {
     const activation = status.localActivationStatus;
+    if (!activation || typeof activation !== "object" || Array.isArray(activation))
+      throw new Error("expected_local_activation_record");
+    const fields = activation as Record<string, unknown>;
+    const twoWorker = fields.twoLocalWorkerPreflight;
+    const storage = fields.schedulerResultStorage;
+    if (!twoWorker || typeof twoWorker !== "object" || Array.isArray(twoWorker)
+      || !storage || typeof storage !== "object" || Array.isArray(storage))
+      throw new Error("expected_local_activation_details");
+    const twoWorkerFields = twoWorker as Record<string, unknown>;
+    const storageFields = storage as Record<string, unknown>;
     assert.equal(status.nextStage, "complete");
-    assert.equal(activation.twoLocalWorkerPreflight.status, "missing_local_proof");
-    assert.equal(activation.schedulerResultStorage.state, "blocked");
-    assert.equal(activation.schedulerResultStorage.performsEffect, false);
-    assert.equal(activation.schedulerResultStorage.evidenceDigest,
+    assert.equal(twoWorkerFields.status, "missing_local_proof");
+    assert.equal(storageFields.state, "blocked");
+    assert.equal(storageFields.performsEffect, false);
+    assert.equal(storageFields.evidenceDigest,
       localActivationStatus.schedulerResultStorage.evidenceDigest);
     assert.doesNotMatch(JSON.stringify(activation), /password|\/fixture\/|postgresql:\/\//iu);
   }

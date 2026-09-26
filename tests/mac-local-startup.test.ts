@@ -6,8 +6,9 @@ import { MAC_LOCAL_PROTECTED_CONFIGURATION_V1 } from "../src/web/v1/mac-local-pr
 import { captureMacLocalProtectedConfigurationV1 } from "../src/web/v1/mac-local-protected-configuration";
 import { LOCAL_OWNER_SESSION_PROFILE_V1 } from "../src/web/v1/local-owner-session";
 import { OWNER_TRUSTED_LOCAL_ENABLEMENT_V1 } from "../src/harness/v1/owner-trusted-local-enablements";
+import { captureOwnerTrustedLocalEnablementV1 } from "../src/harness/v1/owner-trusted-local-enablements";
 
-const config = { schema: MAC_LOCAL_PROTECTED_CONFIGURATION_V1, port: 3210, workspaceId: "workspace:mac-local", localOwnerSession: { schema: LOCAL_OWNER_SESSION_PROFILE_V1, origin: "http://127.0.0.1:3210", tenantId: "tenant:mac-local", provider: "local", subject: "owner", ownerCodeDigest: sha256Digest({ ownerCode: "long local test owner code" }), sessionSeconds: 900 }, database: { host: "127.0.0.1", port: 5432, database: "control_room", username: "control_room_web", password: "test", majorVersion: 17 }, enablement: { schema: OWNER_TRUSTED_LOCAL_ENABLEMENT_V1, mode: "mac-local", nodeId: "mac-1", workers: [{ workerId: "worker:codex", kind: "codex", executablePath: "/bin/codex", recordedVersion: "codex test" }] } } as const;
+const config = captureMacLocalProtectedConfigurationV1({ schema: MAC_LOCAL_PROTECTED_CONFIGURATION_V1, port: 3210, workspaceId: "workspace:mac-local", localOwnerSession: { schema: LOCAL_OWNER_SESSION_PROFILE_V1, origin: "http://127.0.0.1:3210", tenantId: "tenant:mac-local", provider: "local", subject: "owner", ownerCodeDigest: sha256Digest({ ownerCode: "long local test owner code" }), sessionSeconds: 900 }, database: { host: "127.0.0.1", port: 5432, database: "control_room", username: "control_room_web", password: "test", majorVersion: 17 }, enablement: { schema: OWNER_TRUSTED_LOCAL_ENABLEMENT_V1, mode: "mac-local", nodeId: "mac-1", workers: [{ workerId: "worker:codex", kind: "codex", executablePath: "/bin/codex", recordedVersion: "codex test" }] } });
 
 test("verifies pinned workers before it opens the database and starts exactly once", async () => {
   const trace: string[] = [];
@@ -23,8 +24,10 @@ test("does not open the database when worker verification fails", async () => {
 });
 
 test("one updated CLI leaves that worker unavailable while the others start", async () => {
-  const two = { ...config, enablement: { ...config.enablement, workers: [...config.enablement.workers,
-    { workerId: "worker:claude", kind: "claude-code", executablePath: "/bin/claude", recordedVersion: "claude test" }] } } as never;
+  const enablement = captureOwnerTrustedLocalEnablementV1({ schema: OWNER_TRUSTED_LOCAL_ENABLEMENT_V1, mode: "mac-local",
+    nodeId: "mac-1", workers: [...config.enablement.workers,
+      { workerId: "worker:claude", kind: "claude-code", executablePath: "/bin/claude", recordedVersion: "claude test" }] });
+  const two = captureMacLocalProtectedConfigurationV1({ ...config, enablement });
   const startup = createMacLocalStartupV1({ async readVersion(path) { return path === "/bin/codex" ? "codex test" : "claude updated"; },
     openDatabase() { return { client: {} as never, async close() {} }; },
     createService() { return { async start() {}, async close() {} }; } });

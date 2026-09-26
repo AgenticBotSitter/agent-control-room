@@ -31,7 +31,7 @@ export type MacosHermesMachODependencyClosureV1 = Readonly<{
   architecture: "arm64" | "x64";
   executablePath: string;
   imagePaths: readonly string[];
-  imageInventory: readonly Readonly<{ path: string; sha256: string }>;
+  imageInventory: ReadonlyArray<Readonly<{ path: string; sha256: string }>>;
   closureDigest: string;
   macosBaseline: "13.0";
   filesystemInspected: false; hostPathSearchPerformed: false; readyForPackaging: false;

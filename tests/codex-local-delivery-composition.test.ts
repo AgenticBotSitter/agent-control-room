@@ -90,7 +90,7 @@ function observation(packet: ControllerWorkerDeliveryV1) {
 
 test('Codex local delivery persists the shared receipt before one injected host observation and exact replay never starts again', async t => {
   const f = await nativeTaskFixture(); t.after(f.close);
-  const packet = delivery(), state = { revoked: false, receives: 0, starts: 0 }, config = composition(f, packet, state);
+  const packet = delivery(), state = { revoked: false, receives: 0, starts: 0, binds: 0 }, config = composition(f, packet, state);
   const first = await deliverCodexLocalTaskV1(config, packet, { kind: 'local', workerId: worker.workerId }, at(2000));
   assert.equal(first.state, 'started_observation'); assert.equal(state.receives, 1); assert.equal(state.starts, 1);
   assert.equal(state.binds, 1);
@@ -106,7 +106,7 @@ test('wrong, changed, expired, and revoked deliveries refuse before receipt hand
     { name: 'expired', packet: () => delivery({ expiresAt: at(1900) }), route: () => ({ kind: 'local' as const, workerId: worker.workerId }) },
   ];
   for (const item of cases) {
-    const f = await nativeTaskFixture(); const packet = item.packet(), state = { revoked: false, receives: 0, starts: 0 };
+    const f = await nativeTaskFixture(); const packet = item.packet(), state = { revoked: false, receives: 0, starts: 0, binds: 0 };
     t.after(f.close);
     await assert.rejects(deliverCodexLocalTaskV1(composition(f, packet, state), packet, item.route(packet), at(2000)), /codex_local_delivery_unavailable/);
     assert.deepEqual({ receives: state.receives, starts: state.starts }, { receives: 0, starts: 0 }, item.name);

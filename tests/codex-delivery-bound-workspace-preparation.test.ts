@@ -41,8 +41,8 @@ function fixture(options: { failCreate?: boolean; revokeDuringCreate?: boolean }
   let creates = 0, removes = 0, inspections = 0, current = true;
   const journal = {
     reserveWorkspaceIntent: () => 'recorded' as const,
-    recordWorkspaceRoots() {}, recordWorkspaceCreation() {},
-    reserveWorkspaceRemoval: () => 'recorded' as const, recordWorkspaceRemoved() {},
+    recordWorkspaceRoots() { return 'recorded' as const; }, recordWorkspaceCreation() { return 'recorded' as const; },
+    reserveWorkspaceRemoval: () => 'recorded' as const, recordWorkspaceRemoved() { return 'recorded' as const; },
   };
   const preparation = createCodexDeliveryBoundWorkspacePreparationV1({ workspaceIntent: intent, journal,
     policy: { allowedPaths: ['src/**'], maximumChangedFiles: 5, maximumChangedBytes: 4096 },

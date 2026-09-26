@@ -49,9 +49,12 @@ const pw = () => randomBytes(24).toString("base64url");
 const secrets = { migrator: pw(), application: pw(), scheduler: pw() };
 const local: Record<string, string> = { control_room_web: pw(), control_room_coordinator: pw(), control_room_results: pw(), control_room_publisher: pw(), control_room_queue_worker: pw() };
 const bootstrapTarget = `host=127.0.0.1 port=${port} dbname=control_room user=postgres`;
-await applyMigrations({ bootstrapTarget,
+await applyMigrations({ target: bootstrapTarget, rootDir: process.cwd(),
+  ledgerPath: new URL("../../../deploy/postgres/migration-ledger.json", import.meta.url).pathname,
+  bootstrapTarget,
   migrateTarget: `host=127.0.0.1 port=${port} dbname=control_room user=control_room_migrator password=${secrets.migrator}`,
-  env: { CONTROL_ROOM_MIGRATOR_PASSWORD: secrets.migrator, CONTROL_ROOM_APP_PASSWORD: secrets.application, CONTROL_ROOM_SCHEDULER_PASSWORD: secrets.scheduler } });
+  env: { NODE_ENV: "test", CONTROL_ROOM_MIGRATOR_PASSWORD: secrets.migrator,
+    CONTROL_ROOM_APP_PASSWORD: secrets.application, CONTROL_ROOM_SCHEDULER_PASSWORD: secrets.scheduler } });
 const psql = (database: string, file: string) => execFileSync("psql", ["-h", "127.0.0.1", "-p", String(port), "-U", "postgres", "-d", database,
   "-v", "ON_ERROR_STOP=1", "-f", new URL(file, import.meta.url).pathname], bounded);
 // Match the reviewed package-5 sequence against this fresh disposable cluster.
@@ -88,7 +91,11 @@ try {
 const home = homedir(), claudeRoot = join(home, "Library/Application Support/Claude/claude-code");
 const claudeVersion = readdirSync(claudeRoot).filter(v => /^\d+\.\d+\.\d+$/u.test(v))
   .sort((a, b) => b.localeCompare(a, undefined, { numeric: true }))[0];
-const paths = { codex: "/Applications/ChatGPT.app/Contents/Resources/codex",
+const codexCandidates = ["/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex",
+  "/Applications/ChatGPT.app/Contents/Resources/codex"];
+const codexPath = codexCandidates.find(path => existsSync(path));
+if (!codexPath) throw new Error("rehearsal_codex_executable_missing");
+const paths = { codex: codexPath,
   "claude-code": join(claudeRoot, claudeVersion ?? "missing", "claude.app/Contents/MacOS/claude"),
   hermes: join(home, ".hermes/hermes-agent/venv/bin/hermes") } as const;
 const workers = [];

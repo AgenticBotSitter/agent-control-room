@@ -12,7 +12,7 @@ type TaskApplication = Awaited<ReturnType<typeof createMacLocalTaskApplicationV1
  * canonical authority recheck, result publisher and queue-worker startup.
  */
 export async function createMacLocalHermesTaskApplicationV1(input: Omit<MacLocalTaskApplicationInputV1, "coordinator"> & Readonly<{
-  coordinator: Omit<TaskCoordinatorConfiguration, "hermes021Local">;
+  coordinator: TaskCoordinatorConfiguration;
   hermes: HermesDeliveryInput;
 }>, dependencies: Readonly<{
   createTaskApplication?: (value: MacLocalTaskApplicationInputV1) => Promise<TaskApplication>;
@@ -22,8 +22,11 @@ export async function createMacLocalHermesTaskApplicationV1(input: Omit<MacLocal
   if (input.hermes.tenantId !== input.web?.tenantId || input.hermes.tenantId !== input.coordinator.scope?.tenantId)
     throw new Error("mac_local_hermes_task_application_config_invalid");
   const delivery = createMacLocalHermesOwnerRunnerQueueDeliveryV1(input.hermes);
+  const voidDelivery = Object.freeze({ async deliver(target: Parameters<typeof delivery.deliver>[0], signal: AbortSignal): Promise<void> {
+    await delivery.deliver(target, signal);
+  } });
   const create = dependencies.createTaskApplication ?? createMacLocalTaskApplicationV1;
   return create({ web: input.web, clock: input.clock,
-    coordinator: Object.freeze({ ...input.coordinator, hermes021Local: delivery }),
+    coordinator: Object.freeze({ ...input.coordinator, hermes021Local: voidDelivery }),
   });
 }

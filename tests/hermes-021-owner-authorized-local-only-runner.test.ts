@@ -12,6 +12,8 @@ import { createHermes021MacosOwnerAuthorizedLocalOnlyRunnerV1,
 import { reviewHermes021MacosExecutableV1 } from "../src/harness/hermes-021-v1/reviewed-executable-identity";
 import { sha256Digest } from "../src/security/canonical-digest";
 import { createMacLocalHermesOwnerRunnerPortFactoryV1 } from "../src/web/v1/mac-local-hermes-owner-runner";
+import { createControllerWorkerDeliveryV1 } from "../src/harness/v1/controller-worker-delivery";
+import { HERMES_021_MACOS_LOCAL_ADAPTER_V1, prepareHermes021MacosTaskV1 } from "../src/harness/hermes-021-v1/macos-local-worker";
 
 const source = fileURLToPath(new URL("./fixtures/hermes-qualification-result.mjs", import.meta.url));
 
@@ -128,9 +130,20 @@ test("the Mac queue port factory preserves the owner runner's per-task one-use a
   } });
   const task = { tenantId: "tenant:fixture", projectId: "project:fixture", jobId: "job:fixture", attemptId: "attempt:fixture",
     runId: "run:fixture", nodeId: "node:fixture", prompt: "x", instructions: "x", deadline: Date.now() + 30_000 };
-  const first = factory.createPrivatePort({ task });
-  await assert.rejects(first.run({ localServiceId: f.input.workerBinding.localServiceId, task }));
-  const second = factory.createPrivatePort({ task });
-  await assert.rejects(second.run({ localServiceId: f.input.workerBinding.localServiceId, task }),
+  const issuedAt = new Date(Date.now() - 1_000).toISOString();
+  const expiresAt = new Date(task.deadline).toISOString();
+  const route = { kind: "local" as const, workerId: f.input.workerBinding.workerId };
+  const delivery = createControllerWorkerDeliveryV1({ identity: { tenantId: task.tenantId, projectId: task.projectId,
+    jobId: task.jobId, attemptId: task.attemptId, runId: task.runId, nodeId: task.nodeId },
+    worker: { workerId: f.input.workerBinding.workerId, adapterId: HERMES_021_MACOS_LOCAL_ADAPTER_V1,
+      adapterRevision: f.input.workerBinding.sourceRevision },
+    input: { prompt: task.prompt, instructions: task.instructions }, authorityDigest: sha256Digest("authority"),
+    connectorProfileDigest: sha256Digest("connector"), acceptanceProfileId: "profile:fixture",
+    acceptanceProfileDigest: sha256Digest("acceptance"), issuedAt, expiresAt });
+  const deliveredTask = prepareHermes021MacosTaskV1(delivery, route, f.input.workerBinding);
+  const first = factory.createPrivatePort({ task: deliveredTask, delivery, route });
+  await assert.rejects(first.run({ localServiceId: f.input.workerBinding.localServiceId, task: deliveredTask }));
+  const second = factory.createPrivatePort({ task: deliveredTask, delivery, route });
+  await assert.rejects(second.run({ localServiceId: f.input.workerBinding.localServiceId, task: deliveredTask }),
     /owner_authorized_local_only_runner_refused/u);
 });

@@ -140,7 +140,7 @@ nativeTest("the real ACRSVC1 helper accepts only its fixed binary frame while us
   assert.equal(accepted.stdout.length, 96);
   assert.equal(accepted.stdout.subarray(0, 8).toString("ascii"), "ACRSVR1\n");
   assert.equal(accepted.stdout.readUInt32BE(12), 1);
-  const substituted = await invokeRealHelper(path, identity.dev, identity.ino + 1n);
+  const substituted = await invokeRealHelper(path, identity.dev, identity.ino + BigInt(1));
   assert.equal(substituted.code, 1); assert.equal(substituted.stdout.length, 0);
   const definition = Buffer.from("<?xml version=\"1.0\"?><plist><dict/></plist>\n", "utf8");
   const published = await invokeRealHelper(path, identity.dev, identity.ino, 3, definition);

@@ -36,7 +36,7 @@ export type OwnerTrustedLocalHermesExecV1 = Readonly<{ execute(input: Readonly<{
 
 type Spawn = (file: string, args: readonly string[], options: Readonly<{
   cwd: string; detached: true; shell: false; windowsHide: true;
-  stdio: readonly ["pipe", "pipe", "pipe"]; env: Readonly<Record<string, string>>;
+  stdio: ["pipe", "pipe", "pipe"]; env: Readonly<Record<string, string>>;
 }>) => ChildProcess;
 type ReadDirectory = (path: string) => Promise<readonly string[]>;
 
@@ -90,6 +90,7 @@ export function createOwnerTrustedLocalHermesExecV1(dependencies: Readonly<{ spa
         LANG: process.env.LANG ?? "en_US.UTF-8", TMPDIR: process.env.TMPDIR ?? "/tmp" }) }); }
     catch { return failed("failed", "spawn_refused"); }
     if (!child.stdin || !child.stdout || !child.stderr) { groupSignal(child, "SIGKILL"); return failed("cleanup_uncertain", "stdio_unavailable"); }
+    const stdin = child.stdin, stdoutStream = child.stdout, stderrStream = child.stderr;
     return await new Promise<OwnerTrustedLocalHermesExecResultV1>(resolve => {
       let settled = false, bytes = 0, remainder = "", result: z.infer<typeof terminal> | undefined;
       let stop: "canceled" | "timed_out" | "failed" | undefined;
@@ -136,9 +137,9 @@ export function createOwnerTrustedLocalHermesExecV1(dependencies: Readonly<{ spa
       const cancel = () => terminate("canceled");
       const deadline = setTimeout(() => terminate("timed_out"), input.deadlineMs);
       input.signal?.addEventListener("abort", cancel, { once: true });
-      child.on("error", () => terminate("failed")); child.stdin.on("error", () => terminate("failed"));
-      child.stdout.on("error", () => terminate("failed")); child.stderr.on("error", () => terminate("failed"));
-      child.stdout.on("data", receive); child.stderr.on("data", stderr);
+      child.on("error", () => terminate("failed")); stdin.on("error", () => terminate("failed"));
+      stdoutStream.on("error", () => terminate("failed")); stderrStream.on("error", () => terminate("failed"));
+      stdoutStream.on("data", receive); stderrStream.on("data", stderr);
       child.once("close", code => {
         const trailing = remainder + decoder.end(); if (trailing) accept(trailing);
         if (stop) { if (!groupExists(child)) final(stopped()); return; }
@@ -148,7 +149,7 @@ export function createOwnerTrustedLocalHermesExecV1(dependencies: Readonly<{ spa
         final(Object.freeze({ status: "completed" as const, text: result.text, usage: Object.freeze({ inputTokens: result.tokens.input,
           outputTokens: result.tokens.output, totalTokens: result.tokens.total }) }));
       });
-      try { child.stdin.end(input.prompt, "utf8"); } catch { terminate("failed"); }
+      try { stdin.end(input.prompt, "utf8"); } catch { terminate("failed"); }
     });
   } });
 }

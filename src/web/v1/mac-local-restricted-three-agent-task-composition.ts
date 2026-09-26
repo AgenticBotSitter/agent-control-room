@@ -32,9 +32,12 @@ export async function createMacLocalRestrictedThreeAgentTaskApplicationV1(
     || "runner" in legacyHermes || "admission" in legacyHermes)
     throw new Error("mac_local_restricted_three_agent_task_composition_invalid");
   const hermesDelivery = createHermes021LocalSubprocessQueueExecutorV1(hermes);
+  const voidHermesDelivery = Object.freeze({ async deliver(target: Parameters<typeof hermesDelivery.deliver>[0], signal: AbortSignal): Promise<void> {
+    await hermesDelivery.deliver(target, signal);
+  } });
   return createMacLocalRestrictedTaskApplicationV1(restricted, {
     createTaskApplication: value => createMacLocalTaskApplicationV1({ ...value,
-      coordinator: Object.freeze({ ...value.coordinator, hermes021Local: hermesDelivery,
+      coordinator: Object.freeze({ ...value.coordinator, hermes021Local: voidHermesDelivery,
         claudeCodeLocal: claude, codexOwnerTrustedLocal: codex }),
     }),
   });

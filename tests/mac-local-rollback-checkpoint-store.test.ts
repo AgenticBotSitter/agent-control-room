@@ -38,13 +38,13 @@ test("initialize, read and compare-and-swap advance persist durably in private f
 test("every non-matching write is refused and leaves the file unchanged", async t => {
   const r = await root(t), file = join(r, "state/rollback-checkpoints.json");
   const store = await openMacLocalRollbackCheckpointStoreV1(r);
-  await assert.rejects(store.initialize(checkpoint(2)), /conflict/u);
+  await assert.rejects(Promise.resolve().then(async () => { await store.initialize(checkpoint(2)); }), /conflict/u);
   await store.initialize(checkpoint(1));
   const before = await readFile(file, "utf8");
-  await assert.rejects(store.initialize(checkpoint(1)), /conflict/u);
-  await assert.rejects(store.advance(rollbackCheckpointDigestV1(checkpoint(1, "9")), checkpoint(2)), /conflict/u);
-  await assert.rejects(store.advance(rollbackCheckpointDigestV1(checkpoint(1)), checkpoint(3)), /conflict/u);
-  await assert.rejects(store.advance(rollbackCheckpointDigestV1(checkpoint(1)), { ...checkpoint(2), scope: "completion-gate:other" }), /conflict/u);
+  await assert.rejects(Promise.resolve().then(async () => { await store.initialize(checkpoint(1)); }), /conflict/u);
+  await assert.rejects(Promise.resolve().then(async () => { await store.advance(rollbackCheckpointDigestV1(checkpoint(1, "9")), checkpoint(2)); }), /conflict/u);
+  await assert.rejects(Promise.resolve().then(async () => { await store.advance(rollbackCheckpointDigestV1(checkpoint(1)), checkpoint(3)); }), /conflict/u);
+  await assert.rejects(Promise.resolve().then(async () => { await store.advance(rollbackCheckpointDigestV1(checkpoint(1)), { ...checkpoint(2), scope: "completion-gate:other" }); }), /conflict/u);
   assert.equal(await readFile(file, "utf8"), before);
   await store.close();
 });
@@ -60,7 +60,7 @@ test("a rolled-back file is returned as-is, and the caller's compare-and-swap re
   // The store itself returns the older copy; detection is the caller's digest comparison.
   assert.equal((await store.read(scope))?.revision, 1);
   // The caller (the review system) still holds revision 2 as current state.
-  await assert.rejects(store.advance(rollbackCheckpointDigestV1(checkpoint(2)), checkpoint(3)), /conflict/u);
+  await assert.rejects(Promise.resolve().then(() => store.advance(rollbackCheckpointDigestV1(checkpoint(2)), checkpoint(3))), /conflict/u);
   await store.close();
 });
 
@@ -85,15 +85,16 @@ test("tampered, readable-by-others or symlinked files are refused without echoin
   const protoKey = `{"schema":"control-room.mac-local-rollback-checkpoints/v1","checkpoints":{"__proto__":${JSON.stringify({ ...checkpoint(1), scope: "__proto__" })}}}\n`;
   for (const content of ["not json", wrongScope, "{\"schema\":\"x\",\"checkpoints\":{}}\n", protoKey]) {
     await writeFile(file, content, { mode: 0o600 });
-    await assert.rejects(store.read(scope), error => error instanceof Error && error.message === "mac_local_rollback_checkpoint_unavailable");
+    await assert.rejects(Promise.resolve().then(() => store.read(scope)),
+      (error: unknown) => error instanceof Error && error.message === "mac_local_rollback_checkpoint_unavailable");
   }
   await writeFile(file, valid, { mode: 0o600 });
   await chmod(file, 0o644);
-  await assert.rejects(store.read(scope), /unavailable/u);
+  await assert.rejects(Promise.resolve().then(() => store.read(scope)), /unavailable/u);
   await chmod(file, 0o600);
   await rm(file); await writeFile(join(r, "elsewhere.json"), valid, { mode: 0o600 });
   await symlink(join(r, "elsewhere.json"), file);
-  await assert.rejects(store.read(scope), /unavailable/u);
+  await assert.rejects(Promise.resolve().then(() => store.read(scope)), /unavailable/u);
   await store.close();
 });
 
@@ -101,7 +102,7 @@ test("an open is refused for a relative root or a non-private protected root", a
   await assert.rejects(openMacLocalRollbackCheckpointStoreV1("relative/root"), /unavailable/u);
   const r0 = await root(t), s0 = await openMacLocalRollbackCheckpointStoreV1(r0);
   for (const bad of ["__proto__", "constructor", "revision", "no-colon-scope"])
-    await assert.rejects(s0.read(bad), /unavailable/u);
+    await assert.rejects(Promise.resolve().then(() => s0.read(bad)), /unavailable/u);
   await s0.close();
   const r = await root(t);
   await chmod(r, 0o755);
@@ -115,10 +116,10 @@ test("an aborted signal and a closed store both refuse", async t => {
   const r = await root(t);
   const store = await openMacLocalRollbackCheckpointStoreV1(r);
   const controller = new AbortController(); controller.abort();
-  await assert.rejects(store.initialize(checkpoint(1), controller.signal), /unavailable/u);
+  await assert.rejects(Promise.resolve().then(() => store.initialize(checkpoint(1), controller.signal)), /unavailable/u);
   assert.equal(await store.read(scope), undefined);
   await store.close();
-  await assert.rejects(store.read(scope), /unavailable/u);
+  await assert.rejects(Promise.resolve().then(() => store.read(scope)), /unavailable/u);
 });
 
 test("two processes taking over the same dead lock at once: exactly one wins", async t => {

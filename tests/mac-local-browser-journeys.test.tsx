@@ -161,7 +161,7 @@ async function stopCluster(target: Cluster) {
     const pidFile = join(target.data, "postmaster.pid");
     let pid: number | undefined;
     try { pid = Number((await readFile(pidFile, "utf8")).split("\n")[0]?.trim()); } catch { pid = undefined; }
-    if (Number.isSafeInteger(pid) && pid > 1) {
+    if (typeof pid === "number" && Number.isSafeInteger(pid) && pid > 1) {
       try { process.kill(pid, "SIGKILL"); } catch { /* already gone */ }
     }
     // Give the kernel a moment to release the listening socket.
@@ -188,7 +188,7 @@ async function readPostmasterPid(target: Cluster): Promise<number | undefined> {
 /** A pid is only "alive" if it exists AND is the postgres postmaster, so a
  * recycled pid belonging to something else can never be reported as ours. */
 function isPostmasterAlive(pid: number | undefined): boolean {
-  if (!Number.isSafeInteger(pid) || pid <= 1) return false;
+  if (typeof pid !== "number" || !Number.isSafeInteger(pid) || pid <= 1) return false;
   try { process.kill(pid, 0); } catch { return false; }
   try {
     const command = execFileSync("/bin/ps", ["-o", "command=", "-p", String(pid)], { encoding: "utf8" });

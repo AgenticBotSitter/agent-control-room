@@ -71,9 +71,9 @@ export type ThreeWorkerActivationBundlePreflightV1 = Readonly<z.infer<typeof pla
 
 function refused(): never { const error = new Error("three_worker_activation_bundle_preflight_refused"); error.stack = undefined; throw error; }
 function freezePlan(value: z.infer<typeof planSchema>): ThreeWorkerActivationBundlePreflightV1 {
-  return Object.freeze({ ...value, components: Object.freeze(value.components.map(item => Object.freeze({ ...item }))),
+  return planSchema.parse(Object.freeze({ ...value, components: Object.freeze(value.components.map(item => Object.freeze({ ...item }))),
     ownerActions: Object.freeze([...value.ownerActions]),
-    rollback: Object.freeze({ ...value.rollback, missing: Object.freeze([...value.rollback.missing]) }) });
+    rollback: Object.freeze({ ...value.rollback, missing: Object.freeze([...value.rollback.missing]) }) }));
 }
 function aggregate(value: unknown) {
   if (!value || typeof value !== "object") return refused();

@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { adaptPglite, type DatabaseClient } from "../src/persistence/database";
+import { adaptPglite, type DatabaseClient, type DatabaseSession } from "../src/persistence/database";
 import { ServerNodeSession } from "../src/node-control/server-node-session";
 import { sha256Digest } from "../src/security";
 import { assemblePrivateAgentTaskOperatorConfiguration } from "../src/web/v1/private-agent-task-operator-configuration";
 import { validatePrivateTaskStartupConfiguration } from "../src/web/v1/private-task-startup";
+import type { TaskExecutionPlanner } from "../src/web/v1/task-execution-planner";
 import { operatorConfigurationScenario } from "./helpers/private-agent-task-operator-configuration";
 import { capturePrivateRemoteControllerWorkerQueueCapabilityV1, capturePrivateRemoteControllerWorkerReceiptIngressCapabilityV1,
   createPrivateRemoteControllerWorkerCompositionV1, isPrivateRemoteControllerWorkerCompositionV1,
@@ -166,9 +167,9 @@ test("the private composition refuses revoked, foreign and structurally fake ins
   const fakeDb = Object.freeze({ ...c.f.db }) as DatabaseClient;
   await assert.rejects(Promise.resolve().then(() => createPrivateRemoteControllerWorkerCompositionV1({ ...base,
     db: fakeDb })), /unavailable/, "a structural database copy is not protected storage authority");
-  const structuralReceiver = {
+  const structuralReceiver: DatabaseSession & { transaction<T>(work: (tx: DatabaseSession) => Promise<T>): Promise<T> } = {
     async query<T>() { return { rows: [] as T[] }; },
-    async transaction<T>(work: (tx: typeof structuralReceiver) => Promise<T>) { return work(structuralReceiver); },
+    async transaction<T>(work: (tx: DatabaseSession) => Promise<T>) { return work(this); },
   };
   const genericAdaptedFake = adaptPglite(structuralReceiver);
   await assert.rejects(Promise.resolve().then(() => createPrivateRemoteControllerWorkerCompositionV1({ ...base,

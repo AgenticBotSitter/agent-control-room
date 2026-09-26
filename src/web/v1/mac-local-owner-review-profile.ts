@@ -30,6 +30,6 @@ export function createMacLocalOwnerReviewProfileV1(input: Readonly<{
  * replace the owner's independent accept/correct decision. */
 export function createMacLocalTextScenarioV1(profile: ReturnType<typeof createMacLocalOwnerReviewProfileV1>): AutomaticDocumentScenario {
   return Object.freeze({ scenarioId: MAC_LOCAL_TEXT_SCENARIO_V1, acceptanceProfileId: profile.id,
-    acceptanceProfileDigest: sha256Digest(profile), rules: { version: "document-structure/v1",
+    acceptanceProfileDigest: sha256Digest(profile), rules: { version: "document-structure/v1" as const,
       minUtf8Bytes: 1, maxUtf8Bytes: 65_536, requiredHeadings: [], forbiddenTerms: [] } });
 }

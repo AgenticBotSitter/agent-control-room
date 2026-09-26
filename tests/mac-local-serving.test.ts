@@ -18,9 +18,18 @@ test("Mac-local service is inert until explicit start and binds only its selecte
     configuration: fixture.configuration, database: fixture.database, trust: fixture.trust, assertion: fixture.assertion,
   });
   const origin = "http://127.0.0.1:3210", ownerCode = "mac-local-owner-code-long-enough";
-  let bound: Record<string, unknown> | undefined;
+  type ObservedListenOptions = Readonly<{ host?: string; port?: number; exclusive?: boolean; backlog?: number; signal?: AbortSignal }>;
+  const capture = new class {
+    #value: ObservedListenOptions | undefined;
+    set(value: ObservedListenOptions) { this.#value = value; }
+    read(): ObservedListenOptions | undefined { return this.#value; }
+  }();
   const server = new EventEmitter() as Server;
-  server.listen = ((input: Record<string, unknown>, callback: () => void) => { bound = input; queueMicrotask(callback); return server; }) as Server["listen"];
+  server.listen = ((input: ObservedListenOptions, callback?: () => void) => {
+    capture.set(input);
+    if (callback) queueMicrotask(callback);
+    return server;
+  }) as Server["listen"];
   server.close = (callback?: (error?: Error) => void) => { queueMicrotask(() => callback?.()); return server; };
   server.closeIdleConnections = () => {}; server.closeAllConnections = () => {};
   const service = createMacLocalControlRoomServiceV1({ origin, port: 3210, workspaceId: fixture.configuration.workspaceId,
@@ -29,10 +38,11 @@ test("Mac-local service is inert until explicit start and binds only its selecte
     database: { client: fixture.client, close: async () => {} }, assets: { count: 0, digest: "empty", respond: () => undefined },
     render: () => new Response("shell"), createServer: (_options: Readonly<ServerOptions>) => server,
     listenerTiming: { bindMs: 100, closeMs: 100 } });
-  assert.equal(service.isReady(), false); assert.equal(bound, undefined);
+  assert.equal(service.isReady(), false); assert.equal(capture.read(), undefined);
   await service.start();
-  assert.equal(bound?.host, "127.0.0.1"); assert.equal(bound?.port, 3210);
-  assert.equal(bound?.exclusive, true); assert.equal(bound?.backlog, 64); assert.ok(bound?.signal instanceof AbortSignal);
+  const observed = (): ObservedListenOptions | undefined => capture.read();
+  assert.equal(observed()?.host, "127.0.0.1"); assert.equal(observed()?.port, 3210);
+  assert.equal(observed()?.exclusive, true); assert.equal(observed()?.backlog, 64); assert.ok(observed()?.signal instanceof AbortSignal);
   assert.equal(service.isReady(), true);
 
   // The page middleware path: nothing renders without a verified owner session.

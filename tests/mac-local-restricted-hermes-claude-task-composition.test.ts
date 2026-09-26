@@ -28,11 +28,12 @@ test("composes the Hermes and text-only Claude routes into one restricted lifecy
 });
 
 test("refuses tenant substitution or prebuilt worker callbacks", async () => {
-  const common = { web: { tenantId: "tenant:one" }, coordinator: { scope: { tenantId: "tenant:one" } },
-    claude: { async deliver() {} }, hermes: { tenantId: "tenant:two" } } as never;
-  await assert.rejects(createMacLocalRestrictedHermesClaudeTaskApplicationV1(common),
+  // Deliberately incomplete attacker input exercises the runtime boundary.
+  const common: Record<string, unknown> = { web: { tenantId: "tenant:one" }, coordinator: { scope: { tenantId: "tenant:one" } },
+    claude: { async deliver() {} }, hermes: { tenantId: "tenant:two" } };
+  await assert.rejects(Reflect.apply(createMacLocalRestrictedHermesClaudeTaskApplicationV1, undefined, [common]),
     /mac_local_restricted_hermes_claude_task_composition_invalid/);
-  await assert.rejects(createMacLocalRestrictedHermesClaudeTaskApplicationV1({ ...common,
+  await assert.rejects(Reflect.apply(createMacLocalRestrictedHermesClaudeTaskApplicationV1, undefined, [{ ...common,
     hermes: { tenantId: "tenant:one" }, coordinator: { scope: { tenantId: "tenant:one" }, claudeCodeLocal: { async deliver() {} } },
-  } as never), /mac_local_restricted_hermes_claude_task_composition_invalid/);
+  }]), /mac_local_restricted_hermes_claude_task_composition_invalid/);
 });

@@ -4,7 +4,7 @@ import { sha256Digest } from "../../security/canonical-digest";
 
 const fullRevision = z.string().regex(/^[a-f0-9]{40}$/u);
 const release = z.string().regex(/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:[-+][0-9A-Za-z.-]+)?$/u);
-const versionLine = /^Hermes Agent v(?<version>[^\s]+) \([^\r\n)]+\) · upstream (?<source>[a-f0-9]{7,40})$/u;
+const versionLine = /^Hermes Agent v([^\s]+) \([^\r\n)]+\) · upstream ([a-f0-9]{7,40})$/u;
 
 export type CurrentMacosHermesBuildV1 = Readonly<{
   /** Exact first line emitted by the installed Hermes executable. */
@@ -16,7 +16,7 @@ export type CurrentMacosHermesBuildV1 = Readonly<{
   buildDigest: string;
 }>;
 
-const unavailable = (): never => { throw new Error("current_macos_hermes_build_unavailable"); };
+function unavailable(): never { throw new Error("current_macos_hermes_build_unavailable"); }
 
 /**
  * Captures a particular installed Hermes build without treating any one
@@ -33,12 +33,13 @@ export function captureCurrentMacosHermesBuildV1(value: unknown): CurrentMacosHe
   if (!value || typeof value !== "object" || Array.isArray(value)) unavailable();
   const input = value as Record<string, unknown>;
   if (Object.keys(input).length !== 2 || typeof input.versionOutput !== "string") unavailable();
+  const versionOutput = input.versionOutput;
   const sourceRevision = fullRevision.safeParse(input.sourceRevision);
   if (!sourceRevision.success) unavailable();
-  const firstLine = input.versionOutput.split(/\r?\n/u, 1)[0] ?? "";
+  const firstLine = versionOutput.split(/\r?\n/u, 1)[0] ?? "";
   const match = versionLine.exec(firstLine);
-  const version = match?.groups?.version;
-  const abbreviatedSource = match?.groups?.source;
+  const version = match?.[1];
+  const abbreviatedSource = match?.[2];
   if (!version || !release.safeParse(version).success || !abbreviatedSource
     || !sourceRevision.data.startsWith(abbreviatedSource)) unavailable();
   const material = Object.freeze({ versionLine: firstLine, version, sourceRevision: sourceRevision.data });
