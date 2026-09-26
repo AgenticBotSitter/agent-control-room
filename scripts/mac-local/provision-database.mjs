@@ -11,13 +11,14 @@
  * reads the local Tailscale route and changes no password or remote state.
  * Re-runs reuse protected password files, so provisioning converges.
  */
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { chmod, lstat, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
 import { promisify } from "node:util";
 import { execFile } from "node:child_process";
+import { Client } from "pg";
 import { sha256Digest } from "../../src/security/canonical-digest";
 import { MAC_LOCAL_PROTECTED_CONFIGURATION_V1 } from "../../src/web/v1/mac-local-protected-configuration";
 import { captureMacLocalProtectedConfigurationV1 } from "../../src/web/v1/mac-local-protected-configuration";
@@ -27,7 +28,10 @@ import { OWNER_TRUSTED_LOCAL_ENABLEMENT_V1 } from "../../src/harness/v1/owner-tr
 import { pinnedVersionLine } from "./executable-version.mjs";
 import { capturePrivatePostgresEndpointPolicyV2, isSupportedPrivatePostgresHostV1,
   privatePostgresEndpointFingerprintV1, PRIVATE_POSTGRES_ENDPOINT_V2 } from "../../src/web/v1/private-postgres-endpoint";
-import { validatePrivatePostgresConfiguration } from "../../src/web/v1/private-postgres";
+import { privatePostgresOptions, validatePrivatePostgresConfiguration } from "../../src/web/v1/private-postgres";
+import { macGrantCatalogSqlV1, macRolePlan } from "./database-upgrade-grants.mjs";
+import { planMacDatabaseUpgradeSnapshotV1 } from "./database-upgrade-remote.mjs";
+import { checkedPostgresScramVerifierV1, postgresScramVerifierV1 } from "./database-upgrade-scram.mjs";
 
 const exec = promisify(execFile);
 const roleNames = Object.freeze({ web: "control_room_web", coordinator: "control_room_coordinator",
@@ -47,7 +51,10 @@ const remoteProvisionTimeoutMs = 5 * 60_000;
 
 function usage() {
   return "Usage: pnpm mac:provision-database --protected-root ABSOLUTE_PATH --ssh-target USER@HOST --database-host HOST [--database-port 5432] [--endpoint-policy-file ABSOLUTE_PATH] [--remote-worktree ABSOLUTE_PATH] [--vps-only] [--dry-run]\n"
-    + "   or: pnpm mac:provision-database --repoint-only --protected-root ABSOLUTE_PATH";
+    + "   or: pnpm mac:provision-database --repoint-only --protected-root ABSOLUTE_PATH\n"
+    + "   or: pnpm mac:provision-database --upgrade --dry-run --snapshot-file ABSOLUTE_PATH\n"
+    + "   or: pnpm mac:provision-database --upgrade --prepare --protected-root ABSOLUTE_PATH\n"
+    + "   or: pnpm mac:provision-database --upgrade --finish --protected-root ABSOLUTE_PATH";
 }
 
 function argument(args, name, fallback) {
@@ -101,6 +108,21 @@ async function readProtectedJson(path) {
   const entry = await lstat(path);
   if (!entry.isFile() || entry.isSymbolicLink() || (entry.mode & 0o077) !== 0) throw new Error("provision_protected_file_refused");
   return JSON.parse(await readFile(path, "utf8"));
+}
+
+async function readPrivatePassword(path) {
+  const entry = await lstat(path);
+  if (!entry.isFile() || entry.isSymbolicLink() || (entry.mode & 0o077) !== 0)
+    throw new Error("upgrade_protected_password_refused");
+  const value = (await readFile(path, "utf8")).trim();
+  if (!passwordPattern.test(value)) throw new Error("upgrade_protected_password_refused");
+  return value;
+}
+
+async function existingPrivateDirectory(path) {
+  const entry = await lstat(path);
+  if (!entry.isDirectory() || entry.isSymbolicLink() || (entry.mode & 0o077) !== 0)
+    throw new Error("upgrade_protected_directory_refused");
 }
 
 export function macLocalRouteFromTailscaleStatusV1(status, evidenceText) {
@@ -312,6 +334,7 @@ cleanup() {
   rm -f "$body"
   git -C ${JSON.stringify(remoteWorktree)} worktree remove --force "$stage" >/dev/null 2>&1 || true
 }
+
 trap cleanup EXIT
 trap 'cleanup; exit 129' HUP
 trap 'cleanup; exit 130' INT
@@ -378,6 +401,144 @@ exit "$status"`;
   });
 }
 
+export function macDatabaseUpgradeReadOnlySqlV1() {
+  const principals = [...Object.keys(macRolePlan), ...Object.values(macRolePlan)];
+  const names = `ARRAY[${principals.map(name => `'${name}'`).join(",")}]::text[]`;
+  const grants = macGrantCatalogSqlV1.replaceAll("$1::text[]", names);
+  const sql = `BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY;
+SELECT json_build_object(
+  'applied', (SELECT coalesce(json_agg(row_to_json(x)), '[]'::json) FROM
+    (SELECT filename,digest,ledger_order FROM control_room_schema_migrations ORDER BY ledger_order) x),
+  'roles', (SELECT coalesce(json_agg(row_to_json(x)), '[]'::json) FROM
+    (SELECT rolname,rolcanlogin,rolinherit,rolsuper,rolcreatedb,rolcreaterole,rolreplication,rolbypassrls
+      FROM pg_roles WHERE rolname=ANY(${names}) ORDER BY rolname) x),
+  'memberships', (SELECT coalesce(json_agg(row_to_json(x)), '[]'::json) FROM
+    (SELECT member.rolname AS member,parent.rolname AS parent,auth.admin_option,auth.inherit_option,auth.set_option
+      FROM pg_auth_members auth JOIN pg_roles member ON member.oid=auth.member
+      JOIN pg_roles parent ON parent.oid=auth.roleid
+      WHERE member.rolname=ANY(${names}) ORDER BY member.rolname,parent.rolname) x),
+  'defaultAcl', (SELECT count(*)::int FROM pg_default_acl d
+    CROSS JOIN LATERAL aclexplode(d.defaclacl) a JOIN pg_roles r ON r.oid=a.grantee
+    WHERE r.rolname=ANY(${names})),
+  'grants', (SELECT coalesce(json_agg(row_to_json(x)), '[]'::json) FROM (${grants}) x)
+)::text;
+COMMIT;`;
+  return sql;
+}
+
+// Upgrade modes keep every password on the Mac. The VPS receives only a SCRAM
+// verifier through a separately operated, owner-approved handoff.
+async function currentMainCommit() {
+  const git = async args => (await exec("git", args, { cwd: repoRoot, encoding: "utf8", timeout: 10_000 })).stdout.trim();
+  const commit = await git(["rev-parse", "HEAD"]);
+  if (await git(["branch", "--show-current"]) !== "main" || await git(["status", "--porcelain"])
+    || !/^[a-f0-9]{40}$/u.test(commit)) throw new Error("upgrade_main_checkout_refused");
+  return commit;
+}
+
+async function existingUpgradeConfiguration(protectedRoot) {
+  requireAbsolute(protectedRoot, "upgrade_protected_root_required");
+  const configRoot = join(protectedRoot, "config"), passwordRoot = join(configRoot, "database-passwords");
+  await existingPrivateDirectory(protectedRoot);
+  await existingPrivateDirectory(configRoot);
+  await existingPrivateDirectory(passwordRoot);
+  const mac = await readProtectedJson(join(configRoot, "mac-local.json"));
+  captureMacLocalProtectedConfigurationV1(mac);
+  const roleFile = join(configRoot, "database-roles.json");
+  const oldRoles = await readProtectedJson(roleFile);
+  const existingNames = ["schema", "web", "coordinator", "results", "queueWorker"];
+  if (oldRoles.schema !== MAC_LOCAL_DATABASE_ROLES_V1
+    || Object.keys(oldRoles).some(key => ![...existingNames, "publisher"].includes(key))
+    || existingNames.some(key => !Object.hasOwn(oldRoles, key))) throw new Error("upgrade_role_config_refused");
+  const sameEndpoint = role => role.host === mac.database.host && role.port === mac.database.port
+    && role.database === mac.database.database && role.majorVersion === mac.database.majorVersion
+    && JSON.stringify(role.privateEndpoint ?? null) === JSON.stringify(mac.database.privateEndpoint ?? null);
+  for (const [key, username] of Object.entries({ web: roleNames.web, coordinator: roleNames.coordinator,
+    results: roleNames.results, queueWorker: roleNames.queueWorker })) {
+    const role = validatePrivatePostgresConfiguration(oldRoles[key]);
+    if (role.username !== username || role.database !== "control_room" || !sameEndpoint(role)
+      || role.password !== await readPrivatePassword(join(passwordRoot, `${username}.txt`)))
+      throw new Error("upgrade_role_config_refused");
+  }
+  if (oldRoles.web.password !== mac.database.password || oldRoles.web.username !== mac.database.username
+    || JSON.stringify(oldRoles.web.privateEndpoint ?? null) !== JSON.stringify(mac.database.privateEndpoint ?? null))
+    throw new Error("upgrade_role_config_refused");
+  if (oldRoles.publisher) {
+    const publisher = validatePrivatePostgresConfiguration(oldRoles.publisher);
+    if (publisher.username !== roleNames.publisher || publisher.database !== "control_room" || !sameEndpoint(publisher)
+      || publisher.password !== await readPrivatePassword(join(passwordRoot, `${roleNames.publisher}.txt`)))
+      throw new Error("upgrade_role_config_refused");
+    captureMacLocalDatabaseRolesV1(oldRoles);
+  }
+  return { configRoot, passwordRoot, roleFile, oldRoles };
+}
+
+export async function planMacDatabaseUpgradeFromFileV1(snapshotFile, expectedMainCommit) {
+  requireAbsolute(snapshotFile, "upgrade_snapshot_file_required");
+  if (!/^[a-f0-9]{40}$/u.test(expectedMainCommit)) throw new Error("upgrade_main_commit_refused");
+  const entry = await lstat(snapshotFile);
+  if (!entry.isFile() || entry.isSymbolicLink() || entry.size > 2 * 1024 * 1024)
+    throw new Error("upgrade_snapshot_file_refused");
+  let record;
+  try { record = JSON.parse(await readFile(snapshotFile, "utf8")); }
+  catch { throw new Error("upgrade_snapshot_file_refused"); }
+  if (!record || typeof record !== "object" || Array.isArray(record)
+    || Object.keys(record).sort().join(",") !== "mainCommit,schema,snapshot"
+    || record.schema !== "control-room.mac-database-upgrade-snapshot/v1"
+    || record.mainCommit !== expectedMainCommit) throw new Error("upgrade_snapshot_commit_refused");
+  try { return await planMacDatabaseUpgradeSnapshotV1(record.snapshot); }
+  catch { throw new Error("upgrade_snapshot_content_refused"); }
+}
+
+export async function prepareMacLocalDatabaseUpgradeV1(options) {
+  const { configRoot, passwordRoot, oldRoles } = await existingUpgradeConfiguration(options.protectedRoot);
+  if (oldRoles.publisher) throw new Error("upgrade_already_finished");
+  const mainCommit = options.mainCommit ?? await currentMainCommit();
+  if (!/^[a-f0-9]{40}$/u.test(mainCommit)) throw new Error("upgrade_main_commit_refused");
+  const password = await privateText(join(passwordRoot, `${roleNames.publisher}.txt`), newPassword);
+  const salt = randomBytes(16);
+  const verifier = postgresScramVerifierV1(password, salt);
+  const verifierDigest = createHash("sha256").update(verifier).digest("hex");
+  await writePrivate(join(configRoot, "database-upgrade-prepare.json"),
+    `${JSON.stringify({ schema: "control-room.mac-database-upgrade-prepare/v1", mainCommit,
+      salt: salt.toString("base64"), verifierDigest })}\n`);
+  return { mainCommit, verifier };
+}
+
+async function verifyPublisherLogin(configuration) {
+  const options = privatePostgresOptions(configuration);
+  const client = new Client({ host: options.host, port: options.port, database: options.database,
+    user: options.username, password: options.password, ssl: options.ssl === false ? false : options.ssl,
+    connectionTimeoutMillis: 5000 });
+  try {
+    await client.connect();
+    const result = await client.query("SELECT current_user = 'control_room_publisher' AS matches");
+    if (result.rows[0]?.matches !== true) throw new Error("upgrade_publisher_login_refused");
+  } finally { await client.end().catch(() => {}); }
+}
+
+export async function finishMacLocalDatabaseUpgradeV1(options) {
+  const { configRoot, passwordRoot, roleFile, oldRoles } = await existingUpgradeConfiguration(options.protectedRoot);
+  const mainCommit = options.mainCommit ?? await currentMainCommit();
+  const prepared = await readProtectedJson(join(configRoot, "database-upgrade-prepare.json"));
+  if (prepared.schema !== "control-room.mac-database-upgrade-prepare/v1"
+    || prepared.mainCommit !== mainCommit || !/^[a-f0-9]{64}$/u.test(prepared.verifierDigest)
+    || typeof prepared.salt !== "string" || !/^[A-Za-z0-9+/=]{24}$/u.test(prepared.salt)
+    || Buffer.from(prepared.salt, "base64").length !== 16)
+    throw new Error("upgrade_prepare_record_refused");
+  const password = await readPrivatePassword(join(passwordRoot, `${roleNames.publisher}.txt`));
+  const verifier = checkedPostgresScramVerifierV1(postgresScramVerifierV1(password, Buffer.from(prepared.salt, "base64")));
+  if (createHash("sha256").update(verifier).digest("hex") !== prepared.verifierDigest)
+    throw new Error("upgrade_prepare_record_refused");
+  const publisher = validatePrivatePostgresConfiguration({ ...oldRoles.web,
+    username: roleNames.publisher, password });
+  await (options.verifyPublisher ?? verifyPublisherLogin)(publisher);
+  const nextRoles = { ...oldRoles, publisher };
+  captureMacLocalDatabaseRolesV1(nextRoles);
+  if (!oldRoles.publisher) await writePrivate(roleFile, `${JSON.stringify(nextRoles)}\n`);
+  return { finished: true, mainCommit };
+}
+
 /** The protected `mac-local.json` record the provisioner writes. Pure: it
  * validates the record exactly as the loader will read it back, and stores the
  * plain enablement material. The enablement digest is derived on every load,
@@ -442,8 +603,31 @@ export async function provisionMacLocalDatabaseV1(options) {
 
 if (process.argv[1] === new URL(import.meta.url).pathname) {
   try {
-    const args = process.argv.slice(2), dryRun = args.includes("--dry-run"), vpsOnly = args.includes("--vps-only"), repointOnly = args.includes("--repoint-only");
-    if (repointOnly) {
+    const supplied = process.argv.slice(2);
+    const args = supplied[0] === "--" ? supplied.slice(1) : supplied;
+    const dryRun = args.includes("--dry-run"), vpsOnly = args.includes("--vps-only"),
+      repointOnly = args.includes("--repoint-only"), upgrade = args.includes("--upgrade");
+    if (upgrade) {
+      const mode = ["--dry-run", "--prepare", "--finish"].filter(flag => args.includes(flag));
+      const consumed = new Set();
+      for (let index = 0; index < args.length; index += 1) {
+        const flag = args[index];
+        if (!["--upgrade", "--dry-run", "--prepare", "--finish", "--protected-root", "--snapshot-file"].includes(flag)
+          || consumed.has(flag)) throw new Error("upgrade_arguments_refused");
+        consumed.add(flag);
+        if (["--protected-root", "--snapshot-file"].includes(flag)) index += 1;
+      }
+      if (vpsOnly || repointOnly || mode.length !== 1
+        || (dryRun ? !consumed.has("--snapshot-file") || consumed.has("--protected-root")
+          : !consumed.has("--protected-root") || consumed.has("--snapshot-file")))
+        throw new Error("upgrade_arguments_refused");
+      const result = dryRun
+        ? await planMacDatabaseUpgradeFromFileV1(argument(args, "--snapshot-file"), await currentMainCommit())
+        : mode[0] === "--prepare"
+          ? await prepareMacLocalDatabaseUpgradeV1({ protectedRoot: argument(args, "--protected-root") })
+          : await finishMacLocalDatabaseUpgradeV1({ protectedRoot: argument(args, "--protected-root") });
+      process.stdout.write(`${JSON.stringify(result)}\n`);
+    } else if (repointOnly) {
       const protectedRoot = parseRepointArgumentsV1(args);
       let status;
       try { status = JSON.parse((await exec("tailscale", ["status", "--json"], { encoding: "utf8", timeout: 10_000, maxBuffer: 2 * 1024 * 1024 })).stdout); }
@@ -459,7 +643,7 @@ if (process.argv[1] === new URL(import.meta.url).pathname) {
       process.stdout.write(`${JSON.stringify({ provisioned: result.provisioned, workers: result.workers })}\n`);
     }
   } catch (error) {
-    process.stderr.write(`${error instanceof Error && error.message.startsWith("provision_") ? error.message : usage()}\n`);
+    process.stderr.write(`${error instanceof Error && /^(?:provision_|upgrade_)/u.test(error.message) ? error.message : usage()}\n`);
     process.exitCode = 1;
   }
 }
