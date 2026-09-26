@@ -404,6 +404,7 @@ exit "$status"`;
 export function macDatabaseUpgradeReadOnlySqlV1() {
   const principals = [...Object.keys(macRolePlan), ...Object.values(macRolePlan)];
   const names = `ARRAY[${principals.map(name => `'${name}'`).join(",")}]::text[]`;
+  const groupNames = `ARRAY[${Object.values(macRolePlan).map(name => `'${name}'`).join(",")}]::text[]`;
   const grants = macGrantCatalogSqlV1.replaceAll("$1::text[]", names);
   const sql = `BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY;
 SELECT json_build_object(
@@ -416,7 +417,8 @@ SELECT json_build_object(
     (SELECT member.rolname AS member,parent.rolname AS parent,auth.admin_option,auth.inherit_option,auth.set_option
       FROM pg_auth_members auth JOIN pg_roles member ON member.oid=auth.member
       JOIN pg_roles parent ON parent.oid=auth.roleid
-      WHERE member.rolname=ANY(${names}) ORDER BY member.rolname,parent.rolname) x),
+      WHERE member.rolname=ANY(${names}) OR parent.rolname=ANY(${groupNames})
+      ORDER BY member.rolname,parent.rolname) x),
   'defaultAcl', (SELECT count(*)::int FROM pg_default_acl d
     CROSS JOIN LATERAL aclexplode(d.defaclacl) a JOIN pg_roles r ON r.oid=a.grantee
     WHERE r.rolname=ANY(${names})),

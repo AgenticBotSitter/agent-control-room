@@ -38,9 +38,9 @@ STAGE=$(mktemp -d /var/tmp/control-room-db-upgrade.XXXXXX)
 git clone --no-local --depth 1 --branch main "file://$PWD" "$STAGE/source"
 test "$(git -C "$STAGE/source" rev-parse HEAD)" = "$(git rev-parse HEAD)"
 CI=true pnpm --dir "$STAGE/source" install --frozen-lockfile --offline --ignore-scripts
+MAIN=$(git -C "$STAGE/source" rev-parse HEAD)
 chown -R postgres:postgres "$STAGE/source"
 chown postgres:postgres "$STAGE"
-MAIN=$(git -C "$STAGE/source" rev-parse HEAD)
 runuser -u postgres -- node "$STAGE/source/scripts/mac-local/database-upgrade-remote.mjs" \
   --plan --expected-main "$MAIN" | tee "$STAGE/plan.json"
 ```
@@ -48,6 +48,13 @@ runuser -u postgres -- node "$STAGE/source/scripts/mac-local/database-upgrade-re
 Send the printed, non-secret plan and digest to Claude for review. Wait for
 Claude's assessment and the owner's explicit "go". If approval is delayed,
 the later apply command will recompute the plan and refuse if anything changed.
+For the inspected 0085-shaped installation, the plan must explicitly show
+creation of the four missing `NOLOGIN` Mac groups and the publisher `LOGIN`,
+four `membership.revoke` entries removing `control_room_application` from the
+existing Mac logins, and four `membership.grant` entries assigning their narrow
+groups (including the new publisher). The web login's existing
+`control_room_private_web` membership is retained. Stop if the printed plan
+differs; do not infer these changes from an empty or abbreviated plan.
 Keep the exact `STAGE` path in private operator notes; if the shell closes,
 restore that exact path manually rather than selecting a directory by glob.
 The optional Mac `--upgrade --dry-run --snapshot-file ABS` remains available,

@@ -56,13 +56,15 @@ async function installOldRoles(client) {
   await boss.start();
   try { await boss.createQueue("native-task-delivery", { retryLimit: 0 }); }
   finally { await boss.stop({ graceful: false }); }
-  for (const file of ["private_web_database.sql", "private_web_roles.sql", "task_coordinator_roles.sql",
-    "native_queue_producer_roles.sql", "native_results_roles.sql", "native_queue_worker_roles.sql"])
+  // Reproduce the inspected live shape, not the earlier 0085 rehearsal shape:
+  // only the web group exists and all four Mac logins inherit application.
+  for (const file of ["private_web_database.sql", "private_web_roles.sql"])
     await client.query(await readFile(join(oldRoot, "db/roles", file), "utf8"));
   for (const [login, group] of oldRoles) {
     await client.query(`CREATE ROLE ${login} LOGIN INHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS
       PASSWORD ${client.escapeLiteral("p".repeat(40) + login)}`);
-    await client.query(`GRANT ${group} TO ${login}`);
+    await client.query(`GRANT control_room_application TO ${login}`);
+    if (login === "control_room_web") await client.query(`GRANT ${group} TO ${login}`);
   }
 }
 
@@ -77,7 +79,7 @@ async function snapshot(client) {
   return { roles, membership, grants: [...await readMacGrantCatalogV1(client)].sort() };
 }
 
-test("0085 PostgreSQL 17 installation upgrades to exactly fresh HEAD roles, with no extra grants, then converges", {
+test("live-shaped 0085 PostgreSQL 17 installation converges to fresh HEAD without changing old passwords", {
   skip: process.env.CONTROL_ROOM_PG17_UPGRADE_REHEARSAL !== "1",
   timeout: 240_000,
 }, async t => {
@@ -106,11 +108,43 @@ test("0085 PostgreSQL 17 installation upgrades to exactly fresh HEAD roles, with
   { input: macDatabaseUpgradeReadOnlySqlV1(), encoding: "utf8", timeout: 30_000 });
   const readOnlySnapshot = JSON.parse(raw.split(/\r?\n/u).find(line => line.startsWith("{")));
   assert.deepEqual(await planMacDatabaseUpgradeSnapshotV1(readOnlySnapshot), plan);
+  assert.deepEqual(plan.createRoles, [
+    "control_room_local_result_publisher", "control_room_native_queue_worker",
+    "control_room_native_results", "control_room_publisher", "control_room_task_coordinator",
+  ].map(role => ({ role, attributes: `${role === "control_room_publisher" ? "LOGIN" : "NOLOGIN"} INHERIT `
+    + "NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS" })));
+  assert.deepEqual(plan.membership.revoke, oldRoles.map(([member]) => ({ member,
+    parent: "control_room_application" })).sort((a, b) => a.member.localeCompare(b.member)));
+  assert.deepEqual(plan.membership.grant, Object.entries(macRolePlan)
+    .filter(([member]) => member !== "control_room_web")
+    .map(([member, parent]) => ({ member, parent })).sort((a, b) => a.member.localeCompare(b.member)));
+  for (const [login] of oldRoles) {
+    const broad = connectTarget(`host=127.0.0.1 port=${old.port} dbname=control_room user=${login}
+      password=${"p".repeat(40) + login}`);
+    await broad.connect();
+    try { await broad.query("UPDATE control_jobs SET id=id WHERE false"); }
+    finally { await broad.end(); }
+  }
+  const missingLogin = structuredClone(readOnlySnapshot);
+  missingLogin.roles = missingLogin.roles.filter(role => role.rolname !== "control_room_results");
+  await assert.rejects(planMacDatabaseUpgradeSnapshotV1(missingLogin), /upgrade_existing_role_missing/u);
+  const changedLogin = structuredClone(readOnlySnapshot);
+  changedLogin.roles.find(role => role.rolname === "control_room_results").rolcreatedb = true;
+  await assert.rejects(planMacDatabaseUpgradeSnapshotV1(changedLogin), /upgrade_role_attributes_refused/u);
+  const outsideMember = structuredClone(readOnlySnapshot);
+  outsideMember.memberships.push({ member: "control_room_app", parent: "control_room_private_web",
+    admin_option: false, inherit_option: true, set_option: true });
+  await assert.rejects(planMacDatabaseUpgradeSnapshotV1(outsideMember), /upgrade_non_login_membership_refused/u);
+  const unexpectedParent = structuredClone(readOnlySnapshot);
+  unexpectedParent.memberships.push({ member: "control_room_results", parent: "control_room_backup",
+    admin_option: false, inherit_option: true, set_option: true });
+  await assert.rejects(planMacDatabaseUpgradeSnapshotV1(unexpectedParent),
+    /upgrade_unexpected_login_membership_refused/u);
   const snapshotFile = join(root, "snapshot.json"), mainCommit = "a".repeat(40);
   await writeFile(snapshotFile, JSON.stringify(captureMacUpgradeSnapshotV1(mainCommit, raw)));
   assert.deepEqual(await planMacDatabaseUpgradeFromFileV1(snapshotFile, mainCommit), plan);
   assert.equal(plan.pendingMigrations.length, 5);
-  assert.ok(plan.createRoles.includes("control_room_publisher"));
+  assert.ok(plan.createRoles.some(item => item.role === "control_room_publisher"));
   assert.ok(plan.grants.extra.some(item => item.includes("control_room_private_web|table|public.control_jobs||DELETE|plain")));
   assert.deepEqual(await snapshot(oldClient), prior, "dry run does not change PostgreSQL");
   const publisherPassword = "q".repeat(40);
@@ -120,7 +154,15 @@ test("0085 PostgreSQL 17 installation upgrades to exactly fresh HEAD roles, with
     ...oldRoles.map(([login]) => login)];
   const passwordSnapshot = async () => (await oldClient.query(`SELECT rolname,rolpassword FROM pg_authid
     WHERE rolname=ANY($1::text[]) ORDER BY rolname`, [retainedLogins])).rows;
+  const otherMemberships = async () => (await oldClient.query(`SELECT member.rolname AS member,
+    parent.rolname AS parent, auth.admin_option, auth.inherit_option, auth.set_option
+    FROM pg_auth_members auth JOIN pg_roles member ON member.oid=auth.member
+    JOIN pg_roles parent ON parent.oid=auth.roleid
+    WHERE member.rolname <> ALL($1::text[]) ORDER BY member.rolname,parent.rolname`,
+  [Object.keys(macRolePlan)])).rows;
   const beforePasswords = await passwordSnapshot();
+  const beforeOtherMemberships = await otherMemberships();
+  assert.equal(beforePasswords.length, 7);
   const localPeer = `host=${old.socket} port=${old.port} dbname=control_room user=postgres`;
   await assert.rejects(applyMacDatabaseUpgradeV1({ ...request,
     expectedPlanDigest: `sha256:${"0".repeat(64)}` }), /upgrade_plan_changed_refused/u);
@@ -129,6 +171,17 @@ test("0085 PostgreSQL 17 installation upgrades to exactly fresh HEAD roles, with
       migrateTarget: localPeer, migrateViaLocalPeer: true, env: {} }) });
   assert.deepEqual(await passwordSnapshot(), beforePasswords,
     "migrator, app, scheduler and four existing login password verifiers are byte-identical");
+  assert.deepEqual(await otherMemberships(), beforeOtherMemberships,
+    "no non-Mac role membership is changed by the upgrade");
+  for (const [login, password] of [...oldRoles.map(([name]) => [name, "p".repeat(40) + name]),
+    ["control_room_publisher", publisherPassword]]) {
+    const restricted = connectTarget(`host=127.0.0.1 port=${old.port} dbname=control_room user=${login} password=${password}`);
+    await restricted.connect();
+    try {
+      await assert.rejects(restricted.query("UPDATE control_jobs SET id=id WHERE false"),
+        error => error.code === "42501", `${login} must not update a forbidden job column`);
+    } finally { await restricted.end(); }
+  }
   const publisher = connectTarget(`host=127.0.0.1 port=${old.port} dbname=control_room user=control_room_publisher password=${publisherPassword}`);
   await publisher.connect();
   assert.equal((await publisher.query("SELECT current_user AS role")).rows[0].role, "control_room_publisher");
