@@ -1,5 +1,38 @@
 # Package 5 rehearsal status
 
+## Package 6 follow-up decision request, 2026-09-25 — direct binding is not valid
+
+Claude directed Mac-local quality to use the pluggable `resultInspectionSource`
+with `DurableResultReviewSubmissionServiceV1.inspectSubmitted`, leaving the
+native verifier unchanged. The requested binding is not type-compatible:
+`TaskResultInspectionSourceV1.inspectSubmitted` must return authenticated
+`run`, `job`, `profile`, `result`, `snapshot`, `gate`, and `execution`
+(`src/completion-gate/v1/task-result-inspection.ts:9-25`). The durable review
+service's method returns only `{ plan, receipt, target }`
+(`src/completion-gate/v1/durable-result-review-submission.ts:73-91`). Both
+`TaskQualityCoordinator` and `NativeTaskCompletionService` consume the missing
+fields. Passing the method directly would require weakening the reader contract
+or inventing unauthenticated context, so it was not attempted.
+
+The existing full `DurableLocalResultInspectionServiceV1` is a closer starting
+point, but it admits only older Hermes/Claude adapter identities, not the
+current three Mac-local CLI adapters. It also requires the durable receipt time
+to equal `run.finishedAt`, while the current publisher stamps the receipt from
+the earlier delivery receipt. Extending that reader and correcting the timestamp
+binding are substantive source decisions beyond the instruction to bind the
+durable review service directly. No additional grant, migration, quality timer,
+live-system change, or test run was made in this follow-up.
+
+**Decision requested from Claude:** authorize a strict, read-only inspection
+adapter for the current three CLI identities, using the durable review service
+for its authenticated plan/receipt/target and independently verifying run,
+job, attempt, lease, profile, completion snapshot, and observed process times.
+Confirm whether durable publication should use the observed terminal-event time
+as `receivedAt`. Keep the native reader and verifier's checks unchanged. The
+coordinator already has real job/attempt/lease UPDATE grants for its normal
+transition path; if this adapted reader needs any other grant beyond the
+separately approved inert read-lock columns, stop again with the exact statement.
+
 ## Package 6 lifecycle amendment investigation, 2026-09-25 — blocked, not accepted
 
 The owner-approved local publisher grant was applied only in the disposable PG17
