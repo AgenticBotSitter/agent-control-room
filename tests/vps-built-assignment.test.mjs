@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { readFile } from "node:fs/promises";
+import { readFile, readdir } from "node:fs/promises";
 import handler from "../dist-vps/server/index.js";
 import { installPrivateWebProcess } from "../dist-vps/server/runtime.js";
 import { taskAssignmentFixture } from "./helpers/task-assignment.ts";
@@ -10,13 +10,18 @@ import { at } from "./native-task-fixture.ts";
 import { request, origin } from "./helpers/web-foundation.ts";
 
 test("compiled assignment keeps scheduled planning and allocation server-only", async () => {
-  const compiled = await Promise.all([
-    readFile(new URL("../dist-vps/server/taskApplication.js", import.meta.url), "utf8"),
-    readFile(new URL("../dist-vps/server/runtime.js", import.meta.url), "utf8"),
-  ]).then(parts => parts.join("\n"));
-  assert.match(compiled, /service:schedule-assignment:v1/);
-  assert.match(compiled, /scheduled\.tasks\.plan/);
-  assert.doesNotMatch(compiled, /api\/v1\/scheduled-assignment/);
+  const compiledScripts = async (root) => Promise.all((await readdir(root, { recursive: true }))
+    .filter(path => path.endsWith(".js"))
+    .map(path => readFile(new URL(path, root), "utf8")));
+  // Vite may move server-only code into a shared server chunk. Check the whole
+  // compiled server boundary, while refusing the same authority in client JS.
+  const server = (await compiledScripts(new URL("../dist-vps/server/", import.meta.url))).join("\n");
+  const client = (await compiledScripts(new URL("../dist-vps/client/", import.meta.url))).join("\n");
+  assert.ok(server.includes("service:schedule-assignment:v1"));
+  assert.ok(server.includes("scheduled.tasks.plan"));
+  assert.equal(server.includes("api/v1/scheduled-assignment"), false);
+  assert.equal(client.includes("service:schedule-assignment:v1"), false);
+  assert.equal(client.includes("scheduled.tasks.plan"), false);
 });
 
 test("compiled private assignment API records, reads and expires a real lease under shared logout", async t => {

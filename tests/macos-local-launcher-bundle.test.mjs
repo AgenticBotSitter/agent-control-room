@@ -464,6 +464,12 @@ test("v3 owner writer accepts only the opaque exact-plan capability and explicit
   const source = { ...installedConfigurationSourceForLauncher(verified),
     standardProtectedRootPath: join(homedir(), "Library", "Application Support", "Agent Control Room", "Protected"),
     expectedOwnerUid: typeof process.geteuid === "function" ? process.geteuid() : 501 };
+  // The actual owner writer is Mac-only. Linux CI must prove refusal rather
+  // than weakening the /Users/<owner> protected-root or non-root UID policy.
+  if (process.platform !== "darwin" || process.geteuid?.() === 0) {
+    assert.throws(() => preparePrivateInstalledConfigurationV1(source), /refused/u);
+    return;
+  }
   const configurationPlan = preparePrivateInstalledConfigurationV1(source);
   const prepared = preparePrivateInstalledConfigurationV3MaterializationV1({
     schema: PRIVATE_INSTALLED_CONFIGURATION_V3_MATERIALIZATION_PREPARATION_V1,

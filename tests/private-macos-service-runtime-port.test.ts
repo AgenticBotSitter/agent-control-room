@@ -360,7 +360,9 @@ test("health observation is deadline-bounded, aborts its host call and rejects m
     operation: "observe_installed_service" as const, requestDigest: d("slow-health"), lifecycleDigest,
     label: PRIVATE_MACOS_SERVICE_LABEL_V1, expectedReleaseDigest: releaseDigest,
     expectedServiceIdentityDigest: serviceIdentityDigest, expectedServiceDefinitionDigest: definitionDigest,
-    deadlineUnixMs: Date.now() + 10 };
+    // Leave enough time for the host call to begin even on a loaded CI runner;
+    // the hanging host is still bounded by this explicit deadline.
+    deadlineUnixMs: Date.now() + 1_000 };
   await assert.rejects(slow.port.nativePort.observeInstalledService(request, new AbortController().signal), /_uncertain/u);
   assert.equal(healthAborted, true);
 

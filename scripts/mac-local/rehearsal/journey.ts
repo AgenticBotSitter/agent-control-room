@@ -284,7 +284,9 @@ async function main() {
       reviewStatus = body.reviews[0]?.status;
       if (items === 1 && reviewStatus === "pending") pendingPage = body;
       return items === 1 && reviewStatus === "pending";
-    }, 55);
+    // The Claude adapter permits 120 seconds for its pinned CLI. Do not call
+    // delivery stuck before that budget and a short queue/publication margin.
+    }, 135);
     assert.ok(polled, `${agent.kind}: expected exactly one result reaching pending review within the bounded timeout (items=${items}, reviewStatus=${reviewStatus})`);
     const page = pendingPage!;
     const artifact = page.items[0]!, target = page.reviews[0]!;

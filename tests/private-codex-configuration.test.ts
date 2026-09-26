@@ -32,6 +32,7 @@ function initialInput(paths: { bridge: string; starts: string }) {
   return { mode: 'initial' as const, paths, runId, queueId: 'queue:test',
     connectionAttemptId: 'connection-attempt:private-config', initializedConnectionDigest: sha256Digest('initialized'),
     threadStartRequestId: 10, turnStartRequestId: 20, startTimeoutMs: 1_000, processCleanupTimeoutMs: 100,
+    workspacePolicy: { allowedPaths: ['src/**'], maximumChangedFiles: 5, maximumChangedBytes: 4096 },
     workspaceIntent: { schema: 'control-room.workspace-intent/v1', ...basis, runId,
       repositoryRoot: '/synthetic/repository', workspaceRoot: '/synthetic/workspaces',
       checkoutPath: `/synthetic/workspaces/codex-${sha256Digest(runId).slice(7,31)}`, revision: 'a'.repeat(40) } };
@@ -134,7 +135,7 @@ test('owned private Codex construction is inert in initial and recover modes and
     async close() { initialEvents.push('acquisition-close'); } };
   const initialOwner = await openOwnedPrivateCodexConfigurationV1(initialInput(initial.paths), initialPorts(),
     initialAcquisition, new AbortController().signal);
-  assert.deepEqual(Object.keys(initialOwner).sort(), ['close', 'harness', 'mode', 'run']);
+  assert.deepEqual(Object.keys(initialOwner).sort(), ['bindDelivery', 'close', 'harness', 'mode', 'run']);
   assert.deepEqual(initialEvents, []); await initialOwner.close(); await initialOwner.close();
   assert.deepEqual(initialEvents, ['acquisition-close']);
   await assert.rejects(initialOwner.run(new AbortController().signal), /private_codex_configuration_unavailable/);
@@ -145,6 +146,7 @@ test('owned private Codex construction is inert in initial and recover modes and
   const recoverEvents: string[] = [], port = recoverAcquisition(saved, recoverEvents);
   const recoverOwner = await openOwnedPrivateCodexConfigurationV1(recoverInput(recover.paths, saved.runId),
     { authority: { assertCurrent() {} } }, port.acquisition, new AbortController().signal);
+  assert.equal('bindDelivery' in recoverOwner, false, 'recovery cannot bind a fresh delivery');
   assert.equal(recoverOwner.mode, 'recover'); assert.deepEqual(recoverEvents, []);
   const observation = await recoverOwner.run(new AbortController().signal);
   assert.equal(observation.mode, 'recover'); assert.equal(observation.status, 'completed');

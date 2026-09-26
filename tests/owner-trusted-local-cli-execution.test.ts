@@ -48,7 +48,7 @@ test("the shared composition exposes Hermes through the same durable delivery sh
   const base = { db: { transaction() { throw new Error("not_called"); } }, integrityKey: new Uint8Array(32),
     binding: { workerId: "worker:marvin", adapterId: "connector:hermes.macos-local.v1", adapterRevision: "b50bb77e" },
     receiptPort: { async receive() { throw new Error("not_called"); } }, async assertCurrent() {},
-    async publish() {} };
+    async publish() {}, async recordFailure() {} };
   const composed = createOwnerTrustedLocalHermesDeliveryV1(base as never, { async execute() {
     return { status: "completed" as const, text: "ok", usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 } };
   } }, { ...configuration, profile: "cr", model: "space-bunny-free", provider: "opencode-go" });
