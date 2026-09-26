@@ -14,7 +14,7 @@ import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { join, resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { connectTarget, readSchemaDigest } from "./evidence.mjs";
+import { connectTarget, parseKeywordValueTarget, readSchemaDigest } from "./evidence.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const sha256 = text => createHash("sha256").update(text).digest("hex");
@@ -25,13 +25,14 @@ const flag = (args, name, fallback) => {
 
 /**
  * @typedef {{ planned: boolean, files?: number, digest?: string, applied?: { file: string, order: number, preSchemaDigest: string, postSchemaDigest: string }[], noOp?: boolean, schemaDigest?: string, objects?: number, logins?: string, grants?: string, operatorProvisionCommand?: string }} ApplyResult
- * @param {{ target?: string, rootDir?: string, ledgerPath?: string, env?: NodeJS.ProcessEnv }} options
+ * @param {{ target?: string, rootDir?: string, ledgerPath?: string, env?: NodeJS.ProcessEnv,
+ *   bootstrapTarget?: string, migrateTarget?: string, migrateViaLocalPeer?: boolean }} options
  * @returns {Promise<ApplyResult>}
  */
 export { readSchemaDigest } from "./evidence.mjs";
 
 export async function applyMigrations({ target, rootDir = root, ledgerPath, env = process.env,
-    bootstrapTarget, migrateTarget }) {
+    bootstrapTarget, migrateTarget, migrateViaLocalPeer = false }) {
   // `target` is a legacy plan-mode flag only; the run gate is the two phase
   // connections (the CLI refuses a partial pair outright).
   if (!bootstrapTarget && !migrateTarget) {
@@ -51,20 +52,55 @@ export async function applyMigrations({ target, rootDir = root, ledgerPath, env 
       throw new Error(`migration_unknown_kind:${entry.file}`);
     }
   }
-  // Two-phase provisioning. The bootstrapTarget is a superuser connection that
+  // Normal two-phase provisioning. The bootstrapTarget is a superuser connection that
   // creates the NOLOGIN owner + migrator + app + scheduler logins (idempotent:
   // IF NOT EXISTS guards each CREATE ROLE). The migrateTarget is a connection
   // authenticated as the restricted migrator; the migrator is in
   // control_room_schema_owner so SET ROLE control_room_schema_owner before each
-  // migration ensures created objects are owned by the NOLOGIN role. This proves
+  // migration ensures created objects are owned by the NOLOGIN role. The
+  // explicitly opted-in VPS-local upgrade skips bootstrap and assumes that
+  // same restricted migrator identity from a Unix-socket operator session.
+  // This proves
   // the production migrator path actually runs as the least-privilege login and
   // owns the resulting objects, instead of running as a connection superuser.
   if (!bootstrapTarget) throw new Error("migration_refused_no_bootstrap_target");
   if (!migrateTarget) throw new Error("migration_refused_no_migrate_target");
-  await runBootstrap({ target: bootstrapTarget, env, rootDir });
+  if (migrateViaLocalPeer) {
+    if (typeof bootstrapTarget !== "string" || migrateTarget !== bootstrapTarget)
+      throw new Error("migration_peer_target_refused");
+    const parsed = parseKeywordValueTarget(migrateTarget);
+    if (typeof parsed.host !== "string" || !parsed.host.startsWith("/")
+      || parsed.database !== "control_room" || parsed.user !== "postgres"
+      || Object.keys(parsed).some(key => !["host", "port", "database", "user"].includes(key)))
+      throw new Error("migration_peer_target_refused");
+  }
+  // The VPS-local upgrade targets an already-provisioned database. It must
+  // never rerun bootstrap, which can create roles or change role membership.
+  if (!migrateViaLocalPeer) await runBootstrap({ target: bootstrapTarget, env, rootDir });
   const client = connectTarget(migrateTarget);
   await client.connect();
   try {
+    if (migrateViaLocalPeer) {
+      const operator = (await client.query(`SELECT current_user, session_user, rolsuper
+        FROM pg_roles WHERE rolname=current_user`)).rows[0];
+      if (operator?.current_user !== "postgres" || operator?.session_user !== "postgres" || operator?.rolsuper !== true)
+        throw new Error("migration_peer_operator_refused");
+      const role = (await client.query(`SELECT rolcanlogin, rolsuper, rolcreatedb, rolcreaterole, rolreplication, rolbypassrls
+        FROM pg_roles WHERE rolname='control_room_migrator'`)).rows[0];
+      const membership = (await client.query(`SELECT count(*)::int AS n FROM pg_auth_members m
+        JOIN pg_roles parent ON parent.oid=m.roleid JOIN pg_roles member ON member.oid=m.member
+        WHERE parent.rolname='control_room_schema_owner' AND member.rolname='control_room_migrator'
+          AND NOT m.admin_option AND m.inherit_option AND m.set_option`)).rows[0];
+      if (role?.rolcanlogin !== true || role?.rolsuper !== false || role?.rolcreatedb !== false
+        || role?.rolcreaterole !== false || role?.rolreplication !== false || role?.rolbypassrls !== false
+        || membership?.n !== 1) throw new Error("migration_peer_role_refused");
+      await client.query("SET SESSION AUTHORIZATION control_room_migrator");
+      const migrator = (await client.query(`SELECT current_user, session_user, rolsuper
+        FROM pg_roles WHERE rolname=current_user`)).rows[0];
+      if (migrator?.current_user !== "control_room_migrator"
+        || migrator?.session_user !== "control_room_migrator" || migrator?.rolsuper !== false)
+        throw new Error("migration_peer_identity_refused");
+    }
     // Schema migrations must run inside one transaction so the ledger row only
     // commits if the schema change succeeded. The migrator does not own the
     // control_room_schema_migrations table itself; the table is created in the
