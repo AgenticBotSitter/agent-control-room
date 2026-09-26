@@ -70,18 +70,14 @@ test("home shows the three saved local route setup states without presenting the
     schedulerAuthorityDigest: sha256Digest("scheduler"),
     currentRoutes: [{ kind: "local", workerId: "worker:local", adapterId: "connector:local-v1", adapterRevision: "00570550" }],
     requestedRoutes: [{ kind: "local", workerId: "worker:local", adapterId: "connector:local-v1", adapterRevision: "00570550" }] });
-  // HomeInstallationStatus composes LocalWorkerRouteStatus, which waits on the
-  // task-worker read before rendering the three route cards. The composed
-  // wrapper does not forward an injected task-worker state, so the route panel
-  // is asserted through the component that owns it; the wrapper's own
-  // "Three local worker routes" summary is asserted just below.
-  const home = renderToStaticMarkup(createElement(HomeInstallationStatus, { topology: {
+  // The home panel now forwards a resolved task-worker read to the route panel
+  // it composes, so the three saved route states are asserted here directly
+  // rather than through the inner component.
+  const html = renderToStaticMarkup(createElement(HomeInstallationStatus, { topology: {
     state: "available", setup: createInstallationSetupViewV1({ plan, localBackupRestoreVerified: false }),
-  } }));
-  assert.match(home, /Three local worker routes/);
-  const html = renderToStaticMarkup(createElement(LocalWorkerRouteStatus, { state: "available",
-    setup: createInstallationSetupViewV1({ plan, localBackupRestoreVerified: false }),
-    taskWorkerStatus: TASK_WORKERS_STARTED }));
+  }, taskWorkerStatus: TASK_WORKERS_STARTED }));
+  assert.match(html, /Local worker routes/);
+  assert.match(html, /Three local worker routes/);
   for (const label of ["Hermes Agent", "Claude Code", "Codex"]) assert.match(html, new RegExp(label));
   assert.match(html, /saved setup and proof states, not a live process monitor/);
   assert.match(html, /This panel has no current route-bound task observation/);
