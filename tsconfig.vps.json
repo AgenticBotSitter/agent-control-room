@@ -34,6 +34,7 @@
     "src/web/v1/mac-local-host.ts",
     "src/web/v1/private-postgres.ts",
     "src/web/v1/mac-local-task-provider.ts",
+    "src/web/v1/mac-local-default-task-provider.ts",
     "src/project-adapters/news/v1/article-extraction-runtime.mjs"
   ],
   "exclude": ["node_modules", "dist-vps", ".next"]
