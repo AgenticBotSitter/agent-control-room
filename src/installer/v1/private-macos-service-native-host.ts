@@ -340,7 +340,10 @@ function runHelper(staged: Staged, input: Buffer, request: CapturedRequest,
     let retirementDeadline = 0;
     const chunks: Buffer[] = [];
     const child = spawn(staged.executable, [], { shell: false, cwd: "/", detached: true,
-      env: { PATH: "/usr/bin:/bin", LANG: "C", LC_ALL: "C" }, stdio: ["pipe", "pipe", "pipe"] });
+      // The helper is a sealed native binary: pass exactly this environment. The
+      // project's ProcessEnv typing requires NODE_ENV, which the helper never reads.
+      env: { PATH: "/usr/bin:/bin", LANG: "C", LC_ALL: "C" } as unknown as NodeJS.ProcessEnv,
+      stdio: ["pipe", "pipe", "pipe"] });
     const finish = (value?: Buffer) => {
       if (settled) return;
       settled = true; clearTimeout(timer); clearTimeout(escalation); clearTimeout(retirementPoll);
