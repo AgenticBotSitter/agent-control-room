@@ -5,6 +5,7 @@ import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
+import { applyMigrations } from "../../deploy/postgres/apply-migrations.mjs";
 import { connectTarget } from "../../deploy/postgres/evidence.mjs";
 import { applyMacGrantDiffV1, diffMacGrantsV1, macRolePlan, readDesiredMacGrantsV1,
   readMacGrantCatalogV1, macGrantRowsToSetV1, macGrantCatalogSqlV1 } from "./database-upgrade-grants.mjs";
@@ -85,15 +86,30 @@ const safeRole = value => {
 };
 
 export async function inspectMacDatabaseUpgradeV1({ client }) {
-  return report(client);
+  await client.query("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY");
+  try {
+    const plan = await report(client);
+    await client.query("COMMIT");
+    return plan;
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  }
 }
 
-export async function applyMacDatabaseUpgradeV1({ publisherVerifier, client }) {
+export function macDatabaseUpgradePlanDigestV1(plan) {
+  return `sha256:${sha256(JSON.stringify(plan))}`;
+}
+
+export async function applyMacDatabaseUpgradeV1({ publisherVerifier, client, expectedPlanDigest, applyPending }) {
   checkedPostgresScramVerifierV1(publisherVerifier);
-  const before = await report(client);
-  // Migration execution needs a separately approved VPS-local restricted
-  // migrator path. Do not silently run pending DDL as postgres.
-  if (before.pendingMigrations.length) throw new Error("upgrade_pending_migrations_need_decision");
+  const before = await inspectMacDatabaseUpgradeV1({ client });
+  if (expectedPlanDigest !== undefined && macDatabaseUpgradePlanDigestV1(before) !== expectedPlanDigest)
+    throw new Error("upgrade_plan_changed_refused");
+  if (before.pendingMigrations.length) {
+    if (typeof applyPending !== "function") throw new Error("upgrade_pending_migrations_need_peer_runner");
+    await applyPending();
+  }
   if (before.createRoles.some(role => !role.includes("publisher"))) throw new Error("upgrade_existing_role_missing");
   await client.query("BEGIN");
   try {
@@ -128,30 +144,43 @@ export async function applyMacDatabaseUpgradeV1({ publisherVerifier, client }) {
   }
 }
 
+async function applyPendingOnVpsV1() {
+  return applyMigrations({ bootstrapTarget, migrateTarget: bootstrapTarget,
+    migrateViaLocalPeer: true, env: {} });
+}
+
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   try {
     const args = process.argv.slice(2);
-    if (args.length !== 3 || args[0] !== "--apply" || args[1] !== "--expected-main"
-      || !/^[a-f0-9]{40}$/u.test(args[2])) throw new Error("upgrade_input_refused");
+    const planning = args.length === 3 && args[0] === "--plan" && args[1] === "--expected-main";
+    const applying = args.length === 5 && args[0] === "--apply" && args[1] === "--expected-main"
+      && args[3] === "--expected-plan-digest" && /^sha256:[a-f0-9]{64}$/u.test(args[4]);
+    if ((!planning && !applying) || !/^[a-f0-9]{40}$/u.test(args[2])) throw new Error("upgrade_input_refused");
     const git = params => execFileSync("git", ["-C", repoRoot, ...params],
       { encoding: "utf8", timeout: 10_000 }).trim();
     if (git(["rev-parse", "HEAD"]) !== args[2]
       || git(["rev-parse", "refs/remotes/origin/main"]) !== args[2]
       || git(["status", "--porcelain"])) throw new Error("upgrade_main_checkout_refused");
-    let input = "";
-    for await (const chunk of process.stdin) {
-      input += String(chunk);
-      if (input.length > 300) throw new Error("upgrade_verifier_input_refused");
+    let verifier;
+    if (applying) {
+      let input = "";
+      for await (const chunk of process.stdin) {
+        input += String(chunk);
+        if (input.length > 300) throw new Error("upgrade_verifier_input_refused");
+      }
+      verifier = checkedPostgresScramVerifierV1(input.trim());
     }
-    const verifier = checkedPostgresScramVerifierV1(input.trim());
     const client = connectTarget(bootstrapTarget);
     await client.connect();
     try {
       const identity = (await client.query("SELECT current_user, session_user, rolsuper FROM pg_roles WHERE rolname=current_user")).rows[0];
       if (identity?.current_user !== "postgres" || identity?.session_user !== "postgres"
         || identity?.rolsuper !== true) throw new Error("upgrade_operator_identity_refused");
-      const result = await applyMacDatabaseUpgradeV1({ client, publisherVerifier: verifier });
-      process.stdout.write(`${JSON.stringify(result)}\n`);
+      const result = planning ? await inspectMacDatabaseUpgradeV1({ client })
+        : await applyMacDatabaseUpgradeV1({ client, publisherVerifier: verifier,
+          expectedPlanDigest: args[4], applyPending: applyPendingOnVpsV1 });
+      process.stdout.write(`${JSON.stringify(planning ? { plan: result, digest: macDatabaseUpgradePlanDigestV1(result) }
+        : result)}\n`);
     } finally { await client.end(); }
   } catch (error) {
     const message = error instanceof Error ? error.message : "";

@@ -7,7 +7,7 @@ import { join, resolve } from "node:path";
 import { PgBoss, getConstructionPlans } from "pg-boss";
 import { applyMigrations } from "../deploy/postgres/apply-migrations.mjs";
 import { connectTarget } from "../deploy/postgres/evidence.mjs";
-import { applyMacDatabaseUpgradeV1, inspectMacDatabaseUpgradeV1 } from
+import { applyMacDatabaseUpgradeV1, inspectMacDatabaseUpgradeV1, macDatabaseUpgradePlanDigestV1 } from
   "../scripts/mac-local/database-upgrade-remote.mjs";
 import { macDatabaseUpgradeReadOnlySqlV1, planMacDatabaseUpgradeFromFileV1 } from
   "../scripts/mac-local/provision-database.mjs";
@@ -26,12 +26,13 @@ const connection = port => `host=127.0.0.1 port=${port} dbname=control_room user
 const migrator = (port, password) => `host=127.0.0.1 port=${port} dbname=control_room user=control_room_migrator password=${password}`;
 
 async function cluster(root, port) {
-  const data = join(root, "pg"), log = join(root, "pg.log");
+  const data = join(root, "pg"), log = join(root, "pg.log"), socket = join(root, "socket");
   await mkdir(root, { recursive: true, mode: 0o700 });
+  await mkdir(socket, { mode: 0o700 });
   exec("initdb", ["-D", data, "-U", "postgres", "--auth=trust", "-E", "UTF8"]);
-  await writeFile(join(data, "pg_hba.conf"), "host all postgres 127.0.0.1/32 trust\nhost all all 127.0.0.1/32 scram-sha-256\n");
-  exec("pg_ctl", ["-D", data, "-l", log, "-w", "-o", `-p ${port} -k '' -c listen_addresses=127.0.0.1`, "start"]);
-  return { port, log, data };
+  await writeFile(join(data, "pg_hba.conf"), "local all postgres trust\nhost all postgres 127.0.0.1/32 trust\nhost all all 127.0.0.1/32 scram-sha-256\n");
+  exec("pg_ctl", ["-D", data, "-l", log, "-w", "-o", `-p ${port} -k '${socket}' -c listen_addresses=127.0.0.1`, "start"]);
+  return { port, log, data, socket };
 }
 
 async function baseDatabase(root, port, suffix) {
@@ -93,7 +94,7 @@ test("0085 PostgreSQL 17 installation upgrades to exactly fresh HEAD roles, with
     }
     await rm(root, { recursive: true, force: true });
   });
-  const oldSecrets = await baseDatabase(oldRoot, old.port, "o");
+  await baseDatabase(oldRoot, old.port, "o");
   const oldClient = connectTarget(connection(old.port)); await oldClient.connect();
   clients.push(oldClient);
   await installOldRoles(oldClient);
@@ -114,10 +115,20 @@ test("0085 PostgreSQL 17 installation upgrades to exactly fresh HEAD roles, with
   assert.deepEqual(await snapshot(oldClient), prior, "dry run does not change PostgreSQL");
   const publisherPassword = "q".repeat(40);
   const request = { client: oldClient, publisherVerifier: postgresScramVerifierV1(publisherPassword) };
-  await assert.rejects(applyMacDatabaseUpgradeV1(request), /upgrade_pending_migrations_need_decision/u);
-  await applyMigrations({ rootDir: headRoot, bootstrapTarget: connection(old.port),
-    migrateTarget: migrator(old.port, oldSecrets.migrator), env: {} });
-  await applyMacDatabaseUpgradeV1(request);
+  await assert.rejects(applyMacDatabaseUpgradeV1(request), /upgrade_pending_migrations_need_peer_runner/u);
+  const retainedLogins = ["control_room_migrator", "control_room_app", "control_room_scheduler",
+    ...oldRoles.map(([login]) => login)];
+  const passwordSnapshot = async () => (await oldClient.query(`SELECT rolname,rolpassword FROM pg_authid
+    WHERE rolname=ANY($1::text[]) ORDER BY rolname`, [retainedLogins])).rows;
+  const beforePasswords = await passwordSnapshot();
+  const localPeer = `host=${old.socket} port=${old.port} dbname=control_room user=postgres`;
+  await assert.rejects(applyMacDatabaseUpgradeV1({ ...request,
+    expectedPlanDigest: `sha256:${"0".repeat(64)}` }), /upgrade_plan_changed_refused/u);
+  await applyMacDatabaseUpgradeV1({ ...request, expectedPlanDigest: macDatabaseUpgradePlanDigestV1(plan),
+    applyPending: () => applyMigrations({ rootDir: headRoot, bootstrapTarget: localPeer,
+      migrateTarget: localPeer, migrateViaLocalPeer: true, env: {} }) });
+  assert.deepEqual(await passwordSnapshot(), beforePasswords,
+    "migrator, app, scheduler and four existing login password verifiers are byte-identical");
   const publisher = connectTarget(`host=127.0.0.1 port=${old.port} dbname=control_room user=control_room_publisher password=${publisherPassword}`);
   await publisher.connect();
   assert.equal((await publisher.query("SELECT current_user AS role")).rows[0].role, "control_room_publisher");

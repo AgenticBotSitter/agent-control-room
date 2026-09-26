@@ -13,6 +13,16 @@ import { desiredMacGrantsV1, diffMacGrantsV1, readDesiredMacGrantsV1 } from
   "../scripts/mac-local/database-upgrade-grants.mjs";
 import { MAC_LOCAL_DATABASE_ROLES_V1, captureMacLocalDatabaseRolesV1 } from
   "../src/web/v1/mac-local-database-roles.ts";
+import { applyMigrations } from "../deploy/postgres/apply-migrations.mjs";
+
+test("peer migration mode refuses TCP or a different bootstrap connection before DB contact", async () => {
+  await assert.rejects(applyMigrations({ bootstrapTarget: "host=127.0.0.1 dbname=control_room user=postgres",
+    migrateTarget: "host=127.0.0.1 dbname=control_room user=postgres", migrateViaLocalPeer: true }),
+  /migration_peer_target_refused/u);
+  await assert.rejects(applyMigrations({ bootstrapTarget: "host=/var/run/postgresql dbname=control_room user=postgres",
+    migrateTarget: "host=/tmp/other dbname=control_room user=postgres", migrateViaLocalPeer: true }),
+  /migration_peer_target_refused/u);
+});
 
 test("grant plan covers the source role files and detects additions and extras exactly", async () => {
   const desired = await readDesiredMacGrantsV1();
