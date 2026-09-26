@@ -4,6 +4,7 @@
 // -> proposal -> plan -> assignment -> submission preview -> submit -> the task host's own queue
 // worker runs a fake PINNED EXECUTABLE through the production process adapters -> pending review,
 // exactly once per agent, with a replay returning the same receipt and queuing nothing new.
+// The owner then reviews each result through the same HTTP API the website uses.
 // Usage: node --import tsx scripts/mac-local/rehearsal/journey.ts ABSOLUTE_REHEARSAL_DIR
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
@@ -272,16 +273,66 @@ async function main() {
     // 6) poll for the task host's own queue worker to run the fake pinned
     // executable through the production adapter and reach pending review.
     let reviewStatus: string | undefined, items = 0;
+    let pendingPage: { items: { artifactId: string; contentHash: string }[];
+      reviews: { targetId: string; targetDigest: string; contentHash: string; status: string;
+        matchingArtifactIds: string[]; reviews: { decision: string }[] }[] } | undefined;
     const polled = await waitFor(async () => {
       const results = await fetch(new URL(`/api/v1/projects/${idOf(projectId)}/tasks/${idOf(jobId)}/results`, origin), { headers: { cookie } });
       if (results.status !== 200) return false;
-      const body = await results.json() as { items: unknown[]; reviews: { status: string }[] };
+      const body = await results.json() as NonNullable<typeof pendingPage>;
       items = body.items.length;
       reviewStatus = body.reviews[0]?.status;
+      if (items === 1 && reviewStatus === "pending") pendingPage = body;
       return items === 1 && reviewStatus === "pending";
     }, 55);
     assert.ok(polled, `${agent.kind}: expected exactly one result reaching pending review within the bounded timeout (items=${items}, reviewStatus=${reviewStatus})`);
-    outcomes[agent.kind] = { jobId: jobId.slice(0, 24), packetDigest: packetDigest.slice(0, 19), queueId: submittedBody.queueId.slice(0, 24), items, reviewStatus };
+    const page = pendingPage!;
+    const artifact = page.items[0]!, target = page.reviews[0]!;
+    assert.deepEqual(target.matchingArtifactIds, [artifact.artifactId], `${agent.kind}: the pending target must bind the one saved artifact`);
+    assert.equal(target.contentHash, artifact.contentHash);
+    assert.equal(target.reviews.length, 0);
+    const reviewPath = `/api/v1/projects/${idOf(projectId)}/tasks/${idOf(jobId)}/results/${idOf(artifact.artifactId)}/reviews/${idOf(target.targetId)}`;
+    const options = await requireOk(await fetch(new URL(reviewPath, origin), { headers: { cookie } }), 200,
+      `${agent.kind} review options`) as { canReview: boolean; availability: string; targetDigest: string;
+        contentHash: string; ownReview: null | { decision: string; reviewId: string } };
+    assert.equal(options.canReview, true, `${agent.kind}: owner must be able to review the pending result`);
+    assert.equal(options.availability, "available");
+    assert.equal(options.ownReview, null);
+    assert.equal(options.targetDigest, target.targetDigest);
+    assert.equal(options.contentHash, artifact.contentHash);
+    const decision = agent.kind === "hermes" ? "changes_requested" : "accepted";
+    const feedback = decision === "changes_requested" ? "Please revise the harmless test response." : "";
+    const draft = { artifactId: artifact.artifactId, targetId: target.targetId,
+      targetDigest: options.targetDigest, contentHash: options.contentHash, decision, feedback };
+    const reviewKey = `journey-${agent.kind}-owner-review-0001`;
+    const writeReview = () => fetch(new URL(reviewPath, origin), { method: "POST",
+      headers: { origin, cookie, "content-type": "application/json", "idempotency-key": reviewKey },
+      body: JSON.stringify(draft) });
+    const recorded = await requireOk(await writeReview(), 201, `${agent.kind} owner review`) as
+      { receipt: { reviewId: string; findingId: string | null; decision: string }; replayed: boolean };
+    assert.equal(recorded.replayed, false);
+    assert.equal(recorded.receipt.decision, decision);
+    assert.equal(recorded.receipt.findingId !== null, decision === "changes_requested");
+    const reviewReplay = await requireOk(await writeReview(), 200, `${agent.kind} owner review replay`) as typeof recorded;
+    assert.equal(reviewReplay.replayed, true);
+    assert.deepEqual(reviewReplay.receipt, recorded.receipt, `${agent.kind}: exact replay must not record another review`);
+    const after = await requireOk(await fetch(new URL(`/api/v1/projects/${idOf(projectId)}/tasks/${idOf(jobId)}/results`, origin),
+      { headers: { cookie } }), 200, `${agent.kind} reviewed result`) as NonNullable<typeof pendingPage>;
+    assert.equal(after.items.length, 1, `${agent.kind}: result must remain singular after review`);
+    assert.equal(after.reviews.length, 1, `${agent.kind}: target must remain singular after review`);
+    // An owner acceptance is a saved quality vote, not automatic completion:
+    // this profile also requires the separate structural verification scenario.
+    assert.equal(after.reviews[0]?.status, decision === "accepted" ? "pending" : "changes_requested");
+    assert.equal(after.reviews[0]?.reviews.length, 1, `${agent.kind}: owner decision must be recorded exactly once`);
+    assert.equal(after.reviews[0]?.reviews[0]?.decision, decision);
+    const afterOptions = await requireOk(await fetch(new URL(reviewPath, origin), { headers: { cookie } }), 200,
+      `${agent.kind} saved review options`) as typeof options;
+    assert.equal(afterOptions.canReview, false);
+    assert.equal(afterOptions.availability, "already_reviewed");
+    assert.equal(afterOptions.ownReview?.reviewId, recorded.receipt.reviewId);
+    outcomes[agent.kind] = { jobId: jobId.slice(0, 24), packetDigest: packetDigest.slice(0, 19),
+      queueId: submittedBody.queueId.slice(0, 24), items, reviewStatus: after.reviews[0]?.status,
+      ownerDecision: decision, reviewCount: after.reviews[0]?.reviews.length };
   }
 
   process.stdout.write(`Package 6b journey: PASS ${JSON.stringify(outcomes)}\n`);

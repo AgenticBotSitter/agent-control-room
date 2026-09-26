@@ -1,5 +1,29 @@
 # Package 5 rehearsal status
 
+## Package 6 owner review, 2026-09-25 (disposable Mac-local proof)
+
+Starting from Claude's `d8196a20` base, the authenticated website API opened
+the one pending result for each of Hermes, Claude Code, and Codex. It recorded
+one `changes_requested` review for Hermes and one `accepted` review each for
+Claude Code and Codex. An identical repeat of each POST returned the same
+receipt without creating a second review; each result and target remained
+singular, and the owner could not record another decision on that target.
+The `changes_requested` target moved to that state. The two accepted reviews
+were recorded exactly once, but their targets correctly remained `pending`:
+the separate required text-verification scenario was not run. This is not a
+claim that those tasks are fully ready or complete.
+
+The updated rehearsal is the regression test for the owner-decision/replay
+path: it fails if a decision is missing, duplicated, incorrectly bound to the
+result, or has the wrong post-decision state. A clean full run passed on a fresh
+disposable PostgreSQL 17 cluster at loopback port 15541 and stopped its local
+services. TypeScript, the production build, and all 14 existing Mac-local
+browser-journey tests passed. The first browser-test invocation was blocked
+before execution by the sandbox's shared-memory restriction; the permitted
+rerun passed. This checkout has no `pnpm lint` script. No grant, live database,
+Tailscale setting, or production service was changed. Fake pinned executables
+were used; no real agent ran.
+
 ## Package 6b follow-up, 2026-09-25 (disposable Mac-local proof)
 
 The isolated PostgreSQL 17 rehearsal on loopback port 15541 passed the full
