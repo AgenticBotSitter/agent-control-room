@@ -1315,6 +1315,12 @@ async function installedClaudePortComposerFor(t: Parameters<typeof installedOper
 test("verified installed Claude ports enter the existing additive post-install tuple once without replacing Hermes or invoking native work", async t => {
   const f = await fixture(t), claude = await additiveClaudePackage(f), effects: string[] = [];
   const originalPorts = claude.claudePostInstall.compositionInput.ports;
+  if (process.platform !== "darwin") {
+    await assert.rejects(installedClaudePortComposerFor(t, f, claude),
+      /private_macos_claude_code_installed_port_composer_refused/u,
+      "the real macOS native port must refuse construction on other hosts");
+    return;
+  }
   const composed = await installedClaudePortComposerFor(t, f, claude);
   const bridged = composePrivateMacosClaudeCodePostInstallV1({
     schema: PRIVATE_MACOS_CLAUDE_CODE_POST_INSTALL_BRIDGE_V1,
