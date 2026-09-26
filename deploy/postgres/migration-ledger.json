@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "digest": "507d1d4c3703a7e54c237173e9559424fc296c819cc293d0bd54343be291af10",
+  "digest": "b86ae12e259266b76c9f4bb20e99d057c806bdae4fb4cfcee2cd4c3f1f466c4e",
   "entries": [
     {
       "file": "db/migrations/0001_control_room_core.sql",
@@ -515,13 +515,13 @@
     {
       "file": "db/migrations/0086_mac_local_owner_review_profile.sql",
       "order": 86,
-      "sha256": "37591ee635909898885c4b68934fd06d576c129a37e5c50e2472e57c6c9fd6fe",
+      "sha256": "f23d3b0277272d4349ebf452d6679c99f8fb32f5a4dc27e665185996cb979f9d",
       "kind": "migrate"
     },
     {
       "file": "db/migrations/0087_mac_local_fleet_signals.sql",
       "order": 87,
-      "sha256": "73ffb817e2c097f765a832f03a91b8841c4d229b9f726d379b8362da7f54d7b3",
+      "sha256": "55487112da40d81e6b4b08891100b571531daab96e60b55a21e03f1e46a8beb9",
       "kind": "migrate"
     },
     {
