@@ -19,18 +19,21 @@ and completion replays added no second record. Marvin's independent review
 showed that the 15-second poll only masked a parent/child lock-order inversion.
 The reader now locks job, attempt and lease before run, receipt and plan,
 matching the publisher's foreign-key order. The normal 2-second poll is
-restored and a reader-query-order test passes. **This is not yet an accepted
-fix:** a fresh full PG17 journey at the normal interval still failed before
-Claude reached pending review. PostgreSQL reported a second deadlock, between
+restored and a reader-query-order test passes. An earlier full PG17 journey at
+the normal interval failed before Claude reached pending review. PostgreSQL
+reported a second deadlock, between
 `SELECT * FROM control_completion_gate_integrity ... FOR UPDATE` and
 `INSERT INTO control_transition_events` in a concurrent task transition.
-The earlier parent/child cycle is gone, but the complete workflow remains red.
-The new PG17 collision assertion at the end of the journey has not run because
-the journey stops first. The exact remaining decision is whether to impose one
-canonical order for completion-integrity and task-transition locks across the
-existing quality/publication transactions, or to serialize these operations
-inside the Mac-local host. Neither should be replaced with a longer timer or
-a skipped check. No new grant or role is proposed. A failed CLI run remains covered by the separate
+The live `pg_locks` snapshot showed assignment held the tenant row while
+waiting for completion integrity, and the capacity-release transaction held
+completion integrity while its transition-event insert waited for the tenant
+foreign key. A tenant `FOR KEY SHARE` is now taken before completion inspection.
+The full three-agent journey at the normal interval passed on fresh disposable
+PG17; parent/child and tenant/integrity collision tests both passed afterward.
+The latter replays the captured two-sided wait: assignment locks the tenant
+before requesting completion integrity; capacity release requests a compatible
+tenant key-share before integrity and its transition-event insert. No longer
+timer, skipped check, new grant or role is used. A failed CLI run remains covered by the separate
 `owner-trusted-local-cli-delivery` regression: it records failure and publishes
 no result. No live database, agent, or Tailscale setting was changed.
 
@@ -39,7 +42,42 @@ review-plan and artifact-receipt tables, already authorized by the owner and
 recorded in trust-decision section 15. The structural digest and migration
 ledger were regenerated and verified. The production TypeScript check, Vite
 build, and focused conformance/publisher tests passed. This branch awaits Marvin's
-further deadlock repair and then Claude review; it is not merged or live.
+Claude review; it is not merged or live.
+
+### Lock-order audit boundary
+
+The observed deadlock involved two live statements and two already-held rows:
+
+| Transaction | Held first | Blocked on | Why |
+| --- | --- | --- | --- |
+| Task assignment | `tenants FOR UPDATE` | `control_completion_gate_integrity FOR UPDATE` | assignment takes the tenant lock before its completion-gate read |
+| Capacity release | `control_completion_gate_integrity FOR UPDATE` | `INSERT control_transition_events` | the insert needs a foreign-key key-share on the tenant |
+
+This was captured from `pg_stat_activity`, `pg_blocking_pids` and `pg_locks`
+while both transactions were blocked, not inferred from the deadlock message
+alone. The original result-publisher inversion was also observed: its artifact
+insert implicitly locks job/attempt before the run/receipt/plan, whereas the
+reader used to lock the child rows before job/attempt/lease.
+
+The proposed codebase-wide order `run → job → attempt → lease → integrity →
+plan/receipt` is **not yet a valid universal rule**: it omits the tenant lock
+shown above and contradicts the existing publisher's foreign-key acquisition
+order. Current source audit of paths named in the request:
+
+| Path | Current relevant acquisition order | Result |
+| --- | --- | --- |
+| Mac durable inspection | tenant key-share → job → attempt → lease → run → receipt → plan → completion integrity | tested with normal sweep and both PG17 collisions |
+| Durable publication metadata transaction | reservation → artifact manifest (job/attempt FK) → receipt (run FK) → plan | reader now matches the parent-before-child portion |
+| Durable review submission transaction | receipt → plan → completion integrity | separate from the metadata transaction; no task-transition insert in this transaction |
+| Native result submission `bound`/`inspectSubmitted` | run → job → plan read → completion integrity | not changed by this Mac-local patch; needs separate multi-path review before a universal order is declared |
+| Native task completion `releaseCapacity`/`complete` | injected inspection source, then job → attempt → lease and transition | Mac source now takes tenant and parent locks first; default native source uses the native ordering above |
+| Completion-gate store | integrity before its own completion records | callers may already hold other locks; the store alone cannot impose a universal order |
+| Canonical transition | tenant first for ready-job transitions, then entity; other transitions lock entity and write an event with a tenant FK | no safe universal rewrite inferred from this local proof |
+
+No other paths were changed. A separate architecture-level audit would be
+required before asserting that all hosted/native/remote transactions follow
+one order. This package solves the two reproduced Mac-local cycles without
+changing their authority, grants, or verification rules.
 
 ## Package 6 follow-up decision request, 2026-09-25 — direct binding is not valid
 

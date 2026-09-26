@@ -375,15 +375,18 @@ async function main() {
   // Exercise the publisher's implicit FK parent-before-child order against a
   // simultaneous reader. The conformance test above pins the real reader's
   // SQL lock sequence; this PG17 collision proves that order has no 40P01.
-  const collisionRow = (await coordinator.query<{ job_id: string; run_id: string; attempt_id: string; node_id: string; epoch: number }>(`
+  const collisionConnection = () => new Client({ host: roleMap.coordinator.host, port: roleMap.coordinator.port,
+    database: roleMap.coordinator.database, user: roleMap.coordinator.username, password: roleMap.coordinator.password,
+    connectionTimeoutMillis: 5_000, statement_timeout: 5_000 });
+  const collisionLookup = collisionConnection();
+  await collisionLookup.connect();
+  const collisionRow = (await collisionLookup.query<{ job_id: string; run_id: string; attempt_id: string; node_id: string; epoch: number }>(`
     SELECT r.job_id,r.id AS run_id,r.attempt_id,r.node_id,a.lease_epoch AS epoch
     FROM control_harness_runs r JOIN control_attempts a ON a.tenant_id=r.tenant_id AND a.id=r.attempt_id
     JOIN control_native_review_plans p ON p.tenant_id=r.tenant_id AND p.run_id=r.id
     WHERE r.tenant_id=$1 ORDER BY r.id LIMIT 1`, [config.localOwnerSession.tenantId])).rows[0];
+  await collisionLookup.end();
   assert.ok(collisionRow, "collision proof requires a saved result");
-  const collisionConnection = () => new Client({ host: roleMap.coordinator.host, port: roleMap.coordinator.port,
-    database: roleMap.coordinator.database, user: roleMap.coordinator.username, password: roleMap.coordinator.password,
-    connectionTimeoutMillis: 5_000, statement_timeout: 5_000 });
   const publisher = collisionConnection(), reader = collisionConnection();
   await Promise.all([publisher.connect(), reader.connect()]);
   try {
@@ -408,6 +411,37 @@ async function main() {
     await Promise.allSettled([publisher.end(), reader.end()]);
   }
   process.stdout.write("Package 6b parent-before-child PG17 collision: PASS (no deadlock)\n");
+
+  // Exact second collision captured in pg_locks: assignment held a tenant
+  // FOR UPDATE while waiting for completion-gate integrity; completion held
+  // integrity while its transition-event INSERT waited on the tenant FK.
+  // The reader's tenant key-share must now precede integrity acquisition.
+  const assignment = collisionConnection(), completion = collisionConnection();
+  await Promise.all([assignment.connect(), completion.connect()]);
+  try {
+    await assignment.query("BEGIN"); await completion.query("BEGIN");
+    const tenantId = config.localOwnerSession.tenantId;
+    await assignment.query("SELECT id FROM tenants WHERE id=$1 FOR UPDATE", [tenantId]);
+    const complete = (async () => {
+      await completion.query("SELECT id FROM tenants WHERE id=$1 FOR KEY SHARE", [tenantId]);
+      await completion.query("SELECT tenant_id FROM control_completion_gate_integrity WHERE tenant_id=$1 FOR UPDATE", [tenantId]);
+      await completion.query(`INSERT INTO control_transition_events
+        (id,tenant_id,entity_kind,entity_id,from_state,to_state,from_version,to_version,
+         actor_id,actor_type,idempotency_key,safe_metadata,occurred_at)
+        VALUES('transition:rehearsal-lock-order',$1,'service','service:rehearsal-lock-order',
+          'pending','done',0,1,'service:rehearsal-lock-order','service',
+          'rehearsal-lock-order','{}'::jsonb,now())`, [tenantId]);
+    })();
+    await new Promise(resolve => setTimeout(resolve, 100));
+    await assignment.query("SELECT tenant_id FROM control_completion_gate_integrity WHERE tenant_id=$1 FOR UPDATE", [tenantId]);
+    await assignment.query("COMMIT");
+    await complete;
+    await completion.query("ROLLBACK");
+  } finally {
+    await Promise.allSettled([assignment.query("ROLLBACK"), completion.query("ROLLBACK")]);
+    await Promise.allSettled([assignment.end(), completion.end()]);
+  }
+  process.stdout.write("Package 6b tenant-before-gate PG17 collision: PASS (no deadlock)\n");
 
   const finalDown = invoke(["scripts/mac-local/down.mjs", "--protected-root", protectedRoot]);
   assert.equal(finalDown.status, 0, finalDown.stderr || finalDown.stdout);

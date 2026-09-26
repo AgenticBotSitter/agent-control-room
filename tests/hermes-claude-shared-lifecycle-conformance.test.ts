@@ -244,8 +244,8 @@ test("Hermes and Claude run concurrently through one durable lifecycle without c
   const lockOrder: string[] = [];
   const [inspectedHermes, inspectedClaude] = await Promise.all([
     f.db.transaction(tx => durableInspection.inspectSubmitted({ query: async <T = Record<string, unknown>>(sql: string, params?: unknown[]) => {
-      if (/FOR UPDATE/u.test(sql)) {
-        const table = /FROM (control_[a-z_]+)/u.exec(sql)?.[1];
+      if (/FOR (?:UPDATE|KEY SHARE)/u.test(sql)) {
+        const table = /FROM (control_[a-z_]+|tenants)/u.exec(sql)?.[1];
         if (table) lockOrder.push(table);
       }
       return tx.query<T>(sql, params);
@@ -256,8 +256,8 @@ test("Hermes and Claude run concurrently through one durable lifecycle without c
     [hermesReview.artifact_id, claudeReview.artifact_id].sort());
   assert.deepEqual([inspectedHermes.execution.leaseId, inspectedClaude.execution.leaseId].sort(),
     [hermesAssigned.receipt.leaseId, claudeAssigned.receipt.leaseId].sort());
-  assert.deepEqual(lockOrder.slice(0, 4), ["control_jobs", "control_attempts", "control_leases", "control_harness_runs"],
-    "the authenticated reader must lock publisher FK parents before child result rows");
+  assert.deepEqual(lockOrder.slice(0, 5), ["tenants", "control_jobs", "control_attempts", "control_leases", "control_harness_runs"],
+    "the authenticated reader must lock tenant and publisher FK parents before child result rows");
   const unauthenticated = new DurableLocalResultInspectionServiceV1(f.db, {
     integrityKey: f.resultKey, reviewIntegrityKey: f.reviewKey, harnessIntegrityKey: f.harnessKey,
     deliveryIntegrityKeys: { hermes: new Uint8Array(32).fill(67), claude: new Uint8Array(32).fill(68) },

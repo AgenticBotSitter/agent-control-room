@@ -98,6 +98,11 @@ export class DurableLocalResultInspectionServiceV1 implements TaskResultInspecti
 
   async inspectSubmitted(tx: DatabaseSession, tenantIdValue: string, runIdValue: string): Promise<SubmittedTaskResultInspectionV1> {
     const tenantId = id.parse(tenantIdValue), runId = id.parse(runIdValue);
+    // Task assignment takes the tenant FOR UPDATE before reading the gate.
+    // Hold a compatible tenant key-share before taking child/gate locks, so a
+    // later transition event's tenant FK cannot invert that order.
+    const tenant = await tx.query("SELECT id FROM tenants WHERE id=$1 FOR KEY SHARE", [tenantId]);
+    if (tenant.rows.length !== 1) return unavailable();
     // Use the run only as an untrusted locator until the parent rows are locked.
     // The publisher takes job/attempt FK locks before run/receipt/plan locks;
     // taking these in the reverse order creates a PostgreSQL deadlock.

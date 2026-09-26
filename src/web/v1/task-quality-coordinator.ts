@@ -69,6 +69,8 @@ export class TaskQualityCoordinator {
       : new NativeResultSubmissionService(this.db, this.config).inspectSubmitted(tx, tenantId, runId);
   }
   private async scopeIn(tx: DatabaseSession, request: Pick<TaskQualityRequest, "projectId" | "jobId" | "runId">) {
+    const tenant = await tx.query("SELECT id FROM tenants WHERE id=$1 FOR KEY SHARE", [this.scope.tenantId]);
+    if (tenant.rows.length !== 1) return deny();
     const rows = await tx.query(`SELECT p.id FROM control_harness_runs r
       JOIN control_jobs j ON j.tenant_id=r.tenant_id AND j.id=r.job_id AND j.project_id=r.project_id
       JOIN projects p ON p.tenant_id=j.tenant_id AND p.id=j.project_id
