@@ -13,9 +13,13 @@ import { checkedPostgresScramVerifierV1 } from "./database-upgrade-scram.mjs";
 
 const bootstrapTarget = "host=/var/run/postgresql dbname=control_room user=postgres";
 const repoRoot = fileURLToPath(new URL("../../", import.meta.url));
-const principals = [...Object.keys(macRolePlan), ...Object.values(macRolePlan)];
+const logins = Object.keys(macRolePlan);
+const groups = Object.values(macRolePlan);
+const principals = [...logins, ...groups];
 const migrationLedger = new URL("../../deploy/postgres/migration-ledger.json", import.meta.url);
 const sha256 = bytes => createHash("sha256").update(bytes).digest("hex");
+const roleAttributes = role => `${role === "control_room_publisher" ? "LOGIN" : "NOLOGIN"} INHERIT `
+  + "NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS";
 
 async function pendingMigrations(applied) {
   const ledger = JSON.parse(await readFile(migrationLedger, "utf8"));
@@ -32,20 +36,31 @@ async function pendingMigrations(applied) {
 
 function roleState({ roles, memberships, defaultAcl }) {
   for (const role of roles) {
-    if (role.rolcanlogin !== Object.hasOwn(macRolePlan, role.rolname) || !role.rolinherit
+    if (!principals.includes(role.rolname)
+      || role.rolcanlogin !== Object.hasOwn(macRolePlan, role.rolname) || !role.rolinherit
       || role.rolsuper || role.rolcreatedb || role.rolcreaterole || role.rolreplication || role.rolbypassrls)
       throw new Error("upgrade_role_attributes_refused");
   }
   const found = new Set(roles.map(role => role.rolname));
-  for (const role of principals.filter(role => !role.includes("publisher")))
+  for (const role of logins.filter(role => role !== "control_room_publisher"))
     if (!found.has(role)) throw new Error("upgrade_existing_role_missing");
-  const actual = new Set(memberships.map(row => `${row.member}|${row.parent}`));
+  const actual = new Set();
+  for (const row of memberships) {
+    if (!logins.includes(row.member)) throw new Error("upgrade_non_login_membership_refused");
+    if (row.parent !== macRolePlan[row.member]
+      && !(row.parent === "control_room_application" && row.member !== "control_room_publisher"))
+      throw new Error("upgrade_unexpected_login_membership_refused");
+    const item = `${row.member}|${row.parent}`;
+    if (actual.has(item)) throw new Error("upgrade_duplicate_membership_refused");
+    actual.add(item);
+  }
   const desired = new Set(Object.entries(macRolePlan).map(([member, parent]) => `${member}|${parent}`));
   if (memberships.some(row => row.admin_option || !row.inherit_option || !row.set_option))
     throw new Error("upgrade_role_membership_options_refused");
   if (defaultAcl !== 0) throw new Error("upgrade_unexpected_default_grant");
-  return { found, membership: { missing: [...desired].filter(value => !actual.has(value)).sort(),
-    extra: [...actual].filter(value => !desired.has(value)).sort() } };
+  const split = value => { const [member, parent] = value.split("|"); return { member, parent }; };
+  return { found, membership: { grant: [...desired].filter(value => !actual.has(value)).sort().map(split),
+    revoke: [...actual].filter(value => !desired.has(value)).sort().map(split) } };
 }
 
 export async function planMacDatabaseUpgradeSnapshotV1(snapshot) {
@@ -54,7 +69,8 @@ export async function planMacDatabaseUpgradeSnapshotV1(snapshot) {
   const desired = await readDesiredMacGrantsV1();
   const actual = macGrantRowsToSetV1(snapshot.grants);
   const grants = diffMacGrantsV1(actual, desired);
-  return { pendingMigrations: pending, createRoles: principals.filter(role => !roles.found.has(role)).sort(),
+  return { pendingMigrations: pending, createRoles: principals.filter(role => !roles.found.has(role)).sort()
+    .map(role => ({ role, attributes: roleAttributes(role) })),
     membership: roles.membership, grants };
 }
 
@@ -68,7 +84,8 @@ async function databaseSnapshot(client) {
       auth.admin_option, auth.inherit_option, auth.set_option
     FROM pg_auth_members auth JOIN pg_roles member ON member.oid=auth.member
       JOIN pg_roles parent ON parent.oid=auth.roleid
-    WHERE member.rolname=ANY($1::text[]) ORDER BY member.rolname,parent.rolname`, [principals])).rows;
+    WHERE member.rolname=ANY($1::text[]) OR parent.rolname=ANY($2::text[])
+    ORDER BY member.rolname,parent.rolname`, [principals, groups])).rows;
   const defaultAcl = (await client.query(`SELECT count(*)::int AS count FROM pg_default_acl d
     CROSS JOIN LATERAL aclexplode(d.defaclacl) a JOIN pg_roles r ON r.oid=a.grantee
     WHERE r.rolname=ANY($1::text[])`, [principals])).rows[0].count;
@@ -80,9 +97,15 @@ async function report(client) {
   return planMacDatabaseUpgradeSnapshotV1(await databaseSnapshot(client));
 }
 
-const safeRole = value => {
-  if (!principals.includes(value)) throw new Error("upgrade_role_catalog_refused");
+const safeMember = value => {
+  if (!logins.includes(value)) throw new Error("upgrade_role_catalog_refused");
   return value;
+};
+const safeParent = (member, parent, verb) => {
+  if (verb === "REVOKE" && parent === "control_room_application" && member !== "control_room_publisher")
+    return parent;
+  if (verb === "GRANT" && macRolePlan[member] === parent) return parent;
+  throw new Error("upgrade_role_catalog_refused");
 };
 
 export async function inspectMacDatabaseUpgradeV1({ client }) {
@@ -110,31 +133,29 @@ export async function applyMacDatabaseUpgradeV1({ publisherVerifier, client, exp
     if (typeof applyPending !== "function") throw new Error("upgrade_pending_migrations_need_peer_runner");
     await applyPending();
   }
-  if (before.createRoles.some(role => !role.includes("publisher"))) throw new Error("upgrade_existing_role_missing");
   await client.query("BEGIN");
   try {
     const state = roleState(await databaseSnapshot(client));
-    if (!state.found.has("control_room_local_result_publisher"))
-      await client.query(`CREATE ROLE control_room_local_result_publisher NOLOGIN INHERIT
-        NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS`);
+    for (const group of groups.filter(role => !state.found.has(role)))
+      await client.query(`CREATE ROLE ${group} ${roleAttributes(group)}`);
     if (!state.found.has("control_room_publisher")) {
-      await client.query(`CREATE ROLE control_room_publisher LOGIN INHERIT NOSUPERUSER NOCREATEDB
-        NOCREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD ${client.escapeLiteral(publisherVerifier)}`);
+      await client.query(`CREATE ROLE control_room_publisher ${roleAttributes("control_room_publisher")}
+        PASSWORD ${client.escapeLiteral(publisherVerifier)}`);
     }
     const current = await readMacGrantCatalogV1(client);
     const desired = await readDesiredMacGrantsV1();
     await applyMacGrantDiffV1(client, diffMacGrantsV1(current, desired));
-    for (const item of state.membership.extra) {
-      const [member, parent] = item.split("|").map(safeRole);
+    for (const item of state.membership.revoke) {
+      const member = safeMember(item.member), parent = safeParent(member, item.parent, "REVOKE");
       await client.query(`REVOKE ${parent} FROM ${member}`);
     }
-    for (const item of state.membership.missing) {
-      const [member, parent] = item.split("|").map(safeRole);
+    for (const item of state.membership.grant) {
+      const member = safeMember(item.member), parent = safeParent(member, item.parent, "GRANT");
       await client.query(`GRANT ${parent} TO ${member}`);
     }
     const after = await report(client);
-    if (after.pendingMigrations.length || after.createRoles.length || after.membership.extra.length
-      || after.membership.missing.length || after.grants.extra.length || after.grants.missing.length)
+    if (after.pendingMigrations.length || after.createRoles.length || after.membership.revoke.length
+      || after.membership.grant.length || after.grants.extra.length || after.grants.missing.length)
       throw new Error("upgrade_convergence_refused");
     await client.query("COMMIT");
     return { upgraded: true, before, after };
