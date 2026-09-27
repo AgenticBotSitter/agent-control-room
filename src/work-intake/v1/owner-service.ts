@@ -6,7 +6,8 @@ import type { VerifiedWebIdentity } from "../../web/v1/access-verifier";
 import { WebAccessError } from "../../web/v1/access-verifier";
 import { WebSessionAuthority, type WebActor } from "../../web/v1/session-authority";
 import { WebTaskService } from "../../web/v1/task-service";
-import { workBatchProposalDigestV1, workBatchProposalSchemaV1, type WorkBatchProposalV1 } from "./schemas";
+import { workBatchProposalSchemaV1, type WorkBatchProposalV1 } from "./schemas";
+import { workBatchProposalDigestV1 } from "./digest";
 import { workBatchOwnerCommandSchemaV1, workBatchOwnerPageSchemaV1, workBatchOwnerReceiptSchemaV1, workBatchOwnerViewSchemaV1,
   type WorkBatchOwnerReceiptV1 } from "./owner-schemas";
 
