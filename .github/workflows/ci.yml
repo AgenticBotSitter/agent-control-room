@@ -333,6 +333,84 @@ jobs:
             tests/worktree-change-audit.test.ts \
             tests/worktree-evidence-web-authorization.test.ts
 
+  full-mac-local-rehearsal:
+    name: Full Mac-local rehearsal
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      # PGDG installs versioned binaries outside Ubuntu's default PATH.
+      PG_BIN: /usr/lib/postgresql/17/bin
+      LC_ALL: C.UTF-8
+      LANG: C.UTF-8
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22.13.0
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile --ignore-scripts
+      - name: Install PostgreSQL 17 from PGDG
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ca-certificates curl gnupg
+          sudo install -d -m 0755 /etc/apt/keyrings
+          curl --silent --show-error --location --output /tmp/pgdg.asc https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          test -s /tmp/pgdg.asc
+          head -1 /tmp/pgdg.asc | grep -q "BEGIN PGP PUBLIC KEY BLOCK"
+          sudo cp /tmp/pgdg.asc /etc/apt/keyrings/pgdg.asc
+          echo "deb [signed-by=/etc/apt/keyrings/pgdg.asc] http://apt.postgresql.org/pub/repos/apt $(lsb_release --short --codename)-pgdg main" | sudo tee /etc/apt/sources.list.d/pgdg.list
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends postgresql-17
+      - name: Build the production application
+        run: pnpm build
+      - name: Run both supported full journeys with pinned fakes
+        run: |
+          set -euo pipefail
+          rehearsal_root=""
+          rehearsal_port=""
+          cleanup() {
+            if [ -n "${rehearsal_root}" ] && [ -d "${rehearsal_root}" ]; then
+              pnpm mac:rehearsal down "${rehearsal_root}" --port "${rehearsal_port}" --fake-executables || true
+              rm -rf -- "${rehearsal_root}"
+            fi
+          }
+          trap cleanup EXIT INT TERM
+          run_rehearsal() {
+            mode="$1"
+            database_port="$2"
+            web_port="$3"
+            rehearsal_port="${database_port}"
+            rehearsal_root="$(mktemp -d "${RUNNER_TEMP}/mac-local-rehearsal.XXXXXX")"
+            pnpm mac:rehearsal up "${rehearsal_root}" --port "${database_port}" --web-port "${web_port}" --fake-executables
+            pnpm mac:prepare-task-runtime -- \
+              --protected-root "${rehearsal_root}/protected" \
+              --hermes-profile cr \
+              --hermes-provider opencode-go \
+              --hermes-model space-bunny-free \
+              --hermes-destination https://opencode.ai:443
+            if [ -n "${mode}" ]; then
+              node --import tsx scripts/mac-local/rehearsal/journey.ts "${rehearsal_root}" "${mode}"
+            else
+              node --import tsx scripts/mac-local/rehearsal/journey.ts "${rehearsal_root}"
+            fi
+            rm -rf -- "${rehearsal_root}"
+            rehearsal_root=""
+            rehearsal_port=""
+          }
+          echo "::notice::launchd installation is macOS-only; this Linux rehearsal uses mac:up's documented detached-host path."
+          run_rehearsal "" 15499 3217
+          if grep -q -- "--model-allowlists" scripts/mac-local/rehearsal/journey.ts; then
+            run_rehearsal "--model-allowlists" 15500 3218
+          else
+            echo "::notice::model-allowlists journey is not present on this pre-#365 revision; the default journey passed and stacked revisions must run both modes."
+          fi
+
   # Runs exactly the lanes the fast path skipped, so the union of everything that
   # ran is the complete suite. One matrix entry per lane, so a skipped lane is
   # caught up in parallel rather than serialised behind the others.
@@ -387,7 +465,7 @@ jobs:
   merge-gate:
     name: Full suite (merge gate)
     if: ${{ always() }}
-    needs: [route, quick, test-demo, test-server, test-components, test-articles, test-unified-product, full-gate]
+    needs: [route, quick, test-demo, test-server, test-components, test-articles, test-unified-product, full-mac-local-rehearsal, full-gate]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -414,6 +492,7 @@ jobs:
           check components "${{ needs.test-components.result }}"
           check articles "${{ needs.test-articles.result }}"
           check unified-product "${{ needs.test-unified-product.result }}"
+          check full-mac-local-rehearsal "${{ needs.full-mac-local-rehearsal.result }}"
           check full-gate "${{ needs.full-gate.result }}"
           if [ "${status}" -ne 0 ]; then
             echo "::error::the complete suite did not pass, so this pull request is not merge-ready"

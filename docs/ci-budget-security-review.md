@@ -233,3 +233,20 @@ check at under a second each; the hosted figures above are the ones to trust.
 - It does not claim merge-readiness is enforced. Nothing was added to branch protection.
   To make the gate binding, the repository has to require `Full suite (merge gate)` as a
   status check; that decision stays with the maintainer.
+
+## Amendment: full Mac-local rehearsal on Linux
+
+The CI workflow now runs the whole Mac-local application against a fresh PostgreSQL 17
+cluster on a standard `ubuntu-latest` runner. It builds the production application,
+creates the protected task runtime with the documented non-secret settings, and drives
+the real HTTP and queue path with pinned fake executables. It supplies no provider
+credentials and makes no provider request. The launchd installation step is macOS-only,
+so Linux uses the product's documented detached-host path and emits an explicit notice.
+
+Each journey gets a `mktemp` directory, dedicated loopback database and web ports, and
+an exit trap that stops PostgreSQL and removes the directory after success or failure.
+`PG_BIN` pins `initdb`, `pg_ctl`, and `psql` to PGDG's PostgreSQL 17 installation.
+Current main predates the model-allowlist journey and records an explicit compatibility
+notice; revisions that contain that mode run both the default and `--model-allowlists`
+journeys. The aggregate merge gate depends on this job, so a failed or cancelled
+rehearsal makes the revision non-merge-ready.
