@@ -305,10 +305,13 @@ test.describe("disposable owner website adversarial attacks", () => {
     const stale = await context.newPage();
     observeBrowserErrors(stale, browserErrors);
     await page.goto(projectPath); await stale.goto(projectPath);
+    const staleProject = await api(stale, `/api/v1/projects/${encodeURIComponent(projectA.projectId)}`);
+    const staleVersion = (JSON.parse(staleProject.text) as { project: { version: number } }).project.version;
     await page.getByRole("button", { name: "Pause project" }).click();
     await expect(page.getByText(/^paused ·/)).toBeVisible();
-    await stale.getByRole("button", { name: "Mark complete" }).click();
-    await expect(stale.getByRole("alert")).toContainText("changed in another tab");
+    const staleTransition = await api(stale, `/api/v1/projects/${encodeURIComponent(projectA.projectId)}/lifecycle`,
+      "POST", { lifecycle: "completed", expectedVersion: staleVersion }, "advstalelifecycle01");
+    expect(staleTransition.status).toBe(409);
     await stale.reload(); await expect(stale.getByText(/^paused ·/)).toBeVisible();
     await page.getByRole("button", { name: "Reopen project" }).click();
     await expect(page.getByText(/^active ·/)).toBeVisible();

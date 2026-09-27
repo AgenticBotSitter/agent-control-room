@@ -55,13 +55,14 @@ case " $* " in *" --model model-rehearsal "*) ;; *) exit 41 ;; esac
 case " $* " in *" --provider provider-rehearsal "*) ;; *) exit 41 ;; esac` : ""}
 case " $* " in *" --max-turns 4 "*) ;; *) exit 44 ;; esac
 cat >/dev/null
+session_id="fake-hermes-session-$(printf '%012d' "$$")"
 printf '%s\\n' 'rehearsal output' > "$PWD/hermes-result.txt"
-printf '%s\\n' '{"type":"system","subtype":"init","session_id":"fake-hermes-session-0001","model":"fake-model","timestamp":1}'
+printf '%s\\n' '{"type":"system","subtype":"init","session_id":"'"$session_id"'","model":"fake-model","timestamp":1}'
 printf '%s\\n' '{"type":"text","text":"I will write the requested result.","timestamp":2}'
 printf '%s\\n' '{"type":"tool_use","name":"write_file","tool_call_id":"tool-1","input":{"path":"hermes-result.txt"},"timestamp":3}'
 printf '%s\\n' '{"type":"tool_result","name":"write_file","tool_call_id":"tool-1","output":"Wrote hermes-result.txt","duration_ms":1,"is_error":false,"timestamp":4}'
-printf '%s\\n' '{"type":"result","session_id":"fake-hermes-session-0001","exit_code":0,"text":"Fake Hermes pinned executable result.","tokens":{"input":3,"output":5,"total":8,"cache_read":0,"cache_write":0},"duration_ms":5,"timestamp":5}'
-printf '%s\\n' 'session_id: fake-hermes-session-0001' >&2
+printf '%s\\n' '{"type":"result","session_id":"'"$session_id"'","exit_code":0,"text":"Fake Hermes pinned executable result.","tokens":{"input":3,"output":5,"total":8,"cache_read":0,"cache_write":0},"duration_ms":5,"timestamp":5}'
+printf 'session_id: %s\\n' "$session_id" >&2
 exit 0
 `;
 }
@@ -75,11 +76,12 @@ for a in "$@"; do [ "$a" = "--version" ] && printf '%s\\n' '${version}' && exit 
 ${selected ? `case " $* " in *" --model sonnet-rehearsal "*) ;; *) exit 42 ;; esac
 case " $* " in *" --effort high "*) ;; *) exit 42 ;; esac` : ""}
 cat >/dev/null
-printf '%s\\n' '{"type":"system","subtype":"init","session_id":"00000000-0000-4000-8000-00000000fa01","model":"fake-model"}'
-printf '%s\\n' '{"type":"rate_limit_event","session_id":"00000000-0000-4000-8000-00000000fa01","rate_limit_info":{"status":"allowed"}}'
-printf '%s\\n' '{"type":"system","subtype":"thinking_tokens","session_id":"00000000-0000-4000-8000-00000000fa01","thinking_tokens":2}'
-printf '%s\\n' '{"type":"assistant","session_id":"00000000-0000-4000-8000-00000000fa01","message":{"role":"assistant","content":[{"type":"text","text":"Fake Claude Code pinned executable result."}]}}'
-printf '%s\\n' '{"type":"result","subtype":"success","is_error":false,"session_id":"00000000-0000-4000-8000-00000000fa01","result":"Fake Claude Code pinned executable result.","terminal_reason":"completed","total_cost_usd":0,"usage":{}}'
+session_id="00000000-0000-4000-8000-$(printf '%012d' "$$")"
+printf '%s\\n' '{"type":"system","subtype":"init","session_id":"'"$session_id"'","model":"fake-model"}'
+printf '%s\\n' '{"type":"rate_limit_event","session_id":"'"$session_id"'","rate_limit_info":{"status":"allowed"}}'
+printf '%s\\n' '{"type":"system","subtype":"thinking_tokens","session_id":"'"$session_id"'","thinking_tokens":2}'
+printf '%s\\n' '{"type":"assistant","session_id":"'"$session_id"'","message":{"role":"assistant","content":[{"type":"text","text":"Fake Claude Code pinned executable result."}]}}'
+printf '%s\\n' '{"type":"result","subtype":"success","is_error":false,"session_id":"'"$session_id"'","result":"Fake Claude Code pinned executable result.","terminal_reason":"completed","total_cost_usd":0,"usage":{}}'
 exit 0
 `;
 }
@@ -94,7 +96,8 @@ for a in "$@"; do [ "$a" = "--version" ] && printf '%s\\n' '${version}' && exit 
 ${selected ? `case " $* " in *" -m gpt-rehearsal "*) ;; *) exit 43 ;; esac
 case " $* " in *" model_reasoning_effort=high "*) ;; *) exit 43 ;; esac` : ""}
 cat >/dev/null
-printf '%s\\n' '{"type":"thread.started","thread_id":"00000000-0000-4000-8000-00000000fc01"}'
+thread_id="00000000-0000-4000-8000-$(printf '%012d' "$$")"
+printf '%s\\n' '{"type":"thread.started","thread_id":"'"$thread_id"'"}'
 printf '%s\\n' '{"type":"turn.started"}'
 printf '%s\\n' '{"type":"item.completed","item":{"type":"reasoning"}}'
 printf '%s\\n' '{"type":"item.completed","item":{"type":"agent_message","text":"Fake Codex pinned executable result."}}'
