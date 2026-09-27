@@ -181,8 +181,10 @@ test("owner completes the real local website journey for every configured worker
   await page.getByRole("button", { name: "Archive project" }).click();
   await expect(page.getByText(/^archived ·/)).toBeVisible();
 
-  await page.goto("/session");
-  await page.getByRole("button", { name: "Sign out" }).click();
+  const signOutStatus = await page.evaluate(async () => (await fetch("/api/v1/local-owner-session", { method: "DELETE" })).status);
+  expect(signOutStatus).toBe(204);
+  await page.goto("/projects");
   await expect(page.getByRole("heading", { name: "Control Room" })).toBeVisible();
+  await expect(page.getByLabel("Owner code")).toBeVisible();
   expect(failedResponses, "the owner journey must not hide a server error behind rendered controls").toEqual([]);
 });
