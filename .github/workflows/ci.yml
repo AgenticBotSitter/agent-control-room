@@ -482,6 +482,41 @@ jobs:
           pnpm build
           run_browser_suite --browser-owner-e2e 15501 3219
           run_browser_suite --browser-adversarial-e2e 15502 3220
+      - name: Capture owner page screenshots
+        # Visual evidence for the review: the real signed-in pages, in both colour
+        # schemes and at the phone width the owner actually uses. Every image also
+        # gets a JSON sidecar with the computed background and any horizontal
+        # overflow, so a caption cannot claim a theme the page did not paint.
+        #
+        # Best-effort by design, and `continue-on-error` says so explicitly. The
+        # run_browser_suite function tears its stack down as it returns, so on a
+        # normal green run there is nothing left to photograph and the capture is
+        # skipped. It is kept because on a failing journey the evidence is exactly
+        # what a reviewer wants, and because a missing screenshot must never be the
+        # reason an otherwise-green owner journey reports red.
+        #
+        # Making this always-on needs the stack to outlive run_browser_suite, which
+        # is a change to the rehearsal harness rather than to this workflow.
+        # Recorded as a known limitation instead of working around it here.
+        if: ${{ always() }}
+        continue-on-error: true
+        run: |
+          pnpm mac:rehearsal up "${rehearsal_root}" --port 15501 --web-port 3219 --fake-executables \
+            || { echo "rehearsal is not running; skipping screenshots"; exit 0; }
+          CONTROL_ROOM_SCREENSHOT_ORIGIN="http://127.0.0.1:3219" \
+          CONTROL_ROOM_SCREENSHOT_ROOT="${rehearsal_root}" \
+            node scripts/owner-page-screenshots.mjs test-results/owner-screenshots light
+          CONTROL_ROOM_SCREENSHOT_ORIGIN="http://127.0.0.1:3219" \
+          CONTROL_ROOM_SCREENSHOT_ROOT="${rehearsal_root}" \
+            node scripts/owner-page-screenshots.mjs test-results/owner-screenshots dark
+      - name: Upload owner page screenshots
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: owner-page-screenshots
+          path: test-results/owner-screenshots
+          if-no-files-found: ignore
+          retention-days: 14
       - name: Upload browser failure evidence
         if: ${{ failure() }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
