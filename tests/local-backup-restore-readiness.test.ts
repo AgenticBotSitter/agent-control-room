@@ -9,7 +9,7 @@ import { localBackupRestoreEvidenceDigestForInstallationPlanV1 } from "../src/ha
 import { planInstallationTopologyV1 } from "../src/harness/v1/installation-topology";
 import { sha256Digest } from "../src/security";
 import { createMacLocalDatabaseBackupV1 } from "../scripts/ops/backup-database.mjs";
-import { normalizeMacApplicationOwnershipV1, verifyMacLocalDatabaseBackupV1 } from
+import { databaseBackupVerificationRootPrefixV1, normalizeMacApplicationOwnershipV1, verifyMacLocalDatabaseBackupV1 } from
   "../scripts/ops/verify-database-backup.mjs";
 
 const planDigest = sha256Digest("reviewed-local-installation-plan");
@@ -106,6 +106,17 @@ test("writes a secret-free digest manifest and refuses a tampered dump before st
   await writeFile(join(root, "database.dump"), "tampered-custom-format-backup");
   await assert.rejects(verifyMacLocalDatabaseBackupV1({ backup: root, port: 15620,
     pgBin: "/unused/postgres/bin" }), /database_backup_digest_refused/u);
+});
+
+test("uses a short macOS PostgreSQL socket path even when TMPDIR is long", () => {
+  const longMacTemporaryDirectory = `/var/folders/${"nested-path/".repeat(12)}T`;
+  const prefix = databaseBackupVerificationRootPrefixV1("darwin", longMacTemporaryDirectory);
+  const longestAssignedSocket = join(`${prefix}XXXXXX`, "socket", ".s.PGSQL.15759");
+  assert.equal(prefix, "/tmp/crv-");
+  assert.ok(Buffer.byteLength(longestAssignedSocket) <= 103,
+    `PostgreSQL socket path is ${Buffer.byteLength(longestAssignedSocket)} bytes: ${longestAssignedSocket}`);
+  assert.equal(databaseBackupVerificationRootPrefixV1("linux", longMacTemporaryDirectory),
+    join(longMacTemporaryDirectory, "control-room-backup-verify-"));
 });
 
 test("normalizes only restored application ownership, never bootstrap system ownership", async () => {

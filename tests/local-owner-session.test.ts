@@ -105,3 +105,20 @@ test("expired and revoked persisted sessions are refused", async () => {
   assert.throws(() => expiring.verify(request("/api/v1/projects", { cookie: expired.cookie.split(";", 1)[0]! }), 903_001),
     (error: unknown) => error instanceof WebAccessError && error.code === "authentication_required");
 });
+
+test("a failed persistent revoke is surfaced and leaves the in-memory session active", async () => {
+  const rows = new Map<string, PersistedLocalOwnerSessionV1>();
+  const store: LocalOwnerSessionStoreV1 = {
+    async load() { return [...rows.values()]; },
+    async save(session) { rows.set(session.tokenDigest, { ...session }); },
+    async revoke() { throw new Error("persistent_revoke_failed"); },
+  };
+  const service = new LocalOwnerSessionServiceV1(profile, store);
+  const issued = await service.issue(request(undefined, { origin, "content-type": "application/json" },
+    JSON.stringify({ ownerCode })), ownerCode, 1_000);
+  const cookie = issued.cookie.split(";", 1)[0]!;
+  await assert.rejects(service.revoke(request(undefined, { origin, cookie }), 2_000), /persistent_revoke_failed/u);
+  assert.equal(service.verify(request("/api/v1/projects", { cookie }), 2_001).subject, profile.subject);
+  const restarted = new LocalOwnerSessionServiceV1(profile, store, await store.load(2_001));
+  assert.equal(restarted.verify(request("/api/v1/projects", { cookie }), 2_001).subject, profile.subject);
+});

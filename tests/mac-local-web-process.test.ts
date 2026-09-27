@@ -106,6 +106,12 @@ test("the real Mac-local wrapper signs in locally and reaches the existing proje
   const overview = await app.handle(request(`/api/v1/projects/${encodeURIComponent(projectId)}/overview`,
     { headers: { cookie: cookie! } }), () => new Response("unused"));
   assert.equal(overview.status, 200);
+  for (const malformedProjectId of ["%", "%2F", "%20", "a".repeat(201)]) {
+    const malformedOverview = await app.handle(request(`/api/v1/projects/${malformedProjectId}/overview`,
+      { headers: { cookie: cookie! } }), () => new Response("unused"));
+    assert.equal(malformedOverview.status, 404, malformedProjectId);
+    assert.deepEqual(await malformedOverview.json(), { error: "not_found" });
+  }
   const reviews = await app.handle(request(`/api/v1/projects/${encodeURIComponent(projectId)}/reviews`,
     { headers: { cookie: cookie! } }), () => new Response("unused"));
   assert.equal(reviews.status, 200);
