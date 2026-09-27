@@ -302,7 +302,9 @@ async function main() {
     // 6) poll for the task host's own queue worker to run the fake pinned
     // executable through the production adapter and reach pending review.
     let reviewStatus: string | undefined, items = 0;
-    let pendingPage: { items: { artifactId: string; contentHash: string; modelSelection?: { model: string; effort: string } }[];
+    let pendingPage: { items: { artifactId: string; contentHash: string; modelSelection?: {
+      model: string; effort: string; profile?: string; provider?: string;
+    } }[];
       reviews: { targetId: string; targetDigest: string; contentHash: string; status: string;
         matchingArtifactIds: string[]; reviews: { decision: string }[] }[] } | undefined;
     const polled = await waitFor(async () => {
@@ -320,8 +322,9 @@ async function main() {
     const page = pendingPage!;
     const artifact = page.items[0]!, target = page.reviews[0]!;
     assert.deepEqual(artifact.modelSelection, withModelAllowlists
-      ? { model: agent.worker === "hermes" ? "model-rehearsal" : agent.worker === "claude-code" ? "sonnet-rehearsal" : "gpt-rehearsal",
-          effort: agent.worker === "hermes" ? "default" : "high" }
+      ? agent.worker === "hermes"
+        ? { model: "model-rehearsal", effort: "default", profile: "build", provider: "provider-rehearsal" }
+        : { model: agent.worker === "claude-code" ? "sonnet-rehearsal" : "gpt-rehearsal", effort: "high" }
       : { model: "default", effort: "default" }, `${agent.kind}: result must record selected or default model evidence`);
     assert.deepEqual(target.matchingArtifactIds, [artifact.artifactId], `${agent.kind}: the pending target must bind the one saved artifact`);
     assert.equal(target.contentHash, artifact.contentHash);
