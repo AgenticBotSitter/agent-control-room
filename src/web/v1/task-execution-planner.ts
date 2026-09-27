@@ -250,7 +250,8 @@ export type TaskPlanningTemplateChoice = Readonly<{ id: string; adapter: NativeT
 export type TaskPlanningOperation = Readonly<{ tenantId: string; workspaceId: string; plan: TaskExecutionPlanner["plan"];
   ensureProject?: (projectId: string) => Promise<void>;
   supportsProject?: (projectId: string) => boolean; templatesForProject?: (projectId: string) => readonly TaskPlanningTemplateChoice[];
-  readSaved?: TaskExecutionPlanner["readSaved"]; readPreparedWorker?: TaskExecutionPlanner["readPreparedWorker"];
+  readSaved?: TaskExecutionPlanner["readSaved"]; readSavedContinuation?: TaskExecutionPlanner["readSavedContinuation"];
+  readPreparedWorker?: TaskExecutionPlanner["readPreparedWorker"];
   readConfiguredLocalRoute?: TaskExecutionPlanner["readConfiguredLocalRoute"] }>;
 type Row = { tenant_id: string; project_id: string; source_job_id: string; job_id: string; plan: unknown; auth_tag: string };
 const joined = (tx: DatabaseSession): DatabaseClient => ({ query: tx.query.bind(tx), transaction: async work => work(tx),
@@ -464,7 +465,8 @@ export class TaskExecutionPlanner {
   webOperation(): TaskPlanningOperation {
     return Object.freeze({ tenantId: this.scope.tenantId, workspaceId: this.scope.workspaceId, plan: this.plan.bind(this),
       supportsProject: this.supportsProject.bind(this), templatesForProject: this.templatesForProject.bind(this),
-      readSaved: this.readSaved.bind(this), readPreparedWorker: this.readPreparedWorker.bind(this) });
+      readSaved: this.readSaved.bind(this), readSavedContinuation: this.readSavedContinuation.bind(this),
+      readPreparedWorker: this.readPreparedWorker.bind(this) });
   }
   supportsProject(projectId: string) {
     return (this.currentTemplateMaps().projectTemplates.get(projectId) ?? []).some(template => this.canPrepare(template));
@@ -493,6 +495,11 @@ export class TaskExecutionPlanner {
   }
   /** Historical receipt only; never replans or applies current template expiry to saved evidence. */
   async readSaved(identity: VerifiedWebIdentity, projectId: string, sourceJobId: string) {
+    return (await this.readSavedContinuation(identity, projectId, sourceJobId))?.receipt ?? null;
+  }
+  /** Authenticated source-to-prepared continuation. The status is read from the
+   * same canonical job verified against the immutable execution plan. */
+  async readSavedContinuation(identity: VerifiedWebIdentity, projectId: string, sourceJobId: string) {
     localId.parse(projectId); localId.parse(sourceJobId);
     return new WebSessionAuthority(this.db, this.scope, this.clock, "task").authenticated(identity, async (tx, actor) => {
       actor.require("tasks.read", projectId);
@@ -507,8 +514,9 @@ export class TaskExecutionPlanner {
       if (["control-room.task-execution-plan/v2", "control-room.task-execution-plan/v4", "control-room.task-execution-plan/v6", "control-room.task-execution-plan/v8", "control-room.task-execution-plan/v10", "control-room.task-execution-plan/v12", "control-room.task-execution-plan/v14", "control-room.task-execution-plan/v16"].includes(plan.schema) || plan.projectId !== projectId
         || plan.sourceJobId !== sourceJobId || plan.sourceDigest !== sha256Digest(source)
         || plan.sourceInputDigest !== source.job.inputDigest) fail();
-      await this.checkedJob(tx, plan);
-      return this.receipt(plan);
+      const prepared = await this.checkedJob(tx, plan);
+      return { receipt: this.receipt(plan), preparedTask: { jobId: prepared.id, state: prepared.state,
+        version: prepared.version, updatedAt: prepared.updatedAt } };
     });
   }
   /** A deliberately small read model for a prepared task page. It verifies the saved plan

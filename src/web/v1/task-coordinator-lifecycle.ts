@@ -418,6 +418,10 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
       const actor = { ...identity };
       return run(() => planner.readSaved(actor, projectId, sourceJobId));
     },
+    readSavedContinuation: (identity, projectId, sourceJobId) => {
+      const actor = { ...identity };
+      return run(() => planner.readSavedContinuation(actor, projectId, sourceJobId));
+    },
     readPreparedWorker: (identity, projectId, jobId) => {
       const actor = { ...identity };
       return run(() => planner.readPreparedWorker(actor, projectId, jobId));

@@ -12,10 +12,17 @@ test("task detail presents only the server-recorded prepared worker", async t =>
   const command = await saved.json() as { receipt: { jobId: string } };
   const detailPath = `${f.path}/${encodeURIComponent(command.receipt.jobId)}`;
   const calls: unknown[][] = [];
+  const preparedJobId = "job:prepared-child";
   const handler = createTaskHttpHandler({ origin, trust, service: f.tasks, clock: () => now,
     planning: { async plan() { throw new Error("not reached by task detail"); }, async readPreparedWorker(...input) {
       calls.push(input);
       return "claude" as const;
+    }, async readSavedContinuation(_identity, projectId, sourceJobId) {
+      const source = await f.tasks.detail(f.identity, projectId, sourceJobId);
+      const observedAt = new Date(now).toISOString();
+      return { receipt: { projectId, sourceJobId, jobId: preparedJobId, sourceInputDigest: source.inputDigest,
+        inputDigest: `sha256:${"f".repeat(64)}`, plannedAt: observedAt, startsWork: false as const, grantsExecutionAuthority: false as const },
+      preparedTask: { jobId: preparedJobId, state: "leased" as const, version: 2, updatedAt: observedAt } };
     }, async readConfiguredLocalRoute() { return "configured" as const; } } });
 
   const response = await handler(request(detailPath));
@@ -25,6 +32,15 @@ test("task detail presents only the server-recorded prepared worker", async t =>
   assert.deepEqual(detail.localRouteObservation, { state: "not_observed", adapter: "claude" });
   assert.equal(calls.length, 1);
   assert.deepEqual(calls[0]?.slice(1), [f.project.projectId, command.receipt.jobId]);
+
+  const planningResponse = await handler(request(`${detailPath}/plan`));
+  assert.equal(planningResponse.status, 200);
+  const planning = await planningResponse.json() as {
+    availability: string; savedPlan: { jobId: string }; preparedTask: { jobId: string; state: string } };
+  assert.equal(planning.availability, "already_planned");
+  assert.equal(planning.savedPlan.jobId, preparedJobId);
+  assert.deepEqual(planning.preparedTask, { jobId: preparedJobId, state: "leased", version: 2,
+    updatedAt: new Date(now).toISOString() });
 
   // A browser parameter cannot choose a worker or reinterpret the saved plan.
   assert.equal((await handler(request(`${detailPath}?preparedFor=hermes`))).status, 400);

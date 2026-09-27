@@ -53,6 +53,20 @@ test("durable result review submission re-verifies the publication and audits on
     WHERE tenant_id=$1 AND kind='target'`, [binding.tenantId])).rows[0], { count: 1 });
 });
 
+test("recovers a committed artifact and plan when target registration was interrupted", async t => {
+  const { f, published, service } = await prepared("run:durable-review-recovery"); t.after(f.close);
+  assert.deepEqual((await f.db.query<{ count: number }>(`SELECT count(*)::int AS count
+    FROM control_completion_gate_records WHERE tenant_id=$1 AND kind='target'`, [binding.tenantId])).rows[0], { count: 0 });
+
+  assert.deepEqual(await service.recoverProject(binding.tenantId, binding.projectId), { recovered: 1, hasMore: false });
+  const recovered = await service.submit(binding.tenantId, "run:durable-review-recovery");
+  assert.equal(recovered.replayed, true);
+  assert.deepEqual(recovered.target, published.target);
+  assert.deepEqual(await service.recoverProject(binding.tenantId, binding.projectId), { recovered: 0, hasMore: false });
+  assert.deepEqual((await f.db.query<{ count: number }>(`SELECT count(*)::int AS count
+    FROM control_completion_gate_records WHERE tenant_id=$1 AND kind='target'`, [binding.tenantId])).rows[0], { count: 1 });
+});
+
 test("durable result review submission fails closed when the immutable plan cannot be authenticated", async t => {
   const { f } = await prepared("run:durable-review-plan"); t.after(f.close);
   const service = new DurableResultReviewSubmissionServiceV1(f.db, { integrityKey: f.resultKey,

@@ -22,7 +22,7 @@ import { taskDetailSchema } from "./task-wire";
 import { observeTaskLocalRoute, type TrustedConfiguredLocalRoute } from "./task-local-route-observation";
 
 export function createTaskHttpHandler(options: { origin: string; trust?: AccessTrust; service: WebTaskService;
-  ownerReviews?: WebTaskReviewService; ownerVerifications?: WebTaskVerificationService; planning?: Pick<TaskPlanningOperation, "plan" | "ensureProject" | "readSaved" | "readPreparedWorker" | "readConfiguredLocalRoute" | "supportsProject" | "templatesForProject">;
+  ownerReviews?: WebTaskReviewService; ownerVerifications?: WebTaskVerificationService; planning?: Pick<TaskPlanningOperation, "plan" | "ensureProject" | "readSaved" | "readSavedContinuation" | "readPreparedWorker" | "readConfiguredLocalRoute" | "supportsProject" | "templatesForProject">;
   assignment?: TaskAssignmentOperation; approvals?: TaskApprovalOperation; submission?: TaskSubmissionOperation; revisions?: TaskRevisionOperation;
   /** Trusted process selection; the browser cannot choose a header/provider. */
   gatewayAssertionProfile?: GatewayAssertionProviderProfileV1; clock?: () => number;
@@ -207,10 +207,13 @@ export function createTaskHttpHandler(options: { origin: string; trust?: AccessT
           if (authorized.availability === "available") await options.planning?.ensureProject?.(projectId);
           const value = authorized.availability === "available" && options.planning?.supportsProject
             && options.planning.supportsProject(projectId) !== true ? { ...authorized, availability: "not_configured" as const } : authorized;
-          const savedPlan = await options.planning?.readSaved?.(identity, projectId, jobId);
+          const continuation = await options.planning?.readSavedContinuation?.(identity, projectId, jobId);
+          const savedPlan = options.planning?.readSavedContinuation ? continuation?.receipt ?? null
+            : await options.planning?.readSaved?.(identity, projectId, jobId);
           const templates = options.planning?.templatesForProject?.(projectId);
           return Response.json(taskPlanningOptionsSchema.parse({ ...value, ...(templates !== undefined ? { templates } : {}),
-            ...(savedPlan !== undefined ? { savedPlan, ...(savedPlan ? { availability: "already_planned" } : {}) } : {}) }),
+            ...(savedPlan !== undefined ? { savedPlan, ...(savedPlan ? { availability: "already_planned" } : {}) } : {}),
+            ...(continuation ? { preparedTask: continuation.preparedTask } : {}) }),
           { headers: privateResponseHeaders });
         }
         if (request.method !== "POST") throw new WebAccessError("not_found");

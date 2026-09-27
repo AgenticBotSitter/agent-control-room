@@ -38,6 +38,7 @@ async function createPreparedTask(page: Page, projectPath: string, title: string
     await page.reload();
     await expect(page.getByRole("heading", { name: title })).toBeVisible();
   }
+  const sourceUrl = page.url();
   const workerChoice = page.getByLabel("Choose a prepared worker");
   await workerChoice.selectOption({ label: worker });
   if (observePolling) {
@@ -50,6 +51,10 @@ async function createPreparedTask(page: Page, projectPath: string, title: string
     await expect(workerChoice).toHaveValue(/template:/);
   }
   await page.getByRole("button", { name: "Prepare saved task" }).click();
+  await page.goto(sourceUrl);
+  await expect(page.getByRole("status")).toContainText("Prepared task status: proposed");
+  await expect(page.getByRole("button", { name: "Assign after preparation" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Approve after assignment" })).toHaveCount(0);
   await page.getByRole("link", { name: "Open the prepared task" }).click();
   await expect(page.getByRole("button", { name: "Assign and run" })).toBeEnabled();
   if (!run) return;
@@ -95,6 +100,8 @@ async function waitForLatestDisposableLeaseExpiry(jobId: string) {
 }
 
 async function openResult(page: Page) {
+  await expect(page.getByText(/Local agent evidence/).first()).toBeVisible();
+  await expect(page.getByText(/Legacy adapter evidence/)).toHaveCount(0);
   await refreshUntil(page, "Read result");
   await page.getByRole("button", { name: "Read result" }).first().click();
   await expect(page.getByRole("heading", { name: "Received result" })).toBeVisible();

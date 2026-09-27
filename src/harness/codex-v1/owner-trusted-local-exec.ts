@@ -109,7 +109,10 @@ export function createOwnerTrustedLocalCodexExecV1(dependencies: Readonly<{ spaw
   return Object.freeze({ async execute(input) {
     if (!safeInput(input)) return failed("failed", "invalid_input");
     if (input.signal?.aborted) return failed("canceled", "aborted_before_spawn");
-    try { if ((await list(input.workingDirectory)).length !== 0) return failed("failed", "working_directory_not_empty"); }
+    // The configured worker directory is persistent across tasks. Listing it
+    // is an accessibility check only; prior task output must not disable the
+    // worker for every later assignment.
+    try { await list(input.workingDirectory); }
     catch { return failed("failed", "working_directory_unavailable"); }
     // Directory inspection is asynchronous. A cancellation that arrives while
     // it is in flight must fence the process boundary, not merely the earlier

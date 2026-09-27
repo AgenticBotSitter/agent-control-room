@@ -136,7 +136,8 @@ function RunPanel({ run }: { run: TaskRun }) {
     <h4>{run.harness} · {retained ? "Agent progress is not current" : label}</h4>
     {retained && <p className="private-notice">Not a current live signal. {run.availability ? `Availability: ${run.availability}. ` : ""}
       Last reported state: {label}.</p>}
-    <p>{run.source === "legacy" ? "Legacy adapter evidence" : "Native agent evidence"} · <ConfiguredTimestamp value={run.lastObservedAt} prefix="Last observed" /></p>
+    <p>{run.source === "native_snapshot" ? "Native agent evidence"
+      : run.routeEvidence && run.routeEvidence !== "other_or_unknown" ? "Local agent evidence" : "Legacy adapter evidence"} · <ConfiguredTimestamp value={run.lastObservedAt} prefix="Last observed" /></p>
     {run.model && <p><strong>Model:</strong> {run.profile ? `${run.profile} · ` : ""}{run.model} · effort {run.effort ?? "unknown"}{run.provider ? ` · ${run.provider}` : ""}</p>}
     {routeLabel && <p className="private-note">Saved adapter route: {routeLabel}. This identifies the signed run record only; it does not prove that this computer still has that worker configured, available, or running.</p>}
     <dl className="private-task-facts"><div><dt>First observed working</dt><dd>{run.firstObservedExecutionAt ? <ConfiguredTimestamp value={run.firstObservedExecutionAt} /> : "Unknown"}</dd></div>
@@ -210,7 +211,7 @@ export function TaskDetailPanel({ detail }: { detail: TaskDetail }) {
   const preparedFor = detail.preparedFor === "hermes" ? "Hermes Agent" : detail.preparedFor === "codex" ? "Codex"
     : detail.preparedFor === "claude" ? "Claude Code" : detail.preparedFor === "configured_worker" ? "Configured worker" : undefined;
   const preparedRouteDetail = detail.preparedFor === "hermes"
-    ? "This route is limited to a supplied-text review. Before it can receive even that work, its local qualification and separate owner enablement must be recorded."
+    ? "This route is limited to one bounded task in its assigned local workspace. Before it can receive work, its local qualification and separate owner enablement must be recorded."
     : detail.preparedFor === "claude"
       ? "This route is limited to one text-only review. Its fixed first-task policy does not allow tools, add-ons, saved sessions, or unattended permission prompts."
       : detail.preparedFor === "codex"

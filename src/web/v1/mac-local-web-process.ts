@@ -31,7 +31,7 @@ export interface MacLocalWebProcessOptionsV1 {
    * The local wrapper owns no planner, queue, review store, or worker. */
   ownerReviews?: WebTaskReviewService;
   ownerVerifications?: WebTaskVerificationService;
-  planning?: Pick<TaskPlanningOperation, "plan" | "ensureProject" | "readSaved" | "readPreparedWorker" | "readConfiguredLocalRoute" | "supportsProject" | "templatesForProject">;
+  planning?: Pick<TaskPlanningOperation, "plan" | "ensureProject" | "readSaved" | "readSavedContinuation" | "readPreparedWorker" | "readConfiguredLocalRoute" | "supportsProject" | "templatesForProject">;
   assignment?: TaskAssignmentOperation;
   approvals?: TaskApprovalOperation;
   submission?: TaskSubmissionOperation;

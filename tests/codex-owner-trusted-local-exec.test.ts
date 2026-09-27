@@ -86,10 +86,11 @@ test("rechecks cancellation after asynchronous directory inspection and never sp
   assert.equal(spawned, false);
 });
 
-test("requires the caller-provided task directory to be empty", async () => {
+test("reuses an accessible persistent task directory", async () => {
   const cwd = await taskDirectory(); await chmod(cwd, 0o700); await writeFile(join(cwd, "not-empty"), "x");
   const result = await adapter().execute(input(cwd, "hello"));
-  assert.deepEqual(result, { status: "failed", reason: "working_directory_not_empty" });
+  assert.equal(result.status, "completed");
+  assert.equal((await readdir(cwd)).includes("not-empty"), true);
 });
 
 test("cancellation stops a direct child promptly instead of waiting for the kill timer", async () => {

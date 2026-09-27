@@ -258,6 +258,9 @@ export const createTaskApplication: MacLocalTaskProviderV1["createTaskApplicatio
     const sweepQuality = async () => {
       if (!application?.quality) throw new Error("mac_local_quality_unavailable");
       for (const projectId of liveProjects.projectIds()) {
+        // Publication commits durable bytes/plan before the results-role target
+        // transaction. Close that bounded gap before admitting quality work.
+        await reviewSubmission.recoverProject(tenantId, projectId);
         let afterRunId: string | undefined;
         do {
           const page = await application.quality.sweep({ projectId,
