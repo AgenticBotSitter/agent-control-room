@@ -153,7 +153,7 @@ export function PrivateTaskWorkspace({ projectId, jobId, after }: { projectId: s
           onClick={() => { void prepareExperiment(); }}>{preparing ? "Reading experiment…" : "Prepare first experiment task"}</button>
         {(!!draft.title || !!draft.instructions) && <p>Clear both draft fields first if you want to prepare it again. Existing text is never replaced.</p>}
       </section>}{experimentNotice && <p role="status">{experimentNotice}</p>}
-        <TaskProposalForm draft={draft} setDraft={setDraft} pending={pending} preparing={preparing} uncertain={uncertain} onSave={() => { void save(); }} /></div>
+        <TaskProposalForm draft={draft} setDraft={setDraft} modelOptions={page.modelOptions} pending={pending} preparing={preparing} uncertain={uncertain} onSave={() => { void save(); }} /></div>
         : <p className="private-note">{page.project.lifecycle !== "active" ? "Reopen this project before proposing more work." : "Your current access allows reading tasks, not proposing new work."}</p>}</div>}
     {detail && <TaskDetailPanel detail={detail} />}
     {detail && <TaskStateGuidance detail={detail} refreshing={loading} onRefresh={refreshSaved} />}

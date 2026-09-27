@@ -27,6 +27,7 @@ function savedDetail(state: TaskDetail["task"]["state"] = "succeeded"): TaskDeta
     project: { projectId: task.projectId, title: "Owner journey", summary: "Disposable owner journey", origin: "ordinary",
       lifecycle: "active", version: 1, createdAt: at, updatedAt: at, lifecycleEditable: true },
     task: { ...task, state }, instructions: "Inspect the returned evidence before accepting it.", inputDigest: digest, observedAt: at,
+    modelSelection: null, ownershipLeases: [],
     attempts: [], earlierAttemptsOmitted: false, preparedFor: "codex", localRouteObservation: { state: "not_observed", adapter: "codex" },
     hermesDeliveryRecovery: { source: "not_applicable" }, progressSource: "configured", dispatch: "configured",
     artifacts: "configured", review: "recorded",

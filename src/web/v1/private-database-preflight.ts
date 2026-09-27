@@ -32,13 +32,14 @@ export const privateWebReadTables = ["control_identities", "control_role_grants"
   "control_project_coordinator_heads", "control_project_coordination_proposals", "control_project_delegation_policies",
   "control_project_coordination_operation_receipts", "control_project_coordination_operation_jobs",
   "control_work_resources", "control_attempt_resource_admissions", "control_attempt_resource_scopes",
+  "control_task_model_selections", "control_task_declared_scopes", "control_assignment_lease_scopes",
   "control_durable_result_write_reservations"] as const;
 const inserts = new Set(["control_web_sessions", "adapter_registry", "projects", "control_manual_project_heads",
   "control_web_project_commands", "audit_events", "control_audit_chain_heads", "control_requests", "control_workflows",
   "control_jobs", "control_web_task_commands", "control_idea_canonical_task_sessions", "control_idea_canonical_task_links",
   "control_completion_gate_records", "control_web_task_review_commands", "control_news_source_settings", "control_news_story_archives",
   "control_policy_decisions", "control_project_lifecycle_events", "control_project_coordinator_heads",
-  "control_project_delegation_policies"]);
+  "control_project_delegation_policies", "control_task_model_selections", "control_task_declared_scopes"]);
 
 /** Tables whose INSERT grant is column-scoped rather than table-wide. Every
  * listed column must carry INSERT and every unlisted column must not — a
@@ -102,7 +103,8 @@ const coordinatorReads = ["tenants", "workspaces", "control_identities", "contro
   "control_action_inbox", "control_project_coordinator_heads", "control_project_coordination_proposals",
   "control_project_delegation_policies", "control_project_coordination_operation_receipts",
   "control_project_coordination_operation_jobs", "control_work_resources",
-  "control_attempt_resource_admissions", "control_attempt_resource_scopes"];
+  "control_attempt_resource_admissions", "control_attempt_resource_scopes", "control_task_model_selections",
+  "control_task_declared_scopes", "control_assignment_lease_scopes"];
 const coordinatorInserts = new Set(["control_web_sessions", "control_requests", "control_workflows", "control_jobs",
   "control_attempts", "control_leases", "control_task_execution_plans", "control_transition_events", "control_outbox",
   "audit_events", "control_audit_chain_heads", "control_native_approval_packets", "control_native_task_queue", "control_native_delivery_preparations", "control_native_delivery_envelopes", "control_native_transmission_intents", "control_native_delivery_receipts",
@@ -111,7 +113,8 @@ const coordinatorInserts = new Set(["control_web_sessions", "control_requests", 
   "control_project_coordination_proposals", "control_project_coordination_operation_receipts",
   "control_project_coordination_operation_jobs", "control_action_inbox", "control_work_resources",
   "control_attempt_resource_admissions", "control_attempt_resource_scopes", "control_job_dependencies",
-  "control_installation_transition_revisions", "control_node_fleet_signals", "control_node_fleet_current"]);
+  "control_installation_transition_revisions", "control_node_fleet_signals", "control_node_fleet_current",
+  "control_task_model_selections", "control_task_declared_scopes", "control_assignment_lease_scopes"]);
 const coordinatorUpdates: Record<string, readonly string[]> = {
   ...Object.fromEntries(["control_requests", "control_workflows", "control_jobs", "control_attempts", "control_leases"]
     .map(table => [table, ["state", "version", "payload", "updated_at"]])),
@@ -178,6 +181,7 @@ const sessionUpdates: Record<string, readonly string[]> = {
  * and `publishDurableResultV1` (with the durable reservation Postgres port)
  * execute in one transaction. Review-tray registration stays on `results`. */
 const publisherReads = ["workspaces", "control_identities", "control_role_grants", "control_jobs", "control_attempts", "adapter_registry",
+  "control_task_model_selections",
   "control_harness_runs", "control_harness_run_events", "control_artifact_manifests", "control_native_artifact_receipts",
   "control_durable_result_write_reservations", "control_native_review_plans",
   "audit_events", "control_audit_chain_heads"];

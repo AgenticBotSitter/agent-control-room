@@ -7,7 +7,10 @@ import { createOwnerTrustedLocalClaudeExecutionAdapterV1, createOwnerTrustedLoca
 import { deliverOwnerTrustedLocalCliTaskV1, type OwnerTrustedLocalCliDeliveryV1 } from "./owner-trusted-local-cli-delivery";
 
 type Base = Omit<OwnerTrustedLocalCliDeliveryV1, "execute">;
-type Configuration = Readonly<{ executablePath: string; workingDirectory: string; deadlineMs: number }>;
+type Configuration = Readonly<{ executablePath: string; workingDirectory: string; deadlineMs: number } & (
+  { model: string; effort: string; supportsEffort?: boolean } |
+  { select(jobId: string): Promise<{ model: string; effort: string; supportsEffort?: boolean }> }
+)>;
 
 function captureBase(value: unknown): Base {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("owner_trusted_local_cli_composition_unavailable");

@@ -4,7 +4,9 @@ import { taskReviewDraftSchema } from "./task-review-wire";
 import { taskPlanningReceiptSchema } from "./task-planning-wire";
 const digest = z.string().regex(/^sha256:[a-f0-9]{64}$/);
 export const taskRevisionRequestSchema = z.object({ runId: id, targetId: id, targetDigest: digest,
-  contentHash: digest, reviewId: id, feedback: z.string() }).strict().superRefine((value, ctx) => {
+  contentHash: digest, reviewId: id, feedback: z.string(),
+  model: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:/+-]{0,179}$/).optional(),
+  effort: z.enum(["default", "low", "medium", "high", "xhigh", "max"]).optional() }).strict().superRefine((value, ctx) => {
   // Reuse the exact feedback normalization/control-character/UTF-8 bounds without
   // accepting review commands or caller-selected execution authority.
   const checked = taskReviewDraftSchema.safeParse({ artifactId: "artifact:revision-input", targetId: value.targetId,

@@ -32,6 +32,10 @@ export const taskWorktreeChangeSummarySchema = worktreeChangeSummarySchema;
 export type TaskWorktreeChangeSummary = z.infer<typeof taskWorktreeChangeSummarySchema>;
 export const taskResultMetadataSchema = z.object({ artifactId: id, attemptId: id, runId: id, contentHash: digest,
   sizeBytes: z.number().int().min(0).max(65_536), receivedAt: time, byteCheck: z.literal("matched_recorded_claim"),
+  modelSelection: z.object({ model: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:/+-]{0,179}$/),
+    effort: z.enum(["default", "low", "medium", "high", "xhigh", "max"]),
+    provider: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:/+-]{0,179}$/).optional(),
+    profile: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:/+-]{0,179}$/).optional() }).strict().optional(),
   qualityAccepted: z.literal(false),
   /** Bound to this result artifact only; missing never means zero changes. */
   worktreeChangeSummary: taskWorktreeChangeSummarySchema.optional() }).strict();

@@ -18,7 +18,7 @@ function adapter(capture?: { file?: string; args?: readonly string[]; env?: Read
   } });
 }
 function input(workingDirectory: string, prompt = "hello", deadlineMs = 10_000, signal?: AbortSignal) {
-  return { executablePath: executable, prompt, workingDirectory, deadlineMs, signal };
+  return { executablePath: executable, prompt, workingDirectory, deadlineMs, model: "gpt-test", effort: "high", signal };
 }
 
 test("runs fixed arguments once, closes stdin, and exposes only the allowed environment", async () => {
@@ -28,7 +28,7 @@ test("runs fixed arguments once, closes stdin, and exposes only the allowed envi
   assert.equal(result.status, "completed");
   if (result.status !== "completed") throw new Error("expected completed output");
   assert.deepEqual(captured.args, ["exec", "--json", "--sandbox", "read-only", "--ephemeral", "--skip-git-repo-check",
-    "--color", "never", "-C", cwd, "-"]);
+    "--color", "never", "-C", cwd, "-m", "gpt-test", "-c", "model_reasoning_effort=high", "-"]);
   const received = JSON.parse(result.text) as { args: string[]; env: string[]; prompt: string };
   assert.deepEqual(received.args, captured.args); assert.equal(received.prompt, "hello");
   // macOS may inject its own encoding marker after spawn; the adapter itself

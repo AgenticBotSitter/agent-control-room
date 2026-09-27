@@ -45,6 +45,7 @@ import { CLAUDE_CODE_LOCAL_ADAPTER_V1 } from "../../harness/claude-code-v1/task-
 import { CODEX_OWNER_TRUSTED_LOCAL_ADAPTER_V1 } from "../../harness/codex-v1/owner-trusted-local-task-planning-contract";
 import type { OwnerTrustedLocalEnablementV1 } from "../../harness/v1/owner-trusted-local-enablements";
 import type { TaskAssignmentRoute } from "./task-assignment-coordinator";
+import { captureTaskModelCatalogV1, resolveTaskModelV1 } from "./task-model-selection";
 
 type SelectedWorker = Readonly<{ kind: "hermes" | "claude-code" | "codex";
   worker: OwnerTrustedLocalEnablementV1["workers"][number]; route: TaskAssignmentRoute; adapterId: string }>;
@@ -133,11 +134,6 @@ export const createTaskApplication: MacLocalTaskProviderV1["createTaskApplicatio
     const scenarioRegistry = createTaskQualityScenarioRegistryV1(built.profiles.map(createMacLocalTextScenarioV1));
     const liveProjects = createMacLocalLiveProjectProvisionerV1({ db: input.database.client, tenantId, workspaceId,
       configuration, runtime, profileGate, templates: templateRegistry, scenarios: scenarioRegistry, initialProjects: projects });
-    const planning: ConstructorParameters<typeof TaskExecutionPlanner>[2] = { templateRegistry,
-      integrityKey: keys.planning, reviewIntegrityKey: keys.review, checkpoints: checkpointStore,
-      localAdapterAdmission: { enabledAdapters: [HERMES_LOCAL_ADAPTER_V1, CLAUDE_CODE_LOCAL_ADAPTER_V1,
-        CODEX_OWNER_TRUSTED_LOCAL_ADAPTER_V1] } };
-    const planner = new TaskExecutionPlanner(readPool.client, { tenantId, workspaceId }, planning);
     const workers: SelectedWorker[] = (["hermes", "claude", "codex"] as const).map(kind => {
       const workerKind: "hermes" | "claude-code" | "codex" = kind === "claude" ? "claude-code" : kind;
       const worker = configuration.enablement.workers.find(value => value.kind === workerKind);
@@ -146,6 +142,22 @@ export const createTaskApplication: MacLocalTaskProviderV1["createTaskApplicatio
       return { kind: workerKind, worker, route, adapterId: kind === "hermes" ? HERMES_LOCAL_ADAPTER_V1
         : kind === "claude" ? CLAUDE_CODE_LOCAL_ADAPTER_V1 : CODEX_OWNER_TRUSTED_LOCAL_ADAPTER_V1 };
     });
+    const modelCatalog = captureTaskModelCatalogV1(workers.map(value => ({ kind: value.kind, policy: value.worker.modelPolicy })));
+    const planning: ConstructorParameters<typeof TaskExecutionPlanner>[2] = { templateRegistry,
+      integrityKey: keys.planning, reviewIntegrityKey: keys.review, checkpoints: checkpointStore, modelCatalog,
+      localAdapterAdmission: { enabledAdapters: [HERMES_LOCAL_ADAPTER_V1, CLAUDE_CODE_LOCAL_ADAPTER_V1,
+        CODEX_OWNER_TRUSTED_LOCAL_ADAPTER_V1] } };
+    const planner = new TaskExecutionPlanner(readPool.client, { tenantId, workspaceId }, planning);
+    const selectedModel = async (kind: "hermes" | "claude-code" | "codex", jobId: string) => {
+      const row = (await readPool.client.query<{ selection_key: string; model: string; effort: string;
+        provider: string | null; profile: string | null; worker_kind: string }>(`SELECT selection_key,model,effort,provider,profile,worker_kind
+        FROM control_task_model_selections WHERE tenant_id=$1 AND job_id=$2`, [tenantId, jobId])).rows[0];
+      if (!row || row.worker_kind !== kind) throw new Error("mac_local_task_model_selection_unavailable");
+      const verified = resolveTaskModelV1(modelCatalog, kind, { model: row.selection_key, effort: row.effort });
+      if (verified.model !== row.model || (verified.provider ?? null) !== row.provider || (verified.profile ?? null) !== row.profile)
+        throw new Error("mac_local_task_model_selection_unavailable");
+      return verified;
+    };
     const prepared = workers.map(value => {
       const adapterRevision = sha256Digest({ executablePath: value.worker.executablePath,
         recordedVersion: value.worker.recordedVersion }).slice("sha256:".length);
@@ -165,7 +177,12 @@ export const createTaskApplication: MacLocalTaskProviderV1["createTaskApplicatio
     const common = (index: number, registerRun: Parameters<typeof createOwnerTrustedLocalCliPublishV1>[0]["registerRun"]) => {
       const selected = workers[index]!;
       const lifecycle = createOwnerTrustedLocalCliLifecycleV1({ db: publisherPool.client,
-        runIntegrityKey: keys.harness, publication, registerRun });
+        runIntegrityKey: keys.harness, publication, registerRun,
+        resolveModelSelection: async jobId => {
+          const value = await selectedModel(selected.kind, jobId);
+          return { model: value.model, effort: value.effort as "default" | "low" | "medium" | "high" | "xhigh" | "max",
+            ...(value.provider ? { provider: value.provider, profile: value.profile! } : {}) };
+        } });
       return { db: readPool.client, integrityKey: keys.deliveryReceipt,
         binding: { workerId: selected.worker.workerId, adapterId: selected.adapterId,
           adapterRevision: sha256Digest({ executablePath: selected.worker.executablePath,
@@ -179,25 +196,31 @@ export const createTaskApplication: MacLocalTaskProviderV1["createTaskApplicatio
     const codexHarnessVersion = ownerTrustedLocalHarnessVersionV1(workers[2]!.worker.recordedVersion);
     const hermes = { tenantId,
       preparation: prepared[0] as HermesLocalDispatchPreparationV1,
-      delivery: createOwnerTrustedLocalHermesDeliveryV1(common(0, (value, time) =>
-        hermesLocalRunRegistrationV1(value, time, hermesHarnessVersion)),
+      delivery: createOwnerTrustedLocalHermesDeliveryV1(common(0, (value, time, modelSelection) =>
+        hermesLocalRunRegistrationV1(value, time, hermesHarnessVersion, modelSelection)),
       createOwnerTrustedLocalHermesExecV1(), { executablePath: workers[0]!.worker.executablePath,
-        profile: runtime.hermes.profile, provider: runtime.hermes.provider, model: runtime.hermes.model,
+        select: async jobId => { const value = await selectedModel("hermes", jobId); return {
+          profile: value.profile!, provider: value.provider!, model: value.model }; },
         workingDirectory: work.hermes, deadlineMs: 120_000 }) };
     const claude = createClaudeOwnerTrustedLocalQueueExecutorV1({ tenantId,
       preparation: prepared[1] as ClaudeCodeLocalDispatchPreparationV1,
       delivery: createOwnerTrustedLocalClaudeDeliveryV1(common(1, ClaudeCodeLocalRunRegistrationV1),
         createOwnerTrustedLocalClaudeExecV1(), { executablePath: workers[1]!.worker.executablePath,
-          workingDirectory: work.claude, deadlineMs: 120_000 }) });
+          workingDirectory: work.claude, deadlineMs: 120_000, select: async jobId => {
+            const value = await selectedModel("claude-code", jobId);
+            return { model: value.model, effort: value.effort, supportsEffort: true };
+          } }) });
     const voidClaude = Object.freeze({ async deliver(target: Parameters<typeof claude.deliver>[0], signal: AbortSignal): Promise<void> {
       await claude.deliver(target, signal);
     } });
     const codex = createCodexOwnerTrustedLocalQueueExecutorV1({ tenantId,
       preparation: prepared[2] as CodexOwnerTrustedLocalDispatchPreparationV1,
-      delivery: createOwnerTrustedLocalCodexDeliveryV1(common(2, (value, time) =>
-        codexOwnerTrustedLocalRunRegistrationV1(value, time, codexHarnessVersion)),
+      delivery: createOwnerTrustedLocalCodexDeliveryV1(common(2, (value, time, modelSelection) =>
+        codexOwnerTrustedLocalRunRegistrationV1(value, time, codexHarnessVersion, modelSelection)),
       createOwnerTrustedLocalCodexExecV1(), { executablePath: workers[2]!.worker.executablePath,
-        workingDirectory: work.codex, deadlineMs: 120_000 }) });
+        workingDirectory: work.codex, deadlineMs: 120_000, select: async jobId => {
+          const value = await selectedModel("codex", jobId); return { model: value.model, effort: value.effort };
+        } }) });
     const voidCodex = Object.freeze({ async deliver(target: Parameters<typeof codex.deliver>[0], signal: AbortSignal): Promise<void> {
       await codex.deliver(target, signal);
     } });
@@ -207,7 +230,7 @@ export const createTaskApplication: MacLocalTaskProviderV1["createTaskApplicatio
         nodeId: value.route.nodeId, capabilityProbeId: value.route.capabilityProbeId })) });
     application = await createMacLocalCurrentThreeAgentTaskApplicationV1({
       web: { tenantId, workspaceId, database: withAvailability(input.database),
-        tasks: { harnessIntegrityKey: keys.harness,
+        tasks: { harnessIntegrityKey: keys.harness, modelCatalog,
           results: { integrityKey: keys.results, storageClass: "local", storage },
           reviews: { integrityKey: keys.review, checkpoints: checkpointStore },
           ownerReviews: { integrityKey: keys.review, checkpoints: checkpointStore } } },

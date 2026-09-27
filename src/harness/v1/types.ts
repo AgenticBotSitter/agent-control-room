@@ -42,6 +42,8 @@ export interface HarnessRunV1 {
   /** Optional reviewed connector/authority anchors for non-native adapters. */
   connectorProfileDigest?: string;
   authorityDigest?: string;
+  modelSelection?: Readonly<{ model: string; effort: "default" | "low" | "medium" | "high" | "xhigh" | "max";
+    provider?: string; profile?: string }>;
   parentRunId?: string;
   revisionOfRunId?: string;
   state: HarnessRunState;

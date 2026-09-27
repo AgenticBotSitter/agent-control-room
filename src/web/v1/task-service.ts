@@ -34,6 +34,7 @@ import { taskHomeActivitySchema } from "./task-home-wire";
 import { taskProjectOverviewSchema } from "./task-project-overview-wire";
 import { taskProjectFilesSchema } from "./task-project-files-wire";
 import type { TaskWorktreeChangeSummary } from "./task-result-wire";
+import { taskModelOptionsV1, validateRequestedTaskModelV1, type TaskModelCatalogV1 } from "./task-model-selection";
 
 /** Joins existing stores to the caller-owned session transaction. No nested BEGIN/COMMIT and no
  * new authority: this closure stays inside authenticated(). The outer freshness check owns commit. */
@@ -70,6 +71,7 @@ function validated(row: TaskRow, tenantId: string, projectId: string) {
 }
 
 export interface WebTaskKeys {
+  modelCatalog?: TaskModelCatalogV1;
   harnessIntegrityKey?: Uint8Array;
   ideaIntegrityKey?: Uint8Array;
   results?: NativeResultReadConfiguration;
@@ -102,9 +104,11 @@ export class WebTaskService {
   private readonly ideaProjectsConfigured: boolean;
   private readonly hermesDeliveryRecovery?: WebTaskKeys["hermesDeliveryRecovery"];
   private readonly worktreeChangeEvidence?: NonNullable<WebTaskKeys["worktreeChangeEvidence"]>;
+  private readonly modelCatalog?: TaskModelCatalogV1;
   constructor(private readonly db: DatabaseClient, private readonly scope: { tenantId: string; workspaceId: string },
     private readonly clock: () => number = Date.now, keys?: WebTaskKeys) {
     this.authority = new WebSessionAuthority(db, scope, clock, "task");
+    this.modelCatalog = keys?.modelCatalog;
     this.ideaProjectsConfigured = !!keys?.ideaIntegrityKey;
     this.reviewCommandsConfigured = !!keys?.ownerReviews;
     this.verificationCommandsConfigured = !!keys?.manualVerificationScenarios?.length;
@@ -186,7 +190,8 @@ export class WebTaskService {
       [this.scope.tenantId, projectId, after ?? null])).rows;
       const tasks = rows.slice(0, 50).map(row => validated(row, this.scope.tenantId, projectId).summary);
       return taskPageSchema.parse({ project, tasks, nextCursor: rows.length > 50 ? tasks.at(-1)!.jobId : null,
-        canPropose: project.lifecycle === "active" && actor.can("tasks.propose", projectId), dispatch: "not_connected", observedAt: actor.now });
+        canPropose: project.lifecycle === "active" && actor.can("tasks.propose", projectId), dispatch: "not_connected", observedAt: actor.now,
+        ...(this.modelCatalog ? { modelOptions: taskModelOptionsV1(this.modelCatalog) } : {}) });
     });
   }
 
@@ -224,6 +229,12 @@ export class WebTaskService {
     if (!parsed.success || !/^[A-Za-z0-9:_-]{12,180}$/.test(key)
       || dependencies.some(id => !catalogProjectIdSchema.safeParse(id).success)
       || new Set(dependencies).size !== dependencies.length) throw new WebAccessError("invalid_request");
+    try {
+      if (parsed.success && (parsed.data.model !== undefined || parsed.data.effort !== undefined)) {
+        if (!this.modelCatalog) throw new Error();
+        validateRequestedTaskModelV1(this.modelCatalog, { model: parsed.data.model, effort: parsed.data.effort });
+      }
+    } catch { throw new WebAccessError("invalid_request"); }
     try { assertNoSecretMaterial(parsed.data); } catch { throw new WebAccessError("invalid_request"); }
     // Preserve the prior idempotency digest byte-for-byte for ordinary browser
     // proposals. Only the narrow dependency integration adds this field.
@@ -267,11 +278,17 @@ export class WebTaskService {
           definitionDigest: sha256Digest({ type: "private-task-proposal/v1", projectId, draft: parsed.data, dependsOnJobIds: dependencies }),
           authorityMode: "control_room_native", state: "proposed", jobIds: [jobId] },
         job: { ...base, id: jobId, kind: "job", workflowId, projectId, jobType: "task.proposal", specVersion: "1.0.0",
-          inputDigest: sha256Digest(parsed.data), state: "proposed", priority: 50, requiredCapability: "task.proposal.review",
+          inputDigest: sha256Digest({ title: parsed.data.title, instructions: parsed.data.instructions }), state: "proposed", priority: 50, requiredCapability: "task.proposal.review",
           dependsOnJobIds: dependencies, authority, retryPolicy: { maxAttempts: 1, backoffSeconds: 0, retryableFailureCodes: [],
             retryAfterOrphan: false, ambiguousEffectPolicy: "attention" } },
       };
       await new CanonicalStore(joined(tx)).createProposedWorkBundle(bundle);
+      await tx.query(`INSERT INTO control_task_model_selections
+        (tenant_id,project_id,job_id,selection_key,effort,created_at) VALUES($1,$2,$3,$4,$5,$6)`,
+      [this.scope.tenantId, projectId, jobId, parsed.data.model ?? null, parsed.data.effort ?? null, actor.now]);
+      for (const scope of parsed.data.scopes ?? []) await tx.query(`INSERT INTO control_task_declared_scopes
+        (tenant_id,project_id,job_id,scope_kind,path,path_fold) VALUES($1,$2,$3,$4,$5,$5)`,
+      [this.scope.tenantId, projectId, jobId, scope.kind, scope.path]);
       const receipt: TaskReceipt = { projectId, jobId, requestId, createdAt: actor.now, submission: "proposed", startsWork: false };
       await appendAuditWith(tx, { id: `audit:${randomUUID()}`, ...this.scope, projectId, actorId: actor.id, actorType: "human",
         action: "tasks.propose", targetType: "job", targetId: jobId, idempotencyKey: key, occurredAt: actor.now,
@@ -291,6 +308,24 @@ export class WebTaskService {
         [this.scope.tenantId, projectId, jobId])).rows[0];
       if (!row) throw new WebAccessError("not_found");
       const { job, request, summary } = validated(row, this.scope.tenantId, projectId);
+      const modelRow = (await tx.query<{ worker_kind: string | null; selection_key: string | null; model: string | null;
+        effort: string | null; provider: string | null; profile: string | null; inherited_from_job_id: string | null }>(
+        `SELECT worker_kind,selection_key,model,effort,provider,profile,inherited_from_job_id
+         FROM control_task_model_selections WHERE tenant_id=$1 AND job_id=$2`, [this.scope.tenantId, jobId])).rows[0];
+      const leaseRows = (await tx.query<{ node_id: string; expires_at: string | Date; state: string;
+        scope_kind: "file" | "tree"; path: string }>(`SELECT s.node_id,l.expires_at,l.state,s.scope_kind,s.path
+        FROM control_assignment_lease_scopes s JOIN control_leases l ON l.tenant_id=s.tenant_id AND l.id=s.lease_id
+        WHERE s.tenant_id=$1 AND s.job_id=$2 ORDER BY l.expires_at DESC,s.scope_kind,s.path`,
+      [this.scope.tenantId, jobId])).rows;
+      const leaseGroups = new Map<string, { nodeId: string; expiresAt: string; state: "active" | "released" | "expired" | "revoked";
+        current: boolean; scopes: { kind: "file" | "tree"; path: string }[] }>();
+      for (const lease of leaseRows) {
+        const expiresAt = new Date(lease.expires_at).toISOString(), key = `${lease.node_id}\0${expiresAt}\0${lease.state}`;
+        const state = lease.state as "active" | "released" | "expired" | "revoked";
+        const group = leaseGroups.get(key) ?? { nodeId: lease.node_id, expiresAt, state,
+          current: state === "active" && Date.parse(expiresAt) > Date.parse(actor.now), scopes: [] };
+        group.scopes.push({ kind: lease.scope_kind, path: lease.path }); leaseGroups.set(key, group);
+      }
       const attemptRows = (await tx.query<{ id: string; state: string; attempt_number: number; payload: unknown }>(
         `SELECT id,state,attempt_number,payload FROM control_attempts WHERE tenant_id=$1 AND job_id=$2 ORDER BY attempt_number DESC LIMIT 11`,
       [this.scope.tenantId, jobId])).rows;
@@ -312,6 +347,7 @@ export class WebTaskService {
           const snapshots = events.flatMap(event => event.payload.category === "native_snapshot" ? [event.payload.snapshot] : []);
           const last = snapshots.at(-1);
           runs.push(taskRunSchema.parse({ runId: run.id, harness: run.harness, routeEvidence: routeEvidence(run.adapterId), state: run.state, lastObservedAt: run.lastObservedAt,
+            ...(run.modelSelection ?? {}),
             stale: Date.parse(run.lastObservedAt) > Date.parse(actor.now) || Date.parse(actor.now) - Date.parse(run.lastObservedAt) > 120_000,
             firstObservedExecutionAt: run.startedAt ?? null, finishedObservedAt: run.finishedAt ?? null, cancellation: run.cancelState,
             source: run.nativeTask ? "native_snapshot" : "legacy", nativeState: last?.state ?? null,
@@ -327,6 +363,10 @@ export class WebTaskService {
       }
       const hermesDeliveryRecovery = await this.inspectHermesDeliveryRecovery(job, projectId, jobId, attempts);
       return taskDetailSchema.parse({ project, task: summary, instructions: request.objective, inputDigest: job.inputDigest,
+        modelSelection: modelRow ? { workerKind: modelRow.worker_kind, selectionKey: modelRow.selection_key,
+          model: modelRow.model, effort: modelRow.effort, provider: modelRow.provider, profile: modelRow.profile,
+          inheritedFromJobId: modelRow.inherited_from_job_id } : null,
+        ownershipLeases: [...leaseGroups.values()],
         observedAt: actor.now, attempts, earlierAttemptsOmitted: attemptRows.length > 10, preparedFor: null,
         localRouteObservation: { state: "not_prepared", adapter: null },
         hermesDeliveryRecovery,
@@ -374,6 +414,9 @@ export class WebTaskService {
       const result = this.resultStore ? await this.resultStore.list(tx, this.scope.tenantId, projectId, jobId)
         : { receipts: [], additionalResultsOmitted: false };
       const items = await Promise.all(result.receipts.map(async receipt => {
+        const runEvidence = this.harnessKey ? await new HarnessRunStoreV1(joined(tx), this.harnessKey).get(this.scope.tenantId, receipt.runId) : undefined;
+        if (runEvidence && (runEvidence.projectId !== projectId || runEvidence.jobId !== jobId
+          || runEvidence.attemptId !== receipt.attemptId)) throw new Error("task_result_model_unavailable");
         let worktreeChangeSummary: TaskWorktreeChangeSummary;
         if (!actor.can("tasks.results.read", projectId)) worktreeChangeSummary = { source: "not_authorized" };
         else if (!this.worktreeChangeEvidence) worktreeChangeSummary = { source: "not_configured" };
@@ -388,7 +431,8 @@ export class WebTaskService {
             grantsExecutionAuthority: false, permitsRetry: false, permitsResume: false, permitsApproval: false,
             permitsMerge: false } : { source: "unavailable" };
         }
-        return taskResultMetadataSchema.parse({ ...resultMetadata(receipt), worktreeChangeSummary });
+        return taskResultMetadataSchema.parse({ ...resultMetadata(receipt),
+          ...(runEvidence?.modelSelection ? { modelSelection: runEvidence.modelSelection } : {}), worktreeChangeSummary });
       }));
       const lineage = this.reviewConfig ? await readTaskReviewPlanV1(tx, this.reviewConfig.integrityKey,
         this.scope.tenantId, projectId, jobId) : undefined;

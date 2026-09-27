@@ -18,7 +18,8 @@ function adapter(capture?: { file?: string; args?: readonly string[]; env?: Read
   } });
 }
 function input(workingDirectory: string, prompt = "hello", deadlineMs = 10_000, signal?: AbortSignal) {
-  return { executablePath: executable, prompt, workingDirectory, deadlineMs, signal };
+  return { executablePath: executable, prompt, workingDirectory, deadlineMs, model: "sonnet", effort: "high",
+    supportsEffort: false, signal };
 }
 
 test("runs only the reviewed Mac-local Claude arguments and exposes no inherited environment", async () => {
@@ -27,12 +28,19 @@ test("runs only the reviewed Mac-local Claude arguments and exposes no inherited
   const result = await adapter(captured).execute(input(cwd));
   assert.equal(result.status, "completed");
   if (result.status !== "completed") throw new Error("expected completed output");
-  assert.deepEqual(captured.args, OWNER_TRUSTED_LOCAL_CLAUDE_ARGS_V1);
+  assert.deepEqual(captured.args, [...OWNER_TRUSTED_LOCAL_CLAUDE_ARGS_V1, "--model", "sonnet"]);
   const received = JSON.parse(result.text) as { args: string[]; env: string[]; prompt: string };
   assert.deepEqual(received.args, captured.args); assert.equal(received.prompt, "hello");
   assert.equal(received.env.includes("SECRET_SHOULD_NOT_LEAK"), false);
   assert.deepEqual(Object.keys(captured.env ?? {}).sort(), ["HOME", "LANG", "LOGNAME", "PATH", "TMPDIR", "USER"]);
   assert.equal(result.usageReported, true); assert.deepEqual(await readdir(cwd), []);
+});
+
+test("passes a chosen effort only when startup verified the installed CLI supports it", async () => {
+  const captured: { args?: readonly string[] } = {};
+  const result = await adapter(captured).execute({ ...input(await taskDirectory()), model: "opus", effort: "high", supportsEffort: true });
+  assert.equal(result.status, "completed");
+  assert.deepEqual(captured.args, [...OWNER_TRUSTED_LOCAL_CLAUDE_ARGS_V1, "--model", "opus", "--effort", "high"]);
 });
 
 test("rejects a canceled task and a nonempty directory before spawning", async () => {

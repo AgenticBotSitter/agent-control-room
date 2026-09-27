@@ -57,6 +57,9 @@ export function TaskResultsPanel({ page, content: suppliedContent, pending, sele
           return <li key={item.artifactId}><div><h3>Saved result file {index + 1}</h3>
           <p>File ID: <code>{item.artifactId}</code></p>
           <p>{item.sizeBytes.toLocaleString()} bytes · <ConfiguredTimestamp value={item.receivedAt} prefix="Received" /></p>
+          {item.modelSelection ? <p><strong>Model evidence:</strong> {item.modelSelection.profile ? `${item.modelSelection.profile} · ` : ""}
+            {item.modelSelection.model} · effort {item.modelSelection.effort}{item.modelSelection.provider ? ` · ${item.modelSelection.provider}` : ""}</p>
+            : <p className="private-notice">Model evidence is unavailable for this historical result.</p>}
           <p>Received bytes matched the agent’s recorded fingerprint. This is not a quality approval.</p>
           {worktreeChange.source === "not_configured"
             ? <p className="private-notice">Verified coding-change evidence is not configured for this result.</p>

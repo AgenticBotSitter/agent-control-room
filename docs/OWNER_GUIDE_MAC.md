@@ -169,6 +169,50 @@ The Tailscale client tag and the access-policy grant are both **done**. Do not r
 one; if a future update needs another machine on the route, give that machine the same approved
 client tag and change nothing else.
 
+### Protected model choices
+
+Model choices are installation policy, not browser configuration. Before starting the task host,
+add a `modelPolicy` to each worker in `<protected-root>/config/mac-local.json`. Keep only models
+the owner has approved and the installed CLI reports. The shape is:
+
+```json
+{
+  "kind": "codex",
+  "modelPolicy": {
+    "models": ["<installed-codex-model>"],
+    "defaultModel": "<installed-codex-model>",
+    "efforts": ["low", "medium", "high"],
+    "defaultEffort": "medium"
+  }
+}
+```
+
+Claude uses the same shape. Its default should be `sonnet`; put owner-approved, more limited
+choices such as `opus` in `limitedModels` so the task form displays “uses more of your Claude
+limit”. Hermes uses named, worker-side credential profiles:
+
+```json
+{
+  "kind": "hermes",
+  "modelPolicy": {
+    "profiles": [
+      { "name": "build", "provider": "<provider>", "model": "<provider-model>" },
+      { "name": "check", "provider": "<provider>", "model": "<provider-model>" }
+    ],
+    "defaultProfile": "build",
+    "efforts": ["default"],
+    "defaultEffort": "default"
+  }
+}
+```
+
+Each Hermes profile's credentials stay in Hermes's own protected worker configuration. Do not put
+credentials in `mac-local.json`. At every startup Control Room checks the pinned version and the
+installed CLI's model/argument surface. A changed or unsupported policy makes only that worker
+unavailable; it is never accepted from a browser request. Stop Control Room before editing the
+protected file and start it normally afterward. Removing a model prevents new tasks from selecting
+it; existing run evidence remains readable.
+
 What is still open is the set of drills in the private installation checklist item 3: the phone-or-PC port test,
 a Mac sleep and wake, the VPS-side PostgreSQL and Tailscale restarts, and a forced certificate
 renewal. Those are not setup steps; they are the checks that prove the route survives real

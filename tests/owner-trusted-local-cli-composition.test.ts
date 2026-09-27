@@ -32,7 +32,7 @@ test("the composed Codex delivery reaches the common receipt and publisher exact
   let calls = 0;
   const delivery = createOwnerTrustedLocalCodexDeliveryV1(base(f, workerId, adapterId, state), { async execute() {
     calls++; return { status: "completed" as const, text: "codex finished" };
-  } }, baseConfiguration);
+  } }, { ...baseConfiguration, model: "gpt-test", effort: "high" });
   const first = await delivery.deliver(packet(workerId, adapterId), { kind: "local", workerId }, at(2000));
   assert.equal(first.state, "published"); assert.equal(calls, 1); assert.equal(state.published, 1);
   const replay = await delivery.deliver(packet(workerId, adapterId), { kind: "local", workerId }, at(2000));
@@ -43,7 +43,7 @@ test("the composed Claude delivery keeps a nonzero CLI outcome out of publicatio
   const f = await nativeTaskFixture(); t.after(f.close); const state = { published: 0 }, workerId = "worker:claude-local", adapterId = "connector:claude-local-v1";
   const delivery = createOwnerTrustedLocalClaudeDeliveryV1(base(f, workerId, adapterId, state), { async execute() {
     return { status: "timed_out" as const, reason: "deadline_exceeded" };
-  } }, baseConfiguration);
+  } }, { ...baseConfiguration, model: "sonnet", effort: "high", supportsEffort: true });
   const result = await delivery.deliver(packet(workerId, adapterId), { kind: "local", workerId }, at(2000));
   assert.equal(result.state, "execution_failed"); assert.equal(state.published, 0);
 });
@@ -53,7 +53,7 @@ test("a composed delivery snapshots its host-owned binding before future calls",
   const mutable = base(f, workerId, adapterId, state);
   const delivery = createOwnerTrustedLocalCodexDeliveryV1(mutable, { async execute() {
     return { status: "completed" as const, text: "snapshot result" };
-  } }, baseConfiguration);
+  } }, { ...baseConfiguration, model: "gpt-test", effort: "high" });
   mutable.binding = { workerId: "worker:other", adapterId, adapterRevision: "00570550" };
   const result = await delivery.deliver(packet(workerId, adapterId), { kind: "local", workerId }, at(2000));
   assert.equal(result.state, "published"); assert.equal(state.published, 1);

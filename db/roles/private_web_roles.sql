@@ -32,6 +32,8 @@ GRANT SELECT ON control_identities, control_role_grants, workspaces, control_web
   control_project_delegation_policies, control_project_coordination_operation_receipts,
   control_project_coordination_operation_jobs, control_work_resources,
   control_attempt_resource_admissions, control_attempt_resource_scopes TO control_room_private_web;
+GRANT SELECT ON control_task_model_selections, control_task_declared_scopes,
+  control_assignment_lease_scopes TO control_room_private_web;
 GRANT SELECT ON control_durable_result_write_reservations TO control_room_private_web;
 GRANT UPDATE (web_lock) ON control_identities, control_role_grants, workspaces,
   control_connection_registry_heads, control_completion_gate_integrity, control_completion_gate_records TO control_room_private_web;
@@ -42,6 +44,7 @@ GRANT INSERT ON control_web_sessions, adapter_registry, projects, control_manual
   control_completion_gate_records, control_web_task_review_commands, control_news_source_settings, control_news_story_archives,
   control_policy_decisions, control_project_lifecycle_events,
   control_project_coordinator_heads, control_project_delegation_policies TO control_room_private_web;
+GRANT INSERT ON control_task_model_selections, control_task_declared_scopes TO control_room_private_web;
 GRANT INSERT ON control_project_coordinator_heads, control_project_delegation_policies
   TO control_room_private_web;
 -- Coordinator lifecycle idempotency ledger: exact-match replay before any

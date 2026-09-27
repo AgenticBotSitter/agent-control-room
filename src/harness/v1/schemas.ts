@@ -31,6 +31,8 @@ export const harnessRunSchemaV1 = z.object({
   schemaVersion: z.literal(HARNESS_CONTRACT_VERSION_V1), id, tenantId: id, projectId: id, jobId: id, attemptId: id, nodeId: id,
   adapterId: id, adapterVersion: version, harness: z.enum(["hermes", "codex", "claude", "other"]), harnessVersion: version,
   nativeSessionKeyDigest: digest, connectorProfileDigest: digest.optional(), authorityDigest: digest.optional(),
+  modelSelection: z.object({ model: id, effort: z.enum(["default", "low", "medium", "high", "xhigh", "max"]),
+    provider: id.optional(), profile: id.optional() }).strict().optional(),
   parentRunId: id.optional(), revisionOfRunId: id.optional(), state: z.enum(harnessRunStates), resumable: z.boolean(),
   cancelState: z.enum(["not_requested", "requested", "confirmed", "reported", "unsupported"]), nativeTask: nativeTaskRegistrationSchema.optional(),
   remoteTask: remoteTaskRegistrationSchemaV1.optional(),

@@ -12,21 +12,25 @@ function path(value: unknown): value is string { return typeof value === "string
  * model/provider are values, not source constants, so a normal model change
  * is a configuration/qualification event rather than a code change. */
 export type OwnerTrustedLocalHermesExecutionConfigurationV1 = Readonly<{
-  executablePath: string; profile: string; model: string; provider: string; workingDirectory: string; deadlineMs: number;
-}>;
+  executablePath: string; workingDirectory: string; deadlineMs: number;
+} & ({ profile: string; model: string; provider: string } |
+  { select(jobId: string): Promise<{ profile: string; model: string; provider: string }> })>;
 
 function capture(value: unknown): OwnerTrustedLocalHermesExecutionConfigurationV1 {
   if (!value || typeof value !== "object" || Array.isArray(value)) unavailable();
   const item = value as Record<string, unknown>;
   const executablePath = item.executablePath, workingDirectory = item.workingDirectory;
   const profile = item.profile, model = item.model, provider = item.provider, deadlineMs = item.deadlineMs;
-  if (Object.keys(item).length !== 6 || !path(executablePath) || !path(workingDirectory)
-    || typeof profile !== "string" || !identifier.test(profile)
+  const dynamic = typeof item.select === "function";
+  if (Object.keys(item).length !== (dynamic ? 4 : 6) || !path(executablePath) || !path(workingDirectory)
+    || !dynamic && (typeof profile !== "string" || !identifier.test(profile)
     || typeof model !== "string" || !identifier.test(model)
-    || typeof provider !== "string" || !identifier.test(provider)
+    || typeof provider !== "string" || !identifier.test(provider))
     || typeof deadlineMs !== "number" || !Number.isSafeInteger(deadlineMs)
     || deadlineMs < 100 || deadlineMs > 3_600_000) return unavailable();
-  return Object.freeze({ executablePath, profile, model, provider, workingDirectory, deadlineMs });
+  return Object.freeze({ executablePath, workingDirectory, deadlineMs,
+    ...(dynamic ? { select: item.select as (jobId: string) => Promise<{ profile: string; model: string; provider: string }> }
+      : { profile: profile as string, model: model as string, provider: provider as string }) }) as OwnerTrustedLocalHermesExecutionConfigurationV1;
 }
 
 /** Maps the proven direct Hermes runner to the one shared local CLI delivery
@@ -38,7 +42,11 @@ export function createOwnerTrustedLocalHermesExecutionAdapterV1(executor: OwnerT
   if (!executor || typeof executor.execute !== "function") unavailable();
   return Object.freeze({ async execute(input) {
     if (!input || !(input.signal instanceof AbortSignal) || input.signal.aborted) unavailable();
-    const result = await executor.execute(Object.freeze({ ...fixed, prompt: ownerTrustedLocalCliPromptV1(input.delivery.input), signal: input.signal }));
+    const selected = "select" in fixed ? await fixed.select(input.delivery.identity.jobId) : fixed;
+    const result = await executor.execute(Object.freeze({ executablePath: fixed.executablePath,
+      workingDirectory: fixed.workingDirectory, deadlineMs: fixed.deadlineMs,
+      profile: selected.profile, model: selected.model, provider: selected.provider,
+      prompt: ownerTrustedLocalCliPromptV1(input.delivery.input), signal: input.signal }));
     if (result.status === "completed") return Object.freeze({ kind: "completed" as const, text: result.text });
     return Object.freeze({ kind: "failed" as const, reason: `${result.status}:${result.reason}` });
   } });

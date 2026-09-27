@@ -23,7 +23,8 @@ export type OwnerTrustedLocalCliPublishConfigurationV1 = Readonly<{
    * supplies its own (`codexOwnerTrustedLocalRunRegistrationV1`,
    * `hermesLocalRunRegistrationV1`, ...); this module stays agnostic of
    * which harness it is publishing for. */
-  registerRun(deliveryValue: unknown, createdAt: string): HarnessRunV1;
+  registerRun(deliveryValue: unknown, createdAt: string, modelSelection?: HarnessRunV1["modelSelection"]): HarnessRunV1;
+  resolveModelSelection?(jobId: string): Promise<NonNullable<HarnessRunV1["modelSelection"]>>;
 }>;
 
 /** `ControllerWorkerDeliveryV1` carries no `workflowId` — it lives on the
@@ -58,7 +59,8 @@ export function createOwnerTrustedLocalCliLifecycleV1(config: OwnerTrustedLocalC
     const delivery = controllerWorkerDeliverySchemaV1.parse(input.delivery);
     const receipt = controllerWorkerDeliveryReceiptSchemaV1.parse(input.receipt);
     if (receipt.deliveryId !== delivery.deliveryId || receipt.deliveryDigest !== delivery.deliveryDigest) unavailable();
-    const run = config.registerRun(delivery, receipt.receivedAt);
+    const modelSelection = config.resolveModelSelection ? await config.resolveModelSelection(delivery.identity.jobId) : undefined;
+    const run = config.registerRun(delivery, receipt.receivedAt, modelSelection);
     if (run.id !== delivery.identity.runId || run.tenantId !== delivery.identity.tenantId
       || run.projectId !== delivery.identity.projectId || run.jobId !== delivery.identity.jobId
       || run.attemptId !== delivery.identity.attemptId || run.nodeId !== delivery.identity.nodeId) unavailable();
