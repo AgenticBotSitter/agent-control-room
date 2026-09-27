@@ -163,8 +163,9 @@ test("owner completes the real local website journey for every configured worker
   await waitForCompletedAccepted(page);
 
   await page.goto(`${projectPath}/tasks`);
-  const completedWork = page.locator('section[aria-label="Saved tasks"] li').filter({ hasText: "Claude browser task" });
-  await expect(completedWork).toContainText("Completed · Accepted");
+  const completedWork = page.locator('section[aria-label="Saved tasks"] li').filter({ hasText: "Claude browser task" })
+    .filter({ hasText: "Completed · Accepted" });
+  await expect(completedWork).toHaveCount(1);
   await page.goto("/");
   const recentResults = page.locator('section[aria-labelledby="home-results"]');
   await expect(recentResults.getByText("Claude browser task")).toBeVisible();
