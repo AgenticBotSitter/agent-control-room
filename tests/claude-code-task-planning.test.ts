@@ -149,7 +149,8 @@ test("a local Claude delivery publishes once, then a rebuilt executor recovers t
   let now = instant + 7_000;
   const planner = new TaskExecutionPlanner(f.db, f.scope, { template, integrityKey: new Uint8Array(32).fill(79),
     reviewIntegrityKey: f.reviewKey, checkpoints: f.checkpoints }, () => now);
-  const source = await f.tasks.propose(f.identity, binding.projectId, taskDraft, "claude-local-executor-source");
+  const source = await f.tasks.propose(f.identity, binding.projectId, { ...taskDraft,
+    scopes: [{ kind: "tree", path: "tasks/claude-primary" }] }, "claude-local-executor-source");
   const planned = await planner.plan(f.identity, binding.projectId, source.receipt.jobId, sha256Digest(taskDraft));
   // This exercises several separate disposable task identities (success,
   // rejected-before-start, cancellation/uncertainty, and already-failed/cancelled runs). Capacity must not be
@@ -228,7 +229,8 @@ test("a local Claude delivery publishes once, then a rebuilt executor recovers t
 
   // A rejected non-executing receipt is still durable evidence for recovery,
   // but it must not make the ordinary run look as if Claude started.
-  const rejectedSource = await f.tasks.propose(f.identity, binding.projectId, { ...taskDraft, title: "Rejected Claude delivery" }, "claude-rejected-source");
+  const rejectedSource = await f.tasks.propose(f.identity, binding.projectId, { ...taskDraft, title: "Rejected Claude delivery",
+    scopes: [{ kind: "tree", path: "tasks/claude-rejected" }] }, "claude-rejected-source");
   const rejectedPlan = await planner.plan(f.identity, binding.projectId, rejectedSource.receipt.jobId,
     sha256Digest({ ...taskDraft, title: "Rejected Claude delivery" }));
   const rejectedAssignment = await assignments.assign(f.identity, binding.projectId, rejectedPlan.receipt.jobId,
@@ -276,7 +278,8 @@ test("a local Claude delivery publishes once, then a rebuilt executor recovers t
   // a mysterious non-start.  The shared history records it as terminal, no
   // result reaches review, and a reconstructed executor cannot reopen Claude.
   const cancelledDuringDeliverySource = await f.tasks.propose(f.identity, binding.projectId,
-    { ...taskDraft, title: "Cancelled during Claude delivery" }, "claude-cancel-during-delivery-source");
+    { ...taskDraft, title: "Cancelled during Claude delivery",
+      scopes: [{ kind: "tree", path: "tasks/claude-cancel-during-delivery" }] }, "claude-cancel-during-delivery-source");
   const cancelledDuringDeliveryPlan = await planner.plan(f.identity, binding.projectId, cancelledDuringDeliverySource.receipt.jobId,
     sha256Digest({ ...taskDraft, title: "Cancelled during Claude delivery" }));
   const cancelledDuringDeliveryAssignment = await assignments.assign(f.identity, binding.projectId,
@@ -312,7 +315,8 @@ test("a local Claude delivery publishes once, then a rebuilt executor recovers t
   // disconnected run, creates neither a review nor a replacement attempt, and
   // a reconstructed executor must not resend the unknown original packet.
   const uncertainSource = await f.tasks.propose(f.identity, binding.projectId,
-    { ...taskDraft, title: "Uncertain Claude delivery" }, "claude-uncertain-delivery-source");
+    { ...taskDraft, title: "Uncertain Claude delivery",
+      scopes: [{ kind: "tree", path: "tasks/claude-uncertain" }] }, "claude-uncertain-delivery-source");
   const uncertainPlan = await planner.plan(f.identity, binding.projectId, uncertainSource.receipt.jobId,
     sha256Digest({ ...taskDraft, title: "Uncertain Claude delivery" }));
   const uncertainAssignment = await assignments.assign(f.identity, binding.projectId, uncertainPlan.receipt.jobId,
@@ -346,7 +350,8 @@ test("a local Claude delivery publishes once, then a rebuilt executor recovers t
   // A prior terminal failure consumes that exact run. A later call cannot
   // contact Claude, add a delivery receipt, or publish old success evidence
   // under the failed task identity.
-  const failedSource = await f.tasks.propose(f.identity, binding.projectId, { ...taskDraft, title: "Failed Claude run" }, "claude-failed-source");
+  const failedSource = await f.tasks.propose(f.identity, binding.projectId, { ...taskDraft, title: "Failed Claude run",
+    scopes: [{ kind: "tree", path: "tasks/claude-failed" }] }, "claude-failed-source");
   const failedPlan = await planner.plan(f.identity, binding.projectId, failedSource.receipt.jobId,
     sha256Digest({ ...taskDraft, title: "Failed Claude run" }));
   const failedAssignment = await assignments.assign(f.identity, binding.projectId, failedPlan.receipt.jobId,
@@ -374,7 +379,8 @@ test("a local Claude delivery publishes once, then a rebuilt executor recovers t
 
   // Cancellation is terminal for the same reason: a later delivery may not
   // reinterpret old protected bytes as an approval to revive this task.
-  const cancelledSource = await f.tasks.propose(f.identity, binding.projectId, { ...taskDraft, title: "Cancelled Claude run" }, "claude-cancelled-source");
+  const cancelledSource = await f.tasks.propose(f.identity, binding.projectId, { ...taskDraft, title: "Cancelled Claude run",
+    scopes: [{ kind: "tree", path: "tasks/claude-cancelled" }] }, "claude-cancelled-source");
   const cancelledPlan = await planner.plan(f.identity, binding.projectId, cancelledSource.receipt.jobId,
     sha256Digest({ ...taskDraft, title: "Cancelled Claude run" }));
   const cancelledAssignment = await assignments.assign(f.identity, binding.projectId, cancelledPlan.receipt.jobId,
@@ -405,7 +411,8 @@ test("a local Claude delivery publishes once, then a rebuilt executor recovers t
   // before the shared receipt, result reservation, acquired host or protected
   // publication paths are even considered.
   const refusedSource = await f.tasks.propose(f.identity, binding.projectId,
-    { ...taskDraft, title: "Post-assembly Claude admission refusal" }, "claude-post-assembly-refusal-source");
+    { ...taskDraft, title: "Post-assembly Claude admission refusal",
+      scopes: [{ kind: "tree", path: "tasks/claude-refused" }] }, "claude-post-assembly-refusal-source");
   const refusedPlan = await planner.plan(f.identity, binding.projectId, refusedSource.receipt.jobId,
     sha256Digest({ ...taskDraft, title: "Post-assembly Claude admission refusal" }));
   const refusedAssignment = await assignments.assign(f.identity, binding.projectId, refusedPlan.receipt.jobId,
