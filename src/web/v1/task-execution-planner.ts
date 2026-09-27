@@ -402,15 +402,17 @@ export class TaskExecutionPlanner {
     const source = (await tx.query<{ selection_key: string | null; effort: string | null }>(
       "SELECT selection_key,effort FROM control_task_model_selections WHERE tenant_id=$1 AND job_id=$2",
       [this.scope.tenantId, sourceJobId])).rows[0];
-    if (!source) return fail();
-    let requested: RequestedTaskModelV1 = { model: source.selection_key ?? undefined, effort: source.effort ?? undefined };
+    // Jobs saved before 0091 have no selection row. Resolve those through the
+    // chosen worker's current protected default; never invent a browser value
+    // or bypass the allowlist. New jobs always retain their exact saved choice.
+    let requested: RequestedTaskModelV1 = source
+      ? { model: source.selection_key ?? undefined, effort: source.effort ?? undefined } : {};
     if (inheritedFromJobId) {
       const inherited = (await tx.query<{ selection_key: string; effort: string }>(
         `SELECT selection_key,effort FROM control_task_model_selections
          WHERE tenant_id=$1 AND job_id=$2 AND worker_kind IS NOT NULL`,
       [this.scope.tenantId, inheritedFromJobId])).rows[0];
-      if (!inherited) return fail();
-      requested = { model: inherited.selection_key, effort: inherited.effort };
+      requested = inherited ? { model: inherited.selection_key, effort: inherited.effort } : {};
     }
     requested = inheritTaskModelRequestV1(requested, override ?? {});
     let selected;

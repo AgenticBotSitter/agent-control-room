@@ -3,6 +3,7 @@ import { test } from "node:test";
 import { createPrivatePgDriver } from "../src/web/v1/private-pg-driver";
 import { boundPrivateDatabase } from "../src/web/v1/bounded-database";
 import { qualifyPrivatePgSession } from "../src/web/v1/private-pg-qualification";
+import { sanitizedDatabaseFailureV1 } from "../src/web/v1/sanitized-database-failure";
 
 test("qualification refusal destroys the lease before returning application access", async () => {
   for (const rows of [[], [{ qualified: false }], [{ qualified: "true" }], [{ qualified: true }, { qualified: true }]]) {
@@ -101,6 +102,36 @@ for (const sqlState of ["40P01", "40001"] as const) test(`${sqlState} before COM
   assert.deepEqual(statements, ["BEGIN", "INSERT INTO synthetic VALUES (1)", "ROLLBACK", "SELECT 1"]);
   assert.deepEqual(releases, [false, false]); assert.equal(ends, 0);
   await db.close(); assert.equal(ends, 1);
+});
+
+for (const sqlState of ["P0001", "55P03"] as const) test(`${sqlState} is a definite refusal that does not stop the pool`, async () => {
+  const statements: string[] = [];
+  let failed = false, ends = 0;
+  const db = boundPrivateDatabase(createPrivatePgDriver({ async connect() { return {
+    async query(statement) {
+      statements.push(statement);
+      if (statement === "INSERT INTO synthetic VALUES (1)" && !failed) {
+        failed = true; throw Object.assign(new Error("must not escape"), { code: sqlState, detail: "secret" });
+      }
+      return { rows: statement === "SELECT 1" ? [{ ok: true }] : [] };
+    }, release() {},
+  }; }, async end() { ends++; } }));
+  const refusal = await db.client.transaction(session => session.query("INSERT INTO synthetic VALUES (1)"))
+    .then(() => undefined, error => error);
+  assert.equal(refusal?.message, "database_unavailable");
+  assert.equal(refusal?.sqlState, sqlState);
+  assert.equal(sanitizedDatabaseFailureV1(refusal), `code=database_unavailable sqlstate=${sqlState}`);
+  assert.doesNotMatch(sanitizedDatabaseFailureV1(refusal), /secret|must not escape/);
+  assert.equal(db.isAvailable(), true);
+  assert.deepEqual(await db.client.query("SELECT 1"), { rows: [{ ok: true }] });
+  assert.deepEqual(statements, ["BEGIN", "INSERT INTO synthetic VALUES (1)", "ROLLBACK", "SELECT 1"]);
+  assert.equal(ends, 0); await db.close(); assert.equal(ends, 1);
+});
+
+test("unknown sweep failures expose no exception detail", () => {
+  assert.equal(sanitizedDatabaseFailureV1(new Error("password host query detail")), "code=unknown");
+  assert.equal(sanitizedDatabaseFailureV1(new Error("mac_local_quality_unavailable")),
+    "code=mac_local_quality_unavailable");
 });
 
 test("a caught deadlock statement still forces rollback without stopping the pool", async () => {

@@ -1,12 +1,10 @@
-import { PrivateDatabaseError, type PrivateDatabaseDriver, type PrivateDatabaseRollbackSqlState } from "./bounded-database";
+import { PrivateDatabaseError, type PrivateDatabaseDriver } from "./bounded-database";
 
-const rollbackSqlStates = new Set<PrivateDatabaseRollbackSqlState>(["40P01", "40001"]);
-function definiteRollbackSqlState(error: unknown): PrivateDatabaseRollbackSqlState | undefined {
+function definiteSqlState(error: unknown): string | undefined {
   if (!error || typeof error !== "object") return undefined;
   let code: unknown;
   try { code = Reflect.get(error, "code"); } catch { return undefined; }
-  return typeof code === "string" && rollbackSqlStates.has(code as PrivateDatabaseRollbackSqlState)
-    ? code as PrivateDatabaseRollbackSqlState : undefined;
+  return typeof code === "string" && /^[0-9A-Z]{5}$/u.test(code) ? code : undefined;
 }
 
 /** Trusted node-postgres pool surface. Construction and credentials belong to
@@ -60,7 +58,7 @@ export function createPrivatePgDriver(pool: PrivatePgPool,
               if (stopped || released) throw new PrivateDatabaseError("database_outcome_uncertain");
               return { rows: result.rows as T[] };
             } catch (error) {
-              const sqlState = definiteRollbackSqlState(error);
+              const sqlState = definiteSqlState(error);
               if (sqlState) throw new PrivateDatabaseError("database_unavailable", sqlState);
               throw new PrivateDatabaseError("database_outcome_uncertain");
             }

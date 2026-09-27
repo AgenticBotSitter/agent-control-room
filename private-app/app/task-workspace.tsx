@@ -19,6 +19,17 @@ import { createIdeaBrowserClient } from "../../src/web/v1/idea-browser-client";
 import { canPrepareIdeaExperiment, prepareIdeaExperimentDraft } from "../../src/web/v1/idea-experiment-draft";
 import { useLocalRuntime } from "./local-runtime";
 
+/** Polling the same task must retain its object identity. The planning,
+ * assignment and result children key their protected reads to this value; a
+ * fresh but equal object otherwise fans one 30-second poll into more reads and
+ * resets in-progress owner choices. */
+export function retainEquivalentTaskDetailV1<T extends { observedAt: string }>(previous: T | undefined, next: T): T {
+  if (!previous) return next;
+  const { observedAt: _previousObservation, ...previousValue } = previous;
+  const { observedAt: _nextObservation, ...nextValue } = next;
+  return JSON.stringify(previousValue) === JSON.stringify(nextValue) ? previous : next;
+}
+
 export function TaskAuthenticationRecovery({ held }: { held: boolean }) {
   return <p>{browserAuthenticationRecovery(held)}</p>;
 }
@@ -84,7 +95,7 @@ export function PrivateTaskWorkspace({ projectId, jobId, after }: { projectId: s
       try {
         const value = jobId ? await client.detail(projectId, jobId) : await client.list(projectId, after);
         if (live && current === generation.current) {
-          if ("task" in value) setDetail(value); else setPage(value);
+          if ("task" in value) setDetail(previous => retainEquivalentTaskDetailV1(previous, value)); else setPage(value);
           setError(client.hasPending() ? new BrowserRequestError("uncertain") : undefined);
         }
       } catch (reason) {
