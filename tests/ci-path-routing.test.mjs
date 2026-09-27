@@ -259,6 +259,25 @@ test("the merge gate cannot be skipped by anything the pull request controls", (
     !/needs\.route\.outputs/u.test(header),
     "routing must never gate the merge-check job itself, only which lanes run early",
   );
+  assert.match(header, /full-mac-local-rehearsal/u, "the full rehearsal must be required by the merge gate");
+});
+
+test("the full Mac-local rehearsal is isolated, fake, PG17, and runs every supported mode", () => {
+  const start = workflow.indexOf("  full-mac-local-rehearsal:");
+  const end = workflow.indexOf("\n  full-gate:", start);
+  assert.ok(start > 0 && end > start, "the full rehearsal job must exist before the catch-up gate");
+  const job = workflow.slice(start, end);
+  assert.match(job, /name: Full Mac-local rehearsal/u);
+  assert.match(job, /runs-on: ubuntu-latest/u);
+  assert.match(job, /PG_BIN: \/usr\/lib\/postgresql\/17\/bin/u);
+  assert.match(job, /postgresql-17/u);
+  assert.match(job, /mktemp -d/u);
+  assert.match(job, /--fake-executables/u);
+  assert.match(job, /mac:prepare-task-runtime/u);
+  assert.match(job, /journey\.ts "\$\{rehearsal_root\}"/u);
+  assert.match(job, /run_rehearsal "--model-allowlists"/u);
+  assert.match(job, /trap cleanup EXIT INT TERM/u);
+  assert.ok(!/secrets\./u.test(job), "the fake rehearsal must not receive secrets");
 });
 
 test("every lane the fast path can skip has a merge-gate counterpart", () => {

@@ -6,7 +6,7 @@ import { randomBytes } from "node:crypto";
 import { PgBoss, getConstructionPlans } from "pg-boss";
 import { existsSync, mkdirSync, readdirSync, writeFileSync, chmodSync } from "node:fs";
 import { homedir } from "node:os";
-import { isAbsolute, join } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { applyMigrations } from "../../../deploy/postgres/apply-migrations.mjs";
 import { connectTarget } from "../../../deploy/postgres/evidence.mjs";
@@ -22,15 +22,22 @@ const portIndex = process.argv.indexOf("--port");
 const port = portIndex === -1 ? 15499 : Number(process.argv[portIndex + 1]);
 const webPortIndex = process.argv.indexOf("--web-port");
 const webPort = webPortIndex === -1 ? 3217 : Number(process.argv[webPortIndex + 1]);
+const fakeExecutables = process.argv.includes("--fake-executables");
 if (!["up", "down"].includes(action) || !dir || !isAbsolute(dir) || !Number.isInteger(port)
   || !Number.isInteger(webPort) || webPort < 1024 || webPort > 65535 || webPort === port) {
-  console.error("usage: pnpm mac:rehearsal up|down ABSOLUTE_DIR [--port 15499] [--web-port 3217]");
+  console.error("usage: pnpm mac:rehearsal up|down ABSOLUTE_DIR [--port 15499] [--web-port 3217] [--fake-executables]");
   process.exit(2);
 }
-const env = { ...process.env, LC_ALL: "en_US.UTF-8", LANG: "en_US.UTF-8" };
+const locale = process.platform === "linux" ? "C.UTF-8" : "en_US.UTF-8";
+const env = { ...process.env, LC_ALL: process.env.LC_ALL || locale, LANG: process.env.LANG || locale };
+const pgBin = process.env.PG_BIN;
+if (pgBin !== undefined && (!isAbsolute(pgBin) || resolve(pgBin) !== pgBin)) {
+  throw new Error("rehearsal_pg_bin_must_be_absolute");
+}
+const pgExecutable = (name: string) => pgBin ? join(pgBin, name) : name;
 const pg = join(dir, "pg");
 const bounded = { env, stdio: "ignore" as const, timeout: 120_000, killSignal: "SIGKILL" as const };
-const pgctl = (...args: string[]) => execFileSync("pg_ctl", ["-D", pg, ...args], bounded);
+const pgctl = (...args: string[]) => execFileSync(pgExecutable("pg_ctl"), ["-D", pg, ...args], bounded);
 let clusterStarted = false;
 let keepCluster = false;
 let stopping = false;
@@ -59,7 +66,7 @@ const fresh = !existsSync(pg);
 try {
   if (fresh) {
     mkdirSync(dir, { recursive: true, mode: 0o700 });
-    execFileSync("initdb", ["-D", pg, "-U", "postgres", "--auth=trust", "-E", "UTF8"], bounded);
+    execFileSync(pgExecutable("initdb"), ["-D", pg, "-U", "postgres", "--auth=trust", "-E", "UTF8"], bounded);
     writeFileSync(join(pg, ".control-room-disposable-postgres.json"), `${JSON.stringify({
       schema: "control-room.disposable-postgres/v1", createdBy: "mac-local-rehearsal",
     })}\n`, { mode: 0o600, flag: "wx" });
@@ -73,7 +80,7 @@ try {
     process.exit(0);
   }
 
-execFileSync("psql", ["-h", "127.0.0.1", "-p", String(port), "-U", "postgres", "-d", "postgres", "-v", "dbname=control_room",
+execFileSync(pgExecutable("psql"), ["-h", "127.0.0.1", "-p", String(port), "-U", "postgres", "-d", "postgres", "-v", "dbname=control_room",
   "-f", fileURLToPath(new URL("../../../deploy/postgres/provision-database.sql", import.meta.url))], bounded);
 const pw = () => randomBytes(24).toString("base64url");
 const secrets = { migrator: pw(), application: pw(), scheduler: pw() };
@@ -85,7 +92,7 @@ await applyMigrations({ target: bootstrapTarget, rootDir: process.cwd(),
   migrateTarget: `host=127.0.0.1 port=${port} dbname=control_room user=control_room_migrator password=${secrets.migrator}`,
   env: { NODE_ENV: "test", CONTROL_ROOM_MIGRATOR_PASSWORD: secrets.migrator,
     CONTROL_ROOM_APP_PASSWORD: secrets.application, CONTROL_ROOM_SCHEDULER_PASSWORD: secrets.scheduler } });
-const psql = (database: string, file: string) => execFileSync("psql", ["-h", "127.0.0.1", "-p", String(port), "-U", "postgres", "-d", database,
+const psql = (database: string, file: string) => execFileSync(pgExecutable("psql"), ["-h", "127.0.0.1", "-p", String(port), "-U", "postgres", "-d", database,
   "-v", "ON_ERROR_STOP=1", "-f", fileURLToPath(new URL(file, import.meta.url))], bounded);
 // Match the reviewed package-5 sequence against this fresh disposable cluster.
 // applyMigrations installs the production roles as part of bootstrap; rerunning
@@ -118,16 +125,28 @@ try {
   }
 } finally { await membership.end(); }
 
-const home = homedir(), claudeRoot = join(home, "Library/Application Support/Claude/claude-code");
-const claudeVersion = readdirSync(claudeRoot).filter(v => /^\d+\.\d+\.\d+$/u.test(v))
-  .sort((a, b) => b.localeCompare(a, undefined, { numeric: true }))[0];
-const codexCandidates = ["/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex",
-  "/Applications/ChatGPT.app/Contents/Resources/codex"];
-const codexPath = codexCandidates.find(path => existsSync(path));
-if (!codexPath) throw new Error("rehearsal_codex_executable_missing");
-const paths = { codex: codexPath,
-  "claude-code": join(claudeRoot, claudeVersion ?? "missing", "claude.app/Contents/MacOS/claude"),
-  hermes: join(home, ".hermes/hermes-agent/venv/bin/hermes") } as const;
+let paths: Readonly<Record<"codex" | "claude-code" | "hermes", string>>;
+if (fakeExecutables) {
+  const fakeRoot = join(dir, "setup-fake-workers");
+  mkdirSync(fakeRoot, { recursive: true, mode: 0o700 });
+  paths = Object.freeze({ codex: join(fakeRoot, "codex"), "claude-code": join(fakeRoot, "claude"), hermes: join(fakeRoot, "hermes") });
+  for (const [kind, path] of Object.entries(paths)) {
+    writeFileSync(path, `#!/bin/sh\n[ "$1" = "--version" ] || exit 64\nprintf '%s\\n' '${kind} 1.0.0'\n`, { mode: 0o700, flag: "wx" });
+    chmodSync(path, 0o700);
+  }
+} else {
+  if (process.platform !== "darwin") throw new Error("rehearsal_real_executables_require_macos");
+  const home = homedir(), claudeRoot = join(home, "Library/Application Support/Claude/claude-code");
+  const claudeVersion = readdirSync(claudeRoot).filter(v => /^\d+\.\d+\.\d+$/u.test(v))
+    .sort((a, b) => b.localeCompare(a, undefined, { numeric: true }))[0];
+  const codexCandidates = ["/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex",
+    "/Applications/ChatGPT.app/Contents/Resources/codex"];
+  const codexPath = codexCandidates.find(path => existsSync(path));
+  if (!codexPath) throw new Error("rehearsal_codex_executable_missing");
+  paths = Object.freeze({ codex: codexPath,
+    "claude-code": join(claudeRoot, claudeVersion ?? "missing", "claude.app/Contents/MacOS/claude"),
+    hermes: join(home, ".hermes/hermes-agent/venv/bin/hermes") });
+}
 const workers = [];
 for (const kind of ["codex", "claude-code", "hermes"] as const)
   workers.push({ workerId: `worker:${kind === "claude-code" ? "claude" : kind}:mac-1`, kind, executablePath: paths[kind],
