@@ -7,6 +7,18 @@
 //
 // Reuses the public issue labels, accepted-claim markers, action markers and the
 // worker-inbox marker parser so one grammar defines every handoff record.
+//
+// An installation supplies the advisory identities whose legacy transition records it
+// wants recognised, either as a comma-separated list:
+//
+//   CONTROL_ROOM_ADVISORY_LOGINS=owner-account,second-account pnpm queue:health
+//
+// or by repeating --advisory-login, which is added to whatever the environment set:
+//
+//   pnpm queue:health -- --advisory-login owner-account --advisory-login second-account
+//
+// Advisory means advisory: a configured identity's record is read and reported, never
+// treated as authoritative, and it grants no authority to anything else.
 import { pathToFileURL } from "node:url";
 import { parseActionMarker } from "./public-worker-inbox.mjs";
 import { parseHandoff } from "./review-handoff-controller.mjs";
@@ -35,6 +47,49 @@ const PR_DECLARATION_WINDOW = 2000;
  * explicit advisory identities, and everything they post remains non-authoritative.
  */
 export const DEFAULT_ADVISORY_LOGINS = Object.freeze([]);
+
+/**
+ * Environment variable an installation uses to supply advisory GitHub logins.
+ *
+ * Comma-separated. A login is never secret, but an installation's advisory set is
+ * local configuration, so it is read from the environment rather than committed.
+ */
+export const ADVISORY_LOGINS_ENV = "CONTROL_ROOM_ADVISORY_LOGINS";
+
+/**
+ * A GitHub login, as the API returns it: alphanumerics and single hyphens, no
+ * leading, trailing or doubled hyphen, at most 39 characters.
+ *
+ * Same shape the repository's own claim-marker `actor` field accepts, so one
+ * definition of "looks like a login" governs markers and configuration alike.
+ */
+const GITHUB_LOGIN = /^(?!.*--)[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}$/;
+
+/**
+ * Parse and validate the configured advisory identities.
+ *
+ * Every supplied value must be a syntactically valid GitHub login. A malformed entry
+ * is rejected rather than skipped: silently dropping one would let a typo look like a
+ * deliberate omission and would hide the reason a legacy record stopped being read.
+ * Login comparison is case-insensitive because GitHub logins are, so `Owner` and
+ * `owner` must not become two different identities.
+ */
+export function parseAdvisoryLogins(values) {
+  const logins = new Map();
+  for (const value of values ?? []) {
+    const login = String(value).trim();
+    if (login === "") continue;
+    if (!GITHUB_LOGIN.test(login))
+      throw new Error(`queue_health_advisory_login_invalid:${login}`);
+    logins.set(login.toLowerCase(), login);
+  }
+  return Object.freeze([...logins.values()]);
+}
+
+/** The advisory logins an installation configured, from the environment. */
+export function advisoryLoginsFromEnv(env = process.env) {
+  return parseAdvisoryLogins((env[ADVISORY_LOGINS_ENV] ?? "").split(","));
+}
 
 /** Minimum number of substantial Ready packages that must stay available. */
 export const READY_FLOOR = 4;
@@ -197,7 +252,11 @@ const CONTROLLER = comment => comment?.user?.login === "github-actions[bot]" && 
  */
 function trusted(marker, comment, advisoryLogins) {
   if (!marker) return false;
-  return CONTROLLER(comment) || advisoryLogins.includes(comment?.user?.login);
+  const login = comment?.user?.login;
+  if (CONTROLLER(comment)) return true;
+  // Compared case-insensitively, matching the configured normalisation, so an
+  // installation that spells an identity differently from the API still recognises it.
+  return advisoryLogins.some(configured => configured.toLowerCase() === String(login ?? "").toLowerCase());
 }
 
 /**
@@ -276,6 +335,9 @@ export async function readQueueHealth({
   now = Date.now(),
 } = {}) {
   if (!REPOSITORY.test(repository ?? "")) throw new Error("queue_health_repository_invalid");
+  // Validated here as well as at the argument layer, so a direct caller cannot pass a
+  // malformed identity into a comparison that would then never match anything.
+  advisoryLogins = parseAdvisoryLogins(advisoryLogins);
   const root = `https://api.github.com/repos/${repository}`;
   const list = await pages(fetchImpl, `${root}/issues?state=open`, token, maxPages);
 
@@ -580,17 +642,27 @@ export function renderQueueHealthJson(report) {
   return JSON.stringify(report, null, 2);
 }
 
-function argumentsFor(argv) {
-  const values = { repository: "AgenticBotSitter/agent-control-room", json: false };
+export function argumentsFor(argv, env = process.env) {
+  const values = {
+    repository: "AgenticBotSitter/agent-control-room",
+    json: false,
+    advisoryLogins: advisoryLoginsFromEnv(env),
+  };
   for (let index = 0; index < argv.length; index++) {
     // A bare separator is accepted so `pnpm queue:health -- --json` still works.
     if (argv[index] === "--") continue;
     if (argv[index] === "--repository") values.repository = argv[++index];
     else if (argv[index] === "--json") values.json = true;
     else if (argv[index] === "--max-pages") values.maxPages = Number(argv[++index]);
+    // Repeatable, and additive to the environment so an installation can name an
+    // advisory identity once in configuration and add another per invocation. Copied
+    // first: the parsed list is frozen, and the caller must not be able to mutate it.
+    else if (argv[index] === "--advisory-login")
+      values.advisoryLogins = [...values.advisoryLogins, argv[++index]];
     else throw new Error(`queue_health_argument_invalid:${argv[index]}`);
   }
-  return values;
+  // Re-validated as a whole so a flag cannot smuggle past the syntax check.
+  return { ...values, advisoryLogins: parseAdvisoryLogins(values.advisoryLogins) };
 }
 
 async function main() {

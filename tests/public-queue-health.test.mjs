@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  DEFAULT_MAX_PAGES, DEFAULT_ADVISORY_LOGINS, READY_FLOOR, STATUSES,
-  declaredSubmissionIssue, parseClaimMarker, readQueueHealth, renderQueueHealth, renderQueueHealthJson,
+  ADVISORY_LOGINS_ENV, DEFAULT_MAX_PAGES, DEFAULT_ADVISORY_LOGINS, READY_FLOOR, STATUSES,
+  advisoryLoginsFromEnv, argumentsFor, declaredSubmissionIssue, parseAdvisoryLogins, parseClaimMarker,
+  readQueueHealth, renderQueueHealth, renderQueueHealthJson,
 } from "../scripts/public-queue-health.mjs";
 import { parseClaimPacket, packetHash } from "../scripts/automatic-claim-controller.mjs";
 
@@ -618,4 +619,119 @@ test("failed history, locks and evaluator observations block with errors", async
   assert.ok(headersSeen.every(value => value === "Bearer sentinel-qh-token"));
   assert.ok(!JSON.stringify(tokenReport).includes("sentinel-qh-token"));
   assert.deepEqual(tokenReport.blockedOffers.filter(offer => offer.issue === 331), []);
+});
+
+// Every login in this block is synthetic. None is a real account, and none may be
+// replaced by a real one: the point of the tests is to prove the configuration path,
+// not to grant any identity advisory recognition.
+const SYNTHETIC = Object.freeze({
+  primary: "synthetic-advisory-primary",
+  secondary: "synthetic-advisory-secondary",
+  unconfigured: "synthetic-advisory-unconfigured",
+});
+
+test("advisory logins are supplied by environment variable, comma-separated", () => {
+  assert.equal(ADVISORY_LOGINS_ENV, "CONTROL_ROOM_ADVISORY_LOGINS");
+  assert.deepEqual(
+    advisoryLoginsFromEnv({ [ADVISORY_LOGINS_ENV]: `${SYNTHETIC.primary},${SYNTHETIC.secondary}` }),
+    [SYNTHETIC.primary, SYNTHETIC.secondary]);
+  // Whitespace around a value is a separator artefact, not part of the login.
+  assert.deepEqual(
+    advisoryLoginsFromEnv({ [ADVISORY_LOGINS_ENV]: ` ${SYNTHETIC.primary} , ${SYNTHETIC.secondary} ` }),
+    [SYNTHETIC.primary, SYNTHETIC.secondary]);
+  // An unset variable configures nothing, exactly like the empty default.
+  assert.deepEqual(advisoryLoginsFromEnv({}), []);
+  assert.deepEqual(advisoryLoginsFromEnv({ [ADVISORY_LOGINS_ENV]: "" }), []);
+  // Trailing and doubled separators must not become empty identities.
+  assert.deepEqual(advisoryLoginsFromEnv({ [ADVISORY_LOGINS_ENV]: `,${SYNTHETIC.primary},,` }), [SYNTHETIC.primary]);
+});
+
+test("a malformed configured login is rejected rather than silently dropped", () => {
+  // Skipping a bad value would let a typo read as a deliberate omission.
+  for (const invalid of ["has space", "-leading-hyphen", "trailing-hyphen-", "double--hyphen", "a".repeat(40), "under_score", "dot.separated"])
+    assert.throws(() => parseAdvisoryLogins([invalid]), /queue_health_advisory_login_invalid/);
+  assert.throws(() => advisoryLoginsFromEnv({ [ADVISORY_LOGINS_ENV]: `${SYNTHETIC.primary},has space` }),
+    /queue_health_advisory_login_invalid/);
+  assert.throws(() => argumentsFor(["--advisory-login", "has space"], {}), /queue_health_advisory_login_invalid/);
+  // The longest legal login and the edge shapes the pattern must still accept.
+  assert.deepEqual(parseAdvisoryLogins(["a".repeat(39)]), ["a".repeat(39)]);
+  assert.deepEqual(parseAdvisoryLogins(["a-b-c", "9lives", "a1"]), ["a-b-c", "9lives", "a1"]);
+});
+
+test("configured logins normalise to one identity per account", () => {
+  // GitHub logins are case-insensitive, so a differently-cased spelling must not
+  // become a second, separately-matched identity.
+  assert.deepEqual(parseAdvisoryLogins([SYNTHETIC.primary.toUpperCase()]), [SYNTHETIC.primary.toUpperCase()]);
+  // A later spelling of the same account wins, so the reported identity is the last one
+  // the installation wrote.
+  assert.deepEqual(parseAdvisoryLogins([SYNTHETIC.primary, SYNTHETIC.primary.toUpperCase()]),
+    [SYNTHETIC.primary.toUpperCase()]);
+  assert.deepEqual(parseAdvisoryLogins([SYNTHETIC.primary.toUpperCase(), SYNTHETIC.primary]), [SYNTHETIC.primary]);
+  // Distinct accounts are all kept, in the order supplied.
+  assert.deepEqual(parseAdvisoryLogins([SYNTHETIC.secondary, SYNTHETIC.primary]),
+    [SYNTHETIC.secondary, SYNTHETIC.primary]);
+  // An explicit non-array argument is still bounded rather than throwing on iteration.
+  assert.deepEqual(parseAdvisoryLogins(undefined), []);
+});
+
+test("--advisory-login is repeatable and additive to the environment", () => {
+  const env = { [ADVISORY_LOGINS_ENV]: SYNTHETIC.primary };
+  assert.deepEqual(argumentsFor([], env).advisoryLogins, [SYNTHETIC.primary]);
+  assert.deepEqual(argumentsFor(["--advisory-login", SYNTHETIC.secondary], env).advisoryLogins,
+    [SYNTHETIC.primary, SYNTHETIC.secondary]);
+  assert.deepEqual(
+    argumentsFor(["--advisory-login", SYNTHETIC.secondary, "--advisory-login", SYNTHETIC.unconfigured], env).advisoryLogins,
+    [SYNTHETIC.primary, SYNTHETIC.secondary, SYNTHETIC.unconfigured]);
+  // A repeated identity is still one identity, whichever route supplied it.
+  assert.deepEqual(argumentsFor(["--advisory-login", SYNTHETIC.primary], env).advisoryLogins, [SYNTHETIC.primary]);
+  // The existing options are untouched, including the pnpm separator and --json.
+  const options = argumentsFor(["--", "--json", "--max-pages", "3", "--advisory-login", SYNTHETIC.primary], env);
+  assert.equal(options.json, true);
+  assert.equal(options.maxPages, 3);
+  assert.equal(options.repository, "AgenticBotSitter/agent-control-room");
+  // An unknown option is still rejected rather than ignored.
+  assert.throws(() => argumentsFor(["--advisory-logins", SYNTHETIC.primary], env), /queue_health_argument_invalid/);
+});
+
+test("a configured advisory identity is read as advisory, never as authoritative", async () => {
+  const configured = fakeFetch({
+    issues: [issue(340, ["status:changes-required", "action:worker"])],
+    comments: { 340: [comment(actionMarker("worker:test-01", "changes-required", 340), "NONE", SYNTHETIC.primary)] },
+    pulls: [pull(341, 340)],
+  });
+  const report = await readQueueHealth({ fetchImpl: configured.fetchImpl, advisoryLogins: [SYNTHETIC.primary] });
+  assert.equal(report.oldestCorrection.recordTrust, "advisory");
+  assert.deepEqual(report.anomalies.find(item => item.issue === 340).codes,
+    ["worker_action_marker_not_authoritative"]);
+  assert.match(renderQueueHealth(report), /record: advisory/);
+
+  // Spelling the identity differently must still recognise the same account.
+  const recased = fakeFetch({
+    issues: [issue(340, ["status:changes-required", "action:worker"])],
+    comments: { 340: [comment(actionMarker("worker:test-01", "changes-required", 340), "NONE", SYNTHETIC.primary.toUpperCase())] },
+    pulls: [pull(341, 340)],
+  });
+  const recasedReport = await readQueueHealth({ fetchImpl: recased.fetchImpl, advisoryLogins: [SYNTHETIC.primary] });
+  assert.equal(recasedReport.oldestCorrection.recordTrust, "advisory");
+
+  // An unconfigured identity in the same shape is still not trusted: configuring one
+  // login must not confer recognition on any other. Association grants nothing.
+  const other = fakeFetch({
+    issues: [issue(340, ["status:changes-required", "action:worker"])],
+    comments: { 340: [comment(actionMarker("worker:test-01", "changes-required", 340), "OWNER", SYNTHETIC.unconfigured)] },
+    pulls: [pull(341, 340)],
+  });
+  const otherReport = await readQueueHealth({ fetchImpl: other.fetchImpl, advisoryLogins: [SYNTHETIC.primary] });
+  assert.deepEqual(otherReport.anomalies.find(item => item.issue === 340).codes, ["worker_action_marker_missing"]);
+  assert.notEqual(otherReport.oldestCorrection?.recordTrust, "advisory");
+});
+
+test("the read entry point rejects a malformed advisory login", async () => {
+  const api = fakeFetch({ issues: [] });
+  // Validated at the boundary, so a direct library caller gets the same refusal the
+  // command line does instead of a login that silently never matches.
+  await assert.rejects(() => readQueueHealth({ fetchImpl: api.fetchImpl, advisoryLogins: ["has space"] }),
+    /queue_health_advisory_login_invalid/);
+  await assert.rejects(() => readQueueHealth({ fetchImpl: api.fetchImpl, advisoryLogins: ["-leading"] }),
+    /queue_health_advisory_login_invalid/);
 });
