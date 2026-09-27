@@ -60,7 +60,7 @@
     "test:browser:private": "pnpm build && node --import tsx scripts/private-browser-acceptance.mjs && node --import tsx scripts/private-uncertain-save-browser-acceptance.mjs && node --import tsx scripts/private-result-review-browser-acceptance.mjs && node --import tsx scripts/private-revision-browser-acceptance.mjs && node --import tsx scripts/private-accessibility-browser-acceptance.mjs && node --import tsx scripts/private-two-configuration-browser-acceptance.mjs",
     "test:product-browser": "node --test tests/browser/workspace/product-browser-journeys.test.mjs",
     "test:mac-local-browser-journeys": "node --import tsx --test tests/mac-local-browser-journeys.test.tsx",
-    "test:mac-local-real-pages": "node --import tsx --test --test-concurrency=1 tests/mac-local-real-pages.test.tsx tests/mac-local-accessibility.test.tsx",
+    "test:mac-local-real-pages": "node --import tsx --test --test-concurrency=1 tests/mac-local-real-pages.test.tsx tests/mac-local-accessibility.test.tsx tests/owner-ui.test.tsx",
     "test:mac-local-owner-browser": "playwright test tests/browser/mac-local-owner-journey.spec.ts && playwright test tests/browser/adversarial-owner.spec.ts",
     "test:mac-local-owner-journey-browser": "playwright test tests/browser/mac-local-owner-journey.spec.ts",
     "test:adversarial-owner-browser": "playwright test tests/browser/adversarial-owner.spec.ts",

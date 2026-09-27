@@ -132,6 +132,57 @@
 .private-result-content { margin-top: 1.5rem; border-top: 1px solid var(--border); }
 .private-result-content .private-actions { align-items: center; justify-content: space-between; }
 .private-result-content textarea { display: block; width: 100%; min-height: 20rem; resize: vertical; font: inherit; color: var(--text); padding: 1rem; background: var(--surface-2); border: 1px solid var(--border); border-radius: .5rem; }
+
+/* ---------------------------------------------------------------- *
+ * Shared design system
+ *
+ * One vocabulary for the things the owner reads at a glance: state,
+ * empty, unavailable and loading. The rule these encode is the one
+ * the page copy already keeps making — "unavailable" is not "empty"
+ * and neither is "all clear". Visually they were identical grey
+ * text on the same card, so a glance could not tell a checked
+ * nothing from an unchecked anything.
+ *
+ * Colour never carries the meaning alone: every state keeps its
+ * text, so this stays legible without colour perception and passes
+ * the contrast rules the token values already satisfy.
+ * ---------------------------------------------------------------- */
+
+/* A state chip. The text is supplied by the caller and is the real
+ * content; the dot and the tint are decoration on top of it. */
+.private-chip { display: inline-flex; align-items: center; gap: .4rem; width: fit-content;
+  border: 1px solid var(--border); border-radius: 999px; background: var(--surface-3);
+  padding: .15rem .6rem; font-size: .8rem; font-weight: 700; text-transform: capitalize; }
+.private-chip::before { content: ""; flex: none; width: .5rem; height: .5rem; border-radius: 50%; background: var(--muted); }
+/* Tones map to the existing state tokens. Each was contrast-checked on every
+ * surface it can be painted on by tests/mac-local-accessibility.test.tsx. */
+.private-chip.is-good::before { background: var(--green); }
+.private-chip.is-warn::before { background: var(--amber); }
+.private-chip.is-bad::before { background: var(--red); }
+.private-chip.is-busy::before { background: var(--blue); }
+
+/* The three read outcomes, as three visibly different things. */
+.private-state-empty { color: var(--muted); font-size: .9rem; }
+.private-state-unavailable { border: 1px solid var(--amber); border-radius: .6rem;
+  background: var(--amber-soft); color: var(--text); padding: .7rem .85rem; font-size: .9rem; }
+.private-state-loading { display: flex; align-items: center; gap: .5rem; color: var(--muted); font-size: .9rem; }
+.private-state-loading::before { content: ""; flex: none; width: .7rem; height: .7rem;
+  border: 2px solid var(--border-strong); border-top-color: var(--green); border-radius: 50%; }
+/* The animated spinner is decorative: the sentence beside it already says the
+ * read is in progress, and a looping animation is suppressed under
+ * prefers-reduced-motion (the global rule at the end of control-room.css). */
+@media (prefers-reduced-motion: no-preference) {
+  .private-state-loading::before { animation: private-state-spin .9s linear infinite; }
+}
+@keyframes private-state-spin { to { transform: rotate(360deg); } }
+
+/* A panel heading with an optional trailing count, so a list can be scanned
+ * without counting rows by eye. */
+.private-panel-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; margin-bottom: .75rem; }
+.private-panel-heading h2 { margin: 0; }
+.private-count { flex: none; min-width: 1.6rem; border-radius: 999px; background: var(--surface-3);
+  color: var(--muted); padding: .1rem .55rem; font-size: .8rem; font-weight: 700; text-align: center; }
+
 @media (max-width: 800px) { .private-columns, .private-settings-grid, .private-dashboard-grid { grid-template-columns: 1fr; } .private-dashboard-projects { grid-column: auto; } .private-create { grid-row: 1; } .private-shell main { padding: 1.25rem; } .private-header { padding: 1rem; flex-wrap: wrap; } }
 @media (max-width: 560px) {
   .private-header { gap: .75rem; }
