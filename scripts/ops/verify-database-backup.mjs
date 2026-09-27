@@ -74,6 +74,43 @@ async function verifyOwnership(client) {
   if (rows.length > 0) throw new Error("database_backup_owner_refused");
 }
 
+/** Re-own only restored application objects. Blanket REASSIGN OWNED would also
+ * target bootstrap-owned system objects and PostgreSQL correctly refuses it. */
+export async function normalizeMacApplicationOwnershipV1(client) {
+  const commands = (await client.query(`SELECT command FROM (
+    SELECT CASE WHEN c.relkind='S' THEN 2 ELSE 1 END AS phase,
+      format('ALTER %s %I.%I OWNER TO control_room_schema_owner',
+      CASE c.relkind WHEN 'S' THEN 'SEQUENCE' WHEN 'v' THEN 'VIEW'
+        WHEN 'm' THEN 'MATERIALIZED VIEW' WHEN 'f' THEN 'FOREIGN TABLE' ELSE 'TABLE' END,
+      n.nspname, c.relname) AS command
+    FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+    WHERE n.nspname IN ('public','control_room_queue') AND c.relkind IN ('r','p','S','v','m','f')
+      AND NOT (c.relkind='S' AND EXISTS (
+        SELECT 1 FROM pg_depend d WHERE d.objid=c.oid AND d.classid='pg_class'::regclass
+          AND d.deptype='i' AND EXISTS (
+            SELECT 1 FROM pg_attribute a WHERE a.attrelid=d.refobjid
+              AND a.attidentity IN ('a','d') AND a.attnum=d.refobjsubid)))
+    UNION ALL
+    SELECT 3, format('ALTER %s %I.%I(%s) OWNER TO control_room_schema_owner',
+      CASE p.prokind WHEN 'p' THEN 'PROCEDURE' WHEN 'a' THEN 'AGGREGATE' ELSE 'FUNCTION' END,
+      n.nspname, p.proname, pg_get_function_identity_arguments(p.oid))
+    FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
+    WHERE n.nspname IN ('public','control_room_queue') AND p.prokind IN ('f','p','a','w')
+    UNION ALL
+    SELECT 4, format('ALTER TYPE %I.%I OWNER TO control_room_schema_owner', n.nspname, t.typname)
+    FROM pg_type t JOIN pg_namespace n ON n.oid=t.typnamespace
+    WHERE n.nspname IN ('public','control_room_queue') AND t.typtype IN ('d','e')
+    UNION ALL
+    SELECT 5, format('ALTER SCHEMA %I OWNER TO control_room_schema_owner', n.nspname)
+    FROM pg_namespace n WHERE n.nspname IN ('public','control_room_queue')
+  ) application_objects ORDER BY phase,command`)).rows;
+  for (const row of commands) {
+    if (typeof row.command !== "string" || !row.command.startsWith("ALTER "))
+      throw new Error("database_backup_owner_command_refused");
+    await client.query(row.command);
+  }
+}
+
 export async function verifyMacLocalDatabaseBackupV1({ backup, port, pgBin = "/opt/homebrew/bin" }) {
   if (!Number.isInteger(port) || port < 15620 || port > 15649 || typeof pgBin !== "string" || !isAbsolute(pgBin))
     throw new Error("database_backup_verification_arguments_refused");
@@ -110,15 +147,9 @@ export async function verifyMacLocalDatabaseBackupV1({ backup, port, pgBin = "/o
     const client = new Client(target); await client.connect();
     try {
       // pg_restore --no-owner intentionally creates non-relation objects as
-      // the disposable administrator. Move those restored objects to the one
-      // recorded schema owner before proving the owner invariant.
-      await client.query("REASSIGN OWNED BY postgres TO control_room_schema_owner");
-      await client.query("ALTER SCHEMA public OWNER TO control_room_schema_owner");
-      await client.query(`DO $$ BEGIN
-        IF EXISTS (SELECT 1 FROM pg_namespace WHERE nspname='control_room_queue') THEN
-          ALTER SCHEMA control_room_queue OWNER TO control_room_schema_owner;
-        END IF;
-      END $$`);
+      // the disposable administrator. Move only restored application objects
+      // to the recorded schema owner before proving the owner invariant.
+      await normalizeMacApplicationOwnershipV1(client);
       await verifyOwnership(client);
       const diff = diffMacGrantsV1(await readMacGrantCatalogV1(client), await readDesiredMacGrantsV1());
       if (diff.extra.length > 0 || diff.missing.length > 0) throw new Error("database_backup_mac_grants_refused");

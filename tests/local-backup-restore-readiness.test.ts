@@ -9,7 +9,8 @@ import { localBackupRestoreEvidenceDigestForInstallationPlanV1 } from "../src/ha
 import { planInstallationTopologyV1 } from "../src/harness/v1/installation-topology";
 import { sha256Digest } from "../src/security";
 import { createMacLocalDatabaseBackupV1 } from "../scripts/ops/backup-database.mjs";
-import { verifyMacLocalDatabaseBackupV1 } from "../scripts/ops/verify-database-backup.mjs";
+import { normalizeMacApplicationOwnershipV1, verifyMacLocalDatabaseBackupV1 } from
+  "../scripts/ops/verify-database-backup.mjs";
 
 const planDigest = sha256Digest("reviewed-local-installation-plan");
 const inventory = () => createArtifactBackupInventoryV1({
@@ -105,4 +106,22 @@ test("writes a secret-free digest manifest and refuses a tampered dump before st
   await writeFile(join(root, "database.dump"), "tampered-custom-format-backup");
   await assert.rejects(verifyMacLocalDatabaseBackupV1({ backup: root, port: 15620,
     pgBin: "/unused/postgres/bin" }), /database_backup_digest_refused/u);
+});
+
+test("normalizes only restored application ownership, never bootstrap system ownership", async () => {
+  const commands = [
+    "ALTER TABLE public.tenants OWNER TO control_room_schema_owner",
+    "ALTER FUNCTION control_room_queue.archive() OWNER TO control_room_schema_owner",
+    "ALTER TYPE control_room_queue.job_state OWNER TO control_room_schema_owner",
+    "ALTER SCHEMA public OWNER TO control_room_schema_owner",
+  ];
+  const queries: string[] = [];
+  const client = { query: async (sql: string) => {
+    queries.push(sql);
+    return queries.length === 1 ? { rows: commands.map(command => ({ command })) } : { rows: [] };
+  } };
+  await normalizeMacApplicationOwnershipV1(client);
+  assert.doesNotMatch(queries[0]!, /REASSIGN OWNED/u);
+  assert.match(queries[0]!, /nspname IN \('public','control_room_queue'\)/u);
+  assert.deepEqual(queries.slice(1), commands);
 });
