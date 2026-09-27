@@ -148,6 +148,11 @@ export class WebTaskReviewService {
     const guarded: DatabaseClient = { query: this.db.query.bind(this.db), transaction: this.db.transaction.bind(this.db),
       transactionWithPreCommitCheck: (work, check) => this.db.transactionWithPreCommitCheck(work, async () => { await check(); await staged.flush(check); await check(); }) };
     return new WebSessionAuthority(guarded, this.scope, this.clock, "task").authenticated(identity, async (tx, actor) => {
+      // Canonical write order: parent tenant before completion-gate and child rows.
+      // The later review-command INSERT takes this same FK key-share implicitly;
+      // acquiring it now prevents a tenant -> gate / gate -> tenant deadlock.
+      const tenant = await tx.query("SELECT id FROM tenants WHERE id=$1 FOR KEY SHARE", [this.scope.tenantId]);
+      if (tenant.rows.length !== 1) throw new Error("review_task_unavailable");
       const context = await this.context(tx, actor, projectId, jobId, draft.artifactId, draft.targetId, this.gate(tx, staged.checkpoints));
       actor.require("tasks.reviews.record", projectId, true, context.risk);
       const digest = this.digest(actor.id, projectId, jobId, draft);
