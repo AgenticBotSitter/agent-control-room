@@ -11,6 +11,8 @@ DO $$ BEGIN
     EXECUTE 'REVOKE INSERT (tenant_id, operation_scope, idempotency_key, request_digest, status) ON control_idempotency FROM control_room_work_intake';
     EXECUTE 'REVOKE UPDATE (status, result, completed_at) ON control_idempotency FROM control_room_work_intake';
     EXECUTE 'REVOKE UPDATE (head_hash, event_count, updated_at) ON control_audit_chain_heads FROM control_room_work_intake';
+    EXECUTE 'REVOKE UPDATE (web_lock) ON control_identities, control_role_grants FROM control_room_work_intake';
+    EXECUTE 'REVOKE UPDATE (coordinator_lock) ON projects FROM control_room_work_intake';
   END IF;
 END $$;
 DROP TRIGGER work_batch_revisions_truncate_guard ON work_batch_revisions;

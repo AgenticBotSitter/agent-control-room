@@ -144,6 +144,8 @@ test("role creation and least-privilege grants travel through reviewed productio
   assert.match(migration, /work_intake_canonical_jsonb/u);
   assert.doesNotMatch(migration, /guard_work_intake_audit_event_insert\(\) RETURNS trigger\s+LANGUAGE plpgsql SECURITY DEFINER/u);
   assert.match(grants, /GRANT EXECUTE ON FUNCTION work_intake_canonical_jsonb\(jsonb\) TO control_room_work_intake/u);
+  assert.match(grants, /GRANT UPDATE \(web_lock\) ON control_identities, control_role_grants TO control_room_work_intake/u);
+  assert.match(grants, /GRANT UPDATE \(coordinator_lock\) ON projects TO control_room_work_intake/u);
   assert.match(migration, /NEW\.event_digest<>expected_digest OR NEW\.event_hash<>expected_hash/u);
   assert.match(migration, /NEW\.result->>'startsWork'<>'false'/u);
   assert.match(migration, /NEW\.result->>'grantsExecutionAuthority'<>'false'/u);

@@ -375,6 +375,13 @@ test("work-intake login cannot read or forge another subsystem's shared-ledger r
   } finally { await query(db,"REVOKE control_room_work_intake FROM control_room_scheduler"); }
 
   const intakeDb=postgresDatabase(intake), store=new WorkBatchStoreV1(intakeDb,new Uint8Array(32).fill(8));
+  const lockPrivileges=(await query(db,`SELECT
+    has_column_privilege('control_room_work_intake','control_identities','web_lock','UPDATE') AS identity_lock,
+    has_column_privilege('control_room_work_intake','control_role_grants','web_lock','UPDATE') AS grant_lock,
+    has_column_privilege('control_room_work_intake','projects','coordinator_lock','UPDATE') AS project_lock,
+    has_column_privilege('control_room_work_intake','control_identities','state','UPDATE') AS identity_state,
+    has_column_privilege('control_room_work_intake','projects','domain_state','UPDATE') AS project_state`)).rows[0];
+  assert.deepEqual(lockPrivileges,{identity_lock:true,grant_lock:true,project_lock:true,identity_state:false,project_state:false});
   const principal={tenantId:"tenant:intake-guard",identityId:"identity:intake-guard",actorType:"agent",
     authenticatedAt:"2026-09-27T11:00:00.000Z",expiresAt:"2027-09-27T12:00:00.000Z"};
   assert.equal((await store.authorizeAction(principal,"project:intake-other","work_batches.propose",
@@ -431,8 +438,10 @@ test("work-intake login cannot read or forge another subsystem's shared-ledger r
   const remaining=(await query(db,`SELECT
     has_table_privilege('control_room_work_intake','control_idempotency','SELECT') AS table_select,
     has_column_privilege('control_room_work_intake','control_idempotency','status','UPDATE') AS column_update,
-    has_column_privilege('control_room_work_intake','control_audit_chain_heads','head_hash','UPDATE') AS head_update`)).rows[0];
-  assert.deepEqual(remaining,{table_select:false,column_update:false,head_update:false});
+    has_column_privilege('control_room_work_intake','control_audit_chain_heads','head_hash','UPDATE') AS head_update,
+    has_column_privilege('control_room_work_intake','control_identities','web_lock','UPDATE') AS identity_lock,
+    has_column_privilege('control_room_work_intake','projects','coordinator_lock','UPDATE') AS project_lock`)).rows[0];
+  assert.deepEqual(remaining,{table_select:false,column_update:false,head_update:false,identity_lock:false,project_lock:false});
   await assert.rejects(query(intake,"SELECT * FROM control_idempotency"),/permission denied/u);
 });
 

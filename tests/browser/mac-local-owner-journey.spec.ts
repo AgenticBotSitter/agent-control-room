@@ -188,8 +188,7 @@ test("owner completes the real local website journey for every configured worker
   await expect(page.getByRole("link", { name: "New task" })).toBeVisible();
 
   const browserMachineBoundary = await page.evaluate(async ({ projectId }) => (await fetch(
-    `/v1/projects/${encodeURIComponent(projectId)}/work-batches`, { method: "POST",
-      headers: { "content-type": "application/json" }, body: "{}" })).status, { projectId });
+    `/v1/projects/${encodeURIComponent(projectId)}/work-batches`)).status, { projectId });
   expect(browserMachineBoundary, "the owner website must not expose the machine-intake route").toBe(404);
   await submitProposalOnlyBatch(projectId);
   await page.goto(`${projectPath}/tasks`);
