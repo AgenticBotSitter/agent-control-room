@@ -136,11 +136,14 @@ test("role creation and least-privilege grants travel through reviewed productio
   assert.doesNotMatch(grants, /GRANT .*control_room_queue.* TO control_room_work_intake/u);
   assert.doesNotMatch(browser, /work_batches|work_batch_revisions/u);
   assert.match(migration, /pg_has_role\(session_user,r\.oid,'member'\)/u);
+  assert.match(migration, /NOT s\.rolsuper/u);
   assert.match(migration, /CREATE POLICY control_idempotency_work_intake_scope/u);
   assert.match(migration, /CREATE POLICY audit_events_work_intake_scope/u);
   assert.match(migration, /AS RESTRICTIVE FOR ALL/u);
   assert.match(migration, /DEFERRABLE INITIALLY DEFERRED/u);
   assert.match(migration, /work_intake_canonical_jsonb/u);
+  assert.doesNotMatch(migration, /guard_work_intake_audit_event_insert\(\) RETURNS trigger\s+LANGUAGE plpgsql SECURITY DEFINER/u);
+  assert.match(grants, /GRANT EXECUTE ON FUNCTION work_intake_canonical_jsonb\(jsonb\) TO control_room_work_intake/u);
   assert.match(migration, /NEW\.event_digest<>expected_digest OR NEW\.event_hash<>expected_hash/u);
   assert.match(migration, /NEW\.result->>'startsWork'<>'false'/u);
   assert.match(migration, /NEW\.result->>'grantsExecutionAuthority'<>'false'/u);
