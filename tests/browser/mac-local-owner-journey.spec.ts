@@ -4,7 +4,7 @@ import { resolve } from "node:path";
 import { Client } from "pg";
 import { AuditStore, auditPartition } from "../../src/audit/audit-store";
 import type { DatabaseClient } from "../../src/persistence/database";
-import { workBatchProposalDigestV1 } from "../../src/work-intake/v1/schemas";
+import { workBatchProposalDigestV1 } from "../../src/work-intake/v1/digest";
 import { captureWorkIntakeClientConfigurationV1, captureWorkIntakeServerConfigurationV1,
   workIntakeClientFileNameV1,
 } from "../../src/work-intake/v1";

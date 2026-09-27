@@ -3,6 +3,7 @@ export * from "./client";
 export * from "./credential";
 export * from "./errors";
 export * from "./schemas";
+export * from "./digest";
 export * from "./owner-schemas";
 export * from "./owner-service";
 export * from "./owner-notification";
