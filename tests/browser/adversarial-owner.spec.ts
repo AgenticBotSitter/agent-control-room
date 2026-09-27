@@ -299,7 +299,7 @@ test.describe("disposable owner website adversarial attacks", () => {
       await expect(page.locator("body")).not.toContainText('{"error"');
     }
     await page.goto("/projects?lifecycle=active&lifecycle=paused");
-    await expect(page.getByRole("alert")).toContainText("filter was invalid and has been reset to All");
+    await expect(page.getByRole("alert")).toContainText("page address is invalid");
     await expectHealthy(page);
 
     const stale = await context.newPage();
@@ -378,8 +378,10 @@ test.describe("disposable owner website adversarial attacks", () => {
       { timeout: 20_000 }).toMatch(/result or review changed|decision is already recorded/i);
     const acceptedRequest = reviewPosts.find(request => request.body.decision === "accepted");
     expect(acceptedRequest).toBeDefined();
+    const acceptedDraft = { ...acceptedRequest!.body };
+    delete acceptedDraft.acceptanceAttestation;
     const requestChangesAfterAccept = await api(page, acceptedRequest!.path, "POST",
-      { ...acceptedRequest!.body, decision: "changes_requested", feedback: "This must be refused after acceptance." },
+      { ...acceptedDraft, decision: "changes_requested", feedback: "This must be refused after acceptance." },
       "advchangesafteraccept1");
     expect(requestChangesAfterAccept.status).toBe(409);
     await expect(page.getByRole("button", { name: /Edit task/i })).toHaveCount(0);
