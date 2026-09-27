@@ -14,10 +14,14 @@ import type { TaskAssignmentOperation } from "./task-assignment-coordinator";
 import type { TaskApprovalOperation, TaskSubmissionOperation } from "./task-coordinator-lifecycle";
 import type { TaskRevisionOperation } from "./task-revision-operation";
 import type { MacLocalWorkerReadinessV1 } from "./mac-local-worker-readiness";
+import type { LocalOwnerSessionStoreV1 } from "./local-owner-session-store";
+import type { PersistedLocalOwnerSessionV1 } from "./local-owner-session";
 
 export interface MacLocalWebProcessOptionsV1 {
   origin: string;
   localOwnerSession: Readonly<LocalOwnerSessionProfileV1>;
+  localOwnerSessionStore?: LocalOwnerSessionStoreV1;
+  initialLocalOwnerSessions?: readonly PersistedLocalOwnerSessionV1[];
   workspaceId: string;
   database: { client: DatabaseClient; close: () => Promise<void> };
   /** Existing canonical task operations, supplied by the host composition.
@@ -58,7 +62,7 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
     || profile.origin !== options.origin || !options.workspaceId || !options.database || typeof options.database.close !== "function")
     throw new Error("mac_local_web_process_config_invalid");
   const clock = options.clock ?? Date.now;
-  const sessions = new LocalOwnerSessionServiceV1(profile);
+  const sessions = new LocalOwnerSessionServiceV1(profile, options.localOwnerSessionStore, options.initialLocalOwnerSessions);
   const projects = new WebProjectService(options.database.client,
     { tenantId: profile.tenantId, workspaceId: options.workspaceId }, clock);
   const tasks = new WebTaskService(options.database.client,
@@ -140,10 +144,18 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
         return renderLocalOwnerSignInPageV1();
       }
       if (url.pathname === "/api/v1/local-owner-session") {
-        if (request.method !== "POST" || url.search) throw new WebAccessError("invalid_request");
-        const issued = await sessions.issue(request, await readLocalOwnerCodeV1(request), clock());
-        return Response.json({ authenticated: true, expiresAt: issued.expiresAt }, { status: 201,
-          headers: { ...privateResponseHeaders, "set-cookie": issued.cookie } });
+        if (url.search) throw new WebAccessError("invalid_request");
+        if (request.method === "POST") {
+          const issued = await sessions.issue(request, await readLocalOwnerCodeV1(request), clock());
+          return Response.json({ authenticated: true, expiresAt: issued.expiresAt }, { status: 201,
+            headers: { ...privateResponseHeaders, "set-cookie": issued.cookie } });
+        }
+        if (request.method === "DELETE") {
+          await sessions.revoke(request, clock());
+          return new Response(null, { status: 204, headers: { ...privateResponseHeaders,
+            "set-cookie": `${"control_room_local_owner"}=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0` } });
+        }
+        throw new WebAccessError("invalid_request");
       }
       if (url.pathname === "/api/v1/local-workers") {
         if (request.method !== "GET" || url.search || !options.workerReadiness) throw new WebAccessError("not_found");
