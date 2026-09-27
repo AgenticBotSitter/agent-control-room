@@ -25,7 +25,8 @@ export async function completeMacLocalFirstOwnerV1(protectedRoot, receiptPath, r
       || (typeof process.getuid === "function" && entry.uid !== process.getuid())) refuse();
     manifest = captureMacLocalFirstOwnerManifestV1(JSON.parse(await readFile(manifestPath, "utf8")));
   } catch { refuse(); }
-  const receipt = await (runtime.readReceipt ?? readMacLocalFirstOwnerReceiptV1)(receiptPath, nodeIds);
+  const expectedRows = 14 + (manifest.workIntakeProjectIds.length > 0 ? 6 : 0);
+  const receipt = await (runtime.readReceipt ?? readMacLocalFirstOwnerReceiptV1)(receiptPath, nodeIds, expectedRows);
   if (receipt.tenantId !== configuration.localOwnerSession.tenantId || receipt.tenantId !== manifest.tenant.id
     || receipt.manifestDigest !== sha256Digest(manifest)
     || manifest.workspace.id !== configuration.workspaceId

@@ -21,13 +21,14 @@ const configuration = Object.freeze({
     { kind: "claude-code", workerId: "worker:claude", executablePath: "/private/claude", recordedVersion: "test" },
     { kind: "codex", workerId: "worker:codex", executablePath: "/private/codex", recordedVersion: "test" },
   ] },
+  workIntakeProjectIds: ["*"],
 });
 const reviewKey = new Uint8Array(32).fill(41);
 const genesis = CompletionGateStoreV1.genesisIntegrityForKeyV1(configuration.localOwnerSession.tenantId, reviewKey);
 
 test("first-owner manifest contains only the exact non-secret transfer fields", () => {
   const manifest = createMacLocalFirstOwnerManifestV1(configuration, "2026-09-25T12:00:00.000Z", genesis);
-  assert.deepEqual(Object.keys(manifest), ["schema", "tenant", "workspace", "identity", "grant", "adapters", "nodes", "completionGateGenesis", "createdAt"]);
+  assert.deepEqual(Object.keys(manifest), ["schema", "tenant", "workspace", "identity", "grant", "adapters", "nodes", "workIntakeProjectIds", "completionGateGenesis", "createdAt"]);
   assert.equal(manifest.schema, MAC_LOCAL_FIRST_OWNER_MANIFEST_V1);
   assert.deepEqual(manifest.tenant, { id: "tenant:mac-local", displayName: "Mac local" });
   assert.deepEqual(manifest.workspace, { id: "workspace:mac-local", displayName: "Mac local" });
@@ -40,6 +41,7 @@ test("first-owner manifest contains only the exact non-secret transfer fields", 
     { nodeId: "mac-1.claude", workerId: "worker:claude", adapterId: CLAUDE_CODE_LOCAL_ADAPTER_V1 },
     { nodeId: "mac-1.codex", workerId: "worker:codex", adapterId: CODEX_OWNER_TRUSTED_LOCAL_ADAPTER_V1 },
   ]);
+  assert.deepEqual(manifest.workIntakeProjectIds, ["*"]);
   assert.equal(JSON.stringify(manifest).includes("/private/"), false);
   assert.equal(JSON.stringify(manifest).includes("test-only-password"), false);
   assert.equal(JSON.stringify(manifest).includes("subject\""), false);
@@ -49,6 +51,8 @@ test("first-owner manifest refuses missing workers and non-canonical timestamps"
   assert.throws(() => createMacLocalFirstOwnerManifestV1({ ...configuration,
     enablement: { ...configuration.enablement, workers: configuration.enablement.workers.slice(0, 2) } }));
   assert.throws(() => createMacLocalFirstOwnerManifestV1(configuration, "2026-09-25"));
+  assert.throws(() => createMacLocalFirstOwnerManifestV1({ ...configuration,
+    workIntakeProjectIds: ["*", "project:extra"] }, "2026-09-25T12:00:00.000Z", genesis));
 });
 
 test("command reads the fixed protected config, writes a shareable file, and never overwrites", async () => {
@@ -64,6 +68,7 @@ test("command reads the fixed protected config, writes a shareable file, and nev
       subject: configuration.localOwnerSession.subject, ownerCodeDigest: sha256Digest({ ownerCode: "owner code for tests" }), sessionSeconds: 900 },
     database: { host: "127.0.0.1", port: 5432, database: "control_room", username: "control_room_web", password: "test-only-password", majorVersion: 17 },
     enablement: { schema: OWNER_TRUSTED_LOCAL_ENABLEMENT_V1, mode: "mac-local", nodeId: "mac-1", workers: configuration.enablement.workers },
+    workIntakeProjectIds: ["*"],
   };
   const configPath = join(configDirectory, "mac-local.json");
   await writeFile(configPath, JSON.stringify(protectedConfiguration), { mode: 0o600 });

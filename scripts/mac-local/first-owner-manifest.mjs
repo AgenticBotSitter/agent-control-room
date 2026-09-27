@@ -12,7 +12,7 @@ import { loadMacLocalTaskRuntimeFromRootV1 } from "../../src/web/v1/mac-local-ta
 import { CompletionGateStoreV1 } from "../../src/completion-gate/v1/store";
 
 export const MAC_LOCAL_FIRST_OWNER_MANIFEST_V1 = "control-room.mac-local-first-owner-manifest/v1";
-const expectedTopKeys = ["schema", "tenant", "workspace", "identity", "grant", "adapters", "nodes", "completionGateGenesis", "createdAt"];
+const expectedTopKeys = ["schema", "tenant", "workspace", "identity", "grant", "adapters", "nodes", "workIntakeProjectIds", "completionGateGenesis", "createdAt"];
 const workerSpecs = Object.freeze([
   { kind: "hermes", adapterId: HERMES_LOCAL_ADAPTER_V1 },
   { kind: "claude", adapterId: CLAUDE_CODE_LOCAL_ADAPTER_V1 },
@@ -37,6 +37,11 @@ export function captureMacLocalFirstOwnerManifestV1(value) {
       || !item.nodeId.endsWith(`.${["hermes", "claude", "codex"][index]}`)
       || typeof item.workerId !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._:/-]{0,179}$/.test(item.workerId)
       || item.adapterId !== workerSpecs[index].adapterId)
+    || !Array.isArray(value.workIntakeProjectIds) || value.workIntakeProjectIds.length > 32
+    || value.workIntakeProjectIds.some(projectId => typeof projectId !== "string"
+      || !/^(?:\*|[A-Za-z0-9][A-Za-z0-9._:-]{0,179})$/.test(projectId))
+    || new Set(value.workIntakeProjectIds).size !== value.workIntakeProjectIds.length
+    || (value.workIntakeProjectIds.includes("*") && value.workIntakeProjectIds.length !== 1)
     || !exactKeys(value.completionGateGenesis, ["revision", "recordCount", "stateDigest", "stateAuthTag"])
     || value.completionGateGenesis.revision !== 1 || value.completionGateGenesis.recordCount !== 0
     || !/^sha256:[a-f0-9]{64}$/.test(value.completionGateGenesis.stateDigest)
@@ -82,6 +87,7 @@ export function createMacLocalFirstOwnerManifestV1(configuration, createdAt = ne
     grant: { id: macLocalOwnerGrantIdV1(tenantId) },
     adapters,
     nodes,
+    workIntakeProjectIds: [...(configuration.workIntakeProjectIds ?? [])],
     completionGateGenesis,
     createdAt,
   };
