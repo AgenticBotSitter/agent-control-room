@@ -16,6 +16,10 @@ const sha256File = async path => `sha256:${createHash("sha256").update(await rea
 const identifier = value => typeof value === "string" && /^[a-z][a-z0-9_]{0,62}$/u.test(value);
 const quote = value => { if (!identifier(value)) throw new Error("database_backup_role_refused"); return `"${value}"`; };
 
+export function databaseBackupVerificationRootPrefixV1(platform = process.platform, temporaryDirectory = tmpdir()) {
+  return platform === "darwin" ? "/tmp/crv-" : join(temporaryDirectory, "control-room-backup-verify-");
+}
+
 async function readBoundBackup(backup) {
   if (typeof backup !== "string" || !isAbsolute(backup) || resolve(backup) !== backup)
     throw new Error("database_backup_path_refused");
@@ -115,7 +119,7 @@ export async function verifyMacLocalDatabaseBackupV1({ backup, port, pgBin = "/o
   if (!Number.isInteger(port) || port < 15620 || port > 15649 || typeof pgBin !== "string" || !isAbsolute(pgBin))
     throw new Error("database_backup_verification_arguments_refused");
   const bound = await readBoundBackup(backup);
-  const root = await mkdtemp(join(tmpdir(), "control-room-backup-verify-"));
+  const root = await mkdtemp(databaseBackupVerificationRootPrefixV1());
   const data = join(root, "pg"), socket = join(root, "socket"), log = join(root, "postgres.log");
   let started = false;
   const stop = () => {

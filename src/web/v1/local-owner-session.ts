@@ -125,8 +125,8 @@ export class LocalOwnerSessionServiceV1 {
   async revoke(request: Request, nowMs: number): Promise<void> {
     this.assertLocalRequest(request, true);
     const identity = this.verify(request, nowMs);
-    this.sessions.delete(identity.tokenDigest);
     await this.store?.revoke(identity.tokenDigest, new Date(nowMs).toISOString());
+    this.sessions.delete(identity.tokenDigest);
   }
 }
 

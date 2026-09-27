@@ -87,17 +87,18 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
       location: new URL(path, options.origin).href } });
   }
 
+  const routeId = (value: string) => {
+    if (!/^[A-Za-z0-9%:_-]{1,600}$/.test(value)) throw new WebAccessError("not_found");
+    let decoded: string;
+    try { decoded = decodeURIComponent(value); } catch { throw new WebAccessError("not_found"); }
+    if (!/^[A-Za-z0-9:_-]{1,200}$/.test(decoded)) throw new WebAccessError("not_found");
+    return decoded;
+  };
+
   /** The local route table exposes only pages backed by the local database or
    * host-owned readiness read. Optional hosted modules remain absent. */
   async function renderProductRoute(identity: ReturnType<typeof sessions.verify>, url: URL,
     render: () => Promise<Response> | Response): Promise<Response> {
-    const routeId = (value: string) => {
-      if (!/^[A-Za-z0-9%:_-]{1,600}$/.test(value)) throw new WebAccessError("not_found");
-      let decoded: string;
-      try { decoded = decodeURIComponent(value); } catch { throw new WebAccessError("not_found"); }
-      if (!/^[A-Za-z0-9:_-]{1,200}$/.test(decoded)) throw new WebAccessError("not_found");
-      return decoded;
-    };
     if (url.pathname === "/") {
       if (url.search) throw new WebAccessError("invalid_request");
       return render();
@@ -223,7 +224,7 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
       const projectOverview = /^\/api\/v1\/projects\/([^/]+)\/overview$/.exec(url.pathname);
       if (projectOverview) {
         if (request.method !== "GET" || url.search) throw new WebAccessError("invalid_request");
-        return Response.json(await tasks.projectOverview(identity, decodeURIComponent(projectOverview[1])),
+        return Response.json(await tasks.projectOverview(identity, routeId(projectOverview[1])),
           { headers: privateResponseHeaders });
       }
       const projectFiles = /^\/api\/v1\/projects\/([^/]+)\/files$/.exec(url.pathname);
