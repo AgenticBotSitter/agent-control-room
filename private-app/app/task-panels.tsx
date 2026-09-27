@@ -26,13 +26,22 @@ export function taskStateGuidance(detail: TaskDetail): TaskGuidance {
     || latestRun.availability !== null && latestRun.availability !== "current");
   if (uncertain) return { heading: "Check what was already recorded", uncertain: true,
     explanation: "The latest agent information is missing, old, disconnected or uncertain. Checking reads the saved status only. It does not retry this task or send replacement work." };
+  if (detail.preparedFor && latestRun?.state === "succeeded") return { heading: "Review the returned result", uncertain: false,
+    href: "#task-results", action: "Go to results",
+    explanation: "The local run reported success. Inspect the saved result and its review evidence before accepting the work." };
   switch (detail.task.state) {
-    case "proposed": return { heading: "Prepare the saved proposal", uncertain: false, href: "#task-planning",
-      action: "Go to preparation", explanation: "Review the requested result and prepare a separate runnable task. This does not assign or start an agent." };
+    case "proposed": return detail.preparedFor
+      ? { heading: "Choose an eligible machine", uncertain: false, href: "#task-assignment",
+        action: "Go to assignment", explanation: "This task is prepared for a local worker. Assignment reserves a machine; it does not start the work." }
+      : { heading: "Prepare the saved proposal", uncertain: false, href: "#task-planning",
+        action: "Go to preparation", explanation: "Review the requested result and prepare a separate runnable task. This does not assign or start an agent." };
     case "ready": return { heading: "Choose an eligible machine", uncertain: false, href: "#task-assignment",
       action: "Go to assignment", explanation: "The task is prepared. Assignment reserves a machine; it does not by itself start the work." };
-    case "leased": return { heading: "Review the recorded assignment", uncertain: false, href: "#task-assignment",
-      action: "Go to assignment", explanation: "A machine reservation is recorded. Check its current state before approving any execution." };
+    case "leased": return detail.preparedFor
+      ? { heading: "Review local execution approval", uncertain: false, href: "#task-approval",
+        action: "Go to approval", explanation: "A machine reservation is recorded. Review the fresh local preview or saved submission receipt before assuming work was queued." }
+      : { heading: "Review the recorded assignment", uncertain: false, href: "#task-assignment",
+        action: "Go to assignment", explanation: "A machine reservation is recorded. Check its current state before approving any execution." };
     case "waiting_approval": return { heading: "Owner approval is required", uncertain: false, href: "#task-approval",
       action: "Go to approval", explanation: "Review the exact prepared request and its limits. Approval and queuing remain separate recorded steps." };
     case "succeeded": return { heading: "Review the returned result", uncertain: false, href: "#task-results",

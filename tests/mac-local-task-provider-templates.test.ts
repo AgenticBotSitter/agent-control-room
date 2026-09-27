@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { captureOwnerTrustedLocalEnablementV1, OWNER_TRUSTED_LOCAL_ENABLEMENT_V1 } from "../src/harness/v1/owner-trusted-local-enablements";
 import { buildMacLocalTaskTemplatesV1 } from "../src/web/v1/mac-local-task-provider-templates";
+import { taskPlanningTemplateChoiceSchema } from "../src/web/v1/task-planning-wire";
 import type { MacLocalProtectedConfigurationV1 } from "../src/web/v1/mac-local-protected-configuration";
 import type { MacLocalTaskRuntimeV1 } from "../src/web/v1/mac-local-task-runtime";
 
@@ -15,6 +16,9 @@ const runtime = { hermes: { profile: "cr", provider: "opencode-go", model: "spac
 test("builds three project-bound, approval-required templates and three distinct local routes", () => {
   const value = buildMacLocalTaskTemplatesV1([{ projectId: "project:first", createdAt: "2026-09-25T00:00:00.000Z" }], configuration, runtime);
   assert.equal(value.templates.length, 3);
+  for (const template of value.templates) assert.equal(taskPlanningTemplateChoiceSchema.safeParse({
+    id: template.id, adapter: template.adapter }).success, true,
+  `the browser must be able to display ${template.adapter}`);
   assert.deepEqual(value.routes.map(item => item.nodeId), ["mac-1.hermes", "mac-1.claude", "mac-1.codex"]);
   assert.deepEqual(value.templates.map(item => item.authority.credentialRefs[0]), [
     "credential:owner-cli:hermes", "credential:owner-cli:claude-code", "credential:owner-cli:codex"]);

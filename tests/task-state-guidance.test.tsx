@@ -138,6 +138,17 @@ test("each ordinary task state points to one safe next destination or explanatio
   }
 });
 
+test("prepared local tasks guide assignment, approval, then result review without claiming completion", () => {
+  const prepared = { ...detail("proposed"), preparedFor: "hermes" as const };
+  assert.equal(taskStateGuidance(prepared).href, "#task-assignment");
+  assert.doesNotMatch(taskStateGuidance(prepared).heading, /Prepare/);
+  const assigned = { ...detail("leased"), preparedFor: "hermes" as const };
+  assert.equal(taskStateGuidance(assigned).href, "#task-approval");
+  const observed = { ...detail("leased", { state: "succeeded", nativeState: null }), preparedFor: "hermes" as const };
+  assert.equal(taskStateGuidance(observed).href, "#task-results");
+  assert.match(taskStateGuidance(observed).explanation, /reported success/);
+});
+
 test("old, disconnected and ambiguous latest observations allow only a read-only recheck", () => {
   const cases = [{ stale: true }, { state: "disconnected" as const }, { nativeState: "ambiguous" as const },
     { availability: "offline" as const }, { availability: "expired" as const }, { availability: "unknown" as const }];

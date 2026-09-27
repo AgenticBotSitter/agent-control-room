@@ -17,9 +17,10 @@ import { sha256Digest } from "../../../src/security/canonical-digest";
 import { applyMacLocalFirstOwnerV1 } from "../first-owner-vps.mjs";
 import { serviceInstalled } from "../service.mjs";
 
-const [arg] = process.argv.slice(2);
-if (!arg || process.argv.length !== 3 || !isAbsolute(arg) || resolve(arg) !== arg) {
-  process.stderr.write("usage: node --import tsx scripts/mac-local/rehearsal/journey.ts ABSOLUTE_REHEARSAL_DIR\n");
+const [arg, mode] = process.argv.slice(2);
+if (!arg || ![3, 4].includes(process.argv.length) || mode !== undefined && mode !== "--browser-proof"
+  || !isAbsolute(arg) || resolve(arg) !== arg) {
+  process.stderr.write("usage: node --import tsx scripts/mac-local/rehearsal/journey.ts ABSOLUTE_REHEARSAL_DIR [--browser-proof]\n");
   process.exit(2);
 }
 const root = resolve(arg), protectedRoot = join(root, "protected");
@@ -94,6 +95,7 @@ async function main() {
   const roleMap = JSON.parse(await readFile(join(protectedRoot, "config/database-roles.json"), "utf8"));
   if (config?.database?.host !== "127.0.0.1" || config.database.database !== "control_room"
     || config.database.majorVersion !== 17 || !Number.isInteger(config.database.port)
+    || config.port === 3210 || !Number.isInteger(config.port)
     || roleMap?.coordinator?.host !== "127.0.0.1" || roleMap.coordinator.port !== config.database.port
     || roleMap.coordinator.database !== "control_room") throw new Error("rehearsal_database_scope_refused");
   if (await serviceInstalled()) throw new Error("rehearsal_refused_existing_launchd_service");
@@ -206,6 +208,12 @@ async function main() {
   assert.equal(workersBody.workers?.length, 3);
   assert.ok(workersBody.workers.every(worker => worker.state === "ready"), `all three workers must be ready: ${JSON.stringify(workersBody.workers)}`);
 
+  if (mode === "--browser-proof") {
+    process.stdout.write(`Isolated built-page browser proof ready at ${origin}/projects. Press Return in this runner after the proof to shut down its host and database.\n`);
+    await new Promise<void>(resolve => process.stdin.once("data", () => resolve()));
+    return;
+  }
+
   const idOf = (value: string) => encodeURIComponent(value);
   const outcomes: Record<string, unknown> = {};
 
@@ -221,10 +229,16 @@ async function main() {
     const detailBody = await requireOk(detail, 200, `${agent.kind} source detail`) as { inputDigest: string };
     const sourceInputDigest = detailBody.inputDigest;
 
-    // 2) plan: the templateId is the deterministic id the same production
-    // formula (mac-local-task-provider-templates.ts) computes for this
-    // project and agent kind.
-    const templateId = `template:mac-local:${agent.kind}:${sha256Digest(projectId).slice(7, 39)}`;
+    // 2) Discover through the same read the real task page uses. Computing
+    // template IDs here hid a broken browser-facing planning response.
+    const planOptions = await requireOk(await fetch(new URL(
+      `/api/v1/projects/${idOf(projectId)}/tasks/${idOf(sourceJobId)}/plan`, origin), { headers: { cookie } }),
+    200, `${agent.kind} planning options`) as { templates?: { id: string; adapter: string }[]; availability: string };
+    assert.equal(planOptions.availability, "available", `${agent.kind} source must be preparable`);
+    assert.equal(planOptions.templates?.length, 3, `${agent.kind} must see all three local workers`);
+    const templateId = planOptions.templates?.find(item => item.id ===
+      `template:mac-local:${agent.kind}:${sha256Digest(projectId).slice(7, 39)}`)?.id;
+    assert.ok(templateId, `${agent.kind} must be a browser-discoverable choice`);
     const planned = await fetch(new URL(`/api/v1/projects/${idOf(projectId)}/tasks/${idOf(sourceJobId)}/plan`, origin), {
       method: "POST", headers: { origin, cookie, "content-type": "application/json" },
       body: JSON.stringify({ expectedInputDigest: sourceInputDigest, templateId }),
@@ -242,6 +256,12 @@ async function main() {
     });
     const assignedBody = await require5xxOr201(assigned, `${agent.kind} assignment`) as { receipt: { inputDigest: string } };
     const assignedInputDigest = assignedBody.receipt.inputDigest;
+    const assignedDetail = await requireOk(await fetch(new URL(
+      `/api/v1/projects/${idOf(projectId)}/tasks/${idOf(jobId)}`, origin), { headers: { cookie } }),
+    200, `${agent.kind} assigned task detail`) as { preparedFor: string | null; attempts: unknown[]; inputDigest: string };
+    assert.equal(assignedDetail.preparedFor, agent.kind, `${agent.kind} prepared worker visible to task page`);
+    assert.ok(assignedDetail.attempts.length > 0, `${agent.kind} task page must expose local submission after assignment`);
+    assert.equal(assignedDetail.inputDigest, assignedInputDigest, `${agent.kind} page and submission digests must match`);
 
     // 4) submission preview, then submit with the exact previewed digest.
     const previewRead = await fetch(new URL(`/api/v1/projects/${idOf(projectId)}/tasks/${idOf(jobId)}/submission?inputDigest=${assignedInputDigest}`, origin),

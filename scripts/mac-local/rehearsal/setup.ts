@@ -7,6 +7,7 @@ import { PgBoss, getConstructionPlans } from "pg-boss";
 import { existsSync, mkdirSync, readdirSync, writeFileSync, chmodSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { applyMigrations } from "../../../deploy/postgres/apply-migrations.mjs";
 import { connectTarget } from "../../../deploy/postgres/evidence.mjs";
 import { sha256Digest } from "../../../src/security/canonical-digest";
@@ -19,8 +20,11 @@ import { readPinnedMacExecutableVersion } from "../start-web-host.mjs";
 const [action, dir] = process.argv.slice(2);
 const portIndex = process.argv.indexOf("--port");
 const port = portIndex === -1 ? 15499 : Number(process.argv[portIndex + 1]);
-if (!["up", "down"].includes(action) || !dir || !isAbsolute(dir) || !Number.isInteger(port)) {
-  console.error("usage: pnpm mac:rehearsal up|down ABSOLUTE_DIR [--port 15499]");
+const webPortIndex = process.argv.indexOf("--web-port");
+const webPort = webPortIndex === -1 ? 3217 : Number(process.argv[webPortIndex + 1]);
+if (!["up", "down"].includes(action) || !dir || !isAbsolute(dir) || !Number.isInteger(port)
+  || !Number.isInteger(webPort) || webPort < 1024 || webPort > 65535 || webPort === port) {
+  console.error("usage: pnpm mac:rehearsal up|down ABSOLUTE_DIR [--port 15499] [--web-port 3217]");
   process.exit(2);
 }
 const env = { ...process.env, LC_ALL: "en_US.UTF-8", LANG: "en_US.UTF-8" };
@@ -44,19 +48,19 @@ pgctl("-l", join(dir, "pg.log"), "-w", "-o", `-p ${port} -k '' -c listen_address
 if (!fresh) { console.log(`rehearsal database running on 127.0.0.1:${port}; protected root ${join(dir, "protected")}`); process.exit(0); }
 
 execFileSync("psql", ["-h", "127.0.0.1", "-p", String(port), "-U", "postgres", "-d", "postgres", "-v", "dbname=control_room",
-  "-f", new URL("../../../deploy/postgres/provision-database.sql", import.meta.url).pathname], bounded);
+  "-f", fileURLToPath(new URL("../../../deploy/postgres/provision-database.sql", import.meta.url))], bounded);
 const pw = () => randomBytes(24).toString("base64url");
 const secrets = { migrator: pw(), application: pw(), scheduler: pw() };
 const local: Record<string, string> = { control_room_web: pw(), control_room_coordinator: pw(), control_room_results: pw(), control_room_publisher: pw(), control_room_queue_worker: pw() };
 const bootstrapTarget = `host=127.0.0.1 port=${port} dbname=control_room user=postgres`;
 await applyMigrations({ target: bootstrapTarget, rootDir: process.cwd(),
-  ledgerPath: new URL("../../../deploy/postgres/migration-ledger.json", import.meta.url).pathname,
+  ledgerPath: fileURLToPath(new URL("../../../deploy/postgres/migration-ledger.json", import.meta.url)),
   bootstrapTarget,
   migrateTarget: `host=127.0.0.1 port=${port} dbname=control_room user=control_room_migrator password=${secrets.migrator}`,
   env: { NODE_ENV: "test", CONTROL_ROOM_MIGRATOR_PASSWORD: secrets.migrator,
     CONTROL_ROOM_APP_PASSWORD: secrets.application, CONTROL_ROOM_SCHEDULER_PASSWORD: secrets.scheduler } });
 const psql = (database: string, file: string) => execFileSync("psql", ["-h", "127.0.0.1", "-p", String(port), "-U", "postgres", "-d", database,
-  "-v", "ON_ERROR_STOP=1", "-f", new URL(file, import.meta.url).pathname], bounded);
+  "-v", "ON_ERROR_STOP=1", "-f", fileURLToPath(new URL(file, import.meta.url))], bounded);
 // Match the reviewed package-5 sequence against this fresh disposable cluster.
 // applyMigrations installs the production roles as part of bootstrap; rerunning
 // this idempotent file here makes the rehearsal's ordering explicit.
@@ -111,8 +115,8 @@ const roles = { schema: MAC_LOCAL_DATABASE_ROLES_V1, web: role("control_room_web
   results: role("control_room_results"), publisher: role("control_room_publisher"), queueWorker: role("control_room_queue_worker") };
 captureMacLocalDatabaseRolesV1(roles);
 const ownerCode = pw() + pw();
-const macLocal = { schema: MAC_LOCAL_PROTECTED_CONFIGURATION_V1, port: 3210, workspaceId: "workspace:mac-local",
-  localOwnerSession: { schema: LOCAL_OWNER_SESSION_PROFILE_V1, origin: "http://127.0.0.1:3210", tenantId: "tenant:mac-local",
+const macLocal = { schema: MAC_LOCAL_PROTECTED_CONFIGURATION_V1, port: webPort, workspaceId: "workspace:mac-local",
+  localOwnerSession: { schema: LOCAL_OWNER_SESSION_PROFILE_V1, origin: `http://127.0.0.1:${webPort}`, tenantId: "tenant:mac-local",
     provider: "local-owner", subject: "owner:local", ownerCodeDigest: sha256Digest({ ownerCode }), sessionSeconds: 28_800 },
   database, enablement: { schema: OWNER_TRUSTED_LOCAL_ENABLEMENT_V1, mode: "mac-local", nodeId: "mac-1", workers } };
 captureMacLocalProtectedConfigurationV1(JSON.parse(JSON.stringify(macLocal)));
