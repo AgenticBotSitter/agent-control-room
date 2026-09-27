@@ -87,6 +87,19 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
       location: new URL(path, requestOrigin).href } });
   }
 
+  function pageFailure(error: unknown): Response {
+    const failure = webFailure(error);
+    const message = failure.status === 400 ? "This page address is invalid. Check the link and try again."
+      : failure.status === 403 ? "Your current access does not allow this page."
+        : failure.status === 404 ? "This page or saved item is not available."
+          : failure.status === 409 ? "This saved item changed. Return to Projects and open its current page."
+            : "Control Room could not load this page. No change was made. Try again when the saved service is available.";
+    return new Response(`<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Control Room page unavailable</title><main><h1>Page unavailable</h1><p role="alert">${message}</p><p><a href="/projects">Return to Projects</a></p></main></html>`, {
+      status: failure.status, headers: { ...privateResponseHeaders, "content-type": "text/html; charset=utf-8",
+        "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'" },
+    });
+  }
+
   const routeId = (value: string) => {
     if (!/^[A-Za-z0-9%:_-]{1,600}$/.test(value)) throw new WebAccessError("not_found");
     let decoded: string;
@@ -254,6 +267,7 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
         && !new URL(request.url).pathname.startsWith("/api/")) {
         return pageRedirect("/session", new URL(request.url).origin);
       }
+      if (request.method === "GET" && !new URL(request.url).pathname.startsWith("/api/")) return pageFailure(error);
       return webFailure(error);
     }
   }

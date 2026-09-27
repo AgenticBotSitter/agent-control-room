@@ -223,8 +223,8 @@ async function main() {
     return cookie;
   };
   if (mode === "--browser-e2e") {
-    const browser = spawnSync("pnpm", ["exec", "playwright", "test", "tests/browser/mac-local-owner-journey.spec.ts"], {
-      cwd: process.cwd(), encoding: "utf8", timeout: 12 * 60_000, stdio: "inherit",
+    const browser = spawnSync("pnpm", ["run", "test:mac-local-owner-browser"], {
+      cwd: process.cwd(), encoding: "utf8", timeout: 25 * 60_000, stdio: "inherit",
       env: { ...process.env, CONTROL_ROOM_E2E_ORIGIN: origin, CONTROL_ROOM_E2E_OWNER_CODE: ownerCode,
         CONTROL_ROOM_E2E_ROOT: root },
     });

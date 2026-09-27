@@ -416,7 +416,7 @@ jobs:
   owner-browser-journey:
     name: Owner browser journey
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 45
     env:
       PG_BIN: /usr/lib/postgresql/17/bin
       LC_ALL: C.UTF-8

@@ -16,11 +16,21 @@ import { useInstallationTopology } from "./installation-topology";
 import { InstallationTopologySummary } from "./installation-topology-summary";
 import { LocalWorkerRouteStatus, type TaskWorkerReadState } from "./local-worker-route-status";
 import { PrivateOperatorCapacityWorkspace } from "./operator-capacity-workspace";
-import { useLocalRuntime, type LocalStatus } from "./local-runtime";
+import { localWorkerStateLabel, useLocalRuntime, type LocalStatus } from "./local-runtime";
 
 type WorkerRead = PrivateConnectionSnapshot | { source: "local"; value: LocalStatus };
 function isLocalWorkerRead(value: WorkerRead): value is { source: "local"; value: LocalStatus } {
   return "source" in value && value.source === "local";
+}
+
+export function MacLocalWorkerEvidence({ status }: { status?: LocalStatus }) {
+  return <section className="private-panel" aria-labelledby="local-worker-evidence-title">
+    <h2 id="local-worker-evidence-title">Local worker evidence</h2>
+    <p>{status ? `The current local host reports ${status.workers.length} configured route${status.workers.length === 1 ? "" : "s"} separately from saved result proof.`
+      : "The current local host route inventory is unavailable."} A passed startup check means the pinned executable was verified when this host started. Result proof means this host generation has saved a result from that route.</p>
+    <p><strong>Neither signal says a worker is currently running, has capacity, is eligible for a particular task, or has owner acceptance.</strong> Check the exact task before assignment.</p>
+    {!status && <p role="status">The local host status could not be checked, so no startup or result proof is inferred.</p>}
+  </section>;
 }
 
 type ReadState<T> = { state: "loading" } | { state: "ready"; value: T } | { state: "unavailable" };
@@ -83,7 +93,7 @@ export function HomeDashboard({ data }: { data: HomeDashboardState }) {
           : isLocalWorkerRead(data.connections.value)
             ? <><p>{data.connections.value.value.workers.length} configured local worker route{data.connections.value.value.workers.length === 1 ? "" : "s"}.</p>
               <ul className="private-dashboard-list">{data.connections.value.value.workers.map(worker => <li key={worker.kind}>
-                <span>{worker.kind}</span><span>{worker.state} · readiness {worker.proof.replaceAll("_", " ")}</span></li>)}</ul>
+                <span>{worker.kind}</span><span>{localWorkerStateLabel(worker)}</span></li>)}</ul>
               <p className="private-note">Current assignment, capacity and resource usage are unknown here. Open Workers and the exact task before assigning work.</p></>
             : <><p>{data.connections.value.projection.summary.connectionCount} enrolled workers · {data.connections.value.projection.summary.currentSignalCount} current signals.</p>
               <p>{data.connections.value.projection.summary.staleSignalCount} stale · {data.connections.value.projection.summary.missingSignalCount} missing · {data.connections.value.projection.summary.attentionCount} need setup or review.</p>
@@ -169,7 +179,8 @@ export function PrivateHome() {
       <h1 id="home-title">{displayName}</h1><p>Current saved work, results and attention from the protected Control Room services. This page refreshes while it is open and again when you return to it. Each section reports unavailable data instead of replacing it with a zero.</p>
       <p className="private-note">Unavailable means the saved database or protected read could not be checked. Checking again only rereads saved records; it does not start, assign, approve or retry work.</p>
       <button type="button" onClick={() => setGeneration(value => value + 1)}>Check saved dashboard again</button></section>
-    <HomeInstallationStatus topology={installationTopology} showSetupGuidance={runtime.mode === "hosted"} />
+    {runtime.mode === "local" ? <MacLocalWorkerEvidence status={runtime.status} />
+      : <HomeInstallationStatus topology={installationTopology} showSetupGuidance={runtime.mode === "hosted"} />}
     <HomeDashboard data={data} />
     {runtime.mode === "hosted" && <PrivateOperatorCapacityWorkspace />}
     {runtime.mode === "hosted" && ideaLab && <aside className="private-note private-home-note" aria-label="Optional module"><strong>Idea Lab is optional.</strong>{" "}
