@@ -32,7 +32,8 @@ GRANT SELECT ON control_identities, control_role_grants, workspaces, control_web
   control_project_coordinator_heads, control_project_coordination_proposals,
   control_project_delegation_policies, control_project_coordination_operation_receipts,
   control_project_coordination_operation_jobs, control_work_resources,
-  control_attempt_resource_admissions, control_attempt_resource_scopes TO control_room_private_web;
+  control_attempt_resource_admissions, control_attempt_resource_scopes,
+  work_batches, work_batch_revisions, work_batch_items, control_action_inbox TO control_room_private_web;
 GRANT SELECT ON control_task_model_selections, control_task_declared_scopes,
   control_assignment_lease_scopes TO control_room_private_web;
 GRANT SELECT ON control_durable_result_write_reservations TO control_room_private_web;
@@ -46,6 +47,7 @@ GRANT INSERT ON control_web_sessions, adapter_registry, projects, control_manual
   control_policy_decisions, control_project_lifecycle_events,
   control_project_coordinator_heads, control_project_delegation_policies TO control_room_private_web;
 GRANT INSERT ON control_task_model_selections, control_task_declared_scopes TO control_room_private_web;
+GRANT INSERT ON work_batch_revisions, work_batch_items TO control_room_private_web;
 -- Coordinator lifecycle idempotency ledger: exact-match replay before any
 -- head mutation. SELECT plus the five inserted columns plus the completion
 -- update; INSERT is column-scoped so the role can never smuggle
@@ -70,4 +72,8 @@ GRANT UPDATE (domain_state, source_version, normalized_state, updated_at, payloa
 GRANT UPDATE (lifecycle, version, updated_at) ON control_manual_project_heads TO control_room_private_web;
 GRANT UPDATE (head_hash, event_count, updated_at) ON control_audit_chain_heads TO control_room_private_web;
 GRANT EXECUTE ON FUNCTION is_work_intake_session() TO control_room_private_web;
+GRANT UPDATE (state, payload) ON control_action_inbox TO control_room_private_web;
+GRANT UPDATE (state, approval_identity_id, approved_at, decision_reason_code, decision_digest,
+  decision_auth_tag, version, updated_at)
+  ON work_batches TO control_room_private_web;
 COMMIT;

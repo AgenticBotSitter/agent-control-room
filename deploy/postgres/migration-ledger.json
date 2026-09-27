@@ -561,8 +561,14 @@
       "kind": "migrate"
     },
     {
-      "file": "db/roles/production_roles.sql",
+      "file": "db/migrations/0094_work_batch_owner_approval.sql",
       "order": 94,
+      "sha256": "2b3a5a8447087bb3fff27a80d936a80d7ca67be893b7db0e3c06c0b1e78e690d",
+      "kind": "migrate"
+    },
+    {
+      "file": "db/roles/production_roles.sql",
+      "order": 95,
       "sha256": "a608ed8aa1cd26b7c4a37ac026c221bf396c2092f128ee32f90623bd1c99e181",
       "kind": "grants"
     },
@@ -574,7 +580,7 @@
     },
     {
       "file": "db/roles/production_provision.sql",
-      "order": 96,
+      "order": 97,
       "sha256": "41f0603df63f6203f34cc80047d815ff237fe8e923f983a780e9e2ca6262c044",
       "kind": "provision"
     }

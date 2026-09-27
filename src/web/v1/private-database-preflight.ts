@@ -15,7 +15,7 @@ export async function verifyPrivateIdeaAdapter(db: DatabaseClient, scope: { tena
   if (rows.length !== 1 || rows[0].valid !== true) throw new Error("private_idea_adapter_unavailable");
 }
 
-// Generated from public migrations 0001-0093, including generic external-content
+// Generated from public migrations 0001-0094, including generic external-content
 // migrations 0025/0026. Catalog query below; not a mutable database marker.
 export const privateWebSchemaDigest = "01aa39a3812d448f36c640f55fb0632317e9e0d512196212f11e720d9b9d5531";
 export const privateWebReadTables = ["control_identities", "control_role_grants", "workspaces", "control_web_sessions",
@@ -33,13 +33,15 @@ export const privateWebReadTables = ["control_identities", "control_role_grants"
   "control_project_coordination_operation_receipts", "control_project_coordination_operation_jobs",
   "control_work_resources", "control_attempt_resource_admissions", "control_attempt_resource_scopes",
   "control_task_model_selections", "control_task_declared_scopes", "control_assignment_lease_scopes",
-  "control_durable_result_write_reservations"] as const;
+  "control_durable_result_write_reservations", "work_batches", "work_batch_revisions", "work_batch_items",
+  "control_action_inbox"] as const;
 const inserts = new Set(["control_web_sessions", "adapter_registry", "projects", "control_manual_project_heads",
   "control_web_project_commands", "audit_events", "control_audit_chain_heads", "control_requests", "control_workflows",
   "control_jobs", "control_web_task_commands", "control_idea_canonical_task_sessions", "control_idea_canonical_task_links",
   "control_completion_gate_records", "control_web_task_review_commands", "control_news_source_settings", "control_news_story_archives",
   "control_policy_decisions", "control_project_lifecycle_events", "control_project_coordinator_heads",
   "control_project_delegation_policies", "control_task_model_selections", "control_task_declared_scopes"]);
+inserts.add("work_batch_revisions"); inserts.add("work_batch_items");
 
 /** Tables whose INSERT grant is column-scoped rather than table-wide. Every
  * listed column must carry INSERT and every unlisted column must not — a
@@ -60,6 +62,9 @@ const updates: Record<string, readonly string[]> = {
     "assigned_at", "updated_at", "revoked_at", "payload"],
   control_project_delegation_policies: ["state", "version", "updated_at"],
   control_idempotency: ["status", "result", "completed_at"],
+  control_action_inbox: ["state", "payload"],
+  work_batches: ["state", "approval_identity_id", "approved_at", "decision_reason_code", "decision_digest",
+    "decision_auth_tag", "version", "updated_at"],
   tenants: ["coordinator_lock"],
 };
 const fail = () => { throw new Error("private_database_preflight_failed"); };
