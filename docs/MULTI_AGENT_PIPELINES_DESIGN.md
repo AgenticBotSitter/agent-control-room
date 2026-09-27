@@ -6,9 +6,17 @@ model, with independent checking, bounded correction loops and reusable template
 **Relationship to existing decisions:** this adds no new authority, no second scheduler and
 no second queue. Every concept below maps onto a record the product already owns.
 
+**Open questions: answered.** B.13 was opened as thirteen questions. It now records thirteen
+**decisions**, each written as the setting it becomes, the scope it is set at, the safe public
+default, and the guardrails that hold regardless of any setting. No installation's chosen
+values appear in this document; this repository carries the product, not one install's
+configuration.
+
 Read alongside: `docs/OWNER_PRODUCT_VISION.md`, `docs/PRODUCT_REQUIREMENTS.md` (sections 3
 and 4), `docs/PROJECT_COORDINATION_DECISION.md`, `docs/CR3_DECISION_LOG.md` (ADR-041, ADR-042,
-ADR-044), `docs/CR5C_FINAL_SECURITY_CONTRACT.md`, `docs/claude/W8_MODEL_SELECTION.md`.
+ADR-044, ADR-053, ADR-054), `docs/CR5C_FINAL_SECURITY_CONTRACT.md`,
+`docs/claude/W8_MODEL_SELECTION.md`, `docs/ARCHITECTURE.md`,
+`docs/GITHUB_APP_WORKER_BROKER.md`.
 
 ---
 
@@ -260,9 +268,10 @@ not pretend otherwise:
 Decision: auto-accept is specified as **nothing at all** — no column, no table, no UI
 control, no stored preference. B.11 does not carry `auto_accept_*` columns, because a stored
 flag that cannot be enforced is a lie the interface would have to apologise for later. It is
-listed as a blocked feature in B.12 and as open question 8 in B.13, where the owner can
-choose to prioritise the approval key or to drop the idea entirely. This is the honest
-version: the product says "no", rather than shipping a switch that does nothing.
+listed as a blocked feature in B.12, and decision 8 of B.13 records it as a setting whose
+public default is *off and not implemented*, with a build-priority choice rather than a
+value. This is the honest version: the product says "no", rather than shipping a switch that
+does nothing.
 
 **Rule 4. No stage widens authority.**
 Stage authority is an `AuthorityEnvelope` exactly like any other job's. The lease carries it
@@ -432,8 +441,10 @@ explicitly **out of scope until the enablement record is extended**. The pipelin
 worker id and an allowlisted model — never a credential, never a key, never a raw provider
 secret. If the named model is not on that worker's allowlist, the stage does not start and the
 pipeline asks the owner. Per `CONN-006` no provider credential is ever copied between
-machines or into the database. Extending the enablement record to carry a provider profile is
-listed as open question 13 rather than smuggled in here.
+machines or into the database. Decision 12 of B.13 records this as a setting whose public
+default is the worker's own default profile; the enablement record extension it needs is
+delivered on the base branch, and extending it further is reviewed as a security change
+rather than smuggled in here.
 
 **Model *class* in templates.** A template may pin a class rather than a specific model —
 "a reasoning-capable model in family X at high effort" — because the assigned worker may not
@@ -930,56 +941,554 @@ bounds, overnight expiry behaviour, the `plan` stage kind composed with the exis
 **Explicitly not in any slice:** auto-accept enforcement. It is blocked on the owner approval
 key (CR-8), and no slice may claim it.
 
-### B.13 Open questions for the owner
+### B.13 Decisions
 
-1. **Unattended advance — how much autonomy do you want by default?** Options: never (every
-   stage stops for you), advance between non-consequential stages, or advance fully inside a
-   project delegation policy. This decides whether overnight runs are useful to you and how
-   much of `needs attention` you will see in the morning.
-2. **Loop limit.** What is the default `max_loops` for a check stage — 2, 3, or 5? And when
-   the limit is reached, which of the three owner actions do you expect to be the default
-   button: raise the limit, accept anyway, or stop?
-3. **Reviewer independence — how strict by default?** Different agent only; different agent
-   *and* different model family (the strongest, and the one that makes "the worker switches
-   model for checks" real); or different family required only for higher-risk stages.
-4. **Per-stage agent choice — pinned or capability-based?** Pin a specific registered worker
-   per stage (predictable, but breaks when a node is offline), or choose by capability and
-   platform at run time (robust, but the agent that runs may differ from the one you pictured).
-   Possibly both: pin the default, allow a capability fallback.
-5. **What may run unattended overnight, specifically?** Merges, releases, dependency changes,
-   anything that spends money, anything that contacts an external service. My recommendation
-   is none of these, but the boundary is yours and it should be written into project policy
-   rather than left to judgement at 3am.
-6. **Where should pipeline runs be visible?** Project Pipelines page only, or also promoted
-   onto the Home page and Needs attention when a run is blocked or over its limit?
-7. **How long should a single run live before it is archived?** This is the main retention
-   question, and it interacts with artifact retention.
-8. **Is auto-accept for low-risk work still wanted at all?** It cannot be built until the
-   owner approval key exists. If you want it, it needs that key to be prioritised; if you would
-   rather spend the effort elsewhere, I will drop the stored preference entirely and remove a
-   confusing half-feature.
-9. **Should a pipeline be able to fan out?** The orchestrator stage can propose many
-   sub-tasks (up to 32). Do you want pipelines that fan out and converge, or strictly linear
-   chains for now? This changes the concurrency story in B.7 significantly.
-10. **W8 sequencing.** Per-stage model and effort selection (slice 4) cannot ship before W8.
-    Is W8 still the next thing on the board, or should I design around a different order?
-11. **Agent-as-reviewer is the expensive part.** Slice 3 needs a new database role on the
-    Completion Gate, a new model-family classifier, and a producer identity that actually
-    carries the agent's details. That is a security change, and it should get an independent
-    reviewer and probably a second opinion from you before it lands. Do you want it in this
-    plan at all, or should the first release of pipelines have a **human** check stage only
-    and add agent checks later as a separate, separately-reviewed phase?
-12. **Per-provider switching for Hermes.** B.6 rules it out of scope because the
-    owner-trusted enablement record is closed to `{workerId, kind, executablePath,
-    recordedVersion}`. Do you want that record extended with an owner-approved provider
-    profile per worker — which is what "the worker switches provider for checks" eventually
-    needs — or is per-stage *model* selection on the existing allowlist enough for now?
-13. **What happens to a check the owner thinks is wrong?** Today a finding stays on the record
-    forever, even after you overrule it. For a pipeline that loops, this matters: the owner may
-    be overruling the same finding three times. Should overruling a finding be allowed to close
-    it (with the overruling recorded), or should it stay open so the disagreement remains
-    visible? My recommendation is that it stays open and the loop still stops, because a
-    repeated disagreement is the signal.
+The thirteen questions this design was opened with are now answered, and every one of the
+answers is a **setting**, not code. The public product ships the safe end of each range as
+its default and lets an installation choose differently. This section records, for each
+decision: the setting it becomes, the scope it is set at, the public default, and the
+guardrails that hold no matter what any installation sets.
+
+**The setting scopes, narrowest last.** `install` is the machine-wide default, held in the
+private installation configuration and never in this repository. `project` is a project's
+written policy. `pipeline` is a saved template. `stage` is one stage of one template. Each
+scope may only **narrow** what the scope above it allows, never widen it: a project may
+stop earlier than the install default and may not start earlier; a stage may require more
+independence than its pipeline and may not require less. A template is a record of intent
+and grants nothing (B.3 rule 5), so a template value is a request the server checks, never
+a grant.
+
+**Four rules apply to every setting, without exception.**
+
+1. **Validated server-side, at the moment of use.** No setting is read from a request, a
+   task payload, a stage result, or a browser field. A setting that fails validation is a
+   refusal with a safe code, never a fallback to a default that was not chosen.
+2. **Narrowing only.** A setting can move inside what the security model already allows
+   and no further. The acceptance profile's separation axes (`reviewerSeparation`), the
+   delegation policy's permitted action set, the grant's risk ceiling and the cost ceilings
+   are the ceiling; settings propose below it.
+3. **Risky switches are explicit, explained and recorded.** Turning on an unattended merge,
+   an unattended dependency change, an unattended external call, an unattended provider
+   switch, or any automatic acceptance requires a separate owner confirmation, shows a
+   plain-English statement of what it permits, and writes an audit event naming who
+   confirmed it, when, and the value before and after.
+4. **Every change is audited and never edited.** A setting change appends an event through
+   the existing hash-chained audit store (`src/audit/audit-store.ts:92-138`) carrying the
+   actor, the previous value, the new value and the scope. A revoked or narrowed policy
+   takes effect on the next stage to start, never retroactively (B.3 rule 5).
+
+**What is not a setting, at any scope, for any installation.**
+
+- A `signoff` stage is a quality review. It never becomes effect approval (B.3 rule 1;
+  `CompletionReviewV1.grantsApproval` is a literal `false`).
+- No stage widens its own authority. The lease intersection still decides (B.3 rule 4).
+- A template is not permission. Running one re-derives authority from the current grants
+  and the current project policy at that moment (B.3 rule 5).
+- Automatic acceptance cannot be turned into a capability by any switch. It needs an
+  approval attestation signed by a key in `ApprovalTrustStore`
+  (`src/node-policy/v1/stores.ts:42-44`), and that issuing flow is not complete, so
+  approval-required external effects remain disabled (CR5C §7).
+- The loop limit is the Completion Gate's `maximumRevisionRounds`, not a pipeline setting.
+  A setting may ask for fewer rounds; it can never raise the profile's ceiling (B.5).
+
+---
+
+**1. Autonomy — how far a run advances by itself.**
+*Setting:* `pipeline.advanceMode`. *Scope:* install default → project policy → pipeline
+template → stage (stage may only narrow). *Values:* `stop_every_stage`,
+`advance_past_safe_stages`, `advance_within_project_policy`.
+*Public default:* `advance_past_safe_stages` — the run advances from one stage to the
+next only where the next stage is a non-consequential `build`/`plan`/`check`/`signoff` and
+stops before anything with an effect. An install may choose `stop_every_stage` (the whole
+pipeline waits for the owner at every stage) or `advance_within_project_policy`, and the
+latter is only available to a project that holds an owner-confirmed delegation policy.
+*Guardrails regardless:* the run stops and asks when work is uncertain, repeated,
+over its limit, out of policy, or consequential; an expired stage envelope admits nothing;
+nothing in this setting grants approval, and closing the browser changes nothing
+(`PROJ-006`).
+
+**2. Correction loops — how many rounds, and what happens at the limit.**
+*Setting:* `pipeline.maxLoopsPerStage` plus `pipeline.atLimitAction`. *Scope:* project
+(pipeline and stage may only lower it). *Public default:* `maxLoopsPerStage = 3`, matching
+the only acceptance profile the web role may register
+(`db/migrations/0086_mac_local_owner_review_profile.sql:58`), and
+`atLimitAction = stop_and_ask`. An install may choose `raise_limit_default` or
+`accept_anyway_default` as the first button, with the cost stated beside it.
+*Guardrails regardless:* the stored counter is the gate's `revisionNumber`; a pipeline value
+above the profile ceiling is refused at target creation rather than honoured; raising the
+limit **provisions a new acceptance profile and invalidates the review lineage bound to the
+old one**, and the interface must say so before the click; the run at the limit does not
+retry, escalate, switch agent, or self-accept (B.5).
+
+**3. Reviewer independence — how strict.**
+*Setting:* `review.independence`, resolved into the acceptance profile's `reviewerSeparation`
+axes. *Scope:* project (a stage may only enable more axes, never fewer). *Values:*
+`different_agent`, `different_agent_and_model_family`,
+`different_family_for_risky_stages`. *Public default:* `different_agent_and_model_family`.
+*Guardrails regardless:* absolute separation from the producing worker, agent profile and
+harness identity; a stage may never review its own output; a separation axis with **no
+recorded value is a refusal, not a pass** — the store treats "same value" and "no value"
+identically today, so the two cases must stay distinguishable in the service layer; a
+setting may only enable axes that the installed acceptance profile actually records, and
+ADR-044 records that this is a *narrowing*, never a switch that turns the rule off.
+"Risky stage" is defined by project policy and includes protected files, security and
+authentication, migrations, merges, dependency changes, and anything with an external
+effect. On this base the agent-family axis is derived coarsely from the protected worker
+route rather than from a model string, so it separates every reviewer on the same harness;
+tightening it to a true model-family classifier is a build item, not a setting.
+
+**4. Which agent runs a stage.**
+*Setting:* `stage.agentSelection`. *Scope:* stage (template), resolved at instantiation.
+*Values:* `pinned_worker`, `pinned_with_capability_fallback`. *Public default:*
+`pinned_with_capability_fallback`, because a run that stops because a machine is asleep is
+worse than a run that continues on an equally capable machine.
+*Guardrails regardless:* the fallback is always shown on the Pipelines page next to the
+pinned name; selection is by capability and platform, never by a hardcoded personal name
+(`WORK-011`); if no eligible worker satisfies the declared capability, the stage is refused
+and reported as unavailable — never started on a weaker fallback, never skipped, never
+counted as passed (B.11, `RES-010`).
+
+**5. What may run unattended.**
+*Setting:* four independent switches, each off by default — `autonomy.allowUnattendedMerge`,
+`allowUnattendedDependencyChange`, `allowUnattendedExternalCall`, and
+`autonomy.allowUnattendedProviderSwitch`. *Scope:* install default → project opt-in. An
+install may enable any of them per project; the public default is **all off**, which means
+no unattended merge, no unattended dependency change, no unattended call to anything
+outside the installation, and no unattended provider switch.
+*Guardrails regardless:* each switch requires its own owner confirmation and a
+plain-English statement of what it permits; a prerequisite set must be satisfied and
+proved before any of them can be turned on — all continuous-integration checks plus an
+independent review from a different model family, no self-review; a kill switch that stops
+every unattended action for the install without touching committed work; a complete audit
+record of every action taken under the switch; a merge made under the switch must be
+revertable as one unit; a dependency change may only add or upgrade a lockfile-pinned
+registry package that passes a size and licence check; an external call may only reach a
+destination on an owner-maintained allowlist. None of these switches substitutes for an
+approval attestation: an effect that requires one still requires it (CR5C §7), and ADR-041
+still holds — no record implicitly grants the function of another. The safety work these
+switches depend on is a separate build phase and lands **before** any of them can be
+enabled, not alongside them.
+
+**6. Where runs are visible.**
+*Setting:* `run.visibility`. *Scope:* install default → project. *Values:*
+`project_page`, `project_page_and_attention`, `project_page_home_and_attention`.
+*Public default:* `project_page_and_attention` — the run is listed on the project Pipelines
+page and appears in Needs attention when a stage is `awaiting_owner`, `uncertain`, blocked,
+or over its limit. An install may also promote active runs onto the Home page.
+*Guardrails regardless:* the project Pipelines section is hidden entirely while the
+installed release does not support it, and is never advertised while unavailable
+(`WEB-010`); visibility is presentation and never widens authority; a run is never hidden
+because the owner closed the tab.
+
+**7. How long a finished run is kept in the active list.**
+*Setting:* `retention.runArchiveAfter`. *Scope:* install default → project (may only
+shorten). *Values:* `never` (**public default**), `30`, `90`, `180`, `365` days measured
+from the run's terminal state. *Guardrails regardless:* archival moves a finished run out
+of the active list and into a readable archive view; it never deletes a stage row, an
+attempt, a result, a review, a finding or an audit event, all of which keep their own
+retention class and remain readable in the archive; a run in a non-active project is
+retained with its history, exactly like every other task in that project (B.11,
+`PROJ-005`).
+
+**8. Automatic acceptance of low-risk work.**
+*Setting:* `completion.automaticLowRiskDisposition`. *Scope:* install → project → stage.
+*Public default:* **off, and not implemented.** The honest position stands: the nearest
+field belongs to an acceptance profile and is pinned to `false` by the only profile the web
+role may register; `CompletionPreferenceV1` carries `grantsApproval: false` and
+`grantsExecutionAuthority: false` as literal type fields, so a preference is structurally
+incapable of becoming acceptance authority (B.3 rule 3, ADR-041). Enforcing it means issuing
+an attestation that a compromised server cannot forge, and that flow is not built.
+*Guardrails regardless:* there is **no** persisted auto-accept column anywhere (B.11), so
+there is no stored flag that could later be mistaken for a capability; an AI pre-review may
+comment on a decision but can never issue the attestation (CR5C §7); the interface shows the
+control as unavailable with the reason, not as a switch that does nothing. The meaningful
+choice for an install here is not a value but a build priority: prioritise the owner
+approval key, or leave the product saying "no". Those are the only two honest options.
+
+**9. Fan-out.**
+*Setting:* `pipeline.fanOut`. *Scope:* project → pipeline template. *Values:*
+`linear_only` (**public default**), `fan_out_converge`. *Guardrails regardless:* any
+proposal stays inside the existing proposal bounds — at most 32 sub-tasks and 64 edges, no
+cycles, no dangling edges, no duplicate local ids, and a `.strict()` schema that cannot
+carry an authority, credential, endpoint, callback, effect, risk, cost or identity field
+(B.9); read-only stages may run concurrently, two writers serialise; a fan-out that needs
+parallel writers without an approved parallel-writer policy is refused and **serialised
+instead of failing** (B.7); fan-out is admitted through the one shared
+`ProjectWorkAdmissionServiceV1` path, never a private one.
+
+**10. Per-stage model and effort.**
+*Setting:* `stage.modelSelection`. *Scope:* stage. *Values:* `worker_default`
+(**public default**), `pinned_allowlisted_model`, `model_class_resolved_at_instantiation`.
+*Guardrails regardless:* the allowlist is the owner-trusted enablement record's model policy
+per worker, never the task and never a browser field; a model off the assigned worker's
+allowlist is rejected with 400 and **nothing starts**; a class that no allowlisted model
+satisfies stops and asks rather than substituting; a correction round inherits the original
+stage's model and effort unless the owner changes it, so a loop-back never silently changes
+cost or quality; a model choice never carries a credential, and no provider credential is
+copied between machines or into the database (`CONN-006`); the more expensive choices carry
+a one-line cost note. This decision is recorded as **already delivered** by the
+per-task-model work merged on the base branch, and this design consumes it rather than
+re-specifying it.
+
+**11. An agent may be the checker.**
+*Setting:* `review.allowAgentCheckers`, resolved against an installed capability rather than
+a preference. *Public default:* **human-only check stages**, with the interface saying why.
+Agent-as-checker becomes available only when the restricted write role and its guard exist.
+*Guardrails regardless:* the agent reviewer writes a review record with
+`grantsApproval: false` and `grantsExecutionAuthority: false`; the review must be bound to a
+server-created review plan, and the **database** refuses an agent-authored review that is
+not bound to one, not merely the service; the separation rules in decision 3 apply to the
+agent reviewer exactly as they apply to a human one; human review remains available
+alongside agent review and is never displaced; adding a write role to a table that already
+accepts writes from two non-web roles requires an independent security review that did not
+write the change.
+
+**12. Per-stage provider switching.**
+*Setting:* `stage.providerProfile`. *Scope:* stage, resolved against the assigned worker's
+enablement record. *Values:* `worker_default_profile` (**public default**),
+`pinned_profile` from that worker's configured profile list. *Guardrails regardless:* the
+enablement record remains the only source of what a worker may use, and extending it is
+reviewed as a security change; a profile the worker does not list is refused and the stage
+does not start; the stored value is a profile name, never a key or a raw provider secret;
+the pipeline stores a worker id and an allowlisted model or profile — nothing else; and this
+decision is **available now** rather than deferred, because the enablement record on the
+base branch already carries the per-worker model and profile policy. Enabling provider
+switching *unattended* is a separate switch under decision 5, default off.
+
+**13. A finding the owner thinks is wrong.**
+*Setting:* `review.overruledFindings`. *Scope:* install default → project. *Values:*
+`remain_open_and_stop` (**public default**), `overrule_recorded_and_closed`.
+*Guardrails regardless:* the overrule is **always** recorded with its actor, its time and
+the finding it answers; the finding's statement and evidence stay on the record in both
+cases, because an overruled finding is still evidence that two parties disagreed
+(`IDEA-002`); the run stops at the loop limit either way — the setting changes whether the
+pipeline may continue past a recorded disagreement, never whether the disagreement was
+recorded; and the owner's counter-review is an additional review, never an edit that
+removes one.
+
+---
+
+### B.14 Agent work intake
+
+An agent must be able to **propose** work without driving the website, and the owner must be
+able to approve a whole batch of it from anywhere. This section specifies that path. It
+adds one machine credential, one store, one CLI, and no new queue, no new authority plane
+and no new approval path.
+
+**The credential can only propose.** One credential per registered agent, held in a
+protected store on the agent's machine, with these properties and no others:
+
+- a single permitted action, `work_batches.propose`, in its own `control_role_grants` row
+  with a risk ceiling of `low` and `allowExternalEffects` false, evaluated server-side by
+  the existing `evaluatePolicy` (`src/security/policy.ts:55-92`) against the same grant,
+  expiry and revocation rules every other grant obeys;
+- **no** ability to assign, approve, dispatch, retry, cancel, open an effect, change any
+  setting, or read another project's history. Those actions are simply absent from the
+  grant, so a request for one is a refusal with `no_matching_grant`, not a special case;
+- project scoping exactly as a grant scopes a person: `projectIds` may be a list or `*`,
+  and a project-scoped credential may propose only into those projects;
+- transport reusing the two existing machine-authentication shapes rather than a new one:
+  a signed node-protocol frame with its own replay and rate-limit guards
+  (`src/node-protocol/v1/authentication.ts:44-120`) where the agent already speaks the
+  node protocol, or a loopback-only listener with a fixed-length bearer secret compared in
+  constant time and a private authorizer injected, as the GitHub worker broker's read route
+  does (`src/github-app/v1/private-service.ts`, `docs/GITHUB_APP_WORKER_BROKER.md` §9).
+  No credential is accepted from a query string, a path, or a command-line argument;
+- every receipt it can obtain is negative-authority by construction, exactly as the existing
+  queue receipt is: `startsWork: false` and `grantsExecutionAuthority: false` are literal
+  fields on the receipt type (`src/web/v1/native-task-queue.ts:25-28`), not runtime
+  conditions.
+
+**The batch is the existing proposal shape, extended by role and criteria.** A batch is a
+`projectCoordinationProposalSchemaV1` document — `tasks` (1–32) and `edges` (≤64), strict,
+acyclic, with no dangling edges and no duplicate local ids
+(`src/project-coordination/v1/schemas.ts:33-40`) — plus, per task: the pipeline role the
+owner expects (`builder`, `checker` or `validator`, which map onto the existing `build`,
+`check` and `signoff` stage kinds in B.2), a **requested** agent and model that are checked
+against the assigned worker's allowlist at approval time rather than trusted now, and the
+acceptance criteria and tests the agent proposes, as bounded text.
+
+Validation reuses the existing bounded-rejection path. `validateCoordinationProposalV1`
+returns a `CoordinationProposalValidationV1` with a bounded `safeReasonCode` and never
+throws the raw text (`src/project-coordination/v1/proposal-ingestion.ts:49-127`); the
+secret scan (`assertNoSecretMaterial`) runs over the whole proposal before storage; the
+`.strict()` schema is what makes it impossible for a proposing agent to smuggle an
+authority, a credential, an endpoint, a callback, an effect, a risk, a cost or an identity
+into its own batch. A proposal is **not** a plan: a stage result only counts as a plan when
+it carries the server-created planning marker
+(`projectCoordinatorPlanningMarkerSchemaV1`,
+`src/contracts/v1/project-coordination-boundaries.ts:53-80`), and a batch is never parsed as
+one.
+
+**Approval is the owner's, on the website or the phone.**
+`workIntake.approvalRequired` is a setting with the public default **on**, and the product
+offers no path that skips it. A submitted batch lands in state `proposed` and appears on the
+project Pipelines page and in Needs attention. The owner may approve the whole batch,
+approve some items, edit an item, or reject the batch; every one of those outcomes is
+recorded, and a rejection is stored visibly rather than swallowed. The approval itself is an
+owner command inside the existing `WebSessionAuthority` transaction with
+`actor.require(..., ownerOnly = true)` (`src/web/v1/session-authority.ts:66-77`) — the same
+path that gates a task review today — and it writes an audit event.
+
+The phone path is a **notification plus deep link, and nothing more**. It reuses the existing
+notification planner, which already produces a description and no command, and the guard
+that says so: `notificationEnvelopeHasNoAuthorityV1` fails if an envelope ever carries an
+authority, an action, a legal response or a command
+(`src/notifications/v1/policy.ts:285-307`). ADR-053 is the governing record — a messaging
+button may record a bounded response proposal for a low/medium item and may never prove
+owner identity, grant execution authority, or dispatch work; a consequential decision still
+opens the authenticated dashboard. "Owner approves from the phone" therefore means *the
+owner is notified on the phone and can review and decide in the authenticated product*,
+and the design says so in those words rather than implying a chat button is approval.
+
+**After approval, tasks enter per-agent queues.** The queue is the one that already exists:
+pg-boss, the single scheduler (`ARCHITECTURE.md`), pre-provisioned as
+`native-task-delivery` with the exact bounded profile the code already asserts —
+`policy: standard`, `partition: false`, `retryLimit: 0`, `deadLetter: null`, `notify: false`
+(`src/persistence/pg-boss-native-task-submission.ts:6-26`) — and enqueued **inside the same
+transaction** as the canonical write through `enqueueInSession`, so a commit produces both
+the delivery intent and the job or neither
+(`src/persistence/pg-boss-bounded-submission.ts:95-116`). There is no second queue, no
+second scheduler and no second source of job truth (`ACR-007`).
+
+- **Depth 10–20.** `workIntake.queueDepthPerAgent` is a per-agent setting, default **10**,
+  bounded above at 20. Depth is enforced by counting undelivered rows for that worker
+  against the ceiling at admission time. Over depth, submission is **refused with a visible
+  reason**; nothing is dropped, silently reordered, or evicted, because a silently dropped
+  proposal is a task that will never be built and never be explained.
+- **Order.** Tasks for one agent run in committed order, and each finished task starts the
+  next. Dependencies reuse what the domain already has: `control_job_dependencies` and
+  `JobRecord.dependsOnJobIds` (B.1). A task whose declared dependency has not reached a
+  retained, accepted result is not dispatched; it waits, and it is visible as waiting rather
+  than absent.
+- **Materialisation is the ordinary path.** Approved items become ordinary proposed tasks
+  through `WebTaskService.proposeWithDependencies`
+  (`src/web/v1/task-service.ts:214-283`), which keeps the existing owner authorization, the
+  request/workflow/job bundle, the idempotency ledger, the `startsWork: false` receipt and
+  the secret scan. The Idea Lab bridge is the worked precedent for exactly this shape —
+  deterministic, non-runnable plans converted into ordinary proposed tasks, with a
+  deterministic idempotency key per item
+  (`src/idea-lab/v1/canonical-task-proposal.ts:21-61`,
+  `src/idea-lab/v1/canonical-task-plan.ts:17-37`). Intake composes that service; it does not
+  fork it and does not write a job directly.
+- **What intake does not own:** no driver, runner, queue of its own, retry policy, result
+  channel or completion state. A batch is a proposal until the owner approves it and an
+  ordinary task until the ordinary pipeline runs it.
+
+**Full history, per batch and per task.** Every batch records who proposed it, when, from
+which credential identity, and the exact submitted content by digest. Every later event —
+an edit, an approval, a partial approval, a rejection, a queue admission, a run, a check, a
+result, a revision, a stop — appends to the hash-chained audit store
+(`appendAuditWith`, `src/audit/audit-store.ts:92-138`) and is visible in the batch view and
+the per-task view. History is append-only: an edit appends a new revision with its own
+digest rather than rewriting the batch, so "what was proposed, and what was approved" is
+always answerable. History follows the run retention setting (decision 7) and is never
+shorter-lived than the tasks it describes.
+
+**Data model — sketch level, same rules as B.11.** Two new tables, tenant-scoped,
+versioned, carrying the same `record_digest` + `auth_tag` integrity pattern as the rest of
+the schema, numbered after the current last migration, additive only, `ON DELETE RESTRICT`,
+with a documented down-migration that **refuses** to run while any batch exists:
+
+```
+work_batches
+  id, tenant_id, project_id
+  proposed_by_identity_id, proposed_by_actor_type, proposed_at
+  state: proposed | approved | partially_approved | rejected | superseded
+  approval_identity_id NULL, approved_at NULL, decision_reason_code NULL
+  proposal jsonb            -- the strict proposal document, exactly as submitted
+  queue_depth_limit,        -- recorded per batch so a later change is not retroactive
+  batch_digest, auth_tag, version, created_at, updated_at
+  UNIQUE (tenant_id, id)
+  FK (tenant_id, project_id) -> projects
+
+work_batch_revisions       -- append-only; a batch edit appends, never updates
+  id, tenant_id, batch_id, revision
+  edited_by_identity_id, edited_at, reason_code
+  proposal jsonb            -- the full content as edited, by digest not by patch
+  revision_digest, auth_tag
+  UNIQUE (tenant_id, batch_id, revision)
+  FK (tenant_id, batch_id) -> work_batches ON DELETE RESTRICT
+
+work_batch_items           -- one row per proposed task, bound to its eventual job
+  id, tenant_id, batch_id, batch_revision
+  local_id, ordinal, role, depends_on_local_ids[]
+  requested_worker_kind NULL, requested_model_key NULL
+  acceptance_criteria text, acceptance_tests text
+  job_id NULL, job_attempt_count
+  item_digest, auth_tag
+  UNIQUE (tenant_id, batch_id, local_id)
+  FK (tenant_id, job_id) -> control_jobs(tenant_id, id)   -- nullable, ON DELETE RESTRICT
+```
+
+A `work_batch_items.job_id` is set by the materialisation transaction and is the only
+binding to the canonical domain. The table holds no authority, no credential, no executor,
+no route and no cost. The CLI is a source-only command facade in the style of
+`src/installer/v1/private-local-installation-operator-cli.ts`: an exact argument parser
+that refuses anything it does not recognise, one named operation per invocation, no
+configuration path, no environment selector, no shell command, no retry loop, and a fixed
+usage string. Its three operations are `submit-batch`, `batch-status` and `batches`; it
+never accepts a path, a command or a secret, and its credential is read from the protected
+store the installation already owns.
+
+---
+
+### B.15 Minimum self-hosting slice
+
+The smallest build that lets Control Room run **its own** build plan: linear pipelines of
+`build -> check -> validate`, a per-agent queue, work intake, and agents working in
+isolated Git worktrees and opening pull requests. Nothing below exists yet, and the slices
+are ordered so that each one is independently shippable and independently revertible.
+
+The order is chosen by one rule: **nothing that can start work lands before the thing that
+records what was asked for.** So intake lands first even though it executes nothing, and the
+security slice that lets an agent write a review lands before any pipeline depends on an
+agent review. Each slice keeps a no-loop default: with autonomous advance off, a stage
+produces its result and the run stops for the owner. That is what makes every slice safe to
+release and honest to demonstrate on its own.
+
+Reviewer independence follows the repository convention throughout: no slice is reviewed by
+the agent that built it, and the slices that add a write role or a machine credential get a
+fresh independent security reviewer on the diff.
+
+---
+
+**S0 — Record the reuse and update the requirements.**
+Ships: a `REUSE_DECISION_GATE.md` entry naming every existing record this slice set reuses
+and justifying each new one (`ACR-006`), and the `PRODUCT_REQUIREMENTS.md` §12 changes for
+the added project section, the added machine credential and the added intake concept
+(`PROJ-003`, `ACR-001`).
+*Acceptance:* the reuse entry names, at minimum, `control_requests`, `control_workflows`,
+`control_jobs`, `control_attempts`, `control_leases`, `control_job_dependencies`,
+`control_completion_gate_records`, `control_project_coordination_proposals`,
+`control_native_task_queue`, the `control_room_queue` schema, `audit_events`, and the
+intake credential; the requirement table carries the new sections and the new credential
+with acceptance evidence; the private-name check passes on the whole diff.
+
+**S1 — Work intake: propose only.**
+Ships: the per-agent proposal-only credential, the `work_batches` / `work_batch_revisions`
+tables and migration with its refusal rule, the batch validation path, and the `submit-batch`
+/ `batch-status` / `batches` CLI. No task is created, no queue row is written, nothing runs.
+*Acceptance:* a batch submitted with a valid proposal-only credential lands in state
+`proposed` with **zero** `control_jobs` rows and **zero** `control_room_queue.job` rows
+created; the same credential calling assign, approve, dispatch, retry, cancel or
+settings-change is refused, and each refusal writes an audit event and changes no record;
+an expired, revoked, or wrong-project credential is refused before any parse of the body; a
+batch with a cycle, a dangling edge, a duplicate local id, more than 32 tasks, more than 64
+edges, a cross-project id, or secret-shaped material is refused with a **bounded** reason
+code and leaves no partial write; the `.strict()` schema rejects an extra field that tries
+to add an authority, credential, endpoint, callback, effect, risk, cost or identity; the
+CLI refuses an unknown flag, a path argument, an extra positional argument and a second
+invocation's state; replaying one submission with the same idempotency key returns the
+original batch and creates no second one, and the same key with different content is
+refused; every submission and every refusal survives `AuditStore.verify` on its monthly
+partition.
+
+**S2 — Owner batch approval.**
+Ships: the Pipelines-page batch view with approve / edit / reject per item, the owner
+command, and the notification that reaches the owner out of band. No queue admission yet.
+*Acceptance:* approving a batch creates **ordinary** proposed tasks through
+`proposeWithDependencies`, each receipt carrying `startsWork: false`; the same approval
+command twice creates no second task; editing a batch appends a new revision and leaves
+every earlier revision readable; a rejected item is stored with its reason and is visible
+in the batch view rather than dropped; an approval attempted by a non-owner identity is
+refused with no record written; the notification envelope passes
+`notificationEnvelopeHasNoAuthorityV1` and carries no command, action or legal response; a
+repeated read, a restart and a lost acknowledgement produce exactly one notification for the
+same recorded state; a batch in a non-active project is not approved into a runnable state.
+
+**S3 — Per-agent queue, depth and order.**
+Ships: depth enforcement per agent, dependency-aware dispatch, and the per-agent queue view.
+*Acceptance:* depth is capped at the recorded per-batch limit and never above 20; a
+submission over depth is refused with a visible reason and drops nothing; a task whose
+declared dependency has not reached an accepted retained result is never dispatched and
+reads as waiting, not absent; tasks for one agent are dispatched in committed order and
+each finished task starts the next; two workers never receive the same task; a restart
+mid-batch dispatches nothing twice and resumes from committed state; a queue whose recorded
+configuration is not exactly `standard` / `retryLimit: 0` / no dead letter is **refused at
+startup** rather than repaired at runtime; and the canonical delivery intent and the job row
+appear in the same committed transaction or neither appears.
+
+**S4 — Linear pipelines: build, check, validate.**
+Ships: the three pipeline tables and additive `control_jobs` columns, the ordered stage
+view, instantiation into ordinary tasks, and the first automatic advance. No loops yet, no
+agent checker, no worktree work.
+*Acceptance:* instantiating a three-stage pipeline creates a request, a workflow, a run and
+one row per stage, and the same idempotency key returns the original run while a changed
+template content under the same key is refused; stage N+1 does not start until stage N's
+result is retained **and** the Completion Gate snapshot permits it; an unknown `stage_kind`
+is refused, and the stand-or-fall CHECK refuses a row with a `stage_ordinal` but no
+`stage_kind`; cross-project reads are refused, and the composite lineage foreign keys
+refuse a stage row pointing at another job's attempt; the round the page shows is read from
+the gate's `revisionNumber` and cannot be set by the pipeline; a run in a non-active
+project stops advancing and accepts no new stage; two concurrent "start this stage"
+requests produce exactly one accepted transition; a stage whose usage is unknown renders as
+"unknown", never as 0.
+
+**S5 — Agent-as-checker: identity, the role, and the guard.** *(highest-risk slice)*
+Ships: a model-family / harness classification derived server-side from the protected worker
+route, a producer and reviewer principal that carries the real identity on both sides, and a
+restricted database role with a guard branch that admits an agent-authored review bound to a
+server-created review plan.
+*Acceptance:* a check stage on the same worker identity is refused with
+`reviewer_not_independent`; the same agent profile, harness and family are each refused
+when that axis is enabled **and both sides carry a value**; a review whose axis has **no
+recorded value** is refused with a different safe code from a same-value refusal, and the
+two are not allowed to be indistinguishable; once the role exists, a direct `INSERT` of an
+agent-authored review not bound to a server-created plan is refused **by the database**, not
+only by the service, and a review bound to a plan from a different job, run or project is
+refused; the grant file for the new role contains no privilege beyond the reviewed
+insert-plus-plan-join, and the effective-privilege check the other Mac-local logins run
+passes for it; human owner review still works alongside agent review.
+
+**S6 — Worktrees and pull requests.**
+Ships: a `build` stage working in an isolated Git worktree, the change audit bound to its
+own delivery, and a retained evidence link to the opened pull request.
+*Acceptance:* the worktree lease is derived from the delivery digest, the run, the
+repository identity, the device and the inode, and a second delivery cannot reuse it
+(`src/harness/codex-v1/workspace.ts:74-86`); a change outside the stage's declared
+`allowedPaths`, or over `maximumChangedFiles` or `maximumChangedBytes`, is refused with
+`worktree_change_audit_evidence_out_of_scope`
+(`src/harness/v1/worktree-change-audit.ts:127-131`); a worktree with a dirty index or status
+is **never** removed (`dirty_worktree`) and one with committed work is preserved
+(`workspace_committed_work_requires_preservation`,
+`src/harness/codex-v1/git-workspace-port.ts:128-141`); a worktree observation that is
+missing metadata, I/O-failing or Git-failing reads `unavailable`, never `absent`, so a
+crash cannot be mistaken for a clean checkout; the opened pull request is stored as an
+evidence reference — URL plus commit digest — and **no stage can merge**: the repository
+integration path exposes no merge operation, and final integration remains a separate
+maintainer action; a result without its model recorded is incomplete, and unknown usage
+never renders as zero.
+
+**S7 — Sequential advance, unattended bounds, and the history view.**
+Ships: automatic advance inside a granted project policy, wall-clock and total-budget
+bounds, expiry behaviour, and the full per-batch and per-run history surface.
+*Acceptance:* an unattended run advances only inside the delegation policy's permitted
+action set, eligible workers, risk ceiling, task and cost allowances and validity window;
+a revocation, an exhausted allowance or an expiry stops the next stage and does not cancel
+prior committed work; a stage whose authority expires does not start; the run stops at a
+stage boundary on the deadline rather than mid-effect; advancing from an `uncertain` stage
+is refused, and the run never advances past a `waiting_approval` job; an over-deadline
+stage is refused rather than started; the kill switch stops every unattended action for the
+install without touching committed work; the per-batch and per-task history shows who
+proposed, who approved, what ran, what was checked, and what resulted, in order, with the
+audit chain verifying; and no unattended merge, dependency change or external call occurs
+while its switch is off.
+
+**Definition of done for the self-hosting slice.** One recorded demonstration against a
+disposable real PostgreSQL cluster and the local stack: a real agent credential submits a
+real batch through the CLI, the owner approves it once, a `build` stage changes a real
+repository inside a real isolated worktree and opens a real pull request, a `check` stage
+on a different model family reviews it, a `validate` stage records the acceptance evidence,
+and the batch and task histories show every step — with zero merges performed by the
+product, every attempt retained, and nothing run twice.
+
+**Explicitly outside the self-hosting slice**, and still subject to the guardrails above:
+unattended merge, unattended dependency change, unattended external calls, unattended
+provider switching, automatic acceptance of low-risk work, parallel writers, fan-out beyond
+the proposal bounds, and any effect requiring an owner approval attestation. None of these
+becomes available because the slice is done; each has its own prerequisite work and its own
+review.
 
 ---
 
@@ -1005,3 +1514,10 @@ key (CR-8), and no slice may claim it.
 | ADR-041, ADR-042, ADR-044 | B.3, B.5 |
 | CR5C §2, §5, §6, §7 | B.3, B.8 |
 | `PROJECT_COORDINATION_DECISION.md` | B.7, B.9 |
+| `ACR-001`, `ACR-006`, `PROJ-003` | B.14 adds a machine credential and a project section, so S0 in B.15 opens the `PRODUCT_REQUIREMENTS.md` §12 changes and the `REUSE_DECISION_GATE.md` entry before any code lands |
+| `WORK-001`, `WORK-002` | B.14 — an agent proposes a batch through a machine API and CLI; nothing is assigned or run until the owner approves, and the batch becomes ordinary proposed tasks through the ordinary submission path |
+| `DATA-002`, `DATA-005`, `DATA-006`, `DATA-008` | B.11, B.14 — the three intake tables follow the same additive, restricted, digest-tagged and idempotent rules as the pipeline tables |
+| `ACR-005` | B.14 — every intake event is appended to the existing hash-chained audit store, per batch and per task, append-only |
+| ADR-053, ADR-054 | B.14 — the phone path is a notification and a deep link, never an approval; the intake credential carries a logical reference only, and no credential material is copied or returned |
+| `CONN-006` | B.13 decisions 10 and 12 — a stage stores a worker id and an allowlisted model or profile, never a provider credential |
+| B.13 (all thirteen) | Every decision is a setting at install, project, pipeline or stage scope, validated server-side, narrowing-only, audited, and bounded below by the guardrails the design states |
