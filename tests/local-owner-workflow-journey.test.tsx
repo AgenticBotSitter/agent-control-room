@@ -49,7 +49,7 @@ test("owner can follow the saved local workflow without a false live-worker clai
   const taskProposal = renderToStaticMarkup(createElement(TaskProposalForm, {
     draft: { title: "", instructions: "" }, setDraft: () => {}, pending: false, uncertain: false, onSave: () => {},
   }));
-  assert.match(taskProposal, /Propose a task/);
+  assert.match(taskProposal, /New task/);
   assert.match(taskProposal, /Saving does not assign or start an agent/);
   assert.match(taskProposal, /does not claim that any worker is currently available/);
 
