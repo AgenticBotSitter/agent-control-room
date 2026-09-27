@@ -51,6 +51,22 @@ test("grant plan covers the source role files and detects additions and extras e
   assert.ok(desired.size > 300);
   assert.ok([...desired].some(value => value.includes("control_room_local_result_publisher|table|public.control_harness_runs||INSERT|plain")));
   assert.ok([...desired].some(value => value.includes("control_room_task_coordinator|table|public.control_node_fleet_signals||INSERT|plain")));
+  for (const item of [
+    "control_room_private_web|table|public.control_leases||SELECT|plain",
+    "control_room_private_web|table|public.control_task_execution_plans||SELECT|plain",
+    "control_room_private_web|table|public.control_task_model_selections||SELECT|plain",
+    "control_room_private_web|table|public.control_task_model_selections||INSERT|plain",
+    "control_room_private_web|table|public.control_task_declared_scopes||SELECT|plain",
+    "control_room_private_web|table|public.control_task_declared_scopes||INSERT|plain",
+    "control_room_private_web|table|public.control_assignment_lease_scopes||SELECT|plain",
+    "control_room_task_coordinator|table|public.control_task_model_selections||SELECT|plain",
+    "control_room_task_coordinator|table|public.control_task_model_selections||INSERT|plain",
+    "control_room_task_coordinator|table|public.control_task_declared_scopes||SELECT|plain",
+    "control_room_task_coordinator|table|public.control_task_declared_scopes||INSERT|plain",
+    "control_room_task_coordinator|table|public.control_assignment_lease_scopes||SELECT|plain",
+    "control_room_task_coordinator|table|public.control_assignment_lease_scopes||INSERT|plain",
+    "control_room_local_result_publisher|table|public.control_task_model_selections||SELECT|plain",
+  ]) assert.ok(desired.has(item), `missing stacked grant: ${item}`);
   const missingOne = new Set(desired);
   const item = [...desired][0];
   missingOne.delete(item);
@@ -60,6 +76,12 @@ test("grant plan covers the source role files and detects additions and extras e
   });
   assert.throws(() => desiredMacGrantsV1({ fake: "GRANT ALL ON secret TO control_room_web;" }),
     /upgrade_grant_source_refused/u);
+  const sources = Object.fromEntries(await Promise.all([
+    "private_web_roles.sql", "task_coordinator_roles.sql", "native_queue_producer_roles.sql",
+    "native_results_roles.sql", "local_result_publisher_roles.sql", "native_queue_worker_roles.sql",
+  ].map(async file => [file, await readFile(new URL(`../db/roles/${file}`, import.meta.url), "utf8")])));
+  sources["private_web_roles.sql"] += "\nGRANT SELECT ON control_leases TO control_room_private_web;\n";
+  assert.throws(() => desiredMacGrantsV1(sources), /upgrade_grant_source_duplicate/u);
 });
 
 test("offline plan rejects a mismatched main commit and malformed snapshot", async t => {

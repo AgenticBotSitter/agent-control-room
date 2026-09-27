@@ -15,6 +15,7 @@ import {
   consequentialApprovalDecisionSchemaV1,
   consequentialApprovalRequestSchemaV1,
 } from "./schemas";
+import { assertReviewerIndependentV1 } from "./reviewer-independence";
 import type {
   CompletionAcceptanceProfileV1,
   CompletionFindingV1,
@@ -424,9 +425,8 @@ export class CompletionGateStoreV1 {
       ||review.acceptanceProfileDigest!==sha256Digest(profile)||Date.parse(review.reviewedAt)<Date.parse(target.submittedAt))throw new CompletionGateErrorV1("profile_mismatch");
   }
   private assertIndependent(producer:CompletionPrincipalV1,reviewer:CompletionPrincipalV1,profile:CompletionAcceptanceProfileV1):void{
-    const axes:[keyof CompletionAcceptanceProfileV1["reviewerSeparation"],keyof CompletionPrincipalV1][]=[
-      ["actor","actorId"],["worker","workerId"],["agentProfile","agentProfileId"],["harness","harness"],["modelFamily","modelFamily"]];
-    for(const [policy,field] of axes){if(!profile.reviewerSeparation[policy])continue;const left=producer[field];const right=reviewer[field];if(typeof left!=="string"||typeof right!=="string"||left===right)throw new CompletionGateErrorV1("reviewer_not_independent");}
+    try{assertReviewerIndependentV1(producer,reviewer,profile.reviewerSeparation);}
+    catch{throw new CompletionGateErrorV1("reviewer_not_independent");}
   }
   private checkpointScope(tenantId:string){return `completion-gate:${tenantId}`;}
   private tenantStateTag(tenantId:string,revision:number,recordCount:number,stateDigest:string){return hmacSha256Tag(this.integrityKey,{module:"completion-gate",tenantId,revision,recordCount,stateDigest});}

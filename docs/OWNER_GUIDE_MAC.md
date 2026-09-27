@@ -145,6 +145,16 @@ new one-time owner setup is still unproven. It prints no configuration.
 `mac:up` starts the task host even when there are no active projects. Create a project on the website and open its task-planning page; the running host derives its fixed local templates and registers its owner-review profile without a restart. The host supports up to 50 active projects and refuses the fifty-first with `mac_local_project_limit_50` rather than silently omitting templates. If the selected Hermes profile later sets `OPENCODE_GO_BASE_URL`, Hermes tasks fail closed because the saved network allowlist still names `https://opencode.ai:443`. The preparation command creates the protected task-runtime file once; rerunning it does not update an existing file. Stop Hermes task use and ask for a reviewed recovery procedure. Do not edit the protected file by hand or assume rerunning preparation changes its destination.
 Any line ending `database_check_refused` means that role is not reachable.
 
+### Owner-review profile v2 upgrade
+
+Database migration 0092 is additive: it does not rewrite existing review profiles or targets.
+On the first `mac:up` after the upgrade, every active project registers the v2 owner-review
+profile. Existing in-flight review targets keep their recorded v1 profile and digest; newly
+published results bind to v2. The owner can review both versions. Under v2, any future agent
+review must have different recorded worker, agent-profile and harness provenance, and the default
+policy also requires a different coarse model family. Restarting does not accept, reject, migrate,
+or otherwise decide an existing result.
+
 ## 7. When something is not working
 
 | Symptom | What it means | Do this |

@@ -82,6 +82,7 @@ export const taskDetailSchema = z.object({ project: projectViewSchema, task: tas
   earlierAttemptsOmitted: z.boolean(), preparedFor: z.enum(["hermes", "codex", "claude", "configured_worker"]).nullable(),
   localRouteObservation: taskLocalRouteObservationSchema,
   hermesDeliveryRecovery: hermesDeliveryRecoverySchema,
+  revisionLinks: z.object({ previousJobId: id.nullable(), nextJobId: id.nullable(), revisionNumber: z.number().int().min(0).max(20) }).strict().optional(),
   progressSource: z.enum(["configured", "not_configured"]),
   dispatch: z.enum(["not_connected", "configured"]), artifacts: z.enum(["not_connected", "configured"]), review: z.enum(["not_connected", "recorded"]) }).strict();
 export type TaskDetail = z.infer<typeof taskDetailSchema>;

@@ -36,9 +36,10 @@ test("compiled private result routes read signed native artifacts and checkpoint
   assert.equal(files.startsWork, false);
   const projectFilesPage = await handler(req("/projects/project:test/files")); assert.equal(projectFilesPage.status, 200);
   assert.match(await projectFilesPage.text(), /Project files/);
-  const content = await handler(req(`${route}/${receipt.artifactId}`)); assert.equal(content.status, 200);
-  assert.equal(content.headers.get("cache-control"), "no-store"); assert.equal((await content.json()).text, "Synthetic compiled artifact result");
+  const preview = page.items[0].fileAccess.previewHref;
+  const content = await handler(req(preview)); assert.equal(content.status, 200);
+  assert.equal(content.headers.get("cache-control"), "no-store"); assert.equal(await content.text(), "Synthetic compiled artifact result");
   assert.equal((await handler(req("/api/v1/session/logout", "POST"))).status, 204);
-  for (const path of [route, `${route}/${receipt.artifactId}`, base, projectFilesRoute, "/projects/project:test/files", "/api/v1/home/tasks"])
+  for (const path of [route, preview, base, projectFilesRoute, "/projects/project:test/files", "/api/v1/home/tasks"])
     assert.equal((await handler(req(path))).status, 401);
 });

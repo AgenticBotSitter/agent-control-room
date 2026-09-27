@@ -42,6 +42,21 @@ export function createTaskHttpHandler(options: { origin: string; trust?: AccessT
       else requireSameOrigin(request, options.origin);
       const identity = localOwnerSession ? localOwnerSession.verify(request, (options.clock ?? Date.now)()) : verify!(request, (options.clock ?? Date.now)());
       const url = new URL(request.url);
+      const fileRoute = /^\/api\/v1\/projects\/([^/]+)\/tasks\/([^/]+)\/files\/([^/]+)$/.exec(url.pathname);
+      if (fileRoute) {
+        if (request.method !== "GET" || [...url.searchParams.keys()].some(key => !["disposition", "token"].includes(key))
+          || url.searchParams.getAll("disposition").length !== 1 || url.searchParams.getAll("token").length !== 1)
+          throw new WebAccessError("invalid_request");
+        let projectId: string, jobId: string, artifactId: string;
+        try { projectId = decodeURIComponent(fileRoute[1]); jobId = decodeURIComponent(fileRoute[2]); artifactId = decodeURIComponent(fileRoute[3]); }
+        catch { throw new WebAccessError("invalid_request"); }
+        const disposition = url.searchParams.get("disposition"), token = url.searchParams.get("token") ?? "";
+        if (disposition !== "preview" && disposition !== "download") throw new WebAccessError("invalid_request");
+        const file = await options.service.file(identity, projectId, jobId, artifactId, disposition, token);
+        return new Response(file.text, { headers: { ...privateResponseHeaders, "content-type": "text/plain; charset=utf-8",
+          "content-security-policy": "default-src 'none'; sandbox", "x-content-type-options": "nosniff",
+          "content-disposition": `${disposition === "download" ? "attachment" : "inline"}; filename="result.txt"` } });
+      }
       const absRoute = /^\/api\/v1\/projects\/([^/]+)\/tasks\/from-news$/.exec(url.pathname);
       if (absRoute) {
         if (request.method !== "POST" || url.search) throw new WebAccessError("invalid_request");
@@ -239,9 +254,10 @@ export function createTaskHttpHandler(options: { origin: string; trust?: AccessT
         return Response.json(result, { status: result.replayed ? 200 : 201, headers: privateResponseHeaders });
       }
       if (jobId && route[3] && request.method === "GET") {
-        let artifactId: string | undefined;
-        try { artifactId = route[4] ? decodeURIComponent(route[4]) : undefined; } catch { throw new WebAccessError("invalid_request"); }
-        return Response.json(await options.service.results(identity, projectId, jobId, artifactId), { headers: privateResponseHeaders });
+        // Result bytes are never returned from this JSON collection route. A
+        // file read must carry the short-lived, run-bound ticket handled above.
+        if (route[4]) throw new WebAccessError("not_found");
+        return Response.json(await options.service.results(identity, projectId, jobId), { headers: privateResponseHeaders });
       }
       if (jobId && request.method === "GET") {
         const detail = await options.service.detail(identity, projectId, jobId);

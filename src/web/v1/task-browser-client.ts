@@ -4,7 +4,7 @@ import { newsResearchTaskDraft } from "./news-research-draft";
 import { readBrowserJson as json } from "./browser-json";
 import { catalogProjectIdSchema } from "./project-wire";
 import { taskCommandSchema, taskDetailSchema, taskDraftSchema, taskPageSchema, type TaskReceipt } from "./task-wire";
-import { taskResultsPageSchema, taskResultContentSchema } from "./task-result-wire";
+import { taskResultsPageSchema, taskResultContentSchema, type TaskResultMetadata } from "./task-result-wire";
 import { syntheticResultSchemaV1 } from "../../local-pilot/v1/synthetic-result-wire";
 
 export const taskErrorMessage: Record<BrowserFailureCode, string> = {
@@ -126,12 +126,27 @@ export function createTaskBrowserClient(transport: typeof fetch = fetch, makeKey
         return page;
       } catch (error) { throw error instanceof BrowserRequestError ? error : new BrowserRequestError("unavailable"); }
     },
-    async resultContent(projectId: string, jobId: string, artifactId: string, signal?: AbortSignal) {
+    async resultContent(projectId: string, jobId: string, artifact: TaskResultMetadata | string, signal?: AbortSignal) {
       try {
+        const artifactId = typeof artifact === "string" ? artifact : artifact.artifactId;
         checkId(projectId); checkId(jobId); checkId(artifactId);
-        const content = taskResultContentSchema.parse(await read(`${path(projectId)}/${encodeURIComponent(jobId)}/results/${encodeURIComponent(artifactId)}`, signal));
+        if (typeof artifact === "string" || !artifact.fileAccess) throw new Error();
+        const preview = new URL(artifact.fileAccess.previewHref, "http://control-room.invalid");
+        const expectedPath = `/api/v1/projects/${encodeURIComponent(projectId)}/tasks/${encodeURIComponent(jobId)}/files/${encodeURIComponent(artifactId)}`;
+        if (preview.origin !== "http://control-room.invalid" || preview.pathname !== expectedPath
+          || preview.searchParams.get("disposition") !== "preview" || preview.searchParams.getAll("token").length !== 1
+          || [...preview.searchParams.keys()].some(key => !["disposition", "token"].includes(key))) throw new Error();
+        const response = await call(artifact.fileAccess.previewHref, undefined, signal); signal?.throwIfAborted();
+        if (!response.ok) throw new BrowserRequestError(failure(response.status));
+        if (response.headers.get("content-type")?.split(";")[0].trim() !== "text/plain" || !response.body) throw new Error();
+        const reader = response.body.getReader(), chunks: Uint8Array[] = []; let size = 0;
+        try { for (;;) { const next = await reader.read(); if (next.done) break; size += next.value.byteLength;
+          if (size > 65_536) throw new Error(); chunks.push(next.value); } } finally { void reader.cancel().catch(() => {}); reader.releaseLock(); }
+        const bytes = new Uint8Array(size); let offset = 0; for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
+        const text = new TextDecoder("utf8", { fatal: true }).decode(bytes);
+        const content = taskResultContentSchema.parse({ projectId, jobId, artifact, text,
+          contentVerifiedAt: new Date().toISOString(), untrustedContent: true });
         if (content.projectId !== projectId || content.jobId !== jobId || content.artifact.artifactId !== artifactId) throw new Error();
-        const bytes = new TextEncoder().encode(content.text);
         const hash = [...new Uint8Array(await crypto.subtle.digest("SHA-256", bytes))].map(value => value.toString(16).padStart(2, "0")).join("");
         if (bytes.byteLength !== content.artifact.sizeBytes || `sha256:${hash}` !== content.artifact.contentHash) throw new Error();
         return content;

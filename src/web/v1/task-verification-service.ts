@@ -18,10 +18,11 @@ const descriptorSchema = z.object({ scenarioId: id, label: z.string().trim().min
   instructions: z.string().trim().min(1).max(2000), acceptanceProfileId: id,
   acceptanceProfileDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/) }).strict();
 export type ManualVerificationScenario = z.infer<typeof descriptorSchema>;
+export type ManualVerificationScenarioSource = Readonly<{ list(): readonly ManualVerificationScenario[] }>;
 export interface WebTaskVerificationConfiguration {
   integrityKey: Uint8Array; harnessIntegrityKey: Uint8Array; checkpoints: AwaitableRollbackCheckpointStoreV1;
   results: NativeResultReadConfiguration; ideaIntegrityKey?: Uint8Array;
-  manualVerificationScenarios: readonly ManualVerificationScenario[];
+  manualVerificationScenarios: readonly ManualVerificationScenario[] | ManualVerificationScenarioSource;
 }
 const joined = (tx: DatabaseSession): DatabaseClient => ({ query: tx.query.bind(tx), transaction: async work => work(tx),
   transactionWithPreCommitCheck: async (work, check) => { const result = await work(tx); await check(); return result; } });
@@ -31,17 +32,24 @@ const risks: CompletionRiskV1[] = ["low", "medium", "high", "critical"];
 export class WebTaskVerificationService {
   private readonly key: Uint8Array;
   private readonly checkpoints: AwaitableRollbackCheckpointStoreV1;
-  private readonly descriptors: readonly ManualVerificationScenario[];
+  private readonly descriptorSource: () => readonly ManualVerificationScenario[];
   private readonly results: PlanSelectedTaskResultReaderV1;
   private readonly projects: WebProjectService;
   constructor(private readonly db: DatabaseClient, private readonly scope: { tenantId: string; workspaceId: string },
     config: WebTaskVerificationConfiguration, private readonly clock: () => number = Date.now) {
     if (!(config.integrityKey instanceof Uint8Array) || config.integrityKey.length !== 32) throw new Error("verification_configuration_invalid");
     this.key = Uint8Array.from(config.integrityKey);
-    this.descriptors = z.array(descriptorSchema).max(50).parse(config.manualVerificationScenarios);
-    assertNoSecretMaterial(this.descriptors);
-    if (new Set(this.descriptors.map(value => JSON.stringify([value.acceptanceProfileId, value.acceptanceProfileDigest, value.scenarioId]))).size !== this.descriptors.length)
-      throw new Error("verification_configuration_invalid");
+    const source = Array.isArray(config.manualVerificationScenarios)
+      ? () => config.manualVerificationScenarios as readonly ManualVerificationScenario[]
+      : () => (config.manualVerificationScenarios as ManualVerificationScenarioSource).list();
+    this.descriptorSource = () => {
+      const descriptors = z.array(descriptorSchema).max(50).parse(source());
+      assertNoSecretMaterial(descriptors);
+      if (new Set(descriptors.map(value => JSON.stringify([value.acceptanceProfileId, value.acceptanceProfileDigest, value.scenarioId]))).size !== descriptors.length)
+        throw new Error("verification_configuration_invalid");
+      return descriptors;
+    };
+    this.descriptorSource();
     this.checkpoints = Object.freeze({ read: config.checkpoints.read.bind(config.checkpoints), advance: config.checkpoints.advance.bind(config.checkpoints),
       initialize: () => { throw new Error("verification_provisioning_unavailable"); } });
     this.results = new PlanSelectedTaskResultReaderV1(db, { harnessIntegrityKey: config.harnessIntegrityKey,
@@ -73,7 +81,7 @@ export class WebTaskVerificationService {
       || target.producer.actorType !== "agent") throw new WebAccessError("conflict");
     const lineage = await readTaskReviewPlanV1(tx, this.key, this.scope.tenantId, projectId, jobId);
     verifyTaskReviewTargetV1(lineage, target, result.receipt);
-    const descriptors = this.descriptors.filter(value => value.acceptanceProfileId === profile.id
+    const descriptors = this.descriptorSource().filter(value => value.acceptanceProfileId === profile.id
       && value.acceptanceProfileDigest === sha256Digest(profile) && profile.requiredVerificationScenarioIds.includes(value.scenarioId));
     return { project, snapshot, profile, result, descriptors, gate,
       risk: risks[Math.max(risks.indexOf(profile.minimumRisk), risks.indexOf(job.authority.maxRisk))] };

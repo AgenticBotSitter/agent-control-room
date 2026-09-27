@@ -9,7 +9,9 @@ import { seedMacLocalAdapterRegistryV1 } from "../src/web/v1/mac-local-owner-boo
 import { DurableResultReviewSubmissionServiceV1 } from "../src/completion-gate/v1/durable-result-review-submission";
 import { createInMemoryNeutralReservationPort } from "../src/artifacts/v1/neutral-reservation-port";
 import { InMemoryArtifactStorage } from "../src/node-executor/artifact-storage";
-import type { CompletionAcceptanceProfileV1 } from "../src/completion-gate/v1";
+import { CompletionGateErrorV1, type CompletionAcceptanceProfileV1, type CompletionReviewV1 }
+  from "../src/completion-gate/v1";
+import { durableResultReviewPlanSchemaV1 } from "../src/completion-gate/v1/durable-result-review-plan";
 import { sha256Digest } from "../src/security";
 import { binding } from "./hermes-native-fixture";
 import { at } from "./native-task-fixture";
@@ -28,7 +30,7 @@ async function setup(t: { after(fn: () => unknown): void }, runId: string) {
   const profile: CompletionAcceptanceProfileV1 = { schemaVersion: "control-room-completion-gate/v1",
     id: `profile:${runId}`, tenantId: binding.tenantId, projectId: binding.projectId, name: "Codex local result quality",
     targetKind: "document", requiredVerificationScenarioIds: ["scenario:content"], minimumIndependentReviews: 1,
-    reviewerSeparation: { actor: true, worker: false, agentProfile: false, harness: false, modelFamily: false },
+    reviewerSeparation: { actor: true, worker: true, agentProfile: true, harness: true, modelFamily: true },
     verificationRequiresProducerSeparation: true, minimumRisk: "low", maximumRevisionRounds: 2,
     automaticLowRiskDisposition: false, createdBy: { actorId: "identity:test", actorType: "human" }, createdAt: at() };
   await f.reviewStore.registerProfile(profile);
@@ -50,7 +52,7 @@ async function setup(t: { after(fn: () => unknown): void }, runId: string) {
   });
   const receiptPort = createOwnerTrustedLocalCliReceiptPortV1(() => Date.parse(at(1_000)));
   const receipt = await receiptPort.receive(delivery, { kind: "local", workerId: delivery.worker.workerId });
-  return { f, publish, delivery, receipt, storage };
+  return { f, profile, publish, delivery, receipt, storage };
 }
 
 test("publishes the CLI's completed text through the existing durable result and pending-review path", async t => {
@@ -72,6 +74,34 @@ test("publishes the CLI's completed text through the existing durable result and
   const plan = await f.db.query<{ tenant_id: string }>(
     "SELECT tenant_id FROM control_native_review_plans WHERE tenant_id=$1 AND run_id=$2", [binding.tenantId, delivery.identity.runId]);
   assert.equal(plan.rows.length, 1, "a durable review plan was written");
+});
+
+test("published producer provenance enforces agent independence without blocking the owner", async t => {
+  const { f, profile, publish, delivery, receipt } = await setup(t, "run:cli-publish-independent");
+  await publish({ delivery, receipt, text: "The task completed successfully.", signal: new AbortController().signal });
+  const row = (await f.db.query<{ plan: unknown }>(
+    "SELECT plan FROM control_native_review_plans WHERE tenant_id=$1 AND run_id=$2",
+    [binding.tenantId, delivery.identity.runId])).rows[0];
+  const plan = durableResultReviewPlanSchemaV1.parse(row?.plan);
+  const snapshot = await f.reviewStore.snapshot(binding.tenantId, plan.targetId);
+  assert.deepEqual(snapshot.target.producer, { actorId: binding.nodeId, actorType: "agent",
+    workerId: delivery.worker.workerId,
+    agentProfileId: `agent-profile:${delivery.connectorProfileDigest.slice("sha256:".length)}`,
+    harness: "codex", adapterId: delivery.worker.adapterId, modelFamily: "model-family:codex" });
+
+  const review = (id: string, modelFamily: string): CompletionReviewV1 => ({
+    schemaVersion: "control-room-completion-gate/v1", id, tenantId: binding.tenantId,
+    projectId: binding.projectId, targetId: snapshot.target.id, targetDigest: snapshot.targetDigest,
+    acceptanceProfileId: profile.id, acceptanceProfileDigest: sha256Digest(profile),
+    reviewer: { actorId: `agent:${id}`, actorType: "agent", workerId: "worker:independent",
+      agentProfileId: "agent-profile:independent", harness: "claude", adapterId: "adapter:independent", modelFamily },
+    authority: "completion_gate", decision: "accepted", assessedRisk: "low", effectiveRisk: "low",
+    evidenceDigests: [snapshot.target.subjectDigest], findingIds: [], reviewedAt: at(3_000),
+    grantsApproval: false, grantsExecutionAuthority: false,
+  });
+  await assert.rejects(() => f.reviewStore.recordReview(review("review:same-family", "model-family:codex")),
+    (error: unknown) => error instanceof CompletionGateErrorV1 && error.safeCode === "reviewer_not_independent");
+  await assert.doesNotReject(() => f.reviewStore.recordReview(review("review:different-family", "model-family:claude")));
 });
 
 test("replays cleanly on a retry with the exact same text, and refuses an aborted signal without writing anything", async t => {

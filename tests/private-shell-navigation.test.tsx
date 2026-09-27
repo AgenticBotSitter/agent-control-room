@@ -506,16 +506,20 @@ async function mountTaskResults(options: { search?: string; canReadContent?: boo
   const artifacts = ids.map(artifactId => ({ artifactId, attemptId: "attempt:one", runId: "run:one",
     contentHash: `sha256:${createHash("sha256").update(textFor(artifactId)).digest("hex")}`,
     sizeBytes: Buffer.byteLength(textFor(artifactId)), receivedAt: "2026-09-08T12:00:00.000Z",
-    byteCheck: "matched_recorded_claim", qualityAccepted: false }));
+    byteCheck: "matched_recorded_claim", qualityAccepted: false,
+    fileAccess: {
+      previewHref: `/api/v1/projects/project%3Atest/tasks/job%3Atest/files/${encodeURIComponent(artifactId)}?disposition=preview&token=test-token`,
+      downloadHref: `/api/v1/projects/project%3Atest/tasks/job%3Atest/files/${encodeURIComponent(artifactId)}?disposition=attachment&token=test-token`,
+      expiresAt: "2026-09-08T12:05:00.000Z",
+    } }));
   globalThis.fetch = (async (url: string) => {
     requests.push(String(url));
     const path = String(url);
-    const match = /\/results\/([^/?]+)$/.exec(path);
+    const match = /\/files\/([^/?]+)\?/.exec(path);
     if (match) {
       const artifact = artifacts.find(item => item.artifactId === decodeURIComponent(match[1]));
       if (!artifact) return new Response("no", { status: 404 });
-      return Response.json({ projectId: "project:test", jobId: "job:test", artifact,
-        text: textFor(artifact.artifactId), contentVerifiedAt: artifact.receivedAt, untrustedContent: true });
+      return new Response(textFor(artifact.artifactId), { headers: { "content-type": "text/plain" } });
     }
     return Response.json({ projectId: "project:test", jobId: "job:test", observedAt: "2026-09-08T12:00:00.000Z",
       resultSource: "configured", reviewSource: "configured", items: artifacts, reviews: [],
@@ -542,7 +546,11 @@ async function mountTaskResults(options: { search?: string; canReadContent?: boo
   };
   const idle = () => {
     const text = dom.window.document.body.textContent ?? "";
-    return !text.includes("Loading protected results and review…") && !text.includes("Reading protected result…");
+    // An empty body is the pre-effect state, not a settled read. Requiring the
+    // panel prevents the first assertion from racing the initial protected
+    // list request when React has not committed its loading marker yet.
+    return Boolean(dom.window.document.querySelector(".private-task-results"))
+      && !text.includes("Loading protected results and review…") && !text.includes("Reading protected result…");
   };
   await act(async () => { root.render(React.createElement(PrivateTaskResults,
     { projectId: "project:test", jobId: "job:test", reviewWorkspace: {} as never })); });
@@ -561,7 +569,7 @@ async function mountTaskResults(options: { search?: string; canReadContent?: boo
     }
   };
   return { dom, root, act, requests, artifacts, restore, settle, idle,
-    contentRequests: () => requests.filter(url => /\/results\/[^/?]+$/.test(url)) };
+    contentRequests: () => requests.filter(url => /\/files\/[^/?]+\?/.test(url)) };
 }
 
 test("an unlisted URL selection is refused without any content request", async () => {
@@ -579,7 +587,7 @@ test("an unlisted URL selection is refused without any content request", async (
 test("a listed URL selection opens that exact file and moves focus into it", async () => {
   const mounted = await mountTaskResults({ search: "?result=artifact%3Atwo" });
   try {
-    assert.deepEqual(mounted.contentRequests().map(url => decodeURIComponent(url).split("/").pop()),
+    assert.deepEqual(mounted.contentRequests().map(url => decodeURIComponent(new URL(url, "https://control.invalid").pathname).split("/").pop()),
       ["artifact:two"]);
     const body = mounted.dom.window.document.body;
     assert.match(body.textContent ?? "", /artifact:two PROTECTED RESULT TEXT/);

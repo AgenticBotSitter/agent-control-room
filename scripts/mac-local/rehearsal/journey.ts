@@ -380,6 +380,38 @@ async function main() {
     const taskUrl = new URL(`/api/v1/projects/${idOf(projectId)}/tasks/${idOf(jobId)}`, origin);
     let taskState = "", attemptState = "";
     if (decision === "accepted") {
+      // Profile v2 also requires an owner-observed human verification. Discover
+      // its protected descriptor through the same endpoint as the task page,
+      // then prove the exact write and replay without treating it as approval.
+      const verificationPath = `/api/v1/projects/${idOf(projectId)}/tasks/${idOf(jobId)}/results/${idOf(artifact.artifactId)}/verifications/${idOf(target.targetId)}`;
+      const verificationOptions = await requireOk(await fetch(new URL(verificationPath, origin), { headers: { cookie } }), 200,
+        `${agent.kind} human verification options`) as { source: string; grantsExecutionAuthority: boolean; targetDigest: string;
+          contentHash: string; scenarios: { scenarioId: string; instructionsDigest: string; availability: string; ownVerification: null }[] };
+      assert.equal(verificationOptions.source, "configured");
+      assert.equal(verificationOptions.grantsExecutionAuthority, false);
+      assert.equal(verificationOptions.targetDigest, target.targetDigest);
+      assert.equal(verificationOptions.contentHash, artifact.contentHash);
+      assert.equal(verificationOptions.scenarios.length, 1);
+      const scenario = verificationOptions.scenarios[0]!;
+      assert.equal(scenario.availability, "available");
+      assert.equal(scenario.ownVerification, null);
+      const verificationDraft = { artifactId: artifact.artifactId, targetId: target.targetId,
+        targetDigest: verificationOptions.targetDigest, contentHash: verificationOptions.contentHash,
+        scenarioId: scenario.scenarioId, instructionsDigest: scenario.instructionsDigest,
+        outcome: "passed", note: "Observed the harmless rehearsal result." };
+      const writeVerification = () => fetch(new URL(verificationPath, origin), { method: "POST",
+        headers: { origin, cookie, "content-type": "application/json" }, body: JSON.stringify(verificationDraft) });
+      const verified = await requireOk(await writeVerification(), 201, `${agent.kind} human verification`) as
+        { receipt: { verificationId: string; outcome: string; grantsApproval: boolean; grantsExecutionAuthority: boolean;
+          completesJob: boolean }; replayed: boolean };
+      assert.equal(verified.replayed, false);
+      assert.equal(verified.receipt.outcome, "passed");
+      assert.equal(verified.receipt.grantsApproval, false);
+      assert.equal(verified.receipt.grantsExecutionAuthority, false);
+      assert.equal(verified.receipt.completesJob, false);
+      const verificationReplay = await requireOk(await writeVerification(), 200, `${agent.kind} human verification replay`) as typeof verified;
+      assert.equal(verificationReplay.replayed, true);
+      assert.deepEqual(verificationReplay.receipt, verified.receipt);
       const completed = await waitFor(async () => {
         const taskResponse = await fetch(taskUrl, { headers: { cookie } });
         if (taskResponse.status !== 200) return false;

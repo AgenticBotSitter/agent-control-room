@@ -14,7 +14,7 @@ import { readTaskReviewPlanV1, taskReviewRootSubjectIdV1, type TaskResultReceipt
 import { PlanSelectedTaskResultReaderV1 } from "./task-result-reader";
 import type { AwaitableRollbackCheckpointStoreV1 } from "../../security/rollback-checkpoint";
 import type { WebTaskReviewConfiguration } from "./task-review-service";
-import type { ManualVerificationScenario } from "./task-verification-service";
+import type { ManualVerificationScenario, ManualVerificationScenarioSource } from "./task-verification-service";
 import { taskResultMetadataSchema, boundedTaskResultsPage, taskResultContentSchema, taskReviewEvidenceSchema } from "./task-result-wire";
 import { WebAccessError, type VerifiedWebIdentity } from "./access-verifier";
 import { WebSessionAuthority, type WebActor } from "./session-authority";
@@ -35,6 +35,8 @@ import { taskProjectOverviewSchema } from "./task-project-overview-wire";
 import { taskProjectFilesSchema } from "./task-project-files-wire";
 import type { TaskWorktreeChangeSummary } from "./task-result-wire";
 import { taskModelOptionsV1, validateRequestedTaskModelV1, type TaskModelCatalogV1 } from "./task-model-selection";
+import { readTaskRevisionLinksV1 } from "./task-execution-planner";
+import { issueTaskFileAccessV1, verifyTaskFileAccessV1 } from "./task-file-access";
 
 /** Joins existing stores to the caller-owned session transaction. No nested BEGIN/COMMIT and no
  * new authority: this closure stays inside authenticated(). The outer freshness check owns commit. */
@@ -72,12 +74,14 @@ function validated(row: TaskRow, tenantId: string, projectId: string) {
 
 export interface WebTaskKeys {
   modelCatalog?: TaskModelCatalogV1;
+  /** Read-only authentication key for task execution-plan lineage. */
+  taskPlanIntegrityKey?: Uint8Array;
   harnessIntegrityKey?: Uint8Array;
   ideaIntegrityKey?: Uint8Array;
   results?: NativeResultReadConfiguration;
   reviews?: { integrityKey: Uint8Array; checkpoints: AwaitableRollbackCheckpointStoreV1 };
   ownerReviews?: WebTaskReviewConfiguration;
-  manualVerificationScenarios?: readonly ManualVerificationScenario[];
+  manualVerificationScenarios?: readonly ManualVerificationScenario[] | ManualVerificationScenarioSource;
   /** Installation-owned aggregate reader. The web layer cannot receive a raw
    * evidence table, receipt key, worktree plan, or filesystem path. */
   worktreeChangeEvidence?: { inspect(identity: { tenantId: string; projectId: string; jobId: string; attemptId: string;
@@ -105,13 +109,20 @@ export class WebTaskService {
   private readonly hermesDeliveryRecovery?: WebTaskKeys["hermesDeliveryRecovery"];
   private readonly worktreeChangeEvidence?: NonNullable<WebTaskKeys["worktreeChangeEvidence"]>;
   private readonly modelCatalog?: TaskModelCatalogV1;
+  private readonly taskPlanIntegrityKey?: Uint8Array;
+  private readonly fileAccessKey?: Uint8Array;
   constructor(private readonly db: DatabaseClient, private readonly scope: { tenantId: string; workspaceId: string },
     private readonly clock: () => number = Date.now, keys?: WebTaskKeys) {
     this.authority = new WebSessionAuthority(db, scope, clock, "task");
     this.modelCatalog = keys?.modelCatalog;
+    if (keys?.taskPlanIntegrityKey !== undefined) {
+      if (!(keys.taskPlanIntegrityKey instanceof Uint8Array) || keys.taskPlanIntegrityKey.length !== 32)
+        throw new Error("task_key_invalid");
+      this.taskPlanIntegrityKey = Uint8Array.from(keys.taskPlanIntegrityKey);
+    }
     this.ideaProjectsConfigured = !!keys?.ideaIntegrityKey;
     this.reviewCommandsConfigured = !!keys?.ownerReviews;
-    this.verificationCommandsConfigured = !!keys?.manualVerificationScenarios?.length;
+    this.verificationCommandsConfigured = !!keys?.manualVerificationScenarios;
     if (keys?.hermesDeliveryRecovery && typeof keys.hermesDeliveryRecovery.inspect !== "function") throw new Error("task_key_invalid");
     this.hermesDeliveryRecovery = keys?.hermesDeliveryRecovery ? Object.freeze({
       inspect: keys.hermesDeliveryRecovery.inspect.bind(keys.hermesDeliveryRecovery),
@@ -130,6 +141,7 @@ export class WebTaskService {
       // The web service retains only the read capability, even when composition supplied a fuller store.
       this.resultStore = new PlanSelectedTaskResultReaderV1(db, { harnessIntegrityKey: this.harnessKey,
         results: keys.results, ...(keys.reviews ? { reviewIntegrityKey: keys.reviews.integrityKey } : {}) });
+      this.fileAccessKey = Uint8Array.from(keys.results.integrityKey);
     }
     if (keys?.worktreeChangeEvidence) {
       if (typeof keys.worktreeChangeEvidence.inspect !== "function") throw new Error("task_key_invalid");
@@ -365,6 +377,9 @@ export class WebTaskService {
           runs, additionalRunsOmitted: ids.length > 10 });
       }
       const hermesDeliveryRecovery = await this.inspectHermesDeliveryRecovery(job, projectId, jobId, attempts);
+      const revisionLinks = this.taskPlanIntegrityKey
+        ? await readTaskRevisionLinksV1(tx, this.taskPlanIntegrityKey, this.scope.tenantId, projectId, jobId)
+        : { previousJobId: null, nextJobId: null, revisionNumber: 0 };
       return taskDetailSchema.parse({ project, task: summary, instructions: request.objective, inputDigest: job.inputDigest,
         modelSelection: modelRow ? { workerKind: modelRow.worker_kind, selectionKey: modelRow.selection_key,
           model: modelRow.model, effort: modelRow.effort, provider: modelRow.provider, profile: modelRow.profile,
@@ -373,6 +388,7 @@ export class WebTaskService {
         observedAt: actor.now, attempts, earlierAttemptsOmitted: attemptRows.length > 10, preparedFor: null,
         localRouteObservation: { state: "not_prepared", adapter: null },
         hermesDeliveryRecovery,
+        revisionLinks,
         progressSource: store ? "configured" : "not_configured", dispatch: "not_connected",
         artifacts: this.resultStore ? "configured" : "not_connected", review: this.reviewConfig ? "recorded" : "not_connected" });
     });
@@ -413,6 +429,35 @@ export class WebTaskService {
     });
   }
 
+  private fileAccess(projectId: string, jobId: string, receipt: TaskResultReceiptV1) {
+    if (!this.fileAccessKey) return undefined;
+    const now = this.clock(), scope = { projectId, jobId, runId: receipt.runId, artifactId: receipt.artifactId,
+      contentHash: receipt.contentHash, sizeBytes: receipt.sizeBytes };
+    const preview = issueTaskFileAccessV1(this.fileAccessKey, { ...scope, disposition: "preview" }, now);
+    const download = issueTaskFileAccessV1(this.fileAccessKey, { ...scope, disposition: "download" }, now);
+    const base = `/api/v1/projects/${encodeURIComponent(projectId)}/tasks/${encodeURIComponent(jobId)}/files/${encodeURIComponent(receipt.artifactId)}`;
+    return { previewHref: `${base}?disposition=preview&token=${encodeURIComponent(preview.token)}`,
+      downloadHref: `${base}?disposition=download&token=${encodeURIComponent(download.token)}`, expiresAt: preview.expiresAt };
+  }
+
+  async file(identity: VerifiedWebIdentity, projectId: string, jobId: string, artifactId: string,
+    disposition: "preview" | "download", token: string) {
+    this.id(projectId); this.id(jobId); this.id(artifactId);
+    return this.authority.authenticated(identity, async (tx, actor) => {
+      actor.require("tasks.read", projectId); actor.require("tasks.results.read", projectId);
+      await this.projects.getViewInSession(tx, actor, projectId);
+      if (!this.resultStore || !this.fileAccessKey) throw new WebAccessError("not_found");
+      let claims: ReturnType<typeof verifyTaskFileAccessV1>;
+      try { claims = verifyTaskFileAccessV1(this.fileAccessKey, token, { projectId, jobId, artifactId, disposition }, this.clock()); }
+      catch { throw new WebAccessError("access_denied"); }
+      const content = await this.resultStore.read(tx, this.scope.tenantId, projectId, jobId, artifactId);
+      if (!content || content.receipt.runId !== claims.runId || content.receipt.contentHash !== claims.contentHash
+        || content.receipt.sizeBytes !== claims.sizeBytes || new TextEncoder().encode(content.text).byteLength > 65_536)
+        throw new WebAccessError("not_found");
+      return Object.freeze({ text: content.text, receipt: content.receipt, disposition });
+    });
+  }
+
   private async resultPage(tx: DatabaseSession, actor: WebActor, projectId: string, jobId: string) {
       const result = this.resultStore ? await this.resultStore.list(tx, this.scope.tenantId, projectId, jobId)
         : { receipts: [], additionalResultsOmitted: false };
@@ -435,7 +480,8 @@ export class WebTaskService {
             permitsMerge: false } : { source: "unavailable" };
         }
         return taskResultMetadataSchema.parse({ ...resultMetadata(receipt),
-          ...(runEvidence?.modelSelection ? { modelSelection: runEvidence.modelSelection } : {}), worktreeChangeSummary });
+          ...(runEvidence?.modelSelection ? { modelSelection: runEvidence.modelSelection } : {}),
+          fileAccess: this.fileAccess(projectId, jobId, receipt), worktreeChangeSummary });
       }));
       const lineage = this.reviewConfig ? await readTaskReviewPlanV1(tx, this.reviewConfig.integrityKey,
         this.scope.tenantId, projectId, jobId) : undefined;
@@ -703,7 +749,8 @@ export class WebTaskService {
         if (!row) throw new Error("task_project_file_unavailable");
         const receipt = await this.resultStore.readReceipt(tx, this.scope.tenantId, projectId, candidate.job_id, candidate.artifact_id);
         if (!receipt) throw new Error("task_project_file_unavailable");
-        items.push({ task: validated(row, this.scope.tenantId, projectId).summary, artifact: resultMetadata(receipt) });
+        items.push({ task: validated(row, this.scope.tenantId, projectId).summary,
+          artifact: taskResultMetadataSchema.parse({ ...resultMetadata(receipt), fileAccess: this.fileAccess(projectId, candidate.job_id, receipt) }) });
       }
       return taskProjectFilesSchema.parse({ projectId, items, additionalItemsOmitted: candidates.length > 20,
         resultSource: "configured", observedAt: actor.now, startsWork: false });

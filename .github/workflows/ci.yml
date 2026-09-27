@@ -234,6 +234,8 @@ jobs:
         run: pnpm run test:private-local-runtime-assembly:memory-guard
       - name: Mac-local real-page journey
         run: pnpm run test:mac-local-real-pages
+      - name: Phase 2B contracts
+        run: pnpm run test:phase2b
       - name: Component lanes
         run: pnpm run test:components
       - name: Resource-bound connector contracts

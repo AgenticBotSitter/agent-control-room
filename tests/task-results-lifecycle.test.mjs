@@ -27,7 +27,8 @@ test('cancelled result reads refuse acquisition and late responses', async () =>
 });
 
 test('result reader ignores late content after leaving its task', async () => {
-  const dom = new JSDOM('<div id="root"></div>', { pretendToBeVisual: true });
+  const dom = new JSDOM('<div id="root"></div>', { pretendToBeVisual: true,
+    url: 'https://control.invalid/projects/project%3Atest/tasks/job%3Afirst' });
   const saved = Object.fromEntries(['window', 'document', 'IS_REACT_ACT_ENVIRONMENT', 'fetch']
     .map(key => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
   Object.assign(globalThis, { window: dom.window, document: dom.window.document, IS_REACT_ACT_ENVIRONMENT: true });
@@ -39,8 +40,13 @@ test('result reader ignores late content after leaving its task', async () => {
     contentHash: `sha256:${createHash('sha256').update(protectedText).digest('hex')}`,
     sizeBytes: Buffer.byteLength(protectedText), receivedAt: '2026-09-08T12:00:00.000Z',
     byteCheck: 'matched_recorded_claim', qualityAccepted: false };
+  const artifactFor = jobId => ({ ...artifact, fileAccess: {
+    previewHref: `/api/v1/projects/project%3Atest/tasks/${encodeURIComponent(jobId)}/files/artifact%3Atest?disposition=preview&token=test-token`,
+    downloadHref: `/api/v1/projects/project%3Atest/tasks/${encodeURIComponent(jobId)}/files/artifact%3Atest?disposition=download&token=test-token`,
+    expiresAt: '2026-09-08T12:05:00.000Z',
+  } });
   const page = jobId => ({ projectId: 'project:test', jobId, observedAt: artifact.receivedAt,
-    resultSource: 'configured', reviewSource: 'configured', items: [artifact], reviews: [],
+    resultSource: 'configured', reviewSource: 'configured', items: [artifactFor(jobId)], reviews: [],
     additionalResultsOmitted: false, additionalTargetsOmitted: false, canReadContent: true, reviewCommands: 'not_connected' });
   const render = jobId => root.render(React.createElement(PrivateTaskResults,
     { projectId: 'project:test', jobId, reviewWorkspace: {} }));
@@ -55,8 +61,7 @@ test('result reader ignores late content after leaving its task', async () => {
     await act(async () => render('job:second'));
     assert.equal(pending[2].options.signal.aborted, true);
     assert.doesNotMatch(document.body.textContent, /Saved result file/);
-    await act(async () => pending[2].resolve(Response.json({ projectId: 'project:test', jobId: 'job:first',
-      artifact, text: protectedText, contentVerifiedAt: artifact.receivedAt, untrustedContent: true })));
+    await act(async () => pending[2].resolve(new Response(protectedText, { headers: { 'content-type': 'text/plain' } })));
     assert.doesNotMatch(document.body.textContent, /PRIVATE FIRST TASK CONTENT/);
     await act(async () => pending[3].resolve(Response.json({ ...page('job:second'), items: [] })));
     assert.doesNotMatch(document.body.textContent, /PRIVATE FIRST TASK CONTENT/);
@@ -66,8 +71,7 @@ test('result reader ignores late content after leaving its task', async () => {
     await act(async () => [...document.querySelectorAll('button')].find(button => button.textContent === 'Read result').click());
     await act(async () => pending[5].resolve(Response.json(page('job:second'))));
     await act(async () => {
-      pending[6].resolve(Response.json({ projectId: 'project:test', jobId: 'job:second', artifact,
-        text: protectedText, contentVerifiedAt: artifact.receivedAt, untrustedContent: true }));
+      pending[6].resolve(new Response(protectedText, { headers: { 'content-type': 'text/plain' } }));
       await new Promise(resolve => setTimeout(resolve, 20));
     });
     assert.match(document.body.textContent, /PRIVATE FIRST TASK CONTENT/);

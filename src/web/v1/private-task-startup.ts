@@ -548,6 +548,7 @@ export function createPrivateTaskBootstrap(dependencies: {
             deletedFiles: summary.deletedFiles, evidenceDigest: summary.evidenceDigest });
         } }) : undefined;
       const webTasks = config.web.tasks ? Object.freeze({ ...config.web.tasks,
+        taskPlanIntegrityKey: Uint8Array.from(config.planning.integrityKey),
         ...(hermesDeliveryRecovery ? { hermesDeliveryRecovery } : {}),
         ...(worktreeChangeEvidence ? { worktreeChangeEvidence } : {}) }) : undefined;
       application = await createPrivateTaskApplication({ ...config.web, database: web, clock,
