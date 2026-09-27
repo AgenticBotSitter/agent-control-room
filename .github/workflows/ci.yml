@@ -496,7 +496,10 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
-          cache: pnpm
+          # Catch-up steps are intentionally skipped when the corresponding
+          # early lane ran. Do not register a cache post-step in that case:
+          # there is no pnpm store to save and setup-node treats that as an
+          # error, turning a successful no-op catch-up into a failed gate.
       - name: Note which lane this entry covers
         run: |
           echo "Merge-gate entry for lane: ${{ matrix.lane }}" >> "$GITHUB_STEP_SUMMARY"

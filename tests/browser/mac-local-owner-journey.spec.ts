@@ -87,7 +87,7 @@ async function expireLatestDisposableLease(jobId: string) {
     const expiredAt = new Date(new Date(lease.acquired_at).getTime() + 1_000).toISOString();
     const wait = Date.parse(expiredAt) - Date.now() + 100;
     if (wait > 0) await new Promise(resolveWait => setTimeout(resolveWait, wait));
-    const result = await client.query(`UPDATE control_leases SET expires_at=$1,
+    const result = await client.query(`UPDATE control_leases SET expires_at=$1::timestamptz,
       payload=jsonb_set(payload,'{expiresAt}',to_jsonb($1::text),false),updated_at=now()
       WHERE tenant_id=$2 AND job_id=$3 AND state='active'`, [expiredAt, config.localOwnerSession.tenantId, jobId]);
     expect(result.rowCount).toBe(1);

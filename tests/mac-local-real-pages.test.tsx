@@ -245,7 +245,7 @@ test("real Mac-local pages complete the signed-in project and task journey witho
   const projectView = await mountPage(journey, projectPath,
     await ProjectPage({ params: Promise.resolve({ projectId: encodeURIComponent(project.projectId) }) }));
   try {
-    assertHealthyPage(projectView, [/Real page journey/, /Purpose/, /Work/]);
+    assertHealthyPage(projectView, [/Real page journey/, /Purpose/, /Tasks/]);
     assert.ok(projectView.requests.some(value => value.startsWith("GET /api/v1/projects/")));
   } finally { await projectView.close(); }
 
@@ -253,7 +253,7 @@ test("real Mac-local pages complete the signed-in project and task journey witho
   assert.equal((await journey.request(workPath, { headers: { cookie: journey.cookie } })).status, 200);
   const work = await mountPage(journey, workPath,
     await ProjectTaskPage({ params: Promise.resolve({ projectId: encodeURIComponent(project.projectId) }), searchParams: Promise.resolve({}) }));
-  try { assertHealthyPage(work, [/Saved tasks/, /Propose a task/]); } finally { await work.close(); }
+  try { assertHealthyPage(work, [/Saved tasks/, /New task/]); } finally { await work.close(); }
 
   const taskClient = createTaskBrowserClient(journey.fetch, () => "realpagestask0000001");
   const receipt = await taskClient.propose(project.projectId,

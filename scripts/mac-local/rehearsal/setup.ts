@@ -57,7 +57,12 @@ for (const signal of ["SIGINT", "SIGTERM"] as const) process.once(signal, () => 
 process.once("exit", () => { if (!keepCluster) stopStartedCluster(); });
 
 if (action === "down") {
-  if (existsSync(pg)) pgctl("stop", "-m", "fast");
+  if (existsSync(pg)) {
+    let running = false;
+    try { pgctl("status"); running = true; }
+    catch { /* An already-stopped disposable cluster is the requested state. */ }
+    if (running) pgctl("stop", "-m", "fast");
+  }
   console.log("rehearsal database stopped (data kept; delete the directory to discard)");
   process.exit(0);
 }
