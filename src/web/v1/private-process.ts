@@ -232,6 +232,7 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
   }) : undefined;
   if (options.planning && (options.planning.tenantId !== options.tenantId || options.planning.workspaceId !== options.workspaceId
     || typeof options.planning.plan !== "function" || options.planning.readSaved !== undefined && typeof options.planning.readSaved !== "function"
+    || options.planning.readSavedMany !== undefined && typeof options.planning.readSavedMany !== "function"
     || options.planning.readSavedContinuation !== undefined && typeof options.planning.readSavedContinuation !== "function"
     || options.planning.ensureProject !== undefined && typeof options.planning.ensureProject !== "function"
     || options.planning.readPreparedWorker !== undefined && typeof options.planning.readPreparedWorker !== "function"
@@ -242,6 +243,7 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
     ensureProject: options.planning.ensureProject?.bind(options.planning),
     supportsProject: options.planning.supportsProject?.bind(options.planning), templatesForProject: options.planning.templatesForProject?.bind(options.planning),
     readSaved: options.planning.readSaved?.bind(options.planning),
+    readSavedMany: options.planning.readSavedMany?.bind(options.planning),
     readSavedContinuation: options.planning.readSavedContinuation?.bind(options.planning),
     readPreparedWorker: options.planning.readPreparedWorker?.bind(options.planning),
     readConfiguredLocalRoute: options.planning.readConfiguredLocalRoute?.bind(options.planning) }) : undefined;
@@ -618,12 +620,16 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
             if (request.method !== "GET" || [...url.searchParams.keys()].some(key => key !== "after")
               || url.searchParams.getAll("after").length > 1) throw new WebAccessError("invalid_request");
             const page = await tasks.attention(identity, url.searchParams.get("after") ?? undefined);
-            // Keep this summary fixed-query and fail closed. Exact saved-plan and
-            // delivery evidence remains available on the task page; the summary
-            // retains its generic attention reason instead of running N separate
-            // authority transactions or inferring an all-clear from partial data.
-            return Response.json(taskAttentionPageSchema.parse({ ...page, planningSource: "not_configured",
-              deliverySource: "not_configured" }), { headers: privateResponseHeaders });
+            if (planning?.readSavedMany) {
+              const candidates = page.items.filter(item => item.reasons.includes("proposal"));
+              const saved = await planning.readSavedMany(identity,
+                candidates.map(item => ({ projectId: item.task.projectId, sourceJobId: item.task.jobId })));
+              for (const item of candidates) if (saved.get(JSON.stringify([item.task.projectId, item.task.jobId])))
+                item.reasons = item.reasons.filter(reason => reason !== "proposal");
+            }
+            return Response.json(taskAttentionPageSchema.parse({ ...page,
+              planningSource: planning?.readSavedMany ? "configured" : "not_configured", deliverySource: "not_configured",
+              items: page.items.filter(item => item.reasons.length) }), { headers: privateResponseHeaders });
           }
           if (url.pathname === "/api/v1/needs-me") {
             if (request.method !== "GET" || url.search) throw new WebAccessError("invalid_request");

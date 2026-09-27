@@ -374,6 +374,12 @@ export class CompletionGateStoreV1 {
     return result.rows[0]?this.verifiedRow(result.rows[0]):undefined;});
   }
 
+  /** Fixed-query authenticated lookup for bounded read projections. */
+  async getRecords(tenantId:string,ids:readonly string[],kind:CompletionGateRecordKindV1){
+    return this.db.transaction(async(tx)=>{const records=await this.lockAndVerifyTenantState(tx,tenantId),wanted=new Set(ids);
+      return new Map(records.filter(entry=>entry.kind===kind&&wanted.has(entry.record.id)).map(entry=>[entry.record.id,entry.record]));});
+  }
+
   private async insert(source:DatabaseSession,kind:CompletionGateRecordKindV1,record:CompletionGateRecordV1):Promise<{record:CompletionGateRecordV1;replayed:boolean}>{
     const identity=recordIdentity(record);const metadata=describe(kind,record);const digest=sha256Digest(record);const existing=await this.findExisting(source,kind,record);
     if(existing)return existing;

@@ -29,7 +29,7 @@ export interface MacLocalWebProcessOptionsV1 {
    * The local wrapper owns no planner, queue, review store, or worker. */
   ownerReviews?: WebTaskReviewService;
   ownerVerifications?: WebTaskVerificationService;
-  planning?: Pick<TaskPlanningOperation, "plan" | "ensureProject" | "readSaved" | "readSavedContinuation" | "readPreparedWorker" | "readConfiguredLocalRoute" | "supportsProject" | "templatesForProject">;
+  planning?: Pick<TaskPlanningOperation, "plan" | "ensureProject" | "readSaved" | "readSavedMany" | "readSavedContinuation" | "readPreparedWorker" | "readConfiguredLocalRoute" | "supportsProject" | "templatesForProject">;
   assignment?: TaskAssignmentOperation;
   approvals?: TaskApprovalOperation;
   submission?: TaskSubmissionOperation;
@@ -194,11 +194,16 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
         if (request.method !== "GET" || [...url.searchParams.keys()].some(key => key !== "after")
           || url.searchParams.getAll("after").length > 1) throw new WebAccessError("invalid_request");
         const page = await tasks.attention(identity, url.searchParams.get("after") ?? undefined);
-        // The summary stays fixed-query and conservative. Exact saved-plan and
-        // delivery reconciliation remains on the task page, so no per-row
-        // authenticated transaction is hidden behind this list read.
+        if (options.planning?.readSavedMany) {
+          const candidates = page.items.filter(item => item.reasons.includes("proposal"));
+          const saved = await options.planning.readSavedMany(identity,
+            candidates.map(item => ({ projectId: item.task.projectId, sourceJobId: item.task.jobId })));
+          for (const item of candidates) if (saved.get(JSON.stringify([item.task.projectId, item.task.jobId])))
+            item.reasons = item.reasons.filter(reason => reason !== "proposal");
+        }
         return Response.json(taskAttentionPageSchema.parse({ ...page,
-          planningSource: "not_configured", deliverySource: "not_configured" }), { headers: privateResponseHeaders });
+          planningSource: options.planning?.readSavedMany ? "configured" : "not_configured", deliverySource: "not_configured",
+          items: page.items.filter(item => item.reasons.length) }), { headers: privateResponseHeaders });
       }
       const projectOverview = /^\/api\/v1\/projects\/([^/]+)\/overview$/.exec(url.pathname);
       if (projectOverview) {
