@@ -56,10 +56,10 @@ GRANT USAGE ON SEQUENCE control_github_worker_wake_hints_hint_id_seq TO control_
 -- shared-ledger authority.
 REVOKE ALL ON ALL TABLES IN SCHEMA public FROM control_room_work_intake;
 REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM control_room_work_intake;
-REVOKE ALL ON work_batches, work_batch_revisions FROM control_room_application,
+REVOKE ALL ON work_batches, work_batch_revisions, work_batch_items FROM control_room_application,
   control_room_reader, control_room_schedule_admissions, control_room_github_broker;
 GRANT SELECT ON control_identities, control_role_grants, projects, work_batches,
-  work_batch_revisions, control_idempotency, audit_events, control_audit_chain_heads
+  work_batch_revisions, work_batch_items, control_idempotency, audit_events, control_audit_chain_heads
   TO control_room_work_intake;
 GRANT INSERT ON work_batches, work_batch_revisions, audit_events,
   control_audit_chain_heads TO control_room_work_intake;
@@ -72,6 +72,7 @@ GRANT UPDATE (head_hash, event_count, updated_at) ON control_audit_chain_heads T
 GRANT UPDATE (web_lock) ON control_identities, control_role_grants TO control_room_work_intake;
 GRANT UPDATE (coordinator_lock) ON projects TO control_room_work_intake;
 GRANT EXECUTE ON FUNCTION work_intake_canonical_jsonb(jsonb) TO control_room_work_intake;
+GRANT INSERT ON control_action_inbox TO control_room_work_intake;
 
 ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON TABLES FROM PUBLIC;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON SEQUENCES FROM PUBLIC;

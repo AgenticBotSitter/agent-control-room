@@ -39,6 +39,7 @@ export function createMacLocalWebServiceFromConfigurationV1(input: Readonly<{
   workerReadiness?: Pick<MacLocalWorkerReadinessV1, "read">;
   createServer?: (options: Readonly<ServerOptions>) => Server;
   listenerTiming?: { bindMs?: number; closeMs?: number };
+  workBatchIntegrityKey?: Uint8Array;
 }>): LocalService {
   const configuration = input?.configuration;
   if (!configuration || !input.database?.client || typeof input.database.close !== "function"
@@ -60,6 +61,7 @@ export function createMacLocalWebServiceFromConfigurationV1(input: Readonly<{
     ...(taskApplication?.taskReadKeys ? { taskReadKeys: taskApplication.taskReadKeys } : {}),
     ...(input.workerReadiness ? { workerReadiness: input.workerReadiness } : {}),
     taskWorkersStarted: Boolean(taskApplication),
+    ...(input.workBatchIntegrityKey ? { workBatchIntegrityKey: input.workBatchIntegrityKey } : {}),
     assets: input.assets,
     render: input.render,
     ...(input.createServer ? { createServer: input.createServer } : {}),
@@ -108,6 +110,7 @@ export function createMacLocalProtectedHostV1(input: Readonly<{
   startQueueWorker?: (configuration: NativeQueueWorkerStartupConfiguration) => Promise<OwnedQueueWorker>;
   createServer?: (options: Readonly<ServerOptions>) => Server;
   listenerTiming?: { bindMs?: number; closeMs?: number };
+  workBatchIntegrityKey?: Uint8Array;
 }>) {
   if (!input || typeof input.loadConfiguration !== "function" || typeof input.readVersion !== "function"
     || typeof input.openDatabase !== "function" || !input.assets || typeof input.assets.respond !== "function"
@@ -134,6 +137,7 @@ export function createMacLocalProtectedHostV1(input: Readonly<{
         const initialLocalOwnerSessions = localOwnerSessionStore ? await localOwnerSessionStore.load(Date.now()) : [];
         const web = createMacLocalWebServiceFromConfigurationV1({
           configuration, database, assets: input.assets, render: input.render,
+          ...(input.workBatchIntegrityKey ? { workBatchIntegrityKey: input.workBatchIntegrityKey } : {}),
           ...(localOwnerSessionStore ? { localOwnerSessionStore } : {}), initialLocalOwnerSessions,
           ...(taskApplication ? { taskApplication } : input.operations ? { operations: input.operations } : {}),
           workerReadiness,
