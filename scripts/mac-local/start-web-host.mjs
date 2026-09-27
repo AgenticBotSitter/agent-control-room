@@ -61,18 +61,25 @@ export async function startMacLocalWebHost(input, runtime = {}) {
   if (typeof hostModule.createMacLocalProtectedHostV1 !== "function" || typeof loaderModule.loadMacLocalProtectedConfigurationFromRootV1 !== "function"
     || typeof postgresModule.createPrivatePostgresDatabase !== "function" || typeof servingModule.loadPrivateClientAssets !== "function"
     || typeof rendererModule.default !== "function"
-    || typeof loaderModule.loadWorkIntakeInstalledConfigurationFromRootV1 !== "function"
+    || typeof loaderModule.loadWorkIntakeServerConfigurationFromRootV1 !== "function"
     || typeof intakeModule.prepareWorkIntakePrivateServiceV1 !== "function")
     throw new Error("mac_local_web_host_release_invalid");
   const assets = await servingModule.loadPrivateClientAssets(fileURLToPath(new URL("../../dist-vps/client", import.meta.url)));
-  const installed = await loaderModule.loadWorkIntakeInstalledConfigurationFromRootV1(input.protectedRoot);
+  const [configuration,installed] = await Promise.all([
+    loaderModule.loadMacLocalProtectedConfigurationFromRootV1(input.protectedRoot),
+    loaderModule.loadWorkIntakeServerConfigurationFromRootV1(input.protectedRoot)]);
+  verifyIntakeRoster(configuration,installed);
   const host = hostModule.createMacLocalProtectedHostV1({
-    loadConfiguration: () => loaderModule.loadMacLocalProtectedConfigurationFromRootV1(input.protectedRoot),
+    loadConfiguration: async () => configuration,
     readVersion: runtime.readVersion ?? readPinnedMacExecutableVersion,
     verifyModelPolicy: runtime.verifyModelPolicy ?? verifyPinnedMacModelPolicy,
     openDatabase: postgresModule.createPrivatePostgresDatabase,
     assets, render: rendererModule.default,
   });
+  return startHostWithOptionalIntake(host, installed, intakeModule);
+}
+
+async function startHostWithOptionalIntake(host, installed, intakeModule) {
   let active, intake;
   try {
     if (installed) intake = await intakeModule.prepareWorkIntakePrivateServiceV1({ ...installed,
@@ -87,9 +94,17 @@ export async function startMacLocalWebHost(input, runtime = {}) {
       },
     });
   } catch (error) {
-    await Promise.allSettled([intake?.close(), active?.close()]);
+    const cleanup = await Promise.allSettled([intake?.close(), active?.close()]);
+    if (cleanup.some(result => result.status === "rejected")) throw new Error("mac_local_web_host_cleanup_uncertain");
     throw error;
   }
+}
+
+function verifyIntakeRoster(configuration,installed){
+  if(!installed)return;
+  const roster=new Map((configuration.enablement?.workers??[]).map(worker=>[worker.workerId,worker.kind]));
+  if(installed.credentials.length!==roster.size||installed.credentials.some(mapping=>roster.get(mapping.workerId)!==mapping.workerKind))
+    throw new Error("work_intake_roster_binding_refused");
 }
 
 /** Starts the same protected host with the one fixed owner-held task provider.
@@ -99,24 +114,31 @@ export async function startMacLocalTaskHost(input, runtime = {}) {
   if (!input || typeof input.protectedRoot !== "string") throw new Error("mac_local_web_host_arguments_invalid");
   const releaseRoot = new URL("../../dist-vps/server/", import.meta.url);
   const load = runtime.load ?? (path => import(path));
-  const [hostModule, loaderModule, providerModule, postgresModule, queueModule, servingModule, rendererModule] = await Promise.all([
+  const [hostModule, loaderModule, providerModule, postgresModule, queueModule, servingModule, rendererModule,
+    intakeModule] = await Promise.all([
     load(new URL("macLocalHost.js", releaseRoot).href), load(new URL("macLocalProtectedLoader.js", releaseRoot).href),
     load(new URL("macLocalTaskProvider.js", releaseRoot).href), load(new URL("privatePostgres.js", releaseRoot).href),
     load(new URL("nativeQueueFactories.js", releaseRoot).href),
     load(new URL("serving.js", releaseRoot).href), load(new URL("index.js", releaseRoot).href),
+    load(new URL("workIntakePrivateService.js", releaseRoot).href),
   ]);
   if (typeof hostModule.createMacLocalProtectedHostV1 !== "function" || typeof loaderModule.loadMacLocalProtectedConfigurationFromRootV1 !== "function"
     || typeof loaderModule.loadMacLocalDatabaseRolesFromRootV1 !== "function" || typeof providerModule.loadMacLocalTaskProviderFromRootV1 !== "function"
     || typeof providerModule.requireMacLocalThreeAgentReadinessV1 !== "function"
     || typeof postgresModule.createPrivatePostgresDatabase !== "function" || typeof queueModule.createInstalledNativeQueueFactories !== "function"
     || typeof servingModule.loadPrivateClientAssets !== "function"
-    || typeof rendererModule.default !== "function") throw new Error("mac_local_web_host_release_invalid");
-  const [assets, provider] = await Promise.all([
+    || typeof rendererModule.default !== "function"
+    || typeof loaderModule.loadWorkIntakeServerConfigurationFromRootV1 !== "function"
+    || typeof intakeModule.prepareWorkIntakePrivateServiceV1 !== "function") throw new Error("mac_local_web_host_release_invalid");
+  const [assets, provider, installed, configuration] = await Promise.all([
     servingModule.loadPrivateClientAssets(fileURLToPath(new URL("../../dist-vps/client", import.meta.url))),
     providerModule.loadMacLocalTaskProviderFromRootV1(input.protectedRoot),
+    loaderModule.loadWorkIntakeServerConfigurationFromRootV1(input.protectedRoot),
+    loaderModule.loadMacLocalProtectedConfigurationFromRootV1(input.protectedRoot),
   ]);
+  verifyIntakeRoster(configuration,installed);
   const host = hostModule.createMacLocalProtectedHostV1({
-    loadConfiguration: () => loaderModule.loadMacLocalProtectedConfigurationFromRootV1(input.protectedRoot),
+    loadConfiguration: async () => configuration,
     loadDatabaseRoles: () => loaderModule.loadMacLocalDatabaseRolesFromRootV1(input.protectedRoot),
     readVersion: runtime.readVersion ?? readPinnedMacExecutableVersion,
     verifyModelPolicy: runtime.verifyModelPolicy ?? verifyPinnedMacModelPolicy,
@@ -130,7 +152,7 @@ export async function startMacLocalTaskHost(input, runtime = {}) {
     }).startNativeWorker,
     assets, render: rendererModule.default,
   });
-  return host.start();
+  return startHostWithOptionalIntake(host, installed, intakeModule);
 }
 
 async function main() {

@@ -7,6 +7,9 @@ import type { WorkBatchServiceV1 } from "./service";
 export const WORK_INTAKE_MAX_BODY_BYTES_V1 = 256 * 1024;
 const projectRoute = /^\/v1\/projects\/([^/]+)\/work-batches$/u;
 const statusRoute = /^\/v1\/projects\/([^/]+)\/work-batches\/([^/]+)$/u;
+const actionRoute=/^\/v1\/projects\/([^/]+)\/work-actions\/(assign|approve|dispatch|retry|cancel|settings)$/u;
+const forbiddenActions=Object.freeze({assign:"tasks.assign",approve:"batches.approve",dispatch:"tasks.dispatch",
+  retry:"tasks.retry",cancel:"tasks.cancel",settings:"settings.change"} as const);
 const idPattern = /^[A-Za-z0-9][A-Za-z0-9._:-]{2,179}$/u;
 const responseHeaders = Object.freeze({ "cache-control": "no-store", "content-type": "application/json; charset=utf-8",
   "x-content-type-options": "nosniff", "content-security-policy": "default-src 'none'; frame-ancestors 'none'",
@@ -54,8 +57,9 @@ export function createWorkIntakeNodeBridgeV1(input: Readonly<{ verifier: WorkInt
       try { url = new URL(request.url ?? "/", "http://127.0.0.1"); }
       catch { send(response, 400, { ok: false }); return; }
       if (url.search || url.hash) { send(response, 404, { ok: false }); return; }
+      const actionMatch=request.method==="POST"?actionRoute.exec(url.pathname):null;
       const match = request.method === "GET" ? statusRoute.exec(url.pathname) ?? projectRoute.exec(url.pathname)
-        : request.method === "POST" ? projectRoute.exec(url.pathname) : null;
+        : request.method === "POST" ? projectRoute.exec(url.pathname)??actionMatch : null;
       if (!match) { send(response, 404, { ok: false }); return; }
       let projectId: string, batchId: string | undefined;
       try { projectId = pathId(match[1]!); batchId = match[2] ? pathId(match[2]) : undefined; }
@@ -71,6 +75,11 @@ export function createWorkIntakeNodeBridgeV1(input: Readonly<{ verifier: WorkInt
         await input.service.recordEnvelopeRefusal(principal, projectId, reasonCode, now);
         send(response, status, { ok: false });
       };
+      if(actionMatch){
+        const action=forbiddenActions[actionMatch[2] as keyof typeof forbiddenActions];
+        const decision=await input.service.authorizeAction(principal,projectId,action,now);
+        send(response,decision.allowed?409:403,{ok:false}); return;
+      }
       if (request.method === "POST") {
         const length = header(request, "content-length");
         if ((length && (!/^\d+$/u.test(length) || Number(length) > WORK_INTAKE_MAX_BODY_BYTES_V1))
@@ -93,7 +102,7 @@ export function createWorkIntakeNodeBridgeV1(input: Readonly<{ verifier: WorkInt
         return;
       }
       if ((Number(header(request, "content-length") ?? "0") || header(request, "transfer-encoding"))) {
-        send(response, 400, { ok: false }); return;
+        await refuseEnvelope(400,"http_get_body_refused"); return;
       }
       try {
         const result = batchId ? await input.service.status({ principal, projectId, batchId, now })

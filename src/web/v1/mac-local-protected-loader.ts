@@ -2,7 +2,7 @@ import { lstat, readFile } from "node:fs/promises";
 import { isAbsolute, join, resolve } from "node:path";
 import { captureMacLocalProtectedConfigurationV1, type MacLocalProtectedConfigurationV1 } from "./mac-local-protected-configuration";
 import { captureMacLocalDatabaseRolesV1, type MacLocalDatabaseRolesV1 } from "./mac-local-database-roles";
-import { captureWorkIntakeInstalledConfigurationV1, type WorkIntakeInstalledConfigurationV1 } from
+import { captureWorkIntakeServerConfigurationV1, type WorkIntakeServerConfigurationV1 } from
   "../../work-intake/v1/installed-configuration";
 
 type Runtime = Readonly<{ lstat: typeof lstat; readFile: typeof readFile }>;
@@ -60,11 +60,11 @@ export async function loadMacLocalDatabaseRolesFromRootV1(protectedRoot: string,
 
 /** Optional installed child of the existing Mac-local host. A missing record
  * keeps intake disabled; an unsafe or malformed record fails closed. */
-export async function loadWorkIntakeInstalledConfigurationFromRootV1(protectedRoot: string,
-  runtime: Runtime = production): Promise<WorkIntakeInstalledConfigurationV1 | undefined> {
+export async function loadWorkIntakeServerConfigurationFromRootV1(protectedRoot: string,
+  runtime: Runtime = production): Promise<WorkIntakeServerConfigurationV1 | undefined> {
   if (!isAbsolute(protectedRoot) || resolve(protectedRoot) !== protectedRoot)
     throw new Error("work_intake_installed_configuration_root_invalid");
-  const configRoot = join(protectedRoot, "config"), path = join(configRoot, "work-intake.json");
+  const configRoot = join(protectedRoot, "config"), path = join(configRoot, "work-intake-server.json");
   try {
     for (const directory of [protectedRoot, configRoot]) {
       const entry = await runtime.lstat(directory);
@@ -77,6 +77,6 @@ export async function loadWorkIntakeInstalledConfigurationFromRootV1(protectedRo
       throw error;
     }
     if (!entry.isFile() || entry.isSymbolicLink() || (entry.mode & 0o077) !== 0 || entry.size > 64 * 1024) throw new Error();
-    return captureWorkIntakeInstalledConfigurationV1(JSON.parse(await runtime.readFile(path, "utf8")));
+    return captureWorkIntakeServerConfigurationV1(JSON.parse(await runtime.readFile(path, "utf8")));
   } catch { throw new Error("work_intake_installed_configuration_root_invalid"); }
 }

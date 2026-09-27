@@ -44,9 +44,9 @@ test("web host validates and prepares optional intake before listeners and clean
   const load = async path => {
     const name = path.split("/").at(-1);
     if (name === "macLocalProtectedLoader.js") return {
-      async loadWorkIntakeInstalledConfigurationFromRootV1() { calls.push("load-intake"); return {
-        port: 3211, bearerSecret: "x".repeat(43), integrityKey: "y".repeat(43), database: {}, principal: {} }; },
-      async loadMacLocalProtectedConfigurationFromRootV1() { return {}; },
+      async loadWorkIntakeServerConfigurationFromRootV1() { calls.push("load-intake"); return {
+        port:3211,integrityKey:"y".repeat(43),database:{},credentials:[{workerId:"worker:test",workerKind:"codex"}]}; },
+      async loadMacLocalProtectedConfigurationFromRootV1() { return {enablement:{workers:[{workerId:"worker:test",kind:"codex"}]}}; },
     };
     if (name === "macLocalHost.js") return { createMacLocalProtectedHostV1() { calls.push("prepare-web"); return {
       async start() { calls.push("start-web"); return { async close() { calls.push("close-web"); } }; },
@@ -82,7 +82,8 @@ test("task host requires the fixed release provider and does not accept a caller
       }) };
       if (path.endsWith("macLocalProtectedLoader.js")) return {
         loadMacLocalProtectedConfigurationFromRootV1: async () => ({ localOwnerSession: { tenantId: "tenant:fixture" },
-          workspaceId: "workspace:fixture" }), loadMacLocalDatabaseRolesFromRootV1: async () => ({}),
+          workspaceId: "workspace:fixture",enablement:{workers:[]} }), loadMacLocalDatabaseRolesFromRootV1: async () => ({}),
+        loadWorkIntakeServerConfigurationFromRootV1: async()=>undefined,
       };
       if (path.endsWith("macLocalTaskProvider.js")) return { loadMacLocalTaskProviderFromRootV1: async () => ({
         workerKinds: ["hermes", "claude-code", "codex"], createTaskApplication: async input => { providerInput = input; return {}; },
@@ -93,13 +94,15 @@ test("task host requires the fixed release provider and does not accept a caller
       if (path.endsWith("nativeQueueFactories.js")) return { createInstalledNativeQueueFactories: () => ({ startNativeWorker: async () => ({}) }) };
       if (path.endsWith("serving.js")) return { loadPrivateClientAssets: async () => ({ respond() {} }) };
       if (path.endsWith("index.js")) return { default() {} };
+      if(path.endsWith("workIntakePrivateService.js"))return{prepareWorkIntakePrivateServiceV1(){}};
       throw new Error(`unexpected ${path}`);
     },
   });
   assert.equal(result, task);
   assert.equal(providerInput.protectedRoot, "/protected");
   assert.deepEqual(loaded.sort(), ["index.js", "macLocalHost.js", "macLocalProtectedLoader.js",
-    "macLocalTaskProvider.js", "nativeQueueFactories.js", "privatePostgres.js", "serving.js"].sort());
+    "macLocalTaskProvider.js", "nativeQueueFactories.js", "privatePostgres.js", "serving.js",
+    "workIntakePrivateService.js"].sort());
 });
 
 test("a zero-project first start loads the live task provider without requiring a restart", async () => {
@@ -108,7 +111,8 @@ test("a zero-project first start loads the live task provider without requiring 
   const result = await startMacLocalTaskHost({ protectedRoot: "/protected" }, { load: async path => {
     const name = path.split("/").at(-1); loaded.push(name);
     if (name === "macLocalProtectedLoader.js") return {
-      loadMacLocalProtectedConfigurationFromRootV1: async () => ({}), loadMacLocalDatabaseRolesFromRootV1: async () => ({}),
+      loadMacLocalProtectedConfigurationFromRootV1: async () => ({enablement:{workers:[]}}),
+      loadMacLocalDatabaseRolesFromRootV1: async () => ({}),loadWorkIntakeServerConfigurationFromRootV1:async()=>undefined,
     };
     if (name === "privatePostgres.js") return { createPrivatePostgresDatabase: () => ({}) };
     if (name === "macLocalHost.js") return { createMacLocalProtectedHostV1: input => ({ async start() {
@@ -121,6 +125,7 @@ test("a zero-project first start loads the live task provider without requiring 
     if (name === "nativeQueueFactories.js") return { createInstalledNativeQueueFactories: () => ({ startNativeWorker: async () => ({}) }) };
     if (name === "serving.js") return { loadPrivateClientAssets: async () => ({ respond() {} }) };
     if (name === "index.js") return { default() {} };
+    if(name==="workIntakePrivateService.js")return{prepareWorkIntakePrivateServiceV1(){}};
     throw new Error(`unexpected ${name}`);
   } });
   assert.equal(result, site);

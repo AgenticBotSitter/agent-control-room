@@ -5,6 +5,9 @@ import { Client } from "pg";
 import { AuditStore, auditPartition } from "../../src/audit/audit-store";
 import type { DatabaseClient } from "../../src/persistence/database";
 import { workBatchProposalDigestV1 } from "../../src/work-intake/v1/schemas";
+import { captureWorkIntakeClientConfigurationV1, captureWorkIntakeServerConfigurationV1,
+  workIntakeClientFileNameV1,
+} from "../../src/work-intake/v1";
 
 const ownerCode = process.env.CONTROL_ROOM_E2E_OWNER_CODE;
 if (!ownerCode) throw new Error("CONTROL_ROOM_E2E_OWNER_CODE is required");
@@ -88,8 +91,12 @@ async function removePostUpgradeProposalRows(jobId: string) {
 
 async function submitProposalOnlyBatch(projectId: string) {
   const { client, config } = await disposableAdmin();
-  const installed = JSON.parse(await readFile(`${rehearsalRoot}/protected/config/work-intake.json`, "utf8"));
-  const identityId = installed.principal.identityId;
+  const installed = captureWorkIntakeServerConfigurationV1(JSON.parse(
+    await readFile(`${rehearsalRoot}/protected/config/work-intake-server.json`, "utf8")));
+  const worker=config.enablement.workers.find((candidate:{kind:string})=>candidate.kind==="hermes");
+  if(!worker)throw new Error("browser_fixture_missing_proposal_agent");
+  const agentClient = captureWorkIntakeClientConfigurationV1(JSON.parse(await readFile(
+    `${rehearsalRoot}/protected/config/work-intake-clients/${workIntakeClientFileNameV1(worker.workerId)}`, "utf8")));
   const proposal = { schema: "control-room.work-batch-proposal/v1", projectId, tasks: [{ localId: "build",
     title: "Machine-only proposed batch", instructions: "Remain a proposal for this boundary check.",
     requiredCapability: "code.change", role: "builder", acceptanceCriteria: "No ordinary task exists.",
@@ -101,18 +108,9 @@ async function submitProposalOnlyBatch(projectId: string) {
       (SELECT count(*)::text FROM control_jobs) jobs,
       (SELECT count(*)::text FROM work_items) tasks,
       (SELECT count(*)::text FROM control_room_queue.job) queue`)).rows[0]!;
-    await client.query(`INSERT INTO control_identities(id,tenant_id,actor_type,display_name,auth_provider,
-      auth_subject_digest,state,created_at,updated_at) VALUES($1,$2,'agent','Browser journey proposer',
-      'work-intake',$3,'active',clock_timestamp(),clock_timestamp()) ON CONFLICT(tenant_id,id) DO NOTHING`,
-    [identityId, config.localOwnerSession.tenantId, `sha256:${"1".repeat(64)}`]);
-    await client.query(`INSERT INTO control_role_grants(id,tenant_id,identity_id,role_key,allowed_actions,project_ids,
-      risk_ceiling,allow_external_effects,require_strong_factor,created_at,updated_at)
-      VALUES('grant:browser-journey-proposer',$1,$2,'work_batch_proposer','["work_batches.propose"]',$3::jsonb,
-      'low',false,false,clock_timestamp(),clock_timestamp()) ON CONFLICT(tenant_id,id) DO NOTHING`,
-    [config.localOwnerSession.tenantId, identityId, JSON.stringify([projectId])]);
     const envelope = JSON.stringify({ idempotencyKey: "browser-machine-intake-0001", proposal });
-    const origin = `http://127.0.0.1:${installed.port}`;
-    const headers = { authorization: `Bearer ${installed.bearerSecret}`, "content-type": "application/json" };
+    const origin = agentClient.origin;
+    const headers = { authorization: `Bearer ${agentClient.bearerSecret}`, "content-type": "application/json" };
     const submitted = await fetch(`${origin}/v1/projects/${encodeURIComponent(projectId)}/work-batches`,
       { method: "POST", headers, body: envelope });
     expect(submitted.status).toBe(202);
@@ -124,7 +122,7 @@ async function submitProposalOnlyBatch(projectId: string) {
     expect(replay.status).toBe(202);
     expect((await replay.json()).result.replayed).toBe(true);
     const status = await fetch(`${origin}/v1/projects/${encodeURIComponent(projectId)}/work-batches/${encodeURIComponent(receipt.batchId)}`,
-      { headers: { authorization: `Bearer ${installed.bearerSecret}` } });
+      { headers: { authorization: `Bearer ${agentClient.bearerSecret}` } });
     expect(status.status, "status reread must verify the stored digest and HMAC").toBe(200);
     const durable = (await client.query<{ revisions: string; proposes: string; replays: string }>(`SELECT
       (SELECT count(*)::text FROM work_batch_revisions WHERE tenant_id=$1 AND batch_id=$2) revisions,
@@ -133,7 +131,7 @@ async function submitProposalOnlyBatch(projectId: string) {
     [config.localOwnerSession.tenantId, receipt.batchId])).rows[0]!;
     expect(durable).toEqual({ revisions: "1", proposes: "1", replays: "1" });
     const audit = await new AuditStore(client as unknown as DatabaseClient).verify(config.localOwnerSession.tenantId,
-      auditPartition(installed.principal.authenticatedAt));
+      auditPartition(new Date().toISOString()));
     expect(audit.valid, "the real proposal and replay must preserve the audit chain").toBe(true);
     const after = (await client.query<{ requests: string; workflows: string; jobs: string; tasks: string; queue: string }>(`SELECT
       (SELECT count(*)::text FROM control_requests) requests,

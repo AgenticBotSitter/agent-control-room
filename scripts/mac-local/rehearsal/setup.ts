@@ -16,7 +16,9 @@ import { captureMacLocalDatabaseRolesV1, MAC_LOCAL_DATABASE_ROLES_V1 } from "../
 import { LOCAL_OWNER_SESSION_PROFILE_V1 } from "../../../src/web/v1/local-owner-session";
 import { OWNER_TRUSTED_LOCAL_ENABLEMENT_V1 } from "../../../src/harness/v1/owner-trusted-local-enablements";
 import { readPinnedMacExecutableVersion } from "../start-web-host.mjs";
-import { captureWorkIntakeInstalledConfigurationV1, WORK_INTAKE_INSTALLED_CONFIGURATION_V1 } from
+import { captureWorkIntakeClientConfigurationV1, captureWorkIntakeServerConfigurationV1,
+  workIntakeClientFileNameV1, workIntakeIdentityIdV1,
+  WORK_INTAKE_CLIENT_CONFIGURATION_V1, WORK_INTAKE_SERVER_CONFIGURATION_V1 } from
   "../../../src/work-intake/v1/installed-configuration";
 
 const [action, dir] = process.argv.slice(2);
@@ -173,15 +175,23 @@ const macLocal = { schema: MAC_LOCAL_PROTECTED_CONFIGURATION_V1, port: webPort, 
     provider: "local-owner", subject: "owner:local", ownerCodeDigest: sha256Digest({ ownerCode }), sessionSeconds: 28_800 },
   database, enablement: { schema: OWNER_TRUSTED_LOCAL_ENABLEMENT_V1, mode: "mac-local", nodeId: "mac-1", workers } };
 captureMacLocalProtectedConfigurationV1(JSON.parse(JSON.stringify(macLocal)));
-const authenticatedAt = new Date(), expiresAt = new Date(authenticatedAt.getTime() + 8 * 60 * 60 * 1000);
-const workIntake = captureWorkIntakeInstalledConfigurationV1({ schema: WORK_INTAKE_INSTALLED_CONFIGURATION_V1,
+const clients = workers.map(worker => ({ worker, client: captureWorkIntakeClientConfigurationV1({
+  schema: WORK_INTAKE_CLIENT_CONFIGURATION_V1, origin: `http://127.0.0.1:${webPort + 1}`,
+  bearerSecret: randomBytes(32).toString("base64url") }) }));
+const credentialStart=new Date(),credentialEnd=new Date(credentialStart.getTime()+8*60*60*1000);
+const workIntake = captureWorkIntakeServerConfigurationV1({ schema: WORK_INTAKE_SERVER_CONFIGURATION_V1,
   port: webPort + 1, database: { ...database, username: "control_room_work_intake_agent", password: secrets.workIntake },
-  bearerSecret: randomBytes(32).toString("base64url"), integrityKey: randomBytes(32).toString("base64url"), queueDepthLimit: 10,
-  principal: { tenantId: "tenant:mac-local", identityId: "identity:work-intake-agent", actorType: "agent",
-    authenticatedAt: authenticatedAt.toISOString(), expiresAt: expiresAt.toISOString() } });
+  integrityKey: randomBytes(32).toString("base64url"), queueDepthLimit: 10,
+  credentials: clients.map(({ worker, client }) => ({ workerId:worker.workerId,workerKind:worker.kind,
+    credentialDigest: sha256Digest(client.bearerSecret),
+    principal: { tenantId: "tenant:mac-local",
+      identityId: workIntakeIdentityIdV1("tenant:mac-local",worker.workerId), actorType: "agent",
+      authenticatedAt: credentialStart.toISOString(), expiresAt: credentialEnd.toISOString() } })) });
 for (const [file, body] of [["mac-local.json", JSON.stringify(macLocal)], ["database-roles.json", JSON.stringify(roles)],
-  ["work-intake.json", JSON.stringify(workIntake)], ["owner-sign-in.txt", ownerCode]])
+  ["work-intake-server.json", JSON.stringify(workIntake)], ["owner-sign-in.txt", ownerCode]])
   writeFileSync(join(config, file), `${body}\n`, { mode: 0o600 });
+const clientRoot=join(config,"work-intake-clients"); mkdirSync(clientRoot,{recursive:true,mode:0o700});
+for(const {worker,client} of clients) writeFileSync(join(clientRoot,workIntakeClientFileNameV1(worker.workerId)),`${JSON.stringify(client)}\n`,{mode:0o600});
 console.log(`rehearsal database ready on 127.0.0.1:${port}; protected root ${root}`);
 console.log(`next: pnpm mac:bootstrap-owner ${root} && pnpm mac:check-database ${root}`);
   keepCluster = true;

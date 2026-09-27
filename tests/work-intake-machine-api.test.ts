@@ -8,15 +8,16 @@ import test from "node:test";
 import { WORK_INTAKE_CLIENT_CONFIG_PATH_V1, readProtectedWorkIntakeClientV1 } from "../scripts/run-work-intake";
 import type { DatabaseClient, DatabaseSession } from "../src/persistence/database";
 import { matchesPostgresProductionAclV1 } from "../src/installer/v1/postgres-production-privilege-contract";
-import type { AuthenticatedPrincipal } from "../src/security";
+import { sha256Digest,type AuthenticatedPrincipal } from "../src/security";
 import { createFixedWorkIntakeCredentialVerifierV1, createWorkIntakeLoopbackClientV1,
-  createWorkIntakeNodeBridgeV1, prepareWorkIntakePrivateServiceV1, WORK_INTAKE_INSTALLED_CONFIGURATION_V1,
+  createWorkIntakeNodeBridgeV1, prepareWorkIntakePrivateServiceV1, WORK_INTAKE_CLIENT_CONFIGURATION_V1,
   type WorkBatchServiceV1 } from "../src/work-intake/v1";
 
 const SECRET = "0123456789012345678901234567890123456789012";
 const NOW = "2026-09-27T12:00:00.000Z";
 const PRINCIPAL: AuthenticatedPrincipal = Object.freeze({ tenantId: "tenant:test", identityId: "identity:agent",
   actorType: "agent", authenticatedAt: "2026-09-27T11:00:00.000Z", expiresAt: "2026-09-27T13:00:00.000Z" });
+const MAPPINGS=Object.freeze([{workerId:"worker:test",workerKind:"codex",credentialDigest:sha256Digest(SECRET),principal:PRINCIPAL}]);
 type SyntheticResponse = ServerResponse & { status?: number; body?: string };
 
 function request(method: string, url: string, body = Buffer.alloc(0), headers: IncomingHttpHeaders = {}, onRead?: () => void) {
@@ -135,10 +136,8 @@ test("role creation and least-privilege grants travel through reviewed productio
 });
 
 test("invokable CLI binds to one protected configuration path and exact secret-bearing document", async () => {
-  const source = JSON.stringify({ schema: WORK_INTAKE_INSTALLED_CONFIGURATION_V1, port: 3212,
-    database: { host: "127.0.0.1", port: 5432, database: "control_room",
-      username: "control_room_work_intake_agent", password: "disposable", majorVersion: 17 },
-    bearerSecret: SECRET, principal: PRINCIPAL, integrityKey: SECRET, queueDepthLimit: 10 });
+  const source = JSON.stringify({ schema: WORK_INTAKE_CLIENT_CONFIGURATION_V1,
+    origin:"http://127.0.0.1:3212",bearerSecret:SECRET });
   const stat = { isFile: () => true, uid: BigInt(process.getuid?.() ?? -1), mode: BigInt(0o600),
     size: BigInt(Buffer.byteLength(source)), dev: BigInt(1), ino: BigInt(2), mtimeNs: BigInt(3) };
   let closed = 0;
@@ -161,7 +160,7 @@ test("production composition is inert, role-pinned, loopback-only, and closes it
   server.listen = ((options: ListenOptions, callback: () => void) => { listen = options; queueMicrotask(callback); return server; }) as typeof server.listen;
   server.close = (callback?: (error?: Error) => void) => { queueMicrotask(() => callback?.()); return server; };
   server.closeIdleConnections = () => {}; server.closeAllConnections = () => {};
-  const prepared = await prepareWorkIntakePrivateServiceV1({ port: 3212, bearerSecret: SECRET, principal: PRINCIPAL,
+  const prepared = await prepareWorkIntakePrivateServiceV1({ port: 3212, credentials:MAPPINGS,
     integrityKey: new Uint8Array(32).fill(4), database: { host: "127.0.0.1", port: 5432, database: "control_room",
       username: "control_room_work_intake_agent", password: "disposable", majorVersion: 17 } }, {
     openDatabase: () => { opened += 1; return { client: database, isAvailable: () => true,
@@ -169,7 +168,7 @@ test("production composition is inert, role-pinned, loopback-only, and closes it
   assert.equal(opened, 1); assert.equal(created, 0);
   await prepared.start(); assert.equal(created, 1); assert.equal(listen?.host, "127.0.0.1");
   await prepared.close(); assert.equal(closed, 1);
-  await assert.rejects(prepareWorkIntakePrivateServiceV1({ port: 3212, bearerSecret: SECRET, principal: PRINCIPAL,
+  await assert.rejects(prepareWorkIntakePrivateServiceV1({ port: 3212, credentials:MAPPINGS,
     integrityKey: new Uint8Array(32), database: { host: "127.0.0.1", port: 5432, database: "control_room",
       username: "control_room_private_web", password: "disposable", majorVersion: 17 } }, { openDatabase: () => {
       throw new Error("must not open"); } }), /prepare_failed/u);

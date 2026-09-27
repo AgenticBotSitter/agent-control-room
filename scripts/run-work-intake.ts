@@ -4,10 +4,10 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createWorkIntakeLoopbackClientV1, runWorkIntakeCliV1 } from "../src/work-intake/v1";
-import { captureWorkIntakeInstalledConfigurationV1 } from "../src/work-intake/v1/installed-configuration";
+import { captureWorkIntakeClientConfigurationV1 } from "../src/work-intake/v1/installed-configuration";
 
 export const WORK_INTAKE_CLIENT_CONFIG_PATH_V1 = join(homedir(), "Library", "Application Support",
-  "Agent Control Room", "config", "work-intake.json");
+  "Agent Control Room", "config", "work-intake-client.json");
 const MAX_CONFIG_BYTES = 4096, MAX_STDIN_BYTES = 256 * 1024;
 
 export async function readProtectedWorkIntakeClientV1(path = WORK_INTAKE_CLIENT_CONFIG_PATH_V1,
@@ -23,9 +23,8 @@ export async function readProtectedWorkIntakeClientV1(path = WORK_INTAKE_CLIENT_
     const source = await handle.readFile("utf8"), after = await handle.stat({ bigint: true });
     if (before.dev !== after.dev || before.ino !== after.ino || before.size !== after.size
       || before.mtimeNs !== after.mtimeNs || Buffer.byteLength(source) !== Number(after.size)) throw new Error();
-    const value = captureWorkIntakeInstalledConfigurationV1(JSON.parse(source));
-    return createWorkIntakeLoopbackClientV1({ origin: `http://127.0.0.1:${value.port}`,
-      bearerSecret: value.bearerSecret });
+    const value = captureWorkIntakeClientConfigurationV1(JSON.parse(source));
+    return createWorkIntakeLoopbackClientV1(value);
   } catch { throw new Error("work_intake_protected_configuration_refused"); }
   finally { try { await handle?.close(); } catch {} }
 }
