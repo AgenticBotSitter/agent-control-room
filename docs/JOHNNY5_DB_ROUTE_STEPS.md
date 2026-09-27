@@ -56,12 +56,12 @@ runuser -u postgres -- node "$STAGE/source/scripts/mac-local/database-upgrade-re
 Send the printed, non-secret plan and digest to Claude for review. Wait for
 Claude's assessment and the owner's explicit "go". If approval is delayed,
 the later apply command will recompute the plan and refuse if anything changed.
-For the now-inspected ledger-90 installation, pending migrations must be empty
-and `installQueueSchema` must be true.
-The plan must explicitly show creation of the four missing `NOLOGIN` Mac groups and the publisher `LOGIN`,
-four `membership.revoke` entries removing `control_room_application` from the
-existing Mac logins, and four `membership.grant` entries assigning their narrow
-groups (including the new publisher). The web login's existing
+For the now-inspected ledger-90 installation, the plan must explicitly show
+`pendingMigrations: []`, `installQueueSchema: true`, exactly five `createRoles`
+(the four missing `NOLOGIN` Mac groups and publisher `LOGIN`), exactly four
+`membership.revoke` entries removing `control_room_application` from the
+existing Mac logins, and exactly four `membership.grant` entries assigning
+their narrow groups (including the new publisher). The web login's existing
 `control_room_private_web` membership is retained. Stop if the printed plan
 differs; do not infer these changes from an empty or abbreviated plan.
 Keep the exact `STAGE` path in private operator notes; if the shell closes,
@@ -97,6 +97,10 @@ roles, or grant non-convergence. It does not alter existing login passwords.
 If it fails, stop and report its sanitized `upgrade_error` line. Never call
 `applyMigrations` or another internal function directly on the VPS to repair
 or diagnose this step: a partial change can invalidate the approved plan.
+At `stage=queue`, an installation or shape-check failure removes only the
+newly created queue schema after confirming its identity and zero jobs. If
+that guard cannot be proved, cleanup refuses; stop for review rather than
+manually dropping a schema or reusing the old plan digest.
 Re-run only a documented read-only plan until a reviewed recovery sequence
 accounts for the actual ledger, roles, memberships and grants.
 Check that the printed `after` object has no pending migrations, missing roles,

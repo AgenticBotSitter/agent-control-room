@@ -89,16 +89,54 @@ export async function inspectFixedQueueSchemaV1(client) {
   return { schemaExists: true };
 }
 
+async function queueSchemaOid(client) {
+  return (await client.query(`SELECT oid::text AS oid FROM pg_namespace
+    WHERE nspname='control_room_queue'`)).rows[0]?.oid ?? null;
+}
+
+async function removeQueueCreatedByThisAttempt(client, createdOid) {
+  await client.query("BEGIN");
+  try {
+    if (await queueSchemaOid(client) !== createdOid) throw new Error("upgrade_queue_cleanup_refused");
+    await client.query(`LOCK TABLE control_room_queue.queue, control_room_queue.job,
+      control_room_queue.job_common IN ACCESS EXCLUSIVE MODE`);
+    const jobs = (await client.query(`SELECT EXISTS(SELECT 1 FROM control_room_queue.job)
+      OR EXISTS(SELECT 1 FROM control_room_queue.job_common) AS present`)).rows[0]?.present;
+    if (jobs !== false) throw new Error("upgrade_queue_cleanup_refused");
+    await client.query("DROP SCHEMA control_room_queue CASCADE");
+    if (await queueSchemaOid(client) !== null) throw new Error("upgrade_queue_cleanup_refused");
+    await client.query("COMMIT");
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw error;
+  }
+}
+
 export async function installFixedQueueSchemaV1(client) {
   if ((await fixedQueueShape(client)) !== null) throw new Error("upgrade_queue_existing_refused");
-  await client.query(getConstructionPlans("control_room_queue"));
-  const boss = new PgBoss({ db: { executeSql: (sql, values) => client.query(sql, values) },
-    schema: "control_room_queue", backend: "postgres", migrate: false, createSchema: false,
-    supervise: false, schedule: false, useListenNotify: false });
-  await boss.start();
-  try { await boss.createQueue("native-task-delivery", { retryLimit: 0 }); }
-  finally { await boss.stop({ graceful: false }); }
-  if ((await fixedQueueShape(client)) !== expectedShapeDigest) throw new Error("upgrade_queue_shape_refused");
+  // pg-boss's construction plan commits itself. A failure before that commit
+  // rolls its DDL back; only a committed schema with this attempt's OID may be
+  // removed after a later queue-creation or shape-check failure.
+  try { await client.query(getConstructionPlans("control_room_queue")); }
+  catch (error) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw error;
+  }
+  const createdOid = await queueSchemaOid(client);
+  if (createdOid === null) throw new Error("upgrade_queue_shape_refused");
+  try {
+    const boss = new PgBoss({ db: { executeSql: (sql, values) => client.query(sql, values) },
+      schema: "control_room_queue", backend: "postgres", migrate: false, createSchema: false,
+      supervise: false, schedule: false, useListenNotify: false });
+    await boss.start();
+    try { await boss.createQueue("native-task-delivery", { retryLimit: 0 }); }
+    finally { await boss.stop({ graceful: false }); }
+    if ((await fixedQueueShape(client)) !== expectedShapeDigest) throw new Error("upgrade_queue_shape_refused");
+  } catch (error) {
+    try { await removeQueueCreatedByThisAttempt(client, createdOid); }
+    catch { throw new Error("upgrade_queue_cleanup_refused", { cause: error }); }
+    throw error;
+  }
 }
 
 export async function fixedQueueShapeDigestForTestV1(client) { return fixedQueueShape(client); }

@@ -8,7 +8,8 @@ import { fileURLToPath } from "node:url";
 import { applyMigrations } from "../deploy/postgres/apply-migrations.mjs";
 import { connectTarget } from "../deploy/postgres/evidence.mjs";
 import { applyMacDatabaseUpgradeV1, applyPendingMacMigrationsV1, inspectMacDatabaseUpgradeV1,
-  macDatabaseUpgradePlanDigestV1, runMacDatabaseUpgradeCommandV1 } from
+  macDatabaseUpgradePlanDigestV1, runMacDatabaseUpgradeCommandV1,
+  sanitizedMacDatabaseUpgradeFailureV1 } from
   "../scripts/mac-local/database-upgrade-remote.mjs";
 import { macDatabaseUpgradeReadOnlySqlV1, planMacDatabaseUpgradeFromFileV1 } from
   "../scripts/mac-local/provision-database.mjs";
@@ -287,4 +288,82 @@ test("post-incident ledger 90 with old memberships needs only the role and grant
     "an extra non-Mac queue grant may not be adopted");
   await client.query("REVOKE USAGE ON SCHEMA control_room_queue FROM control_room_application");
   assert.equal((await inspectMacDatabaseUpgradeV1({ client })).installQueueSchema, false);
+});
+
+test("a post-install queue shape mismatch removes only this empty new schema and permits a clean retry", {
+  skip: process.env.CONTROL_ROOM_PG17_UPGRADE_REHEARSAL !== "1",
+  timeout: 240_000,
+}, async t => {
+  const root = await mkdtemp(join(tmpdir(), "mac-db-queue-rollback-"));
+  const local = await cluster(root, 15584);
+  const client = connectTarget(connection(local.port));
+  t.after(async () => {
+    try { await client.end(); } catch {}
+    try { exec("pg_ctl", ["-D", local.data, "-m", "fast", "stop"]); } catch {}
+    await rm(root, { recursive: true, force: true });
+  });
+  await baseDatabase(oldRoot, local.port, "r");
+  await client.connect();
+  await installOldRoles(client);
+  await applyPendingMacMigrationsV1(`host=${local.socket} port=${local.port} dbname=control_room user=postgres`);
+  const plan = await inspectMacDatabaseUpgradeV1({ client });
+  assert.equal(plan.installQueueSchema, true);
+  assert.deepEqual(plan.pendingMigrations, []);
+  let altered = false;
+  const mismatchedCatalogClient = {
+    query: async (sql, values) => {
+      const result = await client.query(sql, values);
+      if (!altered && typeof sql === "string" && sql.includes("pg_get_functiondef(p.oid)")) {
+        altered = true;
+        return { ...result, rows: result.rows.map((row, index) => index === 0
+          ? { ...row, definition: `${row.definition}\n-- simulated PG17 formatting difference` } : row) };
+      }
+      return result;
+    },
+    escapeLiteral: value => client.escapeLiteral(value),
+  };
+  let stage = "plan";
+  const request = { publisherVerifier: postgresScramVerifierV1("r".repeat(40)),
+    expectedPlanDigest: macDatabaseUpgradePlanDigestV1(plan), onStage: next => { stage = next; } };
+  await assert.rejects(applyMacDatabaseUpgradeV1({ ...request, client: mismatchedCatalogClient }), error => {
+    assert.match(error.message, /upgrade_queue_shape_refused/u);
+    assert.match(sanitizedMacDatabaseUpgradeFailureV1(error, stage),
+      /^upgrade_error:upgrade_queue_shape_refused stage=queue /u);
+    return true;
+  });
+  assert.equal(altered, true);
+  assert.equal(stage, "queue");
+  assert.equal(await fixedQueueShapeDigestForTestV1(client), null, "failed attempt leaves no queue schema");
+  assert.deepEqual(await inspectMacDatabaseUpgradeV1({ client }), plan,
+    "the original reviewed plan remains valid after cleanup");
+  const retry = await applyMacDatabaseUpgradeV1({ ...request, client });
+  assert.equal(retry.after.installQueueSchema, false);
+  assert.equal((await inspectMacDatabaseUpgradeV1({ client })).installQueueSchema, false);
+
+  // A job arriving before cleanup must prevent removal, even on this
+  // disposable cluster. The operator then receives a distinct stop reason.
+  await client.query("DROP SCHEMA control_room_queue CASCADE");
+  const occupiedPlan = await inspectMacDatabaseUpgradeV1({ client });
+  let inserted = false;
+  const occupiedClient = {
+    query: async (sql, values) => {
+      const result = await client.query(sql, values);
+      if (!inserted && typeof sql === "string" && sql.includes("pg_get_functiondef(p.oid)")) {
+        inserted = true;
+        await client.query(`INSERT INTO control_room_queue.job(name,data)
+          VALUES ('native-task-delivery','{}'::jsonb)`);
+        return { ...result, rows: result.rows.map((row, index) => index === 0
+          ? { ...row, definition: `${row.definition}\n-- simulated mismatch` } : row) };
+      }
+      return result;
+    },
+    escapeLiteral: value => client.escapeLiteral(value),
+  };
+  await assert.rejects(applyMacDatabaseUpgradeV1({ ...request, client: occupiedClient,
+    expectedPlanDigest: macDatabaseUpgradePlanDigestV1(occupiedPlan) }),
+  /upgrade_queue_cleanup_refused/u);
+  assert.equal(inserted, true);
+  assert.equal((await client.query("SELECT count(*)::int AS count FROM control_room_queue.job")).rows[0].count, 1);
+  assert.notEqual(await fixedQueueShapeDigestForTestV1(client), null,
+    "a queue with a job cannot be removed by failure cleanup");
 });

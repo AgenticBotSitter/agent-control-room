@@ -217,7 +217,7 @@ export function sanitizedMacDatabaseUpgradeFailureV1(error, stage) {
     "upgrade_unexpected_login_membership_refused", "upgrade_duplicate_membership_refused",
     "upgrade_role_membership_options_refused", "upgrade_unexpected_default_grant",
     "upgrade_source_ledger_refused", "upgrade_ledger_prefix_refused", "upgrade_queue_snapshot_unverified",
-    "upgrade_queue_shape_refused", "upgrade_queue_existing_refused",
+    "upgrade_queue_shape_refused", "upgrade_queue_existing_refused", "upgrade_queue_cleanup_refused",
     "upgrade_grant_catalog_refused", "upgrade_grant_source_refused", "upgrade_unexpected_function_grant",
     "migration_peer_target_refused", "migration_peer_operator_refused", "migration_peer_role_refused",
     "migration_peer_identity_refused", "migration_live_schema_drift", "migration_failed",
