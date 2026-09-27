@@ -80,6 +80,67 @@ test("lost commit acknowledgement stops the pool without rollback or replay", as
   await assert.rejects(db.client.query("SELECT 1"), { message: "database_unavailable" });
 });
 
+for (const sqlState of ["40P01", "40001"] as const) test(`${sqlState} before COMMIT rolls back one request without stopping the pool`, async () => {
+  const statements: string[] = [];
+  const releases: boolean[] = [];
+  let ends = 0, failed = false;
+  const db = boundPrivateDatabase(createPrivatePgDriver({ async connect() { return {
+    async query(statement) {
+      statements.push(statement);
+      if (statement === "INSERT INTO synthetic VALUES (1)" && !failed) {
+        failed = true; throw Object.assign(new Error("sensitive postgres detail"), { code: sqlState });
+      }
+      return { rows: statement === "SELECT 1" ? [{ ok: true }] : [] };
+    },
+    release(destroy) { releases.push(!!destroy); },
+  }; }, async end() { ends++; } }));
+  await assert.rejects(db.client.transaction(session => session.query("INSERT INTO synthetic VALUES (1)")),
+    { message: "database_unavailable" });
+  assert.equal(db.isAvailable(), true);
+  assert.deepEqual(await db.client.query("SELECT 1"), { rows: [{ ok: true }] });
+  assert.deepEqual(statements, ["BEGIN", "INSERT INTO synthetic VALUES (1)", "ROLLBACK", "SELECT 1"]);
+  assert.deepEqual(releases, [false, false]); assert.equal(ends, 0);
+  await db.close(); assert.equal(ends, 1);
+});
+
+test("a caught deadlock statement still forces rollback without stopping the pool", async () => {
+  const statements: string[] = [];
+  let failed = false;
+  const db = boundPrivateDatabase(createPrivatePgDriver({ async connect() { return {
+    async query(statement) {
+      statements.push(statement);
+      if (statement === "UPDATE synthetic SET value=1" && !failed) {
+        failed = true; throw Object.assign(new Error("deadlock detail"), { code: "40P01" });
+      }
+      return { rows: [] };
+    },
+    release() {},
+  }; }, async end() {} }));
+  await assert.rejects(db.client.transaction(async session => {
+    try { await session.query("UPDATE synthetic SET value=1"); } catch {}
+  }), { message: "database_unavailable" });
+  assert.deepEqual(statements, ["BEGIN", "UPDATE synthetic SET value=1", "ROLLBACK"]);
+  assert.equal(db.isAvailable(), true); await db.close();
+});
+
+test("a COMMIT-time rollback SQLSTATE still stops the pool because acknowledgement is uncertain", async () => {
+  const statements: string[] = [];
+  let ends = 0;
+  const db = boundPrivateDatabase(createPrivatePgDriver({ async connect() { return {
+    async query(statement) {
+      statements.push(statement);
+      if (statement === "COMMIT") throw Object.assign(new Error("commit failed"), { code: "40001" });
+      return { rows: [] };
+    },
+    release() {},
+  }; }, async end() { ends++; } }));
+  await assert.rejects(db.client.transaction(session => session.query("INSERT INTO synthetic VALUES (1)")),
+    { message: "database_outcome_uncertain" });
+  assert.deepEqual(statements, ["BEGIN", "INSERT INTO synthetic VALUES (1)", "COMMIT"]);
+  assert.equal(db.isAvailable(), false); assert.equal(ends, 1);
+  await assert.rejects(db.client.query("SELECT 1"), { message: "database_unavailable" });
+});
+
 test("shutdown invalidates active query even when its response arrives later", async () => {
   let complete!: (result: { rows: unknown[] }) => void;
   const releases: boolean[] = [];
