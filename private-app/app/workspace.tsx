@@ -94,22 +94,46 @@ export function ProjectSaveRecovery({ pending, onRetry }: { pending: boolean; on
   </section>;
 }
 
+/** Lifecycle action buttons are filtered by the project's current state, so
+ * activating one unmounts it and mounts its opposite in the same place. The
+ * focused element is removed with it, focus falls back to <body>, and a
+ * keyboard user loses their place entirely. This restores focus to the first
+ * control of the re-rendered set.
+ *
+ * The flag is set only by the button's own click, so focus is never stolen on
+ * first mount or by the 30-second background poll that re-renders this subtree. */
+function useActionGroupFocus() {
+  const group = useRef<HTMLDivElement>(null);
+  const afterAction = useRef(false);
+  const onActivate = () => { afterAction.current = true; };
+  useEffect(() => {
+    if (!afterAction.current) return;
+    afterAction.current = false;
+    const first = group.current?.querySelector<HTMLElement>("button:not([disabled])")
+      ?? group.current?.querySelector<HTMLElement>("button");
+    first?.focus();
+  });
+  return { group, onActivate };
+}
+
 export function IdeaProjectStatusActions({ project, pending, onAction }: {
   project: ProjectView; pending: boolean; onAction: (action: IdeaProjectAction) => void;
 }) {
+  const focus = useActionGroupFocus();
   if (project.origin !== "idea_lab" || !project.lifecycleEditable) return null;
-  return <div className="private-actions">{project.ideaLifecycleActions?.map(action =>
-    <button type="button" key={action} disabled={pending} onClick={() => onAction(action)}>
+  return <div className="private-actions" ref={focus.group}>{project.ideaLifecycleActions?.map(action =>
+    <button type="button" key={action} disabled={pending} onClick={() => { focus.onActivate(); onAction(action); }}>
       {{ pause: "Pause project", resume: "Resume project", complete: "Mark complete", archive: "Archive project", reopen: "Reopen project" }[action]}</button>)}</div>;
 }
 
 export function OrdinaryProjectStatusActions({ project, pending, onTransition }: {
   project: ProjectView; pending: boolean; onTransition: (lifecycle: WebProject["lifecycle"]) => void;
 }) {
+  const focus = useActionGroupFocus();
   if (!project.lifecycleEditable || project.origin !== "ordinary") return null;
-  return <div className="private-actions">{(["active", "paused", "completed", "archived"] as const)
+  return <div className="private-actions" ref={focus.group}>{(["active", "paused", "completed", "archived"] as const)
     .filter(value => value !== project.lifecycle && (project.lifecycle !== "archived" || value === "active"))
-    .map(value => <button type="button" key={value} disabled={pending} onClick={() => onTransition(value)}>
+    .map(value => <button type="button" key={value} disabled={pending} onClick={() => { focus.onActivate(); onTransition(value); }}>
       {{ active: "Reopen project", paused: "Pause project", completed: "Mark complete", archived: "Archive project" }[value]}</button>)}</div>;
 }
 
@@ -220,7 +244,12 @@ export function PrivateProjectWorkspace({ projectId, section = "overview", after
     <PrivateHeader />
     <main id="private-main" tabIndex={-1}>
       {state === "ready" && client.hasPending() && <ProjectSaveRecovery pending={pending} onRetry={() => { void retryOriginal(); }} />}
-      {error && <div className="private-notice" role="alert"><p>{browserErrorMessage[error.code]}</p>
+      {error && <div className="private-notice">
+        {/* The live region covers only the message, not the recovery control.
+          * A 30s poll re-renders this subtree, so an alert region that also
+          * contained the button re-announced the button's label on every cycle
+          * and the region was larger than the message it existed to convey. */}
+        <p role="alert">{browserErrorMessage[error.code]}</p>
         {error.code === "authentication_required" ? <><p>This also ends Access sessions for other protected applications.</p><a href="/cdn-cgi/access/logout">Sign in again</a></>
           : <button type="button" disabled={pending} onClick={() => setRefresh(value => value + 1)}>Check saved state again</button>}</div>}
       {!projectId ? <>

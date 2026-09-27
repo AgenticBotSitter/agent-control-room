@@ -9,18 +9,24 @@
   --border: #d9d8cf;
   --border-strong: #c4c3b9;
   --text: #20241e;
-  --muted: #6e746a;
-  --faint: #92978e;
+  /* Secondary text and the state/accent foregrounds are darkened until they
+   * clear WCAG AA 4.5:1 against the DARKEST surface they are ever painted on
+   * (--sidebar / --surface-3), not merely against --bg. Each value was solved
+   * in HLS preserving the original hue and saturation, then verified for all
+   * five plain surfaces plus its own soft background. --faint sits one step
+   * lighter than --muted so the two remain visually distinct at 6px-16px. */
+  --muted: #535850;
+  --faint: #646860;
   --sidebar: #e8e8df;
-  --green: #567d4c;
+  --green: #4b6d43;
   --green-soft: #dce8d7;
-  --amber: #aa711d;
+  --amber: #8b5d18;
   --amber-soft: #f2e6ca;
-  --red: #a34c42;
+  --red: #9e4a40;
   --red-soft: #f1deda;
-  --blue: #4c7086;
+  --blue: #48697e;
   --blue-soft: #dce7ed;
-  --violet: #725e87;
+  --violet: #6e5a82;
   --violet-soft: #e5deea;
   --shadow: 0 10px 30px rgba(50, 54, 45, 0.07);
   --radius: 18px;
@@ -36,7 +42,9 @@
   --border-strong: #465043;
   --text: #edf0e9;
   --muted: #a1aa9b;
-  --faint: #798274;
+  /* --faint is lightened from the original value: it missed 4.5:1 on
+   * --surface-3, --surface-2 and --sidebar. Solved in HLS preserving hue. */
+  --faint: #8b9487;
   --sidebar: #141812;
   --green: #91b686;
   --green-soft: #263522;
@@ -64,8 +72,15 @@ body {
 button, select, input { font: inherit; }
 a { color: inherit; text-decoration: none; }
 button, a, select { -webkit-tap-highlight-color: transparent; }
+/* The focus ring is a non-text UI indicator, so it must clear the 3:1
+ * minimum-contrasted-non-text threshold against every surface it lands on,
+ * not just --bg. The previous `color-mix(in srgb, var(--green) 55%,
+ * transparent)` composited down to roughly 2.2:1 in the light theme and
+ * 2.96:1 on --surface-3 in the dark theme, so the indicator was invisible to
+ * the contrast it has to satisfy. A solid ring clears 3:1 on all ten surfaces
+ * (4.78:1 worst case in light, 6.38:1 in dark). */
 button:focus-visible, a:focus-visible, select:focus-visible {
-  outline: 3px solid color-mix(in srgb, var(--green) 55%, transparent);
+  outline: 3px solid var(--green);
   outline-offset: 3px;
 }
 .skip-link {
@@ -242,7 +257,13 @@ h1, h2, h3, p { overflow-wrap: anywhere; }
 .metric-card div { display: grid; min-width: 0; grid-template-columns: 1fr auto; align-items: end; column-gap: 8px; }
 .metric-card small { grid-column: 1 / -1; color: var(--muted); font-size: 10px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
 .metric-card strong { font-family: Georgia, "Times New Roman", serif; font-size: 27px; font-weight: 500; line-height: 1; }
-.metric-card em { color: var(--faint); font-size: 10px; font-style: normal; white-space: nowrap; }
+/* No `white-space: nowrap` here: this <em> carries interpolated counts
+ * ("12 stale · 3 missing"), so its width is not fixed by the source and it can
+ * exceed a 360px viewport. `.private-shell` sets `overflow-x: clip`, which
+ * clips the overflow instead of scrolling it, so a nowrap line silently loses
+ * text rather than producing a scrollbar. `overflow-wrap: anywhere` lets the
+ * string break at any character and keeps the content readable. */
+.metric-card em { color: var(--faint); font-size: 10px; font-style: normal; overflow-wrap: anywhere; }
 
 .section-block { scroll-margin-top: 86px; margin-top: 30px; }
 .section-heading { display: flex; min-height: 42px; align-items: flex-end; justify-content: space-between; gap: 16px; margin-bottom: 13px; }
