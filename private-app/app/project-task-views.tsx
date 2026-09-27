@@ -39,8 +39,8 @@ export function ProjectTaskViewPanel({ projectId, view, state }: {
     {tasks.length ? <TaskLinks projectId={projectId} tasks={tasks} />
       : <p>{view === "reviews" ? "No task is currently recorded as waiting for approval. This does not replace other review checks."
         : "No saved task activity is recorded for this project yet."}</p>}
-    {omitted && <p className="private-note">More {view} exist. Open Work to see the full saved task list.</p>}
-    <a className="private-action-link" href={`/projects/${encodeURIComponent(projectId)}/tasks`}>Open project work</a>
+    {omitted && <p className="private-note">More {view} exist. Open Tasks to see the full saved task list.</p>}
+    <a className="private-action-link" href={`/projects/${encodeURIComponent(projectId)}/tasks`}>Open project tasks</a>
   </section>;
 }
 

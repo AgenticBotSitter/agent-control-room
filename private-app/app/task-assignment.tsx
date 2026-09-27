@@ -2,17 +2,29 @@
 import { useEffect, useRef, useState } from "react";
 import { BrowserRequestError } from "../../src/web/v1/browser-client";
 import { createTaskAssignmentBrowserClient, assignmentErrorMessage, reconcileAssignmentReceipt } from "../../src/web/v1/task-assignment-browser-client";
+import { createTaskSubmissionBrowserClient } from "../../src/web/v1/task-submission-browser-client";
 import type { TaskAssignmentOptions, TaskAssignmentReceipt } from "../../src/web/v1/task-assignment-wire";
 import type { TaskDetail } from "../../src/web/v1/task-wire";
 
-export function TaskAssignmentPanel({ options, receipt = options?.receipt, error, nodeId, setNodeId, pending, uncertain, onChange, onRetry }: {
+export function retainAssignmentNodeSelectionV1(options: TaskAssignmentOptions, previous: string): string {
+  if (options.candidates.length === 1) return options.candidates[0]!.nodeId;
+  return options.candidates.some(candidate => candidate.nodeId === previous) ? previous : "";
+}
+
+export function TaskAssignmentPanel({ options, receipt = options?.receipt, error, runError, runRecorded = false, nodeId, setNodeId,
+  pending, uncertain, assignAndRun = false, onChange, onRetry }: {
   options?: TaskAssignmentOptions; receipt?: TaskAssignmentReceipt | null; error?: BrowserRequestError;
+  runError?: string; runRecorded?: boolean;
   nodeId: string; setNodeId: (value: string) => void; pending: boolean; uncertain: boolean;
+  assignAndRun?: boolean;
   onChange: (action: "assign" | "expire") => void; onRetry: () => void;
 }) {
   return <section id="task-assignment" className="private-panel" aria-label="Task assignment"><h2>Task assignment</h2>
-    <p>Assignment reserves time on a machine. It does not start an agent. Execution approval and local checks are still required.</p>
+    <p>{assignAndRun ? "Choose a worker, then assign and run this prepared task in one step. Control Room still records the reservation, owner approval and queue submission separately."
+      : "Assignment reserves time on a machine. It does not start an agent. Execution approval and local checks are still required."}</p>
     {error && <p role="alert">{assignmentErrorMessage[error.code]}</p>}
+    {runError && <p role="alert">{runError}</p>}
+    {runRecorded && <p role="status">Assignment and queue submission recorded. The worker may now start after its local checks.</p>}
     {receipt && <div><p>Recorded reservation: {receipt.leaseState}. Ends {receipt.expiresAt}.</p>
       <p>{receipt.leaseCurrent ? "The reservation was current at the last check." : "The reservation is not current."} This is not proof that an agent started or stopped.</p></div>}
     {receipt?.leaseCurrent && !uncertain && <p>Next, <a href="#task-approval">check execution approval</a>. A reservation alone is not permission to run.</p>}
@@ -25,30 +37,34 @@ export function TaskAssignmentPanel({ options, receipt = options?.receipt, error
     {options?.recommendation.state === "not_available" && <p className="private-note" aria-label="Route recommendation">
       No saved configured route can be suggested for this task. This does not prove that no worker exists.</p>}
     {options && (uncertain ? <button type="button" disabled={pending} onClick={onRetry}>Check this exact assignment change</button>
-      : receipt ? receipt.leaseState === "active" && !receipt.leaseCurrent
+      : receipt?.leaseState === "active" ? !receipt.leaseCurrent
         ? <button type="button" disabled={pending} onClick={() => onChange("expire")}>Reconcile expired reservation</button> : null
       : options.candidates.length ? <div><p>Configured machines only. Availability and capacity are checked when you assign.</p>
         <label htmlFor="task-assignment-node">Machine</label><select id="task-assignment-node" value={nodeId} disabled={pending} onChange={event => setNodeId(event.target.value)}>
           <option value="">Choose a machine</option>{options.candidates.map(candidate => <option key={candidate.nodeId} value={candidate.nodeId}>{candidate.label} · {candidate.platform} · {candidate.workScope === "bounded_text_review" ? "text review only" : "configured task"}</option>)}</select>
         {options.candidates.some(candidate => candidate.workScope === "bounded_text_review") && <p className="private-note">Text-review-only work returns a review, test outline, or proposed patch from supplied context. It cannot edit this project, use tools, access accounts, or make network requests.</p>}
-        <button type="button" disabled={pending || !options.candidates.some(candidate => candidate.nodeId === nodeId)} onClick={() => onChange("assign")}>Assign without starting</button></div>
+        <button type="button" disabled={pending || !options.candidates.some(candidate => candidate.nodeId === nodeId)} onClick={() => onChange("assign")}>
+          {pending ? assignAndRun ? "Assigning and starting…" : "Assigning…" : assignAndRun ? "Assign and run" : "Assign without starting"}</button></div>
         : <p>No configured machine is available for a new assignment of this task.</p>)}
   </section>;
 }
 
 /** Stable keyed page owns pending command memory; failed detail/option reads hide data and actions. */
-export function PrivateTaskAssignment({ detail, onRecorded, client: suppliedClient }: { detail?: TaskDetail; onRecorded?: () => void;
-  client?: ReturnType<typeof createTaskAssignmentBrowserClient> }) {
+export function PrivateTaskAssignment({ detail, onRecorded, client: suppliedClient, runOnAssign = false }: { detail?: TaskDetail; onRecorded?: () => void;
+  client?: ReturnType<typeof createTaskAssignmentBrowserClient>; runOnAssign?: boolean }) {
   const [client] = useState(() => suppliedClient ?? createTaskAssignmentBrowserClient());
+  const [submission] = useState(() => createTaskSubmissionBrowserClient());
   const [options, setOptions] = useState<TaskAssignmentOptions>(), [checkedDetail, setCheckedDetail] = useState<TaskDetail>();
   const [receipt, setReceipt] = useState<TaskAssignmentReceipt>();
   const [nodeId, setNodeId] = useState(""), [error, setError] = useState<BrowserRequestError>(), [pending, setPending] = useState(false);
+  const [runError, setRunError] = useState<string>(), [runRecorded, setRunRecorded] = useState(false);
   const generation = useRef(0), busy = useRef(false), alive = useRef(true);
   useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
   useEffect(() => {
     const current = ++generation.current; let live = true;
     if (detail) void client.options(detail.task.projectId, detail.task.jobId, detail.inputDigest).then(value => {
       if (live && current === generation.current) { setCheckedDetail(detail); setOptions(value); setReceipt(previous => reconcileAssignmentReceipt(previous, value.receipt));
+        setNodeId(previous => retainAssignmentNodeSelectionV1(value, previous));
         setError(client.hasPending() ? new BrowserRequestError("uncertain") : undefined); }
     }).catch(reason => { if (live && current === generation.current) { setCheckedDetail(detail); setOptions(undefined);
       setError(reason instanceof BrowserRequestError ? reason : new BrowserRequestError("unavailable")); } });
@@ -56,23 +72,39 @@ export function PrivateTaskAssignment({ detail, onRecorded, client: suppliedClie
   }, [client, detail]);
   async function change(action: "assign" | "expire", retry = false) {
     if (busy.current || !detail || checkedDetail !== detail || !options) return;
-    busy.current = true; setPending(true); setError(undefined); const current = ++generation.current;
+    busy.current = true; setPending(true); setError(undefined); setRunError(undefined); setRunRecorded(false); const current = ++generation.current;
+    let assignmentRecorded = false, changeRecorded = false;
     try {
       const value = retry ? await client.retrySave() : await client.change(detail.task.projectId, detail.task.jobId,
         { action, expectedInputDigest: detail.inputDigest, ...(action === "assign" ? { nodeId } : {}) });
-      if (alive.current) { setReceipt(previous => reconcileAssignmentReceipt(previous, value)); onRecorded?.(); }
+      changeRecorded = true;
+      assignmentRecorded = action === "assign";
+      if (alive.current) setReceipt(previous => reconcileAssignmentReceipt(previous, value));
+      if (action === "assign" && runOnAssign && !retry) {
+        const preview = await submission.read(detail.task.projectId, detail.task.jobId, detail.inputDigest);
+        if (preview.receipt) {
+          if (alive.current) setRunRecorded(true);
+        } else if (preview.preview) {
+          await submission.submit(detail.task.projectId, detail.task.jobId, detail.inputDigest, preview.preview.packetDigest);
+          if (alive.current) setRunRecorded(true);
+        } else throw new Error("submission_preview_missing");
+      }
     } catch (reason) {
       if (alive.current && current === generation.current) {
-        const error = reason instanceof BrowserRequestError ? reason : new BrowserRequestError("unavailable"); setError(error);
-        if (["authentication_required", "access_denied", "not_found"].includes(error.code)) setOptions(undefined);
+        if (action === "assign" && runOnAssign && assignmentRecorded) setRunError("The reservation was recorded, but queue submission was not confirmed. Check the saved task before trying another action.");
+        else {
+          const error = reason instanceof BrowserRequestError ? reason : new BrowserRequestError("unavailable"); setError(error);
+          if (["authentication_required", "access_denied", "not_found"].includes(error.code)) setOptions(undefined);
+        }
       }
-    } finally { busy.current = false; if (alive.current) setPending(false); }
+    } finally { busy.current = false; if (alive.current) { setPending(false); if (changeRecorded) onRecorded?.(); } }
   }
   if (!detail) return null;
   const current = checkedDetail === detail;
   const visibleReceipt = current && options && receipt?.projectId === detail.task.projectId && receipt.jobId === detail.task.jobId
     && receipt.inputDigest === detail.inputDigest ? receipt : undefined;
   return <TaskAssignmentPanel options={current ? options : undefined} receipt={visibleReceipt} error={current ? error : undefined}
+    runError={runError} runRecorded={runRecorded} assignAndRun={runOnAssign}
     nodeId={nodeId} setNodeId={setNodeId} pending={pending} uncertain={current && !!options && client.hasPending()}
     onChange={action => { void change(action); }} onRetry={() => { void change("assign", true); }} />;
 }

@@ -280,11 +280,12 @@ export function PrivateProjectWorkspace({ projectId, section = "overview", after
           <ProjectNavigation projectId={projectId} current={section} presentation={project.presentation} />
           {section === "overview" && <section className="private-panel"><h2>Purpose</h2>
             <p className="private-summary">{project.summary || "No summary added."}</p>
+            {project.lifecycle === "active" && <a className="private-action-link" href={`/projects/${encodeURIComponent(projectId)}/tasks#new-task`}>New task</a>}
             <h3>Project lifecycle</h3>
             <OrdinaryProjectStatusActions project={project} pending={pending || client.hasPending()}
               onTransition={value => { void transition(value); }} />
             <p className="private-note">Completing or archiving preserves project history and does not stop running work. Reopening permits new proposals again.</p>
-            <p className="private-note"><a href={`/projects/${encodeURIComponent(projectId)}/tasks`}>Open project tasks</a> to prepare work, check assignment and approval, and inspect recorded progress and results. Task controls report unavailable services rather than assuming a live agent is connected.</p>
+            <p className="private-note"><a href={`/projects/${encodeURIComponent(projectId)}/tasks`}>Open all work</a> to prepare tasks, check assignment and approval, and inspect recorded progress and results. Task controls report unavailable services rather than assuming a live agent is connected.</p>
             <p className="private-note">Saved revision {project.version} · <ConfiguredTimestamp value={project.updatedAt} prefix="Updated" /></p>
           </section>}
           <ProjectModuleAvailability presentation={project.presentation} />

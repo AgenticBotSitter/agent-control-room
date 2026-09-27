@@ -293,6 +293,16 @@ test("every lane the fast path can skip has a merge-gate counterpart", () => {
   assert.ok(!/needs\.route\.outputs\.\w+ == 'true'/u.test(gateJob));
 });
 
+test("a skipped catch-up lane does not register a cache save for a store it never created", () => {
+  const start = workflow.indexOf("  full-gate:");
+  const end = workflow.indexOf("\n  merge-gate:", start);
+  assert.ok(start > 0 && end > start, "the catch-up matrix must exist");
+  const catchUp = workflow.slice(start, end);
+  assert.doesNotMatch(catchUp, /cache:\s*pnpm/u);
+  assert.match(catchUp, /pnpm install --frozen-lockfile --ignore-scripts/u,
+    "a catch-up lane that does run must still install the frozen graph");
+});
+
 test("routing decisions reach the lanes through the route job's outputs", () => {
   assert.match(workflow, /^ {2}route:/mu, "the route job must exist");
   for (const lane of LANES) {
@@ -309,6 +319,7 @@ test("every action stays on the reviewed allowlist and stays pinned to a commit 
     ["actions/checkout", "11d5960a326750d5838078e36cf38b85af677262"],
     ["pnpm/action-setup", "b906affcce14559ad1aafd4ab0e942779e9f58b1"],
     ["actions/setup-node", "49933ea5288caeca8642d1e84afbd3f7d6820020"],
+    ["actions/upload-artifact", "ea165f8d65b6e75b540449e92b4886f43607fa02"],
   ]);
   const uses = [...workflow.matchAll(/^\s*-?\s*uses:\s*(\S+)(.*)$/gm)].map((match) => ({
     reference: match[1],

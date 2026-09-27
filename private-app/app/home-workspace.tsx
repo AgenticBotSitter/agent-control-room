@@ -41,7 +41,7 @@ function Unavailable({ children }: { children: React.ReactNode }) {
 }
 
 export function HomeDashboard({ data }: { data: HomeDashboardState }) {
-  return <div className="private-dashboard-grid">
+  return <><a className="private-action-link" href="/projects">New task</a><div className="private-dashboard-grid">
     <section className="private-panel" aria-labelledby="home-active"><h2 id="home-active">Running work</h2>
       {data.activity.state === "loading" ? <p role="status">Loading saved work…</p>
         : data.activity.state === "unavailable" ? <Unavailable>Running work is unavailable.</Unavailable>
@@ -95,13 +95,13 @@ export function HomeDashboard({ data }: { data: HomeDashboardState }) {
       {data.projects.state === "loading" ? <p role="status">Loading saved projects…</p>
         : data.projects.state === "unavailable" ? <Unavailable>Projects are unavailable.</Unavailable>
           : data.projects.value.projects.length ? <ul className="private-dashboard-list">{data.projects.value.projects.slice(0, 6).map(project => <li key={project.projectId}>
-            <a href={`/projects/${encodeURIComponent(project.projectId)}`}>{project.title}</a><span>{project.lifecycle.replaceAll("_", " ")}</span></li>)}</ul>
+            <span><a href={`/projects/${encodeURIComponent(project.projectId)}`}>{project.title}</a>{project.lifecycle === "active" && <> · <a href={`/projects/${encodeURIComponent(project.projectId)}/tasks#new-task`}>New task</a></>}</span><span>{project.lifecycle.replaceAll("_", " ")}</span></li>)}</ul>
             : <p>No saved projects are visible with this access.</p>}
       {data.projects.state === "ready" && (data.projects.value.projects.length > 6 || data.projects.value.nextCursor)
         ? <p className="private-note">More projects are available in the full catalog.</p> : null}
       <a className="private-action-link" href="/projects">Open all projects</a>
     </section>
-  </div>;
+  </div></>;
 }
 
 /**

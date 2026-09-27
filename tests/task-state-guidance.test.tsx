@@ -129,12 +129,12 @@ test("each ordinary task state points to one safe next destination or explanatio
   const expected = new Map<TaskDetail["task"]["state"], string | undefined>([
     ["proposed", "#task-planning"], ["ready", "#task-assignment"], ["leased", "#task-assignment"],
     ["running", undefined], ["waiting_approval", "#task-approval"], ["succeeded", "#task-results"],
-    ["failed", undefined], ["cancelled", undefined], ["orphaned", undefined], ["rejected", undefined],
+    ["failed", undefined], ["cancelled", undefined], ["orphaned", "#task-assignment"], ["rejected", undefined],
   ]);
   for (const [state, href] of expected) {
     const guidance = taskStateGuidance(state === "running" ? detail(state, {}) : detail(state));
     assert.equal(guidance.href, href, state);
-    assert.equal(guidance.uncertain, state === "orphaned", state);
+    assert.equal(guidance.uncertain, false, state);
   }
 });
 

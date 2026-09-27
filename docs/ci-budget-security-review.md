@@ -10,7 +10,9 @@ standard `ubuntu-latest` runners for pull requests and pushes to main. Manual di
 is available. There are no schedules, deployments, provider calls or private-host jobs.
 Standard hosted runner minutes are free for public repositories; the private owner's
 monthly allowance does not limit these jobs. Larger runners and storage/cache have
-separate billing. Dependency caches are used; no build artifacts are uploaded.
+separate billing. Dependency caches are used. The owner-approved browser journey
+uploads only its Playwright screenshot and trace directory, only when that job fails,
+with seven-day retention.
 See [GitHub billing](https://docs.github.com/en/billing/concepts/product-billing/github-actions).
 
 ## Verified repository settings
@@ -23,6 +25,8 @@ See [GitHub billing](https://docs.github.com/en/billing/concepts/product-billing
   - `actions/checkout@11d5960a326750d5838078e36cf38b85af677262`
   - `pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1`
   - `actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020`
+  - `actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02`
+    (failure-only browser evidence)
 - The quick job now accepts the optional `CONTROL_ROOM_PRIVATE_NAMES` repository
   secret solely as a newline-separated denylist for the private-name guard. GitHub
   withholds it from fork pull requests, where the guard deliberately skips. The value
