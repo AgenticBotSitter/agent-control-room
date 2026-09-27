@@ -24,10 +24,11 @@ test("startup provisioning adds the current profile beside an old-shape profile 
     requiredVerificationScenarioIds: ["scenario:mac-local-text"],
     reviewerSeparation: { actor: true, worker: false, agentProfile: false, harness: false, modelFamily: false } };
   const rows = new Map([[oldShape.id, oldShape]]);
+  const templates = createNativeTaskTemplateRegistryV1([]), scenarios = createTaskQualityScenarioRegistryV1([]);
+  const humanVerifications = createMacLocalHumanVerificationRegistryV1([]);
   const live = createMacLocalLiveProjectProvisionerV1({ db: {} as DatabaseClient,
     tenantId: "tenant:local", workspaceId: "workspace:local", configuration, runtime,
-    initialProjects: [project], templates: createNativeTaskTemplateRegistryV1([]),
-    scenarios: createTaskQualityScenarioRegistryV1([]), humanVerifications: createMacLocalHumanVerificationRegistryV1([]),
+    initialProjects: [project], templates, scenarios, humanVerifications,
     profileGate: { async registerProfile(profile: unknown) {
       const value = profile as { id: string };
       const existing = rows.get(value.id);
@@ -39,7 +40,24 @@ test("startup provisioning adds the current profile beside an old-shape profile 
   assert.equal(rows.size, 2, "the immutable old row is preserved and a versioned row is added");
   assert.strictEqual(rows.get(oldShape.id), oldShape);
   assert.ok(rows.has(`profile:mac-local-owner-review:v2:${project.projectId}`));
+  assert.equal(templates.snapshot().length, 3, "startup projects publish all three task templates");
+  assert.equal(scenarios.snapshot().length, 1, "startup projects publish the automatic text check");
+  assert.equal(humanVerifications.list().length, 1, "startup projects publish the owner observation descriptor");
   assert.deepEqual(live.projectIds(), [project.projectId]);
+
+  const replayedStartup = createMacLocalLiveProjectProvisionerV1({ db: {} as DatabaseClient,
+    tenantId: "tenant:local", workspaceId: "workspace:local", configuration, runtime,
+    initialProjects: [project], templates, scenarios, humanVerifications,
+    profileGate: { async registerProfile(profile: unknown) {
+      const value = profile as { id: string };
+      const existing = rows.get(value.id);
+      if (!existing || JSON.stringify(existing) !== JSON.stringify(value)) throw new Error("record_conflict");
+      return { profile: value, replayed: true } as never;
+    } } });
+  await replayedStartup.initialize();
+  assert.equal(templates.snapshot().length, 3, "production-shaped preseeded templates replay without growth");
+  assert.equal(scenarios.snapshot().length, 1, "production-shaped preseeded scenarios replay without growth");
+  assert.equal(humanVerifications.list().length, 1, "production-shaped preseeded human descriptors replay without growth");
 });
 
 test("live Mac-local projects register once under concurrency and exceed the former five-project cap", async () => {

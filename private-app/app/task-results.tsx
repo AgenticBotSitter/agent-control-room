@@ -11,7 +11,7 @@ import type { TaskVerificationWorkspace } from "../../src/web/v1/task-verificati
 import { ConfiguredTimestamp } from "./configured-timestamp";
 
 const reviewLabel: Record<TaskReviewEvidence["status"], string> = { pending: "Review in progress", changes_requested: "Changes requested",
-  verification_blocked: "Verification blocked", revision_limit_reached: "Revision limit reached", ready: "Quality review complete", superseded: "Replaced by a newer revision" };
+  verification_blocked: "Verification blocked", revision_limit_reached: "Revision limit reached", ready: "Accepted", superseded: "Replaced by a newer revision" };
 
 export function TaskResultsPanel({ page, content: suppliedContent, pending, selectedArtifactId, onOpen, onClose, onReviewSaved, reviewWorkspace, verificationWorkspace }: { page: TaskResultsPage; content?: TaskResultContent;
   pending: boolean; selectedArtifactId?: string; onOpen: (artifactId: string) => void; onClose: () => void; onReviewSaved?: () => void; reviewWorkspace?: TaskReviewWorkspace;

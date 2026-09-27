@@ -4,7 +4,7 @@ import type { DatabaseClient, DatabaseSession } from "../../persistence/database
 import { jobRecordSchema } from "../../domain/v1";
 import type { NativeResultReadConfiguration } from "../../artifacts/v1/native-results";
 import { CompletionGateStoreV1, CompletionGateErrorV1, type CompletionAcceptanceProfileV1, type CompletionReviewV1,
-  type CompletionFindingV1, type CompletionRiskV1 } from "../../completion-gate/v1";
+  type CompletionFindingV1, type CompletionRiskV1, type CompletionVerificationV1 } from "../../completion-gate/v1";
 import { assertReviewerIndependentV1 } from "../../completion-gate/v1/reviewer-independence";
 import { stageAsyncCompletionCheckpoint } from "../../completion-gate/v1/async-staged-checkpoint";
 import { readTaskReviewPlanV1, verifyTaskReviewTargetV1 } from "../../completion-gate/v1/task-review-plan";
@@ -18,8 +18,10 @@ import { PlanSelectedTaskResultReaderV1 } from "./task-result-reader";
 import { catalogProjectIdSchema } from "./project-wire";
 import { taskReviewDraftSchema, taskReviewReceiptSchema, taskReviewNoteSchema, taskReviewOptionsSchema,
   type TaskReviewDraft, type TaskReviewReceipt } from "./task-review-wire";
+import { manualVerificationScenarioSchema, type ManualVerificationScenario, type ManualVerificationScenarioSource } from "./task-verification-service";
 
-export interface WebTaskReviewConfiguration { integrityKey: Uint8Array; checkpoints: AwaitableRollbackCheckpointStoreV1 }
+export interface WebTaskReviewConfiguration { integrityKey: Uint8Array; checkpoints: AwaitableRollbackCheckpointStoreV1;
+  acceptanceVerificationScenarios?: readonly ManualVerificationScenario[] | ManualVerificationScenarioSource }
 type Row = { tenant_id: string; identity_id: string; idempotency_key: string; project_id: string; job_id: string;
   artifact_id: string; target_id: string; review_id: string; request_digest: string; command: unknown;
   auth_tag: string; occurred_at: string | Date };
@@ -34,6 +36,7 @@ export class WebTaskReviewService {
   private readonly checkpoints: AwaitableRollbackCheckpointStoreV1;
   private readonly results: PlanSelectedTaskResultReaderV1;
   private readonly projects: WebProjectService;
+  private readonly acceptanceVerificationScenarios?: () => readonly z.infer<typeof manualVerificationScenarioSchema>[];
   constructor(private readonly db: DatabaseClient, private readonly scope: { tenantId: string; workspaceId: string },
     config: WebTaskReviewConfiguration & { harnessIntegrityKey: Uint8Array; results: NativeResultReadConfiguration; ideaIntegrityKey?: Uint8Array },
     private readonly clock: () => number = Date.now) {
@@ -44,6 +47,12 @@ export class WebTaskReviewService {
     this.results = new PlanSelectedTaskResultReaderV1(db, { harnessIntegrityKey: config.harnessIntegrityKey,
       results: config.results, reviewIntegrityKey: config.integrityKey });
     this.projects = new WebProjectService(db, scope, clock, config.ideaIntegrityKey);
+    if (config.acceptanceVerificationScenarios) {
+      const source = config.acceptanceVerificationScenarios;
+      this.acceptanceVerificationScenarios = () => z.array(manualVerificationScenarioSchema).max(50)
+        .parse(Array.isArray(source) ? source : (source as ManualVerificationScenarioSource).list());
+      this.acceptanceVerificationScenarios();
+    }
   }
   private ids(...values: string[]) {
     if (values.some(value => !catalogProjectIdSchema.safeParse(value).success)) throw new WebAccessError("invalid_request");
@@ -53,6 +62,17 @@ export class WebTaskReviewService {
   }
   private digest(actorId: string, projectId: string, jobId: string, draft: TaskReviewDraft) {
     return sha256Digest({ ...this.scope, actorId, projectId, jobId, action: "tasks.reviews.record", draft });
+  }
+  private verificationId(actorId: string, targetId: string, scenarioId: string) {
+    return `verification:owner:${sha256Digest({ tenantId: this.scope.tenantId, actorId, targetId, scenarioId }).slice(7)}`;
+  }
+  private acceptanceAttestation(context: Awaited<ReturnType<WebTaskReviewService["context"]>>) {
+    if (!this.acceptanceVerificationScenarios) return undefined;
+    const matches = this.acceptanceVerificationScenarios().filter(value => value.acceptanceProfileId === context.profile.id
+      && value.acceptanceProfileDigest === sha256Digest(context.profile)
+      && context.snapshot.missingVerificationScenarioIds.includes(value.scenarioId));
+    if (matches.length > 1) throw new Error("review_configuration_invalid");
+    return matches[0];
   }
   private tag(row: Omit<Row, "auth_tag">) {
     return hmacSha256Tag(this.integrityKey, { purpose: "web-task-review-command/v1", ...row,
@@ -81,6 +101,14 @@ export class WebTaskReviewService {
     if (receipt.findingId) {
       const finding = await this.gate(tx).getRecord(this.scope.tenantId, receipt.findingId, "finding") as CompletionFindingV1 | undefined;
       if (!finding || finding.reviewId !== review.id || finding.statementDigest !== receipt.feedbackDigest) throw new Error("review_receipt_unavailable");
+    }
+    if (command.draft.acceptanceAttestation) {
+      const verification = await this.gate(tx).getRecord(this.scope.tenantId,
+        this.verificationId(actor.id, receipt.targetId, command.draft.acceptanceAttestation.scenarioId), "verification") as CompletionVerificationV1 | undefined;
+      if (!verification || verification.targetId !== receipt.targetId || verification.targetDigest !== receipt.targetDigest
+        || verification.verifier.actorId !== actor.id || verification.verifier.actorType !== "human"
+        || verification.scenarioId !== command.draft.acceptanceAttestation.scenarioId || verification.outcome !== "passed")
+        throw new Error("review_receipt_unavailable");
     }
     return command;
   }
@@ -132,12 +160,15 @@ export class WebTaskReviewService {
         AND project_id=$3 AND job_id=$4 AND target_id=$5`, [this.scope.tenantId, actor.id, projectId, jobId, targetId])).rows[0];
       const prior = row ? await this.receipt(tx, actor, row) : undefined;
       const availability = this.availability(actor, context, !!prior);
+      const attestation = this.acceptanceAttestation(context);
       return taskReviewOptionsSchema.parse({ projectId, jobId, artifactId, targetId, targetDigest: context.snapshot.targetDigest,
         contentHash: context.result.receipt.contentHash, canReview: availability === "available", availability,
         ownReview: prior ? taskReviewNoteSchema.parse({ reviewId: prior.receipt.reviewId, findingId: prior.receipt.findingId,
           artifactId: prior.receipt.artifactId, targetId: prior.receipt.targetId, decision: prior.receipt.decision,
           contentHash: prior.receipt.contentHash, targetDigest: prior.receipt.targetDigest,
           recordedAt: prior.receipt.recordedAt, feedback: prior.draft.feedback }) : null,
+        acceptanceAttestation: attestation ? { scenarioId: attestation.scenarioId, label: attestation.label,
+          instructions: attestation.instructions, instructionsDigest: sha256Digest(attestation) } : null,
         grantsExecutionAuthority: false });
     });
   }
@@ -167,6 +198,10 @@ export class WebTaskReviewService {
       }
       if (this.availability(actor, context, false) !== "available" || context.snapshot.targetDigest !== draft.targetDigest
         || context.result.receipt.contentHash !== draft.contentHash) throw new WebAccessError("conflict");
+      const attestation = this.acceptanceAttestation(context);
+      if (draft.decision === "accepted" && (!!attestation !== !!draft.acceptanceAttestation
+        || attestation && (draft.acceptanceAttestation?.scenarioId !== attestation.scenarioId
+          || draft.acceptanceAttestation.instructionsDigest !== sha256Digest(attestation)))) throw new WebAccessError("conflict");
       const existing = (await tx.query("SELECT review_id FROM control_web_task_review_commands WHERE tenant_id=$1 AND identity_id=$2 AND target_id=$3",
         [this.scope.tenantId, actor.id, draft.targetId])).rows;
       if (existing.length) throw new WebAccessError("conflict");
@@ -186,6 +221,19 @@ export class WebTaskReviewService {
         if (error instanceof CompletionGateErrorV1 && ["record_conflict", "reviewer_not_independent", "target_superseded", "profile_mismatch"].includes(error.safeCode))
           throw new WebAccessError("conflict");
         throw error;
+      }
+      if (attestation && draft.acceptanceAttestation) {
+        const verification: CompletionVerificationV1 = { schemaVersion, id: this.verificationId(actor.id, draft.targetId, attestation.scenarioId),
+          tenantId: this.scope.tenantId, projectId, targetId: draft.targetId, targetDigest: draft.targetDigest,
+          acceptanceProfileId: context.profile.id, acceptanceProfileDigest: sha256Digest(context.profile), scenarioId: attestation.scenarioId,
+          outcome: "passed", verifier: { actorId: actor.id, actorType: "human" },
+          evidenceDigests: [...new Set([draft.contentHash, sha256Digest(attestation), digest])].sort(), verifiedAt: actor.now,
+          grantsApproval: false, grantsExecutionAuthority: false };
+        await this.gate(tx, staged.checkpoints).recordVerification(verification);
+        await appendAuditWith(tx, { id: `audit:${randomUUID()}`, tenantId: this.scope.tenantId, projectId, actorId: actor.id,
+          actorType: "human", action: "tasks.verifications.record", targetType: "completion_verification", targetId: verification.id,
+          occurredAt: actor.now, idempotencyKey: digest, safeMetadata: { scenarioId: attestation.scenarioId,
+            targetDigest: draft.targetDigest, outcome: "passed", source: "owner_acceptance_attestation" } });
       }
       const receipt: TaskReviewReceipt = { projectId, jobId, artifactId: draft.artifactId, targetId: draft.targetId,
         targetDigest: draft.targetDigest, contentHash: draft.contentHash, reviewId, findingId, decision: draft.decision,

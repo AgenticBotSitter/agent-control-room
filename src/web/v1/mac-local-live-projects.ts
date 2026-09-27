@@ -27,15 +27,18 @@ export function createMacLocalLiveProjectProvisionerV1(input: Readonly<{
 }>) {
   const known = new Set<string>();
   const pending = new Map<string, Promise<void>>();
-  const registerProfile = async (project: Project) => {
+  const registerProject = async (project: Project) => {
     const built = buildMacLocalTaskTemplatesV1([project], input.configuration, input.runtime);
     await input.profileGate.registerProfile(built.profiles[0]);
+    input.templates.register(built.templates);
+    input.scenarios.register([createMacLocalTextScenarioV1(built.profiles[0]!)]);
+    input.humanVerifications.register(built.profiles[0]!);
     return built;
   };
   const initialize = async (): Promise<void> => {
     for (const project of input.initialProjects) {
       if (known.has(project.projectId)) continue;
-      await registerProfile(project);
+      await registerProject(project);
       known.add(project.projectId);
     }
   };
@@ -57,11 +60,8 @@ export function createMacLocalLiveProjectProvisionerV1(input: Readonly<{
       const count = Number(row.active_count);
       if (!Number.isSafeInteger(count) || count < 1 || count > MAC_LOCAL_MAX_PROJECTS_V1)
         throw new Error("mac_local_project_limit_50");
-      const built = await registerProfile({ projectId: row.project_id,
+      await registerProject({ projectId: row.project_id,
         createdAt: new Date(row.created_at).toISOString() });
-      input.templates.register(built.templates);
-      input.scenarios.register([createMacLocalTextScenarioV1(built.profiles[0]!)]);
-      input.humanVerifications.register(built.profiles[0]!);
       known.add(projectId);
     })().finally(() => pending.delete(projectId));
     pending.set(projectId, operation);

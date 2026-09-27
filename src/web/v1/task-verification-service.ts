@@ -14,10 +14,10 @@ import { PlanSelectedTaskResultReaderV1 } from "./task-result-reader";
 import { catalogProjectIdSchema as id } from "./project-wire";
 import { taskVerificationDraftSchema, taskVerificationOptionsSchema, taskVerificationReceiptSchema } from "./task-verification-wire";
 
-const descriptorSchema = z.object({ scenarioId: id, label: z.string().trim().min(1).max(120),
+export const manualVerificationScenarioSchema = z.object({ scenarioId: id, label: z.string().trim().min(1).max(120),
   instructions: z.string().trim().min(1).max(2000), acceptanceProfileId: id,
   acceptanceProfileDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/) }).strict();
-export type ManualVerificationScenario = z.infer<typeof descriptorSchema>;
+export type ManualVerificationScenario = z.infer<typeof manualVerificationScenarioSchema>;
 export type ManualVerificationScenarioSource = Readonly<{ list(): readonly ManualVerificationScenario[] }>;
 export interface WebTaskVerificationConfiguration {
   integrityKey: Uint8Array; harnessIntegrityKey: Uint8Array; checkpoints: AwaitableRollbackCheckpointStoreV1;
@@ -43,7 +43,7 @@ export class WebTaskVerificationService {
       ? () => config.manualVerificationScenarios as readonly ManualVerificationScenario[]
       : () => (config.manualVerificationScenarios as ManualVerificationScenarioSource).list();
     this.descriptorSource = () => {
-      const descriptors = z.array(descriptorSchema).max(50).parse(source());
+      const descriptors = z.array(manualVerificationScenarioSchema).max(50).parse(source());
       assertNoSecretMaterial(descriptors);
       if (new Set(descriptors.map(value => JSON.stringify([value.acceptanceProfileId, value.acceptanceProfileDigest, value.scenarioId]))).size !== descriptors.length)
         throw new Error("verification_configuration_invalid");
