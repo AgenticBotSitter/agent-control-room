@@ -178,20 +178,24 @@ async function mountPage(journey: Journey, path: string, element: ReactElement):
   const dom = new JSDOM("<!doctype html><div id=root></div>", { url: `${origin}${path}`, pretendToBeVisual: true });
   dom.window.addEventListener("error", event => { errors.push(event.error ?? event.message); });
   dom.window.addEventListener("unhandledrejection", event => { errors.push(event.reason); });
-  const previous = { window: globalThis.window, document: globalThis.document, navigator: globalThis.navigator,
-    location: globalThis.location, fetch: globalThis.fetch,
-    act: (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT };
-  Object.assign(globalThis, { window: dom.window, document: dom.window.document, navigator: dom.window.navigator,
-    location: dom.window.location });
-  (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-  globalThis.fetch = async (input: string | URL | Request, init?: RequestInit) => {
+  const previous = new Map<string, PropertyDescriptor | undefined>();
+  const installGlobal = (key: string, value: unknown) => {
+    previous.set(key, Object.getOwnPropertyDescriptor(globalThis, key));
+    Object.defineProperty(globalThis, key, { configurable: true, writable: true, value });
+  };
+  installGlobal("window", dom.window);
+  installGlobal("document", dom.window.document);
+  installGlobal("navigator", dom.window.navigator);
+  installGlobal("location", dom.window.location);
+  installGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  installGlobal("fetch", async (input: string | URL | Request, init?: RequestInit) => {
     const source = input instanceof Request ? input : new Request(new URL(String(input), origin), init);
     const url = new URL(source.url); requests.push(`${source.method} ${url.pathname}${url.search}`);
     pendingRequests++;
     try { return await journey.fetch(source); }
     catch (error) { errors.push(error); throw error; }
     finally { pendingRequests--; }
-  };
+  });
   const root = createRoot(dom.window.document.getElementById("root")!);
   await act(async () => { root.render(createElement(LocalRuntimeContextV1.Provider,
     { value: { mode: "local", status: journey.status } }, element)); });
@@ -205,8 +209,10 @@ async function mountPage(journey: Journey, path: string, element: ReactElement):
   assert.equal(pendingRequests, 0, `${path} still had client reads after the bounded render wait`);
   const close = async () => {
     await act(async () => { root.unmount(); }); dom.window.close();
-    Object.assign(globalThis, previous);
-    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = previous.act;
+    for (const [key, descriptor] of previous) {
+      if (descriptor) Object.defineProperty(globalThis, key, descriptor);
+      else Reflect.deleteProperty(globalThis, key);
+    }
   };
   return { dom, root, errors, requests, close };
 }
