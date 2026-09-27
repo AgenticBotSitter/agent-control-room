@@ -433,7 +433,7 @@ test("documented clean-cluster provision/migrate/backup/restore/verify journey",
     } else {
       await mkdir(data, { recursive: true });
     }
-    await native("initdb", ["-D", data, "-U", "fixture_admin", "--auth-local=trust",
+    await native("initdb", ["-D", data, "-U", "postgres", "--auth-local=trust",
       "--auth-host=reject", "--no-locale", "--encoding=UTF8"]);
     await native("pg_ctl", ["-D", data, "-l", join(run, log), "-w", "-t", "30", "-o",
       `-k ${socket} -p ${port} -h '' -c unix_socket_permissions=0700 -c shared_buffers=32MB -c max_connections=20`, "start"]);
@@ -455,7 +455,7 @@ test("documented clean-cluster provision/migrate/backup/restore/verify journey",
   const pw = { migrator: "clean-install-migrator-0001", app: "clean-install-app-000001", scheduler: "clean-install-scheduler-0001" };
   const psqlFor = (socket, port) => ({
     PATH: "/usr/bin:/bin", LC_ALL: "C", TMPDIR: run,
-    PGHOST: socket, PGPORT: String(port), PGUSER: "fixture_admin",
+    PGHOST: socket, PGPORT: String(port), PGUSER: "postgres",
     PGPASSWORD: "fixture_only",
   });
   const psqlBase = psqlFor(cleanSocket, CLEAN_PORT);
@@ -464,7 +464,7 @@ test("documented clean-cluster provision/migrate/backup/restore/verify journey",
      "-v", `scheduler_password=${pw.scheduler}`,
      "-f", join(ROOT, "db/roles/production_provision.sql"), "-X", "-q"],
     { env: { ...env, PGDATABASE: database }, timeout: 60000, maxBuffer: 1 << 26 });
-  const cleanConn = (socket, port, database, user = "fixture_admin", password = "fixture_only") =>
+  const cleanConn = (socket, port, database, user = "postgres", password = "fixture_only") =>
     ({ host: socket, port, database, user, password });
   const sourceConn = (database, user, password) => cleanConn(cleanSocket, CLEAN_PORT, database, user, password);
   const targetConn = (database, user, password) => cleanConn(targetSocket, TARGET_PORT, database, user, password);
@@ -486,7 +486,7 @@ test("documented clean-cluster provision/migrate/backup/restore/verify journey",
     { env: { ...psqlBase, PGDATABASE: "postgres" }, timeout: 60000, maxBuffer: 1 << 26 });
   const preOwner = (await sourceQuery("postgres",
     "SELECT pg_get_userbyid(datdba) AS owner FROM pg_database WHERE datname = 'cr_clean_install'")).rows[0].owner;
-  assert.equal(preOwner, "fixture_admin", "database starts owned by the creating superuser");
+  assert.equal(preOwner, "postgres", "database starts owned by the creating superuser");
   // Step 1: standalone role provisioning on the clean database.
   await provisionRoles("cr_clean_install");
   // Step 2: the documented two-connection migration command, via the real CLI.
