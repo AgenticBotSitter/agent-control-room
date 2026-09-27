@@ -109,6 +109,7 @@
     "mac:tasks": "node scripts/mac-local/start-task-host.mjs",
     "mac:up": "node scripts/mac-local/up.mjs",
     "mac:down": "node scripts/mac-local/down.mjs",
+    "mac:service-status": "node scripts/mac-local/service-status.mjs",
     "mac:uninstall-service": "node scripts/mac-local/uninstall-service.mjs",
     "mac:prepare-task-runtime": "node --import tsx scripts/mac-local/prepare-task-runtime.ts",
     "db:ledger": "node scripts/generate-migration-ledger.mjs",

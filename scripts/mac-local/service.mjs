@@ -62,10 +62,12 @@ const production = Object.freeze({
 });
 
 /** Refuses a LaunchAgents directory or plist that is a symlink or not a regular entry. */
-async function inspectPlist(path) {
+async function inspectPlist(path, createDirectory = false) {
   const directory = join(path, "..");
-  await mkdir(directory, { recursive: true, mode: 0o755 });
-  const dir = await lstat(directory);
+  if (createDirectory) await mkdir(directory, { recursive: true, mode: 0o755 });
+  let dir;
+  try { dir = await lstat(directory); }
+  catch (error) { if (error?.code === "ENOENT" && !createDirectory) return undefined; throw error; }
   if (!dir.isDirectory() || dir.isSymbolicLink()) throw new Error("mac_local_service_directory_invalid");
   try {
     const entry = await lstat(path);
@@ -95,6 +97,21 @@ export async function servicePid(runtime = production) {
   return { loaded: true, pid: Number.isSafeInteger(pid) && pid > 1 ? pid : undefined };
 }
 
+/** Read-only launch-agent status. It does not create ~/Library/LaunchAgents,
+ * write a plist, enable a service, or start a process. */
+export async function serviceStatus(expected, runtime = production) {
+  const path = plistPath(runtime.home()), current = await inspectPlist(path);
+  const running = await servicePid(runtime);
+  const disabled = await runtime.launchctl(["print-disabled", `gui/${runtime.uid()}`]);
+  const escaped = SERVICE_LABEL.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+  const match = disabled.code === 0 ? new RegExp(`"${escaped}"\\s*=>\\s*(true|false)`, "u").exec(disabled.stdout) : undefined;
+  const enabled = match ? match[1] === "false" : undefined;
+  const definition = current === undefined ? "absent" : expected
+    ? current === servicePlist(expected) ? "current" : "outdated" : "installed";
+  return Object.freeze({ installed: current !== undefined, loaded: running.loaded, pid: running.pid,
+    enabled, definition, state: running.pid ? "running" : current === undefined ? "not_installed" : "stopped" });
+}
+
 async function must(runtime, args) {
   const result = await runtime.launchctl(args);
   if (result.code !== 0) throw new Error(`mac_local_service_launchctl_failed: ${args[0]}`);
@@ -104,7 +121,7 @@ async function must(runtime, args) {
 export async function installOrRefreshService({ protectedRoot, logPath, env }, runtime = production) {
   const path = plistPath(runtime.home());
   const body = servicePlist({ protectedRoot, logPath, env });
-  const current = await inspectPlist(path);
+  const current = await inspectPlist(path, true);
   const uid = runtime.uid();
   const { loaded } = await servicePid(runtime);
   // mac:up reaches here only when the host is not already serving, so an unchanged, loaded agent

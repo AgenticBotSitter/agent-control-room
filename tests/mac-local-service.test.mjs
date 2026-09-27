@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { installOrRefreshService, plistPath, SERVICE_LABEL, serviceInstalled, servicePid, servicePlist,
-  serviceUpToDate, stopService, uninstallService } from "../scripts/mac-local/service.mjs";
+  serviceStatus, serviceUpToDate, stopService, uninstallService } from "../scripts/mac-local/service.mjs";
 import { hostCommand } from "../scripts/mac-local/stack.mjs";
 import { cleanupTestPostgres, DISPOSABLE_POSTGRES_MARKER, parsePostgresProcesses,
   parseSharedMemory } from "../scripts/dev/cleanup-test-postgres.mjs";
@@ -21,6 +21,8 @@ async function fixture(t, { loaded = false, pid = 4242 } = {}) {
     calls.push(args.join(" "));
     const [verb] = args;
     if (verb === "print") return state.loaded ? { code: 0, stdout: `${target} = {\n\tstate = running\n\tpid = ${state.pid}\n}\n` } : { code: 113, stdout: "" };
+    if (verb === "print-disabled") return { code: 0,
+      stdout: `disabled services = {\n\t"${SERVICE_LABEL}" => ${state.enabled ? "false" : "true"}\n}\n` };
     if (verb === "bootout") { if (!state.loaded) return { code: 3, stdout: "" }; state.loaded = false; return { code: 0, stdout: "" }; }
     if (verb === "bootstrap") { if (state.loaded || !state.enabled) return { code: 5, stdout: "" }; state.loaded = true; return { code: 0, stdout: "" }; }
     if (verb === "enable") { state.enabled = true; return { code: 0, stdout: "" }; }
@@ -92,6 +94,37 @@ test("uninstall stops the agent, removes the plist and clears the disable overri
   assert.equal(await uninstallService(f.runtime), "stopped_and_removed");
   assert.equal(await serviceInstalled(f.runtime), false);
   assert.equal(f.state.enabled, true);
+  assert.equal(await uninstallService(f.runtime), "removed");
+});
+
+test("status is read-only, exact, and stable before install, while running, and after stop", async t => {
+  const f = await fixture(t);
+  assert.deepEqual(await serviceStatus({ protectedRoot: root, logPath, env: {} }, f.runtime), {
+    installed: false, loaded: false, pid: undefined, enabled: true, definition: "absent", state: "not_installed",
+  });
+  assert.equal(await stat(join(f.home, "Library")).then(() => true, () => false), false,
+    "status must not create the LaunchAgents parent");
+  await installOrRefreshService({ protectedRoot: root, logPath, env: {} }, f.runtime);
+  assert.deepEqual(await serviceStatus({ protectedRoot: root, logPath, env: {} }, f.runtime), {
+    installed: true, loaded: true, pid: 4242, enabled: true, definition: "current", state: "running",
+  });
+  await stopService(f.runtime);
+  assert.deepEqual(await serviceStatus({ protectedRoot: root, logPath, env: {} }, f.runtime), {
+    installed: true, loaded: false, pid: undefined, enabled: false, definition: "current", state: "stopped",
+  });
+});
+
+test("a failed bootstrap is repeat-safe and uninstall remains idempotent", async t => {
+  const f = await fixture(t);
+  let failed = false;
+  const runtime = { ...f.runtime, launchctl: async args => {
+    if (args[0] === "bootstrap" && !failed) { failed = true; return { code: 5, stdout: "" }; }
+    return f.runtime.launchctl(args);
+  } };
+  await assert.rejects(installOrRefreshService({ protectedRoot: root, logPath, env: {} }, runtime), /launchctl_failed: bootstrap/u);
+  assert.equal(await serviceInstalled(f.runtime), true, "the complete plist is retained for a safe retry");
+  assert.equal(await installOrRefreshService({ protectedRoot: root, logPath, env: {} }, f.runtime), "reloaded");
+  assert.equal(await uninstallService(f.runtime), "stopped_and_removed");
   assert.equal(await uninstallService(f.runtime), "removed");
 });
 
