@@ -21,11 +21,12 @@ function fail(): never { throw new Error("task_model_selection_refused"); }
 export function captureTaskModelCatalogV1(value: readonly Readonly<{
   kind: OwnerTrustedLocalWorkerKindV1; policy?: OwnerTrustedLocalModelPolicyV1;
 }>[]): TaskModelCatalogV1 {
-  const items = value.filter(item => item.kind !== "hermes-021").map(item => {
-    if (!item.policy || !["codex", "claude-code", "hermes"].includes(item.kind)) fail();
-    return Object.freeze({ kind: item.kind as TaskModelWorkerKindV1, policy: item.policy });
-  });
-  if (items.length !== 3 || new Set(items.map(item => item.kind)).size !== items.length) fail();
+  const eligible = value.filter(item => item.kind !== "hermes-021");
+  if (eligible.some(item => !["codex", "claude-code", "hermes"].includes(item.kind))
+    || new Set(eligible.map(item => item.kind)).size !== eligible.length) fail();
+  const items = eligible.filter(item => item.policy !== undefined).map(item => Object.freeze({
+    kind: item.kind as TaskModelWorkerKindV1, policy: item.policy!,
+  }));
   return Object.freeze(items);
 }
 

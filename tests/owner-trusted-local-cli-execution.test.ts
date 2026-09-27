@@ -26,6 +26,16 @@ test("the Codex adapter pins its executable, empty task directory, and deadline 
     prompt: ownerTrustedLocalCliPromptV1(delivery.input), signal: (observed as { signal: AbortSignal }).signal });
 });
 
+test("an unconfigured Codex worker reaches the direct runner without a model override", async () => {
+  let observed: Record<string, unknown> | undefined;
+  const adapter = createOwnerTrustedLocalCodexExecutionAdapterV1({ async execute(input) {
+    observed = input; return { status: "completed" as const, text: "default text" };
+  } }, configuration);
+  await adapter.execute({ delivery, signal: new AbortController().signal });
+  assert.equal(Object.hasOwn(observed!, "model"), false);
+  assert.equal(Object.hasOwn(observed!, "effort"), false);
+});
+
 test("the Claude adapter maps an unsafe direct outcome to a non-publishable failure", async () => {
   const adapter = createOwnerTrustedLocalClaudeExecutionAdapterV1({ async execute() {
     return { status: "cleanup_uncertain" as const, reason: "process_group_still_running" };

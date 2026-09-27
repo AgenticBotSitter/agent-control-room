@@ -171,13 +171,22 @@ client tag and change nothing else.
 
 ### Protected model choices
 
-Model choices are installation policy, not browser configuration. Before starting the task host,
-add a `modelPolicy` to each worker in `<protected-root>/config/mac-local.json`. Keep only models
-the owner has approved and the installed CLI reports. The shape is:
+Model choices are optional installation policy, not browser configuration. An installation created
+before model selection has no `modelPolicy` fields and needs no migration: each such worker keeps
+using its existing CLI or protected profile default, and the task form offers no model choice for
+that worker.
+
+To enable model selection later, stop Control Room and edit the protected enablement record at the
+exact file `<protected-root>/config/mac-local.json`. Add `modelPolicy` inside only the worker object
+you want to enable; do not add it at the top level. Keep only models the owner has approved and the
+installed CLI reports. For example, the complete relevant Codex worker shape is:
 
 ```json
 {
+  "workerId": "worker:codex:mac-1",
   "kind": "codex",
+  "executablePath": "/absolute/path/to/codex",
+  "recordedVersion": "<the already-pinned version line>",
   "modelPolicy": {
     "models": ["<installed-codex-model>"],
     "defaultModel": "<installed-codex-model>",
@@ -207,11 +216,13 @@ limit”. Hermes uses named, worker-side credential profiles:
 ```
 
 Each Hermes profile's credentials stay in Hermes's own protected worker configuration. Do not put
-credentials in `mac-local.json`. At every startup Control Room checks the pinned version and the
-installed CLI's model/argument surface. A changed or unsupported policy makes only that worker
-unavailable; it is never accepted from a browser request. Stop Control Room before editing the
-protected file and start it normally afterward. Removing a model prevents new tasks from selecting
-it; existing run evidence remains readable.
+credentials in `mac-local.json`. At every startup Control Room checks an explicitly configured
+policy against the pinned installed CLI. A malformed, changed, or unsupported policy is refused
+fail-closed and the task host does not start with that worker. A policy is never accepted from a
+browser request. Start Control Room normally after saving the protected file. Removing a model
+prevents new tasks from selecting it; existing run evidence remains readable. Removing the whole
+`modelPolicy` object disables model selection for that worker and returns it to its prior default
+behavior.
 
 What is still open is the set of drills in the private installation checklist item 3: the phone-or-PC port test,
 a Mac sleep and wake, the VPS-side PostgreSQL and Tailscale restarts, and a forced certificate

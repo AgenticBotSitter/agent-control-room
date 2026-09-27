@@ -8,6 +8,7 @@ import { deliverOwnerTrustedLocalCliTaskV1, type OwnerTrustedLocalCliDeliveryV1 
 
 type Base = Omit<OwnerTrustedLocalCliDeliveryV1, "execute">;
 type Configuration = Readonly<{ executablePath: string; workingDirectory: string; deadlineMs: number } & (
+  Record<never, never> |
   { model: string; effort: string; supportsEffort?: boolean } |
   { select(jobId: string): Promise<{ model: string; effort: string; supportsEffort?: boolean }> }
 )>;

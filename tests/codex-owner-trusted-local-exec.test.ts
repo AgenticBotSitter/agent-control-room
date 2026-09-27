@@ -39,6 +39,17 @@ test("runs fixed arguments once, closes stdin, and exposes only the allowed envi
   assert.deepEqual(await readdir(cwd), []);
 });
 
+test("omits model arguments when protected model selection is not enabled", async () => {
+  const cwd = await taskDirectory();
+  const captured: { args?: readonly string[] } = {};
+  const selected = input(cwd);
+  const result = await adapter(captured).execute({ executablePath: selected.executablePath, prompt: selected.prompt,
+    workingDirectory: selected.workingDirectory, deadlineMs: selected.deadlineMs });
+  assert.equal(result.status, "completed");
+  assert.deepEqual(captured.args, ["exec", "--json", "--sandbox", "read-only", "--ephemeral", "--skip-git-repo-check",
+    "--color", "never", "-C", cwd, "-"]);
+});
+
 test("rejects a task before spawning when it is already canceled", async () => {
   const controller = new AbortController(); controller.abort();
   const result = await adapter().execute(input(await taskDirectory(), "hello", 10_000, controller.signal));

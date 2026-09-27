@@ -14,6 +14,15 @@ const catalog = captureTaskModelCatalogV1([
     efforts: ["default"], defaultEffort: "default" } },
 ]);
 
+test("workers without an explicit protected allowlist expose no model choices", () => {
+  const defaults = captureTaskModelCatalogV1([
+    { kind: "codex" }, { kind: "claude-code" }, { kind: "hermes" },
+  ]);
+  assert.deepEqual(defaults, []);
+  assert.deepEqual(taskModelOptionsV1(defaults), []);
+  assert.throws(() => resolveTaskModelV1(defaults, "codex", {}), /task_model_selection_refused/);
+});
+
 test("tampered model and effort values are refused before planning", () => {
   assert.throws(() => validateRequestedTaskModelV1(catalog, { model: "not-enabled", effort: "high" }),
     /task_model_selection_refused/);

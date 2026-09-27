@@ -371,7 +371,7 @@ export class TaskExecutionPlanner {
       SELECT tenant_id,project_id,$3,scope_kind,path,path_fold FROM control_task_declared_scopes
       WHERE tenant_id=$1 AND job_id=$2`, [this.scope.tenantId, sourceJobId, targetJobId]);
     const kind = this.modelKind(template);
-    if (!kind || !this.modelCatalog) return;
+    if (!kind || !this.modelCatalog?.some(item => item.kind === kind)) return;
     const source = (await tx.query<{ selection_key: string | null; effort: string | null }>(
       "SELECT selection_key,effort FROM control_task_model_selections WHERE tenant_id=$1 AND job_id=$2",
       [this.scope.tenantId, sourceJobId])).rows[0];

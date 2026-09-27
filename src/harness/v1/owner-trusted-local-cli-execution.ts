@@ -22,12 +22,13 @@ function safeConfiguration(value: unknown, claude: boolean): value is Readonly<{
   const record = value as Record<string, unknown>;
   const keys = Object.keys(record);
   const dynamic = typeof record.select === "function";
-  return keys.length === (dynamic ? 4 : claude ? 6 : 5) && keys.every(key => ["executablePath", "workingDirectory", "deadlineMs", "select",
+  const fixedSelection = typeof record.model === "string";
+  return keys.length === (dynamic ? 4 : fixedSelection ? claude ? 6 : 5 : 3) && keys.every(key => ["executablePath", "workingDirectory", "deadlineMs", "select",
     "model", "effort", ...(claude ? ["supportsEffort"] : [])].includes(key))
     && safePath(record.executablePath) && safePath(record.workingDirectory)
     && typeof record.deadlineMs === "number" && Number.isSafeInteger(record.deadlineMs)
     && record.deadlineMs >= 100 && record.deadlineMs <= 3_600_000
-    && (dynamic || typeof record.model === "string" && /^[A-Za-z0-9][A-Za-z0-9._:/+-]{0,179}$/u.test(record.model)
+    && (dynamic || !fixedSelection || typeof record.model === "string" && /^[A-Za-z0-9][A-Za-z0-9._:/+-]{0,179}$/u.test(record.model)
       && typeof record.effort === "string" && /^(?:low|medium|high|xhigh|max)$/u.test(record.effort)
       && (!claude || typeof record.supportsEffort === "boolean"));
 }
@@ -58,19 +59,20 @@ function mapped(result: Readonly<{ status: string; text?: string; reason?: strin
 }
 
 function capture(executor: Readonly<{ execute(input: Readonly<{ executablePath: string; prompt: string; workingDirectory: string;
-  deadlineMs: number; model: string; effort: string; supportsEffort: boolean; signal?: AbortSignal }>):
+  deadlineMs: number; model?: string; effort?: string; supportsEffort?: boolean; signal?: AbortSignal }>):
   Promise<Readonly<{ status: string; text?: string; reason?: string }>> }>,
   configuration: unknown, claude: boolean): OwnerTrustedLocalCliExecutionAdapterV1 {
   if (!executor || typeof executor.execute !== "function" || !safeConfiguration(configuration, claude)) return invalid();
   const fixed = Object.freeze({ ...configuration });
   return Object.freeze({ async execute(input: ExecutionInput) {
     if (!input || typeof input !== "object" || !(input.signal instanceof AbortSignal) || input.signal.aborted) invalid();
-    const selected = fixed.select ? await fixed.select(input.delivery.identity.jobId) : fixed as CliSelection;
-    if (typeof selected.model !== "string" || typeof selected.effort !== "string") invalid();
+    const selected = fixed.select ? await fixed.select(input.delivery.identity.jobId)
+      : typeof fixed.model === "string" ? fixed as CliSelection : undefined;
+    if (selected && (typeof selected.model !== "string" || typeof selected.effort !== "string")) invalid();
     const result = await executor.execute(Object.freeze({ executablePath: fixed.executablePath,
       workingDirectory: fixed.workingDirectory, deadlineMs: fixed.deadlineMs,
-      model: selected.model, effort: selected.effort,
-      supportsEffort: claude ? selected.supportsEffort === true : false,
+      ...(selected ? { model: selected.model, effort: selected.effort,
+        supportsEffort: claude ? selected.supportsEffort === true : false } : {}),
       prompt: ownerTrustedLocalCliPromptV1(input.delivery.input), signal: input.signal }));
     return mapped(result);
   } });

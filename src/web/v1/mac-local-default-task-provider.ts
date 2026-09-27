@@ -178,11 +178,11 @@ export const createTaskApplication: MacLocalTaskProviderV1["createTaskApplicatio
       const selected = workers[index]!;
       const lifecycle = createOwnerTrustedLocalCliLifecycleV1({ db: publisherPool.client,
         runIntegrityKey: keys.harness, publication, registerRun,
-        resolveModelSelection: async jobId => {
+        resolveModelSelection: selected.worker.modelPolicy ? async jobId => {
           const value = await selectedModel(selected.kind, jobId);
           return { model: value.model, effort: value.effort as "default" | "low" | "medium" | "high" | "xhigh" | "max",
             ...(value.provider ? { provider: value.provider, profile: value.profile! } : {}) };
-        } });
+        } : async () => ({ model: "default", effort: "default" as const }) });
       return { db: readPool.client, integrityKey: keys.deliveryReceipt,
         binding: { workerId: selected.worker.workerId, adapterId: selected.adapterId,
           adapterRevision: sha256Digest({ executablePath: selected.worker.executablePath,
@@ -199,17 +199,19 @@ export const createTaskApplication: MacLocalTaskProviderV1["createTaskApplicatio
       delivery: createOwnerTrustedLocalHermesDeliveryV1(common(0, (value, time, modelSelection) =>
         hermesLocalRunRegistrationV1(value, time, hermesHarnessVersion, modelSelection)),
       createOwnerTrustedLocalHermesExecV1(), { executablePath: workers[0]!.worker.executablePath,
-        select: async jobId => { const value = await selectedModel("hermes", jobId); return {
-          profile: value.profile!, provider: value.provider!, model: value.model }; },
+        ...(workers[0]!.worker.modelPolicy ? { select: async (jobId: string) => {
+          const value = await selectedModel("hermes", jobId); return {
+            profile: value.profile!, provider: value.provider!, model: value.model };
+        } } : { profile: runtime.hermes.profile, provider: runtime.hermes.provider, model: runtime.hermes.model }),
         workingDirectory: work.hermes, deadlineMs: 120_000 }) };
     const claude = createClaudeOwnerTrustedLocalQueueExecutorV1({ tenantId,
       preparation: prepared[1] as ClaudeCodeLocalDispatchPreparationV1,
       delivery: createOwnerTrustedLocalClaudeDeliveryV1(common(1, ClaudeCodeLocalRunRegistrationV1),
         createOwnerTrustedLocalClaudeExecV1(), { executablePath: workers[1]!.worker.executablePath,
-          workingDirectory: work.claude, deadlineMs: 120_000, select: async jobId => {
+          workingDirectory: work.claude, deadlineMs: 120_000, ...(workers[1]!.worker.modelPolicy ? { select: async (jobId: string) => {
             const value = await selectedModel("claude-code", jobId);
             return { model: value.model, effort: value.effort, supportsEffort: true };
-          } }) });
+          } } : {}) }) });
     const voidClaude = Object.freeze({ async deliver(target: Parameters<typeof claude.deliver>[0], signal: AbortSignal): Promise<void> {
       await claude.deliver(target, signal);
     } });
@@ -218,9 +220,9 @@ export const createTaskApplication: MacLocalTaskProviderV1["createTaskApplicatio
       delivery: createOwnerTrustedLocalCodexDeliveryV1(common(2, (value, time, modelSelection) =>
         codexOwnerTrustedLocalRunRegistrationV1(value, time, codexHarnessVersion, modelSelection)),
       createOwnerTrustedLocalCodexExecV1(), { executablePath: workers[2]!.worker.executablePath,
-        workingDirectory: work.codex, deadlineMs: 120_000, select: async jobId => {
+        workingDirectory: work.codex, deadlineMs: 120_000, ...(workers[2]!.worker.modelPolicy ? { select: async (jobId: string) => {
           const value = await selectedModel("codex", jobId); return { model: value.model, effort: value.effort };
-        } }) });
+        } } : {}) }) });
     const voidCodex = Object.freeze({ async deliver(target: Parameters<typeof codex.deliver>[0], signal: AbortSignal): Promise<void> {
       await codex.deliver(target, signal);
     } });
