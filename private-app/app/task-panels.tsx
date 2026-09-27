@@ -21,7 +21,7 @@ export function taskStateGuidance(detail: TaskDetail): TaskGuidance {
   const runningContradiction = detail.task.state === "running" && (detail.progressSource !== "configured" || !latestRun
     || latestRun.nativeState !== null && ["completed", "failed", "cancelled", "interrupted"].includes(latestRun.nativeState)
     || ["succeeded", "failed", "cancelled"].includes(latestRun.state));
-  const uncertain = detail.task.state === "orphaned" || runningContradiction || !!latestRun && (latestRun.stale
+  const uncertain = runningContradiction || !!latestRun && (latestRun.stale
     || latestRun.state === "disconnected" || latestRun.nativeState === "ambiguous"
     || latestRun.availability !== null && latestRun.availability !== "current");
   if (uncertain) return { heading: "Check what was already recorded", uncertain: true,
@@ -52,8 +52,8 @@ export function taskStateGuidance(detail: TaskDetail): TaskGuidance {
       explanation: "Control Room will not create replacement work automatically. Check the saved evidence before deciding whether to prepare a new task." };
     case "cancelled": return { heading: "The task was cancelled", uncertain: false,
       explanation: "Cancellation is recorded. This page will not restart the task; check saved status if an outside process may still be finishing." };
-    case "orphaned": return { heading: "Check what was already recorded", uncertain: true,
-      explanation: "The assignment was lost. Checking reads the saved status only. It does not retry this task or send replacement work." };
+    case "orphaned": return { heading: "Reassign or cancel this task", uncertain: false, href: "#task-assignment",
+      action: "Choose a worker again", explanation: "The old reservation ended without a confirmed run. Choose a worker again below, or leave the task unassigned." };
     case "rejected": return { heading: "The proposal was rejected", uncertain: false,
       explanation: "No work should start from this proposal. Create a new proposal only after deciding what should change." };
     default: return detail.task.state satisfies never;
@@ -74,8 +74,8 @@ export function TaskProposalForm({ draft, setDraft, modelOptions = [], pending, 
   setDraft: (value: TaskDraft) => void; modelOptions?: TaskPage["modelOptions"]; pending: boolean; preparing?: boolean; uncertain: boolean; onSave: () => void }) {
   const choices = modelOptions.flatMap(worker => worker.choices.map(choice => ({ ...choice, workerKind: worker.workerKind })));
   const selected = choices.find(choice => choice.key === draft.model);
-  return <form className="private-create" onSubmit={event => { event.preventDefault(); onSave(); }}>
-    <h2>Propose a task</h2><p className="private-note">Save what you want done. Saving does not assign or start an agent.
+  return <form id="new-task" className="private-create" onSubmit={event => { event.preventDefault(); onSave(); }}>
+    <h2>New task</h2><p className="private-note">Describe and save the work you want done. Saving does not assign or start an agent.
       Open the saved task to check preparation and assignment availability.</p>
     <p className="private-note">An agent reporting completion is not acceptance; result review is a separate step.
       Eligible capabilities, available slots, current work, and cancel or resume support are checked after preparation.
@@ -104,7 +104,7 @@ export function TaskProposalForm({ draft, setDraft, modelOptions = [], pending, 
           path: (value === "/" ? "" : value.replace(/\/$/u, "")).toLowerCase() })) })} />
     <p className="private-note">One repository-relative path per line. End a directory with “/”. Overlapping active assignments are refused.</p>
     <p id="task-secrets-note" className="private-note">Include the desired result and limits. Never paste passwords, tokens or private keys.</p>
-    <button type="submit" disabled={pending || preparing || uncertain}>{preparing ? "Reading experiment…" : pending ? "Saving proposal…" : "Save proposal"}</button>
+    <button type="submit" disabled={pending || preparing || uncertain}>{preparing ? "Reading experiment…" : pending ? "Saving task…" : "Save task"}</button>
   </form>;
 }
 

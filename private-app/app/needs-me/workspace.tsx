@@ -37,7 +37,7 @@ export function PrivateNeedsMe() {
     return () => { live = false; };
   }, [refresh, runtime.mode]);
   return <div className="private-shell"><PrivateHeader /><main id="private-main" tabIndex={-1}>
-    <h1>Needs Me</h1><p>Owner-only task attention and recovery observations.</p>
+    <h1>Needs attention</h1><p>Owner-only task attention and recovery observations.</p>
     <PrivateTaskAttention />
     {runtime.mode !== "local" ? <><button type="button" disabled={loading} onClick={() => {
       setLoading(true); setData(undefined); setError(undefined); setRefresh(value => value + 1);

@@ -59,6 +59,16 @@ test("compiled private assignment API records, reads and expires a real lease un
   now = instant + 70_000;
   const expired = await handler(req(path, "POST", { action: "expire", expectedInputDigest: options.inputDigest }));
   assert.equal(expired.status, 201, await expired.clone().text()); assert.equal((await expired.json()).receipt.leaseState, "expired");
+  const retryOptions = await (await handler(req())).json();
+  assert.equal(retryOptions.candidates.length, 1, "a terminal reservation must expose a route again");
+  const reassigned = await handler(req(path, "POST", { ...draft, nodeId: retryOptions.candidates[0].nodeId }));
+  assert.equal(reassigned.status, 201, await reassigned.clone().text());
+  const reassignedReceipt = (await reassigned.json()).receipt;
+  assert.notEqual(reassignedReceipt.leaseId, receipt.leaseId);
+  assert.equal(reassignedReceipt.leaseEpoch, 2);
+  const reassignedDetail = await (await handler(req(base))).json();
+  assert.equal(reassignedDetail.attempts[0].attemptNumber, 2);
+  assert.equal(reassignedDetail.task.state, "leased");
   assert.equal((await handler(req("/api/v1/session/logout", "POST"))).status, 204);
   assert.equal((await handler(req())).status, 401);
 });

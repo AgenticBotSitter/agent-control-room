@@ -60,7 +60,7 @@ export function TaskExecutionStage({ detail, mode, workspace, onRecorded }: {
     <section id="task-approval" className="private-panel" aria-label="Execution approval"><h2>Execution approval</h2>
       <p>Execution approval follows preparation and assignment. No permission has been granted and no agent starts from this page automatically.</p>
       <button type="button" disabled>Approve after assignment</button></section></>;
-  return <><PrivateTaskAssignment detail={detail} client={workspace.assignment} onRecorded={onRecorded} />
+  return <><PrivateTaskAssignment detail={detail} client={workspace.assignment} onRecorded={onRecorded} runOnAssign />
     <PrivateTaskApproval detail={detail} workspace={workspace} local /></>;
 }
 

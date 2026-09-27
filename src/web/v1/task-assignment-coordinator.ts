@@ -1530,13 +1530,13 @@ export class TaskAssignmentCoordinator {
   }
   /** One canonical eligibility predicate for both task detail and project aggregation. */
   private async configuredCandidatesInSession(tx: DatabaseSession, project: Pick<ProjectView, "lifecycle" | "origin">,
-    job: JobRecord, plan: Awaited<ReturnType<TaskExecutionPlanner["readInSession"]>>, hasStoredAssignment: boolean) {
+    job: JobRecord, plan: Awaited<ReturnType<TaskExecutionPlanner["readInSession"]>>, hasCurrentAssignment: boolean) {
     const workScope = plan && (plan.schema === "control-room.task-execution-plan/v7" || plan.schema === "control-room.task-execution-plan/v8")
       ? "bounded_text_review" as const : "configured_task" as const;
     const candidates: Array<{ nodeId: string; label: string; platform: "macos" | "windows" | "linux" | "cloud";
       workScope: "bounded_text_review" | "configured_task" }> = [];
-    if (!hasStoredAssignment && plan && this.planner.isPlanAssignable(plan)
-      && project.lifecycle === "active" && project.origin === "ordinary" && job.state === "proposed") {
+    if (!hasCurrentAssignment && plan && this.planner.isPlanAssignable(plan)
+      && project.lifecycle === "active" && project.origin === "ordinary" && ["proposed", "ready", "orphaned"].includes(job.state)) {
       for (const route of this.routes.filter(route => route.executorId === job.authority.allowedExecutor)) {
         const row = (await tx.query<{ payload: unknown }>("SELECT payload FROM control_nodes WHERE tenant_id=$1 AND id=$2",
           [this.scope.tenantId, route.nodeId])).rows[0];
@@ -1559,7 +1559,8 @@ export class TaskAssignmentCoordinator {
       if (!plan || plan.projectId !== projectId) throw new WebAccessError("not_found");
       const stored = await this.stored(tx, job);
       const receipt = stored ? this.receipt(job, stored.attempt, stored.lease) : null;
-      const { candidates } = await this.configuredCandidatesInSession(tx, project, job, plan, !!stored);
+      const { candidates } = await this.configuredCandidatesInSession(tx, project, job, plan,
+        !!stored && stored.lease.state === "active");
       const recommendation = candidates.length === 1 ? { state: "one_configured_route" as const,
         nodeId: candidates[0]!.nodeId, label: candidates[0]!.label, workScope: candidates[0]!.workScope,
         availability: "unknown" as const, startsWork: false as const, grantsExecutionAuthority: false as const }
@@ -1630,8 +1631,8 @@ export class TaskAssignmentCoordinator {
       return value;
     });
   }
-  private ids(jobId: string) {
-    const suffix = sha256Digest({ ...this.scope, jobId }).slice(7);
+  private ids(jobId: string, attemptNumber = 1) {
+    const suffix = sha256Digest(attemptNumber === 1 ? { ...this.scope, jobId } : { ...this.scope, jobId, attemptNumber }).slice(7);
     return { attemptId: `attempt:assignment:${suffix}`, leaseId: `lease:assignment:${suffix}`,
       transitionId: `transition:assignment:${suffix}`, idempotencyKey: `assignment:${suffix}`, auditId: `audit:assignment:${suffix}` };
   }
@@ -1648,25 +1649,29 @@ export class TaskAssignmentCoordinator {
   private receipt(job: JobRecord, attempt: AttemptRecord, lease: LeaseRecord) {
     if (attempt.tenantId !== job.tenantId || lease.tenantId !== job.tenantId || attempt.jobId !== job.id || lease.jobId !== job.id
       || lease.attemptId !== attempt.id || lease.nodeId !== attempt.nodeId || lease.epoch !== attempt.leaseEpoch
-      || attempt.attemptNumber !== 1) return unavailable();
+      || attempt.attemptNumber < 1) return unavailable();
     return { projectId: job.projectId, jobId: job.id, inputDigest: job.inputDigest, nodeId: lease.nodeId,
       attemptId: attempt.id, leaseId: lease.id, leaseEpoch: lease.epoch, acquiredAt: lease.acquiredAt, expiresAt: lease.expiresAt,
       leaseState: lease.state, leaseCurrent: lease.state === "active" && Date.parse(lease.expiresAt) > this.clock(),
       startsWork: false as const, grantsExecutionAuthority: false as const };
   }
   private async stored(tx: DatabaseSession, job: JobRecord, lock = true) {
-    const ids = this.ids(job.id);
     const row = (await tx.query<{ payload: unknown; state: string; version: number; node_id: string; attempt_id: string;
-      epoch: number; acquired_at: string | Date; expires_at: string | Date }>(
-      `SELECT payload,state,version,node_id,attempt_id,epoch,acquired_at,expires_at FROM control_leases
-       WHERE tenant_id=$1 AND job_id=$2 AND id=$3${lock ? " FOR UPDATE" : ""}`,
-      [this.scope.tenantId, job.id, ids.leaseId])).rows[0];
+      epoch: number; acquired_at: string | Date; expires_at: string | Date; attempt_number: number }>(
+      `SELECT l.payload,l.state,l.version,l.node_id,l.attempt_id,l.epoch,l.acquired_at,l.expires_at,a.attempt_number
+       FROM control_attempts a JOIN control_leases l
+         ON l.tenant_id=a.tenant_id AND l.job_id=a.job_id AND l.attempt_id=a.id
+       WHERE a.tenant_id=$1 AND a.job_id=$2
+       ORDER BY a.attempt_number DESC LIMIT 1${lock ? " FOR UPDATE OF a,l" : ""}`,
+      [this.scope.tenantId, job.id])).rows[0];
     if (!row) return undefined;
+    const ids = this.ids(job.id, Number(row.attempt_number));
+    if (row.attempt_id !== ids.attemptId) return unavailable();
     const lease = leaseRecordSchema.parse(row.payload);
     const attemptRow = (await tx.query<{ payload: unknown; state: string; version: number; node_id: string; lease_epoch: number; attempt_number: number }>(
       `SELECT payload,state,version,node_id,lease_epoch,attempt_number FROM control_attempts
        WHERE tenant_id=$1 AND job_id=$2 AND id=$3${lock ? " FOR UPDATE" : ""}`,
-      [this.scope.tenantId, job.id, ids.attemptId])).rows[0];
+      [this.scope.tenantId, job.id, row.attempt_id])).rows[0];
     if (!attemptRow) return unavailable();
     const attempt = attemptRecordSchema.parse(attemptRow.payload);
     const claim = (await tx.query<{ entity_id: string; safe_metadata: { attemptId?: string; leaseId?: string } }>(
@@ -1734,26 +1739,33 @@ export class TaskAssignmentCoordinator {
       const job = await this.job(tx, projectId, jobId);
       const plan = await this.planner.readInSession(tx, jobId);
       if (!plan || plan.projectId !== projectId || plan.tenantId !== this.scope.tenantId || job.inputDigest !== expectedInputDigest) conflict();
-      const ids = this.ids(jobId), canonical = new CanonicalStore(joined(tx));
       const prior = await this.stored(tx, job);
-      if (prior) {
+      const canReassign = !!prior && (prior.lease.state === "expired" || job.state === "orphaned");
+      if (prior && !canReassign) {
         if (prior.lease.nodeId !== nodeId) conflict();
         return { receipt: this.receipt(job, prior.attempt, prior.lease), replayed: true };
       }
+      const attemptNumber = (prior?.attempt.attemptNumber ?? 0) + 1;
+      const ids = this.ids(jobId, attemptNumber), canonical = new CanonicalStore(joined(tx));
+      // These attempts are reservation lineage. A reservation that expired
+      // before submission did not execute the task, so the job's execution
+      // failure retry policy does not turn that terminal lease into a dead end.
+      // The domain schema still bounds the lineage at 100 canonical attempts.
       // Fleet telemetry can select capacity, but it can never turn an
       // unprepared local process into an admitted worker.  The planner owns
       // the immutable installation policy and this check occurs before a new
       // lease is created; an already-recorded lease remains recoverable.
       this.planner.assertPlanAssignable(plan);
       const route = this.routes.find(route => route.nodeId === nodeId);
-      if (!route || project.lifecycle !== "active" || project.origin !== "ordinary" || job.state !== "proposed" || job.version !== 0
+      if (!route || project.lifecycle !== "active" || project.origin !== "ordinary" || !["proposed", "ready", "orphaned"].includes(job.state)
         || job.authority.allowedExecutor !== route.executorId || job.requiredCapability !== route.capabilityProbeId
-        || job.retryPolicy.maxAttempts !== 1 || job.retryPolicy.retryAfterOrphan || job.dependsOnJobIds.length) conflict();
+        || job.dependsOnJobIds.length || attemptNumber > 100) conflict();
       await this.assertTransitionAdmission(tx, route.nodeId);
-      if ((await tx.query("SELECT id FROM control_attempts WHERE tenant_id=$1 AND job_id=$2 LIMIT 1", [this.scope.tenantId, jobId])).rows.length) conflict();
       const request = requestRecordSchema.parse(await canonical.get(this.scope.tenantId, "request", plan.request.id));
       const workflow = workflowRecordSchema.parse(await canonical.get(this.scope.tenantId, "workflow", plan.workflow.id));
-      if (request.state !== "draft" || request.version !== 0 || workflow.state !== "proposed" || workflow.version !== 0) conflict();
+      const firstAssignment = !prior;
+      if (firstAssignment ? request.state !== "draft" || request.version !== 0 || workflow.state !== "proposed" || workflow.version !== 0
+        : request.state !== "accepted" || workflow.state !== "active") conflict();
       const row = (await tx.query<{ payload: unknown; state: string; version: number }>(
         "SELECT payload,state,version FROM control_nodes WHERE tenant_id=$1 AND id=$2 FOR UPDATE", [this.scope.tenantId, nodeId])).rows[0];
       if (!row) conflict();
@@ -1819,14 +1831,17 @@ export class TaskAssignmentCoordinator {
       if (commitDeadline <= now) conflict();
       authority.commitDeadline(commitDeadline);
       const occurredAt = new Date(now).toISOString(), actorRef = authority.actor;
-      for (const [kind, entityId, expectedVersion, toState, suffix] of [
-        ["request", request.id, 0, "submitted", "submit"], ["request", request.id, 1, "accepted", "accept"],
-        ["workflow", workflow.id, 0, "active", "activate"],
-      ] as const) await canonical.transition({ tenantId: this.scope.tenantId, kind, entityId, expectedVersion, toState,
-        transitionId: `${ids.transitionId}:${suffix}`, idempotencyKey: `${ids.idempotencyKey}:${suffix}`, actor: actorRef, occurredAt });
-      await canonical.transition({ tenantId: this.scope.tenantId, kind: "job", entityId: jobId, expectedVersion: 0, toState: "ready",
-        transitionId: `${ids.transitionId}:ready`, idempotencyKey: `${ids.idempotencyKey}:ready`, actor: actorRef, occurredAt });
-      const claimed = await canonical.claimReadyJob({ ...ids, tenantId: this.scope.tenantId, jobId, expectedJobVersion: 1,
+      if (firstAssignment) {
+        for (const [kind, entityId, expectedVersion, toState, suffix] of [
+          ["request", request.id, 0, "submitted", "submit"], ["request", request.id, 1, "accepted", "accept"],
+          ["workflow", workflow.id, 0, "active", "activate"],
+        ] as const) await canonical.transition({ tenantId: this.scope.tenantId, kind, entityId, expectedVersion, toState,
+          transitionId: `${ids.transitionId}:${suffix}`, idempotencyKey: `${ids.idempotencyKey}:${suffix}`, actor: actorRef, occurredAt });
+      }
+      const ready = job.state === "ready" ? job : (await canonical.transition({ tenantId: this.scope.tenantId, kind: "job", entityId: jobId,
+        expectedVersion: job.version, toState: "ready", transitionId: `${ids.transitionId}:ready`,
+        idempotencyKey: `${ids.idempotencyKey}:ready`, actor: actorRef, occurredAt })).entity as JobRecord;
+      const claimed = await canonical.claimReadyJob({ ...ids, tenantId: this.scope.tenantId, jobId, expectedJobVersion: ready.version,
         nodeId, actor: actorRef, acquiredAt: occurredAt, expiresAt: new Date(commitDeadline).toISOString() });
       for (const declared of declaredScopes) await tx.query(`INSERT INTO control_assignment_lease_scopes
         (tenant_id,lease_id,project_id,job_id,attempt_id,node_id,scope_kind,path,path_fold)
@@ -1850,8 +1865,9 @@ export class TaskAssignmentCoordinator {
       await this.projects.getViewInSession(tx, actor, projectId);
       const job = await this.job(tx, projectId, jobId), plan = await this.planner.readInSession(tx, jobId);
       if (!plan || plan.projectId !== projectId || plan.tenantId !== this.scope.tenantId || job.inputDigest !== expectedInputDigest) conflict();
-      const ids = this.ids(jobId), canonical = new CanonicalStore(joined(tx));
+      const canonical = new CanonicalStore(joined(tx));
       const stored = await this.stored(tx, job); if (!stored) conflict();
+      const ids = this.ids(jobId, stored.attempt.attemptNumber);
       const { lease, attempt } = stored;
       const occurredAt = new Date(this.clock()).toISOString();
       if (lease.state === "expired") {

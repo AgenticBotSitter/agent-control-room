@@ -330,11 +330,11 @@ test("unavailable project files do not claim an empty result set", () => {
 
 test("project navigation starts with only routes shared by hosted and Mac-local", () => {
   const html = renderToStaticMarkup(createElement(ProjectNavigation, { projectId: "project:alpha", current: "work" }));
-  for (const [label, path] of [["Overview", "/projects/project%3Aalpha"], ["Work", "/projects/project%3Aalpha/tasks"]]) {
+  for (const [label, path] of [["Overview", "/projects/project%3Aalpha"], ["Tasks", "/projects/project%3Aalpha/tasks"]]) {
     assert.match(html, new RegExp(`href="${path}"[^>]*>${label}`));
   }
   assert.doesNotMatch(html, /href="\/projects\/project%3Aalpha\/(?:files|reviews|activity|settings)"/);
-  assert.match(html, /href="\/projects\/project%3Aalpha\/tasks" aria-current="page">Work/);
+  assert.match(html, /href="\/projects\/project%3Aalpha\/tasks" aria-current="page">Tasks/);
   assert.doesNotMatch(html, />News</);
 });
 

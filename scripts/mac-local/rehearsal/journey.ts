@@ -5,7 +5,7 @@
 // worker runs a fake PINNED EXECUTABLE through the production process adapters -> pending review,
 // exactly once per agent, with a replay returning the same receipt and queuing nothing new.
 // The owner then reviews each result through the same HTTP API the website uses.
-// Usage: node --import tsx scripts/mac-local/rehearsal/journey.ts ABSOLUTE_REHEARSAL_DIR [--browser-proof|--model-allowlists]
+// Usage: node --import tsx scripts/mac-local/rehearsal/journey.ts ABSOLUTE_REHEARSAL_DIR [--browser-proof|--browser-e2e|--model-allowlists]
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
@@ -18,9 +18,9 @@ import { applyMacLocalFirstOwnerV1 } from "../first-owner-vps.mjs";
 import { serviceInstalled } from "../service.mjs";
 
 const [arg, mode] = process.argv.slice(2);
-if (!arg || ![3, 4].includes(process.argv.length) || mode !== undefined && !["--browser-proof", "--model-allowlists"].includes(mode)
+if (!arg || ![3, 4].includes(process.argv.length) || mode !== undefined && !["--browser-proof", "--browser-e2e", "--model-allowlists"].includes(mode)
   || !isAbsolute(arg) || resolve(arg) !== arg) {
-  process.stderr.write("usage: node --import tsx scripts/mac-local/rehearsal/journey.ts ABSOLUTE_REHEARSAL_DIR [--browser-proof|--model-allowlists]\n");
+  process.stderr.write("usage: node --import tsx scripts/mac-local/rehearsal/journey.ts ABSOLUTE_REHEARSAL_DIR [--browser-proof|--browser-e2e|--model-allowlists]\n");
   process.exit(2);
 }
 const root = resolve(arg), protectedRoot = join(root, "protected");
@@ -210,6 +210,15 @@ async function main() {
     assert.ok(cookie.startsWith("control_room_local_owner="));
     return cookie;
   };
+  if (mode === "--browser-e2e") {
+    const browser = spawnSync("pnpm", ["exec", "playwright", "test", "tests/browser/mac-local-owner-journey.spec.ts"], {
+      cwd: process.cwd(), encoding: "utf8", timeout: 12 * 60_000, stdio: "inherit",
+      env: { ...process.env, CONTROL_ROOM_E2E_ORIGIN: origin, CONTROL_ROOM_E2E_OWNER_CODE: ownerCode,
+        CONTROL_ROOM_E2E_ROOT: root },
+    });
+    assert.equal(browser.status, 0, `owner browser journey failed with status ${browser.status}`);
+    return;
+  }
   let cookie = await signIn();
   const projectResponse = await fetch(new URL("/api/v1/projects", origin), {
     method: "POST", headers: { origin, cookie, "content-type": "application/json", "idempotency-key": "journey-rehearsal-project" },

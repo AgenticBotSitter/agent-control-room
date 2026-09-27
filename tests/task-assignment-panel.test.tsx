@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { TaskAssignmentPanel } from "../private-app/app/task-assignment";
+import { retainAssignmentNodeSelectionV1, TaskAssignmentPanel } from "../private-app/app/task-assignment";
 import { retainPreparedWorkerSelectionV1 } from "../private-app/app/task-planning";
 import { HERMES_LOCAL_ADAPTER_V1 } from "../src/harness/hermes-local-v1/task-planning-contract";
 import { retainEquivalentTaskDetailV1 } from "../private-app/app/task-workspace";
@@ -39,6 +39,22 @@ test("multiple configured routes remain an owner choice", () => {
   assert.match(html, /Choose a machine/);
   assert.match(html, /<option value="" selected="">Choose a machine/);
   assert.doesNotMatch(html, /<option value="node:(one|two)" selected="">/);
+});
+
+test("local assignment offers one clear assign-and-run action and keeps a valid refresh selection", () => {
+  const options = { projectId: "project:local", jobId: "job:local", inputDigest: `sha256:${"a".repeat(64)}`,
+    receipt: null, startsWork: false as const, candidateEvidence: "configured_routes_only" as const,
+    recommendation: { state: "one_configured_route" as const, nodeId: "node:local", label: "Local agent",
+      workScope: "configured_task" as const, availability: "unknown" as const, startsWork: false as const,
+      grantsExecutionAuthority: false as const },
+    candidates: [{ nodeId: "node:local", label: "Local agent", platform: "macos" as const, workScope: "configured_task" as const }] };
+  const html = renderToStaticMarkup(createElement(TaskAssignmentPanel, { options, nodeId: "node:local", setNodeId() {},
+    pending: false, uncertain: false, assignAndRun: true, onChange() {}, onRetry() {} }));
+  assert.match(html, />Assign and run</);
+  assert.match(html, /records the reservation, owner approval and queue submission separately/i);
+  assert.doesNotMatch(html, /Assign without starting/);
+  assert.equal(retainAssignmentNodeSelectionV1(options, "node:local"), "node:local");
+  assert.equal(retainAssignmentNodeSelectionV1(options, "node:gone"), "node:local");
 });
 
 test("an unchanged prepared-worker refresh preserves the owner's selection", () => {
