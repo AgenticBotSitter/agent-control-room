@@ -103,7 +103,8 @@ CREATE FUNCTION guard_work_intake_idempotency_write() RETURNS trigger
 LANGUAGE plpgsql AS $$
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_roles r WHERE r.rolname='control_room_work_intake'
-    AND pg_has_role(session_user,r.oid,'member')) THEN
+    AND pg_has_role(session_user,r.oid,'member')
+    AND EXISTS (SELECT 1 FROM pg_roles s WHERE s.rolname=session_user AND NOT s.rolsuper)) THEN
     RETURN NEW;
   END IF;
   IF TG_OP='INSERT' THEN
@@ -160,10 +161,12 @@ CREATE POLICY control_idempotency_existing_access ON control_idempotency
 CREATE POLICY control_idempotency_work_intake_scope ON control_idempotency
   AS RESTRICTIVE FOR ALL
   USING (NOT EXISTS (SELECT 1 FROM pg_roles r WHERE r.rolname='control_room_work_intake'
-      AND pg_has_role(session_user,r.oid,'member'))
+      AND pg_has_role(session_user,r.oid,'member')
+      AND EXISTS (SELECT 1 FROM pg_roles s WHERE s.rolname=session_user AND NOT s.rolsuper))
     OR operation_scope ~ '^work-batches\.propose/v1:[A-Za-z0-9][A-Za-z0-9._:-]{2,179}$')
   WITH CHECK (NOT EXISTS (SELECT 1 FROM pg_roles r WHERE r.rolname='control_room_work_intake'
-      AND pg_has_role(session_user,r.oid,'member'))
+      AND pg_has_role(session_user,r.oid,'member')
+      AND EXISTS (SELECT 1 FROM pg_roles s WHERE s.rolname=session_user AND NOT s.rolsuper))
     OR operation_scope ~ '^work-batches\.propose/v1:[A-Za-z0-9][A-Za-z0-9._:-]{2,179}$');
 
 CREATE FUNCTION work_intake_canonical_jsonb(input jsonb) RETURNS text
@@ -186,11 +189,12 @@ END $$;
 REVOKE ALL ON FUNCTION work_intake_canonical_jsonb(jsonb) FROM PUBLIC;
 
 CREATE FUNCTION guard_work_intake_audit_event_insert() RETURNS trigger
-LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,public AS $$
+LANGUAGE plpgsql SET search_path=pg_catalog,public AS $$
 DECLARE material jsonb; expected_digest text; expected_hash text;
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_roles r WHERE r.rolname='control_room_work_intake'
-    AND pg_has_role(session_user,r.oid,'member')) THEN
+    AND pg_has_role(session_user,r.oid,'member')
+    AND EXISTS (SELECT 1 FROM pg_roles s WHERE s.rolname=session_user AND NOT s.rolsuper)) THEN
     RETURN NEW;
   END IF;
   IF NEW.id !~ '^audit:work-intake[-:]' OR NEW.actor_type<>'agent'
@@ -270,7 +274,8 @@ CREATE FUNCTION enforce_work_intake_audit_event_head() RETURNS trigger
 LANGUAGE plpgsql AS $$
 BEGIN
   IF EXISTS (SELECT 1 FROM pg_roles r WHERE r.rolname='control_room_work_intake'
-      AND pg_has_role(session_user,r.oid,'member')) AND NOT EXISTS (
+      AND pg_has_role(session_user,r.oid,'member')
+      AND EXISTS (SELECT 1 FROM pg_roles s WHERE s.rolname=session_user AND NOT s.rolsuper)) AND NOT EXISTS (
     SELECT 1 FROM control_audit_chain_heads h
     WHERE h.tenant_id=NEW.tenant_id AND h.chain_partition=NEW.chain_partition
       AND h.event_count>=NEW.chain_sequence
@@ -290,12 +295,14 @@ CREATE POLICY audit_events_existing_access ON audit_events
 CREATE POLICY audit_events_work_intake_scope ON audit_events
   AS RESTRICTIVE FOR ALL
   USING (NOT EXISTS (SELECT 1 FROM pg_roles r WHERE r.rolname='control_room_work_intake'
-      AND pg_has_role(session_user,r.oid,'member'))
+      AND pg_has_role(session_user,r.oid,'member')
+      AND EXISTS (SELECT 1 FROM pg_roles s WHERE s.rolname=session_user AND NOT s.rolsuper))
     OR (id ~ '^audit:work-intake[-:]' AND action IN (
       'work_batches.propose','work_batches.propose.replayed',
       'work_batches.propose.refused','work_batches.action.refused')))
   WITH CHECK (NOT EXISTS (SELECT 1 FROM pg_roles r WHERE r.rolname='control_room_work_intake'
-      AND pg_has_role(session_user,r.oid,'member'))
+      AND pg_has_role(session_user,r.oid,'member')
+      AND EXISTS (SELECT 1 FROM pg_roles s WHERE s.rolname=session_user AND NOT s.rolsuper))
     OR (id ~ '^audit:work-intake[-:]' AND action IN (
       'work_batches.propose','work_batches.propose.replayed',
       'work_batches.propose.refused','work_batches.action.refused')));
@@ -305,7 +312,8 @@ LANGUAGE plpgsql AS $$
 DECLARE genesis constant text := 'sha256:' || repeat('0',64);
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_roles r WHERE r.rolname='control_room_work_intake'
-    AND pg_has_role(session_user,r.oid,'member')) THEN
+    AND pg_has_role(session_user,r.oid,'member')
+    AND EXISTS (SELECT 1 FROM pg_roles s WHERE s.rolname=session_user AND NOT s.rolsuper)) THEN
     RETURN NEW;
   END IF;
   IF TG_OP='INSERT' THEN
@@ -336,7 +344,8 @@ CREATE FUNCTION enforce_work_intake_audit_head_nonempty() RETURNS trigger
 LANGUAGE plpgsql AS $$
 BEGIN
   IF EXISTS (SELECT 1 FROM pg_roles r WHERE r.rolname='control_room_work_intake'
-      AND pg_has_role(session_user,r.oid,'member')) AND NOT EXISTS (
+      AND pg_has_role(session_user,r.oid,'member')
+      AND EXISTS (SELECT 1 FROM pg_roles s WHERE s.rolname=session_user AND NOT s.rolsuper)) AND NOT EXISTS (
     SELECT 1 FROM control_audit_chain_heads h JOIN audit_events e
       ON e.tenant_id=h.tenant_id AND e.chain_partition=h.chain_partition
       AND e.chain_sequence=h.event_count AND e.event_hash=h.head_hash

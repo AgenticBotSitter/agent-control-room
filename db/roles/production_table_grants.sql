@@ -67,6 +67,7 @@ GRANT INSERT (tenant_id, operation_scope, idempotency_key, request_digest, statu
   ON control_idempotency TO control_room_work_intake;
 GRANT UPDATE (status, result, completed_at) ON control_idempotency TO control_room_work_intake;
 GRANT UPDATE (head_hash, event_count, updated_at) ON control_audit_chain_heads TO control_room_work_intake;
+GRANT EXECUTE ON FUNCTION work_intake_canonical_jsonb(jsonb) TO control_room_work_intake;
 
 ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON TABLES FROM PUBLIC;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON SEQUENCES FROM PUBLIC;
