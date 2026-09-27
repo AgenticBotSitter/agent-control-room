@@ -100,9 +100,9 @@ async function waitForLatestDisposableLeaseExpiry(jobId: string) {
 }
 
 async function openResult(page: Page) {
+  await refreshUntil(page, "Read result");
   await expect(page.getByText(/Local agent evidence/).first()).toBeVisible();
   await expect(page.getByText(/Legacy adapter evidence/)).toHaveCount(0);
-  await refreshUntil(page, "Read result");
   await page.getByRole("button", { name: "Read result" }).first().click();
   await expect(page.getByRole("heading", { name: "Received result" })).toBeVisible();
 }
