@@ -49,11 +49,24 @@ async function expectHealthy(page: Page) {
     .toHaveCount(0, { timeout: 20_000 });
 }
 
-function observeBrowserErrors(page: Page, errors: string[]) {
+function observeBrowserErrors(page: Page, errors: string[], observeHttpFailures = false) {
   page.on("pageerror", error => errors.push(error.message));
   page.on("console", message => {
-    if (["error", "warning"].includes(message.type())) errors.push(message.text());
+    if (["error", "warning"].includes(message.type())) {
+      if (/^Failed to load resource: the server responded with a status of \d+/.test(message.text())) return;
+      const location = message.location().url;
+      errors.push(`${message.text()}${location ? ` (${new URL(location).pathname})` : ""}`);
+    }
   });
+  if (observeHttpFailures) page.on("response", response => {
+    if (response.status() >= 400) errors.push(`HTTP ${response.status()} ${new URL(response.url()).pathname}`);
+  });
+}
+
+async function prepareAcceptance(page: Page) {
+  const attestation = page.getByLabel("I read it and it’s correct");
+  if (await attestation.count()) await attestation.check();
+  await expect(page.getByRole("button", { name: "Accept", exact: true })).toBeEnabled();
 }
 
 async function activateTwice(locator: Locator) {
@@ -152,7 +165,7 @@ test.describe("disposable owner website adversarial attacks", () => {
 
   test("readiness, invalid filters, reloads and layout tell one coherent human story", async ({ page }) => {
     const browserErrors: string[] = [];
-    observeBrowserErrors(page, browserErrors);
+    observeBrowserErrors(page, browserErrors, true);
     await signIn(page);
 
     await page.goto("/");
@@ -353,10 +366,11 @@ test.describe("disposable owner website adversarial attacks", () => {
     await refreshUntil(staleReview, "Read result");
     await staleReview.getByRole("button", { name: "Read result" }).first().click();
     await expect(staleReview.getByRole("heading", { name: "Received result" })).toBeVisible();
-    await expect(staleReview.getByRole("button", { name: "Accept quality" })).toBeVisible();
+    await prepareAcceptance(page);
+    await prepareAcceptance(staleReview);
     await Promise.all([
-      page.getByRole("button", { name: "Accept quality" }).click(),
-      staleReview.getByRole("button", { name: "Accept quality" }).click(),
+      page.getByRole("button", { name: "Accept", exact: true }).click(),
+      staleReview.getByRole("button", { name: "Accept", exact: true }).click(),
     ]);
     await expect.poll(async () => `${await page.locator("body").innerText()}\n${await staleReview.locator("body").innerText()}`,
       { timeout: 20_000 }).toMatch(/Saved: quality acceptance/);
@@ -393,7 +407,8 @@ test.describe("disposable owner website adversarial attacks", () => {
     await page.getByRole("link", { name: "Open revised task" }).click();
     await expect(page.getByRole("button", { name: "Assign and run" })).toBeEnabled();
     await assignAndOpenResult(page, true);
-    await page.getByRole("button", { name: "Accept quality" }).click();
+    await prepareAcceptance(page);
+    await page.getByRole("button", { name: "Accept", exact: true }).click();
     await expect(page.getByText(/Saved: quality acceptance/)).toBeVisible();
 
     for (const path of [projectPath, `${projectPath}/tasks`, `${projectPath}/reviews`,

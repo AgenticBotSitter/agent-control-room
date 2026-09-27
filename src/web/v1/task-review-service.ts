@@ -125,7 +125,11 @@ export class WebTaskReviewService {
       || job.state !== row.state || job.version !== Number(row.version) || job.authority.projectId !== projectId
       || job.authority.digest !== computeAuthorityDigest(job.authority))
       throw new Error("review_task_unavailable");
-    const snapshot = await gate.snapshot(this.scope.tenantId, targetId);
+    const snapshot = await gate.snapshot(this.scope.tenantId, targetId).catch((error: unknown) => {
+      if (error instanceof CompletionGateErrorV1 && error.safeCode === "record_not_found")
+        throw new WebAccessError("not_found");
+      throw error;
+    });
     if (snapshot.target.projectId !== projectId || snapshot.target.kind !== "document")
       throw new WebAccessError("not_found");
     const profile = await gate.getRecord(this.scope.tenantId, snapshot.target.acceptanceProfileId, "profile") as CompletionAcceptanceProfileV1;

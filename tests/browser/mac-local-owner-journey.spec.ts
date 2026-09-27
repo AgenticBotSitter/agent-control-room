@@ -135,7 +135,7 @@ test("owner completes the real local website journey for every configured worker
   await page.getByRole("button", { name: "Sign in" }).click();
   await expect(page.getByRole("heading", { name: "Projects" })).toBeVisible();
 
-  await page.getByLabel("Project name").fill("Owner browser journey");
+  await page.getByRole("textbox", { name: "Project name", exact: true }).fill("Owner browser journey");
   await page.getByLabel("What do you want to accomplish?").fill("Exercise the complete local owner workflow in a disposable rehearsal.");
   await page.getByRole("button", { name: "Create project" }).click();
   await expect(page.getByRole("heading", { name: "Owner browser journey" })).toBeVisible();

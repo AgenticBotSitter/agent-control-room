@@ -153,7 +153,7 @@ export function PrivateHome() {
     }, () => { if (live) setData(current => ({ ...current, [key]: { state: "unavailable" } })); });
     const reads = [settle(projects.list(), "projects"), settle(readTaskHomeActivity(), "activity"),
       settle(readTaskAttention(), "attention")];
-    if (runtime.mode !== "local") reads.push(settle(readPrivateConnections(), "connections"));
+    if (runtime.mode === "hosted") reads.push(settle(readPrivateConnections(), "connections"));
     void Promise.all(reads);
     return () => { live = false; };
   }, [generation, projects, runtime.mode, runtime.status]);
