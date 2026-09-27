@@ -316,12 +316,13 @@ test("the workflow keeps its read-only, fork-safe shape", () => {
   assert.match(workflow, /^permissions:\n {2}contents: read$/mu, "contents must stay read-only");
   assert.match(workflow, /persist-credentials: false/u);
   assert.match(workflow, /pnpm install --frozen-lockfile --ignore-scripts/u);
-  // Anchored to the expression form, not the word: the header comment says the run
-  // has no access to secrets, and a substring search matches that prose.
-  assert.ok(
-    !/\$\{\{\s*secrets\./u.test(workflow),
-    "the workflow must not read secrets",
-  );
+  const secretExpressions = [...workflow.matchAll(/\$\{\{\s*secrets\.([A-Z0-9_]+)\s*\}\}/gu)]
+    .map(match => match[1]);
+  assert.deepEqual(secretExpressions, ["CONTROL_ROOM_PRIVATE_NAMES"],
+    "only the optional private-name denylist may be read");
+  assert.match(workflow,
+    /CONTROL_ROOM_PRIVATE_NAMES:\s*\$\{\{\s*secrets\.CONTROL_ROOM_PRIVATE_NAMES\s*\}\}/u,
+    "the denylist must be passed only through the guard's named environment variable");
   assert.ok(!/runs-on:.*self-hosted/u.test(workflow), "no contributor-hosted runners");
   assert.match(workflow, /cancel-in-progress: true/u, "superseded runs must still cancel");
 });
