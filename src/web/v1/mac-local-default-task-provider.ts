@@ -18,7 +18,7 @@ import { MAC_LOCAL_TASK_PROVIDER_V1, MAC_LOCAL_THREE_AGENT_KINDS_V1,
 import { loadMacLocalTaskRuntimeFromRootV1 } from "./mac-local-task-runtime";
 import { openMacLocalRollbackCheckpointStoreV1 } from "./mac-local-rollback-checkpoint-store";
 import { buildMacLocalTaskTemplatesV1, MAC_LOCAL_MAX_PROJECTS_V1 } from "./mac-local-task-provider-templates";
-import { createMacLocalTextScenarioV1 } from "./mac-local-owner-review-profile";
+import { createMacLocalHumanVerificationRegistryV1, createMacLocalTextScenarioV1 } from "./mac-local-owner-review-profile";
 import { createMacLocalLiveProjectProvisionerV1 } from "./mac-local-live-projects";
 import { createTaskQualityScenarioRegistryV1 } from "./task-quality-coordinator";
 import { checkMacLocalNodeKeyPinV1 } from "./mac-local-node-key-pin";
@@ -126,14 +126,17 @@ export const createTaskApplication: MacLocalTaskProviderV1["createTaskApplicatio
     // ordinary host must never initialize the review authority on startup.
     const existing = await readPool.client.query("SELECT revision FROM control_completion_gate_integrity WHERE tenant_id=$1", [tenantId]);
     if (existing.rows.length !== 1) throw new Error("mac_local_first_owner_setup_missing");
-    // Only the web login may add the fixed owner-review profile (migration 0086
-    // admits exactly that shape); the coordinator's guard refuses every profile.
+    // Only the web login may add the fixed owner-review profile; the
+    // coordinator's guard refuses every profile. Startup and later project
+    // discovery share the version-aware live-project provisioner below.
     const profileGate = new CompletionGateStoreV1(input.database.client, keys.review, checkpoints);
-    for (const profile of built.profiles) await profileGate.registerProfile(profile);
     const templateRegistry = createNativeTaskTemplateRegistryV1(built.templates);
     const scenarioRegistry = createTaskQualityScenarioRegistryV1(built.profiles.map(createMacLocalTextScenarioV1));
+    const humanVerifications = createMacLocalHumanVerificationRegistryV1(built.profiles);
     const liveProjects = createMacLocalLiveProjectProvisionerV1({ db: input.database.client, tenantId, workspaceId,
-      configuration, runtime, profileGate, templates: templateRegistry, scenarios: scenarioRegistry, initialProjects: projects });
+      configuration, runtime, profileGate, templates: templateRegistry, scenarios: scenarioRegistry,
+      humanVerifications, initialProjects: projects });
+    await liveProjects.initialize();
     const workers: SelectedWorker[] = (["hermes", "claude", "codex"] as const).map(kind => {
       const workerKind: "hermes" | "claude-code" | "codex" = kind === "claude" ? "claude-code" : kind;
       const worker = configuration.enablement.workers.find(value => value.kind === workerKind);
@@ -235,7 +238,8 @@ export const createTaskApplication: MacLocalTaskProviderV1["createTaskApplicatio
         tasks: { harnessIntegrityKey: keys.harness, modelCatalog,
           results: { integrityKey: keys.results, storageClass: "local", storage },
           reviews: { integrityKey: keys.review, checkpoints: checkpointStore },
-          ownerReviews: { integrityKey: keys.review, checkpoints: checkpointStore } } },
+          ownerReviews: { integrityKey: keys.review, checkpoints: checkpointStore },
+          manualVerificationScenarios: humanVerifications } },
       databaseRoles, openDatabase: openCoordinatorDatabase,
       coordinator: { scope: { tenantId, workspaceId }, planning, routes: built.routes,
         ensurePlanningProject: liveProjects.ensureProject,

@@ -31,6 +31,9 @@ test("the real Mac-local wrapper signs in locally and reaches the existing proje
   const signedOutApi = await app.handle(request("/api/v1/projects"), () => new Response("unused"));
   assert.equal(signedOutApi.status, 401);
   assert.deepEqual(await signedOutApi.json(), { error: "authentication_required" });
+  const signedOutFile = await app.handle(request("/api/v1/projects/project:test/tasks/job:test/files/artifact:test?disposition=preview&token=untrusted"),
+    () => new Response("unused"));
+  assert.equal(signedOutFile.status, 401, "file preview requires an authenticated owner session before a ticket is considered");
   for (const path of ["/", "/projects", "/projects/project:unknown/tasks"]) {
     const signedOutPage = await app.handle(request(path), () => { throw new Error("must not render signed-out page"); });
     assert.equal(signedOutPage.status, 303);

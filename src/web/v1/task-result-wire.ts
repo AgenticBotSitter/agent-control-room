@@ -37,6 +37,8 @@ export const taskResultMetadataSchema = z.object({ artifactId: id, attemptId: id
     provider: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:/+-]{0,179}$/).optional(),
     profile: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:/+-]{0,179}$/).optional() }).strict().optional(),
   qualityAccepted: z.literal(false),
+  fileAccess: z.object({ previewHref: z.string().startsWith("/api/v1/").max(4096),
+    downloadHref: z.string().startsWith("/api/v1/").max(4096), expiresAt: time }).strict().optional(),
   /** Bound to this result artifact only; missing never means zero changes. */
   worktreeChangeSummary: taskWorktreeChangeSummarySchema.optional() }).strict();
 export type TaskResultMetadata = z.infer<typeof taskResultMetadataSchema>;

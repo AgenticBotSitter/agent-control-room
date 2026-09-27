@@ -23,6 +23,7 @@ GRANT SELECT ON control_identities, control_role_grants, workspaces, control_web
   control_connection_registry_heads, control_connection_enrollments,
   control_connection_authenticated_telemetry_receipts, control_requests, control_workflows, control_jobs, control_leases,
   control_attempts, control_harness_runs, control_harness_run_events, control_web_task_commands,
+  control_task_execution_plans,
   control_artifact_manifests, control_native_artifact_receipts, control_completion_gate_records,
   control_completion_gate_integrity, control_web_task_review_commands, control_native_review_plans,
   control_news_story_versions, control_news_source_observations, control_news_source_settings, control_news_story_archives, control_news_article_details, control_idea_sessions, control_idea_contributions,
@@ -45,8 +46,6 @@ GRANT INSERT ON control_web_sessions, adapter_registry, projects, control_manual
   control_policy_decisions, control_project_lifecycle_events,
   control_project_coordinator_heads, control_project_delegation_policies TO control_room_private_web;
 GRANT INSERT ON control_task_model_selections, control_task_declared_scopes TO control_room_private_web;
-GRANT INSERT ON control_project_coordinator_heads, control_project_delegation_policies
-  TO control_room_private_web;
 -- Coordinator lifecycle idempotency ledger: exact-match replay before any
 -- head mutation. SELECT plus the five inserted columns plus the completion
 -- update; INSERT is column-scoped so the role can never smuggle

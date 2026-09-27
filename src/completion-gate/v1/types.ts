@@ -9,6 +9,7 @@ export interface CompletionPrincipalV1 {
   workerId?: string;
   agentProfileId?: string;
   harness?: string;
+  adapterId?: string;
   modelFamily?: string;
 }
 

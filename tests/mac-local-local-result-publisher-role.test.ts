@@ -212,6 +212,11 @@ test("the native results role submits a published result for review through the 
     reviewIntegrityKey: f.reviewKey, checkpoints: f.checkpoints, storageClass: "local", storage });
   const submitted = await service.submit(binding.tenantId, "run:publisher-role-c");
   assert.equal(submitted.replayed, false);
+  assert.deepEqual(submitted.target.producer, {
+    actorId: binding.nodeId, actorType: "agent", workerId: "worker:publisher:mac-3",
+    agentProfileId: `agent-profile:${packet.connectorProfileDigest.slice("sha256:".length)}`,
+    harness: "hermes", adapterId: HERMES_LOCAL_ADAPTER_V1, modelFamily: "model-family:hermes",
+  }, "the restricted results path retains every trusted producer-independence axis");
   assert.equal((await f.db.query("SELECT count(*)::int AS n FROM control_completion_gate_records WHERE tenant_id=$1 AND kind='target'",
     [binding.tenantId])).rows[0]?.n, 1);
   const replay = await service.submit(binding.tenantId, "run:publisher-role-c");

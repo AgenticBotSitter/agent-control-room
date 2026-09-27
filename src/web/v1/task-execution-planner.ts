@@ -256,6 +256,33 @@ type Row = { tenant_id: string; project_id: string; source_job_id: string; job_i
 const joined = (tx: DatabaseSession): DatabaseClient => ({ query: tx.query.bind(tx), transaction: async work => work(tx),
   transactionWithPreCommitCheck: async (work, check) => { const result = await work(tx); await check(); return result; } });
 const fail = (): never => { throw new Error("task_execution_plan_unavailable"); };
+function taskExecutionPlanTagV1(key: Uint8Array, plan: Plan) {
+  const version = plan.schema.slice("control-room.task-execution-plan/v".length);
+  return hmacSha256Tag(key, { purpose: `task-execution-plan/v${version}`, plan });
+}
+
+/** Authenticated, read-only lineage for task-page navigation. */
+export async function readTaskRevisionLinksV1(tx: DatabaseSession, integrityKey: Uint8Array,
+  tenantId: string, projectId: string, jobId: string) {
+  localId.parse(tenantId); localId.parse(projectId); localId.parse(jobId);
+  const rows = (await tx.query<Row>(`SELECT tenant_id,project_id,source_job_id,job_id,plan,auth_tag
+    FROM control_task_execution_plans WHERE tenant_id=$1 AND project_id=$2 AND (job_id=$3 OR source_job_id=$3)
+    ORDER BY job_id COLLATE "C"`, [tenantId, projectId, jobId])).rows;
+  const plans = rows.map(row => {
+    const plan = planSchema.parse(row.plan), expected = Buffer.from(taskExecutionPlanTagV1(integrityKey, plan));
+    const actual = Buffer.from(row.auth_tag);
+    if (expected.length !== actual.length || !timingSafeEqual(expected, actual) || row.tenant_id !== plan.tenantId
+      || row.project_id !== plan.projectId || row.source_job_id !== plan.sourceJobId || row.job_id !== plan.job.id) fail();
+    return plan;
+  });
+  const current = plans.find(plan => plan.job.id === jobId);
+  const previousJobId = current && "revision" in current ? current.revision.fromJobId : null;
+  const children = plans.filter(plan => plan.job.id !== jobId && "revision" in plan && plan.revision.fromJobId === jobId);
+  if (children.length > 1) fail();
+  const nextJobId = children[0]?.job.id ?? null;
+  const revisionNumber = current && "revision" in current ? current.revision.revisionNumber : 0;
+  return Object.freeze({ previousJobId, nextJobId, revisionNumber });
+}
 const immutableJob = (job: JobRecord) => ({ ...job, state: "proposed", version: 0, updatedAt: job.createdAt });
 const taskExecutionPlannerDatabases = new WeakMap<object, DatabaseClient>();
 export const SCHEDULE_ASSIGNMENT_SERVICE_ACTOR_V1 = "service:schedule-assignment:v1";
@@ -431,22 +458,7 @@ export class TaskExecutionPlanner {
     return { ...context, execution: { leaseId: native.leaseId, leaseEpoch: native.leaseEpoch,
       startedAt: context.run.startedAt, completedAt: context.run.finishedAt, completedBefore: native.deadline } };
   }
-  private tag(plan: Plan) { return hmacSha256Tag(this.key, { purpose: plan.schema === "control-room.task-execution-plan/v1"
-    ? "task-execution-plan/v1" : plan.schema === "control-room.task-execution-plan/v2"
-      ? "task-execution-plan/v2" : plan.schema === "control-room.task-execution-plan/v3"
-        ? "task-execution-plan/v3" : plan.schema === "control-room.task-execution-plan/v4"
-          ? "task-execution-plan/v4" : plan.schema === "control-room.task-execution-plan/v5"
-          ? "task-execution-plan/v5" : plan.schema === "control-room.task-execution-plan/v6"
-            ? "task-execution-plan/v6" : plan.schema === "control-room.task-execution-plan/v7"
-              ? "task-execution-plan/v7" : plan.schema === "control-room.task-execution-plan/v8"
-                ? "task-execution-plan/v8" : plan.schema === "control-room.task-execution-plan/v9"
-                  ? "task-execution-plan/v9" : plan.schema === "control-room.task-execution-plan/v10"
-                  ? "task-execution-plan/v10" : plan.schema === "control-room.task-execution-plan/v11"
-                    ? "task-execution-plan/v11" : plan.schema === "control-room.task-execution-plan/v12"
-                      ? "task-execution-plan/v12" : plan.schema === "control-room.task-execution-plan/v13"
-                        ? "task-execution-plan/v13" : plan.schema === "control-room.task-execution-plan/v14"
-                          ? "task-execution-plan/v14" : plan.schema === "control-room.task-execution-plan/v15"
-                            ? "task-execution-plan/v15" : "task-execution-plan/v16", plan }); }
+  private tag(plan: Plan) { return taskExecutionPlanTagV1(this.key, plan); }
   webOperation(): TaskPlanningOperation {
     return Object.freeze({ tenantId: this.scope.tenantId, workspaceId: this.scope.workspaceId, plan: this.plan.bind(this),
       supportsProject: this.supportsProject.bind(this), templatesForProject: this.templatesForProject.bind(this),

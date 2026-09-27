@@ -197,6 +197,15 @@ function LocalRouteObservationPanel({ detail }: { detail: TaskDetail }) {
   </section>;
 }
 
+export function TaskRevisionTaskLinks({ projectId, links }: { projectId: string; links: NonNullable<TaskDetail["revisionLinks"]> }) {
+  if (!links.previousJobId && !links.nextJobId) return null;
+  return <div className="private-note" aria-label="Revision task links">
+    <p>This is Revision {links.revisionNumber} in a linked task history. Each revision remains a separate task.</p>
+    {links.previousJobId && <p><a href={`/projects/${encodeURIComponent(projectId)}/tasks/${encodeURIComponent(links.previousJobId)}`}>Open previous task</a></p>}
+    {links.nextJobId && <p><a href={`/projects/${encodeURIComponent(projectId)}/tasks/${encodeURIComponent(links.nextJobId)}`}>Open revised task</a></p>}
+  </div>;
+}
+
 export function TaskDetailPanel({ detail }: { detail: TaskDetail }) {
   const preparedFor = detail.preparedFor === "hermes" ? "Hermes Agent" : detail.preparedFor === "codex" ? "Codex"
     : detail.preparedFor === "claude" ? "Claude Code" : detail.preparedFor === "configured_worker" ? "Configured worker" : undefined;
@@ -214,7 +223,9 @@ export function TaskDetailPanel({ detail }: { detail: TaskDetail }) {
       {detail.modelSelection?.model && <p><strong>Chosen model:</strong> {detail.modelSelection.profile ? `${detail.modelSelection.profile} · ` : ""}
         {detail.modelSelection.model} · effort {detail.modelSelection.effort}{detail.modelSelection.provider ? ` · ${detail.modelSelection.provider}` : ""}</p>}
       <p className="private-note"><ConfiguredTimestamp value={detail.task.createdAt} prefix="Saved" /> · <ConfiguredTimestamp value={detail.task.updatedAt} prefix="Job record updated" /></p>
-      {detail.task.state === "proposed" && <p>This is saved proposed work, not an agent assignment.</p>}</section>
+      {detail.task.state === "proposed" && <p>This is saved proposed work, not an agent assignment.</p>}
+      <TaskRevisionTaskLinks projectId={detail.task.projectId}
+        links={detail.revisionLinks ?? { previousJobId: null, nextJobId: null, revisionNumber: 0 }} /></section>
     {preparedFor && <section className="private-panel" aria-label="Prepared worker"><h2>Prepared worker</h2>
       <p>This task is prepared for {preparedFor}. Preparation does not assign or start this worker.</p>
       <p className="private-note">{preparedRouteDetail}</p>

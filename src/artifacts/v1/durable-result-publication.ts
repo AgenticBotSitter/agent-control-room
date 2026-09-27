@@ -122,6 +122,7 @@ const durableReservationIdentitySchemaV1 = z.object({
   // not forced to impersonate either. The connector profile digest is the
   // binding identity; the harness tag is a label, not a gate.
   harness: z.string().min(1).max(64),
+  workerId: localId.optional(), agentProfileId: localId.optional(), adapterId: localId.optional(), modelFamily: localId.optional(),
   workflowId: localId,
   // The connector profile digest is the binding identity. The reservation
   // identity schema marks it optional so a future connector that supplies
@@ -233,6 +234,10 @@ export interface DurableResultBindingV1 {
    * a built-in. The connector profile digest is the binding identity.
    */
   harness: string;
+  /** Server-derived producer provenance for configured agent-review separation.
+   * Generic connectors may omit it; an agent review then fails closed on any
+   * required missing axis, while a human owner remains exempt from agent axes. */
+  workerId?: string; agentProfileId?: string; adapterId?: string; modelFamily?: string;
   connectorProfileDigest: string;
   /** Current canonical authority recorded when this run was admitted. */
   authorityDigest?: string;
@@ -308,7 +313,8 @@ async function verifyRecordedIdentity(tx: DatabaseSession, binding: DurableResul
     "WHERE tenant_id=$1 AND id=$2", [binding.tenantId, binding.runId])).rows[0];
   if (!runRow) throw new Error("durable_result_identity_mismatch");
   if (runRow.project_id !== binding.projectId || runRow.job_id !== binding.jobId
-    || runRow.attempt_id !== binding.attemptId || runRow.node_id !== binding.nodeId)
+    || runRow.attempt_id !== binding.attemptId || runRow.node_id !== binding.nodeId
+    || binding.adapterId !== undefined && runRow.adapter_id !== binding.adapterId)
     throw new Error("durable_result_identity_mismatch");
 
   const jobRow = (await tx.query<{ workflow_id: string; authority_digest: string }>(
@@ -414,10 +420,13 @@ async function updateNeutralReservation(port: NeutralReservationPort, tx: Databa
 function neutralIdentityParts(binding: DurableResultBindingV1) {
   const parsed = z.object({ tenantId: localId, projectId: localId, jobId: localId, attemptId: localId,
     runId: localId, nodeId: localId, workflowId: localId, harness: z.string().min(1).max(64),
+    workerId: localId.optional(), agentProfileId: localId.optional(), adapterId: localId.optional(), modelFamily: localId.optional(),
     connectorProfileDigest: digestSchema, acceptanceProfileId: localId, acceptanceProfileDigest: digestSchema })
     .strict().parse({ tenantId: binding.tenantId, projectId: binding.projectId, jobId: binding.jobId,
       attemptId: binding.attemptId, runId: binding.runId, nodeId: binding.nodeId, workflowId: binding.workflowId,
       harness: binding.harness, connectorProfileDigest: binding.connectorProfileDigest,
+      workerId: binding.workerId, agentProfileId: binding.agentProfileId,
+      adapterId: binding.adapterId, modelFamily: binding.modelFamily,
       acceptanceProfileId: binding.acceptanceProfileId, acceptanceProfileDigest: binding.acceptanceProfileDigest });
   const evidence = z.object({ snapshotDigest: digestSchema.optional(), snapshotVersion: z.number().int().positive().optional(),
     publicationContractDigest: digestSchema.optional(), terminalEvidenceDigest: digestSchema.optional(),
@@ -445,6 +454,9 @@ function buildNeutralIdentity(binding: DurableResultBindingV1, artifactId: strin
     acceptanceProfileId: binding.acceptanceProfileId,
     acceptanceProfileDigest: binding.acceptanceProfileDigest,
     contentHash, sizeBytes };
+  for (const key of ["workerId", "agentProfileId", "adapterId", "modelFamily"] as const) {
+    if (parsed[key] !== undefined) identity[key] = parsed[key];
+  }
   for (const [k, v] of Object.entries(evidence)) {
     if (v !== undefined && k !== "snapshotVersion") identity[k] = v;
   }
@@ -473,7 +485,7 @@ function issueNeutralReceipt(binding: DurableResultBindingV1, artifactId: string
 }
 
 function planNeutralReview(binding: DurableResultBindingV1, receipt: DurableResultReceiptV1, receivedAt: string) {
-  const { evidence } = neutralIdentityParts(binding);
+  const { parsed, evidence } = neutralIdentityParts(binding);
   // Strip undefined evidence fields so the plan carries only the evidence
   // the connector actually supplied. The review plan records the connector
   // anchor digests, not the snapshot version — that lives in the receipt.
@@ -484,6 +496,9 @@ function planNeutralReview(binding: DurableResultBindingV1, receipt: DurableResu
     acceptanceProfileDigest: binding.acceptanceProfileDigest, plannedAt: receivedAt,
     targetId: `target:durable:${sha256Digest({ tenantId: binding.tenantId, jobId: binding.jobId }).slice(7)}`,
     qualityAccepted: false, completionVerified: false, releasesCapacity: false, grantsExecutionAuthority: false };
+  for (const key of ["workerId", "agentProfileId", "adapterId", "modelFamily"] as const) {
+    if (parsed[key] !== undefined) planFields[key] = parsed[key];
+  }
   // The review plan records connector anchors, not the snapshot version
   // or thread/turn/item identifiers — those live in the receipt.
   for (const [k, v] of Object.entries(evidence)) {

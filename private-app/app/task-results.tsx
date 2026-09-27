@@ -77,9 +77,10 @@ export function TaskResultsPanel({ page, content: suppliedContent, pending, sele
             && review.matchingArtifactIds.includes(item.artifactId)).map(review => <p key={review.targetId}>
               Matches Revision {review.revision} · {reviewLabel[review.status]}</p>)}
           <details><summary>File fingerprint</summary><code>{item.contentHash}</code></details></div>
-          {page.canReadContent ? <button type="button" disabled={pending}
+          {page.canReadContent ? <div><button type="button" disabled={pending}
             ref={node => { openers.current.set(item.artifactId, node); }}
             onClick={() => onOpen(item.artifactId)}>Read result</button>
+            {item.fileAccess && <a className="private-action-link" href={item.fileAccess.downloadHref}>Download text result</a>}</div>
             : <p>Your access permits metadata, not reading this file.</p>}</li>;
         })}</ul>}
     {page.additionalResultsOmitted && <p>Only the first 50 result records are listed. Additional records remain saved.</p>}
@@ -257,7 +258,7 @@ function TaskResultsReader({ projectId, jobId, reviewWorkspace, verificationWork
           } else if (!next.items.some(item => item.artifactId === selected)) {
             missing = selected;
           } else {
-            result = await client.resultContent(projectId, jobId, selected, abort.signal);
+            result = await client.resultContent(projectId, jobId, next.items.find(item => item.artifactId === selected)!, abort.signal);
           }
         }
         if (live && current === generation.current) {

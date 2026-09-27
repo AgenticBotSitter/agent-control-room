@@ -15,9 +15,9 @@ export async function verifyPrivateIdeaAdapter(db: DatabaseClient, scope: { tena
   if (rows.length !== 1 || rows[0].valid !== true) throw new Error("private_idea_adapter_unavailable");
 }
 
-// Generated from public migrations 0001-0089, including generic external-content
+// Generated from public migrations 0001-0092, including generic external-content
 // migrations 0025/0026. Catalog query below; not a mutable database marker.
-export const privateWebSchemaDigest = "56ed38e8b6b7cde1b8f446cdf31e567676374eb074fc2e4e490c029ac0dc84a8";
+export const privateWebSchemaDigest = "514f57093dbace5f491721b631507324491753ddd36a9d2a78e3d793f8a9a623";
 export const privateWebReadTables = ["control_identities", "control_role_grants", "workspaces", "control_web_sessions",
   "tenants", "control_idempotency",
   "control_schedules", "control_schedule_occurrences",
@@ -27,7 +27,7 @@ export const privateWebReadTables = ["control_identities", "control_role_grants"
   "adapter_registry", "projects", "control_manual_project_heads", "control_web_project_commands", "audit_events",
   "control_audit_chain_heads", "control_project_lifecycle_events", "control_policy_decisions", "control_connection_registry_heads",
   "control_connection_enrollments", "control_connection_authenticated_telemetry_receipts", "control_requests", "control_workflows",
-  "control_jobs", "control_attempts", "control_leases", "control_harness_runs", "control_harness_run_events", "control_web_task_commands",
+  "control_jobs", "control_attempts", "control_leases", "control_task_execution_plans", "control_harness_runs", "control_harness_run_events", "control_web_task_commands",
   "control_artifact_manifests", "control_native_artifact_receipts", "control_completion_gate_records", "control_completion_gate_integrity", "control_web_task_review_commands", "control_native_review_plans",
   "control_project_coordinator_heads", "control_project_coordination_proposals", "control_project_delegation_policies",
   "control_project_coordination_operation_receipts", "control_project_coordination_operation_jobs",

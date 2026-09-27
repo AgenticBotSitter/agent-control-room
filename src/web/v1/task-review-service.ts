@@ -5,6 +5,7 @@ import { jobRecordSchema } from "../../domain/v1";
 import type { NativeResultReadConfiguration } from "../../artifacts/v1/native-results";
 import { CompletionGateStoreV1, CompletionGateErrorV1, type CompletionAcceptanceProfileV1, type CompletionReviewV1,
   type CompletionFindingV1, type CompletionRiskV1 } from "../../completion-gate/v1";
+import { assertReviewerIndependentV1 } from "../../completion-gate/v1/reviewer-independence";
 import { stageAsyncCompletionCheckpoint } from "../../completion-gate/v1/async-staged-checkpoint";
 import { readTaskReviewPlanV1, verifyTaskReviewTargetV1 } from "../../completion-gate/v1/task-review-plan";
 import { assertNoSecretMaterial, computeAuthorityDigest, hmacSha256Tag, sha256Digest } from "../../security";
@@ -117,8 +118,10 @@ export class WebTaskReviewService {
     if (already || context.ownRecordedReview) return "already_reviewed" as const;
     if (context.project.lifecycle !== "active") return "project_inactive" as const;
     if (!["pending", "verification_blocked"].includes(context.snapshot.status)) return "target_closed" as const;
-    if (context.snapshot.target.producer.actorId === actor.id || Object.entries(context.profile.reviewerSeparation)
-      .some(([axis, required]) => axis !== "actor" && required)) return "independence_required" as const;
+    try {
+      assertReviewerIndependentV1(context.snapshot.target.producer, { actorId: actor.id, actorType: "human" },
+        context.profile.reviewerSeparation);
+    } catch { return "independence_required" as const; }
     return "available" as const;
   }
   async options(identity: VerifiedWebIdentity, projectId: string, jobId: string, artifactId: string, targetId: string) {

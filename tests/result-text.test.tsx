@@ -11,6 +11,8 @@ test("formatted results show Markdown but never fetch images or interpret raw HT
   assert.ok(!html.includes("<img")); assert.ok(!html.includes("<script"));
   assert.ok(!html.includes('href="javascript:'));
   assert.ok(html.includes('rel="noopener noreferrer"'));
+  assert.ok(html.includes("external link"));
+  assert.ok(html.includes("(external)"));
   assert.ok(html.includes("Original plain text"));
 });
 

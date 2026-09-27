@@ -30,7 +30,8 @@ export function ProjectFilesView({ projectId, data }: { projectId: string; data:
         <p>{artifact.sizeBytes.toLocaleString()} bytes · <ConfiguredTimestamp value={artifact.receivedAt} prefix="Received" /></p>
         <p>Received bytes matched the worker’s recorded fingerprint. This is not a quality approval.</p>
         <details><summary>File fingerprint</summary><code>{artifact.contentHash}</code></details></div>
-        <a className="private-action-link" href={taskResultHrefV1(projectId, task.jobId, artifact.artifactId)}>Open protected result</a>
+        <div><a className="private-action-link" href={taskResultHrefV1(projectId, task.jobId, artifact.artifactId)}>Open protected result</a>
+          {artifact.fileAccess && <a className="private-action-link" href={artifact.fileAccess.downloadHref}>Download text result</a>}</div>
       </li>)}</ul>}
     {value.additionalItemsOmitted && <p className="private-note">More result files remain saved. Open individual tasks to inspect them.</p>}
   </section>;
