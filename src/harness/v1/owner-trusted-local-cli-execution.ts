@@ -72,7 +72,7 @@ function capture(executor: Readonly<{ execute(input: Readonly<{ executablePath: 
     const result = await executor.execute(Object.freeze({ executablePath: fixed.executablePath,
       workingDirectory: fixed.workingDirectory, deadlineMs: fixed.deadlineMs,
       ...(selected ? { model: selected.model, effort: selected.effort,
-        supportsEffort: claude ? selected.supportsEffort === true : false } : {}),
+        ...(claude ? { supportsEffort: selected.supportsEffort === true } : {}) } : {}),
       prompt: ownerTrustedLocalCliPromptV1(input.delivery.input), signal: input.signal }));
     return mapped(result);
   } });

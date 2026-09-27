@@ -286,7 +286,10 @@ export class WebTaskService {
       await tx.query(`INSERT INTO control_task_model_selections
         (tenant_id,project_id,job_id,selection_key,effort,created_at) VALUES($1,$2,$3,$4,$5,$6)`,
       [this.scope.tenantId, projectId, jobId, parsed.data.model ?? null, parsed.data.effort ?? null, actor.now]);
-      for (const scope of parsed.data.scopes ?? []) await tx.query(`INSERT INTO control_task_declared_scopes
+      // Omission is conservative: until an owner approves enforceable disjoint
+      // write scopes, this task owns the whole repository while leased.
+      const declaredScopes = parsed.data.scopes?.length ? parsed.data.scopes : [{ kind: "tree" as const, path: "" }];
+      for (const scope of declaredScopes) await tx.query(`INSERT INTO control_task_declared_scopes
         (tenant_id,project_id,job_id,scope_kind,path,path_fold) VALUES($1,$2,$3,$4,$5,$5)`,
       [this.scope.tenantId, projectId, jobId, scope.kind, scope.path]);
       const receipt: TaskReceipt = { projectId, jobId, requestId, createdAt: actor.now, submission: "proposed", startsWork: false };

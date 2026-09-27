@@ -6,6 +6,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { createOwnerTrustedLocalCodexExecV1 } from "../src/harness/codex-v1/owner-trusted-local-exec";
+import { createOwnerTrustedLocalCodexExecutionAdapterV1 } from "../src/harness/v1/owner-trusted-local-cli-execution";
 
 const root = await mkdtemp(join(tmpdir(), "acr-codex-exec-"));
 const fake = join(dirname(fileURLToPath(import.meta.url)), "fixtures", "codex-owner-trusted-local-exec-fake.mjs");
@@ -48,6 +49,24 @@ test("omits model arguments when protected model selection is not enabled", asyn
   assert.equal(result.status, "completed");
   assert.deepEqual(captured.args, ["exec", "--json", "--sandbox", "read-only", "--ephemeral", "--skip-git-repo-check",
     "--color", "never", "-C", cwd, "-"]);
+});
+
+test("the shared adapter sends a per-task Codex selection through the real executor", async () => {
+  const cwd = await taskDirectory();
+  const captured: { args?: readonly string[] } = {};
+  const selected = createOwnerTrustedLocalCodexExecutionAdapterV1(adapter(captured), {
+    executablePath: executable, workingDirectory: cwd, deadlineMs: 10_000,
+    async select(jobId: string) {
+      assert.equal(jobId, "job:selected");
+      return { model: "gpt-selected", effort: "xhigh" };
+    },
+  });
+  const result = await selected.execute({ delivery: { identity: { jobId: "job:selected" },
+    input: { instructions: "Read only the supplied task.", prompt: "Return the bounded result." } },
+  signal: new AbortController().signal });
+  assert.equal(result.kind, "completed");
+  assert.deepEqual(captured.args, ["exec", "--json", "--sandbox", "read-only", "--ephemeral", "--skip-git-repo-check",
+    "--color", "never", "-C", cwd, "-m", "gpt-selected", "-c", "model_reasoning_effort=xhigh", "-"]);
 });
 
 test("rejects a task before spawning when it is already canceled", async () => {

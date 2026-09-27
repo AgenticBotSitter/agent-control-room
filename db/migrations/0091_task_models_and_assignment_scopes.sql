@@ -27,6 +27,9 @@ CREATE TABLE control_task_model_selections (
 );
 
 -- Proposal scopes reuse the canonical repository-relative file/tree grammar.
+-- New browser proposals that omit scopes store a root tree scope. Assignment
+-- also treats any legacy missing declaration as root-tree ownership, so an
+-- empty set never opts a writer out of overlap protection.
 CREATE TABLE control_task_declared_scopes (
   tenant_id text NOT NULL,
   project_id text NOT NULL,
@@ -42,6 +45,8 @@ CREATE TABLE control_task_declared_scopes (
 
 -- These are scopes owned by control_leases, not a second lease authority.
 -- Terminal/released/expired canonical leases cease to conflict automatically.
+-- Explicit expiry deletes its rows; assignment also prunes up to 256 terminal
+-- or elapsed rows per claim so crash-expired evidence remains bounded.
 CREATE TABLE control_assignment_lease_scopes (
   tenant_id text NOT NULL,
   lease_id text NOT NULL,

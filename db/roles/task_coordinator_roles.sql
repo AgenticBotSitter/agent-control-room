@@ -37,6 +37,9 @@ GRANT INSERT ON control_web_sessions, control_requests, control_workflows, contr
   control_worker_delivery_receipts TO control_room_task_coordinator;
 GRANT INSERT ON control_task_model_selections, control_task_declared_scopes,
   control_assignment_lease_scopes TO control_room_task_coordinator;
+-- Assignment owns this derived lease evidence and may remove only its rows
+-- once the canonical lease is terminal or elapsed.
+GRANT DELETE ON control_assignment_lease_scopes TO control_room_task_coordinator;
 GRANT INSERT ON control_installation_transition_revisions TO control_room_task_coordinator;
 GRANT INSERT ON control_project_coordination_proposals,
   control_project_coordination_operation_receipts, control_project_coordination_operation_jobs,

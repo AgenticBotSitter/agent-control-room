@@ -115,6 +115,7 @@ const coordinatorInserts = new Set(["control_web_sessions", "control_requests", 
   "control_attempt_resource_admissions", "control_attempt_resource_scopes", "control_job_dependencies",
   "control_installation_transition_revisions", "control_node_fleet_signals", "control_node_fleet_current",
   "control_task_model_selections", "control_task_declared_scopes", "control_assignment_lease_scopes"]);
+const coordinatorDeletes = new Set(["control_assignment_lease_scopes"]);
 const coordinatorUpdates: Record<string, readonly string[]> = {
   ...Object.fromEntries(["control_requests", "control_workflows", "control_jobs", "control_attempts", "control_leases"]
     .map(table => [table, ["state", "version", "payload", "updated_at"]])),
@@ -349,6 +350,7 @@ async function verifyDatabase(db: DatabaseClient, config: PrivatePostgresConfigu
   const allowedReads = kind === "newsCoordinator" ? newsCoordinatorReads : kind === "newsIngestion" ? newsIngestionReads : kind === "ideaRuntime" ? ideaRuntimeReads : kind === "ideas" ? ideaCreationReads : kind === "sessions" ? sessionReads : kind === "publisher" ? publisherReads : kind === "evidence" ? evidenceReads : kind === "results" ? resultReads : kind === "coordinator" ? coordinatorReads : privateWebReadTables;
   const allowedInserts = kind === "newsCoordinator" ? newsCoordinatorInserts : kind === "newsIngestion" ? newsIngestionInserts : kind === "ideaRuntime" ? ideaRuntimeInserts : kind === "ideas" ? ideaCreationInserts : kind === "sessions" ? sessionInserts : kind === "publisher" ? publisherInserts : kind === "evidence" ? evidenceInserts : kind === "results" ? resultInserts : kind === "coordinator" ? coordinatorInserts : inserts;
   const allowedUpdates = kind === "newsCoordinator" ? newsCoordinatorUpdates : kind === "newsIngestion" ? newsIngestionUpdates : kind === "ideaRuntime" ? ideaRuntimeUpdates : kind === "ideas" ? ideaCreationUpdates : kind === "sessions" ? sessionUpdates : kind === "publisher" ? publisherUpdates : kind === "evidence" ? evidenceUpdates : kind === "results" ? resultUpdates : kind === "coordinator" ? coordinatorUpdates : updates;
+  const allowedDeletes = kind === "coordinator" ? coordinatorDeletes : new Set<string>();
   try {
     await db.transaction(async tx => {
       await verifySession(tx, config, role);
@@ -372,17 +374,18 @@ async function verifyDatabase(db: DatabaseClient, config: PrivatePostgresConfigu
       if (unsafe?.unsafe !== false) fail();
       if (withQueue) await verifyPgBossApplicationPermissions(tx,
         kind === "coordinator" && !(queue && "nativeQueueProducer" in queue && queue.nativeQueueProducer === false) || feedProducer, recovery);
-      const columns = (await tx.query<{ table_name: string; column_name: string; read: boolean; insert: boolean; update: boolean; extra: boolean }>(`
+      const columns = (await tx.query<{ table_name: string; column_name: string; read: boolean; insert: boolean; update: boolean; remove: boolean; extra: boolean }>(`
         SELECT c.relname AS table_name,a.attname AS column_name,
           has_column_privilege(c.oid,a.attnum,'SELECT') AS read,
           has_column_privilege(c.oid,a.attnum,'INSERT') AS insert,
           has_column_privilege(c.oid,a.attnum,'UPDATE') AS update,
+          has_table_privilege(c.oid,'DELETE') AS remove,
           has_column_privilege(c.oid,a.attnum,'REFERENCES')
           OR has_column_privilege(c.oid,a.attnum,'SELECT WITH GRANT OPTION')
           OR has_column_privilege(c.oid,a.attnum,'INSERT WITH GRANT OPTION')
           OR has_column_privilege(c.oid,a.attnum,'UPDATE WITH GRANT OPTION')
           OR has_column_privilege(c.oid,a.attnum,'REFERENCES WITH GRANT OPTION')
-          OR has_table_privilege(c.oid,'DELETE') OR has_table_privilege(c.oid,'TRUNCATE')
+          OR has_table_privilege(c.oid,'TRUNCATE')
           OR has_table_privilege(c.oid,'TRIGGER') OR has_table_privilege(c.oid,'MAINTAIN') AS extra
         FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace JOIN pg_attribute a ON a.attrelid=c.oid
         WHERE n.nspname='public' AND c.relkind IN ('r','p','v','m','f') AND a.attnum>0 AND NOT a.attisdropped`)).rows;
@@ -392,7 +395,8 @@ async function verifyDatabase(db: DatabaseClient, config: PrivatePostgresConfigu
       const scopedInserts = kind === "web" ? privateWebInsertColumns : {};
       if (!columns.length || columns.some(c => c.extra || c.read !== reads.has(c.table_name)
         || c.insert !== (allowedInserts.has(c.table_name) || !!scopedInserts[c.table_name]?.includes(c.column_name))
-        || c.update !== !!allowedUpdates[c.table_name]?.includes(c.column_name))) fail();
+        || c.update !== !!allowedUpdates[c.table_name]?.includes(c.column_name)
+        || c.remove !== allowedDeletes.has(c.table_name))) fail();
       if (await readPrivateWebSchemaDigest(tx) !== privateWebSchemaDigest) fail();
       const binding = (await tx.query<{ valid: boolean }>(`SELECT EXISTS(SELECT 1 FROM workspaces w
         JOIN control_identities i ON i.tenant_id=w.tenant_id JOIN control_role_grants g ON g.tenant_id=i.tenant_id AND g.identity_id=i.id

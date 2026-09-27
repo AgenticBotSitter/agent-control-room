@@ -42,9 +42,9 @@ test("assignment scopes refuse overlap, allow disjoint work, and recover after e
   await signals.ingestAuthenticated(capability, at(7_000), binding);
   const assignments = new TaskAssignmentCoordinator(f.db, f.scope, planner, route, () => now);
 
-  async function prepare(key: string, path: string, kind: "file" | "tree" = "tree") {
+  async function prepare(key: string, path?: string, kind: "file" | "tree" = "tree") {
     const draft = { title: `Scoped task ${key}`, instructions: "Make one bounded change and return evidence.",
-      scopes: [{ kind, path }] } as const;
+      ...(path === undefined ? {} : { scopes: [{ kind, path }] }) } as const;
     const proposed = await f.tasks.propose(f.identity, binding.projectId, draft, `scope-proposal-${key}`);
     const planned = await planner.plan(f.identity, binding.projectId, proposed.receipt.jobId,
       sha256Digest({ title: draft.title, instructions: draft.instructions }));
@@ -59,6 +59,14 @@ test("assignment scopes refuse overlap, allow disjoint work, and recover after e
   await assert.rejects(assignments.assign(f.identity, binding.projectId, overlapping.jobId, binding.nodeId, overlapping.inputDigest),
     (error: unknown) => (error as { code?: string }).code === "conflict", "an active tree lease excludes a nested file scope");
 
+  const undeclared = await prepare("undeclared");
+  const defaultScopes = (await f.db.query<{ scope_kind: string; path: string }>(
+    "SELECT scope_kind,path FROM control_task_declared_scopes WHERE tenant_id=$1 AND job_id=$2",
+    [binding.tenantId, undeclared.jobId])).rows;
+  assert.deepEqual(defaultScopes, [{ scope_kind: "tree", path: "" }], "omitted scopes persist as whole-repository ownership");
+  await assert.rejects(assignments.assign(f.identity, binding.projectId, undeclared.jobId, binding.nodeId, undeclared.inputDigest),
+    (error: unknown) => (error as { code?: string }).code === "conflict", "an omitted declaration cannot evade an active scope");
+
   const disjoint = await prepare("disjoint", "docs/owner-guide.md", "file");
   const disjointAssignment = await assignments.assign(f.identity, binding.projectId, disjoint.jobId, binding.nodeId, disjoint.inputDigest);
   assert.equal(disjointAssignment.receipt.leaseCurrent, true, "disjoint scopes can run concurrently");
@@ -70,4 +78,16 @@ test("assignment scopes refuse overlap, allow disjoint work, and recover after e
   const originalLease = (await f.db.query<{ state: string }>(
     "SELECT state FROM control_leases WHERE tenant_id=$1 AND id=$2", [binding.tenantId, firstAssignment.receipt.leaseId])).rows[0];
   assert.equal(originalLease?.state, "active", "recovery does not require a crashed worker to release its lease record");
+  const staleScopeCount = (await f.db.query<{ count: string }>(
+    "SELECT count(*)::text AS count FROM control_assignment_lease_scopes WHERE tenant_id=$1 AND lease_id=$2",
+    [binding.tenantId, firstAssignment.receipt.leaseId])).rows[0];
+  assert.equal(staleScopeCount?.count, "0", "a later assignment prunes crash-expired scope rows");
+
+  now = instant + 30_000;
+  const expired = await assignments.expire(f.identity, binding.projectId, expiryAssignment.receipt.jobId, expiryAssignment.receipt.inputDigest);
+  assert.equal(expired.receipt.leaseState, "expired");
+  const explicitlyExpiredScopeCount = (await f.db.query<{ count: string }>(
+    "SELECT count(*)::text AS count FROM control_assignment_lease_scopes WHERE tenant_id=$1 AND lease_id=$2",
+    [binding.tenantId, expiryAssignment.receipt.leaseId])).rows[0];
+  assert.equal(explicitlyExpiredScopeCount?.count, "0", "explicit expiry removes its scope rows");
 });

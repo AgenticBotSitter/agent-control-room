@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "digest": "521ff4eb8ab32c42bbfd8c0c6caeae17953c21029c5a3e9ceda843669753dfd8",
+  "digest": "d1a80c2fe0eed0c86d26c9b7d69d115f5c377ef789bd0d174d3d0811670a1fc2",
   "entries": [
     {
       "file": "db/migrations/0001_control_room_core.sql",
@@ -545,7 +545,7 @@
     {
       "file": "db/migrations/0091_task_models_and_assignment_scopes.sql",
       "order": 91,
-      "sha256": "f70572e46796e97093abc9d79a6dc4cb219ac151911dd26ece5a168ab29257b0",
+      "sha256": "9632cac868bd9e807a80bc63492df7b6d12f6a64709c9c256fbd412b4247ca48",
       "kind": "migrate"
     },
     {

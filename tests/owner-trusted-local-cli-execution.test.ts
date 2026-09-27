@@ -22,7 +22,7 @@ test("the Codex adapter pins its executable, empty task directory, and deadline 
   } }, { ...configuration, model: "gpt-test", effort: "high" });
   const result = await adapter.execute({ delivery, signal: new AbortController().signal });
   assert.deepEqual(result, { kind: "completed", text: "codex text" });
-  assert.deepEqual(observed, { ...configuration, model: "gpt-test", effort: "high", supportsEffort: false,
+  assert.deepEqual(observed, { ...configuration, model: "gpt-test", effort: "high",
     prompt: ownerTrustedLocalCliPromptV1(delivery.input), signal: (observed as { signal: AbortSignal }).signal });
 });
 
