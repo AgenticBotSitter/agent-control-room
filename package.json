@@ -60,7 +60,7 @@
     "test:browser:private": "pnpm build && node --import tsx scripts/private-browser-acceptance.mjs && node --import tsx scripts/private-uncertain-save-browser-acceptance.mjs && node --import tsx scripts/private-result-review-browser-acceptance.mjs && node --import tsx scripts/private-revision-browser-acceptance.mjs && node --import tsx scripts/private-accessibility-browser-acceptance.mjs && node --import tsx scripts/private-two-configuration-browser-acceptance.mjs",
     "test:product-browser": "node --test tests/browser/workspace/product-browser-journeys.test.mjs",
     "test:mac-local-browser-journeys": "node --import tsx --test tests/mac-local-browser-journeys.test.tsx",
-    "test:mac-local-real-pages": "node --import tsx --test --test-concurrency=1 tests/mac-local-real-pages.test.tsx tests/mac-local-accessibility.test.tsx",
+    "test:mac-local-real-pages": "node --import tsx --test --test-concurrency=1 tests/mac-local-real-pages.test.tsx tests/mac-local-accessibility.test.tsx tests/owner-ui.test.tsx",
     "test:mac-local-owner-browser": "playwright test tests/browser/mac-local-owner-journey.spec.ts",
     "test:phase2b": "node --import tsx --test --test-concurrency=1 tests/reviewer-independence.test.ts tests/mac-local-linked-revision-pages.test.tsx tests/mac-local-human-verification-pages.test.tsx tests/task-file-access.test.ts tests/task-file-preview-browser.test.ts tests/result-text.test.tsx",
     "release:local:assemble": "node scripts/assemble-local-release.mjs",
