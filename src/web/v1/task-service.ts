@@ -10,7 +10,8 @@ import { assertNoSecretMaterial, computeAuthorityDigest, sha256Digest } from "..
 import { HarnessRunStoreV1 } from "../../harness/v1/store";
 import type { NativeResultReadConfiguration } from "../../artifacts/v1/native-results";
 import { CompletionGateStoreV1 } from "../../completion-gate/v1/store";
-import { readTaskReviewPlanV1, taskReviewRootSubjectIdV1, type TaskResultReceiptV1, verifyTaskReviewTargetV1 } from "../../completion-gate/v1/task-review-plan";
+import { readTaskReviewPlanV1, taskReviewPlanKeyV1, taskReviewRootSubjectIdV1,
+  type TaskResultReceiptV1, verifyTaskReviewTargetV1 } from "../../completion-gate/v1/task-review-plan";
 import { PlanSelectedTaskResultReaderV1 } from "./task-result-reader";
 import type { AwaitableRollbackCheckpointStoreV1 } from "../../security/rollback-checkpoint";
 import type { WebTaskReviewConfiguration } from "./task-review-service";
@@ -202,10 +203,8 @@ export class WebTaskService {
       const rows = (await tx.query<TaskRow>(`SELECT ${selection} WHERE j.tenant_id=$1 AND j.project_id=$2
         AND ($3::text IS NULL OR j.id COLLATE "C">$3 COLLATE "C") ORDER BY j.id COLLATE "C" LIMIT 51`,
       [this.scope.tenantId, projectId, after ?? null])).rows;
-      const tasks = [];
-      for (const row of rows.slice(0, 50)) {
-        tasks.push(await this.withQualityStatus(tx, actor, validated(row, this.scope.tenantId, projectId).summary));
-      }
+      const summaries = rows.slice(0, 50).map(row => validated(row, this.scope.tenantId, projectId).summary);
+      const tasks = await this.withQualityStatuses(tx, actor, summaries);
       return taskPageSchema.parse({ project, tasks, nextCursor: rows.length > 50 ? tasks.at(-1)!.jobId : null,
         canPropose: project.lifecycle === "active" && actor.can("tasks.propose", projectId), dispatch: "not_connected", observedAt: actor.now,
         ...(this.modelCatalog ? { modelOptions: taskModelOptionsV1(this.modelCatalog) } : {}) });
@@ -523,6 +522,7 @@ export class WebTaskService {
     try {
       const page = await this.resultPage(tx, actor, summary.projectId, summary.jobId);
       const accepted = page.items.length > 0 && !page.additionalResultsOmitted && !page.additionalTargetsOmitted
+        && page.reviews.every(review => !review.additionalEvidenceOmitted)
         && page.items.every(item => page.reviews.some(review => review.status === "ready"
           && review.matchingArtifactIds.includes(item.artifactId) && review.contentHash === item.contentHash));
       return accepted ? taskSummarySchema.parse({ ...summary, qualityStatus: "accepted" }) : summary;
@@ -531,6 +531,96 @@ export class WebTaskService {
       // authenticate it removes the claim without hiding the underlying task.
       return summary;
     }
+  }
+
+  /** Lightweight result/review projection for bounded task summaries. Unlike
+   * resultPage it deliberately does not mint file links, inspect worktrees, or
+   * load harness model metadata. */
+  private async batchResultEvidence(tx: DatabaseSession, actor: WebActor,
+    tasks: readonly { projectId: string; jobId: string }[]) {
+    type Projection = { resultSource: "configured" | "not_configured"; reviewSource: "configured" | "not_configured";
+      items: ReturnType<typeof resultMetadata>[]; reviews: ReturnType<typeof taskReviewEvidenceSchema.parse>[];
+      additionalResultsOmitted: boolean; additionalTargetsOmitted: boolean; canReadContent: boolean };
+    const unique = [...new Map(tasks.map(task => [taskReviewPlanKeyV1(task.projectId, task.jobId), task])).values()];
+    const output = new Map<string, Projection>();
+    if (!this.resultStore) {
+      for (const task of unique) output.set(taskReviewPlanKeyV1(task.projectId, task.jobId), { resultSource: "not_configured",
+        reviewSource: this.reviewConfig ? "configured" : "not_configured", items: [], reviews: [],
+        additionalResultsOmitted: false, additionalTargetsOmitted: false, canReadContent: false });
+      return output;
+    }
+    const batch = await this.resultStore.listMany(tx, this.scope.tenantId, unique);
+    const subjects = unique.map(task => ({ projectId: task.projectId,
+      subjectId: taskReviewRootSubjectIdV1(batch.plans.get(taskReviewPlanKeyV1(task.projectId, task.jobId)), task.jobId) }));
+    const inspected = this.reviewConfig ? await new CompletionGateStoreV1(joined(tx), this.reviewConfig.integrityKey,
+      this.reviewConfig.checkpoints).inspectSubjects(this.scope.tenantId, subjects) : new Map();
+    for (const task of unique) {
+      const key = taskReviewPlanKeyV1(task.projectId, task.jobId), page = batch.pages.get(key);
+      if (!page) throw new Error("task_result_model_unavailable");
+      const lineage = batch.plans.get(key), subjectId = taskReviewRootSubjectIdV1(lineage, task.jobId);
+      const review = (this.reviewConfig
+        ? inspected.get(JSON.stringify([task.projectId, subjectId])) ?? { targets: [], additionalTargetsOmitted: false }
+        : { targets: [], additionalTargetsOmitted: false }) as Awaited<ReturnType<CompletionGateStoreV1["inspectSubject"]>>;
+      const reviews = review.targets.map(({ snapshot, reviews, verifications, findings, additionalEvidenceOmitted }) => taskReviewEvidenceSchema.parse({
+        targetId: snapshot.target.id, kind: snapshot.target.kind, targetDigest: snapshot.targetDigest,
+        contentHash: snapshot.target.subjectDigest, revision: snapshot.revisionNumber,
+        supersedesTargetId: snapshot.target.supersedesTargetId ?? null, status: snapshot.status,
+        matchingArtifactIds: snapshot.target.kind === "document" ? page.receipts.filter(receipt => {
+          if (receipt.contentHash !== snapshot.target.subjectDigest) return false;
+          try { verifyTaskReviewTargetV1(lineage, snapshot.target, receipt); return true; } catch { return false; }
+        }).map(receipt => receipt.artifactId) : [], additionalEvidenceOmitted,
+        reviews: reviews.map(value => ({ id: value.id, decision: value.decision, authority: value.authority, reviewedAt: value.reviewedAt })),
+        verifications: verifications.map(value => ({ id: value.id, scenarioId: value.scenarioId, outcome: value.outcome, verifiedAt: value.verifiedAt })),
+        findings: findings.map(value => ({ id: value.id, code: value.code, severity: value.severity,
+          statementDigest: value.statementDigest, raisedAt: value.raisedAt })),
+        missingVerificationScenarioIds: snapshot.missingVerificationScenarioIds, openFindingCount: snapshot.openFindingIds.length,
+        grantsApproval: false, grantsExecutionAuthority: false }));
+      output.set(key, { resultSource: "configured", reviewSource: this.reviewConfig ? "configured" : "not_configured",
+        items: page.receipts.map(resultMetadata), reviews, additionalResultsOmitted: page.additionalResultsOmitted,
+        additionalTargetsOmitted: review.additionalTargetsOmitted, canReadContent: actor.can("tasks.results.read", task.projectId) });
+    }
+    return output;
+  }
+
+  private async withQualityStatuses(tx: DatabaseSession, actor: WebActor, summaries: readonly TaskSummary[]): Promise<TaskSummary[]> {
+    const eligible = summaries.filter(summary => summary.state === "succeeded" && this.resultStore && this.reviewConfig
+      && actor.can("tasks.results.read", summary.projectId));
+    if (!eligible.length) return [...summaries];
+    let evidence: Awaited<ReturnType<WebTaskService["batchResultEvidence"]>>;
+    try { evidence = await this.batchResultEvidence(tx, actor, eligible); }
+    catch { return [...summaries]; }
+    return this.applyQualityEvidence(summaries, evidence);
+  }
+
+  private applyQualityEvidence(summaries: readonly TaskSummary[],
+    evidence: Awaited<ReturnType<WebTaskService["batchResultEvidence"]>>): TaskSummary[] {
+    return summaries.map(summary => {
+      const page = evidence.get(taskReviewPlanKeyV1(summary.projectId, summary.jobId));
+      const accepted = !!page && page.items.length > 0 && !page.additionalResultsOmitted && !page.additionalTargetsOmitted
+        && page.reviews.every(review => !review.additionalEvidenceOmitted)
+        && page.items.every(item => page.reviews.some(review => review.status === "ready"
+          && review.matchingArtifactIds.includes(item.artifactId) && review.contentHash === item.contentHash));
+      return accepted ? taskSummarySchema.parse({ ...summary, qualityStatus: "accepted" }) : summary;
+    });
+  }
+
+  private resultAttentionFromEvidence(result: Awaited<ReturnType<WebTaskService["batchResultEvidence"]>> extends Map<string, infer P> ? P : never) {
+    const reasons: TaskAttentionPage["items"][number]["reasons"] = [], resultArtifactIds: string[] = [];
+    if (result.resultSource === "not_configured" || result.reviewSource === "not_configured")
+      return { reasons: ["result_checks_unavailable"] as TaskAttentionPage["items"][number]["reasons"], resultArtifactIds };
+    for (const review of result.reviews.filter(value => value.matchingArtifactIds.length > 0)) {
+      switch (review.status) {
+        case "pending": reasons.push("review"); break;
+        case "changes_requested": case "verification_blocked": case "revision_limit_reached": reasons.push(review.status); break;
+      }
+      if (["pending", "changes_requested", "verification_blocked", "revision_limit_reached"].includes(review.status))
+        resultArtifactIds.push(...review.matchingArtifactIds);
+    }
+    if (result.additionalResultsOmitted || result.additionalTargetsOmitted
+      || result.reviews.some(value => value.additionalEvidenceOmitted)
+      || result.items.some(item => !result.reviews.some(review => review.matchingArtifactIds.includes(item.artifactId))))
+      reasons.push("result_checks_unavailable");
+    return { reasons: [...new Set(reasons)], resultArtifactIds: result.canReadContent ? [...new Set(resultArtifactIds)].sort() : [] };
   }
 
   /** One result/review inspection powers both the workspace-wide attention list and
@@ -597,10 +687,12 @@ export class WebTaskService {
             SELECT 1 FROM control_native_artifact_receipts a WHERE a.tenant_id=j.tenant_id AND a.project_id=j.project_id AND a.job_id=j.id))
         ORDER BY j.id COLLATE "C" LIMIT 26`, [this.scope.tenantId, this.scope.workspaceId, after ?? null,
         `adapter:manual:${sha256Digest(this.scope).slice(7, 39)}`, CONTROL_ROOM_IDEA_ADAPTER_V1, sources.ordinary === "included", sources.ideas === "included"])).rows;
+      await this.projects.getViewsInSession(tx, actor, rows.slice(0, 25).map(row => row.project_id));
+      for (const row of rows.slice(0, 25)) actor.require("tasks.read", row.project_id, true);
+      const evidence = await this.batchResultEvidence(tx, actor, rows.slice(0, 25).filter(row => row.has_artifacts)
+        .map(row => ({ projectId: row.project_id, jobId: row.id })));
       const items: TaskAttentionPage["items"] = [];
       for (const row of rows.slice(0, 25)) {
-        await this.projects.getViewInSession(tx, actor, row.project_id);
-        actor.require("tasks.read", row.project_id, true);
         const { summary, job } = validated(row, this.scope.tenantId, row.project_id);
         const reasons: TaskAttentionPage["items"][number]["reasons"] = [];
         if (summary.state === "proposed") reasons.push(job.jobType === "task.proposal" ? "proposal" : "assignment");
@@ -609,7 +701,8 @@ export class WebTaskService {
         if (job.jobType === "harness.hermes.native.task" && ["leased", "running", "waiting_approval", "orphaned", "failed"].includes(summary.state))
           reasons.push("delivery_check");
         if (row.has_artifacts) {
-          reasons.push(...(await this.resultAttention(tx, actor, row)).reasons);
+          const result = evidence.get(taskReviewPlanKeyV1(row.project_id, row.id));
+          reasons.push(...(result ? this.resultAttentionFromEvidence(result).reasons : ["result_checks_unavailable"] as const));
         }
         if (reasons.length) {
           const uniqueReasons = [...new Set(reasons)];
@@ -638,6 +731,8 @@ export class WebTaskService {
       const rows = (await tx.query<TaskRow & { has_artifacts: boolean }>(`SELECT ${hasArtifact} AS has_artifacts, ${selection}
         WHERE j.tenant_id=$1 AND j.project_id=$2 AND ($3::text IS NULL OR j.id COLLATE "C">$3 COLLATE "C") AND ${candidate}
         ORDER BY j.id COLLATE "C" LIMIT 21`, [this.scope.tenantId, projectId, after ?? null])).rows;
+      const evidence = await this.batchResultEvidence(tx, actor,
+        rows.slice(0, 20).filter(row => row.has_artifacts).map(row => ({ projectId, jobId: row.id })));
       const items: TaskProjectAttentionPage["items"] = [];
       for (const row of rows.slice(0, 20)) {
         const { summary, job } = validated(row, this.scope.tenantId, projectId);
@@ -649,7 +744,10 @@ export class WebTaskService {
           if (job.jobType === "harness.hermes.native.task" && ["leased", "running", "waiting_approval", "orphaned", "failed"].includes(summary.state))
             reasons.push("delivery_check");
         }
-        const result = await this.resultAttention(tx, actor, row);
+        const projection = row.has_artifacts ? evidence.get(taskReviewPlanKeyV1(projectId, row.id)) : undefined;
+        const result = !row.has_artifacts ? { reasons: [] as TaskAttentionPage["items"][number]["reasons"], resultArtifactIds: [] }
+          : projection ? this.resultAttentionFromEvidence(projection)
+          : { reasons: ["result_checks_unavailable"] as TaskAttentionPage["items"][number]["reasons"], resultArtifactIds: [] };
         reasons.push(...result.reasons);
         const uniqueReasons = [...new Set(reasons)];
         if (!uniqueReasons.length || mode === "reviews" && !uniqueReasons.some(reason =>
@@ -677,15 +775,28 @@ export class WebTaskService {
         WHERE h.tenant_id=p.tenant_id AND h.project_id=p.id)) OR (p.adapter_id=$3 AND $5::boolean))`;
       const sourceParameters = [`adapter:manual:${sha256Digest(this.scope).slice(7, 39)}`,
         CONTROL_ROOM_IDEA_ADAPTER_V1, sources.ordinary === "included", sources.ideas === "included"] as const;
-      const activeRows = (await tx.query<TaskRow>(`SELECT ${selection}
-        JOIN projects p ON p.tenant_id=j.tenant_id AND p.id=j.project_id
-        WHERE j.tenant_id=$1 AND p.workspace_id=$6 AND ${visibleProject}
-          AND j.state IN ('leased','running','waiting_approval')
-        ORDER BY j.updated_at DESC,j.id COLLATE "C" LIMIT 11`,
-      [this.scope.tenantId, ...sourceParameters, this.scope.workspaceId])).rows;
+      const canReadResults = !!this.resultStore && actor.can("tasks.results.read", undefined, true);
+      if (canReadResults) actor.require("tasks.results.read", undefined, true);
+      const homeRows = (await tx.query<TaskRow & { home_kind: "active" | "result"; artifact_id: string | null }>(`
+        WITH active_rows AS (
+          SELECT 'active'::text AS home_kind,NULL::text AS artifact_id,${selection}
+          JOIN projects p ON p.tenant_id=j.tenant_id AND p.id=j.project_id
+          WHERE j.tenant_id=$1 AND p.workspace_id=$6 AND ${visibleProject}
+            AND j.state IN ('leased','running','waiting_approval')
+          ORDER BY j.updated_at DESC,j.id COLLATE "C" LIMIT 11
+        ), result_rows AS (
+          SELECT 'result'::text AS home_kind,a.artifact_id,${selection}
+          JOIN control_native_artifact_receipts a ON a.tenant_id=j.tenant_id AND a.project_id=j.project_id AND a.job_id=j.id
+          JOIN control_artifact_manifests m ON m.tenant_id=a.tenant_id AND m.id=a.artifact_id
+          JOIN projects p ON p.tenant_id=a.tenant_id AND p.id=a.project_id
+          WHERE a.tenant_id=$1 AND p.workspace_id=$6 AND $7::boolean AND ${visibleProject}
+          ORDER BY m.created_at DESC,a.artifact_id COLLATE "C" LIMIT 11
+        ) SELECT * FROM active_rows UNION ALL SELECT * FROM result_rows`,
+      [this.scope.tenantId, ...sourceParameters, this.scope.workspaceId, canReadResults])).rows;
+      const activeRows = homeRows.filter(row => row.home_kind === "active");
+      await this.projects.getViewsInSession(tx, actor, homeRows.map(row => row.project_id));
       const active = [];
       for (const row of activeRows.slice(0, 10)) {
-        await this.projects.getViewInSession(tx, actor, row.project_id);
         actor.require("tasks.read", row.project_id);
         active.push(validated(row, this.scope.tenantId, row.project_id).summary);
       }
@@ -693,28 +804,20 @@ export class WebTaskService {
       const recentResults: { task: ReturnType<typeof validated>["summary"];
         artifact: ReturnType<typeof resultMetadata> }[] = [];
       let additionalResultsOmitted = false;
-      const canReadResults = !!this.resultStore && actor.can("tasks.results.read", undefined, true);
       if (this.resultStore && canReadResults) {
-        actor.require("tasks.results.read", undefined, true);
-        const candidates = (await tx.query<{ project_id: string; job_id: string; artifact_id: string }>(`
-          SELECT a.project_id,a.job_id,a.artifact_id FROM control_native_artifact_receipts a
-          JOIN control_artifact_manifests m ON m.tenant_id=a.tenant_id AND m.id=a.artifact_id
-          JOIN projects p ON p.tenant_id=a.tenant_id AND p.id=a.project_id
-          WHERE a.tenant_id=$1 AND p.workspace_id=$6 AND ${visibleProject}
-          ORDER BY m.created_at DESC,a.artifact_id COLLATE "C" LIMIT 11`,
-        [this.scope.tenantId, ...sourceParameters, this.scope.workspaceId])).rows;
-        for (const candidate of candidates.slice(0, 10)) {
-          await this.projects.getViewInSession(tx, actor, candidate.project_id);
+        const candidates = homeRows.filter((row): row is typeof row & { artifact_id: string } =>
+          row.home_kind === "result" && row.artifact_id !== null);
+        const selected = candidates.slice(0, 10), summaries = selected.map(candidate => {
           actor.require("tasks.read", candidate.project_id); actor.require("tasks.results.read", candidate.project_id);
-          const row = (await tx.query<TaskRow>(`SELECT ${selection} WHERE j.tenant_id=$1 AND j.project_id=$2 AND j.id=$3`,
-            [this.scope.tenantId, candidate.project_id, candidate.job_id])).rows[0];
-          if (!row) throw new Error("task_home_result_unavailable");
-          const receipt = await this.resultStore.readReceipt(tx, this.scope.tenantId, candidate.project_id,
-            candidate.job_id, candidate.artifact_id);
+          return validated(candidate, this.scope.tenantId, candidate.project_id).summary;
+        });
+        const evidence = await this.batchResultEvidence(tx, actor, summaries);
+        const enriched = this.applyQualityEvidence(summaries, evidence);
+        for (let index = 0; index < selected.length; index += 1) {
+          const candidate = selected[index]!, page = evidence.get(taskReviewPlanKeyV1(candidate.project_id, candidate.id));
+          const receipt = page?.items.find(item => item.artifactId === candidate.artifact_id);
           if (!receipt) throw new Error("task_home_result_unavailable");
-          recentResults.push({ task: await this.withQualityStatus(tx, actor,
-            validated(row, this.scope.tenantId, candidate.project_id).summary),
-            artifact: resultMetadata(receipt) });
+          recentResults.push({ task: enriched[index]!, artifact: receipt });
         }
         additionalResultsOmitted = candidates.length > 10;
       }

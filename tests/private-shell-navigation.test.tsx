@@ -4,7 +4,9 @@ import { createHash } from "node:crypto";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import Home from "../private-app/app/page";
-import { HomeDashboard, HomeInstallationStatus, type HomeDashboardState } from "../private-app/app/home-workspace";
+import { createHomeReadTransport, HomeDashboard, HomeInstallationStatus, PrivateHome,
+  type HomeDashboardState } from "../private-app/app/home-workspace";
+import { LocalRuntimeContextV1 } from "../private-app/app/local-runtime";
 import SettingsPage from "../private-app/app/settings/page";
 import { OrdinaryProjectStatusActions, PrivateProjectWorkspace, ProjectAgentInstallationStatus } from "../private-app/app/workspace";
 import { ProjectCatalogNavigation } from "../app/components/project-catalog-navigation";
@@ -215,6 +217,108 @@ test("home task reader accepts only the bounded read-only activity contract", as
   await assert.rejects(readTaskHomeActivity((async () => Response.json({ ...result, startsWork: true })) as typeof fetch), /unavailable/);
   await assert.rejects(readTaskHomeActivity((async () => Response.json({ ...result, resultSource: "not_authorized",
     recentResults: [{ unexpected: true }] })) as typeof fetch), /unavailable/);
+});
+
+test("home read transport retries only one transient 503", async () => {
+  const controller = new AbortController();
+  for (const fixture of [
+    { statuses: [503, 200], expected: 200, calls: 2 },
+    { statuses: [503, 503], expected: 503, calls: 2 },
+    { statuses: [500, 200], expected: 500, calls: 1 },
+    { statuses: [401, 200], expected: 401, calls: 1 },
+    { statuses: [404, 200], expected: 404, calls: 1 },
+  ]) {
+    let calls = 0;
+    const transport = createHomeReadTransport(controller.signal, (async () =>
+      new Response(null, { status: fixture.statuses[calls++] })) as typeof fetch);
+    assert.equal((await transport("/api/v1/home/tasks", { method: "GET" })).status, fixture.expected);
+    assert.equal(calls, fixture.calls);
+  }
+  let postCalls = 0;
+  const post = createHomeReadTransport(controller.signal, (async () => {
+    postCalls += 1; return new Response(null, { status: 503 });
+  }) as typeof fetch);
+  assert.equal((await post("/api/v1/home/tasks", { method: "POST" })).status, 503);
+  assert.equal(postCalls, 1);
+});
+
+test("home waits for runtime detection and coalesces strict, focus, visibility and manual refreshes", async () => {
+  const jsdomModule = await import("jsdom");
+  const JSDOM = (jsdomModule as { JSDOM: unknown }).JSDOM as new (
+    html: string, options?: { url?: string; pretendToBeVisual?: boolean },
+  ) => { window: Window & typeof globalThis };
+  const React = await import("react");
+  const { createRoot } = await import("react-dom/client");
+  const dom = new JSDOM('<div id="root"></div>', { url: "https://control.invalid/", pretendToBeVisual: true });
+  const saved = Object.fromEntries(["window", "document", "IS_REACT_ACT_ENVIRONMENT", "fetch"]
+    .map(key => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
+  Object.assign(globalThis, { window: dom.window, document: dom.window.document, IS_REACT_ACT_ENVIRONMENT: true });
+  Object.defineProperty(dom.window.document, "hidden", { configurable: true, get: () => false });
+  const paths = ["/api/v1/projects", "/api/v1/home/tasks", "/api/v1/needs-me/tasks"];
+  const requests: string[] = [];
+  const pending: { path: string; resolve: (response: Response) => void }[] = [];
+  const responseFor = (path: string) => path === "/api/v1/projects"
+    ? Response.json({ projects: [], nextCursor: null, canCreate: true,
+      sources: { ordinary: "included", ideas: "not_configured" } })
+    : path === "/api/v1/home/tasks"
+      ? Response.json({ active: [], recentResults: [], additionalActiveOmitted: false,
+        additionalResultsOmitted: false, resultSource: "not_configured",
+        observedAt: "2026-09-27T12:00:00.000Z", startsWork: false })
+      : Response.json({ items: [], nextCursor: null, examined: 0,
+        observedAt: "2026-09-27T12:00:00.000Z", startsWork: false,
+        planningSource: "not_configured", deliverySource: "not_configured",
+        sources: { ordinary: "included", ideas: "not_configured" } });
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    const path = String(input);
+    requests.push(path);
+    if (!paths.includes(path)) return new Response(null, { status: 404 });
+    return new Promise<Response>(resolve => pending.push({ path, resolve }));
+  }) as typeof fetch;
+  const root = createRoot(dom.window.document.getElementById("root")!);
+  const render = (mode: "checking" | "local") => React.createElement(React.StrictMode, null,
+    React.createElement(LocalRuntimeContextV1.Provider, { value: mode === "checking" ? { mode }
+      : { mode, status: { taskWorkersStarted: true, workers: [], projectSections: [] } } },
+    React.createElement(PrivateHome)));
+  const tick = async () => { await React.act(async () => { await new Promise(resolve => setTimeout(resolve, 0)); }); };
+  const counts = () => Object.fromEntries(paths.map(path => [path, requests.filter(item => item === path).length]));
+  const settle = async () => {
+    const reads = pending.splice(0);
+    await React.act(async () => { for (const read of reads) read.resolve(responseFor(read.path)); });
+    await tick();
+  };
+  try {
+    await React.act(async () => { root.render(render("checking")); });
+    await tick();
+    assert.deepEqual(counts(), Object.fromEntries(paths.map(path => [path, 0])));
+    await React.act(async () => { root.render(render("local")); });
+    await tick();
+    assert.deepEqual(counts(), Object.fromEntries(paths.map(path => [path, 1])), "StrictMode starts one dashboard batch");
+    assert.equal(requests.includes("/api/v1/connections"), false, "local Home never requests the hosted connection route");
+    await React.act(async () => {
+      dom.window.dispatchEvent(new dom.window.Event("focus"));
+      dom.window.document.dispatchEvent(new dom.window.Event("visibilitychange"));
+      const button = [...dom.window.document.querySelectorAll("button")]
+        .find(item => item.textContent === "Check saved dashboard again");
+      assert.ok(button); button.click();
+    });
+    await tick();
+    assert.deepEqual(counts(), Object.fromEntries(paths.map(path => [path, 1])), "in-flight refreshes are coalesced");
+    await settle();
+    await React.act(async () => {
+      dom.window.dispatchEvent(new dom.window.Event("focus"));
+      dom.window.document.dispatchEvent(new dom.window.Event("visibilitychange"));
+    });
+    await tick();
+    assert.deepEqual(counts(), Object.fromEntries(paths.map(path => [path, 2])), "settled batch permits one refresh");
+    await settle();
+  } finally {
+    await React.act(async () => { root.unmount(); });
+    dom.window.close();
+    for (const [key, descriptor] of Object.entries(saved)) {
+      if (descriptor) Object.defineProperty(globalThis, key, descriptor);
+      else delete (globalThis as Record<string, unknown>)[key];
+    }
+  }
 });
 
 test("project catalog filter is sent to the protected read and rejects mixed lifecycle results", async () => {

@@ -17,8 +17,6 @@ import type { MacLocalWorkerReadinessV1 } from "./mac-local-worker-readiness";
 import type { LocalOwnerSessionStoreV1 } from "./local-owner-session-store";
 import type { PersistedLocalOwnerSessionV1 } from "./local-owner-session";
 import { taskAttentionPageSchema } from "./task-attention-wire";
-import { taskPlanningReceiptSchema } from "./task-planning-wire";
-import { taskDeliveryStatusSchema } from "./task-delivery-wire";
 
 export interface MacLocalWebProcessOptionsV1 {
   origin: string;
@@ -196,32 +194,11 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
         if (request.method !== "GET" || [...url.searchParams.keys()].some(key => key !== "after")
           || url.searchParams.getAll("after").length > 1) throw new WebAccessError("invalid_request");
         const page = await tasks.attention(identity, url.searchParams.get("after") ?? undefined);
-        if (options.planning?.readSaved) for (const item of page.items) {
-          if (!item.reasons.includes("proposal")) continue;
-          const saved = await options.planning.readSaved(identity, item.task.projectId, item.task.jobId);
-          if (saved) {
-            const receipt = taskPlanningReceiptSchema.parse(saved);
-            if (receipt.projectId !== item.task.projectId || receipt.sourceJobId !== item.task.jobId
-              || receipt.jobId === item.task.jobId) throw new Error("planning_receipt_scope_mismatch");
-            item.reasons = item.reasons.filter(reason => reason !== "proposal");
-          }
-        }
-        if (options.submission?.readDelivery) for (const item of page.items) {
-          if (!item.reasons.includes("delivery_check")) continue;
-          const status = taskDeliveryStatusSchema.parse(await options.submission.readDelivery(identity,
-            item.task.projectId, item.task.jobId, item.inputDigest));
-          if (status.projectId !== item.task.projectId || status.jobId !== item.task.jobId)
-            throw new Error("delivery_status_scope_mismatch");
-          item.reasons = item.reasons.filter(reason => reason !== "delivery_check");
-          if (status.state === "not_queued") item.reasons.push("submission_needed");
-          else if (status.state === "transmission_unconfirmed") item.reasons.push("delivery_uncertain");
-          else if (status.state === "receipt_rejected") item.reasons.push("delivery_rejected");
-          else if (status.state !== "receipt_recorded") item.reasons.push("delivery_pending");
-        }
+        // The summary stays fixed-query and conservative. Exact saved-plan and
+        // delivery reconciliation remains on the task page, so no per-row
+        // authenticated transaction is hidden behind this list read.
         return Response.json(taskAttentionPageSchema.parse({ ...page,
-          planningSource: options.planning?.readSaved ? "configured" : "not_configured",
-          deliverySource: options.submission?.readDelivery ? "configured" : "not_configured",
-          items: page.items.filter(item => item.reasons.length) }), { headers: privateResponseHeaders });
+          planningSource: "not_configured", deliverySource: "not_configured" }), { headers: privateResponseHeaders });
       }
       const projectOverview = /^\/api\/v1\/projects\/([^/]+)\/overview$/.exec(url.pathname);
       if (projectOverview) {

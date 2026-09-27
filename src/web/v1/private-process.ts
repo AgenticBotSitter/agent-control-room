@@ -26,9 +26,7 @@ import type { TaskAssignmentOperation } from "./task-assignment-coordinator";
 import type { IdeaCanonicalResultProjectionOperation, TaskApprovalOperation, TaskSubmissionOperation } from "./task-coordinator-lifecycle";
 import type { TaskRevisionOperation } from "./task-revision-operation";
 import type { QueueAttentionSource } from "./queue-attention-wire";
-import { taskPlanningReceiptSchema } from "./task-planning-wire";
 import { taskAttentionPageSchema } from "./task-attention-wire";
-import { taskDeliveryStatusSchema } from "./task-delivery-wire";
 import { taskProjectAgentOptionsSchema } from "./task-project-agents-wire";
 import { newsCollectionStatusSchema, newsCollectionHistorySchema } from "./news-collection-status-wire";
 import { ideaCreationOptionsSchema } from "./idea-wire";
@@ -620,31 +618,12 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
             if (request.method !== "GET" || [...url.searchParams.keys()].some(key => key !== "after")
               || url.searchParams.getAll("after").length > 1) throw new WebAccessError("invalid_request");
             const page = await tasks.attention(identity, url.searchParams.get("after") ?? undefined);
-            // Separate authenticated transactions: never call a second identity-locking pool
-            // from inside the web read transaction. Each receipt read rechecks current access.
-            if (planning?.readSaved) for (const item of page.items) {
-              if (!item.reasons.includes("proposal")) continue;
-              const saved = await planning.readSaved(identity, item.task.projectId, item.task.jobId);
-              if (saved) {
-                const receipt = taskPlanningReceiptSchema.parse(saved);
-                if (receipt.projectId !== item.task.projectId || receipt.sourceJobId !== item.task.jobId
-                  || receipt.jobId === item.task.jobId) throw new Error("planning_receipt_scope_mismatch");
-                item.reasons = item.reasons.filter(reason => reason !== "proposal");
-              }
-            }
-            if (submission?.readDelivery) for (const item of page.items) {
-              if (!item.reasons.includes("delivery_check")) continue;
-              const status = taskDeliveryStatusSchema.parse(await submission.readDelivery(identity, item.task.projectId, item.task.jobId, item.inputDigest));
-              if (status.projectId !== item.task.projectId || status.jobId !== item.task.jobId) throw new Error("delivery_status_scope_mismatch");
-              item.reasons = item.reasons.filter(reason => reason !== "delivery_check");
-              if (status.state === "not_queued") item.reasons.push("submission_needed");
-              else if (status.state === "transmission_unconfirmed") item.reasons.push("delivery_uncertain");
-              else if (status.state === "receipt_rejected") item.reasons.push("delivery_rejected");
-              else if (status.state !== "receipt_recorded") item.reasons.push("delivery_pending");
-            }
-            return Response.json(taskAttentionPageSchema.parse({ ...page, planningSource: planning?.readSaved ? "configured" : "not_configured",
-              deliverySource: submission?.readDelivery ? "configured" : "not_configured",
-              items: page.items.filter(item => item.reasons.length) }), { headers: privateResponseHeaders });
+            // Keep this summary fixed-query and fail closed. Exact saved-plan and
+            // delivery evidence remains available on the task page; the summary
+            // retains its generic attention reason instead of running N separate
+            // authority transactions or inferring an all-clear from partial data.
+            return Response.json(taskAttentionPageSchema.parse({ ...page, planningSource: "not_configured",
+              deliverySource: "not_configured" }), { headers: privateResponseHeaders });
           }
           if (url.pathname === "/api/v1/needs-me") {
             if (request.method !== "GET" || url.search) throw new WebAccessError("invalid_request");
