@@ -438,8 +438,6 @@ test("documented clean-cluster provision/migrate/backup/restore/verify journey",
     await native("pg_ctl", ["-D", data, "-l", join(run, log), "-w", "-t", "30", "-o",
       `-k ${socket} -p ${port} -h '' -c unix_socket_permissions=0700 -c shared_buffers=32MB -c max_connections=20`, "start"]);
   };
-  await startCluster(cleanSocket, cleanData, CLEAN_PORT, "clean-server.log");
-  await startCluster(targetSocket, targetData, TARGET_PORT, "clean-target-server.log");
   t.after(async () => {
     for (const data of [cleanData, targetData]) {
       try {
@@ -452,6 +450,8 @@ test("documented clean-cluster provision/migrate/backup/restore/verify journey",
     await rm(targetData, { recursive: true, force: true });
     await rm(cleanBackup, { recursive: true, force: true });
   });
+  await startCluster(cleanSocket, cleanData, CLEAN_PORT, "clean-server.log");
+  await startCluster(targetSocket, targetData, TARGET_PORT, "clean-target-server.log");
   const pw = { migrator: "clean-install-migrator-0001", app: "clean-install-app-000001", scheduler: "clean-install-scheduler-0001" };
   const psqlFor = (socket, port) => ({
     PATH: "/usr/bin:/bin", LC_ALL: "C", TMPDIR: run,
@@ -589,13 +589,18 @@ test("documented clean-cluster provision/migrate/backup/restore/verify journey",
 
   // The Mac-local wrapper adds the five exact restricted roles, hashes the
   // dump+metadata manifest, and proves the result in its own fresh cluster.
-  await provisionMacLocalNarrowRolesV1({
-    query: (sql, values) => cleanTargetQuery(sql, values),
-    escapeLiteral: value => `'${String(value).replaceAll("'", "''")}'`,
-  }, Object.fromEntries([
-    "control_room_web", "control_room_coordinator", "control_room_results",
-    "control_room_publisher", "control_room_queue_worker",
-  ].map((name, index) => [name, `${index}`.repeat(40)])));
+  // Queue construction and its guarded cleanup both contain transactions, so
+  // provisioning must keep every statement on this one PostgreSQL session.
+  const narrowRoleClient = new Client(db);
+  await narrowRoleClient.connect();
+  try {
+    await provisionMacLocalNarrowRolesV1(narrowRoleClient, Object.fromEntries([
+      "control_room_web", "control_room_coordinator", "control_room_results",
+      "control_room_publisher", "control_room_queue_worker",
+    ].map((name, index) => [name, `${index}`.repeat(40)])));
+  } finally {
+    await narrowRoleClient.end();
+  }
   const macBackup = join(run, "mac-local-backup-set");
   const manifest = await createMacLocalDatabaseBackupV1({ source: db, out: macBackup, pgBin: BIN,
     now: () => "2026-09-27T00:00:00.000Z" });
