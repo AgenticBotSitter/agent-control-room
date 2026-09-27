@@ -45,8 +45,12 @@ const runners: Record<string, Run> = {};
 for (const worker of configuration.enablement.workers) {
   const base = (prompt: string, deadlineMs: number, signal: AbortSignal | undefined, cwd: string) =>
     ({ executablePath: worker.executablePath, prompt, workingDirectory: cwd, deadlineMs, ...(signal ? { signal } : {}) });
-  if (worker.kind === "codex") { const exec = createOwnerTrustedLocalCodexExecV1(); runners.codex = (p, d, s, c) => exec.execute(base(p, d, s, c!)); }
-  if (worker.kind === "claude-code") { const exec = createOwnerTrustedLocalClaudeExecV1(); runners["claude-code"] = (p, d, s, c) => exec.execute(base(p, d, s, c!)); }
+  const policy = worker.modelPolicy;
+  if (worker.kind === "codex" && policy && "models" in policy) { const exec = createOwnerTrustedLocalCodexExecV1();
+    runners.codex = (p, d, s, c) => exec.execute({ ...base(p, d, s, c!), model: policy.defaultModel, effort: policy.defaultEffort }); }
+  if (worker.kind === "claude-code" && policy && "models" in policy) { const exec = createOwnerTrustedLocalClaudeExecV1();
+    runners["claude-code"] = (p, d, s, c) => exec.execute({ ...base(p, d, s, c!), model: policy.defaultModel,
+      effort: policy.defaultEffort, supportsEffort: true }); }
   if (worker.kind === "hermes") { const exec = createOwnerTrustedLocalHermesExecV1(); runners.hermes = (p, d, s, c) => exec.execute({ ...base(p, d, s, c!), ...hermesProfile }); }
 }
 

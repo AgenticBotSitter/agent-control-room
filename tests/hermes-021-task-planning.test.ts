@@ -55,7 +55,8 @@ test("a Hermes 0.21 worker template creates a pinned text-review plan, not an ol
   const planner = new TaskExecutionPlanner(f.db, f.scope, { template, integrityKey: new Uint8Array(32).fill(91),
     reviewIntegrityKey: f.reviewKey, checkpoints: f.checkpoints,
     localAdapterAdmission: { enabledAdapters: [HERMES_021_MACOS_LOCAL_ADAPTER_V1] } }, () => instant + 7000);
-  const source = await f.tasks.propose(f.identity, binding.projectId, taskDraft, "hermes-worker-021-plan-source");
+  const primaryDraft = { ...taskDraft, scopes: [{ kind: "tree" as const, path: "tasks/hermes-primary" }] };
+  const source = await f.tasks.propose(f.identity, binding.projectId, primaryDraft, "hermes-worker-021-plan-source");
   const notInstalled = new TaskExecutionPlanner(f.db, f.scope, { template, integrityKey: new Uint8Array(32).fill(91),
     reviewIntegrityKey: f.reviewKey, checkpoints: f.checkpoints,
     localAdapterAdmission: { enabledAdapters: [] } }, () => instant + 7000);
@@ -174,7 +175,8 @@ test("a Hermes 0.21 worker template creates a pinned text-review plan, not an ol
     planned.receipt.inputDigest)).replayed, true, "the fence does not erase an exact historical lease receipt");
   await assert.rejects(fenced.locateApprovedHermes021LocalQueueDelivery(queuedReferences[0]!, new AbortController().signal), /conflict/,
     "a paused affected node cannot deliver an already queued task");
-  const fencedSource = await f.tasks.propose(f.identity, binding.projectId, taskDraft, "hermes-worker-transition-fence-source");
+  const fencedDraft = { ...taskDraft, scopes: [{ kind: "tree" as const, path: "tasks/hermes-fenced" }] };
+  const fencedSource = await f.tasks.propose(f.identity, binding.projectId, fencedDraft, "hermes-worker-transition-fence-source");
   const fencedPlan = await planner.plan(f.identity, binding.projectId, fencedSource.receipt.jobId, sha256Digest(taskDraft));
   await assert.rejects(fenced.assign(f.identity, binding.projectId, fencedPlan.receipt.jobId, binding.nodeId,
     fencedPlan.receipt.inputDigest), /conflict/, "a paused affected node cannot receive a new lease");
@@ -227,7 +229,8 @@ test("a Hermes 0.21 worker template creates a pinned text-review plan, not an ol
   // Revoke a different assignment after its first canonical check succeeds.
   // The second, immediately-before-launch check must see that revocation and
   // refuse before the private Hermes host can receive a task.
-  const revokedSource = await f.tasks.propose(f.identity, binding.projectId, taskDraft, "hermes-worker-021-revocation-source");
+  const revokedDraft = { ...taskDraft, scopes: [{ kind: "tree" as const, path: "tasks/hermes-revoked" }] };
+  const revokedSource = await f.tasks.propose(f.identity, binding.projectId, revokedDraft, "hermes-worker-021-revocation-source");
   const revokedPlan = await planner.plan(f.identity, binding.projectId, revokedSource.receipt.jobId,
     sha256Digest(taskDraft));
   const revokedAssigned = await assignments.assign(f.identity, binding.projectId, revokedPlan.receipt.jobId,

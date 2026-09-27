@@ -39,7 +39,7 @@ function taskDetail(jobId: string, routeEvidence: "local_hermes" | "local_claude
       lifecycle: "active", version: 1, createdAt: observedAt, updatedAt: observedAt, lifecycleEditable: true },
     task: { jobId, projectId: binding.projectId, requestId: `request:${jobId.split(":").at(-1)}`, title: "Current project task",
       state: "running", version: 2, createdAt: observedAt, updatedAt: observedAt },
-    instructions: "Review the bounded input", inputDigest: digest, observedAt,
+    instructions: "Review the bounded input", inputDigest: digest, observedAt, modelSelection: null, ownershipLeases: [],
     attempts: [{ attemptId: `attempt:${jobId.split(":").at(-1)}`, attemptNumber: 1, state: "running",
       runs: [{ runId: `run:${jobId.split(":").at(-1)}`, harness: "claude", state: "running", lastObservedAt: observedAt,
         stale: false, routeEvidence, firstObservedExecutionAt: observedAt, finishedObservedAt: null,

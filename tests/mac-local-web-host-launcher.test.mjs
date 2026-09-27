@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { parseMacLocalWebHostArguments, readPinnedMacExecutableVersion, startMacLocalTaskHost } from "../scripts/mac-local/start-web-host.mjs";
+import { parseMacLocalWebHostArguments, readPinnedMacExecutableVersion, startMacLocalTaskHost,
+  verifyPinnedMacModelPolicy } from "../scripts/mac-local/start-web-host.mjs";
 
 test("Mac local web host launcher accepts only the owner-attended fixed protected root", () => {
   assert.deepEqual(parseMacLocalWebHostArguments(["--owner-attended", "--protected-root", "/Library/Application Support/Agent Control Room"]),
@@ -22,6 +23,20 @@ test("Mac local web host reads a bounded exact executable version without shell 
   assert.deepEqual(seen[0][1], ["--version"]);
   await assert.rejects(() => readPinnedMacExecutableVersion("/usr/local/bin/example", { execFile: async () => ({ stdout: "bad\nvalue" }) }),
     /mac_local_executable_version_unavailable/);
+});
+
+test("startup validates an explicit model allowlist against the pinned CLI surface", async () => {
+  const worker = { kind: "codex", executablePath: "/usr/local/bin/codex", modelPolicy: {
+    models: ["gpt-build"], defaultModel: "gpt-build", efforts: ["high"], defaultEffort: "high",
+  } };
+  const calls = [];
+  assert.equal(await verifyPinnedMacModelPolicy(worker, { execFile: async (_path, args) => {
+    calls.push(args); return { stdout: args[0] === "debug" ? "gpt-build\n" : "--model\n" };
+  } }), true);
+  assert.deepEqual(calls, [["debug", "models"], ["exec", "--help"]]);
+  assert.equal(await verifyPinnedMacModelPolicy(worker, { execFile: async (_path, args) => ({
+    stdout: args[0] === "debug" ? "different-model\n" : "--model\n",
+  }) }), false);
 });
 
 test("task host requires the fixed release provider and does not accept a caller callback", async () => {

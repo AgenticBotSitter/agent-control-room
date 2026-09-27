@@ -32,6 +32,8 @@ import { WebSessionAuthority } from "./session-authority";
 import { WebProjectService } from "./project-service";
 import { taskDraftSchema } from "./task-wire";
 import { taskRevisionContextSchema, taskRevisionRequestSchema, type TaskRevisionRequest } from "./task-revision-wire";
+import { inheritTaskModelRequestV1, resolveTaskModelV1, type TaskModelCatalogV1,
+  type RequestedTaskModelV1, type TaskModelWorkerKindV1 } from "./task-model-selection";
 
 const instant = z.string().datetime().refine(value => new Date(value).toISOString() === value);
 /** Server-owned template, never accepted from a browser or worker request. This first planning
@@ -315,10 +317,12 @@ export class TaskExecutionPlanner {
   private readonly checkpoints: AwaitableRollbackCheckpointStoreV1;
   private readonly projects: WebProjectService;
   private readonly revisionSource?: NativeResultSubmissionService | TaskResultInspectionSourceV1;
+  private readonly modelCatalog?: TaskModelCatalogV1;
   constructor(private readonly db: DatabaseClient, private readonly scope: { tenantId: string; workspaceId: string },
     config: { template?: NativeTaskTemplate; additionalTemplates?: readonly NativeTaskTemplate[]; templateRegistry?: NativeTaskTemplateRegistryV1;
       integrityKey: Uint8Array; reviewIntegrityKey: Uint8Array;
-      checkpoints: AwaitableRollbackCheckpointStoreV1; ideaIntegrityKey?: Uint8Array; localAdapterAdmission?: LocalTaskAdapterAdmission }, private readonly clock: () => number = Date.now,
+      checkpoints: AwaitableRollbackCheckpointStoreV1; ideaIntegrityKey?: Uint8Array; localAdapterAdmission?: LocalTaskAdapterAdmission;
+      modelCatalog?: TaskModelCatalogV1 }, private readonly clock: () => number = Date.now,
     revisionResults?: ConstructorParameters<typeof NativeResultSubmissionService>[1], revisionSource?: TaskResultInspectionSourceV1) {
     if (config.templateRegistry !== undefined) {
       if (!isNativeTaskTemplateRegistryV1(config.templateRegistry) || config.template !== undefined || config.additionalTemplates !== undefined)
@@ -337,6 +341,7 @@ export class TaskExecutionPlanner {
     this.checkpoints = { read: config.checkpoints.read.bind(config.checkpoints),
       initialize: fail, advance: fail };
     this.localAdapterAdmission = captureLocalTaskAdapterAdmission(config.localAdapterAdmission);
+    this.modelCatalog = config.modelCatalog;
     this.projects = new WebProjectService(db, scope, clock, config.ideaIntegrityKey);
     if (revisionResults) {
       if (revisionResults.integrityKey.length !== this.reviewKey.length || !timingSafeEqual(revisionResults.integrityKey, this.reviewKey)) fail();
@@ -352,6 +357,43 @@ export class TaskExecutionPlanner {
     return { templates: new Map(values.map(value => [value.id, value])),
       projectTemplates: new Map([...new Set(values.map(value => value.authority.projectId))].map(projectId => [projectId,
         Object.freeze(values.filter(value => value.authority.projectId === projectId))])) };
+  }
+  private modelKind(template: NativeTaskTemplate): TaskModelWorkerKindV1 | undefined {
+    if (template.adapter === CODEX_OWNER_TRUSTED_LOCAL_ADAPTER_V1) return "codex";
+    if (template.adapter === CLAUDE_CODE_LOCAL_ADAPTER_V1) return "claude-code";
+    if (template.adapter === HERMES_LOCAL_ADAPTER_V1) return "hermes";
+    return undefined;
+  }
+  private async materializeModelSelection(tx: DatabaseSession, sourceJobId: string, targetJobId: string,
+    projectId: string, template: NativeTaskTemplate, createdAt: string, inheritedFromJobId?: string,
+    override?: { model?: string; effort?: string }) {
+    await tx.query(`INSERT INTO control_task_declared_scopes(tenant_id,project_id,job_id,scope_kind,path,path_fold)
+      SELECT tenant_id,project_id,$3,scope_kind,path,path_fold FROM control_task_declared_scopes
+      WHERE tenant_id=$1 AND job_id=$2`, [this.scope.tenantId, sourceJobId, targetJobId]);
+    const kind = this.modelKind(template);
+    if (!kind || !this.modelCatalog?.some(item => item.kind === kind)) return;
+    const source = (await tx.query<{ selection_key: string | null; effort: string | null }>(
+      "SELECT selection_key,effort FROM control_task_model_selections WHERE tenant_id=$1 AND job_id=$2",
+      [this.scope.tenantId, sourceJobId])).rows[0];
+    if (!source) return fail();
+    let requested: RequestedTaskModelV1 = { model: source.selection_key ?? undefined, effort: source.effort ?? undefined };
+    if (inheritedFromJobId) {
+      const inherited = (await tx.query<{ selection_key: string; effort: string }>(
+        `SELECT selection_key,effort FROM control_task_model_selections
+         WHERE tenant_id=$1 AND job_id=$2 AND worker_kind IS NOT NULL`,
+      [this.scope.tenantId, inheritedFromJobId])).rows[0];
+      if (!inherited) return fail();
+      requested = { model: inherited.selection_key, effort: inherited.effort };
+    }
+    requested = inheritTaskModelRequestV1(requested, override ?? {});
+    let selected;
+    try { selected = resolveTaskModelV1(this.modelCatalog, kind, requested); }
+    catch { throw new WebAccessError("conflict"); }
+    await tx.query(`INSERT INTO control_task_model_selections
+      (tenant_id,project_id,job_id,worker_kind,selection_key,model,effort,provider,profile,inherited_from_job_id,created_at)
+      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`, [this.scope.tenantId, projectId, targetJobId,
+      selected.workerKind, selected.selectionKey, selected.model, selected.effort, selected.provider ?? null,
+      selected.profile ?? null, inheritedFromJobId ?? null, createdAt]);
   }
   private canPrepare(template: NativeTaskTemplate) {
     return !requiresLocalAdmission(template.adapter) || this.localAdapterAdmission === undefined
@@ -606,6 +648,7 @@ export class TaskExecutionPlanner {
       // trusted canonical writer inside our one owner-authorized transaction, without any transition.
       const canonical = new CanonicalStore(joined(tx));
       for (const record of [plan.request, plan.workflow, plan.job]) await canonical.create(record);
+      await this.materializeModelSelection(tx, sourceJobId, plan.job.id, projectId, template, actor.now);
       await tx.query(`INSERT INTO control_task_execution_plans(tenant_id,project_id,source_job_id,job_id,plan,auth_tag)
         VALUES($1,$2,$3,$4,$5::jsonb,$6)`, [plan.tenantId, projectId, sourceJobId, plan.job.id, JSON.stringify(plan), this.tag(plan)]);
       await appendAuditWith(tx, { id: `audit:execution:${suffix}`, tenantId: plan.tenantId, projectId, actorId: actor.id, actorType: "human",
@@ -690,6 +733,7 @@ export class TaskExecutionPlanner {
     await this.profile(tx, plan, plannedAt); assertNoSecretMaterial(plan); await assertCurrent();
     const canonical = new CanonicalStore(joined(tx));
     for (const record of [plan.request, plan.workflow, plan.job]) await canonical.create(record);
+    await this.materializeModelSelection(tx, sourceJobId, plan.job.id, projectId, template, plannedAt);
     await tx.query(`INSERT INTO control_task_execution_plans(tenant_id,project_id,source_job_id,job_id,plan,auth_tag)
       VALUES($1,$2,$3,$4,$5::jsonb,$6)`, [plan.tenantId, projectId, sourceJobId, plan.job.id,
       JSON.stringify(plan), this.tag(plan)]);
@@ -840,6 +884,8 @@ export class TaskExecutionPlanner {
       assertNoSecretMaterial(plan); current();
       const canonical = new CanonicalStore(joined(tx));
       for (const record of [plan.request, plan.workflow, plan.job]) { await canonical.create(record); current(); }
+      await this.materializeModelSelection(tx, sourceJobId, plan.job.id, projectId, template, actor.now, sourceJobId,
+        { model: input.model, effort: input.effort }); current();
       await tx.query(`INSERT INTO control_task_execution_plans(tenant_id,project_id,source_job_id,job_id,plan,auth_tag)
         VALUES($1,$2,$3,$4,$5::jsonb,$6)`, [plan.tenantId, projectId, sourceJobId, plan.job.id, JSON.stringify(plan), this.tag(plan)]);
       await appendAuditWith(tx, { id: `audit:revision:${suffix}`, tenantId: plan.tenantId, projectId, actorId: actor.id, actorType: "human",

@@ -55,7 +55,7 @@ function detail(state: TaskDetail["task"]["state"], run?: Partial<TaskDetail["at
     lifecycle: "active", version: 1, createdAt: at, updatedAt: at, lifecycleEditable: true },
     task: { jobId: "job:test", projectId: "project:test", requestId: "request:test", title: "Test task",
       state, version: 1, createdAt: at, updatedAt: at }, instructions: "Deliver the requested result", inputDigest: digest,
-    observedAt: at, attempts: run ? [{ attemptId: "attempt:test", attemptNumber: 1, state: "running", additionalRunsOmitted: false,
+    observedAt: at, modelSelection: null, ownershipLeases: [], attempts: run ? [{ attemptId: "attempt:test", attemptNumber: 1, state: "running", additionalRunsOmitted: false,
       runs: [{ runId: "run:test", harness: "codex", state: "running", lastObservedAt: at, stale: false,
         firstObservedExecutionAt: at, finishedObservedAt: null, cancellation: "not_requested", source: "native_snapshot",
         nativeState: "running", availability: "current", usage: null, resultClaim: null, timeline: [],

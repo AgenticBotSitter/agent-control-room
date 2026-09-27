@@ -18,7 +18,8 @@ function adapter(capture?: { file?: string; args?: readonly string[]; env?: Read
   } });
 }
 function input(workingDirectory: string, prompt = "hello", deadlineMs = 10_000, signal?: AbortSignal) {
-  return { executablePath: executable, prompt, workingDirectory, deadlineMs, signal };
+  return { executablePath: executable, prompt, workingDirectory, deadlineMs, model: "sonnet", effort: "high",
+    supportsEffort: false, signal };
 }
 
 test("runs only the reviewed Mac-local Claude arguments and exposes no inherited environment", async () => {
@@ -33,6 +34,21 @@ test("runs only the reviewed Mac-local Claude arguments and exposes no inherited
   assert.equal(received.env.includes("SECRET_SHOULD_NOT_LEAK"), false);
   assert.deepEqual(Object.keys(captured.env ?? {}).sort(), ["HOME", "LANG", "LOGNAME", "PATH", "TMPDIR", "USER"]);
   assert.equal(result.usageReported, true); assert.deepEqual(await readdir(cwd), []);
+});
+
+test("passes a chosen effort only when startup verified the installed CLI supports it", async () => {
+  const captured: { args?: readonly string[] } = {};
+  const result = await adapter(captured).execute({ ...input(await taskDirectory()), model: "opus", effort: "high", supportsEffort: true });
+  assert.equal(result.status, "completed");
+  assert.deepEqual(captured.args, ["-p", "--model", "opus", "--effort", "high", ...OWNER_TRUSTED_LOCAL_CLAUDE_ARGS_V1.slice(3)]);
+});
+
+test("keeps the pre-W8 Sonnet invocation when protected model selection is absent", async () => {
+  const cwd = await taskDirectory();
+  const captured: { args?: readonly string[] } = {};
+  const result = await adapter(captured).execute({ executablePath: executable, prompt: "hello", workingDirectory: cwd, deadlineMs: 10_000 });
+  assert.equal(result.status, "completed");
+  assert.deepEqual(captured.args, OWNER_TRUSTED_LOCAL_CLAUDE_ARGS_V1);
 });
 
 test("rejects a canceled task and a nonempty directory before spawning", async () => {

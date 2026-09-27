@@ -34,6 +34,9 @@ export type OwnerTrustedLocalClaudeExecV1 = Readonly<{
     prompt: string;
     workingDirectory: string;
     deadlineMs: number;
+    model?: string;
+    effort?: string;
+    supportsEffort?: boolean;
     signal?: AbortSignal;
   }>): Promise<OwnerTrustedLocalClaudeExecResultV1>;
 }>;
@@ -57,11 +60,15 @@ function safeInput(input: unknown): input is Parameters<OwnerTrustedLocalClaudeE
   if (!input || typeof input !== "object" || Array.isArray(input) || types.isProxy(input)
     || Object.getPrototypeOf(input) !== Object.prototype) return false;
   const value = input as Record<string, unknown>;
-  return Object.keys(value).every(key => ["executablePath", "prompt", "workingDirectory", "deadlineMs", "signal"].includes(key))
+  return Object.keys(value).every(key => ["executablePath", "prompt", "workingDirectory", "deadlineMs", "model", "effort", "supportsEffort", "signal"].includes(key))
     && safePath(value.executablePath) && safePath(value.workingDirectory)
     && typeof value.prompt === "string" && Buffer.byteLength(value.prompt, "utf8") <= MAX_PROMPT_BYTES
     && typeof value.deadlineMs === "number" && Number.isSafeInteger(value.deadlineMs)
     && value.deadlineMs >= 100 && value.deadlineMs <= 3_600_000
+    && ((value.model === undefined && value.effort === undefined && value.supportsEffort === undefined)
+      || typeof value.model === "string" && /^[A-Za-z0-9][A-Za-z0-9._:/+-]{0,179}$/u.test(value.model)
+        && typeof value.effort === "string" && /^(?:low|medium|high|max)$/u.test(value.effort)
+        && typeof value.supportsEffort === "boolean")
     && (value.signal === undefined || value.signal instanceof AbortSignal);
 }
 
@@ -91,7 +98,11 @@ export function createOwnerTrustedLocalClaudeExecV1(dependencies: Readonly<{ spa
     if (input.signal?.aborted) return failed("canceled", "aborted_before_spawn");
     let child: ChildProcess;
     try {
-      child = launch(input.executablePath, OWNER_TRUSTED_LOCAL_CLAUDE_ARGS_V1, {
+      const args = input.model === undefined ? OWNER_TRUSTED_LOCAL_CLAUDE_ARGS_V1 : Object.freeze([
+        "-p", "--model", input.model, ...(input.supportsEffort ? ["--effort", input.effort!] : []),
+        ...OWNER_TRUSTED_LOCAL_CLAUDE_ARGS_V1.slice(3),
+      ]);
+      child = launch(input.executablePath, args, {
         cwd: input.workingDirectory, detached: true, shell: false, windowsHide: true,
         stdio: ["pipe", "pipe", "pipe"], env: Object.freeze({ HOME: process.env.HOME ?? "", PATH: SYSTEM_PATH,
           LANG: process.env.LANG ?? "en_US.UTF-8", TMPDIR: process.env.TMPDIR ?? "/tmp",

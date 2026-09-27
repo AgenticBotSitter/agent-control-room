@@ -10,6 +10,21 @@ export const OWNER_TRUSTED_LOCAL_ENABLEMENT_V1 =
  * selected worker identity. */
 export type OwnerTrustedLocalWorkerKindV1 = "codex" | "hermes" | "hermes-021" | "claude-code";
 
+export type OwnerTrustedLocalModelPolicyV1 = Readonly<{
+  models: readonly string[];
+  defaultModel: string;
+  efforts: readonly ("low" | "medium" | "high" | "xhigh" | "max")[];
+  defaultEffort: "low" | "medium" | "high" | "xhigh" | "max";
+  /** Claude-only cost guard. These remain ordinary allowed models, but the UI
+   * warns before the owner spends the more limited allowance. */
+  limitedModels?: readonly string[];
+}> | Readonly<{
+  profiles: readonly Readonly<{ name: string; provider: string; model: string }>[];
+  defaultProfile: string;
+  efforts: readonly ["default"];
+  defaultEffort: "default";
+}>;
+
 export type OwnerTrustedLocalEnablementV1 = Readonly<{
   schema: typeof OWNER_TRUSTED_LOCAL_ENABLEMENT_V1;
   mode: "mac-local";
@@ -19,12 +34,14 @@ export type OwnerTrustedLocalEnablementV1 = Readonly<{
     kind: OwnerTrustedLocalWorkerKindV1;
     executablePath: string;
     recordedVersion: string;
+    modelPolicy?: OwnerTrustedLocalModelPolicyV1;
   }>[];
   enablementDigest: string;
 }>;
 
 const workerId = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,179}$/u;
 const safeVersion = /^[^\u0000-\u001f\u007f]{1,240}$/u;
+const modelId = /^[A-Za-z0-9][A-Za-z0-9._:/+-]{0,179}$/u;
 const safePath = (value: unknown): value is string => typeof value === "string" && value.length > 0
   && value.length <= 4096 && isAbsolute(value) && normalize(value) === value && !/[\u0000-\u001f\u007f]/u.test(value);
 
@@ -48,14 +65,56 @@ function exact(value: unknown, keys: readonly string[]): Record<string, unknown>
 
 function captureWorker(value: unknown): Readonly<{
   workerId: string; kind: OwnerTrustedLocalWorkerKindV1; executablePath: string; recordedVersion: string;
+  modelPolicy?: OwnerTrustedLocalModelPolicyV1;
 }> {
-  const item = exact(value, ["workerId", "kind", "executablePath", "recordedVersion"]);
+  const raw = plain(value), hasPolicy = Object.hasOwn(raw, "modelPolicy");
+  const item = exact(value, hasPolicy ? ["workerId", "kind", "executablePath", "recordedVersion", "modelPolicy"]
+    : ["workerId", "kind", "executablePath", "recordedVersion"]);
   const id = item.workerId, kind = item.kind, executablePath = item.executablePath, recordedVersion = item.recordedVersion;
   if (typeof id !== "string" || !workerId.test(id)
     || (kind !== "codex" && kind !== "hermes" && kind !== "hermes-021" && kind !== "claude-code")
     || !safePath(executablePath) || typeof recordedVersion !== "string" || !safeVersion.test(recordedVersion)) refused();
-  return Object.freeze({ workerId: id, kind, executablePath, recordedVersion }) as Readonly<{
+  let modelPolicy: OwnerTrustedLocalModelPolicyV1 | undefined;
+  if (hasPolicy) {
+    if (kind === "hermes" || kind === "hermes-021") {
+      const policy = exact(item.modelPolicy, ["profiles", "defaultProfile", "efforts", "defaultEffort"]);
+      if (!Array.isArray(policy.profiles) || policy.profiles.length < 1 || policy.profiles.length > 32
+        || !Array.isArray(policy.efforts) || policy.efforts.length !== 1 || policy.efforts[0] !== "default"
+        || policy.defaultEffort !== "default" || typeof policy.defaultProfile !== "string") refused();
+      const profiles = (policy.profiles as unknown[]).map(value => {
+        const profile = exact(value, ["name", "provider", "model"]);
+        if (typeof profile.name !== "string" || !modelId.test(profile.name)
+          || typeof profile.provider !== "string" || !modelId.test(profile.provider)
+          || typeof profile.model !== "string" || !modelId.test(profile.model)) refused();
+        return Object.freeze({ name: profile.name as string, provider: profile.provider as string, model: profile.model as string });
+      });
+      if (new Set(profiles.map(profile => profile.name)).size !== profiles.length
+        || !profiles.some(profile => profile.name === policy.defaultProfile)) refused();
+      modelPolicy = Object.freeze({ profiles: Object.freeze(profiles), defaultProfile: policy.defaultProfile as string,
+        efforts: Object.freeze(["default"] as const), defaultEffort: "default" as const });
+    } else {
+      const policyKeys = kind === "claude-code" && Object.hasOwn(plain(item.modelPolicy), "limitedModels")
+        ? ["models", "defaultModel", "efforts", "defaultEffort", "limitedModels"] : ["models", "defaultModel", "efforts", "defaultEffort"];
+      const policy = exact(item.modelPolicy, policyKeys);
+      if (!Array.isArray(policy.models) || policy.models.length < 1 || policy.models.length > 32
+        || !Array.isArray(policy.efforts) || policy.efforts.length < 1 || policy.efforts.length > 5
+        || typeof policy.defaultModel !== "string" || typeof policy.defaultEffort !== "string") refused();
+      const models = (policy.models as unknown[]).map(value => typeof value === "string" && modelId.test(value) ? value : refused());
+      const allowedEfforts = kind === "codex" ? ["low", "medium", "high", "xhigh", "max"] : ["low", "medium", "high", "max"];
+      const efforts = (policy.efforts as unknown[]).map(value => typeof value === "string" && allowedEfforts.includes(value) ? value : refused()) as Array<"low" | "medium" | "high" | "xhigh" | "max">;
+      if (new Set(models).size !== models.length || new Set(efforts).size !== efforts.length
+        || !models.includes(policy.defaultModel as string) || !efforts.includes(policy.defaultEffort as (typeof efforts)[number])) refused();
+      const limited = Object.hasOwn(policy, "limitedModels") ? policy.limitedModels : undefined;
+      if (limited !== undefined && (!Array.isArray(limited) || kind !== "claude-code"
+        || limited.some(value => typeof value !== "string" || !models.includes(value)) || new Set(limited).size !== limited.length)) refused();
+      modelPolicy = Object.freeze({ models: Object.freeze(models), defaultModel: policy.defaultModel,
+        efforts: Object.freeze(efforts), defaultEffort: policy.defaultEffort,
+        ...(limited ? { limitedModels: Object.freeze([...(limited as string[])]) } : {}) }) as OwnerTrustedLocalModelPolicyV1;
+    }
+  }
+  return Object.freeze({ workerId: id, kind, executablePath, recordedVersion, ...(modelPolicy ? { modelPolicy } : {}) }) as Readonly<{
     workerId: string; kind: OwnerTrustedLocalWorkerKindV1; executablePath: string; recordedVersion: string;
+    modelPolicy?: OwnerTrustedLocalModelPolicyV1;
   }>;
 }
 
@@ -100,7 +159,8 @@ export function captureLoadedOwnerTrustedLocalEnablementV1(value: unknown): Owne
  * updated CLI must not take down the other workers, so only a startup where no
  * worker verifies is refused. */
 export async function verifyOwnerTrustedLocalEnablementV1(enablementValue: unknown,
-  readVersion: (executablePath: string) => Promise<string>): Promise<Readonly<{ nodeId: "mac-1";
+  readVersion: (executablePath: string) => Promise<string>,
+  verifyModelPolicy?: (worker: OwnerTrustedLocalEnablementV1["workers"][number]) => Promise<boolean>): Promise<Readonly<{ nodeId: "mac-1";
     enabledWorkerIds: readonly string[]; unavailableWorkerIds: readonly string[] }>> {
   // A protected configuration loader returns the captured form, which carries
   // the digest it derived. Verify that digest, then recover the same plain
@@ -112,8 +172,12 @@ export async function verifyOwnerTrustedLocalEnablementV1(enablementValue: unkno
   const enabled: string[] = [], unavailable: string[] = [];
   for (const worker of enablement.workers) {
     let observed: unknown;
-    try { observed = await readVersion(worker.executablePath); } catch { observed = undefined; }
-    (observed === worker.recordedVersion ? enabled : unavailable).push(worker.workerId);
+    let policyCurrent = worker.modelPolicy === undefined;
+    try {
+      observed = await readVersion(worker.executablePath);
+      if (worker.modelPolicy && verifyModelPolicy) policyCurrent = await verifyModelPolicy(worker);
+    } catch { observed = undefined; }
+    (observed === worker.recordedVersion && policyCurrent ? enabled : unavailable).push(worker.workerId);
   }
   if (enabled.length === 0) refused();
   return Object.freeze({ nodeId: "mac-1" as const, enabledWorkerIds: Object.freeze(enabled),

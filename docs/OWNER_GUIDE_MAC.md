@@ -169,10 +169,86 @@ The Tailscale client tag and the access-policy grant are both **done**. Do not r
 one; if a future update needs another machine on the route, give that machine the same approved
 client tag and change nothing else.
 
+### Protected model choices
+
+Model choices are optional installation policy, not browser configuration. An installation created
+before model selection has no `modelPolicy` fields and needs no migration: each such worker keeps
+using its existing CLI or protected profile default, and the task form offers no model choice for
+that worker.
+
+To enable model selection later, stop Control Room and edit the protected enablement record at the
+exact file `<protected-root>/config/mac-local.json`. Add `modelPolicy` inside only the worker object
+you want to enable; do not add it at the top level. Keep only models the owner has approved and the
+installed CLI reports. For example, the complete relevant Codex worker shape is:
+
+```json
+{
+  "workerId": "worker:codex:mac-1",
+  "kind": "codex",
+  "executablePath": "/absolute/path/to/codex",
+  "recordedVersion": "<the already-pinned version line>",
+  "modelPolicy": {
+    "models": ["<installed-codex-model>"],
+    "defaultModel": "<installed-codex-model>",
+    "efforts": ["low", "medium", "high"],
+    "defaultEffort": "medium"
+  }
+}
+```
+
+Claude uses the same shape. Its default should be `sonnet`; put owner-approved, more limited
+choices such as `opus` in `limitedModels` so the task form displays “uses more of your Claude
+limit”. Hermes uses named, worker-side credential profiles:
+
+```json
+{
+  "kind": "hermes",
+  "modelPolicy": {
+    "profiles": [
+      { "name": "build", "provider": "<provider>", "model": "<provider-model>" },
+      { "name": "check", "provider": "<provider>", "model": "<provider-model>" }
+    ],
+    "defaultProfile": "build",
+    "efforts": ["default"],
+    "defaultEffort": "default"
+  }
+}
+```
+
+Each Hermes profile's credentials stay in Hermes's own protected worker configuration. Do not put
+credentials in `mac-local.json`. At every startup Control Room checks an explicitly configured
+policy against the pinned installed CLI. A malformed, changed, or unsupported policy is refused
+fail-closed and the task host does not start with that worker. A policy is never accepted from a
+browser request. Start Control Room normally after saving the protected file. Removing a model
+prevents new tasks from selecting it; existing run evidence remains readable. Removing the whole
+`modelPolicy` object disables model selection for that worker and returns it to its prior default
+behavior.
+
 What is still open is the set of drills in the private installation checklist item 3: the phone-or-PC port test,
 a Mac sleep and wake, the VPS-side PostgreSQL and Tailscale restarts, and a forced certificate
 renewal. Those are not setup steps; they are the checks that prove the route survives real
 interruptions.
+
+### Optional private HTTPS address for a phone or PC
+
+This is off by default. It does not change the Control Room listener: the app still binds only to
+`127.0.0.1`. Tailscale Serve terminates HTTPS and proxies back to that loopback listener. Use Serve,
+not Funnel; Funnel would make the address public.
+
+1. Stop Control Room: `pnpm mac:down -- --protected-root <protected-root>`.
+2. In `<protected-root>/config/mac-local.json`, add this field inside `localOwnerSession`:
+   `"trustedOrigin": "https://<mac-name>.<tailnet-name>.ts.net"`. It must be the exact HTTPS origin,
+   with no path, wildcard, trailing slash, credentials, or query string.
+3. Start the private proxy on the Mac: `tailscale serve --bg 3210`.
+4. Confirm the printed Serve URL exactly matches `trustedOrigin`, then start Control Room with the
+   normal `pnpm mac:up -- --protected-root <protected-root>` command.
+5. Open that exact HTTPS URL on a tailnet-authorized phone or PC. Sign-in uses a `Secure`,
+   `HttpOnly`, `SameSite=Strict` cookie; writes still require the exact origin and CSRF checks.
+
+To turn it off, stop Control Room, run `tailscale serve --https=443 off`, remove `trustedOrigin`
+from the protected file, and start Control Room again. An unconfigured or different origin remains
+refused. Tailscale documents the current Serve syntax in its official
+[Serve command reference](https://tailscale.com/docs/reference/tailscale-cli/serve).
 
 ## 9. Known limitations (read before you rely on this)
 
@@ -211,10 +287,11 @@ by finding its pinned executable. A worker that cannot be verified shows
 `ready` and still `not_proven`, which simply means it has not published a
 result yet. Neither state is a fault report.
 
-### 9.4 One Mac, one owner, loopback only
+### 9.4 One Mac, one owner, loopback listener
 
-The site is served on the loopback address on this Mac only. It is not
-published to the network, and it is not reachable from your phone. The
+The site always listens on the loopback address on this Mac only. It is not
+reachable from another device unless the owner configures the optional exact private HTTPS origin
+above and enables Tailscale Serve. The
 database is reached over a private connection to the one remote machine
 holding it, and the database port is not open to your other devices.
 

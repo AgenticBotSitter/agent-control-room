@@ -84,6 +84,7 @@ export function createMacLocalWebServiceFromConfigurationV1(input: Readonly<{
 export function createMacLocalProtectedHostV1(input: Readonly<{
   loadConfiguration(): Promise<MacLocalProtectedConfigurationV1>;
   readVersion(executablePath: string): Promise<string>;
+  verifyModelPolicy?: Parameters<typeof createMacLocalStartupV1>[0]["verifyModelPolicy"];
   openDatabase(configuration: MacLocalProtectedConfigurationV1["database"]): OpenedDatabase;
   assets: PrivateClientAssets;
   render(request: Request): Promise<Response> | Response;
@@ -117,6 +118,7 @@ export function createMacLocalProtectedHostV1(input: Readonly<{
     throw new Error("mac_local_host_configuration_invalid");
   const startup = createMacLocalStartupV1({
     readVersion: input.readVersion,
+    ...(input.verifyModelPolicy ? { verifyModelPolicy: input.verifyModelPolicy } : {}),
     openDatabase: input.openDatabase,
     createService: async ({ configuration, database, workerReadiness, databaseRoles }) => {
       let taskApplication: HostedTaskApplication | undefined;

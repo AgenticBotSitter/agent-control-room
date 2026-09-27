@@ -34,7 +34,9 @@ export function createMacLocalControlRoomServiceV1(options: MacLocalWebProcessOp
   const app = createMacLocalWebProcessV1(options);
   // Same shape as the VPS host: the renderer's middleware sends every request to
   // the installed application, which authorizes before any page renders.
-  const service = createMacLocalNodeService({ origin: options.origin, port: options.port, assets: options.assets,
+  const service = createMacLocalNodeService({ origin: options.origin,
+    ...(options.localOwnerSession.trustedOrigin ? { secondaryOrigin: options.localOwnerSession.trustedOrigin } : {}),
+    port: options.port, assets: options.assets,
     handler: request => options.render(request),
     application: { isReady: app.isReady, close: app.close }, ...(options.createServer ? { createServer: options.createServer } : {}),
     ...(options.listenerTiming ? { listenerTiming: options.listenerTiming } : {}) });

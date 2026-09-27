@@ -16,7 +16,7 @@ import { validateTaskQualityKeys } from "./task-quality-coordinator";
  */
 export type MacLocalTaskApplicationV1 = Readonly<{
   operations: MacLocalCanonicalTaskOperationsV1;
-  taskReadKeys?: Pick<NonNullable<MacLocalTaskApplicationInputV1["web"]["tasks"]>, "harnessIntegrityKey" | "results" | "reviews" | "ownerReviews">;
+  taskReadKeys?: Pick<NonNullable<MacLocalTaskApplicationInputV1["web"]["tasks"]>, "harnessIntegrityKey" | "results" | "reviews" | "ownerReviews" | "modelCatalog">;
   isReady(): boolean;
   close(): Promise<void>;
   queueDelivery?: ReturnType<typeof createTaskCoordinatorLifecycle>["queueDelivery"];
@@ -82,7 +82,8 @@ export async function createMacLocalTaskApplicationV1(input: MacLocalTaskApplica
     return Object.freeze({
       operations,
       ...(tasks ? { taskReadKeys: { harnessIntegrityKey: tasks.harnessIntegrityKey,
-        results: tasks.results, reviews: tasks.reviews, ownerReviews: tasks.ownerReviews } } : {}),
+        results: tasks.results, reviews: tasks.reviews, ownerReviews: tasks.ownerReviews,
+        modelCatalog: tasks.modelCatalog } } : {}),
       isReady: lifecycle.isReady.bind(lifecycle),
       close: lifecycle.close.bind(lifecycle),
       ...(lifecycle.queueDelivery ? { queueDelivery: lifecycle.queueDelivery } : {}),

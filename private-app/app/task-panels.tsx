@@ -70,8 +70,10 @@ export function TaskStateGuidance({ detail, refreshing, onRefresh }: { detail: T
     </div></section>;
 }
 
-export function TaskProposalForm({ draft, setDraft, pending, preparing = false, uncertain, onSave }: { draft: TaskDraft;
-  setDraft: (value: TaskDraft) => void; pending: boolean; preparing?: boolean; uncertain: boolean; onSave: () => void }) {
+export function TaskProposalForm({ draft, setDraft, modelOptions = [], pending, preparing = false, uncertain, onSave }: { draft: TaskDraft;
+  setDraft: (value: TaskDraft) => void; modelOptions?: TaskPage["modelOptions"]; pending: boolean; preparing?: boolean; uncertain: boolean; onSave: () => void }) {
+  const choices = modelOptions.flatMap(worker => worker.choices.map(choice => ({ ...choice, workerKind: worker.workerKind })));
+  const selected = choices.find(choice => choice.key === draft.model);
   return <form className="private-create" onSubmit={event => { event.preventDefault(); onSave(); }}>
     <h2>Propose a task</h2><p className="private-note">Save what you want done. Saving does not assign or start an agent.
       Open the saved task to check preparation and assignment availability.</p>
@@ -83,6 +85,24 @@ export function TaskProposalForm({ draft, setDraft, pending, preparing = false, 
     <label htmlFor="task-instructions">What should the agent deliver?</label>
     <textarea id="task-instructions" required rows={8} maxLength={4000} value={draft.instructions} disabled={pending || preparing || uncertain}
       aria-describedby="task-secrets-note" onChange={event => setDraft({ ...draft, instructions: event.target.value })} />
+    {!!choices.length && <><label htmlFor="task-model">Model (optional)</label><select id="task-model" value={draft.model ?? ""}
+      disabled={pending || preparing || uncertain} onChange={event => {
+        const choice = choices.find(item => item.key === event.target.value);
+        setDraft({ ...draft, model: choice?.key || undefined,
+          effort: choice ? (choice.efforts.includes(draft.effort as never) ? draft.effort : choice.efforts[0]) : undefined });
+      }}><option value="">Worker default</option>{choices.map(choice => <option key={`${choice.workerKind}:${choice.key}`}
+        value={choice.key}>{choice.workerKind}: {choice.label}</option>)}</select>
+      {selected && <><label htmlFor="task-effort">Effort</label><select id="task-effort" value={draft.effort ?? selected.efforts[0]}
+        disabled={pending || preparing || uncertain} onChange={event => setDraft({ ...draft, effort: event.target.value as TaskDraft["effort"] })}>
+        {selected.efforts.map(value => <option key={value} value={value}>{value}</option>)}</select>
+      {selected.limited && <p className="private-note">Uses more of your Claude limit.</p>}</>}</>}
+    <label htmlFor="task-scopes">Owned file or directory paths (optional)</label>
+    <textarea id="task-scopes" rows={4} value={(draft.scopes ?? []).map(scope => `${scope.path}${scope.kind === "tree" ? "/" : ""}`).join("\n")}
+      disabled={pending || preparing || uncertain} placeholder={"src/example.ts\ndocs/"}
+      onChange={event => setDraft({ ...draft, scopes: event.target.value.split("\n").map(value => value.trim()).filter(Boolean)
+        .map(value => ({ kind: value.endsWith("/") ? "tree" as const : "file" as const,
+          path: (value === "/" ? "" : value.replace(/\/$/u, "")).toLowerCase() })) })} />
+    <p className="private-note">One repository-relative path per line. End a directory with “/”. Overlapping active assignments are refused.</p>
     <p id="task-secrets-note" className="private-note">Include the desired result and limits. Never paste passwords, tokens or private keys.</p>
     <button type="submit" disabled={pending || preparing || uncertain}>{preparing ? "Reading experiment…" : pending ? "Saving proposal…" : "Save proposal"}</button>
   </form>;
@@ -117,6 +137,7 @@ function RunPanel({ run }: { run: TaskRun }) {
     {retained && <p className="private-notice">Not a current live signal. {run.availability ? `Availability: ${run.availability}. ` : ""}
       Last reported state: {label}.</p>}
     <p>{run.source === "legacy" ? "Legacy adapter evidence" : "Native agent evidence"} · <ConfiguredTimestamp value={run.lastObservedAt} prefix="Last observed" /></p>
+    {run.model && <p><strong>Model:</strong> {run.profile ? `${run.profile} · ` : ""}{run.model} · effort {run.effort ?? "unknown"}{run.provider ? ` · ${run.provider}` : ""}</p>}
     {routeLabel && <p className="private-note">Saved adapter route: {routeLabel}. This identifies the signed run record only; it does not prove that this computer still has that worker configured, available, or running.</p>}
     <dl className="private-task-facts"><div><dt>First observed working</dt><dd>{run.firstObservedExecutionAt ? <ConfiguredTimestamp value={run.firstObservedExecutionAt} /> : "Unknown"}</dd></div>
       <div><dt>Reported tokens</dt><dd>{run.usage?.totalTokens === null || run.usage?.totalTokens === undefined ? "Unknown" : run.usage.totalTokens.toLocaleString()}</dd></div>
@@ -190,6 +211,8 @@ export function TaskDetailPanel({ detail }: { detail: TaskDetail }) {
   return <div className="private-task-detail">
     <section className="private-panel"><span className="private-state">{taskStateLabel[detail.task.state]}</span><h2>{detail.task.title}</h2>
       <h3>Requested result</h3><p className="private-summary">{detail.instructions}</p>
+      {detail.modelSelection?.model && <p><strong>Chosen model:</strong> {detail.modelSelection.profile ? `${detail.modelSelection.profile} · ` : ""}
+        {detail.modelSelection.model} · effort {detail.modelSelection.effort}{detail.modelSelection.provider ? ` · ${detail.modelSelection.provider}` : ""}</p>}
       <p className="private-note"><ConfiguredTimestamp value={detail.task.createdAt} prefix="Saved" /> · <ConfiguredTimestamp value={detail.task.updatedAt} prefix="Job record updated" /></p>
       {detail.task.state === "proposed" && <p>This is saved proposed work, not an agent assignment.</p>}</section>
     {preparedFor && <section className="private-panel" aria-label="Prepared worker"><h2>Prepared worker</h2>
@@ -197,6 +220,9 @@ export function TaskDetailPanel({ detail }: { detail: TaskDetail }) {
       <p className="private-note">{preparedRouteDetail}</p>
       <p className="private-note">Next: open assignment to check the configured route for this task. A prepared route is not a current availability or running-work signal.</p></section>}
     <LocalRouteObservationPanel detail={detail} />
+    {!!detail.ownershipLeases.length && <section className="private-panel" aria-label="Ownership leases"><h2>Ownership leases</h2>
+      {detail.ownershipLeases.map(lease => <div key={`${lease.nodeId}:${lease.expiresAt}`}><p><strong>{lease.nodeId}</strong> · {lease.current ? "active" : lease.state} · expires <ConfiguredTimestamp value={lease.expiresAt} /></p>
+        <ul>{lease.scopes.map(scope => <li key={`${scope.kind}:${scope.path}`}>{scope.kind}: <code>{scope.path || "/"}</code></li>)}</ul></div>)}</section>}
     <HermesDeliveryRecoveryPanel recovery={detail.hermesDeliveryRecovery} />
     <section className="private-panel"><h2>Agent progress</h2>
       <p>{detail.dispatch === "configured"

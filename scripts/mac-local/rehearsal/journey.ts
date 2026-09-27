@@ -5,7 +5,7 @@
 // worker runs a fake PINNED EXECUTABLE through the production process adapters -> pending review,
 // exactly once per agent, with a replay returning the same receipt and queuing nothing new.
 // The owner then reviews each result through the same HTTP API the website uses.
-// Usage: node --import tsx scripts/mac-local/rehearsal/journey.ts ABSOLUTE_REHEARSAL_DIR
+// Usage: node --import tsx scripts/mac-local/rehearsal/journey.ts ABSOLUTE_REHEARSAL_DIR [--browser-proof|--model-allowlists]
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
@@ -18,9 +18,9 @@ import { applyMacLocalFirstOwnerV1 } from "../first-owner-vps.mjs";
 import { serviceInstalled } from "../service.mjs";
 
 const [arg, mode] = process.argv.slice(2);
-if (!arg || ![3, 4].includes(process.argv.length) || mode !== undefined && mode !== "--browser-proof"
+if (!arg || ![3, 4].includes(process.argv.length) || mode !== undefined && !["--browser-proof", "--model-allowlists"].includes(mode)
   || !isAbsolute(arg) || resolve(arg) !== arg) {
-  process.stderr.write("usage: node --import tsx scripts/mac-local/rehearsal/journey.ts ABSOLUTE_REHEARSAL_DIR [--browser-proof]\n");
+  process.stderr.write("usage: node --import tsx scripts/mac-local/rehearsal/journey.ts ABSOLUTE_REHEARSAL_DIR [--browser-proof|--model-allowlists]\n");
   process.exit(2);
 }
 const root = resolve(arg), protectedRoot = join(root, "protected");
@@ -44,9 +44,13 @@ const AGENTS = Object.freeze([
 // on each block below for the exact source it was matched against). A fixed
 // shebang path is used deliberately: the production spawn only exposes
 // PATH=/usr/bin:/bin to the child, which would not resolve `env node`.
-function hermesFakeScript(version: string) {
+function hermesFakeScript(version: string, selected: boolean) {
   return `#!/bin/sh
 for a in "$@"; do [ "$a" = "--version" ] && printf '%s\\n' '${version}' && exit 0; done
+[ "$1" = "--help" ] && printf '%s\\n' '--profile --provider --model' && exit 0
+${selected ? `case " $* " in *" -p build "*) ;; *) exit 41 ;; esac
+case " $* " in *" --model model-rehearsal "*) ;; *) exit 41 ;; esac
+case " $* " in *" --provider provider-rehearsal "*) ;; *) exit 41 ;; esac` : ""}
 cat >/dev/null
 printf '%s\\n' '{"type":"result","session_id":"fake-hermes-session-0001","exit_code":0,"text":"Fake Hermes pinned executable result.","tokens":{"input":3,"output":5,"total":8,"cache_read":0,"cache_write":0},"duration_ms":5,"timestamp":1}'
 exit 0
@@ -55,9 +59,12 @@ exit 0
 // Matches src/harness/claude-code-v1/owner-trusted-local-exec.ts (stdin prompt,
 // OWNER_TRUSTED_LOCAL_CLAUDE_ARGS_V1) and stream-json-decode.ts (init, then one
 // terminal result frame with subtype "success", is_error false, a usage object).
-function claudeFakeScript(version: string) {
+function claudeFakeScript(version: string, selected: boolean) {
   return `#!/bin/sh
 for a in "$@"; do [ "$a" = "--version" ] && printf '%s\\n' '${version}' && exit 0; done
+[ "$1" = "--help" ] && printf '%s\\n' '--model --effort' && exit 0
+${selected ? `case " $* " in *" --model sonnet-rehearsal "*) ;; *) exit 42 ;; esac
+case " $* " in *" --effort high "*) ;; *) exit 42 ;; esac` : ""}
 cat >/dev/null
 printf '%s\\n' '{"type":"system","subtype":"init","session_id":"00000000-0000-4000-8000-00000000fa01","model":"fake-model"}'
 printf '%s\\n' '{"type":"result","subtype":"success","is_error":false,"session_id":"00000000-0000-4000-8000-00000000fa01","result":"Fake Claude Code pinned executable result.","total_cost_usd":0,"usage":{}}'
@@ -67,9 +74,13 @@ exit 0
 // Matches src/harness/codex-v1/owner-trusted-local-exec.ts (stdin prompt, args
 // end with -C <cwd> -) and its parseLine(): item.completed/agent_message text,
 // then turn.completed with a usage object.
-function codexFakeScript(version: string) {
+function codexFakeScript(version: string, selected: boolean) {
   return `#!/bin/sh
 for a in "$@"; do [ "$a" = "--version" ] && printf '%s\\n' '${version}' && exit 0; done
+[ "$1 $2" = "debug models" ] && printf '%s\\n' 'gpt-rehearsal' && exit 0
+[ "$1 $2" = "exec --help" ] && printf '%s\\n' '--model' && exit 0
+${selected ? `case " $* " in *" -m gpt-rehearsal "*) ;; *) exit 43 ;; esac
+case " $* " in *" model_reasoning_effort=high "*) ;; *) exit 43 ;; esac` : ""}
 cat >/dev/null
 printf '%s\\n' '{"type":"item.completed","item":{"type":"reasoning"}}'
 printf '%s\\n' '{"type":"item.completed","item":{"type":"agent_message","text":"Fake Codex pinned executable result."}}'
@@ -137,14 +148,23 @@ async function main() {
   const fakeDirectory = join(protectedRoot, "fake-workers");
   await mkdir(fakeDirectory, { mode: 0o700 });
   await chmod(fakeDirectory, 0o700);
+  const withModelAllowlists = mode === "--model-allowlists";
   for (const worker of config.enablement.workers) {
     const name = worker.kind === "claude-code" ? "claude" : worker.kind;
     const executable = join(fakeDirectory, name);
     const version = `${name} 1.0.0`;
-    await writeFile(executable, fakeScript[worker.kind as keyof typeof fakeScript](version), { mode: 0o700, flag: "wx" });
+    await writeFile(executable, fakeScript[worker.kind as keyof typeof fakeScript](version, withModelAllowlists), { mode: 0o700, flag: "wx" });
     await chmod(executable, 0o700);
     worker.executablePath = executable;
     worker.recordedVersion = version;
+    if (withModelAllowlists) worker.modelPolicy = worker.kind === "hermes" ? {
+      profiles: [{ name: "build", provider: "provider-rehearsal", model: "model-rehearsal" }],
+      defaultProfile: "build", efforts: ["default"], defaultEffort: "default",
+    } : worker.kind === "claude-code" ? {
+      models: ["sonnet-rehearsal"], defaultModel: "sonnet-rehearsal", efforts: ["high"], defaultEffort: "high",
+    } : {
+      models: ["gpt-rehearsal"], defaultModel: "gpt-rehearsal", efforts: ["high"], defaultEffort: "high",
+    };
   }
   await writeJsonPrivate(join(protectedRoot, "config/mac-local.json"), config);
 
@@ -212,10 +232,11 @@ async function main() {
   const outcomes: Record<string, unknown> = {};
 
   for (const agent of AGENTS) {
+    const declaredScope = { kind: "tree" as const, path: `rehearsal/${agent.kind}` };
     // 1) proposal
     const proposed = await fetch(new URL(`/api/v1/projects/${idOf(projectId)}/tasks`, origin), {
       method: "POST", headers: { origin, cookie, "content-type": "application/json", "idempotency-key": `journey-${agent.kind}-source-0001` },
-      body: JSON.stringify({ title: `Journey ${agent.kind} task`, instructions: "Return one harmless short line." }),
+      body: JSON.stringify({ title: `Journey ${agent.kind} task`, instructions: "Return one harmless short line.", scopes: [declaredScope] }),
     });
     const proposedBody = await require5xxOr201(proposed, `${agent.kind} propose`) as { receipt: { jobId: string } };
     const sourceJobId = proposedBody.receipt.jobId;
@@ -252,10 +273,13 @@ async function main() {
     const assignedInputDigest = assignedBody.receipt.inputDigest;
     const assignedDetail = await requireOk(await fetch(new URL(
       `/api/v1/projects/${idOf(projectId)}/tasks/${idOf(jobId)}`, origin), { headers: { cookie } }),
-    200, `${agent.kind} assigned task detail`) as { preparedFor: string | null; attempts: unknown[]; inputDigest: string };
+    200, `${agent.kind} assigned task detail`) as { preparedFor: string | null; attempts: unknown[]; inputDigest: string;
+      ownershipLeases: { scopes: { kind: "file" | "tree"; path: string }[]; current: boolean }[] };
     assert.equal(assignedDetail.preparedFor, agent.kind, `${agent.kind} prepared worker visible to task page`);
     assert.ok(assignedDetail.attempts.length > 0, `${agent.kind} task page must expose local submission after assignment`);
     assert.equal(assignedDetail.inputDigest, assignedInputDigest, `${agent.kind} page and submission digests must match`);
+    assert.deepEqual(assignedDetail.ownershipLeases.find(lease => lease.current)?.scopes, [declaredScope],
+      `${agent.kind} assignment must hold only its declared rehearsal tree`);
 
     // 4) submission preview, then submit with the exact previewed digest.
     const previewRead = await fetch(new URL(`/api/v1/projects/${idOf(projectId)}/tasks/${idOf(jobId)}/submission?inputDigest=${assignedInputDigest}`, origin),
@@ -287,7 +311,9 @@ async function main() {
     // 6) poll for the task host's own queue worker to run the fake pinned
     // executable through the production adapter and reach pending review.
     let reviewStatus: string | undefined, items = 0;
-    let pendingPage: { items: { artifactId: string; contentHash: string }[];
+    let pendingPage: { items: { artifactId: string; contentHash: string; modelSelection?: {
+      model: string; effort: string; profile?: string; provider?: string;
+    } }[];
       reviews: { targetId: string; targetDigest: string; contentHash: string; status: string;
         matchingArtifactIds: string[]; reviews: { decision: string }[] }[] } | undefined;
     const polled = await waitFor(async () => {
@@ -304,6 +330,11 @@ async function main() {
     assert.ok(polled, `${agent.kind}: expected exactly one result reaching pending review within the bounded timeout (items=${items}, reviewStatus=${reviewStatus})`);
     const page = pendingPage!;
     const artifact = page.items[0]!, target = page.reviews[0]!;
+    assert.deepEqual(artifact.modelSelection, withModelAllowlists
+      ? agent.worker === "hermes"
+        ? { model: "model-rehearsal", effort: "default", profile: "build", provider: "provider-rehearsal" }
+        : { model: agent.worker === "claude-code" ? "sonnet-rehearsal" : "gpt-rehearsal", effort: "high" }
+      : { model: "default", effort: "default" }, `${agent.kind}: result must record selected or default model evidence`);
     assert.deepEqual(target.matchingArtifactIds, [artifact.artifactId], `${agent.kind}: the pending target must bind the one saved artifact`);
     assert.equal(target.contentHash, artifact.contentHash);
     assert.equal(target.reviews.length, 0);
@@ -386,7 +417,7 @@ async function main() {
       ownerDecision: decision, reviewCount: after.reviews[0]?.reviews.length, taskState, attemptState };
   }
 
-  process.stdout.write(`Package 6b journey: PASS ${JSON.stringify(outcomes)}\n`);
+  process.stdout.write(`Package 6b journey (${withModelAllowlists ? "configured model allowlists" : "CLI/profile defaults"}): PASS ${JSON.stringify(outcomes)}\n`);
 
   // Exercise the publisher's implicit FK parent-before-child order against a
   // simultaneous reader. The conformance test above pins the real reader's

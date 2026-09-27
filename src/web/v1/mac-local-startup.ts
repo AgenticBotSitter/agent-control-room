@@ -13,6 +13,7 @@ type LocalService = Readonly<{ start(): Promise<void>; close(): Promise<void> }>
 export function createMacLocalStartupV1(input: Readonly<{
   openDatabase(configuration: MacLocalProtectedConfigurationV1["database"]): OpenedDatabase;
   readVersion(executablePath: string): Promise<string>;
+  verifyModelPolicy?: Parameters<typeof verifyOwnerTrustedLocalEnablementV1>[2];
   createService(input: Readonly<{ configuration: MacLocalProtectedConfigurationV1; database: OpenedDatabase;
     workerReadiness: MacLocalWorkerReadinessV1; databaseRoles?: MacLocalDatabaseRolesV1 }>): LocalService | Promise<LocalService>;
 }>) {
@@ -22,7 +23,7 @@ export function createMacLocalStartupV1(input: Readonly<{
   return Object.freeze({ async start(configuration: MacLocalProtectedConfigurationV1, databaseRoles?: MacLocalDatabaseRolesV1) {
     if (attempted) throw new Error("mac_local_startup_already_attempted");
     attempted = true;
-    const verified = await verifyOwnerTrustedLocalEnablementV1(configuration.enablement, input.readVersion);
+    const verified = await verifyOwnerTrustedLocalEnablementV1(configuration.enablement, input.readVersion, input.verifyModelPolicy);
     const workerReadiness = createMacLocalWorkerReadinessV1(configuration.enablement, verified);
     let database: OpenedDatabase | undefined, service: LocalService | undefined;
     try {
