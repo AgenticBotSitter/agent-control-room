@@ -405,10 +405,10 @@ All **observed** on 2026-09-15.
 | S5 | #200 title still reads `[READY]`; #224 title reads `[READY]`; #199 closed with title `[CHANGES REQUIRED]` but label `status:done` | Titles are stale relative to labels | A contributor scanning titles sees wrong availability |
 | S6 | PR #222 body has `Closes #200` but **no `Control-Room-Issue: 200` line**, and no `Worker-Model`/`Worker-Effort` | `CONTRIBUTOR_HANDBOOK.md:294-296` requires exactly one such line for controller verification | The controller cannot bind #222 to #200; the submission is unverifiable by tooling |
 | S7 | PR #180's `Component lanes` check is **FAILURE** on head `90a907453233` | Issue #173 is correctly `changes-required`, so state is consistent — but the failing lane is not named in the issue's correction list | Worker may correct review findings and still fail CI |
-| S8 | #172, #173, #187 carry `action:v1` correction markers posted from the shared `MarvinAi5` account with literal `\n` escapes in the body (2026-09-14 12:54) | Malformed advisory markers; `public-worker-inbox.mjs:91` tags these `advisory`, never authoritative | These three workers receive an ADVISORY-only inbox entry for a real correction |
+| S8 | #172, #173, #187 carry `action:v1` correction markers posted from the owner's GitHub account with literal `\n` escapes in the body (2026-09-14 12:54) | Malformed advisory markers; `public-worker-inbox.mjs:91` tags these `advisory`, never authoritative | These three workers receive an ADVISORY-only inbox entry for a real correction |
 
 **Also observed, reported as fact not defect:** every `CLAIM ACCEPTED` on this repository
-names the same GitHub actor `MarvinAi5`. `HANDOFF_MAINTAINERS` is unset
+names the same GitHub actor: the owner's GitHub account. `HANDOFF_MAINTAINERS` is unset
 (`docs/WORKFLOW_IMPLEMENTATION_STATUS.md:25-29`), and
 `scripts/review-handoff-controller.mjs:85` refuses any maintainer action when
 `actor === claim.actor`. **Decision for the lead:** PUB-007's "authors cannot self-merge"
@@ -468,7 +468,7 @@ completion and restore identities, so it would not detect altered recovery evide
 not become silently optional.
 
 **R3 — Review authority is convention, not mechanism (security/process).**
-Every `CLAIM ACCEPTED` on this repository names the same actor `MarvinAi5`;
+Every `CLAIM ACCEPTED` on this repository names the same actor: the owner's GitHub account;
 `HANDOFF_MAINTAINERS` is unset (`docs/WORKFLOW_IMPLEMENTATION_STATUS.md:25-29`); and
 `scripts/review-handoff-controller.mjs:85` refuses maintainer actions when
 `actor === claim.actor` (**observed**). PUB-007 requires that authors cannot self-merge.

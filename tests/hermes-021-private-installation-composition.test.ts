@@ -6,7 +6,7 @@ import {
   PRIVATE_HERMES_021_INSTALLED_COMPOSITION_IDENTITY_V1 } from
   "../src/web/v1/hermes-021-private-installation-composition";
 
-const binding = Object.freeze({ localServiceId: "service:marvin", workerId: "worker:marvin",
+const binding = Object.freeze({ localServiceId: "service:hermes-worker", workerId: "worker:hermes-worker",
   expectedVersion: "0.21.3" as const, sourceRevision: "00570550" });
 const subprocess = Object.freeze({ executablePath: "/private/fixture/hermes", profile: "cr",
   model: "qwen3.8:27b-long", provider: "ollama", workingDirectory: "/private/fixture/work" });

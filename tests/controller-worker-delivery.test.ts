@@ -5,8 +5,8 @@ import { sha256Digest } from "../src/security/canonical-digest";
 
 const digest = (value: string) => sha256Digest(value);
 const delivery = () => createControllerWorkerDeliveryV1({
-  identity: { tenantId: "tenant:local", projectId: "project:local", jobId: "job:local", attemptId: "attempt:local", runId: "run:local", nodeId: "node:marvin" },
-  worker: { workerId: "worker:marvin", adapterId: "connector:hermes-021", adapterRevision: "00570550" },
+  identity: { tenantId: "tenant:local", projectId: "project:local", jobId: "job:local", attemptId: "attempt:local", runId: "run:local", nodeId: "node:hermes-worker" },
+  worker: { workerId: "worker:hermes-worker", adapterId: "connector:hermes-021", adapterRevision: "00570550" },
   input: { prompt: "Summarize the change.", instructions: "Return a short plain-English result." },
   authorityDigest: digest("authority"), connectorProfileDigest: digest("profile"), acceptanceProfileId: "profile:result",
   acceptanceProfileDigest: digest("acceptance"), issuedAt: "2026-09-19T12:00:00.000Z", expiresAt: "2026-09-19T12:05:00.000Z",

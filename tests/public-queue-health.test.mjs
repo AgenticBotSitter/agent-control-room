@@ -186,7 +186,7 @@ test("a status that needs an action label but has none is reported with its resp
   assert.ok(anomaly.codes.includes("action_label_missing"));
   assert.equal(anomaly.responsibilityArea, "Reviewer: review the exact submitted commit.");
   assert.equal(report.oldestReview.issue, 125);
-  assert.doesNotMatch(anomaly.responsibilityArea, /codex|claude|marvin|hermes|gpt|@/i);
+  assert.doesNotMatch(anomaly.responsibilityArea, /codex|claude|hermes-worker|hermes|gpt|@/i);
 });
 
 test("stale reviews and corrections report the oldest item and its age", async () => {
@@ -403,7 +403,7 @@ test("the human-readable report states who acts next for the oldest review and c
   assert.equal(report.oldestCorrection.responsibilityArea, "Original worker: correct the same pull request.");
   // Areas name a role, never a preferred person, login or bot brand.
   const areas = [report.oldestReview.responsibilityArea, report.oldestCorrection.responsibilityArea];
-  for (const area of areas) assert.doesNotMatch(area, /codex|claude|marvin|ziggy|johnny5|hermes|gpt|@/i);
+  for (const area of areas) assert.doesNotMatch(area, /codex|claude|hermes-worker|pc-worker|vps-operator|hermes|gpt|@/i);
 });
 
 test("pagination stays bounded and the report declares its own uncertainty", async () => {
@@ -439,7 +439,7 @@ test("authority comes from the controller, never from repository membership", as
   // NONE), so membership can neither identify a poster nor authorize one.
   const controller = fakeFetch({
     issues: [issue(199, ["status:working"])],
-    comments: { 199: [comment(claimMarker(199, "marvin-project-templates-01"), "NONE", "github-actions[bot]", "Bot")] },
+    comments: { 199: [comment(claimMarker(199, "hermes-worker-project-templates-01"), "NONE", "github-actions[bot]", "Bot")] },
   });
   const controllerReport = await readQueueHealth({ fetchImpl: controller.fetchImpl });
   assert.equal(controllerReport.claimedAssignments, 1);
@@ -449,10 +449,10 @@ test("authority comes from the controller, never from repository membership", as
   // authoritative and the gap in authority is reported rather than hidden.
   const advisory = fakeFetch({
     issues: [issue(170, ["status:changes-required", "action:worker"])],
-    comments: { 170: [comment(actionMarker("worker:test-01", "changes-required", 170), "CONTRIBUTOR", "MarvinAi5")] },
+    comments: { 170: [comment(actionMarker("worker:test-01", "changes-required", 170), "CONTRIBUTOR", "owner-account")] },
     pulls: [pull(303, 170)],
   });
-  const advisoryReport = await readQueueHealth({ fetchImpl: advisory.fetchImpl });
+  const advisoryReport = await readQueueHealth({ fetchImpl: advisory.fetchImpl, advisoryLogins: ["owner-account"] });
   assert.equal(advisoryReport.oldestCorrection.workerId, "worker:test-01");
   assert.equal(advisoryReport.oldestCorrection.recordTrust, "advisory");
   assert.deepEqual(advisoryReport.anomalies.find(item => item.issue === 170).codes,
@@ -473,7 +473,7 @@ test("authority comes from the controller, never from repository membership", as
       ["worker_action_marker_missing"], `${association} must not grant trust`);
   }
 
-  assert.ok(DEFAULT_ADVISORY_LOGINS.includes("MarvinAi5"));
+  assert.deepEqual(DEFAULT_ADVISORY_LOGINS, []);
   assert.ok(!DEFAULT_ADVISORY_LOGINS.includes("github-actions[bot]"),
     "the controller is authoritative through its bot identity, not a login allowlist");
 });
@@ -549,8 +549,8 @@ test("rendered output never publishes a credential value", async () => {
 });
 
 test("claim markers are parsed only in the exact bounded controller form", () => {
-  assert.deepEqual(parseClaimMarker(`CLAIM ACCEPTED\n<!-- agent-control-room-claim:v2 issue=199 request=1 actor=maintainer worker=marvin-project-templates-01 -->`),
-    { issue: 199, request: 1, actor: "maintainer", workerId: "marvin-project-templates-01" });
+  assert.deepEqual(parseClaimMarker(`CLAIM ACCEPTED\n<!-- agent-control-room-claim:v2 issue=199 request=1 actor=maintainer worker=hermes-worker-project-templates-01 -->`),
+    { issue: 199, request: 1, actor: "maintainer", workerId: "hermes-worker-project-templates-01" });
   for (const value of ["CLAIM ACCEPTED", "<!-- agent-control-room-claim:v2 issue=199 -->",
     "<!-- agent-control-room-claim:v2 issue=199 request=1 actor=a worker=b -->"])
     assert.equal(parseClaimMarker(value), undefined);

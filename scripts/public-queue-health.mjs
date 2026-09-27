@@ -31,10 +31,10 @@ const PR_DECLARATION_WINDOW = 2000;
  * Trust is never derived from `author_association`. Every repository OWNER, MEMBER and
  * COLLABORATOR can post a comment, so treating membership as trust would let an
  * unauthorized comment satisfy a required handoff and silently suppress a missing-record
- * warning. Authority belongs to the serialized controller alone; the identities below are
- * named explicitly and everything they post is reported as advisory, never authoritative.
+ * warning. Authority belongs to the serialized controller alone; installations may pass
+ * explicit advisory identities, and everything they post remains non-authoritative.
  */
-export const DEFAULT_ADVISORY_LOGINS = Object.freeze(["MarvinAi5"]);
+export const DEFAULT_ADVISORY_LOGINS = Object.freeze([]);
 
 /** Minimum number of substantial Ready packages that must stay available. */
 export const READY_FLOOR = 4;

@@ -114,6 +114,6 @@ The existing source for these stays in place.
 
 - **Claude (lead, integrator):** P2 host mode, P3 generic port plus the Hermes and Claude adapters, integration, final review. Claude is the only editor of shared composer and startup files.
 - **Codex (bounded, file-disjoint):** the P3 Codex adapter and its tests, and the P1 read-only database check script. Packets are in `docs/claude/assignments/`.
-- **Marvin / Hermes (bounded, read-only reports):** the P0 commit scan, the website route inventory for P2 and P4, and a flag cross-check for the adapters. Packets are in `docs/claude/assignments/`.
+- **Hermes worker / Hermes (bounded, read-only reports):** the P0 commit scan, the website route inventory for P2 and P4, and a flag cross-check for the adapters. Packets are in `docs/claude/assignments/`.
 
 Worker output is evidence, not authority. Claude reviews and integrates everything.

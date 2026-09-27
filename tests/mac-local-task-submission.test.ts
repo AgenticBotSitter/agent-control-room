@@ -44,8 +44,8 @@ async function signals(f: Fixture, capabilityProbeId: string, seed: string) {
  * for `previewMacLocalTask`/`enqueueMacLocalTask`. */
 async function setupLocalJob(f: Fixture, kind: "hermes-local" | "claude-code-local" | "codex-owner-trusted-local", seed: number) {
   const authority: NativeTaskTemplate["authority"] = kind === "hermes-local"
-    ? { projectId: binding.projectId, allowedExecutor: "executor:marvin", allowedOperations: [HERMES_LOCAL_START_OPERATION_V1],
-      credentialRefs: ["credential:marvin"], filesystemRoots: [], networkPolicy: "allowlist",
+    ? { projectId: binding.projectId, allowedExecutor: "executor:hermes-worker", allowedOperations: [HERMES_LOCAL_START_OPERATION_V1],
+      credentialRefs: ["credential:hermes-worker"], filesystemRoots: [], networkPolicy: "allowlist",
       allowedNetworkDestinations: [enrollment.canonicalDestination], effectPolicy: "approval_required", maxRisk: "low",
       maxDurationSeconds: 120, maxConcurrentEffects: 1, expiresAt: at(300_000), digest: "" }
     : kind === "claude-code-local"

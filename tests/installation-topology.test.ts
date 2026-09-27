@@ -5,7 +5,7 @@ import { createInstallationReadinessV1, summarizeInstallationReadinessV1, verify
 import { sha256Digest } from "../src/security/canonical-digest";
 
 const digest = (value: string) => sha256Digest(value);
-const local = { kind: "local" as const, workerId: "worker:marvin", adapterId: "connector:hermes-021-macos-local-v1", adapterRevision: "00570550" };
+const local = { kind: "local" as const, workerId: "worker:hermes-worker", adapterId: "connector:hermes-021-macos-local-v1", adapterRevision: "00570550" };
 const remote = { kind: "remote" as const, workerId: "worker:remote", adapterId: "connector:generic-remote-v1", adapterRevision: "00570550" };
 const input = (requestedRoutes: readonly unknown[]) => ({ databaseAuthorityDigest: digest("one-postgres"),
   schedulerAuthorityDigest: digest("one-scheduler"), currentRoutes: [local], requestedRoutes });
@@ -27,7 +27,7 @@ test("a controller-only bootstrap has no implied worker or worker proof", () => 
 test("the controller-only bootstrap names the first local or remote route and its proofs", () => {
   const firstLocal = planInstallationTopologyV1({ ...input([local]), currentRoutes: [] });
   const firstRemote = planInstallationTopologyV1({ ...input([remote]), currentRoutes: [] });
-  assert.deepEqual(firstLocal.addedLocalWorkerIds, ["worker:marvin"]);
+  assert.deepEqual(firstLocal.addedLocalWorkerIds, ["worker:hermes-worker"]);
   assert.deepEqual(firstLocal.addedRemoteWorkerIds, []);
   assert.deepEqual(firstLocal.requiredProofs, ["backup_restore", "local_owner_qualification", "local_runner_bridge"]);
   assert.equal(firstRemote.mode, "several_computers");
@@ -40,7 +40,7 @@ test("a this-computer plan preserves one authority and asks only for local proof
   const plan = planInstallationTopologyV1(input([local]));
   assert.equal(plan.currentMode, "this_computer");
   assert.equal(plan.mode, "this_computer");
-  assert.deepEqual(plan.retainedWorkerIds, ["worker:marvin"]);
+  assert.deepEqual(plan.retainedWorkerIds, ["worker:hermes-worker"]);
   assert.deepEqual(plan.reboundWorkerIds, []);
   assert.deepEqual(plan.addedLocalWorkerIds, []);
   assert.deepEqual(plan.addedRemoteWorkerIds, []);
@@ -54,7 +54,7 @@ test("adding a remote worker is one-installation migration preparation, not a se
   const plan = planInstallationTopologyV1(input([local, remote]));
   assert.equal(plan.currentMode, "this_computer");
   assert.equal(plan.mode, "several_computers");
-  assert.deepEqual(plan.retainedWorkerIds, ["worker:marvin"]);
+  assert.deepEqual(plan.retainedWorkerIds, ["worker:hermes-worker"]);
   assert.deepEqual(plan.reboundWorkerIds, []);
   assert.deepEqual(plan.addedLocalWorkerIds, []);
   assert.deepEqual(plan.addedRemoteWorkerIds, ["worker:remote"]);
@@ -78,7 +78,7 @@ test("malformed and duplicate routes remain refused, and a changed reviewed plan
 test("moving a known worker between local and remote is a rebind, not quiet retention", () => {
   const plan = planInstallationTopologyV1(input([{ ...local, kind: "remote" }]));
   assert.deepEqual(plan.retainedWorkerIds, []);
-  assert.deepEqual(plan.reboundWorkerIds, ["worker:marvin"]);
+  assert.deepEqual(plan.reboundWorkerIds, ["worker:hermes-worker"]);
   assert.deepEqual(plan.addedLocalWorkerIds, []);
   assert.deepEqual(plan.addedRemoteWorkerIds, []);
   assert.deepEqual(plan.removedWorkerIds, []);

@@ -30,7 +30,7 @@
  *   5  permission_denied     — the OS refused the spawn (EACCES/EPERM)
  *   6  interaction_required  — reserved; not produced here
  *
- * Hygiene (per `ziggy-machine-profile` §4):
+ * Hygiene (per the PC worker machine profile):
  *   - `-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass`
  *   - PowerShell child spawned with `windowsHide: true` equivalent,
  *     bounded output (64 KiB) and a 60 s timeout

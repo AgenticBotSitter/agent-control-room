@@ -96,7 +96,7 @@ test("Hermes and Claude run concurrently through one durable lifecycle without c
       acceptanceProfileId: f.profile.id, acceptanceProfileDigest: sha256Digest(f.profile) };
   };
   const hermesPlanner = new TaskExecutionPlanner(f.db, f.scope, { template: makeTemplate("template:shared-hermes",
-    HERMES_021_MACOS_LOCAL_ADAPTER_V1, "executor:marvin", HERMES_021_MACOS_LOCAL_START_OPERATION_V1,
+    HERMES_021_MACOS_LOCAL_ADAPTER_V1, "executor:hermes-worker", HERMES_021_MACOS_LOCAL_START_OPERATION_V1,
     HERMES_021_MACOS_CONNECTOR_PROFILE_DIGEST_V1), integrityKey: new Uint8Array(32).fill(61),
     reviewIntegrityKey: f.reviewKey, checkpoints: f.checkpoints,
     localAdapterAdmission: { enabledAdapters: [HERMES_021_MACOS_LOCAL_ADAPTER_V1] } }, () => now);
@@ -127,7 +127,7 @@ test("Hermes and Claude run concurrently through one durable lifecycle without c
     await signals.ingestAuthenticated({ schemaVersion: "1.0.0", tenantId: binding.tenantId, nodeId: binding.nodeId, sequence: await nextSignal("capability"),
       observedAt: at(6_000), expiresAt: at(120_000), trust: "reported", fingerprint: sha256Digest(`shared-${probeId}`),
       kind: "capability", source: "probe_runner", payload: { probeId, probeVersion: "1.0.0", outcome: "pass", reasonCode: "fixture" } }, at(6_000), binding);
-  const hermesRoute = [{ nodeId: binding.nodeId, executorId: "executor:marvin", capabilityProbeId: HERMES_021_MACOS_LOCAL_CAPABILITY_V1,
+  const hermesRoute = [{ nodeId: binding.nodeId, executorId: "executor:hermes-worker", capabilityProbeId: HERMES_021_MACOS_LOCAL_CAPABILITY_V1,
     maxConcurrentTasks: 4, requiredScratchBytes: 0, leaseSeconds: 60 }] as const;
   const claudeRoute = [{ nodeId: binding.nodeId, executorId: "executor:claude", capabilityProbeId: CLAUDE_CODE_LOCAL_CAPABILITY_V1,
     maxConcurrentTasks: 4, requiredScratchBytes: 0, leaseSeconds: 60 }] as const;
@@ -152,7 +152,7 @@ test("Hermes and Claude run concurrently through one durable lifecycle without c
   assert.equal(hermesTarget.kind, "hermes-021-local"); assert.equal(claudeTarget.kind, "claude-code-local");
   const hermesReference = { tenantId: binding.tenantId, projectId: binding.projectId, jobId: hermesPlan.receipt.jobId,
     attemptId: hermesAssigned.receipt.attemptId, leaseId: hermesAssigned.receipt.leaseId, inputDigest: hermesPlan.receipt.inputDigest };
-  const hermesBinding = { localServiceId: "service:fixture-hermes", workerId: "worker:marvin", expectedVersion: "0.21.3" as const, sourceRevision: "00570550" };
+  const hermesBinding = { localServiceId: "service:fixture-hermes", workerId: "worker:hermes-worker", expectedVersion: "0.21.3" as const, sourceRevision: "00570550" };
   let hermesStarts = 0;
   const hermesOpened = deferred(), claudeOpened = deferred();
   const releaseHermesOutput = deferred(), releaseClaudeOutput = deferred();

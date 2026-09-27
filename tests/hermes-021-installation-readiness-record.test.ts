@@ -8,7 +8,7 @@ import { sha256Digest } from "../src/security/canonical-digest";
 import { HERMES_021_MACOS_LOCAL_RUNNER_QUALIFICATION_REPORT_V1, recordHermes021MacosLocalQualificationReadinessV1,
   recordHermes021MacosLocalRunnerQualificationReadinessV1, recordLocalBackupRestoreReadinessV1 } from "../src/harness/hermes-021-v1";
 
-const route = { kind: "local" as const, workerId: "worker:marvin", adapterId: "connector:hermes-021-macos-local-v1", adapterRevision: "00570550" };
+const route = { kind: "local" as const, workerId: "worker:hermes-worker", adapterId: "connector:hermes-021-macos-local-v1", adapterRevision: "00570550" };
 const plan = planInstallationTopologyV1({ databaseAuthorityDigest: sha256Digest("database"), schedulerAuthorityDigest: sha256Digest("scheduler"),
   currentRoutes: [route], requestedRoutes: [route] });
 const report = { qualified: true as const, exitCode: 0 as const, exitSignal: null, terminalResultObserved: true as const,

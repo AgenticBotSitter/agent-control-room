@@ -33,7 +33,7 @@ import { createHermesOwnerQualificationHostFixture, hermesOwnerQualificationConf
   "./helpers/hermes-owner-qualification-host";
 
 const d = (value: string) => sha256Digest(value);
-const route = Object.freeze({ kind: "local" as const, workerId: "worker:marvin",
+const route = Object.freeze({ kind: "local" as const, workerId: "worker:hermes-worker",
   adapterId: HERMES_021_MACOS_LOCAL_ADAPTER_V1, adapterRevision: HERMES_021_SOURCE_REVISION_V1 });
 const topologyInput = Object.freeze({ databaseAuthorityDigest: d("database"), schedulerAuthorityDigest: d("scheduler"),
   currentRoutes: Object.freeze([]), requestedRoutes: Object.freeze([route]) });
@@ -93,7 +93,7 @@ function protectedConfigurationSource() {
 }
 
 async function assertHermesPinnedLaunchBlocked() {
-  const workerBinding = Object.freeze({ localServiceId: "service:marvin", workerId: route.workerId,
+  const workerBinding = Object.freeze({ localServiceId: "service:hermes-worker", workerId: route.workerId,
     expectedVersion: "0.21.3" as const, sourceRevision: HERMES_021_SOURCE_REVISION_V1 });
   const runnerConfiguration = hermesOwnerQualificationConfigurationFixture({ profile: "owner-profile-private",
     model: "qwen3.8:27b-long", provider: "ollama" });
@@ -132,7 +132,7 @@ test("structural or caller-digest proof cannot leave blocked state", () => {
 });
 
 test("a structural fake Hermes host cannot advance the activation preflight", async () => {
-  const workerBinding = Object.freeze({ localServiceId: "service:marvin", workerId: route.workerId,
+  const workerBinding = Object.freeze({ localServiceId: "service:hermes-worker", workerId: route.workerId,
     expectedVersion: "0.21.3" as const, sourceRevision: HERMES_021_SOURCE_REVISION_V1 });
   const runnerConfiguration = Object.freeze({ executablePath: "/private/fixture/hermes",
     profile: "owner-profile-private", model: "qwen3.8:27b-long", provider: "ollama",

@@ -30,11 +30,11 @@ test("runner qualification evidence refuses an incomplete or failed run", () => 
 });
 
 test("reviewed executable still cannot mint evidence without pinned-handle launch", async () => {
-  const route = { kind: "local" as const, workerId: "worker:marvin", adapterId: HERMES_021_MACOS_LOCAL_ADAPTER_V1,
+  const route = { kind: "local" as const, workerId: "worker:hermes-worker", adapterId: HERMES_021_MACOS_LOCAL_ADAPTER_V1,
     adapterRevision: HERMES_021_SOURCE_REVISION_V1 };
   const topologyPlan = planInstallationTopologyV1({ databaseAuthorityDigest: sha256Digest("database"),
     schedulerAuthorityDigest: sha256Digest("scheduler"), currentRoutes: [], requestedRoutes: [route] });
-  const workerBinding = { localServiceId: "service:marvin", workerId: route.workerId,
+  const workerBinding = { localServiceId: "service:hermes-worker", workerId: route.workerId,
     expectedVersion: "0.21.3" as const, sourceRevision: HERMES_021_SOURCE_REVISION_V1 };
   const runnerConfiguration = hermesOwnerQualificationConfigurationFixture();
   const fixture = await createHermesOwnerQualificationHostFixture(runnerConfiguration);
@@ -45,7 +45,7 @@ test("reviewed executable still cannot mint evidence without pinned-handle launc
 });
 
 test("a fabricated matching terminal callback has no owner-host provenance", async () => {
-  const route = { kind: "local" as const, workerId: "worker:marvin", adapterId: HERMES_021_MACOS_LOCAL_ADAPTER_V1,
+  const route = { kind: "local" as const, workerId: "worker:hermes-worker", adapterId: HERMES_021_MACOS_LOCAL_ADAPTER_V1,
     adapterRevision: HERMES_021_SOURCE_REVISION_V1 };
   const topologyPlan = planInstallationTopologyV1({ databaseAuthorityDigest: sha256Digest("database"),
     schedulerAuthorityDigest: sha256Digest("scheduler"), currentRoutes: [], requestedRoutes: [route] });
@@ -53,7 +53,7 @@ test("a fabricated matching terminal callback has no owner-host provenance", asy
     model: "owner-model", provider: "owner-provider", workingDirectory: "/private/fixture/work" };
   let calls = 0;
   await assert.rejects(runHermes021MacosInstallationBoundRunnerQualificationV1({ installationId: "fixture-installation",
-    releaseDigest: sha256Digest("release"), topologyPlan, workerBinding: { localServiceId: "service:marvin",
+    releaseDigest: sha256Digest("release"), topologyPlan, workerBinding: { localServiceId: "service:hermes-worker",
       workerId: route.workerId, expectedVersion: "0.21.3", sourceRevision: HERMES_021_SOURCE_REVISION_V1 },
     runnerConfiguration, reviewedExecutableIdentity: { schema: "control-room.hermes-021-macos-reviewed-executable-identity/v1",
       executableSha256: sha256Digest("fake"), expectedVersion: "0.21.3", sourceRevision: HERMES_021_SOURCE_REVISION_V1 } },
@@ -65,7 +65,7 @@ test("a fabricated matching terminal callback has no owner-host provenance", asy
 });
 
 test("an injectable factory-created host cannot mint qualification evidence", async () => {
-  const route = { kind: "local" as const, workerId: "worker:marvin", adapterId: HERMES_021_MACOS_LOCAL_ADAPTER_V1,
+  const route = { kind: "local" as const, workerId: "worker:hermes-worker", adapterId: HERMES_021_MACOS_LOCAL_ADAPTER_V1,
     adapterRevision: HERMES_021_SOURCE_REVISION_V1 };
   const topologyPlan = planInstallationTopologyV1({ databaseAuthorityDigest: sha256Digest("database"),
     schedulerAuthorityDigest: sha256Digest("scheduler"), currentRoutes: [], requestedRoutes: [route] });
@@ -76,7 +76,7 @@ test("an injectable factory-created host cannot mint qualification evidence", as
     () => { launches += 1; throw new Error("must not launch"); }, async () => "/private/tmp/hostile-hermes",
     async () => {}, async () => {}, Date.now);
   await assert.rejects(runHermes021MacosInstallationBoundRunnerQualificationV1({ installationId: "fixture-installation",
-    releaseDigest: sha256Digest("release"), topologyPlan, workerBinding: { localServiceId: "service:marvin",
+    releaseDigest: sha256Digest("release"), topologyPlan, workerBinding: { localServiceId: "service:hermes-worker",
       workerId: route.workerId, expectedVersion: "0.21.3", sourceRevision: HERMES_021_SOURCE_REVISION_V1 },
     runnerConfiguration, reviewedExecutableIdentity }, genericHost),
   /installation_bound_runner_qualification_evidence_unavailable/u);

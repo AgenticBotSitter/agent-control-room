@@ -1,10 +1,10 @@
-# Marvin M1 — Agent Control Room: `mac-local` Website Route Inventory (re-run)
+# Hermes worker M1 — Agent Control Room: `mac-local` Website Route Inventory (re-run)
 
 Status: COMPLETE
 Branch: `hermes/mac-w5-m1-inventory`
 Base commit: `e9bac6e4` (integration head at time of run)
-Method source: `docs/claude/assignments/MARVIN_H2_WEBSITE_ROUTE_INVENTORY.md` (prior inventory — repeated as method, not trusted as current truth)
-Owner: Marvin, lane M1
+Method source: `docs/claude/assignments/HERMES_WORKER_H2_WEBSITE_ROUTE_INVENTORY.md` (prior inventory — repeated as method, not trusted as current truth)
+Owner: Hermes worker, lane M1
 
 This document contains no real hostnames, IP addresses, certificates, credentials,
 owner codes, or private filesystem paths. Hosts and services are named by role only.

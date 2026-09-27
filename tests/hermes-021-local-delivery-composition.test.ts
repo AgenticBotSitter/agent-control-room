@@ -8,10 +8,10 @@ import { at, nativeTaskFixture, registration } from "./native-task-fixture";
 import { binding, input } from "./hermes-native-fixture";
 
 const receiptKey = new Uint8Array(32).fill(64);
-const localBinding = { localServiceId: "service:marvin-hermes", workerId: "worker:marvin",
+const localBinding = { localServiceId: "service:hermes-worker-hermes", workerId: "worker:hermes-worker",
   expectedVersion: "0.21.3", sourceRevision: "00570550" } as const;
-const result = { type: "result" as const, session_id: "session:marvin", exit_code: 0,
-  text: "Marvin completed the controlled task.", tokens: { input: 9, output: 6, total: 15, cache_read: 0, cache_write: 0 },
+const result = { type: "result" as const, session_id: "session:hermes-worker", exit_code: 0,
+  text: "Hermes worker completed the controlled task.", tokens: { input: 9, output: 6, total: 15, cache_read: 0, cache_write: 0 },
   duration_ms: 120, timestamp: 1 };
 
 function delivery() {
@@ -20,13 +20,13 @@ function delivery() {
       attemptId: binding.attemptId, runId: registration.id, nodeId: binding.nodeId },
     worker: { workerId: localBinding.workerId, adapterId: "connector:hermes-021-macos-local-v1",
       adapterRevision: localBinding.sourceRevision },
-    input: { prompt: input.prompt, instructions: input.instructions }, authorityDigest: sha256Digest("marvin-authority"),
-    connectorProfileDigest: sha256Digest("marvin-profile"), acceptanceProfileId: "profile:marvin",
-    acceptanceProfileDigest: sha256Digest("marvin-acceptance"), issuedAt: at(1000), expiresAt: at(120_000),
+    input: { prompt: input.prompt, instructions: input.instructions }, authorityDigest: sha256Digest("hermes-worker-authority"),
+    connectorProfileDigest: sha256Digest("hermes-worker-profile"), acceptanceProfileId: "profile:hermes-worker",
+    acceptanceProfileDigest: sha256Digest("hermes-worker-acceptance"), issuedAt: at(1000), expiresAt: at(120_000),
   });
 }
 
-test("Marvin's local delivery is recorded before one controlled invocation and never auto-runs again after restart", async t => {
+test("the Hermes worker's local delivery is recorded before one controlled invocation and never auto-runs again after restart", async t => {
   const f = await nativeTaskFixture(); t.after(f.close);
   const packet = delivery(); let policyCalls = 0, runs = 0, stages = 0;
   const terminalResultStorage = new InMemoryArtifactStorage();
@@ -53,7 +53,7 @@ test("Marvin's local delivery is recorded before one controlled invocation and n
   assert.equal(policyCalls, 3);
 });
 
-test("a local policy refusal records no receipt and never invokes Marvin", async t => {
+test("a local policy refusal records no receipt and never invokes the Hermes worker", async t => {
   const f = await nativeTaskFixture(); t.after(f.close);
   const packet = delivery(); let runs = 0;
   await assert.rejects(deliverHermes021MacosLocalTaskV1({ db: f.db, integrityKey: receiptKey, binding: localBinding,
