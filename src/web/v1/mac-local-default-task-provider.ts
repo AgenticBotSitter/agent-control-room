@@ -10,15 +10,17 @@ import { CompletionGateStoreV1 } from "../../completion-gate/v1/store";
 import { preparePgBossNativeTaskSubmission } from "../../persistence/pg-boss-native-task-submission";
 import type { DatabaseClient } from "../../persistence/database";
 import { NativeApprovalPacketStore } from "./native-approval-packet-store";
-import { TaskExecutionPlanner } from "./task-execution-planner";
+import { createNativeTaskTemplateRegistryV1, TaskExecutionPlanner } from "./task-execution-planner";
 import { createPrivatePostgresDatabase } from "./private-postgres";
 import { createMacLocalCurrentThreeAgentTaskApplicationV1 } from "./mac-local-current-three-agent-task-composition";
 import { MAC_LOCAL_TASK_PROVIDER_V1, MAC_LOCAL_THREE_AGENT_KINDS_V1,
   type MacLocalTaskProviderV1 } from "./mac-local-task-provider";
 import { loadMacLocalTaskRuntimeFromRootV1 } from "./mac-local-task-runtime";
 import { openMacLocalRollbackCheckpointStoreV1 } from "./mac-local-rollback-checkpoint-store";
-import { buildMacLocalTaskTemplatesV1 } from "./mac-local-task-provider-templates";
+import { buildMacLocalTaskTemplatesV1, MAC_LOCAL_MAX_PROJECTS_V1 } from "./mac-local-task-provider-templates";
 import { createMacLocalTextScenarioV1 } from "./mac-local-owner-review-profile";
+import { createMacLocalLiveProjectProvisionerV1 } from "./mac-local-live-projects";
+import { createTaskQualityScenarioRegistryV1 } from "./task-quality-coordinator";
 import { checkMacLocalNodeKeyPinV1 } from "./mac-local-node-key-pin";
 import { refreshMacLocalFleetSignalsV1 } from "./mac-local-fleet-signals";
 import { CodexOwnerTrustedLocalDispatchPreparationV1 } from "../../harness/codex-v1/owner-trusted-local-dispatch-preparation";
@@ -82,8 +84,8 @@ export const createTaskApplication: MacLocalTaskProviderV1["createTaskApplicatio
     `SELECT p.id AS project_id,h.created_at FROM projects p
       JOIN control_manual_project_heads h ON h.tenant_id=p.tenant_id AND h.project_id=p.id
       WHERE p.tenant_id=$1 AND p.workspace_id=$2 AND h.lifecycle='active'
-      ORDER BY p.id LIMIT 6`, [tenantId, workspaceId]);
-  if (rows.rows.length < 1 || rows.rows.length > 5) throw new Error("mac_local_project_limit");
+      ORDER BY p.id LIMIT ${MAC_LOCAL_MAX_PROJECTS_V1 + 1}`, [tenantId, workspaceId]);
+  if (rows.rows.length > MAC_LOCAL_MAX_PROJECTS_V1) throw new Error("mac_local_project_limit_50");
   const projects = rows.rows.map(row => ({ projectId: row.project_id, createdAt: new Date(row.created_at).toISOString() }));
   const built = buildMacLocalTaskTemplatesV1(projects, configuration, runtime);
   // Validate each parent before creating descendants: lstat on a child alone
@@ -127,7 +129,11 @@ export const createTaskApplication: MacLocalTaskProviderV1["createTaskApplicatio
     // admits exactly that shape); the coordinator's guard refuses every profile.
     const profileGate = new CompletionGateStoreV1(input.database.client, keys.review, checkpoints);
     for (const profile of built.profiles) await profileGate.registerProfile(profile);
-    const planning: ConstructorParameters<typeof TaskExecutionPlanner>[2] = { template: built.templates[0]!, additionalTemplates: built.templates.slice(1),
+    const templateRegistry = createNativeTaskTemplateRegistryV1(built.templates);
+    const scenarioRegistry = createTaskQualityScenarioRegistryV1(built.profiles.map(createMacLocalTextScenarioV1));
+    const liveProjects = createMacLocalLiveProjectProvisionerV1({ db: input.database.client, tenantId, workspaceId,
+      configuration, runtime, profileGate, templates: templateRegistry, scenarios: scenarioRegistry, initialProjects: projects });
+    const planning: ConstructorParameters<typeof TaskExecutionPlanner>[2] = { templateRegistry,
       integrityKey: keys.planning, reviewIntegrityKey: keys.review, checkpoints: checkpointStore,
       localAdapterAdmission: { enabledAdapters: [HERMES_LOCAL_ADAPTER_V1, CLAUDE_CODE_LOCAL_ADAPTER_V1,
         CODEX_OWNER_TRUSTED_LOCAL_ADAPTER_V1] } };
@@ -207,12 +213,13 @@ export const createTaskApplication: MacLocalTaskProviderV1["createTaskApplicatio
           ownerReviews: { integrityKey: keys.review, checkpoints: checkpointStore } } },
       databaseRoles, openDatabase: openCoordinatorDatabase,
       coordinator: { scope: { tenantId, workspaceId }, planning, routes: built.routes,
+        ensurePlanningProject: liveProjects.ensureProject,
         resultInspectionSource,
         approvals: { enrollments: [], store: new NativeApprovalPacketStore(keys.approvals, []) },
         nativeSubmission: submission, revisionPlanning: true,
         quality: { integrityKey: keys.review, harnessIntegrityKey: keys.harness, checkpoints: checkpointStore,
           results: { integrityKey: keys.results, storageClass: "local", storage },
-          scenarios: built.profiles.map(createMacLocalTextScenarioV1) } },
+          scenarios: scenarioRegistry.snapshot(), scenarioRegistry } },
       hermes, claude: voidClaude, codex: voidCodex,
     });
     // A local host tick invokes the existing canonical quality operation; it
@@ -220,10 +227,10 @@ export const createTaskApplication: MacLocalTaskProviderV1["createTaskApplicatio
     let qualityFailureReported = false;
     const sweepQuality = async () => {
       if (!application?.quality) throw new Error("mac_local_quality_unavailable");
-      for (const project of projects) {
+      for (const projectId of liveProjects.projectIds()) {
         let afterRunId: string | undefined;
         do {
-          const page = await application.quality.sweep({ projectId: project.projectId,
+          const page = await application.quality.sweep({ projectId,
             ...(afterRunId ? { afterRunId } : {}) }, new AbortController().signal);
           afterRunId = page.nextRunId ?? undefined;
           if (page.items.some(item => item.status === "unavailable")) throw new Error("mac_local_quality_reconciliation_unavailable");

@@ -57,26 +57,32 @@ test("task host requires the fixed release provider and does not accept a caller
   });
   assert.equal(result, task);
   assert.equal(providerInput.protectedRoot, "/protected");
-  assert.deepEqual(loaded.sort(), ["index.js", "macLocalHost.js", "macLocalProtectedLoader.js", "macLocalProtectedLoader.js",
-    "macLocalTaskProvider.js", "nativeQueueFactories.js", "privatePostgres.js", "privatePostgres.js", "serving.js"].sort());
+  assert.deepEqual(loaded.sort(), ["index.js", "macLocalHost.js", "macLocalProtectedLoader.js",
+    "macLocalTaskProvider.js", "nativeQueueFactories.js", "privatePostgres.js", "serving.js"].sort());
 });
 
-test("a zero-project first start opens the website and does not load a task provider", async () => {
+test("a zero-project first start loads the live task provider without requiring a restart", async () => {
   const loaded = [];
   const site = { async close() {}, isReady: () => true };
   const result = await startMacLocalTaskHost({ protectedRoot: "/protected" }, { load: async path => {
     const name = path.split("/").at(-1); loaded.push(name);
-    if (name === "macLocalProtectedLoader.js") return { loadMacLocalProtectedConfigurationFromRootV1: async () => ({
-      localOwnerSession: { tenantId: "tenant:fixture" }, workspaceId: "workspace:fixture" }) };
-    if (name === "privatePostgres.js") return { createPrivatePostgresDatabase: () => ({
-      client: { query: async () => ({ rows: [] }) }, async close() {},
-    }) };
-    if (name === "macLocalHost.js") return { createMacLocalProtectedHostV1: () => ({ start: async () => site }) };
+    if (name === "macLocalProtectedLoader.js") return {
+      loadMacLocalProtectedConfigurationFromRootV1: async () => ({}), loadMacLocalDatabaseRolesFromRootV1: async () => ({}),
+    };
+    if (name === "privatePostgres.js") return { createPrivatePostgresDatabase: () => ({}) };
+    if (name === "macLocalHost.js") return { createMacLocalProtectedHostV1: input => ({ async start() {
+      await input.createTaskApplication({ workerReadiness: {}, configuration: {}, database: {}, databaseRoles: {} });
+      return site;
+    } }) };
+    if (name === "macLocalTaskProvider.js") return { loadMacLocalTaskProviderFromRootV1: async () => ({
+      workerKinds: ["hermes", "claude-code", "codex"], createTaskApplication: async () => ({}),
+    }), requireMacLocalThreeAgentReadinessV1() {} };
+    if (name === "nativeQueueFactories.js") return { createInstalledNativeQueueFactories: () => ({ startNativeWorker: async () => ({}) }) };
     if (name === "serving.js") return { loadPrivateClientAssets: async () => ({ respond() {} }) };
     if (name === "index.js") return { default() {} };
     throw new Error(`unexpected ${name}`);
   } });
   assert.equal(result, site);
-  assert.equal(loaded.includes("macLocalTaskProvider.js"), false);
-  assert.equal(loaded.includes("nativeQueueFactories.js"), false);
+  assert.equal(loaded.includes("macLocalTaskProvider.js"), true);
+  assert.equal(loaded.includes("nativeQueueFactories.js"), true);
 });

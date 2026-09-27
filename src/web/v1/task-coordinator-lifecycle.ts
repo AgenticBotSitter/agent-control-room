@@ -63,6 +63,9 @@ export type TaskCoordinatorDatabase = Readonly<{ client: DatabaseClient; close: 
 export type TaskCoordinatorConfiguration = {
   scope: { tenantId: string; workspaceId: string };
   planning: ConstructorParameters<typeof TaskExecutionPlanner>[2]; routes: readonly TaskAssignmentRoute[];
+  /** Installation-owned live project preparation. It may register only the
+   * server-derived templates and review profile for an already authorized project. */
+  ensurePlanningProject?: (projectId: string) => Promise<void>;
   approvals?: { enrollments: readonly NativeApprovalEnrollment[]; store: NativeApprovalPacketStore };
   /** Trusted, already prepared submission port. Optional close transfers ownership
    * after construction; drained and stopped before the underlying pool closes.
@@ -128,6 +131,8 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
   for (const [value, ceiling] of [[maxActive, 8], [drainMs, 30_000], [closeMs, 5000]])
     if (!Number.isSafeInteger(value) || value < 1 || value > ceiling) throw new Error("task_coordinator_config_invalid");
   if (input.revisionPlanning !== undefined && (input.revisionPlanning !== true || !input.quality)) throw new Error("task_coordinator_config_invalid");
+  if (input.ensurePlanningProject !== undefined && typeof input.ensurePlanningProject !== "function")
+    throw new Error("task_coordinator_config_invalid");
   if (input.resultDatabase && (!input.quality || input.resultDatabase === input.database || input.resultDatabase.client === input.database.client))
     throw new Error("task_coordinator_config_invalid");
   if (input.evidence && (!input.resultDatabase || !input.quality
@@ -403,7 +408,10 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
   sessionState.manager = sessions;
   const nativeHttp = httpSettings ? createNativeHttpHost({ ...httpSettings, connections: sessions!,
     isReady: () => { try { check(); return !closing && !invalid; } catch { return false; } }, clock: input.clock }) : undefined;
-  const planning: TaskPlanningOperation = Object.freeze({ ...scope, plan: (...args) => run(() => planner.plan(...args)),
+  const ensurePlanningProject = input.ensurePlanningProject?.bind(input);
+  const planning: TaskPlanningOperation = Object.freeze({ ...scope,
+    ...(ensurePlanningProject ? { ensureProject: (projectId: string) => run(() => ensurePlanningProject(projectId)) } : {}),
+    plan: (...args) => run(async () => { await ensurePlanningProject?.(args[1]); return planner.plan(...args); }),
     supportsProject: projectId => { check(); return !closing && planner.supportsProject(projectId); },
     templatesForProject: projectId => { check(); return !closing ? planner.templatesForProject(projectId) : []; },
     readSaved: (identity, projectId, sourceJobId) => {

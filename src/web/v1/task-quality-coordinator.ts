@@ -13,7 +13,14 @@ import { catalogProjectIdSchema } from "./project-wire";
 import { TaskCoordinatorInterruption } from "./task-coordinator-interruption";
 import type { TaskResultInspectionSourceV1 } from "../../completion-gate/v1/task-result-inspection";
 
-export type TaskQualityConfiguration = NativeQualityConfiguration & { scenarios: readonly AutomaticDocumentScenario[] };
+export const MAC_LOCAL_MAX_QUALITY_SCENARIOS_V1 = 50;
+export type TaskQualityScenarioRegistryV1 = Readonly<{
+  snapshot(): readonly AutomaticDocumentScenario[];
+  register(scenarios: readonly AutomaticDocumentScenario[]): void;
+}>;
+const taskQualityScenarioRegistries = new WeakSet<object>();
+export type TaskQualityConfiguration = NativeQualityConfiguration & { scenarios: readonly AutomaticDocumentScenario[];
+  scenarioRegistry?: TaskQualityScenarioRegistryV1 };
 export const taskQualityRequestSchema = nativeQualityRequestSchema.extend({ projectId: catalogProjectIdSchema, jobId: catalogProjectIdSchema }).strict();
 export type TaskQualityRequest = z.infer<typeof taskQualityRequestSchema>;
 export const taskQualitySweepRequestSchema = z.object({ projectId: catalogProjectIdSchema,
@@ -29,6 +36,20 @@ const scenariosSchema = z.array(z.object({ scenarioId: catalogProjectIdSchema, a
   acceptanceProfileDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/), rules: documentStructureRulesSchema }).strict()).max(50);
 const deny = (): never => { throw new Error("task_quality_unavailable"); };
 
+export function createTaskQualityScenarioRegistryV1(initial: readonly AutomaticDocumentScenario[]): TaskQualityScenarioRegistryV1 {
+  let values: readonly AutomaticDocumentScenario[] = Object.freeze([]);
+  const registry: TaskQualityScenarioRegistryV1 = Object.freeze({ snapshot: () => values, register(input) {
+    const parsed = scenariosSchema.parse(input); assertNoSecretMaterial(parsed);
+    const next = new Map(values.map(value => [JSON.stringify([value.acceptanceProfileId,
+      value.acceptanceProfileDigest, value.scenarioId]), value]));
+    for (const value of parsed) next.set(JSON.stringify([value.acceptanceProfileId,
+      value.acceptanceProfileDigest, value.scenarioId]), value);
+    if (next.size > MAC_LOCAL_MAX_QUALITY_SCENARIOS_V1) throw new Error("task_quality_scenario_limit_50");
+    values = Object.freeze([...next.values()]);
+  } });
+  taskQualityScenarioRegistries.add(registry); registry.register(initial); return registry;
+}
+
 export function validateTaskQualityKeys(quality: TaskQualityConfiguration, reviewKey: Uint8Array, web: PrivateWebProcessOptions["tasks"]) {
   const equal = (a: Uint8Array, b: Uint8Array | undefined) => b instanceof Uint8Array && a.length === 32 && b.length === 32 && timingSafeEqual(a, b);
   if (!equal(quality.integrityKey, reviewKey) || !equal(quality.integrityKey, web?.reviews?.integrityKey)
@@ -40,7 +61,9 @@ export function captureTaskQualityConfiguration(config: TaskQualityConfiguration
   const key = (value: Uint8Array) => { if (!(value instanceof Uint8Array) || value.length !== 32) return deny(); return Uint8Array.from(value); };
   const scenarios = scenariosSchema.parse(config.scenarios); assertNoSecretMaterial(scenarios);
   if (new Set(scenarios.map(value => JSON.stringify([value.acceptanceProfileId, value.acceptanceProfileDigest, value.scenarioId]))).size !== scenarios.length) return deny();
+  if (config.scenarioRegistry !== undefined && (!taskQualityScenarioRegistries.has(config.scenarioRegistry as object))) return deny();
   const captured = { integrityKey: key(config.integrityKey), harnessIntegrityKey: key(config.harnessIntegrityKey), scenarios,
+    ...(config.scenarioRegistry ? { scenarioRegistry: config.scenarioRegistry } : {}),
     results: { ...config.results, integrityKey: key(config.results.integrityKey), storage: Object.freeze({ read: config.results.storage.read.bind(config.results.storage) }) },
     checkpoints: Object.freeze({ read: config.checkpoints.read.bind(config.checkpoints), advance: config.checkpoints.advance.bind(config.checkpoints),
       initialize: () => { throw new Error("task_quality_provisioning_unavailable"); } }) };
@@ -166,7 +189,7 @@ export class TaskQualityCoordinator {
     let context = await inspect();
     let verification: "not_configured" | "not_run" | "recorded" | "replayed" = "not_run";
     if (["pending", "ready"].includes(context.snapshot.status)) {
-      const scenarios = this.config.scenarios.filter(value => value.acceptanceProfileId === context.profile.id
+      const scenarios = (this.config.scenarioRegistry?.snapshot() ?? this.config.scenarios).filter(value => value.acceptanceProfileId === context.profile.id
         && value.acceptanceProfileDigest === sha256Digest(context.profile) && context.profile.requiredVerificationScenarioIds.includes(value.scenarioId));
       if (scenarios.length) {
         const verified = await new NativeResultVerificationService(db, this.config, scenarios, time, this.inspectionSource).verify(native, current);

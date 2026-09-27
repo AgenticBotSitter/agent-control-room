@@ -77,6 +77,45 @@ export const nativeTaskTemplateSchema = z.object({ id: localId, adapter: z.enum(
   catch { context.addIssue({ code: "custom", message: "unsupported native destination" }); }
 });
 export type NativeTaskTemplate = z.infer<typeof nativeTaskTemplateSchema>;
+export const MAC_LOCAL_MAX_TASK_TEMPLATES_V1 = 150;
+export type NativeTaskTemplateRegistryV1 = Readonly<{
+  maximumTemplates: number;
+  snapshot(): readonly NativeTaskTemplate[];
+  register(templates: readonly NativeTaskTemplate[]): void;
+}>;
+const nativeTaskTemplateRegistries = new WeakSet<object>();
+
+/** A process-local, server-owned template registry for hosts whose project set
+ * can grow while they are running. Registration is synchronous after parsing,
+ * so readers observe either the old complete snapshot or the new one. */
+export function createNativeTaskTemplateRegistryV1(initial: readonly NativeTaskTemplate[],
+  maximumTemplates = MAC_LOCAL_MAX_TASK_TEMPLATES_V1): NativeTaskTemplateRegistryV1 {
+  if (!Number.isSafeInteger(maximumTemplates) || maximumTemplates < 1 || maximumTemplates > MAC_LOCAL_MAX_TASK_TEMPLATES_V1)
+    throw new Error("task_execution_template_registry_invalid");
+  let values: readonly NativeTaskTemplate[] = Object.freeze([]);
+  const registry: NativeTaskTemplateRegistryV1 = Object.freeze({ maximumTemplates,
+    snapshot: () => values,
+    register(input) {
+      const parsed = z.array(nativeTaskTemplateSchema).max(maximumTemplates).parse(input);
+      for (const value of parsed) assertNoSecretMaterial(value);
+      const next = new Map(values.map(value => [value.id, value]));
+      for (const value of parsed) {
+        const prior = next.get(value.id);
+        if (prior && sha256Digest(prior) !== sha256Digest(value)) throw new Error("task_execution_templates_ambiguous");
+        next.set(value.id, value);
+      }
+      if (next.size > maximumTemplates) throw new Error("task_execution_template_limit_150");
+      values = Object.freeze([...next.values()]);
+    },
+  });
+  nativeTaskTemplateRegistries.add(registry);
+  registry.register(initial);
+  return registry;
+}
+
+function isNativeTaskTemplateRegistryV1(value: unknown): value is NativeTaskTemplateRegistryV1 {
+  return !!value && typeof value === "object" && nativeTaskTemplateRegistries.has(value as object);
+}
 /**
  * Local adapters require installation-specific proof in addition to a normal
  * task template.  This is deliberately server configuration, never a fleet
@@ -207,6 +246,7 @@ const planSchema = z.discriminatedUnion("schema", [initialPlanSchema, revisionPl
 type Plan = z.infer<typeof planSchema>;
 export type TaskPlanningTemplateChoice = Readonly<{ id: string; adapter: NativeTaskTemplate["adapter"] }>;
 export type TaskPlanningOperation = Readonly<{ tenantId: string; workspaceId: string; plan: TaskExecutionPlanner["plan"];
+  ensureProject?: (projectId: string) => Promise<void>;
   supportsProject?: (projectId: string) => boolean; templatesForProject?: (projectId: string) => readonly TaskPlanningTemplateChoice[];
   readSaved?: TaskExecutionPlanner["readSaved"]; readPreparedWorker?: TaskExecutionPlanner["readPreparedWorker"];
   readConfiguredLocalRoute?: TaskExecutionPlanner["readConfiguredLocalRoute"] }>;
@@ -269,17 +309,25 @@ export async function readCodexTaskExecutionPlanV3InSession(tx: DatabaseSession,
 export class TaskExecutionPlanner {
   private readonly templates: ReadonlyMap<string, NativeTaskTemplate>;
   private readonly projectTemplates: ReadonlyMap<string, readonly NativeTaskTemplate[]>;
+  private readonly templateRegistry?: NativeTaskTemplateRegistryV1;
   private readonly key: Uint8Array;
   private readonly reviewKey: Uint8Array;
   private readonly checkpoints: AwaitableRollbackCheckpointStoreV1;
   private readonly projects: WebProjectService;
   private readonly revisionSource?: NativeResultSubmissionService | TaskResultInspectionSourceV1;
   constructor(private readonly db: DatabaseClient, private readonly scope: { tenantId: string; workspaceId: string },
-    config: { template: NativeTaskTemplate; additionalTemplates?: readonly NativeTaskTemplate[]; integrityKey: Uint8Array; reviewIntegrityKey: Uint8Array;
+    config: { template?: NativeTaskTemplate; additionalTemplates?: readonly NativeTaskTemplate[]; templateRegistry?: NativeTaskTemplateRegistryV1;
+      integrityKey: Uint8Array; reviewIntegrityKey: Uint8Array;
       checkpoints: AwaitableRollbackCheckpointStoreV1; ideaIntegrityKey?: Uint8Array; localAdapterAdmission?: LocalTaskAdapterAdmission }, private readonly clock: () => number = Date.now,
     revisionResults?: ConstructorParameters<typeof NativeResultSubmissionService>[1], revisionSource?: TaskResultInspectionSourceV1) {
-    const captured = captureNativeTaskTemplates(config);
-    const values = [captured.template, ...(captured.additionalTemplates ?? [])];
+    if (config.templateRegistry !== undefined) {
+      if (!isNativeTaskTemplateRegistryV1(config.templateRegistry) || config.template !== undefined || config.additionalTemplates !== undefined)
+        throw new Error("task_execution_template_registry_invalid");
+      this.templateRegistry = config.templateRegistry;
+    } else if (config.template === undefined) throw new Error("task_execution_templates_unavailable");
+    const captured = this.templateRegistry ? undefined : captureNativeTaskTemplates({ template: config.template!,
+      ...(config.additionalTemplates === undefined ? {} : { additionalTemplates: config.additionalTemplates }) });
+    const values = this.templateRegistry?.snapshot() ?? [captured!.template, ...(captured!.additionalTemplates ?? [])];
     this.templates = new Map(values.map(value => [value.id, value]));
     this.projectTemplates = new Map([...new Set(values.map(value => value.authority.projectId))].map(projectId => [projectId,
       Object.freeze(values.filter(value => value.authority.projectId === projectId))]));
@@ -298,6 +346,13 @@ export class TaskExecutionPlanner {
     taskExecutionPlannerDatabases.set(this, db);
   }
   private readonly localAdapterAdmission?: Readonly<{ enabledAdapters: readonly LocallyAdmittedTaskAdapter[] }>;
+  private currentTemplateMaps() {
+    if (!this.templateRegistry) return { templates: this.templates, projectTemplates: this.projectTemplates };
+    const values = this.templateRegistry.snapshot();
+    return { templates: new Map(values.map(value => [value.id, value])),
+      projectTemplates: new Map([...new Set(values.map(value => value.authority.projectId))].map(projectId => [projectId,
+        Object.freeze(values.filter(value => value.authority.projectId === projectId))])) };
+  }
   private canPrepare(template: NativeTaskTemplate) {
     return !requiresLocalAdmission(template.adapter) || this.localAdapterAdmission === undefined
       || this.localAdapterAdmission.enabledAdapters.includes(template.adapter);
@@ -356,19 +411,19 @@ export class TaskExecutionPlanner {
       readSaved: this.readSaved.bind(this), readPreparedWorker: this.readPreparedWorker.bind(this) });
   }
   supportsProject(projectId: string) {
-    return (this.projectTemplates.get(projectId) ?? []).some(template => this.canPrepare(template));
+    return (this.currentTemplateMaps().projectTemplates.get(projectId) ?? []).some(template => this.canPrepare(template));
   }
   /** Safe server-owned choices only. IDs identify reviewed templates, not a host, login or executable. */
   templatesForProject(projectId: string): readonly TaskPlanningTemplateChoice[] {
     localId.parse(projectId);
-    return Object.freeze((this.projectTemplates.get(projectId) ?? []).filter(value => this.canPrepare(value))
+    return Object.freeze((this.currentTemplateMaps().projectTemplates.get(projectId) ?? []).filter(value => this.canPrepare(value))
       .map(value => Object.freeze({ id: value.id, adapter: value.adapter })));
   }
   private selectTemplate(projectId: string, templateId?: string) {
-    const candidates = this.projectTemplates.get(projectId) ?? [];
+    const current = this.currentTemplateMaps(), candidates = current.projectTemplates.get(projectId) ?? [];
     if (templateId !== undefined) {
       localId.parse(templateId);
-      const selected = this.templates.get(templateId);
+      const selected = current.templates.get(templateId);
       if (!selected || selected.authority.projectId !== projectId) throw new WebAccessError("conflict");
       return selected;
     }
@@ -376,7 +431,7 @@ export class TaskExecutionPlanner {
     return candidates[0]!;
   }
   private templateForSavedPlan(projectId: string, templateDigest: string) {
-    const candidates = (this.projectTemplates.get(projectId) ?? []).filter(value => sha256Digest(value) === templateDigest);
+    const candidates = (this.currentTemplateMaps().projectTemplates.get(projectId) ?? []).filter(value => sha256Digest(value) === templateDigest);
     if (candidates.length !== 1) throw new WebAccessError("conflict");
     return candidates[0]!;
   }

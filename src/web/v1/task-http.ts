@@ -22,7 +22,7 @@ import { taskDetailSchema } from "./task-wire";
 import { observeTaskLocalRoute, type TrustedConfiguredLocalRoute } from "./task-local-route-observation";
 
 export function createTaskHttpHandler(options: { origin: string; trust?: AccessTrust; service: WebTaskService;
-  ownerReviews?: WebTaskReviewService; ownerVerifications?: WebTaskVerificationService; planning?: Pick<TaskPlanningOperation, "plan" | "readSaved" | "readPreparedWorker" | "readConfiguredLocalRoute" | "supportsProject" | "templatesForProject">;
+  ownerReviews?: WebTaskReviewService; ownerVerifications?: WebTaskVerificationService; planning?: Pick<TaskPlanningOperation, "plan" | "ensureProject" | "readSaved" | "readPreparedWorker" | "readConfiguredLocalRoute" | "supportsProject" | "templatesForProject">;
   assignment?: TaskAssignmentOperation; approvals?: TaskApprovalOperation; submission?: TaskSubmissionOperation; revisions?: TaskRevisionOperation;
   /** Trusted process selection; the browser cannot choose a header/provider. */
   gatewayAssertionProfile?: GatewayAssertionProviderProfileV1; clock?: () => number;
@@ -189,6 +189,7 @@ export function createTaskHttpHandler(options: { origin: string; trust?: AccessT
         if (request.method === "GET") {
           const authorized = await options.service.planningOptions(identity, projectId, jobId, !!options.planning);
           // Resolve server configuration only after database-backed session/project access.
+          if (authorized.availability === "available") await options.planning?.ensureProject?.(projectId);
           const value = authorized.availability === "available" && options.planning?.supportsProject
             && options.planning.supportsProject(projectId) !== true ? { ...authorized, availability: "not_configured" as const } : authorized;
           const savedPlan = await options.planning?.readSaved?.(identity, projectId, jobId);
