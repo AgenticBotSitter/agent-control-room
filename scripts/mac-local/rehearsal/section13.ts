@@ -105,11 +105,49 @@ await vps.connect();
 try {
   receipt = await applyMacLocalFirstOwnerV1(vps, manifest);
   assert.equal(receipt.manifestDigest, expectedDigest);
-  assert.equal(receipt.created + receipt.kept, 14);
+  assert.equal(receipt.created + receipt.kept, 20);
   const repeat = await applyMacLocalFirstOwnerV1(vps, manifest);
   assert.equal(repeat.created, 0, "second VPS run must keep all existing rows");
-  assert.equal(repeat.kept, 14);
+  assert.equal(repeat.kept, 20);
   assert.equal(repeat.manifestDigest, expectedDigest);
+  const proposalRoster = (await vps.query<{ worker_kind: string; project_ids: unknown }>(`SELECT
+      CASE i.display_name
+        WHEN 'Registered proposal agent hermes' THEN 'hermes'
+        WHEN 'Registered proposal agent claude-code' THEN 'claude-code'
+        WHEN 'Registered proposal agent codex' THEN 'codex'
+      END AS worker_kind, g.project_ids
+    FROM control_identities i JOIN control_role_grants g
+      ON g.tenant_id=i.tenant_id AND g.identity_id=i.id
+    WHERE i.tenant_id=$1 AND i.actor_type='agent' AND i.auth_provider='work-intake'
+      AND i.state='active' AND g.role_key='work_batch_proposer'
+      AND g.allowed_actions='["work_batches.propose"]'::jsonb
+      AND g.risk_ceiling='low' AND NOT g.allow_external_effects
+      AND NOT g.require_strong_factor AND g.expires_at IS NULL AND g.revoked_at IS NULL
+    ORDER BY worker_kind`, [manifest.tenant.id])).rows;
+  assert.deepEqual(proposalRoster, ["claude-code", "codex", "hermes"].map(worker_kind =>
+    ({ worker_kind, project_ids: ["*"] })), "offline setup must install the exact proposal-only roster");
+
+  const rosterIdentity = (await vps.query<{ id: string }>(`SELECT id FROM control_identities
+    WHERE tenant_id=$1 AND display_name='Registered proposal agent codex'`, [manifest.tenant.id])).rows[0]?.id;
+  assert.ok(rosterIdentity, "proposal identity must exist");
+  await vps.query("UPDATE control_identities SET state='inactive' WHERE tenant_id=$1 AND id=$2",
+    [manifest.tenant.id, rosterIdentity]);
+  try {
+    await assert.rejects(applyMacLocalFirstOwnerV1(vps, manifest), /first_owner_row_conflict/u,
+      "disabled proposal identities must never be silently adopted or repaired");
+  } finally {
+    await vps.query("UPDATE control_identities SET state='active' WHERE tenant_id=$1 AND id=$2",
+      [manifest.tenant.id, rosterIdentity]);
+  }
+  await vps.query("UPDATE control_role_grants SET revoked_at=$3 WHERE tenant_id=$1 AND identity_id=$2",
+    [manifest.tenant.id, rosterIdentity, manifest.createdAt]);
+  try {
+    await assert.rejects(applyMacLocalFirstOwnerV1(vps, manifest), /first_owner_row_conflict/u,
+      "revoked proposal grants must never be silently adopted or repaired");
+  } finally {
+    await vps.query("UPDATE control_role_grants SET revoked_at=NULL WHERE tenant_id=$1 AND identity_id=$2",
+      [manifest.tenant.id, rosterIdentity]);
+  }
 
   const conflict = structuredClone(manifest);
   conflict.identity.id += ".altered";
