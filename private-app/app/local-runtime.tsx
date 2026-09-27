@@ -3,7 +3,7 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 
 type Worker = Readonly<{ kind: string; state: "ready" | "unavailable"; proof: "proven" | "not_proven" }>;
-type LocalStatus = Readonly<{ taskWorkersStarted: boolean; instruction?: string; workers: readonly Worker[] }>;
+export type LocalStatus = Readonly<{ taskWorkersStarted: boolean; instruction?: string; workers: readonly Worker[] }>;
 type Runtime = Readonly<{ mode: "checking" | "local" | "hosted"; status?: LocalStatus }>;
 const RuntimeContext = createContext<Runtime>({ mode: "checking" });
 
