@@ -165,7 +165,8 @@ export function PrivateHome() {
   return <div className="private-shell"><PrivateHeader /><main id="private-main" tabIndex={-1}>
     <section className="private-home-intro" aria-labelledby="home-title"><p className="private-eyebrow">Private workspace</p>
       <h1 id="home-title">{displayName}</h1><p>Current saved work, results and attention from the protected Control Room services. This page refreshes while it is open and again when you return to it. Each section reports unavailable data instead of replacing it with a zero.</p>
-      <button type="button" onClick={() => setGeneration(value => value + 1)}>Refresh dashboard</button></section>
+      <p className="private-note">Unavailable means the saved database or protected read could not be checked. Checking again only rereads saved records; it does not start, assign, approve or retry work.</p>
+      <button type="button" onClick={() => setGeneration(value => value + 1)}>Check saved dashboard again</button></section>
     <HomeInstallationStatus topology={installationTopology} />
     <HomeDashboard data={data} />
     {runtime.mode !== "local" && <PrivateOperatorCapacityWorkspace />}

@@ -8,7 +8,8 @@ import { HomeDashboard, HomeInstallationStatus, type HomeDashboardState } from "
 import SettingsPage from "../private-app/app/settings/page";
 import { OrdinaryProjectStatusActions, PrivateProjectWorkspace, ProjectAgentInstallationStatus } from "../private-app/app/workspace";
 import { ProjectCatalogNavigation } from "../app/components/project-catalog-navigation";
-import { createProjectBrowserClient } from "../src/web/v1/browser-client";
+import { browserErrorMessage, createProjectBrowserClient } from "../src/web/v1/browser-client";
+import { taskErrorMessage } from "../src/web/v1/task-browser-client";
 import { readTaskHomeActivity } from "../src/web/v1/task-home-browser-client";
 import { ProjectOverviewActivityView } from "../private-app/app/project-overview-activity";
 import { PrivateTaskResults, readTaskResultSelectionV1, taskResultHrefV1 } from "../private-app/app/task-results";
@@ -36,6 +37,14 @@ test("compiled route parameters decode exactly once before reaching browser clie
   assert.equal(decodePrivateRouteSegment("project%253Aalpha"), "project%3Aalpha");
   for (const value of ["", "%", "project%2Falpha", "project%5Calpha", "project%00alpha"])
     assert.throws(() => decodePrivateRouteSegment(value), /private_route_segment_invalid/);
+});
+
+test("database-or-service failures explain the safe read-only next step", () => {
+  for (const message of [browserErrorMessage.unavailable, taskErrorMessage.unavailable]) {
+    assert.match(message, /saved .*database or service/i);
+    assert.match(message, /No .* (?:made|started|changed)/i);
+    assert.match(message, /Check saved/i);
+  }
 });
 
 test("home gives honest navigation to existing private workspace surfaces", () => {
@@ -271,6 +280,8 @@ test("unavailable project overview does not claim an empty project", () => {
   const html = renderToStaticMarkup(createElement(ProjectOverviewActivityView,
     { projectId: "project:alpha", state: { state: "unavailable", code: "unavailable" } }));
   assert.match(html, /No empty project or all-clear is inferred/);
+  assert.match(html, /saved database or protected task-activity read could not be checked/);
+  assert.match(html, /checking again does not start work/);
   assert.doesNotMatch(html, /No saved tasks exist/);
 });
 
@@ -310,6 +321,10 @@ test("unavailable project files do not claim an empty result set", () => {
       resultSource: "not_configured", observedAt: "2026-09-04T12:00:00.000Z", startsWork: false } } }));
   assert.match(html, /No zero count or empty file list is inferred/);
   assert.doesNotMatch(html, /No verified result files have been received/);
+  const failed = renderToStaticMarkup(createElement(ProjectFilesView,
+    { projectId: "project:alpha", data: { state: "unavailable", code: "unavailable" } }));
+  assert.match(failed, /saved database or protected file index could not be read/);
+  assert.match(failed, /checking again will not change work/);
 });
 
 test("project navigation starts with only routes shared by hosted and Mac-local", () => {
@@ -346,6 +361,8 @@ test("project review page distinguishes unavailable data from an empty list", ()
   const html = renderToStaticMarkup(createElement(ProjectTaskViewPanel,
     { projectId: "project:alpha", view: "reviews", state: { state: "unavailable", code: "unavailable" } }));
   assert.match(html, /No empty list or all-clear is inferred/);
+  assert.match(html, /saved database or protected reviews read could not be checked/);
+  assert.match(html, /checking again does not start work/);
   assert.doesNotMatch(html, /No task is currently recorded/);
 });
 
@@ -381,6 +398,10 @@ test("project review attention does not turn unavailable evidence into an empty 
       observedAt: "2026-09-04T12:00:00.000Z", startsWork: false } } }));
   assert.match(html, /not an all-clear for omitted or unavailable evidence/);
   assert.doesNotMatch(html, /No returned result needs review/);
+  const failed = renderToStaticMarkup(createElement(ProjectResultReviewPanel, { projectId: "project:alpha", mode: "reviews",
+    data: { state: "unavailable", code: "unavailable" } }));
+  assert.match(failed, /saved database or protected attention read could not be checked/);
+  assert.match(failed, /no review decision was recorded/);
 });
 
 test("project review attention explains limited access without advertising a result link", () => {

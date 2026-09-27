@@ -222,7 +222,7 @@ export function PrivateProjectWorkspace({ projectId, section = "overview", after
       {state === "ready" && client.hasPending() && <ProjectSaveRecovery pending={pending} onRetry={() => { void retryOriginal(); }} />}
       {error && <div className="private-notice" role="alert"><p>{browserErrorMessage[error.code]}</p>
         {error.code === "authentication_required" ? <><p>This also ends Access sessions for other protected applications.</p><a href="/cdn-cgi/access/logout">Sign in again</a></>
-          : <button type="button" disabled={pending} onClick={() => setRefresh(value => value + 1)}>Refresh saved state</button>}</div>}
+          : <button type="button" disabled={pending} onClick={() => setRefresh(value => value + 1)}>Check saved state again</button>}</div>}
       {!projectId ? <>
         <div className="private-heading"><h1>Projects</h1><p>Open a project here or use “Open in new tab” to monitor several projects side by side. Closing a tab does not stop work, complete or archive its project.</p></div>
         <nav className="private-filter-tabs" aria-label="Filter projects by status">
