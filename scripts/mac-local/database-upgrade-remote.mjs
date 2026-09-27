@@ -115,7 +115,7 @@ export async function inspectMacDatabaseUpgradeV1({ client }) {
     await client.query("COMMIT");
     return plan;
   } catch (error) {
-    await client.query("ROLLBACK");
+    await client.query("ROLLBACK").catch(() => {});
     throw error;
   }
 }
@@ -124,15 +124,19 @@ export function macDatabaseUpgradePlanDigestV1(plan) {
   return `sha256:${sha256(JSON.stringify(plan))}`;
 }
 
-export async function applyMacDatabaseUpgradeV1({ publisherVerifier, client, expectedPlanDigest, applyPending }) {
+export async function applyMacDatabaseUpgradeV1({ publisherVerifier, client, expectedPlanDigest, applyPending,
+  onStage = () => {} }) {
+  onStage("plan");
   checkedPostgresScramVerifierV1(publisherVerifier);
   const before = await inspectMacDatabaseUpgradeV1({ client });
   if (expectedPlanDigest !== undefined && macDatabaseUpgradePlanDigestV1(before) !== expectedPlanDigest)
     throw new Error("upgrade_plan_changed_refused");
   if (before.pendingMigrations.length) {
     if (typeof applyPending !== "function") throw new Error("upgrade_pending_migrations_need_peer_runner");
+    onStage("migrate");
     await applyPending();
   }
+  onStage("roles");
   await client.query("BEGIN");
   try {
     const state = roleState(await databaseSnapshot(client));
@@ -142,17 +146,21 @@ export async function applyMacDatabaseUpgradeV1({ publisherVerifier, client, exp
       await client.query(`CREATE ROLE control_room_publisher ${roleAttributes("control_room_publisher")}
         PASSWORD ${client.escapeLiteral(publisherVerifier)}`);
     }
+    onStage("grants");
     const current = await readMacGrantCatalogV1(client);
     const desired = await readDesiredMacGrantsV1();
     await applyMacGrantDiffV1(client, diffMacGrantsV1(current, desired));
     for (const item of state.membership.revoke) {
+      onStage("roles");
       const member = safeMember(item.member), parent = safeParent(member, item.parent, "REVOKE");
       await client.query(`REVOKE ${parent} FROM ${member}`);
     }
     for (const item of state.membership.grant) {
+      onStage("roles");
       const member = safeMember(item.member), parent = safeParent(member, item.parent, "GRANT");
       await client.query(`GRANT ${parent} TO ${member}`);
     }
+    onStage("verify");
     const after = await report(client);
     if (after.pendingMigrations.length || after.createRoles.length || after.membership.revoke.length
       || after.membership.grant.length || after.grants.extra.length || after.grants.missing.length)
@@ -160,54 +168,104 @@ export async function applyMacDatabaseUpgradeV1({ publisherVerifier, client, exp
     await client.query("COMMIT");
     return { upgraded: true, before, after };
   } catch (error) {
-    await client.query("ROLLBACK");
+    await client.query("ROLLBACK").catch(() => {});
     throw error;
   }
 }
 
-async function applyPendingOnVpsV1() {
-  return applyMigrations({ bootstrapTarget, migrateTarget: bootstrapTarget,
+export async function applyPendingMacMigrationsV1(target = bootstrapTarget) {
+  return applyMigrations({ bootstrapTarget: target, migrateTarget: target,
     migrateViaLocalPeer: true, env: {} });
 }
 
-if (process.argv[1] === fileURLToPath(import.meta.url)) {
+const safeCauseCode = (error, accept) => {
+  let current = error;
+  for (let depth = 0; depth < 4 && current && typeof current === "object"; depth += 1) {
+    if (typeof current.code === "string" && accept(current.code)) return current.code;
+    current = current.cause;
+  }
+  return "none";
+};
+const safeSqlstate = error => safeCauseCode(error, code => /^[0-9A-Z]{5}$/u.test(code));
+const safeSystemCode = error => safeCauseCode(error, code => ["ENOENT", "EACCES", "EPERM", "ECONNREFUSED",
+  "ECONNRESET", "ETIMEDOUT", "EPIPE"].includes(code));
+const safeErrorClass = error => {
+  const sqlstate = safeSqlstate(error);
+  if (sqlstate !== "none") return `SQLSTATE_${sqlstate.slice(0, 2)}`;
+  const name = error?.constructor?.name;
+  return ["DatabaseError", "Error", "TypeError", "RangeError", "SyntaxError", "AggregateError"].includes(name)
+    ? name : "Unknown";
+};
+
+export function sanitizedMacDatabaseUpgradeFailureV1(error, stage) {
+  const message = error instanceof Error ? error.message : "";
+  const known = new Set(["upgrade_input_refused", "upgrade_main_checkout_refused",
+    "upgrade_verifier_input_refused", "upgrade_scram_verifier_refused", "upgrade_operator_identity_refused",
+    "upgrade_plan_changed_refused", "upgrade_pending_migrations_need_peer_runner",
+    "upgrade_existing_role_missing", "upgrade_role_attributes_refused", "upgrade_convergence_refused",
+    "upgrade_role_catalog_refused", "upgrade_non_login_membership_refused",
+    "upgrade_unexpected_login_membership_refused", "upgrade_duplicate_membership_refused",
+    "upgrade_role_membership_options_refused", "upgrade_unexpected_default_grant",
+    "upgrade_source_ledger_refused", "upgrade_ledger_prefix_refused",
+    "upgrade_grant_catalog_refused", "upgrade_grant_source_refused", "upgrade_unexpected_function_grant",
+    "migration_peer_target_refused", "migration_peer_operator_refused", "migration_peer_role_refused",
+    "migration_peer_identity_refused", "migration_live_schema_drift", "migration_failed",
+    "migration_gap", "migration_missing", "migration_altered", "migration_ledger_digest_mismatch",
+    "migration_unknown_row", "migration_unknown_rows", "migration_unknown_kind",
+    "migration_refused_non_owner_objects"]);
+  const candidate = /^(?:upgrade|migration)_[a-z0-9_]+/u.exec(message)?.[0];
+  const code = candidate && known.has(candidate) ? candidate : "remote_refused";
+  return `upgrade_error:${code} stage=${["plan", "migrate", "roles", "grants", "verify"].includes(stage)
+    ? stage : "plan"} sqlstate=${safeSqlstate(error)} class=${safeErrorClass(error)} system=${safeSystemCode(error)}`;
+}
+
+const sourceGit = params => execFileSync("git", ["-C", repoRoot, ...params],
+  { encoding: "utf8", timeout: 10_000 }).trim();
+
+export async function runMacDatabaseUpgradeCommandV1({ args, readVerifier, git = sourceGit,
+  openClient = () => connectTarget(bootstrapTarget), applyPending = applyPendingMacMigrationsV1,
+  onStage = () => {} }) {
+  onStage("plan");
+  const planning = args.length === 3 && args[0] === "--plan" && args[1] === "--expected-main";
+  const applying = args.length === 5 && args[0] === "--apply" && args[1] === "--expected-main"
+    && args[3] === "--expected-plan-digest" && /^sha256:[a-f0-9]{64}$/u.test(args[4]);
+  if ((!planning && !applying) || !/^[a-f0-9]{40}$/u.test(args[2])) throw new Error("upgrade_input_refused");
+  if (git(["rev-parse", "HEAD"]) !== args[2]
+    || git(["rev-parse", "refs/remotes/origin/main"]) !== args[2]
+    || git(["status", "--porcelain"])) throw new Error("upgrade_main_checkout_refused");
+  const verifier = applying ? checkedPostgresScramVerifierV1((await readVerifier()).trim()) : undefined;
+  const client = openClient();
+  await client.connect();
   try {
-    const args = process.argv.slice(2);
-    const planning = args.length === 3 && args[0] === "--plan" && args[1] === "--expected-main";
-    const applying = args.length === 5 && args[0] === "--apply" && args[1] === "--expected-main"
-      && args[3] === "--expected-plan-digest" && /^sha256:[a-f0-9]{64}$/u.test(args[4]);
-    if ((!planning && !applying) || !/^[a-f0-9]{40}$/u.test(args[2])) throw new Error("upgrade_input_refused");
-    const git = params => execFileSync("git", ["-C", repoRoot, ...params],
-      { encoding: "utf8", timeout: 10_000 }).trim();
-    if (git(["rev-parse", "HEAD"]) !== args[2]
-      || git(["rev-parse", "refs/remotes/origin/main"]) !== args[2]
-      || git(["status", "--porcelain"])) throw new Error("upgrade_main_checkout_refused");
-    let verifier;
-    if (applying) {
-      let input = "";
-      for await (const chunk of process.stdin) {
-        input += String(chunk);
-        if (input.length > 300) throw new Error("upgrade_verifier_input_refused");
-      }
-      verifier = checkedPostgresScramVerifierV1(input.trim());
+    const identity = (await client.query("SELECT current_user, session_user, rolsuper FROM pg_roles WHERE rolname=current_user")).rows[0];
+    if (identity?.current_user !== "postgres" || identity?.session_user !== "postgres"
+      || identity?.rolsuper !== true) throw new Error("upgrade_operator_identity_refused");
+    if (planning) {
+      const plan = await inspectMacDatabaseUpgradeV1({ client });
+      return { plan, digest: macDatabaseUpgradePlanDigestV1(plan) };
     }
-    const client = connectTarget(bootstrapTarget);
-    await client.connect();
-    try {
-      const identity = (await client.query("SELECT current_user, session_user, rolsuper FROM pg_roles WHERE rolname=current_user")).rows[0];
-      if (identity?.current_user !== "postgres" || identity?.session_user !== "postgres"
-        || identity?.rolsuper !== true) throw new Error("upgrade_operator_identity_refused");
-      const result = planning ? await inspectMacDatabaseUpgradeV1({ client })
-        : await applyMacDatabaseUpgradeV1({ client, publisherVerifier: verifier,
-          expectedPlanDigest: args[4], applyPending: applyPendingOnVpsV1 });
-      process.stdout.write(`${JSON.stringify(planning ? { plan: result, digest: macDatabaseUpgradePlanDigestV1(result) }
-        : result)}\n`);
-    } finally { await client.end(); }
+    return await applyMacDatabaseUpgradeV1({ client, publisherVerifier: verifier,
+      expectedPlanDigest: args[4], applyPending, onStage });
+  } finally { await client.end(); }
+}
+
+async function readVerifierStdinV1() {
+  let input = "";
+  for await (const chunk of process.stdin) {
+    input += String(chunk);
+    if (input.length > 300) throw new Error("upgrade_verifier_input_refused");
+  }
+  return input;
+}
+
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  let stage = "plan";
+  try {
+    const result = await runMacDatabaseUpgradeCommandV1({ args: process.argv.slice(2),
+      readVerifier: readVerifierStdinV1, onStage: next => { stage = next; } });
+    process.stdout.write(`${JSON.stringify(result)}\n`);
   } catch (error) {
-    const message = error instanceof Error ? error.message : "";
-    const code = /^(upgrade_[a-z0-9_]+)/u.exec(message)?.[1]
-      ?? /^(migration_[a-z0-9_]+)/u.exec(message)?.[1] ?? "remote_refused";
-    process.stderr.write(`upgrade_error:${code}\n`);
+    process.stderr.write(`${sanitizedMacDatabaseUpgradeFailureV1(error, stage)}\n`);
     process.exitCode = 1;
   }
 }

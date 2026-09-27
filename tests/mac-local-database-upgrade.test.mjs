@@ -14,6 +14,28 @@ import { desiredMacGrantsV1, diffMacGrantsV1, readDesiredMacGrantsV1 } from
 import { MAC_LOCAL_DATABASE_ROLES_V1, captureMacLocalDatabaseRolesV1 } from
   "../src/web/v1/mac-local-database-roles.ts";
 import { applyMigrations } from "../deploy/postgres/apply-migrations.mjs";
+import { sanitizedMacDatabaseUpgradeFailureV1 } from "../scripts/mac-local/database-upgrade-remote.mjs";
+
+test("upgrade failure reports only the bounded stage, SQLSTATE and error class", () => {
+  const secret = "SCRAM-SHA-256$secret-material";
+  const error = Object.assign(new Error(`permission denied ${secret}`), {
+    code: "42501", detail: secret, hint: secret,
+  });
+  const report = sanitizedMacDatabaseUpgradeFailureV1(error, "grants");
+  assert.equal(report, "upgrade_error:remote_refused stage=grants sqlstate=42501 class=SQLSTATE_42 system=none");
+  assert.equal(report.includes(secret), false);
+  assert.equal(sanitizedMacDatabaseUpgradeFailureV1(new TypeError(secret), "migrate"),
+    "upgrade_error:remote_refused stage=migrate sqlstate=none class=TypeError system=none");
+  assert.equal(sanitizedMacDatabaseUpgradeFailureV1(new Error("upgrade_plan_changed_refused " + secret), "plan"),
+    "upgrade_error:upgrade_plan_changed_refused stage=plan sqlstate=none class=Error system=none");
+  assert.equal(sanitizedMacDatabaseUpgradeFailureV1(Object.assign(new Error(secret), { code: "ENOENT" }), "migrate"),
+    "upgrade_error:remote_refused stage=migrate sqlstate=none class=Error system=ENOENT");
+  const wrapped = new Error(`migration_failed:0086_example.sql:${secret}`, { cause: error });
+  assert.equal(sanitizedMacDatabaseUpgradeFailureV1(wrapped, "migrate"),
+    "upgrade_error:migration_failed stage=migrate sqlstate=42501 class=SQLSTATE_42 system=none");
+  assert.equal(sanitizedMacDatabaseUpgradeFailureV1(new Error("upgrade_secret_material"), "roles"),
+    "upgrade_error:remote_refused stage=roles sqlstate=none class=Error system=none");
+});
 
 test("peer migration mode refuses TCP or a different bootstrap connection before DB contact", async () => {
   await assert.rejects(applyMigrations({ bootstrapTarget: "host=127.0.0.1 dbname=control_room user=postgres",
