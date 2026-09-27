@@ -1,12 +1,21 @@
 import { expect, test, type Page } from "@playwright/test";
+import { execFile } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
+import { promisify } from "node:util";
 import { Client } from "pg";
+import { CompletionGateStoreV1, type CompletionAcceptanceProfileV1 } from "../../src/completion-gate/v1";
+import { sha256Digest } from "../../src/security";
+import { createPrivatePostgresDatabase } from "../../src/web/v1/private-postgres";
+import { openMacLocalRollbackCheckpointStoreV1 } from "../../src/web/v1/mac-local-rollback-checkpoint-store";
+import { loadMacLocalTaskRuntimeFromRootV1 } from "../../src/web/v1/mac-local-task-runtime";
 
 const ownerCode = process.env.CONTROL_ROOM_E2E_OWNER_CODE;
 if (!ownerCode) throw new Error("CONTROL_ROOM_E2E_OWNER_CODE is required");
 const rehearsalRoot = process.env.CONTROL_ROOM_E2E_ROOT;
 if (!rehearsalRoot || resolve(rehearsalRoot) !== rehearsalRoot) throw new Error("CONTROL_ROOM_E2E_ROOT must be absolute");
+const exec = promisify(execFile);
 
 async function expectHealthyPage(page: Page) {
   await expect(page.locator("main")).toBeVisible();
@@ -113,6 +122,51 @@ async function acceptReadResult(page: Page) {
   await expect(page.getByText(/Saved: quality acceptance/)).toBeVisible();
 }
 
+async function seedAcceptedEarlierReview(page: Page) {
+  const pageUrl = new URL(page.url());
+  const jobId = decodeURIComponent(pageUrl.pathname.split("/").at(-1)!);
+  const projectId = decodeURIComponent(pageUrl.pathname.split("/").at(-3)!);
+  const config = JSON.parse(await readFile(`${rehearsalRoot}/protected/config/mac-local.json`, "utf8"));
+  const roles = JSON.parse(await readFile(`${rehearsalRoot}/protected/config/database-roles.json`, "utf8"));
+  await exec(process.execPath, ["scripts/mac-local/down.mjs", "--protected-root", `${rehearsalRoot}/protected`],
+    { cwd: process.cwd(), timeout: 120_000 });
+  let database: ReturnType<typeof createPrivatePostgresDatabase> | undefined;
+  let checkpoints: Awaited<ReturnType<typeof openMacLocalRollbackCheckpointStoreV1>> | undefined;
+  try {
+    database = createPrivatePostgresDatabase(roles.coordinator);
+    checkpoints = await openMacLocalRollbackCheckpointStoreV1(`${rehearsalRoot}/protected`);
+    const runtime = await loadMacLocalTaskRuntimeFromRootV1(`${rehearsalRoot}/protected`);
+    const gate = new CompletionGateStoreV1(database.client, runtime.keys.review, checkpoints);
+    const plan = (await database.client.query<{ target_id: string }>(
+      "SELECT plan->>'targetId' AS target_id FROM control_native_review_plans WHERE tenant_id=$1 AND project_id=$2 AND job_id=$3",
+      [config.localOwnerSession.tenantId, projectId, jobId])).rows[0];
+    if (!plan?.target_id) throw new Error("browser_accepted_earlier_fixture_missing_target");
+    const snapshot = await gate.snapshot(config.localOwnerSession.tenantId, plan.target_id);
+    const profile = await gate.getRecord(config.localOwnerSession.tenantId,
+      snapshot.target.acceptanceProfileId, "profile") as CompletionAcceptanceProfileV1;
+    await gate.recordReview({ schemaVersion: "control-room-completion-gate/v1", id: `review:${randomUUID()}`,
+      tenantId: config.localOwnerSession.tenantId, projectId, targetId: snapshot.target.id,
+      targetDigest: snapshot.targetDigest, acceptanceProfileId: profile.id,
+      acceptanceProfileDigest: sha256Digest(profile),
+      reviewer: { actorId: `identity:${config.localOwnerSession.tenantId}:owner`, actorType: "human" },
+      authority: "completion_gate", decision: "accepted", assessedRisk: "low", effectiveRisk: "low",
+      evidenceDigests: [snapshot.target.subjectDigest], findingIds: [], reviewedAt: new Date().toISOString(),
+      grantsApproval: false, grantsExecutionAuthority: false }, []);
+  } finally {
+    await checkpoints?.close();
+    await database?.close();
+    await exec(process.execPath, ["scripts/mac-local/up.mjs", "--protected-root", `${rehearsalRoot}/protected`],
+      { cwd: process.cwd(), timeout: 180_000 });
+  }
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await expectHealthyPage(page);
+}
+
+async function recordStandaloneAcceptanceVerification(page: Page) {
+  await page.getByRole("button", { name: "I read it and it’s correct", exact: true }).click();
+  await expect(page.getByText(/Recorded human verification: Passed/)).toBeVisible();
+}
+
 async function waitForCompletedAccepted(page: Page) {
   await expect.poll(async () => {
     const refresh = page.getByRole("button", { name: "Check latest saved status" }).first();
@@ -177,7 +231,21 @@ test("owner completes the real local website journey for every configured worker
 
   await createPreparedTask(page, projectPath, "Codex browser task", "Codex");
   await openResult(page);
-  await acceptReadResult(page);
+  await seedAcceptedEarlierReview(page);
+  await expect(page.getByText(/accepted · Completion review/)).toBeVisible();
+  await expect(page.getByText(/Checks still needed:/)).toBeVisible();
+  await expect.poll(async () => {
+    const refresh = page.getByRole("button", { name: "Check latest saved status" }).first();
+    if (await refresh.isEnabled().catch(() => false)) await refresh.click();
+    return page.locator(".private-task-detail .private-state").first().innerText();
+  }, { timeout: 150_000 }).toBe("Completed");
+  const acceptedEarlierUrl = page.url();
+  await page.goto("/");
+  await expect(page.locator('section[aria-labelledby="home-active"]')).not.toContainText("Codex browser task");
+  await page.goto(acceptedEarlierUrl);
+  await expect(page.getByRole("heading", { name: "Received result" })).toBeVisible();
+  await recordStandaloneAcceptanceVerification(page);
+  await waitForCompletedAccepted(page);
 
   await createPreparedTask(page, projectPath, "Expired reservation recovery", "Hermes Agent", false, false);
   let blockedSubmission = true;
