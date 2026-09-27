@@ -144,7 +144,7 @@ async function setDisposableNodeState(nodeId: string, state: "active" | "disable
   } finally { await client.end(); }
 }
 
-test.describe.serial("disposable owner website adversarial attacks", () => {
+test.describe("disposable owner website adversarial attacks", () => {
   test.beforeAll(async () => {
     const client = await disposableAdmin();
     await client.end();
@@ -164,7 +164,7 @@ test.describe.serial("disposable owner website adversarial attacks", () => {
 
     await page.goto("/projects?lifecycle=garbage");
     await expect(page.getByRole("alert")).toContainText("filter was invalid and has been reset to All");
-    await expect(page.getByRole("link", { name: "All" })).toHaveAttribute("aria-current", "page");
+    await expect(page.getByRole("link", { name: "All", exact: true })).toHaveAttribute("aria-current", "page");
 
     for (const viewport of [{ width: 390, height: 844 }, { width: 1440, height: 900 }]) {
       await page.setViewportSize(viewport);

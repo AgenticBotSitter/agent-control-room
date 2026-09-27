@@ -103,7 +103,8 @@ test("local client shell exposes only reachable routes and reads only local work
     for (const unsupported of ["/setup", "/workboard", "/settings", "/ideas", "/connections",
       "/projects/project%3Aalpha/inbox", "/projects/project%3Aalpha/agents"])
       assert.equal(links.includes(unsupported), false, unsupported);
-    assert.match(dom.window.document.body.textContent ?? "", /Hermes Agent.*ready.*Claude Code.*ready.*Codex.*ready/s);
+    assert.match(dom.window.document.body.textContent ?? "",
+      /Hermes Agent.*Startup check passed.*no result proof recorded.*Claude Code.*Startup check passed.*no result proof recorded.*Codex.*Startup check passed.*no result proof recorded/s);
   } finally {
     await act(async () => root.unmount());
     dom.window.close();
