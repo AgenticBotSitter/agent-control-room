@@ -1330,26 +1330,49 @@ opens the authenticated dashboard. "Owner approves from the phone" therefore mea
 owner is notified on the phone and can review and decide in the authenticated product*,
 and the design says so in those words rather than implying a chat button is approval.
 
-**After approval, tasks enter per-agent queues.** The queue is the one that already exists:
-pg-boss, the single scheduler (`ARCHITECTURE.md`), pre-provisioned as
-`native-task-delivery` with the exact bounded profile the code already asserts —
-`policy: standard`, `partition: false`, `retryLimit: 0`, `deadLetter: null`, `notify: false`
-(`src/persistence/pg-boss-native-task-submission.ts:6-26`) — and enqueued **inside the same
-transaction** as the canonical write through `enqueueInSession`, so a commit produces both
-the delivery intent and the job or neither
-(`src/persistence/pg-boss-bounded-submission.ts:95-116`). There is no second queue, no
-second scheduler and no second source of job truth (`ACR-007`).
+**After approval, tasks become visible in per-agent queue projections.** "Per-agent" means
+the exact registered agent principal selected for the item (`agentId`), not a worker kind such
+as `codex`, `claude` or `hermes`, and not whichever node happens to be available later. The
+ordinary job id plus the immutable batch id and item ordinal is the stable queue-item identity.
+The selected agent, model and effort are an append-only effective-assignment snapshot, not part
+of that identity; a later S9 reassignment appends a new snapshot and never rewrites the item.
+
+The view is a projection over the ordinary task, its canonical dependency edges and its
+effective-assignment history. It is **not** a new queue table. When an eligible item is actually
+started by the existing owner/manual path, or automatically by S7, delivery reuses pg-boss, the
+single scheduler (`ARCHITECTURE.md`), pre-provisioned as `native-task-delivery` with the exact
+bounded profile the code already asserts — `policy: standard`, `partition: false`,
+`retryLimit: 0`, `deadLetter: null`, `notify: false`
+(`src/persistence/pg-boss-native-task-submission.ts:6-26`). That start path enqueues **inside
+the same transaction** as its canonical delivery-intent write through `enqueueInSession`, so a
+commit produces both the delivery intent and the pg-boss job or neither
+(`src/persistence/pg-boss-bounded-submission.ts:95-116`). S3 does not call that path merely
+because a predecessor completed. There is no second queue, no second scheduler and no second
+source of job truth (`ACR-007`).
 
 - **Depth 10–20.** `workIntake.queueDepthPerAgent` is a per-agent setting, default **10**,
-  bounded above at 20. Depth is enforced by counting undelivered rows for that worker
-  against the ceiling at admission time. Over depth, submission is **refused with a visible
+  bounded above at 20. Depth is enforced by counting unfinished admitted jobs for the exact
+  registered `agentId` against the ceiling at admission time; two agents of the same worker
+  kind have separate depths. Over depth, submission is **refused with a visible
   reason**; nothing is dropped, silently reordered, or evicted, because a silently dropped
   proposal is a task that will never be built and never be explained.
 - **Order.** Tasks for one agent run in committed order, and each finished task starts the
-  next. Dependencies reuse what the domain already has: `control_job_dependencies` and
-  `JobRecord.dependsOnJobIds` (B.1). A task whose declared dependency has not reached a
-  retained, accepted result is not dispatched; it waits, and it is visible as waiting rather
-  than absent.
+  next **only once S7 automatic advance exists and its current delegation checks pass**.
+  Before S7, completion only changes the next item's projection from `waiting_dependency` to
+  `eligible`; the item becomes visible to the existing owner/manual start path and no worker is
+  invoked. Dependencies reuse what the domain already has: `control_job_dependencies` and
+  `JobRecord.dependsOnJobIds` (B.1). Eligibility requires canonical proof for every declared
+  predecessor: a retained result bound to that predecessor's exact job and terminal attempt,
+  its still-present artifact id and verified digest, and the accepted Completion Gate snapshot
+  bound to the same result. A succeeded state, queue receipt, callback, unretained result or
+  acceptance for another attempt is insufficient. Until that proof exists, the item reads as
+  waiting rather than absent.
+- **Exact-agent model validation.** Admission resolves the requested `agentId` to the current
+  protected registered-agent/worker enablement and validates the requested model and effort
+  against that exact agent's allowlist; validating only against its worker kind is forbidden.
+  A missing, disabled or mismatched agent/model refuses admission without consuming depth.
+  Because protected enablement may change while an item waits, the manual start path and S7
+  automatic start revalidate the same exact-agent selection before creating a delivery intent.
 - **Materialisation is the ordinary path.** Approved items become ordinary proposed tasks
   through `WebTaskService.proposeWithDependencies`
   (`src/web/v1/task-service.ts:214-283`), which keeps the existing owner authorization, the
@@ -1487,36 +1510,50 @@ repeated read, a restart and a lost acknowledgement produce exactly one notifica
 same recorded state; a batch in a non-active project is not approved into a runnable state.
 
 **S3 — Per-agent queue, depth and order.**
-Ships: depth enforcement per agent, dependency-aware dispatch, and the per-agent queue view.
-Queue identity and committed order belong to the task and batch ordinal, not permanently to one
-agent. S3 records the effective assignee used at dispatch so later reassignment can preserve the
-same job, dependencies and idempotency identity without rewriting history; it does not yet ship
-fallback or reassignment.
-*Acceptance:* depth is capped at the recorded per-batch limit and never above 20; a
-submission over depth is refused with a visible reason and drops nothing; a task whose
-declared dependency has not reached an accepted retained result is never dispatched and
-reads as waiting, not absent; tasks for one agent are dispatched in committed order and
-each finished task starts the next; two workers never receive the same task; a restart
-mid-batch dispatches nothing twice and resumes from committed state; a queue whose recorded
-configuration is not exactly `standard` / `retryLimit: 0` / no dead letter is **refused at
-startup** rather than repaired at runtime; and the canonical delivery intent and the job row
-appear in the same committed transaction or neither appears.
+Ships: depth enforcement per exact registered `agentId`, dependency-derived eligibility, and
+the per-agent queue projection. This is not dispatch automation. Completing one item can make
+the next item `eligible` and visible, but only the existing owner/manual start path may invoke
+it until S7 ships. Eligibility, queue position and a queue receipt grant no execution authority.
+Queue-item identity and committed order belong to the existing job plus immutable batch id and
+item ordinal, not permanently to one agent. The first effective agent/model/effort selection is
+recorded as an append-only snapshot, so S9 can append a reassignment while preserving the same
+job, dependencies, ordinal and idempotency identity. S3 does not yet ship fallback or
+reassignment and creates no second queue.
+*Acceptance:* depth is capped at the recorded per-batch limit and never above 20 for one exact
+registered agent, while two agents of the same worker kind have independent counts; admission
+resolves the exact `agentId` and validates model/effort against that exact agent's protected
+allowlist, and refuses an unknown, disabled or kind-only match without consuming depth; a
+submission over depth is refused with a visible reason and drops nothing; a task whose declared
+dependency lacks the canonical accepted retained-result proof — exact predecessor job and
+terminal attempt, still-retained artifact id, verified digest, and an accepted Completion Gate
+snapshot bound to that result — is never eligible and reads as waiting, not absent; a task state,
+callback, queue receipt or acceptance for another attempt does not satisfy the dependency; items
+for one agent become eligible in committed order; completion makes the next item visible but
+does not create a delivery intent, pg-boss job, lease or invocation; two workers never receive
+the same task; a restart mid-batch neither duplicates eligibility nor dispatches anything twice;
+the queue view is reconstructed from canonical jobs, dependency edges and append-only assignment
+history rather than a new queue store; a scheduler whose recorded configuration is not exactly
+`standard` / `retryLimit: 0` / no dead letter is **refused at startup** rather than repaired at
+runtime; whenever the existing manual start path is used, it revalidates the exact agent/model
+and the canonical delivery intent and pg-boss job appear in the same committed transaction or
+neither appears.
 
 **S4 — Linear pipelines: build, check, validate.**
 Ships: the three pipeline tables and additive `control_jobs` columns, the ordered stage
-view, instantiation into ordinary tasks, and the first automatic advance. No loops yet, no
-agent checker, no worktree work.
+view, instantiation into ordinary tasks, and the first dependency-derived eligibility
+transition. No automatic invocation, loops, agent checker or worktree work yet.
 *Acceptance:* instantiating a three-stage pipeline creates a request, a workflow, a run and
 one row per stage, and the same idempotency key returns the original run while a changed
-template content under the same key is refused; stage N+1 does not start until stage N's
-result is retained **and** the Completion Gate snapshot permits it; an unknown `stage_kind`
-is refused, and the stand-or-fall CHECK refuses a row with a `stage_ordinal` but no
-`stage_kind`; cross-project reads are refused, and the composite lineage foreign keys
-refuse a stage row pointing at another job's attempt; the round the page shows is read from
-the gate's `revisionNumber` and cannot be set by the pipeline; a run in a non-active
-project stops advancing and accepts no new stage; two concurrent "start this stage"
-requests produce exactly one accepted transition; a stage whose usage is unknown renders as
-"unknown", never as 0.
+template content under the same key is refused; stage N+1 remains `waiting_dependency` until
+stage N has the accepted retained-result proof defined in S3, then becomes `eligible` without
+being invoked; an unknown `stage_kind` is refused, and the stand-or-fall CHECK refuses a row
+with a `stage_ordinal` but no `stage_kind`; cross-project reads are refused, and the composite
+lineage foreign keys refuse a stage row pointing at another job's attempt; the round the page
+shows is read from the gate's `revisionNumber` and cannot be set by the pipeline; a run in a
+non-active project stops changing eligibility and accepts no new stage; two concurrent manual
+"start this stage" requests produce exactly one accepted transition through the existing start
+authorizer; merely becoming eligible produces no delivery, lease or authority; a stage whose
+usage is unknown renders as "unknown", never as 0.
 The run/stage identity is `(pipeline run, ordinal, stored kind, role)`; worker/model/effort are
 effective snapshots rather than identity. The `validate` product role uses stored kind
 `signoff`. Stage outputs remain opaque artifact ids plus digests. These invariants prepare the
@@ -1558,10 +1595,15 @@ maintainer action; a result without its model recorded is incomplete, and unknow
 never renders as zero.
 
 **S7 — Sequential advance, unattended bounds, and the history view.**
-Ships: automatic advance inside a granted project policy, wall-clock and total-budget
-bounds, expiry behaviour, and the full per-batch and per-run history surface.
-*Acceptance:* an unattended run advances only inside the delegation policy's permitted
+Ships: the first automatic invocation of an eligible next item, inside a granted project
+policy, plus wall-clock and total-budget bounds, expiry behaviour, and the full per-batch and
+per-run history surface. It calls the existing ordinary assignment/start and
+`native-task-delivery` path; it does not treat S3 eligibility, order or queue position as
+authority and does not add a scheduler or queue.
+*Acceptance:* an unattended run invokes an eligible item only inside the delegation policy's permitted
 action set, eligible workers, risk ceiling, task and cost allowances and validity window;
+a current exact-agent/model/effort allowlist check, dependency proof and ordinary execution
+authority check all pass again immediately before the delivery intent is created;
 a revocation, an exhausted allowance or an expiry stops the next stage and does not cancel
 prior committed work; a stage whose authority expires does not start; the run stops at a
 stage boundary on the deadline rather than mid-effect; advancing from an `uncertain` stage
