@@ -17,6 +17,9 @@ import { restoreDatabase } from "../deploy/postgres/restore-database.mjs";
 import { collectDatabaseEvidence, digestOf } from "../deploy/postgres/evidence.mjs";
 import { computeDatabaseRestoreIdentity, verifyRestoredIdentity } from "../deploy/postgres/restore-identity.mjs";
 import { collectLedgerEntries, ledgerDigest } from "../scripts/generate-migration-ledger.mjs";
+import { provisionMacLocalNarrowRolesV1 } from "../scripts/mac-local/narrow-role-provision.mjs";
+import { createMacLocalDatabaseBackupV1 } from "../scripts/ops/backup-database.mjs";
+import { verifyMacLocalDatabaseBackupV1 } from "../scripts/ops/verify-database-backup.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const BIN = process.env.PG_BIN ?? "/usr/lib/postgresql/17/bin";
@@ -26,7 +29,7 @@ const BIN = process.env.PG_BIN ?? "/usr/lib/postgresql/17/bin";
 // failing the whole lane for an unrelated pull request.
 const PG_AVAILABLE = existsSync(join(BIN, "initdb")) && existsSync(join(BIN, "postgres"));
 const needsPg = PG_AVAILABLE ? undefined : { skip: "needs PostgreSQL 17 binaries (PG_BIN or /usr/lib/postgresql/17/bin)" };
-const PORT = 65434;
+const PORT = 15630;
 const exec = promisify(execFile);
 
 let run = "", socket = "", data = "";
@@ -408,13 +411,13 @@ test("documented clean-cluster provision/migrate/backup/restore/verify journey",
   // not mask a provision script that assumes groups already exist, and the
   // restore target must not inherit shared-cluster role state either. Every
   // step below is the documented operator flow, executed literally.
-  const CLEAN_PORT = 65435;
+  const CLEAN_PORT = 15631;
   const cleanSocket = join(run, "clean-socket"), cleanData = join(run, "clean-data");
   const cleanBackup = join(run, "clean-backup-set");
   // The restore target lives in its OWN disposable cluster: roles and
   // memberships are cluster-wide, so a second database in the source cluster
   // would inherit the source's role state before target provisioning.
-  const TARGET_PORT = 65436;
+  const TARGET_PORT = 15632;
   const targetSocket = join(run, "clean-target-socket"), targetData = join(run, "clean-target-data");
   const asPostgres = process.getuid?.() === ROOT_UID;
   const ownDirs = async (...dirs) => {
@@ -430,13 +433,11 @@ test("documented clean-cluster provision/migrate/backup/restore/verify journey",
     } else {
       await mkdir(data, { recursive: true });
     }
-    await native("initdb", ["-D", data, "-U", "fixture_admin", "--auth-local=trust",
+    await native("initdb", ["-D", data, "-U", "postgres", "--auth-local=trust",
       "--auth-host=reject", "--no-locale", "--encoding=UTF8"]);
     await native("pg_ctl", ["-D", data, "-l", join(run, log), "-w", "-t", "30", "-o",
       `-k ${socket} -p ${port} -h '' -c unix_socket_permissions=0700 -c shared_buffers=32MB -c max_connections=20`, "start"]);
   };
-  await startCluster(cleanSocket, cleanData, CLEAN_PORT, "clean-server.log");
-  await startCluster(targetSocket, targetData, TARGET_PORT, "clean-target-server.log");
   t.after(async () => {
     for (const data of [cleanData, targetData]) {
       try {
@@ -449,10 +450,12 @@ test("documented clean-cluster provision/migrate/backup/restore/verify journey",
     await rm(targetData, { recursive: true, force: true });
     await rm(cleanBackup, { recursive: true, force: true });
   });
+  await startCluster(cleanSocket, cleanData, CLEAN_PORT, "clean-server.log");
+  await startCluster(targetSocket, targetData, TARGET_PORT, "clean-target-server.log");
   const pw = { migrator: "clean-install-migrator-0001", app: "clean-install-app-000001", scheduler: "clean-install-scheduler-0001" };
   const psqlFor = (socket, port) => ({
     PATH: "/usr/bin:/bin", LC_ALL: "C", TMPDIR: run,
-    PGHOST: socket, PGPORT: String(port), PGUSER: "fixture_admin",
+    PGHOST: socket, PGPORT: String(port), PGUSER: "postgres",
     PGPASSWORD: "fixture_only",
   });
   const psqlBase = psqlFor(cleanSocket, CLEAN_PORT);
@@ -461,7 +464,7 @@ test("documented clean-cluster provision/migrate/backup/restore/verify journey",
      "-v", `scheduler_password=${pw.scheduler}`,
      "-f", join(ROOT, "db/roles/production_provision.sql"), "-X", "-q"],
     { env: { ...env, PGDATABASE: database }, timeout: 60000, maxBuffer: 1 << 26 });
-  const cleanConn = (socket, port, database, user = "fixture_admin", password = "fixture_only") =>
+  const cleanConn = (socket, port, database, user = "postgres", password = "fixture_only") =>
     ({ host: socket, port, database, user, password });
   const sourceConn = (database, user, password) => cleanConn(cleanSocket, CLEAN_PORT, database, user, password);
   const targetConn = (database, user, password) => cleanConn(targetSocket, TARGET_PORT, database, user, password);
@@ -483,11 +486,11 @@ test("documented clean-cluster provision/migrate/backup/restore/verify journey",
     { env: { ...psqlBase, PGDATABASE: "postgres" }, timeout: 60000, maxBuffer: 1 << 26 });
   const preOwner = (await sourceQuery("postgres",
     "SELECT pg_get_userbyid(datdba) AS owner FROM pg_database WHERE datname = 'cr_clean_install'")).rows[0].owner;
-  assert.equal(preOwner, "fixture_admin", "database starts owned by the creating superuser");
+  assert.equal(preOwner, "postgres", "database starts owned by the creating superuser");
   // Step 1: standalone role provisioning on the clean database.
   await provisionRoles("cr_clean_install");
   // Step 2: the documented two-connection migration command, via the real CLI.
-  const adminConn = `host=${cleanSocket} port=${CLEAN_PORT} dbname=cr_clean_install user=fixture_admin`;
+  const adminConn = `host=${cleanSocket} port=${CLEAN_PORT} dbname=cr_clean_install user=postgres`;
   const migratorConn = `host=${cleanSocket} port=${CLEAN_PORT} dbname=cr_clean_install user=control_room_migrator password=${pw.migrator}`;
   const migrated = await exec(process.execPath,
     [join(ROOT, "deploy/postgres/apply-migrations.mjs"),
@@ -583,4 +586,31 @@ test("documented clean-cluster provision/migrate/backup/restore/verify journey",
     "SELECT pg_get_userbyid(datdba) AS owner FROM pg_database WHERE datname = 'cr_clean_restored'")).rows[0].owner;
   assert.equal(targetDbOwner, dbOwner, "restored database owner matches the source database owner");
   assert.equal(targetDbOwner, "control_room_schema_owner");
+
+  // The Mac-local wrapper adds the five exact restricted roles, hashes the
+  // dump+metadata manifest, and proves the result in its own fresh cluster.
+  // Queue construction and its guarded cleanup both contain transactions, so
+  // provisioning must keep every statement on this one PostgreSQL session.
+  const narrowRoleClient = new Client(db);
+  await narrowRoleClient.connect();
+  try {
+    await provisionMacLocalNarrowRolesV1(narrowRoleClient, Object.fromEntries([
+      "control_room_web", "control_room_coordinator", "control_room_results",
+      "control_room_publisher", "control_room_queue_worker",
+    ].map((name, index) => [name, `${index}`.repeat(40)])));
+  } finally {
+    await narrowRoleClient.end();
+  }
+  const macBackup = join(run, "mac-local-backup-set");
+  const manifest = await createMacLocalDatabaseBackupV1({ source: db, out: macBackup, pgBin: BIN,
+    now: () => "2026-09-27T00:00:00.000Z" });
+  assert.match(manifest.dumpDigest, /^sha256:[a-f0-9]{64}$/u);
+  const verified = await verifyMacLocalDatabaseBackupV1({ backup: macBackup, port: 15633, pgBin: BIN });
+  assert.equal(verified.verified, true);
+  assert.equal(verified.identityDigest, manifest.restoreIdentityDigest);
+  const dumpPath = join(macBackup, "database.dump"), altered = await readFile(dumpPath);
+  altered[0] ^= 0xff;
+  await writeFile(dumpPath, altered);
+  await assert.rejects(verifyMacLocalDatabaseBackupV1({ backup: macBackup, port: 15634, pgBin: BIN }),
+    /database_backup_digest_refused/u);
 });

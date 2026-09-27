@@ -60,6 +60,32 @@ Then open that address in the browser and sign in.
 
 If `pnpm mac:up` reports `already running`, you do not need to do anything.
 
+### Optional one-time owner action: start automatically at login
+
+This source tree prepares a per-user launch agent but does not install it for you. When you decide “yes, start at login,” run this once while signed in as the Mac owner:
+
+```sh
+pnpm mac:up -- --protected-root <protected-root> --install-service
+```
+
+If macOS shows a background-item notification, open **System Settings → General → Login Items & Extensions** and confirm the Control Room item is allowed. Do not run the command with `sudo`; this is an owner-login service, not a system service.
+
+Check it without changing anything:
+
+```sh
+pnpm mac:service-status -- --protected-root <protected-root>
+```
+
+A healthy installed result says `running definition=current enabled=true` and includes a PID. Repeating the install command is safe: an already healthy matching service is restarted in place, while a stopped or changed definition is re-enabled/refreshed through the same fixed label.
+
+`pnpm mac:down -- --protected-root <protected-root>` stops and disables the service, so it will not return at the next login. A later ordinary `mac:up` re-enables an installed service. To remove only the login service while keeping all protected data and configuration:
+
+```sh
+pnpm mac:uninstall-service
+```
+
+The uninstall command is repeat-safe. After it reports `removed`, `mac:service-status` reports `not_installed`; an ordinary `mac:up` then uses the direct detached start again unless you explicitly pass `--install-service`.
+
 ## 3. Sign in
 
 The owner sign-in code is created once, during section 1 step 2, and stored in the protected
@@ -171,7 +197,7 @@ intended behaviour once that lands.
 | Sign-in, projects, creating a project or a task | Covered by automated tests against a disposable database. **Not** yet run by you on the real one. |
 | Assigning, approving, accepting, requesting changes, planning | **Routed but unusable.** The page exists and answers "service unavailable", because the operation behind it is not installed. |
 | Cancelling a running task | **Not available at all.** There is no cancel action anywhere in the local product. A task that is running cannot be stopped from the website. |
-| Automatic service at login | **Not built.** Starting is a manual command for now. |
+| Automatic service at login | **Prepared, not installed.** The owner may opt in once with the exact `--install-service` command in section 2. No agent installs it automatically. |
 
 The two rows that matter most to an owner expecting a normal product: you
 cannot cancel a task, and several review steps are not usable. Do not plan

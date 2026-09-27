@@ -3,6 +3,8 @@ import test from "node:test";
 import { sha256Digest } from "../src/security";
 import { LocalOwnerSessionServiceV1, LOCAL_OWNER_SESSION_PROFILE_V1, readLocalOwnerCodeV1 } from "../src/web/v1/local-owner-session";
 import { WebAccessError } from "../src/web/v1/access-verifier";
+import type { LocalOwnerSessionStoreV1 } from "../src/web/v1/local-owner-session-store";
+import type { PersistedLocalOwnerSessionV1 } from "../src/web/v1/local-owner-session";
 
 const origin = "http://127.0.0.1:3210";
 const ownerCode = "local-owner-code-that-is-long-enough";
@@ -58,4 +60,48 @@ test("local owner sign-in request accepts only a small exact JSON object", async
     await assert.rejects(readLocalOwnerCodeV1(request(undefined, { "content-type": "application/json" }, value)),
       (error: unknown) => error instanceof WebAccessError && error.code === "invalid_request");
   }
+});
+
+test("a persisted hashed session survives restart, remains installation-bound, and contains no cookie secret", async () => {
+  const rows = new Map<string, PersistedLocalOwnerSessionV1 & { revokedAt?: string }>();
+  const store: LocalOwnerSessionStoreV1 = {
+    async load(nowMs) { return [...rows.values()].filter(row => !row.revokedAt && Date.parse(row.expiresAt) > nowMs); },
+    async save(session) { rows.set(session.tokenDigest, { ...session }); },
+    async revoke(tokenDigest, revokedAt) { const row = rows.get(tokenDigest); if (!row) throw new Error("missing"); rows.set(tokenDigest, { ...row, revokedAt }); },
+  };
+  const first = new LocalOwnerSessionServiceV1(profile, store);
+  const issued = await first.issue(request(undefined, { origin, "content-type": "application/json" }, JSON.stringify({ ownerCode })), ownerCode, 1_000);
+  const cookie = issued.cookie.split(";", 1)[0]!, token = cookie.split("=", 2)[1]!;
+  assert.equal(rows.size, 1);
+  assert.doesNotMatch(JSON.stringify([...rows.values()]), new RegExp(token, "u"));
+  const restarted = new LocalOwnerSessionServiceV1(profile, store, await store.load(2_000));
+  assert.equal(restarted.verify(request("/api/v1/projects", { cookie }), 2_000).subject, profile.subject);
+
+  const anotherInstallation = { ...profile, ownerCodeDigest: sha256Digest({ ownerCode: `${ownerCode}-different-installation` }) };
+  const copied = new LocalOwnerSessionServiceV1(anotherInstallation, store, await store.load(2_000));
+  assert.throws(() => copied.verify(request("/api/v1/projects", { cookie }), 2_000),
+    (error: unknown) => error instanceof WebAccessError && error.code === "authentication_required");
+});
+
+test("expired and revoked persisted sessions are refused", async () => {
+  const rows = new Map<string, PersistedLocalOwnerSessionV1 & { revokedAt?: string }>();
+  const store: LocalOwnerSessionStoreV1 = {
+    async load(nowMs) { return [...rows.values()].filter(row => !row.revokedAt && Date.parse(row.expiresAt) > nowMs); },
+    async save(session) { rows.set(session.tokenDigest, { ...session }); },
+    async revoke(tokenDigest, revokedAt) { const row = rows.get(tokenDigest); if (!row) throw new Error("missing"); rows.set(tokenDigest, { ...row, revokedAt }); },
+  };
+  const active = new LocalOwnerSessionServiceV1(profile, store);
+  const issued = await active.issue(request(undefined, { origin, "content-type": "application/json" }, JSON.stringify({ ownerCode })), ownerCode, 1_000);
+  const cookie = issued.cookie.split(";", 1)[0]!;
+  await active.revoke(request(undefined, { origin, cookie }), 2_000);
+  assert.throws(() => active.verify(request("/api/v1/projects", { cookie }), 2_001),
+    (error: unknown) => error instanceof WebAccessError && error.code === "authentication_required");
+  const afterRevocation = new LocalOwnerSessionServiceV1(profile, store, await store.load(2_001));
+  assert.throws(() => afterRevocation.verify(request("/api/v1/projects", { cookie }), 2_001),
+    (error: unknown) => error instanceof WebAccessError && error.code === "authentication_required");
+
+  const expiring = new LocalOwnerSessionServiceV1(profile, store);
+  const expired = await expiring.issue(request(undefined, { origin, "content-type": "application/json" }, JSON.stringify({ ownerCode })), ownerCode, 3_000);
+  assert.throws(() => expiring.verify(request("/api/v1/projects", { cookie: expired.cookie.split(";", 1)[0]! }), 903_001),
+    (error: unknown) => error instanceof WebAccessError && error.code === "authentication_required");
 });

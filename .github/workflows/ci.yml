@@ -396,6 +396,11 @@ jobs:
           check() {
             case "$2" in
               success|skipped) echo "  $1: $2" ;;
+              cancelled)
+                echo "  $1: $2"
+                echo "::error::${1} runner was lost or cancelled; re-run the workflow"
+                status=1
+                ;;
               *) echo "  $1: $2"; status=1 ;;
             esac
           }

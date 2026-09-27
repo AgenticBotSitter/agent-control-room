@@ -31,6 +31,23 @@ const env = { ...process.env, LC_ALL: "en_US.UTF-8", LANG: "en_US.UTF-8" };
 const pg = join(dir, "pg");
 const bounded = { env, stdio: "ignore" as const, timeout: 120_000, killSignal: "SIGKILL" as const };
 const pgctl = (...args: string[]) => execFileSync("pg_ctl", ["-D", pg, ...args], bounded);
+let clusterStarted = false;
+let keepCluster = false;
+let stopping = false;
+
+function stopStartedCluster() {
+  if (!clusterStarted || stopping) return;
+  stopping = true;
+  try { pgctl("stop", "-m", "fast"); } catch { /* Preserve the original setup or signal failure. */ }
+  clusterStarted = false;
+}
+
+for (const signal of ["SIGINT", "SIGTERM"] as const) process.once(signal, () => {
+  keepCluster = false;
+  stopStartedCluster();
+  process.exit(signal === "SIGINT" ? 130 : 143);
+});
+process.once("exit", () => { if (!keepCluster) stopStartedCluster(); });
 
 if (action === "down") {
   if (existsSync(pg)) pgctl("stop", "-m", "fast");
@@ -39,13 +56,22 @@ if (action === "down") {
 }
 
 const fresh = !existsSync(pg);
-if (fresh) {
-  mkdirSync(dir, { recursive: true, mode: 0o700 });
-  execFileSync("initdb", ["-D", pg, "-U", "postgres", "--auth=trust", "-E", "UTF8"], bounded);
-  writeFileSync(join(pg, "pg_hba.conf"), "host all postgres 127.0.0.1/32 trust\nhost all all 127.0.0.1/32 scram-sha-256\n");
-}
-pgctl("-l", join(dir, "pg.log"), "-w", "-o", `-p ${port} -k '' -c listen_addresses=127.0.0.1`, "start");
-if (!fresh) { console.log(`rehearsal database running on 127.0.0.1:${port}; protected root ${join(dir, "protected")}`); process.exit(0); }
+try {
+  if (fresh) {
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
+    execFileSync("initdb", ["-D", pg, "-U", "postgres", "--auth=trust", "-E", "UTF8"], bounded);
+    writeFileSync(join(pg, ".control-room-disposable-postgres.json"), `${JSON.stringify({
+      schema: "control-room.disposable-postgres/v1", createdBy: "mac-local-rehearsal",
+    })}\n`, { mode: 0o600, flag: "wx" });
+    writeFileSync(join(pg, "pg_hba.conf"), "host all postgres 127.0.0.1/32 trust\nhost all all 127.0.0.1/32 scram-sha-256\n");
+  }
+  pgctl("-l", join(dir, "pg.log"), "-w", "-o", `-p ${port} -k '' -c listen_addresses=127.0.0.1`, "start");
+  clusterStarted = true;
+  if (!fresh) {
+    keepCluster = true;
+    console.log(`rehearsal database running on 127.0.0.1:${port}; protected root ${join(dir, "protected")}`);
+    process.exit(0);
+  }
 
 execFileSync("psql", ["-h", "127.0.0.1", "-p", String(port), "-U", "postgres", "-d", "postgres", "-v", "dbname=control_room",
   "-f", fileURLToPath(new URL("../../../deploy/postgres/provision-database.sql", import.meta.url))], bounded);
@@ -124,3 +150,7 @@ for (const [file, body] of [["mac-local.json", JSON.stringify(macLocal)], ["data
   writeFileSync(join(config, file), `${body}\n`, { mode: 0o600 });
 console.log(`rehearsal database ready on 127.0.0.1:${port}; protected root ${root}`);
 console.log(`next: pnpm mac:bootstrap-owner ${root} && pnpm mac:check-database ${root}`);
+  keepCluster = true;
+} finally {
+  if (!keepCluster) stopStartedCluster();
+}
