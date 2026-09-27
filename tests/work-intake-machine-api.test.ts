@@ -123,8 +123,10 @@ test("production privilege preflight admits only the dedicated role on intake ta
 });
 
 test("role creation and least-privilege grants travel through reviewed production provisioning", async () => {
-  const [roles, provision, grants, browser] = await Promise.all(["production_roles.sql", "production_provision.sql",
-    "production_table_grants.sql", "private_web_roles.sql"].map(file => readFile(`db/roles/${file}`, "utf8")));
+  const [roles, provision, grants, browser, migration] = await Promise.all([
+    ...["production_roles.sql", "production_provision.sql", "production_table_grants.sql", "private_web_roles.sql"]
+      .map(file => readFile(`db/roles/${file}`, "utf8")),
+    readFile("db/migrations/0093_work_batch_intake.sql", "utf8")]);
   assert.match(roles, /CREATE ROLE control_room_work_intake NOLOGIN/u);
   assert.match(provision, /CREATE ROLE control_room_work_intake NOLOGIN/u);
   assert.match(provision, /CREATE ROLE control_room_work_intake_agent LOGIN/u);
@@ -133,6 +135,17 @@ test("role creation and least-privilege grants travel through reviewed productio
   assert.doesNotMatch(grants, /GRANT .*control_jobs.* TO control_room_work_intake/u);
   assert.doesNotMatch(grants, /GRANT .*control_room_queue.* TO control_room_work_intake/u);
   assert.doesNotMatch(browser, /work_batches|work_batch_revisions/u);
+  assert.match(migration, /pg_has_role\(session_user,r\.oid,'member'\)/u);
+  assert.match(migration, /CREATE POLICY control_idempotency_work_intake_scope/u);
+  assert.match(migration, /CREATE POLICY audit_events_work_intake_scope/u);
+  assert.match(migration, /AS RESTRICTIVE FOR ALL/u);
+  assert.match(migration, /DEFERRABLE INITIALLY DEFERRED/u);
+  assert.match(migration, /work_intake_canonical_jsonb/u);
+  assert.match(migration, /NEW\.event_digest<>expected_digest OR NEW\.event_hash<>expected_hash/u);
+  assert.match(migration, /NEW\.result->>'startsWork'<>'false'/u);
+  assert.match(migration, /NEW\.result->>'grantsExecutionAuthority'<>'false'/u);
+  assert.match(migration, /NEW\.event_count<>OLD\.event_count\+1/u);
+  assert.doesNotMatch(migration, /NEW\.action LIKE 'work_batches\.%'/u);
 });
 
 test("invokable CLI binds to one protected configuration path and exact secret-bearing document", async () => {

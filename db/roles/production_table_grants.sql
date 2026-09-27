@@ -50,7 +50,10 @@ GRANT SELECT, INSERT, DELETE ON control_github_webhook_replays TO control_room_g
 GRANT SELECT, INSERT, DELETE ON control_github_worker_wake_hints TO control_room_github_broker;
 GRANT USAGE ON SEQUENCE control_github_worker_wake_hints_hint_id_seq TO control_room_github_broker;
 
--- Proposal-only machine intake: no task, queue, assignment, approval or effect tables.
+-- Proposal-only machine intake: no task, queue, assignment, approval or effect
+-- tables. Migration 0093 additionally confines the shared-ledger grants below
+-- by login-aware triggers and row-level policies; they are not unrestricted
+-- shared-ledger authority.
 REVOKE ALL ON ALL TABLES IN SCHEMA public FROM control_room_work_intake;
 REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM control_room_work_intake;
 REVOKE ALL ON work_batches, work_batch_revisions FROM control_room_application,

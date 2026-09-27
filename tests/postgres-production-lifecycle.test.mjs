@@ -20,6 +20,9 @@ import { collectLedgerEntries, ledgerDigest } from "../scripts/generate-migratio
 import { provisionMacLocalNarrowRolesV1 } from "../scripts/mac-local/narrow-role-provision.mjs";
 import { createMacLocalDatabaseBackupV1 } from "../scripts/ops/backup-database.mjs";
 import { verifyMacLocalDatabaseBackupV1 } from "../scripts/ops/verify-database-backup.mjs";
+import { AuditStore } from "../src/audit/audit-store.ts";
+import { WorkBatchStoreV1 } from "../src/work-intake/v1/store.ts";
+import { sha256Digest } from "../src/security/canonical-digest.ts";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const BIN = process.env.PG_BIN ?? "/usr/lib/postgresql/17/bin";
@@ -76,6 +79,25 @@ async function query(target, sql, params = []) {
   } finally {
     await client.end();
   }
+}
+
+function postgresDatabase(target) {
+  const one = async (callback) => {
+    const client=new Client(target); await client.connect();
+    try { return await callback(client); } finally { await client.end(); }
+  };
+  const database={
+    query:(sql,params=[])=>one(client=>client.query(sql,params)),
+    transaction:(callback)=>one(async client=>{ await client.query("BEGIN");
+      try { const result=await callback({query:(sql,params=[])=>client.query(sql,params)});
+        await client.query("COMMIT"); return result; }
+      catch(error){ await client.query("ROLLBACK"); throw error; } }),
+    transactionWithPreCommitCheck:(callback,check)=>one(async client=>{ await client.query("BEGIN");
+      try { const result=await callback({query:(sql,params=[])=>client.query(sql,params)});
+        await check(); await client.query("COMMIT"); return result; }
+      catch(error){ await client.query("ROLLBACK"); throw error; } }),
+  };
+  return Object.freeze(database);
 }
 
 before(async () => {
@@ -288,6 +310,130 @@ test("schedule-admission service gets narrow grants on fresh install and upgrade
   assert.equal(reconverged.noOp, true);
   const back = (await query(db, "SELECT has_table_privilege('control_room_scheduler', 'control_scheduled_task_admissions', 'INSERT') AS sched_insert")).rows[0];
   assert.equal(back.sched_insert, true);
+});
+
+test("work-intake login cannot read or forge another subsystem's shared-ledger records", needsPg, async () => {
+  await freshDatabase("cr_prod_intake_guard");
+  const db=target("cr_prod_intake_guard");
+  await applyMigrations({ target:db, bootstrapTarget:bootstrapTarget("cr_prod_intake_guard"),
+    migrateTarget:migrateTarget("cr_prod_intake_guard"), rootDir:ROOT, env:{...process.env,...passwords} });
+  await query(db,"INSERT INTO tenants(id,display_name) VALUES('tenant:intake-guard','intake guard')");
+  await query(db,"INSERT INTO workspaces(id,tenant_id,display_name) VALUES('workspace:intake-guard','tenant:intake-guard','workspace')");
+  await query(db,`INSERT INTO adapter_registry(id,tenant_id,source_system,contract_version,authority_mode,status,
+    redaction_policy_version,cursor_retention_days) VALUES('adapter:intake-guard','tenant:intake-guard','manual','1',
+    'control_room_native','fixture','v1',1)`);
+  for(const projectId of ["project:intake-guard","project:intake-other"])
+    await query(db,`INSERT INTO projects(id,tenant_id,workspace_id,adapter_id,source_record_id,source_version,title,
+      normalized_state,domain_state,health,authority_mode,observed_at,payload) VALUES($1,'tenant:intake-guard',
+      'workspace:intake-guard','adapter:intake-guard',$1,'1','Project','ready','ready','healthy',
+      'control_room_native','2026-09-27T12:00:00.000Z','{}')`,[projectId]);
+  await query(db,`INSERT INTO control_identities(id,tenant_id,actor_type,display_name,auth_provider,
+    auth_subject_digest,state,created_at,updated_at) VALUES('identity:intake-guard','tenant:intake-guard','agent',
+    'Intake agent','work-intake',$1,'active','2026-09-27T12:00:00.000Z','2026-09-27T12:00:00.000Z')`,
+    [`sha256:${"6".repeat(64)}`]);
+  await query(db,`INSERT INTO control_role_grants(id,tenant_id,identity_id,role_key,allowed_actions,project_ids,
+    risk_ceiling,allow_external_effects,require_strong_factor,created_at,updated_at) VALUES('grant:intake-guard',
+    'tenant:intake-guard','identity:intake-guard','work_batch_proposer','["work_batches.propose"]',
+    '["project:intake-guard"]','low',false,false,'2026-09-27T12:00:00.000Z','2026-09-27T12:00:00.000Z')`);
+  await query(db,`INSERT INTO control_idempotency
+    (tenant_id,operation_scope,idempotency_key,request_digest,status)
+    VALUES('tenant:intake-guard','other.operation/v1','other-key-0001',$1,'processing')`,[`sha256:${"1".repeat(64)}`]);
+  await query(db,`INSERT INTO audit_events
+    (id,tenant_id,actor_id,actor_type,action,target_type,target_id,safe_metadata,occurred_at)
+    VALUES('audit:other:1','tenant:intake-guard','identity:other','service','other.action','tenant',
+      'tenant:intake-guard','{}'::jsonb,'2026-09-27T12:00:00.000Z')`);
+  await query(db,`INSERT INTO control_audit_chain_heads
+    (tenant_id,chain_partition,head_hash,event_count,updated_at)
+    VALUES('tenant:intake-guard','month:2026-09',$1,0,'2026-09-27T12:00:00.000Z')`,[`sha256:${"0".repeat(64)}`]);
+  const intake={...target("cr_prod_intake_guard","control_room_work_intake_agent"),
+    password:passwords.CONTROL_ROOM_WORK_INTAKE_PASSWORD};
+  assert.deepEqual((await query(intake,"SELECT operation_scope FROM control_idempotency")).rows,[]);
+  assert.deepEqual((await query(intake,"SELECT id FROM audit_events")).rows,[]);
+  await assert.rejects(query(intake,`INSERT INTO control_idempotency
+    (tenant_id,operation_scope,idempotency_key,request_digest,status)
+    VALUES('tenant:intake-guard','other.operation/v1','attack-key-0001',$1,'processing')`,
+    [`sha256:${"2".repeat(64)}`]),/work intake idempotency insert rejected/u);
+  await assert.rejects(query(intake,`INSERT INTO audit_events
+    (id,tenant_id,actor_id,actor_type,action,target_type,target_id,safe_metadata,occurred_at,
+      chain_version,chain_partition,chain_sequence,event_digest,prev_hash,event_hash)
+    VALUES('audit:work-intake:forged','tenant:intake-guard','identity:other','agent','other.action',
+      'project','project:other','{}'::jsonb,'2026-09-27T12:00:00.000Z',1,'month:2026-09',1,$1,$2,$3)`,
+    [`sha256:${"3".repeat(64)}`,`sha256:${"0".repeat(64)}`,`sha256:${"4".repeat(64)}`]),
+    /work intake audit event insert rejected/u);
+  await assert.rejects(query(intake,`UPDATE control_audit_chain_heads SET head_hash=$1,event_count=1
+    WHERE tenant_id='tenant:intake-guard' AND chain_partition='month:2026-09'`,[`sha256:${"5".repeat(64)}`]),
+    /work intake audit head update rejected/u);
+
+  await query(db,"GRANT control_room_work_intake TO control_room_scheduler");
+  try {
+    const alternate={...target("cr_prod_intake_guard","control_room_scheduler"),
+      password:passwords.CONTROL_ROOM_SCHEDULER_PASSWORD};
+    await assert.rejects(query(alternate,`INSERT INTO control_idempotency
+      (tenant_id,operation_scope,idempotency_key,request_digest,status)
+      VALUES('tenant:intake-guard','other.operation/v1','alternate-key-0001',$1,'processing')`,
+      [`sha256:${"7".repeat(64)}`]),/work intake idempotency insert rejected/u);
+  } finally { await query(db,"REVOKE control_room_work_intake FROM control_room_scheduler"); }
+
+  const intakeDb=postgresDatabase(intake), store=new WorkBatchStoreV1(intakeDb,new Uint8Array(32).fill(8));
+  const principal={tenantId:"tenant:intake-guard",identityId:"identity:intake-guard",actorType:"agent",
+    authenticatedAt:"2026-09-27T11:00:00.000Z",expiresAt:"2027-09-27T12:00:00.000Z"};
+  assert.equal((await store.authorizeAction(principal,"project:intake-other","work_batches.propose",
+    "2026-09-27T12:01:00.000Z")).allowed,false,"wrong-project refusal is recorded");
+  await query(db,"UPDATE control_role_grants SET revoked_at='2026-09-27T12:01:30.000Z' WHERE id='grant:intake-guard'");
+  assert.equal((await store.authorizeAction(principal,"project:intake-guard","work_batches.propose",
+    "2026-09-27T12:02:00.000Z")).allowed,false,"revoked-grant refusal is recorded");
+  await query(db,"UPDATE control_role_grants SET revoked_at=NULL,expires_at='2026-09-27T12:02:30.000Z' WHERE id='grant:intake-guard'");
+  assert.equal((await store.authorizeAction(principal,"project:intake-guard","work_batches.propose",
+    "2026-09-27T12:03:00.000Z")).allowed,false,"expired-grant refusal is recorded");
+  await query(db,"UPDATE control_role_grants SET expires_at=NULL WHERE id='grant:intake-guard'; UPDATE control_identities SET state='suspended' WHERE id='identity:intake-guard'");
+  assert.equal((await store.authorizeAction(principal,"project:intake-guard","work_batches.propose",
+    "2026-09-27T12:04:00.000Z")).allowed,false,"inactive-identity refusal is recorded");
+  const verified=await new AuditStore(intakeDb).verify("tenant:intake-guard","month:2026-09");
+  assert.equal(verified.valid,true); assert.equal(verified.checkedEvents,4);
+
+  const head=(await query(intake,`SELECT head_hash,event_count::int FROM control_audit_chain_heads
+    WHERE tenant_id='tenant:intake-guard' AND chain_partition='month:2026-09'`)).rows[0];
+  const orphanMaterial={id:"audit:work-intake-refusal:orphan",tenantId:"tenant:intake-guard",workspaceId:null,
+    projectId:"project:intake-guard",actorId:"identity:intake-guard",actorType:"agent",
+    action:"work_batches.propose.refused",targetType:"project",targetId:"project:intake-guard",
+    correlationId:null,idempotencyKey:null,safeMetadata:{reasonCode:"no_matching_grant"},
+    occurredAt:"2026-09-27T12:05:00.000Z"};
+  const orphanDigest=sha256Digest(orphanMaterial), orphanSequence=head.event_count+1;
+  const orphanHash=sha256Digest({chainVersion:1,partition:"month:2026-09",sequence:orphanSequence,
+    previousHash:head.head_hash,eventDigest:orphanDigest});
+  await assert.rejects(query(intake,`INSERT INTO audit_events
+    (id,tenant_id,project_id,actor_id,actor_type,action,target_type,target_id,safe_metadata,occurred_at,
+      chain_version,chain_partition,chain_sequence,event_digest,prev_hash,event_hash)
+    VALUES($1,'tenant:intake-guard','project:intake-guard','identity:intake-guard','agent',
+      'work_batches.propose.refused','project','project:intake-guard',$2::jsonb,
+      '2026-09-27T12:05:00.000Z',1,'month:2026-09',$3,$4,$5,$6)`,
+    [orphanMaterial.id,JSON.stringify(orphanMaterial.safeMetadata),orphanSequence,
+      `sha256:${"8".repeat(64)}`,head.head_hash,`sha256:${"9".repeat(64)}`]),/work intake audit hash rejected/u);
+  await assert.rejects(query(intake,`INSERT INTO audit_events
+    (id,tenant_id,project_id,actor_id,actor_type,action,target_type,target_id,safe_metadata,occurred_at,
+      chain_version,chain_partition,chain_sequence,event_digest,prev_hash,event_hash)
+    SELECT 'audit:work-intake-refusal:orphan','tenant:intake-guard','project:intake-guard',
+      'identity:intake-guard','agent','work_batches.propose.refused','project','project:intake-guard',$1::jsonb,
+      '2026-09-27T12:05:00.000Z',1,'month:2026-09',$2,$3,$4,$5`,
+    [JSON.stringify(orphanMaterial.safeMetadata),orphanSequence,orphanDigest,head.head_hash,orphanHash]),
+    /committed without head advance/u);
+
+  const down=await readFile(join(ROOT,"db/down/0093_work_batch_intake.sql"),"utf8");
+  await query(db,"CREATE POLICY test_dependent_policy ON audit_events AS RESTRICTIVE USING (true)");
+  await assert.rejects(query(db,down),/shared-ledger RLS policies depend on it/u);
+  const retained=(await query(db,`SELECT
+    has_column_privilege('control_room_work_intake','control_idempotency','status','UPDATE') AS column_update,
+    (SELECT count(*)::int FROM pg_trigger WHERE tgname='control_idempotency_work_intake_guard' AND NOT tgisinternal) AS guard_count,
+    (SELECT count(*)::int FROM pg_policies WHERE policyname='audit_events_work_intake_scope') AS policy_count`)).rows[0];
+  assert.deepEqual(retained,{column_update:true,guard_count:1,policy_count:1});
+  await query(db,"DROP POLICY test_dependent_policy ON audit_events");
+  await query(db,down);
+  const remaining=(await query(db,`SELECT
+    has_table_privilege('control_room_work_intake','control_idempotency','SELECT') AS table_select,
+    has_column_privilege('control_room_work_intake','control_idempotency','status','UPDATE') AS column_update,
+    has_column_privilege('control_room_work_intake','control_audit_chain_heads','head_hash','UPDATE') AS head_update`)).rows[0];
+  assert.deepEqual(remaining,{table_select:false,column_update:false,head_update:false});
+  await assert.rejects(query(intake,"SELECT * FROM control_idempotency"),/permission denied/u);
 });
 
 test("backup and disposable restore preserve rows, owners, grants and identity", needsPg, async () => {
