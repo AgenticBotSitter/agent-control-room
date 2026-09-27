@@ -2,6 +2,9 @@ import { expect, test, type Page } from "@playwright/test";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { Client } from "pg";
+import { AuditStore, auditPartition } from "../../src/audit/audit-store";
+import type { DatabaseClient } from "../../src/persistence/database";
+import { workBatchProposalDigestV1 } from "../../src/work-intake/v1/schemas";
 
 const ownerCode = process.env.CONTROL_ROOM_E2E_OWNER_CODE;
 if (!ownerCode) throw new Error("CONTROL_ROOM_E2E_OWNER_CODE is required");
@@ -83,6 +86,65 @@ async function removePostUpgradeProposalRows(jobId: string) {
   finally { await client.end(); }
 }
 
+async function submitProposalOnlyBatch(projectId: string) {
+  const { client, config } = await disposableAdmin();
+  const installed = JSON.parse(await readFile(`${rehearsalRoot}/protected/config/work-intake.json`, "utf8"));
+  const identityId = installed.principal.identityId;
+  const proposal = { schema: "control-room.work-batch-proposal/v1", projectId, tasks: [{ localId: "build",
+    title: "Machine-only proposed batch", instructions: "Remain a proposal for this boundary check.",
+    requiredCapability: "code.change", role: "builder", acceptanceCriteria: "No ordinary task exists.",
+    acceptanceTests: "Owner task surface stays unchanged." }], edges: [] };
+  try {
+    const before = (await client.query<{ requests: string; workflows: string; jobs: string; tasks: string; queue: string }>(`SELECT
+      (SELECT count(*)::text FROM control_requests) requests,
+      (SELECT count(*)::text FROM control_workflows) workflows,
+      (SELECT count(*)::text FROM control_jobs) jobs,
+      (SELECT count(*)::text FROM work_items) tasks,
+      (SELECT count(*)::text FROM control_room_queue.job) queue`)).rows[0]!;
+    await client.query(`INSERT INTO control_identities(id,tenant_id,actor_type,display_name,auth_provider,
+      auth_subject_digest,state,created_at,updated_at) VALUES($1,$2,'agent','Browser journey proposer',
+      'work-intake',$3,'active',clock_timestamp(),clock_timestamp()) ON CONFLICT(tenant_id,id) DO NOTHING`,
+    [identityId, config.localOwnerSession.tenantId, `sha256:${"1".repeat(64)}`]);
+    await client.query(`INSERT INTO control_role_grants(id,tenant_id,identity_id,role_key,allowed_actions,project_ids,
+      risk_ceiling,allow_external_effects,require_strong_factor,created_at,updated_at)
+      VALUES('grant:browser-journey-proposer',$1,$2,'work_batch_proposer','["work_batches.propose"]',$3::jsonb,
+      'low',false,false,clock_timestamp(),clock_timestamp()) ON CONFLICT(tenant_id,id) DO NOTHING`,
+    [config.localOwnerSession.tenantId, identityId, JSON.stringify([projectId])]);
+    const envelope = JSON.stringify({ idempotencyKey: "browser-machine-intake-0001", proposal });
+    const origin = `http://127.0.0.1:${installed.port}`;
+    const headers = { authorization: `Bearer ${installed.bearerSecret}`, "content-type": "application/json" };
+    const submitted = await fetch(`${origin}/v1/projects/${encodeURIComponent(projectId)}/work-batches`,
+      { method: "POST", headers, body: envelope });
+    expect(submitted.status).toBe(202);
+    const receipt = (await submitted.json()).result;
+    expect(receipt).toMatchObject({ projectId, state: "proposed", proposalDigest: workBatchProposalDigestV1(proposal),
+      revision: 1, replayed: false, startsWork: false, grantsExecutionAuthority: false });
+    const replay = await fetch(`${origin}/v1/projects/${encodeURIComponent(projectId)}/work-batches`,
+      { method: "POST", headers, body: envelope });
+    expect(replay.status).toBe(202);
+    expect((await replay.json()).result.replayed).toBe(true);
+    const status = await fetch(`${origin}/v1/projects/${encodeURIComponent(projectId)}/work-batches/${encodeURIComponent(receipt.batchId)}`,
+      { headers: { authorization: `Bearer ${installed.bearerSecret}` } });
+    expect(status.status, "status reread must verify the stored digest and HMAC").toBe(200);
+    const durable = (await client.query<{ revisions: string; proposes: string; replays: string }>(`SELECT
+      (SELECT count(*)::text FROM work_batch_revisions WHERE tenant_id=$1 AND batch_id=$2) revisions,
+      (SELECT count(*)::text FROM audit_events WHERE tenant_id=$1 AND target_id=$2 AND action='work_batches.propose') proposes,
+      (SELECT count(*)::text FROM audit_events WHERE tenant_id=$1 AND target_id=$2 AND action='work_batches.propose.replayed') replays`,
+    [config.localOwnerSession.tenantId, receipt.batchId])).rows[0]!;
+    expect(durable).toEqual({ revisions: "1", proposes: "1", replays: "1" });
+    const audit = await new AuditStore(client as unknown as DatabaseClient).verify(config.localOwnerSession.tenantId,
+      auditPartition(installed.principal.authenticatedAt));
+    expect(audit.valid, "the real proposal and replay must preserve the audit chain").toBe(true);
+    const after = (await client.query<{ requests: string; workflows: string; jobs: string; tasks: string; queue: string }>(`SELECT
+      (SELECT count(*)::text FROM control_requests) requests,
+      (SELECT count(*)::text FROM control_workflows) workflows,
+      (SELECT count(*)::text FROM control_jobs) jobs,
+      (SELECT count(*)::text FROM work_items) tasks,
+      (SELECT count(*)::text FROM control_room_queue.job) queue`)).rows[0]!;
+    expect(after, "a proposal-only batch cannot create an ordinary task, workflow, job, or queue item").toEqual(before);
+  } finally { await client.end(); }
+}
+
 async function waitForLatestDisposableLeaseExpiry(jobId: string) {
   const { client, config } = await disposableAdmin();
   let waitMs = -1;
@@ -124,7 +186,16 @@ test("owner completes the real local website journey for every configured worker
   await page.getByRole("button", { name: "Create project" }).click();
   await expect(page.getByRole("heading", { name: "Owner browser journey" })).toBeVisible();
   const projectPath = new URL(page.url()).pathname;
+  const projectId = decodeURIComponent(projectPath.split("/").at(-1)!);
   await expect(page.getByRole("link", { name: "New task" })).toBeVisible();
+
+  const browserMachineBoundary = await page.evaluate(async ({ projectId }) => (await fetch(
+    `/v1/projects/${encodeURIComponent(projectId)}/work-batches`, { method: "POST",
+      headers: { "content-type": "application/json" }, body: "{}" })).status, { projectId });
+  expect(browserMachineBoundary, "the owner website must not expose the machine-intake route").toBe(404);
+  await submitProposalOnlyBatch(projectId);
+  await page.goto(`${projectPath}/tasks`);
+  await expect(page.getByText("Machine-only proposed batch")).toHaveCount(0);
 
   await createPreparedTask(page, projectPath, "Hermes browser task", "Hermes Agent", true, true, true);
   await openResult(page);

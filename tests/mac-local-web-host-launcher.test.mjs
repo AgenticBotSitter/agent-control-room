@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { parseMacLocalWebHostArguments, readPinnedMacExecutableVersion, startMacLocalTaskHost,
-  verifyPinnedMacModelPolicy } from "../scripts/mac-local/start-web-host.mjs";
+  startMacLocalWebHost, verifyPinnedMacModelPolicy } from "../scripts/mac-local/start-web-host.mjs";
 
 test("Mac local web host launcher accepts only the owner-attended fixed protected root", () => {
   assert.deepEqual(parseMacLocalWebHostArguments(["--owner-attended", "--protected-root", "/Library/Application Support/Agent Control Room"]),
@@ -37,6 +37,32 @@ test("startup validates an explicit model allowlist against the pinned CLI surfa
   assert.equal(await verifyPinnedMacModelPolicy(worker, { execFile: async (_path, args) => ({
     stdout: args[0] === "debug" ? "different-model\n" : "--model\n",
   }) }), false);
+});
+
+test("web host validates and prepares optional intake before listeners and cleans a partial start", async () => {
+  const calls = [];
+  const load = async path => {
+    const name = path.split("/").at(-1);
+    if (name === "macLocalProtectedLoader.js") return {
+      async loadWorkIntakeInstalledConfigurationFromRootV1() { calls.push("load-intake"); return {
+        port: 3211, bearerSecret: "x".repeat(43), integrityKey: "y".repeat(43), database: {}, principal: {} }; },
+      async loadMacLocalProtectedConfigurationFromRootV1() { return {}; },
+    };
+    if (name === "macLocalHost.js") return { createMacLocalProtectedHostV1() { calls.push("prepare-web"); return {
+      async start() { calls.push("start-web"); return { async close() { calls.push("close-web"); } }; },
+    }; } };
+    if (name === "workIntakePrivateService.js") return { async prepareWorkIntakePrivateServiceV1() {
+      calls.push("prepare-intake"); return { async start() { calls.push("start-intake"); throw new Error("fixture"); },
+        async close() { calls.push("close-intake"); } };
+    } };
+    if (name === "privatePostgres.js") return { createPrivatePostgresDatabase() {} };
+    if (name === "serving.js") return { async loadPrivateClientAssets() { return {}; } };
+    if (name === "index.js") return { default() {} };
+    throw new Error(`unexpected ${name}`);
+  };
+  await assert.rejects(startMacLocalWebHost({ protectedRoot: "/protected" }, { load }), /fixture/);
+  assert.deepEqual(calls, ["load-intake", "prepare-web", "prepare-intake", "start-web", "start-intake",
+    "close-intake", "close-web"]);
 });
 
 test("task host requires the fixed release provider and does not accept a caller callback", async () => {

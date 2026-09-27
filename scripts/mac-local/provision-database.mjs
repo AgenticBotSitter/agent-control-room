@@ -32,12 +32,14 @@ import { privatePostgresOptions, validatePrivatePostgresConfiguration } from "..
 import { macGrantCatalogSqlV1, macRolePlan } from "./database-upgrade-grants.mjs";
 import { planMacDatabaseUpgradeSnapshotV1 } from "./database-upgrade-remote.mjs";
 import { checkedPostgresScramVerifierV1, postgresScramVerifierV1 } from "./database-upgrade-scram.mjs";
+import { captureWorkIntakeInstalledConfigurationV1, WORK_INTAKE_INSTALLED_CONFIGURATION_V1 } from
+  "../../src/work-intake/v1/installed-configuration";
 
 const exec = promisify(execFile);
 const roleNames = Object.freeze({ web: "control_room_web", coordinator: "control_room_coordinator",
   results: "control_room_results", publisher: "control_room_publisher", queueWorker: "control_room_queue_worker" });
 const bootstrapRoles = Object.freeze({ migrator: "control_room_migrator", application: "control_room_app",
-  scheduler: "control_room_scheduler" });
+  scheduler: "control_room_scheduler", workIntake: "control_room_work_intake_agent" });
 const passwordPattern = /^[A-Za-z0-9_-]{32,}$/u;
 const privateMode = 0o700;
 const privateFileMode = 0o600;
@@ -289,14 +291,17 @@ const migrateTarget = 'host=127.0.0.1 port=5432 dbname=control_room user=control
 process.stderr.write('provision_stage:bootstrap-passwords\n');
 const bootstrap = connectTarget(bootstrapTarget); await bootstrap.connect();
 try {
-  for (const [name, password] of Object.entries({ control_room_migrator: value.migrator, control_room_app: value.application, control_room_scheduler: value.scheduler }))
+  for (const [name, password] of Object.entries({ control_room_migrator: value.migrator,
+    control_room_app: value.application, control_room_scheduler: value.scheduler,
+    control_room_work_intake_agent: value.workIntake }))
     await bootstrap.query('ALTER ROLE ' + name + ' PASSWORD ' + bootstrap.escapeLiteral(password));
 } finally { await bootstrap.end(); }
 process.stderr.write('provision_stage:migrations\n');
 await applyMigrations({ bootstrapTarget, migrateTarget, env: {
   CONTROL_ROOM_MIGRATOR_PASSWORD: value.migrator,
   CONTROL_ROOM_APP_PASSWORD: value.application,
-  CONTROL_ROOM_SCHEDULER_PASSWORD: value.scheduler
+  CONTROL_ROOM_SCHEDULER_PASSWORD: value.scheduler,
+  CONTROL_ROOM_WORK_INTAKE_PASSWORD: value.workIntake
 }});
 const client = connectTarget(bootstrapTarget); await client.connect();
 try {
@@ -557,6 +562,16 @@ export function captureProvisionedMacLocalConfigurationV1({ database, ownerCode,
   return macLocal;
 }
 
+export function prepareProvisionedWorkIntakeConfigurationV1({ database, bearerSecret, integrityKey, now }) {
+  const authenticatedAt = new Date(now);
+  if (!Number.isFinite(authenticatedAt.getTime())) throw new Error("work_intake_provision_time_invalid");
+  const expiresAt = new Date(authenticatedAt.getTime() + 365 * 24 * 60 * 60 * 1000).toISOString();
+  return captureWorkIntakeInstalledConfigurationV1({ schema: WORK_INTAKE_INSTALLED_CONFIGURATION_V1, port: 3211,
+    database, bearerSecret, integrityKey, queueDepthLimit: 10,
+    principal: { tenantId: "tenant:mac-local", identityId: "identity:work-intake-agent", actorType: "agent",
+      authenticatedAt: authenticatedAt.toISOString(), expiresAt } });
+}
+
 export async function provisionMacLocalDatabaseV1(options) {
   if (options.repointOnly) return repointOnly(options);
   const protectedRoot = requireAbsolute(options.protectedRoot, "provision_protected_root_required");
@@ -580,6 +595,7 @@ export async function provisionMacLocalDatabaseV1(options) {
   if (options.vpsOnly) {
     if (!options.dryRun) await runRemoteProvision({ sshTarget: options.sshTarget, remoteWorktree: options.remoteWorktree,
       passwords: { migrator: allPasswords.migrator, application: allPasswords.application, scheduler: allPasswords.scheduler,
+        workIntake: allPasswords.workIntake,
         local: Object.fromEntries(Object.entries(roleNames).map(([key, name]) => [name, allPasswords[key]])) } });
     return Object.freeze({ provisioned: !options.dryRun, protectedRoot, workers: [] });
   }
@@ -590,6 +606,7 @@ export async function provisionMacLocalDatabaseV1(options) {
   }));
   if (!options.dryRun) await runRemoteProvision({ sshTarget: options.sshTarget, remoteWorktree: options.remoteWorktree,
     passwords: { migrator: allPasswords.migrator, application: allPasswords.application, scheduler: allPasswords.scheduler,
+      workIntake: allPasswords.workIntake,
       local: Object.fromEntries(Object.entries(roleNames).map(([key, name]) => [name, allPasswords[key]])) } });
   const database = Object.freeze({ host: databaseHost, port: databasePort, database: "control_room", username: roleNames.web,
     password: allPasswords.web, majorVersion: 17, ...(endpoint ? { privateEndpoint: endpoint } : {}) });
@@ -598,9 +615,13 @@ export async function provisionMacLocalDatabaseV1(options) {
     results: role(roleNames.results), publisher: role(roleNames.publisher), queueWorker: role(roleNames.queueWorker) });
   const ownerCode = await privateText(join(configRoot, "owner-sign-in.txt"), newPassword);
   const macLocal = captureProvisionedMacLocalConfigurationV1({ database, ownerCode, workers });
+  const workIntake = prepareProvisionedWorkIntakeConfigurationV1({
+    database: { ...database, username: bootstrapRoles.workIntake, password: allPasswords.workIntake },
+    bearerSecret: newPassword(), integrityKey: randomBytes(32).toString("base64url"), now: new Date().toISOString() });
   if (!options.dryRun) {
     await writePrivate(join(configRoot, "database-roles.json"), `${JSON.stringify(roles)}\n`);
     await writePrivate(join(configRoot, "mac-local.json"), `${JSON.stringify(macLocal)}\n`);
+    await writePrivate(join(configRoot, "work-intake.json"), `${JSON.stringify(workIntake)}\n`);
   }
   return Object.freeze({ provisioned: !options.dryRun, protectedRoot, workers: workers.map(worker => worker.kind) });
 }

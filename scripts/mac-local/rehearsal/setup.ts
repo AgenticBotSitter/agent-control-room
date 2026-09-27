@@ -16,6 +16,8 @@ import { captureMacLocalDatabaseRolesV1, MAC_LOCAL_DATABASE_ROLES_V1 } from "../
 import { LOCAL_OWNER_SESSION_PROFILE_V1 } from "../../../src/web/v1/local-owner-session";
 import { OWNER_TRUSTED_LOCAL_ENABLEMENT_V1 } from "../../../src/harness/v1/owner-trusted-local-enablements";
 import { readPinnedMacExecutableVersion } from "../start-web-host.mjs";
+import { captureWorkIntakeInstalledConfigurationV1, WORK_INTAKE_INSTALLED_CONFIGURATION_V1 } from
+  "../../../src/work-intake/v1/installed-configuration";
 
 const [action, dir] = process.argv.slice(2);
 const portIndex = process.argv.indexOf("--port");
@@ -24,7 +26,7 @@ const webPortIndex = process.argv.indexOf("--web-port");
 const webPort = webPortIndex === -1 ? 3217 : Number(process.argv[webPortIndex + 1]);
 const fakeExecutables = process.argv.includes("--fake-executables");
 if (!["up", "down"].includes(action) || !dir || !isAbsolute(dir) || !Number.isInteger(port)
-  || !Number.isInteger(webPort) || webPort < 1024 || webPort > 65535 || webPort === port) {
+  || !Number.isInteger(webPort) || webPort < 1024 || webPort > 65534 || webPort === port || webPort + 1 === port) {
   console.error("usage: pnpm mac:rehearsal up|down ABSOLUTE_DIR [--port 15499] [--web-port 3217] [--fake-executables]");
   process.exit(2);
 }
@@ -88,7 +90,7 @@ try {
 execFileSync(pgExecutable("psql"), ["-h", "127.0.0.1", "-p", String(port), "-U", "postgres", "-d", "postgres", "-v", "dbname=control_room",
   "-f", fileURLToPath(new URL("../../../deploy/postgres/provision-database.sql", import.meta.url))], bounded);
 const pw = () => randomBytes(24).toString("base64url");
-const secrets = { migrator: pw(), application: pw(), scheduler: pw() };
+const secrets = { migrator: pw(), application: pw(), scheduler: pw(), workIntake: pw() };
 const local: Record<string, string> = { control_room_web: pw(), control_room_coordinator: pw(), control_room_results: pw(), control_room_publisher: pw(), control_room_queue_worker: pw() };
 const bootstrapTarget = `host=127.0.0.1 port=${port} dbname=control_room user=postgres`;
 await applyMigrations({ target: bootstrapTarget, rootDir: process.cwd(),
@@ -96,7 +98,8 @@ await applyMigrations({ target: bootstrapTarget, rootDir: process.cwd(),
   bootstrapTarget,
   migrateTarget: `host=127.0.0.1 port=${port} dbname=control_room user=control_room_migrator password=${secrets.migrator}`,
   env: { NODE_ENV: "test", CONTROL_ROOM_MIGRATOR_PASSWORD: secrets.migrator,
-    CONTROL_ROOM_APP_PASSWORD: secrets.application, CONTROL_ROOM_SCHEDULER_PASSWORD: secrets.scheduler } });
+    CONTROL_ROOM_APP_PASSWORD: secrets.application, CONTROL_ROOM_SCHEDULER_PASSWORD: secrets.scheduler,
+    CONTROL_ROOM_WORK_INTAKE_PASSWORD: secrets.workIntake } });
 const psql = (database: string, file: string) => execFileSync(pgExecutable("psql"), ["-h", "127.0.0.1", "-p", String(port), "-U", "postgres", "-d", database,
   "-v", "ON_ERROR_STOP=1", "-f", fileURLToPath(new URL(file, import.meta.url))], bounded);
 // Match the reviewed package-5 sequence against this fresh disposable cluster.
@@ -170,7 +173,14 @@ const macLocal = { schema: MAC_LOCAL_PROTECTED_CONFIGURATION_V1, port: webPort, 
     provider: "local-owner", subject: "owner:local", ownerCodeDigest: sha256Digest({ ownerCode }), sessionSeconds: 28_800 },
   database, enablement: { schema: OWNER_TRUSTED_LOCAL_ENABLEMENT_V1, mode: "mac-local", nodeId: "mac-1", workers } };
 captureMacLocalProtectedConfigurationV1(JSON.parse(JSON.stringify(macLocal)));
-for (const [file, body] of [["mac-local.json", JSON.stringify(macLocal)], ["database-roles.json", JSON.stringify(roles)], ["owner-sign-in.txt", ownerCode]])
+const authenticatedAt = new Date(), expiresAt = new Date(authenticatedAt.getTime() + 8 * 60 * 60 * 1000);
+const workIntake = captureWorkIntakeInstalledConfigurationV1({ schema: WORK_INTAKE_INSTALLED_CONFIGURATION_V1,
+  port: webPort + 1, database: { ...database, username: "control_room_work_intake_agent", password: secrets.workIntake },
+  bearerSecret: randomBytes(32).toString("base64url"), integrityKey: randomBytes(32).toString("base64url"), queueDepthLimit: 10,
+  principal: { tenantId: "tenant:mac-local", identityId: "identity:work-intake-agent", actorType: "agent",
+    authenticatedAt: authenticatedAt.toISOString(), expiresAt: expiresAt.toISOString() } });
+for (const [file, body] of [["mac-local.json", JSON.stringify(macLocal)], ["database-roles.json", JSON.stringify(roles)],
+  ["work-intake.json", JSON.stringify(workIntake)], ["owner-sign-in.txt", ownerCode]])
   writeFileSync(join(config, file), `${body}\n`, { mode: 0o600 });
 console.log(`rehearsal database ready on 127.0.0.1:${port}; protected root ${root}`);
 console.log(`next: pnpm mac:bootstrap-owner ${root} && pnpm mac:check-database ${root}`);
