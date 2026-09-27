@@ -27,6 +27,13 @@ test("ready review evidence displays accepted only for the same received artifac
     contentHash: `sha256:${"b".repeat(64)}` }] })).qualityStatus, undefined);
 });
 
+test("changes-requested review stays separate from the completed execution display", () => {
+  const projected = projectTaskDisplayStateV1(task("leased"), evidence({ reviews: [{ status: "changes_requested",
+    contentHash: hash, matchingArtifactIds: ["artifact:result"] }] }));
+  assert.equal(projected.state, "succeeded");
+  assert.equal(projected.qualityStatus, undefined);
+});
+
 test("missing, stale-attempt, nonterminal, and partial evidence fail closed", () => {
   const cases: TaskDisplayEvidenceV1[] = [
     evidence({ latestAttemptOutcome: undefined }),
