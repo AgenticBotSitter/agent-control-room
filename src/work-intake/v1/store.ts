@@ -37,7 +37,7 @@ export class WorkBatchStoreV1 {
       return { allowed: false, safeReasonCode: "credential_inactive" };
     const rows = (await tx.query<{ id: string; role_key: string; allowed_actions: string[]; project_ids: string[];
       risk_ceiling: RoleGrant["riskCeiling"]; allow_external_effects: boolean; require_strong_factor: boolean;
-      expires_at?: string; revoked_at?: string }>(`SELECT id,role_key,allowed_actions,project_ids,risk_ceiling,
+      expires_at?: string | Date; revoked_at?: string | Date }>(`SELECT id,role_key,allowed_actions,project_ids,risk_ceiling,
         allow_external_effects,require_strong_factor,expires_at,revoked_at FROM control_role_grants
         WHERE tenant_id=$1 AND identity_id=$2 FOR SHARE`, [principal.tenantId, principal.identityId])).rows;
     const grants = rows.filter(row => row.role_key === "work_batch_proposer"
@@ -46,7 +46,8 @@ export class WorkBatchStoreV1 {
       && row.require_strong_factor === false).map(row => ({ id: row.id,
       allowedActions: row.allowed_actions, projectIds: row.project_ids, riskCeiling: row.risk_ceiling,
       allowExternalEffects: row.allow_external_effects, requireStrongFactor: row.require_strong_factor,
-      expiresAt: row.expires_at, revokedAt: row.revoked_at }));
+      expiresAt: row.expires_at instanceof Date ? row.expires_at.toISOString() : row.expires_at,
+      revokedAt: row.revoked_at instanceof Date ? row.revoked_at.toISOString() : row.revoked_at }));
     const decision = evaluatePolicy(principal, grants, { tenantId: principal.tenantId, action,
       resourceType: "project", resourceId: projectId, projectId, risk: "low", externalEffect: false, occurredAt: now });
     return decision.allowed ? { allowed: true, workspaceId: project.workspace_id }

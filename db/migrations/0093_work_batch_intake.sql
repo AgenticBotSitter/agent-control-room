@@ -94,6 +94,264 @@ CREATE TRIGGER work_batch_revisions_append_only BEFORE UPDATE OR DELETE ON work_
 CREATE TRIGGER work_batch_revisions_truncate_guard BEFORE TRUNCATE ON work_batch_revisions
   FOR EACH STATEMENT EXECUTE FUNCTION reject_append_only_mutation();
 
+-- The production intake login uses shared idempotency and audit ledgers. Keep
+-- its raw table privileges inside the proposal-only namespace even if the
+-- process holding that login is compromised. Membership is derived from
+-- session_user so SET ROLE cannot turn the login-level boundary off and a
+-- future login granted the same group cannot bypass it.
+CREATE FUNCTION guard_work_intake_idempotency_write() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_roles r WHERE r.rolname='control_room_work_intake'
+    AND pg_has_role(session_user,r.oid,'member')) THEN
+    RETURN NEW;
+  END IF;
+  IF TG_OP='INSERT' THEN
+    IF NEW.operation_scope !~ '^work-batches\.propose/v1:[A-Za-z0-9][A-Za-z0-9._:-]{2,179}$'
+      OR NEW.status<>'processing' OR NEW.result IS NOT NULL OR NEW.completed_at IS NOT NULL
+      OR NOT EXISTS (
+        SELECT 1 FROM control_identities i JOIN control_role_grants g
+          ON g.tenant_id=i.tenant_id AND g.identity_id=i.id
+        WHERE i.tenant_id=NEW.tenant_id
+          AND i.id=substring(NEW.operation_scope from '^work-batches\.propose/v1:(.+)$')
+          AND i.actor_type='agent' AND i.state='active'
+          AND g.role_key='work_batch_proposer'
+          AND g.allowed_actions='["work_batches.propose"]'::jsonb
+          AND g.risk_ceiling='low' AND NOT g.allow_external_effects AND NOT g.require_strong_factor
+          AND (g.revoked_at IS NULL OR g.revoked_at>statement_timestamp())
+          AND (g.expires_at IS NULL OR g.expires_at>statement_timestamp())
+      ) THEN
+      RAISE EXCEPTION 'work intake idempotency insert rejected';
+    END IF;
+  ELSIF OLD.operation_scope !~ '^work-batches\.propose/v1:[A-Za-z0-9][A-Za-z0-9._:-]{2,179}$'
+    OR NEW.tenant_id IS DISTINCT FROM OLD.tenant_id
+    OR NEW.operation_scope IS DISTINCT FROM OLD.operation_scope
+    OR NEW.idempotency_key IS DISTINCT FROM OLD.idempotency_key
+    OR NEW.request_digest IS DISTINCT FROM OLD.request_digest
+    OR OLD.status<>'processing' OR OLD.result IS NOT NULL OR OLD.completed_at IS NOT NULL
+    OR NEW.status<>'completed' OR NEW.completed_at IS NULL
+    OR jsonb_typeof(NEW.result)<>'object'
+    OR NEW.result->>'schema'<>'control-room.work-batch-receipt/v1'
+    OR NEW.result->>'state'<>'proposed'
+    OR NEW.result->>'startsWork'<>'false'
+    OR NEW.result->>'grantsExecutionAuthority'<>'false'
+    OR NEW.result->>'replayed'<>'false'
+    OR (SELECT count(*) FROM jsonb_object_keys(NEW.result))<>9
+    OR NOT EXISTS (
+      SELECT 1 FROM work_batches b
+      WHERE b.tenant_id=NEW.tenant_id AND b.id=NEW.result->>'batchId'
+        AND b.project_id=NEW.result->>'projectId' AND b.state='proposed'
+        AND b.proposed_by_identity_id=substring(NEW.operation_scope from '^work-batches\.propose/v1:(.+)$')
+        AND b.batch_digest=NEW.result->>'proposalDigest'
+        AND b.version=(NEW.result->>'revision')::bigint
+    ) THEN
+    RAISE EXCEPTION 'work intake idempotency update rejected';
+  END IF;
+  RETURN NEW;
+END $$;
+REVOKE ALL ON FUNCTION guard_work_intake_idempotency_write() FROM PUBLIC;
+CREATE TRIGGER control_idempotency_work_intake_guard
+  BEFORE INSERT OR UPDATE ON control_idempotency
+  FOR EACH ROW EXECUTE FUNCTION guard_work_intake_idempotency_write();
+
+ALTER TABLE control_idempotency ENABLE ROW LEVEL SECURITY;
+CREATE POLICY control_idempotency_existing_access ON control_idempotency
+  AS PERMISSIVE FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY control_idempotency_work_intake_scope ON control_idempotency
+  AS RESTRICTIVE FOR ALL
+  USING (NOT EXISTS (SELECT 1 FROM pg_roles r WHERE r.rolname='control_room_work_intake'
+      AND pg_has_role(session_user,r.oid,'member'))
+    OR operation_scope ~ '^work-batches\.propose/v1:[A-Za-z0-9][A-Za-z0-9._:-]{2,179}$')
+  WITH CHECK (NOT EXISTS (SELECT 1 FROM pg_roles r WHERE r.rolname='control_room_work_intake'
+      AND pg_has_role(session_user,r.oid,'member'))
+    OR operation_scope ~ '^work-batches\.propose/v1:[A-Za-z0-9][A-Za-z0-9._:-]{2,179}$');
+
+CREATE FUNCTION work_intake_canonical_jsonb(input jsonb) RETURNS text
+LANGUAGE plpgsql IMMUTABLE AS $$
+DECLARE kind text := jsonb_typeof(input); rendered text;
+BEGIN
+  IF kind IN ('null','boolean','number','string') THEN RETURN input::text; END IF;
+  IF kind='array' THEN
+    SELECT '[' || coalesce(string_agg(work_intake_canonical_jsonb(value),',' ORDER BY ordinal),'') || ']'
+      INTO rendered FROM jsonb_array_elements(input) WITH ORDINALITY AS item(value,ordinal);
+    RETURN rendered;
+  END IF;
+  IF kind='object' THEN
+    SELECT '{' || coalesce(string_agg(to_jsonb(key)::text || ':' || work_intake_canonical_jsonb(value),',' ORDER BY key),'') || '}'
+      INTO rendered FROM jsonb_each(input) AS item(key,value);
+    RETURN rendered;
+  END IF;
+  RAISE EXCEPTION 'work intake canonical JSON rejected';
+END $$;
+REVOKE ALL ON FUNCTION work_intake_canonical_jsonb(jsonb) FROM PUBLIC;
+
+CREATE FUNCTION guard_work_intake_audit_event_insert() RETURNS trigger
+LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,public AS $$
+DECLARE material jsonb; expected_digest text; expected_hash text;
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_roles r WHERE r.rolname='control_room_work_intake'
+    AND pg_has_role(session_user,r.oid,'member')) THEN
+    RETURN NEW;
+  END IF;
+  IF NEW.id !~ '^audit:work-intake[-:]' OR NEW.actor_type<>'agent'
+    OR NEW.project_id IS NULL OR NEW.chain_version<>1
+    OR NEW.chain_sequence<1 OR NOT EXISTS (
+      SELECT 1 FROM control_audit_chain_heads h
+      WHERE h.tenant_id=NEW.tenant_id AND h.chain_partition=NEW.chain_partition
+        AND h.event_count=NEW.chain_sequence-1 AND h.head_hash=NEW.prev_hash
+    )
+    OR NOT coalesce((
+      (NEW.action IN ('work_batches.propose','work_batches.propose.replayed')
+        AND NEW.target_type='work_batch' AND NEW.target_id LIKE 'batch:%')
+      OR (NEW.action IN ('work_batches.propose.refused','work_batches.action.refused')
+        AND NEW.target_type='project' AND NEW.target_id=NEW.project_id)
+    ),false)
+    OR NOT coalesce((
+      (NEW.action='work_batches.propose' AND jsonb_typeof(NEW.safe_metadata)='object'
+        AND (SELECT count(*) FROM jsonb_object_keys(NEW.safe_metadata))=3
+        AND NEW.safe_metadata->>'proposalDigest' ~ '^sha256:[a-f0-9]{64}$'
+        AND jsonb_typeof(NEW.safe_metadata->'taskCount')='number'
+        AND jsonb_typeof(NEW.safe_metadata->'edgeCount')='number'
+        AND (NEW.safe_metadata->>'taskCount')::integer BETWEEN 1 AND 32
+        AND (NEW.safe_metadata->>'edgeCount')::integer BETWEEN 0 AND 64)
+      OR (NEW.action='work_batches.propose.replayed' AND jsonb_typeof(NEW.safe_metadata)='object'
+        AND (SELECT count(*) FROM jsonb_object_keys(NEW.safe_metadata))=1
+        AND NEW.safe_metadata->>'proposalDigest' ~ '^sha256:[a-f0-9]{64}$')
+      OR (NEW.action='work_batches.propose.refused' AND jsonb_typeof(NEW.safe_metadata)='object'
+        AND (SELECT count(*) FROM jsonb_object_keys(NEW.safe_metadata))=1
+        AND NEW.safe_metadata->>'reasonCode' ~ '^[a-z][a-z0-9_]{2,63}$')
+      OR (NEW.action='work_batches.action.refused' AND jsonb_typeof(NEW.safe_metadata)='object'
+        AND (SELECT count(*) FROM jsonb_object_keys(NEW.safe_metadata))=2
+        AND NEW.safe_metadata->>'reasonCode' ~ '^[a-z][a-z0-9_]{2,63}$'
+        AND NEW.safe_metadata->>'requestedAction' ~ '^[a-z][a-z0-9_.]{2,127}$')
+    ),false)
+    OR (NEW.action IN ('work_batches.propose','work_batches.propose.replayed') AND NOT EXISTS (
+      SELECT 1 FROM work_batches b WHERE b.tenant_id=NEW.tenant_id AND b.id=NEW.target_id
+        AND b.project_id=NEW.project_id AND b.proposed_by_identity_id=NEW.actor_id
+    ))
+    OR NOT EXISTS (
+      SELECT 1 FROM projects p
+      JOIN control_identities i ON i.tenant_id=p.tenant_id AND i.id=NEW.actor_id
+      JOIN control_role_grants g ON g.tenant_id=i.tenant_id AND g.identity_id=i.id
+      WHERE p.tenant_id=NEW.tenant_id AND p.id=NEW.project_id
+        AND (NEW.workspace_id IS NULL OR NEW.workspace_id=p.workspace_id)
+        AND i.actor_type='agent'
+        AND g.role_key='work_batch_proposer'
+        AND g.allowed_actions='["work_batches.propose"]'::jsonb
+        AND g.risk_ceiling='low' AND NOT g.allow_external_effects AND NOT g.require_strong_factor
+        AND (NEW.action IN ('work_batches.propose.refused','work_batches.action.refused') OR (
+          i.state='active'
+          AND (g.project_ids @> to_jsonb(ARRAY[NEW.project_id]::text[]) OR g.project_ids @> '["*"]'::jsonb)
+          AND (g.revoked_at IS NULL OR g.revoked_at>statement_timestamp())
+          AND (g.expires_at IS NULL OR g.expires_at>statement_timestamp())
+        ))
+    ) THEN
+    RAISE EXCEPTION 'work intake audit event insert rejected';
+  END IF;
+  material=jsonb_build_object('id',NEW.id,'tenantId',NEW.tenant_id,'workspaceId',NEW.workspace_id,
+    'projectId',NEW.project_id,'actorId',NEW.actor_id,'actorType',NEW.actor_type,'action',NEW.action,
+    'targetType',NEW.target_type,'targetId',NEW.target_id,'correlationId',NEW.correlation_id,
+    'idempotencyKey',NEW.idempotency_key,'safeMetadata',NEW.safe_metadata,
+    'occurredAt',to_char(NEW.occurred_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'));
+  expected_digest='sha256:' || encode(sha256(convert_to(work_intake_canonical_jsonb(material),'UTF8')),'hex');
+  expected_hash='sha256:' || encode(sha256(convert_to(work_intake_canonical_jsonb(jsonb_build_object(
+    'chainVersion',1,'partition',NEW.chain_partition,'sequence',NEW.chain_sequence,
+    'previousHash',NEW.prev_hash,'eventDigest',expected_digest)),'UTF8')),'hex');
+  IF NEW.event_digest<>expected_digest OR NEW.event_hash<>expected_hash THEN
+    RAISE EXCEPTION 'work intake audit hash rejected';
+  END IF;
+  RETURN NEW;
+END $$;
+REVOKE ALL ON FUNCTION guard_work_intake_audit_event_insert() FROM PUBLIC;
+CREATE TRIGGER audit_events_work_intake_guard BEFORE INSERT ON audit_events
+  FOR EACH ROW EXECUTE FUNCTION guard_work_intake_audit_event_insert();
+
+CREATE FUNCTION enforce_work_intake_audit_event_head() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles r WHERE r.rolname='control_room_work_intake'
+      AND pg_has_role(session_user,r.oid,'member')) AND NOT EXISTS (
+    SELECT 1 FROM control_audit_chain_heads h
+    WHERE h.tenant_id=NEW.tenant_id AND h.chain_partition=NEW.chain_partition
+      AND h.event_count>=NEW.chain_sequence
+  ) THEN
+    RAISE EXCEPTION 'work intake audit event committed without head advance';
+  END IF;
+  RETURN NULL;
+END $$;
+REVOKE ALL ON FUNCTION enforce_work_intake_audit_event_head() FROM PUBLIC;
+CREATE CONSTRAINT TRIGGER audit_events_work_intake_head_consistency
+  AFTER INSERT ON audit_events DEFERRABLE INITIALLY DEFERRED
+  FOR EACH ROW EXECUTE FUNCTION enforce_work_intake_audit_event_head();
+
+ALTER TABLE audit_events ENABLE ROW LEVEL SECURITY;
+CREATE POLICY audit_events_existing_access ON audit_events
+  AS PERMISSIVE FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY audit_events_work_intake_scope ON audit_events
+  AS RESTRICTIVE FOR ALL
+  USING (NOT EXISTS (SELECT 1 FROM pg_roles r WHERE r.rolname='control_room_work_intake'
+      AND pg_has_role(session_user,r.oid,'member'))
+    OR (id ~ '^audit:work-intake[-:]' AND action IN (
+      'work_batches.propose','work_batches.propose.replayed',
+      'work_batches.propose.refused','work_batches.action.refused')))
+  WITH CHECK (NOT EXISTS (SELECT 1 FROM pg_roles r WHERE r.rolname='control_room_work_intake'
+      AND pg_has_role(session_user,r.oid,'member'))
+    OR (id ~ '^audit:work-intake[-:]' AND action IN (
+      'work_batches.propose','work_batches.propose.replayed',
+      'work_batches.propose.refused','work_batches.action.refused')));
+
+CREATE FUNCTION guard_work_intake_audit_head_write() RETURNS trigger
+LANGUAGE plpgsql AS $$
+DECLARE genesis constant text := 'sha256:' || repeat('0',64);
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_roles r WHERE r.rolname='control_room_work_intake'
+    AND pg_has_role(session_user,r.oid,'member')) THEN
+    RETURN NEW;
+  END IF;
+  IF TG_OP='INSERT' THEN
+    IF NEW.head_hash<>genesis OR NEW.event_count<>0 THEN
+      RAISE EXCEPTION 'work intake audit head insert rejected';
+    END IF;
+  ELSIF NEW.tenant_id IS DISTINCT FROM OLD.tenant_id
+    OR NEW.chain_partition IS DISTINCT FROM OLD.chain_partition
+    OR NEW.event_count<>OLD.event_count+1
+    OR NOT EXISTS (
+      SELECT 1 FROM audit_events e
+      WHERE e.tenant_id=NEW.tenant_id AND e.chain_partition=NEW.chain_partition
+        AND e.chain_sequence=NEW.event_count AND e.prev_hash=OLD.head_hash
+        AND e.event_hash=NEW.head_hash AND e.id ~ '^audit:work-intake[-:]'
+        AND e.action IN ('work_batches.propose','work_batches.propose.replayed',
+          'work_batches.propose.refused','work_batches.action.refused')
+    ) THEN
+    RAISE EXCEPTION 'work intake audit head update rejected';
+  END IF;
+  RETURN NEW;
+END $$;
+REVOKE ALL ON FUNCTION guard_work_intake_audit_head_write() FROM PUBLIC;
+CREATE TRIGGER control_audit_chain_heads_work_intake_guard
+  BEFORE INSERT OR UPDATE ON control_audit_chain_heads
+  FOR EACH ROW EXECUTE FUNCTION guard_work_intake_audit_head_write();
+
+CREATE FUNCTION enforce_work_intake_audit_head_nonempty() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles r WHERE r.rolname='control_room_work_intake'
+      AND pg_has_role(session_user,r.oid,'member')) AND NOT EXISTS (
+    SELECT 1 FROM control_audit_chain_heads h JOIN audit_events e
+      ON e.tenant_id=h.tenant_id AND e.chain_partition=h.chain_partition
+      AND e.chain_sequence=h.event_count AND e.event_hash=h.head_hash
+    WHERE h.tenant_id=NEW.tenant_id AND h.chain_partition=NEW.chain_partition
+      AND h.event_count>=1
+  ) THEN
+    RAISE EXCEPTION 'work intake audit head committed without event';
+  END IF;
+  RETURN NULL;
+END $$;
+REVOKE ALL ON FUNCTION enforce_work_intake_audit_head_nonempty() FROM PUBLIC;
+CREATE CONSTRAINT TRIGGER control_audit_chain_heads_work_intake_nonempty
+  AFTER INSERT ON control_audit_chain_heads DEFERRABLE INITIALLY DEFERRED
+  FOR EACH ROW EXECUTE FUNCTION enforce_work_intake_audit_head_nonempty();
+
 -- A down migration is intentionally operator-authored and data refusing:
 -- it must first lock both tables and raise when work_batches contains any row.
 -- Production recovery never silently drops these records.

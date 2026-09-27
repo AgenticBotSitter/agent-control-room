@@ -11,6 +11,7 @@ export type MacLocalProtectedConfigurationV1 = Readonly<{
   localOwnerSession: LocalOwnerSessionProfileV1;
   database: PrivatePostgresConfiguration;
   enablement: OwnerTrustedLocalEnablementV1;
+  workIntakeProjectIds: readonly string[];
 }>;
 
 /**
@@ -24,16 +25,24 @@ export function captureMacLocalProtectedConfigurationV1(value: unknown): MacLoca
     if (!value || typeof value !== "object" || Array.isArray(value) || Object.getPrototypeOf(value) !== Object.prototype)
       throw new Error();
     const record = value as Record<string, unknown>;
-    const keys = ["schema", "port", "workspaceId", "localOwnerSession", "database", "enablement"];
-    if (Object.keys(record).length !== keys.length || keys.some(key => !(key in record)) || Object.keys(record).some(key => !keys.includes(key))
+    const requiredKeys = ["schema", "port", "workspaceId", "localOwnerSession", "database", "enablement"];
+    const keys = [...requiredKeys, "workIntakeProjectIds"];
+    const workIntakeProjectIds = record.workIntakeProjectIds ?? [];
+    if (requiredKeys.some(key => !(key in record)) || Object.keys(record).some(key => !keys.includes(key))
       || record.schema !== MAC_LOCAL_PROTECTED_CONFIGURATION_V1 || !Number.isSafeInteger(record.port)
       || (record.port as number) < 1 || (record.port as number) > 65535 || typeof record.workspaceId !== "string"
-      || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,179}$/.test(record.workspaceId)) throw new Error();
+      || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,179}$/.test(record.workspaceId)
+      || !Array.isArray(workIntakeProjectIds) || workIntakeProjectIds.length > 32
+      || workIntakeProjectIds.some(projectId => typeof projectId !== "string"
+        || !/^(?:\*|[A-Za-z0-9][A-Za-z0-9._:-]{0,179})$/.test(projectId))
+      || new Set(workIntakeProjectIds).size !== workIntakeProjectIds.length
+      || (workIntakeProjectIds.includes("*") && workIntakeProjectIds.length !== 1)) throw new Error();
     const localOwnerSession = captureLocalOwnerSessionProfileV1(record.localOwnerSession);
     if (new URL(localOwnerSession.origin).port !== String(record.port)) throw new Error();
     const database = validatePrivatePostgresConfiguration(record.database as PrivatePostgresConfiguration);
     const enablement = captureOwnerTrustedLocalEnablementV1(record.enablement);
     return Object.freeze({ schema: MAC_LOCAL_PROTECTED_CONFIGURATION_V1, port: record.port as number,
-      workspaceId: record.workspaceId, localOwnerSession, database, enablement });
+      workspaceId: record.workspaceId, localOwnerSession, database, enablement,
+      workIntakeProjectIds: Object.freeze([...(workIntakeProjectIds as string[])]) });
   } catch { throw new Error("mac_local_protected_configuration_invalid"); }
 }

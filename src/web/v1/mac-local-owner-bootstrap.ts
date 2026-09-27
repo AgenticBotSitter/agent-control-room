@@ -15,6 +15,9 @@ export const macLocalOwnerGrantIdV1 = (tenantId: string) => `grant:${tenantId}:o
 async function seedWorkIntakeRosterV1(tx:DatabaseSession,configuration:MacLocalProtectedConfigurationV1,now:string){
   if(!configuration.enablement?.workers)return;
   const tenantId=configuration.localOwnerSession.tenantId;
+  const projectIds=configuration.workIntakeProjectIds;
+  if(projectIds.length===0)return;
+  const projectIdsJson=JSON.stringify(projectIds);
   for(const worker of configuration.enablement.workers){
     const identityId=workIntakeIdentityIdV1(tenantId,worker.workerId);
     const suffix=identityId.slice("identity:work-intake:".length),grantId=`grant:work-intake:${suffix}`;
@@ -25,15 +28,15 @@ async function seedWorkIntakeRosterV1(tx:DatabaseSession,configuration:MacLocalP
       subjectDigest,now]);
     await tx.query(`INSERT INTO control_role_grants(id,tenant_id,identity_id,role_key,allowed_actions,project_ids,
       risk_ceiling,allow_external_effects,require_strong_factor,created_at,updated_at)
-      VALUES($1,$2,$3,'work_batch_proposer','["work_batches.propose"]','["*"]','low',false,false,$4,$4)
-      ON CONFLICT(tenant_id,id) DO NOTHING`,[grantId,tenantId,identityId,now]);
+      VALUES($1,$2,$3,'work_batch_proposer','["work_batches.propose"]',$4::jsonb,'low',false,false,$5,$5)
+      ON CONFLICT(tenant_id,id) DO NOTHING`,[grantId,tenantId,identityId,projectIdsJson,now]);
     const exact=(await tx.query<{valid:boolean}>(`SELECT i.state='active' AND i.actor_type='agent'
       AND i.auth_provider='work-intake' AND i.auth_subject_digest=$4
       AND g.role_key='work_batch_proposer' AND g.allowed_actions='["work_batches.propose"]'::jsonb
-      AND g.project_ids='["*"]'::jsonb AND g.risk_ceiling='low' AND NOT g.allow_external_effects
+      AND g.project_ids=$5::jsonb AND g.risk_ceiling='low' AND NOT g.allow_external_effects
       AND NOT g.require_strong_factor AND g.expires_at IS NULL AND g.revoked_at IS NULL AS valid FROM control_identities i
       JOIN control_role_grants g ON g.tenant_id=i.tenant_id AND g.identity_id=i.id
-      WHERE i.tenant_id=$1 AND i.id=$2 AND g.id=$3`,[tenantId,identityId,grantId,subjectDigest])).rows[0];
+      WHERE i.tenant_id=$1 AND i.id=$2 AND g.id=$3`,[tenantId,identityId,grantId,subjectDigest,projectIdsJson])).rows[0];
     if(exact?.valid!==true) throw new Error("mac_local_owner_bootstrap_conflict");
   }
 }

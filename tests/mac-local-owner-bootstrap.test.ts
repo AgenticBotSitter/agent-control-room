@@ -21,6 +21,7 @@ import { closePrivateOwnerBootstrapConformanceDatabase, conformanceNow,
 after(closePrivateOwnerBootstrapConformanceDatabase);
 
 const local = (tenantId: string, workspaceId: string) => ({ workspaceId,
+  workIntakeProjectIds: [],
   localOwnerSession: { tenantId, provider: "local-owner", subject: "owner:local" } }) as unknown as MacLocalProtectedConfigurationV1;
 const clock = () => conformanceNow;
 
@@ -116,4 +117,19 @@ test("bootstraps one unspendable identity per local worker and refuses remote fr
   await fixture.client.query("UPDATE control_nodes SET payload=jsonb_set(payload,'{softwareFingerprint}',to_jsonb($2::text)) WHERE id=$1",
     ["mac-1.codex", "sha256:" + "f".repeat(64)]);
   await assert.rejects(seedMacLocalNodeV1(fixture.client, config, clock), /mac_local_node_conflict/);
+});
+
+test("proposal grants use only the explicit protected project scope", async t => {
+  const fixture = await privateOwnerBootstrapFixture({ fresh: "mac-intake-scope" }); t.after(fixture.close);
+  const enablement = captureOwnerTrustedLocalEnablementV1({ schema: OWNER_TRUSTED_LOCAL_ENABLEMENT_V1,
+    mode: "mac-local", nodeId: "mac-1", workers: [
+      { workerId: "worker:codex", kind: "codex", executablePath: "/private/tmp/fixture-codex", recordedVersion: "fixture-version" },
+    ] });
+  const config = { ...local("tenant:mac-intake-scope", "workspace:mac-intake-scope"),
+    workIntakeProjectIds: ["project:allowed"], enablement };
+  await bootstrapMacLocalOwnerV1(fixture.client, config, clock);
+  const grants = await fixture.client.query<{project_ids:string[]}>(
+    "SELECT project_ids FROM control_role_grants WHERE tenant_id=$1 AND role_key='work_batch_proposer'",
+    ["tenant:mac-intake-scope"]);
+  assert.deepEqual(grants.rows.map(row=>row.project_ids), [["project:allowed"]]);
 });
