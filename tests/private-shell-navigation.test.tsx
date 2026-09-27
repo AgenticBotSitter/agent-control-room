@@ -6,9 +6,10 @@ import { renderToStaticMarkup } from "react-dom/server";
 import Home from "../private-app/app/page";
 import { HomeDashboard, HomeInstallationStatus, type HomeDashboardState } from "../private-app/app/home-workspace";
 import SettingsPage from "../private-app/app/settings/page";
-import { PrivateProjectWorkspace, ProjectAgentInstallationStatus } from "../private-app/app/workspace";
+import { OrdinaryProjectStatusActions, PrivateProjectWorkspace, ProjectAgentInstallationStatus } from "../private-app/app/workspace";
 import { ProjectCatalogNavigation } from "../app/components/project-catalog-navigation";
-import { createProjectBrowserClient } from "../src/web/v1/browser-client";
+import { browserErrorMessage, createProjectBrowserClient } from "../src/web/v1/browser-client";
+import { taskErrorMessage } from "../src/web/v1/task-browser-client";
 import { readTaskHomeActivity } from "../src/web/v1/task-home-browser-client";
 import { ProjectOverviewActivityView } from "../private-app/app/project-overview-activity";
 import { PrivateTaskResults, readTaskResultSelectionV1, taskResultHrefV1 } from "../private-app/app/task-results";
@@ -38,11 +39,20 @@ test("compiled route parameters decode exactly once before reaching browser clie
     assert.throws(() => decodePrivateRouteSegment(value), /private_route_segment_invalid/);
 });
 
+test("database-or-service failures explain the safe read-only next step", () => {
+  for (const message of [browserErrorMessage.unavailable, taskErrorMessage.unavailable]) {
+    assert.match(message, /saved .*database or service/i);
+    assert.match(message, /No .* (?:made|started|changed)/i);
+    assert.match(message, /Check saved/i);
+  }
+});
+
 test("home gives honest navigation to existing private workspace surfaces", () => {
   const html = renderToStaticMarkup(createElement(Home));
   // Before the browser identifies hosted versus Mac-local, server rendering
   // exposes only links shared by both. Hosted links hydrate after the read.
-  for (const href of ["/projects", "/workers", "/setup", "/needs-me"]) assert.match(html, new RegExp(`href="${href}"`));
+  for (const href of ["/projects", "/workers", "/needs-me"]) assert.match(html, new RegExp(`href="${href}"`));
+  assert.doesNotMatch(html, /href="\/setup"/);
   assert.doesNotMatch(html, /href="\/settings"/);
   assert.doesNotMatch(html, /href="\/ideas"/);
   assert.match(html, /aria-controls="private-workspace-navigation"/);
@@ -58,9 +68,9 @@ test("home gives honest navigation to existing private workspace surfaces", () =
   assert.doesNotMatch(html, /live workers|running now|0 tasks/i);
   for (const label of ["Loading saved work", "Loading saved attention items", "Loading verified result records",
     "Loading saved worker signals", "Loading saved projects"]) assert.match(html, new RegExp(label));
-  assert.match(html, /Operator capacity/);
-  assert.match(html, /Reading the recorded capacity and outcome evidence/);
-  assert.equal((html.match(/operator-capacity-title/g) ?? []).length, 2, "one read-only capacity panel is mounted");
+  assert.doesNotMatch(html, /Operator capacity/);
+  assert.doesNotMatch(html, /Reading the recorded capacity and outcome evidence/);
+  assert.equal((html.match(/operator-capacity-title/g) ?? []).length, 0, "hosted-only capacity stays hidden until runtime detection settles");
 });
 
 /** The route panel renders only once the task-worker read has resolved. The
@@ -230,6 +240,19 @@ test("project status filters are direct links and remain selected across catalog
   assert.match(pages, /href="\/projects\?lifecycle=archived&amp;after=project%3Atwo">Next page/);
 });
 
+test("ordinary project lifecycle controls expose complete and archive, and archived projects expose only reopen", () => {
+  const project = { projectId: "project:alpha", title: "Alpha", summary: "Saved", lifecycle: "active" as const,
+    version: 1, createdAt: "2026-09-04T10:00:00.000Z", updatedAt: "2026-09-04T10:00:00.000Z",
+    origin: "ordinary" as const, lifecycleEditable: true };
+  const active = renderToStaticMarkup(createElement(OrdinaryProjectStatusActions,
+    { project, pending: false, onTransition() {} }));
+  assert.match(active, /Mark complete/); assert.match(active, /Archive project/);
+  const archived = renderToStaticMarkup(createElement(OrdinaryProjectStatusActions,
+    { project: { ...project, lifecycle: "archived" }, pending: false, onTransition() {} }));
+  assert.match(archived, /Reopen project/);
+  assert.doesNotMatch(archived, /Mark complete|Pause project|Archive project/);
+});
+
 test("project overview shows scoped current, review and recent work without commands", async () => {
   const base = { projectId: "project:alpha", requestId: "request:alpha", version: 2,
     createdAt: "2026-09-04T10:00:00.000Z", updatedAt: "2026-09-04T12:00:00.000Z" };
@@ -258,6 +281,8 @@ test("unavailable project overview does not claim an empty project", () => {
   const html = renderToStaticMarkup(createElement(ProjectOverviewActivityView,
     { projectId: "project:alpha", state: { state: "unavailable", code: "unavailable" } }));
   assert.match(html, /No empty project or all-clear is inferred/);
+  assert.match(html, /saved database or protected task-activity read could not be checked/);
+  assert.match(html, /checking again does not start work/);
   assert.doesNotMatch(html, /No saved tasks exist/);
 });
 
@@ -297,6 +322,10 @@ test("unavailable project files do not claim an empty result set", () => {
       resultSource: "not_configured", observedAt: "2026-09-04T12:00:00.000Z", startsWork: false } } }));
   assert.match(html, /No zero count or empty file list is inferred/);
   assert.doesNotMatch(html, /No verified result files have been received/);
+  const failed = renderToStaticMarkup(createElement(ProjectFilesView,
+    { projectId: "project:alpha", data: { state: "unavailable", code: "unavailable" } }));
+  assert.match(failed, /saved database or protected file index could not be read/);
+  assert.match(failed, /checking again will not change work/);
 });
 
 test("project navigation starts with only routes shared by hosted and Mac-local", () => {
@@ -333,6 +362,8 @@ test("project review page distinguishes unavailable data from an empty list", ()
   const html = renderToStaticMarkup(createElement(ProjectTaskViewPanel,
     { projectId: "project:alpha", view: "reviews", state: { state: "unavailable", code: "unavailable" } }));
   assert.match(html, /No empty list or all-clear is inferred/);
+  assert.match(html, /saved database or protected reviews read could not be checked/);
+  assert.match(html, /checking again does not start work/);
   assert.doesNotMatch(html, /No task is currently recorded/);
 });
 
@@ -368,6 +399,10 @@ test("project review attention does not turn unavailable evidence into an empty 
       observedAt: "2026-09-04T12:00:00.000Z", startsWork: false } } }));
   assert.match(html, /not an all-clear for omitted or unavailable evidence/);
   assert.doesNotMatch(html, /No returned result needs review/);
+  const failed = renderToStaticMarkup(createElement(ProjectResultReviewPanel, { projectId: "project:alpha", mode: "reviews",
+    data: { state: "unavailable", code: "unavailable" } }));
+  assert.match(failed, /saved database or protected attention read could not be checked/);
+  assert.match(failed, /no review decision was recorded/);
 });
 
 test("project review attention explains limited access without advertising a result link", () => {

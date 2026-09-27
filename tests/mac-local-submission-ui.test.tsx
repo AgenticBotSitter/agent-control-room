@@ -118,11 +118,16 @@ test("workflow guidance distinguishes local preview from hosted signing", () => 
   assert.doesNotMatch(source, /href="#task-assignment"|href="#task-approval"/);
 });
 
-test("source proposal offers preparation, never the assignment read or approval", () => {
+test("source proposal shows the later assignment and approval steps as disabled, without reading or submitting them", () => {
   const html = renderToStaticMarkup(createElement(TaskExecutionStage,
     { detail: { ...detail, preparedFor: null, attempts: [] } as TaskDetail, mode: "local", workspace: createTaskExecutionWorkspace() }));
   assert.match(html, /Prepare task/);
-  assert.doesNotMatch(html, /Task assignment|Execution approval|Submit task/);
+  assert.match(html, /Task assignment/);
+  assert.match(html, /Execution approval/);
+  assert.match(html, /Assign after preparation/);
+  assert.match(html, /Approve after assignment/);
+  assert.equal((html.match(/disabled=""/g) ?? []).length, 2);
+  assert.doesNotMatch(html, /Submit task/);
 });
 
 test("prepared Mac task offers assignment and local submission, not a second plan or hosted signing", () => {

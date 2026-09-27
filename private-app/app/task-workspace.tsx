@@ -42,7 +42,13 @@ export function TaskExecutionStage({ detail, mode, workspace, onRecorded }: {
   if (mode === "hosted") return <><PrivateTaskPlanning detail={detail} client={workspace.planning} />
     <PrivateTaskAssignment detail={detail} client={workspace.assignment} onRecorded={onRecorded} />
     <PrivateTaskApproval detail={detail} workspace={workspace} /></>;
-  if (!detail.preparedFor) return <PrivateTaskPlanning detail={detail} client={workspace.planning} />;
+  if (!detail.preparedFor) return <><PrivateTaskPlanning detail={detail} client={workspace.planning} />
+    <section id="task-assignment" className="private-panel" aria-label="Task assignment"><h2>Task assignment</h2>
+      <p>Prepare this saved proposal before choosing a configured machine. Assignment will reserve capacity without starting work.</p>
+      <button type="button" disabled>Assign after preparation</button></section>
+    <section id="task-approval" className="private-panel" aria-label="Execution approval"><h2>Execution approval</h2>
+      <p>Execution approval follows preparation and assignment. No permission has been granted and no agent starts from this page automatically.</p>
+      <button type="button" disabled>Approve after assignment</button></section></>;
   return <><PrivateTaskAssignment detail={detail} client={workspace.assignment} onRecorded={onRecorded} />
     <PrivateTaskApproval detail={detail} workspace={workspace} local /></>;
 }
@@ -134,7 +140,7 @@ export function PrivateTaskWorkspace({ projectId, jobId, after }: { projectId: s
       : <p>{taskErrorMessage[error.code]}</p>}
       {jobId && <p>Result content has been cleared. Unfinished review text and exact pending save keys remain in this task page’s memory.
         Restore access and reopen the same result to continue. Leaving or reloading the task page discards them.</p>}
-      <div className="private-actions"><button type="button" disabled={pending || preparing} onClick={() => setRefresh(value => value + 1)}>Refresh saved tasks</button>
+      <div className="private-actions"><button type="button" disabled={pending || preparing} onClick={() => setRefresh(value => value + 1)}>Check saved tasks again</button>
         {uncertain && page && <button type="button" disabled={pending} onClick={() => { void save(true); }}>Check this exact save again</button>}</div></div>}
     {loading && <p role="status">Loading protected tasks…</p>}
     {project && <button type="button" disabled={loading || pending || preparing} onClick={refreshSaved}>Check latest saved status</button>}

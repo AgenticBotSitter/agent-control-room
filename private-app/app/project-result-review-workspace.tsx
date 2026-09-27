@@ -33,7 +33,7 @@ export function ProjectResultReviewPanel({ projectId, mode, data }: { projectId:
   if (data.state === "unavailable") return <section className="private-panel"><h2>{title}</h2><p role="alert">
     {data.code === "authentication_required" ? "Your session has ended. Sign in again to see this project’s saved attention."
       : data.code === "access_denied" ? "Your current access does not include this project’s saved attention."
-        : "This project’s saved attention is unavailable. No empty list or all-clear is inferred."}
+        : "The saved database or protected attention read could not be checked. No empty list or all-clear is inferred, and no review decision was recorded."}
   </p></section>;
   const value = data.value;
   return <section className="private-panel"><h2>{title}</h2>
@@ -77,7 +77,7 @@ export function PrivateProjectResultReview({ projectId, mode, after }: { project
         : "This page discovers saved returned-result review work, including results that are not waiting for execution approval."}</p></div>
     <ProjectNavigation projectId={projectId} current={mode} />
     <ProjectResultReviewPanel projectId={projectId} mode={mode} data={data} />
-    <button type="button" onClick={() => setGeneration(value => value + 1)}>Refresh saved {mode}</button>
+    <button type="button" onClick={() => setGeneration(value => value + 1)}>Check saved {mode} again</button>
     <p className="private-note">Refresh and navigation only read saved records. They do not approve, retry, revise, submit, or start work.</p>
   </main></div>;
 }

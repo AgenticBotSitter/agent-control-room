@@ -10,7 +10,7 @@ function LocalWorkers() {
     <div className="private-heading"><h1>Workers on this Mac</h1>
       <p>These statuses come from the current local host. Ready means its pinned executable passed startup checks;
         it does not mean the worker is running a task.</p></div>
-    {!runtime.status ? <p role="status">Worker status is unavailable. No readiness is inferred.</p>
+    {!runtime.status ? <p role="status">The local host status read could not be checked. No readiness, capacity or running work is inferred. Reloading this page only rechecks status; it does not start a worker.</p>
       : <>{!runtime.status.taskWorkersStarted && <p role="status">Task workers have not started.
         {runtime.status.instruction ? ` ${runtime.status.instruction}` : ""}</p>}
         <ul className="private-local-agent-list">{runtime.status.workers.map(worker => <li key={worker.kind}

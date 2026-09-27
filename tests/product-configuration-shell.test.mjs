@@ -80,7 +80,8 @@ test("local client shell exposes only reachable routes and reads only local work
   globalThis.fetch = path => {
     reads.push(path);
     if (path !== "/api/v1/local-workers") throw new Error(`unsupported local fetch: ${path}`);
-    return Promise.resolve(Response.json({ taskWorkersStarted: true, workers: [
+    return Promise.resolve(Response.json({ taskWorkersStarted: true,
+      projectSections: ["overview", "work", "reviews", "activity", "files"], workers: [
       { kind: "hermes-021", state: "ready", proof: "not_proven" },
       { kind: "claude-code", state: "ready", proof: "not_proven" },
       { kind: "codex", state: "ready", proof: "not_proven" },
@@ -95,8 +96,11 @@ test("local client shell exposes only reachable routes and reads only local work
     assert.deepEqual(reads, ["/api/v1/local-workers"]);
     const links = [...dom.window.document.querySelectorAll("a[href]")].map(link => link.getAttribute("href"));
     assert.ok(links.includes("/workers"));
+    assert.ok(links.includes("/needs-me"));
     assert.ok(links.includes("/projects/project%3Aalpha/tasks"));
-    for (const unsupported of ["/setup", "/workboard", "/needs-me", "/settings", "/ideas", "/connections",
+    for (const supported of ["reviews", "activity", "files"])
+      assert.ok(links.includes(`/projects/project%3Aalpha/${supported}`));
+    for (const unsupported of ["/setup", "/workboard", "/settings", "/ideas", "/connections",
       "/projects/project%3Aalpha/inbox", "/projects/project%3Aalpha/agents"])
       assert.equal(links.includes(unsupported), false, unsupported);
     assert.match(dom.window.document.body.textContent ?? "", /Hermes Agent.*ready.*Claude Code.*ready.*Codex.*ready/s);

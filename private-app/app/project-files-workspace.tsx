@@ -17,7 +17,7 @@ export function ProjectFilesView({ projectId, data }: { projectId: string; data:
   if (data.state === "unavailable") return <section className="private-panel"><h2>Project files unavailable</h2>
     <p role="alert">{data.code === "authentication_required" ? "Your session has ended. Sign in again to see project files."
       : data.code === "access_denied" ? "Your current access does not include this project’s files."
-        : "Project files are unavailable. No empty file list is inferred."}</p></section>;
+        : "The saved database or protected file index could not be read. No empty file list is inferred, and checking again will not change work."}</p></section>;
   const { value } = data;
   if (value.resultSource !== "configured") return <section className="private-panel"><h2>Project files unavailable</h2>
     <p>{value.resultSource === "not_authorized" ? "Your current access includes the project, but not its result files."
@@ -54,6 +54,6 @@ export function PrivateProjectFiles({ projectId }: { projectId: string }) {
     <div className="private-heading"><h1>Project files</h1><p>Verified result records from this project. Opening one goes straight to that exact file in its task, where it can be read and reviewed.</p></div>
     <ProjectNavigation projectId={projectId} current="files" />
     <ProjectFilesView projectId={projectId} data={state} />
-    <button type="button" onClick={() => setGeneration(value => value + 1)}>Refresh project files</button>
+    <button type="button" onClick={() => setGeneration(value => value + 1)}>Check saved project files again</button>
   </main></div>;
 }

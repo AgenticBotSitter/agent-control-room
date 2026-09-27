@@ -44,9 +44,9 @@ export function PrivateTaskAttention() {
   }, [cursor, generation]);
   const load = (after?: string) => { setPage(undefined); setError(false); setLoading(true); setCursor(after); setGeneration(value => value + 1); };
   return <section aria-labelledby="task-attention-heading"><h2 id="task-attention-heading">Tasks needing attention</h2>
-    <button type="button" disabled={loading} onClick={() => load()}>Refresh task inbox</button>
+    <button type="button" disabled={loading} onClick={() => load()}>Check saved task inbox again</button>
     {loading && <p role="status">Checking saved tasks…</p>}
-    {error && <p role="alert">Task inbox unavailable. Check your session and owner permissions; no empty inbox is claimed.</p>}
+    {error && <p role="alert">The saved task database or protected read could not be checked. No empty inbox is claimed and no work was started. Check your session and owner permissions, then safely check this inbox again.</p>}
     {page && <><TaskAttentionPanel page={page} />{page.nextCursor && <button type="button" disabled={loading}
       onClick={() => load(page.nextCursor!)}>Check next page</button>}</>}
   </section>;

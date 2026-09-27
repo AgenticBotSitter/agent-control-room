@@ -16,13 +16,19 @@ import { useInstallationTopology } from "./installation-topology";
 import { InstallationTopologySummary } from "./installation-topology-summary";
 import { LocalWorkerRouteStatus, type TaskWorkerReadState } from "./local-worker-route-status";
 import { PrivateOperatorCapacityWorkspace } from "./operator-capacity-workspace";
+import { useLocalRuntime, type LocalStatus } from "./local-runtime";
+
+type WorkerRead = PrivateConnectionSnapshot | { source: "local"; value: LocalStatus };
+function isLocalWorkerRead(value: WorkerRead): value is { source: "local"; value: LocalStatus } {
+  return "source" in value && value.source === "local";
+}
 
 type ReadState<T> = { state: "loading" } | { state: "ready"; value: T } | { state: "unavailable" };
 export type HomeDashboardState = Readonly<{
   projects: ReadState<ProjectCatalogPage>;
   activity: ReadState<TaskHomeActivity>;
   attention: ReadState<TaskAttentionPage>;
-  connections: ReadState<PrivateConnectionSnapshot>;
+  connections: ReadState<WorkerRead>;
 }>;
 
 const loadingState: HomeDashboardState = Object.freeze({ projects: { state: "loading" }, activity: { state: "loading" },
@@ -74,9 +80,14 @@ export function HomeDashboard({ data }: { data: HomeDashboardState }) {
     <section className="private-panel" aria-labelledby="home-workers"><h2 id="home-workers">Worker status</h2>
       {data.connections.state === "loading" ? <p role="status">Loading saved worker signals…</p>
         : data.connections.state === "unavailable" ? <Unavailable>Worker status is unavailable.</Unavailable>
-          : <><p>{data.connections.value.projection.summary.connectionCount} enrolled workers · {data.connections.value.projection.summary.currentSignalCount} current signals.</p>
-            <p>{data.connections.value.projection.summary.staleSignalCount} stale · {data.connections.value.projection.summary.missingSignalCount} missing · {data.connections.value.projection.summary.attentionCount} need setup or review.</p>
-            {data.connections.value.telemetry === "not_configured" && <Unavailable>Signal verification is not configured.</Unavailable>}</>}
+          : isLocalWorkerRead(data.connections.value)
+            ? <><p>{data.connections.value.value.workers.length} configured local worker route{data.connections.value.value.workers.length === 1 ? "" : "s"}.</p>
+              <ul className="private-dashboard-list">{data.connections.value.value.workers.map(worker => <li key={worker.kind}>
+                <span>{worker.kind}</span><span>{worker.state} · readiness {worker.proof.replaceAll("_", " ")}</span></li>)}</ul>
+              <p className="private-note">Current assignment, capacity and resource usage are unknown here. Open Workers and the exact task before assigning work.</p></>
+            : <><p>{data.connections.value.projection.summary.connectionCount} enrolled workers · {data.connections.value.projection.summary.currentSignalCount} current signals.</p>
+              <p>{data.connections.value.projection.summary.staleSignalCount} stale · {data.connections.value.projection.summary.missingSignalCount} missing · {data.connections.value.projection.summary.attentionCount} need setup or review.</p>
+              {data.connections.value.telemetry === "not_configured" && <Unavailable>Signal verification is not configured.</Unavailable>}</>}
       <a className="private-action-link" href="/workers">Open workers</a>
     </section>
 
@@ -102,17 +113,20 @@ export function HomeDashboard({ data }: { data: HomeDashboardState }) {
  * resolved read. Passing it through here keeps the home panel's three saved
  * route states assertable without waiting on a live `/api/v1/local-workers`
  * read, and lets a page that already holds the read avoid a second one. */
-export function HomeInstallationStatus({ topology, taskWorkerStatus }: {
+export function HomeInstallationStatus({ topology, taskWorkerStatus, showSetupGuidance }: {
   topology: ReturnType<typeof useInstallationTopology>;
   taskWorkerStatus?: TaskWorkerReadState;
+  showSetupGuidance?: boolean;
 }) {
   return <>
     <InstallationTopologySummary setup={topology.setup} status={topology.state} />
-    <LocalWorkerRouteStatus setup={topology.setup} state={topology.state} taskWorkerStatus={taskWorkerStatus} />
+    <LocalWorkerRouteStatus setup={topology.setup} state={topology.state} taskWorkerStatus={taskWorkerStatus}
+      showSetupGuidance={showSetupGuidance} />
   </>;
 }
 
 export function PrivateHome() {
+  const runtime = useLocalRuntime();
   const displayName = useProductDisplayName();
   const ideaLab = useProductModule("ideaLab");
   const installationTopology = useInstallationTopology();
@@ -121,14 +135,18 @@ export function PrivateHome() {
   const [generation, setGeneration] = useState(0);
   useEffect(() => {
     let live = true;
-    setData(loadingState);
+    setData(runtime.mode === "local" ? { ...loadingState,
+      connections: runtime.status ? { state: "ready", value: { source: "local", value: runtime.status } } : { state: "unavailable" } }
+      : loadingState);
     const settle = <T,>(promise: Promise<T>, key: keyof HomeDashboardState) => promise.then(value => {
       if (live) setData(current => ({ ...current, [key]: { state: "ready", value } }));
     }, () => { if (live) setData(current => ({ ...current, [key]: { state: "unavailable" } })); });
-    void Promise.all([settle(projects.list(), "projects"), settle(readTaskHomeActivity(), "activity"),
-      settle(readTaskAttention(), "attention"), settle(readPrivateConnections(), "connections")]);
+    const reads = [settle(projects.list(), "projects"), settle(readTaskHomeActivity(), "activity"),
+      settle(readTaskAttention(), "attention")];
+    if (runtime.mode !== "local") reads.push(settle(readPrivateConnections(), "connections"));
+    void Promise.all(reads);
     return () => { live = false; };
-  }, [generation, projects]);
+  }, [generation, projects, runtime.mode, runtime.status]);
   useEffect(() => {
     // This dashboard only reads already-saved records.  Keep an open local
     // Control Room view useful without inventing browser-side scheduling or
@@ -149,11 +167,12 @@ export function PrivateHome() {
   return <div className="private-shell"><PrivateHeader /><main id="private-main" tabIndex={-1}>
     <section className="private-home-intro" aria-labelledby="home-title"><p className="private-eyebrow">Private workspace</p>
       <h1 id="home-title">{displayName}</h1><p>Current saved work, results and attention from the protected Control Room services. This page refreshes while it is open and again when you return to it. Each section reports unavailable data instead of replacing it with a zero.</p>
-      <button type="button" onClick={() => setGeneration(value => value + 1)}>Refresh dashboard</button></section>
-    <HomeInstallationStatus topology={installationTopology} />
+      <p className="private-note">Unavailable means the saved database or protected read could not be checked. Checking again only rereads saved records; it does not start, assign, approve or retry work.</p>
+      <button type="button" onClick={() => setGeneration(value => value + 1)}>Check saved dashboard again</button></section>
+    <HomeInstallationStatus topology={installationTopology} showSetupGuidance={runtime.mode === "hosted"} />
     <HomeDashboard data={data} />
-    <PrivateOperatorCapacityWorkspace />
-    {ideaLab && <aside className="private-note private-home-note" aria-label="Optional module"><strong>Idea Lab is optional.</strong>{" "}
+    {runtime.mode === "hosted" && <PrivateOperatorCapacityWorkspace />}
+    {runtime.mode === "hosted" && ideaLab && <aside className="private-note private-home-note" aria-label="Optional module"><strong>Idea Lab is optional.</strong>{" "}
       <a href="/ideas">Open Idea Lab</a> to compare ideas before promoting an approved one to a project.</aside>}
   </main></div>;
 }
