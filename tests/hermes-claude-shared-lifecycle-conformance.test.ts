@@ -104,8 +104,12 @@ test("Hermes and Claude run concurrently through one durable lifecycle without c
     CLAUDE_CODE_LOCAL_ADAPTER_V1, "executor:claude", CLAUDE_CODE_LOCAL_START_OPERATION_V1,
     CLAUDE_CODE_CONNECTOR_PROFILE_DIGEST_V1), integrityKey: new Uint8Array(32).fill(62),
     reviewIntegrityKey: f.reviewKey, checkpoints: f.checkpoints }, () => now);
-  const hermesSource = await f.tasks.propose(f.identity, binding.projectId, { ...taskDraft, title: "Hermes shared lifecycle" }, "shared-hermes-source");
-  const claudeSource = await f.tasks.propose(f.identity, binding.projectId, { ...taskDraft, title: "Claude shared lifecycle" }, "shared-claude-source");
+  const hermesDraft = { ...taskDraft, title: "Hermes shared lifecycle",
+    scopes: [{ kind: "tree" as const, path: "tasks/shared-hermes" }] };
+  const claudeDraft = { ...taskDraft, title: "Claude shared lifecycle",
+    scopes: [{ kind: "tree" as const, path: "tasks/shared-claude" }] };
+  const hermesSource = await f.tasks.propose(f.identity, binding.projectId, hermesDraft, "shared-hermes-source");
+  const claudeSource = await f.tasks.propose(f.identity, binding.projectId, claudeDraft, "shared-claude-source");
   const hermesPlan = await hermesPlanner.plan(f.identity, binding.projectId, hermesSource.receipt.jobId,
     sha256Digest({ ...taskDraft, title: "Hermes shared lifecycle" }));
   const claudePlan = await claudePlanner.plan(f.identity, binding.projectId, claudeSource.receipt.jobId,
