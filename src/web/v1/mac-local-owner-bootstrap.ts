@@ -7,9 +7,36 @@ import { CLAUDE_CODE_LOCAL_ADAPTER_V1 } from "../../harness/claude-code-v1/task-
 import { DOMAIN_CONTRACT_VERSION, nodeRecordSchema } from "../../domain/v1";
 import { generateKeyPairSync } from "node:crypto";
 import { publicKeyFingerprint } from "../../node-protocol/v1";
+import { workIntakeAuthSubjectDigestV1, workIntakeIdentityIdV1 } from "../../work-intake/v1/installed-configuration";
 
 export const macLocalOwnerIdentityIdV1 = (tenantId: string) => `identity:${tenantId}:owner`;
 export const macLocalOwnerGrantIdV1 = (tenantId: string) => `grant:${tenantId}:owner`;
+
+async function seedWorkIntakeRosterV1(tx:DatabaseSession,configuration:MacLocalProtectedConfigurationV1,now:string){
+  if(!configuration.enablement?.workers)return;
+  const tenantId=configuration.localOwnerSession.tenantId;
+  for(const worker of configuration.enablement.workers){
+    const identityId=workIntakeIdentityIdV1(tenantId,worker.workerId);
+    const suffix=identityId.slice("identity:work-intake:".length),grantId=`grant:work-intake:${suffix}`;
+    const subjectDigest=workIntakeAuthSubjectDigestV1(worker.workerId,worker.kind);
+    await tx.query(`INSERT INTO control_identities(id,tenant_id,actor_type,display_name,auth_provider,
+      auth_subject_digest,state,created_at,updated_at) VALUES($1,$2,'agent',$3,'work-intake',$4,'active',$5,$5)
+      ON CONFLICT(tenant_id,id) DO NOTHING`,[identityId,tenantId,`Registered proposal agent ${worker.kind}`,
+      subjectDigest,now]);
+    await tx.query(`INSERT INTO control_role_grants(id,tenant_id,identity_id,role_key,allowed_actions,project_ids,
+      risk_ceiling,allow_external_effects,require_strong_factor,created_at,updated_at)
+      VALUES($1,$2,$3,'work_batch_proposer','["work_batches.propose"]','["*"]','low',false,false,$4,$4)
+      ON CONFLICT(tenant_id,id) DO NOTHING`,[grantId,tenantId,identityId,now]);
+    const exact=(await tx.query<{valid:boolean}>(`SELECT i.state='active' AND i.actor_type='agent'
+      AND i.auth_provider='work-intake' AND i.auth_subject_digest=$4
+      AND g.role_key='work_batch_proposer' AND g.allowed_actions='["work_batches.propose"]'::jsonb
+      AND g.project_ids='["*"]'::jsonb AND g.risk_ceiling='low' AND NOT g.allow_external_effects
+      AND NOT g.require_strong_factor AND g.expires_at IS NULL AND g.revoked_at IS NULL AS valid FROM control_identities i
+      JOIN control_role_grants g ON g.tenant_id=i.tenant_id AND g.identity_id=i.id
+      WHERE i.tenant_id=$1 AND i.id=$2 AND g.id=$3`,[tenantId,identityId,grantId,subjectDigest])).rows[0];
+    if(exact?.valid!==true) throw new Error("mac_local_owner_bootstrap_conflict");
+  }
+}
 
 /** Each local worker has its own assignment route. Its public identity key is
  * recorded so the coordinator can assign, but the private half is never exported
@@ -132,6 +159,7 @@ export async function bootstrapMacLocalOwnerV1(db: DatabaseClient, configuration
       const workspace = (await tx.query<{ id: string }>("SELECT id FROM workspaces WHERE id=$1 AND tenant_id=$2",
         [workspaceId, tenantId])).rows;
       if (owner.length !== 1 || workspace.length !== 1) throw new Error("mac_local_owner_bootstrap_conflict");
+      await seedWorkIntakeRosterV1(tx,configuration,new Date(clock()).toISOString());
       return "already_present" as const;
     }
     if ((await tx.query("SELECT id FROM workspaces WHERE id=$1", [workspaceId])).rows.length !== 0)
@@ -144,6 +172,7 @@ export async function bootstrapMacLocalOwnerV1(db: DatabaseClient, configuration
     await new SecurityStore(joined).bootstrapOwner({ tenantId, identityId: macLocalOwnerIdentityIdV1(tenantId),
       grantId: macLocalOwnerGrantIdV1(tenantId), displayName: "Owner", provider, subject,
       verifiedAt: new Date(now).toISOString(), expiresAt: new Date(now + 60_000).toISOString(), now: new Date(now).toISOString() });
+    await seedWorkIntakeRosterV1(tx,configuration,new Date(now).toISOString());
     return "created" as const;
   });
 }

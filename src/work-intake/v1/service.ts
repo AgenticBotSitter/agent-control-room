@@ -16,6 +16,9 @@ export class WorkBatchServiceV1 {
   authorizeBeforeBody(principal: AuthenticatedPrincipal, projectId: string, now: string) {
     return this.store.authorize(principal, projectId, now);
   }
+  authorizeAction(principal:AuthenticatedPrincipal,projectId:string,action:string,now:string){
+    return this.store.authorizeAction(principal,projectId,action,now);
+  }
 
   recordEnvelopeRefusal(principal: AuthenticatedPrincipal, projectId: string, reasonCode: string, now: string) {
     return this.store.recordValidationRefusal(principal, projectId, reasonCode, now);

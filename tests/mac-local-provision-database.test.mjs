@@ -26,11 +26,13 @@ test("the provisioner dry-run's prospective protected config survives the file J
 test("provisioner prepares one protected client-and-server intake record without starting anything", () => {
   const record = prepareProvisionedWorkIntakeConfigurationV1({ database: { host: "127.0.0.1", port: 15432,
     database: "control_room", username: "control_room_work_intake_agent", password: "fixture", majorVersion: 17 },
-  bearerSecret: "a".repeat(43), integrityKey: "b".repeat(43), now: "2026-09-27T12:00:00.000Z" });
+  integrityKey: "b".repeat(43), credentials:[{workerId:"worker:codex:mac-1",workerKind:"codex",
+    credentialDigest:`sha256:${"a".repeat(64)}`,principal:{tenantId:"tenant:mac-local",identityId:"identity:test",
+      actorType:"agent",authenticatedAt:"2026-09-27T12:00:00.000Z",expiresAt:"2026-10-27T12:00:00.000Z"}}] });
   assert.equal(record.port, 3211);
   assert.equal(record.database.username, "control_room_work_intake_agent");
   assert.equal(record.queueDepthLimit, 10);
-  assert.equal(record.principal.expiresAt, "2027-09-27T12:00:00.000Z");
+  assert.equal(record.credentials[0].principal.expiresAt, "2026-10-27T12:00:00.000Z");
   assert.equal(Object.keys(record).sort().join(","),
-    "bearerSecret,database,integrityKey,port,principal,queueDepthLimit,schema");
+    "credentials,database,integrityKey,port,queueDepthLimit,schema");
 });
