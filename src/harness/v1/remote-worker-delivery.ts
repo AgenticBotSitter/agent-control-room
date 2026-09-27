@@ -11,7 +11,8 @@ export const REMOTE_WORKER_ENROLLMENT_V1 = "control-room.remote-worker-enrollmen
 
 /** Planning identifiers only. This class saves a bounded text-review proposal;
  * it does not enroll a worker, queue a packet, or start remote work. */
-export const CONTROLLER_WORKER_REMOTE_ADAPTER_V1 = "connector:controller-worker-remote-v1" as const;
+import { CONTROLLER_WORKER_REMOTE_ADAPTER_V1 } from "./remote-worker-adapter-id";
+export { CONTROLLER_WORKER_REMOTE_ADAPTER_V1 };
 export const CONTROLLER_WORKER_REMOTE_CAPABILITY_V1 = "harness.controller-worker.remote.text-review.v1" as const;
 export const CONTROLLER_WORKER_REMOTE_JOB_TYPE_V1 = "harness.controller-worker.remote.task" as const;
 export const CONTROLLER_WORKER_REMOTE_START_OPERATION_V1 = "harness.controller-worker.remote.start" as const;

@@ -24,6 +24,16 @@ test("compiled assignment keeps scheduled planning and allocation server-only", 
   assert.equal(client.includes("scheduled.tasks.plan"), false);
 });
 
+test("browser bundles never include server-only host-value security code", async () => {
+  // host-value.ts reads node:util intrinsics at import time; in a browser
+  // chunk it throws and blanks the page (the Mac-local Work page did this).
+  const root = new URL("../dist-vps/client/", import.meta.url);
+  for (const path of (await readdir(root, { recursive: true })).filter(item => item.endsWith(".js"))) {
+    const text = await readFile(new URL(path, root), "utf8");
+    assert.equal(text.includes("host intrinsics unavailable"), false, `server-only host-value code in ${path}`);
+  }
+});
+
 test("compiled private assignment API records, reads and expires a real lease under shared logout", async t => {
   const f = await taskAssignmentFixture(); let now = instant + 8000;
   const coordinator = f.create(f.db, () => now);
