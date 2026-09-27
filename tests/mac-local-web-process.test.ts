@@ -26,7 +26,17 @@ test("the real Mac-local wrapper signs in locally and reaches the existing proje
     workerReadiness: { read: () => [{ kind: "hermes-021" as const, state: "ready" as const, proof: "not_proven" as const }] },
     taskWorkersStarted: true });
   const request = (path: string, init: RequestInit = {}) => new Request(`${origin}${path}`, init);
-  assert.equal((await app.handle(request("/api/v1/projects"), () => new Response("unused"))).status, 401);
+  const signedOutApi = await app.handle(request("/api/v1/projects"), () => new Response("unused"));
+  assert.equal(signedOutApi.status, 401);
+  assert.deepEqual(await signedOutApi.json(), { error: "authentication_required" });
+  for (const path of ["/", "/projects", "/projects/project:unknown/tasks"]) {
+    const signedOutPage = await app.handle(request(path), () => { throw new Error("must not render signed-out page"); });
+    assert.equal(signedOutPage.status, 303);
+    assert.equal(signedOutPage.headers.get("location"), `${origin}/session`);
+    assert.equal(signedOutPage.headers.get("cache-control"), "no-store");
+  }
+  const signedOutWrite = await app.handle(request("/projects", { method: "POST" }), () => new Response("unused"));
+  assert.equal(signedOutWrite.status, 401);
   const signedIn = await app.handle(request("/api/v1/local-owner-session", { method: "POST", headers: {
     origin, "sec-fetch-site": "same-origin", "content-type": "application/json" }, body: JSON.stringify({ ownerCode }) }), () => new Response("unused"));
   assert.equal(signedIn.status, 201);
@@ -37,6 +47,10 @@ test("the real Mac-local wrapper signs in locally and reaches the existing proje
   const projects = await app.handle(request("/api/v1/projects", { headers: { cookie: cookie! } }), () => new Response("unused"));
   assert.equal(projects.status, 200);
   assert.match(await projects.text(), /projects/);
+  const home = await app.handle(request("/", { headers: { cookie: cookie! } }), () => { throw new Error("must redirect"); });
+  assert.equal(home.status, 303);
+  assert.equal(home.headers.get("location"), `${origin}/projects`);
+  assert.equal(home.headers.get("cache-control"), "no-store");
   const foreignPort = await app.handle(request("/api/v1/projects", { method: "POST", headers: { cookie: cookie!, origin: "http://127.0.0.1:1", "content-type": "application/json",
     "idempotency-key": "mac-local-project-foreign-port-001" }, body: JSON.stringify({ title: "Foreign port", summary: "Must be refused" }) }),
   () => new Response("unused"));
