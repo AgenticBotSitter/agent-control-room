@@ -50,6 +50,7 @@ import { assertCanonicalCodexAdmissionInSession, codexCurrentAdmissionSchemaV1,
   persistCodexActivationTransmissionIntent, readCodexActivationTransmissionIntentInSession,
   type CodexCurrentAdmissionBasisV1, type CodexCurrentAdmissionV1 } from "./codex-activation-transmission-intent";
 import { taskProjectAgentOptionsSchema } from "./task-project-agents-wire";
+import { scopesOverlapV1 } from "../../project-coordination/v1/resource-conflict";
 
 type CanonicalNativeApproval = ReturnType<typeof prepareNativeTaskApprovalWithLease> & {
   enrollment: NativeEnrollment; preparedAt: string; sourceInputDigest: string; inputDigest: string;
@@ -1772,6 +1773,23 @@ export class TaskAssignmentCoordinator {
       if (!eligible.eligible || !telemetry || telemetry.kind !== "telemetry" || !capability
         || !["limited", "metered", "unmetered"].includes(telemetry.payload.networkClass)
         || ["critical", "blocked", "unavailable"].includes(telemetry.payload.thermalState)) conflict();
+      const declaredScopes = (await tx.query<{ scope_kind: "file" | "tree"; path_fold: string }>(
+        `SELECT scope_kind,path_fold FROM control_task_declared_scopes
+         WHERE tenant_id=$1 AND project_id=$2 AND job_id=$3 ORDER BY scope_kind,path_fold FOR SHARE`,
+      [this.scope.tenantId, projectId, jobId])).rows;
+      if (declaredScopes.length) {
+        const held = (await tx.query<{ lease_id: string; job_id: string; node_id: string;
+          scope_kind: "file" | "tree"; path_fold: string }>(`SELECT s.lease_id,s.job_id,s.node_id,s.scope_kind,s.path_fold
+          FROM control_assignment_lease_scopes s
+          JOIN control_leases l ON l.tenant_id=s.tenant_id AND l.id=s.lease_id
+          WHERE s.tenant_id=$1 AND s.project_id=$2 AND s.job_id<>$3
+            AND l.state='active' AND l.expires_at>$4
+          ORDER BY s.lease_id,s.scope_kind,s.path_fold FOR UPDATE OF l`,
+        [this.scope.tenantId, projectId, jobId, new Date(now).toISOString()])).rows;
+        if (declaredScopes.some(requested => held.some(other => scopesOverlapV1(
+          { scopeKind: requested.scope_kind, path: requested.path_fold },
+          { scopeKind: other.scope_kind, path: other.path_fold })))) conflict();
+      }
       // Reported capabilities guide allocation only. They are never host qualification or local admission.
       const active = (await tx.query<{ count: string }>(`SELECT count(*)::text AS count FROM control_leases
         WHERE tenant_id=$1 AND node_id=$2 AND state='active'`, [this.scope.tenantId, nodeId])).rows[0];
@@ -1791,6 +1809,10 @@ export class TaskAssignmentCoordinator {
         transitionId: `${ids.transitionId}:ready`, idempotencyKey: `${ids.idempotencyKey}:ready`, actor: actorRef, occurredAt });
       const claimed = await canonical.claimReadyJob({ ...ids, tenantId: this.scope.tenantId, jobId, expectedJobVersion: 1,
         nodeId, actor: actorRef, acquiredAt: occurredAt, expiresAt: new Date(commitDeadline).toISOString() });
+      for (const declared of declaredScopes) await tx.query(`INSERT INTO control_assignment_lease_scopes
+        (tenant_id,lease_id,project_id,job_id,attempt_id,node_id,scope_kind,path,path_fold)
+        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$8)`, [this.scope.tenantId, claimed.lease.id, projectId, jobId,
+        claimed.attempt.id, nodeId, declared.scope_kind, declared.path_fold]);
       await appendAuditWith(tx, { id: ids.auditId, tenantId: this.scope.tenantId, projectId,
         actorId: actorRef.actorId, actorType: actorRef.actorType,
         action: "tasks.assign", targetType: "job", targetId: jobId, idempotencyKey: ids.idempotencyKey, occurredAt,
