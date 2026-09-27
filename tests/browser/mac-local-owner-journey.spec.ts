@@ -17,7 +17,7 @@ async function refreshUntil(page: Page, locatorName: string, timeoutMs = 150_000
   const end = Date.now() + timeoutMs;
   while (Date.now() < end) {
     if (await page.getByRole("button", { name: locatorName }).count()) return;
-    const refresh = page.getByRole("button", { name: "Check latest saved status" });
+    const refresh = page.getByRole("button", { name: "Check latest saved status" }).first();
     if (await refresh.isEnabled().catch(() => false)) await refresh.click();
     await page.waitForTimeout(1_000);
   }
@@ -78,20 +78,20 @@ async function removePostUpgradeProposalRows(jobId: string) {
   finally { await client.end(); }
 }
 
-async function expireLatestDisposableLease(jobId: string) {
+async function waitForLatestDisposableLeaseExpiry(jobId: string) {
   const { client, config } = await disposableAdmin();
+  let waitMs = -1;
   try {
-    const lease = (await client.query<{ acquired_at: string | Date }>(`SELECT acquired_at FROM control_leases
+    const lease = (await client.query<{ wait_ms: string }>(`SELECT GREATEST(0,
+        CEIL(EXTRACT(EPOCH FROM (expires_at - clock_timestamp())) * 1000))::bigint::text AS wait_ms
+      FROM control_leases
       WHERE tenant_id=$1 AND job_id=$2 AND state='active'`, [config.localOwnerSession.tenantId, jobId])).rows[0];
     if (!lease) throw new Error("browser_expiry_fixture_missing_active_lease");
-    const expiredAt = new Date(new Date(lease.acquired_at).getTime() + 1_000).toISOString();
-    const wait = Date.parse(expiredAt) - Date.now() + 100;
-    if (wait > 0) await new Promise(resolveWait => setTimeout(resolveWait, wait));
-    const result = await client.query(`UPDATE control_leases SET expires_at=$1::timestamptz,
-      payload=jsonb_set(payload,'{expiresAt}',to_jsonb($1::text),false),updated_at=now()
-      WHERE tenant_id=$2 AND job_id=$3 AND state='active'`, [expiredAt, config.localOwnerSession.tenantId, jobId]);
-    expect(result.rowCount).toBe(1);
+    waitMs = Number(lease.wait_ms);
+    if (!Number.isSafeInteger(waitMs) || waitMs < 0 || waitMs > 5 * 60_000)
+      throw new Error("browser_expiry_fixture_unbounded_wait");
   } finally { await client.end(); }
+  await new Promise(resolveWait => setTimeout(resolveWait, waitMs + 250));
 }
 
 async function openResult(page: Page) {
@@ -151,7 +151,7 @@ test("owner completes the real local website journey for every configured worker
   await page.getByRole("button", { name: "Assign and run" }).click();
   await expect(page.getByText(/reservation was recorded, but queue submission was not confirmed/i)).toBeVisible();
   const jobId = decodeURIComponent(new URL(page.url()).pathname.split("/").at(-1)!);
-  await expireLatestDisposableLease(jobId);
+  await waitForLatestDisposableLeaseExpiry(jobId);
   await page.reload();
   await page.getByRole("button", { name: "Reconcile expired reservation" }).click();
   await expect(page.getByRole("button", { name: "Assign and run" })).toBeEnabled();
