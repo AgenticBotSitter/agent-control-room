@@ -49,7 +49,7 @@ export function TaskApprovalSubmission({ detail, checked, state, workspace }: {
   return <PrivateTaskSubmission key={JSON.stringify(binding)} {...binding} client={client} />;
 }
 
-export function PrivateTaskApproval({ detail, workspace: suppliedWorkspace }: { detail?: TaskDetail; workspace?: TaskExecutionWorkspace }) {
+export function PrivateTaskApproval({ detail, workspace: suppliedWorkspace, local = false }: { detail?: TaskDetail; workspace?: TaskExecutionWorkspace; local?: boolean }) {
   const [workspace] = useState(() => suppliedWorkspace ?? createTaskExecutionWorkspace());
   const client = workspace.approval;
   const [checked, setChecked] = useState<TaskDetail>(), [state, setState] = useState<TaskApprovalRead>();
@@ -60,7 +60,7 @@ export function PrivateTaskApproval({ detail, workspace: suppliedWorkspace }: { 
   useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
   useEffect(() => {
     const current = ++generation.current; let live = true;
-    if (detail?.attempts.length) void client.read(detail.task.projectId, detail.task.jobId, detail.inputDigest).then(value => {
+    if (!local && detail?.attempts.length) void client.read(detail.task.projectId, detail.task.jobId, detail.inputDigest).then(value => {
       if (live && current === generation.current) { setChecked(detail); setState(value);
         setEditor(previous => client.hasPending() ? undefined : retainApprovalEditor(previous, detail, value));
         setError(client.hasPending() ? new BrowserRequestError("uncertain") : undefined); }
@@ -69,7 +69,7 @@ export function PrivateTaskApproval({ detail, workspace: suppliedWorkspace }: { 
       setError(reason instanceof BrowserRequestError ? reason : new BrowserRequestError("unavailable"));
     } });
     return () => { live = false; };
-  }, [client, detail]);
+  }, [client, detail, local]);
   async function action(kind: "review" | "check" | "save") {
     if (!detail || checked !== detail || kind !== "check" && !state || busy.current || kind === "save" && !file) return;
     if (kind === "save" && (!state || !retainApprovalEditor(editor, detail, state))) return;
@@ -105,6 +105,7 @@ export function PrivateTaskApproval({ detail, workspace: suppliedWorkspace }: { 
   if (!detail) return null;
   if (!detail.attempts.length) return <section id="task-approval" className="private-panel" aria-label="Execution approval"><h2>Execution approval</h2>
     <p>Execution approval is available after task preparation and assignment. No agent starts from this page automatically.</p></section>;
+  if (local) return <section id="task-approval" aria-label="Local execution approval"><PrivateMacLocalTaskSubmission detail={detail} /></section>;
   const current = checked === detail;
   return <><TaskApprovalPanel state={current ? state : undefined} review={current ? review : undefined} error={current ? error : undefined}
     fileName={current ? file?.name ?? "" : ""} pending={pending} uncertain={client.hasPending()}

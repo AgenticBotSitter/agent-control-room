@@ -6,6 +6,15 @@ import { sha256Digest } from "../src/security";
 import { ownerReviewFixture } from "./helpers/web-owner-review";
 import { instant } from "./hermes-native-fixture";
 import { request, token, trust } from "./helpers/web-foundation";
+import type { DatabaseClient, DatabaseSession } from "../src/persistence/database";
+
+const traceTransactions = (db: DatabaseClient, statements: string[]): DatabaseClient => {
+  const traced = (tx: DatabaseSession): DatabaseSession => ({ query: async <T>(sql: string, params?: unknown[]) => {
+    statements.push(sql.replace(/\s+/gu, " ").trim()); return tx.query<T>(sql, params);
+  } });
+  return { query: db.query.bind(db), transaction: work => db.transaction(tx => work(traced(tx))),
+    transactionWithPreCommitCheck: (work, check) => db.transactionWithPreCommitCheck(tx => work(traced(tx)), check) };
+};
 
 test("project result-review discovery finds a pending returned result without confusing it with execution approval", async t => {
   const f = await ownerReviewFixture(); t.after(f.close);
@@ -24,6 +33,17 @@ test("project result-review discovery finds a pending returned result without co
   assert.deepEqual(afterChange.items[0]?.reasons, ["changes_requested"]);
 
   await assert.rejects(f.tasks.projectAttention(f.identity, "project:other", "reviews"), /not_found|access_denied/);
+});
+
+test("owner review locks the tenant before completion-gate or child rows", async t => {
+  const f = await ownerReviewFixture(); t.after(f.close);
+  const statements: string[] = [];
+  const reviews = f.createReviews(traceTransactions(f.db, statements));
+  await reviews.record(f.identity, "project:test", "job:test", f.draft, "owner-review-lock-order");
+  const tenant = statements.findIndex(sql => sql === "SELECT id FROM tenants WHERE id=$1 FOR KEY SHARE");
+  const gate = statements.findIndex(sql => /control_completion_gate_integrity.*FOR UPDATE/u.test(sql));
+  const child = statements.findIndex(sql => sql.startsWith("INSERT INTO control_web_task_review_commands"));
+  assert.ok(tenant >= 0 && gate > tenant && child > gate, JSON.stringify({ tenant, gate, child, statements }));
 });
 
 test("project result-review discovery reports unavailable evidence rather than treating it as no review work", async t => {

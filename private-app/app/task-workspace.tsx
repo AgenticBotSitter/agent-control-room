@@ -17,6 +17,7 @@ import { installNewsNavigationGuard } from "../../src/web/v1/news-navigation-gua
 import { createTaskExecutionWorkspace } from "../../src/web/v1/task-execution-workspace";
 import { createIdeaBrowserClient } from "../../src/web/v1/idea-browser-client";
 import { canPrepareIdeaExperiment, prepareIdeaExperimentDraft } from "../../src/web/v1/idea-experiment-draft";
+import { useLocalRuntime } from "./local-runtime";
 
 export function TaskAuthenticationRecovery({ held }: { held: boolean }) {
   return <p>{browserAuthenticationRecovery(held)}</p>;
@@ -31,7 +32,23 @@ export function TaskDetailResults({ detail, projectId, reviewWorkspace, verifica
       jobId={detail.task.jobId} reviewWorkspace={reviewWorkspace} verificationWorkspace={verificationWorkspace} /> : null;
 }
 
+/** A proposal has no assignment yet; asking the assignment endpoint for it is
+ * an expected 404. Only the separately prepared task has that capability. */
+export function TaskExecutionStage({ detail, mode, workspace, onRecorded }: {
+  detail: TaskDetail; mode: "checking" | "local" | "hosted"; workspace: ReturnType<typeof createTaskExecutionWorkspace>;
+  onRecorded?: () => void;
+}) {
+  if (mode === "checking") return <p className="private-note">Checking this installation’s task workflow…</p>;
+  if (mode === "hosted") return <><PrivateTaskPlanning detail={detail} client={workspace.planning} />
+    <PrivateTaskAssignment detail={detail} client={workspace.assignment} onRecorded={onRecorded} />
+    <PrivateTaskApproval detail={detail} workspace={workspace} /></>;
+  if (!detail.preparedFor) return <PrivateTaskPlanning detail={detail} client={workspace.planning} />;
+  return <><PrivateTaskAssignment detail={detail} client={workspace.assignment} onRecorded={onRecorded} />
+    <PrivateTaskApproval detail={detail} workspace={workspace} local /></>;
+}
+
 export function PrivateTaskWorkspace({ projectId, jobId, after }: { projectId: string; jobId?: string; after?: string }) {
+  const runtime = useLocalRuntime();
   const [client] = useState(() => createTaskBrowserClient());
   const [ideas] = useState(() => createIdeaBrowserClient());
   // Neither failed task-detail reads nor failed result reads may discard an unfinished review.
@@ -134,11 +151,9 @@ export function PrivateTaskWorkspace({ projectId, jobId, after }: { projectId: s
         : <p className="private-note">{page.project.lifecycle !== "active" ? "Reopen this project before proposing more work." : "Your current access allows reading tasks, not proposing new work."}</p>}</div>}
     {detail && <TaskDetailPanel detail={detail} />}
     {detail && <TaskStateGuidance detail={detail} refreshing={loading} onRefresh={refreshSaved} />}
-    {detail && <TaskWorkflowGuide />}
-    {jobId && <PrivateTaskPlanning detail={detail} client={executionWorkspace.planning} />}
-    {jobId && <PrivateTaskAssignment detail={detail} client={executionWorkspace.assignment} onRecorded={refreshSaved} />}
-    {jobId && <PrivateTaskApproval detail={detail} workspace={executionWorkspace} />}
+    {detail && runtime.mode !== "checking" && <TaskWorkflowGuide local={runtime.mode === "local"} prepared={!!detail.preparedFor} />}
+    {jobId && detail && <TaskExecutionStage detail={detail} mode={runtime.mode} workspace={executionWorkspace} onRecorded={refreshSaved} />}
     <div id="task-results"><TaskDetailResults detail={detail} projectId={projectId} reviewWorkspace={reviewWorkspace} verificationWorkspace={verificationWorkspace} /></div>
-    {project && <p className="private-note">Saved-state view · Refreshes every 30 seconds while visible. Use the task’s submission controls to queue signed work when configured. Refreshing this page does not submit a task.</p>}
+    {project && <p className="private-note">Saved-state view · Refreshes every 30 seconds while visible. Use the task’s submission controls to queue work when configured. Refreshing this page does not submit a task.</p>}
   </main></div>;
 }

@@ -17,9 +17,10 @@ import { sha256Digest } from "../../../src/security/canonical-digest";
 import { applyMacLocalFirstOwnerV1 } from "../first-owner-vps.mjs";
 import { serviceInstalled } from "../service.mjs";
 
-const [arg] = process.argv.slice(2);
-if (!arg || process.argv.length !== 3 || !isAbsolute(arg) || resolve(arg) !== arg) {
-  process.stderr.write("usage: node --import tsx scripts/mac-local/rehearsal/journey.ts ABSOLUTE_REHEARSAL_DIR\n");
+const [arg, mode] = process.argv.slice(2);
+if (!arg || ![3, 4].includes(process.argv.length) || mode !== undefined && mode !== "--browser-proof"
+  || !isAbsolute(arg) || resolve(arg) !== arg) {
+  process.stderr.write("usage: node --import tsx scripts/mac-local/rehearsal/journey.ts ABSOLUTE_REHEARSAL_DIR [--browser-proof]\n");
   process.exit(2);
 }
 const root = resolve(arg), protectedRoot = join(root, "protected");
@@ -94,6 +95,7 @@ async function main() {
   const roleMap = JSON.parse(await readFile(join(protectedRoot, "config/database-roles.json"), "utf8"));
   if (config?.database?.host !== "127.0.0.1" || config.database.database !== "control_room"
     || config.database.majorVersion !== 17 || !Number.isInteger(config.database.port)
+    || config.port === 3210 || !Number.isInteger(config.port)
     || roleMap?.coordinator?.host !== "127.0.0.1" || roleMap.coordinator.port !== config.database.port
     || roleMap.coordinator.database !== "control_room") throw new Error("rehearsal_database_scope_refused");
   if (await serviceInstalled()) throw new Error("rehearsal_refused_existing_launchd_service");
@@ -206,6 +208,12 @@ async function main() {
   assert.equal(workersBody.workers?.length, 3);
   assert.ok(workersBody.workers.every(worker => worker.state === "ready"), `all three workers must be ready: ${JSON.stringify(workersBody.workers)}`);
 
+  if (mode === "--browser-proof") {
+    process.stdout.write(`Isolated built-page browser proof ready at ${origin}/projects. Press Return in this runner after the proof to shut down its host and database.\n`);
+    await new Promise<void>(resolve => process.stdin.once("data", () => resolve()));
+    return;
+  }
+
   const idOf = (value: string) => encodeURIComponent(value);
   const outcomes: Record<string, unknown> = {};
 
@@ -221,10 +229,16 @@ async function main() {
     const detailBody = await requireOk(detail, 200, `${agent.kind} source detail`) as { inputDigest: string };
     const sourceInputDigest = detailBody.inputDigest;
 
-    // 2) plan: the templateId is the deterministic id the same production
-    // formula (mac-local-task-provider-templates.ts) computes for this
-    // project and agent kind.
-    const templateId = `template:mac-local:${agent.kind}:${sha256Digest(projectId).slice(7, 39)}`;
+    // 2) Discover through the same read the real task page uses. Computing
+    // template IDs here hid a broken browser-facing planning response.
+    const planOptions = await requireOk(await fetch(new URL(
+      `/api/v1/projects/${idOf(projectId)}/tasks/${idOf(sourceJobId)}/plan`, origin), { headers: { cookie } }),
+    200, `${agent.kind} planning options`) as { templates?: { id: string; adapter: string }[]; availability: string };
+    assert.equal(planOptions.availability, "available", `${agent.kind} source must be preparable`);
+    assert.equal(planOptions.templates?.length, 3, `${agent.kind} must see all three local workers`);
+    const templateId = planOptions.templates?.find(item => item.id ===
+      `template:mac-local:${agent.kind}:${sha256Digest(projectId).slice(7, 39)}`)?.id;
+    assert.ok(templateId, `${agent.kind} must be a browser-discoverable choice`);
     const planned = await fetch(new URL(`/api/v1/projects/${idOf(projectId)}/tasks/${idOf(sourceJobId)}/plan`, origin), {
       method: "POST", headers: { origin, cookie, "content-type": "application/json" },
       body: JSON.stringify({ expectedInputDigest: sourceInputDigest, templateId }),
@@ -242,6 +256,12 @@ async function main() {
     });
     const assignedBody = await require5xxOr201(assigned, `${agent.kind} assignment`) as { receipt: { inputDigest: string } };
     const assignedInputDigest = assignedBody.receipt.inputDigest;
+    const assignedDetail = await requireOk(await fetch(new URL(
+      `/api/v1/projects/${idOf(projectId)}/tasks/${idOf(jobId)}`, origin), { headers: { cookie } }),
+    200, `${agent.kind} assigned task detail`) as { preparedFor: string | null; attempts: unknown[]; inputDigest: string };
+    assert.equal(assignedDetail.preparedFor, agent.kind, `${agent.kind} prepared worker visible to task page`);
+    assert.ok(assignedDetail.attempts.length > 0, `${agent.kind} task page must expose local submission after assignment`);
+    assert.equal(assignedDetail.inputDigest, assignedInputDigest, `${agent.kind} page and submission digests must match`);
 
     // 4) submission preview, then submit with the exact previewed digest.
     const previewRead = await fetch(new URL(`/api/v1/projects/${idOf(projectId)}/tasks/${idOf(jobId)}/submission?inputDigest=${assignedInputDigest}`, origin),
@@ -444,6 +464,43 @@ async function main() {
     await Promise.allSettled([assignment.end(), completion.end()]);
   }
   process.stdout.write("Package 6b tenant-before-gate PG17 collision: PASS (no deadlock)\n");
+
+  // Owner review follows the same canonical parent-before-gate order. Hold the
+  // stronger tenant lock used by competing lifecycle work, prove owner review
+  // waits there (without owning the gate), capture the live wait graph, then
+  // release it and let both transactions acquire the gate in tenant order.
+  const quality = collisionConnection(), ownerReview = collisionConnection(), lockObserver = collisionConnection();
+  await Promise.all([quality.connect(), ownerReview.connect(), lockObserver.connect()]);
+  try {
+    const tenantId = config.localOwnerSession.tenantId;
+    await quality.query("BEGIN"); await ownerReview.query("BEGIN");
+    const qualityPid = Number((await quality.query<{ pid: number }>("SELECT pg_backend_pid() AS pid")).rows[0]?.pid);
+    const ownerPid = Number((await ownerReview.query<{ pid: number }>("SELECT pg_backend_pid() AS pid")).rows[0]?.pid);
+    await quality.query("SELECT id FROM tenants WHERE id=$1 FOR UPDATE", [tenantId]);
+    const ownerTenant = ownerReview.query("SELECT id FROM tenants WHERE id=$1 FOR KEY SHARE", [tenantId]);
+    await new Promise(resolve => setTimeout(resolve, 100));
+    const waits = (await lockObserver.query<{ pid: number; blocking_pids: number[] }>(
+      "SELECT pid,pg_blocking_pids(pid) AS blocking_pids FROM pg_stat_activity WHERE pid=ANY($1::int[]) ORDER BY pid",
+      [[qualityPid, ownerPid]])).rows;
+    const locks = (await lockObserver.query<{ pid: number; locktype: string; relation: string | null; mode: string; granted: boolean }>(`
+      SELECT pid,locktype,relation::regclass::text AS relation,mode,granted FROM pg_locks
+      WHERE pid=ANY($1::int[]) ORDER BY pid,granted,locktype,mode`, [[qualityPid, ownerPid]])).rows;
+    assert.deepEqual(waits.find(row => Number(row.pid) === ownerPid)?.blocking_pids.map(Number), [qualityPid]);
+    assert.deepEqual(waits.find(row => Number(row.pid) === qualityPid)?.blocking_pids.map(Number), []);
+    assert.equal(locks.some(row => Number(row.pid) === ownerPid && row.relation === "control_completion_gate_integrity"), false,
+      "owner review must not acquire the gate while waiting for its parent tenant");
+    process.stdout.write(`Owner-review tenant wait pg_locks: ${JSON.stringify(locks)}\n`);
+    process.stdout.write(`Owner-review tenant wait pg_blocking_pids: ${JSON.stringify(waits)}\n`);
+    await quality.query("SELECT tenant_id FROM control_completion_gate_integrity WHERE tenant_id=$1 FOR UPDATE", [tenantId]);
+    await quality.query("COMMIT");
+    await ownerTenant;
+    await ownerReview.query("SELECT tenant_id FROM control_completion_gate_integrity WHERE tenant_id=$1 FOR UPDATE", [tenantId]);
+    await ownerReview.query("ROLLBACK");
+  } finally {
+    await Promise.allSettled([quality.query("ROLLBACK"), ownerReview.query("ROLLBACK")]);
+    await Promise.allSettled([quality.end(), ownerReview.end(), lockObserver.end()]);
+  }
+  process.stdout.write("Owner-review tenant-before-gate PG17 collision: PASS (captured wait, no deadlock)\n");
 
   const finalDown = invoke(["scripts/mac-local/down.mjs", "--protected-root", protectedRoot]);
   assert.equal(finalDown.status, 0, finalDown.stderr || finalDown.stdout);

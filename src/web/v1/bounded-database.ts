@@ -3,8 +3,10 @@ import { databaseOperationSignal, withDatabaseOperationSignal } from "../../pers
 
 export const privateDatabaseLimits = Object.freeze({ connections: 8, checkoutMs: 5000,
   statementMs: 5000, transactionMs: 10000, closeMs: 5000 });
+export type PrivateDatabaseRollbackSqlState = "40P01" | "40001";
 export class PrivateDatabaseError extends Error {
-  constructor(readonly code: "database_unavailable" | "database_outcome_uncertain" | "database_close_uncertain") { super(code); }
+  constructor(readonly code: "database_unavailable" | "database_outcome_uncertain" | "database_close_uncertain",
+    readonly rollbackSqlState?: PrivateDatabaseRollbackSqlState) { super(code); }
 }
 export interface PrivateDatabaseLease extends DatabaseSession { release(): void }
 /** Trusted, explicitly supplied transport. No ambient driver or fallback is selected here. */
@@ -49,6 +51,7 @@ export function boundPrivateDatabase(driver: PrivateDatabaseDriver,
     const operation = new AbortController(), parent = databaseOperationSignal();
     const signal = parent ? AbortSignal.any([parent, operation.signal]) : operation.signal;
     let valid = true, busy = false, queryFailed = false;
+    let rollbackSqlState: PrivateDatabaseRollbackSqlState | undefined;
     let invalidate!: () => void;
     const invalidated = new Promise<never>((_, reject) => { invalidate = () => {
       valid = false; operation.abort(); reject(new PrivateDatabaseError("database_outcome_uncertain"));
@@ -74,7 +77,11 @@ export function boundPrivateDatabase(driver: PrivateDatabaseDriver,
         try {
           const result = await deadline(Promise.resolve().then(() => { assertActive(); return lease.query<U>(statement, params); }), limits.statementMs);
           assertActive(); return result;
-        } catch (error) { queryFailed = true; throw error; }
+        } catch (error) {
+          queryFailed = true;
+          if (error instanceof PrivateDatabaseError && error.rollbackSqlState) rollbackSqlState = error.rollbackSqlState;
+          throw error;
+        }
         finally { busy = false; }
       };
       try {
@@ -82,9 +89,13 @@ export function boundPrivateDatabase(driver: PrivateDatabaseDriver,
         if (transaction) { await query("BEGIN"); began = true; }
         const result = await callback(Object.freeze({ query }));
         assertActive();
-        if (busy || queryFailed) throw new PrivateDatabaseError("database_outcome_uncertain");
+        if (busy || queryFailed) throw rollbackSqlState
+          ? new PrivateDatabaseError("database_unavailable", rollbackSqlState)
+          : new PrivateDatabaseError("database_outcome_uncertain");
         await check(); assertActive();
-        if (busy || queryFailed) throw new PrivateDatabaseError("database_outcome_uncertain");
+        if (busy || queryFailed) throw rollbackSqlState
+          ? new PrivateDatabaseError("database_unavailable", rollbackSqlState)
+          : new PrivateDatabaseError("database_outcome_uncertain");
         if (transaction) { commitAttempted = true; await query("COMMIT"); began = false; }
         return result;
       } catch (error) {
@@ -97,6 +108,11 @@ export function boundPrivateDatabase(driver: PrivateDatabaseDriver,
           try { await query("ROLLBACK"); }
           catch { await stop(); throw new PrivateDatabaseError("database_outcome_uncertain"); }
         }
+        // PostgreSQL has already aborted the transaction for these statement-time failures.
+        // The successful ROLLBACK above proves this lease is reusable; keep the pool serving
+        // other requests while returning one sanitized, retryable refusal to this caller.
+        if (error instanceof PrivateDatabaseError && error.rollbackSqlState)
+          throw new PrivateDatabaseError("database_unavailable");
         throw error;
       } finally { valid = false; lease.release(); }
     });
