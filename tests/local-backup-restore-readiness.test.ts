@@ -1,10 +1,15 @@
 import assert from "node:assert/strict";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 import { createArtifactBackupInventoryV1, verifyRestoredArtifactBackupInventoryV1 } from "../src/artifacts/v1/artifact-backup-inventory";
 import { createLocalBackupRestoreReadinessV1, verifyLocalBackupRestoreReadinessV1 } from "../src/harness/v1/local-backup-restore-readiness";
 import { localBackupRestoreEvidenceDigestForInstallationPlanV1 } from "../src/harness/v1/local-backup-restore-readiness";
 import { planInstallationTopologyV1 } from "../src/harness/v1/installation-topology";
 import { sha256Digest } from "../src/security";
+import { createMacLocalDatabaseBackupV1 } from "../scripts/ops/backup-database.mjs";
+import { verifyMacLocalDatabaseBackupV1 } from "../scripts/ops/verify-database-backup.mjs";
 
 const planDigest = sha256Digest("reviewed-local-installation-plan");
 const inventory = () => createArtifactBackupInventoryV1({
@@ -76,4 +81,28 @@ test("accepts backup evidence only for the exact reviewed unified installation p
   const changed = planInstallationTopologyV1({ databaseAuthorityDigest: sha256Digest("database:changed"),
     schedulerAuthorityDigest: sha256Digest("scheduler"), currentRoutes: routes, requestedRoutes: routes });
   assert.throws(() => localBackupRestoreEvidenceDigestForInstallationPlanV1(changed, usable), /local_backup_restore_readiness_unavailable/);
+});
+
+test("writes a secret-free digest manifest and refuses a tampered dump before starting PostgreSQL", async t => {
+  const root = await mkdtemp(join(tmpdir(), "mac-backup-manifest-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const identityDigest = sha256Digest("restore-identity"), ledgerDigest = sha256Digest("ledger");
+  const manifest = await createMacLocalDatabaseBackupV1({
+    source: "postgresql://operator:private-password@127.0.0.1/control_room", out: root,
+    pgBin: "/unused/postgres/bin", now: () => "2026-09-27T00:00:00.000Z",
+    backup: async ({ out }) => {
+      await mkdir(out!, { recursive: true });
+      await writeFile(join(out!, "database.dump"), "custom-format-backup");
+      await writeFile(join(out!, "metadata.json"), JSON.stringify({ version: 1, ledgerDigest,
+        identity: { identityDigest }, evidence: { roles: [{ rolname: "control_room_schema_owner" }],
+          ledger: [{ filename: "db/migrations/0090_test.sql", digest: sha256Digest("head"), ledger_order: 90 }] } }));
+      return { planned: false, identityDigest };
+    },
+  });
+  const encoded = JSON.stringify(manifest);
+  assert.doesNotMatch(encoded, /private-password|postgresql|operator/u);
+  assert.equal(manifest.restoreIdentityDigest, identityDigest);
+  await writeFile(join(root, "database.dump"), "tampered-custom-format-backup");
+  await assert.rejects(verifyMacLocalDatabaseBackupV1({ backup: root, port: 15620,
+    pgBin: "/unused/postgres/bin" }), /database_backup_digest_refused/u);
 });

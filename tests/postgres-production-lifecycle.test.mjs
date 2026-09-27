@@ -17,6 +17,9 @@ import { restoreDatabase } from "../deploy/postgres/restore-database.mjs";
 import { collectDatabaseEvidence, digestOf } from "../deploy/postgres/evidence.mjs";
 import { computeDatabaseRestoreIdentity, verifyRestoredIdentity } from "../deploy/postgres/restore-identity.mjs";
 import { collectLedgerEntries, ledgerDigest } from "../scripts/generate-migration-ledger.mjs";
+import { provisionMacLocalNarrowRolesV1 } from "../scripts/mac-local/narrow-role-provision.mjs";
+import { createMacLocalDatabaseBackupV1 } from "../scripts/ops/backup-database.mjs";
+import { verifyMacLocalDatabaseBackupV1 } from "../scripts/ops/verify-database-backup.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const BIN = process.env.PG_BIN ?? "/usr/lib/postgresql/17/bin";
@@ -26,7 +29,7 @@ const BIN = process.env.PG_BIN ?? "/usr/lib/postgresql/17/bin";
 // failing the whole lane for an unrelated pull request.
 const PG_AVAILABLE = existsSync(join(BIN, "initdb")) && existsSync(join(BIN, "postgres"));
 const needsPg = PG_AVAILABLE ? undefined : { skip: "needs PostgreSQL 17 binaries (PG_BIN or /usr/lib/postgresql/17/bin)" };
-const PORT = 65434;
+const PORT = 15630;
 const exec = promisify(execFile);
 
 let run = "", socket = "", data = "";
@@ -408,13 +411,13 @@ test("documented clean-cluster provision/migrate/backup/restore/verify journey",
   // not mask a provision script that assumes groups already exist, and the
   // restore target must not inherit shared-cluster role state either. Every
   // step below is the documented operator flow, executed literally.
-  const CLEAN_PORT = 65435;
+  const CLEAN_PORT = 15631;
   const cleanSocket = join(run, "clean-socket"), cleanData = join(run, "clean-data");
   const cleanBackup = join(run, "clean-backup-set");
   // The restore target lives in its OWN disposable cluster: roles and
   // memberships are cluster-wide, so a second database in the source cluster
   // would inherit the source's role state before target provisioning.
-  const TARGET_PORT = 65436;
+  const TARGET_PORT = 15632;
   const targetSocket = join(run, "clean-target-socket"), targetData = join(run, "clean-target-data");
   const asPostgres = process.getuid?.() === ROOT_UID;
   const ownDirs = async (...dirs) => {
@@ -583,4 +586,26 @@ test("documented clean-cluster provision/migrate/backup/restore/verify journey",
     "SELECT pg_get_userbyid(datdba) AS owner FROM pg_database WHERE datname = 'cr_clean_restored'")).rows[0].owner;
   assert.equal(targetDbOwner, dbOwner, "restored database owner matches the source database owner");
   assert.equal(targetDbOwner, "control_room_schema_owner");
+
+  // The Mac-local wrapper adds the five exact restricted roles, hashes the
+  // dump+metadata manifest, and proves the result in its own fresh cluster.
+  await provisionMacLocalNarrowRolesV1({
+    query: (sql, values) => cleanTargetQuery(sql, values),
+    escapeLiteral: value => `'${String(value).replaceAll("'", "''")}'`,
+  }, Object.fromEntries([
+    "control_room_web", "control_room_coordinator", "control_room_results",
+    "control_room_publisher", "control_room_queue_worker",
+  ].map((name, index) => [name, `${index}`.repeat(40)])));
+  const macBackup = join(run, "mac-local-backup-set");
+  const manifest = await createMacLocalDatabaseBackupV1({ source: db, out: macBackup, pgBin: BIN,
+    now: () => "2026-09-27T00:00:00.000Z" });
+  assert.match(manifest.dumpDigest, /^sha256:[a-f0-9]{64}$/u);
+  const verified = await verifyMacLocalDatabaseBackupV1({ backup: macBackup, port: 15633, pgBin: BIN });
+  assert.equal(verified.verified, true);
+  assert.equal(verified.identityDigest, manifest.restoreIdentityDigest);
+  const dumpPath = join(macBackup, "database.dump"), altered = await readFile(dumpPath);
+  altered[0] ^= 0xff;
+  await writeFile(dumpPath, altered);
+  await assert.rejects(verifyMacLocalDatabaseBackupV1({ backup: macBackup, port: 15634, pgBin: BIN }),
+    /database_backup_digest_refused/u);
 });
