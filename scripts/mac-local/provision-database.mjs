@@ -422,6 +422,8 @@ SELECT json_build_object(
   'defaultAcl', (SELECT count(*)::int FROM pg_default_acl d
     CROSS JOIN LATERAL aclexplode(d.defaclacl) a JOIN pg_roles r ON r.oid=a.grantee
     WHERE r.rolname=ANY(${names})),
+  'queue', json_build_object('schemaExists', EXISTS (SELECT 1 FROM pg_namespace
+    WHERE nspname='control_room_queue')),
   'grants', (SELECT coalesce(json_agg(row_to_json(x)), '[]'::json) FROM (${grants}) x)
 )::text;
 COMMIT;`;

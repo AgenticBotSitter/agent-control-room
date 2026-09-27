@@ -2,7 +2,7 @@
  * by application startup. Existing grants are inspected, not repaired here;
  * live membership correction is the separately reviewed step 11.C. */
 import { readFile } from "node:fs/promises";
-import { PgBoss, getConstructionPlans } from "pg-boss";
+import { inspectFixedQueueSchemaV1, installFixedQueueSchemaV1 } from "./fixed-queue-schema.mjs";
 
 const plan = Object.freeze([
   ["control_room_web", "control_room_private_web"],
@@ -18,20 +18,8 @@ const roleFiles = Object.freeze([
 const roleSource = file => new URL(`../../db/roles/${file}`, import.meta.url);
 
 async function installFixedQueue(client) {
-  const schema = (await client.query("SELECT to_regclass('control_room_queue.queue') IS NOT NULL AS installed")).rows[0]?.installed;
-  if (!schema) {
-    await client.query(getConstructionPlans("control_room_queue"));
-    const boss = new PgBoss({ db: { executeSql: (sql, values) => client.query(sql, values) },
-      schema: "control_room_queue", backend: "postgres", migrate: false, createSchema: false,
-      supervise: false, schedule: false, useListenNotify: false });
-    await boss.start();
-    try { await boss.createQueue("native-task-delivery", { retryLimit: 0 }); }
-    finally { await boss.stop({ graceful: false }); }
-  }
-  const rows = (await client.query(`SELECT name FROM control_room_queue.queue
-    WHERE name='native-task-delivery' AND policy='standard' AND partition=false
-      AND retry_limit=0 AND dead_letter IS NULL AND notify=false`)).rows;
-  if (rows.length !== 1) throw new Error("narrow_role_queue_refused");
+  const queue = await inspectFixedQueueSchemaV1(client);
+  if (!queue.schemaExists) await installFixedQueueSchemaV1(client);
 }
 
 async function inspectRoles(client) {
