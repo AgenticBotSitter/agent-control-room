@@ -113,13 +113,15 @@ export function HomeDashboard({ data }: { data: HomeDashboardState }) {
  * resolved read. Passing it through here keeps the home panel's three saved
  * route states assertable without waiting on a live `/api/v1/local-workers`
  * read, and lets a page that already holds the read avoid a second one. */
-export function HomeInstallationStatus({ topology, taskWorkerStatus }: {
+export function HomeInstallationStatus({ topology, taskWorkerStatus, showSetupGuidance }: {
   topology: ReturnType<typeof useInstallationTopology>;
   taskWorkerStatus?: TaskWorkerReadState;
+  showSetupGuidance?: boolean;
 }) {
   return <>
     <InstallationTopologySummary setup={topology.setup} status={topology.state} />
-    <LocalWorkerRouteStatus setup={topology.setup} state={topology.state} taskWorkerStatus={taskWorkerStatus} />
+    <LocalWorkerRouteStatus setup={topology.setup} state={topology.state} taskWorkerStatus={taskWorkerStatus}
+      showSetupGuidance={showSetupGuidance} />
   </>;
 }
 
@@ -167,10 +169,10 @@ export function PrivateHome() {
       <h1 id="home-title">{displayName}</h1><p>Current saved work, results and attention from the protected Control Room services. This page refreshes while it is open and again when you return to it. Each section reports unavailable data instead of replacing it with a zero.</p>
       <p className="private-note">Unavailable means the saved database or protected read could not be checked. Checking again only rereads saved records; it does not start, assign, approve or retry work.</p>
       <button type="button" onClick={() => setGeneration(value => value + 1)}>Check saved dashboard again</button></section>
-    <HomeInstallationStatus topology={installationTopology} />
+    <HomeInstallationStatus topology={installationTopology} showSetupGuidance={runtime.mode === "hosted"} />
     <HomeDashboard data={data} />
-    {runtime.mode !== "local" && <PrivateOperatorCapacityWorkspace />}
-    {ideaLab && <aside className="private-note private-home-note" aria-label="Optional module"><strong>Idea Lab is optional.</strong>{" "}
+    {runtime.mode === "hosted" && <PrivateOperatorCapacityWorkspace />}
+    {runtime.mode === "hosted" && ideaLab && <aside className="private-note private-home-note" aria-label="Optional module"><strong>Idea Lab is optional.</strong>{" "}
       <a href="/ideas">Open Idea Lab</a> to compare ideas before promoting an approved one to a project.</aside>}
   </main></div>;
 }

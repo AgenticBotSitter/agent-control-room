@@ -51,7 +51,8 @@ test("home gives honest navigation to existing private workspace surfaces", () =
   const html = renderToStaticMarkup(createElement(Home));
   // Before the browser identifies hosted versus Mac-local, server rendering
   // exposes only links shared by both. Hosted links hydrate after the read.
-  for (const href of ["/projects", "/workers", "/setup", "/needs-me"]) assert.match(html, new RegExp(`href="${href}"`));
+  for (const href of ["/projects", "/workers", "/needs-me"]) assert.match(html, new RegExp(`href="${href}"`));
+  assert.doesNotMatch(html, /href="\/setup"/);
   assert.doesNotMatch(html, /href="\/settings"/);
   assert.doesNotMatch(html, /href="\/ideas"/);
   assert.match(html, /aria-controls="private-workspace-navigation"/);
@@ -67,9 +68,9 @@ test("home gives honest navigation to existing private workspace surfaces", () =
   assert.doesNotMatch(html, /live workers|running now|0 tasks/i);
   for (const label of ["Loading saved work", "Loading saved attention items", "Loading verified result records",
     "Loading saved worker signals", "Loading saved projects"]) assert.match(html, new RegExp(label));
-  assert.match(html, /Operator capacity/);
-  assert.match(html, /Reading the recorded capacity and outcome evidence/);
-  assert.equal((html.match(/operator-capacity-title/g) ?? []).length, 2, "one read-only capacity panel is mounted");
+  assert.doesNotMatch(html, /Operator capacity/);
+  assert.doesNotMatch(html, /Reading the recorded capacity and outcome evidence/);
+  assert.equal((html.match(/operator-capacity-title/g) ?? []).length, 0, "hosted-only capacity stays hidden until runtime detection settles");
 });
 
 /** The route panel renders only once the task-worker read has resolved. The
