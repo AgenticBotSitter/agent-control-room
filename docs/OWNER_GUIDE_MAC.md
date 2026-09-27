@@ -21,17 +21,14 @@
 > from this branch or treat the command sequence below as an accepted install.
 
 Run every `pnpm` command from the repository root, on the Mac that holds the workers.
-For a later VPS database upgrade, use the separate reviewed operator sequence in
-`docs/JOHNNY5_DB_ROUTE_STEPS.md`; do not reuse the one-time setup command below.
-That VPS sequence gives the `postgres` account a stage-local temporary directory
-(the VPS default `TMPDIR` is root-only) and runs TSX-dependent tooling with
-`/usr/local/bin/node22` (the VPS default Node is 20.19, below the supported 22.13).
+For a later VPS database upgrade, use the separately maintained private VPS
+operator runbook; do not reuse the one-time setup command below.
 
 ## 1. First time only (one-time setup)
 
 | # | Step | Who | Command / note |
 |---|------|-----|----------------|
-| 1 | Confirm the Mac's approved Tailscale client tag is showing | **Owner-only** | See `docs/OWNER_ACTIONS.md` item 1. Bots cannot do this. |
+| 1 | Confirm the Mac's approved Tailscale client tag is showing | **Owner-only** | See the private installation checklist item 1. Bots cannot do this. |
 | 2 | Create the database and protected configuration | Agent, at your request | `pnpm mac:provision-database -- --protected-root <protected-root> --ssh-target <user@host> --database-host <host> --remote-worktree <absolute-path>` — **unproven** |
 | 3 | Point the Mac at the current database route | Agent | `pnpm mac:provision-database -- --repoint-only --protected-root <protected-root>` — **unproven** |
 | 4 | Build once | Agent | `pnpm build` |
@@ -80,7 +77,7 @@ directory:
 | Sessions last 8 hours | Re-enter the code when the site asks again. |
 
 If the file is missing, the Mac was provisioned against a different protected root. See
-`docs/OWNER_ACTIONS.md`; do not run the provisioner again just to get a new code.
+the private installation checklist; do not run the provisioner again just to get a new code.
 
 ## 4. Stop the system
 
@@ -126,7 +123,7 @@ Any line ending `database_check_refused` means that role is not reachable.
 
 | Symptom | What it means | Do this |
 |---------|---------------|---------|
-| Site says the database is unavailable | The direct private route to the database is not working. This is expected while the Mac is off the private network, or if the Tailscale client tag is not yet effective. | 1. Open Tailscale and confirm the Mac is connected. 2. Confirm the approved client tag is showing (see `docs/OWNER_ACTIONS.md` item 1). 3. Re-run `pnpm mac:check-database -- <protected-root>`. 4. If roles are still refused, stop and report it — do not start a tunnel, and do not change the tag or the policy. |
+| Site says the database is unavailable | The direct private route to the database is not working. This is expected while the Mac is off the private network, or if the Tailscale client tag is not yet effective. | 1. Open Tailscale and confirm the Mac is connected. 2. Confirm the approved client tag is showing (see the private installation checklist item 1). 3. Re-run `pnpm mac:check-database -- <protected-root>`. 4. If roles are still refused, stop and report it — do not start a tunnel, and do not change the tag or the policy. |
 | `mac:up FAILED database check failed` | The database was not reachable, so the stack deliberately did not start. | Fix the route as above, then start again. |
 | `mac:up FAILED repin exit 2: protected configuration is unsafe` | The protected configuration is missing, unreadable, or unsafe. | Do not start. Report it to the agent. |
 | A worker shows `unavailable` | That worker's executable could not be verified. | The other workers keep working. `pnpm mac:down` then `pnpm mac:up` re-checks it. |
@@ -138,7 +135,7 @@ key, certificate, or database address into chat, a ticket, or this repository.
 
 ## 8. Owner-only actions
 
-Anything a bot cannot do is listed in `docs/OWNER_ACTIONS.md`. Read that file rather than
+Anything a bot cannot do is listed in the private installation checklist. Read that file rather than
 repeating it here. Never paste a password, access key, database address, MagicDNS name,
 certificate, or terminal output into that file.
 
@@ -146,7 +143,7 @@ The Tailscale client tag and the access-policy grant are both **done**. Do not r
 one; if a future update needs another machine on the route, give that machine the same approved
 client tag and change nothing else.
 
-What is still open is the set of drills in `OWNER_ACTIONS.md` item 3: the phone-or-PC port test,
+What is still open is the set of drills in the private installation checklist item 3: the phone-or-PC port test,
 a Mac sleep and wake, the VPS-side PostgreSQL and Tailscale restarts, and a forced certificate
 renewal. Those are not setup steps; they are the checks that prove the route survives real
 interruptions.
@@ -198,7 +195,7 @@ holding it, and the database port is not open to your other devices.
 ### 9.5 What still has to be proved by a person
 
 Three checks need you rather than an agent, and they are listed in
-`docs/OWNER_ACTIONS.md` item 3: a port test from your phone or PC (which
+the private installation checklist item 3: a port test from your phone or PC (which
 must fail), a sleep and wake on this Mac, and remote restarts of the
 database and the private connection. Until those are done, the route has not
 been shown to survive a real interruption.

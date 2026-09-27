@@ -105,7 +105,7 @@ must be assembled before that window.
    ordinary owner review, one requested correction, restart recovery, and no
    automatic retry after uncertainty.
 
-**Done when:** Marvin receives ordinary Control Room work automatically and
+**Done when:** Hermes worker receives ordinary Control Room work automatically and
 returns it to the same website review flow.
 
 ## Phase 3 — Make Claude Code a second ordinary local worker
@@ -124,7 +124,7 @@ returns it to the same website review flow.
    records, cancellation, restart recovery, owner review, and a correction
    without reopening either completed task.
 
-**Done when:** Marvin and Claude can work concurrently through one controller,
+**Done when:** Hermes worker and Claude can work concurrently through one controller,
 database, scheduler, website, and review path.
 
 ## Phase 4 — Add Codex through the supported Linux route

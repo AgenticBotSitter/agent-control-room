@@ -64,7 +64,7 @@ refusal.  It is the honest state and prevents a misleading partial launch.
 
 ## Independent check
 
-On September 24, Marvin reviewed this map through the selected Hermes route
+On September 24, Hermes worker reviewed this map through the selected Hermes route
 using `space-bunny-free` on `opencode-go`.  The review reached the same
 conclusion: the current provider arguments cannot create the real lifecycle,
 and a fake or no-op provider would make worker readiness misleading.  Verdict:

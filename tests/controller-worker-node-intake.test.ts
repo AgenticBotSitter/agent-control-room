@@ -16,7 +16,7 @@ const keys = generateKeyPairSync("ed25519");
 function fixture() {
   const delivery = createControllerWorkerDeliveryV1({
     identity: { tenantId: "tenant:test", projectId: "project:test", jobId: "job:test", attemptId: "attempt:test", runId: "run:test", nodeId: "node:mac" },
-    worker: { workerId: "worker:marvin", adapterId: "hermes/0.21", adapterRevision: "revision:7654321" },
+    worker: { workerId: "worker:hermes-worker", adapterId: "hermes/0.21", adapterRevision: "revision:7654321" },
     input: { prompt: "Inspect one exact task", instructions: "Return only bounded evidence." },
     authorityDigest: sha256Digest("authority"), connectorProfileDigest: sha256Digest("connector"),
     acceptanceProfileId: "acceptance:test", acceptanceProfileDigest: sha256Digest("acceptance"), issuedAt: at(0), expiresAt: at(60_000),

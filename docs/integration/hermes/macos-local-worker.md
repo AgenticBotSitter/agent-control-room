@@ -18,7 +18,7 @@ session operations Control Room already supports:
 - read its bounded result.
 
 The adapter passes only a stable local service label such as
-`service:marvin-hermes`. It does not contain a hostname, filesystem path,
+`service:hermes-worker`. It does not contain a hostname, filesystem path,
 login, token, model name, shell command, or process-control instruction.
 Those private details remain with the Mac integration owned by the operator.
 

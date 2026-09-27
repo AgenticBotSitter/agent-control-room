@@ -38,7 +38,7 @@ const argument = (name: string): string | undefined =>
 const requestedWorker = argument("worker");
 const worker = requestedWorker?.trim();
 if (requestedWorker !== undefined && !(worker && /^[a-z0-9][a-z0-9-]{2,63}$/.test(worker))) {
-  console.error(`invalid --worker value: ${JSON.stringify(requestedWorker)} (expected a bare worker-id, e.g. --worker=ziggy-results-01)`);
+  console.error(`invalid --worker value: ${JSON.stringify(requestedWorker)} (expected a bare worker-id, e.g. --worker=pc-worker-results-01)`);
   process.exit(2);
 }
 

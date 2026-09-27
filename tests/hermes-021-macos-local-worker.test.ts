@@ -10,25 +10,25 @@ import { sha256Digest } from "../src/security/canonical-digest";
 import { projectHermes021MacosTerminalResultEvidenceV1, terminalResultEvidenceSchemaV1 } from "../src/harness/v1/terminal-result-evidence";
 import { runHermes021MacosTextOnlyQualificationV1 } from "../src/harness/hermes-021-v1";
 
-const result = (overrides: Record<string, unknown> = {}) => ({ type: "result", session_id: "session:marvin", exit_code: 0,
+const result = (overrides: Record<string, unknown> = {}) => ({ type: "result", session_id: "session:hermes-worker", exit_code: 0,
   text: "Finished the requested task.", tokens: { input: 12, output: 8, total: 20, cache_read: 0, cache_write: 0 },
   duration_ms: 1200, timestamp: 1, ...overrides });
-const binding = { localServiceId: "service:marvin-hermes", workerId: "worker:marvin", expectedVersion: "0.21.3", sourceRevision: "00570550" } as const;
+const binding = { localServiceId: "service:hermes-worker-hermes", workerId: "worker:hermes-worker", expectedVersion: "0.21.3", sourceRevision: "00570550" } as const;
 const task = { tenantId: "tenant:local", projectId: "project:local", jobId: "job:local", attemptId: "attempt:local",
-  runId: "run:local", nodeId: "node:marvin", prompt: "Explain the change.", instructions: "Answer plainly.", deadline: 5000 };
+  runId: "run:local", nodeId: "node:hermes-worker", prompt: "Explain the change.", instructions: "Answer plainly.", deadline: 5000 };
 
 const controllerDelivery = () => createControllerWorkerDeliveryV1({
-  identity: { tenantId: "tenant:local", projectId: "project:local", jobId: "job:local", attemptId: "attempt:local", runId: "run:local", nodeId: "node:marvin" },
-  worker: { workerId: "worker:marvin", adapterId: HERMES_021_MACOS_LOCAL_ADAPTER_V1, adapterRevision: "00570550" },
+  identity: { tenantId: "tenant:local", projectId: "project:local", jobId: "job:local", attemptId: "attempt:local", runId: "run:local", nodeId: "node:hermes-worker" },
+  worker: { workerId: "worker:hermes-worker", adapterId: HERMES_021_MACOS_LOCAL_ADAPTER_V1, adapterRevision: "00570550" },
   input: { prompt: "Explain the change.", instructions: "Answer plainly." }, authorityDigest: sha256Digest("authority"),
   connectorProfileDigest: sha256Digest("profile"), acceptanceProfileId: "profile:result", acceptanceProfileDigest: sha256Digest("acceptance"),
   issuedAt: "2026-09-19T12:00:00.000Z", expiresAt: "2026-09-19T12:05:00.000Z",
 });
 
-test("shared local controller packet maps to one Marvin task and remote delivery cannot invoke the Mac worker", () => {
-  const prepared = prepareHermes021MacosTaskV1(controllerDelivery(), { kind: "local", workerId: "worker:marvin" }, binding);
+test("shared local controller packet maps to one Hermes worker task and remote delivery cannot invoke the Mac worker", () => {
+  const prepared = prepareHermes021MacosTaskV1(controllerDelivery(), { kind: "local", workerId: "worker:hermes-worker" }, binding);
   assert.deepEqual(prepared, { ...task, deadline: Date.parse("2026-09-19T12:05:00.000Z") });
-  assert.throws(() => prepareHermes021MacosTaskV1(controllerDelivery(), { kind: "remote", workerId: "worker:marvin" }, binding),
+  assert.throws(() => prepareHermes021MacosTaskV1(controllerDelivery(), { kind: "remote", workerId: "worker:hermes-worker" }, binding),
     /hermes_local_worker_unavailable/);
 });
 
@@ -39,7 +39,7 @@ test("Hermes 0.21 local worker accepts exactly one well-formed terminal report",
   if (outcome.kind !== "completed") throw new Error("expected completed");
   assert.equal(outcome.totalTokens, 20); assert.equal(outcome.sizeBytes, Buffer.byteLength(outcome.text, "utf8"));
   assert.equal(outcome.terminalResultDigest, sha256Digest(outcome.terminalResult));
-  assert.deepEqual(calls, [{ localServiceId: "service:marvin-hermes", task, terminalStage: undefined, signal: undefined }]);
+  assert.deepEqual(calls, [{ localServiceId: "service:hermes-worker-hermes", task, terminalStage: undefined, signal: undefined }]);
 });
 
 test("Hermes 0.21 local worker fails closed for missing, duplicate, invalid, or failed terminal reports", () => {
@@ -73,44 +73,44 @@ test("a controller shutdown during an already-started Hermes run is recorded as 
     "controller shutdown does not invent a public Hermes cancel capability");
 });
 
-test("Marvin's normal local runner needs a synchronous policy for the exact shared delivery", async () => {
+test("the Hermes worker's normal local runner needs a synchronous policy for the exact shared delivery", async () => {
   let runs = 0, policyCalls = 0;
   const completed = await runAdmittedHermes021MacosLocalTaskV1(controllerDelivery(),
-    { kind: "local", workerId: "worker:marvin" }, binding, { assertAdmitted(input) {
-      policyCalls++; assert.equal(input.delivery.worker.workerId, "worker:marvin");
+    { kind: "local", workerId: "worker:hermes-worker" }, binding, { assertAdmitted(input) {
+      policyCalls++; assert.equal(input.delivery.worker.workerId, "worker:hermes-worker");
       assert.equal(input.task.jobId, input.delivery.identity.jobId);
     } }, { async run() { runs++; return [result()]; } });
   assert.equal(completed.kind, "completed");
   assert.equal(policyCalls, 1); assert.equal(runs, 1);
 
   await assert.rejects(runAdmittedHermes021MacosLocalTaskV1(controllerDelivery(),
-    { kind: "local", workerId: "worker:marvin" }, binding, { assertAdmitted() { throw new Error("local_policy_refused"); } },
+    { kind: "local", workerId: "worker:hermes-worker" }, binding, { assertAdmitted() { throw new Error("local_policy_refused"); } },
     { async run() { runs++; return [result()]; } }), /local_policy_refused/);
   assert.equal(runs, 1);
 
   await assert.rejects(runAdmittedHermes021MacosLocalTaskV1(controllerDelivery(),
-    { kind: "local", workerId: "worker:marvin" }, binding, { assertAdmitted: (() => Promise.resolve()) as never },
+    { kind: "local", workerId: "worker:hermes-worker" }, binding, { assertAdmitted: (() => Promise.resolve()) as never },
     { async run() { runs++; return [result()]; } }), /hermes_local_worker_unavailable/);
   assert.equal(runs, 1);
 });
 
-test("Marvin's local policy accepts only its configured canonical authority", async () => {
+test("the Hermes worker's local policy accepts only its configured canonical authority", async () => {
   const packet = controllerDelivery();
-  const policy = createHermes021MacosLocalTaskPolicyV1({ policyId: "policy:marvin-local", binding,
+  const policy = createHermes021MacosLocalTaskPolicyV1({ policyId: "policy:hermes-worker-local", binding,
     authorityDigest: packet.authorityDigest,
     taskInputDigest: sha256Digest({ prompt: packet.input.prompt, instructions: packet.input.instructions }),
     deliveryDigest: packet.deliveryDigest,
     expiresAt: "2026-09-19T13:00:00.000Z" });
   const port = createHermes021MacosLocalTaskPolicyPortV1(policy, () => Date.parse("2026-09-19T12:02:00.000Z"));
   let runs = 0;
-  const outcome = await runAdmittedHermes021MacosLocalTaskV1(packet, { kind: "local", workerId: "worker:marvin" }, binding,
+  const outcome = await runAdmittedHermes021MacosLocalTaskV1(packet, { kind: "local", workerId: "worker:hermes-worker" }, binding,
     port, { async run() { runs++; return [result()]; } });
   assert.equal(outcome.kind, "completed"); assert.equal(runs, 1);
   const foreign = createControllerWorkerDeliveryV1({ identity: packet.identity, worker: packet.worker, input: packet.input,
     authorityDigest: sha256Digest("foreign"), connectorProfileDigest: packet.connectorProfileDigest,
     acceptanceProfileId: packet.acceptanceProfileId, acceptanceProfileDigest: packet.acceptanceProfileDigest,
     issuedAt: packet.issuedAt, expiresAt: packet.expiresAt });
-  await assert.rejects(runAdmittedHermes021MacosLocalTaskV1(foreign, { kind: "local", workerId: "worker:marvin" }, binding,
+  await assert.rejects(runAdmittedHermes021MacosLocalTaskV1(foreign, { kind: "local", workerId: "worker:hermes-worker" }, binding,
     port, { async run() { runs++; return [result()]; } }), /hermes_021_macos_task_policy_refused/);
   assert.equal(runs, 1);
 
@@ -120,7 +120,7 @@ test("Marvin's local policy accepts only its configured canonical authority", as
     acceptanceProfileId: packet.acceptanceProfileId, acceptanceProfileDigest: packet.acceptanceProfileDigest,
     issuedAt: packet.issuedAt, expiresAt: packet.expiresAt });
   await assert.rejects(runAdmittedHermes021MacosLocalTaskV1(sameTextDifferentTask,
-    { kind: "local", workerId: "worker:marvin" }, binding, port,
+    { kind: "local", workerId: "worker:hermes-worker" }, binding, port,
     { async run() { runs++; return [result()]; } }), /hermes_021_macos_task_policy_refused/);
   assert.equal(runs, 1);
 
@@ -128,7 +128,7 @@ test("Marvin's local policy accepts only its configured canonical authority", as
     input: { prompt: "Do different work.", instructions: packet.input.instructions }, authorityDigest: packet.authorityDigest,
     connectorProfileDigest: packet.connectorProfileDigest, acceptanceProfileId: packet.acceptanceProfileId,
     acceptanceProfileDigest: packet.acceptanceProfileDigest, issuedAt: packet.issuedAt, expiresAt: packet.expiresAt });
-  await assert.rejects(runAdmittedHermes021MacosLocalTaskV1(changedInput, { kind: "local", workerId: "worker:marvin" }, binding,
+  await assert.rejects(runAdmittedHermes021MacosLocalTaskV1(changedInput, { kind: "local", workerId: "worker:hermes-worker" }, binding,
     port, { async run() { runs++; return [result()]; } }), /hermes_021_macos_task_policy_refused/);
   assert.equal(runs, 1);
 
@@ -140,7 +140,7 @@ test("Marvin's local policy accepts only its configured canonical authority", as
       input: packet.input, authorityDigest: packet.authorityDigest, connectorProfileDigest: packet.connectorProfileDigest,
       acceptanceProfileId: packet.acceptanceProfileId, acceptanceProfileDigest: packet.acceptanceProfileDigest, issuedAt, expiresAt });
     await assert.rejects(runAdmittedHermes021MacosLocalTaskV1(outsideDeliveryWindow,
-      { kind: "local", workerId: "worker:marvin" }, binding, port,
+      { kind: "local", workerId: "worker:hermes-worker" }, binding, port,
       { async run() { runs++; return [result()]; } }), /hermes_021_macos_task_policy_refused/);
   }
   assert.equal(runs, 1);
@@ -179,7 +179,7 @@ test("per-task local policy is derived from each canonical prepared packet", asy
   "a future writing route cannot reuse this text-review policy constructor");
 });
 
-test("Marvin's local connector records what is proven and explicitly refuses unqualified execution", () => {
+test("the Hermes worker's local connector records what is proven and explicitly refuses unqualified execution", () => {
   assert.equal(hermes021MacosLocalConnectorProfileV1.harness, "hermes");
   assert.equal(hermes021MacosLocalConnectorProfileV1.operations.result.status, "supported");
   assert.deepEqual(refuseHermes021MacosOperationV1("submit"), {
@@ -190,12 +190,12 @@ test("Marvin's local connector records what is proven and explicitly refuses unq
   assert.throws(() => refuseHermes021MacosOperationV1("result"), /hermes_021_macos_operation_refusal_unavailable/);
 });
 
-test("Marvin's completed JSON report becomes shared inert result evidence", () => {
+test("the Hermes worker's completed JSON report becomes shared inert result evidence", () => {
   const raw = JSON.stringify(result());
   const evidence = projectHermes021MacosTerminalResultEvidenceV1({
     lineage: { tenantId: "tenant:local", projectId: "project:local", jobId: "job:local", attemptId: "attempt:local",
-      runId: "run:local", nodeId: "node:marvin" },
-    retained: { sessionId: "session:marvin", connectorProfileDigest: sha256Digest("profile"),
+      runId: "run:local", nodeId: "node:hermes-worker" },
+    retained: { sessionId: "session:hermes-worker", connectorProfileDigest: sha256Digest("profile"),
       terminalResultDigest: sha256Digest(JSON.parse(raw)) },
     terminalResultRawLine: raw,
     observedAt: "2026-09-19T12:00:00.000Z",
@@ -211,7 +211,7 @@ test("Marvin's completed JSON report becomes shared inert result evidence", () =
 
 test("the first owner qualification is text-only, bounded, and never retried", async () => {
   const calls: unknown[] = [];
-  const qualification = { ...task, qualificationId: "qualification:marvin", mode: "text_only" as const,
+  const qualification = { ...task, qualificationId: "qualification:hermes-worker", mode: "text_only" as const,
     toolset: "none" as const, maximumTurns: 1 as const, maximumRunBudgetSeconds: 120 as const,
     sourceTag: "control-room-local-qualification" as const };
   const outcome = await runHermes021MacosTextOnlyQualificationV1(binding, qualification, {

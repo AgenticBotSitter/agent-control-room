@@ -132,7 +132,7 @@ threat model needs.
    projects' roles.
 6. PostgreSQL stays bound to loopback only.
 
-**Owner, once (see `docs/OWNER_ACTIONS.md` item 1):**
+**Owner, once (see the private installation checklist item 1):**
 
 7. In the Tailscale policy file: add `tag:control-room-client` to
    `tagOwners`, and add one grant from `tag:control-room-client` to

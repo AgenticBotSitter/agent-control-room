@@ -30,12 +30,12 @@ async function fixture(t: TestContext) {
 }
 
 function qualificationInput(selected: Awaited<ReturnType<typeof fixture>>) {
-  const route = { kind: "local" as const, workerId: "worker:marvin",
+  const route = { kind: "local" as const, workerId: "worker:hermes-worker",
     adapterId: HERMES_021_MACOS_LOCAL_ADAPTER_V1, adapterRevision: HERMES_021_SOURCE_REVISION_V1 };
   const topologyPlan = planInstallationTopologyV1({ databaseAuthorityDigest: sha256Digest("database"),
     schedulerAuthorityDigest: sha256Digest("scheduler"), currentRoutes: [], requestedRoutes: [route] });
   return { installationId: "fixture-installation", releaseDigest: sha256Digest("release"), topologyPlan,
-    workerBinding: { localServiceId: "service:marvin", workerId: route.workerId, expectedVersion: "0.21.3",
+    workerBinding: { localServiceId: "service:hermes-worker", workerId: route.workerId, expectedVersion: "0.21.3",
       sourceRevision: HERMES_021_SOURCE_REVISION_V1 }, runnerConfiguration: selected.runnerConfiguration,
     reviewedExecutableIdentity: selected.review.record };
 }

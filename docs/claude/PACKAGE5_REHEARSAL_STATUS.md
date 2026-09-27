@@ -15,7 +15,7 @@ On a fresh disposable PG17 cluster at loopback port 15541, the website journey
 passed for all three fake pinned executables. Hermes' changes-requested result
 stayed incomplete; Claude's and Codex's owner-accepted results became completed
 exactly once, with one result and one owner review each. Submission, owner-review,
-and completion replays added no second record. Marvin's independent review
+and completion replays added no second record. Hermes worker's independent review
 showed that the 15-second poll only masked a parent/child lock-order inversion.
 The reader now locks job, attempt and lease before run, receipt and plan,
 matching the publisher's foreign-key order. The normal 2-second poll is
@@ -41,7 +41,7 @@ The only new privileges are inert CHECK-false `coordinator_lock` updates on the
 review-plan and artifact-receipt tables, already authorized by the owner and
 recorded in trust-decision section 15. The structural digest and migration
 ledger were regenerated and verified. The production TypeScript check, Vite
-build, and focused conformance/publisher tests passed. This branch awaits Marvin's
+build, and focused conformance/publisher tests passed. This branch awaits Hermes worker's
 Claude review; it is not merged or live.
 
 ### Lock-order audit boundary

@@ -9,7 +9,7 @@ import { CLAUDE_CODE_TEXT_REVIEW_INVOCATION_POLICY_DIGEST_V1 } from
 import { planInstallationTopologyV1 } from "../src/harness/v1/installation-topology";
 import { sha256Digest } from "../src/security/canonical-digest";
 
-const hermes = { kind: "local" as const, workerId: "worker:marvin",
+const hermes = { kind: "local" as const, workerId: "worker:hermes-worker",
   adapterId: "connector:hermes-021-macos-local-v1", adapterRevision: "00570550" };
 const claude = { kind: "local" as const, workerId: "worker:claude",
   adapterId: "connector:claude-code-local-v1", adapterRevision: "0000001" };

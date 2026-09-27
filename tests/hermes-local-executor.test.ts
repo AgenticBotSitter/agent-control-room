@@ -9,7 +9,7 @@ const target = Object.freeze({ kind: "hermes-local" as const, nodeId: "node:mac-
 
 test("the current Hermes executor prepares and rechecks before it accepts one published delivery", async () => {
   const reference = hermesLocalQueueTargetToDispatchReferenceV1("tenant:one", target);
-  const prepared = Object.freeze({ delivery: Object.freeze({ marker: "delivery" }), route: Object.freeze({ kind: "local", workerId: "worker:marvin" }) });
+  const prepared = Object.freeze({ delivery: Object.freeze({ marker: "delivery" }), route: Object.freeze({ kind: "local", workerId: "worker:hermes-worker" }) });
   let preparedCalls = 0, checkedCalls = 0, deliveredCalls = 0;
   const executor = createHermesLocalQueueExecutorV1({ tenantId: "tenant:one", clock: () => 1_700_000_000_000,
     preparation: {

@@ -104,7 +104,7 @@ Claude fixes on this branch. Without them, every real Claude task would have fai
 3. **Normal finish read as failure.** The current CLI reports `terminal_reason: "completed"` on success, and the decoder treated any terminal reason as a failure. `completed` now succeeds, and every other reason still fails.
 4. **Opus by default.** The CLI default model is Opus, which would spend the owner's limited Opus allowance on every task. The worker now pins `--model sonnet` until W8 adds a per-task choice.
 
-**Hermes model (owner decision, 2026-09-24):** Marvin uses **`space-bunny-free` on provider `opencode-go`**. The `cr` profile's old default (`stealth/ox-alpha` on OpenRouter) is retired, and that OpenRouter account has no credits.
+**Hermes model (owner decision, 2026-09-24):** Hermes worker uses **`space-bunny-free` on provider `opencode-go`**. The `cr` profile's old default (`stealth/ox-alpha` on OpenRouter) is retired, and that OpenRouter account has no credits.
 
 - Set the Hermes worker's model and provider to these values in the protected configuration.
 - Update the `cr` profile default to match, so manual runs agree with the worker.

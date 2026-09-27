@@ -3,10 +3,10 @@
 ## Scope
 
 The original SSH-based design was superseded by Claude's decision: the tagged
-Mac must not receive VPS SSH access, and no plaintext password is relayed to
-Johnny5. The current upgrade is a VPS-local read-only plan, Mac-local prepare,
+Mac must not receive VPS SSH access, and no plaintext password is relayed to the
+VPS operator. The current upgrade is a VPS-local read-only plan, Mac-local prepare,
 then one VPS-local plan-pinned apply followed by Mac-local finish. See
-`docs/JOHNNY5_DB_ROUTE_STEPS.md` for the operator sequence.
+the separately maintained private VPS operator runbook for the operator sequence.
 
 The owner approval covers source work and disposable rehearsal, not a live
 upgrade. No VPS change may run before Claude reviews the VPS-printed plan and

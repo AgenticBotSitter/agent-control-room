@@ -48,7 +48,7 @@ These findings still apply to the new route and **must** be handled in W3 and W4
   - It contains `--model opus`, which spends the owner's limited Opus usage.
   - Use the W4 arguments instead: `-p --output-format stream-json --verbose --tools "" --strict-mcp-config --setting-sources "" --no-session-persistence --disable-slash-commands`, with the prompt on stdin.
   - Leave the model at the CLI default, or use `sonnet` if a model must be pinned.
-  - Before finalising, confirm every flag against the installed CLI's `--help` output (packet `MARVIN_H3_ADAPTER_FLAG_CROSSCHECK.md`).
+  - Before finalising, confirm every flag against the installed CLI's `--help` output (packet `HERMES_WORKER_H3_ADAPTER_FLAG_CROSSCHECK.md`).
 - **Readiness must mean something (from finding 2).** In `mac-local` mode, a worker shows "ready" only when both are true:
   - its pinned executable exists and its `--version` output matches the enablement record, checked at startup
   - the worker has no failed readiness check since then

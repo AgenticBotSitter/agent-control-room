@@ -40,7 +40,7 @@ not a working installation.
 
 | Agent | What is actually known | What is still missing |
 | --- | --- | --- |
-| Hermes / Marvin | The local Hermes command can complete a harmless text-only qualification through the selected local model provider. | A real Control Room worker adapter, delivery from the canonical queue, result return, restart/recovery, and a live readiness record. |
+| Hermes / Hermes worker | The local Hermes command can complete a harmless text-only qualification through the selected local model provider. | A real Control Room worker adapter, delivery from the canonical queue, result return, restart/recovery, and a live readiness record. |
 | Claude Code | Claude Code is installed and the owner has signed in. Existing source has a strict text-only stream decoder and local delivery composition. | A verified local worker record, a real Control Room delivery adapter, result return, and a live readiness record. |
 | Codex | Codex Desktop's command-line interface is present. A separate, unreviewed branch contains a first text-only `codex exec --json` prototype. | Review/fix the prototype, connect it at the shared delivery point, produce results/recovery behavior, and a live readiness record. |
 
@@ -158,7 +158,7 @@ The build can and should continue now.
 
 Owner-attended work will be required later only to run the real service and
 use protected local credentials/configuration. Keep those as one or two
-bundled, copy-paste steps in `docs/OWNER_ACTIONS.md`; do not request a series
+bundled, copy-paste steps in the private installation checklist; do not request a series
 of small confirmations.
 
 ## Minimum acceptance definition

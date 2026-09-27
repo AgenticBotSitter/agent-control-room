@@ -1,4 +1,4 @@
-# Marvin H1: pre-push scan of unpushed commits (P0), read-only
+# Hermes worker H1: pre-push scan of unpushed commits (P0), read-only
 
 Plan: `docs/MAC_LOCAL_CRITICAL_PATH.md`.
 

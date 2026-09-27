@@ -1,4 +1,4 @@
-# Marvin H2: website route inventory (P2/P4), read-only
+# Hermes worker H2: website route inventory (P2/P4), read-only
 
 Plan: `docs/MAC_LOCAL_CRITICAL_PATH.md`. Work in `~/work/acr-mac-local` and read files only.
 

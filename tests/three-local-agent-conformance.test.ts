@@ -21,7 +21,7 @@ import { CLAUDE_CODE_LOCAL_ADAPTER_V1 } from "../src/harness/claude-code-v1";
  * qualification and enablement gates.
  */
 const workers = [
-  { harness: "hermes", workerId: "worker:marvin", adapterId: "connector:hermes-021-macos-local-v1" },
+  { harness: "hermes", workerId: "worker:hermes-worker", adapterId: "connector:hermes-021-macos-local-v1" },
   { harness: "codex", workerId: "worker:codex", adapterId: "codex-app-server/v1" },
   { harness: "claude", workerId: "worker:claude", adapterId: "connector:claude-code-local-v1" },
 ] as const;
@@ -110,7 +110,7 @@ test("two separately prepared local routes retain separate receipts through a sh
   };
   const hermesPacket = inputFor(hermes, {
     tenantId: "tenant:local", projectId: "project:local", jobId: "job:hermes", attemptId: "attempt:hermes",
-    runId: "run:hermes", nodeId: "node:marvin",
+    runId: "run:hermes", nodeId: "node:hermes-worker",
   });
   const claudePacket = inputFor(claude, {
     tenantId: "tenant:local", projectId: "project:local", jobId: "job:claude", attemptId: "attempt:claude",
@@ -166,13 +166,13 @@ test("C4's two local routes keep distinct pending reviews through lost-reply rec
   // The fixture injects only in-memory transport and disposable PGlite state; it
   // never discovers, launches, or authenticates either local program.
   const hermes = await nativeRevisedResultFixture("Hermes pending-review text.", { topologyRoute: "local",
-    topologyWorker: { workerId: "worker:marvin", adapterId: HERMES_021_MACOS_LOCAL_ADAPTER_V1, adapterRevision: revision } });
+    topologyWorker: { workerId: "worker:hermes-worker", adapterId: HERMES_021_MACOS_LOCAL_ADAPTER_V1, adapterRevision: revision } });
   const claude = await nativeRevisedResultFixture("Claude pending-review text.", { topologyRoute: "local",
     topologyWorker: { workerId: "worker:claude", adapterId: CLAUDE_CODE_LOCAL_ADAPTER_V1, adapterRevision: revision } });
   t.after(claude.close); t.after(hermes.close);
 
   assert.deepEqual(hermes.topology && { route: hermes.topology.route, workerId: hermes.topology.workerId,
-    adapterId: hermes.topology.adapterId }, { route: "local", workerId: "worker:marvin", adapterId: HERMES_021_MACOS_LOCAL_ADAPTER_V1 });
+    adapterId: hermes.topology.adapterId }, { route: "local", workerId: "worker:hermes-worker", adapterId: HERMES_021_MACOS_LOCAL_ADAPTER_V1 });
   assert.deepEqual(claude.topology && { route: claude.topology.route, workerId: claude.topology.workerId,
     adapterId: claude.topology.adapterId }, { route: "local", workerId: "worker:claude", adapterId: CLAUDE_CODE_LOCAL_ADAPTER_V1 });
   assert.notEqual(hermes.topology?.deliveryId, claude.topology?.deliveryId,
@@ -203,9 +203,9 @@ test("C4's two local routes keep distinct pending reviews through lost-reply rec
   // port is called once, but the controller does not retry it or manufacture a
   // pending review for cancelled work.
   const abort = new AbortController(); let calls = 0;
-  const cancelled = runHermes021MacosLocalTaskV1({ localServiceId: "service:marvin-hermes", workerId: "worker:marvin",
+  const cancelled = runHermes021MacosLocalTaskV1({ localServiceId: "service:hermes-worker-hermes", workerId: "worker:hermes-worker",
     expectedVersion: "0.21.3", sourceRevision: revision }, { tenantId: "tenant:local", projectId: "project:local",
-    jobId: "job:cancelled", attemptId: "attempt:cancelled", runId: "run:cancelled", nodeId: "node:marvin",
+    jobId: "job:cancelled", attemptId: "attempt:cancelled", runId: "run:cancelled", nodeId: "node:hermes-worker",
     prompt: "Stop.", instructions: "Stop.", deadline: Date.parse(expiresAt) }, { async run(input) {
       calls++; await new Promise<void>(resolve => input.signal?.addEventListener("abort", () => resolve(), { once: true }));
       throw new Error("controller stopped");
