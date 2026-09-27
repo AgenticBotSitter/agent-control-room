@@ -129,9 +129,13 @@ jobs:
       # These two need no dependencies, so they report in seconds, before the
       # install that the type checks require.
       - name: Test the lane coverage checker and the path routing
-        run: node --test tests/check-test-lane-coverage.test.mjs tests/ci-path-routing.test.mjs
+        run: node --test tests/check-test-lane-coverage.test.mjs tests/ci-path-routing.test.mjs tests/private-name-guard.test.mjs
       - name: Fail if any test file is unreachable from GitHub Actions
         run: node scripts/check-test-lane-coverage.mjs
+      - name: Reject configured private names
+        env:
+          CONTROL_ROOM_PRIVATE_NAMES: ${{ secrets.CONTROL_ROOM_PRIVATE_NAMES }}
+        run: node scripts/check-private-names.mjs
       - run: pnpm install --frozen-lockfile --ignore-scripts
       - name: Type check contributor demo
         run: pnpm run check:demo
@@ -226,6 +230,8 @@ jobs:
       # calendar, observations, workspaces, native fences, release licenses and
       # the build profile. These cover the security boundaries the
       # configuration contract commits to; none of them ran in CI before.
+      - name: Runtime-assembly memory guard
+        run: pnpm run test:private-local-runtime-assembly:memory-guard
       - name: Component lanes
         run: pnpm run test:components
       - name: Resource-bound connector contracts

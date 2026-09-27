@@ -1,6 +1,6 @@
 # Codex execution plan: finish the single-Mac Control Room
 
-**Plan owner:** Claude, lead architect. **Builder and integrator:** Codex. **Second builder and routine reviewer:** Marvin (Hermes Agent).
+**Plan owner:** Claude, lead architect. **Builder and integrator:** Codex. **Second builder and routine reviewer:** Hermes worker (Hermes Agent).
 **Branch:** `claude/mac-local-integration`, already on GitHub. Scope and decisions: [`MAC_LOCAL_CRITICAL_PATH.md`](MAC_LOCAL_CRITICAL_PATH.md).
 Follow this file in order. Where this file conflicts with any older plan, this file wins. Only a Claude checkpoint may change this plan (see "How to ask Claude").
 
@@ -16,30 +16,30 @@ Codex drives the build and calls the other two bots through their command-line t
 
 | Bot | Role | Builds | Reviews | Why |
 | --- | --- | --- | --- | --- |
-| **Codex** | Builder and integrator: owns the branch, merges packages, runs the real bring-up | W1, W3, W4, W6, W7 and most of W2/W5 | Marvin's code | Has the most usage and can run for hours |
-| **Marvin (Hermes)** | Second builder for bounded, file-disjoint work; routine reviewer; independent checker | Route inventory, flag cross-checks, W5 journey test cases, owner guide draft, the independent re-check of the W7 evidence | Codex's routine packages (W1, W5, W6) | Runs locally at no Claude cost, so it can work in parallel |
+| **Codex** | Builder and integrator: owns the branch, merges packages, runs the real bring-up | W1, W3, W4, W6, W7 and most of W2/W5 | Hermes worker's code | Has the most usage and can run for hours |
+| **Hermes worker (Hermes)** | Second builder for bounded, file-disjoint work; routine reviewer; independent checker | Route inventory, flag cross-checks, W5 journey test cases, owner guide draft, the independent re-check of the W7 evidence | Codex's routine packages (W1, W5, W6) | Runs locally at no Claude cost, so it can work in parallel |
 | **Claude** | Plan owner and architect; security reviewer; final gate | Nothing by default. The owner may open a Claude session to have Claude build W2 (sign-in), which is small and security-critical. | W2, W3, W4 and the W7 final gate; answers plan questions | Limited usage, so it is spent only where judgment matters most |
 
-### How Codex calls Marvin
+### How Codex calls Hermes worker
 
-Run from the relevant worktree. Marvin's final answer comes back on stdout.
+Run from the relevant worktree. Hermes worker's final answer comes back on stdout.
 
 ```
 hermes --in <worktree> -z "<task prompt>"
 ```
 
-- **Parallel work:** start a Marvin job in the background at the start of a package. Write its output to a log. Collect it before merging.
-- **Marvin's code:** Marvin works in its **own** worktree and branch, `hermes/mac-<Wn>-<slug>`. Codex reviews that branch and merges it.
-- **Owned files:** give Marvin an explicit list of files it owns. Never assign a file Codex is editing at the same time.
-- **Every Marvin prompt must include:**
+- **Parallel work:** start a Hermes worker job in the background at the start of a package. Write its output to a log. Collect it before merging.
+- **Hermes worker's code:** Hermes worker works in its **own** worktree and branch, `hermes/mac-<Wn>-<slug>`. Codex reviews that branch and merges it.
+- **Owned files:** give Hermes worker an explicit list of files it owns. Never assign a file Codex is editing at the same time.
+- **Every Hermes worker prompt must include:**
   - the objective
   - the files it owns
   - the checks to run
   - "Do not commit, push, contact GitHub, read credentials, or start services"
   - "End with RELAY-RESULT: done or RELAY-RESULT: blocked: <reason>"
 
-  Codex commits Marvin's work.
-- **Marvin reviews:** send the review prompt plus the output of `git diff <base>...HEAD`. Require a final line of `VERDICT: APPROVE` or `VERDICT: CHANGES`.
+  Codex commits Hermes worker's work.
+- **Hermes worker reviews:** send the review prompt plus the output of `git diff <base>...HEAD`. Require a final line of `VERDICT: APPROVE` or `VERDICT: CHANGES`.
 
 ### How Codex calls Claude
 
@@ -58,7 +58,7 @@ claude -p --model opus --permission-mode dontAsk \
 
 ### Sandbox note
 
-Codex must run in a mode that is allowed to start `hermes` and `claude`. Both need network access to reach their model providers. If Codex's sandbox blocks this, record it once in `docs/OWNER_ACTIONS.md` and continue without reviews until it is resolved. Never skip the W7 Claude gate.
+Codex must run in a mode that is allowed to start `hermes` and `claude`. Both need network access to reach their model providers. If Codex's sandbox blocks this, record it once in the private installation checklist and continue without reviews until it is resolved. Never skip the W7 Claude gate.
 
 ## Anti-goals (why the build stalled before; do not repeat)
 
@@ -81,7 +81,7 @@ Codex must run in a mode that is allowed to start `hermes` and `claude`. Both ne
    - the evidence
    - review verdicts
    - what's next
-4. **Owner-only steps.** Add them to `docs/OWNER_ACTIONS.md` as numbered, copy-paste-ready items, then **keep going** on other packages.
+4. **Owner-only steps.** Add them to the private installation checklist as numbered, copy-paste-ready items, then **keep going** on other packages.
 5. **The repo is public.** Never commit or print secrets, connection strings, private paths, tailnet hostnames or IP addresses. Protected configuration goes only in the protected Application Support `Protected/config` directory, with mode 0600.
 6. **Authority already granted.** The takeover handoff authorizes:
    - the dedicated database and accounts
@@ -93,9 +93,9 @@ Codex must run in a mode that is allowed to start `hermes` and `claude`. Both ne
 
 ## Work packages
 
-W1 and W4 can run in parallel. Marvin's items run alongside Codex's.
+W1 and W4 can run in parallel. Hermes worker's items run alongside Codex's.
 
-### W1: Mac → existing VPS PostgreSQL (Codex builds; Marvin reviews)
+### W1: Mac → existing VPS PostgreSQL (Codex builds; Hermes worker reviews)
 
 1. `scripts/mac-local/check-database.ts`: a read-only check for each component role. See packet `docs/claude/assignments/CODEX_A2_VPS_DATABASE_READ_CHECK.md`.
 2. `scripts/mac-local/provision-database.mjs`: reuses `deploy/postgres/provision-database.sql`, `apply-migrations.mjs` and `migration-ledger.json`.
@@ -105,7 +105,7 @@ W1 and W4 can run in parallel. Marvin's items run alongside Codex's.
    - Is idempotent.
 3. **Reaching the VPS:**
    - If the Mac already has non-interactive SSH access, run the provisioning over SSH.
-   - Otherwise add one `OWNER_ACTIONS.md` item: a single command to paste on the VPS.
+   - Otherwise add one item to the private installation checklist: a single command to paste on the VPS.
 4. **Private route:**
    - PostgreSQL stays bound to loopback.
    - It is exposed only to the tailnet through Tailscale Serve TCP, with PostgreSQL TLS required.
@@ -143,7 +143,7 @@ W1 and W4 can run in parallel. Marvin's items run alongside Codex's.
    - the owner can sign in
    - projects and tasks survive a restart
 
-### W4: One owner-trusted local CLI worker port + three adapters (Codex builds; Marvin cross-checks flags; Claude reviews)
+### W4: One owner-trusted local CLI worker port + three adapters (Codex builds; Hermes worker cross-checks flags; Claude reviews)
 
 1. **One generic `deliver` capability** at the queue worker's existing final-authority point. It reuses the `local-delivery-composition` flow:
    - persist the receipt
@@ -161,7 +161,7 @@ W1 and W4 can run in parallel. Marvin's items run alongside Codex's.
    - **Codex:** the CLI bundled in the ChatGPT app, run as `codex exec --json --sandbox read-only --ephemeral --skip-git-repo-check -C <dir> -` with the prompt on stdin. Packet: `CODEX_A1_LOCAL_EXEC_ADAPTER.md`.
    - **Claude:** `claude -p --output-format stream-json --verbose --tools "" --strict-mcp-config --setting-sources "" --no-session-persistence --disable-slash-commands` with the prompt on stdin. Reuse the existing strict stream-json decoder.
    - **Hermes:** the existing stream host plus the preserved runner patch (commit `4bd0c6ca`). Make its free-standing admission internal and derive the port from the exact canonical delivery. Tools disabled.
-4. **Marvin, in parallel:** run the check in `MARVIN_H3_ADAPTER_FLAG_CROSSCHECK.md` before the adapters are finalized.
+4. **Hermes worker, in parallel:** run the check in `HERMES_WORKER_H3_ADAPTER_FLAG_CROSSCHECK.md` before the adapters are finalized.
 5. **Done when** fake-executable tests prove:
    - no spawn after revocation or a task change
    - no second spawn on replay or restart
@@ -169,9 +169,9 @@ W1 and W4 can run in parallel. Marvin's items run alongside Codex's.
    - cancel and deadline kill the whole process group
    - no environment leak
 
-### W5: Website journey on real services (Marvin inventories and writes tests; Codex fixes gaps; Marvin reviews)
+### W5: Website journey on real services (Hermes worker inventories and writes tests; Codex fixes gaps; Hermes worker reviews)
 
-1. **Marvin:** `MARVIN_H2_WEBSITE_ROUTE_INVENTORY.md`. Report which journey steps lack an installed route.
+1. **Hermes worker:** `HERMES_WORKER_H2_WEBSITE_ROUTE_INVENTORY.md`. Report which journey steps lack an installed route.
 2. **Codex:** close every gap so each step runs on installed services:
    - create project
    - create task
@@ -185,10 +185,10 @@ W1 and W4 can run in parallel. Marvin's items run alongside Codex's.
    - worker status panel, driven by real readiness and recent work
 
    Preview and fake panels must be unreachable in `mac-local` mode.
-3. **Marvin, in its own branch:** browser test cases for each journey step, in the existing `test:browser:private` / `test:product-browser` lane.
+3. **Hermes worker, in its own branch:** browser test cases for each journey step, in the existing `test:browser:private` / `test:product-browser` lane.
 4. **Done when:** the full journey passes against a disposable PostgreSQL.
 
-### W6: One command, as a service (Codex builds and runs; Marvin reviews)
+### W6: One command, as a service (Codex builds and runs; Hermes worker reviews)
 
 1. `scripts/mac-local/up.mjs`, run as `pnpm mac:up`. It is idempotent. In order, it:
    1. prepares dependencies from the frozen lockfile
@@ -202,7 +202,7 @@ W1 and W4 can run in parallel. Marvin's items run alongside Codex's.
 3. **Codex runs `pnpm mac:up` itself.**
 4. **Done when:** the service survives logout/login and a `kill -9`.
 
-### W7: Real proof, then hand-over (Codex runs; Marvin independently re-checks; Claude final gate)
+### W7: Real proof, then hand-over (Codex runs; Hermes worker independently re-checks; Claude final gate)
 
 1. **Codex,** on the real website and service:
    - one harmless task per worker, producing three distinct saved results
@@ -214,15 +214,15 @@ W1 and W4 can run in parallel. Marvin's items run alongside Codex's.
    - back up the VPS database and restore it into a scratch database
 2. **Codex writes:**
    - `docs/MAC_LOCAL_EVIDENCE.md`: what ran, when, result IDs and plain limitations, with no secrets
-   - `docs/OWNER_GUIDE_MAC.md`: one page, drafted by Marvin
-3. **Marvin re-checks independently.** It uses the website's read routes, or the read-only database check. For each claim in the evidence file it reports CONFIRMED or NOT FOUND.
-4. **Claude final gate** on Opus. Input: the evidence file, Marvin's re-check, and a summary of the W2–W4 diffs. Output: ACCEPT or NOT READY.
+   - `docs/OWNER_GUIDE_MAC.md`: one page, drafted by Hermes worker
+3. **Hermes worker re-checks independently.** It uses the website's read routes, or the read-only database check. For each claim in the evidence file it reports CONFIRMED or NOT FOUND.
+4. **Claude final gate** on Opus. Input: the evidence file, Hermes worker's re-check, and a summary of the W2–W4 diffs. Output: ACCEPT or NOT READY.
 5. **On ACCEPT:** open one PR from `claude/mac-local-integration` into `main` for the owner. **Do not merge it.**
 
 ## What the owner does at the end
 
 - **Best case:** nothing. Open the URL in `OWNER_GUIDE_MAC.md` and sign in with the code from the protected file.
-- **Possible one-line items in `OWNER_ACTIONS.md`:**
+- **Possible one-line items in the private installation checklist:**
   - one VPS command, if there is no SSH access
   - approving a macOS or Tailscale prompt, if one appears
   - merging the final PR

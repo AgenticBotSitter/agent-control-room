@@ -35,8 +35,8 @@ test("local harness capabilities are truthful, bounded and installation-safe", (
 
 test("local Hermes proof completion remains blocked until persistent service preparation is recorded", () => {
   const plan = planInstallationTopologyV1({ databaseAuthorityDigest: sha256Digest("database"), schedulerAuthorityDigest: sha256Digest("scheduler"),
-    currentRoutes: [{ kind: "local", workerId: "worker:marvin", adapterId: "connector:hermes-021-macos-local-v1", adapterRevision: "00570550" }],
-    requestedRoutes: [{ kind: "local", workerId: "worker:marvin", adapterId: "connector:hermes-021-macos-local-v1", adapterRevision: "00570550" }] });
+    currentRoutes: [{ kind: "local", workerId: "worker:hermes-worker", adapterId: "connector:hermes-021-macos-local-v1", adapterRevision: "00570550" }],
+    requestedRoutes: [{ kind: "local", workerId: "worker:hermes-worker", adapterId: "connector:hermes-021-macos-local-v1", adapterRevision: "00570550" }] });
   const ready = createInstallationReadinessV1({ planDigest: plan.planDigest, proofs: [
     { proof: "backup_restore", state: "passed", evidenceDigest: sha256Digest("backup") },
     { proof: "local_owner_qualification", state: "passed", evidenceDigest: sha256Digest("qualification") },
@@ -61,8 +61,8 @@ test("local Hermes proof completion remains blocked until persistent service pre
 
 test("a generic passed backup label never substitutes for verified restore evidence", () => {
   const plan = planInstallationTopologyV1({ databaseAuthorityDigest: sha256Digest("database"), schedulerAuthorityDigest: sha256Digest("scheduler"),
-    currentRoutes: [{ kind: "local", workerId: "worker:marvin", adapterId: "connector:hermes-021-macos-local-v1", adapterRevision: "00570550" }],
-    requestedRoutes: [{ kind: "local", workerId: "worker:marvin", adapterId: "connector:hermes-021-macos-local-v1", adapterRevision: "00570550" }] });
+    currentRoutes: [{ kind: "local", workerId: "worker:hermes-worker", adapterId: "connector:hermes-021-macos-local-v1", adapterRevision: "00570550" }],
+    requestedRoutes: [{ kind: "local", workerId: "worker:hermes-worker", adapterId: "connector:hermes-021-macos-local-v1", adapterRevision: "00570550" }] });
   const generic = createInstallationReadinessV1({ planDigest: plan.planDigest, proofs: [
     { proof: "backup_restore", state: "passed", evidenceDigest: sha256Digest("unbound-backup") },
     { proof: "local_owner_qualification", state: "passed", evidenceDigest: sha256Digest("qualification") },
@@ -76,8 +76,8 @@ test("a generic passed backup label never substitutes for verified restore evide
 
 test("a recorded Hermes runner proof remains visible while other local setup proof is missing", () => {
   const plan = planInstallationTopologyV1({ databaseAuthorityDigest: sha256Digest("database"), schedulerAuthorityDigest: sha256Digest("scheduler"),
-    currentRoutes: [{ kind: "local", workerId: "worker:marvin", adapterId: "connector:hermes-021-macos-local-v1", adapterRevision: "00570550" }],
-    requestedRoutes: [{ kind: "local", workerId: "worker:marvin", adapterId: "connector:hermes-021-macos-local-v1", adapterRevision: "00570550" }] });
+    currentRoutes: [{ kind: "local", workerId: "worker:hermes-worker", adapterId: "connector:hermes-021-macos-local-v1", adapterRevision: "00570550" }],
+    requestedRoutes: [{ kind: "local", workerId: "worker:hermes-worker", adapterId: "connector:hermes-021-macos-local-v1", adapterRevision: "00570550" }] });
   const partial = createInstallationReadinessV1({ planDigest: plan.planDigest, proofs: [
     { proof: "local_runner_bridge", state: "passed", evidenceDigest: sha256Digest("runner") },
   ] });
@@ -87,7 +87,7 @@ test("a recorded Hermes runner proof remains visible while other local setup pro
   assert.match(hermes.summary, /still not enabled or running/i);
   assert.match(hermes.nextStep, /local agent check/);
   assert.match(hermes.nextStep, /backup-and-restore check/);
-  assert.doesNotMatch(JSON.stringify(hermes), /sha256:|worker:marvin|profile|provider|model/i);
+  assert.doesNotMatch(JSON.stringify(hermes), /sha256:|worker:hermes-worker|profile|provider|model/i);
 });
 
 test("macOS Codex custody readiness is plan-bound and never becomes launch authority", () => {

@@ -1,6 +1,6 @@
 # Mac-local finish plan: from the database route to the accepted single-Mac Control Room
 
-**Author:** Claude (lead). **Date:** 2026-09-25. **Executor:** Codex, with Marvin as a second builder.
+**Author:** Claude (lead). **Date:** 2026-09-25. **Executor:** Codex, with Hermes worker as a second builder.
 **Scope and rules:** this plan sequences what remains of `docs/CODEX_MAC_BUILD_EXECUTION.md` (W1–W7)
 and `docs/claude/ACCEPTANCE_W6_W7.md`. Where they conflict, those two files win. This file adds order,
 parallel lanes, and stop conditions. It does not change a decision.
@@ -8,7 +8,7 @@ parallel lanes, and stop conditions. It does not change a decision.
 ## Who does what
 
 **Codex (builder, integrator, live operator)**
-- Owns both branches and all merges. Commits Marvin's reviewed work.
+- Owns both branches and all merges. Commits Hermes worker's reviewed work.
 - Builds and edits all security-relevant code:
   - database route and provisioning (`scripts/mac-local/*`);
   - sign-in, host startup, composer and protected loader;
@@ -21,9 +21,9 @@ parallel lanes, and stop conditions. It does not change a decision.
   - real website tasks;
   - backup and restore.
 - Writes the final `docs/MAC_LOCAL_EVIDENCE.md` rows and the progress log entries.
-- Starts, briefs and collects Marvin's lanes. Calls Claude for the reviews listed under Budget.
+- Starts, briefs and collects Hermes worker's lanes. Calls Claude for the reviews listed under Budget.
 
-**Marvin (second builder and routine reviewer, lanes M1–M6 below)**
+**Hermes worker (second builder and routine reviewer, lanes M1–M6 below)**
 - Writes only these, in its own worktree and branch:
   - reports;
   - browser tests;
@@ -76,34 +76,34 @@ parallel lanes, and stop conditions. It does not change a decision.
   - a password mismatch after the repoint;
   - any failed security check;
   - a package growing past about 800 changed lines;
-  - any step that needs an owner action. Record the action in `docs/OWNER_ACTIONS.md` and continue on the other lanes.
+  - any step that needs an owner action. Record the action in the private installation checklist and continue on the other lanes.
 - Stage files by name. The untracked `node_modules` symlink in `the repoint worktree` must never be committed.
 
-## Marvin as a second builder
+## Hermes worker as a second builder
 
-- **How to call Marvin:** `hermes --in <its own worktree> -z "<prompt>"`, using Hermes profile `cr`,
+- **How to call Hermes worker:** `hermes --in <its own worktree> -z "<prompt>"`, using Hermes profile `cr`,
   model `space-bunny-free` on OpenCode Go. This is the local relay path from `CODEX_MAC_BUILD_EXECUTION.md`,
   not the GitHub job queue.
-- **Every Marvin prompt contains:**
+- **Every Hermes worker prompt contains:**
   - the objective;
-  - the exact files Marvin owns;
+  - the exact files Hermes worker owns;
   - the checks to run;
   - "Do not commit, push, contact GitHub, read credentials, read Protected/, or start services";
   - "End with RELAY-RESULT: done or RELAY-RESULT: blocked: <reason>".
-- Marvin works only in its own worktree and branch, and never on a file Codex is editing.
-  Codex reviews Marvin's diff and commits it. Marvin's output is evidence, not authority.
-- **Marvin's lanes**, all file-disjoint from Codex:
+- Hermes worker works only in its own worktree and branch, and never on a file Codex is editing.
+  Codex reviews Hermes worker's diff and commits it. Hermes worker's output is evidence, not authority.
+- **Hermes worker's lanes**, all file-disjoint from Codex:
 
 | Lane | Task | Owns | Starts |
 | --- | --- | --- | --- |
-| M1 | Re-run `MARVIN_H2_WEBSITE_ROUTE_INVENTORY.md` against the current integration branch. List every journey step with no installed route in `mac-local` mode. | a report file only | Phase 0 |
-| M2 | Browser test cases for each W5 journey step, in the existing `test:browser:private` / `test:product-browser` lane, run against a disposable PostgreSQL | new test files under `tests/` that Marvin names up front | after M1 |
+| M1 | Re-run `HERMES_WORKER_H2_WEBSITE_ROUTE_INVENTORY.md` against the current integration branch. List every journey step with no installed route in `mac-local` mode. | a report file only | Phase 0 |
+| M2 | Browser test cases for each W5 journey step, in the existing `test:browser:private` / `test:product-browser` lane, run against a disposable PostgreSQL | new test files under `tests/` that Hermes worker names up front | after M1 |
 | M3 | Draft `docs/OWNER_GUIDE_MAC.md`: one screen, covering the five topics in `ACCEPTANCE_W6_W7.md` | that file | Phase 0 |
 | M4 | Draft the `docs/MAC_LOCAL_EVIDENCE.md` skeleton: 15 worker rows and 2 system rows, with empty cells | that file | Phase 0 |
 | M5 | Routine reviews of Codex's W1, W5 and W6 diffs. Final line must be `VERDICT: APPROVE` or `VERDICT: CHANGES`. | nothing | per package |
 | M6 | Independent W7 re-check: CONFIRMED or NOT FOUND for each evidence claim, using only website read routes or `pnpm mac:check-database` | a report file only | Phase 5 |
 
-Marvin never touches `scripts/mac-local/provision-database.mjs`, `up.mjs`, `down.mjs` or `stack.mjs`,
+Hermes worker never touches `scripts/mac-local/provision-database.mjs`, `up.mjs`, `down.mjs` or `stack.mjs`,
 the protected loader, sign-in, host startup or composer files, or anything under `Protected/`.
 
 ## Phase 0: land the approved route change (Codex, mechanical)
@@ -116,7 +116,7 @@ the protected loader, sign-in, host startup or composer files, or anything under
    - The integration entry saying "No Tailscale administrator change is required" is superseded by
      revision 3.1. Mark it superseded rather than deleting it.
    - Re-run the repoint test file and `pnpm check` on the merged result, then push.
-4. Start Marvin lanes M1, M3 and M4 in the background.
+4. Start Hermes worker lanes M1, M3 and M4 in the background.
 
 **Done when:** both branches are pushed and the integration branch contains the repoint code.
 
@@ -143,7 +143,7 @@ Run these from the integration checkout.
 8. **Check 7 is an owner action.** Add to OWNER_ACTIONS: from the phone or PC, try to connect to the
    VPS on port 5432. It must fail.
 9. Record one REAL progress entry listing each check as passed, failed or owner-pending.
-   Marvin (M5) reviews any code that was touched.
+   Hermes worker (M5) reviews any code that was touched.
 
 **Done when:** checks 1–10 pass or only check 7 remains owner-pending.
 
@@ -155,11 +155,11 @@ Run these from the integration checkout.
    - Exit 0 is required. Exit 3 (restart skipped) is not done.
    - Paste only the PASS/FAIL lines into progress.
 3. Fix any failure in its own package. Claude reviews anything touching sign-in, host startup or the
-   protected loader. Marvin reviews the rest.
+   protected loader. Hermes worker reviews the rest.
 
 **Done when:** `acceptance-w6.mjs --restart` exits 0 against the real VPS database.
 
-## Phase 3: W4/W5 live, on the real website (Codex fixes gaps; Marvin tests)
+## Phase 3: W4/W5 live, on the real website (Codex fixes gaps; Hermes worker tests)
 
 1. For each of Hermes, Claude and Codex, run one harmless text task through the website:
    create project, create task, assign, approve, run, result reaches pending review.
@@ -192,7 +192,7 @@ Run these from the integration checkout.
    restore into a scratch database, and compare project and task counts). Fill M4's evidence file
    with task ids, timestamps, final states and one-line excerpts.
 2. Finalize the owner guide from M3's draft.
-3. Marvin M6 runs the independent re-check.
+3. Hermes worker M6 runs the independent re-check.
 4. **Claude final gate (one Claude session, Opus):**
    - Input: the evidence file, M6's report, and a summary of the W2–W4 diffs.
    - Output: ACCEPT or NOT READY.
@@ -244,5 +244,5 @@ final PR from `claude/mac-local-integration` into `main`. Do not merge it.
   - reviews of any sign-in, host or loader change (Phases 2–4);
   - the Phase 5 final gate;
   - review of W8 model selection (Phase 6).
-- **Marvin:** unlimited within its lanes.
+- **Hermes worker:** unlimited within its lanes.
 - **Codex:** does everything else.

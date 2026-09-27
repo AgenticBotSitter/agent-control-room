@@ -1,4 +1,4 @@
-# Marvin H3: Hermes and Claude CLI flag cross-check (P3), read-only
+# Hermes worker H3: Hermes and Claude CLI flag cross-check (P3), read-only
 
 ## Run these (help and version only; no prompts, no model calls)
 - `hermes --help`

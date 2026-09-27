@@ -36,7 +36,7 @@ From the repository root:
 node --import tsx scripts/workflow-journeys/run-workflow-journeys.ts
 node --import tsx scripts/workflow-journeys/run-workflow-journeys.ts --journey=idea-lab-attribution
 node --import tsx scripts/workflow-journeys/run-workflow-journeys.ts --evidence-file=.hermes/journey-evidence.json
-node --import tsx scripts/workflow-journeys/run-workflow-journeys.ts --worker=ziggy-results-01
+node --import tsx scripts/workflow-journeys/run-workflow-journeys.ts --worker=pc-worker-results-01
 ```
 
 The driver prints one `ok`/`note` line per step and exits non-zero if a journey fails.

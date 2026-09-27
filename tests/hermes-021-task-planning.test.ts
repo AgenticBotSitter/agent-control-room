@@ -33,7 +33,7 @@ test("the planning wire accepts the canonical Hermes native adapter identifier",
   assert.equal(taskPlanningTemplateChoiceSchema.safeParse({ id: "template:hermes-native", adapter: "hermes-native/v1" }).success, false);
 });
 
-test("a Marvin Hermes 0.21 template creates a pinned text-review plan, not an older generic Hermes plan", async t => {
+test("a Hermes 0.21 worker template creates a pinned text-review plan, not an older generic Hermes plan", async t => {
   const f = await ownerReviewFixture(); t.after(f.close);
   // The durable publisher verifies the admitted run's adapter against the
   // installation registry. A real installer creates this neutral adapter
@@ -41,12 +41,12 @@ test("a Marvin Hermes 0.21 template creates a pinned text-review plan, not an ol
   await f.db.query(`INSERT INTO adapter_registry(id,tenant_id,source_system,contract_version,authority_mode,status,redaction_policy_version,cursor_retention_days)
     VALUES($1,$2,'hermes-021-macos-local','1.0.0','control_room_native','disabled','v1',30)`,
   [HERMES_021_MACOS_LOCAL_ADAPTER_V1, binding.tenantId]);
-  const authority: NativeTaskTemplate["authority"] = { projectId: binding.projectId, allowedExecutor: "executor:marvin",
-    allowedOperations: [HERMES_021_MACOS_LOCAL_START_OPERATION_V1], credentialRefs: ["credential:marvin"], filesystemRoots: [],
+  const authority: NativeTaskTemplate["authority"] = { projectId: binding.projectId, allowedExecutor: "executor:hermes-worker",
+    allowedOperations: [HERMES_021_MACOS_LOCAL_START_OPERATION_V1], credentialRefs: ["credential:hermes-worker"], filesystemRoots: [],
     networkPolicy: "allowlist", allowedNetworkDestinations: [enrollment.canonicalDestination], effectPolicy: "approval_required",
     maxRisk: "low", maxDurationSeconds: 60, maxConcurrentEffects: 1, expiresAt: at(300_000), digest: "" };
   authority.digest = computeAuthorityDigest(authority);
-  const template: NativeTaskTemplate = { id: "template:marvin-021", adapter: HERMES_021_MACOS_LOCAL_ADAPTER_V1, authority,
+  const template: NativeTaskTemplate = { id: "template:hermes-worker-021", adapter: HERMES_021_MACOS_LOCAL_ADAPTER_V1, authority,
     instructions: "Return a bounded plain-text result.", connectorProfileDigest: HERMES_021_MACOS_CONNECTOR_PROFILE_DIGEST_V1,
     acceptanceProfileId: f.profile.id, acceptanceProfileDigest: sha256Digest(f.profile) };
   const tooLongAuthority = { ...authority, maxDurationSeconds: 121, digest: "" };
@@ -55,7 +55,7 @@ test("a Marvin Hermes 0.21 template creates a pinned text-review plan, not an ol
   const planner = new TaskExecutionPlanner(f.db, f.scope, { template, integrityKey: new Uint8Array(32).fill(91),
     reviewIntegrityKey: f.reviewKey, checkpoints: f.checkpoints,
     localAdapterAdmission: { enabledAdapters: [HERMES_021_MACOS_LOCAL_ADAPTER_V1] } }, () => instant + 7000);
-  const source = await f.tasks.propose(f.identity, binding.projectId, taskDraft, "marvin-021-plan-source");
+  const source = await f.tasks.propose(f.identity, binding.projectId, taskDraft, "hermes-worker-021-plan-source");
   const notInstalled = new TaskExecutionPlanner(f.db, f.scope, { template, integrityKey: new Uint8Array(32).fill(91),
     reviewIntegrityKey: f.reviewKey, checkpoints: f.checkpoints,
     localAdapterAdmission: { enabledAdapters: [] } }, () => instant + 7000);
@@ -93,12 +93,12 @@ test("a Marvin Hermes 0.21 template creates a pinned text-review plan, not an ol
     return (row.rows[0]?.sequence ?? 0) + 1;
   };
   const telemetry: FleetSignalEnvelope = { schemaVersion: "1.0.0", tenantId: binding.tenantId, nodeId: binding.nodeId,
-    sequence: await nextSignalSequence("telemetry"), observedAt: at(6000), expiresAt: at(120_000), trust: "reported", fingerprint: sha256Digest("marvin-telemetry"),
+    sequence: await nextSignalSequence("telemetry"), observedAt: at(6000), expiresAt: at(120_000), trust: "reported", fingerprint: sha256Digest("hermes-worker-telemetry"),
     kind: "telemetry", source: "telemetry_port", payload: { samplingIntervalSeconds: 30,
       cpuUtilizationPercent: { quality: "observed", value: 10 }, availableMemoryBytes: { quality: "observed", value: 1000 },
       availableStorageBytes: { quality: "observed", value: 1000 }, networkClass: "unmetered", powerState: "ac", thermalState: "nominal" } };
   const capability: FleetSignalEnvelope = { schemaVersion: "1.0.0", tenantId: binding.tenantId, nodeId: binding.nodeId,
-    sequence: await nextSignalSequence("capability", HERMES_021_MACOS_LOCAL_CAPABILITY_V1), observedAt: at(6000), expiresAt: at(120_000), trust: "reported", fingerprint: sha256Digest("marvin-capability"),
+    sequence: await nextSignalSequence("capability", HERMES_021_MACOS_LOCAL_CAPABILITY_V1), observedAt: at(6000), expiresAt: at(120_000), trust: "reported", fingerprint: sha256Digest("hermes-worker-capability"),
     kind: "capability", source: "probe_runner", payload: { probeId: HERMES_021_MACOS_LOCAL_CAPABILITY_V1,
       probeVersion: "1.0.0", outcome: "pass", reasonCode: "reported_only" } };
   await signals.ingestAuthenticated(telemetry, at(6000), binding);
@@ -139,7 +139,7 @@ test("a Marvin Hermes 0.21 template creates a pinned text-review plan, not an ol
   assert.deepEqual(located.task, { projectId: binding.projectId, jobId: planned.receipt.jobId,
     attemptId: assigned.receipt.attemptId, inputDigest: planned.receipt.inputDigest });
   const standardPickup = await hermesQueue.locateQueuedHarnessDelivery(queuedReferences[0]!, new AbortController().signal);
-  assert.equal(standardPickup.kind, "hermes-021-local", "the shared queue dispatcher selects Marvin's local route");
+  assert.equal(standardPickup.kind, "hermes-021-local", "the shared queue dispatcher selects the Hermes worker's local route");
   const replayedQueue = await hermesQueue.enqueueHermes021LocalTask(f.identity, binding.projectId, planned.receipt.jobId,
     planned.receipt.inputDigest, new AbortController().signal);
   assert.equal(replayedQueue.replayed, true);
@@ -151,7 +151,7 @@ test("a Marvin Hermes 0.21 template creates a pinned text-review plan, not an ol
   const transitionKey = new Uint8Array(32).fill(93);
   const transitionPlan = planInstallationTopologyV1({ databaseAuthorityDigest: sha256Digest("transition-db"),
     schedulerAuthorityDigest: sha256Digest("transition-scheduler"),
-    currentRoutes: [{ kind: "local", workerId: "worker:marvin", adapterId: "connector:old", adapterRevision: "0000001" },
+    currentRoutes: [{ kind: "local", workerId: "worker:hermes-worker", adapterId: "connector:old", adapterRevision: "0000001" },
       { kind: "local", workerId: "worker:unaffected", adapterId: "connector:unaffected", adapterRevision: "0000001" }],
     requestedRoutes: [{ kind: "local", workerId: "worker:unaffected", adapterId: "connector:unaffected", adapterRevision: "0000001" }] });
   const transition = await f.db.transaction(tx => createInstallationTransitionRecordV1(tx, transitionKey, {
@@ -159,7 +159,7 @@ test("a Marvin Hermes 0.21 template creates a pinned text-review plan, not an ol
   await f.db.transaction(tx => advanceInstallationTransitionRecordV1(tx, transitionKey, {
     tenantId: binding.tenantId, transitionId: transition.record.transitionId, expectedRevision: transition.record.revision,
     action: "pause_admission", now: at(10_001), evidenceDigest: sha256Digest("pause") }));
-  const nodeWorkers = new Map([[binding.nodeId, "worker:marvin"], ["node:unaffected", "worker:unaffected"]]);
+  const nodeWorkers = new Map([[binding.nodeId, "worker:hermes-worker"], ["node:unaffected", "worker:unaffected"]]);
   const transitionFence = Object.freeze({ isPausedInSession: (tx: Parameters<typeof isInstallationTransitionAdmissionPausedV1>[0],
     tenantId: string, nodeId: string) => {
       const workerId = nodeWorkers.get(nodeId);
@@ -174,7 +174,7 @@ test("a Marvin Hermes 0.21 template creates a pinned text-review plan, not an ol
     planned.receipt.inputDigest)).replayed, true, "the fence does not erase an exact historical lease receipt");
   await assert.rejects(fenced.locateApprovedHermes021LocalQueueDelivery(queuedReferences[0]!, new AbortController().signal), /conflict/,
     "a paused affected node cannot deliver an already queued task");
-  const fencedSource = await f.tasks.propose(f.identity, binding.projectId, taskDraft, "marvin-transition-fence-source");
+  const fencedSource = await f.tasks.propose(f.identity, binding.projectId, taskDraft, "hermes-worker-transition-fence-source");
   const fencedPlan = await planner.plan(f.identity, binding.projectId, fencedSource.receipt.jobId, sha256Digest(taskDraft));
   await assert.rejects(fenced.assign(f.identity, binding.projectId, fencedPlan.receipt.jobId, binding.nodeId,
     fencedPlan.receipt.inputDigest), /conflict/, "a paused affected node cannot receive a new lease");
@@ -186,7 +186,7 @@ test("a Marvin Hermes 0.21 template creates a pinned text-review plan, not an ol
   await assert.rejects(fenced.locateApprovedHermes021LocalQueueDelivery(queuedReferences[0]!, new AbortController().signal), /conflict/,
     "a damaged transition journal fails closed at the coordinator fence");
   const localBinding = {
-    localServiceId: "service:marvin-hermes", workerId: "worker:marvin", expectedVersion: "0.21.3" as const,
+    localServiceId: "service:hermes-worker-hermes", workerId: "worker:hermes-worker", expectedVersion: "0.21.3" as const,
     sourceRevision: "00570550",
   };
   let deliveryNow = instant + 9000;
@@ -219,7 +219,7 @@ test("a Marvin Hermes 0.21 template creates a pinned text-review plan, not an ol
     },
     host: { async execute(input) {
       launches++;
-      await input.onLine(JSON.stringify({ type: "result", session_id: "session:marvin", exit_code: 0, text: "completed", tokens: {
+      await input.onLine(JSON.stringify({ type: "result", session_id: "session:hermes-worker", exit_code: 0, text: "completed", tokens: {
       input: 1, output: 1, total: 2, cache_read: 0, cache_write: 0 }, duration_ms: 3, timestamp: instant + 9000 }));
     } },
   });
@@ -227,7 +227,7 @@ test("a Marvin Hermes 0.21 template creates a pinned text-review plan, not an ol
   // Revoke a different assignment after its first canonical check succeeds.
   // The second, immediately-before-launch check must see that revocation and
   // refuse before the private Hermes host can receive a task.
-  const revokedSource = await f.tasks.propose(f.identity, binding.projectId, taskDraft, "marvin-021-revocation-source");
+  const revokedSource = await f.tasks.propose(f.identity, binding.projectId, taskDraft, "hermes-worker-021-revocation-source");
   const revokedPlan = await planner.plan(f.identity, binding.projectId, revokedSource.receipt.jobId,
     sha256Digest(taskDraft));
   const revokedAssigned = await assignments.assign(f.identity, binding.projectId, revokedPlan.receipt.jobId,
@@ -256,9 +256,9 @@ test("a Marvin Hermes 0.21 template creates a pinned text-review plan, not an ol
     partition: false, retryLimit: 0, deadLetter: null, notify: false };
   const workerClient: PgBossNativeWorkerClient = {
     async getQueue() { return queue; },
-    async work(name, _options, handler) { assert.equal(name, PG_BOSS_NATIVE_SUBMISSION.name); queuedWorkerHandler = handler; return "worker:marvin"; },
+    async work(name, _options, handler) { assert.equal(name, PG_BOSS_NATIVE_SUBMISSION.name); queuedWorkerHandler = handler; return "worker:hermes-worker"; },
     async cancel() {},
-    async offWork(_name, input) { assert.deepEqual(input, { id: "worker:marvin", wait: true }); workerStopped++; },
+    async offWork(_name, input) { assert.deepEqual(input, { id: "worker:hermes-worker", wait: true }); workerStopped++; },
   };
   let composed: Awaited<ReturnType<typeof localExecutor.deliver>> | undefined;
   const worker = await startPgBossNativeTaskWorker(workerClient, { async deliver(reference, signal) {
@@ -308,7 +308,7 @@ test("a Marvin Hermes 0.21 template creates a pinned text-review plan, not an ol
   assert.equal(recovered.execution.prepared.delivery.deliveryDigest, executed.prepared.delivery.deliveryDigest,
     "delayed recovery retains the authenticated original packet instead of signing fresh issuance time");
   assert.equal(recovered.execution.delivered.receipt.receivedAt, executed.delivered.receipt.receivedAt);
-  assert.equal(launches, 1, "restart recovery never invokes Marvin again");
+  assert.equal(launches, 1, "restart recovery never invokes the Hermes worker again");
   assert.deepEqual(await execution.runs.events(binding.tenantId, executed.registered.run.id), completedEvents,
     "the terminal harness history is immutable across restart recovery");
 

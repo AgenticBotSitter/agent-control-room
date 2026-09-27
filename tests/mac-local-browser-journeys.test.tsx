@@ -4,7 +4,7 @@
 // ---------------------
 // The route table that `mac:up`/`mac:host` actually mounts is
 // `src/web/v1/mac-local-web-process.ts` (NOT `private-process.ts`). M1
-// (`docs/MARVIN_MAC_WEBSITE_ROUTE_INVENTORY.md`) read that table and recorded
+// (`docs/HERMES_WORKER_MAC_WEBSITE_ROUTE_INVENTORY.md`) read that table and recorded
 // which journey steps are reachable as shipped. This file turns that report
 // into executable assertions, so the report cannot silently drift from the
 // code.

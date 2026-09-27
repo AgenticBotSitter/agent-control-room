@@ -18,10 +18,10 @@ const transitionKey = new Uint8Array(32).fill(83);
 const delivery = (): ControllerWorkerDeliveryV1 => createControllerWorkerDeliveryV1({
   identity: { tenantId: binding.tenantId, projectId: binding.projectId, jobId: binding.jobId,
     attemptId: binding.attemptId, runId: registration.id, nodeId: binding.nodeId },
-  worker: { workerId: "worker:marvin", adapterId: "connector:hermes-021-macos-local-v1", adapterRevision: "00570550" },
-  input: { prompt: input.prompt, instructions: input.instructions }, authorityDigest: sha256Digest("marvin-authority"),
-  connectorProfileDigest: sha256Digest("marvin-profile"), acceptanceProfileId: "profile:marvin",
-  acceptanceProfileDigest: sha256Digest("marvin-acceptance"), issuedAt: at(1000), expiresAt: at(120_000),
+  worker: { workerId: "worker:hermes-worker", adapterId: "connector:hermes-021-macos-local-v1", adapterRevision: "00570550" },
+  input: { prompt: input.prompt, instructions: input.instructions }, authorityDigest: sha256Digest("hermes-worker-authority"),
+  connectorProfileDigest: sha256Digest("hermes-worker-profile"), acceptanceProfileId: "profile:hermes-worker",
+  acceptanceProfileDigest: sha256Digest("hermes-worker-acceptance"), issuedAt: at(1000), expiresAt: at(120_000),
 });
 
 const receipt = (packet: ControllerWorkerDeliveryV1, kind: "local" | "remote" = "local") => {

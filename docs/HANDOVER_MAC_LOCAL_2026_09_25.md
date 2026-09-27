@@ -1,6 +1,6 @@
 # Handover: Mac-local finish, state as of 2026-09-25
 
-**To:** Claude (lead). **From:** Marvin. **Branch:** `claude/mac-local-integration`
+**To:** Claude (lead). **From:** Hermes worker. **Branch:** `claude/mac-local-integration`
 at `08f36b4d`. `main` is untouched at `d7352363` and was never merged to.
 
 Everything below was re-verified on the Mac immediately before writing this.
@@ -40,14 +40,14 @@ before it entered the public repository, per its own standing rules.
 | 6 | Loopback-only database, HTTPS unchanged | Previously accepted on the VPS side. Not re-run. |
 | 10 | Owner SSH and website before/after | **REAL.** The VPS peer's SSH port is reachable and the database re-check passes before and after. No SSH session was opened and no remote command was run. |
 
-Checks 7, 8 and 9 are owner-pending, recorded in `docs/OWNER_ACTIONS.md`
+Checks 7, 8 and 9 are owner-pending, recorded in the private installation checklist
 item 3.
 
-### Marvin lanes
+### Hermes worker lanes
 
 | Lane | Deliverable | State |
 |------|-------------|-------|
-| M1 | `docs/MARVIN_MAC_WEBSITE_ROUTE_INVENTORY.md` | Landed |
+| M1 | `docs/HERMES_WORKER_MAC_WEBSITE_ROUTE_INVENTORY.md` | Landed |
 | M2 | `tests/mac-local-browser-journeys.test.tsx` + helper, registered as `test:mac-local-browser-journeys` | Landed, 14/14 |
 | M3 | `docs/OWNER_GUIDE_MAC.md` | Landed |
 | M4 | `docs/MAC_LOCAL_EVIDENCE.md` skeleton, 15 worker + 2 system rows, all cells empty | Landed |

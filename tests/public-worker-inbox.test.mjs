@@ -12,12 +12,12 @@ test("capacity update is discoverable even when the personal inbox is empty", ()
 });
 const bot = { login: "github-actions[bot]", type: "Bot" };
 const issue = (labels = ["action:worker", "status:working"], number = 170) => ({ number, title: "Assignment", labels, state: "open" });
-const legacy = (worker = workerId, state = "working", id = 1) => ({ id, user: { login: "MarvinAi5", type: "User" }, author_association: "OWNER",
+const legacy = (worker = workerId, state = "working", id = 1) => ({ id, user: { login: "owner-account", type: "User" }, author_association: "OWNER",
   body: `<!-- agent-control-room-action:v1 worker=${worker} state=${state} issue=170 -->` });
 const claim = (outcome = "ACCEPTED", worker = workerId, id = 1) => ({ id, user: bot,
-  body: `CLAIM ${outcome} — record\n<!-- agent-control-room-claim:v2 issue=170 request=2 actor=MarvinAi5 worker=${worker} -->` });
+  body: `CLAIM ${outcome} — record\n<!-- agent-control-room-claim:v2 issue=170 request=2 actor=owner-account worker=${worker} -->` });
 const handoff = (values = {}, id = 2) => ({ id, user: bot, body: `<!-- agent-control-room-handoff:v1 ${JSON.stringify({
-  issue: 170, pr: 171, workerId, actor: "MarvinAi5", head: "a".repeat(40), state: "working", action: "worker",
+  issue: 170, pr: 171, workerId, actor: "owner-account", head: "a".repeat(40), state: "working", action: "worker",
   requestId: 1, previousId: null, phase: "complete", reviewUrl: null, acknowledged: false, ...values,
 })} -->` });
 function fakeFetch({ issues = [issue()], comments = [claim()], failIssue, full = false } = {}) {
@@ -32,7 +32,7 @@ function fakeFetch({ issues = [issue()], comments = [claim()], failIssue, full =
 const read = options => readWorkerInbox({ workerId, fetchImpl: fakeFetch(options).fetchImpl });
 const packet = values => `<!-- acr-public-work:v1 ${JSON.stringify({ target: "main", base: "a".repeat(40),
   writeScopes: ["src/example/**"], dependencies: [], checks: ["pnpm check"], risk: "ordinary", effects: "none", leaseHours: 24, ...values })} -->`;
-const currentClaim = (outcome, extra = "", id = 3) => ({ id, user: bot, body: `CLAIM ${outcome} — record\n<!-- agent-control-room-claim:v3 issue=170 request=2 actor=MarvinAi5 worker=${workerId} packet=${"b".repeat(64)} accepted=1000${extra} -->` });
+const currentClaim = (outcome, extra = "", id = 3) => ({ id, user: bot, body: `CLAIM ${outcome} — record\n<!-- agent-control-room-claim:v3 issue=170 request=2 actor=owner-account worker=${workerId} packet=${"b".repeat(64)} accepted=1000${extra} -->` });
 
 test("current controller submission and renewal reach the worker", async () => {
   for (const outcome of ["ACCEPTED", "RENEWED"]) {
@@ -52,8 +52,8 @@ test("current controller submission and renewal reach the worker", async () => {
 
 test("release and expiry end stale ownership; later advisory cannot resurrect it", async () => {
   for (const body of [
-    `CLAIM RELEASED — record\n<!-- agent-control-room-claim:v3 issue=170 request=2 actor=MarvinAi5 worker=${workerId} released=2000 -->`,
-    `CLAIM EXPIRED — record\n<!-- agent-control-room-claim:v3 issue=170 expired=2000 action=ready reason=lease_expired_no_pr actor=MarvinAi5 worker=${workerId} -->`,
+    `CLAIM RELEASED — record\n<!-- agent-control-room-claim:v3 issue=170 request=2 actor=owner-account worker=${workerId} released=2000 -->`,
+    `CLAIM EXPIRED — record\n<!-- agent-control-room-claim:v3 issue=170 expired=2000 action=ready reason=lease_expired_no_pr actor=owner-account worker=${workerId} -->`,
   ]) {
     const result = await read({ issues: [issue(["status:ready"])], comments: [claim(), { id: 3, user: bot, body }, legacy(workerId, "working", 4)] });
     assert.equal(result[0].disposition, "released");
@@ -141,7 +141,7 @@ test("evaluator or dependency API failure never advertises pickup", async () => 
 test("complete fetched history gates admission; accepted history refuses", async () => {
   // Item 2: the evaluator sees the complete issue history, not comments:[].
   const accepted = [{ id: 50, user: bot,
-    body: `CLAIM ACCEPTED — record\n<!-- agent-control-room-claim:v2 issue=1 request=2 actor=MarvinAi5 worker=worker:other -->` }];
+    body: `CLAIM ACCEPTED — record\n<!-- agent-control-room-claim:v2 issue=1 request=2 actor=owner-account worker=worker:other -->` }];
   const refused = await readWorkerInbox({ workerId, includeReady: true,
     fetchImpl: readyFetch({ issues: readyIssues(), commentsByIssue: { 1: accepted } }).fetchImpl });
   const offer = refused.filter(action => action.disposition === "discovery")[0];
@@ -160,7 +160,7 @@ test("verified scope locks refuse overlapping offers; legacy locks fail closed",
   const workingPacket = packet({ writeScopes: ["src/example/**"] });
   const parsed = parseClaimPacket(workingPacket);
   const marker = { id: 60, user: bot,
-    body: `CLAIM ACCEPTED — record\n<!-- agent-control-room-claim:v3 issue=170 request=2 actor=MarvinAi5 worker=worker:other packet=${packetHash(parsed)} accepted=1000 -->` };
+    body: `CLAIM ACCEPTED — record\n<!-- agent-control-room-claim:v3 issue=170 request=2 actor=owner-account worker=worker:other packet=${packetHash(parsed)} accepted=1000 -->` };
   const working = { ...issue(["status:working"], 170), body: workingPacket };
   const overlapped = await readWorkerInbox({ workerId, includeReady: true,
     fetchImpl: readyFetch({ issues: [...readyIssues(), working], workingIssues: [working],

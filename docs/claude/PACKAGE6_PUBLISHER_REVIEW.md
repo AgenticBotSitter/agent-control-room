@@ -1,6 +1,6 @@
 # Package 6 — fifth Mac login (`control_room_local_result_publisher`) review
 
-**Reviewed by:** Marvin (independent, read-only) · **Commit:** `8ba905b8` (parent `e492ea75`)
+**Reviewed by:** Hermes worker (independent, read-only) · **Commit:** `8ba905b8` (parent `e492ea75`)
 **Scope as assigned:** the owner approved the fifth login, the `results_lock` columns, and the
 publisher's read-only access to workspaces, identities and role grants. This review judges only
 whether those were implemented exactly as approved — not whether they should exist.

@@ -4,7 +4,7 @@ import { chmod, lstat, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { PRIVATE_POSTGRES_ENDPOINT_V2, privatePostgresEndpointFingerprintV1 } from
   "../src/web/v1/private-postgres-endpoint";
-import test from "node:test";
+import test, { after } from "node:test";
 import { createArtifactBackupInventoryV1, verifyRestoredArtifactBackupInventoryV1 } from
   "../src/artifacts/v1/artifact-backup-inventory";
 import { HERMES_021_MACOS_CONNECTOR_PROFILE_DIGEST_V1, HERMES_021_SOURCE_REVISION_V1 } from
@@ -80,7 +80,7 @@ import { createPrivateHermes021LocalInstallationDeliveryV1,
   } from
   "../src/web/v1/hermes-021-private-installation-composition";
 import { privateArtifactStorageNamespaceDigestV1 } from "../src/web/v1/private-artifact-storage";
-import { privateAgentTaskCompositionFixture } from "./helpers/private-agent-task-composition";
+import { operatorConfigurationScenario } from "./helpers/private-agent-task-operator-configuration";
 import { isClaudeCodePrivateInstalledDeliverCapabilityV1 } from
   "../src/web/v1/claude-code-private-installation-composition";
 import { composePrivateMacosClaudeCodePostInstallV1,
@@ -94,6 +94,14 @@ import { createPrivateMacosClaudeCodeSupervisedQualificationRouteDigestV1,
   "../src/node-bridge/private-macos-claude-code-qualification-port-composer";
 
 const d = (value: unknown) => sha256Digest(value);
+after(() => {
+  const configuredLimit = process.env.ACR_RUNTIME_ASSEMBLY_MAX_RSS_KIB;
+  if (configuredLimit === undefined) return;
+  const limit = Number(configuredLimit), maximumRss = process.resourceUsage().maxRSS;
+  assert.ok(Number.isSafeInteger(limit) && limit > 0 && maximumRss < limit,
+    `runtime_assembly_test_rss_limit_exceeded:${maximumRss}:${configuredLimit}`);
+});
+
 const claudeSupervisedRouteDigest = () => createPrivateMacosClaudeCodeSupervisedQualificationRouteDigestV1({
   releaseVersion: "1.2.3", releaseSha256: d("claude-bridge-release"), platform: "darwin",
   architecture: "arm64", sidecarManifestSha256: d("claude-bridge-sidecar"),
@@ -136,7 +144,7 @@ function assertBlocked(result: unknown, blocker: "private_configuration_custody_
   assert.equal((result as { blocker?: unknown }).blocker, blocker);
 }
 
-async function fixture(t: { after(fn: () => unknown): void }) {
+async function fixture(_t: { after(fn: () => unknown): void }) {
   const workerBinding = { localServiceId: "service:hermes", workerId: "worker:hermes", expectedVersion: "0.21.3",
     sourceRevision: HERMES_021_SOURCE_REVISION_V1 };
   const topologyInput = { databaseAuthorityDigest: d("database"), schedulerAuthorityDigest: d("scheduler"), currentRoutes: [],
@@ -197,9 +205,17 @@ async function fixture(t: { after(fn: () => unknown): void }) {
     runnerQualificationReport, qualificationObservation, installationReadiness, backupRestoreProof,
     supervisorReadiness, serviceObservation };
   const installationBinding = prepareLocalHermesInstallationBindingV1(bindingInput);
-  const application = await privateAgentTaskCompositionFixture(); t.after(application.close);
-  const scenario = application.scenario(); let hermesCalls = 0;
-  const makeDelivery = () => createPrivateHermes021LocalInstallationDeliveryV1({ tenantId: scenario.configuration.web.tenantId,
+  // Runtime assembly only needs inert operator configuration. The full application fixture
+  // also creates PGlite, native transport and SQLite runtimes that these tests never invoke.
+  const scenario = operatorConfigurationScenario("full"), operator = scenario.trusted, roles = scenario.settings.databaseRoles;
+  const startupConfiguration = { web: operator.web, coordinator: { planning: operator.planning,
+    routes: operator.routes, approvals: { enrollments: operator.approvalEnrollments, store: operator.approvalStore },
+    quality: operator.quality, revisionPlanning: true as const, database: roles.coordinator,
+    resultDatabase: roles.results, evidence: { ...operator.evidence!, database: roles.evidence },
+    nativeQueue: true as const, nativeQueueRecovery: true as const,
+    queueWorker: { database: roles.queueWorker!, concurrency: scenario.settings.queueWorkerConcurrency } } };
+  let hermesCalls = 0;
+  const makeDelivery = () => createPrivateHermes021LocalInstallationDeliveryV1({ tenantId: startupConfiguration.web.tenantId,
     execution: { preparation: {}, runs: {}, delivery: { binding: workerBinding, db: {}, integrityKey: new Uint8Array(32),
       policy: { assertAdmitted() {} }, terminalResultStorage: {} } }, results: {}, assertAuthority() { hermesCalls++; },
     subprocess: runnerConfiguration });
@@ -218,9 +234,8 @@ async function fixture(t: { after(fn: () => unknown): void }) {
     inventory: { releaseId: "release:fixture", releaseDigest, databaseSchemaVersion: inventory.databaseSchemaVersion,
       databaseSchemaDigest: inventory.databaseSchemaDigest, storageNamespace: artifactNamespace,
       storageNamespaceDigest: privateArtifactStorageNamespaceDigestV1(artifactNamespace, artifactRoot) } };
-  const bootstrapStartupConfiguration = { ...scenario.configuration,
-    coordinator: { ...scenario.configuration.coordinator, sessions: undefined, nativeHttp: undefined },
-    web: { ...scenario.configuration.web, installationTopologyPlan: topology, installationReadiness,
+  const bootstrapStartupConfiguration = { ...startupConfiguration,
+    web: { ...startupConfiguration.web, installationTopologyPlan: topology, installationReadiness,
       localBackupRestoreReadiness: backupRestoreProof, localSupervisorReadiness: supervisorReadiness } };
   const bootstrapPackage = installedComposerPackage({ plan, topology,
     runnerInput: { admissionPreparationInput, privateStartupConfiguration: bootstrapStartupConfiguration,

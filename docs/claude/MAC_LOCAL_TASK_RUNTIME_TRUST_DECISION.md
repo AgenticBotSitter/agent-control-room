@@ -158,7 +158,7 @@ independent placement the contract asks for, and the etcd store exists to provid
   owner-trusted local model (critical path decision 3), it doesn't defend against a malicious process
   running as the owner on the Mac, which could edit both the file and the keys.
 
-## 6. Package 4 composition map (answers Marvin's four questions, 2026-09-25)
+## 6. Package 4 composition map (answers Hermes worker's four questions, 2026-09-25)
 
 Nothing here is a new authority. Every field comes from protected configuration that already exists,
 from `task-runtime.json`, or from an existing class. Follow
@@ -334,12 +334,12 @@ These replace the conflicting parts of sections 6 and 7. None of them changes
   - Don't make up a destination.
 - Claude and Codex keep `networkPolicy: "none"` with no destinations, as the planner requires.
 
-**E. The Claude queue executor must mirror Codex's exactly (review finding from Marvin).**
+**E. The Claude queue executor must mirror Codex's exactly (review finding from Hermes worker).**
 - Call `preparation.assertCurrent(reference, prepared)` again **after** `delivery.deliver` returns
   `published`, before returning `delivered`.
 - Throw the distinct `*_queue_delivery_unresolved` error when publication isn't confirmed, as
   `codex-owner-trusted-local-executor.ts` does. Don't use `unavailable`, which means "never ran".
-- Add Marvin's two tests (commit `e1e928ef` on `codex/mac-w3-p4`):
+- Add Hermes worker's two tests (commit `e1e928ef` on `codex/mac-w3-p4`):
   - an aborted signal is refused before `prepare()`;
   - a lease revoked between the two checks isn't acknowledged.
 

@@ -46,7 +46,7 @@ test("the Hermes adapter keeps the selected model/provider in protected configur
 
 test("the shared composition exposes Hermes through the same durable delivery shape", async () => {
   const base = { db: { transaction() { throw new Error("not_called"); } }, integrityKey: new Uint8Array(32),
-    binding: { workerId: "worker:marvin", adapterId: "connector:hermes.macos-local.v1", adapterRevision: "b50bb77e" },
+    binding: { workerId: "worker:hermes-worker", adapterId: "connector:hermes.macos-local.v1", adapterRevision: "b50bb77e" },
     receiptPort: { async receive() { throw new Error("not_called"); } }, async assertCurrent() {},
     async publish() {}, async recordFailure() {} };
   const composed = createOwnerTrustedLocalHermesDeliveryV1(base as never, { async execute() {

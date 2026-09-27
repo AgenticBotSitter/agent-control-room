@@ -5,7 +5,7 @@ import { captureOwnerTrustedLocalEnablementV1, ownerTrustedLocalEnablementDigest
 
 const valid = Object.freeze({ schema: OWNER_TRUSTED_LOCAL_ENABLEMENT_V1, mode: "mac-local" as const, nodeId: "mac-1" as const,
   workers: [{ workerId: "worker:codex", kind: "codex" as const, executablePath: "/Applications/Codex.app/Contents/MacOS/codex", recordedVersion: "codex 0.155.0" },
-    { workerId: "worker:marvin", kind: "hermes-021" as const, executablePath: "/usr/local/bin/hermes", recordedVersion: "hermes 0.21.3" }] });
+    { workerId: "worker:hermes-worker", kind: "hermes-021" as const, executablePath: "/usr/local/bin/hermes", recordedVersion: "hermes 0.21.3" }] });
 
 test("captures one bounded mac-local worker record without granting execution", () => {
   const captured = captureOwnerTrustedLocalEnablementV1(valid);
@@ -27,9 +27,9 @@ test("refuses paths, unknown fields, duplicate workers, and non-Mac node records
 
 test("a missing or version-drifted executable leaves only that worker unavailable", async () => {
   const drifted = await verifyOwnerTrustedLocalEnablementV1(valid, async path => path.includes("Codex") ? "codex 0.155.0" : "hermes 0.21.2");
-  assert.deepEqual(drifted, { nodeId: "mac-1", enabledWorkerIds: ["worker:codex"], unavailableWorkerIds: ["worker:marvin"] });
+  assert.deepEqual(drifted, { nodeId: "mac-1", enabledWorkerIds: ["worker:codex"], unavailableWorkerIds: ["worker:hermes-worker"] });
   const missing = await verifyOwnerTrustedLocalEnablementV1(valid, async path => { if (path.includes("hermes")) throw new Error("not found"); return "codex 0.155.0"; });
-  assert.deepEqual(missing.unavailableWorkerIds, ["worker:marvin"]);
+  assert.deepEqual(missing.unavailableWorkerIds, ["worker:hermes-worker"]);
   await assert.rejects(verifyOwnerTrustedLocalEnablementV1(valid, async () => { throw new Error("not found"); }));
   const checked = await verifyOwnerTrustedLocalEnablementV1({ ...valid, workers: [valid.workers[0]] }, async () => "codex 0.155.0");
   assert.deepEqual(checked, { nodeId: "mac-1", enabledWorkerIds: ["worker:codex"], unavailableWorkerIds: [] });
@@ -39,7 +39,7 @@ test("accepts an already captured record only while its digest still matches", a
   const captured = captureOwnerTrustedLocalEnablementV1(valid);
   assert.deepEqual(captureOwnerTrustedLocalEnablementV1(JSON.parse(JSON.stringify(captured))), captured);
   const checked = await verifyOwnerTrustedLocalEnablementV1(captured, async path => path.includes("Codex") ? "codex 0.155.0" : "hermes 0.21.3");
-  assert.deepEqual(checked.enabledWorkerIds, ["worker:codex", "worker:marvin"]);
+  assert.deepEqual(checked.enabledWorkerIds, ["worker:codex", "worker:hermes-worker"]);
   assert.throws(() => captureOwnerTrustedLocalEnablementV1({ ...captured, enablementDigest: `sha256:${"0".repeat(64)}` }));
   const swapped = { ...captured, workers: [{ ...captured.workers[0], executablePath: "/tmp/other-codex" }, captured.workers[1]] };
   assert.throws(() => captureOwnerTrustedLocalEnablementV1(swapped));

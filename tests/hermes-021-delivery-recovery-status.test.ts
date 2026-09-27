@@ -10,18 +10,18 @@ import { nativeTaskFixture } from "./native-task-fixture";
 import { binding as nativeBinding, input } from "./hermes-native-fixture";
 
 const key = new Uint8Array(32).fill(71);
-const binding = { localServiceId: "service:marvin", workerId: "worker:marvin", expectedVersion: "0.21.3" as const,
+const binding = { localServiceId: "service:hermes-worker", workerId: "worker:hermes-worker", expectedVersion: "0.21.3" as const,
   sourceRevision: "00570550" };
 const receivedAt = "2026-09-20T00:00:02.000Z";
-const terminal = { type: "result" as const, session_id: "session:marvin", exit_code: 0, text: "bounded reviewed text",
+const terminal = { type: "result" as const, session_id: "session:hermes-worker", exit_code: 0, text: "bounded reviewed text",
   tokens: { input: 4, output: 5, total: 9, cache_read: 0, cache_write: 0 }, duration_ms: 8, timestamp: 9 };
 
 function delivery() {
   return createControllerWorkerDeliveryV1({ identity: { tenantId: nativeBinding.tenantId, projectId: nativeBinding.projectId,
-    jobId: nativeBinding.jobId, attemptId: nativeBinding.attemptId, runId: "run:marvin", nodeId: nativeBinding.nodeId }, worker: { workerId: binding.workerId,
+    jobId: nativeBinding.jobId, attemptId: nativeBinding.attemptId, runId: "run:hermes-worker", nodeId: nativeBinding.nodeId }, worker: { workerId: binding.workerId,
     adapterId: "connector:hermes-021-macos-local-v1", adapterRevision: binding.sourceRevision },
   input: { prompt: input.prompt, instructions: input.instructions }, authorityDigest: sha256Digest("authority"),
-  connectorProfileDigest: sha256Digest("profile"), acceptanceProfileId: "profile:marvin",
+  connectorProfileDigest: sha256Digest("profile"), acceptanceProfileId: "profile:hermes-worker",
   acceptanceProfileDigest: sha256Digest("acceptance"), issuedAt: "2026-09-20T00:00:01.000Z", expiresAt: "2026-09-20T00:01:00.000Z" });
 }
 
@@ -60,7 +60,7 @@ test("recovery inspection refuses a stage from a different authenticated deliver
   const original = delivery();
   const { schema: _schema, inputDigest: _inputDigest, deliveryId: _deliveryId, deliveryDigest: _deliveryDigest, ...otherInput } = original;
   const other = createControllerWorkerDeliveryV1({ ...otherInput, identity: { tenantId: "tenant:test", projectId: "project:test",
-    jobId: "job:other", attemptId: "attempt:other", runId: "run:other", nodeId: "node:marvin" }, authorityDigest: sha256Digest("other") });
+    jobId: "job:other", attemptId: "attempt:other", runId: "run:other", nodeId: "node:hermes-worker" }, authorityDigest: sha256Digest("other") });
   await createHermes021MacosTerminalStageV1({ storage, delivery: other, receivedAt: receipt.receivedAt }).capture(terminal);
   const status = await inspectHermes021MacosDeliveryRecoveryStatusV1({ db: f.db, integrityKey: key, storage },
     { tenantId: nativeBinding.tenantId, projectId: nativeBinding.projectId, jobId: nativeBinding.jobId,

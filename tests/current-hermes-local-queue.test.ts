@@ -19,14 +19,14 @@ test("the current Hermes plan uses the existing approval queue and refuses a cha
   const f = await ownerReviewFixture();
   t.after(f.close);
   const authority: NativeTaskTemplate["authority"] = {
-    projectId: binding.projectId, allowedExecutor: "executor:marvin",
-    allowedOperations: [HERMES_LOCAL_START_OPERATION_V1], credentialRefs: ["credential:marvin"], filesystemRoots: [],
+    projectId: binding.projectId, allowedExecutor: "executor:hermes-worker",
+    allowedOperations: [HERMES_LOCAL_START_OPERATION_V1], credentialRefs: ["credential:hermes-worker"], filesystemRoots: [],
     networkPolicy: "allowlist", allowedNetworkDestinations: [enrollment.canonicalDestination], effectPolicy: "approval_required",
     maxRisk: "low", maxDurationSeconds: 120, maxConcurrentEffects: 1, expiresAt: at(300_000), digest: "",
   };
   authority.digest = computeAuthorityDigest(authority);
   const template: NativeTaskTemplate = {
-    id: "template:marvin-current-queue", adapter: HERMES_LOCAL_ADAPTER_V1, authority,
+    id: "template:hermes-worker-current-queue", adapter: HERMES_LOCAL_ADAPTER_V1, authority,
     instructions: "Return a bounded plain-text result.", connectorProfileDigest: sha256Digest("current-hermes-qualified-build"),
     acceptanceProfileId: f.profile.id, acceptanceProfileDigest: sha256Digest(f.profile),
   };

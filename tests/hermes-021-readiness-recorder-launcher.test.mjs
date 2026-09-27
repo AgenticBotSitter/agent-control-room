@@ -12,7 +12,7 @@ import { createLocalBackupRestoreReadinessV1 } from "../src/harness/v1/local-bac
 import { sha256Digest } from "../src/security/canonical-digest.ts";
 
 const run = promisify(execFile);
-const route = { kind: "local", workerId: "worker:marvin", adapterId: "connector:hermes-021-macos-local-v1", adapterRevision: "00570550" };
+const route = { kind: "local", workerId: "worker:hermes-worker", adapterId: "connector:hermes-021-macos-local-v1", adapterRevision: "00570550" };
 const plan = planInstallationTopologyV1({ databaseAuthorityDigest: sha256Digest("database"), schedulerAuthorityDigest: sha256Digest("scheduler"),
   currentRoutes: [route], requestedRoutes: [route] });
 const report = { qualified: true, exitCode: 0, exitSignal: null, terminalResultObserved: true,
@@ -45,7 +45,7 @@ test("readiness recorder emits only opaque readiness for a qualified text report
     const readiness = JSON.parse(stdout);
     assert.equal(readiness.planDigest, plan.planDigest);
     assert.equal(readiness.proofs.find(item => item.proof === "local_owner_qualification")?.state, "passed");
-    assert.doesNotMatch(stdout, /marvin|00570550|804|877|bbbbbbbb/);
+    assert.doesNotMatch(stdout, /hermes-worker|00570550|804|877|bbbbbbbb/);
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
 

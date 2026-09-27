@@ -8,13 +8,13 @@ import { sha256Digest } from "../src/security/canonical-digest";
 import { createHermesOwnerQualificationHostFixture, hermesOwnerQualificationConfigurationFixture } from
   "./helpers/hermes-owner-qualification-host";
 
-const route = Object.freeze({ kind: "local" as const, workerId: "worker:marvin",
+const route = Object.freeze({ kind: "local" as const, workerId: "worker:hermes-worker",
   adapterId: HERMES_021_MACOS_LOCAL_ADAPTER_V1, adapterRevision: HERMES_021_SOURCE_REVISION_V1 });
 const topologyInput = Object.freeze({ databaseAuthorityDigest: sha256Digest("database"),
   schedulerAuthorityDigest: sha256Digest("scheduler"), currentRoutes: Object.freeze([]),
   requestedRoutes: Object.freeze([route]) });
 const topologyPlan = planInstallationTopologyV1(topologyInput);
-const workerBinding = Object.freeze({ localServiceId: "service:marvin", workerId: route.workerId,
+const workerBinding = Object.freeze({ localServiceId: "service:hermes-worker", workerId: route.workerId,
   expectedVersion: "0.21.3" as const, sourceRevision: HERMES_021_SOURCE_REVISION_V1 });
 const runnerConfiguration = hermesOwnerQualificationConfigurationFixture();
 
