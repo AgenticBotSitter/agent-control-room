@@ -490,7 +490,7 @@ test("documented clean-cluster provision/migrate/backup/restore/verify journey",
   // Step 1: standalone role provisioning on the clean database.
   await provisionRoles("cr_clean_install");
   // Step 2: the documented two-connection migration command, via the real CLI.
-  const adminConn = `host=${cleanSocket} port=${CLEAN_PORT} dbname=cr_clean_install user=fixture_admin`;
+  const adminConn = `host=${cleanSocket} port=${CLEAN_PORT} dbname=cr_clean_install user=postgres`;
   const migratorConn = `host=${cleanSocket} port=${CLEAN_PORT} dbname=cr_clean_install user=control_room_migrator password=${pw.migrator}`;
   const migrated = await exec(process.execPath,
     [join(ROOT, "deploy/postgres/apply-migrations.mjs"),
