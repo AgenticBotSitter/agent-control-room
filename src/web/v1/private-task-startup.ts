@@ -127,7 +127,10 @@ export function validatePrivateTaskStartupConfiguration(input: PrivateTaskStartu
     if (database.host !== web.database.host || database.port !== web.database.port || database.database !== web.database.database
       || database.username === web.database.username) throw new Error();
     const key = (value: Uint8Array) => { if (!(value instanceof Uint8Array) || value.length !== 32) throw new Error(); return Uint8Array.from(value); };
-    const p = input.coordinator.planning, templates = captureNativeTaskTemplates(p);
+    const p = input.coordinator.planning;
+    if (p.templateRegistry !== undefined || p.template === undefined) throw new Error();
+    const templates = captureNativeTaskTemplates({ template: p.template,
+      ...(p.additionalTemplates === undefined ? {} : { additionalTemplates: p.additionalTemplates }) });
     const read = p.checkpoints.read.bind(p.checkpoints);
     const denied = (): never => { throw new Error("private_task_checkpoint_write_denied"); };
     const planning = { ...templates, integrityKey: key(p.integrityKey), reviewIntegrityKey: key(p.reviewIntegrityKey),

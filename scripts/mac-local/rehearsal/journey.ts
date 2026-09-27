@@ -168,8 +168,8 @@ async function main() {
 
   const upArgs = ["scripts/mac-local/up.mjs", "--protected-root", protectedRoot];
 
-  // First mac:up: no active project yet, so it is website-only. Create the
-  // one project through the real HTTP boundary, exactly as the owner would.
+  // Start with no active project, then create the first project through the
+  // real HTTP boundary. The running task host must prepare it without restart.
   const start1 = invoke(upArgs);
   assert.equal(start1.status, 0, start1.stderr || start1.stdout);
   stackMayBeUp = true;
@@ -186,21 +186,10 @@ async function main() {
   let cookie = await signIn();
   const projectResponse = await fetch(new URL("/api/v1/projects", origin), {
     method: "POST", headers: { origin, cookie, "content-type": "application/json", "idempotency-key": "journey-rehearsal-project" },
-    body: JSON.stringify({ title: "Package 6b journey project", summary: "One task per local agent." }),
+    body: JSON.stringify({ title: "Post-startup journey project", summary: "One task per local agent." }),
   });
   const { project } = await require5xxOr201(projectResponse, "create project") as { project: { projectId: string } };
   const projectId = project.projectId;
-
-  // Restart the task host: only now does the task provider construct with
-  // the queue worker (and, from mac-local-default-task-provider.ts, actually
-  // require the first-owner completion-gate row this journey just created).
-  const down1 = invoke(["scripts/mac-local/down.mjs", "--protected-root", protectedRoot]);
-  assert.equal(down1.status, 0, down1.stderr || down1.stdout);
-  stackMayBeUp = false;
-  const start2 = invoke(upArgs);
-  assert.equal(start2.status, 0, start2.stderr || start2.stdout);
-  stackMayBeUp = true;
-  cookie = await signIn();
 
   const workersResponse = await fetch(new URL("/api/v1/local-workers", origin), { headers: { cookie } });
   assert.equal(workersResponse.status, 200);

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { captureOwnerTrustedLocalEnablementV1, OWNER_TRUSTED_LOCAL_ENABLEMENT_V1 } from "../src/harness/v1/owner-trusted-local-enablements";
-import { buildMacLocalTaskTemplatesV1 } from "../src/web/v1/mac-local-task-provider-templates";
+import { buildMacLocalTaskTemplatesV1, MAC_LOCAL_MAX_PROJECTS_V1 } from "../src/web/v1/mac-local-task-provider-templates";
 import { taskPlanningTemplateChoiceSchema } from "../src/web/v1/task-planning-wire";
 import type { MacLocalProtectedConfigurationV1 } from "../src/web/v1/mac-local-protected-configuration";
 import type { MacLocalTaskRuntimeV1 } from "../src/web/v1/mac-local-task-runtime";
@@ -27,7 +27,12 @@ test("builds three project-bound, approval-required templates and three distinct
   assert.ok(value.templates.every(item => item.authority.effectPolicy === "approval_required"));
   assert.equal(value.templates[0]?.acceptanceProfileId, value.profiles[0]?.id);
   assert.deepEqual(buildMacLocalTaskTemplatesV1([{ projectId: "project:first", createdAt: "2026-09-25T00:00:00.000Z" }], configuration, runtime), value);
-  assert.throws(() => buildMacLocalTaskTemplatesV1([], configuration, runtime), /mac_local_template_limit/);
-  assert.throws(() => buildMacLocalTaskTemplatesV1(Array.from({ length: 6 }, (_, i) => ({
-    projectId: `project:${i}`, createdAt: "2026-09-25T00:00:00.000Z" })), configuration, runtime), /mac_local_template_limit/);
+  const empty = buildMacLocalTaskTemplatesV1([], configuration, runtime);
+  assert.equal(empty.templates.length, 0);
+  assert.equal(empty.routes.length, 3, "a zero-project host is ready to serve the first project without restarting");
+  const many = buildMacLocalTaskTemplatesV1(Array.from({ length: 6 }, (_, i) => ({
+    projectId: `project:${i}`, createdAt: "2026-09-25T00:00:00.000Z" })), configuration, runtime);
+  assert.equal(many.templates.length, 18, "more than five projects are supported");
+  assert.throws(() => buildMacLocalTaskTemplatesV1(Array.from({ length: MAC_LOCAL_MAX_PROJECTS_V1 + 1 }, (_, i) => ({
+    projectId: `project:${i}`, createdAt: "2026-09-25T00:00:00.000Z" })), configuration, runtime), /mac_local_project_limit_50/);
 });
