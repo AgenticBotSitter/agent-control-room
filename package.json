@@ -72,6 +72,7 @@
     "test:private-installation-final-review": "node --import tsx --test tests/private-installation-final-review.test.ts",
     "test:private-local-hermes-startup-reverification": "node --import tsx --test tests/private-local-hermes-startup-reverification.test.ts tests/private-local-hermes-startup-configuration.test.ts tests/private-agent-task-composition.test.ts",
     "test:private-local-runtime-assembly": "node --import tsx --test tests/private-local-installation-runtime-assembly.test.ts",
+    "test:private-local-runtime-assembly:memory-guard": "node scripts/run-runtime-assembly-memory-guard.mjs",
     "test:private-local-installation-operator": "node --import tsx --test tests/private-local-installation-operator.test.ts",
     "test:private-local-installation-operator-cli": "node --import tsx --test tests/private-local-installation-operator-cli.test.ts",
     "test:private-activation": "node --test tests/private-vps-activation.test.mjs",
