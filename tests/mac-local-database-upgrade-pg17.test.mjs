@@ -5,7 +5,6 @@ import { mkdtemp, mkdir, rm, writeFile, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { PgBoss, getConstructionPlans } from "pg-boss";
 import { applyMigrations } from "../deploy/postgres/apply-migrations.mjs";
 import { connectTarget } from "../deploy/postgres/evidence.mjs";
 import { applyMacDatabaseUpgradeV1, applyPendingMacMigrationsV1, inspectMacDatabaseUpgradeV1,
@@ -18,6 +17,7 @@ import { planMacDatabaseUpgradeSnapshotV1 } from "../scripts/mac-local/database-
 import { macRolePlan, readMacGrantCatalogV1 } from "../scripts/mac-local/database-upgrade-grants.mjs";
 import { provisionMacLocalNarrowRolesV1 } from "../scripts/mac-local/narrow-role-provision.mjs";
 import { postgresScramVerifierV1 } from "../scripts/mac-local/database-upgrade-scram.mjs";
+import { fixedQueueShapeDigestForTestV1 } from "../scripts/mac-local/fixed-queue-schema.mjs";
 
 const oldRoot = "/private/tmp/acr-db-0085";
 const headRoot = resolve(fileURLToPath(new URL("../", import.meta.url)));
@@ -51,15 +51,8 @@ async function baseDatabase(root, port, suffix) {
 }
 
 async function installOldRoles(client) {
-  await client.query(getConstructionPlans("control_room_queue"));
-  const boss = new PgBoss({ db: { executeSql: (sql, values) => client.query(sql, values) },
-    schema: "control_room_queue", backend: "postgres", migrate: false, createSchema: false,
-    supervise: false, schedule: false, useListenNotify: false });
-  await boss.start();
-  try { await boss.createQueue("native-task-delivery", { retryLimit: 0 }); }
-  finally { await boss.stop({ graceful: false }); }
-  // Reproduce the inspected live shape, not the earlier 0085 rehearsal shape:
-  // only the web group exists and all four Mac logins inherit application.
+  // Reproduce the inspected live shape: no queue schema, only the web group,
+  // and all four Mac logins inheriting the broad application role.
   for (const file of ["private_web_database.sql", "private_web_roles.sql"])
     await client.query(await readFile(join(oldRoot, "db/roles", file), "utf8"));
   for (const [login, group] of oldRoles) {
@@ -78,7 +71,11 @@ async function snapshot(client) {
     m.admin_option,m.inherit_option,m.set_option FROM pg_auth_members m
     JOIN pg_roles parent ON parent.oid=m.roleid JOIN pg_roles member ON member.oid=m.member
     WHERE member.rolname=ANY($1::text[]) ORDER BY parent.rolname,member.rolname`, [principals])).rows;
-  return { roles, membership, grants: [...await readMacGrantCatalogV1(client)].sort() };
+  const queue = await fixedQueueShapeDigestForTestV1(client);
+  const queueOwnership = (await client.query(`SELECT n.nspname,pg_get_userbyid(n.nspowner) AS owner
+    FROM pg_namespace n WHERE n.nspname='control_room_queue'`)).rows;
+  return { roles, membership, grants: [...await readMacGrantCatalogV1(client)].sort(),
+    queue, queueOwnership };
 }
 
 test("live-shaped 0085 PostgreSQL 17 installation converges to fresh HEAD without changing old passwords", {
@@ -102,6 +99,7 @@ test("live-shaped 0085 PostgreSQL 17 installation converges to fresh HEAD withou
   const oldClient = connectTarget(connection(old.port)); await oldClient.connect();
   clients.push(oldClient);
   await installOldRoles(oldClient);
+  assert.equal(await fixedQueueShapeDigestForTestV1(oldClient), null);
   await oldClient.query("GRANT DELETE ON control_jobs TO control_room_private_web");
   const prior = await snapshot(oldClient);
   const plan = await inspectMacDatabaseUpgradeV1({ client: oldClient });
@@ -110,6 +108,7 @@ test("live-shaped 0085 PostgreSQL 17 installation converges to fresh HEAD withou
   { input: macDatabaseUpgradeReadOnlySqlV1(), encoding: "utf8", timeout: 30_000 });
   const readOnlySnapshot = JSON.parse(raw.split(/\r?\n/u).find(line => line.startsWith("{")));
   assert.deepEqual(await planMacDatabaseUpgradeSnapshotV1(readOnlySnapshot), plan);
+  assert.equal(plan.installQueueSchema, true);
   assert.deepEqual(plan.createRoles, [
     "control_room_local_result_publisher", "control_room_native_queue_worker",
     "control_room_native_results", "control_room_publisher", "control_room_task_coordinator",
@@ -209,6 +208,8 @@ test("live-shaped 0085 PostgreSQL 17 installation converges to fresh HEAD withou
   assert.equal((await publisher.query("SELECT current_user AS role")).rows[0].role, "control_room_publisher");
   await publisher.end();
   const upgraded = await snapshot(oldClient);
+  assert.equal(upgraded.queue,
+    "sha256:c7ac7af7bb4b466fb108743d14f66539fa2131d8414588dfabafd1e523a69256");
   const repeat = await applyMacDatabaseUpgradeV1(request);
   assert.deepEqual(repeat.before.grants, { extra: [], missing: [] });
   assert.deepEqual(repeat.before.pendingMigrations, []);
@@ -241,6 +242,7 @@ test("post-incident ledger 90 with old memberships needs only the role and grant
   await applyPendingMacMigrationsV1(peer);
   const before = await inspectMacDatabaseUpgradeV1({ client });
   assert.deepEqual(before.pendingMigrations, []);
+  assert.equal(before.installQueueSchema, true);
   assert.equal(before.createRoles.length, 5);
   assert.equal(before.membership.revoke.length, 4);
   const oldVerifiers = (await client.query(`SELECT rolname,rolpassword FROM pg_authid
@@ -260,8 +262,9 @@ test("post-incident ledger 90 with old memberships needs only the role and grant
     onStage: stage => stages.push(stage),
   });
   assert.equal(pendingCalled, false);
+  assert.ok(stages.includes("queue"));
   assert.equal(stages.at(-1), "verify");
-  assert.deepEqual(result.after, { pendingMigrations: [], createRoles: [],
+  assert.deepEqual(result.after, { pendingMigrations: [], installQueueSchema: false, createRoles: [],
     membership: { grant: [], revoke: [] }, grants: { extra: [], missing: [] } });
   assert.deepEqual((await client.query(`SELECT rolname,rolpassword FROM pg_authid
     WHERE rolname=ANY($1::text[]) ORDER BY rolname`, [oldVerifiers.map(row => row.rolname)])).rows,
@@ -275,4 +278,13 @@ test("post-incident ledger 90 with old memberships needs only the role and grant
         error => error.code === "42501");
     } finally { await restricted.end(); }
   }
+  await client.query("UPDATE control_room_queue.queue SET retry_limit=1 WHERE name='native-task-delivery'");
+  await assert.rejects(inspectMacDatabaseUpgradeV1({ client }), /upgrade_queue_shape_refused/u,
+    "an altered existing queue may not be adopted");
+  await client.query("UPDATE control_room_queue.queue SET retry_limit=0 WHERE name='native-task-delivery'");
+  await client.query("GRANT USAGE ON SCHEMA control_room_queue TO control_room_application");
+  await assert.rejects(inspectMacDatabaseUpgradeV1({ client }), /upgrade_queue_shape_refused/u,
+    "an extra non-Mac queue grant may not be adopted");
+  await client.query("REVOKE USAGE ON SCHEMA control_room_queue FROM control_room_application");
+  assert.equal((await inspectMacDatabaseUpgradeV1({ client })).installQueueSchema, false);
 });

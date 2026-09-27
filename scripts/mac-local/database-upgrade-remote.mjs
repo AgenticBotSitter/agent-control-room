@@ -10,6 +10,7 @@ import { connectTarget } from "../../deploy/postgres/evidence.mjs";
 import { applyMacGrantDiffV1, diffMacGrantsV1, macRolePlan, readDesiredMacGrantsV1,
   readMacGrantCatalogV1, macGrantRowsToSetV1, macGrantCatalogSqlV1 } from "./database-upgrade-grants.mjs";
 import { checkedPostgresScramVerifierV1 } from "./database-upgrade-scram.mjs";
+import { inspectFixedQueueSchemaV1, installFixedQueueSchemaV1 } from "./fixed-queue-schema.mjs";
 
 const bootstrapTarget = "host=/var/run/postgresql dbname=control_room user=postgres";
 const repoRoot = fileURLToPath(new URL("../../", import.meta.url));
@@ -66,10 +67,13 @@ function roleState({ roles, memberships, defaultAcl }) {
 export async function planMacDatabaseUpgradeSnapshotV1(snapshot) {
   const pending = await pendingMigrations(snapshot.applied);
   const roles = roleState(snapshot);
+  if (snapshot.queue?.schemaExists !== false && snapshot.queue?.verified !== true)
+    throw new Error("upgrade_queue_snapshot_unverified");
   const desired = await readDesiredMacGrantsV1();
   const actual = macGrantRowsToSetV1(snapshot.grants);
   const grants = diffMacGrantsV1(actual, desired);
-  return { pendingMigrations: pending, createRoles: principals.filter(role => !roles.found.has(role)).sort()
+  return { pendingMigrations: pending, installQueueSchema: snapshot.queue.schemaExists === false,
+    createRoles: principals.filter(role => !roles.found.has(role)).sort()
     .map(role => ({ role, attributes: roleAttributes(role) })),
     membership: roles.membership, grants };
 }
@@ -90,7 +94,9 @@ async function databaseSnapshot(client) {
     CROSS JOIN LATERAL aclexplode(d.defaclacl) a JOIN pg_roles r ON r.oid=a.grantee
     WHERE r.rolname=ANY($1::text[])`, [principals])).rows[0].count;
   const grants = (await client.query(macGrantCatalogSqlV1, [principals])).rows;
-  return { applied, roles, memberships, defaultAcl, grants };
+  const queue = await inspectFixedQueueSchemaV1(client);
+  return { applied, roles, memberships, defaultAcl, grants,
+    queue: { ...queue, verified: queue.schemaExists } };
 }
 
 async function report(client) {
@@ -136,6 +142,10 @@ export async function applyMacDatabaseUpgradeV1({ publisherVerifier, client, exp
     onStage("migrate");
     await applyPending();
   }
+  if (before.installQueueSchema) {
+    onStage("queue");
+    await installFixedQueueSchemaV1(client);
+  }
   onStage("roles");
   await client.query("BEGIN");
   try {
@@ -162,7 +172,7 @@ export async function applyMacDatabaseUpgradeV1({ publisherVerifier, client, exp
     }
     onStage("verify");
     const after = await report(client);
-    if (after.pendingMigrations.length || after.createRoles.length || after.membership.revoke.length
+    if (after.pendingMigrations.length || after.installQueueSchema || after.createRoles.length || after.membership.revoke.length
       || after.membership.grant.length || after.grants.extra.length || after.grants.missing.length)
       throw new Error("upgrade_convergence_refused");
     await client.query("COMMIT");
@@ -206,7 +216,8 @@ export function sanitizedMacDatabaseUpgradeFailureV1(error, stage) {
     "upgrade_role_catalog_refused", "upgrade_non_login_membership_refused",
     "upgrade_unexpected_login_membership_refused", "upgrade_duplicate_membership_refused",
     "upgrade_role_membership_options_refused", "upgrade_unexpected_default_grant",
-    "upgrade_source_ledger_refused", "upgrade_ledger_prefix_refused",
+    "upgrade_source_ledger_refused", "upgrade_ledger_prefix_refused", "upgrade_queue_snapshot_unverified",
+    "upgrade_queue_shape_refused", "upgrade_queue_existing_refused",
     "upgrade_grant_catalog_refused", "upgrade_grant_source_refused", "upgrade_unexpected_function_grant",
     "migration_peer_target_refused", "migration_peer_operator_refused", "migration_peer_role_refused",
     "migration_peer_identity_refused", "migration_live_schema_drift", "migration_failed",
@@ -215,7 +226,7 @@ export function sanitizedMacDatabaseUpgradeFailureV1(error, stage) {
     "migration_refused_non_owner_objects"]);
   const candidate = /^(?:upgrade|migration)_[a-z0-9_]+/u.exec(message)?.[0];
   const code = candidate && known.has(candidate) ? candidate : "remote_refused";
-  return `upgrade_error:${code} stage=${["plan", "migrate", "roles", "grants", "verify"].includes(stage)
+  return `upgrade_error:${code} stage=${["plan", "migrate", "queue", "roles", "grants", "verify"].includes(stage)
     ? stage : "plan"} sqlstate=${safeSqlstate(error)} class=${safeErrorClass(error)} system=${safeSystemCode(error)}`;
 }
 

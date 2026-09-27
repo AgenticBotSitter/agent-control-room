@@ -1,11 +1,12 @@
 # Johnny5: VPS-local Control Room database upgrade
 
-**Incident hold (2026-09-26):** The first guarded apply refused without
-changing roles or grants. A later, separate direct migration call applied
-0086–0090; the owner chose to keep them. The old 0085 plan, digest and staged
-checkout are no longer authority for an apply. Use a fresh staged checkout and
-read-only plan from the reviewed recovery source, obtain a new review and owner
-go, and do not run the real apply until the original failure is diagnosed.
+**Incident hold (2026-09-26):** The first guarded apply encountered the missing
+`control_room_queue` schema and rolled back its role/grant transaction. A later,
+separate direct migration call applied 0086–0090; the owner chose to keep them.
+The old 0085 plan, digest and staged checkout are no longer authority for an
+apply. Use a fresh staged checkout and read-only plan from the reviewed
+recovery source. The plan must explicitly include `installQueueSchema: true`.
+Obtain a new review and owner go before any real apply.
 
 These are root commands **on the VPS**, not commands for the Mac. This file
 contains no host address, password, or verifier. The tagged Mac has no VPS SSH
@@ -55,7 +56,8 @@ runuser -u postgres -- node "$STAGE/source/scripts/mac-local/database-upgrade-re
 Send the printed, non-secret plan and digest to Claude for review. Wait for
 Claude's assessment and the owner's explicit "go". If approval is delayed,
 the later apply command will recompute the plan and refuse if anything changed.
-For the now-inspected ledger-90 installation, pending migrations must be empty.
+For the now-inspected ledger-90 installation, pending migrations must be empty
+and `installQueueSchema` must be true.
 The plan must explicitly show creation of the four missing `NOLOGIN` Mac groups and the publisher `LOGIN`,
 four `membership.revoke` entries removing `control_room_application` from the
 existing Mac logins, and four `membership.grant` entries assigning their narrow
