@@ -46,6 +46,7 @@ import { CODEX_OWNER_TRUSTED_LOCAL_ADAPTER_V1 } from "../../harness/codex-v1/own
 import type { OwnerTrustedLocalEnablementV1 } from "../../harness/v1/owner-trusted-local-enablements";
 import type { TaskAssignmentRoute } from "./task-assignment-coordinator";
 import { captureTaskModelCatalogV1, resolveTaskModelV1 } from "./task-model-selection";
+import { sanitizedDatabaseFailureV1 } from "./sanitized-database-failure";
 
 type SelectedWorker = Readonly<{ kind: "hermes" | "claude-code" | "codex";
   worker: OwnerTrustedLocalEnablementV1["workers"][number]; route: TaskAssignmentRoute; adapterId: string }>;
@@ -268,8 +269,8 @@ export const createTaskApplication: MacLocalTaskProviderV1["createTaskApplicatio
     };
     qualityTimer = setInterval(() => {
       if (qualityInFlight) return;
-      qualityInFlight = sweepQuality().then(() => { qualityFailureReported = false; }).catch(() => {
-        if (!qualityFailureReported) process.stderr.write("mac_local_quality_sweep_unavailable\n");
+      qualityInFlight = sweepQuality().then(() => { qualityFailureReported = false; }).catch(error => {
+        if (!qualityFailureReported) process.stderr.write(`mac_local_quality_sweep_unavailable ${sanitizedDatabaseFailureV1(error)}\n`);
         qualityFailureReported = true;
       }).finally(() => { qualityInFlight = undefined; });
     }, 2_000);

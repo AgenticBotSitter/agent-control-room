@@ -33,9 +33,11 @@ let verifiedThisRehearsalCluster = false;
 let stackMayBeUp = false;
 
 const AGENTS = Object.freeze([
-  { kind: "hermes" as const, worker: "hermes" as const, node: "hermes" },
   { kind: "claude" as const, worker: "claude-code" as const, node: "claude" },
   { kind: "codex" as const, worker: "codex" as const, node: "codex" },
+  // The pre-0091-shaped proposal defaults to a root-tree ownership scope, so
+  // assign it last after both narrower-scope journeys have finished.
+  { kind: "hermes" as const, worker: "hermes" as const, node: "hermes" },
 ]);
 
 // One shell script per agent: it answers `--version` for the pin check, and
@@ -231,8 +233,81 @@ async function main() {
   const idOf = (value: string) => encodeURIComponent(value);
   const outcomes: Record<string, unknown> = {};
 
+  // Reproduce a proposal that existed before 0091 added model and declared-
+  // scope rows. The public API creates a valid saved proposal first; while the
+  // disposable host is stopped, the cluster owner removes only those two
+  // post-0090 child rows. Restart, prepare and assign must all work, and one
+  // refusal must never collapse the coordinator pool behind every task route.
+  const legacyProposal = await require5xxOr201(await fetch(new URL(
+    `/api/v1/projects/${idOf(projectId)}/tasks`, origin), {
+    method: "POST", headers: { origin, cookie, "content-type": "application/json",
+      "idempotency-key": "journey-pre-0091-source-0001" },
+    body: JSON.stringify({ title: "Pre-0091 saved proposal", instructions: "Return one harmless short line." }),
+  }), "pre-0091-shaped propose") as { receipt: { jobId: string } };
+  const legacySourceJobId = legacyProposal.receipt.jobId;
+  const legacySource = await requireOk(await fetch(new URL(
+    `/api/v1/projects/${idOf(projectId)}/tasks/${idOf(legacySourceJobId)}`, origin), { headers: { cookie } }),
+  200, "pre-0091-shaped detail") as { inputDigest: string };
+  const stopForLegacyShape = invoke(["scripts/mac-local/down.mjs", "--protected-root", protectedRoot]);
+  assert.equal(stopForLegacyShape.status, 0, stopForLegacyShape.stderr || stopForLegacyShape.stdout);
+  stackMayBeUp = false;
+  const legacyAdmin = connectTarget(target);
+  await legacyAdmin.connect();
+  try {
+    await legacyAdmin.query("BEGIN");
+    await legacyAdmin.query("DELETE FROM control_task_model_selections WHERE job_id=$1", [legacySourceJobId]);
+    await legacyAdmin.query("DELETE FROM control_task_declared_scopes WHERE job_id=$1", [legacySourceJobId]);
+    await legacyAdmin.query("COMMIT");
+  } catch (error) {
+    await legacyAdmin.query("ROLLBACK").catch(() => {});
+    throw error;
+  } finally { await legacyAdmin.end(); }
+  const restartForLegacyShape = invoke(upArgs);
+  assert.equal(restartForLegacyShape.status, 0, restartForLegacyShape.stderr || restartForLegacyShape.stdout);
+  stackMayBeUp = true;
+  cookie = await signIn();
+  const legacyPlanOptions = await requireOk(await fetch(new URL(
+    `/api/v1/projects/${idOf(projectId)}/tasks/${idOf(legacySourceJobId)}/plan`, origin), { headers: { cookie } }),
+  200, "pre-0091-shaped planning options") as { templates?: { id: string }[]; availability: string };
+  assert.equal(legacyPlanOptions.availability, "available");
+  const legacyTemplateId = legacyPlanOptions.templates?.find(item => item.id.startsWith("template:mac-local:hermes:"))?.id;
+  assert.ok(legacyTemplateId);
+  const legacyPlanned = await require5xxOr201(await fetch(new URL(
+    `/api/v1/projects/${idOf(projectId)}/tasks/${idOf(legacySourceJobId)}/plan`, origin), {
+    method: "POST", headers: { origin, cookie, "content-type": "application/json" },
+    body: JSON.stringify({ expectedInputDigest: legacySource.inputDigest, templateId: legacyTemplateId }),
+  }), "pre-0091-shaped plan") as { receipt: { jobId: string; inputDigest: string } };
+  const legacyJobId = legacyPlanned.receipt.jobId;
+  const legacyNodeId = `${config.enablement.nodeId}.hermes`;
+  const assignLegacyShape = async () => {
+    const assigned = await require5xxOr201(await fetch(new URL(
+      `/api/v1/projects/${idOf(projectId)}/tasks/${idOf(legacyJobId)}/assignment`, origin), {
+      method: "POST", headers: { origin, cookie, "content-type": "application/json" },
+      body: JSON.stringify({ action: "assign", nodeId: legacyNodeId,
+        expectedInputDigest: legacyPlanned.receipt.inputDigest }),
+    }), "pre-0091-shaped assignment") as { receipt: { inputDigest: string } };
+    for (const [label, path] of [
+      ["task list", `/api/v1/projects/${idOf(projectId)}/tasks`],
+      ["task detail", `/api/v1/projects/${idOf(projectId)}/tasks/${idOf(legacyJobId)}`],
+      ["task plan", `/api/v1/projects/${idOf(projectId)}/tasks/${idOf(legacyJobId)}/plan`],
+      ["task results", `/api/v1/projects/${idOf(projectId)}/tasks/${idOf(legacyJobId)}/results`],
+    ] as const) await requireOk(await fetch(new URL(path, origin), { headers: { cookie } }), 200,
+      `post-assignment ${label}`);
+    outcomes.legacyPre0091Shape = { sourceJobId: legacySourceJobId, jobId: legacyJobId,
+      assignmentSurvived: true, endpointsAvailable: true };
+    return assigned;
+  };
+
   for (const agent of AGENTS) {
-    const declaredScope = { kind: "tree" as const, path: `rehearsal/${agent.kind}` };
+    // The legacy-shaped task is also the Hermes end-to-end journey. Reusing
+    // its live reservation proves delivery and review without fabricating a
+    // second lease or mutating canonical lease evidence in the fixture.
+    const declaredScope = { kind: "tree" as const, path: agent.kind === "hermes" ? "" : `rehearsal/${agent.kind}` };
+    let jobId: string, assignedInputDigest: string;
+    if (agent.kind === "hermes") {
+      jobId = legacyJobId;
+      assignedInputDigest = (await assignLegacyShape()).receipt.inputDigest;
+    } else {
     // 1) proposal
     const proposed = await fetch(new URL(`/api/v1/projects/${idOf(projectId)}/tasks`, origin), {
       method: "POST", headers: { origin, cookie, "content-type": "application/json", "idempotency-key": `journey-${agent.kind}-source-0001` },
@@ -259,7 +334,8 @@ async function main() {
       body: JSON.stringify({ expectedInputDigest: sourceInputDigest, templateId }),
     });
     const plannedBody = await require5xxOr201(planned, `${agent.kind} plan`) as { receipt: { jobId: string; inputDigest: string } };
-    const jobId = plannedBody.receipt.jobId, inputDigest = plannedBody.receipt.inputDigest;
+    jobId = plannedBody.receipt.jobId;
+    const inputDigest = plannedBody.receipt.inputDigest;
 
     // 3) assignment
     const nodeId = `${config.enablement.nodeId}.${agent.node}`;
@@ -270,7 +346,8 @@ async function main() {
       body: JSON.stringify({ action: "assign", nodeId, expectedInputDigest: inputDigest }),
     });
     const assignedBody = await require5xxOr201(assigned, `${agent.kind} assignment`) as { receipt: { inputDigest: string } };
-    const assignedInputDigest = assignedBody.receipt.inputDigest;
+    assignedInputDigest = assignedBody.receipt.inputDigest;
+    }
     const assignedDetail = await requireOk(await fetch(new URL(
       `/api/v1/projects/${idOf(projectId)}/tasks/${idOf(jobId)}`, origin), { headers: { cookie } }),
     200, `${agent.kind} assigned task detail`) as { preparedFor: string | null; attempts: unknown[]; inputDigest: string;

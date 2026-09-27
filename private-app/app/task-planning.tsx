@@ -9,6 +9,12 @@ import type { TaskPlanningOptions, TaskPlanningReceipt } from "../../src/web/v1/
 import type { TaskDetail } from "../../src/web/v1/task-wire";
 import { taskUrl } from "./task-panels";
 
+export function retainPreparedWorkerSelectionV1(options: TaskPlanningOptions, previous?: string): string | undefined {
+  const templates = options.templates ?? [];
+  if (templates.length === 1) return templates[0]!.id;
+  return previous && templates.some(template => template.id === previous) ? previous : undefined;
+}
+
 export function TaskPlanningPanel({ options, receipt, error, pending, uncertain, selectedTemplateId, onSelectTemplate, onPrepare, onRetry }: {
   options?: TaskPlanningOptions; receipt?: TaskPlanningReceipt; error?: BrowserRequestError;
   pending: boolean; uncertain: boolean; selectedTemplateId?: string; onSelectTemplate: (value: string) => void;
@@ -52,7 +58,7 @@ export function PrivateTaskPlanning({ detail, client: suppliedClient }: { detail
     const current = ++generation.current; let live = true;
     if (detail) void client.options(detail.task.projectId, detail.task.jobId, detail.inputDigest).then(value => {
       if (live && current === generation.current) { setCheckedDetail(detail); setOptions(value);
-        setSelectedTemplateId(value.templates?.length === 1 ? value.templates[0]!.id : undefined);
+        setSelectedTemplateId(previous => retainPreparedWorkerSelectionV1(value, previous));
         setReceipt(value.savedPlan ?? client.savedReceipt(detail.task.projectId, detail.task.jobId, detail.inputDigest));
         setError(client.hasPending() ? new BrowserRequestError("uncertain") : undefined); }
     }).catch(reason => { if (live && current === generation.current) { setCheckedDetail(detail); setOptions(undefined); setReceipt(undefined);

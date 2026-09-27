@@ -12,8 +12,10 @@ import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { alive, hostCommand, protectedRootFromArguments, readPid, repoRoot, runtimePaths, stopRecorded } from "./stack.mjs";
 import { installOrRefreshService, plistPath, serviceInstalled, servicePid, serviceUpToDate } from "./service.mjs";
+import { captureMacLocalBuildSourceV1, macLocalBuildSourceV1 } from "./build-source.mjs";
 
 const PROVIDER_MODULE = "dist-vps/server/macLocalDefaultTaskProvider.js";
+const BUILD_SOURCE = "dist-vps/server/mac-local-build-source.json";
 
 export function providerFileBody(modulePath) {
   return `export { schema, workerKinds, createTaskApplication } from ${JSON.stringify(pathToFileURL(modulePath).href)};\n`;
@@ -21,6 +23,14 @@ export function providerFileBody(modulePath) {
 
 export function missingTaskRuntimeInstruction(root) {
   return `task settings missing: run pnpm mac:prepare-task-runtime -- --protected-root ${JSON.stringify(root)} --hermes-profile cr --hermes-provider opencode-go --hermes-model space-bunny-free --hermes-destination https://opencode.ai:443`;
+}
+
+export async function verifyMacLocalBuildCurrentV1(root = repoRoot) {
+  try {
+    const recorded = captureMacLocalBuildSourceV1(JSON.parse(await readFile(join(root, BUILD_SOURCE), "utf8")));
+    const current = await macLocalBuildSourceV1(root);
+    return recorded.commit === current.commit && recorded.sourceDigest === current.sourceDigest;
+  } catch { return false; }
 }
 
 const log = line => console.log(`mac:up ${line}`);
@@ -103,6 +113,7 @@ async function main() {
   if (!existsSync(join(root, "config/task-runtime.json")))
     fail(missingTaskRuntimeInstruction(root));
   if (!existsSync(join(repoRoot, "dist-vps/server/macLocalHost.js"))) fail("release build missing: run pnpm build first");
+  if (!await verifyMacLocalBuildCurrentV1()) fail("release build stale: run pnpm build first");
 
   log("1/5 database");
   if (await run(["--import", "tsx", "scripts/mac-local/check-database.ts", root]) !== 0) {

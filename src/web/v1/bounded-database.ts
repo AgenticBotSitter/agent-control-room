@@ -6,7 +6,13 @@ export const privateDatabaseLimits = Object.freeze({ connections: 8, checkoutMs:
 export type PrivateDatabaseRollbackSqlState = "40P01" | "40001";
 export class PrivateDatabaseError extends Error {
   constructor(readonly code: "database_unavailable" | "database_outcome_uncertain" | "database_close_uncertain",
-    readonly rollbackSqlState?: PrivateDatabaseRollbackSqlState) { super(code); }
+    /** PostgreSQL's sanitized five-character SQLSTATE. It proves that the
+     * server rejected the statement; unlike a transport failure, that outcome
+     * is known and must not quarantine every connection in the pool. */
+    readonly sqlState?: string) { super(code); }
+  get rollbackSqlState(): PrivateDatabaseRollbackSqlState | undefined {
+    return this.sqlState === "40P01" || this.sqlState === "40001" ? this.sqlState : undefined;
+  }
 }
 export interface PrivateDatabaseLease extends DatabaseSession { release(): void }
 /** Trusted, explicitly supplied transport. No ambient driver or fallback is selected here. */
@@ -51,7 +57,7 @@ export function boundPrivateDatabase(driver: PrivateDatabaseDriver,
     const operation = new AbortController(), parent = databaseOperationSignal();
     const signal = parent ? AbortSignal.any([parent, operation.signal]) : operation.signal;
     let valid = true, busy = false, queryFailed = false;
-    let rollbackSqlState: PrivateDatabaseRollbackSqlState | undefined;
+    let statementSqlState: string | undefined;
     let invalidate!: () => void;
     const invalidated = new Promise<never>((_, reject) => { invalidate = () => {
       valid = false; operation.abort(); reject(new PrivateDatabaseError("database_outcome_uncertain"));
@@ -79,7 +85,7 @@ export function boundPrivateDatabase(driver: PrivateDatabaseDriver,
           assertActive(); return result;
         } catch (error) {
           queryFailed = true;
-          if (error instanceof PrivateDatabaseError && error.rollbackSqlState) rollbackSqlState = error.rollbackSqlState;
+          if (error instanceof PrivateDatabaseError && error.sqlState) statementSqlState = error.sqlState;
           throw error;
         }
         finally { busy = false; }
@@ -89,12 +95,12 @@ export function boundPrivateDatabase(driver: PrivateDatabaseDriver,
         if (transaction) { await query("BEGIN"); began = true; }
         const result = await callback(Object.freeze({ query }));
         assertActive();
-        if (busy || queryFailed) throw rollbackSqlState
-          ? new PrivateDatabaseError("database_unavailable", rollbackSqlState)
+        if (busy || queryFailed) throw statementSqlState
+          ? new PrivateDatabaseError("database_unavailable", statementSqlState)
           : new PrivateDatabaseError("database_outcome_uncertain");
         await check(); assertActive();
-        if (busy || queryFailed) throw rollbackSqlState
-          ? new PrivateDatabaseError("database_unavailable", rollbackSqlState)
+        if (busy || queryFailed) throw statementSqlState
+          ? new PrivateDatabaseError("database_unavailable", statementSqlState)
           : new PrivateDatabaseError("database_outcome_uncertain");
         if (transaction) { commitAttempted = true; await query("COMMIT"); began = false; }
         return result;
