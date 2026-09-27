@@ -373,14 +373,14 @@ export class TaskExecutionPlanner {
     const kind = this.modelKind(template);
     if (!kind || !this.modelCatalog) return;
     const source = (await tx.query<{ selection_key: string | null; effort: string | null }>(
-      "SELECT selection_key,effort FROM control_task_model_selections WHERE tenant_id=$1 AND job_id=$2 FOR SHARE",
+      "SELECT selection_key,effort FROM control_task_model_selections WHERE tenant_id=$1 AND job_id=$2",
       [this.scope.tenantId, sourceJobId])).rows[0];
     if (!source) return fail();
     let requested: RequestedTaskModelV1 = { model: source.selection_key ?? undefined, effort: source.effort ?? undefined };
     if (inheritedFromJobId) {
       const inherited = (await tx.query<{ selection_key: string; effort: string }>(
         `SELECT selection_key,effort FROM control_task_model_selections
-         WHERE tenant_id=$1 AND job_id=$2 AND worker_kind IS NOT NULL FOR SHARE`,
+         WHERE tenant_id=$1 AND job_id=$2 AND worker_kind IS NOT NULL`,
       [this.scope.tenantId, inheritedFromJobId])).rows[0];
       if (!inherited) return fail();
       requested = { model: inherited.selection_key, effort: inherited.effort };

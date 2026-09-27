@@ -1775,7 +1775,7 @@ export class TaskAssignmentCoordinator {
         || ["critical", "blocked", "unavailable"].includes(telemetry.payload.thermalState)) conflict();
       const declaredScopes = (await tx.query<{ scope_kind: "file" | "tree"; path_fold: string }>(
         `SELECT scope_kind,path_fold FROM control_task_declared_scopes
-         WHERE tenant_id=$1 AND project_id=$2 AND job_id=$3 ORDER BY scope_kind,path_fold FOR SHARE`,
+         WHERE tenant_id=$1 AND project_id=$2 AND job_id=$3 ORDER BY scope_kind,path_fold`,
       [this.scope.tenantId, projectId, jobId])).rows;
       if (declaredScopes.length) {
         const held = (await tx.query<{ lease_id: string; job_id: string; node_id: string;
