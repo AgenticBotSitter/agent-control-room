@@ -24,6 +24,11 @@ if (!arg || ![3, 4].includes(process.argv.length) || mode !== undefined && !["--
   process.exit(2);
 }
 const root = resolve(arg), protectedRoot = join(root, "protected");
+const pgBin = process.env.PG_BIN;
+if (pgBin !== undefined && (!isAbsolute(pgBin) || resolve(pgBin) !== pgBin)) {
+  throw new Error("rehearsal_pg_bin_must_be_absolute");
+}
+const pgExecutable = (name: string) => pgBin ? join(pgBin, name) : name;
 let verifiedThisRehearsalCluster = false;
 let stackMayBeUp = false;
 
@@ -583,7 +588,7 @@ try {
     const down = spawnSync(process.execPath, ["--import", "tsx", "scripts/mac-local/rehearsal/setup.ts", "down", root], {
       cwd: process.cwd(), encoding: "utf8", timeout: 120_000,
     });
-    const status = spawnSync("pg_ctl", ["-D", join(root, "pg"), "status"], { encoding: "utf8", timeout: 10_000 });
+    const status = spawnSync(pgExecutable("pg_ctl"), ["-D", join(root, "pg"), "status"], { encoding: "utf8", timeout: 10_000 });
     if (status.status === 0) throw new Error("rehearsal_cluster_still_running_after_cleanup");
     if (down.status !== 0 && !/data directory .* not exist/u.test(`${down.stderr}\n${down.stdout}`))
       throw new Error("rehearsal_cluster_stop_failed");
