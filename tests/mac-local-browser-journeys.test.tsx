@@ -357,6 +357,7 @@ describe("W5 journey steps that are reachable as shipped", { skip: needsPg }, ()
     const workers = await f.request("/api/v1/local-workers", { headers: f.auth });
     assert.deepEqual(await readJson(workers, 200, "worker status"),
       { taskWorkersStarted: false, instruction: "create your first project, then run mac:down && mac:up",
+        projectSections: ["overview", "work", "reviews", "activity"],
         workers: [{ kind: "hermes-021", state: "unavailable", proof: "not_proven" }] });
   });
 });

@@ -19,7 +19,12 @@ export function ProjectNavigation({ projectId, current, presentation }: {
     <a href={href} aria-current={current === page ? "page" : undefined}>{label}</a>;
   return <nav className="private-tabs" aria-label="Project pages">
     {link(base, "Overview", "overview")}
-    {runtime.mode !== "hosted" ? link(`${base}/tasks`, "Work", "work") : <>
+    {runtime.mode === "local" ? <>
+      {link(`${base}/tasks`, "Work", "work")}
+      {runtime.status?.projectSections.includes("reviews") && link(`${base}/reviews`, "Reviews", "reviews")}
+      {runtime.status?.projectSections.includes("activity") && link(`${base}/activity`, "Activity", "activity")}
+      {runtime.status?.projectSections.includes("files") && link(`${base}/files`, "Files", "files")}
+    </> : runtime.mode === "checking" ? link(`${base}/tasks`, "Work", "work") : <>
     {link(`${base}/inbox`, "Inbox", "inbox")}
     {link(`${base}/tasks`, "Work", "work")}
     {link(`${base}/agents`, "Agents", "agents")}

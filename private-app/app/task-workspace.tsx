@@ -42,7 +42,13 @@ export function TaskExecutionStage({ detail, mode, workspace, onRecorded }: {
   if (mode === "hosted") return <><PrivateTaskPlanning detail={detail} client={workspace.planning} />
     <PrivateTaskAssignment detail={detail} client={workspace.assignment} onRecorded={onRecorded} />
     <PrivateTaskApproval detail={detail} workspace={workspace} /></>;
-  if (!detail.preparedFor) return <PrivateTaskPlanning detail={detail} client={workspace.planning} />;
+  if (!detail.preparedFor) return <><PrivateTaskPlanning detail={detail} client={workspace.planning} />
+    <section id="task-assignment" className="private-panel" aria-label="Task assignment"><h2>Task assignment</h2>
+      <p>Prepare this saved proposal before choosing a configured machine. Assignment will reserve capacity without starting work.</p>
+      <button type="button" disabled>Assign after preparation</button></section>
+    <section id="task-approval" className="private-panel" aria-label="Execution approval"><h2>Execution approval</h2>
+      <p>Execution approval follows preparation and assignment. No permission has been granted and no agent starts from this page automatically.</p>
+      <button type="button" disabled>Approve after assignment</button></section></>;
   return <><PrivateTaskAssignment detail={detail} client={workspace.assignment} onRecorded={onRecorded} />
     <PrivateTaskApproval detail={detail} workspace={workspace} local /></>;
 }

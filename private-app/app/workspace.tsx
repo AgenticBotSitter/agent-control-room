@@ -103,6 +103,16 @@ export function IdeaProjectStatusActions({ project, pending, onAction }: {
       {{ pause: "Pause project", resume: "Resume project", complete: "Mark complete", archive: "Archive project", reopen: "Reopen project" }[action]}</button>)}</div>;
 }
 
+export function OrdinaryProjectStatusActions({ project, pending, onTransition }: {
+  project: ProjectView; pending: boolean; onTransition: (lifecycle: WebProject["lifecycle"]) => void;
+}) {
+  if (!project.lifecycleEditable || project.origin !== "ordinary") return null;
+  return <div className="private-actions">{(["active", "paused", "completed", "archived"] as const)
+    .filter(value => value !== project.lifecycle && (project.lifecycle !== "archived" || value === "active"))
+    .map(value => <button type="button" key={value} disabled={pending} onClick={() => onTransition(value)}>
+      {{ active: "Reopen project", paused: "Pause project", completed: "Mark complete", archived: "Archive project" }[value]}</button>)}</div>;
+}
+
 export function ProjectIdeaOrigin({ project }: { project: ProjectView }) {
   return project.origin === "idea_lab" && project.sourceIdeaSessionId
     ? <p><a href={`/ideas/${encodeURIComponent(project.sourceIdeaSessionId)}`}>View original Idea Lab discussion and decision</a></p> : null;
@@ -241,6 +251,10 @@ export function PrivateProjectWorkspace({ projectId, section = "overview", after
           <ProjectNavigation projectId={projectId} current={section} presentation={project.presentation} />
           {section === "overview" && <section className="private-panel"><h2>Purpose</h2>
             <p className="private-summary">{project.summary || "No summary added."}</p>
+            <h3>Project lifecycle</h3>
+            <OrdinaryProjectStatusActions project={project} pending={pending || client.hasPending()}
+              onTransition={value => { void transition(value); }} />
+            <p className="private-note">Completing or archiving preserves project history and does not stop running work. Reopening permits new proposals again.</p>
             <p className="private-note"><a href={`/projects/${encodeURIComponent(projectId)}/tasks`}>Open project tasks</a> to prepare work, check assignment and approval, and inspect recorded progress and results. Task controls report unavailable services rather than assuming a live agent is connected.</p>
             <p className="private-note">Saved revision {project.version} · <ConfiguredTimestamp value={project.updatedAt} prefix="Updated" /></p>
           </section>}
@@ -251,10 +265,8 @@ export function PrivateProjectWorkspace({ projectId, section = "overview", after
           {section === "automations" && <ProjectScheduleStatusPanel projectId={projectId} />}
           {section === "settings" && <section className="private-panel"><h2>Project status</h2>
             <p className="private-summary">{project.summary || "No summary added."}</p>
-            {project.lifecycleEditable && project.origin === "ordinary" ? <div className="private-actions">{(["active", "paused", "completed", "archived"] as const)
-              .filter(value => value !== project.lifecycle && (project.lifecycle !== "archived" || value === "active"))
-              .map(value => <button type="button" key={value} disabled={pending || client.hasPending()} onClick={() => { void transition(value); }}>
-                {{ active: "Reopen project", paused: "Pause project", completed: "Mark complete", archived: "Archive project" }[value]}</button>)}</div>
+            {project.lifecycleEditable && project.origin === "ordinary" ? <OrdinaryProjectStatusActions project={project}
+              pending={pending || client.hasPending()} onTransition={value => { void transition(value); }} />
               : project.lifecycleEditable && project.origin === "idea_lab" ? <IdeaProjectStatusActions project={project}
                 pending={pending || client.hasPending()} onAction={action => { void transitionIdea(action); }} />
               : <p className="private-note">{project.origin === "idea_lab" ? "No Idea Lab status changes are available with the current access and configuration. Its history is preserved."

@@ -180,6 +180,7 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
         sessions.verify(request, clock());
         return Response.json({ taskWorkersStarted: options.taskWorkersStarted === true,
           ...(options.taskWorkersStarted === true ? {} : { instruction: "create your first project, then run mac:down && mac:up" }),
+          projectSections: ["overview", "work", "reviews", "activity", ...(options.taskReadKeys?.results ? ["files"] : [])],
           workers: options.workerReadiness.read().map(worker => options.taskWorkersStarted === true ? worker
             : { ...worker, state: "unavailable", proof: "not_proven" }) }, { headers: privateResponseHeaders });
       }

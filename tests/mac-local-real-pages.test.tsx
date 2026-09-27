@@ -109,6 +109,7 @@ before(async () => { if (PG_BIN) cluster = await startCluster(); });
 after(async () => { if (cluster) await stopCluster(cluster); });
 
 type LocalStatus = Readonly<{ taskWorkersStarted: boolean; instruction?: string;
+  projectSections: readonly ("overview" | "work" | "reviews" | "activity" | "files")[];
   workers: readonly Readonly<{ kind: string; state: "ready" | "unavailable"; proof: "proven" | "not_proven" }>[] }>;
 type Journey = Readonly<{ app: ReturnType<typeof createMacLocalWebProcessV1>; cookie: string; status: LocalStatus;
   request(path: string, init?: RequestInit): Promise<Response>; fetch: typeof fetch }>;

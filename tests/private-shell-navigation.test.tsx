@@ -6,7 +6,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import Home from "../private-app/app/page";
 import { HomeDashboard, HomeInstallationStatus, type HomeDashboardState } from "../private-app/app/home-workspace";
 import SettingsPage from "../private-app/app/settings/page";
-import { PrivateProjectWorkspace, ProjectAgentInstallationStatus } from "../private-app/app/workspace";
+import { OrdinaryProjectStatusActions, PrivateProjectWorkspace, ProjectAgentInstallationStatus } from "../private-app/app/workspace";
 import { ProjectCatalogNavigation } from "../app/components/project-catalog-navigation";
 import { createProjectBrowserClient } from "../src/web/v1/browser-client";
 import { readTaskHomeActivity } from "../src/web/v1/task-home-browser-client";
@@ -228,6 +228,19 @@ test("project status filters are direct links and remain selected across catalog
     { lifecycle: "archived", after: "project:one", nextCursor: "project:two", count: 50 }));
   assert.match(pages, /href="\/projects\?lifecycle=archived">First page/);
   assert.match(pages, /href="\/projects\?lifecycle=archived&amp;after=project%3Atwo">Next page/);
+});
+
+test("ordinary project lifecycle controls expose complete and archive, and archived projects expose only reopen", () => {
+  const project = { projectId: "project:alpha", title: "Alpha", summary: "Saved", lifecycle: "active" as const,
+    version: 1, createdAt: "2026-09-04T10:00:00.000Z", updatedAt: "2026-09-04T10:00:00.000Z",
+    origin: "ordinary" as const, lifecycleEditable: true };
+  const active = renderToStaticMarkup(createElement(OrdinaryProjectStatusActions,
+    { project, pending: false, onTransition() {} }));
+  assert.match(active, /Mark complete/); assert.match(active, /Archive project/);
+  const archived = renderToStaticMarkup(createElement(OrdinaryProjectStatusActions,
+    { project: { ...project, lifecycle: "archived" }, pending: false, onTransition() {} }));
+  assert.match(archived, /Reopen project/);
+  assert.doesNotMatch(archived, /Mark complete|Pause project|Archive project/);
 });
 
 test("project overview shows scoped current, review and recent work without commands", async () => {

@@ -43,6 +43,7 @@ test("the real Mac-local wrapper signs in locally and reaches the existing proje
   const cookie = signedIn.headers.get("set-cookie"); assert.ok(cookie);
   const workers = await app.handle(request("/api/v1/local-workers", { headers: { cookie: cookie! } }), () => new Response("unused"));
   assert.equal(workers.status, 200); assert.deepEqual(await workers.json(), { taskWorkersStarted: true,
+    projectSections: ["overview", "work", "reviews", "activity", "files"],
     workers: [{ kind: "hermes-021", state: "ready", proof: "not_proven" }] });
   const projects = await app.handle(request("/api/v1/projects", { headers: { cookie: cookie! } }), () => new Response("unused"));
   assert.equal(projects.status, 200);
@@ -86,6 +87,16 @@ test("the real Mac-local wrapper signs in locally and reaches the existing proje
   body: JSON.stringify({ title: "Local text task", instructions: "Return a harmless short answer." }) }), () => new Response("unused"));
   assert.equal(proposed.status, 201);
   const proposedReceipt = await proposed.json() as { receipt: { jobId: string } };
+  let expectedVersion = 3;
+  for (const [lifecycle, key] of [["completed", "mac-local-lifecycle-complete-001"],
+    ["archived", "mac-local-lifecycle-archive-001"], ["active", "mac-local-lifecycle-reopen-001"]] as const) {
+    const transitioned = await app.handle(request(`/api/v1/projects/${encodeURIComponent(projectId)}/lifecycle`, { method: "POST",
+      headers: { cookie: cookie!, origin, "content-type": "application/json", "idempotency-key": key },
+      body: JSON.stringify({ lifecycle, expectedVersion }) }), () => new Response("unused"));
+    assert.equal(transitioned.status, 200);
+    const body = await transitioned.json() as { project: { lifecycle: string; version: number } };
+    assert.equal(body.project.lifecycle, lifecycle); expectedVersion = body.project.version;
+  }
   const homeTasks = await app.handle(request("/api/v1/home/tasks", { headers: { cookie: cookie! } }), () => new Response("unused"));
   assert.equal(homeTasks.status, 200);
   assert.equal((await homeTasks.json() as { startsWork: boolean }).startsWork, false);
