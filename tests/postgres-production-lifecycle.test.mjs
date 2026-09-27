@@ -36,7 +36,8 @@ let run = "", socket = "", data = "";
 const target = (database, user = "fixture_admin") =>
   ({ host: socket, port: PORT, database, user, password: "fixture_only" });
 const adminDb = () => target("postgres");
-const passwords = { CONTROL_ROOM_MIGRATOR_PASSWORD: "m".repeat(24), CONTROL_ROOM_APP_PASSWORD: "a".repeat(24), CONTROL_ROOM_SCHEDULER_PASSWORD: "s".repeat(24) };
+const passwords = { CONTROL_ROOM_MIGRATOR_PASSWORD: "m".repeat(24), CONTROL_ROOM_APP_PASSWORD: "a".repeat(24),
+  CONTROL_ROOM_SCHEDULER_PASSWORD: "s".repeat(24), CONTROL_ROOM_WORK_INTAKE_PASSWORD: "w".repeat(24) };
 // Production-correct migrator target: the bootstrap phase creates the
 // control_room_migrator login with the password from CONTROL_ROOM_MIGRATOR_PASSWORD,
 // then the migrate phase connects as that login (IN ROLE schema_owner) and runs
@@ -377,15 +378,18 @@ test("operator provision script creates logins via psql without exposing passwor
   const provision = (vars) => exec(join(BIN, "psql"),
     ["-v", `migrator_password=${vars.migrator}`, "-v", `app_password=${vars.app}`,
      "-v", `scheduler_password=${vars.scheduler}`,
+     "-v", `work_intake_password=${vars.workIntake}`,
      "-f", join(ROOT, "db/roles/production_provision.sql"), "-X", "-q"],
     { env: psqlEnv, timeout: 60000, maxBuffer: 1 << 26 });
   // Short passwords fail closed before any login is created.
-  const short = await provision({ migrator: "x".repeat(23), app: "y".repeat(24), scheduler: "z".repeat(24) }).then(
+  const short = await provision({ migrator: "x".repeat(23), app: "y".repeat(24), scheduler: "z".repeat(24),
+    workIntake: "w".repeat(24) }).then(
     () => { throw new Error("provision_accepted_short_password"); },
     (error) => error);
   assert.match(`${short.stderr ?? ""}`, /provision_refused_short_migrator_password/);
   // Full run: genuinely executable through real psql variable substitution.
-  const pw = { migrator: "provision-test-migrator-0001", app: "provision-test-app-00001", scheduler: "provision-test-scheduler-0001" };
+  const pw = { migrator: "provision-test-migrator-0001", app: "provision-test-app-00001",
+    scheduler: "provision-test-scheduler-0001", workIntake: "provision-test-work-intake-001" };
   const done = await provision(pw);
   for (const secret of Object.values(pw)) {
     assert.ok(!`${done.stdout ?? ""}${done.stderr ?? ""}`.includes(secret), "password leaked into psql output");
@@ -393,7 +397,8 @@ test("operator provision script creates logins via psql without exposing passwor
   const roles = (await query(target("cr_prod_provision"),
     "SELECT rolname, rolcanlogin, rolpassword FROM pg_roles WHERE rolname LIKE 'control@_room@_%' ESCAPE '@' ORDER BY 1")).rows;
   const byName = new Map(roles.map(role => [role.rolname, role]));
-  for (const login of ["control_room_migrator", "control_room_app", "control_room_scheduler"]) {
+  for (const login of ["control_room_migrator", "control_room_app", "control_room_scheduler",
+      "control_room_work_intake_agent"]) {
     assert.equal(byName.get(login)?.rolcanlogin, true, `${login} can login`);
     assert.ok(byName.get(login)?.rolpassword, `${login} has a password set`);
   }
@@ -401,7 +406,8 @@ test("operator provision script creates logins via psql without exposing passwor
   const memberships = await roleMemberships(target("cr_prod_provision"));
   for (const [member, role] of [["control_room_migrator", "control_room_schema_owner"],
       ["control_room_app", "control_room_application"],
-      ["control_room_scheduler", "control_room_schedule_admissions"]]) {
+      ["control_room_scheduler", "control_room_schedule_admissions"],
+      ["control_room_work_intake_agent", "control_room_work_intake"]]) {
     assert.ok(memberships.some(entry => entry.member === member && entry.role === role), `${member} in ${role}`);
   }
 });
@@ -452,7 +458,8 @@ test("documented clean-cluster provision/migrate/backup/restore/verify journey",
   });
   await startCluster(cleanSocket, cleanData, CLEAN_PORT, "clean-server.log");
   await startCluster(targetSocket, targetData, TARGET_PORT, "clean-target-server.log");
-  const pw = { migrator: "clean-install-migrator-0001", app: "clean-install-app-000001", scheduler: "clean-install-scheduler-0001" };
+  const pw = { migrator: "clean-install-migrator-0001", app: "clean-install-app-000001",
+    scheduler: "clean-install-scheduler-0001", workIntake: "clean-install-work-intake-001" };
   const psqlFor = (socket, port) => ({
     PATH: "/usr/bin:/bin", LC_ALL: "C", TMPDIR: run,
     PGHOST: socket, PGPORT: String(port), PGUSER: "postgres",
@@ -462,6 +469,7 @@ test("documented clean-cluster provision/migrate/backup/restore/verify journey",
   const provisionRoles = (database, env = psqlBase) => exec(join(BIN, "psql"),
     ["-v", `migrator_password=${pw.migrator}`, "-v", `app_password=${pw.app}`,
      "-v", `scheduler_password=${pw.scheduler}`,
+     "-v", `work_intake_password=${pw.workIntake}`,
      "-f", join(ROOT, "db/roles/production_provision.sql"), "-X", "-q"],
     { env: { ...env, PGDATABASE: database }, timeout: 60000, maxBuffer: 1 << 26 });
   const cleanConn = (socket, port, database, user = "postgres", password = "fixture_only") =>
@@ -498,7 +506,8 @@ test("documented clean-cluster provision/migrate/backup/restore/verify journey",
     { cwd: ROOT, timeout: 300000, maxBuffer: 1 << 26,
       env: { ...process.env, PATH: "/usr/bin:/bin", LC_ALL: "C",
         CONTROL_ROOM_MIGRATOR_PASSWORD: pw.migrator, CONTROL_ROOM_APP_PASSWORD: pw.app,
-        CONTROL_ROOM_SCHEDULER_PASSWORD: pw.scheduler } });
+        CONTROL_ROOM_SCHEDULER_PASSWORD: pw.scheduler,
+        CONTROL_ROOM_WORK_INTAKE_PASSWORD: pw.workIntake } });
   const result = JSON.parse(migrated.stdout);
   assert.ok((result.applied?.length ?? 0) > 0, "migrations applied through the documented CLI");
   // The install is complete and least-privilege: logins, groups, memberships,
@@ -517,7 +526,8 @@ test("documented clean-cluster provision/migrate/backup/restore/verify journey",
   const roles = (await cleanTargetQuery(
     "SELECT rolname, rolcanlogin FROM pg_roles WHERE rolname LIKE 'control@_room@_%' ESCAPE '@' ORDER BY 1")).rows;
   const byName = new Map(roles.map(role => [role.rolname, role]));
-  for (const login of ["control_room_migrator", "control_room_app", "control_room_scheduler"]) {
+  for (const login of ["control_room_migrator", "control_room_app", "control_room_scheduler",
+      "control_room_work_intake_agent"]) {
     assert.equal(byName.get(login)?.rolcanlogin, true, `${login} can login`);
   }
   for (const group of ["control_room_schema_owner", "control_room_application", "control_room_schedule_admissions"]) {
@@ -526,7 +536,8 @@ test("documented clean-cluster provision/migrate/backup/restore/verify journey",
   const memberships = await roleMemberships(db);
   for (const [member, role] of [["control_room_migrator", "control_room_schema_owner"],
       ["control_room_app", "control_room_application"],
-      ["control_room_scheduler", "control_room_schedule_admissions"]]) {
+      ["control_room_scheduler", "control_room_schedule_admissions"],
+      ["control_room_work_intake_agent", "control_room_work_intake"]]) {
     assert.ok(memberships.some(entry => entry.member === member && entry.role === role), `${member} in ${role}`);
   }
   const owners = (await cleanTargetQuery(

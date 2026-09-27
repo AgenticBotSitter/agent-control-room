@@ -21,6 +21,7 @@ const passwords = {
   CONTROL_ROOM_MIGRATOR_PASSWORD: "m".repeat(24),
   CONTROL_ROOM_APP_PASSWORD: "a".repeat(24),
   CONTROL_ROOM_SCHEDULER_PASSWORD: "s".repeat(24),
+  CONTROL_ROOM_WORK_INTAKE_PASSWORD: "w".repeat(24),
 };
 
 export interface DisposableMacLocalDatabaseOptions {

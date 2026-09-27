@@ -53,15 +53,19 @@ export async function startMacLocalWebHost(input, runtime = {}) {
   if (!input || typeof input.protectedRoot !== "string") throw new Error("mac_local_web_host_arguments_invalid");
   const releaseRoot = new URL("../../dist-vps/server/", import.meta.url);
   const load = runtime.load ?? (path => import(path));
-  const [hostModule, loaderModule, postgresModule, servingModule, rendererModule] = await Promise.all([
+  const [hostModule, loaderModule, postgresModule, servingModule, rendererModule, intakeModule] = await Promise.all([
     load(new URL("macLocalHost.js", releaseRoot).href), load(new URL("macLocalProtectedLoader.js", releaseRoot).href),
     load(new URL("privatePostgres.js", releaseRoot).href), load(new URL("serving.js", releaseRoot).href),
-    load(new URL("index.js", releaseRoot).href),
+    load(new URL("index.js", releaseRoot).href), load(new URL("workIntakePrivateService.js", releaseRoot).href),
   ]);
   if (typeof hostModule.createMacLocalProtectedHostV1 !== "function" || typeof loaderModule.loadMacLocalProtectedConfigurationFromRootV1 !== "function"
     || typeof postgresModule.createPrivatePostgresDatabase !== "function" || typeof servingModule.loadPrivateClientAssets !== "function"
-    || typeof rendererModule.default !== "function") throw new Error("mac_local_web_host_release_invalid");
+    || typeof rendererModule.default !== "function"
+    || typeof loaderModule.loadWorkIntakeInstalledConfigurationFromRootV1 !== "function"
+    || typeof intakeModule.prepareWorkIntakePrivateServiceV1 !== "function")
+    throw new Error("mac_local_web_host_release_invalid");
   const assets = await servingModule.loadPrivateClientAssets(fileURLToPath(new URL("../../dist-vps/client", import.meta.url)));
+  const installed = await loaderModule.loadWorkIntakeInstalledConfigurationFromRootV1(input.protectedRoot);
   const host = hostModule.createMacLocalProtectedHostV1({
     loadConfiguration: () => loaderModule.loadMacLocalProtectedConfigurationFromRootV1(input.protectedRoot),
     readVersion: runtime.readVersion ?? readPinnedMacExecutableVersion,
@@ -69,7 +73,23 @@ export async function startMacLocalWebHost(input, runtime = {}) {
     openDatabase: postgresModule.createPrivatePostgresDatabase,
     assets, render: rendererModule.default,
   });
-  return host.start();
+  let active, intake;
+  try {
+    if (installed) intake = await intakeModule.prepareWorkIntakePrivateServiceV1({ ...installed,
+      integrityKey: Uint8Array.from(Buffer.from(installed.integrityKey, "base64url")) });
+    active = await host.start();
+    if (!intake) return active;
+    await intake.start();
+    return Object.freeze({
+      async close() {
+        const results = await Promise.allSettled([intake.close(), active.close()]);
+        if (results.some(result => result.status === "rejected")) throw new Error("mac_local_web_host_cleanup_uncertain");
+      },
+    });
+  } catch (error) {
+    await Promise.allSettled([intake?.close(), active?.close()]);
+    throw error;
+  }
 }
 
 /** Starts the same protected host with the one fixed owner-held task provider.
