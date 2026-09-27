@@ -465,6 +465,43 @@ async function main() {
   }
   process.stdout.write("Package 6b tenant-before-gate PG17 collision: PASS (no deadlock)\n");
 
+  // Owner review follows the same canonical parent-before-gate order. Hold the
+  // stronger tenant lock used by competing lifecycle work, prove owner review
+  // waits there (without owning the gate), capture the live wait graph, then
+  // release it and let both transactions acquire the gate in tenant order.
+  const quality = collisionConnection(), ownerReview = collisionConnection(), lockObserver = collisionConnection();
+  await Promise.all([quality.connect(), ownerReview.connect(), lockObserver.connect()]);
+  try {
+    const tenantId = config.localOwnerSession.tenantId;
+    await quality.query("BEGIN"); await ownerReview.query("BEGIN");
+    const qualityPid = Number((await quality.query<{ pid: number }>("SELECT pg_backend_pid() AS pid")).rows[0]?.pid);
+    const ownerPid = Number((await ownerReview.query<{ pid: number }>("SELECT pg_backend_pid() AS pid")).rows[0]?.pid);
+    await quality.query("SELECT id FROM tenants WHERE id=$1 FOR UPDATE", [tenantId]);
+    const ownerTenant = ownerReview.query("SELECT id FROM tenants WHERE id=$1 FOR KEY SHARE", [tenantId]);
+    await new Promise(resolve => setTimeout(resolve, 100));
+    const waits = (await lockObserver.query<{ pid: number; blocking_pids: number[] }>(
+      "SELECT pid,pg_blocking_pids(pid) AS blocking_pids FROM pg_stat_activity WHERE pid=ANY($1::int[]) ORDER BY pid",
+      [[qualityPid, ownerPid]])).rows;
+    const locks = (await lockObserver.query<{ pid: number; locktype: string; relation: string | null; mode: string; granted: boolean }>(`
+      SELECT pid,locktype,relation::regclass::text AS relation,mode,granted FROM pg_locks
+      WHERE pid=ANY($1::int[]) ORDER BY pid,granted,locktype,mode`, [[qualityPid, ownerPid]])).rows;
+    assert.deepEqual(waits.find(row => Number(row.pid) === ownerPid)?.blocking_pids.map(Number), [qualityPid]);
+    assert.deepEqual(waits.find(row => Number(row.pid) === qualityPid)?.blocking_pids.map(Number), []);
+    assert.equal(locks.some(row => Number(row.pid) === ownerPid && row.relation === "control_completion_gate_integrity"), false,
+      "owner review must not acquire the gate while waiting for its parent tenant");
+    process.stdout.write(`Owner-review tenant wait pg_locks: ${JSON.stringify(locks)}\n`);
+    process.stdout.write(`Owner-review tenant wait pg_blocking_pids: ${JSON.stringify(waits)}\n`);
+    await quality.query("SELECT tenant_id FROM control_completion_gate_integrity WHERE tenant_id=$1 FOR UPDATE", [tenantId]);
+    await quality.query("COMMIT");
+    await ownerTenant;
+    await ownerReview.query("SELECT tenant_id FROM control_completion_gate_integrity WHERE tenant_id=$1 FOR UPDATE", [tenantId]);
+    await ownerReview.query("ROLLBACK");
+  } finally {
+    await Promise.allSettled([quality.query("ROLLBACK"), ownerReview.query("ROLLBACK")]);
+    await Promise.allSettled([quality.end(), ownerReview.end(), lockObserver.end()]);
+  }
+  process.stdout.write("Owner-review tenant-before-gate PG17 collision: PASS (captured wait, no deadlock)\n");
+
   const finalDown = invoke(["scripts/mac-local/down.mjs", "--protected-root", protectedRoot]);
   assert.equal(finalDown.status, 0, finalDown.stderr || finalDown.stdout);
   stackMayBeUp = false;
