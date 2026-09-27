@@ -128,6 +128,18 @@ for (const sqlState of ["P0001", "55P03"] as const) test(`${sqlState} is a defin
   assert.equal(ends, 0); await db.close(); assert.equal(ends, 1);
 });
 
+for (const sqlState of ["08006", "57P01", "53300", "XX000", "40003"] as const) test(`${sqlState} is not treated as a definite refusal`, async () => {
+  const db = boundPrivateDatabase(createPrivatePgDriver({ async connect() { return {
+    async query(statement) {
+      if (statement === "SELECT 1") throw Object.assign(new Error("lost"), { code: sqlState });
+      return { rows: [] };
+    }, release() {},
+  }; }, async end() {} }));
+  const failure = await db.client.query("SELECT 1").then(() => undefined, error => error);
+  assert.equal(failure?.sqlState, undefined);
+  await db.close().catch(() => {});
+});
+
 test("unknown sweep failures expose no exception detail", () => {
   assert.equal(sanitizedDatabaseFailureV1(new Error("password host query detail")), "code=unknown");
   assert.equal(sanitizedDatabaseFailureV1(new Error("mac_local_quality_unavailable")),
