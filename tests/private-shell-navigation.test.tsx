@@ -40,7 +40,10 @@ test("compiled route parameters decode exactly once before reaching browser clie
 
 test("home gives honest navigation to existing private workspace surfaces", () => {
   const html = renderToStaticMarkup(createElement(Home));
-  for (const href of ["/projects", "/workers", "/setup", "/needs-me", "/settings"]) assert.match(html, new RegExp(`href="${href}"`));
+  // Before the browser identifies hosted versus Mac-local, server rendering
+  // exposes only links shared by both. Hosted links hydrate after the read.
+  for (const href of ["/projects", "/workers", "/setup", "/needs-me"]) assert.match(html, new RegExp(`href="${href}"`));
+  assert.doesNotMatch(html, /href="\/settings"/);
   assert.doesNotMatch(html, /href="\/ideas"/);
   assert.match(html, /aria-controls="private-workspace-navigation"/);
   assert.match(html, /<nav id="private-workspace-navigation" class="private-navigation"/);
@@ -296,13 +299,12 @@ test("unavailable project files do not claim an empty result set", () => {
   assert.doesNotMatch(html, /No verified result files have been received/);
 });
 
-test("shared project navigation keeps core pages and hides optional news until enabled", () => {
+test("project navigation starts with only routes shared by hosted and Mac-local", () => {
   const html = renderToStaticMarkup(createElement(ProjectNavigation, { projectId: "project:alpha", current: "work" }));
-  for (const [label, path] of [["Overview", "/projects/project%3Aalpha"], ["Work", "/projects/project%3Aalpha/tasks"],
-    ["Files", "/projects/project%3Aalpha/files"], ["Reviews", "/projects/project%3Aalpha/reviews"],
-    ["Activity", "/projects/project%3Aalpha/activity"], ["Settings", "/projects/project%3Aalpha/settings"]]) {
+  for (const [label, path] of [["Overview", "/projects/project%3Aalpha"], ["Work", "/projects/project%3Aalpha/tasks"]]) {
     assert.match(html, new RegExp(`href="${path}"[^>]*>${label}`));
   }
+  assert.doesNotMatch(html, /href="\/projects\/project%3Aalpha\/(?:files|reviews|activity|settings)"/);
   assert.match(html, /href="\/projects\/project%3Aalpha\/tasks" aria-current="page">Work/);
   assert.doesNotMatch(html, />News</);
 });

@@ -26,7 +26,17 @@ test("the real Mac-local wrapper signs in locally and reaches the existing proje
     workerReadiness: { read: () => [{ kind: "hermes-021" as const, state: "ready" as const, proof: "not_proven" as const }] },
     taskWorkersStarted: true });
   const request = (path: string, init: RequestInit = {}) => new Request(`${origin}${path}`, init);
-  assert.equal((await app.handle(request("/api/v1/projects"), () => new Response("unused"))).status, 401);
+  const signedOutApi = await app.handle(request("/api/v1/projects"), () => new Response("unused"));
+  assert.equal(signedOutApi.status, 401);
+  assert.deepEqual(await signedOutApi.json(), { error: "authentication_required" });
+  for (const path of ["/", "/projects", "/projects/project:unknown/tasks"]) {
+    const signedOutPage = await app.handle(request(path), () => { throw new Error("must not render signed-out page"); });
+    assert.equal(signedOutPage.status, 303);
+    assert.equal(signedOutPage.headers.get("location"), `${origin}/session`);
+    assert.equal(signedOutPage.headers.get("cache-control"), "no-store");
+  }
+  const signedOutWrite = await app.handle(request("/projects", { method: "POST" }), () => new Response("unused"));
+  assert.equal(signedOutWrite.status, 401);
   const signedIn = await app.handle(request("/api/v1/local-owner-session", { method: "POST", headers: {
     origin, "sec-fetch-site": "same-origin", "content-type": "application/json" }, body: JSON.stringify({ ownerCode }) }), () => new Response("unused"));
   assert.equal(signedIn.status, 201);
@@ -37,6 +47,10 @@ test("the real Mac-local wrapper signs in locally and reaches the existing proje
   const projects = await app.handle(request("/api/v1/projects", { headers: { cookie: cookie! } }), () => new Response("unused"));
   assert.equal(projects.status, 200);
   assert.match(await projects.text(), /projects/);
+  const home = await app.handle(request("/", { headers: { cookie: cookie! } }), () => { throw new Error("must redirect"); });
+  assert.equal(home.status, 303);
+  assert.equal(home.headers.get("location"), `${origin}/projects`);
+  assert.equal(home.headers.get("cache-control"), "no-store");
   const foreignPort = await app.handle(request("/api/v1/projects", { method: "POST", headers: { cookie: cookie!, origin: "http://127.0.0.1:1", "content-type": "application/json",
     "idempotency-key": "mac-local-project-foreign-port-001" }, body: JSON.stringify({ title: "Foreign port", summary: "Must be refused" }) }),
   () => new Response("unused"));
@@ -45,6 +59,27 @@ test("the real Mac-local wrapper signs in locally and reaches the existing proje
     "idempotency-key": "mac-local-project-create-001" }, body: JSON.stringify({ title: "Local wrapper project", summary: "Disposable route proof" }) }),
   () => new Response("unused"));
   assert.equal(created.status, 201); const projectId = (await created.json() as { project: { projectId: string } }).project.projectId;
+  const detailApi = await app.handle(request(`/api/v1/projects/${encodeURIComponent(projectId)}`, { headers: { cookie: cookie! } }),
+    () => new Response("unused"));
+  assert.equal(detailApi.status, 200);
+  assert.equal((await detailApi.json() as { project: { projectId: string } }).project.projectId, projectId);
+  for (const lifecycle of ["active", "paused", "completed", "archived"]) {
+    const filtered = await app.handle(request(`/projects?lifecycle=${lifecycle}`, { headers: { cookie: cookie! } }),
+      () => new Response("filtered project shell"));
+    assert.equal(filtered.status, 200);
+  }
+  const change = await app.handle(request(`/api/v1/projects/${encodeURIComponent(projectId)}/lifecycle`, { method: "POST",
+    headers: { cookie: cookie!, origin, "content-type": "application/json", "idempotency-key": "mac-local-lifecycle-001" },
+    body: JSON.stringify({ lifecycle: "paused", expectedVersion: 1 }) }), () => new Response("unused"));
+  assert.equal(change.status, 200);
+  assert.equal((await change.json() as { project: { lifecycle: string } }).project.lifecycle, "paused");
+  const changedDetail = await app.handle(request(`/api/v1/projects/${encodeURIComponent(projectId)}`, { headers: { cookie: cookie! } }),
+    () => new Response("unused"));
+  assert.equal((await changedDetail.json() as { project: { lifecycle: string } }).project.lifecycle, "paused");
+  const reopen = await app.handle(request(`/api/v1/projects/${encodeURIComponent(projectId)}/lifecycle`, { method: "POST",
+    headers: { cookie: cookie!, origin, "content-type": "application/json", "idempotency-key": "mac-local-lifecycle-002" },
+    body: JSON.stringify({ lifecycle: "active", expectedVersion: 2 }) }), () => new Response("unused"));
+  assert.equal(reopen.status, 200);
   const tasks = await app.handle(request(`/api/v1/projects/${encodeURIComponent(projectId)}/tasks`, { headers: { cookie: cookie! } }), () => new Response("unused"));
   assert.equal(tasks.status, 200, await tasks.text());
   const proposed = await app.handle(request(`/api/v1/projects/${encodeURIComponent(projectId)}/tasks`, { method: "POST", headers: {
@@ -57,6 +92,8 @@ test("the real Mac-local wrapper signs in locally and reaches the existing proje
   const projectShell = await app.handle(request(`/projects/${encodeURIComponent(projectId)}`, { headers: { cookie: cookie! } }),
     () => new Response("real project shell"));
   assert.equal(projectShell.status, 200); assert.equal(await projectShell.text(), "real project shell");
+  const workersShell = await app.handle(request("/workers", { headers: { cookie: cookie! } }), () => new Response("real workers shell"));
+  assert.equal(workersShell.status, 200); assert.equal(await workersShell.text(), "real workers shell");
   const taskShell = await app.handle(request(`/projects/${encodeURIComponent(projectId)}/tasks`, { headers: { cookie: cookie! } }),
     () => new Response("real task shell"));
   assert.equal(taskShell.status, 200); assert.equal(await taskShell.text(), "real task shell");

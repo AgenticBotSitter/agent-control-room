@@ -22,6 +22,7 @@ import {
   type ProjectCoordinationCanonicalStoreAdapter,
 } from "../src/web/v1/project-coordination-http";
 import { ProjectNavigation } from "../private-app/app/project-navigation";
+import { LocalRuntimeContextV1 } from "../private-app/app/local-runtime";
 import {
   AttentionSection,
   LifecycleControls,
@@ -404,9 +405,9 @@ test("naming your own owner identity as coordinator is refused", async (t) => {
 });
 
 test("navigation links the coordination route", () => {
-  const html = renderToStaticMarkup(createElement(ProjectNavigation, {
-    projectId: "project:alpha", current: "coordination",
-  }));
+  // Hosted-only project tabs appear once the runtime is identified as hosted.
+  const html = renderToStaticMarkup(createElement(LocalRuntimeContextV1.Provider, { value: { mode: "hosted" } },
+    createElement(ProjectNavigation, { projectId: "project:alpha", current: "coordination" })));
   assert.match(html, /href="\/projects\/project%3Aalpha\/coordination"/);
   assert.match(html, /aria-current="page"/);
 });

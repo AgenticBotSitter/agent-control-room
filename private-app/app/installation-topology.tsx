@@ -3,6 +3,7 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 import { parseInstallationSetupViewV1, type InstallationSetupViewV1 } from "../../src/harness/v1/installation-setup-wire";
 import { verifyInstallationPlanViewV1, type InstallationPlanViewV1 } from "../../src/installer/v1/installation-plan-view";
+import { useLocalRuntime } from "./local-runtime";
 
 type InstallationTopologyState = Readonly<{
   /** The setup read is deliberately distinct from an absent or unavailable plan. */
@@ -15,8 +16,11 @@ const InstallationTopologyContext = createContext<InstallationTopologyState>({ s
 
 /** Reads only an operator-prepared setup plan. A missing plan never implies a local or remote worker is available. */
 export function InstallationTopologyProvider({ children }: { children: ReactNode }) {
+  const runtime = useLocalRuntime();
   const [plan, setPlan] = useState<InstallationTopologyState>({ state: "loading", planState: "loading" });
   useEffect(() => {
+    if (runtime.mode === "local") { setPlan({ state: "unavailable", planState: "unavailable" }); return; }
+    if (runtime.mode !== "hosted") return;
     const controller = new AbortController();
     let request = 0;
     const load = async () => {
@@ -47,7 +51,7 @@ export function InstallationTopologyProvider({ children }: { children: ReactNode
     const interval = setInterval(refreshVisible, 30_000);
     window.addEventListener("focus", refreshVisible);
     return () => { controller.abort(); clearInterval(interval); window.removeEventListener("focus", refreshVisible); };
-  }, []);
+  }, [runtime.mode]);
   return <InstallationTopologyContext.Provider value={plan}>{children}</InstallationTopologyContext.Provider>;
 }
 

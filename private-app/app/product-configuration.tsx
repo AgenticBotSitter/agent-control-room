@@ -2,6 +2,7 @@
 
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 import { productConfigurationSchemaV1, type ProductConfigurationV1 } from "../../src/config/v1/product-configuration";
+import { useLocalRuntime } from "./local-runtime";
 
 type ProductConfigurationState = Readonly<ProductConfigurationV1> | undefined;
 const ProductConfigurationContext = createContext<ProductConfigurationState>(undefined);
@@ -9,8 +10,10 @@ const ProductConfigurationContext = createContext<ProductConfigurationState>(und
 /** Presentation configuration is read from the authenticated private endpoint.
  * Absence preserves the portable artifact's neutral Control Room shell. */
 export function ProductConfigurationProvider({ children }: { children: ReactNode }) {
+  const runtime = useLocalRuntime();
   const [configuration, setConfiguration] = useState<ProductConfigurationState>();
   useEffect(() => {
+    if (runtime.mode !== "hosted") return;
     const controller = new AbortController();
     void (async () => {
       try {
@@ -22,7 +25,7 @@ export function ProductConfigurationProvider({ children }: { children: ReactNode
       } catch { /* Keep the neutral shell when the optional configuration cannot be read. */ }
     })();
     return () => controller.abort();
-  }, []);
+  }, [runtime.mode]);
   return <ProductConfigurationContext.Provider value={configuration}>{children}</ProductConfigurationContext.Provider>;
 }
 

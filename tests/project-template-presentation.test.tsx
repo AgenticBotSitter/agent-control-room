@@ -30,15 +30,16 @@ test("ProjectNavigation hides the news tab when a saved template enables it but 
   assert.doesNotMatch(html, />\s*News\s*</);
 });
 
-test("ProjectNavigation shows the news tab when no presentation is supplied and the global module would allow it", () => {
-  // The component reads useProductModule via React context. With no provider mounted in this
-  // static render, the global gate returns false and the news tab is hidden regardless of presentation.
+test("ProjectNavigation shows only shared tabs before runtime and module configuration are known", () => {
+  // A static render has neither runtime nor module configuration. Hosted-only
+  // links appear after the browser identifies the host; local mode never shows them.
   const html = renderToStaticMarkup(createElement(ProjectNavigation, {
     projectId: "project:test", current: "overview", presentation: undefined,
   }));
   assert.doesNotMatch(html, />\s*News\s*</);
   assert.match(html, /Overview/);
-  assert.match(html, /Inbox/);
+  assert.match(html, /Work/);
+  assert.doesNotMatch(html, /Inbox/);
 });
 
 test("ProjectNavigation is keyboard-accessible: it is a single <nav> with an aria-label", () => {

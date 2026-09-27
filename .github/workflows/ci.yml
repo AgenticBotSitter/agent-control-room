@@ -184,6 +184,8 @@ jobs:
       # build as well and there is no separate build job.
       - name: Build and test
         run: pnpm run test
+      - name: Built Mac-local navigation
+        run: pnpm run test:built-mac-local-navigation
 
   test-components:
     name: Component lanes

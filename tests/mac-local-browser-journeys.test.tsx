@@ -315,18 +315,10 @@ describe("W5 journey steps that are reachable as shipped", { skip: needsPg }, ()
     const found = catalog.projects.find(item => item.projectId === project.projectId);
     assert.ok(found, "the created project must appear in the authorized catalog");
     assert.equal(found!.title, "Journey project");
-    // Recorded separately, because M1 does not claim it and it is easy to
-    // misread: the project list returns the project, but the per-id
-    // `GET /api/v1/projects/{id}` lookup answers not_found for the same id.
-    // The list query and getView apply different source/adapter eligibility
-    // (project-service.ts:96 uses manual_project_<id> domain_state, which
-    // `create` evidently does not set the way getView expects). Assert the
-    // observed behaviour so a future fix is a deliberate change to this test,
-    // not a silent capability.
+    // The per-id lookup the project page uses must return the same project.
     const byId = await f.request(`/api/v1/projects/${f.id(project.projectId)}`, { headers: f.auth });
-    assert.equal(byId.status, 404,
-      "per-id project lookup currently answers not_found even though the catalog lists the project");
-    assert.deepEqual(await readJson(byId, 404, "project by id"), { error: "not_found" });
+    const detail = await readJson(byId, 200, "project by id");
+    assert.ok(JSON.stringify(detail).includes(project.projectId), "per-id lookup returns the created project");
   });
 
   test("4. create task saves a proposal that does not start work", async t => {

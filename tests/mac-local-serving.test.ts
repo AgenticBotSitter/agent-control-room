@@ -49,7 +49,9 @@ test("Mac-local service is inert until explicit start and binds only its selecte
   let rendered = 0;
   const render = () => { rendered++; return new Response("page"); };
   const anonymous = await handlePrivateWebRequest(new Request(`${origin}/projects`), render);
-  assert.equal(anonymous.status, 401); assert.equal(rendered, 0);
+  // A signed-out browser page request is sent to sign-in; nothing renders.
+  assert.equal(anonymous.status, 303); assert.equal(anonymous.headers.get("location"), `${origin}/session`);
+  assert.equal(rendered, 0);
   const wrong = await handlePrivateWebRequest(new Request(`${origin}/api/v1/local-owner-session`, { method: "POST",
     headers: { "content-type": "application/json", origin }, body: JSON.stringify({ ownerCode: `${ownerCode}x` }) }), render);
   assert.equal(wrong.status, 401); assert.equal(wrong.headers.get("set-cookie"), null);
