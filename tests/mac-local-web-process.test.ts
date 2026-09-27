@@ -3,7 +3,7 @@ import test, { after } from "node:test";
 import { sha256Digest } from "../src/security";
 import { LOCAL_OWNER_SESSION_PROFILE_V1 } from "../src/web/v1/local-owner-session";
 import { createMacLocalWebProcessV1 } from "../src/web/v1/mac-local-web-process";
-import { createMacLocalNodeHandler } from "../src/web/v1/private-node-handler";
+import { createContributorDemoNodeHandler, createMacLocalNodeHandler } from "../src/web/v1/private-node-handler";
 import { createPrivateOwnerBootstrapCommand } from "../src/web/v1/private-owner-bootstrap";
 import { closePrivateOwnerBootstrapConformanceDatabase, conformanceNow, conformanceSubject,
   privateOwnerBootstrapFixture } from "./helpers/private-owner-bootstrap-conformance";
@@ -229,9 +229,10 @@ test("the Mac-local transport stays loopback-only and admits only one configured
     isReady: () => true, close: async () => {},
   }, handler: async () => new Response("unused"), assets: { count: 0, digest: "empty", respond: () => undefined } }),
   /mac_local_serving_config_invalid/);
+  const receivedMethods: string[] = [];
   const handler = createMacLocalNodeHandler({ origin, secondaryOrigin: trustedOrigin,
     application: { isReady: () => true, close: async () => {} },
-    handler: async () => new Response("ok", { headers: { "set-cookie": "control_room_local_owner=value; HttpOnly" } }),
+    handler: async request => { receivedMethods.push(request.method); return new Response("ok", { headers: { "set-cookie": "control_room_local_owner=value; HttpOnly" } }); },
     assets: { count: 0, digest: "empty", respond: () => undefined } });
   const exchange = nodeExchange({ path: "/session" }); exchange.input.rawHeaders[1] = "127.0.0.1:3210";
   const done = new Promise<void>((resolve, reject) => { exchange.output.once("finish", resolve); exchange.output.once("error", reject); });
@@ -243,6 +244,22 @@ test("the Mac-local transport stays loopback-only and admits only one configured
   const remoteDone = new Promise<void>((resolve, reject) => { remote.output.once("finish", resolve); remote.output.once("error", reject); });
   void handler.handle(remote.input, remote.output); await remoteDone;
   assert.equal(remote.output.statusCode, 200);
+
+  const signOut = nodeExchange({ path: "/api/v1/local-owner-session", method: "DELETE" });
+  signOut.input.rawHeaders[1] = "127.0.0.1:3210";
+  const signOutDone = new Promise<void>((resolve, reject) => { signOut.output.once("finish", resolve); signOut.output.once("error", reject); });
+  void handler.handle(signOut.input, signOut.output); await signOutDone;
+  assert.equal(signOut.output.statusCode, 200);
+  assert.deepEqual(receivedMethods, ["GET", "GET", "DELETE"]);
+
+  const demoHandler = createContributorDemoNodeHandler({ origin: "http://127.0.0.1:3000",
+    application: { isReady: () => true, close: async () => {} }, handler: async () => new Response("unexpected"),
+    assets: { count: 0, digest: "empty", respond: () => undefined } });
+  const demoDelete = nodeExchange({ path: "/api/v1/local-owner-session", method: "DELETE" });
+  demoDelete.input.rawHeaders[1] = "127.0.0.1:3000";
+  const demoDeleteDone = new Promise<void>((resolve, reject) => { demoDelete.output.once("finish", resolve); demoDelete.output.once("error", reject); });
+  void demoHandler.handle(demoDelete.input, demoDelete.output); await demoDeleteDone;
+  assert.equal(demoDelete.output.statusCode, 405);
 
   const foreign = nodeExchange({ path: "/projects", headers: ["Origin", "https://foreign.example.ts.net"] });
   foreign.input.rawHeaders[1] = "foreign.example.ts.net";

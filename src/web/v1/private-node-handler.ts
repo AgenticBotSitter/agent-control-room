@@ -36,6 +36,7 @@ class RequestFailure extends Error { constructor(readonly status: number) { supe
 type NodeHandlerMode = Readonly<{
   localLoopback: boolean;
   allowPost: boolean;
+  allowDelete: boolean;
   allowCookies: boolean;
   allowSetCookie: boolean;
   rejectForwarded: boolean;
@@ -45,18 +46,18 @@ type NodeHandlerMode = Readonly<{
   allowSecondaryOrigin: boolean;
 }>;
 
-const productionMode: NodeHandlerMode = Object.freeze({ localLoopback: false, allowPost: true,
+const productionMode: NodeHandlerMode = Object.freeze({ localLoopback: false, allowPost: true, allowDelete: false,
   allowCookies: false, allowSetCookie: false, rejectForwarded: false, rejectCredentialHeaders: false,
   validateSuppliedOrigin: false, injectSetupMarker: false, allowSecondaryOrigin: true });
-const contributorDemoMode: NodeHandlerMode = Object.freeze({ localLoopback: true, allowPost: true,
+const contributorDemoMode: NodeHandlerMode = Object.freeze({ localLoopback: true, allowPost: true, allowDelete: false,
   allowCookies: true, allowSetCookie: true, rejectForwarded: true, rejectCredentialHeaders: false,
   validateSuppliedOrigin: false, injectSetupMarker: false, allowSecondaryOrigin: false });
 /** Selected by the Mac-local composition only. This accepts cookies strictly
  * on loopback; it does not select or replace application authentication. */
-const macLocalMode: NodeHandlerMode = Object.freeze({ localLoopback: true, allowPost: true,
+const macLocalMode: NodeHandlerMode = Object.freeze({ localLoopback: true, allowPost: true, allowDelete: true,
   allowCookies: true, allowSetCookie: true, rejectForwarded: true, rejectCredentialHeaders: false,
   validateSuppliedOrigin: true, injectSetupMarker: false, allowSecondaryOrigin: true });
-const localSetupMode: NodeHandlerMode = Object.freeze({ localLoopback: true, allowPost: false,
+const localSetupMode: NodeHandlerMode = Object.freeze({ localLoopback: true, allowPost: false, allowDelete: false,
   allowCookies: false, allowSetCookie: false, rejectForwarded: true, rejectCredentialHeaders: true,
   validateSuppliedOrigin: true, injectSetupMarker: true, allowSecondaryOrigin: false });
 
@@ -65,7 +66,8 @@ function requestHead(input: IncomingMessage, origins: readonly string[], mode: N
   if (input.socket.remoteAddress !== "127.0.0.1" || input.httpVersion !== "1.1") throw new RequestFailure(403);
   const method = input.method;
   const target = input.url;
-  if (!method || !(mode.allowPost ? ["GET", "HEAD", "POST"] : ["GET", "HEAD"]).includes(method))
+  const allowedMethods = ["GET", "HEAD", ...(mode.allowPost ? ["POST"] : []), ...(mode.allowDelete ? ["DELETE"] : [])];
+  if (!method || !allowedMethods.includes(method))
     throw new RequestFailure(405);
   if (!target || Buffer.byteLength(target) > privateHttpLimits.urlBytes || !target.startsWith("/")
     || target.startsWith("//") || /[\\\s#]/u.test(target)
