@@ -40,3 +40,6 @@ export function LocalRuntimeProvider({ children }: { children: ReactNode }) {
 }
 
 export function useLocalRuntime() { return useContext(RuntimeContext); }
+
+/** Lets render tests supply a settled runtime mode without a network read. */
+export const LocalRuntimeContextV1 = RuntimeContext;
