@@ -76,7 +76,7 @@ Check it without changing anything:
 pnpm mac:service-status -- --protected-root <protected-root>
 ```
 
-A healthy installed result says `running definition=current enabled=true` and includes a PID. Repeating the install command is safe: an already healthy matching service is left running, while a stopped or changed definition is re-enabled/refreshed through the same fixed label.
+A healthy installed result says `running definition=current enabled=true` and includes a PID. Repeating the install command is safe: an already healthy matching service is restarted in place, while a stopped or changed definition is re-enabled/refreshed through the same fixed label.
 
 `pnpm mac:down -- --protected-root <protected-root>` stops and disables the service, so it will not return at the next login. A later ordinary `mac:up` re-enables an installed service. To remove only the login service while keeping all protected data and configuration:
 

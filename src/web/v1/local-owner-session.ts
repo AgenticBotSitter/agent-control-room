@@ -60,9 +60,9 @@ export function captureLocalOwnerSessionProfileV1(value: unknown): LocalOwnerSes
 }
 
 /**
- * Loopback-only, process-local session issuer. It intentionally has no database
- * tables of its own: existing WebSessionAuthority records the normalized session
- * digest and still enforces the currently active owner/grant on every request.
+ * Loopback-only session issuer. It optionally persists only installation-bound
+ * token digests in the existing web-session table; WebSessionAuthority still
+ * enforces the currently active owner/grant on every protected request.
  */
 export class LocalOwnerSessionServiceV1 {
   private readonly sessions = new Map<string, PersistedLocalOwnerSessionV1>();

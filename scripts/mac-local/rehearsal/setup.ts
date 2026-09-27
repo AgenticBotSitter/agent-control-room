@@ -45,7 +45,7 @@ function stopStartedCluster() {
 for (const signal of ["SIGINT", "SIGTERM"] as const) process.once(signal, () => {
   keepCluster = false;
   stopStartedCluster();
-  process.exitCode = signal === "SIGINT" ? 130 : 143;
+  process.exit(signal === "SIGINT" ? 130 : 143);
 });
 process.once("exit", () => { if (!keepCluster) stopStartedCluster(); });
 

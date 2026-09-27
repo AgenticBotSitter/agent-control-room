@@ -113,6 +113,12 @@ export async function verifyMacLocalDatabaseBackupV1({ backup, port, pgBin = "/o
       // the disposable administrator. Move those restored objects to the one
       // recorded schema owner before proving the owner invariant.
       await client.query("REASSIGN OWNED BY postgres TO control_room_schema_owner");
+      await client.query("ALTER SCHEMA public OWNER TO control_room_schema_owner");
+      await client.query(`DO $$ BEGIN
+        IF EXISTS (SELECT 1 FROM pg_namespace WHERE nspname='control_room_queue') THEN
+          ALTER SCHEMA control_room_queue OWNER TO control_room_schema_owner;
+        END IF;
+      END $$`);
       await verifyOwnership(client);
       const diff = diffMacGrantsV1(await readMacGrantCatalogV1(client), await readDesiredMacGrantsV1());
       if (diff.extra.length > 0 || diff.missing.length > 0) throw new Error("database_backup_mac_grants_refused");
