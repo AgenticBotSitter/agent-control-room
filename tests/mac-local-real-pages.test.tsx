@@ -174,6 +174,7 @@ type MountedPage = Readonly<{ dom: JSDOM; root: Root; errors: unknown[]; request
 
 async function mountPage(journey: Journey, path: string, element: ReactElement): Promise<MountedPage> {
   const errors: unknown[] = [], requests: string[] = [];
+  let pendingRequests = 0;
   const dom = new JSDOM("<!doctype html><div id=root></div>", { url: `${origin}${path}`, pretendToBeVisual: true });
   dom.window.addEventListener("error", event => { errors.push(event.error ?? event.message); });
   dom.window.addEventListener("unhandledrejection", event => { errors.push(event.reason); });
@@ -186,14 +187,22 @@ async function mountPage(journey: Journey, path: string, element: ReactElement):
   globalThis.fetch = async (input: string | URL | Request, init?: RequestInit) => {
     const source = input instanceof Request ? input : new Request(new URL(String(input), origin), init);
     const url = new URL(source.url); requests.push(`${source.method} ${url.pathname}${url.search}`);
+    pendingRequests++;
     try { return await journey.fetch(source); }
     catch (error) { errors.push(error); throw error; }
+    finally { pendingRequests--; }
   };
   const root = createRoot(dom.window.document.getElementById("root")!);
-  await act(async () => {
-    root.render(createElement(LocalRuntimeContextV1.Provider, { value: { mode: "local", status: journey.status } }, element));
-    await new Promise(resolve => dom.window.setTimeout(resolve, 25));
-  });
+  await act(async () => { root.render(createElement(LocalRuntimeContextV1.Provider,
+    { value: { mode: "local", status: journey.status } }, element)); });
+  let quietChecks = 0, previousCount = -1;
+  for (let attempt = 0; attempt < 100 && quietChecks < 2; attempt += 1) {
+    await act(async () => { await new Promise(resolve => dom.window.setTimeout(resolve, 10)); });
+    if (pendingRequests === 0 && requests.length === previousCount) quietChecks++;
+    else quietChecks = 0;
+    previousCount = requests.length;
+  }
+  assert.equal(pendingRequests, 0, `${path} still had client reads after the bounded render wait`);
   const close = async () => {
     await act(async () => { root.unmount(); }); dom.window.close();
     Object.assign(globalThis, previous);
@@ -225,30 +234,38 @@ test("real Mac-local pages complete the signed-in project and task journey witho
 
   const projectClient = createProjectBrowserClient(journey.fetch, () => "realpagesproject0001");
   const project = await projectClient.create({ title: "Real page journey", summary: "Disposable real-page coverage" });
-  const projectView = await mountPage(journey, `/projects/${encodeURIComponent(project.projectId)}`,
+  const projectPath = `/projects/${encodeURIComponent(project.projectId)}`;
+  assert.equal((await journey.request(projectPath, { headers: { cookie: journey.cookie } })).status, 200);
+  const projectView = await mountPage(journey, projectPath,
     await ProjectPage({ params: Promise.resolve({ projectId: encodeURIComponent(project.projectId) }) }));
   try {
     assertHealthyPage(projectView, [/Real page journey/, /Purpose/, /Work/]);
     assert.ok(projectView.requests.some(value => value.startsWith("GET /api/v1/projects/")));
   } finally { await projectView.close(); }
 
-  const work = await mountPage(journey, `/projects/${encodeURIComponent(project.projectId)}/tasks`,
+  const workPath = `/projects/${encodeURIComponent(project.projectId)}/tasks`;
+  assert.equal((await journey.request(workPath, { headers: { cookie: journey.cookie } })).status, 200);
+  const work = await mountPage(journey, workPath,
     await ProjectTaskPage({ params: Promise.resolve({ projectId: encodeURIComponent(project.projectId) }), searchParams: Promise.resolve({}) }));
   try { assertHealthyPage(work, [/Saved tasks/, /Propose a task/]); } finally { await work.close(); }
 
   const taskClient = createTaskBrowserClient(journey.fetch, () => "realpagestask0000001");
   const receipt = await taskClient.propose(project.projectId,
     { title: "Real-page task", instructions: "Return one harmless short line." });
-  const task = await mountPage(journey, `/projects/${encodeURIComponent(project.projectId)}/tasks/${encodeURIComponent(receipt.jobId)}`,
+  const taskPath = `/projects/${encodeURIComponent(project.projectId)}/tasks/${encodeURIComponent(receipt.jobId)}`;
+  assert.equal((await journey.request(taskPath, { headers: { cookie: journey.cookie } })).status, 200);
+  const task = await mountPage(journey, taskPath,
     await TaskPage({ params: Promise.resolve({ projectId: encodeURIComponent(project.projectId), jobId: encodeURIComponent(receipt.jobId) }) }));
   try {
     assertHealthyPage(task, [/Real-page task/, /Prepare task/, /Task assignment/, /Execution approval/]);
     assert.ok(task.requests.some(value => value.endsWith("/plan")), "the real preparation panel must execute its client read");
   } finally { await task.close(); }
 
+  assert.equal((await journey.request("/workers", { headers: { cookie: journey.cookie } })).status, 200);
   const workers = await mountPage(journey, "/workers", createElement(WorkersPage));
   try { assertHealthyPage(workers, [/Workers on this Mac/, /Codex/, /Status: ready/]); } finally { await workers.close(); }
 
+  assert.equal((await journey.request("/", { headers: { cookie: journey.cookie } })).status, 200);
   const home = await mountPage(journey, "/", createElement(HomePage));
   try { assertHealthyPage(home, [/Running work/, /Needs attention/, /Worker status/]); } finally { await home.close(); }
 });
