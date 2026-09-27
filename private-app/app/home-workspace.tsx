@@ -71,7 +71,7 @@ export function HomeDashboard({ data }: { data: HomeDashboardState }) {
           ? <Unavailable>Verified result records are unavailable.</Unavailable>
           : data.activity.value.recentResults.length ? <ul className="private-dashboard-list">{data.activity.value.recentResults.slice(0, 5).map(({ task, artifact }) =>
             <li key={artifact.artifactId}><a href={taskResultHrefV1(task.projectId, task.jobId, artifact.artifactId)}>{task.title}</a>
-              <span>{artifact.sizeBytes.toLocaleString()} bytes · <ConfiguredTimestamp value={artifact.receivedAt} prefix="Received" /></span></li>)}</ul>
+              <span>{task.state === "succeeded" ? `Completed${task.qualityStatus === "accepted" ? " · Accepted" : ""} · ` : ""}{artifact.sizeBytes.toLocaleString()} bytes · <ConfiguredTimestamp value={artifact.receivedAt} prefix="Received" /></span></li>)}</ul>
             : <p>No verified result records are available yet.</p>}
       {data.activity.state === "ready" && data.activity.value.additionalResultsOmitted
         ? <p className="private-note">More recent results exist. Open the affected projects to inspect them.</p> : null}

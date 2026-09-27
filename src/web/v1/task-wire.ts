@@ -21,7 +21,9 @@ export const taskDraftSchema = z.object({ title: text(120), instructions: text(4
   });
 export type TaskDraft = z.infer<typeof taskDraftSchema>;
 export const taskSummarySchema = z.object({ jobId: id, projectId: id, requestId: id, title: text(180),
-  state: z.enum(jobStates), version: count, createdAt: z.string().datetime(), updatedAt: z.string().datetime() }).strict();
+  state: z.enum(jobStates), version: count, createdAt: z.string().datetime(), updatedAt: z.string().datetime(),
+  /** Present only when authenticated completion-gate evidence proves the result is ready. */
+  qualityStatus: z.literal("accepted").optional() }).strict();
 export type TaskSummary = z.infer<typeof taskSummarySchema>;
 export const taskReceiptSchema = z.object({ jobId: id, projectId: id, requestId: id,
   createdAt: z.string().datetime(), submission: z.literal("proposed"), startsWork: z.literal(false) }).strict();

@@ -25,7 +25,7 @@ import { taskProjectAttentionPageSchema, taskProjectResultAttentionReasons,
 import { WebProjectService } from "./project-service";
 import { catalogProjectIdSchema } from "./project-wire";
 import { taskDraftSchema, taskSummarySchema, taskReceiptSchema, taskDetailSchema, taskPageSchema,
-  taskRunSchema, type HermesDeliveryRecovery, type TaskRun, type TaskReceipt } from "./task-wire";
+  taskRunSchema, type HermesDeliveryRecovery, type TaskRun, type TaskReceipt, type TaskSummary } from "./task-wire";
 import { HERMES_021_MACOS_LOCAL_ADAPTER_V1, HERMES_021_MACOS_LOCAL_JOB_TYPE_V1, type Hermes021MacosDeliveryRecoveryStatusV1 } from "../../harness/hermes-021-v1";
 import { HERMES_LOCAL_ADAPTER_V1 } from "../../harness/hermes-local-v1/task-planning-contract";
 import { CLAUDE_CODE_LOCAL_ADAPTER_V1 } from "../../harness/claude-code-v1";
@@ -202,7 +202,10 @@ export class WebTaskService {
       const rows = (await tx.query<TaskRow>(`SELECT ${selection} WHERE j.tenant_id=$1 AND j.project_id=$2
         AND ($3::text IS NULL OR j.id COLLATE "C">$3 COLLATE "C") ORDER BY j.id COLLATE "C" LIMIT 51`,
       [this.scope.tenantId, projectId, after ?? null])).rows;
-      const tasks = rows.slice(0, 50).map(row => validated(row, this.scope.tenantId, projectId).summary);
+      const tasks = [];
+      for (const row of rows.slice(0, 50)) {
+        tasks.push(await this.withQualityStatus(tx, actor, validated(row, this.scope.tenantId, projectId).summary));
+      }
       return taskPageSchema.parse({ project, tasks, nextCursor: rows.length > 50 ? tasks.at(-1)!.jobId : null,
         canPropose: project.lifecycle === "active" && actor.can("tasks.propose", projectId), dispatch: "not_connected", observedAt: actor.now,
         ...(this.modelCatalog ? { modelOptions: taskModelOptionsV1(this.modelCatalog) } : {}) });
@@ -382,7 +385,8 @@ export class WebTaskService {
       const revisionLinks = this.taskPlanIntegrityKey
         ? await readTaskRevisionLinksV1(tx, this.taskPlanIntegrityKey, this.scope.tenantId, projectId, jobId)
         : { previousJobId: null, nextJobId: null, revisionNumber: 0 };
-      return taskDetailSchema.parse({ project, task: summary, instructions: request.objective, inputDigest: job.inputDigest,
+      return taskDetailSchema.parse({ project, task: await this.withQualityStatus(tx, actor, summary),
+        instructions: request.objective, inputDigest: job.inputDigest,
         modelSelection: modelRow ? { workerKind: modelRow.worker_kind, selectionKey: modelRow.selection_key,
           model: modelRow.model, effort: modelRow.effort, provider: modelRow.provider, profile: modelRow.profile,
           inheritedFromJobId: modelRow.inherited_from_job_id } : null,
@@ -508,6 +512,25 @@ export class WebTaskService {
         canReadContent: !!this.resultStore && actor.can("tasks.results.read", projectId),
         reviewCommands: this.reviewCommandsConfigured ? "configured" : "not_connected",
         verificationCommands: this.verificationCommandsConfigured ? "configured" : "not_connected" });
+  }
+
+  /** "Accepted" is derived only from authenticated completion-gate evidence.
+   * Execution success alone remains "Completed". Omitted result or review rows
+   * fail closed so a partial projection can never overstate acceptance. */
+  private async withQualityStatus(tx: DatabaseSession, actor: WebActor, summary: TaskSummary): Promise<TaskSummary> {
+    if (summary.state !== "succeeded" || !this.resultStore || !this.reviewConfig
+      || !actor.can("tasks.results.read", summary.projectId)) return summary;
+    try {
+      const page = await this.resultPage(tx, actor, summary.projectId, summary.jobId);
+      const accepted = page.items.length > 0 && !page.additionalResultsOmitted && !page.additionalTargetsOmitted
+        && page.items.every(item => page.reviews.some(review => review.status === "ready"
+          && review.matchingArtifactIds.includes(item.artifactId) && review.contentHash === item.contentHash));
+      return accepted ? taskSummarySchema.parse({ ...summary, qualityStatus: "accepted" }) : summary;
+    } catch {
+      // Acceptance is optional enrichment on these task projections. Failure to
+      // authenticate it removes the claim without hiding the underlying task.
+      return summary;
+    }
   }
 
   /** One result/review inspection powers both the workspace-wide attention list and
@@ -689,7 +712,8 @@ export class WebTaskService {
           const receipt = await this.resultStore.readReceipt(tx, this.scope.tenantId, candidate.project_id,
             candidate.job_id, candidate.artifact_id);
           if (!receipt) throw new Error("task_home_result_unavailable");
-          recentResults.push({ task: validated(row, this.scope.tenantId, candidate.project_id).summary,
+          recentResults.push({ task: await this.withQualityStatus(tx, actor,
+            validated(row, this.scope.tenantId, candidate.project_id).summary),
             artifact: resultMetadata(receipt) });
         }
         additionalResultsOmitted = candidates.length > 10;

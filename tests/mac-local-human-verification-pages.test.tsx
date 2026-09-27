@@ -2,10 +2,12 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import { OwnerVerificationPanel } from "../private-app/app/task-owner-verification";
+import { OwnerReviewPanel } from "../private-app/app/task-owner-review";
 import { sha256Digest } from "../src/security";
 import { MAC_LOCAL_HUMAN_VERIFICATION_SCENARIO_V1, MAC_LOCAL_TEXT_SCENARIO_V1 } from "../src/web/v1/mac-local-owner-review-profile";
 import { createTaskVerificationBrowserClient } from "../src/web/v1/task-verification-browser-client";
 import type { TaskVerificationDraft, TaskVerificationOptions } from "../src/web/v1/task-verification-wire";
+import type { TaskReviewOptions } from "../src/web/v1/task-review-wire";
 
 const at = "2026-09-27T12:00:00.000Z", digest = (value: string) => `sha256:${value.repeat(64)}`;
 const binding = { projectId: "project:one", jobId: "job:one", artifactId: "artifact:one", targetId: "target:one",
@@ -42,4 +44,16 @@ test("Mac-local result page exposes a human-only control and records its explici
   const receipt = await client.record(binding.projectId, binding.jobId, draft);
   assert.equal(receipt.outcome, "passed"); assert.equal(receipt.completesJob, false);
   assert.equal(receipt.grantsApproval, false); assert.equal(receipt.grantsExecutionAuthority, false);
+});
+
+test("owner acceptance presents the configured read-and-correct attestation beside both decisions", () => {
+  const reviewOptions: TaskReviewOptions = { ...binding, canReview: true, availability: "available", ownReview: null,
+    acceptanceAttestation: { scenarioId: MAC_LOCAL_HUMAN_VERIFICATION_SCENARIO_V1,
+      label: "Owner human verification", instructions: "Read the protected text result and confirm it satisfies the task.",
+      instructionsDigest }, grantsExecutionAuthority: false };
+  const markup = renderToStaticMarkup(<OwnerReviewPanel options={reviewOptions} feedback="" pending={false} held={false}
+    onFeedback={() => {}} onRecord={() => {}} />);
+  assert.match(markup, /I read it and it’s correct/);
+  assert.match(markup, />Accept</);
+  assert.match(markup, /Request changes/);
 });

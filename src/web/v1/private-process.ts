@@ -318,7 +318,8 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
   const coordinationInflight = new Map<string, Promise<unknown>>();
   const ownerReviews = options.tasks?.ownerReviews ? new WebTaskReviewService(options.database.client,
     { tenantId: options.tenantId, workspaceId: options.workspaceId }, { ...options.tasks.ownerReviews,
-      harnessIntegrityKey: options.tasks.harnessIntegrityKey, results: options.tasks.results!, ideaIntegrityKey: options.ideaProjects?.integrityKey }, clock) : undefined;
+      harnessIntegrityKey: options.tasks.harnessIntegrityKey, results: options.tasks.results!,
+      ideaIntegrityKey: options.ideaProjects?.integrityKey }, clock) : undefined;
   const ownerVerifications = options.tasks?.manualVerificationScenarios ? new WebTaskVerificationService(options.database.client,
     { tenantId: options.tenantId, workspaceId: options.workspaceId }, { ...options.tasks.reviews!,
       harnessIntegrityKey: options.tasks.harnessIntegrityKey, results: options.tasks.results!, ideaIntegrityKey: options.ideaProjects?.integrityKey,
@@ -769,8 +770,13 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
           let id: string, jobId: string | undefined;
           try { id = decodeURIComponent(taskPage[1]); jobId = taskPage[2] ? decodeURIComponent(taskPage[2]) : undefined; }
           catch { throw new WebAccessError("invalid_request"); }
-          if ([...url.searchParams.keys()].some(key => key !== "after") || url.searchParams.getAll("after").length > 1
-            || jobId && url.search || url.searchParams.has("after") && !catalogProjectIdSchema.safeParse(url.searchParams.get("after")).success)
+          const allowedKey = jobId ? "result" : "after";
+          // A result selection is only a browser hint. The protected result API
+          // re-authorizes the exact artifact before returning bytes, so stale or
+          // malformed selections must not turn an otherwise valid task page into JSON.
+          if ([...url.searchParams.keys()].some(key => key !== allowedKey)
+            || !jobId && (url.searchParams.getAll(allowedKey).length > 1
+              || url.searchParams.has(allowedKey) && !catalogProjectIdSchema.safeParse(url.searchParams.get(allowedKey)).success))
             throw new WebAccessError("invalid_request");
           if (jobId) await tasks.detail(identity, id, jobId); else await tasks.authorize(identity, id);
         } else if (newsPage) {

@@ -439,7 +439,8 @@ async function main() {
     const reviewPath = `/api/v1/projects/${idOf(projectId)}/tasks/${idOf(jobId)}/results/${idOf(artifact.artifactId)}/reviews/${idOf(target.targetId)}`;
     const options = await requireOk(await fetch(new URL(reviewPath, origin), { headers: { cookie } }), 200,
       `${agent.kind} review options`) as { canReview: boolean; availability: string; targetDigest: string;
-        contentHash: string; ownReview: null | { decision: string; reviewId: string } };
+        contentHash: string; ownReview: null | { decision: string; reviewId: string };
+        acceptanceAttestation?: null | { scenarioId: string; instructionsDigest: string } };
     assert.equal(options.canReview, true, `${agent.kind}: owner must be able to review the pending result`);
     assert.equal(options.availability, "available");
     assert.equal(options.ownReview, null);
@@ -447,8 +448,12 @@ async function main() {
     assert.equal(options.contentHash, artifact.contentHash);
     const decision = agent.kind === "hermes" ? "changes_requested" : "accepted";
     const feedback = decision === "changes_requested" ? "Please revise the harmless test response." : "";
+    if (decision === "accepted") assert.ok(options.acceptanceAttestation,
+      `${agent.kind}: public owner acceptance must expose its explicit human-read attestation`);
     const draft = { artifactId: artifact.artifactId, targetId: target.targetId,
-      targetDigest: options.targetDigest, contentHash: options.contentHash, decision, feedback };
+      targetDigest: options.targetDigest, contentHash: options.contentHash, decision, feedback,
+      ...(decision === "accepted" ? { acceptanceAttestation: { scenarioId: options.acceptanceAttestation!.scenarioId,
+        instructionsDigest: options.acceptanceAttestation!.instructionsDigest, confirmed: true } } : {}) };
     const reviewKey = `journey-${agent.kind}-owner-review-0001`;
     const writeReview = () => fetch(new URL(reviewPath, origin), { method: "POST",
       headers: { origin, cookie, "content-type": "application/json", "idempotency-key": reviewKey },
@@ -478,38 +483,27 @@ async function main() {
     const taskUrl = new URL(`/api/v1/projects/${idOf(projectId)}/tasks/${idOf(jobId)}`, origin);
     let taskState = "", attemptState = "";
     if (decision === "accepted") {
-      // Profile v2 also requires an owner-observed human verification. Discover
-      // its protected descriptor through the same endpoint as the task page,
-      // then prove the exact write and replay without treating it as approval.
+      // Acceptance atomically records the explicitly configured owner-read
+      // verification. The separate endpoint must see that same canonical row
+      // as already recorded, never offer a second manual decision.
       const verificationPath = `/api/v1/projects/${idOf(projectId)}/tasks/${idOf(jobId)}/results/${idOf(artifact.artifactId)}/verifications/${idOf(target.targetId)}`;
       const verificationOptions = await requireOk(await fetch(new URL(verificationPath, origin), { headers: { cookie } }), 200,
         `${agent.kind} human verification options`) as { source: string; grantsExecutionAuthority: boolean; targetDigest: string;
-          contentHash: string; scenarios: { scenarioId: string; instructionsDigest: string; availability: string; ownVerification: null }[] };
+          contentHash: string; scenarios: { scenarioId: string; instructionsDigest: string; availability: string;
+            ownVerification: null | { outcome: string; grantsApproval: boolean; grantsExecutionAuthority: boolean; completesJob: boolean } }[] };
       assert.equal(verificationOptions.source, "configured");
       assert.equal(verificationOptions.grantsExecutionAuthority, false);
       assert.equal(verificationOptions.targetDigest, target.targetDigest);
       assert.equal(verificationOptions.contentHash, artifact.contentHash);
       assert.equal(verificationOptions.scenarios.length, 1);
       const scenario = verificationOptions.scenarios[0]!;
-      assert.equal(scenario.availability, "available");
-      assert.equal(scenario.ownVerification, null);
-      const verificationDraft = { artifactId: artifact.artifactId, targetId: target.targetId,
-        targetDigest: verificationOptions.targetDigest, contentHash: verificationOptions.contentHash,
-        scenarioId: scenario.scenarioId, instructionsDigest: scenario.instructionsDigest,
-        outcome: "passed", note: "Observed the harmless rehearsal result." };
-      const writeVerification = () => fetch(new URL(verificationPath, origin), { method: "POST",
-        headers: { origin, cookie, "content-type": "application/json" }, body: JSON.stringify(verificationDraft) });
-      const verified = await requireOk(await writeVerification(), 201, `${agent.kind} human verification`) as
-        { receipt: { verificationId: string; outcome: string; grantsApproval: boolean; grantsExecutionAuthority: boolean;
-          completesJob: boolean }; replayed: boolean };
-      assert.equal(verified.replayed, false);
-      assert.equal(verified.receipt.outcome, "passed");
-      assert.equal(verified.receipt.grantsApproval, false);
-      assert.equal(verified.receipt.grantsExecutionAuthority, false);
-      assert.equal(verified.receipt.completesJob, false);
-      const verificationReplay = await requireOk(await writeVerification(), 200, `${agent.kind} human verification replay`) as typeof verified;
-      assert.equal(verificationReplay.replayed, true);
-      assert.deepEqual(verificationReplay.receipt, verified.receipt);
+      assert.equal(scenario.scenarioId, options.acceptanceAttestation!.scenarioId);
+      assert.equal(scenario.instructionsDigest, options.acceptanceAttestation!.instructionsDigest);
+      assert.equal(scenario.availability, "already_recorded");
+      assert.equal(scenario.ownVerification?.outcome, "passed");
+      assert.equal(scenario.ownVerification?.grantsApproval, false);
+      assert.equal(scenario.ownVerification?.grantsExecutionAuthority, false);
+      assert.equal(scenario.ownVerification?.completesJob, false);
       const completed = await waitFor(async () => {
         const taskResponse = await fetch(taskUrl, { headers: { cookie } });
         if (taskResponse.status !== 200) return false;

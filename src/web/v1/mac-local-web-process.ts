@@ -133,7 +133,9 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
     }
     const taskDetail = /^\/projects\/([^/]+)\/tasks\/([^/]+)$/.exec(url.pathname);
     if (taskDetail) {
-      if (url.search) throw new WebAccessError("invalid_request");
+      // The selected result is an untrusted browser hint. The result endpoint
+      // validates authorization and binding before any content is returned.
+      if ([...url.searchParams.keys()].some(name => name !== "result")) throw new WebAccessError("invalid_request");
       await tasks.detail(identity, routeId(taskDetail[1]), routeId(taskDetail[2]));
       return render();
     }

@@ -143,6 +143,15 @@ test("the real Mac-local wrapper signs in locally and reaches the existing proje
   const detailShell = await app.handle(request(`/projects/${encodeURIComponent(projectId)}/tasks/${encodeURIComponent(proposedReceipt.receipt.jobId)}`,
     { headers: { cookie: cookie! } }), () => new Response("real task detail shell"));
   assert.equal(detailShell.status, 200); assert.equal(await detailShell.text(), "real task detail shell");
+  const selectedResultShell = await app.handle(request(`/projects/${encodeURIComponent(projectId)}/tasks/${encodeURIComponent(proposedReceipt.receipt.jobId)}`
+    + `?result=${encodeURIComponent("artifact:test")}`, { headers: { cookie: cookie! } }), () => new Response("real selected result shell"));
+  assert.equal(selectedResultShell.status, 200); assert.equal(await selectedResultShell.text(), "real selected result shell");
+  for (const search of ["?result=", "?result=bad%00id", "?result=one&result=two", `?result=${"x".repeat(300)}`]) {
+    const staleResultShell = await app.handle(request(`/projects/${encodeURIComponent(projectId)}/tasks/${encodeURIComponent(proposedReceipt.receipt.jobId)}${search}`,
+      { headers: { cookie: cookie! } }), () => new Response("real stale result shell"));
+    assert.equal(staleResultShell.status, 200, `a stale selection must not replace the page for ${search.slice(0, 40)}`);
+    assert.equal(await staleResultShell.text(), "real stale result shell");
+  }
   const results = await app.handle(request(`/api/v1/projects/${encodeURIComponent(projectId)}/tasks/${encodeURIComponent(proposedReceipt.receipt.jobId)}/results`,
     { headers: { cookie: cookie! } }), () => new Response("unused"));
   assert.equal(results.status, 200);

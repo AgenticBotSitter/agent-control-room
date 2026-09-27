@@ -638,7 +638,7 @@ try {
     "  check(TAG + 'expanded result controls meet 24px', expanded.small.length === 0, expanded.small.join(' | '));",
     "  check(TAG + 'expanded result does not scroll sideways', !expanded.overflow);",
     "  check(TAG + 'expanded review offers the request-changes decision', (await page.getByRole('button', { name: 'Request changes' }).count()) >= 1);",
-    "  const accept = page.getByRole('button', { name: 'Accept quality' });",
+    "  const accept = page.getByRole('button', { name: 'Accept', exact: true });",
     "  await accept.waitFor({ timeout: 15000 });",
     "  check(TAG + 'owner review loads for the recorded result', (await accept.count()) === 1);",
     "  await page.getByLabel('Changes you want').focus();",

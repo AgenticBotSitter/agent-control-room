@@ -6216,3 +6216,32 @@ Registration must finish before the task application becomes ready. A conflict
 or guard refusal therefore fails startup instead of silently falling back to
 the old profile. Migration 0092 changes the insert guard only and adds no grant;
 the private web role still cannot insert review targets through this path.
+
+## ADR-255 — explicit owner acceptance may carry the configured plain-text observation
+
+2026-09-27. The Mac-local v2 profile keeps both of its conservative checks: the
+automatic bounded-text structure scenario and the human observation scenario.
+The default owner interface no longer asks the same owner to accept quality and
+then repeat that semantic judgment in a second form. Accept is disabled until
+the owner explicitly checks “I read it and it’s correct.” The resulting one
+idempotent command records both the completion-gate review and the configured
+human verification in the same database and staged-checkpoint transaction.
+Requesting changes records no verification pass.
+
+This is an explicit owner-review composition setting, not a generic inference
+from the manual-verification registry. The public Mac-local default passes only
+its human read descriptor to that setting. A review service only offers the
+combined attestation when it is given exactly one matching configured scenario
+that is still missing from the target. Profiles may retain a
+separate verification action by omitting that review-service configuration.
+The recorded verification still grants neither approval nor execution authority,
+and the ordinary quality coordinator remains the only path that can complete the
+canonical job after every required scenario passes.
+
+Startup and newly discovered Mac-local projects now use the same registration
+path for their immutable profile, three task templates, automatic text scenario,
+and human descriptor. A project is not marked known until all four registrations
+succeed. This closes the prior startup-only gap that left the automatic text
+scenario unavailable. Task-result deep links treat `result` as an untrusted
+browser hint and still render when that hint is stale, empty, duplicate, or
+malformed; the existing authorized result list gates every content read.

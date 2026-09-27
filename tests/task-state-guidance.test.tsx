@@ -24,7 +24,8 @@ import type {
   OwnerNotificationSettingsV1,
 } from "../src/notifications/v1/index.ts";
 import { NotificationDecisionList, NotificationSettingsSurface } from "../private-app/app/notification-settings.tsx";
-import { HermesDeliveryRecoveryPanel, TaskDetailPanel, TaskStateGuidance, taskStateGuidance } from "../private-app/app/task-panels.tsx";
+import { HermesDeliveryRecoveryPanel, TaskDetailPanel, TaskStateGuidance, taskStateGuidance,
+  taskSummaryStateLabel } from "../private-app/app/task-panels.tsx";
 import { PrivateSettingsWorkspace } from "../private-app/app/settings/workspace.tsx";
 import { readOwnerNotificationsV1, unavailableOwnerNotificationsV1 } from "../src/web/v1/owner-notifications-browser-client.ts";
 import { OwnerNotificationsPanel } from "../private-app/app/owner-notifications-workspace.tsx";
@@ -64,6 +65,12 @@ function detail(state: TaskDetail["task"]["state"], run?: Partial<TaskDetail["at
     localRouteObservation: { state: "not_prepared", adapter: null },
     progressSource, dispatch: "configured", artifacts: "configured", review: "recorded" };
 }
+
+test("execution completion never claims owner acceptance without authenticated quality evidence", () => {
+  const completed = detail("succeeded").task;
+  assert.equal(taskSummaryStateLabel(completed), "Completed");
+  assert.equal(taskSummaryStateLabel({ ...completed, qualityStatus: "accepted" }), "Completed · Accepted");
+});
 
 test("local Hermes recovery tells the owner only what saved evidence proves", () => {
   const staged = renderToStaticMarkup(<HermesDeliveryRecoveryPanel recovery={{ source: "configured", status: {

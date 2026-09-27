@@ -107,6 +107,22 @@ async function openResult(page: Page) {
   await expect(page.getByRole("heading", { name: "Received result" })).toBeVisible();
 }
 
+async function acceptReadResult(page: Page) {
+  await page.getByLabel("I read it and it’s correct").check();
+  await page.getByRole("button", { name: "Accept", exact: true }).click();
+  await expect(page.getByText(/Saved: quality acceptance/)).toBeVisible();
+}
+
+async function waitForCompletedAccepted(page: Page) {
+  await expect.poll(async () => {
+    const refresh = page.getByRole("button", { name: "Check latest saved status" }).first();
+    if (await refresh.isEnabled().catch(() => false)) await refresh.click();
+    return page.locator(".private-task-detail .private-state").first().innerText();
+  }, { timeout: 150_000 }).toBe("Completed · Accepted");
+  await expect(page.getByRole("heading", { name: /Revision 0 · Accepted/ })).toBeVisible();
+  await expect(page.getByText(/Checks still needed:/)).toHaveCount(0);
+}
+
 test("owner completes the real local website journey for every configured worker", async ({ page }) => {
   const failedResponses: string[] = [];
   page.on("response", response => {
@@ -136,18 +152,32 @@ test("owner completes the real local website journey for every configured worker
 
   await createPreparedTask(page, projectPath, "Claude browser task", "Claude Code");
   await openResult(page);
-  await page.getByRole("button", { name: "Accept quality" }).click();
-  await expect(page.getByText(/Saved: quality acceptance/)).toBeVisible();
-  await page.getByLabel("Configured human check").selectOption({ index: 1 });
-  await page.getByLabel("Observed result").selectOption("passed");
-  await page.getByLabel("Required observation note").fill("Observed the harmless rehearsal result in the protected result reader.");
-  await page.getByRole("button", { name: "Record human verification" }).click();
-  await expect(page.getByText(/Recorded human verification: Passed/)).toBeVisible();
+  const selectedResult = new URL(page.url()).searchParams.get("result");
+  expect(selectedResult).toBeTruthy();
+  const reloaded = await page.reload({ waitUntil: "domcontentloaded" });
+  expect(reloaded?.status()).toBe(200);
+  await expectHealthyPage(page);
+  await expect(page.getByRole("heading", { name: "Received result" })).toBeVisible();
+  expect(new URL(page.url()).searchParams.get("result")).toBe(selectedResult);
+  await acceptReadResult(page);
+  await waitForCompletedAccepted(page);
+
+  await page.goto(`${projectPath}/tasks`);
+  const completedWork = page.locator('section[aria-label="Saved tasks"] li').filter({ hasText: "Claude browser task" })
+    .filter({ hasText: "Completed · Accepted" });
+  await expect(completedWork).toHaveCount(1);
+  await page.goto("/");
+  const recentResults = page.locator('section[aria-labelledby="home-results"]');
+  await expect(recentResults.getByText("Claude browser task")).toBeVisible();
+  await expect(recentResults).toContainText("Completed · Accepted");
+  await expect(page.locator('section[aria-labelledby="home-active"]')).not.toContainText("Claude browser task");
+  await expect(page.locator('section[aria-labelledby="home-attention"]')).not.toContainText("Claude browser task");
+  await page.goto("/needs-me");
+  await expect(page.getByRole("heading", { name: "Tasks needing attention" }).locator("..")).not.toContainText("Claude browser task");
 
   await createPreparedTask(page, projectPath, "Codex browser task", "Codex");
   await openResult(page);
-  await page.getByRole("button", { name: "Accept quality" }).click();
-  await expect(page.getByText(/Saved: quality acceptance/)).toBeVisible();
+  await acceptReadResult(page);
 
   await createPreparedTask(page, projectPath, "Expired reservation recovery", "Hermes Agent", false, false);
   let blockedSubmission = true;
