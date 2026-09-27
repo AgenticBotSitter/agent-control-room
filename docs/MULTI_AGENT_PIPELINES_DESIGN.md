@@ -174,6 +174,11 @@ stageKind:
   "effect"  →  a consequential effect; ALWAYS terminates at owner approval
 ```
 
+The owner-facing pipeline role **validator** maps to the stored `signoff` stage kind. `validate`
+is not a sixth database value: validation is the product label, while `signoff` is the existing
+Completion Gate quality-review behavior. This keeps the minimum `build -> check -> validate`
+flow and the schema vocabulary consistent.
+
 `build` is the default and is the only kind that writes a workspace. `plan`, `check` and
 `signoff` are read-only; `check` and `signoff` are the only kinds permitted to produce
 findings. `effect` exists so that a template can name the consequential step explicitly rather
@@ -344,6 +349,17 @@ Provenance is exact: the envelope binds `(pipelineRunId, stageOrdinal, jobId, at
 resultDigest)`. A result that arrives for the wrong attempt, the wrong project or a stale
 digest is refused, which is `RES-001` behaviour applied at the stage boundary.
 
+**A checkpoint is not a hand-off.** A hand-off is the bounded output one completed stage gives
+the next stage. A checkpoint is an optional recovery record inside one unfinished stage. Its
+strict manifest binds the exact tenant, project, run, stage, job, attempt and producer principal;
+a monotonic sequence and previous-checkpoint digest; bounded plan/notes/completed and remaining
+steps; repository-relative changed-file names, states and digests; branch/commit when present;
+and opaque artifact ids plus digests. The whole manifest is at most 65,536 bytes and is
+secret-scanned before storage. It contains no raw prompt, reasoning, transcript, environment,
+credential, absolute path, executable argument, provider endpoint or authority. An artifact is
+the protected byte object referenced by either record; changing from local disk to the existing
+S3-compatible adapter changes neither manifest nor lineage.
+
 ### B.5 Loops — check fails, work goes back, and the limit is a stop
 
 The loop is the existing revision cycle, with two new bounds.
@@ -458,6 +474,15 @@ product principles forbid.
 half of W8 in slice 2 and per-stage model selection in slice 4, after W8 lands. Slices 1 and 3
 need only the role and agent identity, which already exist.
 
+**Ordered candidates and later changes.** A stage's role and ordinal are its identity; its
+worker, model, effort and provider profile are effective assignment snapshots. A template may
+request an ordered candidate chain, but every candidate is rechecked against current protected
+enablement, capability, policy, cost and reviewer-separation rules when it would take effect.
+Changing the candidate on queued or running work grants nothing and never rewrites history. A
+running change stays pending until a proven safe boundary; it cannot cancel, steal or duplicate
+the current lease. The exact append-only selection records land after the minimum linear stage
+records so S4 does not hard-code one immutable agent/model as the stage's identity.
+
 ### B.7 Concurrency, collisions and leases
 
 **Default is serial.** A pipeline advances one stage at a time. That is not a limitation to
@@ -531,6 +556,10 @@ from a read, a page load, a retry, or a timer that creates an attempt.
 | Result arrives for a stale attempt, wrong project or wrong worker | Refused with the existing scope/identity checks. | Accept it as the current stage result |
 | Effect outcome ambiguous | Stops the pipeline. Ambiguity resolves only from destination evidence or an explicit human decision recorded as a new authorized action. | Auto-retry the effect |
 | Check fails repeatedly | Loop counter; at the limit, `awaiting_owner`. | Escalate, auto-pass, or self-accept |
+| Usage or rate limit is exhausted | Record a bounded resource reason and a trusted retry time when one exists; otherwise show that reset time is unknown. Wait by default. | Count it as a task failure, retain raw provider text, or guess a reset time |
+| Provider unavailable or node offline | Derive the reason from protected adapter/fleet evidence. At a safe boundary, either wait or consider the next owner-configured candidate. | Treat a disconnect as proof that work stopped, or dispatch a second attempt while the first is uncertain |
+| Owner changes the role assignment | Record a pending append-only transition and apply it only before dispatch or after terminal/reconciled work. | Rewrite the original selection or move a live lease |
+| Checkpoint missing, corrupt or conflicting | Stop as `uncertain`/`awaiting_owner`; retain the last trusted chain head. | Resume from an older checkpoint silently or treat notes as execution authority |
 | Template deleted mid-run | The run continues; it references the template version it started with. | Break an in-flight pipeline |
 
 `RetryPolicy` already carries `retryAfterOrphan` and `ambiguousEffectPolicy: "attention"`, and
@@ -751,6 +780,20 @@ partially-populated stage row cannot be claimed by a pipeline. There is delibera
 `loop_iteration` column: the round count is the Completion Gate's `revisionNumber`, derived
 (B.5), and a second stored counter would be a second truth that could disagree with the
 digest-bound one.
+
+`pipeline_stage_runs.worker_id`, `model` and `effort` are the current effective projection,
+not the sole history. Before fallback or live reassignment ships, the later selection slice adds
+an immutable per-run candidate snapshot plus append-only assignment transitions and a revision
+pointer. S4 must not overwrite an earlier effective selection. Hand-offs and later checkpoints
+refer to artifacts by opaque id and digest, never by a local path, so storage composition can
+change without rewriting stage lineage.
+
+Later additive records are justified for the expanded requirements: an immutable per-run role
+candidate snapshot, append-only assignment-transition events, and a checkpoint manifest/head.
+The candidate snapshot preserves what the run was allowed to consider; transition events retain
+every automatic or owner-requested choice and safe boundary; the checkpoint head provides one
+compare-and-set recovery chain while the manifest points at ordinary protected artifacts. None
+is a task, queue, lease, result, review, approval or credential store, and none grants execution.
 
 **Migration rules.** New files in `db/migrations/`, numbered after `0090`. Additive only: no
 column is dropped, renamed or retyped; no existing row is rewritten. Foreign keys use
@@ -1040,9 +1083,9 @@ tightening it to a true model-family classifier is a build item, not a setting.
 **4. Which agent runs a stage.**
 *Setting:* `stage.agentSelection`. *Scope:* stage (template), resolved at instantiation.
 *Values:* `pinned_worker`, `pinned_with_capability_fallback`. *Public default:*
-`pinned_with_capability_fallback`, because a run that stops because a machine is asleep is
-worse than a run that continues on an equally capable machine.
-*Guardrails regardless:* the fallback is always shown on the Pipelines page next to the
+`pinned_worker`. Capability fallback is only candidate eligibility beneath the ordered-chain
+and resource-failure decisions 14 and 15; it is not an independently automatic route.
+*Guardrails regardless:* every eligible fallback is shown on the Pipelines page next to the
 pinned name; selection is by capability and platform, never by a hardcoded personal name
 (`WORK-011`); if no eligible worker satisfies the declared capability, the stage is refused
 and reported as unavailable — never started on a weaker fallback, never skipped, never
@@ -1165,6 +1208,52 @@ cases, because an overruled finding is still evidence that two parties disagreed
 pipeline may continue past a recorded disagreement, never whether the disagreement was
 recorded; and the owner's counter-review is an additional review, never an edit that
 removes one.
+
+**14. Ordered fallback chains per role.**
+*Setting:* `stage.fallbackChain`. *Scope:* install -> project -> pipeline -> stage, where a
+narrower scope may remove or reorder only candidates already admitted by the protected scope
+above it. *Public default:* one pinned candidate. *Guardrails regardless:* every builder,
+checker and validator candidate names an agent plus allowlisted model/profile; the effective
+candidate is revalidated when selected; reviewer independence compares the actual producer and
+checker; exhausting the chain waits visibly and never chooses an unlisted default.
+
+**15. What resource failures may move to a fallback.**
+*Setting:* `stage.resourceFailureAction`. *Values:* `wait` (**public default**) and
+`automatic_at_safe_point`. Only bounded `usage_exhausted`, `rate_limited`,
+`provider_unavailable` and `node_offline` reasons are eligible. *Guardrails regardless:*
+`task_failed`, `uncertain`, review rejection, effect ambiguity and policy refusal never trigger
+fallback; raw provider text is not retained; an untrusted or malformed retry time is omitted;
+and no next candidate starts while the previous attempt may still be live.
+If the next eligible candidate changes provider, automatic activation additionally requires
+the separately owner-confirmed `autonomy.allowUnattendedProviderSwitch`; while that switch is
+off the run waits for the owner even when `automatic_at_safe_point` is selected.
+
+**16. Owner reassignment of queued or running work.**
+*Setting:* `stage.ownerReassignment`. *Scope:* project -> pipeline run -> stage. *Public
+default:* allowed at the next safe point. *Guardrails regardless:* queued work retains its task,
+dependency, ordinal and idempotency identity; running work records a pending change and keeps its
+lease; the new selection is checked again for capability, allowlist, provider profile, policy,
+cost, authority and independence; every change is append-only and visible on desktop and phone.
+
+**17. Checkpoint and resume.**
+*Setting:* `stage.checkpointPolicy`. *Values:* `off` (**public default**) and bounded periodic or
+stage-requested checkpoints. *Guardrails regardless:* a checkpoint is strict, secret-scanned,
+size-bounded and digest-chained; it carries plan/notes/completed steps, repository-relative
+changed files and branch/commit evidence, never prompts, reasoning, transcripts, environment,
+credentials, absolute paths or authority. Resume requires a terminal or safely reconciled prior
+attempt, creates a new attempt identity, revalidates all current authority, and says "partial
+resume" when only notes and digests can be recovered.
+
+**18. Artifact and checkpoint storage.**
+*Setting:* `storage.artifactBackend`. *Scope:* protected install configuration only. *Values:*
+`local` (**public default**) and `s3-compatible`. The product already has a provider-neutral
+S3-compatible configuration and a result-byte adapter whose identifiers and media scope are too
+narrow for hand-offs and checkpoints. The missing work includes an additive, backward-compatible
+adapter contract and key-space extension as well as protected production composition and
+qualification; it is not a second authority plane. *Guardrails regardless:* agents receive scoped
+Control Room capabilities, never bucket credentials; objects are create-once, bounded and
+digest-verified; cross-tenant/project/job/attempt/purpose access is refused; and a lost write
+reply is reconciled rather than blindly retried.
 
 ---
 
@@ -1399,6 +1488,10 @@ same recorded state; a batch in a non-active project is not approved into a runn
 
 **S3 — Per-agent queue, depth and order.**
 Ships: depth enforcement per agent, dependency-aware dispatch, and the per-agent queue view.
+Queue identity and committed order belong to the task and batch ordinal, not permanently to one
+agent. S3 records the effective assignee used at dispatch so later reassignment can preserve the
+same job, dependencies and idempotency identity without rewriting history; it does not yet ship
+fallback or reassignment.
 *Acceptance:* depth is capped at the recorded per-batch limit and never above 20; a
 submission over depth is refused with a visible reason and drops nothing; a task whose
 declared dependency has not reached an accepted retained result is never dispatched and
@@ -1424,6 +1517,10 @@ the gate's `revisionNumber` and cannot be set by the pipeline; a run in a non-ac
 project stops advancing and accepts no new stage; two concurrent "start this stage"
 requests produce exactly one accepted transition; a stage whose usage is unknown renders as
 "unknown", never as 0.
+The run/stage identity is `(pipeline run, ordinal, stored kind, role)`; worker/model/effort are
+effective snapshots rather than identity. The `validate` product role uses stored kind
+`signoff`. Stage outputs remain opaque artifact ids plus digests. These invariants prepare the
+later fallback, reassignment and shared-storage slices without implementing them here.
 
 **S5 — Agent-as-checker: identity, the role, and the guard.** *(highest-risk slice)*
 Ships: a model-family / harness classification derived server-side from the protected worker
@@ -1475,6 +1572,48 @@ proposed, who approved, what ran, what was checked, and what resulted, in order,
 audit chain verifying; and no unattended merge, dependency change or external call occurs
 while its switch is off.
 
+**S8 — Resource-failure classification and honest wait states.**
+Ships: one provider-neutral bounded vocabulary — `usage_exhausted`, `rate_limited`,
+`provider_unavailable`, `node_offline`, `task_failed`, `uncertain` — across supported harnesses,
+with trusted `retryAt` when available and clear known/unknown wait presentation. The safe default
+waits; this slice does not automatically fall back. It never retains raw provider bodies or
+stderr, guesses exhaustion, marks work complete, consumes approval or starts a second attempt
+after ambiguous execution. Needs Attention and the phone layout show the role, reason and safe
+next action.
+
+**S9 — Role fallback chains and live reassignment.** *(security/authority slice)*
+Ships: immutable ordered candidate snapshots for builder, checker and validator roles;
+append-only assignment transitions; safe-point automatic fallback as an explicit setting; and
+owner reassignment for queued/running work. A queued change preserves job identity and order. A
+running change stays pending until after a terminal attempt or explicit reconciliation proves
+there is no live lease. A valid checkpoint is only resume input after that proof; it is never
+proof that the previous execution stopped. Only S8 resource reasons are fallback-eligible. Candidate activation
+rechecks enablement, capability, model/profile, policy, cost, authority and actual reviewer
+independence; concurrent transitions create at most one next attempt; chain exhaustion waits
+visibly. Requires `[needs-lead-review]` and independent security review.
+
+**S10 — Shared artifact-storage composition.** *(security/authority slice)*
+Ships: an additive backward-compatible adapter-contract and key-space extension from result
+bytes to purpose-scoped results, hand-offs and checkpoints, plus production composition for the
+existing local and S3-compatible adapters, with local disk still the public default; shared namespaces;
+opaque locators; and scoped Control Room access instead of raw storage credentials. Create-once
+writes, exact replay, conflict refusal, digest/size/type/deadline bounds, cross-scope refusal and
+lost-reply reconciliation are required. Fake clients are source evidence only; deployment
+qualification needs a disposable real S3-compatible rehearsal. Requires `[needs-lead-review]`.
+
+**S11 — Bounded checkpoint/resume.** *(security/authority slice)*
+Ships: strict 65,536-byte-or-smaller checkpoint manifests bound to tenant, project, run, stage,
+job, attempt and producer principal; monotonic sequence and previous digest; bounded plan/notes,
+completed/remaining steps, repository-relative file evidence, branch/commit and opaque artifact
+references. Stale writers cannot replace the head. Missing/corrupt/conflicting/rollback-suspect
+state stops; resume never falls back silently to older data. After no-live-lease proof, resume
+creates a fresh ordinary job/delivery with the canonical stage task, a new attempt identity and
+a newly intersected authority envelope. The checkpoint and prior-stage hand-off are its only
+supplemental recovery context and grant no authority. All current policy, selection,
+independence, workspace and artifact scopes are revalidated.
+Cross-machine acceptance proves resume without exposing storage credentials. Requires
+`[needs-lead-review]`.
+
 **Definition of done for the self-hosting slice.** One recorded demonstration against a
 disposable real PostgreSQL cluster and the local stack: a real agent credential submits a
 real batch through the CLI, the owner approves it once, a `build` stage changes a real
@@ -1483,9 +1622,13 @@ on a different model family reviews it, a `validate` stage records the acceptanc
 and the batch and task histories show every step — with zero merges performed by the
 product, every attempt retained, and nothing run twice.
 
+The expanded demonstration also records one resource-exhaustion wait or eligible fallback, one
+audited owner reassignment, and one second worker resuming from a bounded checkpoint through the
+shared storage adapter without receiving storage credentials.
+
 **Explicitly outside the self-hosting slice**, and still subject to the guardrails above:
-unattended merge, unattended dependency change, unattended external calls, unattended
-provider switching, automatic acceptance of low-risk work, parallel writers, fan-out beyond
+unattended merge, unattended dependency change, unattended external calls, automatic acceptance
+of low-risk work, parallel writers, fan-out beyond
 the proposal bounds, and any effect requiring an owner approval attestation. None of these
 becomes available because the slice is done; each has its own prerequisite work and its own
 review.
@@ -1520,4 +1663,5 @@ review.
 | `ACR-005` | B.14 — every intake event is appended to the existing hash-chained audit store, per batch and per task, append-only |
 | ADR-053, ADR-054 | B.14 — the phone path is a notification and a deep link, never an approval; the intake credential carries a logical reference only, and no credential material is copied or returned |
 | `CONN-006` | B.13 decisions 10 and 12 — a stage stores a worker id and an allowlisted model or profile, never a provider credential |
-| B.13 (all thirteen) | Every decision is a setting at install, project, pipeline or stage scope, validated server-side, narrowing-only, audited, and bounded below by the guardrails the design states |
+| B.13 (all eighteen) | Every decision is a setting at install, project, pipeline or stage scope, validated server-side, narrowing-only, audited, and bounded below by the guardrails the design states |
+| B.13 decisions 14-18; S8-S11 | Resource failures remain distinct from task failure; fallback and reassignment act only at safe points; checkpoints grant no authority; local or S3-compatible storage remains one protected artifact authority |
