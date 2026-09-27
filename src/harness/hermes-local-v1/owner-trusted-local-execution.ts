@@ -1,12 +1,23 @@
 import { isAbsolute, normalize } from "node:path";
 import type { OwnerTrustedLocalCliExecutionAdapterV1 } from "../v1/owner-trusted-local-cli-execution";
-import { ownerTrustedLocalCliPromptV1 } from "../v1/owner-trusted-local-cli-execution";
 import type { OwnerTrustedLocalHermesExecV1 } from "./owner-trusted-local-exec";
 
 function unavailable(): never { throw new Error("owner_trusted_local_hermes_execution_unavailable"); }
 const identifier = /^[A-Za-z0-9._:/-]{1,180}$/u;
+const MAX_PROMPT_BYTES = 49_152;
 function path(value: unknown): value is string { return typeof value === "string" && value.length > 0 && value.length <= 4096
   && isAbsolute(value) && normalize(value) === value && !/[\u0000-\u001f\u007f]/u.test(value); }
+
+function prompt(input: Readonly<{ prompt: string; instructions: string }>) {
+  const value = [
+    "You are completing one approved Agent Control Room task in its assigned local workspace.",
+    "Use only the tools needed for this task, stay inside the current working directory, and do not retry, resume, use the network, or widen authority.",
+    "Return the requested bounded result after the work is complete.",
+    "", "Instructions:", input.instructions, "", "Task:", input.prompt, "",
+  ].join("\n");
+  if (Buffer.byteLength(value, "utf8") < 1 || Buffer.byteLength(value, "utf8") > MAX_PROMPT_BYTES) unavailable();
+  return value;
+}
 
 /** Protected configuration for one approved Hermes local worker. The chosen
  * model/provider are values, not source constants, so a normal model change
@@ -46,7 +57,7 @@ export function createOwnerTrustedLocalHermesExecutionAdapterV1(executor: OwnerT
     const result = await executor.execute(Object.freeze({ executablePath: fixed.executablePath,
       workingDirectory: fixed.workingDirectory, deadlineMs: fixed.deadlineMs,
       profile: selected.profile, model: selected.model, provider: selected.provider,
-      prompt: ownerTrustedLocalCliPromptV1(input.delivery.input), signal: input.signal }));
+      prompt: prompt(input.delivery.input), signal: input.signal }));
     if (result.status === "completed") return Object.freeze({ kind: "completed" as const, text: result.text });
     return Object.freeze({ kind: "failed" as const, reason: `${result.status}:${result.reason}` });
   } });

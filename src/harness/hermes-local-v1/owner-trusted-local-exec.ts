@@ -21,7 +21,7 @@ const terminal = z.object({
 /** Fixed controls; profile/model/provider come only from protected worker configuration. */
 export const OWNER_TRUSTED_LOCAL_HERMES_FIXED_ARGS_V1 = Object.freeze([
   "chat", "--query-file", "-", "--oneshot", "--quiet", "--format", "stream-json",
-  "--toolsets", "", "--ignore-rules", "--max-turns", "1", "--source", "control-room-local-worker",
+  "--toolsets", "", "--ignore-rules", "--max-turns", "4", "--source", "control-room-local-worker",
 ] as const);
 
 export type OwnerTrustedLocalHermesExecResultV1 = Readonly<
@@ -78,7 +78,10 @@ export function createOwnerTrustedLocalHermesExecV1(dependencies: Readonly<{ spa
   return Object.freeze({ async execute(input) {
     if (!safeInput(input)) return failed("failed", "invalid_input");
     if (input.signal?.aborted) return failed("canceled", "aborted_before_spawn");
-    try { if ((await list(input.workingDirectory)).length !== 0) return failed("failed", "working_directory_not_empty"); }
+    // This is the worker's persistent project workspace. A prior successful
+    // task may have created files that a later approved task must inspect or
+    // update, so accessibility is required but emptiness is not.
+    try { await list(input.workingDirectory); }
     catch { return failed("failed", "working_directory_unavailable"); }
     if (input.signal?.aborted) return failed("canceled", "aborted_before_spawn");
     const seconds = Math.max(1, Math.ceil(input.deadlineMs / 1_000));

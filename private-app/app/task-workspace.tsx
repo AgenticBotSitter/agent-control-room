@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { BrowserRequestError, browserAuthenticationRecovery } from "../../src/web/v1/browser-client";
 import { createTaskBrowserClient, taskErrorMessage } from "../../src/web/v1/task-browser-client";
 import type { TaskDetail, TaskDraft, TaskPage, TaskReceipt } from "../../src/web/v1/task-wire";
@@ -18,6 +18,7 @@ import { createTaskExecutionWorkspace } from "../../src/web/v1/task-execution-wo
 import { createIdeaBrowserClient } from "../../src/web/v1/idea-browser-client";
 import { canPrepareIdeaExperiment, prepareIdeaExperimentDraft } from "../../src/web/v1/idea-experiment-draft";
 import { useLocalRuntime } from "./local-runtime";
+import type { PreparedTaskStatus } from "../../src/web/v1/task-planning-wire";
 
 /** Polling the same task must retain its object identity. The planning,
  * assignment and result children key their protected reads to this value; a
@@ -49,17 +50,23 @@ export function TaskExecutionStage({ detail, mode, workspace, onRecorded }: {
   detail: TaskDetail; mode: "checking" | "local" | "hosted"; workspace: ReturnType<typeof createTaskExecutionWorkspace>;
   onRecorded?: () => void;
 }) {
+  const [preparedContinuation, setPreparedContinuation] = useState<{ sourceJobId: string; task: PreparedTaskStatus }>();
+  const recordPreparedTask = useCallback((sourceJobId: string, task?: PreparedTaskStatus) => {
+    setPreparedContinuation(task ? { sourceJobId, task } : undefined);
+  }, []);
+  const preparedFromSource = preparedContinuation?.sourceJobId === detail.task.jobId ? preparedContinuation.task : undefined;
   if (mode === "checking") return <p className="private-note">Checking this installation’s task workflow…</p>;
   if (mode === "hosted") return <><PrivateTaskPlanning detail={detail} client={workspace.planning} />
     <PrivateTaskAssignment detail={detail} client={workspace.assignment} onRecorded={onRecorded} />
     <PrivateTaskApproval detail={detail} workspace={workspace} /></>;
-  if (!detail.preparedFor) return <><PrivateTaskPlanning detail={detail} client={workspace.planning} />
+  if (!detail.preparedFor) return <><PrivateTaskPlanning detail={detail} client={workspace.planning} onPreparedTask={recordPreparedTask} />
+    {preparedFromSource ? null : <>
     <section id="task-assignment" className="private-panel" aria-label="Task assignment"><h2>Task assignment</h2>
       <p>Prepare this saved proposal before choosing a configured machine. Assignment will reserve capacity without starting work.</p>
       <button type="button" disabled>Assign after preparation</button></section>
     <section id="task-approval" className="private-panel" aria-label="Execution approval"><h2>Execution approval</h2>
       <p>Execution approval follows preparation and assignment. No permission has been granted and no agent starts from this page automatically.</p>
-      <button type="button" disabled>Approve after assignment</button></section></>;
+      <button type="button" disabled>Approve after assignment</button></section></>}</>;
   return <><PrivateTaskAssignment detail={detail} client={workspace.assignment} onRecorded={onRecorded} runOnAssign />
     <PrivateTaskApproval detail={detail} workspace={workspace} local /></>;
 }

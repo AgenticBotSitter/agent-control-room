@@ -27,8 +27,10 @@ import { catalogProjectIdSchema } from "./project-wire";
 import { taskDraftSchema, taskSummarySchema, taskReceiptSchema, taskDetailSchema, taskPageSchema,
   taskRunSchema, type HermesDeliveryRecovery, type TaskRun, type TaskReceipt } from "./task-wire";
 import { HERMES_021_MACOS_LOCAL_ADAPTER_V1, HERMES_021_MACOS_LOCAL_JOB_TYPE_V1, type Hermes021MacosDeliveryRecoveryStatusV1 } from "../../harness/hermes-021-v1";
+import { HERMES_LOCAL_ADAPTER_V1 } from "../../harness/hermes-local-v1/task-planning-contract";
 import { CLAUDE_CODE_LOCAL_ADAPTER_V1 } from "../../harness/claude-code-v1";
 import { CODEX_APP_SERVER_ADAPTER } from "../../harness/codex-v1/delivery-contract";
+import { CODEX_OWNER_TRUSTED_LOCAL_ADAPTER_V1 } from "../../harness/codex-v1/owner-trusted-local-task-planning-contract";
 import { taskPlanningOptionsSchema } from "./task-planning-wire";
 import { taskHomeActivitySchema } from "./task-home-wire";
 import { taskProjectOverviewSchema } from "./task-project-overview-wire";
@@ -47,9 +49,9 @@ function joined(tx: DatabaseSession): DatabaseClient {
     } });
 }
 function routeEvidence(adapterId: string): "local_hermes" | "local_claude" | "local_codex" | "other_or_unknown" {
-  if (adapterId === HERMES_021_MACOS_LOCAL_ADAPTER_V1) return "local_hermes";
+  if (adapterId === HERMES_021_MACOS_LOCAL_ADAPTER_V1 || adapterId === HERMES_LOCAL_ADAPTER_V1) return "local_hermes";
   if (adapterId === CLAUDE_CODE_LOCAL_ADAPTER_V1) return "local_claude";
-  if (adapterId === CODEX_APP_SERVER_ADAPTER) return "local_codex";
+  if (adapterId === CODEX_APP_SERVER_ADAPTER || adapterId === CODEX_OWNER_TRUSTED_LOCAL_ADAPTER_V1) return "local_codex";
   return "other_or_unknown";
 }
 type TaskRow = { id: string; state: string; version: number; project_id: string; workflow_id: string;

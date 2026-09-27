@@ -52,7 +52,12 @@ test("the Hermes adapter keeps the selected model/provider in protected configur
   const result = await adapter.execute({ delivery, signal: new AbortController().signal });
   assert.deepEqual(result, { kind: "completed", text: "hermes text" });
   assert.deepEqual(observed, { ...configuration, profile: "cr", model: "space-bunny-free", provider: "opencode-go",
-    prompt: ownerTrustedLocalCliPromptV1(delivery.input), signal: (observed as { signal: AbortSignal }).signal });
+    prompt: [
+      "You are completing one approved Agent Control Room task in its assigned local workspace.",
+      "Use only the tools needed for this task, stay inside the current working directory, and do not retry, resume, use the network, or widen authority.",
+      "Return the requested bounded result after the work is complete.",
+      "", "Instructions:", delivery.input.instructions, "", "Task:", delivery.input.prompt, "",
+    ].join("\n"), signal: (observed as { signal: AbortSignal }).signal });
 });
 
 test("the shared composition exposes Hermes through the same durable delivery shape", async () => {

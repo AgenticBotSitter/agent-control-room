@@ -22,7 +22,9 @@ import { durableResultReceiptSchemaV1 } from "../src/artifacts/v1/durable-result
 import { durableResultReviewPlanSchemaV1, durableReviewTargetV1 } from "../src/completion-gate/v1/durable-result-review-plan";
 import { DurableResultReviewSubmissionServiceV1 } from "../src/completion-gate/v1/durable-result-review-submission";
 import { DurableLocalResultInspectionServiceV1 } from "../src/completion-gate/v1/durable-local-result-inspection";
-import { RoutedTaskResultInspectionServiceV1 } from "../src/completion-gate/v1/routed-result-inspection";
+import { isRoutedLocalResultAdapterV1, RoutedTaskResultInspectionServiceV1 } from "../src/completion-gate/v1/routed-result-inspection";
+import { HERMES_LOCAL_ADAPTER_V1 } from "../src/harness/hermes-local-v1/task-planning-contract";
+import { CODEX_OWNER_TRUSTED_LOCAL_ADAPTER_V1 } from "../src/harness/codex-v1/owner-trusted-local-task-planning-contract";
 import { NativeResultVerificationService, type AutomaticDocumentScenario } from "../src/completion-gate/v1/native-result-verification";
 import { NativeTaskCompletionService } from "../src/persistence/native-task-completion";
 import type { ControllerWorkerDeliveryPortV1, ControllerWorkerDeliveryV1 } from "../src/harness/v1/controller-worker-delivery";
@@ -36,6 +38,13 @@ function deferred() {
   const promise = new Promise<void>(done => { resolve = done; });
   return Object.freeze({ promise, resolve });
 }
+
+test("the result router admits every current local CLI adapter", () => {
+  assert.equal(isRoutedLocalResultAdapterV1(HERMES_LOCAL_ADAPTER_V1), true);
+  assert.equal(isRoutedLocalResultAdapterV1(CLAUDE_CODE_LOCAL_ADAPTER_V1), true);
+  assert.equal(isRoutedLocalResultAdapterV1(CODEX_OWNER_TRUSTED_LOCAL_ADAPTER_V1), true);
+  assert.equal(isRoutedLocalResultAdapterV1("connector:unknown-local-v1"), false);
+});
 
 class FinishedClaudeProcess {
   private firstRead = true;

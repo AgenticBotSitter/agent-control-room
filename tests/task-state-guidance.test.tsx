@@ -99,8 +99,8 @@ test("a prepared task shows only its safe worker category and no assignment clai
 
 test("a prepared local worker explains its route limit without advertising an enabled process", () => {
   const hermes = renderToStaticMarkup(<TaskDetailPanel detail={{ ...detail("ready"), preparedFor: "hermes" }} />);
-  assert.match(hermes, /limited to a supplied-text review/);
-  assert.match(hermes, /Before it can receive even that work/);
+  assert.match(hermes, /one bounded task in its assigned local workspace/);
+  assert.match(hermes, /Before it can receive work/);
   const claude = renderToStaticMarkup(<TaskDetailPanel detail={{ ...detail("ready"), preparedFor: "claude" }} />);
   assert.match(claude, /one text-only review/);
   assert.match(claude, /does not allow tools, add-ons, saved sessions, or unattended permission prompts/);
