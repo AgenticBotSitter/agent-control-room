@@ -95,12 +95,17 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
     };
     if (url.pathname === "/") {
       if (url.search) throw new WebAccessError("invalid_request");
-      await projects.authorizeCatalog(identity);
       return pageRedirect("/projects");
     }
     if (url.pathname === "/projects") {
-      if (url.search) throw new WebAccessError("invalid_request");
+      if ([...url.searchParams.keys()].some(name => !["after", "lifecycle"].includes(name))
+        || ["after", "lifecycle"].some(name => url.searchParams.getAll(name).length > 1))
+        throw new WebAccessError("invalid_request");
       await projects.authorizeCatalog(identity);
+      return render();
+    }
+    if (url.pathname === "/workers") {
+      if (url.search) throw new WebAccessError("invalid_request");
       return render();
     }
     const taskDetail = /^\/projects\/([^/]+)\/tasks\/([^/]+)$/.exec(url.pathname);
@@ -148,7 +153,8 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
           workers: options.workerReadiness.read().map(worker => options.taskWorkersStarted === true ? worker
             : { ...worker, state: "unavailable", proof: "not_proven" }) }, { headers: privateResponseHeaders });
       }
-      if (url.pathname === "/api/v1/projects") return projectHttp(request);
+      if (url.pathname === "/api/v1/projects"
+        || /^\/api\/v1\/projects\/[^/]+(?:\/(?:lifecycle|idea-lifecycle))?$/.test(url.pathname)) return projectHttp(request);
       if (/^\/api\/v1\/projects\/[^/]+\/tasks(?:\/|$)/.test(url.pathname)) return taskHttp(request);
       const identity = sessions.verify(request, clock());
       if (request.method !== "GET") throw new WebAccessError("invalid_request");

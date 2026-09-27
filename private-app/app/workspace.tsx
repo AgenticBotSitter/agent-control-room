@@ -16,6 +16,7 @@ import { ProjectModuleAvailability } from "./project-module-availability";
 import { useInstallationTopology } from "./installation-topology";
 import { InstallationTopologySummary } from "./installation-topology-summary";
 import { ProjectAgentWorkspace } from "./project-agent-workspace";
+import { useLocalRuntime } from "./local-runtime";
 
 /** Browser-side canonical JSON: stable across equivalent object key ordering. Mirrors the
  * server's canonical-digest implementation so the template-selection key the browser sends
@@ -110,6 +111,7 @@ export function ProjectIdeaOrigin({ project }: { project: ProjectView }) {
 export function PrivateProjectWorkspace({ projectId, section = "overview", after, lifecycleFilter }: {
   projectId?: string; section?: ProjectSection; after?: string; lifecycleFilter?: WebProject["lifecycle"];
 }) {
+  const runtime = useLocalRuntime();
   const sessionObservations = useProductModule("sessionObservations");
   const installationTopology = useInstallationTopology();
   const templateOptions = useProductTemplateOptions();
@@ -260,13 +262,17 @@ export function PrivateProjectWorkspace({ projectId, section = "overview", after
             <p className="private-note">Status changes preserve history. They do not stop running work. Closing this tab does not change the project.</p>
             <p className="private-note">Saved revision {project.version} · <ConfiguredTimestamp value={project.updatedAt} prefix="Updated" /></p>
           </section>}
-          {section === "overview" && <><ProjectOverviewActivity key={projectId} projectId={projectId} />
+          {section === "overview" && runtime.mode === "hosted" && <><ProjectOverviewActivity key={projectId} projectId={projectId} />
             <section className="private-panel"><h2>Worker availability</h2>
               <p>Open Project agents to compare task-specific eligibility with separately recorded availability, capacity, connections, and current project work.</p>
               <a className="private-action-link" href={`/projects/${encodeURIComponent(projectId)}/agents`}>Open project agents</a>
               <a className="private-action-link" href={`/workboard?projectId=${encodeURIComponent(projectId)}`}>Open Control Room workboard</a>
             </section>
             {sessionObservations && <SessionObservations projectId={projectId} />}</>}
+          {section === "overview" && runtime.mode === "local" && <section className="private-panel">
+            <h2>Local workers</h2><p>Worker readiness is installation-wide. Check this task’s assignment controls for eligibility.</p>
+            <a className="private-action-link" href="/workers">See local worker status</a>
+          </section>}
         </>}
       </>}
     </main>
