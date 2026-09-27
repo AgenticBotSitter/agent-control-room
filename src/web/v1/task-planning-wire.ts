@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { HERMES_NATIVE_ADAPTER } from "../../harness/v1/native-run-identifiers";
-import { CONTROLLER_WORKER_REMOTE_ADAPTER_V1 } from "../../harness/v1/remote-worker-delivery";
+import { CONTROLLER_WORKER_REMOTE_ADAPTER_V1 } from "../../harness/v1/remote-worker-adapter-id";
 import { catalogProjectIdSchema as id } from "./project-wire";
 
 const digest = z.string().regex(/^sha256:[a-f0-9]{64}$/);
