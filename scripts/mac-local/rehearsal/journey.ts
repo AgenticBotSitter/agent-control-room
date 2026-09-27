@@ -227,10 +227,11 @@ async function main() {
   const outcomes: Record<string, unknown> = {};
 
   for (const agent of AGENTS) {
+    const declaredScope = { kind: "tree" as const, path: `rehearsal/${agent.kind}` };
     // 1) proposal
     const proposed = await fetch(new URL(`/api/v1/projects/${idOf(projectId)}/tasks`, origin), {
       method: "POST", headers: { origin, cookie, "content-type": "application/json", "idempotency-key": `journey-${agent.kind}-source-0001` },
-      body: JSON.stringify({ title: `Journey ${agent.kind} task`, instructions: "Return one harmless short line." }),
+      body: JSON.stringify({ title: `Journey ${agent.kind} task`, instructions: "Return one harmless short line.", scopes: [declaredScope] }),
     });
     const proposedBody = await require5xxOr201(proposed, `${agent.kind} propose`) as { receipt: { jobId: string } };
     const sourceJobId = proposedBody.receipt.jobId;
@@ -267,10 +268,13 @@ async function main() {
     const assignedInputDigest = assignedBody.receipt.inputDigest;
     const assignedDetail = await requireOk(await fetch(new URL(
       `/api/v1/projects/${idOf(projectId)}/tasks/${idOf(jobId)}`, origin), { headers: { cookie } }),
-    200, `${agent.kind} assigned task detail`) as { preparedFor: string | null; attempts: unknown[]; inputDigest: string };
+    200, `${agent.kind} assigned task detail`) as { preparedFor: string | null; attempts: unknown[]; inputDigest: string;
+      ownershipLeases: { scopes: { kind: "file" | "tree"; path: string }[]; current: boolean }[] };
     assert.equal(assignedDetail.preparedFor, agent.kind, `${agent.kind} prepared worker visible to task page`);
     assert.ok(assignedDetail.attempts.length > 0, `${agent.kind} task page must expose local submission after assignment`);
     assert.equal(assignedDetail.inputDigest, assignedInputDigest, `${agent.kind} page and submission digests must match`);
+    assert.deepEqual(assignedDetail.ownershipLeases.find(lease => lease.current)?.scopes, [declaredScope],
+      `${agent.kind} assignment must hold only its declared rehearsal tree`);
 
     // 4) submission preview, then submit with the exact previewed digest.
     const previewRead = await fetch(new URL(`/api/v1/projects/${idOf(projectId)}/tasks/${idOf(jobId)}/submission?inputDigest=${assignedInputDigest}`, origin),
