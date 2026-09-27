@@ -21,6 +21,11 @@
 > from this branch or treat the command sequence below as an accepted install.
 
 Run every `pnpm` command from the repository root, on the Mac that holds the workers.
+For a later VPS database upgrade, use the separate reviewed operator sequence in
+`docs/JOHNNY5_DB_ROUTE_STEPS.md`; do not reuse the one-time setup command below.
+That VPS sequence gives the `postgres` account a stage-local temporary directory
+(the VPS default `TMPDIR` is root-only) and runs TSX-dependent tooling with
+`/usr/local/bin/node22` (the VPS default Node is 20.19, below the supported 22.13).
 
 ## 1. First time only (one-time setup)
 

@@ -47,9 +47,10 @@ git clone --no-local --depth 1 --branch main "file://$PWD" "$STAGE/source"
 test "$(git -C "$STAGE/source" rev-parse HEAD)" = "$(git rev-parse HEAD)"
 CI=true pnpm --dir "$STAGE/source" install --frozen-lockfile --offline --ignore-scripts
 MAIN=$(git -C "$STAGE/source" rev-parse HEAD)
+mkdir "$STAGE/tmp"
 chown -R postgres:postgres "$STAGE/source"
-chown postgres:postgres "$STAGE"
-runuser -u postgres -- node "$STAGE/source/scripts/mac-local/database-upgrade-remote.mjs" \
+chown postgres:postgres "$STAGE" "$STAGE/tmp"
+runuser -u postgres -- env TMPDIR="$STAGE/tmp" /usr/local/bin/node22 "$STAGE/source/scripts/mac-local/database-upgrade-remote.mjs" \
   --plan --expected-main "$MAIN" | tee "$STAGE/plan.json"
 ```
 
@@ -85,7 +86,7 @@ migrator password.
 PLAN_DIGEST=$(node -e 'const p=require(process.argv[1]); if(!/^sha256:[a-f0-9]{64}$/.test(p.digest))process.exit(1); process.stdout.write(p.digest)' "$STAGE/plan.json")
 read -r -s -p 'Paste the SCRAM verifier privately: ' CR_VERIFIER
 printf '\n'
-printf '%s\n' "$CR_VERIFIER" | runuser -u postgres -- node \
+printf '%s\n' "$CR_VERIFIER" | runuser -u postgres -- env TMPDIR="$STAGE/tmp" /usr/local/bin/node22 \
   "$STAGE/source/scripts/mac-local/database-upgrade-remote.mjs" \
   --apply --expected-main "$MAIN" --expected-plan-digest "$PLAN_DIGEST"
 unset CR_VERIFIER
