@@ -13,6 +13,8 @@ export interface LocalOwnerSessionProfileV1 {
   subject: string;
   ownerCodeDigest: string;
   sessionSeconds: number;
+  /** Optional owner-configured HTTPS origin for a loopback reverse proxy. */
+  trustedOrigin?: string;
 }
 
 export type PersistedLocalOwnerSessionV1 = Readonly<{ tokenDigest: string; issuedAt: string; expiresAt: string }>;
@@ -25,14 +27,15 @@ function safeEqual(left: string, right: string): boolean {
   return a.length === b.length && timingSafeEqual(a, b);
 }
 
-function localRequest(request: Request, origin: string, requireOrigin: boolean): void {
-  const url = new URL(request.url), expected = new URL(origin);
+function localRequest(request: Request, profile: LocalOwnerSessionProfileV1, requireOrigin: boolean): void {
+  const url = new URL(request.url), expected = new URL(profile.origin);
+  const allowed = new Set([profile.origin, ...(profile.trustedOrigin ? [profile.trustedOrigin] : [])]);
   if (expected.protocol !== "http:" || expected.hostname !== "127.0.0.1" || !expected.port
-    || expected.origin !== origin || url.origin !== origin || url.protocol !== "http:"
+    || expected.origin !== profile.origin || !allowed.has(url.origin)
     || request.headers.has("forwarded") || [...request.headers.keys()].some(name => name.startsWith("x-forwarded-")))
     throw new WebAccessError("access_denied");
   const suppliedOrigin = request.headers.get("origin");
-  if (requireOrigin && suppliedOrigin !== origin || suppliedOrigin !== null && suppliedOrigin !== origin)
+  if (requireOrigin && suppliedOrigin !== url.origin || suppliedOrigin !== null && suppliedOrigin !== url.origin)
     throw new WebAccessError("access_denied");
   const fetchSite = request.headers.get("sec-fetch-site");
   if (fetchSite !== null && fetchSite !== "same-origin" && fetchSite !== "none") throw new WebAccessError("access_denied");
@@ -49,14 +52,20 @@ export function captureLocalOwnerSessionProfileV1(value: unknown): LocalOwnerSes
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("invalid_local_owner_session_profile");
   const input = value as Partial<LocalOwnerSessionProfileV1>;
   const origin = typeof input.origin === "string" ? new URL(input.origin) : undefined;
+  const trustedOrigin = typeof input.trustedOrigin === "string" ? new URL(input.trustedOrigin) : undefined;
   if (input.schema !== LOCAL_OWNER_SESSION_PROFILE_V1 || !origin || origin.protocol !== "http:" || origin.hostname !== "127.0.0.1"
     || !origin.port || origin.origin !== input.origin || typeof input.tenantId !== "string" || !input.tenantId
     || typeof input.provider !== "string" || !input.provider || typeof input.subject !== "string" || !input.subject
     || !/^sha256:[a-f0-9]{64}$/.test(input.ownerCodeDigest ?? "") || !Number.isSafeInteger(input.sessionSeconds)
     || input.sessionSeconds! < 300 || input.sessionSeconds! > 86_400)
     throw new Error("invalid_local_owner_session_profile");
+  if (input.trustedOrigin !== undefined && (!trustedOrigin || trustedOrigin.protocol !== "https:"
+    || trustedOrigin.origin !== input.trustedOrigin || trustedOrigin.pathname !== "/" || trustedOrigin.search || trustedOrigin.hash
+    || trustedOrigin.username || trustedOrigin.password || trustedOrigin.hostname.includes("*")
+    || trustedOrigin.origin === input.origin)) throw new Error("invalid_local_owner_session_profile");
   return Object.freeze({ schema: LOCAL_OWNER_SESSION_PROFILE_V1, origin: input.origin, tenantId: input.tenantId,
-    provider: input.provider, subject: input.subject, ownerCodeDigest: input.ownerCodeDigest!, sessionSeconds: input.sessionSeconds! });
+    provider: input.provider, subject: input.subject, ownerCodeDigest: input.ownerCodeDigest!, sessionSeconds: input.sessionSeconds!,
+    ...(input.trustedOrigin ? { trustedOrigin: input.trustedOrigin } : {}) });
 }
 
 /**
@@ -83,7 +92,7 @@ export class LocalOwnerSessionServiceV1 {
   }
 
   assertLocalRequest(request: Request, requireOrigin = false): void {
-    localRequest(request, this.profile.origin, requireOrigin);
+    localRequest(request, this.profile, requireOrigin);
   }
 
   async issue(request: Request, ownerCode: unknown, nowMs: number): Promise<{ cookie: string; expiresAt: string }> {
@@ -102,7 +111,8 @@ export class LocalOwnerSessionServiceV1 {
     const session = Object.freeze({ tokenDigest, issuedAt, expiresAt });
     await this.store?.save(session);
     this.sessions.set(tokenDigest, session);
-    return Object.freeze({ cookie: `${cookieName}=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${this.profile.sessionSeconds}`,
+    const secure = new URL(request.url).protocol === "https:" ? "; Secure" : "";
+    return Object.freeze({ cookie: `${cookieName}=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${this.profile.sessionSeconds}${secure}`,
       expiresAt });
   }
 

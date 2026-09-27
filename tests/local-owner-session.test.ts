@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { sha256Digest } from "../src/security";
-import { LocalOwnerSessionServiceV1, LOCAL_OWNER_SESSION_PROFILE_V1, readLocalOwnerCodeV1 } from "../src/web/v1/local-owner-session";
+import { captureLocalOwnerSessionProfileV1, LocalOwnerSessionServiceV1, LOCAL_OWNER_SESSION_PROFILE_V1,
+  readLocalOwnerCodeV1 } from "../src/web/v1/local-owner-session";
 import { WebAccessError } from "../src/web/v1/access-verifier";
 import type { LocalOwnerSessionStoreV1 } from "../src/web/v1/local-owner-session-store";
 import type { PersistedLocalOwnerSessionV1 } from "../src/web/v1/local-owner-session";
@@ -24,6 +25,30 @@ test("local owner session accepts only the correct code from the configured loop
   const identity = service.verify(request("/api/v1/projects", { cookie }), 1_001);
   assert.deepEqual(identity, { provider: "local-owner", subject: "owner:local", tokenDigest: identity.tokenDigest,
     issuedAt: "1970-01-01T00:00:01.000Z", expiresAt: "1970-01-01T00:15:01.000Z", verificationExpiresAt: "1970-01-01T00:15:01.000Z" });
+});
+
+test("an optional exact HTTPS origin gets a Secure cookie and keeps exact-origin write checks", async () => {
+  const trustedOrigin = "https://control-room-mac.example.ts.net";
+  const service = new LocalOwnerSessionServiceV1(captureLocalOwnerSessionProfileV1({ ...profile, trustedOrigin }));
+  const remote = (path: string, headers: Record<string, string> = {}, body?: string) => new Request(`${trustedOrigin}${path}`,
+    { method: body === undefined ? "GET" : "POST", headers, body });
+  const issued = await service.issue(remote("/api/v1/local-owner-session", { origin: trustedOrigin,
+    "sec-fetch-site": "same-origin", "content-type": "application/json" }, JSON.stringify({ ownerCode })), ownerCode, 1_000);
+  assert.match(issued.cookie, /; Secure$/);
+  const cookie = issued.cookie.split(";", 1)[0]!;
+  assert.equal(service.verify(remote("/api/v1/projects", { cookie }), 1_001).subject, "owner:local");
+  await assert.rejects(service.issue(remote("/api/v1/local-owner-session", { origin,
+    "content-type": "application/json" }, JSON.stringify({ ownerCode })), ownerCode, 1_002),
+  (error: unknown) => error instanceof WebAccessError && error.code === "access_denied");
+});
+
+test("an HTTPS origin is off by default and protected configuration refuses unsafe alternatives", async () => {
+  const service = new LocalOwnerSessionServiceV1(profile);
+  const remote = new Request("https://control-room-mac.example.ts.net/api/v1/projects");
+  assert.throws(() => service.verify(remote, 1_000),
+    (error: unknown) => error instanceof WebAccessError && error.code === "access_denied");
+  for (const trustedOrigin of ["http://control-room-mac.example.ts.net", "https://*.example.ts.net", "https://user@example.ts.net", "https://example.ts.net/path"])
+    assert.throws(() => captureLocalOwnerSessionProfileV1({ ...profile, trustedOrigin }));
 });
 
 test("local owner session rejects wrong code, forwarded requests, foreign origins, and expired cookies", async () => {

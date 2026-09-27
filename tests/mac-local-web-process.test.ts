@@ -16,10 +16,12 @@ test("the real Mac-local wrapper signs in locally and reaches the existing proje
   await createPrivateOwnerBootstrapCommand({ openDatabase: fixture.openDatabase(), clock: () => conformanceNow })({
     configuration: fixture.configuration, database: fixture.database, trust: fixture.trust, assertion: fixture.assertion,
   });
-  const origin = "http://127.0.0.1:3210", ownerCode = "mac-local-owner-code-long-enough";
+  const origin = "http://127.0.0.1:3210", trustedOrigin = "https://control-room-mac.example.ts.net";
+  const ownerCode = "mac-local-owner-code-long-enough";
   const app = createMacLocalWebProcessV1({ origin, workspaceId: fixture.configuration.workspaceId,
     localOwnerSession: { schema: LOCAL_OWNER_SESSION_PROFILE_V1, origin, tenantId: fixture.configuration.tenantId,
-      provider: fixture.trust.issuer, subject: conformanceSubject, ownerCodeDigest: sha256Digest({ ownerCode }), sessionSeconds: 900 },
+      provider: fixture.trust.issuer, subject: conformanceSubject, ownerCodeDigest: sha256Digest({ ownerCode }), sessionSeconds: 900,
+      trustedOrigin },
     database: { client: fixture.client, close: async () => {} }, clock: () => conformanceNow,
     taskReadKeys: { harnessIntegrityKey: new Uint8Array(32).fill(1),
       results: { integrityKey: new Uint8Array(32).fill(2), storageClass: "local", storage: { read: async () => undefined } } },
@@ -143,6 +145,23 @@ test("the real Mac-local wrapper signs in locally and reaches the existing proje
   assert.equal(results.status, 200);
   assert.equal((await results.json() as { resultSource: string }).resultSource, "configured",
     "the local website must receive the task application's result-read capability");
+  const remoteRequest = (path: string, init: RequestInit = {}) => new Request(`${trustedOrigin}${path}`, init);
+  const remoteSignedOut = await app.handle(remoteRequest("/projects"), () => new Response("unused"));
+  assert.equal(remoteSignedOut.headers.get("location"), `${trustedOrigin}/session`);
+  const remoteSigned = await app.handle(remoteRequest("/api/v1/local-owner-session", { method: "POST", headers: {
+    origin: trustedOrigin, "sec-fetch-site": "same-origin", "content-type": "application/json" },
+  body: JSON.stringify({ ownerCode }) }), () => new Response("unused"));
+  assert.equal(remoteSigned.status, 201); assert.match(remoteSigned.headers.get("set-cookie") ?? "", /; Secure$/);
+  const remoteCookie = remoteSigned.headers.get("set-cookie")!;
+  const remoteRead = await app.handle(remoteRequest("/api/v1/projects", { headers: { cookie: remoteCookie } }), () => new Response("unused"));
+  assert.equal(remoteRead.status, 200);
+  const remoteWrite = await app.handle(remoteRequest("/api/v1/projects", { method: "POST", headers: { cookie: remoteCookie,
+    origin: trustedOrigin, "content-type": "application/json", "idempotency-key": "mac-local-private-origin-write-001" },
+  body: JSON.stringify({ title: "Private address project", summary: "Exact alternate origin proof" }) }), () => new Response("unused"));
+  assert.equal(remoteWrite.status, 201);
+  const foreign = await app.handle(new Request("https://foreign.example.ts.net/api/v1/projects", { headers: { cookie: remoteCookie } }),
+    () => new Response("unused"));
+  assert.equal(foreign.status, 403);
   const fakePreview = await app.handle(request("/local-preview", { headers: { cookie: cookie! } }), () => new Response("must not render"));
   assert.equal(fakePreview.status, 404);
   await app.close();
@@ -200,17 +219,31 @@ test("the Mac-local wrapper forwards the existing assignment operation through l
   await app.close();
 });
 
-test("the Mac-local transport is loopback-only and is the only transport that relays its session cookie", async () => {
+test("the Mac-local transport stays loopback-only and admits only one configured exact HTTPS host", async () => {
   const origin = "http://127.0.0.1:3210";
+  const trustedOrigin = "https://control-room-mac.example.ts.net";
   assert.throws(() => createMacLocalNodeHandler({ origin: "https://private.example.invalid", application: {
     isReady: () => true, close: async () => {},
   }, handler: async () => new Response("unused"), assets: { count: 0, digest: "empty", respond: () => undefined } }),
   /mac_local_serving_config_invalid/);
-  const handler = createMacLocalNodeHandler({ origin, application: { isReady: () => true, close: async () => {} },
+  const handler = createMacLocalNodeHandler({ origin, secondaryOrigin: trustedOrigin,
+    application: { isReady: () => true, close: async () => {} },
     handler: async () => new Response("ok", { headers: { "set-cookie": "control_room_local_owner=value; HttpOnly" } }),
     assets: { count: 0, digest: "empty", respond: () => undefined } });
   const exchange = nodeExchange({ path: "/session" }); exchange.input.rawHeaders[1] = "127.0.0.1:3210";
   const done = new Promise<void>((resolve, reject) => { exchange.output.once("finish", resolve); exchange.output.once("error", reject); });
   void handler.handle(exchange.input, exchange.output); await done;
   assert.equal(exchange.headers.get("set-cookie"), "control_room_local_owner=value; HttpOnly");
+
+  const remote = nodeExchange({ path: "/projects", headers: ["Origin", trustedOrigin] });
+  remote.input.rawHeaders[1] = "control-room-mac.example.ts.net";
+  const remoteDone = new Promise<void>((resolve, reject) => { remote.output.once("finish", resolve); remote.output.once("error", reject); });
+  void handler.handle(remote.input, remote.output); await remoteDone;
+  assert.equal(remote.output.statusCode, 200);
+
+  const foreign = nodeExchange({ path: "/projects", headers: ["Origin", "https://foreign.example.ts.net"] });
+  foreign.input.rawHeaders[1] = "foreign.example.ts.net";
+  const foreignDone = new Promise<void>((resolve, reject) => { foreign.output.once("finish", resolve); foreign.output.once("error", reject); });
+  void handler.handle(foreign.input, foreign.output); await foreignDone;
+  assert.equal(foreign.output.statusCode, 403);
 });

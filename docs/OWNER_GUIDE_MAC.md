@@ -174,6 +174,27 @@ a Mac sleep and wake, the VPS-side PostgreSQL and Tailscale restarts, and a forc
 renewal. Those are not setup steps; they are the checks that prove the route survives real
 interruptions.
 
+### Optional private HTTPS address for a phone or PC
+
+This is off by default. It does not change the Control Room listener: the app still binds only to
+`127.0.0.1`. Tailscale Serve terminates HTTPS and proxies back to that loopback listener. Use Serve,
+not Funnel; Funnel would make the address public.
+
+1. Stop Control Room: `pnpm mac:down -- --protected-root <protected-root>`.
+2. In `<protected-root>/config/mac-local.json`, add this field inside `localOwnerSession`:
+   `"trustedOrigin": "https://<mac-name>.<tailnet-name>.ts.net"`. It must be the exact HTTPS origin,
+   with no path, wildcard, trailing slash, credentials, or query string.
+3. Start the private proxy on the Mac: `tailscale serve --bg 3210`.
+4. Confirm the printed Serve URL exactly matches `trustedOrigin`, then start Control Room with the
+   normal `pnpm mac:up -- --protected-root <protected-root>` command.
+5. Open that exact HTTPS URL on a tailnet-authorized phone or PC. Sign-in uses a `Secure`,
+   `HttpOnly`, `SameSite=Strict` cookie; writes still require the exact origin and CSRF checks.
+
+To turn it off, stop Control Room, run `tailscale serve --https=443 off`, remove `trustedOrigin`
+from the protected file, and start Control Room again. An unconfigured or different origin remains
+refused. Tailscale documents the current Serve syntax in its official
+[Serve command reference](https://tailscale.com/docs/reference/tailscale-cli/serve).
+
 ## 9. Known limitations (read before you rely on this)
 
 Nothing in this section is a bug report; it is the honest state of the
@@ -211,10 +232,11 @@ by finding its pinned executable. A worker that cannot be verified shows
 `ready` and still `not_proven`, which simply means it has not published a
 result yet. Neither state is a fault report.
 
-### 9.4 One Mac, one owner, loopback only
+### 9.4 One Mac, one owner, loopback listener
 
-The site is served on the loopback address on this Mac only. It is not
-published to the network, and it is not reachable from your phone. The
+The site always listens on the loopback address on this Mac only. It is not
+reachable from another device unless the owner configures the optional exact private HTTPS origin
+above and enables Tailscale Serve. The
 database is reached over a private connection to the one remote machine
 holding it, and the database port is not open to your other devices.
 

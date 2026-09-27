@@ -82,9 +82,9 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
   });
   let closed: Promise<void> | undefined;
 
-  function pageRedirect(path: "/session" | "/projects"): Response {
+  function pageRedirect(path: "/session" | "/projects", requestOrigin = options.origin): Response {
     return new Response(null, { status: 303, headers: { ...privateResponseHeaders,
-      location: new URL(path, options.origin).href } });
+      location: new URL(path, requestOrigin).href } });
   }
 
   const routeId = (value: string) => {
@@ -156,7 +156,7 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
   async function handle(request: Request, render: () => Promise<Response> | Response): Promise<Response> {
     try {
       const url = new URL(request.url);
-      if (url.origin !== options.origin) throw new WebAccessError("access_denied");
+      if (url.origin !== options.origin && url.origin !== profile.trustedOrigin) throw new WebAccessError("access_denied");
       if (url.pathname === "/session") {
         if (request.method !== "GET" || url.search) throw new WebAccessError("invalid_request");
         sessions.assertLocalRequest(request);
@@ -250,7 +250,7 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
     } catch (error) {
       if (error instanceof WebAccessError && error.code === "authentication_required" && request.method === "GET"
         && !new URL(request.url).pathname.startsWith("/api/")) {
-        return pageRedirect("/session");
+        return pageRedirect("/session", new URL(request.url).origin);
       }
       return webFailure(error);
     }
