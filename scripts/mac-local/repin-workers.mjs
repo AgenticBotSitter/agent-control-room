@@ -25,6 +25,8 @@ const installLocations = Object.freeze([
       .sort((a, b) => b.localeCompare(a, undefined, { numeric: true }));
     return versions.map(v => join(claudeRoot, v, "claude.app/Contents/MacOS/claude")).filter(p => existsSync(p));
   } },
+  // The owner's Claude Code CLI can also be the npm install under Hermes's Node prefix.
+  { kind: "claude-code", root: join(home, ".hermes/node/bin/"), current: async () => [join(home, ".hermes/node/bin/claude")] },
   { kind: "codex", root: "/Applications/ChatGPT.app/Contents/Resources/", current: async () => [
     "/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex",
     "/Applications/ChatGPT.app/Contents/Resources/codex",
