@@ -30,3 +30,14 @@ test("the public cleanup command targets only the ownership registry", async () 
   assert.match(source, /runtime\.pgCtl\(ownership\.databaseDirectory/u);
   assert.match(source, /cleanupRegisteredRehearsals/u);
 });
+
+test("both restart rehearsals reuse the original owner session instead of signing in again", async () => {
+  for (const name of ["journey.ts", "section13.ts"]) {
+    const source = await readFile(new URL(`../scripts/mac-local/rehearsal/${name}`, import.meta.url), "utf8");
+    assert.match(source, /the original owner session must survive task-host restart/u, name);
+  }
+  const section13 = await readFile(new URL("../scripts/mac-local/rehearsal/section13.ts", import.meta.url), "utf8");
+  assert.equal(section13.match(/\/api\/v1\/local-owner-session/g)?.length, 1);
+  const journey = await readFile(new URL("../scripts/mac-local/rehearsal/journey.ts", import.meta.url), "utf8");
+  assert.equal(journey.match(/await signIn\(\)/g)?.length, 1);
+});

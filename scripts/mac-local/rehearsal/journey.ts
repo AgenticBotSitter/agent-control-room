@@ -281,7 +281,7 @@ async function main() {
     assert.equal(browser.status, 0, `owner browser journey failed with status ${browser.status}`);
     return;
   }
-  let cookie = await signIn();
+  const cookie = await signIn();
   const projectResponse = await fetch(new URL("/api/v1/projects", origin), {
     method: "POST", headers: { origin, cookie, "content-type": "application/json", "idempotency-key": "journey-rehearsal-project" },
     body: JSON.stringify({ title: "Post-startup journey project", summary: "One task per local agent." }),
@@ -334,7 +334,8 @@ async function main() {
   const restartForLegacyShape = await invoke(upArgs);
   assert.equal(restartForLegacyShape.status, 0, restartForLegacyShape.stderr || restartForLegacyShape.stdout);
   await recordHost();
-  cookie = await signIn();
+  const resumedSession = await fetch(new URL("/api/v1/local-workers", origin), { headers: { cookie } });
+  assert.equal(resumedSession.status, 200, "the original owner session must survive task-host restart");
   const legacyPlanOptions = await requireOk(await fetch(new URL(
     `/api/v1/projects/${idOf(projectId)}/tasks/${idOf(legacySourceJobId)}/plan`, origin), { headers: { cookie } }),
   200, "pre-0091-shaped planning options") as { templates?: { id: string }[]; availability: string };
