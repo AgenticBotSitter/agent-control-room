@@ -165,6 +165,15 @@ task workspace. The current macOS direct-process boundary cannot enforce a
 hard per-run CPU or memory ceiling. Adding those controls requires a separately
 reviewed native process launcher.
 
+### Disposable rehearsal cleanup
+
+`pnpm mac:rehearsal down <absolute-rehearsal-root>` stops only processes and the PostgreSQL
+data directory bound to that rehearsal's private ownership record, then removes the entire
+disposable rehearsal root. Copy any logs or evidence you need before running `down`; rehearsal
+data is not kept afterward. Repeating `down` after removal reports that the root is already
+cleaned. A pre-ownership rehearsal root is retained with an explicit refusal so it can be handled
+with the legacy manual stop procedure instead of being deleted without proof.
+
 ### Owner-review profile v2 upgrade
 
 Database migration 0092 is additive: it does not rewrite existing review profiles or targets.

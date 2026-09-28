@@ -27,7 +27,7 @@ if (!arg || process.argv.length !== 3 || !isAbsolute(arg) || resolve(arg) !== ar
   process.stderr.write("usage: node --import tsx scripts/mac-local/rehearsal/section13.ts ABSOLUTE_REHEARSAL_DIR\n");
   process.exit(2);
 }
-const root = resolve(arg), protectedRoot = join(root, "protected");
+let root = resolve(arg), protectedRoot = join(root, "protected");
 const shutdown = new AbortController();
 type RehearsalProcess = { kind: "journey" | "host" | "child"; pid: number; command: readonly string[]; group: boolean };
 let ownershipReady = false, ownedProcesses: RehearsalProcess[] = [];
@@ -104,6 +104,16 @@ await writeFile(join(protectedRoot, "config/mac-local.json"), `${JSON.stringify(
 await chmod(join(protectedRoot, "config/mac-local.json"), 0o600);
 
 const target = `host=127.0.0.1 port=${config.database.port} dbname=control_room user=postgres`;
+const readPersistedOwnerSessions = async () => {
+  const sessionDatabase = connectTarget(target);
+  await sessionDatabase.connect();
+  try {
+    return (await sessionDatabase.query<{ token_digest: string; issued_at: string; expires_at: string; revoked_at: string | null }>(
+      `SELECT token_digest,issued_at::text,expires_at::text,revoked_at::text
+        FROM control_web_sessions WHERE tenant_id=$1 ORDER BY token_digest`,
+      [config.localOwnerSession.tenantId])).rows;
+  } finally { await sessionDatabase.end(); }
+};
 const admin = connectTarget(target);
 await admin.connect();
 try {
@@ -288,6 +298,16 @@ const sessionResponse = await fetch(new URL("/api/v1/local-owner-session", origi
 assert.equal(sessionResponse.status, 201, "local disposable owner sign-in should succeed");
 const cookie = (sessionResponse.headers.get("set-cookie") ?? "").split(";", 1)[0];
 assert.ok(cookie.startsWith("control_room_local_owner="));
+const sessionToken = cookie.slice("control_room_local_owner=".length);
+assert.match(sessionToken, /^[A-Za-z0-9_-]{43}$/u);
+const sessionTokenDigest = sha256Digest({ token: sessionToken, installationBindingDigest: sha256Digest({
+  schema: config.localOwnerSession.schema, origin: config.localOwnerSession.origin,
+  tenantId: config.localOwnerSession.tenantId, provider: config.localOwnerSession.provider,
+  subject: config.localOwnerSession.subject, ownerCodeDigest: config.localOwnerSession.ownerCodeDigest,
+}) });
+const sessionBeforeRestart = await readPersistedOwnerSessions();
+assert.equal(sessionBeforeRestart.length, 1, "the original owner session must be persisted before restart");
+assert.equal(sessionBeforeRestart[0]?.token_digest, sessionTokenDigest);
 const projectResponse = await fetch(new URL("/api/v1/projects", origin), {
   method: "POST", headers: { origin, cookie, "content-type": "application/json", "idempotency-key": "section13-rehearsal-project" },
   body: JSON.stringify({ title: "Disposable section 13 rehearsal", summary: "Readiness only; no task submissions." }),
@@ -299,6 +319,9 @@ assert.equal(taskHost.status, 0, taskHost.stderr || taskHost.stdout);
 await recordHost();
 const workersResponse = await fetch(new URL("/api/v1/local-workers", origin), { headers: { cookie } });
 assert.equal(workersResponse.status, 200, "the original owner session must survive task-host restart");
+const sessionAfterRestart = await readPersistedOwnerSessions();
+assert.deepEqual(sessionAfterRestart, sessionBeforeRestart,
+  "restart must reuse the exact persisted session digest without issuing or replacing a session");
 const workersBody = await workersResponse.json();
 assert.equal(workersBody.workers?.length, 3);
 assert.ok(workersBody.workers.every((worker: { state: string }) => worker.state === "ready"));
@@ -306,7 +329,9 @@ await stopHost();
 process.stdout.write("Focused first-owner and section 13 checks plus three-worker readiness: PASS (no tasks submitted)\n");
 }
 
-await validateRehearsalOwnership({ root });
+const initialOwnership = (await validateRehearsalOwnership({ root })).ownership;
+root = initialOwnership.root;
+protectedRoot = initialOwnership.protectedRoot;
 ownershipReady = true;
 let cleanupPromise: Promise<void> | undefined;
 const cleanup = () => cleanupPromise ??= (async () => {

@@ -8,6 +8,7 @@ import {
   createRehearsalOwnership,
   installRehearsalSignalCleanup,
   runBoundedChild,
+  validateRehearsalOwnership,
 } from "../scripts/mac-local/rehearsal/lifecycle.mjs";
 
 async function temporaryRoot(t) {
@@ -39,16 +40,30 @@ test("ownership stores an absolute repository helper path without its trailing s
   assert.equal(ownership.repositoryRoot, repositoryRoot.slice(0, -1));
 });
 
+test("ownership canonicalizes a real mktemp root whose ancestors are symlinked", async t => {
+  const root = await mkdtemp(join(tmpdir(), "acr-rehearsal-mktemp-"));
+  await chmod(root, 0o700);
+  const registryDirectory = join(root, "registry"), rehearsal = join(root, "run");
+  await mkdir(rehearsal, { mode: 0o700 });
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const ownership = await createRehearsalOwnership({ root: rehearsal, databasePort: 15499, webPort: 3217,
+    repositoryRoot: await realpath(process.cwd()), registryDirectory });
+  assert.equal(ownership.root, await realpath(rehearsal));
+  assert.equal((await validateRehearsalOwnership({ root: rehearsal, registryDirectory })).ownership.root,
+    ownership.root);
+});
+
 test("bounded child reports its process group and kills it after the timeout", async () => {
   let spawned;
   const result = await runBoundedChild(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {
     timeoutMs: 50,
     terminateGraceMs: 20,
+    processCommand: async () => `${process.execPath} -e setInterval(() => {}, 1000)`,
     onSpawn: record => { spawned = record; },
   });
   assert.ok(spawned.pid > 1);
   assert.equal(spawned.group, true);
-  assert.deepEqual(spawned.command.slice(0, 2), [process.execPath, "-e"]);
+  assert.deepEqual(spawned.command, [`${process.execPath} -e setInterval(() => {}, 1000)`]);
   assert.equal(result.timedOut, true);
   assert.notEqual(result.signal, null);
 });
@@ -57,6 +72,7 @@ test("a failed child-registration hook terminates the child before returning", a
   const result = await runBoundedChild(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {
     timeoutMs: 5_000,
     terminateGraceMs: 20,
+    processCommand: async () => `${process.execPath} -e setInterval(() => {}, 1000)`,
     onSpawn: async () => { throw new Error("registry write failed"); },
   });
   assert.match(result.error?.message ?? "", /registry write failed/u);
@@ -67,6 +83,7 @@ test("a fast child cannot resolve before its asynchronous process registration s
   let registered = false;
   const resultPromise = runBoundedChild(process.execPath, ["-e", "process.exit(0)"], {
     timeoutMs: 5_000,
+    processCommand: async () => `${process.execPath} -e process.exit(0)`,
     onSpawn: async () => {
       await new Promise(resolve => setTimeout(resolve, 40));
       registered = true;
@@ -92,6 +109,7 @@ test("a closed child is never signalled when late process registration fails", a
   };
   const result = await runBoundedChild("fake", [], {
     spawnImpl,
+    processCommand: async () => "fake",
     onSpawn: async () => {
       await new Promise(resolve => setTimeout(resolve, 20));
       throw new Error("late registration failure");
@@ -118,6 +136,7 @@ test("a timed-out child that closes during registration is never killed through 
     spawnImpl,
     timeoutMs: 5,
     terminateGraceMs: 10,
+    processCommand: async () => "fake",
     onSpawn: async () => { await new Promise(resolve => setTimeout(resolve, 40)); },
   });
   assert.equal(result.timedOut, true);

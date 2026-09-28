@@ -35,9 +35,15 @@ test("both restart rehearsals reuse the original owner session instead of signin
   for (const name of ["journey.ts", "section13.ts"]) {
     const source = await readFile(new URL(`../scripts/mac-local/rehearsal/${name}`, import.meta.url), "utf8");
     assert.match(source, /the original owner session must survive task-host restart/u, name);
+    assert.match(source, /sessionTokenDigest/u, name);
+    assert.match(source, /assert\.deepEqual\(sessionAfterRestart, sessionBeforeRestart/u, name);
+    assert.match(source, /WHERE tenant_id=\$1 ORDER BY token_digest/u, name);
+    const restart = source.indexOf("await stopHost()", source.indexOf("sessionBeforeRestart"));
+    assert.ok(restart > 0, `${name} must stop after capturing the original session digest`);
+    assert.doesNotMatch(source.slice(restart), /\/api\/v1\/local-owner-session/u, name);
   }
   const section13 = await readFile(new URL("../scripts/mac-local/rehearsal/section13.ts", import.meta.url), "utf8");
   assert.equal(section13.match(/\/api\/v1\/local-owner-session/g)?.length, 1);
   const journey = await readFile(new URL("../scripts/mac-local/rehearsal/journey.ts", import.meta.url), "utf8");
-  assert.equal(journey.match(/await signIn\(\)/g)?.length, 1);
+  assert.equal(journey.match(/\/api\/v1\/local-owner-session/g)?.length, 1);
 });

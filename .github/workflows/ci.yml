@@ -387,6 +387,7 @@ jobs:
             mode="$1"
             database_port="$2"
             web_port="$3"
+            entrypoint="$4"
             rehearsal_port="${database_port}"
             rehearsal_root="$(mktemp -d "${RUNNER_TEMP}/mac-local-rehearsal.XXXXXX")"
             pnpm mac:rehearsal up "${rehearsal_root}" --port "${database_port}" --web-port "${web_port}" --fake-executables
@@ -396,7 +397,9 @@ jobs:
               --hermes-provider opencode-go \
               --hermes-model space-bunny-free \
               --hermes-destination https://opencode.ai:443
-            if [ -n "${mode}" ]; then
+            if [ "${entrypoint}" = "section13" ]; then
+              node --import tsx scripts/mac-local/rehearsal/section13.ts "${rehearsal_root}"
+            elif [ -n "${mode}" ]; then
               node --import tsx scripts/mac-local/rehearsal/journey.ts "${rehearsal_root}" "${mode}"
             else
               node --import tsx scripts/mac-local/rehearsal/journey.ts "${rehearsal_root}"
@@ -406,12 +409,13 @@ jobs:
             rehearsal_port=""
           }
           echo "::notice::launchd installation is macOS-only; this Linux rehearsal uses mac:up's documented detached-host path."
-          run_rehearsal "" 15499 3217
+          run_rehearsal "" 15499 3217 journey
           if grep -q -- "--model-allowlists" scripts/mac-local/rehearsal/journey.ts; then
-            run_rehearsal "--model-allowlists" 15500 3218
+            run_rehearsal "--model-allowlists" 15500 3218 journey
           else
             echo "::notice::model-allowlists journey is not present on this pre-#365 revision; the default journey passed and stacked revisions must run both modes."
           fi
+          run_rehearsal "" 15501 3219 section13
 
   owner-browser-journey:
     name: Owner browser journey

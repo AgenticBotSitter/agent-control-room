@@ -90,7 +90,7 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
       : failure.status === 403 ? "Your current access does not allow this page."
         : failure.status === 404 ? "This page or saved item is not available."
           : failure.status === 409 ? "This saved item changed. Return to Projects and open its current page."
-            : "The local service or saved database is temporarily unavailable; reconnecting… No change was retried. Try this page again in a moment.";
+            : "The local service or saved database is temporarily unavailable. No change was retried. Try this page again in a moment.";
     return new Response(`<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Control Room page unavailable</title><main><h1>Page unavailable</h1><p role="alert">${message}</p><p><a href="/projects">Return to Projects</a></p></main></html>`, {
       status: failure.status, headers: { ...privateResponseHeaders, "content-type": "text/html; charset=utf-8",
         "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'" },

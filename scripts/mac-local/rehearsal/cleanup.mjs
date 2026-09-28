@@ -40,7 +40,7 @@ const production = Object.freeze({
   signal: (pid, signal) => { try { process.kill(pid, signal); return true; } catch { return false; } },
   wait: milliseconds => new Promise(resolveWait => setTimeout(resolveWait, milliseconds)),
   pgCtl: (dataDirectory, args) => exec(configuredPgBin ? join(configuredPgBin, "pg_ctl")
-    : process.platform === "darwin" ? "/opt/homebrew/bin/pg_ctl" : "pg_ctl", ["-D", dataDirectory, ...args],
+    : "pg_ctl", ["-D", dataDirectory, ...args],
     { encoding: "utf8", timeout: 30_000 }),
 });
 
@@ -122,6 +122,17 @@ async function discoverExactHosts(ownership, runtime) {
 
 export async function cleanupRehearsalRoot({ root, registryDirectory = defaultRegistryDirectory(),
   forbiddenProtectedRoots = [], graceMs = 5_000 }, runtime = production) {
+  try { await runtime.lstat(root); }
+  catch (error) {
+    if (error?.code === "ENOENT") return Object.freeze({ root, cleaned: true, alreadyCleaned: true, outcomes: [] });
+    throw error;
+  }
+  try { await runtime.lstat(join(root, ".control-room-rehearsal.json")); }
+  catch (error) {
+    if (error?.code === "ENOENT") return Object.freeze({ root, cleaned: false,
+      reason: "rehearsal_ownership_marker_missing", outcomes: [] });
+    throw error;
+  }
   const validated = await validateRehearsalOwnership({ root, registryDirectory, forbiddenProtectedRoots }, runtime);
   const ownership = validated.ownership;
   const outcomes = [];
@@ -191,8 +202,10 @@ export async function cleanupRegisteredRehearsals({ registryDirectory = defaultR
       const record = JSON.parse(await runtime.readFile(join(registryDirectory, name), "utf8"));
       if (record?.schema !== REHEARSAL_SCHEMA || `${record.runId}.json` !== name)
         throw new Error("rehearsal_registry_entry_invalid");
-      results.push(await cleanupRehearsalRoot({ root: record.root, registryDirectory,
-        forbiddenProtectedRoots, graceMs }, runtime));
+      const result = await cleanupRehearsalRoot({ root: record.root, registryDirectory,
+        forbiddenProtectedRoots, graceMs }, runtime);
+      if (result.alreadyCleaned) await runtime.rm(join(registryDirectory, name), { force: true });
+      results.push(result);
     } catch (error) {
       results.push(Object.freeze({ root: undefined, cleaned: false,
         reason: error instanceof Error ? error.message : "rehearsal_cleanup_failed", outcomes: [] }));
