@@ -51,14 +51,15 @@ CREATE TABLE control_pipeline_build_publications (
     AND evidence->>'evidenceDigest'=evidence_digest)
 );
 CREATE TRIGGER control_pipeline_build_publications_immutable BEFORE UPDATE OR DELETE
-  ON control_pipeline_build_publications FOR EACH ROW EXECUTE FUNCTION reject_append_only_mutation();
+  ON public.control_pipeline_build_publications FOR EACH ROW EXECUTE FUNCTION public.reject_append_only_mutation();
 CREATE TRIGGER control_pipeline_build_publications_no_truncate BEFORE TRUNCATE
-  ON control_pipeline_build_publications FOR EACH STATEMENT EXECUTE FUNCTION reject_append_only_mutation();
+  ON public.control_pipeline_build_publications FOR EACH STATEMENT EXECUTE FUNCTION public.reject_append_only_mutation();
 
-CREATE OR REPLACE FUNCTION guard_pipeline_stage_run_write() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION guard_pipeline_stage_run_write() RETURNS trigger
+LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $$
 DECLARE linked record;
 BEGIN
-  SELECT project_id,pipeline_run_id,stage_kind,stage_ordinal INTO linked FROM control_jobs
+  SELECT project_id,pipeline_run_id,stage_kind,stage_ordinal INTO linked FROM public.control_jobs
     WHERE tenant_id=NEW.tenant_id AND id=NEW.current_job_id;
   IF linked.project_id IS DISTINCT FROM NEW.project_id
     OR linked.pipeline_run_id IS DISTINCT FROM NEW.pipeline_run_id
@@ -78,4 +79,4 @@ BEGIN
   END IF;
   RETURN NEW;
 END $$;
-REVOKE ALL ON FUNCTION guard_pipeline_stage_run_write() FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.guard_pipeline_stage_run_write() FROM PUBLIC;

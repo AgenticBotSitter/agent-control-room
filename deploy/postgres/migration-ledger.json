@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "digest": "396b8d339888262753b4aaa93eabdc963ec119e5598b8f316d370a327967cd28",
+  "digest": "f2b6e80b075f3cc4b4e8536ade81593d7f755628777b1d093274ccc00aa01c1b",
   "entries": [
     {
       "file": "db/migrations/0001_control_room_core.sql",
@@ -587,13 +587,13 @@
     {
       "file": "db/migrations/0098_pipeline_build_publications.sql",
       "order": 98,
-      "sha256": "69a5ed0a204ab5f768e50165b4077379668685781e2662954d372da7c4a4863c",
+      "sha256": "826fa819f266b3a2693e244bf0bf104e8f75cdea5844147826eaf67244bd0b5f",
       "kind": "migrate"
     },
     {
       "file": "db/migrations/0099_restore_private_web_action_inbox_guard.sql",
       "order": 99,
-      "sha256": "91ebe0520a029c3ed0fc6de7e0145363691fe358478faba9fdde26eb576b1833",
+      "sha256": "215c28bd82c9c5907adeef405514a66efd3487424bf16e0ed25b670953c7df96",
       "kind": "migrate"
     },
     {
