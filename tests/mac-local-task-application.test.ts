@@ -26,6 +26,7 @@ test("Mac-local task composition reuses the canonical operations without startin
     evidence: { ...configuration.coordinator.evidence!, database: f.openDatabase(configuration.coordinator.evidence!.database) },
     sessions: { ...configuration.coordinator.sessions!, database: f.openDatabase(configuration.coordinator.sessions!.database) },
     nativeHttp: configuration.coordinator.nativeHttp,
+    workBatches: { integrityKey: new Uint8Array(32).fill(44), selectionAuthority: { assertCurrent: () => true } },
   };
   const webDatabase = f.openDatabase(configuration.web.database);
   const app = await createMacLocalTaskApplicationV1({
@@ -51,6 +52,8 @@ test("Mac-local task composition reuses the canonical operations without startin
   assert.equal(app.taskReadKeys?.manualVerificationScenarios, manualVerificationScenarios,
     "the Mac-local result page receives the same human-only scenario source as the write operation");
   assert.equal(app.queueDelivery, undefined, "constructing the local website must not start or imply a queue worker");
+  assert.equal(typeof app.workBatchAuthority?.acceptedResultProof, "function",
+    "production composition must expose the owner authority that projects authenticated predecessor provenance");
   assert.ok(!f.trace.includes("queue-start"));
 
   await app.close();

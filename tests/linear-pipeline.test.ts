@@ -9,6 +9,7 @@ import { taskFixture } from "./helpers/web-task";
 import { taskAssignmentFixture } from "./helpers/task-assignment";
 import { now, origin, request, trust } from "./helpers/web-foundation";
 import { binding, instant } from "./hermes-native-fixture";
+import { nativeQualityCompletionFixture, qualityText } from "./helpers/native-quality-completion";
 
 const key = new Uint8Array(32).fill(12);
 const template = { name: "Build, check, validate", description: "Complete one bounded change and review it.",
@@ -31,6 +32,40 @@ async function fixture() {
   const service = new LinearPipelineServiceV1(f.client, { tenantId: "tenant:web", workspaceId: "workspace:web" }, key,
     { assertCurrent: () => true, isAcceptedResultCurrent: () => false }, () => now);
   return { ...f, projects: f.service, service };
+}
+
+async function completedPredecessorFixture() {
+  let runJobIds: readonly string[] = [];
+  const pipelineKey = new Uint8Array(32).fill(55);
+  const quality = await nativeQualityCompletionFixture(qualityText, async base => {
+    const service = new LinearPipelineServiceV1(base.db, base.scope, pipelineKey,
+      { assertCurrent: () => true, isAcceptedResultCurrent: () => false }, () => instant + 5000);
+    const stages = template.stages.map(stage => ({ ...stage, workerId: "executor:hermes-native", workerKind: "hermes" as const,
+      nodeId: binding.nodeId, provider: "provider:test", profile: "profile:test" }));
+    const saved = await service.createTemplate(base.identity, binding.projectId, { ...template, stages });
+    const run = await service.instantiate(base.identity, binding.projectId,
+      { templateId: saved.templateId, title: "Authenticated predecessor" }, "linear-completed-predecessor-0001");
+    runJobIds = run.jobIds;
+    // The lifecycle fixture owns stage-zero assignment and predates pipeline
+    // admission. Unlink only that source job so it can produce the real
+    // retained completion proof consumed by the stage-one admission below.
+    await base.db.query(`UPDATE control_jobs SET stage_kind=NULL,stage_ordinal=NULL,pipeline_run_id=NULL
+      WHERE tenant_id=$1 AND id=$2`, [binding.tenantId, run.jobIds[0]]);
+    return { draft: { title: "Authenticated predecessor", instructions: template.description },
+      source: { receipt: { jobId: run.jobIds[0]! } } };
+  });
+  await quality.ready(); await quality.complete();
+  const base = quality.f.assignmentFixture;
+  const expected = sha256Digest({ title: "Authenticated predecessor", instructions: template.description });
+  const prepared = await base.planner.plan(base.identity, binding.projectId, runJobIds[1]!, expected);
+  let acceptedChecks = 0;
+  const authority: WorkBatchAssignmentAdmissionAuthority = { integrityKey: pipelineKey,
+    assertCurrent: async () => {}, assertAcceptedResultCurrent: async () => { acceptedChecks += 1; } };
+  const coordinator = new TaskAssignmentCoordinator(base.db, base.scope, base.planner, [base.route], () => instant + 8000,
+    [], undefined, undefined, undefined, undefined, authority);
+  const assign = () => coordinator.assign(base.identity, binding.projectId, prepared.receipt.jobId,
+    binding.nodeId, prepared.receipt.inputDigest);
+  return { quality, base, runJobIds, prepared, assign, acceptedChecks: () => acceptedChecks };
 }
 
 test("a linear pipeline materializes one canonical request/workflow and three inert dependent jobs", async t => {
@@ -146,6 +181,14 @@ test("pre-0098 authenticated pipelines remain readable but cannot publish or ins
     { templateId: saved.templateId, title: "Legacy must be revised" }, "linear-legacy-upgrade-0002"), /conflict/u);
 });
 
+test("pipeline instantiation screens secret-shaped titles before persistence", async t => {
+  const f = await fixture(); t.after(() => void f.db.close());
+  const saved = await f.service.createTemplate(f.identity, f.project.projectId, template);
+  await assert.rejects(f.service.instantiate(f.identity, f.project.projectId,
+    { templateId: saved.templateId, title: "api_key=synthetic-value-123456" }, "linear-secret-screen-0001"), /invalid_request/u);
+  assert.equal((await f.db.query("SELECT 1 FROM pipeline_runs")).rows.length, 0);
+});
+
 test("template creation authorizes before consulting protected selection and instantiation revalidates it", async t => {
   const f = await taskFixture(); t.after(() => void f.db.close());
   let selectionChecks = 0, current = true;
@@ -228,6 +271,46 @@ test("planner propagates pipeline lineage and assignment revalidates stage zero 
   assert.equal(selectionChecks, 2);
 });
 
+test("pipeline assignment admits an exact stage after an authenticated accepted predecessor", async t => {
+  const f = await completedPredecessorFixture(); t.after(f.quality.close);
+  await f.assign();
+  assert.equal(f.acceptedChecks(), 1);
+});
+
+test("pipeline assignment independently rechecks the exact predecessor dependency edge", async t => {
+  const f = await completedPredecessorFixture(); t.after(f.quality.close);
+  await f.base.db.query("DELETE FROM control_job_dependencies WHERE tenant_id=$1 AND job_id=$2",
+    [binding.tenantId, f.runJobIds[1]]);
+  await assert.rejects(f.assign(), /conflict/u);
+  assert.equal(f.acceptedChecks(), 0);
+});
+
+test("pipeline assignment independently authenticates the saved stage record", async t => {
+  const f = await completedPredecessorFixture(); t.after(f.quality.close);
+  await f.base.db.query("UPDATE pipeline_stage_runs SET auth_tag=$1 WHERE tenant_id=$2 AND current_job_id=$3",
+    [`hmac-sha256:${"0".repeat(64)}`, binding.tenantId, f.runJobIds[1]]);
+  await assert.rejects(f.assign(), /conflict/u);
+  assert.equal(f.acceptedChecks(), 0);
+});
+
+test("pipeline assignment independently matches the planned model selection", async t => {
+  const f = await completedPredecessorFixture(); t.after(f.quality.close);
+  await f.base.db.query("UPDATE control_task_model_selections SET model='model:substituted' WHERE tenant_id=$1 AND job_id=$2",
+    [binding.tenantId, f.prepared.receipt.jobId]);
+  await assert.rejects(f.assign(), /conflict/u);
+  assert.equal(f.acceptedChecks(), 0);
+});
+
+test("pipeline assignment independently requires retained canonical predecessor proof", async t => {
+  const f = await completedPredecessorFixture(); t.after(f.quality.close);
+  await f.base.db.query("DROP TRIGGER control_transition_events_append_only ON control_transition_events");
+  await f.base.db.query(`DELETE FROM control_transition_events WHERE tenant_id=$1 AND entity_kind='job'
+    AND entity_id=$2 AND to_state='succeeded' AND idempotency_key LIKE 'native-completion:%:job'`,
+  [binding.tenantId, f.base.prepared.receipt.jobId]);
+  await assert.rejects(f.assign(), /conflict/u);
+  assert.equal(f.acceptedChecks(), 0);
+});
+
 test("pipeline HTTP route requires gateway authentication", async t => {
   const f = await fixture(); t.after(() => void f.db.close());
   const handler = createLinearPipelineHttpHandlerV1({ origin, trust, service: f.service, clock: () => now });
@@ -254,6 +337,27 @@ test("schema constraints refuse partial pipeline columns, unknown kinds and cros
     { title: "Other project task", instructions: "Stay in the other project." }, "linear-other-task-0001");
   await assert.rejects(f.db.query(`UPDATE control_jobs SET stage_kind='build',stage_ordinal=0,pipeline_run_id=$1 WHERE id=$2`,
     [run.runId, otherTask.receipt.jobId]), /foreign key constraint/u);
+});
+
+test("pipeline projection pauses every stage outside an active project", async t => {
+  const f = await fixture(); t.after(() => void f.db.close());
+  const saved = await f.service.createTemplate(f.identity, f.project.projectId, template);
+  const run = await f.service.instantiate(f.identity, f.project.projectId,
+    { templateId: saved.templateId, title: "Paused projection" }, "linear-paused-projection-0001");
+  await f.projects.transition(f.identity, f.project.projectId, { lifecycle: "paused", expectedVersion: 1 },
+    "pipeline-project-pause-0001");
+  assert.deepEqual((await f.service.view(f.identity, f.project.projectId, run.runId)).stages.map(stage => stage.state),
+    ["paused", "paused", "paused"]);
+});
+
+test("pipeline projection fails closed when the run no longer has exactly three stages", async t => {
+  const f = await fixture(); t.after(() => void f.db.close());
+  const saved = await f.service.createTemplate(f.identity, f.project.projectId, template);
+  const run = await f.service.instantiate(f.identity, f.project.projectId,
+    { templateId: saved.templateId, title: "Stage count guard" }, "linear-stage-count-guard-0001");
+  await f.db.query("DROP TRIGGER pipeline_stage_runs_guard ON pipeline_stage_runs");
+  await f.db.query("DELETE FROM pipeline_stage_runs WHERE pipeline_run_id=$1 AND stage_ordinal=2", [run.runId]);
+  await assert.rejects(f.service.view(f.identity, f.project.projectId, run.runId), /pipeline_integrity_failed/u);
 });
 
 test("0098 and 0096 down migrations refuse retained policy/history and remove owned objects only when empty", async t => {

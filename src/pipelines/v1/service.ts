@@ -423,6 +423,7 @@ export class LinearPipelineServiceV1 {
   async instantiate(identity: VerifiedWebIdentity, projectId: string, value: unknown, idempotencyKey: string) {
     const parsed = instantiateLinearPipelineSchemaV1.safeParse(value);
     if (!parsed.success || !/^[A-Za-z0-9:_-]{12,180}$/.test(idempotencyKey)) throw new WebAccessError("invalid_request");
+    try { assertNoSecretMaterial(parsed.data); } catch { throw new WebAccessError("invalid_request"); }
     return this.#authority.authenticated(identity, async (tx, actor) => {
       actor.require("tasks.propose", projectId, true); await this.#project(tx, projectId, true);
       const template = (await tx.query<TemplateRow>(`SELECT id,project_id,name,description,stages,max_stages,max_total_loops,
