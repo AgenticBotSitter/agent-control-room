@@ -8,15 +8,20 @@
 // Usage: node --import tsx scripts/mac-local/rehearsal/journey.ts ABSOLUTE_REHEARSAL_DIR
 //   [--browser-proof|--browser-e2e|--browser-owner-e2e|--browser-adversarial-e2e|--model-allowlists]
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { execFile } from "node:child_process";
 import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
+import { promisify } from "node:util";
 import { Client } from "pg";
 import { connectTarget } from "../../../deploy/postgres/evidence.mjs";
 import { sha256Digest } from "../../../src/security/canonical-digest";
 import { applyMacLocalFirstOwnerV1 } from "../first-owner-vps.mjs";
 import { serviceInstalled } from "../service.mjs";
+import { alive, hostCommand, readPid, runtimePaths, stopRecorded } from "../stack.mjs";
+import { cleanupRehearsalRoot } from "./cleanup.mjs";
+import { installRehearsalSignalCleanup, runBoundedChild, updateRehearsalProcesses,
+  validateRehearsalOwnership } from "./lifecycle.mjs";
 
 const [arg, mode] = process.argv.slice(2);
 if (!arg || ![3, 4].includes(process.argv.length) || mode !== undefined && !["--browser-proof", "--browser-e2e",
@@ -26,13 +31,12 @@ if (!arg || ![3, 4].includes(process.argv.length) || mode !== undefined && !["--
   process.exit(2);
 }
 const root = resolve(arg), protectedRoot = join(root, "protected");
-const pgBin = process.env.PG_BIN;
-if (pgBin !== undefined && (!isAbsolute(pgBin) || resolve(pgBin) !== pgBin)) {
-  throw new Error("rehearsal_pg_bin_must_be_absolute");
-}
-const pgExecutable = (name: string) => pgBin ? join(pgBin, name) : name;
-let verifiedThisRehearsalCluster = false;
-let stackMayBeUp = false;
+const shutdown = new AbortController();
+type RehearsalProcess = { kind: "journey" | "host" | "child"; pid: number; command: readonly string[]; group: boolean };
+let ownershipReady = false;
+let ownedProcesses: RehearsalProcess[] = [];
+let processUpdate = Promise.resolve();
+const exec = promisify(execFile);
 
 const AGENTS = Object.freeze([
   { kind: "claude" as const, worker: "claude-code" as const, node: "claude" },
@@ -109,11 +113,43 @@ exit 0
 }
 const fakeScript = Object.freeze({ hermes: hermesFakeScript, "claude-code": claudeFakeScript, codex: codexFakeScript });
 
-function invoke(args: string[]) {
-  return spawnSync(process.execPath, ["--import", "tsx", ...args], {
-    cwd: process.cwd(), encoding: "utf8", timeout: 180_000,
-    env: { ...process.env, CONTROL_ROOM_PROTECTED_ROOT: protectedRoot },
+async function saveProcesses(processes: RehearsalProcess[]) {
+  processUpdate = processUpdate.then(async () => {
+    await updateRehearsalProcesses({ root, processes }); ownedProcesses = processes;
   });
+  return processUpdate;
+}
+async function invoke(args: string[], timeoutMs = 180_000) {
+  let child: RehearsalProcess | undefined;
+  const result = await runBoundedChild(process.execPath, ["--import", "tsx", ...args], {
+    cwd: process.cwd(), timeoutMs, signal: shutdown.signal,
+    env: { ...process.env, CONTROL_ROOM_PROTECTED_ROOT: protectedRoot },
+    async onSpawn(record) {
+      const registered: RehearsalProcess = { kind: "child", ...record };
+      child = registered;
+      await saveProcesses([...ownedProcesses.filter(value => value.kind !== "child"), registered]);
+    },
+  });
+  if (child) await saveProcesses(ownedProcesses.filter(value => value.pid !== child!.pid));
+  return result;
+}
+async function recordHost() {
+  const command = hostCommand(protectedRoot), pid = await readPid(runtimePaths(protectedRoot).hostPid);
+  if (!pid || !alive(pid, command)) throw new Error("rehearsal_host_identity_unavailable");
+  await saveProcesses([...ownedProcesses.filter(value => value.kind !== "host"),
+    { kind: "host", pid, command, group: true }]);
+}
+async function forgetStoppedHost() {
+  const host = ownedProcesses.find(value => value.kind === "host");
+  if (host && alive(host.pid, host.command)) throw new Error("rehearsal_host_still_running");
+  if (host) await saveProcesses(ownedProcesses.filter(value => value !== host));
+}
+async function stopHost() {
+  const host = ownedProcesses.find(value => value.kind === "host");
+  if (!host) throw new Error("rehearsal_host_identity_unavailable");
+  const state = await stopRecorded(runtimePaths(protectedRoot).hostPid, host.command, 30);
+  if (state === "still_running") throw new Error("rehearsal_host_stop_uncertain");
+  await forgetStoppedHost();
 }
 async function writeJsonPrivate(path: string, value: unknown) {
   await writeFile(path, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 });
@@ -126,10 +162,13 @@ async function waitFor(check: () => Promise<boolean>, seconds: number) {
 }
 
 async function main() {
+  const ownership = (await validateRehearsalOwnership({ root })).ownership;
   const config = JSON.parse(await readFile(join(protectedRoot, "config/mac-local.json"), "utf8"));
   const roleMap = JSON.parse(await readFile(join(protectedRoot, "config/database-roles.json"), "utf8"));
   if (config?.database?.host !== "127.0.0.1" || config.database.database !== "control_room"
     || config.database.majorVersion !== 17 || !Number.isInteger(config.database.port)
+    || config.database.port !== ownership.databasePort || config.port !== ownership.webPort
+    || config.database.port === 5432
     || config.port === 3210 || !Number.isInteger(config.port)
     || roleMap?.coordinator?.host !== "127.0.0.1" || roleMap.coordinator.port !== config.database.port
     || roleMap.coordinator.database !== "control_room") throw new Error("rehearsal_database_scope_refused");
@@ -147,7 +186,6 @@ async function main() {
       || Math.floor((identity?.version_num ?? 0) / 10_000) !== 17
       || identity?.current_user !== "postgres" || identity.current_database !== "control_room")
       throw new Error("rehearsal_database_scope_refused");
-    verifiedThisRehearsalCluster = true;
   } finally { await admin.end(); }
 
   const coordinator = new Client({ host: roleMap.coordinator.host, port: roleMap.coordinator.port,
@@ -196,7 +234,7 @@ async function main() {
   // First-owner setup: the minimal positive path (see section13.ts for the
   // negative/fault-injection coverage of this same sequence).
   const manifestOut = join(root, "first-owner-manifest.json");
-  const generate = invoke(["scripts/mac-local/first-owner-manifest.mjs", protectedRoot, manifestOut]);
+  const generate = await invoke(["scripts/mac-local/first-owner-manifest.mjs", protectedRoot, manifestOut]);
   assert.equal(generate.status, 0, generate.stderr || generate.stdout);
   const manifest = JSON.parse(await readFile(join(protectedRoot, "config/first-owner-manifest.json"), "utf8"));
   const vps = new Client({ host: "127.0.0.1", port: config.database.port, database: "control_room", user: "postgres",
@@ -207,16 +245,16 @@ async function main() {
   finally { await vps.end(); }
   const receiptPath = join(protectedRoot, "config/first-owner-receipt.json");
   await writeJsonPrivate(receiptPath, receipt);
-  const complete = invoke(["scripts/mac-local/complete-first-owner.mjs", protectedRoot, receiptPath]);
+  const complete = await invoke(["scripts/mac-local/complete-first-owner.mjs", protectedRoot, receiptPath]);
   assert.equal(complete.status, 0, complete.stderr || complete.stdout);
 
   const upArgs = ["scripts/mac-local/up.mjs", "--protected-root", protectedRoot];
 
   // Start with no active project, then create the first project through the
   // real HTTP boundary. The running task host must prepare it without restart.
-  const start1 = invoke(upArgs);
+  const start1 = await invoke(upArgs);
   assert.equal(start1.status, 0, start1.stderr || start1.stdout);
-  stackMayBeUp = true;
+  await recordHost();
   const ownerCode = (await readFile(join(protectedRoot, "config/owner-sign-in.txt"), "utf8")).trim();
   const origin = `http://127.0.0.1:${config.port}`;
   const signIn = async () => {
@@ -230,11 +268,16 @@ async function main() {
   if (["--browser-e2e", "--browser-owner-e2e", "--browser-adversarial-e2e"].includes(mode ?? "")) {
     const browserScript = mode === "--browser-owner-e2e" ? "test:mac-local-owner-journey-browser"
       : mode === "--browser-adversarial-e2e" ? "test:adversarial-owner-browser" : "test:mac-local-owner-browser";
-    const browser = spawnSync("pnpm", ["run", browserScript], {
-      cwd: process.cwd(), encoding: "utf8", timeout: 25 * 60_000, stdio: "inherit",
+    const browser = await runBoundedChild("pnpm", ["run", browserScript], {
+      cwd: process.cwd(), timeoutMs: 25 * 60_000, signal: shutdown.signal,
       env: { ...process.env, CONTROL_ROOM_E2E_ORIGIN: origin, CONTROL_ROOM_E2E_OWNER_CODE: ownerCode,
         CONTROL_ROOM_E2E_ROOT: root },
+      async onSpawn(record) {
+        const child: RehearsalProcess = { kind: "child", ...record };
+        await saveProcesses([...ownedProcesses.filter(value => value.kind !== "child"), child]);
+      },
     });
+    await saveProcesses(ownedProcesses.filter(value => value.kind !== "child"));
     assert.equal(browser.status, 0, `owner browser journey failed with status ${browser.status}`);
     return;
   }
@@ -276,9 +319,7 @@ async function main() {
   const legacySource = await requireOk(await fetch(new URL(
     `/api/v1/projects/${idOf(projectId)}/tasks/${idOf(legacySourceJobId)}`, origin), { headers: { cookie } }),
   200, "pre-0091-shaped detail") as { inputDigest: string };
-  const stopForLegacyShape = invoke(["scripts/mac-local/down.mjs", "--protected-root", protectedRoot]);
-  assert.equal(stopForLegacyShape.status, 0, stopForLegacyShape.stderr || stopForLegacyShape.stdout);
-  stackMayBeUp = false;
+  await stopHost();
   const legacyAdmin = connectTarget(target);
   await legacyAdmin.connect();
   try {
@@ -290,9 +331,9 @@ async function main() {
     await legacyAdmin.query("ROLLBACK").catch(() => {});
     throw error;
   } finally { await legacyAdmin.end(); }
-  const restartForLegacyShape = invoke(upArgs);
+  const restartForLegacyShape = await invoke(upArgs);
   assert.equal(restartForLegacyShape.status, 0, restartForLegacyShape.stderr || restartForLegacyShape.stdout);
-  stackMayBeUp = true;
+  await recordHost();
   cookie = await signIn();
   const legacyPlanOptions = await requireOk(await fetch(new URL(
     `/api/v1/projects/${idOf(projectId)}/tasks/${idOf(legacySourceJobId)}/plan`, origin), { headers: { cookie } }),
@@ -659,9 +700,7 @@ async function main() {
   }
   process.stdout.write("Owner-review tenant-before-gate PG17 collision: PASS (captured wait, no deadlock)\n");
 
-  const finalDown = invoke(["scripts/mac-local/down.mjs", "--protected-root", protectedRoot]);
-  assert.equal(finalDown.status, 0, finalDown.stderr || finalDown.stdout);
-  stackMayBeUp = false;
+  await stopHost();
 }
 
 async function requireOk(response: Response, expected: number, label: string) {
@@ -675,22 +714,22 @@ async function require5xxOr201(response: Response, label: string) {
   return JSON.parse(text);
 }
 
+await validateRehearsalOwnership({ root });
+ownershipReady = true;
+let cleanupPromise: Promise<void> | undefined;
+const cleanup = () => cleanupPromise ??= (async () => {
+  shutdown.abort(); await processUpdate.catch(() => {});
+  if (!ownershipReady) return;
+  const result = await cleanupRehearsalRoot({ root });
+  if (!result.cleaned) throw new Error(`rehearsal_cleanup_failed:${result.reason}`);
+  ownershipReady = false;
+})();
+const signals = installRehearsalSignalCleanup(cleanup);
 try {
+  const currentCommand = (await exec("/bin/ps", ["-ww", "-o", "command=", "-p", String(process.pid)],
+    { encoding: "utf8", timeout: 10_000 })).stdout.trim();
+  if (!currentCommand) throw new Error("rehearsal_journey_identity_unavailable");
+  await saveProcesses([{ kind: "journey", pid: process.pid, command: [currentCommand], group: false }]);
   await main();
-} finally {
-  if (verifiedThisRehearsalCluster) {
-    if (stackMayBeUp) {
-      const downHost = spawnSync(process.execPath, ["--import", "tsx", "scripts/mac-local/down.mjs", "--protected-root", protectedRoot], {
-        cwd: process.cwd(), encoding: "utf8", timeout: 60_000,
-      });
-      if (downHost.status !== 0) throw new Error("rehearsal_mac_stack_stop_failed");
-    }
-    const down = spawnSync(process.execPath, ["--import", "tsx", "scripts/mac-local/rehearsal/setup.ts", "down", root], {
-      cwd: process.cwd(), encoding: "utf8", timeout: 120_000,
-    });
-    const status = spawnSync(pgExecutable("pg_ctl"), ["-D", join(root, "pg"), "status"], { encoding: "utf8", timeout: 10_000 });
-    if (status.status === 0) throw new Error("rehearsal_cluster_still_running_after_cleanup");
-    if (down.status !== 0 && !/data directory .* not exist/u.test(`${down.stderr}\n${down.stdout}`))
-      throw new Error("rehearsal_cluster_stop_failed");
-  }
 }
+finally { signals.dispose(); await cleanup(); }

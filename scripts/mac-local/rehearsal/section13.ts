@@ -2,10 +2,11 @@
 // PG17 cluster made by `pnpm mac:rehearsal up`. Do not point this at a VPS.
 // Usage: node --import tsx scripts/mac-local/rehearsal/section13.ts ABSOLUTE_REHEARSAL_DIR
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { execFile } from "node:child_process";
 import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { rename } from "node:fs/promises";
 import { isAbsolute, join, resolve } from "node:path";
+import { promisify } from "node:util";
 import { Client } from "pg";
 import { connectTarget } from "../../../deploy/postgres/evidence.mjs";
 import { sha256Digest } from "../../../src/security/canonical-digest";
@@ -16,6 +17,10 @@ import { CompletionGateStoreV1 } from "../../../src/completion-gate/v1/store";
 import { createMacLocalOwnerReviewProfileV1 } from "../../../src/web/v1/mac-local-owner-review-profile";
 import { createPrivatePostgresDatabase } from "../../../src/web/v1/private-postgres";
 import { serviceInstalled } from "../service.mjs";
+import { alive, hostCommand, readPid, runtimePaths, stopRecorded } from "../stack.mjs";
+import { cleanupRehearsalRoot } from "./cleanup.mjs";
+import { installRehearsalSignalCleanup, runBoundedChild, updateRehearsalProcesses,
+  validateRehearsalOwnership } from "./lifecycle.mjs";
 
 const [arg] = process.argv.slice(2);
 if (!arg || process.argv.length !== 3 || !isAbsolute(arg) || resolve(arg) !== arg) {
@@ -23,15 +28,59 @@ if (!arg || process.argv.length !== 3 || !isAbsolute(arg) || resolve(arg) !== ar
   process.exit(2);
 }
 const root = resolve(arg), protectedRoot = join(root, "protected");
-let verifiedThisRehearsalCluster = false;
-let stackMayBeUp = false;
+const shutdown = new AbortController();
+type RehearsalProcess = { kind: "journey" | "host" | "child"; pid: number; command: readonly string[]; group: boolean };
+let ownershipReady = false, ownedProcesses: RehearsalProcess[] = [];
+let processUpdate = Promise.resolve();
+const exec = promisify(execFile);
+async function saveProcesses(processes: RehearsalProcess[]) {
+  processUpdate = processUpdate.then(async () => {
+    await updateRehearsalProcesses({ root, processes }); ownedProcesses = processes;
+  });
+  return processUpdate;
+}
+async function invoke(args: string[], timeoutMs = 180_000) {
+  let child: RehearsalProcess | undefined;
+  const result = await runBoundedChild(process.execPath, ["--import", "tsx", ...args], {
+    cwd: process.cwd(), timeoutMs, signal: shutdown.signal,
+    env: { ...process.env, CONTROL_ROOM_PROTECTED_ROOT: protectedRoot },
+    async onSpawn(record) {
+      const registered: RehearsalProcess = { kind: "child", ...record };
+      child = registered;
+      await saveProcesses([...ownedProcesses.filter(value => value.kind !== "child"), registered]);
+    },
+  });
+  if (child) await saveProcesses(ownedProcesses.filter(value => value.pid !== child!.pid));
+  return result;
+}
+async function recordHost() {
+  const command = hostCommand(protectedRoot), pid = await readPid(runtimePaths(protectedRoot).hostPid);
+  if (!pid || !alive(pid, command)) throw new Error("rehearsal_host_identity_unavailable");
+  await saveProcesses([...ownedProcesses.filter(value => value.kind !== "host"),
+    { kind: "host", pid, command, group: true }]);
+}
+async function forgetStoppedHost() {
+  const host = ownedProcesses.find(value => value.kind === "host");
+  if (host && alive(host.pid, host.command)) throw new Error("rehearsal_host_still_running");
+  if (host) await saveProcesses(ownedProcesses.filter(value => value !== host));
+}
+async function stopHost() {
+  const host = ownedProcesses.find(value => value.kind === "host");
+  if (!host) throw new Error("rehearsal_host_identity_unavailable");
+  const state = await stopRecorded(runtimePaths(protectedRoot).hostPid, host.command, 30);
+  if (state === "still_running") throw new Error("rehearsal_host_stop_uncertain");
+  await forgetStoppedHost();
+}
 async function main() {
+const ownership = (await validateRehearsalOwnership({ root })).ownership;
 const config = JSON.parse(await readFile(join(protectedRoot, "config/mac-local.json"), "utf8"));
 const roleMap = JSON.parse(await readFile(join(protectedRoot, "config/database-roles.json"), "utf8"));
 const manifestPath = join(protectedRoot, "config/first-owner-manifest.json");
 const receiptPath = join(protectedRoot, "config/first-owner-receipt.json");
 if (config?.database?.host !== "127.0.0.1" || config.database.database !== "control_room"
   || config.database.majorVersion !== 17 || !Number.isInteger(config.database.port)
+  || config.database.port !== ownership.databasePort || config.port !== ownership.webPort
+  || config.database.port === 5432 || config.port === 3210
   || roleMap?.coordinator?.host !== "127.0.0.1" || roleMap.coordinator.port !== config.database.port
   || roleMap.coordinator.database !== "control_room") throw new Error("rehearsal_database_scope_refused");
 if (await serviceInstalled()) throw new Error("rehearsal_refused_existing_launchd_service");
@@ -55,10 +104,6 @@ await writeFile(join(protectedRoot, "config/mac-local.json"), `${JSON.stringify(
 await chmod(join(protectedRoot, "config/mac-local.json"), 0o600);
 
 const target = `host=127.0.0.1 port=${config.database.port} dbname=control_room user=postgres`;
-const invoke = (args: string[]) => spawnSync(process.execPath, ["--import", "tsx", ...args], {
-  cwd: process.cwd(), encoding: "utf8", timeout: 180_000,
-  env: { ...process.env, CONTROL_ROOM_PROTECTED_ROOT: protectedRoot },
-});
 const admin = connectTarget(target);
 await admin.connect();
 try {
@@ -68,7 +113,6 @@ try {
     || Math.floor((identity?.version_num ?? 0) / 10_000) !== 17
     || identity?.current_user !== "postgres" || identity.current_database !== "control_room")
     throw new Error("rehearsal_database_scope_refused");
-  verifiedThisRehearsalCluster = true;
 } finally { await admin.end(); }
 
 // This check is deliberately before the VPS-side transaction: missing reviewed
@@ -86,15 +130,15 @@ try {
   throw new Error("STOP: coordinator lacks SELECT on a completion-gate table; do not widen grants or provision the tenant");
 } finally { await coordinator.end(); }
 
-const generate = invoke(["scripts/mac-local/first-owner-manifest.mjs", protectedRoot, join(root, "first-owner-manifest.json")]);
+const generate = await invoke(["scripts/mac-local/first-owner-manifest.mjs", protectedRoot, join(root, "first-owner-manifest.json")]);
 assert.equal(generate.status, 0, generate.stderr || generate.stdout);
 const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
 const expectedDigest = sha256Digest(manifest);
-const nonPeer = invoke(["scripts/mac-local/first-owner-vps.mjs", "--manifest", join(root, "first-owner-manifest.json")]);
+const nonPeer = await invoke(["scripts/mac-local/first-owner-vps.mjs", "--manifest", join(root, "first-owner-manifest.json")]);
 assert.notEqual(nonPeer.status, 0, "VPS CLI must refuse when invoked by a non-postgres OS user");
 assert.match(nonPeer.stderr, /Do not automatically retry/u, "CLI failure stays generic and does not expose database details");
 const upArgs = ["scripts/mac-local/up.mjs", "--protected-root", protectedRoot];
-const noSetup = invoke(upArgs);
+const noSetup = await invoke(upArgs);
 assert.notEqual(noSetup.status, 0, "mac:up without VPS setup must refuse");
 assert.match(`${noSetup.stdout}\n${noSetup.stderr}`, /first-owner setup has not been run; see OWNER_GUIDE_MAC\.md/u);
 
@@ -135,7 +179,7 @@ try {
   await keyCheck.query("ALTER TABLE control_node_keys DISABLE TRIGGER control_node_keys_identity_immutable");
   try {
     await keyCheck.query("UPDATE control_node_keys SET fingerprint=$2 WHERE node_id=$1", [keyNode, `sha256:${"0".repeat(64)}`]);
-    const badPin = invoke(["scripts/mac-local/pin-node-keys.mjs", protectedRoot, receiptPath]);
+    const badPin = await invoke(["scripts/mac-local/pin-node-keys.mjs", protectedRoot, receiptPath]);
     assert.notEqual(badPin.status, 0, "tampered key row must fail the pin");
   } finally {
     await keyCheck.query("UPDATE control_node_keys SET fingerprint=$2 WHERE node_id=$1", [keyNode, originalFingerprint]);
@@ -155,7 +199,7 @@ try {
   const receiptForAlteredManifest = JSON.parse(originalReceipt);
   receiptForAlteredManifest.manifestDigest = sha256Digest(altered);
   await writeFile(receiptPath, `${JSON.stringify(receiptForAlteredManifest, null, 2)}\n`, { mode: 0o600 });
-  assert.notEqual(complete().status, 0, "altered genesis tag must fail the Mac finisher");
+  assert.notEqual((await complete()).status, 0, "altered genesis tag must fail the Mac finisher");
 } finally {
   await writeFile(manifestPath, originalManifest, { mode: 0o600 });
   await writeFile(receiptPath, originalReceipt, { mode: 0o600 });
@@ -165,12 +209,12 @@ try {
   const altered = JSON.parse(originalReceipt);
   altered.manifestDigest = `sha256:${"0".repeat(64)}`;
   await writeFile(receiptPath, `${JSON.stringify(altered, null, 2)}\n`, { mode: 0o600 });
-  assert.notEqual(complete().status, 0, "receipt bound to another manifest must fail");
+  assert.notEqual((await complete()).status, 0, "receipt bound to another manifest must fail");
 } finally { await writeFile(receiptPath, originalReceipt, { mode: 0o600 }); }
 
-const firstComplete = complete();
+const firstComplete = await complete();
 assert.equal(firstComplete.status, 0, firstComplete.stderr || firstComplete.stdout);
-const repeatedComplete = complete();
+const repeatedComplete = await complete();
 assert.equal(repeatedComplete.status, 0, repeatedComplete.stderr || repeatedComplete.stdout);
 
 // Simulate the required advanced-state / missing-checkpoint stop condition on
@@ -183,8 +227,8 @@ const fault = connectTarget(target);
 await fault.connect();
 try {
   await fault.query("UPDATE control_completion_gate_integrity SET revision=revision+1 WHERE tenant_id=$1", [manifest.tenant.id]);
-  assert.notEqual(complete().status, 0, "finisher must refuse advanced integrity without checkpoint");
-  const missingCheckpointUp = invoke(upArgs);
+  assert.notEqual((await complete()).status, 0, "finisher must refuse advanced integrity without checkpoint");
+  const missingCheckpointUp = await invoke(upArgs);
   assert.notEqual(missingCheckpointUp.status, 0, "mac:up must refuse advanced integrity without checkpoint");
 } finally {
   await fault.query("UPDATE control_completion_gate_integrity SET revision=1 WHERE tenant_id=$1", [manifest.tenant.id]);
@@ -226,16 +270,16 @@ try {
 }
 await rename(checkpointFile, checkpointSaved);
 try {
-  assert.notEqual(complete().status, 0, "finisher must refuse a real advanced tenant without its checkpoint");
-  assert.notEqual(invoke(upArgs).status, 0, "mac:up must refuse a real advanced tenant without its checkpoint");
+  assert.notEqual((await complete()).status, 0, "finisher must refuse a real advanced tenant without its checkpoint");
+  assert.notEqual((await invoke(upArgs)).status, 0, "mac:up must refuse a real advanced tenant without its checkpoint");
 } finally { await rename(checkpointSaved, checkpointFile); }
 
 // Prove read-only readiness with fake version-reporting executables. Create a
 // project so mac:up constructs the task provider, but intentionally submit no
 // task and invoke no worker task protocol.
-const start = invoke(upArgs);
+const start = await invoke(upArgs);
 assert.equal(start.status, 0, start.stderr || start.stdout);
-stackMayBeUp = true;
+await recordHost();
 const ownerCode = (await readFile(join(protectedRoot, "config/owner-sign-in.txt"), "utf8")).trim();
 const origin = `http://127.0.0.1:${config.port}`;
 const sessionResponse = await fetch(new URL("/api/v1/local-owner-session", origin), {
@@ -249,12 +293,10 @@ const projectResponse = await fetch(new URL("/api/v1/projects", origin), {
   body: JSON.stringify({ title: "Disposable section 13 rehearsal", summary: "Readiness only; no task submissions." }),
 });
 assert.equal(projectResponse.status, 201, `disposable project creation status ${projectResponse.status}`);
-const downBeforeTaskHost = invoke(["scripts/mac-local/down.mjs", "--protected-root", protectedRoot]);
-assert.equal(downBeforeTaskHost.status, 0, downBeforeTaskHost.stderr || downBeforeTaskHost.stdout);
-stackMayBeUp = false;
-const taskHost = invoke(upArgs);
+await stopHost();
+const taskHost = await invoke(upArgs);
 assert.equal(taskHost.status, 0, taskHost.stderr || taskHost.stdout);
-stackMayBeUp = true;
+await recordHost();
 // A local owner session does not survive a host restart; sign in again.
 const resumed = await fetch(new URL("/api/v1/local-owner-session", origin), {
   method: "POST", headers: { origin, "content-type": "application/json" }, body: JSON.stringify({ ownerCode }),
@@ -267,28 +309,26 @@ assert.equal(workersResponse.status, 200);
 const workersBody = await workersResponse.json();
 assert.equal(workersBody.workers?.length, 3);
 assert.ok(workersBody.workers.every((worker: { state: string }) => worker.state === "ready"));
-const finalDown = invoke(["scripts/mac-local/down.mjs", "--protected-root", protectedRoot]);
-assert.equal(finalDown.status, 0, finalDown.stderr || finalDown.stdout);
-stackMayBeUp = false;
+await stopHost();
 process.stdout.write("Focused first-owner and section 13 checks plus three-worker readiness: PASS (no tasks submitted)\n");
 }
 
+await validateRehearsalOwnership({ root });
+ownershipReady = true;
+let cleanupPromise: Promise<void> | undefined;
+const cleanup = () => cleanupPromise ??= (async () => {
+  shutdown.abort(); await processUpdate.catch(() => {});
+  if (!ownershipReady) return;
+  const result = await cleanupRehearsalRoot({ root });
+  if (!result.cleaned) throw new Error(`rehearsal_cleanup_failed:${result.reason}`);
+  ownershipReady = false;
+})();
+const signals = installRehearsalSignalCleanup(cleanup);
 try {
+  const currentCommand = (await exec("/bin/ps", ["-ww", "-o", "command=", "-p", String(process.pid)],
+    { encoding: "utf8", timeout: 10_000 })).stdout.trim();
+  if (!currentCommand) throw new Error("rehearsal_journey_identity_unavailable");
+  await saveProcesses([{ kind: "journey", pid: process.pid, command: [currentCommand], group: false }]);
   await main();
-} finally {
-  if (verifiedThisRehearsalCluster) {
-    if (stackMayBeUp) {
-      const downHost = spawnSync(process.execPath, ["--import", "tsx", "scripts/mac-local/down.mjs", "--protected-root", protectedRoot], {
-        cwd: process.cwd(), encoding: "utf8", timeout: 60_000,
-      });
-      if (downHost.status !== 0) throw new Error("rehearsal_mac_stack_stop_failed");
-    }
-    const down = spawnSync(process.execPath, ["--import", "tsx", "scripts/mac-local/rehearsal/setup.ts", "down", root], {
-      cwd: process.cwd(), encoding: "utf8", timeout: 120_000,
-    });
-    const status = spawnSync("pg_ctl", ["-D", join(root, "pg"), "status"], { encoding: "utf8", timeout: 10_000 });
-    if (status.status === 0) throw new Error("rehearsal_cluster_still_running_after_cleanup");
-    if (down.status !== 0 && !/data directory .* not exist/u.test(`${down.stderr}\n${down.stdout}`))
-      throw new Error("rehearsal_cluster_stop_failed");
-  }
 }
+finally { signals.dispose(); await cleanup(); }
