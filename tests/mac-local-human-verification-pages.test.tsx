@@ -81,6 +81,13 @@ test("a delayed revised-target read binds the newest revision and enables Accept
       requestedTargets.push(requested.targetId); return delayedOptions;
     }, async record() { throw new Error("record_not_expected"); }, async retrySave() { throw new Error("retry_not_expected"); } };
   const workspace = createTaskReviewWorkspace(() => client as never);
+  // Attestation is scoped to an authenticated session (see
+  // tests/review-memory.test.tsx and src/web/v1/task-review-workspace.ts).
+  // In production this binding arrives from the task client's own
+  // authenticated response before the owner ever sees the review panel; this
+  // test renders the panel directly, so it must establish the same binding
+  // itself rather than exercise an owner who was never signed in.
+  workspace.bindAuthenticatedSession({ actorId: sha256Digest("actor:one"), sessionEpoch: sha256Digest("session:one") });
   const artifact = { artifactId: "artifact:revised", attemptId: "attempt:one", runId: "run:one",
     contentHash: binding.contentHash, sizeBytes: 12, receivedAt: at, byteCheck: "matched_recorded_claim" as const,
     qualityAccepted: false as const };
