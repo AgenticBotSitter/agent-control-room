@@ -47,6 +47,54 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  affected-tests:
+    name: Affected tests (fast)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      PG_BIN: /usr/lib/postgresql/17/bin
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile --ignore-scripts
+      - name: Check whether conservative fallback requires every test
+        id: selection
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          if [ "$(node scripts/ci/affected-tests.mjs "${BASE_SHA:-HEAD^}")" = "ALL" ]; then
+            echo "all=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "all=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Install PostgreSQL 17 for the complete-test fallback
+        if: ${{ steps.selection.outputs.all == 'true' }}
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ca-certificates curl gnupg
+          sudo install -d -m 0755 /etc/apt/keyrings
+          curl --silent --show-error --location --output /tmp/pgdg.asc https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          test -s /tmp/pgdg.asc
+          head -1 /tmp/pgdg.asc | grep -q "BEGIN PGP PUBLIC KEY BLOCK"
+          sudo cp /tmp/pgdg.asc /etc/apt/keyrings/pgdg.asc
+          echo "deb [signed-by=/etc/apt/keyrings/pgdg.asc] http://apt.postgresql.org/pub/repos/apt $(lsb_release --short --codename)-pgdg main" | sudo tee /etc/apt/sources.list.d/pgdg.list
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends postgresql-17
+      - name: Run tests affected by this change
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: pnpm test:affected -- "${BASE_SHA:-HEAD^}"
+
   route:
     name: Route changed paths
     runs-on: ubuntu-latest
@@ -129,7 +177,7 @@ jobs:
       # These two need no dependencies, so they report in seconds, before the
       # install that the type checks require.
       - name: Test the lane coverage checker and the path routing
-        run: node --test tests/check-test-lane-coverage.test.mjs tests/ci-path-routing.test.mjs tests/private-name-guard.test.mjs
+        run: node --test tests/check-test-lane-coverage.test.mjs tests/affected-tests.test.mjs tests/ci-path-routing.test.mjs tests/private-name-guard.test.mjs
       - name: Fail if any test file is unreachable from GitHub Actions
         run: node scripts/check-test-lane-coverage.mjs
       - name: Reject configured private names
@@ -548,7 +596,7 @@ jobs:
   merge-gate:
     name: Full suite (merge gate)
     if: ${{ always() }}
-    needs: [route, quick, test-demo, test-server, test-components, test-articles, test-unified-product, full-mac-local-rehearsal, owner-browser-journey, full-gate]
+    needs: [affected-tests, route, quick, test-demo, test-server, test-components, test-articles, test-unified-product, full-mac-local-rehearsal, owner-browser-journey, full-gate]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -568,6 +616,7 @@ jobs:
             esac
           }
           echo "Lane results:"
+          check affected-tests "${{ needs.affected-tests.result }}"
           check route "${{ needs.route.result }}"
           check quick "${{ needs.quick.result }}"
           check demo "${{ needs.test-demo.result }}"
