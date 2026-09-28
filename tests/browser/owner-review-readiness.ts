@@ -56,8 +56,8 @@ export async function openResultWithDeferredOwnerReview(page: Page): Promise<voi
     await page.getByRole("button", { name: "Read result" }).first().click();
     await expect(page.getByRole("heading", { name: "Received result" })).toBeVisible();
     await deferred.waitUntilHeld();
-    await expect(page.getByRole("status", { name: "Loading owner review…", exact: true }))
-      .toHaveAttribute("data-state", "loading");
+    const loading = page.locator('[role="status"][data-state="loading"]');
+    await expect(loading).toHaveText("Loading owner review…");
     deferred.release();
   } finally {
     deferred.release();
