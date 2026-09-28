@@ -16,7 +16,7 @@ CREATE TABLE work_batch_agent_queue_heads (
 );
 
 CREATE FUNCTION guard_work_batch_agent_queue_head_write() RETURNS trigger
-LANGUAGE plpgsql AS $$
+LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $$
 BEGIN
   IF TG_OP='INSERT' THEN
     IF NEW.next_position<>1 THEN
@@ -29,16 +29,16 @@ BEGIN
   END IF;
   RETURN NEW;
 END $$;
-REVOKE ALL ON FUNCTION guard_work_batch_agent_queue_head_write() FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.guard_work_batch_agent_queue_head_write() FROM PUBLIC;
 CREATE TRIGGER work_batch_agent_queue_heads_guard
-  BEFORE INSERT OR UPDATE ON work_batch_agent_queue_heads
-  FOR EACH ROW EXECUTE FUNCTION guard_work_batch_agent_queue_head_write();
+  BEFORE INSERT OR UPDATE ON public.work_batch_agent_queue_heads
+  FOR EACH ROW EXECUTE FUNCTION public.guard_work_batch_agent_queue_head_write();
 CREATE TRIGGER work_batch_agent_queue_heads_no_delete
-  BEFORE DELETE ON work_batch_agent_queue_heads
-  FOR EACH ROW EXECUTE FUNCTION reject_append_only_mutation();
+  BEFORE DELETE ON public.work_batch_agent_queue_heads
+  FOR EACH ROW EXECUTE FUNCTION public.reject_append_only_mutation();
 CREATE TRIGGER work_batch_agent_queue_heads_no_truncate
-  BEFORE TRUNCATE ON work_batch_agent_queue_heads
-  FOR EACH STATEMENT EXECUTE FUNCTION reject_append_only_mutation();
+  BEFORE TRUNCATE ON public.work_batch_agent_queue_heads
+  FOR EACH STATEMENT EXECUTE FUNCTION public.reject_append_only_mutation();
 
 CREATE TABLE work_batch_queue_admissions (
   tenant_id text NOT NULL,
@@ -82,47 +82,47 @@ CREATE TABLE work_batch_queue_admissions (
 );
 
 CREATE FUNCTION guard_work_batch_queue_admission_insert() RETURNS trigger
-LANGUAGE plpgsql AS $$
-DECLARE previous work_batch_queue_admissions%ROWTYPE; has_previous boolean;
+LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $$
+DECLARE previous public.work_batch_queue_admissions%ROWTYPE; has_previous boolean;
 BEGIN
-  SELECT * INTO previous FROM work_batch_queue_admissions a
+  SELECT * INTO previous FROM public.work_batch_queue_admissions a
     WHERE a.tenant_id=NEW.tenant_id AND a.item_id=NEW.item_id
     ORDER BY a.assignment_revision DESC LIMIT 1 FOR UPDATE;
   has_previous=FOUND;
   IF NOT EXISTS (
-    SELECT 1 FROM work_batch_items i JOIN work_batches b
+    SELECT 1 FROM public.work_batch_items i JOIN public.work_batches b
       ON b.tenant_id=i.tenant_id AND b.id=i.batch_id AND b.project_id=i.project_id
     WHERE i.tenant_id=NEW.tenant_id AND i.id=NEW.item_id AND i.batch_id=NEW.batch_id
       AND i.project_id=NEW.project_id AND i.job_id=NEW.job_id AND i.decision_state='approved'
       AND b.queue_depth_limit=NEW.queue_depth_limit
-      AND EXISTS (SELECT 1 FROM control_identities identity JOIN control_role_grants grant_record
+      AND EXISTS (SELECT 1 FROM public.control_identities identity JOIN public.control_role_grants grant_record
         ON grant_record.tenant_id=identity.tenant_id AND grant_record.identity_id=identity.id
         WHERE identity.tenant_id=NEW.tenant_id AND identity.id=NEW.authorized_by_identity_id
           AND identity.actor_type='human' AND identity.state='active' AND grant_record.role_key='owner'
           AND grant_record.revoked_at IS NULL
           AND (grant_record.expires_at IS NULL OR grant_record.expires_at>NEW.admitted_at)
-          AND (grant_record.project_ids @> to_jsonb(ARRAY[NEW.project_id]::text[])
+          AND (grant_record.project_ids @> pg_catalog.to_jsonb(ARRAY[NEW.project_id]::text[])
             OR grant_record.project_ids @> '["*"]'::jsonb)
           AND (grant_record.allowed_actions @> '["work_batches.decide"]'::jsonb
             OR grant_record.allowed_actions @> '["*"]'::jsonb))
   ) OR NOT EXISTS (
-    SELECT 1 FROM work_batch_agent_queue_heads h WHERE h.tenant_id=NEW.tenant_id
+    SELECT 1 FROM public.work_batch_agent_queue_heads h WHERE h.tenant_id=NEW.tenant_id
       AND h.worker_id=NEW.worker_id AND NEW.queue_position<h.next_position
   ) OR EXISTS (
-    SELECT 1 FROM work_batch_items current_item
-    JOIN work_batch_items predecessor ON predecessor.tenant_id=current_item.tenant_id
+    SELECT 1 FROM public.work_batch_items current_item
+    JOIN public.work_batch_items predecessor ON predecessor.tenant_id=current_item.tenant_id
       AND predecessor.batch_id=current_item.batch_id
       AND predecessor.local_id=ANY(current_item.depends_on_local_ids)
       AND predecessor.decision_state='approved'
     WHERE current_item.tenant_id=NEW.tenant_id AND current_item.id=NEW.item_id
-      AND EXISTS (SELECT 1 FROM work_batch_queue_admissions prior
+      AND EXISTS (SELECT 1 FROM public.work_batch_queue_admissions prior
         WHERE prior.tenant_id=predecessor.tenant_id AND prior.item_id=predecessor.id
           AND prior.worker_id=NEW.worker_id AND prior.queue_position>=NEW.queue_position
-          AND NOT EXISTS (SELECT 1 FROM work_batch_queue_admissions newer
+          AND NOT EXISTS (SELECT 1 FROM public.work_batch_queue_admissions newer
             WHERE newer.tenant_id=prior.tenant_id AND newer.item_id=prior.item_id
               AND newer.assignment_revision>prior.assignment_revision))
   ) OR (NOT has_previous AND (NEW.assignment_revision<>1 OR NEW.supersedes_admission_id IS NOT NULL
-      OR NOT EXISTS (SELECT 1 FROM work_batch_items i JOIN work_batches b
+      OR NOT EXISTS (SELECT 1 FROM public.work_batch_items i JOIN public.work_batches b
         ON b.tenant_id=i.tenant_id AND b.id=i.batch_id
         WHERE i.tenant_id=NEW.tenant_id AND i.id=NEW.item_id
           AND i.requested_worker_id=NEW.worker_id
@@ -137,28 +137,28 @@ BEGIN
   END IF;
   RETURN NEW;
 END $$;
-REVOKE ALL ON FUNCTION guard_work_batch_queue_admission_insert() FROM PUBLIC;
-CREATE TRIGGER work_batch_queue_admissions_guard BEFORE INSERT ON work_batch_queue_admissions
-  FOR EACH ROW EXECUTE FUNCTION guard_work_batch_queue_admission_insert();
-CREATE TRIGGER work_batch_queue_admissions_append_only BEFORE UPDATE OR DELETE ON work_batch_queue_admissions
-  FOR EACH ROW EXECUTE FUNCTION reject_append_only_mutation();
-CREATE TRIGGER work_batch_queue_admissions_no_truncate BEFORE TRUNCATE ON work_batch_queue_admissions
-  FOR EACH STATEMENT EXECUTE FUNCTION reject_append_only_mutation();
+REVOKE ALL ON FUNCTION public.guard_work_batch_queue_admission_insert() FROM PUBLIC;
+CREATE TRIGGER work_batch_queue_admissions_guard BEFORE INSERT ON public.work_batch_queue_admissions
+  FOR EACH ROW EXECUTE FUNCTION public.guard_work_batch_queue_admission_insert();
+CREATE TRIGGER work_batch_queue_admissions_append_only BEFORE UPDATE OR DELETE ON public.work_batch_queue_admissions
+  FOR EACH ROW EXECUTE FUNCTION public.reject_append_only_mutation();
+CREATE TRIGGER work_batch_queue_admissions_no_truncate BEFORE TRUNCATE ON public.work_batch_queue_admissions
+  FOR EACH STATEMENT EXECUTE FUNCTION public.reject_append_only_mutation();
 
 -- The service advances one locked per-worker head before inserting the exact
 -- batch of admissions. This deferred check sees the completed transaction and
 -- makes gaps, abandoned allocations, and out-of-order position fabrication
 -- impossible even for a caller that possesses the narrow head grants.
 CREATE FUNCTION enforce_work_batch_agent_queue_head_consistency() RETURNS trigger
-LANGUAGE plpgsql AS $$
+LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $$
 DECLARE admission_count bigint; highest_position bigint; final_next_position bigint;
 BEGIN
   SELECT next_position INTO final_next_position
-    FROM work_batch_agent_queue_heads
+    FROM public.work_batch_agent_queue_heads
     WHERE tenant_id=NEW.tenant_id AND worker_id=NEW.worker_id;
-  SELECT count(*),coalesce(max(queue_position),0)
+  SELECT pg_catalog.count(*),coalesce(pg_catalog.max(queue_position),0)
     INTO admission_count,highest_position
-    FROM work_batch_queue_admissions
+    FROM public.work_batch_queue_admissions
     WHERE tenant_id=NEW.tenant_id AND worker_id=NEW.worker_id;
   IF final_next_position IS NULL OR admission_count<>final_next_position-1
     OR highest_position<>final_next_position-1 THEN
@@ -166,10 +166,10 @@ BEGIN
   END IF;
   RETURN NULL;
 END $$;
-REVOKE ALL ON FUNCTION enforce_work_batch_agent_queue_head_consistency() FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.enforce_work_batch_agent_queue_head_consistency() FROM PUBLIC;
 CREATE CONSTRAINT TRIGGER work_batch_agent_queue_heads_consistency
-  AFTER INSERT OR UPDATE ON work_batch_agent_queue_heads DEFERRABLE INITIALLY DEFERRED
-  FOR EACH ROW EXECUTE FUNCTION enforce_work_batch_agent_queue_head_consistency();
+  AFTER INSERT OR UPDATE ON public.work_batch_agent_queue_heads DEFERRABLE INITIALLY DEFERRED
+  FOR EACH ROW EXECUTE FUNCTION public.enforce_work_batch_agent_queue_head_consistency();
 
 -- Effective assignment is derived, never updated in place: the highest
 -- append-only revision for a stable item/job is the sole current admission.

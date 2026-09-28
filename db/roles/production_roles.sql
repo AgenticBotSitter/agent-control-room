@@ -19,3 +19,18 @@ BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'control_room_work_intake') THEN CREATE ROLE control_room_work_intake NOLOGIN; END IF;
 END;
 $$;
+
+-- Database TEMPORARY is not needed by production service/read roles. Revoking
+-- it from PUBLIC is what removes the inherited default; the per-role revokes
+-- document and preserve the intended restricted-role contract.
+DO $$
+BEGIN
+  EXECUTE format('REVOKE TEMPORARY ON DATABASE %I FROM PUBLIC', current_database());
+  EXECUTE format('REVOKE TEMPORARY ON DATABASE %I FROM control_room_application', current_database());
+  EXECUTE format('REVOKE TEMPORARY ON DATABASE %I FROM control_room_reader', current_database());
+  EXECUTE format('REVOKE TEMPORARY ON DATABASE %I FROM control_room_backup', current_database());
+  EXECUTE format('REVOKE TEMPORARY ON DATABASE %I FROM control_room_schedule_admissions', current_database());
+  EXECUTE format('REVOKE TEMPORARY ON DATABASE %I FROM control_room_github_broker', current_database());
+  EXECUTE format('REVOKE TEMPORARY ON DATABASE %I FROM control_room_work_intake', current_database());
+END;
+$$;

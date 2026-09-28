@@ -39,34 +39,34 @@ CREATE TABLE control_agent_review_plans (
     AND reviewer ?& ARRAY['actorId','workerId','agentProfileId','harness','adapterId'])
 );
 
-CREATE TRIGGER control_agent_review_plans_immutable BEFORE UPDATE OR DELETE ON control_agent_review_plans
-  FOR EACH ROW EXECUTE FUNCTION reject_append_only_mutation();
-CREATE TRIGGER control_agent_review_plans_no_truncate BEFORE TRUNCATE ON control_agent_review_plans
-  FOR EACH STATEMENT EXECUTE FUNCTION reject_append_only_mutation();
+CREATE TRIGGER control_agent_review_plans_immutable BEFORE UPDATE OR DELETE ON public.control_agent_review_plans
+  FOR EACH ROW EXECUTE FUNCTION public.reject_append_only_mutation();
+CREATE TRIGGER control_agent_review_plans_no_truncate BEFORE TRUNCATE ON public.control_agent_review_plans
+  FOR EACH STATEMENT EXECUTE FUNCTION public.reject_append_only_mutation();
 
 CREATE FUNCTION guard_agent_review_plan_insert() RETURNS trigger
-LANGUAGE plpgsql SET search_path = pg_catalog, public AS $$
+LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $$
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pipeline_stage_runs reviewer
-    JOIN pipeline_stage_runs producer ON producer.tenant_id=reviewer.tenant_id
+  IF NOT EXISTS (SELECT 1 FROM public.pipeline_stage_runs reviewer
+    JOIN public.pipeline_stage_runs producer ON producer.tenant_id=reviewer.tenant_id
       AND producer.pipeline_run_id=reviewer.pipeline_run_id
       AND producer.stage_ordinal=reviewer.stage_ordinal-1
-    JOIN control_task_execution_plans reviewer_execution ON reviewer_execution.tenant_id=reviewer.tenant_id
+    JOIN public.control_task_execution_plans reviewer_execution ON reviewer_execution.tenant_id=reviewer.tenant_id
       AND reviewer_execution.project_id=reviewer.project_id
       AND reviewer_execution.source_job_id=reviewer.current_job_id
       AND reviewer_execution.job_id=NEW.reviewer_job_id
-    JOIN control_task_execution_plans producer_execution ON producer_execution.tenant_id=producer.tenant_id
+    JOIN public.control_task_execution_plans producer_execution ON producer_execution.tenant_id=producer.tenant_id
       AND producer_execution.project_id=producer.project_id
       AND producer_execution.source_job_id=producer.current_job_id
       AND producer_execution.job_id=NEW.producer_job_id
-    JOIN control_harness_runs run ON run.tenant_id=reviewer.tenant_id
+    JOIN public.control_harness_runs run ON run.tenant_id=reviewer.tenant_id
       AND run.id=NEW.reviewer_run_id AND run.job_id=reviewer_execution.job_id
       AND run.project_id=reviewer.project_id AND run.node_id=reviewer.node_id
-    JOIN control_attempts attempt ON attempt.tenant_id=run.tenant_id AND attempt.id=run.attempt_id
+    JOIN public.control_attempts attempt ON attempt.tenant_id=run.tenant_id AND attempt.id=run.attempt_id
       AND attempt.job_id=run.job_id AND attempt.node_id=run.node_id AND attempt.worker_id=reviewer.worker_id
-    JOIN control_task_model_selections selection ON selection.tenant_id=reviewer.tenant_id
+    JOIN public.control_task_model_selections selection ON selection.tenant_id=reviewer.tenant_id
       AND selection.project_id=reviewer.project_id AND selection.job_id=reviewer_execution.job_id
-    JOIN control_completion_gate_records target ON target.tenant_id=producer.tenant_id
+    JOIN public.control_completion_gate_records target ON target.tenant_id=producer.tenant_id
       AND target.project_id=producer.project_id AND target.id=NEW.target_id AND target.kind='target'
     WHERE reviewer.tenant_id=NEW.tenant_id AND reviewer.project_id=NEW.project_id
       AND reviewer.pipeline_run_id=NEW.pipeline_run_id AND reviewer_execution.job_id=NEW.reviewer_job_id
@@ -75,7 +75,7 @@ BEGIN
       AND target.payload->>'subjectId'=NEW.producer_job_id
       AND target.payload->>'acceptanceProfileId'=NEW.acceptance_profile_id
       AND target.payload->>'acceptanceProfileDigest'=NEW.acceptance_profile_digest
-      AND NEW.reviewer=jsonb_strip_nulls(jsonb_build_object('actorId',run.node_id,'actorType','agent',
+      AND NEW.reviewer=pg_catalog.jsonb_strip_nulls(pg_catalog.jsonb_build_object('actorId',run.node_id,'actorType','agent',
         'workerId',reviewer.worker_id,'agentProfileId',NEW.reviewer->>'agentProfileId',
         'harness',NEW.reviewer->>'harness','adapterId',NEW.reviewer->>'adapterId',
         'modelFamily',NEW.reviewer->>'modelFamily'))
@@ -88,28 +88,28 @@ BEGIN
   RETURN NEW;
 END;
 $$;
-REVOKE ALL ON FUNCTION guard_agent_review_plan_insert() FROM PUBLIC;
-CREATE TRIGGER control_agent_review_plans_binding BEFORE INSERT ON control_agent_review_plans
-  FOR EACH ROW EXECUTE FUNCTION guard_agent_review_plan_insert();
+REVOKE ALL ON FUNCTION public.guard_agent_review_plan_insert() FROM PUBLIC;
+CREATE TRIGGER control_agent_review_plans_binding BEFORE INSERT ON public.control_agent_review_plans
+  FOR EACH ROW EXECUTE FUNCTION public.guard_agent_review_plan_insert();
 
 -- Defense in depth: the dedicated reviewer login never writes this table
 -- directly. The SECURITY DEFINER entry point below derives and authenticates
 -- the complete append instead.
 CREATE FUNCTION guard_agent_reviewer_gate_insert() RETURNS trigger
-LANGUAGE plpgsql SET search_path = pg_catalog, public AS $$
+LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $$
 BEGIN
-  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='control_room_agent_reviewer'
-      AND pg_has_role(session_user,oid,'MEMBER'))
+  IF EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname='control_room_agent_reviewer'
+      AND pg_catalog.pg_has_role(session_user,oid,'MEMBER'))
     AND current_user=session_user
-    AND EXISTS (SELECT 1 FROM pg_roles WHERE rolname=session_user AND NOT rolsuper) THEN
+    AND EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname=session_user AND NOT rolsuper) THEN
     RAISE EXCEPTION 'agent reviewer raw insert rejected';
   END IF;
   RETURN NEW;
 END;
 $$;
-REVOKE ALL ON FUNCTION guard_agent_reviewer_gate_insert() FROM PUBLIC;
-CREATE TRIGGER control_completion_gate_agent_reviewer BEFORE INSERT ON control_completion_gate_records
-  FOR EACH ROW EXECUTE FUNCTION guard_agent_reviewer_gate_insert();
+REVOKE ALL ON FUNCTION public.guard_agent_reviewer_gate_insert() FROM PUBLIC;
+CREATE TRIGGER control_completion_gate_agent_reviewer BEFORE INSERT ON public.control_completion_gate_records
+  FOR EACH ROW EXECUTE FUNCTION public.guard_agent_reviewer_gate_insert();
 
 CREATE FUNCTION agent_review_canonical_jsonb(input jsonb) RETURNS text
 LANGUAGE plpgsql IMMUTABLE SET search_path = pg_catalog AS $$
@@ -166,7 +166,7 @@ CREATE FUNCTION commit_agent_review(plan_id text, review_payload jsonb, finding_
 RETURNS TABLE(replayed boolean, prior_revision bigint, prior_record_count bigint, prior_state_digest text,
   prior_state_auth_tag text, next_revision bigint, next_record_count bigint, next_state_digest text,
   next_state_auth_tag text)
-LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $$
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public, pg_temp AS $$
 DECLARE plan public.control_agent_review_plans%ROWTYPE; target public.control_completion_gate_records%ROWTYPE;
   profile public.control_completion_gate_records%ROWTYPE; integrity public.control_completion_gate_integrity%ROWTYPE;
   existing public.control_completion_gate_records%ROWTYPE; plan_material jsonb;
@@ -175,56 +175,56 @@ DECLARE plan public.control_agent_review_plans%ROWTYPE; target public.control_co
   minimum_risk integer; assessed_risk integer; effective_risk integer; expected_current_tag text;
   computed_count bigint; computed_digest text;
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_roles r WHERE r.rolname='control_room_agent_reviewer'
-      AND pg_has_role(session_user,r.oid,'MEMBER'))
-    OR NOT EXISTS (SELECT 1 FROM pg_roles s WHERE s.rolname=session_user AND NOT s.rolsuper) THEN
+  IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_roles r WHERE r.rolname='control_room_agent_reviewer'
+      AND pg_catalog.pg_has_role(session_user,r.oid,'MEMBER'))
+    OR NOT EXISTS (SELECT 1 FROM pg_catalog.pg_roles s WHERE s.rolname=session_user AND NOT s.rolsuper) THEN
     RAISE EXCEPTION 'agent review commit caller rejected';
   END IF;
-  IF octet_length(integrity_key)<>32 OR jsonb_typeof(review_payload)<>'object'
-    OR (finding_payload IS NOT NULL AND jsonb_typeof(finding_payload)<>'object') THEN
+  IF pg_catalog.octet_length(integrity_key)<>32 OR pg_catalog.jsonb_typeof(review_payload)<>'object'
+    OR (finding_payload IS NOT NULL AND pg_catalog.jsonb_typeof(finding_payload)<>'object') THEN
     RAISE EXCEPTION 'agent review commit input rejected';
   END IF;
   SELECT * INTO plan FROM public.control_agent_review_plans p WHERE p.id=plan_id AND p.tenant_id=review_payload->>'tenantId';
   IF NOT FOUND THEN RAISE EXCEPTION 'agent review plan unavailable'; END IF;
   SELECT * INTO integrity FROM public.control_completion_gate_integrity i WHERE i.tenant_id=plan.tenant_id FOR UPDATE;
   IF NOT FOUND THEN RAISE EXCEPTION 'agent review integrity unavailable'; END IF;
-  expected_current_tag=public.agent_review_hmac_sha256(integrity_key,public.agent_review_canonical_jsonb(jsonb_build_object(
+  expected_current_tag=public.agent_review_hmac_sha256(integrity_key,public.agent_review_canonical_jsonb(pg_catalog.jsonb_build_object(
     'module','completion-gate','tenantId',integrity.tenant_id,'revision',integrity.revision,
     'recordCount',integrity.record_count,'stateDigest',integrity.state_digest)));
   IF integrity.state_auth_tag IS DISTINCT FROM expected_current_tag THEN RAISE EXCEPTION 'agent review integrity key rejected'; END IF;
   FOR existing IN SELECT * FROM public.control_completion_gate_records r
     WHERE r.tenant_id=plan.tenant_id ORDER BY r.kind,r.id LOOP
-    computed_digest='sha256:' || encode(sha256(convert_to(public.agent_review_canonical_jsonb(existing.payload),'UTF8')),'hex');
-    expected_current_tag=public.agent_review_hmac_sha256(integrity_key,public.agent_review_canonical_jsonb(jsonb_build_object(
+    computed_digest='sha256:' || pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(public.agent_review_canonical_jsonb(existing.payload),'UTF8')),'hex');
+    expected_current_tag=public.agent_review_hmac_sha256(integrity_key,public.agent_review_canonical_jsonb(pg_catalog.jsonb_build_object(
       'id',existing.id,'tenantId',existing.tenant_id,'projectId',existing.project_id,'kind',existing.kind,
       'recordKey',existing.record_key,'subjectId',existing.subject_id,'parentId',existing.parent_id,
       'recordDigest',existing.record_digest,
-      'occurredAt',to_char(existing.occurred_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'))));
+      'occurredAt',pg_catalog.to_char(existing.occurred_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'))));
     IF existing.record_digest IS DISTINCT FROM computed_digest
       OR existing.record_auth_tag IS DISTINCT FROM expected_current_tag THEN
       RAISE EXCEPTION 'agent review existing record integrity rejected';
     END IF;
   END LOOP;
-  SELECT count(*),jsonb_build_object('tenantId',plan.tenant_id,'records',coalesce(jsonb_agg(jsonb_build_object(
+  SELECT pg_catalog.count(*),pg_catalog.jsonb_build_object('tenantId',plan.tenant_id,'records',coalesce(pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object(
     'id',r.id,'projectId',r.project_id,'kind',r.kind,'recordKey',r.record_key,'subjectId',r.subject_id,
     'parentId',r.parent_id,'recordDigest',r.record_digest,'recordAuthTag',r.record_auth_tag,
-    'occurredAt',to_char(r.occurred_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')) ORDER BY r.kind,r.id),'[]'::jsonb))
+    'occurredAt',pg_catalog.to_char(r.occurred_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')) ORDER BY r.kind,r.id),'[]'::jsonb))
     INTO computed_count,state_material FROM public.control_completion_gate_records r WHERE r.tenant_id=plan.tenant_id;
-  computed_digest='sha256:' || encode(sha256(convert_to(public.agent_review_canonical_jsonb(state_material),'UTF8')),'hex');
+  computed_digest='sha256:' || pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(public.agent_review_canonical_jsonb(state_material),'UTF8')),'hex');
   IF integrity.record_count<>computed_count OR integrity.state_digest IS DISTINCT FROM computed_digest THEN
     RAISE EXCEPTION 'agent review existing state integrity rejected';
   END IF;
-  plan_material=jsonb_build_object('schema','control-room.agent-review-plan/v1','id',plan.id,
+  plan_material=pg_catalog.jsonb_build_object('schema','control-room.agent-review-plan/v1','id',plan.id,
     'tenantId',plan.tenant_id,'projectId',plan.project_id,'pipelineRunId',plan.pipeline_run_id,
     'producerJobId',plan.producer_job_id,'reviewerJobId',plan.reviewer_job_id,'reviewerRunId',plan.reviewer_run_id,
     'targetId',plan.target_id,'targetDigest',plan.target_digest,'acceptanceProfileId',plan.acceptance_profile_id,
     'acceptanceProfileDigest',plan.acceptance_profile_digest,'reviewId',plan.review_id,'findingId',plan.finding_id,
-    'reviewer',plan.reviewer,'createdAt',to_char(plan.created_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
+    'reviewer',plan.reviewer,'createdAt',pg_catalog.to_char(plan.created_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
     'grantsApproval',false,'grantsExecutionAuthority',false);
-  IF plan.plan_digest IS DISTINCT FROM 'sha256:' || encode(sha256(convert_to(
+  IF plan.plan_digest IS DISTINCT FROM 'sha256:' || pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(
       public.agent_review_canonical_jsonb(plan_material),'UTF8')),'hex')
     OR plan.auth_tag IS DISTINCT FROM public.agent_review_hmac_sha256(integrity_key,public.agent_review_canonical_jsonb(
-      jsonb_build_object('purpose','agent-review-plan/v1','plan',plan_material))) THEN
+      pg_catalog.jsonb_build_object('purpose','agent-review-plan/v1','plan',plan_material))) THEN
     RAISE EXCEPTION 'agent review plan integrity rejected';
   END IF;
   SELECT * INTO target FROM public.control_completion_gate_records r
@@ -232,9 +232,9 @@ BEGIN
   SELECT * INTO profile FROM public.control_completion_gate_records r
     WHERE r.tenant_id=plan.tenant_id AND r.project_id=plan.project_id
       AND r.id=plan.acceptance_profile_id AND r.kind='profile';
-  minimum_risk=array_position(ARRAY['low','medium','high','critical'],profile.payload->>'minimumRisk');
-  assessed_risk=array_position(ARRAY['low','medium','high','critical'],review_payload->>'assessedRisk');
-  effective_risk=array_position(ARRAY['low','medium','high','critical'],review_payload->>'effectiveRisk');
+  minimum_risk=pg_catalog.array_position(ARRAY['low','medium','high','critical'],profile.payload->>'minimumRisk');
+  assessed_risk=pg_catalog.array_position(ARRAY['low','medium','high','critical'],review_payload->>'assessedRisk');
+  effective_risk=pg_catalog.array_position(ARRAY['low','medium','high','critical'],review_payload->>'effectiveRisk');
   IF target.id IS NULL OR profile.id IS NULL OR target.record_digest<>plan.target_digest
     OR profile.record_digest<>plan.acceptance_profile_digest
     OR target.payload->>'tenantId'<>plan.tenant_id OR target.payload->>'projectId'<>plan.project_id
@@ -254,7 +254,7 @@ BEGIN
     OR review_payload->>'grantsApproval'<>'false' OR review_payload->>'grantsExecutionAuthority'<>'false'
     OR minimum_risk IS NULL OR assessed_risk IS NULL OR effective_risk<>greatest(minimum_risk,assessed_risk)
     OR review_payload->'findingIds'<>(CASE WHEN review_payload->>'decision'='accepted' THEN '[]'::jsonb
-      ELSE jsonb_build_array(plan.finding_id) END)
+      ELSE pg_catalog.jsonb_build_array(plan.finding_id) END)
     OR (review_payload->>'reviewedAt')::timestamptz < (target.payload->>'submittedAt')::timestamptz
     OR NOT EXISTS (SELECT 1 FROM public.control_harness_runs run
       JOIN public.control_attempts attempt ON attempt.tenant_id=run.tenant_id AND attempt.id=run.attempt_id
@@ -284,24 +284,24 @@ BEGIN
   -- the Completion Gate store's replay-first contract.
   IF EXISTS (SELECT 1 FROM public.control_completion_gate_records r
       WHERE r.tenant_id=plan.tenant_id AND r.id=plan.review_id) THEN
-    v_record_key='sha256:' || encode(sha256(convert_to(public.agent_review_canonical_jsonb(jsonb_build_object(
+    v_record_key='sha256:' || pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(public.agent_review_canonical_jsonb(pg_catalog.jsonb_build_object(
       'kind','review','targetId',plan.target_id,'authority','completion_gate',
       'reviewerActorId',plan.reviewer->>'actorId')),'UTF8')),'hex');
-    v_record_digest='sha256:' || encode(sha256(convert_to(
+    v_record_digest='sha256:' || pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(
       public.agent_review_canonical_jsonb(review_payload),'UTF8')),'hex');
     IF NOT EXISTS (SELECT 1 FROM public.control_completion_gate_records r
         WHERE r.tenant_id=plan.tenant_id AND r.project_id=plan.project_id AND r.id=plan.review_id
           AND r.kind='review' AND r.record_key=v_record_key AND r.subject_id=plan.target_id
           AND r.parent_id=plan.target_id AND r.record_digest=v_record_digest AND r.payload=review_payload
-          AND to_char(r.occurred_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')=review_payload->>'reviewedAt')
+          AND pg_catalog.to_char(r.occurred_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')=review_payload->>'reviewedAt')
       OR finding_payload IS NULL AND EXISTS (SELECT 1 FROM public.control_completion_gate_records r
         WHERE r.tenant_id=plan.tenant_id AND r.id=plan.finding_id)
       OR finding_payload IS NOT NULL AND NOT EXISTS (SELECT 1 FROM public.control_completion_gate_records r
         WHERE r.tenant_id=plan.tenant_id AND r.project_id=plan.project_id AND r.id=plan.finding_id
           AND r.kind='finding' AND r.record_key=plan.finding_id AND r.subject_id=plan.target_id
-          AND r.parent_id=plan.review_id AND r.record_digest='sha256:' || encode(sha256(convert_to(
+          AND r.parent_id=plan.review_id AND r.record_digest='sha256:' || pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(
             public.agent_review_canonical_jsonb(finding_payload),'UTF8')),'hex') AND r.payload=finding_payload
-          AND to_char(r.occurred_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')=finding_payload->>'raisedAt') THEN
+          AND pg_catalog.to_char(r.occurred_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')=finding_payload->>'raisedAt') THEN
       RAISE EXCEPTION 'agent review record conflict';
     END IF;
     replayed=true; prior_revision=integrity.revision; prior_record_count=integrity.record_count;
@@ -328,18 +328,18 @@ BEGIN
     v_record_id=material->>'id';
     v_occurred_at=CASE WHEN v_record_kind='review' THEN (material->>'reviewedAt')::timestamptz ELSE (material->>'raisedAt')::timestamptz END;
     IF (CASE WHEN v_record_kind='review' THEN material->>'reviewedAt' ELSE material->>'raisedAt' END)
-      <>to_char(v_occurred_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') THEN
+      <>pg_catalog.to_char(v_occurred_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') THEN
       RAISE EXCEPTION 'agent review timestamp rejected';
     END IF;
     v_subject_id=plan.target_id; v_parent_id=CASE WHEN v_record_kind='review' THEN plan.target_id ELSE plan.review_id END;
-    v_record_key=CASE WHEN v_record_kind='review' THEN 'sha256:' || encode(sha256(convert_to(
-      public.agent_review_canonical_jsonb(jsonb_build_object('kind','review','targetId',plan.target_id,
+    v_record_key=CASE WHEN v_record_kind='review' THEN 'sha256:' || pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(
+      public.agent_review_canonical_jsonb(pg_catalog.jsonb_build_object('kind','review','targetId',plan.target_id,
         'authority','completion_gate','reviewerActorId',plan.reviewer->>'actorId')),'UTF8')),'hex') ELSE v_record_id END;
-    v_record_digest='sha256:' || encode(sha256(convert_to(public.agent_review_canonical_jsonb(material),'UTF8')),'hex');
-    v_record_auth_tag=public.agent_review_hmac_sha256(integrity_key,public.agent_review_canonical_jsonb(jsonb_build_object(
+    v_record_digest='sha256:' || pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(public.agent_review_canonical_jsonb(material),'UTF8')),'hex');
+    v_record_auth_tag=public.agent_review_hmac_sha256(integrity_key,public.agent_review_canonical_jsonb(pg_catalog.jsonb_build_object(
       'id',v_record_id,'tenantId',plan.tenant_id,'projectId',plan.project_id,'kind',v_record_kind,'recordKey',v_record_key,
       'subjectId',v_subject_id,'parentId',v_parent_id,'recordDigest',v_record_digest,
-      'occurredAt',to_char(v_occurred_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'))));
+      'occurredAt',pg_catalog.to_char(v_occurred_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'))));
     INSERT INTO public.control_completion_gate_records(id,tenant_id,project_id,kind,record_key,subject_id,parent_id,
       record_digest,record_auth_tag,payload,occurred_at)
       VALUES(v_record_id,plan.tenant_id,plan.project_id,v_record_kind,v_record_key,v_subject_id,v_parent_id,
@@ -359,14 +359,14 @@ BEGIN
     replayed=true; next_revision=prior_revision; next_record_count=prior_record_count;
     next_state_digest=prior_state_digest; next_state_auth_tag=prior_state_auth_tag; RETURN NEXT; RETURN;
   END IF;
-  SELECT jsonb_build_object('tenantId',plan.tenant_id,'records',coalesce(jsonb_agg(jsonb_build_object(
+  SELECT pg_catalog.jsonb_build_object('tenantId',plan.tenant_id,'records',coalesce(pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object(
     'id',r.id,'projectId',r.project_id,'kind',r.kind,'recordKey',r.record_key,'subjectId',r.subject_id,
     'parentId',r.parent_id,'recordDigest',r.record_digest,'recordAuthTag',r.record_auth_tag,
-    'occurredAt',to_char(r.occurred_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')) ORDER BY r.kind,r.id),'[]'::jsonb))
+    'occurredAt',pg_catalog.to_char(r.occurred_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')) ORDER BY r.kind,r.id),'[]'::jsonb))
     INTO state_material FROM public.control_completion_gate_records r WHERE r.tenant_id=plan.tenant_id;
-  next_revision=prior_revision+1; next_record_count=(SELECT count(*) FROM public.control_completion_gate_records r WHERE r.tenant_id=plan.tenant_id);
-  next_state_digest='sha256:' || encode(sha256(convert_to(public.agent_review_canonical_jsonb(state_material),'UTF8')),'hex');
-  next_state_auth_tag=public.agent_review_hmac_sha256(integrity_key,public.agent_review_canonical_jsonb(jsonb_build_object(
+  next_revision=prior_revision+1; next_record_count=(SELECT pg_catalog.count(*) FROM public.control_completion_gate_records r WHERE r.tenant_id=plan.tenant_id);
+  next_state_digest='sha256:' || pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(public.agent_review_canonical_jsonb(state_material),'UTF8')),'hex');
+  next_state_auth_tag=public.agent_review_hmac_sha256(integrity_key,public.agent_review_canonical_jsonb(pg_catalog.jsonb_build_object(
     'module','completion-gate','tenantId',plan.tenant_id,'revision',next_revision,
     'recordCount',next_record_count,'stateDigest',next_state_digest)));
   UPDATE public.control_completion_gate_integrity SET revision=next_revision,record_count=next_record_count,
@@ -375,4 +375,4 @@ BEGIN
   replayed=false; RETURN NEXT;
 END;
 $$;
-REVOKE ALL ON FUNCTION commit_agent_review(text,jsonb,jsonb,bytea) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.commit_agent_review(text,jsonb,jsonb,bytea) FROM PUBLIC;

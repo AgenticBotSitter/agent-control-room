@@ -6,7 +6,7 @@ test("agent review guard binds the dedicated role to one server-created predeces
   const sql = await readFile("db/migrations/0097_agent_review_plans.sql", "utf8");
   assert.match(sql, /control_room_agent_reviewer/u);
   assert.match(sql, /agent reviewer raw insert rejected/u);
-  assert.match(sql, /CREATE FUNCTION commit_agent_review[\s\S]*SECURITY DEFINER SET search_path = pg_catalog/u);
+  assert.match(sql, /CREATE FUNCTION commit_agent_review[\s\S]*SECURITY DEFINER SET search_path = pg_catalog, public, pg_temp/u);
   assert.match(sql, /effective_risk<>greatest\(minimum_risk,assessed_risk\)/u);
   assert.match(sql, /agent_review_hmac_sha256\(integrity_key/u);
   assert.match(sql, /review_payload->>'id'<>plan\.review_id/u);
@@ -32,6 +32,7 @@ test("agent reviewer role has only completion-review commit privileges", async (
   assert.doesNotMatch(sql, /\b(?:control_jobs|control_leases|control_outbox|control_native_task_queue)\b/u);
   assert.doesNotMatch(sql, /GRANT\s+(?:DELETE|TRUNCATE|TRIGGER|REFERENCES)/u);
   assert.match(sql, /NOBYPASSRLS/u);
+  assert.doesNotMatch(sql, /GRANT TEMPORARY/u);
   const preflight = await readFile("src/web/v1/private-database-preflight.ts", "utf8");
   assert.match(preflight, /verifyAgentReviewerDatabase/u);
   assert.match(preflight, /agentReviewerReads = \["control_agent_review_plans", "control_completion_gate_records"/u);
