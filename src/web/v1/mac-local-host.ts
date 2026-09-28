@@ -16,7 +16,7 @@ import type { PersistedLocalOwnerSessionV1 } from "./local-owner-session";
 type OpenedDatabase = Readonly<{ client: DatabaseClient; close(): Promise<void> }>;
 type LocalService = Readonly<{ start(): Promise<void>; close(): Promise<void>; isReady(): boolean }>;
 type HostedTaskApplication = Pick<MacLocalTaskApplicationV1, "operations" | "taskReadKeys" | "isReady" | "close" | "queueDelivery" | "queueRecovery">;
-type OwnedQueueWorker = Readonly<{ close(): Promise<void>; status(): { accepting: boolean } }>;
+type OwnedQueueWorker = Readonly<{ close(): Promise<void>; status(): { accepting: boolean; state?: string } }>;
 
 /** One small composition for the Mac-local web host. It deliberately uses the
  * dedicated loopback web process, rather than adapting the hosted Cloudflare
@@ -160,7 +160,9 @@ export function createMacLocalProtectedHostV1(input: Readonly<{
                 deliver: taskApplication!.queueDelivery!,
                 ...(taskApplication!.queueRecovery?.verify ? { verifyRecovery: taskApplication!.queueRecovery.verify } : {}),
               });
-              if (!worker || typeof worker.close !== "function" || typeof worker.status !== "function" || !worker.status().accepting || closeRequested)
+              const workerStatus = worker?.status();
+              if (!worker || typeof worker.close !== "function" || typeof worker.status !== "function"
+                || (workerStatus?.accepting !== true && workerStatus?.state !== "reconnecting") || closeRequested)
                 throw new Error("mac_local_host_queue_worker_unavailable");
             } catch (error) {
               const stopped = worker?.close ? await Promise.allSettled([closeWorker()]) : [];
