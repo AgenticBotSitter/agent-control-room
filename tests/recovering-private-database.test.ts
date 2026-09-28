@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { DatabaseClient, DatabaseSession } from "../src/persistence/database";
+import { databaseOperationSignal, withDatabaseOperationSignal } from "../src/persistence/operation-signal";
 import { PrivateDatabaseError } from "../src/web/v1/bounded-database";
 import { recoveringPrivateDatabase, type RecoveringPrivateDatabaseGeneration } from "../src/web/v1/recovering-private-database";
 
@@ -105,6 +106,27 @@ test("failed candidates back off and close before the next generation opens", as
   await assert.rejects(database.client.query("DELETE uncertain"));
   await eventually(() => database.isAvailable());
   assert.deepEqual(order, ["open:1", "close:first", "sleep:3", "open:2", "close:rejected", "sleep:7", "open:3", "ready:SELECT 1"]);
+  await database.close();
+});
+
+test("recovery detaches from the failed operation's aborted signal", async () => {
+  const operation = new AbortController(); let reportFault!: () => void;
+  const first = generation(async () => {
+    operation.abort(); first.unavailable(); reportFault();
+    throw new PrivateDatabaseError("database_outcome_uncertain");
+  });
+  const ready = generation(async () => {
+    assert.equal(databaseOperationSignal(), undefined);
+    return { rows: [] };
+  });
+  const values = [first.value, ready.value]; let opens = 0;
+  const database = recoveringPrivateDatabase(report => {
+    reportFault = report; return values[opens++]!;
+  }, { delaysMs: [1], sleep: async () => {} });
+  await assert.rejects(withDatabaseOperationSignal(operation.signal,
+    () => database.client.query("SELECT fault")), { message: "database_outcome_uncertain" });
+  await eventually(() => database.isAvailable());
+  assert.equal(opens, 2);
   await database.close();
 });
 

@@ -1,4 +1,5 @@
 import type { DatabaseClient, DatabaseSession } from "../../persistence/database";
+import { withoutDatabaseOperationSignal } from "../../persistence/operation-signal";
 import { PrivateDatabaseError } from "./bounded-database";
 
 export interface RecoveringPrivateDatabaseGeneration {
@@ -53,7 +54,7 @@ export function recoveringPrivateDatabase(open: (reportFault: () => void) => Rec
     if (faulted && faulted !== current) return;
     const failed = current;
     state = "reconnecting";
-    recovery = (async () => {
+    recovery = withoutDatabaseOperationSignal(() => (async () => {
       current = undefined;
       if (failed) await closeGeneration(failed);
       let attempt = 0;
@@ -86,7 +87,7 @@ export function recoveringPrivateDatabase(open: (reportFault: () => void) => Rec
       // cannot start a second recovery while `recovery` is still set, so
       // re-check here to avoid leaving an unavailable generation poisoned.
       if (!closed && !cleanupUncertain && (!current || !current.isAvailable())) recover(current);
-    });
+    }));
   };
   let initial: RecoveringPrivateDatabaseGeneration | undefined, initialFault = false;
   initial = open(() => { if (initial) recover(initial); else initialFault = true; });
