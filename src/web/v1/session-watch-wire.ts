@@ -1,7 +1,9 @@
 import { z } from "zod";
 import { catalogProjectIdSchema } from "./project-wire";
 
-const id = catalogProjectIdSchema;
+/** Canonical attempt/run ids share the domain safe-id grammar, not the project catalog type. */
+export const sessionWatchIdSchema = z.string().min(3).max(180).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/);
+const id = sessionWatchIdSchema;
 const count = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
 const model = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:/+-]{0,179}$/);
 
@@ -9,12 +11,12 @@ export const SESSION_WATCH_EXPECTED_HEARTBEAT_MS_V1 = 120_000;
 export const SESSION_WATCH_PAGE_SIZE_V1 = 25;
 
 export const sessionWatchItemSchemaV1 = z.object({
-  sessionId: id,
+  sessionId: sessionWatchIdSchema,
   runId: id.nullable(),
-  projectId: id,
-  jobId: id,
+  projectId: catalogProjectIdSchema,
+  jobId: sessionWatchIdSchema,
   taskTitle: z.string().trim().min(1).max(180),
-  attemptId: id,
+  attemptId: sessionWatchIdSchema,
   attemptNumber: count,
   worker: z.string().trim().min(1).max(200).nullable(),
   harness: z.enum(["hermes", "codex", "claude", "other"]).nullable(),
@@ -31,7 +33,7 @@ export const sessionWatchItemSchemaV1 = z.object({
 export const sessionWatchPageSchemaV1 = z.object({
   source: z.enum(["configured", "not_configured"]),
   sessions: z.array(sessionWatchItemSchemaV1).max(SESSION_WATCH_PAGE_SIZE_V1),
-  nextCursor: id.nullable(),
+  nextCursor: sessionWatchIdSchema.nullable(),
   observedAt: z.string().datetime(),
   startsWork: z.literal(false),
 }).strict().superRefine((value, context) => {

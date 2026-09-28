@@ -47,6 +47,7 @@ import { parseOperatorSurfaceSnapshotV1, type OperatorSurfaceSnapshotV1 } from "
 import { verifyInstallationPlanV1, type InstallationPlanV1 } from "../../installer/v1/installation-plan";
 import { createInstallationPlanViewV1 } from "../../installer/v1/installation-plan-view";
 import { SessionWatchServiceV1 } from "./session-watch-service";
+import { sessionWatchIdSchema } from "./session-watch-wire";
 
 export interface PrivateWebProcessOptions {
   origin: string; issuer: string; audience: string; tenantId: string; workspaceId: string;
@@ -790,7 +791,7 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
           await tasks.authorizeAttentionPage(identity);
         } else if (url.pathname === "/session-watch") {
           if ([...url.searchParams.keys()].some(key => key !== "after") || url.searchParams.getAll("after").length > 1
-            || url.searchParams.has("after") && !catalogProjectIdSchema.safeParse(url.searchParams.get("after")).success)
+            || url.searchParams.has("after") && !sessionWatchIdSchema.safeParse(url.searchParams.get("after")).success)
             throw new WebAccessError("invalid_request");
           await sessionWatch.authorize(identity);
         } else if (url.pathname === "/connections" || url.pathname === "/workers") {

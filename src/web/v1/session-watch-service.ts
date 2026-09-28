@@ -3,10 +3,9 @@ import { attemptRecordSchema, jobRecordSchema, requestRecordSchema, workflowReco
 import { verifyStoredHarnessRunV1, type StoredHarnessRunRowV1 } from "../../harness/v1/store";
 import type { HarnessEventPayloadV1, HarnessRunState, HarnessRunV1 } from "../../harness/v1/types";
 import { WebAccessError, type VerifiedWebIdentity } from "./access-verifier";
-import { catalogProjectIdSchema } from "./project-wire";
 import { WebSessionAuthority } from "./session-authority";
 import { SESSION_WATCH_EXPECTED_HEARTBEAT_MS_V1, SESSION_WATCH_PAGE_SIZE_V1,
-  sessionWatchItemSchemaV1, sessionWatchPageSchemaV1, type SessionWatchItemV1 } from "./session-watch-wire";
+  sessionWatchIdSchema, sessionWatchItemSchemaV1, sessionWatchPageSchemaV1, type SessionWatchItemV1 } from "./session-watch-wire";
 
 type SessionWatchRow = {
   session_id: string;
@@ -96,6 +95,18 @@ function validateCanonical(row: SessionWatchRow, tenantId: string) {
   return { attempt, request };
 }
 
+function unavailableItem(row: SessionWatchRow, attempt: ReturnType<typeof validateCanonical>["attempt"], request: ReturnType<typeof validateCanonical>["request"],
+  observedAt: string): SessionWatchItemV1 {
+  const started = attempt.startedAt ?? attempt.offeredAt;
+  return sessionWatchItemSchemaV1.parse({ sessionId: attempt.id, runId: null, projectId: row.project_id,
+    jobId: row.job_id, taskTitle: request.title, attemptId: attempt.id, attemptNumber: attempt.attemptNumber,
+    worker: attempt.workerId ?? null, harness: null, model: row.selected_model, effort: row.selected_effort,
+    stage: "run evidence unavailable", state: "stalled",
+    durationSeconds: Math.max(0, Math.floor((Date.parse(observedAt) - Date.parse(started)) / 1000)),
+    lastProgressAt: new Date(row.attempt_updated_at).toISOString(), lastProgress: `canonical attempt ${attempt.state}`,
+    expectedHeartbeatSeconds: SESSION_WATCH_EXPECTED_HEARTBEAT_MS_V1 / 1000 });
+}
+
 /** Owner-only, workspace-wide projection over signed saved run evidence. It has no command port. */
 export class SessionWatchServiceV1 {
   private readonly authority: WebSessionAuthority;
@@ -121,7 +132,7 @@ export class SessionWatchServiceV1 {
   }
 
   async read(identity: VerifiedWebIdentity, after?: string) {
-    if (after !== undefined && !catalogProjectIdSchema.safeParse(after).success) throw new WebAccessError("invalid_request");
+    if (after !== undefined && !sessionWatchIdSchema.safeParse(after).success) throw new WebAccessError("invalid_request");
     return this.authenticated(identity, async (tx, observedAt) => {
       if (!this.key) return sessionWatchPageSchemaV1.parse({ source: "not_configured", sessions: [], nextCursor: null,
         observedAt, startsWork: false });
@@ -172,18 +183,12 @@ export class SessionWatchServiceV1 {
       const sessions: SessionWatchItemV1[] = [];
       for (const row of rows.slice(0, SESSION_WATCH_PAGE_SIZE_V1)) {
         const { attempt, request } = validateCanonical(row, this.scope.tenantId);
-        if (!row.run_id) {
-          const started = attempt.startedAt ?? attempt.offeredAt;
-          sessions.push(sessionWatchItemSchemaV1.parse({ sessionId: attempt.id, runId: null, projectId: row.project_id,
-            jobId: row.job_id, taskTitle: request.title, attemptId: attempt.id, attemptNumber: attempt.attemptNumber,
-            worker: attempt.workerId ?? null, harness: null, model: row.selected_model, effort: row.selected_effort,
-            stage: "run evidence unavailable", state: "stalled",
-            durationSeconds: Math.max(0, Math.floor((Date.parse(observedAt) - Date.parse(started)) / 1000)),
-            lastProgressAt: new Date(row.attempt_updated_at).toISOString(), lastProgress: `canonical attempt ${attempt.state}`,
-            expectedHeartbeatSeconds: SESSION_WATCH_EXPECTED_HEARTBEAT_MS_V1 / 1000 }));
+        if (!row.run_id || row.event_rows.length > 1024) {
+          sessions.push(unavailableItem(row, attempt, request, observedAt));
           continue;
         }
-        if (row.event_rows.length > 1024) throw new Error("session_watch_event_history_unavailable");
+        if (row.run_attempt_id !== attempt.id || row.run_job_id !== row.job_id || row.run_project_id !== row.project_id
+          || row.run_node_id !== attempt.nodeId) throw new Error("session_watch_lineage_unavailable");
         const stored: StoredHarnessRunRowV1 = { id: row.run_id, tenant_id: row.run_tenant_id!, project_id: row.run_project_id!,
           job_id: row.run_job_id!, attempt_id: row.run_attempt_id!, node_id: row.run_node_id!, adapter_id: row.run_adapter_id!,
           harness: row.run_harness!, native_session_key_digest: row.run_native_session_key_digest!,
@@ -192,8 +197,6 @@ export class SessionWatchServiceV1 {
           created_at: row.run_created_at!, updated_at: row.run_updated_at!, last_observed_at: row.run_last_observed_at!,
           event_rows: row.event_rows };
         const run = verifyStoredHarnessRunV1(stored, this.key);
-        if (run.attemptId !== attempt.id || run.jobId !== row.job_id || run.projectId !== row.project_id
-          || run.nodeId !== attempt.nodeId) throw new Error("session_watch_lineage_unavailable");
         const latest = row.event_rows.at(-1)?.payload;
         sessions.push(projectSessionWatchItemV1({ run, event: latest?.payload, eventAt: latest?.occurredAt,
           jobState: row.job_state, taskTitle: request.title, attemptId: attempt.id, attemptNumber: attempt.attemptNumber,

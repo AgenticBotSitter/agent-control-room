@@ -4,11 +4,11 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import type { DatabaseClient, DatabaseSession } from "../src/persistence/database";
 import type { HarnessRunV1 } from "../src/harness/v1/types";
-import { SecurityStore } from "../src/security";
-import { createAccessVerifier } from "../src/web/v1/access-verifier";
+import { SecurityStore, sha256Digest } from "../src/security";
+import { createAccessVerifier, WebAccessError } from "../src/web/v1/access-verifier";
 import { readSessionWatchV1 } from "../src/web/v1/session-watch-browser-client";
 import { projectSessionWatchItemV1, projectSessionWatchStateV1, SessionWatchServiceV1 } from "../src/web/v1/session-watch-service";
-import { SESSION_WATCH_PAGE_SIZE_V1, sessionWatchPageSchemaV1, type SessionWatchItemV1 } from "../src/web/v1/session-watch-wire";
+import { SESSION_WATCH_PAGE_SIZE_V1, sessionWatchIdSchema, sessionWatchPageSchemaV1, type SessionWatchItemV1 } from "../src/web/v1/session-watch-wire";
 import { SessionWatchView } from "../private-app/app/session-watch/workspace";
 import { webNativeResultFixture } from "./helpers/web-native-result";
 import { request, token } from "./helpers/web-foundation";
@@ -91,12 +91,49 @@ function observedDatabase(db: DatabaseClient) {
   return { client, statements };
 }
 
+function transformedDatabase(db: DatabaseClient, transform: (sql: string, rows: Record<string, unknown>[]) => Record<string, unknown>[]) {
+  const session = (tx: DatabaseSession): DatabaseSession => ({ query: async <T,>(sql: string, parameters?: unknown[]) => {
+    const result = await tx.query<T>(sql, parameters);
+    return { ...result, rows: transform(sql, result.rows as Record<string, unknown>[]) as T[] };
+  } });
+  return {
+    query: async <T,>(sql: string, parameters?: unknown[]) => {
+      const result = await db.query<T>(sql, parameters);
+      return { ...result, rows: transform(sql, result.rows as Record<string, unknown>[]) as T[] };
+    },
+    transaction: <T,>(work: (tx: DatabaseSession) => Promise<T>) => db.transaction(tx => work(session(tx))),
+    transactionWithPreCommitCheck: <T,>(work: (tx: DatabaseSession) => Promise<T>, check: () => void | Promise<void>) =>
+      db.transactionWithPreCommitCheck(tx => work(session(tx)), check),
+  } satisfies DatabaseClient;
+}
+
 test("owner session reads stay tenant-bound and emit no task commands", async t => {
   const fixture = await webNativeResultFixture(); t.after(fixture.close);
+  await fixture.db.query("INSERT INTO tenants(id,display_name) VALUES('tenant:watch-other','Other tenant')");
+  await fixture.db.query("INSERT INTO workspaces(id,tenant_id,display_name) VALUES('workspace:watch-other','tenant:watch-other','Other workspace')");
+  await fixture.db.query(`INSERT INTO adapter_registry(id,tenant_id,source_system,contract_version,authority_mode,status,redaction_policy_version,cursor_retention_days)
+    SELECT 'adapter:other','tenant:watch-other',source_system,contract_version,authority_mode,status,redaction_policy_version,cursor_retention_days
+    FROM adapter_registry WHERE tenant_id=$1 LIMIT 1`, [fixture.scope.tenantId]);
+  await fixture.db.query(`INSERT INTO projects(id,tenant_id,workspace_id,adapter_id,source_record_id,source_version,title,description,normalized_state,
+    domain_state,health,authority_mode,observed_at,payload,updated_at) VALUES('project:other','tenant:watch-other','workspace:watch-other','adapter:other',
+    'project:other','1','Other session','Synthetic cross-tenant session','planned','manual_project_active','healthy','control_room_native',$1,'{}',$1)`, [at()]);
+  const copy = async (table: string, columns: string, values: string) => fixture.db.query(`INSERT INTO ${table}(${columns}) SELECT ${values}`);
+  const replace = "replace(replace(replace(replace(replace(payload::text,'tenant:test','tenant:watch-other'),'project:test','project:other'),'request:test','request:other'),'workflow:test','workflow:other'),'job:test','job:other')::jsonb";
+  await copy("control_requests", "id,tenant_id,project_id,state,version,idempotency_key,payload,created_at,updated_at",
+    `'request:other','tenant:watch-other','project:other',state,version,idempotency_key,${replace},created_at,updated_at FROM control_requests WHERE tenant_id='tenant:test' AND id='request:test'`);
+  await copy("control_workflows", "id,tenant_id,request_id,project_id,definition_digest,state,version,payload,created_at,updated_at",
+    `'workflow:other','tenant:watch-other','request:other','project:other',definition_digest,state,version,${replace},created_at,updated_at FROM control_workflows WHERE tenant_id='tenant:test' AND id='workflow:test'`);
+  await copy("control_jobs", "id,tenant_id,workflow_id,project_id,state,version,priority,required_capability,authority_digest,payload,created_at,updated_at",
+    `'job:other','tenant:watch-other','workflow:other','project:other',state,version,priority,required_capability,authority_digest,${replace},created_at,updated_at FROM control_jobs WHERE tenant_id='tenant:test' AND id='job:test'`);
+  await copy("control_nodes", "id,tenant_id,state,version,identity_key_id,payload,created_at,updated_at",
+    `'node:other','tenant:watch-other',state,version,identity_key_id,replace(replace(payload::text,'tenant:test','tenant:watch-other'),'node:test','node:other')::jsonb,created_at,updated_at FROM control_nodes WHERE tenant_id='tenant:test' AND id='node:test'`);
+  await copy("control_attempts", "id,tenant_id,job_id,attempt_number,state,version,worker_id,node_id,lease_epoch,payload,created_at,updated_at",
+    `'attempt:other','tenant:watch-other','job:other',attempt_number,state,version,worker_id,'node:other',lease_epoch,replace(replace(replace(replace(payload::text,'tenant:test','tenant:watch-other'),'job:test','job:other'),'node:test','node:other'),'attempt:test','attempt:other')::jsonb,created_at,updated_at FROM control_attempts WHERE tenant_id='tenant:test' AND id='attempt:test'`);
   const watched = observedDatabase(fixture.db);
   const service = new SessionWatchServiceV1(watched.client, fixture.scope, fixture.harnessKey, () => instant + 6000);
   const page = await service.read(fixture.identity);
   assert.equal(page.sessions.length, 1); assert.equal(page.sessions[0]!.state, "running");
+  assert.equal(page.sessions.some(value => value.sessionId === "attempt:other"), false, "a second tenant's active session is never rendered");
   assert.equal(page.sessions[0]!.worker, null); assert.equal(page.startsWork, false);
   assert.deepEqual((await service.read(fixture.identity, page.sessions[0]!.sessionId)).sessions, [],
     "the stable cursor advances beyond the current page");
@@ -115,6 +152,52 @@ test("owner session reads stay tenant-bound and emit no task commands", async t 
   const other = new SessionWatchServiceV1(fixture.db, { tenantId: "tenant:other", workspaceId: "workspace:other" },
     fixture.harnessKey, () => instant + 6000);
   assert.deepEqual((await other.read(otherIdentity)).sessions, []);
+});
+
+test("session watch refuses a same-tenant operator for both authorize and read", async t => {
+  const fixture = await webNativeResultFixture(); t.after(fixture.close);
+  const subject = "session-watch-operator";
+  await fixture.db.query(`INSERT INTO control_identities(id,tenant_id,actor_type,display_name,auth_provider,auth_subject_digest,state,created_at,updated_at)
+    VALUES($1,$2,'human','Operator',$3,$4,'active',$5,$5)`, ["identity:session-watch-operator", fixture.scope.tenantId,
+    fixture.accessTrust.issuer, sha256Digest({ provider: fixture.accessTrust.issuer, subject }), at()]);
+  await fixture.db.query(`INSERT INTO control_role_grants(id,tenant_id,identity_id,role_key,allowed_actions,project_ids,risk_ceiling,
+    allow_external_effects,require_strong_factor,created_at,updated_at) VALUES($1,$2,$3,'operator',$4::jsonb,$5::jsonb,'low',false,false,$6,$6)`,
+  ["grant:session-watch-operator", fixture.scope.tenantId, "identity:session-watch-operator", JSON.stringify(["tasks.read", "projects.read"]),
+    JSON.stringify(["*"]), at()]);
+  const jwt = token({ sub: subject, iat: instant / 1000 - 60, exp: instant / 1000 + 600 });
+  const identity = createAccessVerifier(fixture.accessTrust)(request(undefined, undefined, undefined, undefined, jwt), instant + 6000);
+  const service = new SessionWatchServiceV1(fixture.db, fixture.scope, fixture.harnessKey, () => instant + 6000);
+  for (const action of [() => service.authorize(identity), () => service.read(identity)]) {
+    await assert.rejects(action, (error: unknown) => error instanceof WebAccessError && error.code === "access_denied");
+  }
+});
+
+test("session watch refuses stored run lineage that does not bind to the selected attempt", async t => {
+  const fixture = await webNativeResultFixture(); t.after(fixture.close);
+  const service = new SessionWatchServiceV1(transformedDatabase(fixture.db, (sql, rows) => sql.includes("WITH cursor")
+    ? rows.map(row => row.run_id ? { ...row, run_attempt_id: "attempt:other" } : row) : rows), fixture.scope, fixture.harnessKey,
+  () => instant + 6000);
+  await assert.rejects(service.read(fixture.identity), /session_watch_lineage_unavailable/);
+});
+
+test("one oversized run is unavailable without hiding healthy sessions", async t => {
+  const fixture = await webNativeResultFixture(); t.after(fixture.close);
+  await fixture.provisionRun("run:oversized", "job:oversized", "attempt:oversized");
+  await fixture.db.query(`UPDATE control_workflows SET payload=jsonb_set(payload,'{jobIds}',payload->'jobIds' || $3::jsonb)
+    WHERE tenant_id=$1 AND id=$2`, [fixture.scope.tenantId, "workflow:test", JSON.stringify(["job:oversized"])]);
+  const service = new SessionWatchServiceV1(transformedDatabase(fixture.db, (sql, rows) => sql.includes("WITH cursor")
+    ? rows.map(row => row.run_id === "run:oversized" ? { ...row, event_rows: Array.from({ length: 1025 }, () => ({})) } : row) : rows),
+  fixture.scope, fixture.harnessKey, () => instant + 6000);
+  const page = await service.read(fixture.identity);
+  assert.equal(page.sessions.length, 2);
+  assert.deepEqual(page.sessions.find(value => value.attemptId === "attempt:oversized" && value.state === "stalled")?.lastProgress,
+    "canonical attempt leased");
+  assert.ok(page.sessions.some(value => value.attemptId !== "attempt:oversized" && value.state === "running"));
+});
+
+test("session-watch cursor schema accepts canonical attempt and run id shapes", () => {
+  for (const id of ["attempt:watch:0", "run:watch:0", "a._:-9"]) assert.equal(sessionWatchIdSchema.parse(id), id);
+  for (const id of ["", "x", "attempt/watch", "attempt space"]) assert.equal(sessionWatchIdSchema.safeParse(id).success, false);
 });
 
 test("a working canonical attempt without a persisted run is shown as stalled with unavailable run evidence", async t => {

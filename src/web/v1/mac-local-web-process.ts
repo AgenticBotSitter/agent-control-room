@@ -18,6 +18,7 @@ import type { LocalOwnerSessionStoreV1 } from "./local-owner-session-store";
 import type { PersistedLocalOwnerSessionV1 } from "./local-owner-session";
 import { SessionWatchServiceV1 } from "./session-watch-service";
 import { catalogProjectIdSchema } from "./project-wire";
+import { sessionWatchIdSchema } from "./session-watch-wire";
 
 export interface MacLocalWebProcessOptionsV1 {
   origin: string;
@@ -136,7 +137,7 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
     if (url.pathname === "/session-watch") {
       if ([...url.searchParams.keys()].some(name => name !== "after") || url.searchParams.getAll("after").length > 1)
         throw new WebAccessError("invalid_request");
-      if (url.searchParams.has("after") && !catalogProjectIdSchema.safeParse(url.searchParams.get("after")).success)
+      if (url.searchParams.has("after") && !sessionWatchIdSchema.safeParse(url.searchParams.get("after")).success)
         throw new WebAccessError("invalid_request");
       await sessionWatch.authorize(identity);
       return render();
