@@ -90,4 +90,59 @@ test("assignment scopes refuse overlap, allow disjoint work, and recover after e
     "SELECT count(*)::text AS count FROM control_assignment_lease_scopes WHERE tenant_id=$1 AND lease_id=$2",
     [binding.tenantId, expiryAssignment.receipt.leaseId])).rows[0];
   assert.equal(explicitlyExpiredScopeCount?.count, "0", "explicit expiry removes its scope rows");
+
+  const renewable = await prepare("renewable", "src/leased");
+  const renewableAssignment = await assignments.assign(f.identity, binding.projectId, renewable.jobId, binding.nodeId, renewable.inputDigest);
+  const leaseRow = (await f.db.query<{ version: number }>(
+    "SELECT version FROM control_leases WHERE tenant_id=$1 AND id=$2",
+    [binding.tenantId, renewableAssignment.receipt.leaseId])).rows[0]!;
+  const holder = { tenantId: binding.tenantId, nodeId: binding.nodeId, expiresAt: at(240_000), assertCurrent() {} };
+  const nonHolder = { ...holder, nodeId: "node:not-the-holder" };
+  now = instant + 35_000;
+  await assert.rejects(assignments.renewByHolder(nonHolder, binding.projectId, renewable.jobId,
+    renewableAssignment.receipt.leaseId, renewableAssignment.receipt.leaseEpoch, leaseRow.version,
+    "renewal:holder-1", at(35_000), at(45_000)),
+  (error: unknown) => (error as { code?: string }).code === "conflict", "only the authenticated holder can renew");
+  const renewed = await assignments.renewByHolder(holder, binding.projectId, renewable.jobId,
+    renewableAssignment.receipt.leaseId, renewableAssignment.receipt.leaseEpoch, leaseRow.version,
+    "renewal:holder-1", at(35_000), at(45_000));
+  assert.ok(Date.parse(renewed.receipt.expiresAt) > Date.parse(renewableAssignment.receipt.expiresAt));
+  const renewalReplay = await assignments.renewByHolder(holder, binding.projectId, renewable.jobId,
+    renewableAssignment.receipt.leaseId, renewableAssignment.receipt.leaseEpoch, leaseRow.version,
+    "renewal:holder-1", at(35_000), at(45_000));
+  assert.equal(renewalReplay.replayed, true, "a lost renewal response can replay the exact holder request");
+
+  const inScope = await assignments.assertWriteEffectsInScope(holder, binding.projectId, renewable.jobId,
+    renewableAssignment.receipt.leaseId, renewableAssignment.receipt.leaseEpoch, ["src/leased/ok.ts"]);
+  assert.deepEqual(inScope.paths, ["src/leased/ok.ts"]);
+  await assert.rejects(assignments.assertWriteEffectsInScope(holder, binding.projectId, renewable.jobId,
+    renewableAssignment.receipt.leaseId, renewableAssignment.receipt.leaseEpoch, ["src/outside.ts"]),
+  (error: unknown) => (error as { code?: string }).code === "conflict", "an out-of-scope write effect is refused");
+
+  const restarted = new TaskAssignmentCoordinator(f.db, f.scope, planner, route, () => now);
+  const ownerView = await f.tasks.detail(f.identity, binding.projectId, renewable.jobId);
+  assert.deepEqual(ownerView.ownershipLeases, [{ nodeId: binding.nodeId, expiresAt: renewed.receipt.expiresAt,
+    state: "active", current: true, scopes: [{ kind: "tree", path: "src/leased" }] }],
+  "the owner sees the holder, deadline, state, and exact leased scope after restart");
+  const restartOverlap = await prepare("restart-overlap", "src/leased/child.ts", "file");
+  await assert.rejects(restarted.assign(f.identity, binding.projectId, restartOverlap.jobId, binding.nodeId, restartOverlap.inputDigest),
+    (error: unknown) => (error as { code?: string }).code === "conflict", "a fresh coordinator observes the durable lease");
+
+  const revoked = await restarted.revoke(f.identity, binding.projectId, renewable.jobId, renewable.inputDigest);
+  assert.equal(revoked.receipt.leaseState, "revoked");
+  assert.equal((await f.db.query<{ count: string }>(
+    "SELECT count(*)::text AS count FROM control_assignment_lease_scopes WHERE tenant_id=$1 AND lease_id=$2",
+    [binding.tenantId, renewableAssignment.receipt.leaseId])).rows[0]?.count, "0");
+  const afterRevoke = await restarted.assign(f.identity, binding.projectId, restartOverlap.jobId, binding.nodeId, restartOverlap.inputDigest);
+  assert.equal(afterRevoke.receipt.leaseCurrent, true, "owner revocation releases the scope");
+
+  const concurrentA = await prepare("concurrent-a", "src/concurrent");
+  const concurrentB = await prepare("concurrent-b", "src/concurrent/child.ts", "file");
+  const concurrent = await Promise.allSettled([
+    restarted.assign(f.identity, binding.projectId, concurrentA.jobId, binding.nodeId, concurrentA.inputDigest),
+    restarted.assign(f.identity, binding.projectId, concurrentB.jobId, binding.nodeId, concurrentB.inputDigest),
+  ]);
+  assert.equal(concurrent.filter(result => result.status === "fulfilled").length, 1,
+    "database-serialized acquisition has exactly one winner");
+  assert.equal(concurrent.filter(result => result.status === "rejected").length, 1);
 });

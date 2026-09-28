@@ -46,6 +46,30 @@ function assertBinding(delivery: ControllerWorkerDeliveryV1, intent: WorkspaceIn
     || activation.connectorProfileDigest !== delivery.connectorProfileDigest) unavailable();
 }
 
+function containsScope(container: string, candidate: string): boolean {
+  if (!container.endsWith('/**')) return container === candidate;
+  const root = container.slice(0, -3);
+  const candidateRoot = candidate.endsWith('/**') ? candidate.slice(0, -3) : candidate;
+  return candidateRoot === root || candidateRoot.startsWith(`${root}/`);
+}
+
+/** Intersects the host's configured ceiling with the signed durable lease
+ * scopes. Neither side can widen the other. */
+export function effectiveOwnershipLeaseAllowedPathsV1(delivery: ControllerWorkerDeliveryV1,
+  configured: readonly string[]): readonly string[] {
+  const leased = delivery.writeScopes.map(scope => scope.scopeKind === 'file' ? scope.path
+    : scope.path === '' ? undefined : `${scope.path}/**`);
+  if (leased.some(scope => scope === undefined)) return configured;
+  const result = new Set<string>();
+  for (const host of configured) for (const lease of leased) {
+    if (!lease) continue;
+    if (containsScope(host, lease)) result.add(lease);
+    else if (containsScope(lease, host)) result.add(host);
+  }
+  if (!result.size) unavailable();
+  return Object.freeze([...result].sort());
+}
+
 /**
  * Binds one shared controller delivery to the existing journaled Codex
  * workspace port and retains the lifecycle holder in this closure. It exposes
@@ -85,9 +109,10 @@ export function createCodexDeliveryBoundWorkspacePreparationV1(input: Readonly<{
       const bound: ControllerWorkerDeliveryV1 = selected;
       assertBinding(bound, intent, binding);
       assertCurrent();
+      const allowedPaths = effectiveOwnershipLeaseAllowedPathsV1(bound, policy.allowedPaths);
       holder ??= new CodingWorkspaceLifecycleHolderV1({
         maximumConcurrentWorkspaces: 1,
-        allowedPaths: policy.allowedPaths,
+        allowedPaths,
         maximumChangedFiles: policy.maximumChangedFiles,
         maximumChangedBytes: policy.maximumChangedBytes,
         workspacePort: journaledWorkspacePort({ port: workspacePort, journal: input.journal,

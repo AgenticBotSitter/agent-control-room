@@ -245,7 +245,8 @@ test("the Mac-local wrapper forwards the existing assignment operation through l
       return { projectId, jobId, inputDigest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         candidates: [], recommendation: { state: "not_available", availability: "unknown", startsWork: false, grantsExecutionAuthority: false },
         receipt: null, startsWork: false, candidateEvidence: "configured_routes_only" };
-    }, async assign() { throw new Error("not used"); }, async expire() { throw new Error("not used"); } },
+    }, async assign() { throw new Error("not used"); }, async expire() { throw new Error("not used"); },
+      async revoke() { throw new Error("not used"); } },
   });
   const request = (path: string, init: RequestInit = {}) => new Request(`${origin}${path}`, init);
   const signedIn = await app.handle(request("/api/v1/local-owner-session", { method: "POST", headers: {

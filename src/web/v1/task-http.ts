@@ -187,10 +187,13 @@ export function createTaskHttpHandler(options: { origin: string; trust?: AccessT
         if (!draft.success) throw new WebAccessError("invalid_request");
         const result = taskAssignmentCommandSchema.parse(draft.data.action === "assign"
           ? await options.assignment.assign(identity, projectId, jobId, draft.data.nodeId, draft.data.expectedInputDigest)
-          : await options.assignment.expire(identity, projectId, jobId, draft.data.expectedInputDigest));
+          : draft.data.action === "expire"
+            ? await options.assignment.expire(identity, projectId, jobId, draft.data.expectedInputDigest)
+            : await options.assignment.revoke(identity, projectId, jobId, draft.data.expectedInputDigest));
         if (result.receipt.projectId !== projectId || result.receipt.jobId !== jobId || result.receipt.inputDigest !== draft.data.expectedInputDigest
           || draft.data.action === "assign" && result.receipt.nodeId !== draft.data.nodeId
-          || draft.data.action === "expire" && result.receipt.leaseState !== "expired") throw new Error("assignment_scope_mismatch");
+          || draft.data.action === "expire" && result.receipt.leaseState !== "expired"
+          || draft.data.action === "revoke" && result.receipt.leaseState !== "revoked") throw new Error("assignment_scope_mismatch");
         return Response.json(result, { status: result.replayed ? 200 : 201, headers: privateResponseHeaders });
       }
       const planningRoute = /^\/api\/v1\/projects\/([^/]+)\/tasks\/([^/]+)\/plan$/.exec(url.pathname);

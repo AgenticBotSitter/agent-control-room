@@ -17,7 +17,7 @@ export function TaskAssignmentPanel({ options, receipt = options?.receipt, error
   runError?: string; runRecorded?: boolean;
   nodeId: string; setNodeId: (value: string) => void; pending: boolean; uncertain: boolean;
   assignAndRun?: boolean;
-  onChange: (action: "assign" | "expire") => void; onRetry: () => void;
+  onChange: (action: "assign" | "expire" | "revoke") => void; onRetry: () => void;
 }) {
   return <section id="task-assignment" className="private-panel" aria-label="Task assignment"><h2>Task assignment</h2>
     <p>{assignAndRun ? "Choose a worker, then assign and run this prepared task in one step. Control Room still records the reservation, owner approval and queue submission separately."
@@ -38,7 +38,8 @@ export function TaskAssignmentPanel({ options, receipt = options?.receipt, error
       No saved configured route can be suggested for this task. This does not prove that no worker exists.</p>}
     {options && (uncertain ? <button type="button" disabled={pending} onClick={onRetry}>Check this exact assignment change</button>
       : receipt?.leaseState === "active" ? !receipt.leaseCurrent
-        ? <button type="button" disabled={pending} onClick={() => onChange("expire")}>Reconcile expired reservation</button> : null
+        ? <button type="button" disabled={pending} onClick={() => onChange("expire")}>Reconcile expired reservation</button>
+        : <button type="button" disabled={pending} onClick={() => onChange("revoke")}>Revoke ownership lease</button>
       : options.candidates.length ? <div><p>Configured machines only. Availability and capacity are checked when you assign.</p>
         <label htmlFor="task-assignment-node">Machine</label><select id="task-assignment-node" value={nodeId} disabled={pending} onChange={event => setNodeId(event.target.value)}>
           <option value="">Choose a machine</option>{options.candidates.map(candidate => <option key={candidate.nodeId} value={candidate.nodeId}>{candidate.label} · {candidate.platform} · {candidate.workScope === "bounded_text_review" ? "text review only" : "configured task"}</option>)}</select>
@@ -70,7 +71,7 @@ export function PrivateTaskAssignment({ detail, onRecorded, client: suppliedClie
       setError(reason instanceof BrowserRequestError ? reason : new BrowserRequestError("unavailable")); } });
     return () => { live = false; };
   }, [client, detail]);
-  async function change(action: "assign" | "expire", retry = false) {
+  async function change(action: "assign" | "expire" | "revoke", retry = false) {
     if (busy.current || !detail || checkedDetail !== detail || !options) return;
     busy.current = true; setPending(true); setError(undefined); setRunError(undefined); setRunRecorded(false); const current = ++generation.current;
     let assignmentRecorded = false, changeRecorded = false;
