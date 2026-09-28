@@ -19,6 +19,7 @@ type TaskApplication = Readonly<{
   close(): Promise<void>;
   queueDelivery?: unknown;
   queueRecovery?: unknown;
+  agentReviews?: Readonly<{ createPlan(value: unknown): Promise<unknown>; record(value: unknown): Promise<unknown> }>;
 }>;
 
 /** Owner-held executable configuration for the existing, already-composed task

@@ -22,6 +22,7 @@ const databaseRoles = Object.freeze({
   coordinator: { ...configuration.database, username: "control_room_coordinator", password: "coordinator-test" },
   results: { ...configuration.database, username: "control_room_results", password: "results-test" },
   publisher: { ...configuration.database, username: "control_room_publisher", password: "publisher-test" },
+  agentReviewer: { ...configuration.database, username: "control_room_agent_reviewer_login", password: "reviewer-test" },
   queueWorker: { ...configuration.database, username: "control_room_queue_worker", password: "queue-worker-test" },
 });
 
@@ -179,6 +180,7 @@ test("starts the existing queue worker only after the loopback site is listening
       trace.push("queue-start");
       assert.equal(value.database.username, "control_room_queue_worker");
       assert.equal(value.application.loginNames.includes("control_room_web"), true);
+      assert.equal(value.application.loginNames.includes("control_room_agent_reviewer_login"), true);
       return { status: () => ({ accepting: true }), async close() { trace.push("queue-close"); } };
     },
     assets: { count: 0, digest: "test", respond() { return undefined; } }, render() { return new Response("local"); },

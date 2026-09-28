@@ -51,7 +51,8 @@ export function renewRetainedWorkIntakeCredentialsV1(existing, prospective, now)
 
 const exec = promisify(execFile);
 const roleNames = Object.freeze({ web: "control_room_web", coordinator: "control_room_coordinator",
-  results: "control_room_results", publisher: "control_room_publisher", queueWorker: "control_room_queue_worker" });
+  results: "control_room_results", publisher: "control_room_publisher",
+  agentReviewer: "control_room_agent_reviewer_login", queueWorker: "control_room_queue_worker" });
 const bootstrapRoles = Object.freeze({ migrator: "control_room_migrator", application: "control_room_app",
   scheduler: "control_room_scheduler", workIntake: "control_room_work_intake_agent" });
 const passwordPattern = /^[A-Za-z0-9_-]{32,}$/u;
@@ -209,15 +210,18 @@ async function repointOnly({ protectedRoot: suppliedRoot, route }) {
     || roles.schema !== MAC_LOCAL_DATABASE_ROLES_V1
     || roles.web.username !== roleNames.web || roles.coordinator.username !== roleNames.coordinator
     || roles.results.username !== roleNames.results || roles.publisher.username !== roleNames.publisher
+    || roles.agentReviewer.username !== roleNames.agentReviewer
     || roles.queueWorker.username !== roleNames.queueWorker
-    || [roles.web, roles.coordinator, roles.results, roles.publisher, roles.queueWorker].some(role => role.database !== "control_room"))
+    || [roles.web, roles.coordinator, roles.results, roles.publisher, roles.agentReviewer, roles.queueWorker]
+      .some(role => role.database !== "control_room"))
     throw new Error("provision_existing_configuration_refused");
 
   const update = configuration => validatePrivatePostgresConfiguration({ ...configuration, host: route.host, port: 5432,
     privateEndpoint: endpoint });
   const nextMacDatabase = update(mac.database);
   const nextRoleConfigurations = { web: update(roles.web), coordinator: update(roles.coordinator),
-    results: update(roles.results), publisher: update(roles.publisher), queueWorker: update(roles.queueWorker) };
+    results: update(roles.results), publisher: update(roles.publisher), agentReviewer: update(roles.agentReviewer),
+    queueWorker: update(roles.queueWorker) };
   captureMacLocalProtectedConfigurationV1({ ...macOriginal, database: nextMacDatabase });
   captureMacLocalDatabaseRolesV1({ ...rolesOriginal, ...nextRoleConfigurations });
   const nextMac = { ...macOriginal, database: nextMacDatabase };
@@ -470,7 +474,7 @@ async function existingUpgradeConfiguration(protectedRoot) {
   const oldRoles = await readProtectedJson(roleFile);
   const existingNames = ["schema", "web", "coordinator", "results", "queueWorker"];
   if (oldRoles.schema !== MAC_LOCAL_DATABASE_ROLES_V1
-    || Object.keys(oldRoles).some(key => ![...existingNames, "publisher"].includes(key))
+    || Object.keys(oldRoles).some(key => ![...existingNames, "publisher", "agentReviewer"].includes(key))
     || existingNames.some(key => !Object.hasOwn(oldRoles, key))) throw new Error("upgrade_role_config_refused");
   const sameEndpoint = role => role.host === mac.database.host && role.port === mac.database.port
     && role.database === mac.database.database && role.majorVersion === mac.database.majorVersion
@@ -490,8 +494,14 @@ async function existingUpgradeConfiguration(protectedRoot) {
     if (publisher.username !== roleNames.publisher || publisher.database !== "control_room" || !sameEndpoint(publisher)
       || publisher.password !== await readPrivatePassword(join(passwordRoot, `${roleNames.publisher}.txt`)))
       throw new Error("upgrade_role_config_refused");
-    captureMacLocalDatabaseRolesV1(oldRoles);
   }
+  if (oldRoles.agentReviewer) {
+    const reviewer = validatePrivatePostgresConfiguration(oldRoles.agentReviewer);
+    if (reviewer.username !== roleNames.agentReviewer || reviewer.database !== "control_room" || !sameEndpoint(reviewer)
+      || reviewer.password !== await readPrivatePassword(join(passwordRoot, `${roleNames.agentReviewer}.txt`)))
+      throw new Error("upgrade_role_config_refused");
+  }
+  if (oldRoles.publisher && oldRoles.agentReviewer) captureMacLocalDatabaseRolesV1(oldRoles);
   return { configRoot, passwordRoot, roleFile, oldRoles };
 }
 
@@ -514,17 +524,22 @@ export async function planMacDatabaseUpgradeFromFileV1(snapshotFile, expectedMai
 
 export async function prepareMacLocalDatabaseUpgradeV1(options) {
   const { configRoot, passwordRoot, oldRoles } = await existingUpgradeConfiguration(options.protectedRoot);
-  if (oldRoles.publisher) throw new Error("upgrade_already_finished");
+  if (oldRoles.publisher && oldRoles.agentReviewer) throw new Error("upgrade_already_finished");
   const mainCommit = options.mainCommit ?? await currentMainCommit();
   if (!/^[a-f0-9]{40}$/u.test(mainCommit)) throw new Error("upgrade_main_commit_refused");
-  const password = await privateText(join(passwordRoot, `${roleNames.publisher}.txt`), newPassword);
-  const salt = randomBytes(16);
-  const verifier = postgresScramVerifierV1(password, salt);
-  const verifierDigest = createHash("sha256").update(verifier).digest("hex");
+  const values = {};
+  for (const [key, name] of [["publisher", roleNames.publisher], ["agentReviewer", roleNames.agentReviewer]]) {
+    const password = oldRoles[key] ? await readPrivatePassword(join(passwordRoot, `${name}.txt`))
+      : await privateText(join(passwordRoot, `${name}.txt`), newPassword);
+    const salt = randomBytes(16), verifier = postgresScramVerifierV1(password, salt);
+    values[key] = { salt: salt.toString("base64"), verifierDigest: createHash("sha256").update(verifier).digest("hex"), verifier };
+  }
   await writePrivate(join(configRoot, "database-upgrade-prepare.json"),
     `${JSON.stringify({ schema: "control-room.mac-database-upgrade-prepare/v1", mainCommit,
-      salt: salt.toString("base64"), verifierDigest })}\n`);
-  return { mainCommit, verifier };
+      verifiers: Object.fromEntries(Object.entries(values).map(([key, value]) => [key,
+        { salt: value.salt, verifierDigest: value.verifierDigest }])) })}\n`);
+  return { mainCommit, verifier: JSON.stringify({ publisher: values.publisher.verifier,
+    agentReviewer: values.agentReviewer.verifier }) };
 }
 
 async function verifyPublisherLogin(configuration) {
@@ -539,25 +554,43 @@ async function verifyPublisherLogin(configuration) {
   } finally { await client.end().catch(() => {}); }
 }
 
+async function verifyAgentReviewerLogin(configuration) {
+  const options = privatePostgresOptions(configuration);
+  const client = new Client({ host: options.host, port: options.port, database: options.database,
+    user: options.username, password: options.password, ssl: options.ssl === false ? false : options.ssl,
+    connectionTimeoutMillis: 5000 });
+  try {
+    await client.connect();
+    const result = await client.query("SELECT current_user = 'control_room_agent_reviewer_login' AS matches");
+    if (result.rows[0]?.matches !== true) throw new Error("upgrade_agent_reviewer_login_refused");
+  } finally { await client.end().catch(() => {}); }
+}
+
 export async function finishMacLocalDatabaseUpgradeV1(options) {
   const { configRoot, passwordRoot, roleFile, oldRoles } = await existingUpgradeConfiguration(options.protectedRoot);
   const mainCommit = options.mainCommit ?? await currentMainCommit();
   const prepared = await readProtectedJson(join(configRoot, "database-upgrade-prepare.json"));
-  if (prepared.schema !== "control-room.mac-database-upgrade-prepare/v1"
-    || prepared.mainCommit !== mainCommit || !/^[a-f0-9]{64}$/u.test(prepared.verifierDigest)
-    || typeof prepared.salt !== "string" || !/^[A-Za-z0-9+/=]{24}$/u.test(prepared.salt)
-    || Buffer.from(prepared.salt, "base64").length !== 16)
+  if (prepared.schema !== "control-room.mac-database-upgrade-prepare/v1" || prepared.mainCommit !== mainCommit
+    || !prepared.verifiers || Object.keys(prepared.verifiers).sort().join(",") !== "agentReviewer,publisher")
     throw new Error("upgrade_prepare_record_refused");
-  const password = await readPrivatePassword(join(passwordRoot, `${roleNames.publisher}.txt`));
-  const verifier = checkedPostgresScramVerifierV1(postgresScramVerifierV1(password, Buffer.from(prepared.salt, "base64")));
-  if (createHash("sha256").update(verifier).digest("hex") !== prepared.verifierDigest)
-    throw new Error("upgrade_prepare_record_refused");
-  const publisher = validatePrivatePostgresConfiguration({ ...oldRoles.web,
-    username: roleNames.publisher, password });
+  const configurations = {};
+  for (const [key, name] of [["publisher", roleNames.publisher], ["agentReviewer", roleNames.agentReviewer]]) {
+    const item = prepared.verifiers[key];
+    if (!item || !/^[a-f0-9]{64}$/u.test(item.verifierDigest) || typeof item.salt !== "string"
+      || !/^[A-Za-z0-9+/=]{24}$/u.test(item.salt) || Buffer.from(item.salt, "base64").length !== 16)
+      throw new Error("upgrade_prepare_record_refused");
+    const password = await readPrivatePassword(join(passwordRoot, `${name}.txt`));
+    const verifier = checkedPostgresScramVerifierV1(postgresScramVerifierV1(password, Buffer.from(item.salt, "base64")));
+    if (createHash("sha256").update(verifier).digest("hex") !== item.verifierDigest)
+      throw new Error("upgrade_prepare_record_refused");
+    configurations[key] = validatePrivatePostgresConfiguration({ ...oldRoles.web, username: name, password });
+  }
+  const publisher = configurations.publisher, agentReviewer = configurations.agentReviewer;
   await (options.verifyPublisher ?? verifyPublisherLogin)(publisher);
-  const nextRoles = { ...oldRoles, publisher };
+  await (options.verifyAgentReviewer ?? verifyAgentReviewerLogin)(agentReviewer);
+  const nextRoles = { ...oldRoles, publisher, agentReviewer };
   captureMacLocalDatabaseRolesV1(nextRoles);
-  if (!oldRoles.publisher) await writePrivate(roleFile, `${JSON.stringify(nextRoles)}\n`);
+  if (!oldRoles.publisher || !oldRoles.agentReviewer) await writePrivate(roleFile, `${JSON.stringify(nextRoles)}\n`);
   return { finished: true, mainCommit };
 }
 
@@ -635,7 +668,8 @@ export async function provisionMacLocalDatabaseV1(options) {
     password: allPasswords.web, majorVersion: 17, ...(endpoint ? { privateEndpoint: endpoint } : {}) });
   const role = username => Object.freeze({ ...database, username, password: allPasswords[Object.keys(roleNames).find(key => roleNames[key] === username)] });
   const roles = captureMacLocalDatabaseRolesV1({ schema: MAC_LOCAL_DATABASE_ROLES_V1, web: role(roleNames.web), coordinator: role(roleNames.coordinator),
-    results: role(roleNames.results), publisher: role(roleNames.publisher), queueWorker: role(roleNames.queueWorker) });
+    results: role(roleNames.results), publisher: role(roleNames.publisher), agentReviewer: role(roleNames.agentReviewer),
+    queueWorker: role(roleNames.queueWorker) });
   const ownerCode = await privateText(join(configRoot, "owner-sign-in.txt"), newPassword);
   const macLocal = captureProvisionedMacLocalConfigurationV1({ database, ownerCode, workers, workIntakeProjectIds });
   const clientRoot = join(configRoot, "work-intake-clients");

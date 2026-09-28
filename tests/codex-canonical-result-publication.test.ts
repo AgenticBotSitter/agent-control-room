@@ -514,6 +514,11 @@ test("persists one exact synthetic Codex result and review target without claimi
     qualificationReceipt: x.qualificationReceipt, bytes: x.bytes });
   assert.equal(first.replayed, false); assert.equal(first.receipt.completionVerified, false);
   assert.equal(first.receipt.releasesCapacity, false); assert.equal(first.target.subjectDigest, first.receipt.contentHash);
+  const producerAttempt = await x.f.canonical.get("tenant:test", "attempt", "attempt:test");
+  assert.equal(producerAttempt?.kind, "attempt");
+  assert.deepEqual(first.target.producer, { actorId: x.publication.identity.nodeId, actorType: "agent",
+    workerId: producerAttempt!.workerId!, agentProfileId: "agent-profile:codex-app-server:v1", harness: "codex",
+    adapterId: "codex-app-server:v1", modelFamily: "model-family:openai" });
   assert.equal(x.storage.putCalls, 1);
   const inspected = await x.f.runs.inspect("tenant:test", x.publication.identity.runId);
   assert.equal(inspected?.run.harness, "codex"); assert.equal(inspected?.run.state, "discovered");

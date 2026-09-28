@@ -19,7 +19,7 @@ const groups = Object.values(macRolePlan);
 const principals = [...logins, ...groups];
 const migrationLedger = new URL("../../deploy/postgres/migration-ledger.json", import.meta.url);
 const sha256 = bytes => createHash("sha256").update(bytes).digest("hex");
-const roleAttributes = role => `${role === "control_room_publisher" ? "LOGIN" : "NOLOGIN"} INHERIT `
+const roleAttributes = role => `${Object.hasOwn(macRolePlan, role) ? "LOGIN" : "NOLOGIN"} INHERIT `
   + "NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS";
 
 async function pendingMigrations(applied) {
@@ -43,7 +43,7 @@ function roleState({ roles, memberships, defaultAcl }) {
       throw new Error("upgrade_role_attributes_refused");
   }
   const found = new Set(roles.map(role => role.rolname));
-  for (const role of logins.filter(role => role !== "control_room_publisher"))
+  for (const role of logins.filter(role => !["control_room_publisher", "control_room_agent_reviewer_login"].includes(role)))
     if (!found.has(role)) throw new Error("upgrade_existing_role_missing");
   const actual = new Set();
   for (const row of memberships) {
@@ -130,10 +130,11 @@ export function macDatabaseUpgradePlanDigestV1(plan) {
   return `sha256:${sha256(JSON.stringify(plan))}`;
 }
 
-export async function applyMacDatabaseUpgradeV1({ publisherVerifier, client, expectedPlanDigest, applyPending,
+export async function applyMacDatabaseUpgradeV1({ publisherVerifier, agentReviewerVerifier, client, expectedPlanDigest, applyPending,
   onStage = () => {} }) {
   onStage("plan");
   checkedPostgresScramVerifierV1(publisherVerifier);
+  checkedPostgresScramVerifierV1(agentReviewerVerifier);
   const before = await inspectMacDatabaseUpgradeV1({ client });
   if (expectedPlanDigest !== undefined && macDatabaseUpgradePlanDigestV1(before) !== expectedPlanDigest)
     throw new Error("upgrade_plan_changed_refused");
@@ -155,6 +156,10 @@ export async function applyMacDatabaseUpgradeV1({ publisherVerifier, client, exp
     if (!state.found.has("control_room_publisher")) {
       await client.query(`CREATE ROLE control_room_publisher ${roleAttributes("control_room_publisher")}
         PASSWORD ${client.escapeLiteral(publisherVerifier)}`);
+    }
+    if (!state.found.has("control_room_agent_reviewer_login")) {
+      await client.query(`CREATE ROLE control_room_agent_reviewer_login ${roleAttributes("control_room_agent_reviewer_login")}
+        PASSWORD ${client.escapeLiteral(agentReviewerVerifier)}`);
     }
     onStage("grants");
     const current = await readMacGrantCatalogV1(client);
@@ -244,7 +249,16 @@ export async function runMacDatabaseUpgradeCommandV1({ args, readVerifier, git =
   if (git(["rev-parse", "HEAD"]) !== args[2]
     || git(["rev-parse", "refs/remotes/origin/main"]) !== args[2]
     || git(["status", "--porcelain"])) throw new Error("upgrade_main_checkout_refused");
-  const verifier = applying ? checkedPostgresScramVerifierV1((await readVerifier()).trim()) : undefined;
+  let verifiers;
+  if (applying) {
+    try { verifiers = JSON.parse((await readVerifier()).trim()); }
+    catch { throw new Error("upgrade_verifier_input_refused"); }
+    if (!verifiers || typeof verifiers !== "object" || Array.isArray(verifiers)
+      || Object.keys(verifiers).sort().join(",") !== "agentReviewer,publisher")
+      throw new Error("upgrade_verifier_input_refused");
+    verifiers = { publisher: checkedPostgresScramVerifierV1(verifiers.publisher),
+      agentReviewer: checkedPostgresScramVerifierV1(verifiers.agentReviewer) };
+  }
   const client = openClient();
   await client.connect();
   try {
@@ -255,7 +269,8 @@ export async function runMacDatabaseUpgradeCommandV1({ args, readVerifier, git =
       const plan = await inspectMacDatabaseUpgradeV1({ client });
       return { plan, digest: macDatabaseUpgradePlanDigestV1(plan) };
     }
-    return await applyMacDatabaseUpgradeV1({ client, publisherVerifier: verifier,
+    return await applyMacDatabaseUpgradeV1({ client, publisherVerifier: verifiers.publisher,
+      agentReviewerVerifier: verifiers.agentReviewer,
       expectedPlanDigest: args[4], applyPending, onStage });
   } finally { await client.end(); }
 }
@@ -264,7 +279,7 @@ async function readVerifierStdinV1() {
   let input = "";
   for await (const chunk of process.stdin) {
     input += String(chunk);
-    if (input.length > 300) throw new Error("upgrade_verifier_input_refused");
+    if (input.length > 700) throw new Error("upgrade_verifier_input_refused");
   }
   return input;
 }

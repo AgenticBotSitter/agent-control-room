@@ -15,7 +15,7 @@ import {
   consequentialApprovalDecisionSchemaV1,
   consequentialApprovalRequestSchemaV1,
 } from "./schemas";
-import { assertReviewerIndependentV1 } from "./reviewer-independence";
+import { assertReviewerIndependentV1, ReviewerIndependenceErrorV1 } from "./reviewer-independence";
 import type {
   CompletionAcceptanceProfileV1,
   CompletionFindingV1,
@@ -34,7 +34,7 @@ import type {
 
 export type CompletionGateRecordKindV1="profile"|"target"|"review"|"verification"|"finding"|"revision"|"preference"|"approval_request"|"approval_decision";
 export type CompletionGateSafeCodeV1="invalid_record"|"record_conflict"|"record_not_found"|"scope_mismatch"|"profile_mismatch"|
-  "reviewer_not_independent"|"risk_floor_mismatch"|"verification_scenario_invalid"|"target_superseded"|"revision_invalid"|"approval_binding_invalid"|"integrity_failed";
+  "reviewer_not_independent"|"reviewer_provenance_missing"|"risk_floor_mismatch"|"verification_scenario_invalid"|"target_superseded"|"revision_invalid"|"approval_binding_invalid"|"integrity_failed";
 
 export class CompletionGateErrorV1 extends Error {
   constructor(readonly safeCode:CompletionGateSafeCodeV1){super(safeCode);this.name="CompletionGateErrorV1";}
@@ -426,7 +426,8 @@ export class CompletionGateStoreV1 {
   }
   private assertIndependent(producer:CompletionPrincipalV1,reviewer:CompletionPrincipalV1,profile:CompletionAcceptanceProfileV1):void{
     try{assertReviewerIndependentV1(producer,reviewer,profile.reviewerSeparation);}
-    catch{throw new CompletionGateErrorV1("reviewer_not_independent");}
+    catch(error){throw new CompletionGateErrorV1(error instanceof ReviewerIndependenceErrorV1
+      ? error.safeCode : "reviewer_not_independent");}
   }
   private checkpointScope(tenantId:string){return `completion-gate:${tenantId}`;}
   private tenantStateTag(tenantId:string,revision:number,recordCount:number,stateDigest:string){return hmacSha256Tag(this.integrityKey,{module:"completion-gate",tenantId,revision,recordCount,stateDigest});}

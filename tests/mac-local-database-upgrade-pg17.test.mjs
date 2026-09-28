@@ -22,7 +22,8 @@ import { fixedQueueShapeDigestForTestV1 } from "../scripts/mac-local/fixed-queue
 
 const oldRoot = "/private/tmp/acr-db-0085";
 const headRoot = resolve(fileURLToPath(new URL("../", import.meta.url)));
-const oldRoles = Object.entries(macRolePlan).filter(([login]) => login !== "control_room_publisher");
+const oldRoles = Object.entries(macRolePlan).filter(([login]) =>
+  !["control_room_publisher", "control_room_agent_reviewer_login"].includes(login));
 const exec = (file, args) => execFileSync(file, args, { encoding: "utf8", timeout: 120_000,
   env: { ...process.env, LANG: "en_US.UTF-8", LC_ALL: "en_US.UTF-8" } });
 const connection = port => `host=127.0.0.1 port=${port} dbname=control_room user=postgres`;
@@ -112,9 +113,9 @@ test("live-shaped 0085 PostgreSQL 17 installation converges to fresh HEAD withou
   assert.deepEqual(await planMacDatabaseUpgradeSnapshotV1(readOnlySnapshot), plan);
   assert.equal(plan.installQueueSchema, true);
   assert.deepEqual(plan.createRoles, [
-    "control_room_local_result_publisher", "control_room_native_queue_worker",
-    "control_room_native_results", "control_room_publisher", "control_room_task_coordinator",
-  ].map(role => ({ role, attributes: `${role === "control_room_publisher" ? "LOGIN" : "NOLOGIN"} INHERIT `
+    "control_room_agent_reviewer", "control_room_agent_reviewer_login", "control_room_local_result_publisher",
+    "control_room_native_queue_worker", "control_room_native_results", "control_room_publisher", "control_room_task_coordinator",
+  ].map(role => ({ role, attributes: `${["control_room_publisher", "control_room_agent_reviewer_login"].includes(role) ? "LOGIN" : "NOLOGIN"} INHERIT `
     + "NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS" })));
   assert.deepEqual(plan.membership.revoke, oldRoles.map(([member]) => ({ member,
     parent: "control_room_application" })).sort((a, b) => a.member.localeCompare(b.member)));
@@ -151,7 +152,9 @@ test("live-shaped 0085 PostgreSQL 17 installation converges to fresh HEAD withou
   assert.ok(plan.grants.extra.some(item => item.includes("control_room_private_web|table|public.control_jobs||DELETE|plain")));
   assert.deepEqual(await snapshot(oldClient), prior, "dry run does not change PostgreSQL");
   const publisherPassword = "q".repeat(40);
-  const request = { client: oldClient, publisherVerifier: postgresScramVerifierV1(publisherPassword) };
+  const reviewerPassword = "w".repeat(40);
+  const request = { client: oldClient, publisherVerifier: postgresScramVerifierV1(publisherPassword),
+    agentReviewerVerifier: postgresScramVerifierV1(reviewerPassword) };
   await assert.rejects(applyMacDatabaseUpgradeV1(request), /upgrade_pending_migrations_need_peer_runner/u);
   const retainedLogins = ["control_room_migrator", "control_room_app", "control_room_scheduler",
     ...oldRoles.map(([login]) => login)];
@@ -174,7 +177,8 @@ test("live-shaped 0085 PostgreSQL 17 installation converges to fresh HEAD withou
   await assert.rejects(runMacDatabaseUpgradeCommandV1({
     args: ["--apply", "--expected-main", mainCommit,
       "--expected-plan-digest", macDatabaseUpgradePlanDigestV1(plan)],
-    readVerifier: async () => `${request.publisherVerifier}\n`,
+    readVerifier: async () => `${JSON.stringify({ publisher: request.publisherVerifier,
+      agentReviewer: request.agentReviewerVerifier })}\n`,
     git: params => params[0] === "status" ? "" : mainCommit,
     openClient: () => connectTarget(connection(old.port)),
     applyPending: async () => { throw simulatedSqlError; },
@@ -186,7 +190,8 @@ test("live-shaped 0085 PostgreSQL 17 installation converges to fresh HEAD withou
   const cli = await runMacDatabaseUpgradeCommandV1({
     args: ["--apply", "--expected-main", mainCommit,
       "--expected-plan-digest", macDatabaseUpgradePlanDigestV1(plan)],
-    readVerifier: async () => `${request.publisherVerifier}\n`,
+    readVerifier: async () => `${JSON.stringify({ publisher: request.publisherVerifier,
+      agentReviewer: request.agentReviewerVerifier })}\n`,
     git: params => params[0] === "status" ? "" : mainCommit,
     openClient: () => connectTarget(connection(old.port)),
     applyPending: () => applyPendingMacMigrationsV1(localPeer),
@@ -197,7 +202,7 @@ test("live-shaped 0085 PostgreSQL 17 installation converges to fresh HEAD withou
   assert.deepEqual(await otherMemberships(), beforeOtherMemberships,
     "no non-Mac role membership is changed by the upgrade");
   for (const [login, password] of [...oldRoles.map(([name]) => [name, "p".repeat(40) + name]),
-    ["control_room_publisher", publisherPassword]]) {
+    ["control_room_publisher", publisherPassword], ["control_room_agent_reviewer_login", reviewerPassword]]) {
     const restricted = connectTarget(`host=127.0.0.1 port=${old.port} dbname=control_room user=${login} password=${password}`);
     await restricted.connect();
     try {
@@ -325,6 +330,7 @@ test("a post-install queue shape mismatch removes only this empty new schema and
   };
   let stage = "plan";
   const request = { publisherVerifier: postgresScramVerifierV1("r".repeat(40)),
+    agentReviewerVerifier: postgresScramVerifierV1("s".repeat(40)),
     expectedPlanDigest: macDatabaseUpgradePlanDigestV1(plan), onStage: next => { stage = next; } };
   await assert.rejects(applyMacDatabaseUpgradeV1({ ...request, client: mismatchedCatalogClient }), error => {
     assert.match(error.message, /upgrade_queue_shape_refused/u);

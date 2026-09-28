@@ -93,7 +93,9 @@ execFileSync(pgExecutable("psql"), ["-h", "127.0.0.1", "-p", String(port), "-U",
   "-f", fileURLToPath(new URL("../../../deploy/postgres/provision-database.sql", import.meta.url))], bounded);
 const pw = () => randomBytes(24).toString("base64url");
 const secrets = { migrator: pw(), application: pw(), scheduler: pw(), workIntake: pw() };
-const local: Record<string, string> = { control_room_web: pw(), control_room_coordinator: pw(), control_room_results: pw(), control_room_publisher: pw(), control_room_queue_worker: pw() };
+const local: Record<string, string> = { control_room_web: pw(), control_room_coordinator: pw(),
+  control_room_results: pw(), control_room_publisher: pw(), control_room_agent_reviewer_login: pw(),
+  control_room_queue_worker: pw() };
 const bootstrapTarget = `host=127.0.0.1 port=${port} dbname=control_room user=postgres`;
 await applyMigrations({ target: bootstrapTarget, rootDir: process.cwd(),
   ledgerPath: fileURLToPath(new URL("../../../deploy/postgres/migration-ledger.json", import.meta.url)),
@@ -121,13 +123,14 @@ try {
 } finally { await queueClient.end(); }
 psql("control_room", "../../../db/roles/private_web_database.sql");
 for (const file of ["private_web_roles.sql", "task_coordinator_roles.sql", "native_queue_producer_roles.sql",
-  "native_results_roles.sql", "local_result_publisher_roles.sql", "native_queue_worker_roles.sql"])
+  "native_results_roles.sql", "local_result_publisher_roles.sql", "native_queue_worker_roles.sql", "agent_reviewer_roles.sql"])
   psql("control_room", `../../../db/roles/${file}`);
 const membership = connectTarget(bootstrapTarget); await membership.connect();
 try {
   const roleByLogin: Record<string, string> = { control_room_web: "control_room_private_web",
     control_room_coordinator: "control_room_task_coordinator", control_room_results: "control_room_native_results",
     control_room_publisher: "control_room_local_result_publisher",
+    control_room_agent_reviewer_login: "control_room_agent_reviewer",
     control_room_queue_worker: "control_room_native_queue_worker" };
   for (const [login, password] of Object.entries(local)) {
     await membership.query(`CREATE ROLE ${login} LOGIN INHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD ${membership.escapeLiteral(password)}`);
@@ -167,7 +170,8 @@ mkdirSync(config, { recursive: true, mode: 0o700 }); chmodSync(root, 0o700); chm
 const database = { host: "127.0.0.1", port, database: "control_room", username: "control_room_web", password: local.control_room_web, majorVersion: 17 };
 const role = (username: string) => ({ ...database, username, password: local[username] });
 const roles = { schema: MAC_LOCAL_DATABASE_ROLES_V1, web: role("control_room_web"), coordinator: role("control_room_coordinator"),
-  results: role("control_room_results"), publisher: role("control_room_publisher"), queueWorker: role("control_room_queue_worker") };
+  results: role("control_room_results"), publisher: role("control_room_publisher"),
+  agentReviewer: role("control_room_agent_reviewer_login"), queueWorker: role("control_room_queue_worker") };
 captureMacLocalDatabaseRolesV1(roles);
 const ownerCode = pw() + pw();
 const macLocal = { schema: MAC_LOCAL_PROTECTED_CONFIGURATION_V1, port: webPort, workspaceId: "workspace:mac-local",

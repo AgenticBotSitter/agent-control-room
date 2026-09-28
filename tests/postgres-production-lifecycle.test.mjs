@@ -451,6 +451,33 @@ test("work-intake login cannot read or forge another subsystem's shared-ledger r
   await assert.rejects(query(intake,"SELECT * FROM control_idempotency"),/permission denied/u);
 });
 
+test("agent-review down migration removes every surviving effective privilege", needsPg, async () => {
+  await freshDatabase("cr_agent_review_down");
+  const db=target("cr_agent_review_down");
+  await applyMigrations({target:db,bootstrapTarget:bootstrapTarget("cr_agent_review_down"),
+    migrateTarget:migrateTarget("cr_agent_review_down"),rootDir:ROOT,env:{...process.env,...passwords}});
+  await query(db,await readFile(join(ROOT,"db/roles/agent_reviewer_roles.sql"),"utf8"));
+  const before=(await query(db,`SELECT
+    has_schema_privilege('control_room_agent_reviewer','public','USAGE') AS schema_usage,
+    has_table_privilege('control_room_agent_reviewer','control_completion_gate_records','SELECT') AS gate_select,
+    has_table_privilege('control_room_agent_reviewer','control_completion_gate_records','INSERT') AS gate_insert,
+    has_column_privilege('control_room_agent_reviewer','control_completion_gate_records','web_lock','UPDATE') AS gate_update,
+    has_column_privilege('control_room_agent_reviewer','control_completion_gate_integrity','revision','UPDATE') AS integrity_update,
+    has_table_privilege('control_room_agent_reviewer','control_harness_runs','SELECT') AS run_select`)).rows[0];
+  assert.deepEqual(before,{schema_usage:true,gate_select:true,gate_insert:true,gate_update:true,
+    integrity_update:true,run_select:true});
+  await query(db,await readFile(join(ROOT,"db/down/0097_agent_review_plans.sql"),"utf8"));
+  const afterDown=(await query(db,`SELECT
+    has_schema_privilege('control_room_agent_reviewer','public','USAGE') AS schema_usage,
+    has_table_privilege('control_room_agent_reviewer','control_completion_gate_records','SELECT') AS gate_select,
+    has_table_privilege('control_room_agent_reviewer','control_completion_gate_records','INSERT') AS gate_insert,
+    has_column_privilege('control_room_agent_reviewer','control_completion_gate_records','web_lock','UPDATE') AS gate_update,
+    has_column_privilege('control_room_agent_reviewer','control_completion_gate_integrity','revision','UPDATE') AS integrity_update,
+    has_table_privilege('control_room_agent_reviewer','control_harness_runs','SELECT') AS run_select`)).rows[0];
+  assert.deepEqual(afterDown,{schema_usage:false,gate_select:false,gate_insert:false,gate_update:false,
+    integrity_update:false,run_select:false});
+});
+
 test("backup and disposable restore preserve rows, owners, grants and identity", needsPg, async () => {
   await freshDatabase("cr_prod_source");
   await applyMigrations({ target: target("cr_prod_source"), bootstrapTarget: bootstrapTarget("cr_prod_source"), migrateTarget: migrateTarget("cr_prod_source"), rootDir: ROOT, env: { ...process.env, ...passwords } });

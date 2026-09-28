@@ -60,6 +60,7 @@ export async function nativeTaskFixture(pgliteOptions: { dataDir?: string; input
   const ready = await canonical.transition({ tenantId: job.tenantId, kind: "job", entityId: job.id, expectedVersion: 0, toState: "ready",
     transitionId: "transition:job", idempotencyKey: "native-fixture-job-ready", actor, occurredAt: at() });
   await canonical.claimReadyJob({ tenantId: job.tenantId, jobId: job.id, expectedJobVersion: ready.entity.version, nodeId: node.id,
+    workerId: "worker:fixture",
     attemptId: binding.attemptId, leaseId: "lease:test", transitionId: "transition:claim", idempotencyKey: "native-fixture-job-claim",
     actor, acquiredAt: at(), expiresAt: at(300_000) });
   const keys = generateKeyPairSync("ed25519"), spki = keys.publicKey.export({ format: "der", type: "spki" }).toString("base64url");

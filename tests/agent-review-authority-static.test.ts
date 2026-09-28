@@ -1,0 +1,50 @@
+import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import test from "node:test";
+
+test("agent review guard binds the dedicated role to one server-created predecessor plan", async () => {
+  const sql = await readFile("db/migrations/0097_agent_review_plans.sql", "utf8");
+  assert.match(sql, /control_room_agent_reviewer/u);
+  assert.match(sql, /NEW\.kind NOT IN \('review','finding'\)/u);
+  assert.match(sql, /plan\.review_id=NEW\.id/u);
+  assert.match(sql, /plan\.target_id=NEW\.parent_id/u);
+  assert.match(sql, /run\.id=plan\.reviewer_run_id AND run\.job_id=plan\.reviewer_job_id/u);
+  assert.match(sql, /attempt\.worker_id=plan\.reviewer->>'workerId'/u);
+  assert.match(sql, /reviewer_execution\.source_job_id=reviewer\.current_job_id/u);
+  assert.match(sql, /reviewer_execution\.job_id=plan\.reviewer_job_id/u);
+  assert.match(sql, /producer\.stage_ordinal=reviewer\.stage_ordinal-1/u);
+  assert.match(sql, /target\.payload->>'subjectId'=NEW\.producer_job_id/u);
+  assert.match(sql, /grantsApproval'[\s\S]*'false'/u);
+  assert.match(sql, /grantsExecutionAuthority'[\s\S]*'false'/u);
+  const service = await readFile("src/completion-gate/v1/agent-review-service.ts", "utf8");
+  assert.match(service, /pipeline-stage-run\/v1/u);
+  assert.match(service, /selected\.worker_kind=stage\.worker_kind/u);
+  assert.match(service, /attempt\.worker_id=stage\.worker_id/u);
+});
+
+test("agent reviewer role has only completion-review commit privileges", async () => {
+  const sql = await readFile("db/roles/agent_reviewer_roles.sql", "utf8");
+  const grants = [...sql.matchAll(/^GRANT\s+[\s\S]*?;/gmu)].map(match => match[0]);
+  assert.equal(grants.length, 5);
+  assert.match(sql, /GRANT SELECT ON control_agent_review_plans, control_completion_gate_records,\s+control_completion_gate_integrity, control_harness_runs, control_attempts, control_task_execution_plans,\s+pipeline_stage_runs/u);
+  assert.match(sql, /GRANT INSERT ON control_completion_gate_records/u);
+  assert.doesNotMatch(sql, /\b(?:control_jobs|control_leases|control_outbox|control_native_task_queue)\b/u);
+  assert.doesNotMatch(sql, /GRANT\s+(?:DELETE|TRUNCATE|TRIGGER|REFERENCES)/u);
+  assert.match(sql, /NOBYPASSRLS/u);
+  const preflight = await readFile("src/web/v1/private-database-preflight.ts", "utf8");
+  assert.match(preflight, /verifyAgentReviewerDatabase/u);
+  assert.match(preflight, /agentReviewerReads = \["control_agent_review_plans", "control_completion_gate_records"/u);
+  assert.match(preflight, /agentReviewerInserts = new Set\(\["control_completion_gate_records"\]\)/u);
+  assert.match(preflight, /agentReviewer: "control_room_agent_reviewer"/u);
+});
+
+test("0097 down migration refuses to erase review authority history", async () => {
+  const sql = await readFile("db/down/0097_agent_review_plans.sql", "utf8");
+  assert.match(sql, /LOCK TABLE control_completion_gate_records, control_agent_review_plans IN ACCESS EXCLUSIVE MODE/u);
+  assert.match(sql, /agent review history exists/u);
+  assert.match(sql, /IF EXISTS \(SELECT 1 FROM pg_roles WHERE rolname='control_room_agent_reviewer'\)/u);
+  assert.match(sql, /REVOKE INSERT ON control_completion_gate_records FROM control_room_agent_reviewer/u);
+  assert.match(sql, /REVOKE UPDATE \(web_lock\) ON control_completion_gate_records FROM control_room_agent_reviewer/u);
+  assert.match(sql, /REVOKE UPDATE \(revision,record_count,state_digest,state_auth_tag\) ON control_completion_gate_integrity FROM control_room_agent_reviewer/u);
+  assert.match(sql, /REVOKE USAGE ON SCHEMA public FROM control_room_agent_reviewer/u);
+});

@@ -1,4 +1,4 @@
-/** Exact direct ACL comparison for the five Mac-local database logins.
+/** Exact direct ACL comparison for the six Mac-local database logins.
  * This is an offline installer component, never imported by the task host. */
 import { readFile } from "node:fs/promises";
 
@@ -7,14 +7,16 @@ export const macRolePlan = Object.freeze({
   control_room_coordinator: "control_room_task_coordinator",
   control_room_results: "control_room_native_results",
   control_room_publisher: "control_room_local_result_publisher",
+  control_room_agent_reviewer_login: "control_room_agent_reviewer",
   control_room_queue_worker: "control_room_native_queue_worker",
 });
 
 const roleFiles = Object.freeze([
   "private_web_roles.sql", "task_coordinator_roles.sql", "native_queue_producer_roles.sql",
   "native_results_roles.sql", "local_result_publisher_roles.sql", "native_queue_worker_roles.sql",
+  "agent_reviewer_roles.sql",
 ]);
-const groups = new Set(Object.values(macRolePlan));
+const groups = new Set([...Object.values(macRolePlan), "control_room_agent_reviewer"]);
 const identifier = /^[a-z][a-z0-9_]*$/u;
 const privilege = new Set(["SELECT", "INSERT", "UPDATE", "DELETE", "TRUNCATE", "REFERENCES", "TRIGGER", "USAGE"]);
 const name = value => {
@@ -114,7 +116,7 @@ CROSS JOIN LATERAL aclexplode(p.proacl) a
 JOIN pg_roles r ON r.oid=a.grantee WHERE r.rolname = ANY($1::text[])`;
 
 export async function readMacGrantCatalogV1(client) {
-  const principals = [...Object.keys(macRolePlan), ...Object.values(macRolePlan)];
+  const principals = [...Object.keys(macRolePlan), ...Object.values(macRolePlan), "control_room_agent_reviewer"];
   const rows = (await client.query(macGrantCatalogSqlV1, [principals])).rows;
   return macGrantRowsToSetV1(rows);
 }

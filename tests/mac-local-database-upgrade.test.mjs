@@ -93,7 +93,7 @@ test("offline plan rejects a mismatched main commit and malformed snapshot", asy
   await assert.rejects(planMacDatabaseUpgradeFromFileV1(path, commit), /upgrade_snapshot_content_refused/u);
 });
 
-test("prepare and finish preserve old passwords and owner config; only verified publisher is added", async t => {
+test("prepare and finish preserve old passwords and owner config; only verified restricted logins are added", async t => {
   const root = await mkdtemp(join(tmpdir(), "mac-db-upgrade-"));
   t.after(() => rm(root, { recursive: true, force: true }));
   const config = join(root, "config"), passwords = join(config, "database-passwords");
@@ -124,7 +124,9 @@ test("prepare and finish preserve old passwords and owner config; only verified 
   await assert.rejects(readFile(join(passwords, "control_room_publisher.txt")), { code: "ENOENT" });
   const prepared = await prepareMacLocalDatabaseUpgradeV1(options);
   assert.equal(prepared.mainCommit, mainCommit);
-  checkedPostgresScramVerifierV1(prepared.verifier);
+  const verifiers = JSON.parse(prepared.verifier);
+  checkedPostgresScramVerifierV1(verifiers.publisher);
+  checkedPostgresScramVerifierV1(verifiers.agentReviewer);
   assert.deepEqual(await readFile(roleFile), rolesBefore);
   let verified = 0;
   await assert.rejects(finishMacLocalDatabaseUpgradeV1({ ...options, verifyPublisher: async () => {
@@ -135,15 +137,20 @@ test("prepare and finish preserve old passwords and owner config; only verified 
     verified += 1;
     assert.equal(publisher.username, "control_room_publisher");
     assert.equal(publisher.password, (await readFile(join(passwords, "control_room_publisher.txt"), "utf8")).trim());
+  }, verifyAgentReviewer: async reviewer => {
+    assert.equal(reviewer.username, "control_room_agent_reviewer_login");
+    assert.equal(reviewer.password, (await readFile(join(passwords, "control_room_agent_reviewer_login.txt"), "utf8")).trim());
   } });
   const changed = JSON.parse(await readFile(roleFile, "utf8"));
   const validated = captureMacLocalDatabaseRolesV1(changed);
   assert.equal(validated.publisher.username, "control_room_publisher");
   assert.equal(validated.publisher.password, (await readFile(join(passwords, "control_room_publisher.txt"), "utf8")).trim());
+  assert.equal(validated.agentReviewer.username, "control_room_agent_reviewer_login");
   assert.equal((await stat(join(passwords, "control_room_publisher.txt"))).mode & 0o077, 0);
   for (const [key, name] of Object.entries(roleNames)) assert.deepEqual(changed[key], oldRoles[key], name);
   assert.deepEqual(await readFile(macFile), macBefore);
-  await finishMacLocalDatabaseUpgradeV1({ ...options, verifyPublisher: async () => { verified += 1; } });
+  await finishMacLocalDatabaseUpgradeV1({ ...options, verifyPublisher: async () => { verified += 1; },
+    verifyAgentReviewer: async () => {} });
   assert.equal(verified, 2);
   assert.deepEqual(await readFile(macFile), macBefore);
 });

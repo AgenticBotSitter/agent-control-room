@@ -41,7 +41,9 @@ async function setup(t: { after(fn: () => unknown): void }, runId: string) {
   const publication = { db: f.db, integrityKey: f.resultKey, reviewKey: f.reviewKey, storage, storageClass: "local" as const,
     reservations: createInMemoryNeutralReservationPort(), reviewSubmission };
   const publish = createOwnerTrustedLocalCliPublishV1({ db: f.db, runIntegrityKey: f.harnessKey, publication,
-    registerRun: (deliveryValue, createdAt) => codexOwnerTrustedLocalRunRegistrationV1(deliveryValue, createdAt, "codex-cli-0.99.1") });
+    registerRun: (deliveryValue, createdAt, modelSelection) => codexOwnerTrustedLocalRunRegistrationV1(
+      deliveryValue, createdAt, "codex-cli-0.99.1", modelSelection),
+    resolveModelSelection: async () => ({ model: "gpt-test", effort: "medium" }) });
 
   const delivery = createControllerWorkerDeliveryV1({
     identity: { tenantId: binding.tenantId, projectId: binding.projectId, jobId, attemptId, runId, nodeId: binding.nodeId },
@@ -86,8 +88,8 @@ test("published producer provenance enforces agent independence without blocking
   const snapshot = await f.reviewStore.snapshot(binding.tenantId, plan.targetId);
   assert.deepEqual(snapshot.target.producer, { actorId: binding.nodeId, actorType: "agent",
     workerId: delivery.worker.workerId,
-    agentProfileId: `agent-profile:${delivery.connectorProfileDigest.slice("sha256:".length)}`,
-    harness: "codex", adapterId: delivery.worker.adapterId, modelFamily: "model-family:codex" });
+    agentProfileId: "agent-profile:gpt-test",
+    harness: "codex", adapterId: delivery.worker.adapterId, modelFamily: "model-family:openai" });
 
   const review = (id: string, modelFamily: string): CompletionReviewV1 => ({
     schemaVersion: "control-room-completion-gate/v1", id, tenantId: binding.tenantId,
@@ -99,9 +101,9 @@ test("published producer provenance enforces agent independence without blocking
     evidenceDigests: [snapshot.target.subjectDigest], findingIds: [], reviewedAt: at(3_000),
     grantsApproval: false, grantsExecutionAuthority: false,
   });
-  await assert.rejects(() => f.reviewStore.recordReview(review("review:same-family", "model-family:codex")),
+  await assert.rejects(() => f.reviewStore.recordReview(review("review:same-family", "model-family:openai")),
     (error: unknown) => error instanceof CompletionGateErrorV1 && error.safeCode === "reviewer_not_independent");
-  await assert.doesNotReject(() => f.reviewStore.recordReview(review("review:different-family", "model-family:claude")));
+  await assert.doesNotReject(() => f.reviewStore.recordReview(review("review:different-family", "model-family:anthropic")));
 });
 
 test("replays cleanly on a retry with the exact same text, and refuses an aborted signal without writing anything", async t => {

@@ -7,6 +7,7 @@ import { sha256Digest } from "../../security";
 import { controllerWorkerDeliverySchemaV1, controllerWorkerDeliveryReceiptSchemaV1 } from "./controller-worker-delivery";
 import { publishDurableResultV1, type DurableResultBindingV1,
   type DurableResultPublicationConfigurationV1 } from "../../artifacts/v1/durable-result-publication";
+import { deriveAuthenticatedRunPrincipalV1 } from "../../completion-gate/v1/protected-agent-principal";
 
 function unavailable(): never { throw new Error("owner_trusted_local_cli_publish_unavailable"); }
 const id = z.string().min(3).max(180).regex(/^[a-zA-Z0-9][a-zA-Z0-9._:-]*$/);
@@ -102,15 +103,14 @@ export function createOwnerTrustedLocalCliLifecycleV1(config: OwnerTrustedLocalC
     const terminal = (await runs.inspect(run.tenantId, run.id))?.events.at(-1);
     if (!terminal || terminal.payload.category !== "lifecycle" || terminal.payload.state !== "succeeded") unavailable();
     if (input.signal.aborted) unavailable();
+    const producer = deriveAuthenticatedRunPrincipalV1(run, delivery.worker.workerId);
     const binding: DurableResultBindingV1 = { tenantId: delivery.identity.tenantId, projectId: delivery.identity.projectId,
       jobId: delivery.identity.jobId, attemptId: delivery.identity.attemptId, runId: delivery.identity.runId,
       nodeId: delivery.identity.nodeId, workflowId, harness: run.harness,
-      workerId: delivery.worker.workerId, adapterId: delivery.worker.adapterId,
-      agentProfileId: `agent-profile:${delivery.connectorProfileDigest.slice("sha256:".length)}`,
-      // This family is derived from the protected worker route, never from a
-      // browser/model string. It is deliberately coarse and therefore errs
-      // toward separating all reviewers that use the same configured harness.
-      modelFamily: `model-family:${run.harness}`, connectorProfileDigest: delivery.connectorProfileDigest,
+      workerId: producer.workerId, adapterId: producer.adapterId,
+      ...(producer.agentProfileId ? { agentProfileId: producer.agentProfileId } : {}),
+      ...(producer.modelFamily ? { modelFamily: producer.modelFamily } : {}),
+      connectorProfileDigest: delivery.connectorProfileDigest,
       authorityDigest: delivery.authorityDigest, acceptanceProfileId: delivery.acceptanceProfileId,
       acceptanceProfileDigest: delivery.acceptanceProfileDigest,
       terminalEvidenceDigest: sha256Digest(terminal) };
