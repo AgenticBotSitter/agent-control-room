@@ -116,12 +116,14 @@ export function HomeDashboard({ data }: { data: HomeDashboardState }) {
           : isLocalWorkerRead(data.connections.value)
             ? <><p>{data.connections.value.value.workers.length} configured local worker route{data.connections.value.value.workers.length === 1 ? "" : "s"}.</p>
               <ul className="private-dashboard-list">{data.connections.value.value.workers.map(worker => <li key={worker.kind}>
-                {/* main's localWorkerStateLabel already separates "startup check
-                    passed" from "result proof recorded" — the honesty my first chip
-                    got wrong. Keep that sentence, and let the chip sit beside it for
-                    scanning without replacing it. */}
-                <span>{worker.kind}</span><StateChip label={`${worker.state} · readiness ${worker.proof.replaceAll("_", " ")}`}
-                  state={worker.state} tone={workerChipToneV1(worker)} />
+                {/* The chip carries only the raw state. An earlier version also
+                    appended "readiness <proof>", which produced the string
+                    "readiness not proven" — wording the adversarial owner test
+                    explicitly forbids on the dashboard, and worse copy than
+                    main's own localWorkerStateLabel sentence right beside it.
+                    Main's label is the canonical phrasing, so it is not restated
+                    in the chip. */}
+                <span>{worker.kind}</span><StateChip state={worker.state} tone={workerChipToneV1(worker)} />
                 <span>{localWorkerStateLabel(worker)}</span></li>)}</ul>
               <p className="private-note">Current assignment, capacity and resource usage are unknown here. Open Workers and the exact task before assigning work.</p></>
             : <><p>{data.connections.value.projection.summary.connectionCount} enrolled workers · {data.connections.value.projection.summary.currentSignalCount} current signals.</p>

@@ -151,6 +151,30 @@ test("the loading spinner is suppressed when the owner asked for less motion", (
     "a reduced-motion rule must still exist");
 });
 
+test("no rendered chip label reintroduces the framing the adversarial test forbids", () => {
+  // tests/browser/adversarial-owner.spec.ts asserts the dashboard does NOT say
+  // "readiness not proven". An earlier version of the Home worker list built its
+  // chip label as `${state} · readiness ${proof}`, which for proof="not_proven"
+  // renders exactly that string and failed CI.
+  //
+  // A chip shows the raw state and nothing else. It must not restate the
+  // sentence beside it, because that sentence is where the proof lives and
+  // restating it is how the forbidden phrasing got in.
+  for (const state of ["ready", "unavailable", "stopped"]) {
+    const html = renderToStaticMarkup(createElement(StateChip,
+      { state, tone: workerChipToneV1({ state }) }));
+    const text = html.replace(/<[^>]*>/g, "");
+    assert.doesNotMatch(text, /readiness/i, `state=${state} must not mention readiness`);
+    assert.doesNotMatch(text, /proof/i, `state=${state} must not mention proof`);
+    assert.equal(text, state, "a worker chip shows the raw state and only the raw state");
+  }
+  // The neutral tone is what keeps a `ready` worker from reading as healthy,
+  // which is the thing the surrounding prose exists to qualify.
+  const ready = renderToStaticMarkup(createElement(StateChip,
+    { state: "ready", tone: workerChipToneV1({ state: "ready" }) }));
+  assert.match(ready, /class="private-state private-chip"/, "ready must not be tinted good");
+});
+
 test("the task state chip keeps the hook the owner journey selects on", () => {
   // The journey reads `.private-task-detail .private-state` and expects the task's
   // own state label there ("Completed · Accepted"). When the task heading became a
