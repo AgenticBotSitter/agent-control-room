@@ -65,7 +65,7 @@ test("B-093 an empty snapshot establishes a replay cursor, drains bounded pages,
     assert.equal(new URL(sources[0]!.url, dom.window.location.href).searchParams.get("after"), originCursor);
     const eventCursor = encodeProjectEventCursorV1(event);
     await act(async () => { sources[0]!.emit("stream.head", JSON.stringify({ mode: "replay", nextCursor: eventCursor,
-      hasMore: true, truncatedBefore: false, pageDigest: "a".repeat(64) })); });
+      hasMore: true, truncatedBefore: false, pageDigest: sha256Digest({ page: "first-replay" }) })); });
     assert.equal(sources[0]!.closed, true); assert.equal(sources.length, 2);
     assert.equal(new URL(sources[1]!.url, dom.window.location.href).searchParams.get("after"), eventCursor);
     await act(async () => { sources[1]!.emit("stream.reset"); await new Promise(resolve => setTimeout(resolve, 0)); });

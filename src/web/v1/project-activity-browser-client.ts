@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { projectEventPageSchemaV1, projectEventSchemaV1 } from "../../project-events/v1/schemas";
 import type { ProjectEventV1 } from "../../project-events/v1/types";
+import { projectWorkspaceDigestSchemaV1 } from "../../project-workspace/v1/schemas";
 import { BrowserRequestError } from "./browser-request-error";
 import { readBrowserJson } from "./browser-json";
 import { catalogProjectIdSchema } from "./project-wire";
@@ -8,7 +9,7 @@ import { catalogProjectIdSchema } from "./project-wire";
 const responseSchema = z.object({ page: projectEventPageSchemaV1, olderCursor: z.string().min(1).max(500).nullable() }).strict();
 const streamHeadSchema = z.object({ mode: z.enum(["snapshot", "replay", "reset"]),
   nextCursor: z.string().min(1).max(500).nullable(), hasMore: z.boolean(), truncatedBefore: z.boolean(),
-  pageDigest: z.string().regex(/^[a-f0-9]{64}$/) }).strict();
+  pageDigest: projectWorkspaceDigestSchemaV1 }).strict();
 
 function failure(status: number) {
   return new BrowserRequestError(status === 401 ? "authentication_required" : status === 403 ? "access_denied"
