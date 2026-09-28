@@ -2,7 +2,7 @@ import { parseMacLocalWebHostArguments, startMacLocalTaskHost } from "./start-we
 import { pathToFileURL } from "node:url";
 
 export function monitorActiveTaskHost(active, runtime = process, timers = globalThis, supervisor = undefined) {
-  let closed = false, supervisorLost = false;
+  let closed = false, supervisorLost = false, boundedStop;
   let onSupervisorLost;
   const releaseSupervisor = () => {
     if (!supervisor) return;
@@ -17,15 +17,23 @@ export function monitorActiveTaskHost(active, runtime = process, timers = global
     try { await active.close(); runtime.exitCode = code; }
     catch { runtime.exitCode = 1; }
   };
-  runtime.once("SIGINT", () => { void stop(); });
-  runtime.once("SIGTERM", () => { void stop(); });
+  const stopWithinBound = (code = 0) => {
+    if (boundedStop) return boundedStop;
+    runtime.exitCode = code;
+    const forced = timers.setTimeout(() => runtime.exit(runtime.exitCode ?? code), 10_000);
+    boundedStop = stop(code).finally(() => {
+      timers.clearTimeout(forced);
+      runtime.exit(runtime.exitCode ?? code);
+    });
+    return boundedStop;
+  };
+  runtime.once("SIGINT", () => { void stopWithinBound(); });
+  runtime.once("SIGTERM", () => { void stopWithinBound(); });
   if (supervisor) {
     onSupervisorLost = () => {
       if (supervisorLost || closed) return;
       supervisorLost = true;
-      runtime.exitCode = 1;
-      const forced = timers.setTimeout(() => runtime.exit(1), 10_000);
-      void stop(1).finally(() => { timers.clearTimeout(forced); runtime.exit(runtime.exitCode ?? 1); });
+      void stopWithinBound(1);
     };
     supervisor.once("end", onSupervisorLost);
     supervisor.once("error", onSupervisorLost);
@@ -37,8 +45,7 @@ export function monitorActiveTaskHost(active, runtime = process, timers = global
   runtime.once("unhandledRejection", reason => {
     runtime.stderr.write(`host stopped because unhandled rejection: ${reason instanceof Error ? reason.stack ?? reason.message : String(reason)}\n`);
     runtime.exitCode = 1;
-    const forced = timers.setTimeout(() => runtime.exit(1), 10_000);
-    void stop(1).finally(() => { timers.clearTimeout(forced); runtime.exit(runtime.exitCode ?? 1); });
+    void stopWithinBound(1);
   });
   return Object.freeze({ stop });
 }
