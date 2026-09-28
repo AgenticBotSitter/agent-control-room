@@ -679,21 +679,20 @@ LANGUAGE plpgsql SECURITY DEFINER AS $$ BEGIN RETURN 1; END $$;
 
   // Two trigger functions in ONE file where only the second is hardened: the
   // exact shape the review reported, with the real trigger kind rather than
-  // SECURITY DEFINER.
+  // SECURITY DEFINER. Both definitions are on ONE line, which is what makes
+  // this a real regression test: the original 2,000-character window then runs
+  // straight from the first function's body into the second function's clause
+  // and reports the first as pinned.
   test("flags the first of two adjacent trigger functions when only the second is hardened", async () => {
     const directory = await temporary("attack-kit-adjacent-");
-    await writeFile(join(directory, "0001.sql"), `
-CREATE FUNCTION guard_first() RETURNS trigger
-LANGUAGE plpgsql SET search_path = pg_catalog, public AS $$ BEGIN RETURN NEW; END $$;
-
-CREATE FUNCTION guard_second() RETURNS trigger
-LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $$ BEGIN RETURN NEW; END $$;
-`);
+    await writeFile(join(directory, "0001.sql"),
+      "CREATE FUNCTION guard_first() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RETURN NEW; END $$; "
+      + "CREATE FUNCTION guard_second() RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $$ BEGIN RETURN NEW; END $$;\n");
     const result = await securityDefinerAudit(directory);
     assert.deepEqual(result.findings.map(finding => finding.function), ["guard_first()", "guard_second()"]);
     const first = result.findings.find(finding => finding.function === "guard_first()")!;
     assert.equal(first.endsInPgTemp, false, "guard_first must not borrow guard_second's pg_temp clause");
-    assert.equal(first.searchPath, "pg_catalog, public");
+    assert.equal(first.searchPath, null);
     assert.deepEqual(result.unpinned.map(finding => finding.function), ["guard_first()"]);
   });
 
