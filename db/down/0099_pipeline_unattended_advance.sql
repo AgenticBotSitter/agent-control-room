@@ -22,6 +22,7 @@ DROP TRIGGER pipeline_unattended_transitions_immutable ON pipeline_unattended_tr
 DROP TABLE pipeline_advance_receipts;
 DROP TABLE pipeline_unattended_transitions;
 DROP FUNCTION reject_pipeline_unattended_history_mutation();
+ALTER TABLE pipeline_runs DROP CONSTRAINT pipeline_runs_active_started_at_check;
 ALTER TABLE pipeline_templates ADD CONSTRAINT pipeline_templates_may_advance_unattended_check
   CHECK (may_advance_unattended=false);
 ALTER TABLE pipeline_runs ADD CONSTRAINT pipeline_runs_unattended_check CHECK (unattended=false);

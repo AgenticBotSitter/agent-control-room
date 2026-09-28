@@ -21,7 +21,8 @@ const templateDefinition={name:"Pipeline",description:"Bounded pipeline.",stages
     workerKind:"hermes",nodeId:"node:three",selectionKey:"selection:three",model:"model-three",effort:"medium",
     provider:"provider:test",profile:"profile:test",maxLoops:0}],maxTotalLoops:2,maxDurationSeconds:3600} as const;
 
-function signedRows(overrides:{unattended?:boolean;tamperStage?:boolean;currentOrdinal?:number|null}={}){
+function signedRows(overrides:{unattended?:boolean;tamperStage?:boolean;currentOrdinal?:number|null;
+  startedAt?:number|null;updatedAt?:number}={}){
   const template:any={id:"pipeline-template:test",project_id:"project:test",name:templateDefinition.name,
     description:templateDefinition.description,stages:templateDefinition.stages,max_stages:3,max_total_loops:2,
     may_advance_unattended:overrides.unattended??true,max_duration_seconds:3600,version:2,created_at:iso(),updated_at:iso()};
@@ -29,14 +30,17 @@ function signedRows(overrides:{unattended?:boolean;tamperStage?:boolean;currentO
     description:template.description,stages:template.stages,maxStages:3,maxTotalLoops:2,
     mayAdvanceUnattended:template.may_advance_unattended,maxDurationSeconds:3600,version:2,createdAt:iso(),updatedAt:iso()};
   template.record_digest=sha256Digest(templateMaterial);template.auth_tag=hmacSha256Tag(key,{purpose:"pipeline-template/v1",record:templateMaterial});
+  const startedAt=Object.prototype.hasOwnProperty.call(overrides,"startedAt")?overrides.startedAt:0;
+  const updatedAt=overrides.updatedAt??0;
   const run:any={id:"pipeline-run:test",project_id:"project:test",request_id:"request:test",template_id:template.id,
     template_version:2,template_digest:template.record_digest,workflow_id:"workflow:test",title:"Run",state:"active",
-    started_at:iso(),updated_at:iso(),completed_at:null,
+    started_at:startedAt===null?null:iso(startedAt),updated_at:iso(updatedAt),completed_at:null,
     current_stage_ordinal:Object.prototype.hasOwnProperty.call(overrides,"currentOrdinal")?overrides.currentOrdinal:0,
     unattended:overrides.unattended??true,version:2};
   const runMaterial={id:run.id,tenantId:"tenant:test",projectId:run.project_id,requestId:run.request_id,templateId:run.template_id,
     templateVersion:2,templateDigest:run.template_digest,workflowId:run.workflow_id,title:run.title,state:run.state,
-    startedAt:iso(),updatedAt:iso(),completedAt:null,currentStageOrdinal:run.current_stage_ordinal,unattended:run.unattended,version:2};
+    startedAt:startedAt===null?null:iso(startedAt),updatedAt:iso(updatedAt),completedAt:null,
+    currentStageOrdinal:run.current_stage_ordinal,unattended:run.unattended,version:2};
   run.record_digest=sha256Digest(runMaterial);run.auth_tag=hmacSha256Tag(key,{purpose:"pipeline-run/v1",record:runMaterial});
   const stages=templateDefinition.stages.map(stage=>{const row:any={project_id:"project:test",pipeline_run_id:run.id,
     stage_ordinal:stage.ordinal,stage_kind:stage.stageKind,role:stage.role,current_job_id:`job:source:${stage.ordinal}`,
@@ -62,6 +66,7 @@ function job(id:string){const authority:any={projectId:"project:test",allowedExe
       retryableFailureCodes:[],retryAfterOrphan:false,ambiguousEffectPolicy:"attention"},version:0,createdAt:iso(),updatedAt:iso()};}
 
 function fixture(overrides:{unattended?:boolean;tamperStage?:boolean;route?:string;currentOrdinal?:number|null;
+  startedAt?:number|null;updatedAt?:number;
   states?: PipelineStageResolutionV1["state"][];
   disableDuringDispatch?:boolean;coordinatorDeadline?:number;advanceClockBeforePrecommit?:number}={}){
   const rows=signedRows(overrides),policy={id:"policy:test",project_id:"project:test",coordinator_identity_id:"agent:lead",
@@ -160,6 +165,16 @@ test("accepted current stage advances exactly one ordinal while in-flight lost r
 test("live installation switch is checked at the delivery boundary",async()=>{const f=fixture({disableDuringDispatch:true});
   await assert.rejects(f.service.advance("pipeline-run:test","policy:test"),
     (error:unknown)=>error instanceof PipelineAdvanceErrorV1&&error.safeReason==="unattended_disabled");assert.equal(f.effects,0);});
+test("active runs require a start anchor and mutable updates cannot extend the wall-clock deadline",async()=>{
+  const missing=fixture({startedAt:null});
+  await assert.rejects(missing.service.advance("pipeline-run:test","policy:test"),
+    (error:unknown)=>error instanceof PipelineAdvanceErrorV1&&error.safeReason==="pipeline_integrity_failed");
+  assert.equal(missing.effects,0);
+  const expired=fixture({startedAt:-3600001,updatedAt:0});
+  await assert.rejects(expired.service.advance("pipeline-run:test","policy:test"),
+    (error:unknown)=>error instanceof PipelineAdvanceErrorV1&&error.safeReason==="deadline_reached");
+  assert.equal(expired.effects,0);
+});
 test("the coordinator's stricter deadline is enforced by the outer precommit boundary",async()=>{
   const f=fixture({coordinatorDeadline:at+30000,advanceClockBeforePrecommit:at+30001});
   await assert.rejects(f.service.advance("pipeline-run:test","policy:test"),
@@ -192,6 +207,23 @@ test("0099 owner transition authenticates and persists both unattended consents 
   assert.equal((await f.db.query<{count:number}>(`SELECT count(*)::int count FROM pipeline_unattended_transitions`)).rows[0]!.count,1);
   await assert.rejects(service.setUnattended(f.identity,f.project.projectId,{...command,enabled:false},
     "pipeline-unattended-enable-0001"),/conflict/u);
+  await assert.rejects(f.db.query("UPDATE pipeline_runs SET state='active' WHERE id=$1",[run.runId]),
+    /pipeline_runs_active_started_at_check/u);
+  // Simulate an authenticated legacy row created before 0099's NOT VALID
+  // lifecycle constraint.  Owner consent must not re-sign this active/null-start
+  // state or turn mutable updated_at into the run's deadline anchor.
+  await f.db.exec("ALTER TABLE pipeline_runs DROP CONSTRAINT pipeline_runs_active_started_at_check");
+  const legacy=(await f.db.query<any>(`SELECT id,project_id,request_id,template_id,template_version,template_digest,workflow_id,title,
+    updated_at,completed_at,current_stage_ordinal,unattended,version FROM pipeline_runs WHERE id=$1`,[run.runId])).rows[0]!;
+  const legacyMaterial={id:legacy.id,tenantId:"tenant:web",projectId:legacy.project_id,requestId:legacy.request_id,
+    templateId:legacy.template_id,templateVersion:Number(legacy.template_version),templateDigest:legacy.template_digest,
+    workflowId:legacy.workflow_id,title:legacy.title,state:"active",startedAt:null,updatedAt:new Date(legacy.updated_at).toISOString(),
+    completedAt:null,currentStageOrdinal:legacy.current_stage_ordinal,unattended:legacy.unattended,version:Number(legacy.version)};
+  await f.db.query("UPDATE pipeline_runs SET state='active',started_at=NULL,record_digest=$1,auth_tag=$2 WHERE id=$3",
+    [sha256Digest(legacyMaterial),hmacSha256Tag(key,{purpose:"pipeline-run/v1",record:legacyMaterial}),run.runId]);
+  await assert.rejects(service.setUnattended(f.identity,f.project.projectId,{...command,enabled:false,
+    expectedRunVersion:2,expectedTemplateVersion:2},"pipeline-unattended-disable-legacy-0001"),
+  (error:unknown)=>error instanceof PipelineAdvanceErrorV1&&error.safeReason==="pipeline_integrity_failed");
   await f.db.exec("ALTER TABLE pipeline_unattended_transitions DISABLE TRIGGER pipeline_unattended_transitions_immutable");
   await f.db.query("UPDATE pipeline_unattended_transitions SET auth_tag=$1",["hmac-sha256:"+"0".repeat(64)]);
   await f.db.exec("ALTER TABLE pipeline_unattended_transitions ENABLE TRIGGER pipeline_unattended_transitions_immutable");
@@ -264,9 +296,11 @@ test("0099 owns append-only records, least-privilege grants, and a guarded down 
   assert.match(web,/GRANT UPDATE \(unattended, updated_at, version, template_version, template_digest,[\s\S]*ON pipeline_runs/u);
   assert.match(coordinator,/GRANT INSERT ON pipeline_advance_receipts TO control_room_task_coordinator/u);
   assert.match(up,/BEFORE UPDATE OR DELETE/u);assert.match(up,/BEFORE TRUNCATE/u);
+  assert.match(up,/pipeline_runs_active_started_at_check[\s\S]*state <> 'active'[\s\S]*started_at IS NOT NULL[\s\S]*NOT VALID/u);
   assert.match(down,/REVOKE UPDATE \(may_advance_unattended, version, updated_at, record_digest, auth_tag\)[\s\S]*pipeline_templates FROM control_room_private_web/u);
   assert.match(down,/REVOKE UPDATE \(unattended, updated_at, version, template_version, template_digest,[\s\S]*pipeline_runs FROM control_room_private_web/u);
   assert.match(down,/may_advance_unattended/u);assert.match(down,/unattended/u);
+  assert.match(down,/DROP CONSTRAINT pipeline_runs_active_started_at_check/u);
 });
 
 test("production adapter reserves through ordinary assignment before the existing native delivery queue",async()=>{

@@ -3,6 +3,11 @@
 
 ALTER TABLE pipeline_templates DROP CONSTRAINT pipeline_templates_may_advance_unattended_check;
 ALTER TABLE pipeline_runs DROP CONSTRAINT pipeline_runs_unattended_check;
+-- Preserve upgrade compatibility with authenticated pre-S7 rows while making
+-- every new or updated active run carry the immutable wall-clock anchor.  The
+-- service refuses any legacy active/null row rather than repairing or re-signing it.
+ALTER TABLE pipeline_runs ADD CONSTRAINT pipeline_runs_active_started_at_check
+  CHECK (state <> 'active' OR started_at IS NOT NULL) NOT VALID;
 
 CREATE TABLE pipeline_unattended_transitions (
   id text NOT NULL,

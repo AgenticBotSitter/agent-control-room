@@ -180,6 +180,10 @@ export class PipelineAdvanceServiceV1 {
       if (run.template_id !== parsed.data.templateId || Number(run.version) !== parsed.data.expectedRunVersion
         || Number(template.version) !== parsed.data.expectedTemplateVersion) throw new WebAccessError("conflict");
       this.#verifySnapshot(run, template, stages);
+      // Pre-S7 rows may be active without a start timestamp.  Never re-sign
+      // that legacy-invalid state: updated_at is mutable owner-transition
+      // metadata and must not become a substitute deadline anchor.
+      if (run.state === "active" && run.started_at === null) refuse("pipeline_integrity_failed");
       const policy = await this.#policy(tx, projectId, parsed.data.policyId);
       if (parsed.data.enabled) this.#assertOwnerPolicyCurrent(policy, actor.now);
       // Template consent is a monotonic owner-authorized capability ceiling. A
@@ -240,6 +244,8 @@ export class PipelineAdvanceServiceV1 {
       if (Number(run.template_version) !== Number(template.version) || run.template_digest !== template.record_digest)
         refuse("pipeline_integrity_failed");
       if (run.state !== "active") refuse("run_not_active");
+      const runStartedAtMillis = run.started_at === null
+        ? refuse("pipeline_integrity_failed") : millis(run.started_at);
       const project = (await tx.query<{lifecycle:string}>(`SELECT h.lifecycle FROM projects p JOIN control_manual_project_heads h
         ON h.tenant_id=p.tenant_id AND h.project_id=p.id WHERE p.tenant_id=$1 AND p.workspace_id=$2 AND p.id=$3 FOR SHARE OF p,h`,
       [this.scope.tenantId,this.scope.workspaceId,run.project_id])).rows[0]; if (!project || project.lifecycle!=="active") refuse("run_not_active");
@@ -278,7 +284,7 @@ export class PipelineAdvanceServiceV1 {
       const policy=await this.#policy(tx,run.project_id,policyId);
       const delegation=await capability.authorizeDelegationInSession(tx,selected,policyId);
       this.#assertDelegation(policy,delegation,stage,execution,this.#now());
-      const runDeadline=millis(run.started_at??run.updated_at)+Number(template.max_duration_seconds)*1000;
+      const runDeadline=runStartedAtMillis+Number(template.max_duration_seconds)*1000;
       let deadline=Math.min(runDeadline,millis(policy.valid_until),Date.parse(execution.authority.expiresAt),Date.parse(delegation.validUntil));
       if (!Number.isFinite(deadline)||this.#now()>=deadline) refuse("deadline_reached");
       const selectionDigest=sha256Digest(selected);
