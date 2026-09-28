@@ -28,6 +28,11 @@ export function NewsArticleReader({ projectId, storyId, storyDigest, canonicalUr
         throw new Error("Article source changed. Refresh saved news.");
       return value;
     },
+    // A read that succeeds is the answer, so any error text from an earlier
+    // failed read is stale and must go. Without this a 404 followed by a
+    // successful poll kept rendering "No saved article text yet" over the
+    // article that had actually arrived.
+    onAccept: () => setMessage(undefined),
     onFailure: (reason: unknown) => setMessage(reason instanceof Error
       && ["No saved article text yet. Use the source link above; opening this view does not fetch the article.",
         "Article unavailable. Refresh or check your access.", "Article source changed. Refresh saved news."].includes(reason.message)

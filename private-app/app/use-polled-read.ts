@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { createPolledReadScheduler, type PolledReadIntervalReason } from "../../src/web/v1/polled-read-scheduler";
+import { createPolledReadScheduler, structuralEqual, type PolledReadIntervalReason } from "../../src/web/v1/polled-read-scheduler";
 import { sharePolledRequest } from "../../src/web/v1/polled-request-sharing";
 
 /**
@@ -80,7 +80,11 @@ export function usePolledRead<T>(options: UsePolledReadOptions<T>): PolledReadSt
       hidden: () => typeof document === "undefined" ? false : document.hidden,
       schedule: (callback, delayMs) => setTimeout(callback, delayMs),
       cancel: timer => clearTimeout(timer as ReturnType<typeof setTimeout>),
-      unchanged: (previous, next) => latest.current.unchanged?.(previous, next) ?? true,
+      // No predicate supplied means "use the scheduler's own change detection".
+      // Defaulting to `?? true` here reported *every* read as unchanged, so a
+      // page whose data actually changed still stretched out to the 4x quiet
+      // ceiling — the opposite of the discipline this hook exists to provide.
+      unchanged: (previous, next) => (latest.current.unchanged ?? structuralEqual)(previous, next),
       observe: (delayMs, reason) => latest.current.onInterval?.(delayMs, reason),
     });
     scheduler.current = instance;

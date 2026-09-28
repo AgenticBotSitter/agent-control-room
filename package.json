@@ -125,7 +125,7 @@
     "test:windows-line-endings": "node --test tests/windows-line-endings.test.mjs",
     "test:windows-launcher-modes": "node --test tests/windows-launcher-modes.test.mjs",
     "test:voice": "node --import tsx --test tests/voice-accessibility.test.tsx",
-    "test:polling-discipline": "node --import tsx --test tests/private-polling-discipline.test.ts tests/private-read-validator.test.ts tests/private-read-validator-concurrent.test.ts"
+    "test:polling-discipline": "node --import tsx --test tests/private-polling-discipline.test.ts tests/use-polled-read.test.tsx tests/private-read-validator.test.ts tests/private-read-validator-concurrent.test.ts"
   },
   "dependencies": {
     "@mozilla/readability": "0.6.0",

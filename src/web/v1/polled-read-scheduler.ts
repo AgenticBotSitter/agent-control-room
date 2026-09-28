@@ -62,7 +62,12 @@ export interface PolledReadScheduler {
   readonly stopped: boolean;
 }
 
-const structuralEqual = (previous: unknown, next: unknown): boolean => {
+/**
+ * Value equality for the no-change backoff. Exported so the React adapter
+ * applies exactly the compare the scheduler uses by default, rather than a
+ * second copy that could drift from it.
+ */
+export const structuralEqual = (previous: unknown, next: unknown): boolean => {
   if (Object.is(previous, next)) return true;
   if (typeof previous !== "object" || typeof next !== "object" || previous === null || next === null) return false;
   if (Array.isArray(previous) !== Array.isArray(next)) return false;
