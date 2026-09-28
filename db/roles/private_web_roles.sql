@@ -36,7 +36,7 @@ GRANT SELECT ON control_identities, control_role_grants, workspaces, control_web
   control_attempt_resource_admissions, control_attempt_resource_scopes,
   work_batches, work_batch_revisions, work_batch_items, control_action_inbox TO control_room_private_web;
 GRANT SELECT ON work_batch_queue_admissions, work_batch_effective_queue_admissions,
-  work_batch_agent_queue_heads TO control_room_private_web;
+  work_batch_agent_queue_heads, control_native_task_queue, control_job_dependencies TO control_room_private_web;
 GRANT SELECT ON control_task_model_selections, control_task_declared_scopes,
   control_assignment_lease_scopes TO control_room_private_web;
 GRANT SELECT ON control_durable_result_write_reservations TO control_room_private_web;
