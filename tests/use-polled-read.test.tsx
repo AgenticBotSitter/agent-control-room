@@ -5,6 +5,7 @@ import { createRoot } from "react-dom/client";
 import { JSDOM } from "jsdom";
 import { usePolledRead, type PolledReadState } from "../private-app/app/use-polled-read";
 import type { PolledReadIntervalReason } from "../src/web/v1/polled-read-scheduler";
+import type { PolledReadFetch } from "../src/web/v1/polled-conditional-fetch";
 
 /**
  * The React adapter, exercised through the hook every owner page actually
@@ -62,7 +63,7 @@ interface Observation { delayMs: number; reason: PolledReadIntervalReason }
  */
 function mount<T>(options: {
   key: string;
-  read: () => Promise<T>;
+  read: (signal: AbortSignal, transport: PolledReadFetch) => Promise<T>;
   unchanged?: (previous: T, next: T) => boolean;
 }) {
   const { dom, restore } = installDom();
@@ -71,7 +72,9 @@ function mount<T>(options: {
   // A counter outside the render closure, so `read` stays referentially stable
   // and the read function never depends on the handle returned below.
   let reads = 0;
-  const read = async (): Promise<T> => { reads += 1; return options.read(); };
+  const read = async (signal: AbortSignal, transport: PolledReadFetch): Promise<T> => {
+    reads += 1; return options.read(signal, transport);
+  };
   const onInterval = (delayMs: number, reason: PolledReadIntervalReason) => { observed.push({ delayMs, reason }); };
   const Probe = () => {
     const state = usePolledRead<T>({
@@ -172,6 +175,32 @@ test("the hook's own error state is cleared by the next successful read", async 
     assert.notEqual(last.value, undefined, "and the value is held");
     assert.equal(last.loading, false);
     assert.equal(view.text(), "held", "the page renders the value, not a failure");
+  } finally { await view.stop(); }
+});
+
+test("a good value remains visible throughout a background re-read", async () => {
+  let attempt = 0, secondStarted!: () => void, releaseSecond!: () => void;
+  const started = new Promise<void>(resolve => { secondStarted = resolve; });
+  const second = new Promise<{ items: number[] }>(resolve => { releaseSecond = () => resolve({ items: [2] }); });
+  const view = mount<{ items: number[] }>({
+    key: "use-polled-read:background-continuity",
+    read: async () => {
+      attempt += 1;
+      if (attempt === 1) return { items: [1] };
+      secondStarted();
+      return second;
+    },
+  });
+  try {
+    await view.start();
+    await started;
+    await act(async () => {});
+    assert.equal(view.text(), "held", "a scheduled re-read must not blank the accepted value");
+    assert.deepEqual(view.states.at(-1)?.value, { items: [1] });
+    assert.equal(view.states.at(-1)?.loading, false, "background polling is not a page loading state");
+    releaseSecond();
+    await settle(10);
+    assert.deepEqual(view.states.at(-1)?.value, { items: [2] });
   } finally { await view.stop(); }
 });
 

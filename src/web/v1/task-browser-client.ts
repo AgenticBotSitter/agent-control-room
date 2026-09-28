@@ -23,17 +23,18 @@ export function createTaskBrowserClient(transport: typeof fetch = fetch, makeKey
   const path = (id: string) => `/api/v1/projects/${encodeURIComponent(id)}/tasks`;
   const failure = (status: number): BrowserFailureCode => ({ 400: "invalid_request", 401: "authentication_required", 403: "access_denied",
     404: "not_found", 409: "conflict" } as Record<number, BrowserFailureCode>)[status] ?? "unavailable";
-  async function call(url: string, command?: { body: string; key: string }, signal?: AbortSignal) {
+  async function call(url: string, command?: { body: string; key: string }, signal?: AbortSignal,
+    transportOverride: typeof fetch = transport) {
     try {
       signal?.throwIfAborted();
-      return await transport(url, { method: command ? "POST" : "GET", credentials: "same-origin", redirect: "error", cache: "no-store",
+      return await transportOverride(url, { method: command ? "POST" : "GET", credentials: "same-origin", redirect: "error", cache: "no-store",
         signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(10_000)]) : AbortSignal.timeout(10_000), headers: { accept: "application/json", "x-requested-with": "XMLHttpRequest",
           ...(command ? { "content-type": "application/json", "idempotency-key": command.key } : {}) },
         ...(command ? { body: command.body } : {}) });
     } catch { throw new BrowserRequestError(command ? "uncertain" : "unavailable"); }
   }
-  async function read(url: string, signal?: AbortSignal) {
-    const response = await call(url, undefined, signal); signal?.throwIfAborted();
+  async function read(url: string, signal?: AbortSignal, readTransport?: typeof fetch) {
+    const response = await call(url, undefined, signal, readTransport); signal?.throwIfAborted();
     if (!response.ok) throw new BrowserRequestError(failure(response.status));
     const result = await json(response); signal?.throwIfAborted(); return result;
   }
@@ -62,20 +63,22 @@ export function createTaskBrowserClient(transport: typeof fetch = fetch, makeKey
   }
   return {
     hasPending: () => !!pending,
-    async list(projectId: string, after?: string) {
+    async list(projectId: string, after?: string, signal?: AbortSignal, readTransport?: typeof fetch) {
       try {
         checkId(projectId); if (after !== undefined) checkId(after);
-        const page = taskPageSchema.parse(await read(`${path(projectId)}${after ? `?after=${encodeURIComponent(after)}` : ""}`));
+        const page = taskPageSchema.parse(await read(
+          `${path(projectId)}${after ? `?after=${encodeURIComponent(after)}` : ""}`, signal, readTransport));
         if (page.project.projectId !== projectId || page.tasks.some((task, index) => task.projectId !== projectId
           || after !== undefined && task.jobId <= after || index > 0 && task.jobId <= page.tasks[index - 1].jobId)
           || page.nextCursor !== null && (page.tasks.length !== 50 || page.nextCursor !== page.tasks.at(-1)?.jobId)) throw new Error();
         return page;
       } catch (error) { throw error instanceof BrowserRequestError ? error : new BrowserRequestError("unavailable"); }
     },
-    async detail(projectId: string, jobId: string, signal?: AbortSignal) {
+    async detail(projectId: string, jobId: string, signal?: AbortSignal, readTransport?: typeof fetch) {
       try {
         checkId(projectId); checkId(jobId);
-        const detail = taskDetailSchema.parse(await read(`${path(projectId)}/${encodeURIComponent(jobId)}`, signal));
+        const detail = taskDetailSchema.parse(await read(
+          `${path(projectId)}/${encodeURIComponent(jobId)}`, signal, readTransport));
         if (detail.project.projectId !== projectId || detail.task.projectId !== projectId || detail.task.jobId !== jobId) throw new Error();
         return detail;
       } catch (error) { throw error instanceof BrowserRequestError ? error : new BrowserRequestError("unavailable"); }

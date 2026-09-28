@@ -86,7 +86,8 @@ function OwnerTaskVerificationController({ projectId, jobId, artifactId, targetI
     key: `task-owner-verification-${projectId}-${jobId}-${artifactId}-${targetId}-${refresh}`,
     baseIntervalMs: 30_000,
     enabled: !held,
-    read: () => client.options(projectId, jobId, { artifactId, targetId, targetDigest, contentHash }),
+    read: (signal, transport) => client.options(projectId, jobId,
+      { artifactId, targetId, targetDigest, contentHash }, signal, transport),
     onAccept: () => { setError(undefined); session.clearError(); },
     onFailure: (reason: unknown) => {
       setError(reason instanceof BrowserRequestError ? reason : new BrowserRequestError("unavailable")); },

@@ -103,11 +103,12 @@ export function PrivateTaskWorkspace({ projectId, jobId, after }: { projectId: s
   usePolledRead<true>({
     key: `task-workspace-${projectId}-${jobId ?? "list"}-${after ?? ""}-${refresh}`,
     baseIntervalMs: 30_000,
-    read: async () => {
+    read: async (signal, transport) => {
       if (busy.current || preparingRef.current) return true;
       const current = ++generation.current;
       try {
-        const value = jobId ? await client.detail(projectId, jobId) : await client.list(projectId, after);
+        const value = jobId ? await client.detail(projectId, jobId, signal, transport)
+          : await client.list(projectId, after, signal, transport);
         if (current === generation.current) {
           if ("task" in value) setDetail(previous => retainEquivalentTaskDetailV1(previous, value)); else setPage(value);
           setError(client.hasPending() ? new BrowserRequestError("uncertain") : undefined);

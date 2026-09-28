@@ -288,6 +288,47 @@ test("a rejected shared request is not left behind for the next reader", async (
   assert.equal(await sharePolledRequest(key, () => Promise.resolve("recovered"), signal), "recovered");
 });
 
+test("one sharer can abort without cancelling a surviving reader", async () => {
+  const key = "shared-endpoint-independent-abort";
+  const first = new AbortController(), second = new AbortController();
+  let requests = 0, underlying: AbortSignal | undefined, release!: (value: string) => void;
+  const request = (signal: AbortSignal) => {
+    requests += 1; underlying = signal;
+    return new Promise<string>(resolve => { release = resolve; });
+  };
+  const abandoned = sharePolledRequest(key, request, first.signal);
+  const survivor = sharePolledRequest(key, request, second.signal);
+  await new Promise<void>(resolve => setImmediate(resolve));
+  assert.equal(requests, 1);
+  first.abort();
+  await assert.rejects(abandoned, error => error instanceof DOMException && error.name === "AbortError");
+  assert.equal(underlying?.aborted, false, "the surviving reader still owns the shared request");
+  release("value");
+  assert.equal(await survivor, "value");
+  assert.equal(sharedRequestCountForTest(), 0);
+});
+
+test("the underlying shared request is cancelled after every sharer aborts", async () => {
+  const key = "shared-endpoint-all-abort";
+  const first = new AbortController(), second = new AbortController();
+  let underlying: AbortSignal | undefined;
+  const request = (signal: AbortSignal) => {
+    underlying = signal;
+    return new Promise<string>((_resolve, reject) => signal.addEventListener("abort", () => reject(signal.reason), { once: true }));
+  };
+  const one = sharePolledRequest(key, request, first.signal);
+  const two = sharePolledRequest(key, request, second.signal);
+  await new Promise<void>(resolve => setImmediate(resolve));
+  first.abort(); second.abort();
+  await Promise.all([
+    assert.rejects(one, error => error instanceof DOMException && error.name === "AbortError"),
+    assert.rejects(two, error => error instanceof DOMException && error.name === "AbortError"),
+  ]);
+  assert.equal(underlying?.aborted, true, "no subscriber remains to consume the request");
+  await new Promise<void>(resolve => setImmediate(resolve));
+  assert.equal(sharedRequestCountForTest(), 0);
+});
+
 test("an invalid base interval is refused rather than silently polling at zero", () => {
   const time = harness();
   for (const baseIntervalMs of [0, -1, Number.NaN, Number.POSITIVE_INFINITY])

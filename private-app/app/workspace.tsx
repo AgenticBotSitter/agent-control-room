@@ -187,14 +187,14 @@ export function PrivateProjectWorkspace({ projectId, section = "overview", after
   usePolledRead<true>({
     key: readKey,
     baseIntervalMs: 30_000,
-    read: async () => {
+    read: async (signal, transport) => {
       if (writeBusy.current) return true;
       const current = ++generation.current;
       if (projectId) {
-        const value = await client.get(projectId);
+        const value = await client.get(projectId, signal, transport);
         if (generation.current === current) setProject(value);
       } else {
-        const page = await client.list(after, lifecycleFilter);
+        const page = await client.list(after, lifecycleFilter, signal, transport);
         if (generation.current === current) { setProjects(page.projects); setCatalog(page); }
       }
       if (generation.current === current) { setState("ready"); setError(previous => previous?.code === "uncertain" ? previous : undefined); }
