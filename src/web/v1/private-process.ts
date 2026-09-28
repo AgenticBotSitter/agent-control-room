@@ -46,6 +46,8 @@ import { IdeaLabErrorV1 } from "../../idea-lab/v1/errors";
 import { parseOperatorSurfaceSnapshotV1, type OperatorSurfaceSnapshotV1 } from "../../operator-surfaces/v1";
 import { verifyInstallationPlanV1, type InstallationPlanV1 } from "../../installer/v1/installation-plan";
 import { createInstallationPlanViewV1 } from "../../installer/v1/installation-plan-view";
+import { encodeProjectEventCursorV1, projectEventSseResponseV1, type ProjectEventReadSourceV1 } from "../../project-events/v1";
+import { ProjectActivityServiceV1 } from "./project-activity-service";
 
 export interface PrivateWebProcessOptions {
   origin: string; issuer: string; audience: string; tenantId: string; workspaceId: string;
@@ -119,6 +121,8 @@ export interface PrivateWebProcessOptions {
    * additionally require an Idempotency-Key header.
    */
   coordination?: { store: ProjectCoordinationCanonicalStoreAdapter };
+  /** Existing append-only projection exposed through a read-only interface. */
+  projectEvents?: ProjectEventReadSourceV1;
   clock?: () => number;
   /** Tests may shorten the production drain ceiling; never extend it. */
   drainMs?: number;
@@ -311,6 +315,8 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
         store: options.coordination.store,
       })
     : undefined;
+  const projectActivity = new ProjectActivityServiceV1(options.database.client,
+    { tenantId: options.tenantId, workspaceId: options.workspaceId }, options.projectEvents, clock);
   // Shared in-flight map so simultaneous same-key POSTs coalesce onto one
   // engine invocation. Perf-only: it is not durable replay (see
   // createCoordinationHttpHandler docs). One instance per process.
@@ -686,16 +692,27 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
             if (request.method !== "GET" || url.search) throw new WebAccessError("invalid_request");
             return Response.json(await connections.read(identity), { headers: privateResponseHeaders });
           }
-          const stream = /^\/api\/v1\/projects\/([^/]+)\/events$/.exec(url.pathname);
-          if (stream && request.method === "GET") {
-            if (url.search) throw new WebAccessError("invalid_request");
+          const activity = /^\/api\/v1\/projects\/([^/]+)\/(activity|events)$/.exec(url.pathname);
+          if (activity) {
+            if (request.method !== "GET" || [...url.searchParams.keys()].some(key =>
+              ![activity[2] === "activity" ? "before" : "after", "limit"].includes(key))
+              || ["before", "after", "limit"].some(key => url.searchParams.getAll(key).length > 1))
+              throw new WebAccessError("invalid_request");
             let id: string;
-            try { id = decodeURIComponent(stream[1]); } catch { throw new WebAccessError("invalid_request"); }
-            const project = await service.getView(identity, id);
-            // A finite, current-state snapshot, not a long-lived authorization or a replayable job-event history.
-            return new Response(`event: project-snapshot\ndata: ${JSON.stringify({ project })}\n\n`, {
-              headers: { ...privateResponseHeaders, "content-type": "text/event-stream", "x-accel-buffering": "no" },
-            });
+            try { id = decodeURIComponent(activity[1]); } catch { throw new WebAccessError("invalid_request"); }
+            const rawLimit = url.searchParams.get("limit") ?? "50";
+            if (!/^[1-9][0-9]{0,2}$/.test(rawLimit) || Number(rawLimit) > 100) throw new WebAccessError("invalid_request");
+            if (activity[2] === "activity") {
+              const before = url.searchParams.has("before") ? url.searchParams.get("before")! : undefined;
+              const page = await projectActivity.read(identity, id, before !== undefined ? { beforeCursor: before } : {}, Number(rawLimit));
+              const olderCursor = page.truncatedBefore
+                ? before ? page.nextCursor : page.events[0] ? encodeProjectEventCursorV1(page.events[0]) : null : null;
+              return Response.json({ page, olderCursor }, { headers: privateResponseHeaders });
+            }
+            const headerCursor = request.headers.get("last-event-id")?.trim() || undefined;
+            const queryCursor = url.searchParams.has("after") ? url.searchParams.get("after")! : undefined;
+            return projectEventSseResponseV1(await projectActivity.read(identity, id,
+              headerCursor !== undefined || queryCursor !== undefined ? { afterCursor: headerCursor ?? queryCursor! } : {}, Number(rawLimit)));
           }
           if (coordination && /^\/api\/v1\/projects\/[^/]+\/coordination(?:\/[^/]+)?$/.test(url.pathname)) {
             return await createCoordinationHttpHandler({
@@ -735,7 +752,8 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
           if (url.search) throw new WebAccessError("invalid_request");
           let id: string;
           try { id = decodeURIComponent(taskSummaryPage[1]); } catch { throw new WebAccessError("invalid_request"); }
-          await tasks.authorize(identity, id);
+          if (taskSummaryPage[2] === "activity") await projectActivity.authorize(identity, id);
+          else await tasks.authorize(identity, id);
         } else if (projectUtilityPage) {
           if (url.search) throw new WebAccessError("invalid_request");
           let id: string;

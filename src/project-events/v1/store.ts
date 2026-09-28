@@ -8,6 +8,7 @@ import {
   buildProjectEventV1,
   decodeProjectEventCursorV1,
   encodeProjectEventCursorV1,
+  encodeProjectEventOriginCursorV1,
   parseProjectEventInputV1,
   parseProjectEventV1,
 } from "./contracts";
@@ -119,28 +120,47 @@ export class ProjectEventStoreV1 {
     if(!project.rows[0]||project.rows[0].workspace_id!==request.workspaceId)throw new ProjectEventErrorV1("project_not_found");
     const selected=await this.#query<HeadRow>(`SELECT ${headColumns} FROM control_project_event_stream_heads WHERE tenant_id=$1 AND project_id=$2`,
       [request.tenantId,request.projectId]);
-    if(!selected.rows[0])return buildProjectEventPageV1({...scope,mode:"snapshot",events:[],nextCursor:null,hasMore:false,truncatedBefore:false});
-    const head=this.#verifiedHead(selected.rows[0],scope),cursor=request.afterCursor?decodeProjectEventCursorV1(request.afterCursor):undefined;
-    let mode:"snapshot"|"replay"|"reset"=request.afterCursor?"replay":"snapshot",after=0,cursorDigest:string|null=null;
-    if(request.afterCursor){
-      if(!cursor||cursor.projectId!==request.projectId||cursor.sequence>Number(head.last_sequence)){mode="reset";}
+    const requestedCursor=request.afterCursor??request.beforeCursor;
+    const decodedCursor=requestedCursor!==undefined?decodeProjectEventCursorV1(requestedCursor):undefined;
+    const originCursor=encodeProjectEventOriginCursorV1(request.projectId);
+    if(!selected.rows[0]){
+      const validOrigin=request.afterCursor!==undefined&&decodedCursor?.projectId===request.projectId&&decodedCursor.sequence===0;
+      return buildProjectEventPageV1({...scope,mode:requestedCursor===undefined?"snapshot":validOrigin?"replay":"reset",events:[],
+        nextCursor:originCursor,hasMore:false,truncatedBefore:false});
+    }
+    const head=this.#verifiedHead(selected.rows[0],scope),cursor=decodedCursor;
+    let mode:"snapshot"|"replay"|"reset"=request.afterCursor?"replay":"snapshot",boundary=0,cursorDigest:string|null=null;
+    let cursorEvent:ProjectEventV1|undefined;
+    if(requestedCursor!==undefined){
+      if(!cursor||cursor.projectId!==request.projectId||cursor.sequence>Number(head.last_sequence)
+        ||request.beforeCursor!==undefined&&cursor.sequence===0){mode="reset";}
+      else if(cursor.sequence===0){
+        const first=await this.#query<EventRow>(`SELECT ${eventColumns} FROM control_project_events WHERE tenant_id=$1 AND project_id=$2 AND sequence=1`,
+          [request.tenantId,request.projectId]);
+        if(!first.rows[0])mode="reset";else this.#verifiedEvent(first.rows[0],scope);
+      }
       else{const row=await this.#query<EventRow>(`SELECT ${eventColumns} FROM control_project_events WHERE tenant_id=$1 AND project_id=$2 AND sequence=$3`,
         [request.tenantId,request.projectId,cursor.sequence]);
-        if(!row.rows[0]||this.#verifiedEvent(row.rows[0],scope).eventDigest!==cursor.eventDigest)mode="reset";
-        else{after=cursor.sequence;cursorDigest=cursor.eventDigest;}}
+        if(!row.rows[0]||(cursorEvent=this.#verifiedEvent(row.rows[0],scope)).eventDigest!==cursor.eventDigest)mode="reset";
+        else{boundary=cursor.sequence;cursorDigest=cursor.eventDigest;}}
     }
+    const history=mode!=="reset"&&request.beforeCursor!==undefined;
     const descending=mode!=="replay";
-    const rows=await this.#query<EventRow>(descending
-      ?`SELECT ${eventColumns} FROM control_project_events WHERE tenant_id=$1 AND project_id=$2 ORDER BY sequence DESC LIMIT $3`
-      :`SELECT ${eventColumns} FROM control_project_events WHERE tenant_id=$1 AND project_id=$2 AND sequence>$3 ORDER BY sequence ASC LIMIT $4`,
-    descending?[request.tenantId,request.projectId,request.limit+1]:[request.tenantId,request.projectId,after,request.limit+1]);
+    const rows=await this.#query<EventRow>(mode==="replay"
+      ?`SELECT ${eventColumns} FROM control_project_events WHERE tenant_id=$1 AND project_id=$2 AND sequence>$3 ORDER BY sequence ASC LIMIT $4`
+      :history
+        ?`SELECT ${eventColumns} FROM control_project_events WHERE tenant_id=$1 AND project_id=$2 AND sequence<$3 ORDER BY sequence DESC LIMIT $4`
+        :`SELECT ${eventColumns} FROM control_project_events WHERE tenant_id=$1 AND project_id=$2 ORDER BY sequence DESC LIMIT $3`,
+    mode==="replay"||history?[request.tenantId,request.projectId,boundary,request.limit+1]
+      :[request.tenantId,request.projectId,request.limit+1]);
     const more=rows.rows.length>request.limit,selectedRows=rows.rows.slice(0,request.limit),ordered=descending?selectedRows.reverse():selectedRows;
     const events=ordered.map(row=>this.#verifiedEvent(row,scope));
     let previous=mode==="replay"?cursorDigest:events[0]?.previousEventDigest??null;
     for(const event of events){if(event.previousEventDigest!==previous)throw new ProjectEventErrorV1("integrity_failed");previous=event.eventDigest;}
-    if(!more){const finalSequence=events.at(-1)?.sequence??(mode==="replay"?after:0),finalDigest=events.at(-1)?.eventDigest??(mode==="replay"?cursorDigest:null);
+    if(history&&(events.at(-1)?.eventDigest??null)!==(cursorEvent?.previousEventDigest??null))throw new ProjectEventErrorV1("integrity_failed");
+    if(!more&&!history){const finalSequence=events.at(-1)?.sequence??(mode==="replay"?boundary:0),finalDigest=events.at(-1)?.eventDigest??(mode==="replay"?cursorDigest:null);
       if(finalSequence!==Number(head.last_sequence)||finalDigest!==head.last_event_digest)throw new ProjectEventErrorV1("integrity_failed");}
-    const nextCursor=events.length?encodeProjectEventCursorV1(events.at(-1)!):(mode==="replay"?request.afterCursor??null:null);
+    const nextCursor=events.length?encodeProjectEventCursorV1(history?events[0]!:events.at(-1)!):(mode==="replay"?request.afterCursor??originCursor:originCursor);
     return buildProjectEventPageV1({...scope,mode,events,nextCursor,hasMore:more,
       truncatedBefore:descending&&(more||(events[0]?.sequence??1)>1)});
   }

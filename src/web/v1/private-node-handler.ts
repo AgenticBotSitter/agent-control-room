@@ -28,7 +28,7 @@ export const privateHttpLimits = Object.freeze({ headersBytes: 24_576, headerCou
   bodyMs: 5000, requestMs: 30_000, drainMs: 30_000 });
 export interface PrivateServingApplication { isReady(): boolean; close(): Promise<void> }
 export type PrivateBuiltHandler = (request: Request) => Promise<Response> | Response;
-const forwarded = new Set(["accept", "accept-language", "origin", "sec-fetch-site",
+const forwarded = new Set(["accept", "accept-language", "origin", "sec-fetch-site", "last-event-id",
   "content-type", "idempotency-key", "x-requested-with", "rsc", "next-router-state-tree", "next-router-prefetch",
   "next-router-segment-prefetch", "next-url"]);
 class RequestFailure extends Error { constructor(readonly status: number) { super("private_request_rejected"); } }

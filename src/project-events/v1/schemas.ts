@@ -7,7 +7,7 @@ import {
   projectWorkspaceSafeIdSchemaV1,
   projectWorkspaceSummarySchemaV1,
   projectWorkspaceTimeSchemaV1,
-} from "../../project-workspace/v1";
+} from "../../project-workspace/v1/schemas";
 import {
   PROJECT_EVENT_INPUT_V1,
   PROJECT_EVENT_PAGE_V1,
@@ -69,9 +69,13 @@ export const projectEventSchemaV1 = projectEventInputSchemaV1.omit({ schemaVersi
 
 export const projectEventCursorSchemaV1 = z.object({
   projectId: projectWorkspaceSafeIdSchemaV1,
-  sequence: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
-  eventDigest: projectWorkspaceDigestSchemaV1,
-}).strict();
+  sequence: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+  eventDigest: projectWorkspaceDigestSchemaV1.nullable(),
+}).strict().superRefine((cursor, context) => {
+  if ((cursor.sequence === 0) !== (cursor.eventDigest === null)) {
+    context.addIssue({ code: "custom", message: "project event origin cursor must use sequence zero and no digest" });
+  }
+});
 
 export const projectEventPageSchemaV1 = z.object({
   contractVersion: z.literal(PROJECT_EVENT_PAGE_V1),
@@ -91,6 +95,11 @@ export const projectEventReadRequestSchemaV1 = z.object({
   tenantId: projectWorkspaceSafeIdSchemaV1,
   workspaceId: projectWorkspaceSafeIdSchemaV1,
   projectId: projectWorkspaceSafeIdSchemaV1,
-  afterCursor: z.string().min(1).max(500).optional(),
+  // Empty and otherwise malformed bounded cursors reach decode as reset
+  // candidates rather than turning recovery into an HTTP request failure.
+  afterCursor: z.string().max(500).optional(),
+  beforeCursor: z.string().max(500).optional(),
   limit: z.number().int().min(1).max(100),
-}).strict();
+}).strict().refine(value => value.afterCursor === undefined || value.beforeCursor === undefined, {
+  message: "project event cursors are mutually exclusive",
+});
