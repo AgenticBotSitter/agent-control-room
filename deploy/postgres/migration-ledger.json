@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "digest": "96756fa2fd41bbc3a19e355d515be7a49c686e244e52caa8609b4be2c771deaf",
+  "digest": "e3aea61ba3d235cd1238161a9adca223805f955bc0f02e9bae8d3b4a40d0d4d7",
   "entries": [
     {
       "file": "db/migrations/0001_control_room_core.sql",
@@ -569,7 +569,7 @@
     {
       "file": "db/roles/production_table_grants.sql",
       "order": 95,
-      "sha256": "5892839e11907c834d41ff1616deacec73c7448763ab3beefee2e9ec1ec77eb9",
+      "sha256": "212778d881bf36b2abb82fd74d84301c15a5e1aae0522ae911b4851dd5553f56",
       "kind": "grants"
     },
     {

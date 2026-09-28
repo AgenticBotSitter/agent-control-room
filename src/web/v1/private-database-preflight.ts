@@ -367,7 +367,20 @@ async function verifyDatabase(db: DatabaseClient, config: PrivatePostgresConfigu
           AND (pg_has_role(c.relowner,'MEMBER') OR c.relkind='S' AND
             (has_sequence_privilege(c.oid,'SELECT') OR has_sequence_privilege(c.oid,'UPDATE') OR has_sequence_privilege(c.oid,'USAGE'))))
         OR EXISTS(SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='public'
-          AND (has_function_privilege(p.oid,'EXECUTE') OR pg_has_role(p.proowner,'MEMBER') OR p.prosecdef))
+          AND (pg_has_role(p.proowner,'MEMBER') OR (has_function_privilege(p.oid,'EXECUTE') OR p.prosecdef) AND NOT (
+            p.oid='is_work_intake_session()'::regprocedure
+            AND p.prosecdef AND p.provolatile='s' AND p.prokind='f' AND p.prorettype='boolean'::regtype
+            AND p.pronargs=0 AND NOT p.proleakproof AND p.proparallel='u'
+            AND p.prolang=(SELECT oid FROM pg_language WHERE lanname='sql')
+            AND p.proconfig=ARRAY['search_path=pg_catalog, public']::text[]
+            AND NOT has_function_privilege('public',p.oid,'EXECUTE')
+            AND NOT EXISTS(SELECT 1 FROM aclexplode(COALESCE(p.proacl,acldefault('f',p.proowner))) a
+              WHERE a.privilege_type='EXECUTE' AND a.grantee<>p.proowner AND (a.is_grantable OR a.grantee=0
+                OR pg_get_userbyid(a.grantee) NOT IN ('control_room_application','control_room_reader','control_room_backup',
+                  'control_room_work_intake','control_room_private_web','control_room_task_coordinator',
+                  'control_room_native_results','control_room_native_evidence','control_room_local_result_publisher',
+                  'control_room_idea_creation','control_room_news_coordinator')))
+          )))
         OR EXISTS(SELECT 1 FROM pg_default_acl d CROSS JOIN LATERAL aclexplode(d.defaclacl) a
           WHERE a.grantee=0 OR a.grantee IN (SELECT oid FROM pg_roles WHERE pg_has_role(oid,'MEMBER')))
         OR NOT has_schema_privilege('public','USAGE') AS unsafe`, [withQueue])).rows[0];

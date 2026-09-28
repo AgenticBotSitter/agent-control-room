@@ -139,6 +139,7 @@ test("role creation and least-privilege grants travel through reviewed productio
   assert.match(migration, /pg_has_role\(s\.oid,a\.grantee,'member'\)/u);
   assert.doesNotMatch(migration, /r\.rolname='control_room_work_intake'/u);
   assert.match(grants, /GRANT SELECT ON work_intake_role_anchor TO control_room_work_intake/u);
+  assert.doesNotMatch(grants, /GRANT EXECUTE ON FUNCTION is_work_intake_session\(\) TO PUBLIC/u);
   assert.match(migration, /NOT s\.rolsuper/u);
   assert.match(migration, /CREATE POLICY control_idempotency_work_intake_scope/u);
   assert.match(migration, /CREATE POLICY audit_events_work_intake_scope/u);

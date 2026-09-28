@@ -74,4 +74,5 @@ GRANT UPDATE (coordinator_lock) ON control_node_fleet_signals TO control_room_ta
 GRANT INSERT ON control_node_fleet_current TO control_room_task_coordinator;
 GRANT UPDATE (signal_sequence, fingerprint, trust, observed_at, expires_at, payload)
   ON control_node_fleet_current TO control_room_task_coordinator;
+GRANT EXECUTE ON FUNCTION is_work_intake_session() TO control_room_task_coordinator;
 COMMIT;
