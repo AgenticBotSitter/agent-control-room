@@ -126,7 +126,7 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
-      # These two need no dependencies, so they report in seconds, before the
+      # These four need no dependencies, so they report in seconds, before the
       # install that the type checks require.
       - name: Test the lane coverage checker and the path routing
         run: node --test tests/check-test-lane-coverage.test.mjs tests/ci-path-routing.test.mjs tests/private-name-guard.test.mjs tests/mac-local-task-host-supervisor.test.mjs
