@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "digest": "bb2fd7c179b1c701c5388307c6a3c9f35a1b06c6ccbbad3ee50452925dfd5ff0",
+  "digest": "396b8d339888262753b4aaa93eabdc963ec119e5598b8f316d370a327967cd28",
   "entries": [
     {
       "file": "db/migrations/0001_control_room_core.sql",
@@ -557,31 +557,31 @@
     {
       "file": "db/migrations/0093_work_batch_intake.sql",
       "order": 93,
-      "sha256": "ca575fd61389837ce091322c889c0a879bc7be5bed1950335ca496f232e1e0b0",
+      "sha256": "d30af64a81aef61aace194f488756973288dbbadd6954802d8c4abeebae66794",
       "kind": "migrate"
     },
     {
       "file": "db/migrations/0094_work_batch_owner_approval.sql",
       "order": 94,
-      "sha256": "6f77ee0501cac319ee22520a0596dc1e5a009cc8b99f69fdb367ef069cf4252f",
+      "sha256": "c2a185caca0bd176ce3ba3045a36da2afefa3153d1bc5fa0c3b527556ecd6768",
       "kind": "migrate"
     },
     {
       "file": "db/migrations/0095_work_batch_agent_queue.sql",
       "order": 95,
-      "sha256": "470b89b1d0cc6a49f4ecc02bbecca232d04f49fd92b532ad7487aeba9e90e2b7",
+      "sha256": "221440da31dead5747c1c977472dbd2305eaf31aaa22fcd6522b266e7eb8660a",
       "kind": "migrate"
     },
     {
       "file": "db/migrations/0096_linear_pipeline_runs.sql",
       "order": 96,
-      "sha256": "d9abaa4a8537484c214d3dbe8a7792efc3ed01cf7da33590a147a2ddbe4edc46",
+      "sha256": "0d69c6bdf3fa9f9d1d8aca5613f5b4262ea12e462dc096353acec928fcbde711",
       "kind": "migrate"
     },
     {
       "file": "db/migrations/0097_agent_review_plans.sql",
       "order": 97,
-      "sha256": "a5509ff6fc6c69963eb88c080f189983665d02d3759044a5ac6bd89d46ee166f",
+      "sha256": "d926e2953498a20d7c6a860b8997f623599903386fffec73c9932abac51d25e3",
       "kind": "migrate"
     },
     {
@@ -599,7 +599,7 @@
     {
       "file": "db/roles/production_roles.sql",
       "order": 100,
-      "sha256": "a608ed8aa1cd26b7c4a37ac026c221bf396c2092f128ee32f90623bd1c99e181",
+      "sha256": "a0da14218b3f2b69e498a1354924d4f5bca46717ef2202a83c52dd270e009203",
       "kind": "grants"
     },
     {
@@ -617,7 +617,7 @@
     {
       "file": "db/roles/production_provision.sql",
       "order": 103,
-      "sha256": "41f0603df63f6203f34cc80047d815ff237fe8e923f983a780e9e2ca6262c044",
+      "sha256": "aa123bf48866eb1e0a3c4962347f8719c7f69b16ca46606e44a0a80563a5c358",
       "kind": "provision"
     }
   ]

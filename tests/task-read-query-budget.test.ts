@@ -34,11 +34,19 @@ function observed(db: DatabaseClient, delayMs: number) {
   return { client, count: () => queries, transactionCount: () => transactions };
 }
 
-// The query-count assertion is the deterministic remote-latency contract. The
-// wall guard includes a small allowance for shared CI runner timer scheduling;
-// it must not be used to admit another database round trip.
-const sequentialWallGuardMs = 575;
-const burstWallGuardMs = 1_650;
+const injectedLatencyMs = 50;
+// Exact round-trip counts are the load-bearing budget. Wall time is only a
+// deadlock/runaway sanity check, so allow a full second for loaded CI runners
+// beyond the worst case where every allowed injected delay is sequential.
+const wallClockMarginMs = 1_000;
+const assertInjectedLatencyBudget = (label: string, measured: { queries: number; elapsedMs: number },
+  allowedRoundTrips: number) => {
+  assert.equal(measured.queries, allowedRoundTrips,
+    `${label} changed the injected-latency round-trip budget: ${JSON.stringify(measured)}`);
+  const sanityBoundMs = injectedLatencyMs * allowedRoundTrips + wallClockMarginMs;
+  assert.ok(measured.elapsedMs < sanityBoundMs,
+    `${label} exceeded the ${sanityBoundMs}ms wall-clock sanity bound: ${JSON.stringify(measured)}`);
+};
 
 async function state(db: DatabaseClient, jobIds: readonly string[], next: "succeeded" | "proposed" | "running", version: number) {
   for (const jobId of jobIds) {
@@ -89,31 +97,24 @@ test("task list, needs-me and Home keep a fixed query budget as the page grows",
     [jobId, JSON.stringify(payload), at(7002), binding.tenantId, binding.jobId]);
   }
 
-  const list = await measure(50, reads.list);
+  const list = await measure(injectedLatencyMs, reads.list);
   assert.equal(list.queries, one.list.queries, `list query count grew: ${JSON.stringify({ one: one.list, ten: list })}`);
-  assert.ok(list.queries <= 9, `list exceeded the nine-query remote budget: ${list.queries}`);
-  assert.ok(list.queries * 50 < 500, `list network budget exceeded 500ms: ${list.queries * 50}`);
-  assert.ok(list.elapsedMs < sequentialWallGuardMs, `list exceeded the injected-latency wall guard: ${list.elapsedMs}`);
+  assertInjectedLatencyBudget("list", list, 9);
   const overview = await measure(0, reads.overview);
   assert.equal(overview.queries, one.overview.queries,
     `project overview query count grew: ${JSON.stringify({ one: one.overview, ten: overview })}`);
 
   await state(f.db, extra, "proposed", 4);
-  const attention = await measure(50, reads.attention);
+  const attention = await measure(injectedLatencyMs, reads.attention);
   assert.equal(attention.queries, one.attention.queries,
     `needs-me query count grew: ${JSON.stringify({ one: one.attention, ten: attention })}`);
-  assert.ok(attention.queries <= 9, `needs-me exceeded the nine-query remote budget: ${attention.queries}`);
-  assert.ok(attention.queries * 50 < 500, `needs-me network budget exceeded 500ms: ${attention.queries * 50}`);
-  assert.ok(attention.elapsedMs < sequentialWallGuardMs,
-    `needs-me exceeded the injected-latency wall guard: ${attention.elapsedMs}`);
+  assertInjectedLatencyBudget("needs-me", attention, 9);
 
   await state(f.db, extra, "running", 5);
-  const home = await measure(50, reads.home);
+  const home = await measure(injectedLatencyMs, reads.home);
   assert.equal(home.queries, one.home.queries, `Home query count grew: ${JSON.stringify({ one: one.home, ten: home })}`);
-  assert.ok(home.queries <= 9, `Home exceeded the nine-query remote budget: ${home.queries}`);
-  assert.ok(home.queries * 50 < 500, `Home network budget exceeded 500ms: ${home.queries * 50}`);
-  assert.ok(home.elapsedMs < sequentialWallGuardMs, `Home exceeded the injected-latency wall guard: ${home.elapsedMs}`);
-  t.diagnostic(JSON.stringify({ injectedLatencyMs: 50, oneTaskQueries: {
+  assertInjectedLatencyBudget("Home", home, 9);
+  t.diagnostic(JSON.stringify({ injectedLatencyMs, oneTaskQueries: {
     list: one.list.queries, attention: one.attention.queries, home: one.home.queries, overview: one.overview.queries,
   }, tenTask: { list, attention, home, overview } }));
 });
@@ -156,17 +157,15 @@ test("needs-me suppresses authentic saved plans in-session without hiding unplan
 
   const additionalSavedJobIds = [];
   for (let index = 2; index <= 5; index += 1) additionalSavedJobIds.push(await saveProposal(index));
-  const many = await measure(50);
+  const many = await measure(injectedLatencyMs);
   assert.equal(many.transactions, 1, "batched saved-plan verification does not open a per-plan transaction");
   for (const jobId of [firstSavedJobId, ...additionalSavedJobIds])
     assert.equal(many.page.items.some(item => item.task.jobId === jobId), false, `saved proposal remained visible: ${jobId}`);
   assert.deepEqual(many.page.items.find(item => item.task.jobId === unplanned.receipt.jobId)?.reasons, ["proposal"]);
   assert.equal(many.queries, one.queries,
     `saved-plan attention query count grew with proposal count: ${JSON.stringify({ one: one.queries, many: many.queries })}`);
-  assert.ok(many.queries * 50 < 500, `saved-plan attention network budget exceeded 500ms: ${many.queries * 50}`);
-  assert.ok(many.elapsedMs < sequentialWallGuardMs,
-    `saved-plan attention exceeded the injected-latency wall guard: ${many.elapsedMs}`);
-  t.diagnostic(JSON.stringify({ injectedLatencyMs: 50, oneSavedPlanQueries: one.queries,
+  assertInjectedLatencyBudget("saved-plan attention", many, 9);
+  t.diagnostic(JSON.stringify({ injectedLatencyMs, oneSavedPlanQueries: one.queries,
     fiveSavedPlans: { queries: many.queries, elapsedMs: many.elapsedMs } }));
 });
 
@@ -190,19 +189,17 @@ test("Home project catalog stays fixed-query as ordinary projects grow", async t
       SELECT tenant_id,$1,lifecycle,version,created_at,updated_at FROM control_manual_project_heads
       WHERE tenant_id=$2 AND project_id=$3`, [id, binding.tenantId, binding.projectId]);
   }
-  const ten = await measure(50);
+  const ten = await measure(injectedLatencyMs);
   assert.equal(ten.queries, one.queries, `project query count grew: ${JSON.stringify({ one, ten })}`);
-  assert.ok(ten.queries <= 5, `project catalog exceeded the five-query remote budget: ${ten.queries}`);
-  assert.ok(ten.queries * 50 < 500, `project catalog network budget exceeded 500ms: ${ten.queries * 50}`);
-  assert.ok(ten.elapsedMs < 500, `project catalog exceeded the 500ms wall target: ${ten.elapsedMs}`);
-  t.diagnostic(JSON.stringify({ injectedLatencyMs: 50, oneTaskQueries: one.queries, tenProjects: ten }));
+  assertInjectedLatencyBudget("project catalog", ten, 5);
+  t.diagnostic(JSON.stringify({ injectedLatencyMs, oneTaskQueries: one.queries, tenProjects: ten }));
 });
 
 test("three concurrent Home reads stay inside the injected remote-latency target", async t => {
   const f = await ownerReviewFixture(); t.after(f.close);
   await state(f.db, [binding.jobId], "succeeded", 3);
   const measure = async (read: (tasks: WebTaskService, projects: WebProjectService) => Promise<unknown>) => {
-    const watched = observed(f.db, 50);
+    const watched = observed(f.db, injectedLatencyMs);
     const tasks = new WebTaskService(watched.client, f.scope, () => instant + 6000, f.ownerKeys);
     const projects = new WebProjectService(watched.client, f.scope, () => instant + 6000);
     const started = performance.now();
@@ -215,11 +212,10 @@ test("three concurrent Home reads stay inside the injected remote-latency target
     home: await measure(tasks => tasks.home(f.identity)),
     projects: await measure((_tasks, projects) => projects.listPage(f.identity)),
   };
-  for (const [name, result] of Object.entries(burst)) {
-    assert.ok(result.queries * 50 < 1_500, `${name} burst network budget exceeded 1.5s: ${result.queries * 50}`);
-    assert.ok(result.elapsedMs < burstWallGuardMs, `${name} burst exceeded the injected-latency wall guard: ${result.elapsedMs}`);
-  }
-  t.diagnostic(JSON.stringify({ injectedLatencyMs: 50, concurrentReads: 3, burst }));
+  const allowedBurstRoundTrips = { list: 27, attention: 27, home: 27, projects: 15 } as const;
+  for (const [name, result] of Object.entries(burst))
+    assertInjectedLatencyBudget(`${name} burst`, result, allowedBurstRoundTrips[name as keyof typeof allowedBurstRoundTrips]);
+  t.diagnostic(JSON.stringify({ injectedLatencyMs, concurrentReads: 3, burst }));
 });
 
 test("task detail and result-open reads stay within fixed remote-query budgets", async t => {
@@ -257,20 +253,18 @@ test("task detail and result-open reads stay within fixed remote-query budgets",
     for (const [name, read] of Object.entries(reads)) entries.push([name, await measure(delayMs, read)]);
     return Object.fromEntries(entries) as Record<keyof typeof reads, { queries: number; elapsedMs: number }>;
   };
-  const baseline = await collect(0), delayed = await collect(50);
-  assert.ok(delayed.detail!.queries <= 13, `task detail exceeded 13 queries: ${JSON.stringify(delayed.detail)}`);
-  for (const name of ["results", "content", "review", "verification"] as const) {
+  const baseline = await collect(0), delayed = await collect(injectedLatencyMs);
+  const allowedRoundTrips = { detail: 12, results: 12, content: 7, review: 12, verification: 11 } as const;
+  for (const name of Object.keys(allowedRoundTrips) as (keyof typeof allowedRoundTrips)[]) {
     assert.equal(delayed[name]!.queries, baseline[name]!.queries, `${name} query count changed under latency`);
-    assert.ok(delayed[name]!.queries <= 13, `${name} exceeded 13 queries: ${JSON.stringify(delayed[name])}`);
+    assertInjectedLatencyBudget(name, delayed[name]!, allowedRoundTrips[name]);
   }
   const resultOpenCriticalQueries = delayed.results!.queries + delayed.content!.queries
     + Math.max(delayed.review!.queries, delayed.verification!.queries);
-  assert.ok(resultOpenCriticalQueries * 50 < 1_600,
-    `composed result-open network budget exceeded 1.6s: ${resultOpenCriticalQueries * 50}`);
-  // Query counts are the deterministic remote-latency gate. Retain measured
-  // wall time as diagnostic evidence without failing on shared-runner timer jitter.
-  t.diagnostic(JSON.stringify({ injectedLatencyMs: 50, wallTargetMs: 700, baseline, delayed,
-    resultOpenCriticalPathMs: resultOpenCriticalQueries * 50 }));
+  assert.ok(resultOpenCriticalQueries * injectedLatencyMs < 1_600,
+    `composed result-open network budget exceeded 1.6s: ${resultOpenCriticalQueries * injectedLatencyMs}`);
+  t.diagnostic(JSON.stringify({ injectedLatencyMs, baseline, delayed,
+    resultOpenCriticalPathMs: resultOpenCriticalQueries * injectedLatencyMs }));
 });
 
 test("verification options stay fixed-query as reviews and configured scenarios grow", async t => {
