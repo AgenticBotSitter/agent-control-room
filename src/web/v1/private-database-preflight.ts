@@ -401,10 +401,11 @@ async function verifyDatabase(db: DatabaseClient, config: PrivatePostgresConfigu
           AND (pg_has_role(p.proowner,'MEMBER')
             OR has_function_privilege(p.oid,'EXECUTE') AND NOT ($2 AND p.oid='commit_agent_review(text,jsonb,jsonb,bytea)'::regprocedure)
             OR p.prosecdef AND NOT (p.oid='commit_agent_review(text,jsonb,jsonb,bytea)'::regprocedure
-              AND pg_get_userbyid(p.proowner)='control_room_schema_owner'
-              AND p.proconfig=ARRAY['search_path=pg_catalog']::text[]
-              AND NOT p.proleakproof AND p.proparallel='u' AND p.provolatile='v'
-              AND NOT has_function_privilege('public','commit_agent_review(text,jsonb,jsonb,bytea)','EXECUTE'))))
+              AND NOT has_function_privilege('public','commit_agent_review(text,jsonb,jsonb,bytea)','EXECUTE')
+              AND (($2 AND pg_get_userbyid(p.proowner)='control_room_schema_owner'
+                AND p.proconfig=ARRAY['search_path=pg_catalog']::text[]
+                AND NOT p.proleakproof AND p.proparallel='u' AND p.provolatile='v')
+                OR (NOT $2 AND NOT has_function_privilege(p.oid,'EXECUTE'))))))
         OR ($2 AND NOT (has_function_privilege('commit_agent_review(text,jsonb,jsonb,bytea)','EXECUTE')
           AND NOT has_function_privilege('public','commit_agent_review(text,jsonb,jsonb,bytea)','EXECUTE')
           AND NOT EXISTS (SELECT 1 FROM pg_proc function_acl
