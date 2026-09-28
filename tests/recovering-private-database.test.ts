@@ -122,6 +122,30 @@ test("a candidate that faults as its probe completes is never published", async 
   await database.close();
 });
 
+test("a generation fault between publication and recovery retirement starts another recovery", async () => {
+  const first = generation(async () => {
+    first.unavailable(); throw new PrivateDatabaseError("database_outcome_uncertain");
+  });
+  const raced = generation(async () => ({ rows: [] }));
+  const ready = generation(async () => ({ rows: [] }));
+  const values = [first.value, raced.value, ready.value]; let opens = 0, reportRacedFault!: () => void;
+  const database = recoveringPrivateDatabase(reportFault => {
+    const value = values[opens++]!;
+    if (value !== raced.value) return value;
+    reportRacedFault = reportFault;
+    let checks = 0;
+    return Object.freeze({ ...value, isAvailable: () => {
+      checks++;
+      if (checks === 2) queueMicrotask(() => { raced.unavailable(); reportRacedFault(); });
+      return value.isAvailable();
+    } });
+  }, { delaysMs: [1], sleep: async () => {} });
+  await assert.rejects(database.client.query("SELECT fault"));
+  await eventually(() => database.isAvailable());
+  assert.equal(opens, 3); assert.equal(raced.closes(), 1);
+  await database.close();
+});
+
 test("explicit close cancels pending recovery and never opens a replacement", async () => {
   const first = generation(async () => {
     first.unavailable(); throw new PrivateDatabaseError("database_outcome_uncertain");

@@ -79,7 +79,14 @@ export function recoveringPrivateDatabase(open: (reportFault: () => void) => Rec
           attempt++;
         }
       }
-    })().catch(() => {}).finally(() => { recovery = undefined; });
+    })().catch(() => {}).finally(() => {
+      recovery = undefined;
+      // A newly published generation can fault after its final qualification
+      // check but before this recovery promise retires. Its fault callback
+      // cannot start a second recovery while `recovery` is still set, so
+      // re-check here to avoid leaving an unavailable generation poisoned.
+      if (!closed && !cleanupUncertain && (!current || !current.isAvailable())) recover(current);
+    });
   };
   let initial: RecoveringPrivateDatabaseGeneration | undefined, initialFault = false;
   initial = open(() => { if (initial) recover(initial); else initialFault = true; });
