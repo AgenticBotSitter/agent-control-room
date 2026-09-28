@@ -1,6 +1,8 @@
 // Capture the owner website's real pages as PNGs, for the visual-change PRs.
 //
-//   node scripts/owner-page-screenshots.mjs <outputDir> [colourScheme]
+//   CONTROL_ROOM_SCREENSHOT_ORIGIN=http://127.0.0.1:3217 \
+//   CONTROL_ROOM_SCREENSHOT_ROOT=/absolute/path/to/rehearsal-root \
+//     node scripts/owner-page-screenshots.mjs <outputDir> [light|dark]
 //
 // Every capture is a real signed-in page from the running local stack, using the
 // same owner-code endpoint and the same saved records the owner sees. Nothing is
@@ -15,6 +17,14 @@
 // colourScheme is "dark" or "light" and selects the emulated OS preference, which
 // is the only thing that changes between the two runs. Both widths are always
 // captured because the owner website is used on a phone.
+//
+// It is NOT wired into CI. The workflow step that used to call it referenced a
+// shell variable from an earlier step, so it expanded empty and skipped every
+// run, and its teardown stopped the app host rather than the database cluster.
+// Photographing a page needs a stack that outlives the journey helper, which
+// tears each one down; that is a rehearsal-harness change and wants the review
+// docs/ci-budget-security-review.md calls for. Run this locally against a
+// rehearsal root while reviewing a visual change.
 import { chromium } from "@playwright/test";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";

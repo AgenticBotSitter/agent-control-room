@@ -159,11 +159,24 @@
   padding: .15rem .6rem; font-size: .8rem; font-weight: 700; text-transform: capitalize; }
 .private-chip::before { content: ""; flex: none; width: .5rem; height: .5rem; border-radius: 50%; background: var(--muted); }
 /* Tones map to the existing state tokens. Each was contrast-checked on every
- * surface it can be painted on by tests/mac-local-accessibility.test.tsx. */
+ * surface it can be painted on by tests/mac-local-accessibility.test.tsx, which
+ * reads the --green/--amber/--red/--blue pairings this file paints them with. */
 .private-chip.is-good::before { background: var(--green); }
 .private-chip.is-warn::before { background: var(--amber); }
 .private-chip.is-bad::before { background: var(--red); }
 .private-chip.is-busy::before { background: var(--blue); }
+
+/* The same tones, for a heading that already carries the state word. The run and
+ * attempt panels state the state in their own heading, so a chip beside it
+ * repeated the sentence. These put the tone on the heading instead: one dot per
+ * state, stated once, with the same tokens as the chips above. */
+.private-run-state, .private-attempt-state { display: flex; align-items: center; gap: .4rem; }
+.private-run-state::before, .private-attempt-state::before { content: ""; flex: none;
+  width: .5rem; height: .5rem; border-radius: 50%; background: var(--muted); }
+.private-run-state.is-good::before, .private-attempt-state.is-good::before { background: var(--green); }
+.private-run-state.is-warn::before, .private-attempt-state.is-warn::before { background: var(--amber); }
+.private-run-state.is-bad::before, .private-attempt-state.is-bad::before { background: var(--red); }
+.private-run-state.is-busy::before, .private-attempt-state.is-busy::before { background: var(--blue); }
 
 /* The three read outcomes, as three visibly different things. */
 .private-state-empty { color: var(--muted); font-size: .9rem; }

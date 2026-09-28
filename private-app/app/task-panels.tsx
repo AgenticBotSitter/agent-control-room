@@ -1,6 +1,6 @@
 import type { HermesDeliveryRecovery, TaskDetail, TaskDraft, TaskPage, TaskRun } from "../../src/web/v1/task-wire";
 import { ConfiguredTimestamp } from "./configured-timestamp";
-import { StateChip } from "./owner-ui";
+import { StateChip, chipToneForStateV1 } from "./owner-ui";
 
 export const taskStateLabel: Record<TaskPage["tasks"][number]["state"], string> = {
   proposed: "Proposal saved", ready: "Ready for assignment", leased: "Assigned", running: "In progress",
@@ -138,10 +138,13 @@ function RunPanel({ run }: { run: TaskRun }) {
       : run.routeEvidence === "local_codex" ? "local Codex adapter"
         : run.routeEvidence === "other_or_unknown" ? "another or unknown adapter" : undefined;
   return <section className="private-run" aria-label="Agent observation">
-    <h4>{run.harness} · {retained ? "Agent progress is not current" : label}</h4>
-    {/* The chip sits after the heading, not inside it: the journey reads this
-        panel's heading text, and prefixing it would change that element's text. */}
-    <StateChip state={run.nativeState ?? run.state} label={label} />
+    {/* No chip here. The heading directly above already ends in `label`, which is
+      the same string the chip would carry, so a chip repeated it verbatim beside
+      the sentence that already says it. The tone still needs to be visible, so
+      the heading itself carries it as a class rather than as a second copy of
+      the text: the same vocabulary, stated once. */}
+    <h4 className={`private-run-state is-${chipToneForStateV1(run.nativeState ?? run.state)}`}>
+      {run.harness} · {retained ? "Agent progress is not current" : label}</h4>
     {retained && <p className="private-notice">Not a current live signal. {run.availability ? `Availability: ${run.availability}. ` : ""}
       Last reported state: {label}.</p>}
     <p>{run.source === "native_snapshot" ? "Native agent evidence"
@@ -254,8 +257,12 @@ export function TaskDetailPanel({ detail }: { detail: TaskDetail }) {
         : "Task submission is not configured for this app."}</p>
       {detail.progressSource === "not_configured" && <p className="private-notice">Agent evidence is not configured for this app. Missing progress does not mean no agent work exists.</p>}
       {!detail.attempts.length && <p>No assignment attempts are recorded for this task.</p>}
-      {detail.attempts.map(attempt => <section key={attempt.attemptId} className="private-attempt"><h3>Attempt {attempt.attemptNumber} · {attempt.state.replaceAll("_", " ")}</h3>
-        <StateChip state={attempt.state} />
+      {detail.attempts.map(attempt => <section key={attempt.attemptId} className="private-attempt">
+        {/* The attempt state is in this heading, so no chip repeats it beside the
+            heading that already says it. The tone moves onto the heading as a
+            class, which is what the chip dot used to convey. */}
+        <h3 className={`private-attempt-state is-${chipToneForStateV1(attempt.state)}`}>
+          Attempt {attempt.attemptNumber} · {attempt.state.replaceAll("_", " ")}</h3>
         {detail.progressSource === "configured" && !attempt.runs.length && <p>No agent observation is recorded for this attempt.</p>}
         {attempt.runs.map(run => <RunPanel key={run.runId} run={run} />)}
         {attempt.additionalRunsOmitted && <p>Only the 10 most recently created run records are shown.</p>}</section>)}

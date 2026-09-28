@@ -482,42 +482,27 @@ jobs:
           pnpm build
           run_browser_suite --browser-owner-e2e 15501 3219
           run_browser_suite --browser-adversarial-e2e 15502 3220
-      - name: Capture owner page screenshots
-        # Visual evidence for the review: the real signed-in pages, in both colour
-        # schemes and at the phone width the owner actually uses. Every image also
-        # gets a JSON sidecar with the computed background and any horizontal
-        # overflow, so a caption cannot claim a theme the page did not paint.
-        #
-        # Best-effort by design, and `continue-on-error` says so explicitly. The
-        # run_browser_suite function tears its stack down as it returns, so on a
-        # normal green run there is nothing left to photograph and the capture is
-        # skipped. It is kept because on a failing journey the evidence is exactly
-        # what a reviewer wants, and because a missing screenshot must never be the
-        # reason an otherwise-green owner journey reports red.
-        #
-        # Making this always-on needs the stack to outlive run_browser_suite, which
-        # is a change to the rehearsal harness rather than to this workflow.
-        # Recorded as a known limitation instead of working around it here.
-        if: ${{ always() }}
-        continue-on-error: true
-        run: |
-          pnpm mac:rehearsal up "${rehearsal_root}" --port 15501 --web-port 3219 --fake-executables \
-            || { echo "rehearsal is not running; skipping screenshots"; exit 0; }
-          CONTROL_ROOM_SCREENSHOT_ORIGIN="http://127.0.0.1:3219" \
-          CONTROL_ROOM_SCREENSHOT_ROOT="${rehearsal_root}" \
-            node scripts/owner-page-screenshots.mjs test-results/owner-screenshots light
-          CONTROL_ROOM_SCREENSHOT_ORIGIN="http://127.0.0.1:3219" \
-          CONTROL_ROOM_SCREENSHOT_ROOT="${rehearsal_root}" \
-            node scripts/owner-page-screenshots.mjs test-results/owner-screenshots dark
-          pnpm mac:down -- --protected-root "${rehearsal_root}/protected"
-      - name: Upload owner page screenshots
-        if: ${{ always() }}
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: owner-page-screenshots
-          path: test-results/owner-screenshots
-          if-no-files-found: ignore
-          retention-days: 14
+      # NOTE: there is deliberately no "capture owner page screenshots" step
+      # here, and no owner-screenshots artifact upload.
+      #
+      # An earlier version of this workflow added one that could never run. It
+      # referenced `rehearsal_root`, a shell variable set inside the step above,
+      # from a separate `run:` block — each step is a fresh shell, so it expanded
+      # empty, `mac:rehearsal up ""` exited 2 (setup.ts requires an absolute dir),
+      # and the step's `||` branch reported success and skipped the capture on
+      # every run. On the path where it did start a cluster, its teardown was
+      # `pnpm mac:down`, which stops the app host and never touches pg_ctl, so the
+      # disposable PostgreSQL cluster was left running. A permanently-dead step
+      # that also leaks a database is worse than no step.
+      #
+      # Screenshot capture needs a stack that outlives run_browser_suite, which
+      # tears each one down (and the trap tears down the last one too). That is
+      # a change to the rehearsal harness — a mode that leaves a verified
+      # disposable cluster up for an external process to photograph — not to this
+      # workflow, and it wants the budget/security review
+      # docs/ci-budget-security-review.md calls for. It is not worth shipping a
+      # dead step in the meantime, so it is removed rather than left for a
+      # reviewer to discover. Re-adding it means adding the harness mode first.
       - name: Upload browser failure evidence
         if: ${{ failure() }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

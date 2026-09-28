@@ -12,6 +12,8 @@
  * data, and never infer a count or a state the caller did not read.
  */
 
+import { Children, isValidElement, type ReactNode } from "react";
+
 /** Tones map to the existing state tokens. Every value here is used together
  * with its text label, so the tone is an aid and never the only carrier of
  * meaning. */
@@ -23,6 +25,16 @@ export type ChipTone = "neutral" | "good" | "warn" | "bad" | "busy";
  * unrecognised value falls through to the neutral tone rather than being
  * guessed into a good/bad tone, so a new backend state can never be misreported
  * as healthy.
+ *
+ * Every key below is a state some record in this repository can actually carry
+ * (job/attempt states in `src/domain/v1/types.ts`, native run states in
+ * `src/web/v1/task-wire.ts`, project lifecycle in `src/web/v1/project-wire.ts`,
+ * lease and node states for the worker routes). That was not true before: this
+ * map used to carry 25 keys of which 19 corresponded to no record state at all,
+ * which made it read as a considered mapping of the domain and was not one. The
+ * test in tests/owner-ui.test.tsx now asserts both directions against the
+ * exported enums, so a state added there without a tone here fails the build's
+ * test lane rather than silently rendering neutral.
  */
 const stateTones: Readonly<Record<string, ChipTone>> = {
   // Settled and healthy.
@@ -32,15 +44,32 @@ const stateTones: Readonly<Record<string, ChipTone>> = {
   // immediately qualifies as "readiness not proven" — a green dot beside that
   // sentence contradicts it. A worker is a saved fact about a route, not proof
   // that a task is healthy, so it takes its tone from the caller.
-  active: "good", running: "good", accepted: "good",
-  // In progress.
-  starting: "busy", submitting: "busy", preparing: "busy",
-  assigned: "busy", queued: "busy", proposed: "warn", pending: "warn",
-  // Needs the owner.
-  changes_requested: "warn", awaiting_review: "warn", paused: "warn",
+  active: "good", running: "good", accepted: "good", fulfilled: "good",
+  // In progress. `prepared` is the pre-dispatch plan, `dispatching` the
+  // hand-off, `stopping`/`cancelling` a wind-down: all of these are the task host
+  // working, not a problem.
+  prepared: "busy", dispatching: "busy", stopping: "busy", starting: "busy",
+  cancelling: "busy", discovered: "busy", executing: "busy", submitted: "busy",
+  queued: "busy", leased: "busy", offered: "busy", claimed: "busy",
+  // Waiting on the owner or the agent. A person has to look at these, so they
+  // read as a warning rather than as either healthy or broken.
+  proposed: "warn", pending: "warn", waiting: "warn", waiting_input: "warn",
+  waiting_approval: "warn", changes_requested: "warn", paused: "warn",
+  // A review target that cannot be verified yet is waiting on a person, not
+  // broken, so it warns for the same reason `changes_requested` does.
+  verification_blocked: "warn", revision_limit_reached: "warn",
+  // Adverse. `orphaned` is an attempt that lost its worker, `interrupted` one
+  // cut off mid-run, `disconnected` one whose observation went stale, and
+  // `ambiguous` one whose outcome could not be established. None of them may
+  // fall through to the neutral default: the whole premise of this vocabulary is
+  // that a glance must not mislead, and these are exactly the states a neutral
+  // grey would under-report.
+  orphaned: "bad", interrupted: "bad", ambiguous: "bad", disconnected: "bad",
   blocked: "bad", failed: "bad", rejected: "bad", unavailable: "bad",
-  offline: "bad", stale: "bad", superseded: "bad", archived: "neutral",
-  cancelled: "neutral", draft: "neutral",
+  offline: "bad", stale: "bad", superseded: "bad", denied: "bad", inconclusive: "bad",
+  // Settled without anything good to report.
+  cancelled: "neutral", archived: "neutral", draft: "neutral", expired: "neutral",
+  revoked: "neutral", released: "neutral", retired: "neutral",
 };
 
 /** The tone for a local worker row. The route being `ready` is a saved fact about
@@ -49,6 +78,13 @@ const stateTones: Readonly<Record<string, ChipTone>> = {
  * than guessed into a healthy tone. */
 export function workerChipToneV1(worker: { state: string }): ChipTone {
   return worker.state === "unavailable" ? "bad" : "neutral";
+}
+
+/** The tone keys this map carries. Exported so the test lane can check the map
+ * against the real enums in both directions: a real state that is not here
+ * renders neutral, and a key here that no record can carry is a guess that rots. */
+export function stateToneKeysV1(): readonly string[] {
+  return Object.keys(stateTones);
 }
 
 export function chipToneForStateV1(state: string): ChipTone {
@@ -101,12 +137,30 @@ export function UnavailableState({ children, urgent }: { children?: React.ReactN
 
 /** A panel heading with an optional trailing count. The count is rendered only
  * when the caller has a real number from a real read; there is deliberately no
- * default of 0, because "zero" is a claim the client has not made. */
+ * default of 0, because "zero" is a claim the client has not made.
+ *
+ * Two ways to pass a count, and both render as the same trailing pill:
+ *
+ * 1. `count={n}` — the number. The pill is a sibling of the heading, the shape
+ *    `.private-panel-heading`'s flex row is designed for.
+ * 2. A `<PrivateCount>` child — how every production call site actually passes
+ *    it, because the number is frequently conditional (`state === "ready"`).
+ *
+ * A count supplied as a child used to be rendered inside the `<h2>`, where it
+ * inherited the heading's font size and stacked inline after the heading text
+ * as "Running work3" instead of a count chip. Detecting the child and hoisting
+ * it out is what makes the chip styling apply on the real pages. The two forms
+ * are not redundant: `count` is the API the isolated component test uses, and
+ * the child form is what a conditional read has to use. */
 export function PanelHeading({ id, children, count }:
-  { id: string; children: React.ReactNode; count?: number }) {
+  { id: string; children?: React.ReactNode; count?: number }) {
+  const nodes = Children.toArray(children);
+  const trailing = nodes.filter(node => isPrivateCount(node));
+  const heading = nodes.filter(node => !isPrivateCount(node));
   return <div className="private-panel-heading">
-    <h2 id={id}>{children}</h2>
-    {typeof count === "number" ? <span className="private-count">{count}</span> : null}
+    <h2 id={id}>{heading}</h2>
+    {typeof count === "number" ? <PrivateCount value={count} />
+      : trailing.length ? trailing : null}
   </div>;
 }
 
@@ -115,4 +169,12 @@ export function PanelHeading({ id, children, count }:
  * read shows no count rather than an invented one. */
 export function PrivateCount({ value }: { value: number }) {
   return <span className="private-count">{value}</span>;
+}
+
+/** Recognises a `<PrivateCount>` child so `PanelHeading` can hoist it out of the
+ * heading. Matching on the component reference rather than the class name means
+ * a hand-written `<span className="private-count">` is left exactly where its
+ * author put it, and only the component is relocated. */
+function isPrivateCount(node: ReactNode): boolean {
+  return isValidElement(node) && node.type === PrivateCount;
 }

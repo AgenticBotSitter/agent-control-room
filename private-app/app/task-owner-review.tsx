@@ -14,11 +14,29 @@ const availability: Record<TaskReviewOptions["availability"], string> = {
   already_reviewed: "Your quality decision is already recorded for this revision.", target_closed: "This revision is closed for new owner decisions.",
   independence_required: "This acceptance profile requires a different independent reviewer.",
 };
+/** The attestation has to be recorded against the exact options the owner was
+ * shown. `attested` is not local UI state: if it lived here, a 30s options poll
+ * that returned a new `options` object (a new task-artifact/contentHash bundle,
+ * which is what `OwnerTaskReview` keys on) would remount this panel and silently
+ * discard the box the owner had just ticked, leaving "Accept" disabled with no
+ * way to tell that the box is still, to the DOM, checked. Keeping the flag
+ * outside the component means it survives the remount; keying it on the
+ * attestation identity means it resets exactly when the attestation it was given
+ * for is no longer the one on screen. */
+const attestations = new Map<string, boolean>();
+const attestationKey = (options: TaskReviewOptions) =>
+  options.acceptanceAttestation ? `${options.availability}:${options.acceptanceAttestation.scenarioId}:${options.acceptanceAttestation.instructionsDigest}` : "";
+
 export function OwnerReviewPanel({ options, feedback, pending, held, onFeedback, onRecord }: {
   options: TaskReviewOptions; feedback: string; pending: boolean; held: boolean;
   onFeedback: (value: string) => void; onRecord: (decision: TaskReviewDraft["decision"], attested?: boolean) => void;
 }) {
-  const [attested, setAttested] = useState(false);
+  const [attested, setAttested] = useState(() => attestations.get(attestationKey(options)) ?? false);
+  const key = attestationKey(options);
+  // An options poll can hand this panel a different attestation. Carry the flag
+  // across the remount rather than resetting the owner's gesture to "not ticked".
+  useEffect(() => { setAttested(attestations.get(key) ?? false); }, [key]);
+  const record = (next: boolean) => { attestations.set(key, next); setAttested(next); };
   return <section className="private-owner-review" aria-label="Owner quality decision"><h4>{availability[options.availability]}</h4>
     {options.ownReview && <div><p>Saved {options.ownReview.decision === "accepted" ? "quality acceptance" : "request for changes"}
       {" · "}<ConfiguredTimestamp value={options.ownReview.recordedAt} /></p>
@@ -30,7 +48,7 @@ export function OwnerReviewPanel({ options, feedback, pending, held, onFeedback,
         onChange={event => onFeedback(event.target.value)} /></label>
       <p className="private-note">Use this field when requesting changes. No passwords or secrets. Maximum 4,096 UTF-8 bytes.</p>
       {options.acceptanceAttestation && <label><input type="checkbox" checked={attested} disabled={pending || held}
-        onChange={event => setAttested(event.target.checked)} /> I read it and it’s correct</label>}
+        onChange={event => record(event.target.checked)} /> I read it and it’s correct</label>}
       {options.acceptanceAttestation && <p className="private-note">{options.acceptanceAttestation.instructions}</p>}
       <div className="private-actions"><button type="button" disabled={pending || held || !!options.acceptanceAttestation && !attested}
         onClick={() => onRecord("accepted", attested)}>Accept</button>

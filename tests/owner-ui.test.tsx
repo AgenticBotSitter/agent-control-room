@@ -6,8 +6,36 @@ import { JSDOM } from "jsdom";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
-import { StateChip, chipToneForStateV1, stateLabelV1, EmptyState, UnavailableState, LoadingState, PanelHeading,
-  workerChipToneV1 } from "../private-app/app/owner-ui";
+import { StateChip, chipToneForStateV1, stateLabelV1, stateToneKeysV1, EmptyState, UnavailableState, LoadingState,
+  PanelHeading, PrivateCount, workerChipToneV1 } from "../private-app/app/owner-ui";
+import { artifactStates, approvalStates, attemptStates, checkpointStates, effectIntentStates, jobStates, leaseStates,
+  nodeStates, requestStates, serviceStates } from "../src/domain/v1/types";
+import { harnessRunStates } from "../src/harness/v1/types";
+import { effectClaimStates } from "../src/node-policy/v1/effect-claim";
+import { lifecycleSchema } from "../src/web/v1/project-wire";
+import { nativeRunStateValues } from "../src/web/v1/task-wire";
+import { taskReviewEvidenceSchema } from "../src/web/v1/task-result-wire";
+
+/** The project lifecycle values the wire schema accepts, read from the schema
+ * itself rather than copied, so this test cannot drift from the contract. */
+const lifecycleSchemaValues = lifecycleSchema.options;
+
+/** The states a saved review target can be in, read off the exported evidence
+ * schema's shape rather than copied, so a new status cannot slip past this test. */
+const reviewTargetStatusValues = taskReviewEvidenceSchema.shape.status.options;
+
+/** The decisions a saved review can record, and the outcomes a saved verification
+ * can record, read off the same schema's element shapes. */
+const reviewDecisionValues = taskReviewEvidenceSchema.shape.reviews.element.def.shape.decision.options;
+const verificationOutcomeValues = taskReviewEvidenceSchema.shape.verifications.element.def.shape.outcome.options;
+
+/** The three read outcomes the shared vocabulary renders itself, plus the states
+ * its own pages pass a chip (a local worker route, an attention reason, a Hermes
+ * delivery recovery status). */
+const readOutcomeValues = ["loading", "ready", "unavailable", "not_configured",
+  "no_authenticated_delivery", "delivery_receipt_unresolved", "terminal_result_staged",
+  // Connection signal freshness, which the connection centre renders as a chip.
+  "current", "stale", "missing"] as const;
 
 const privateStylesheet = readFileSync(fileURLToPath(new URL("../private-app/app/private.css", import.meta.url)), "utf8");
 const stylesheet = readFileSync(fileURLToPath(new URL("../styles/control-room.css", import.meta.url)), "utf8");
@@ -125,6 +153,108 @@ test("a panel count renders only when a real number was supplied", () => {
   assert.equal(withCount.querySelector(".private-count")?.textContent, "3");
   const without = documentFor(renderToStaticMarkup(createElement(PanelHeading, { id: "h", children: "Tasks" })));
   assert.equal(without.querySelector(".private-count"), null, "no count is invented when none was read");
+});
+
+test("a real call site's count renders as a chip beside the heading, not inside it", () => {
+  // The `count` prop had zero production call sites: every real one passed a
+  // <PrivateCount> as a child, because the number is usually conditional on the
+  // read having succeeded. That child landed INSIDE the <h2>, where it inherited
+  // the heading's font size and stacked inline after the heading text, so the
+  // panel rendered "Running work3" instead of a heading plus a count chip. The
+  // old test only covered the prop, which is the path no page takes.
+  //
+  // So render the actual call site's shape: the heading text and the count as a
+  // child, exactly as HomeDashboard and ProjectCatalog write it.
+  const asThePagesCallIt = documentFor(renderToStaticMarkup(createElement(PanelHeading, { id: "home-active" },
+    "Running work", createElement(PrivateCount, { value: 3 }))));
+
+  const count = asThePagesCallIt.querySelector(".private-count");
+  assert.ok(count, "the count must render");
+  assert.equal(count!.textContent, "3", "the real number is shown, not a placeholder");
+  assert.equal(count!.closest("h2"), null,
+    "the count must not be a child of the heading, or it inherits the h2's font size");
+  // It is a sibling inside the flex row the chip styling is designed for.
+  assert.equal(count!.parentElement?.className, "private-panel-heading");
+  assert.equal(count!.previousElementSibling?.tagName, "H2");
+  // And the heading's own text is unchanged, which is what the journey matches on.
+  const heading = asThePagesCallIt.querySelector("h2")!;
+  assert.equal(heading.textContent, "Running work", "the heading must not absorb the count");
+  // The chip is not glued on: the pill is a flex sibling, so the stylesheet's
+  // space-between row applies and the count sits at the far end.
+  assert.match(privateStylesheet, /\.private-panel-heading\s*\{[^}]*display:\s*flex/);
+  assert.match(privateStylesheet, /\.private-count\s*\{[^}]*flex:\s*none/);
+});
+
+test("a count chip is dropped, not rendered, when the read was not successful", () => {
+  // The pages render `{state === "ready" ? <PrivateCount .../> : null}`. A null
+  // child must leave the heading as plain text rather than as an empty pill, so
+  // an unread panel still does not show a count.
+  const notRead = documentFor(renderToStaticMarkup(createElement(PanelHeading, { id: "home-active" },
+    "Running work", null)));
+  assert.equal(notRead.querySelector(".private-count"), null, "no pill at all for a panel that was not read");
+  assert.equal(notRead.querySelector("h2")!.textContent, "Running work");
+});
+
+test("every adverse state reads as adverse, never as the neutral default", () => {
+  // The mapping used to leave 11 real states unmapped, including the two that
+  // matter most for honesty: `interrupted` (the agent was cut off) and
+  // `ambiguous` (the outcome could not be established). Both fell through to the
+  // neutral grey, painting an adverse outcome as ordinary — the same class of
+  // defect as the green `ready` dot this file's sibling test pins.
+  for (const state of ["interrupted", "ambiguous", "orphaned", "disconnected",
+    "blocked", "failed", "rejected", "unavailable", "offline", "stale", "denied"]) {
+    assert.equal(chipToneForStateV1(state), "bad",
+      `${state} is an adverse outcome and must not render neutral`);
+  }
+  // The states that used to be unmapped and are genuinely progress, not trouble.
+  for (const [state, tone] of [["prepared", "busy"], ["dispatching", "busy"], ["stopping", "busy"],
+    ["waiting", "warn"], ["waiting_approval", "warn"], ["offered", "busy"], ["leased", "busy"]] as const) {
+    assert.equal(chipToneForStateV1(state), tone, `${state} is a real record state and needs a real tone`);
+  }
+  // And the neutral default still holds for a state nobody has heard of.
+  assert.equal(chipToneForStateV1("a_state_this_build_has_never_heard_of"), "neutral");
+});
+
+test("stateTones covers every real record state and invents none", () => {
+  // The map used to be 25 keys of which 19 corresponded to no record state at
+  // all, so it read as a considered mapping of the domain and was not one. This
+  // checks both directions against the enums the records actually carry: a real
+  // state must be mapped to something other than the neutral fall-through, and a
+  // key that no record can carry is a guess that will rot.
+  const enums = [
+    ...jobStates, ...attemptStates, ...leaseStates, ...harnessRunStates,
+    ...nativeRunStateValues, ...lifecycleSchemaValues, ...requestStates,
+    ...reviewTargetStatusValues,
+  ];
+  const mapped = new Set(stateToneKeysV1());
+  // `ready` is a real jobStates value and is deliberately NOT in the map: a bare
+  // `ready` is ambiguous across surfaces, so it is never painted healthy, and a
+  // worker row takes its tone from the caller instead (see
+  // "a `ready` worker is not painted healthy" above). It is a considered
+  // exemption, not an unmapped gap, so it is excluded from this direction.
+  const DELIBERATELY_UNMAPPED = new Set(["ready"]);
+  mapped.delete("ready");
+
+  const unmappedRealStates = [...new Set(enums)]
+    .filter(state => !mapped.has(state) && !DELIBERATELY_UNMAPPED.has(state));
+  assert.deepEqual(unmappedRealStates, [],
+    `real record states with no tone, so they render neutral: ${unmappedRealStates.join(", ")}`);
+
+  // Every key must be a value some record can carry. The reachable set is the
+  // union of the state enums the owner-facing pages actually render a chip for:
+  // the domain lifecycle states, the harness/native run states, the review
+  // decision and verification outcomes, the effect-intent and claim outcomes,
+  // the approval, service, node and artifact states, and the three read outcomes
+  // the shared vocabulary renders itself.
+  const reachable = new Set<string>([
+    ...enums, ...nativeRunStateValues,
+    ...artifactStates, ...approvalStates, ...serviceStates, ...nodeStates,
+    ...effectIntentStates, ...effectClaimStates, ...checkpointStates,
+    ...reviewDecisionValues, ...verificationOutcomeValues, ...readOutcomeValues,
+  ]);
+  const invented = stateToneKeysV1().filter(key => !reachable.has(key));
+  assert.deepEqual(invented, [],
+    `stateTones keys no record can carry: ${invented.join(", ")}`);
 });
 
 test("the chip dot is decorative and never the only carrier of meaning", () => {
