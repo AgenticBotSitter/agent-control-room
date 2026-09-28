@@ -133,7 +133,7 @@ async function seedAcceptedEarlierReview(page: Page) {
   let database: ReturnType<typeof createPrivatePostgresDatabase> | undefined;
   let checkpoints: Awaited<ReturnType<typeof openMacLocalRollbackCheckpointStoreV1>> | undefined;
   try {
-    database = createPrivatePostgresDatabase(roles.coordinator);
+    database = createPrivatePostgresDatabase(roles.web);
     checkpoints = await openMacLocalRollbackCheckpointStoreV1(`${rehearsalRoot}/protected`);
     const runtime = await loadMacLocalTaskRuntimeFromRootV1(`${rehearsalRoot}/protected`);
     const gate = new CompletionGateStoreV1(database.client, runtime.keys.review, checkpoints);
