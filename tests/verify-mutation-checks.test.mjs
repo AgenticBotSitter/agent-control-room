@@ -251,6 +251,36 @@ test("SIGTERM during a mutated command restores the file", async () => {
   }
 });
 
+test("overlapping verifiers refuse the second run and preserve the target", async () => {
+  const root = fixture();
+  try {
+    const path = manifest(root, {
+      test: 'exec node -e "const fs=require(\'fs\');if(fs.readFileSync(\'src/guard.mjs\',\'utf8\').includes(\'allow\'))setInterval(()=>{},1000)"',
+    });
+    const before = readFileSync(join(root, "src", "guard.mjs"), "utf8");
+    const first = spawn(process.execPath, [verifier, path], { cwd: root, stdio: ["ignore", "pipe", "pipe"] });
+    let transcript = "";
+    await new Promise(resolveStarted => {
+      const observe = data => {
+        transcript += data;
+        if (transcript.includes("[1] src/guard.mjs")) resolveStarted();
+      };
+      first.stdout.on("data", observe);
+      first.stderr.on("data", observe);
+    });
+    const second = run(root, path);
+    assert.equal(second.status, 1);
+    assert.match(output(second), /another mutation-check verifier is already running/u);
+    const finished = new Promise(resolveDone => first.once("close", resolveDone));
+    first.kill("SIGTERM");
+    await finished;
+    assert.equal(readFileSync(join(root, "src", "guard.mjs"), "utf8"), before);
+    assert.equal(git(root, "status", "--porcelain=v1"), "");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("a symlinked manifest is refused", () => {
   const root = fixture();
   try {

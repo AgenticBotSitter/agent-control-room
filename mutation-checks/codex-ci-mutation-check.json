@@ -12,5 +12,6 @@
   {"file":"scripts/ci/verify-mutation-checks.mjs","find":"if (result.status === 126 || result.status === 127) {","replace":"if (false) {","test":"node --test tests/verify-mutation-checks.test.mjs","why":"missing test commands are configuration errors"},
   {"file":"scripts/ci/verify-mutation-checks.mjs","find":"if (result.timedOut) throw new Error(`${entry.label}: test command timed out after ${timeoutMs}ms`);","replace":"if (false) throw new Error(`${entry.label}: test command timed out after ${timeoutMs}ms`);","test":"node --test tests/verify-mutation-checks.test.mjs","why":"timed-out mutations must fail rather than count as caught"},
   {"file":"scripts/ci/verify-mutation-checks.mjs","find":"if (activeRestore) activeRestore();","replace":"if (false) activeRestore();","test":"node --test tests/verify-mutation-checks.test.mjs","why":"SIGTERM must restore a mutated file"},
-  {"file":"scripts/ci/verify-mutation-checks.mjs","find":"if (result.stdout !== \"\") {","replace":"if (false) {","test":"node --test tests/verify-mutation-checks.test.mjs","why":"test-created stray files must fail the check"}
+  {"file":"scripts/ci/verify-mutation-checks.mjs","find":"if (result.stdout !== \"\") {","replace":"if (false) {","test":"node --test tests/verify-mutation-checks.test.mjs","why":"test-created stray files must fail the check"},
+  {"file":"scripts/ci/verify-mutation-checks.mjs","find":"if (error?.code === \"EEXIST\") {","replace":"if (false) {","test":"node --test tests/verify-mutation-checks.test.mjs","why":"overlapping verifiers must be refused"}
 ]

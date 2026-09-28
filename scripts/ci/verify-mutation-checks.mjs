@@ -4,11 +4,13 @@ import {
   chmodSync,
   existsSync,
   lstatSync,
+  mkdirSync,
   readFileSync,
   realpathSync,
+  rmdirSync,
   writeFileSync,
 } from "node:fs";
-import { basename, dirname, isAbsolute, relative, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { spawn, spawnSync } from "node:child_process";
 import { constants as osConstants } from "node:os";
 
@@ -19,6 +21,7 @@ const SOURCE_GUARD_PATTERN = /\b(?:authorize|refuse|forbid)\b|throw new \w*Refus
 const SQL_GUARD_PATTERN = /\b(?:GRANT|REVOKE|SECURITY\s+DEFINER|POLICY|TRIGGER)\b/u;
 let activeRestore;
 let activeChild;
+let activeRelease;
 let interrupted = false;
 
 function git(root, args, options = {}) {
@@ -80,6 +83,19 @@ function mutationTimeoutMs() {
     throw new Error("MUTATION_CHECK_TIMEOUT_MS must be a positive integer number of milliseconds");
   }
   return Number(configured);
+}
+
+function acquireLock(root) {
+  const lockPath = join(root, ".git", "mutation-checks.lock");
+  try {
+    mkdirSync(lockPath);
+  } catch (error) {
+    if (error?.code === "EEXIST") {
+      throw new Error("another mutation-check verifier is already running in this checkout");
+    }
+    throw error;
+  }
+  return () => rmdirSync(lockPath);
 }
 
 function parseManifest(root, manifestPath) {
@@ -232,6 +248,7 @@ function restoreOnSignal(signal) {
   try {
     if (activeChild && !activeChild.killed) activeChild.kill(signal);
     if (activeRestore) activeRestore();
+    if (activeRelease) activeRelease();
   } catch (error) {
     console.error(`Mutation checks failed while restoring after ${signal}: ${error.message}`);
   }
@@ -254,33 +271,40 @@ async function main() {
     warnAboutMissingManifest(root);
     return;
   }
-  requireCleanCheckout(root);
-  const entries = parseManifest(root, manifestPath);
-  const failures = [];
-  const timeoutMs = mutationTimeoutMs();
-  for (const [index, entry] of entries.entries()) {
-    try {
-      requireCleanCheckout(root);
-      await verifyBaseline(root, entry, index + 1, timeoutMs);
-    } catch (error) {
-      failures.push(error.message);
-      console.error(`FAIL: ${error.message}`);
+  const releaseLock = acquireLock(root);
+  activeRelease = releaseLock;
+  try {
+    requireCleanCheckout(root);
+    const entries = parseManifest(root, manifestPath);
+    const failures = [];
+    const timeoutMs = mutationTimeoutMs();
+    for (const [index, entry] of entries.entries()) {
+      try {
+        requireCleanCheckout(root);
+        await verifyBaseline(root, entry, index + 1, timeoutMs);
+      } catch (error) {
+        failures.push(error.message);
+        console.error(`FAIL: ${error.message}`);
+      }
     }
-  }
-  if (failures.length > 0) throw new Error(`${failures.length} mutation check(s) failed`);
-  for (const [index, entry] of entries.entries()) {
-    try {
-      requireCleanCheckout(root);
-      await verifyEntry(root, entry, index + 1, timeoutMs);
-      requireCleanAfterTest(root);
-    } catch (error) {
-      failures.push(error.message);
-      console.error(`FAIL: ${error.message}`);
+    if (failures.length > 0) throw new Error(`${failures.length} mutation check(s) failed`);
+    for (const [index, entry] of entries.entries()) {
+      try {
+        requireCleanCheckout(root);
+        await verifyEntry(root, entry, index + 1, timeoutMs);
+        requireCleanAfterTest(root);
+      } catch (error) {
+        failures.push(error.message);
+        console.error(`FAIL: ${error.message}`);
+      }
     }
+    requireCleanCheckout(root);
+    if (failures.length > 0) throw new Error(`${failures.length} mutation check(s) failed`);
+    console.log(`\nAll ${entries.length} mutation check(s) were caught and every file was restored.`);
+  } finally {
+    activeRelease = undefined;
+    releaseLock();
   }
-  requireCleanCheckout(root);
-  if (failures.length > 0) throw new Error(`${failures.length} mutation check(s) failed`);
-  console.log(`\nAll ${entries.length} mutation check(s) were caught and every file was restored.`);
 }
 
 try {
