@@ -4,6 +4,8 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { ResultText } from "../private-app/app/result-text";
 import { TaskResultsPanel } from "../private-app/app/task-results";
 import type { TaskResultsPage, TaskResultContent } from "../src/web/v1/task-result-wire";
+import { createTaskReviewWorkspace } from "../src/web/v1/task-review-workspace";
+import { createTaskVerificationWorkspace } from "../src/web/v1/task-verification-workspace";
 
 test("formatted results show Markdown but never fetch images or interpret raw HTML", () => {
   const html = renderToStaticMarkup(<ResultText text={'# Heading\n\n**Bold**\n\n![remote](https://example.invalid/a.png)\n\n<script>alert(1)</script>\n\n[bad](javascript:alert(1))\n\n[good](https://example.invalid)'} />);
@@ -84,22 +86,131 @@ test("result open mounts command readers only for the newest current matching ta
   const artifact = { artifactId: "artifact:test", attemptId: "attempt:test", runId: "run:test", contentHash,
     sizeBytes: 12, receivedAt: "2026-09-08T12:00:00.000Z", byteCheck: "matched_recorded_claim" as const,
     qualityAccepted: false as const };
-  const evidence = (targetId: string, revision: number, status: "pending" | "superseded") => ({ targetId,
-    kind: "document" as const, targetDigest, contentHash, revision, supersedesTargetId: null, status,
+  const evidence = (targetId: string, revision: number, supersedesTargetId: string | null) => ({ targetId,
+    kind: "document" as const, targetDigest, contentHash, revision, supersedesTargetId, status: "pending" as const,
     matchingArtifactIds: [artifact.artifactId], additionalEvidenceOmitted: false, reviews: [], verifications: [], findings: [],
     missingVerificationScenarioIds: [], openFindingCount: 0, grantsApproval: false as const, grantsExecutionAuthority: false as const });
   const page: TaskResultsPage = { projectId: "project:test", jobId: "job:test", observedAt: artifact.receivedAt,
     resultSource: "configured", reviewSource: "configured", items: [artifact],
-    reviews: [evidence("target:current", 1, "pending"), evidence("target:historical", 0, "superseded")],
+    reviews: [evidence("target:stale", 0, null), evidence("target:current", 1, "target:stale")],
     additionalResultsOmitted: false, additionalTargetsOmitted: false, canReadContent: true,
     reviewCommands: "configured", verificationCommands: "configured" };
   const content: TaskResultContent = { projectId: page.projectId, jobId: page.jobId, artifact,
     text: "Current result", contentVerifiedAt: artifact.receivedAt, untrustedContent: true };
+  const reviewTargets: string[] = [], verificationTargets: string[] = [];
+  const reviewWorkspace = createTaskReviewWorkspace(), verificationWorkspace = createTaskVerificationWorkspace();
   const html = renderToStaticMarkup(<TaskResultsPanel page={page} content={content} pending={false}
-    onOpen={() => {}} onClose={() => {}} />);
+    onOpen={() => {}} onClose={() => {}}
+    reviewWorkspace={{ ...reviewWorkspace, get(binding) { reviewTargets.push(binding.targetId); return reviewWorkspace.get(binding); } }}
+    verificationWorkspace={{ ...verificationWorkspace,
+      get(binding) { verificationTargets.push(binding.targetId); return verificationWorkspace.get(binding); } }} />);
   assert.equal(html.match(/Loading owner review/g)?.length, 1);
   assert.equal(html.match(/Loading human verification/g)?.length, 1);
+  assert.deepEqual(reviewTargets, ["target:current"]); assert.deepEqual(verificationTargets, ["target:current"]);
   assert.match(html, /Revision 0/); assert.match(html, /Revision 1/);
+});
+
+test("result open does not mount command readers for a superseded target whose successor is omitted", () => {
+  const contentHash = `sha256:${"1".repeat(64)}`, targetDigest = `sha256:${"2".repeat(64)}`;
+  const artifact = { artifactId: "artifact:superseded", attemptId: "attempt:test", runId: "run:test", contentHash,
+    sizeBytes: 12, receivedAt: "2026-09-08T12:00:00.000Z", byteCheck: "matched_recorded_claim" as const,
+    qualityAccepted: false as const };
+  const review = { targetId: "target:superseded", kind: "document" as const, targetDigest, contentHash, revision: 0,
+    supersedesTargetId: null, status: "superseded" as const, matchingArtifactIds: [artifact.artifactId],
+    additionalEvidenceOmitted: false, reviews: [], verifications: [], findings: [], missingVerificationScenarioIds: [],
+    openFindingCount: 0, grantsApproval: false as const, grantsExecutionAuthority: false as const };
+  const page: TaskResultsPage = { projectId: "project:test", jobId: "job:test", observedAt: artifact.receivedAt,
+    resultSource: "configured", reviewSource: "configured", items: [artifact], reviews: [review],
+    additionalResultsOmitted: false, additionalTargetsOmitted: true, canReadContent: true,
+    reviewCommands: "configured", verificationCommands: "configured" };
+  const content: TaskResultContent = { projectId: page.projectId, jobId: page.jobId, artifact,
+    text: "Historical result", contentVerifiedAt: artifact.receivedAt, untrustedContent: true };
+  const reviewTargets: string[] = [], verificationTargets: string[] = [];
+  const reviewWorkspace = createTaskReviewWorkspace(), verificationWorkspace = createTaskVerificationWorkspace();
+  const html = renderToStaticMarkup(<TaskResultsPanel page={page} content={content} pending={false}
+    onOpen={() => {}} onClose={() => {}}
+    reviewWorkspace={{ ...reviewWorkspace, get(binding) { reviewTargets.push(binding.targetId); return reviewWorkspace.get(binding); } }}
+    verificationWorkspace={{ ...verificationWorkspace,
+      get(binding) { verificationTargets.push(binding.targetId); return verificationWorkspace.get(binding); } }} />);
+  assert.deepEqual(reviewTargets, []); assert.deepEqual(verificationTargets, []);
+  assert.doesNotMatch(html, /Loading owner review|Loading human verification/);
+  assert.match(html, /Replaced by a newer revision/);
+});
+
+test("result open follows lineage even when the successor has different content", () => {
+  const oldHash = `sha256:${"3".repeat(64)}`, newHash = `sha256:${"4".repeat(64)}`;
+  const targetDigest = `sha256:${"5".repeat(64)}`;
+  const artifact = { artifactId: "artifact:old-bytes", attemptId: "attempt:test", runId: "run:test", contentHash: oldHash,
+    sizeBytes: 12, receivedAt: "2026-09-08T12:00:00.000Z", byteCheck: "matched_recorded_claim" as const,
+    qualityAccepted: false as const };
+  const evidence = (targetId: string, contentHash: string, revision: number, supersedesTargetId: string | null,
+    matchingArtifactIds: string[]) => ({ targetId, kind: "document" as const, targetDigest, contentHash, revision,
+    supersedesTargetId, status: "pending" as const, matchingArtifactIds, additionalEvidenceOmitted: false,
+    reviews: [], verifications: [], findings: [], missingVerificationScenarioIds: [], openFindingCount: 0,
+    grantsApproval: false as const, grantsExecutionAuthority: false as const });
+  const page: TaskResultsPage = { projectId: "project:test", jobId: "job:test", observedAt: artifact.receivedAt,
+    resultSource: "configured", reviewSource: "configured", items: [artifact], reviews: [
+      evidence("target:old-bytes", oldHash, 0, null, [artifact.artifactId]),
+      evidence("target:new-bytes", newHash, 1, "target:old-bytes", []),
+    ], additionalResultsOmitted: false, additionalTargetsOmitted: false, canReadContent: true,
+    reviewCommands: "configured", verificationCommands: "configured" };
+  const content: TaskResultContent = { projectId: page.projectId, jobId: page.jobId, artifact,
+    text: "Old result", contentVerifiedAt: artifact.receivedAt, untrustedContent: true };
+  const reviewTargets: string[] = [], verificationTargets: string[] = [];
+  const reviewWorkspace = createTaskReviewWorkspace(), verificationWorkspace = createTaskVerificationWorkspace();
+  renderToStaticMarkup(<TaskResultsPanel page={page} content={content} pending={false}
+    onOpen={() => {}} onClose={() => {}}
+    reviewWorkspace={{ ...reviewWorkspace, get(binding) { reviewTargets.push(binding.targetId); return reviewWorkspace.get(binding); } }}
+    verificationWorkspace={{ ...verificationWorkspace,
+      get(binding) { verificationTargets.push(binding.targetId); return verificationWorkspace.get(binding); } }} />);
+  assert.deepEqual(reviewTargets, []); assert.deepEqual(verificationTargets, []);
+});
+
+test("result open selects the highest revision when stale-first matching leaves are unlinked", () => {
+  const contentHash = `sha256:${"d".repeat(64)}`, targetDigest = `sha256:${"e".repeat(64)}`;
+  const artifact = { artifactId: "artifact:unlinked", attemptId: "attempt:test", runId: "run:test", contentHash,
+    sizeBytes: 12, receivedAt: "2026-09-08T12:00:00.000Z", byteCheck: "matched_recorded_claim" as const,
+    qualityAccepted: false as const };
+  const evidence = (targetId: string, revision: number) => ({ targetId, kind: "document" as const, targetDigest,
+    contentHash, revision, supersedesTargetId: null, status: "pending" as const, matchingArtifactIds: [artifact.artifactId],
+    additionalEvidenceOmitted: false, reviews: [], verifications: [], findings: [], missingVerificationScenarioIds: [],
+    openFindingCount: 0, grantsApproval: false as const, grantsExecutionAuthority: false as const });
+  const page: TaskResultsPage = { projectId: "project:test", jobId: "job:test", observedAt: artifact.receivedAt,
+    resultSource: "configured", reviewSource: "configured", items: [artifact],
+    reviews: [evidence("target:stale-first", 0), evidence("target:newest-second", 2), evidence("target:equal-later", 2)],
+    additionalResultsOmitted: false, additionalTargetsOmitted: false, canReadContent: true,
+    reviewCommands: "configured", verificationCommands: "not_connected" };
+  const content: TaskResultContent = { projectId: page.projectId, jobId: page.jobId, artifact,
+    text: "Current result", contentVerifiedAt: artifact.receivedAt, untrustedContent: true };
+  const targets: string[] = [], workspace = createTaskReviewWorkspace();
+  renderToStaticMarkup(<TaskResultsPanel page={page} content={content} pending={false} onOpen={() => {}} onClose={() => {}}
+    reviewWorkspace={{ ...workspace, get(binding) { targets.push(binding.targetId); return workspace.get(binding); } }} />);
+  assert.deepEqual(targets, ["target:newest-second"]);
+});
+
+test("result open target selection excludes other kinds and hashes before comparing revisions", () => {
+  const contentHash = `sha256:${"6".repeat(64)}`, otherHash = `sha256:${"7".repeat(64)}`;
+  const targetDigest = `sha256:${"8".repeat(64)}`;
+  const artifact = { artifactId: "artifact:filter-pin", attemptId: "attempt:test", runId: "run:test", contentHash,
+    sizeBytes: 12, receivedAt: "2026-09-08T12:00:00.000Z", byteCheck: "matched_recorded_claim" as const,
+    qualityAccepted: false as const };
+  const evidence = (targetId: string, revision: number, kind: "document" | "code", hash: string) => ({ targetId,
+    kind, targetDigest, contentHash: hash, revision, supersedesTargetId: null, status: "pending" as const,
+    matchingArtifactIds: [artifact.artifactId], additionalEvidenceOmitted: false, reviews: [], verifications: [], findings: [],
+    missingVerificationScenarioIds: [], openFindingCount: 0, grantsApproval: false as const, grantsExecutionAuthority: false as const });
+  const page: TaskResultsPage = { projectId: "project:test", jobId: "job:test", observedAt: artifact.receivedAt,
+    resultSource: "configured", reviewSource: "configured", items: [artifact], reviews: [
+      evidence("target:matching-document", 1, "document", contentHash),
+      evidence("target:wrong-hash", 2, "document", otherHash),
+      evidence("target:wrong-kind", 3, "code", contentHash),
+    ], additionalResultsOmitted: false, additionalTargetsOmitted: false, canReadContent: true,
+    reviewCommands: "configured", verificationCommands: "not_connected" };
+  const content: TaskResultContent = { projectId: page.projectId, jobId: page.jobId, artifact,
+    text: "Filter pin", contentVerifiedAt: artifact.receivedAt, untrustedContent: true };
+  const targets: string[] = [], workspace = createTaskReviewWorkspace();
+  renderToStaticMarkup(<TaskResultsPanel page={page} content={content} pending={false} onOpen={() => {}} onClose={() => {}}
+    reviewWorkspace={{ ...workspace, get(binding) { targets.push(binding.targetId); return workspace.get(binding); } }} />);
+  assert.deepEqual(targets, ["target:matching-document"]);
 });
 
 test("oversized results retain full plain text without Markdown parsing", () => {
