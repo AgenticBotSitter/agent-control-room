@@ -20,6 +20,12 @@ const groups = new Set([...Object.values(macRolePlan), "control_room_agent_revie
 const identifier = /^[a-z][a-z0-9_]*$/u;
 const privilege = new Set(["SELECT", "INSERT", "UPDATE", "DELETE", "TRUNCATE", "REFERENCES", "TRIGGER", "USAGE", "EXECUTE"]);
 const agentReviewCommitFunction = "public.commit_agent_review(text, jsonb, jsonb, bytea)";
+const workIntakeIdentityFunction = "public.is_work_intake_session()";
+const functionRoles = new Map([
+  [agentReviewCommitFunction, new Set(["control_room_agent_reviewer"])],
+  [workIntakeIdentityFunction, new Set(["control_room_private_web", "control_room_task_coordinator",
+    "control_room_native_results", "control_room_local_result_publisher"])],
+]);
 const name = value => {
   if (!identifier.test(value)) throw new Error("upgrade_grant_source_refused");
   return value;
@@ -60,7 +66,7 @@ export function desiredMacGrantsV1(sources) {
           : null;
         if (objectKind === "FUNCTION" && !functionMatch) throw new Error("upgrade_grant_source_refused");
         const object = objectKind === "FUNCTION"
-          ? `${functionMatch[2] ? `${name(functionMatch[1])}.${name(functionMatch[2])}` : `public.${name(functionMatch[1])}`}(${splitCommas(functionMatch[3]).map(name).join(", ")})`
+          ? `${functionMatch[2] ? `${name(functionMatch[1])}.${name(functionMatch[2])}` : `public.${name(functionMatch[1])}`}(${functionMatch[3].trim() ? splitCommas(functionMatch[3]).map(name).join(", ") : ""})`
           : objectKind === "SCHEMA" ? name(rawObject) : rawObject.split(".").map(name).join(".");
         if (!objectKind && !object.includes(".")) {
           if (!identifier.test(object)) throw new Error("upgrade_grant_source_refused");
@@ -70,7 +76,8 @@ export function desiredMacGrantsV1(sources) {
           const parsed = /^([A-Z]+)(?:\s*\(([^)]+)\))?$/u.exec(rawRight);
           if (!parsed || !privilege.has(parsed[1])
             || (objectKind === "SCHEMA" && (parsed[1] !== "USAGE" || parsed[2]))
-            || (objectKind === "FUNCTION" && (parsed[1] !== "EXECUTE" || parsed[2])))
+            || (objectKind === "FUNCTION" && (parsed[1] !== "EXECUTE" || parsed[2]
+              || !functionRoles.get(qualified)?.has(role))))
             throw new Error("upgrade_grant_source_refused");
           const columns = parsed[2] ? splitCommas(parsed[2]).map(name) : [""];
           if (parsed[2] && objectKind) throw new Error("upgrade_grant_source_refused");
@@ -147,7 +154,8 @@ function grantSql(item, verb) {
     throw new Error("upgrade_grant_catalog_refused");
   if (grantable !== "plain" && grantable !== "grantable") throw new Error("upgrade_grant_catalog_refused");
   if (kind === "function") {
-    if (object !== agentReviewCommitFunction || column || right !== "EXECUTE")
+    if (!functionRoles.has(object) || verb === "GRANT" && !functionRoles.get(object).has(role)
+      || column || right !== "EXECUTE")
       throw new Error("upgrade_unexpected_function_grant");
     return `${verb} EXECUTE ON FUNCTION ${object} ${verb === "GRANT" ? "TO" : "FROM"} ${role}`;
   }
