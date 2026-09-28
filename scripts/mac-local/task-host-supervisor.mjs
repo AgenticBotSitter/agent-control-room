@@ -4,7 +4,7 @@ import { spawn } from "node:child_process";
 import { closeSync, constants, fstatSync, openSync, writeSync } from "node:fs";
 import { chmod, lstat, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
-import { protectedRootFromArguments, repoRoot, runtimePaths, taskHostCommand } from "./stack.mjs";
+import { alive, hostCommand, protectedRootFromArguments, repoRoot, runtimePaths, taskHostCommand } from "./stack.mjs";
 
 export const HOST_LOG_MAX_BYTES = 5 * 1024 * 1024;
 export const HOST_LOG_BACKUPS = 3;
@@ -105,6 +105,19 @@ async function writePrivateFile(path, content) {
 
 const writeState = (path, state) => writePrivateFile(path, `${JSON.stringify(state)}\n`);
 
+async function stopStaleChild(previous, root, runtime = {}) {
+  if (previous?.state !== "running" || !Number.isSafeInteger(previous.pid)
+    || !Number.isSafeInteger(previous.childPid)) return;
+  const exactAlive = runtime.alive ?? alive;
+  if (exactAlive(previous.pid, hostCommand(root)) || !exactAlive(previous.childPid, taskHostCommand(root))) return;
+  const signal = runtime.signal ?? process.kill;
+  try { signal(-previous.childPid, "SIGKILL"); }
+  catch { try { signal(previous.childPid, "SIGKILL"); } catch {} }
+  for (let attempt = 0; attempt < 80 && exactAlive(previous.childPid, taskHostCommand(root)); attempt += 1)
+    await new Promise(resolve => setTimeout(resolve, 25));
+  if (exactAlive(previous.childPid, taskHostCommand(root))) throw new Error("mac_local_stale_task_host_would_not_stop");
+}
+
 export async function readHostState(path) {
   try {
     const entry = await lstat(path);
@@ -126,16 +139,29 @@ export async function superviseTaskHost(root, runtime = {}) {
   const command = runtime.command ?? defaultCommand;
   const args = runtime.args ?? defaultArgs;
   const signals = runtime.signals ?? process;
-  let requestedSignal, child, childClosed = false, escalation, streamError;
-  const forward = signal => {
-    requestedSignal ??= signal;
+  let shutdown, child, childClosed = false, escalation, streamError;
+  const signalChild = signal => {
     if (!child) return;
-    try { child.kill(signal); } catch {}
+    try {
+      // The real child is a process-group leader. Test doubles use their own kill method
+      // so unit tests cannot accidentally signal an unrelated host process group.
+      if (runtime.spawn) child.kill(signal);
+      else process.kill(-child.pid, signal);
+    } catch {}
+  };
+  const forward = (signal, deliberate = false) => {
+    // The first shutdown event owns the classification. A later owner signal must
+    // not turn an earlier session-loss recovery into a successful deliberate stop.
+    shutdown ??= { signal, deliberate };
+    if (!child) return;
+    signalChild(signal);
     // Leave five seconds inside launchd's 45-second ExitTimeOut to record the forced stop.
-    escalation ??= setTimeout(() => { if (!childClosed) try { child.kill("SIGKILL"); } catch {} }, runtime.shutdownMs ?? 40_000);
+    escalation ??= setTimeout(() => { if (!childClosed) signalChild("SIGKILL"); }, runtime.shutdownMs ?? 40_000);
     if (runtime.unrefShutdown !== false) escalation.unref?.();
   };
-  const onTerm = () => forward("SIGTERM"), onInt = () => forward("SIGINT"), onHangup = () => forward("SIGHUP");
+  const onTerm = () => forward("SIGTERM", true), onInt = () => forward("SIGINT", true);
+  // A hangup is session loss, not an owner request to leave the service stopped.
+  const onHangup = () => forward("SIGHUP");
   signals.once("SIGTERM", onTerm);
   signals.once("SIGINT", onInt);
   signals.once("SIGHUP", onHangup);
@@ -149,8 +175,10 @@ export async function superviseTaskHost(root, runtime = {}) {
       : previous?.state === "running" ? { reason: "supervisor disappeared without recording an exit", at: new Date().toISOString() }
         : previous?.lastStop;
     if (previous?.state === "running") await log.line(`host stopped because ${lastStop.reason}`);
+    await stopStaleChild(previous, root, runtime);
     child = (runtime.spawn ?? spawn)(command, args, {
-      cwd: repoRoot, stdio: ["ignore", "pipe", "pipe"], env: process.env,
+      cwd: repoRoot, detached: true, stdio: ["pipe", "pipe", "pipe"],
+      env: { ...process.env, CONTROL_ROOM_TASK_HOST_SUPERVISED: "1" },
     });
     const completion = new Promise(resolve => {
       child.once("error", error => resolve({ code: 1, signal: undefined, error }));
@@ -158,11 +186,11 @@ export async function superviseTaskHost(root, runtime = {}) {
     });
     const capture = chunk => { void log.write(chunk).catch(error => {
       streamError ??= error;
-      try { child.kill("SIGKILL"); } catch {}
+      signalChild("SIGKILL");
     }); };
     child.stdout?.on("data", capture);
     child.stderr?.on("data", capture);
-    if (requestedSignal) forward(requestedSignal);
+    if (shutdown) forward(shutdown.signal, shutdown.deliberate);
     await writePrivateFile(paths.hostPid, `${process.pid}\n`);
     await writeState(paths.hostState, { schema: "control-room.mac-local-host-state/v1", state: "running",
       pid: process.pid, childPid: child.pid, at: new Date().toISOString(),
@@ -171,6 +199,7 @@ export async function superviseTaskHost(root, runtime = {}) {
     const result = await completion;
     if (escalation) clearTimeout(escalation);
     if (result.error && !streamError) await log.line(`task host stderr: ${cleanDetail(result.error.message)}`);
+    const requestedSignal = shutdown?.deliberate ? shutdown.signal : undefined;
     const reason = streamError ? "supervisor log write failed" : stoppedBecause(result.code, result.signal, requestedSignal);
     if (!streamError) await log.line(`host stopped because ${reason}`);
     await writeState(paths.hostState, { schema: "control-room.mac-local-host-state/v1", state: "stopped",
@@ -184,7 +213,7 @@ export async function superviseTaskHost(root, runtime = {}) {
     signals.removeListener("SIGINT", onInt);
     signals.removeListener("SIGHUP", onHangup);
     if (escalation) clearTimeout(escalation);
-    if (child && !childClosed) try { child.kill("SIGKILL"); } catch {}
+    if (child && !childClosed) signalChild("SIGKILL");
     if (log) await log.close();
   }
 }
