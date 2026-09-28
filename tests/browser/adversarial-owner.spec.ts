@@ -151,7 +151,10 @@ async function setDisposableNodeState(nodeId: string, state: "active" | "quarant
   const client = await disposableAdmin();
   try {
     const changed = await client.query(`UPDATE control_nodes SET state=$1,
-      payload=jsonb_set(payload,'{state}',to_jsonb($1::text)),updated_at=now() WHERE id=$2 RETURNING state`, [state, nodeId]);
+      payload=CASE WHEN $1='quarantined'
+        THEN jsonb_set(jsonb_set(payload,'{state}',to_jsonb($1::text)),'{quarantineReasonCode}',to_jsonb('adversarial_test'::text))
+        ELSE jsonb_set(payload,'{state}',to_jsonb($1::text)) - 'quarantineReasonCode'
+      END WHERE id=$2 RETURNING state`, [state, nodeId]);
     if (changed.rowCount !== 1) throw new Error("adversarial_browser_node_fixture_missing");
     if (changed.rows[0]?.state !== state) throw new Error("adversarial_browser_node_fixture_not_applied");
   } finally { await client.end(); }
@@ -332,9 +335,9 @@ test.describe("disposable owner website adversarial attacks", () => {
     expect(crossProjectAssignment.status).toBe(404);
     await setDisposableNodeState(candidate, "quarantined");
     try {
-      const disabledWorker = await api(page, `/api/v1/projects/${encodeURIComponent(projectA.projectId)}/tasks/${encodeURIComponent(preparedId)}/assignment`,
+      const quarantinedWorker = await api(page, `/api/v1/projects/${encodeURIComponent(projectA.projectId)}/tasks/${encodeURIComponent(preparedId)}/assignment`,
         "POST", { action: "assign", nodeId: candidate, expectedInputDigest: assignment.inputDigest });
-      expect(disabledWorker.status).toBe(409);
+      expect(quarantinedWorker.status).toBe(409);
       await page.getByRole("button", { name: "Assign and run" }).click();
       await expect(page.getByRole("alert")).toContainText(/worker|assign|available|active/i);
     } finally { await setDisposableNodeState(candidate, "active"); }
@@ -390,7 +393,9 @@ test.describe("disposable owner website adversarial attacks", () => {
     await expect(page.getByRole("button", { name: /Edit task/i })).toHaveCount(0);
     const editCompleted = await api(page, completedTaskPath, "POST",
       { title: "Edited", instructions: "A completed task must remain immutable." }, "adveditcompleted01");
-    expect(editCompleted.status).toBe(404);
+    expect(editCompleted.status).toBe(400);
+    await page.reload();
+    await expect(page.getByRole("heading", { name: "Concurrent acceptance task" })).toBeVisible();
     await staleReview.close();
 
     await prepareTask(page, project.projectId, "Revision lifecycle task");
