@@ -19,7 +19,7 @@ import { mkdir, mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import { createConnection } from "node:net";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { dirname } from "node:path";
+import { basename, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { Client } from "pg";
@@ -354,12 +354,35 @@ async function buildQueues(admin: ConnectionOptions): Promise<void> {
   }
 }
 
+/**
+ * A Unix-domain socket path is capped at ~103 bytes, and PostgreSQL's is
+ * `<socket dir>/.s.PGSQL.<port>`. macOS's `tmpdir()` is
+ * `/var/folders/qb/llfk_qh163d9rlt2zvhgdncc0000gn/T`, which is 47 characters, so
+ * a run directory named under it pushed the path past the cap and every start
+ * failed with "could not create any Unix-domain sockets". The run directory
+ * stays where `disposableRunDirectories()` looks for it; only the SOCKET lives
+ * in a short path, and it is removed with the run directory's teardown.
+ */
+const SHORT_SOCKET_ROOT = "/tmp";
+
+/** Longest socket path this will create, including a 5-digit port. */
+const MAX_SOCKET_PATH_BYTES = 100;
+
+function shortSocketDirectory(run: string, port: number): string {
+  const candidate = join(SHORT_SOCKET_ROOT, `ak${process.pid}-${basename(run)}`);
+  // `.s.PGSQL.` plus the port is 13-14 bytes; leave headroom under the cap.
+  if (Buffer.byteLength(candidate) + 16 > MAX_SOCKET_PATH_BYTES) {
+    throw new Error(`attack_kit_socket_path_too_long:${candidate}`);
+  }
+  return candidate;
+}
+
 /** One start/stop cycle, from `initdb` to a migrated, role-provisioned database. */
 async function startCluster(options: WithRealPostgresOptions & { pgBin: string }): Promise<RealPostgres> {
   const { pgBin, port } = options;
   const database = options.database ?? REPOSITORY_DATABASE_NAME;
   const run = await mkdtemp(join(tmpdir(), "attack-kit-pg-"));
-  const socketDirectory = join(run, "socket");
+  const socketDirectory = shortSocketDirectory(run, port);
   const dataDirectory = join(run, "data");
   let started = false;
   // The postmaster pid is RETAINED, because it is the only piece of cleanup
@@ -398,8 +421,10 @@ async function startCluster(options: WithRealPostgresOptions & { pgBin: string }
    * exactly that leak blocks every other job.
    */
   const stop = async (): Promise<void> => {
-    // Nothing was ever started, or a previous stop already completed.
-    if (stopped || (!started && postmasterPid === undefined)) return;
+    // A previous stop already completed. The run directory is removed exactly
+    // once, on every other path: an early return here would leak the directory
+    // whenever `initdb` succeeded but the postmaster never started.
+    if (stopped) return;
     started = false;
     const pid = postmasterPid;
     const failures: string[] = [];
@@ -432,7 +457,13 @@ async function startCluster(options: WithRealPostgresOptions & { pgBin: string }
       // `postmasterPid` is intentionally NOT cleared: it is the evidence the
       // post-teardown liveness check needs, and the process is confirmed gone.
     }
-    await rm(run, { recursive: true, force: true });
+    // Both paths are removed: the run directory holds the data directory, and
+    // the short socket directory lives outside it, so removing `run` alone
+    // would leave a `/tmp/ak<pid>-<run>` directory behind on every cluster.
+    await Promise.all([
+      rm(run, { recursive: true, force: true }),
+      rm(socketDirectory, { recursive: true, force: true }),
+    ]);
     stopped = true;
     if (failures.length > 0) {
       // The postmaster is confirmed gone, so this is not a leak, but the
