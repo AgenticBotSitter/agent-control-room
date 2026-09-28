@@ -43,7 +43,7 @@ import { readProjectScheduleStatus } from "../../schedules/read-service";
 import { ProjectCoordinationHttpService, type ProjectCoordinationCanonicalStoreAdapter } from "./project-coordination-http";
 import { createCoordinationHttpHandler } from "./coordination-http";
 import { IdeaLabErrorV1 } from "../../idea-lab/v1/errors";
-import { parseOperatorSurfaceSnapshotV1, type OperatorSurfaceSnapshotV1 } from "../../operator-surfaces/v1";
+import { parseOperatorSurfaceSnapshotV1, type ActionInboxFilterV1, type OperatorSurfaceSnapshotV1 } from "../../operator-surfaces/v1";
 import { verifyInstallationPlanV1, type InstallationPlanV1 } from "../../installer/v1/installation-plan";
 import { createInstallationPlanViewV1 } from "../../installer/v1/installation-plan-view";
 
@@ -95,6 +95,7 @@ export interface PrivateWebProcessOptions {
    */
   operatorSurface?: { read: (input: {
     tenantId: string; actorId: string; grantedAt: string; now: string;
+    inboxFilter?: Pick<ActionInboxFilterV1, "states">;
   }) => Promise<OperatorSurfaceSnapshotV1> };
   /** Existing harness evidence verification key. No key means progress is unavailable, not no runs. */
   tasks?: Omit<WebTaskKeys, "ideaIntegrityKey"> & { harnessIntegrityKey: Uint8Array };
@@ -381,7 +382,8 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
               actor.require("projects.read", undefined, true);
               return Object.freeze({ tenantId: options.tenantId, actorId: actor.id, grantedAt: actor.now, now: actor.now });
             });
-            const snapshot = parseOperatorSurfaceSnapshotV1(await operatorSurface.read(scope));
+            const snapshot = parseOperatorSurfaceSnapshotV1(await operatorSurface.read({ ...scope,
+              inboxFilter: { states: ["open"] } }));
             if (snapshot.tenantId !== options.tenantId) throw new Error("operator_surface_scope_mismatch");
             return Response.json({ observedAt: snapshot.generatedAt, items: snapshot.actionInbox,
               truncated: snapshot.actionInbox.length === 100 }, { headers: privateResponseHeaders });

@@ -63,8 +63,6 @@ function itemKind(item: ActionInboxItemV1): ActionInboxKind {
 
 function href(item: Pick<ActionInboxItemV1, "projectId" | "workItemId" | "reasonCode" | "blockedWorkItemIds">): string | undefined {
   const { projectId, workItemId } = item;
-  if (projectId && workItemId && item.reasonCode === "work_batch_proposed")
-    return `/projects/${encodeURIComponent(projectId)}/pipelines/${encodeURIComponent(workItemId)}`;
   if (projectId && workItemId && item.blockedWorkItemIds.includes(workItemId))
     return `/projects/${encodeURIComponent(projectId)}/tasks/${encodeURIComponent(workItemId)}`;
   return undefined;
@@ -81,8 +79,7 @@ function canonicalItem(item: ActionInboxItemV1): ActionInboxDisplayItem {
     title: item.requestedAction,
     summary: `Recorded reason: ${item.reasonCode.replaceAll("_", " ")}.`,
     href: href(item),
-    actionLabel: item.reasonCode === "work_batch_proposed" ? "Open pipeline"
-      : item.workItemId && item.blockedWorkItemIds.includes(item.workItemId) ? "Open task"
+    actionLabel: item.workItemId && item.blockedWorkItemIds.includes(item.workItemId) ? "Open task"
         : "Exact action route unavailable",
     ...(item.projectId ? { projectId: item.projectId } : {}),
     observedAt: item.createdAt,

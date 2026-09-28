@@ -3,7 +3,9 @@ import test from "node:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { ActionInboxPanel, type ActionInboxState } from "../private-app/app/needs-me/action-inbox";
-import { OPERATOR_SURFACES_CONTRACT_V1, type ActionInboxItemV1, type OperatorSurfaceSnapshotV1 } from "../src/operator-surfaces/v1";
+import { OPERATOR_SURFACES_CONTRACT_V1, OperatorSurfaceReadServiceV1, type ActionInboxItemV1,
+  type OperatorFleetReadSourceV1, type OperatorSurfaceSnapshotV1, type OperatorSurfaceStoreV1 } from "../src/operator-surfaces/v1";
+import type { ServiceIncidentStore } from "../src/services/v1/incident-store";
 import { buildActionInbox } from "../src/web/v1/action-inbox";
 import { readActionInboxSource } from "../src/web/v1/action-inbox-browser-client";
 import { taskAttentionPageSchema } from "../src/web/v1/task-attention-wire";
@@ -54,8 +56,9 @@ test("universal Action Inbox orders and links every required item type", () => {
     "/projects/project%3Aalpha/tasks/job%3Afailed");
   assert.equal(items.find(item => item.title === "Resolve blocked work")?.href,
     "/projects/project%3Aalpha/tasks/job%3Ablocked");
-  assert.equal(items.find(item => item.title === "Review proposed work batch")?.href,
-    "/projects/project%3Aalpha/pipelines/batch%3Aone");
+  assert.equal(items.find(item => item.title === "Review proposed work batch")?.href, undefined);
+  assert.equal(items.find(item => item.title === "Review proposed work batch")?.actionLabel,
+    "Exact action route unavailable");
   assert.equal(items.find(item => item.title.includes("native session"))?.href, undefined);
   assert.equal(items.some(item => item.title === "Already handled"), false);
   const html = renderToStaticMarkup(createElement(ActionInboxPanel, { data: {
@@ -69,6 +72,35 @@ test("universal Action Inbox orders and links every required item type", () => {
   assert.ok(html.indexOf("Choose after failed run") < html.indexOf("Resolve blocked work"));
   assert.ok(html.indexOf("Resolve blocked work") < html.indexOf("Approve prepared work"));
   assert.ok(html.indexOf("Approve prepared work") < html.indexOf("Review returned result"));
+});
+
+test("canonical attention filters open records before the database safety cap", async () => {
+  const olderOpen = canonical({ id: "attention:older-open", state: "open", createdAt: "2025-01-01T00:00:00.000Z",
+    requestedAction: "Review the older open approval" });
+  const records = [...Array.from({ length: 501 }, (_, index) => canonical({
+    id: `attention:resolved-${index}`, state: "resolved", createdAt: "2026-09-28T13:00:00.000Z",
+    requestedAction: `Resolved item ${index}`,
+  })), olderOpen];
+  const inboxReads: unknown[] = [];
+  const surfaces = {
+    async listInbox(input: { tenantId: string; state?: ActionInboxItemV1["state"]; limit: number }) {
+      inboxReads.push(input);
+      return records.filter(item => input.state === undefined || item.state === input.state).slice(0, input.limit);
+    },
+    async listOwnerFocus() { return []; },
+  } as unknown as OperatorSurfaceStoreV1;
+  const incidents = { async list() { return []; } } as unknown as ServiceIncidentStore;
+  const emptyFleet: OperatorFleetReadSourceV1 = {
+    async fleet() { return []; }, async bottlenecks() { return []; }, async activeWork() { return []; },
+    async portfolio() { return []; }, async services() { return []; }, async schedules() { return []; },
+  };
+  const result = await new OperatorSurfaceReadServiceV1(surfaces, incidents, emptyFleet).read({
+    scope: { tenantId: "tenant:test", actorId: "identity:test", grantedAt: now }, now,
+    inboxFilter: { states: ["open"], limit: 100 },
+  });
+  assert.deepEqual(inboxReads, [{ tenantId: "tenant:test", state: "open", limit: 500 }]);
+  assert.deepEqual(result.snapshot.actionInbox.map(item => item.id), [olderOpen.id]);
+  assert.equal(result.snapshot.actionInbox.length === 100, false, "resolved history must not cause a truncation warning");
 });
 
 test("Action Inbox claims empty only after every source succeeds", () => {

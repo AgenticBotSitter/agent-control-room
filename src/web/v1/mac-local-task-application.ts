@@ -89,7 +89,7 @@ export async function createMacLocalTaskApplicationV1(input: MacLocalTaskApplica
     }) => {
       if (scope.tenantId !== coordinator.scope.tenantId || !scope.actorId
         || Date.parse(scope.grantedAt) > Date.parse(scope.now)) throw new Error("action_inbox_scope_mismatch");
-      const items = await operatorSurfaceStore.listInbox({ tenantId: scope.tenantId, limit: 500 });
+      const items = await operatorSurfaceStore.listInbox({ tenantId: scope.tenantId, state: "open", limit: 500 });
       return { observedAt: scope.now, items, truncated: items.length === 500 };
     } });
     return Object.freeze({

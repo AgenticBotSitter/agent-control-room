@@ -217,7 +217,7 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
       if (url.pathname === "/api/v1/needs-me/action-items") {
         if (request.method !== "GET" || url.search) throw new WebAccessError("invalid_request");
         if (!options.actionInboxSource) throw new WebAccessError("not_found");
-        const owner = await tasks.authorizeAttentionPage(identity);
+        const owner = await tasks.authorizeActionInbox(identity);
         const now = new Date(clock()).toISOString();
         const source = await options.actionInboxSource.read({ tenantId: profile.tenantId,
           actorId: owner.actorId, grantedAt: owner.grantedAt, now });
