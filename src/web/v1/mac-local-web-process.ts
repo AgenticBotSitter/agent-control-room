@@ -13,6 +13,7 @@ import type { TaskPlanningOperation } from "./task-execution-planner";
 import type { TaskAssignmentOperation } from "./task-assignment-coordinator";
 import type { TaskApprovalOperation, TaskSubmissionOperation } from "./task-coordinator-lifecycle";
 import type { TaskRevisionOperation } from "./task-revision-operation";
+import type { TaskBlockerOperationV1 } from "./task-blocker-operation";
 import type { MacLocalWorkerReadinessV1 } from "./mac-local-worker-readiness";
 import type { LocalOwnerSessionStoreV1 } from "./local-owner-session-store";
 import type { PersistedLocalOwnerSessionV1 } from "./local-owner-session";
@@ -33,6 +34,7 @@ export interface MacLocalWebProcessOptionsV1 {
   approvals?: TaskApprovalOperation;
   submission?: TaskSubmissionOperation;
   revisions?: TaskRevisionOperation;
+  blockers?: TaskBlockerOperationV1;
   /** Read capabilities from the same host-owned task application as the
    * submission operations. Without them, a published result looks absent. */
   taskReadKeys?: Pick<WebTaskKeys, "harnessIntegrityKey" | "results" | "reviews" | "ownerReviews" | "modelCatalog" | "taskPlanIntegrityKey">;
@@ -48,7 +50,7 @@ export interface MacLocalWebProcessOptionsV1 {
  * only a typed pass-through: the Mac-local web wrapper cannot construct a
  * planner, queue, result store, review system, or worker of its own. */
 export type MacLocalCanonicalTaskOperationsV1 = Pick<MacLocalWebProcessOptionsV1,
-  "ownerReviews" | "ownerVerifications" | "planning" | "assignment" | "approvals" | "submission" | "revisions">;
+  "ownerReviews" | "ownerVerifications" | "planning" | "assignment" | "approvals" | "submission" | "revisions" | "blockers">;
 
 /**
  * The first real Mac-local web composition. It has a fixed loopback-only owner
@@ -76,6 +78,7 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
     ...(options.approvals ? { approvals: options.approvals } : {}),
     ...(options.submission ? { submission: options.submission } : {}),
     ...(options.revisions ? { revisions: options.revisions } : {}),
+    ...(options.blockers ? { blockers: options.blockers } : {}),
   });
   let closed: Promise<void> | undefined;
 
@@ -205,8 +208,11 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
       if (url.pathname === "/api/v1/needs-me/tasks") {
         if (request.method !== "GET" || [...url.searchParams.keys()].some(key => key !== "after")
           || url.searchParams.getAll("after").length > 1) throw new WebAccessError("invalid_request");
-        return Response.json(await tasks.attention(identity, url.searchParams.get("after") ?? undefined),
-          { headers: privateResponseHeaders });
+        const page = await tasks.attention(identity, url.searchParams.get("after") ?? undefined);
+        const open = options.blockers ? await options.blockers.listOpenForOwner(identity, page.items.map(item => item.task.jobId)) : [];
+        const byJob = new Map(open.map(blocker => [blocker.jobId, blocker]));
+        return Response.json({ ...page, items: page.items.map(item => ({ ...item,
+          ...(byJob.has(item.task.jobId) ? { blocker: byJob.get(item.task.jobId) } : {}) })) }, { headers: privateResponseHeaders });
       }
       const projectOverview = /^\/api\/v1\/projects\/([^/]+)\/overview$/.exec(url.pathname);
       if (projectOverview) {

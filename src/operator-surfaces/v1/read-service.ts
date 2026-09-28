@@ -208,7 +208,8 @@ export class OperatorSurfaceReadServiceV1 {
       this.surfaces.listOwnerFocus({ tenantId, now: input.now }),
       this.incidents.list({ tenantId, state: input.incidentState, limit: 500 }),
     ]);
-    const actionInbox = filterActionInboxV1(inbox, { now: input.now, limit: 100, ...input.inboxFilter });
+    const ownerVisibleInbox = inbox.filter(item => !item.ownerIdentityId || item.ownerIdentityId === input.scope.actorId);
+    const actionInbox = filterActionInboxV1(ownerVisibleInbox, { now: input.now, limit: 100, ...input.inboxFilter });
     if (!actionInbox) throw new OperatorSurfaceReadError("invalid_filter");
     return {
       snapshot: buildOperatorSurfaceSnapshotV1({

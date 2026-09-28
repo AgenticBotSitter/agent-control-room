@@ -36,6 +36,7 @@ export const legalResponseSchemaV1 = z.object({
 export const actionInboxItemSchemaV1 = z.object({
   id: safeId,
   tenantId: safeId,
+  ownerIdentityId: safeId.optional(),
   projectId: safeId.optional(),
   workItemId: safeId.optional(),
   kind: z.enum(attentionKinds),

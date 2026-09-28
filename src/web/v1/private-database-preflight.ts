@@ -15,9 +15,9 @@ export async function verifyPrivateIdeaAdapter(db: DatabaseClient, scope: { tena
   if (rows.length !== 1 || rows[0].valid !== true) throw new Error("private_idea_adapter_unavailable");
 }
 
-// Generated from public migrations 0001-0092, including generic external-content
+// Generated from public migrations 0001-0093, including generic external-content
 // migrations 0025/0026. Catalog query below; not a mutable database marker.
-export const privateWebSchemaDigest = "514f57093dbace5f491721b631507324491753ddd36a9d2a78e3d793f8a9a623";
+export const privateWebSchemaDigest = "47ea0ba4d0370d689aee584c53373d1e3cebbc167f9a2986f8b5264e9da63811";
 export const privateWebReadTables = ["control_identities", "control_role_grants", "workspaces", "control_web_sessions",
   "tenants", "control_idempotency",
   "control_schedules", "control_schedule_occurrences",
@@ -33,6 +33,7 @@ export const privateWebReadTables = ["control_identities", "control_role_grants"
   "control_project_coordination_operation_receipts", "control_project_coordination_operation_jobs",
   "control_work_resources", "control_attempt_resource_admissions", "control_attempt_resource_scopes",
   "control_task_model_selections", "control_task_declared_scopes", "control_assignment_lease_scopes",
+  "control_task_blockers",
   "control_durable_result_write_reservations"] as const;
 const inserts = new Set(["control_web_sessions", "adapter_registry", "projects", "control_manual_project_heads",
   "control_web_project_commands", "audit_events", "control_audit_chain_heads", "control_requests", "control_workflows",
@@ -101,6 +102,7 @@ const coordinatorReads = ["tenants", "workspaces", "control_identities", "contro
   "control_codex_result_publications",
   "control_harness_runs", "control_harness_run_events", "control_native_review_plans", "control_artifact_manifests", "control_native_artifact_receipts",
   "control_action_inbox", "control_project_coordinator_heads", "control_project_coordination_proposals",
+  "control_task_blockers", "control_task_blocker_events", "control_task_blocker_handoffs", "control_task_blocker_handoff_completions",
   "control_project_delegation_policies", "control_project_coordination_operation_receipts",
   "control_project_coordination_operation_jobs", "control_work_resources",
   "control_attempt_resource_admissions", "control_attempt_resource_scopes", "control_task_model_selections",
@@ -112,6 +114,7 @@ const coordinatorInserts = new Set(["control_web_sessions", "control_requests", 
   "control_codex_activation_transmission_intents", "control_completion_gate_records",
   "control_project_coordination_proposals", "control_project_coordination_operation_receipts",
   "control_project_coordination_operation_jobs", "control_action_inbox", "control_work_resources",
+  "control_task_blockers", "control_task_blocker_events", "control_task_blocker_handoffs", "control_task_blocker_handoff_completions",
   "control_attempt_resource_admissions", "control_attempt_resource_scopes", "control_job_dependencies",
   "control_installation_transition_revisions", "control_node_fleet_signals", "control_node_fleet_current",
   "control_task_model_selections", "control_task_declared_scopes", "control_assignment_lease_scopes"]);
@@ -131,6 +134,8 @@ const coordinatorUpdates: Record<string, readonly string[]> = {
   control_project_coordination_operation_receipts: ["coordinator_lock"],
   control_project_coordination_operation_jobs: ["coordinator_lock"],
   control_work_resources: ["coordinator_lock"],
+  control_task_blockers: ["state", "resolved_at", "payload", "auth_tag", "disposition_digest"],
+  control_action_inbox: ["project_id", "work_item_id", "kind", "state", "delivery_state", "created_at", "expires_at", "payload"],
   control_attempt_resource_admissions: ["state", "version", "retired_at", "retirement_kind", "retirement_proof_digest"],
   control_attempt_resource_scopes: ["coordinator_lock"],
   control_completion_gate_integrity: ["web_lock", "revision", "record_count", "state_digest", "state_auth_tag"],

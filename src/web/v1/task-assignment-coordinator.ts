@@ -1737,10 +1737,18 @@ export class TaskAssignmentCoordinator {
         [this.scope.tenantId, projectId]);
       const project = await authority.project();
       const job = await this.job(tx, projectId, jobId);
+      const blockerHandoff = (await tx.query<{ target_node_id: string; task_owner_id: string }>(
+        `SELECT h.target_node_id,b.task_owner_id FROM control_task_blocker_handoffs h
+         JOIN control_task_blockers b ON b.tenant_id=h.tenant_id AND b.id=h.blocker_id
+         WHERE h.tenant_id=$1 AND h.job_id=$2 AND b.state='handoff_pending' FOR SHARE OF h,b`,
+        [this.scope.tenantId, jobId])).rows[0];
+      if (blockerHandoff && (blockerHandoff.target_node_id !== nodeId
+        || authority.actor.actorType !== "human" || blockerHandoff.task_owner_id !== authority.actor.actorId)) conflict();
       const plan = await this.planner.readInSession(tx, jobId);
       if (!plan || plan.projectId !== projectId || plan.tenantId !== this.scope.tenantId || job.inputDigest !== expectedInputDigest) conflict();
       const prior = await this.stored(tx, job);
-      const canReassign = !!prior && (prior.lease.state === "expired" || job.state === "orphaned");
+      const canReassign = !!prior && (prior.lease.state === "expired" || job.state === "orphaned"
+        || prior.lease.state === "revoked" && job.state === "ready" && !!blockerHandoff);
       if (prior && !canReassign) {
         if (prior.lease.nodeId !== nodeId) conflict();
         return { receipt: this.receipt(job, prior.attempt, prior.lease), replayed: true };

@@ -719,6 +719,7 @@ export class WebTaskService {
     return this.authenticatedRead(identity, async (tx, actor) => {
       const sources = this.attentionSources(actor);
       type AttentionRow = TaskRow & { has_artifacts: boolean; source_job_created_at: string | Date;
+        has_pending_blocker: boolean;
         source_job_updated_at: string | Date; plan_tenant_id: string | null; plan_project_id: string | null;
         plan_source_job_id: string | null; plan_job_id: string | null; plan_payload: unknown; plan_auth_tag: string | null;
         prepared_job_payload: unknown; prepared_job_state: string | null; prepared_job_version: number | null;
@@ -726,6 +727,8 @@ export class WebTaskService {
         prepared_job_updated_at: string | Date | null; prepared_workflow_payload: unknown; prepared_request_payload: unknown };
       const rows = (await tx.query<AttentionRow>(`SELECT EXISTS(
         SELECT 1 FROM control_native_artifact_receipts a WHERE a.tenant_id=j.tenant_id AND a.project_id=j.project_id AND a.job_id=j.id) AS has_artifacts,
+        EXISTS(SELECT 1 FROM control_task_blockers b WHERE b.tenant_id=j.tenant_id AND b.job_id=j.id
+          AND b.state='handoff_pending' AND b.task_owner_id=$8) AS has_pending_blocker,
         j.created_at AS source_job_created_at,j.updated_at AS source_job_updated_at,
         ep.tenant_id AS plan_tenant_id,ep.project_id AS plan_project_id,ep.source_job_id AS plan_source_job_id,
         ep.job_id AS plan_job_id,ep.plan AS plan_payload,ep.auth_tag AS plan_auth_tag,
@@ -740,11 +743,15 @@ export class WebTaskService {
         WHERE j.tenant_id=$1 AND p.workspace_id=$2 AND ($3::text IS NULL OR j.id COLLATE "C">$3 COLLATE "C")
           AND ((p.adapter_id=$4 AND $6::boolean AND EXISTS(SELECT 1 FROM control_manual_project_heads h
             WHERE h.tenant_id=p.tenant_id AND h.project_id=p.id)) OR (p.adapter_id=$5 AND $7::boolean))
-          AND (j.state IN ('proposed','waiting_approval','failed','orphaned')
+          AND (j.state<>'blocked' OR EXISTS(SELECT 1 FROM control_task_blockers b
+            WHERE b.tenant_id=j.tenant_id AND b.job_id=j.id AND b.state='open' AND b.task_owner_id=$8))
+          AND (j.state IN ('proposed','waiting_approval','blocked','failed','orphaned') OR EXISTS(
+            SELECT 1 FROM control_task_blockers b WHERE b.tenant_id=j.tenant_id AND b.job_id=j.id
+              AND b.state='handoff_pending' AND b.task_owner_id=$8)
             OR (j.payload->>'jobType'='harness.hermes.native.task' AND j.state IN ('leased','running')) OR EXISTS(
             SELECT 1 FROM control_native_artifact_receipts a WHERE a.tenant_id=j.tenant_id AND a.project_id=j.project_id AND a.job_id=j.id))
         ORDER BY j.id COLLATE "C" LIMIT 26`, [this.scope.tenantId, this.scope.workspaceId, after ?? null,
-        `adapter:manual:${sha256Digest(this.scope).slice(7, 39)}`, CONTROL_ROOM_IDEA_ADAPTER_V1, sources.ordinary === "included", sources.ideas === "included"])).rows;
+        `adapter:manual:${sha256Digest(this.scope).slice(7, 39)}`, CONTROL_ROOM_IDEA_ADAPTER_V1, sources.ordinary === "included", sources.ideas === "included", actor.id])).rows;
       await this.projects.getViewsInSession(tx, actor, rows.slice(0, 25).map(row => row.project_id));
       for (const row of rows.slice(0, 25)) actor.require("tasks.read", row.project_id, true);
       const pageRows = rows.slice(0, 25).map(row => ({ row, ...validated(row, this.scope.tenantId, row.project_id) }));
@@ -792,6 +799,7 @@ export class WebTaskService {
           && plannedSources.has(JSON.stringify([row.project_id, row.id]))))
           reasons.push(job.jobType === "task.proposal" ? "proposal" : "assignment");
         if (summary.state === "waiting_approval") reasons.push("approval");
+        if (summary.state === "blocked" || row.has_pending_blocker) reasons.push("blocked");
         if (summary.state === "failed" || summary.state === "orphaned") reasons.push(summary.state);
         if (job.jobType === "harness.hermes.native.task" && ["leased", "running", "waiting_approval", "orphaned", "failed"].includes(summary.state))
           reasons.push("delivery_check");

@@ -37,9 +37,10 @@ export const workflowTransitions: TransitionTable<WorkflowState> = {
 export const jobTransitions: TransitionTable<JobState> = {
   proposed: ["ready", "rejected", "cancelled"],
   ready: ["leased", "cancelled"],
-  leased: ["running", "ready", "cancelled", "orphaned"],
-  running: ["waiting_approval", "succeeded", "failed", "cancelled", "orphaned"],
-  waiting_approval: ["running", "cancelled", "failed", "orphaned"],
+  leased: ["running", "ready", "blocked", "cancelled", "orphaned"],
+  running: ["waiting_approval", "blocked", "succeeded", "failed", "cancelled", "orphaned"],
+  waiting_approval: ["running", "blocked", "cancelled", "failed", "orphaned"],
+  blocked: ["leased", "running", "waiting_approval", "ready", "cancelled"],
   failed: ["ready"],
   orphaned: ["ready", "failed", "cancelled"],
   succeeded: [],
@@ -49,9 +50,10 @@ export const jobTransitions: TransitionTable<JobState> = {
 
 export const attemptTransitions: TransitionTable<AttemptState> = {
   offered: ["leased", "cancelled"],
-  leased: ["running", "cancelled", "orphaned"],
-  running: ["waiting", "succeeded", "failed", "cancelled", "orphaned"],
-  waiting: ["running", "succeeded", "failed", "cancelled", "orphaned"],
+  leased: ["running", "blocked", "cancelled", "orphaned"],
+  running: ["waiting", "blocked", "succeeded", "failed", "cancelled", "orphaned"],
+  waiting: ["running", "blocked", "succeeded", "failed", "cancelled", "orphaned"],
+  blocked: ["leased", "running", "waiting", "cancelled", "orphaned"],
   succeeded: [],
   failed: [],
   cancelled: [],

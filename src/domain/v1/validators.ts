@@ -144,7 +144,8 @@ export const attemptRecordSchema = orderedRecord({
   if (terminalAttemptStates.has(attempt.state) !== Boolean(attempt.finishedAt)) {
     context.addIssue({ code: "custom", message: "terminal attempts require finishedAt and nonterminal attempts forbid it", path: ["finishedAt"] });
   }
-  if (["running", "waiting", "succeeded", "failed"].includes(attempt.state) && !attempt.startedAt) {
+  if (["running", "waiting", "blocked", "succeeded", "failed"].includes(attempt.state) && !attempt.startedAt
+    && attempt.state !== "blocked") {
     context.addIssue({ code: "custom", message: "started execution requires startedAt", path: ["startedAt"] });
   }
 });

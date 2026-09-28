@@ -2,6 +2,7 @@ import { BrowserRequestError } from "./browser-client";
 import { queueAttentionSchema } from "./queue-attention-wire";
 import { taskAttentionPageSchema } from "./task-attention-wire";
 import { catalogProjectIdSchema } from "./project-wire";
+import { taskBlockerOwnerActionSchema, taskBlockerRecordSchema, type TaskBlockerOwnerActionV1 } from "./task-blocker-wire";
 
 export async function readQueueAttention(transport: typeof fetch = fetch) {
   try { return queueAttentionSchema.parse(await readAttentionJson("/api/v1/needs-me", 4096, transport)); }
@@ -17,6 +18,24 @@ export async function readTaskAttention(after?: string, transport: typeof fetch 
         || page.items.some(item => item.task.jobId > page.nextCursor!))) throw new Error();
     return page;
   } catch (error) { throw error instanceof BrowserRequestError ? error : new BrowserRequestError("unavailable"); }
+}
+
+export async function actOnTaskBlocker(projectId: string, jobId: string, blockerId: string,
+  action: TaskBlockerOwnerActionV1, transport: typeof fetch = fetch) {
+  if ([projectId, jobId, blockerId].some(value => !catalogProjectIdSchema.safeParse(value).success))
+    throw new BrowserRequestError("invalid_request");
+  const body = taskBlockerOwnerActionSchema.parse(action);
+  const response = await transport(`/api/v1/projects/${encodeURIComponent(projectId)}/tasks/${encodeURIComponent(jobId)}/blockers/${encodeURIComponent(blockerId)}`,
+    { method: "POST", credentials: "same-origin", cache: "no-store", redirect: "error",
+      headers: { accept: "application/json", "content-type": "application/json", "x-requested-with": "XMLHttpRequest" },
+      body: JSON.stringify(body) });
+  if (response.status === 401) throw new BrowserRequestError("authentication_required");
+  if (response.status === 403) throw new BrowserRequestError("access_denied");
+  if (!response.ok || response.headers.get("content-type")?.split(";")[0] !== "application/json")
+    throw new BrowserRequestError("unavailable");
+  const value = await response.json() as { blocker?: unknown; replayed?: unknown };
+  if (typeof value.replayed !== "boolean") throw new BrowserRequestError("unavailable");
+  return { blocker: taskBlockerRecordSchema.parse(value.blocker), replayed: value.replayed };
 }
 
 async function readAttentionJson(path: string, limit: number, transport: typeof fetch) {

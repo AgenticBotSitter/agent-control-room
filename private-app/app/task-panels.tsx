@@ -4,7 +4,7 @@ import { ConfiguredTimestamp } from "./configured-timestamp";
 export const taskStateLabel: Record<TaskPage["tasks"][number]["state"], string> = {
   proposed: "Proposal saved", ready: "Ready for assignment", leased: "Assigned", running: "In progress",
   waiting_approval: "Waiting for approval", succeeded: "Completed", failed: "Job failed", cancelled: "Job cancelled",
-  orphaned: "Assignment lost", rejected: "Proposal rejected",
+  blocked: "Blocked", orphaned: "Assignment lost", rejected: "Proposal rejected",
 };
 export const taskSummaryStateLabel = (task: TaskPage["tasks"][number]) => task.state === "succeeded" && task.qualityStatus === "accepted"
   ? "Completed · Accepted" : taskStateLabel[task.state];
@@ -50,6 +50,8 @@ export function taskStateGuidance(detail: TaskDetail): TaskGuidance {
       action: "Go to results", explanation: "The job record says the work finished. Inspect the protected result and its review evidence before accepting it." };
     case "running": return { heading: "Work is in progress", uncertain: false,
       explanation: "Control Room has current progress for this task. Checking status only reads newer saved evidence and never starts another run." };
+    case "blocked": return { heading: "This worker needs your help", uncertain: false, href: "/needs-me",
+      action: "Open needs attention", explanation: "The worker saved a structured blocker. Review its evidence before answering, handing off, or cancelling the task." };
     case "failed": return { heading: "The recorded run failed", uncertain: false,
       explanation: "Control Room will not create replacement work automatically. Check the saved evidence before deciding whether to prepare a new task." };
     case "cancelled": return { heading: "The task was cancelled", uncertain: false,

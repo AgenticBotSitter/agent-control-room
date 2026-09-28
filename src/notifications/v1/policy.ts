@@ -42,6 +42,7 @@ const jobNeed: Record<JobState, NotificationNeedKindV1 | null> = {
   leased: null,
   running: null,
   waiting_approval: "owner_decision",
+  blocked: null,
   succeeded: "completion",
   failed: "failure",
   cancelled: null,

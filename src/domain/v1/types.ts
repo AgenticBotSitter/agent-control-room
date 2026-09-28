@@ -4,8 +4,8 @@ export const DOMAIN_CONTRACT_VERSION = "control-room-domain/v1" as const;
 
 export const requestStates = ["draft", "submitted", "accepted", "fulfilled", "rejected", "cancelled"] as const;
 export const workflowStates = ["proposed", "active", "paused", "succeeded", "failed", "cancelled"] as const;
-export const jobStates = ["proposed", "ready", "leased", "running", "waiting_approval", "succeeded", "failed", "cancelled", "orphaned", "rejected"] as const;
-export const attemptStates = ["offered", "leased", "running", "waiting", "succeeded", "failed", "cancelled", "orphaned"] as const;
+export const jobStates = ["proposed", "ready", "leased", "running", "waiting_approval", "blocked", "succeeded", "failed", "cancelled", "orphaned", "rejected"] as const;
+export const attemptStates = ["offered", "leased", "running", "waiting", "blocked", "succeeded", "failed", "cancelled", "orphaned"] as const;
 export const leaseStates = ["active", "expired", "released", "revoked"] as const;
 export const checkpointStates = ["declared", "stored", "verified", "rejected"] as const;
 export const effectIntentStates = ["proposed", "authorized", "executing", "confirmed", "failed", "ambiguous", "cancelled"] as const;

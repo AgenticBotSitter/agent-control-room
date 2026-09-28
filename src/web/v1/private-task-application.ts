@@ -8,9 +8,9 @@ import { ServiceIncidentStore } from "../../services/v1/incident-store";
 /** Trusted composition for two separately verified resources; not a deployment preflight bypass.
  * No pools are opened here. The separate task bootstrap verifies both roles before calling this factory.
  */
-export async function createPrivateTaskApplication(web: Omit<PrivateWebProcessOptions, "planning" | "assignment" | "approvals" | "submission" | "revisions" | "queueAttention" | "ideaCreation" | "ideaResultProjection" | "database"> & { database: TaskCoordinatorDatabase },
+export async function createPrivateTaskApplication(web: Omit<PrivateWebProcessOptions, "planning" | "assignment" | "approvals" | "submission" | "revisions" | "blockers" | "queueAttention" | "ideaCreation" | "ideaResultProjection" | "database"> & { database: TaskCoordinatorDatabase },
   coordinator: TaskCoordinatorConfiguration) {
-  if ("ideaCreation" in web || "ideaResultProjection" in web || "planning" in web || "assignment" in web || "approvals" in web || "submission" in web || "revisions" in web || "queueAttention" in web || web.tenantId !== coordinator.scope.tenantId
+  if ("ideaCreation" in web || "ideaResultProjection" in web || "planning" in web || "assignment" in web || "approvals" in web || "submission" in web || "revisions" in web || "blockers" in web || "queueAttention" in web || web.tenantId !== coordinator.scope.tenantId
     || web.workspaceId !== coordinator.scope.workspaceId || web.database.client === coordinator.database.client
     || coordinator.resultDatabase?.client === web.database.client
     || coordinator.evidence?.database.client === web.database.client
@@ -55,7 +55,7 @@ export async function createPrivateTaskApplication(web: Omit<PrivateWebProcessOp
     return poolClose;
   } };
   let app: ReturnType<typeof createPrivateWebProcess>;
-  try { app = createPrivateWebProcess({ ...web, database, operatorSurface, planning: tasks.planning, assignment: tasks.assignment, approvals: tasks.approvals, submission: tasks.submission, revisions: tasks.revisions, queueAttention: tasks.queueAttention, ideaCreation: tasks.ideaCreation, ideaResultProjection: tasks.ideaResultProjection }); }
+  try { app = createPrivateWebProcess({ ...web, database, operatorSurface, planning: tasks.planning, assignment: tasks.assignment, approvals: tasks.approvals, submission: tasks.submission, revisions: tasks.revisions, blockers: tasks.blockers, queueAttention: tasks.queueAttention, ideaCreation: tasks.ideaCreation, ideaResultProjection: tasks.ideaResultProjection }); }
   catch {
     const results = await Promise.allSettled([tasks.close(), database.close()]);
     if (results.some(result => result.status === "rejected")) throw new Error("private_task_application_cleanup_uncertain");
@@ -69,6 +69,7 @@ export async function createPrivateTaskApplication(web: Omit<PrivateWebProcessOp
     ...(tasks.queueRecovery ? { queueRecovery: tasks.queueRecovery } : {}),
     ...(tasks.quality ? { quality: tasks.quality } : {}),
     ...(tasks.revisions ? { revisions: tasks.revisions } : {}),
+    blockers: tasks.blockers,
     ...(tasks.results ? { results: tasks.results } : {}),
     ...(tasks.evidence ? { evidence: tasks.evidence } : {}),
     ...(tasks.connections ? { connections: tasks.connections } : {}),

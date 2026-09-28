@@ -25,6 +25,7 @@ export type MacLocalTaskApplicationV1 = Readonly<{
   queueRecovery?: ReturnType<typeof createTaskCoordinatorLifecycle>["queueRecovery"];
   results?: ReturnType<typeof createTaskCoordinatorLifecycle>["results"];
   quality?: ReturnType<typeof createTaskCoordinatorLifecycle>["quality"];
+  blockers: ReturnType<typeof createTaskCoordinatorLifecycle>["blockers"];
 }>;
 
 export type MacLocalTaskApplicationInputV1 = Readonly<{
@@ -78,6 +79,7 @@ export async function createMacLocalTaskApplicationV1(input: MacLocalTaskApplica
       // path, which the Mac-local site must never be able to reach.
       ...(lifecycle.macLocalSubmission ? { submission: lifecycle.macLocalSubmission } : {}),
       ...(lifecycle.revisions ? { revisions: lifecycle.revisions } : {}),
+      blockers: lifecycle.blockers,
       ...(ownerReviews ? { ownerReviews } : {}),
       ...(ownerVerifications ? { ownerVerifications } : {}),
     });
@@ -93,6 +95,7 @@ export async function createMacLocalTaskApplicationV1(input: MacLocalTaskApplica
       ...(lifecycle.queueRecovery ? { queueRecovery: lifecycle.queueRecovery } : {}),
       ...(lifecycle.results ? { results: lifecycle.results } : {}),
       ...(lifecycle.quality ? { quality: lifecycle.quality } : {}),
+      blockers: lifecycle.blockers,
     });
   } catch (error) {
     if (lifecycle) {

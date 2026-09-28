@@ -163,6 +163,20 @@ export interface ExpireLeaseInput {
   occurredAt: string;
 }
 
+export interface TaskBlockerTransitionInput {
+  tenantId: string;
+  blockerId: string;
+  mode: "report" | "cancel" | "handoff" | "cancel_pending";
+  jobId: string;
+  attemptId: string;
+  leaseId?: string;
+  expectedJobVersion: number;
+  expectedAttemptVersion: number;
+  expectedLeaseVersion?: number;
+  actor: ActorRef;
+  occurredAt: string;
+}
+
 export interface RenewLeaseInput {
   tenantId: string;
   leaseId: string;
@@ -824,6 +838,56 @@ export class CanonicalStore {
 
   async transition(input: TransitionInput): Promise<TransitionResult> {
     return this.#transaction((tx) => this.#transitionWith(tx, input, false));
+  }
+
+  /** Exact coordinated state change for one durable structured blocker. It owns no
+   * authentication; callers must authenticate before entering this repository port. */
+  async transitionTaskBlocker(input: TaskBlockerTransitionInput): Promise<{
+    job: JobRecord; attempt: AttemptRecord; lease?: LeaseRecord;
+  }> {
+    if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{2,179}$/.test(input.blockerId)
+      || input.mode === "report" && input.actor.actorType !== "agent"
+      || input.mode !== "report" && input.actor.actorType !== "human"
+      || !input.leaseId || input.expectedLeaseVersion === undefined)
+      throw new Error("Invalid task blocker transition");
+    return this.#transaction(async tx => {
+      const job = await this.#requireWith(tx, input.tenantId, "job", input.jobId) as JobRecord;
+      const attempt = await this.#requireWith(tx, input.tenantId, "attempt", input.attemptId) as AttemptRecord;
+      const lease = input.leaseId ? await this.#requireWith(tx, input.tenantId, "lease", input.leaseId) as LeaseRecord : undefined;
+      if (attempt.jobId !== job.id || lease && (lease.jobId !== job.id || lease.attemptId !== attempt.id
+        || lease.nodeId !== attempt.nodeId || lease.epoch !== attempt.leaseEpoch)) throw new Error("Task blocker lineage mismatch");
+      const suffix = `${input.blockerId}:${input.mode}`, metadata = { blockerId: input.blockerId };
+      if (input.mode === "report" && (!["leased", "running", "waiting_approval"].includes(job.state)
+        || !["leased", "running", "waiting"].includes(attempt.state))) throw new Error("Task is not blockable");
+      if (input.mode === "cancel_pending" && (job.state !== "ready" || attempt.state !== "cancelled" || lease?.state !== "revoked"))
+        throw new Error("Pending task blocker recovery is not cancellable");
+      if (input.mode !== "report" && input.mode !== "cancel_pending" && (job.state !== "blocked" || attempt.state !== "blocked"))
+        throw new Error("Task blocker is not current");
+      if (!lease) throw new Error("Task blocker lease is unavailable");
+      let nextLease = lease;
+      if (input.mode === "report") {
+        if (lease.state !== "active") throw new Error("Task blocker lease is not active");
+        nextLease = (await this.#transitionWith(tx, { tenantId: input.tenantId, kind: "lease", entityId: lease.id,
+          expectedVersion: input.expectedLeaseVersion!, toState: "revoked", transitionId: `transition:blocker:${suffix}:lease`,
+          idempotencyKey: `blocker:${suffix}:lease`, actor: input.actor, occurredAt: input.occurredAt,
+          safeMetadata: metadata }, true)).entity as LeaseRecord;
+      } else if (input.mode === "cancel" || input.mode === "handoff" || input.mode === "cancel_pending") {
+        if (lease.state !== "revoked") throw new Error("Task blocker lease is not fenced");
+      }
+      const attemptState = input.mode === "report" ? "blocked" : "cancelled";
+      const nextAttempt = input.mode === "cancel_pending" ? attempt : (await this.#transitionWith(tx, { tenantId: input.tenantId, kind: "attempt", entityId: attempt.id,
+        expectedVersion: input.expectedAttemptVersion, toState: attemptState,
+        transitionId: `transition:blocker:${suffix}:attempt`, idempotencyKey: `blocker:${suffix}:attempt`,
+        actor: input.actor, occurredAt: input.occurredAt, safeMetadata: metadata,
+        ...(attemptState === "cancelled" ? { recordPatch: { finishedAt: input.occurredAt,
+          safeFailureCode: input.mode === "handoff" ? "owner_handoff" : "owner_cancelled_blocker" } } : {}) }, true)).entity as AttemptRecord;
+      const jobState = input.mode === "report" ? "blocked" : input.mode === "handoff" ? "ready" : "cancelled";
+      const nextJob = (await this.#transitionWith(tx, { tenantId: input.tenantId, kind: "job", entityId: job.id,
+        expectedVersion: input.expectedJobVersion, toState: jobState, transitionId: `transition:blocker:${suffix}:job`,
+        idempotencyKey: `blocker:${suffix}:job`, actor: input.actor, occurredAt: input.occurredAt,
+        safeMetadata: metadata }, true)).entity as JobRecord;
+      return { job: nextJob, attempt: nextAttempt, ...(nextLease ? { lease: nextLease } : {}) };
+    });
   }
 
   async claimReadyJob(input: ClaimJobInput): Promise<{ job: JobRecord; attempt: AttemptRecord; lease: LeaseRecord; replayed: boolean }> {

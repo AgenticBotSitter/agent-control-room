@@ -2,8 +2,9 @@ import { z } from "zod";
 import { taskSummarySchema } from "./task-wire";
 import { catalogProjectIdSchema } from "./project-wire";
 import { approvalDigestSchema } from "./task-approval-wire";
+import { taskBlockerRecordSchema } from "./task-blocker-wire";
 
-export const taskAttentionReasons = ["proposal", "assignment", "approval", "failed", "orphaned", "review",
+export const taskAttentionReasons = ["proposal", "assignment", "approval", "blocked", "failed", "orphaned", "review",
   "changes_requested", "verification_blocked", "revision_limit_reached", "result_checks_unavailable",
   "delivery_check", "submission_needed", "delivery_pending", "delivery_uncertain", "delivery_rejected"] as const;
 export const taskAttentionCategories = ["uncertainty", "failure", "approval", "review", "preparation"] as const;
@@ -12,9 +13,10 @@ export type TaskAttentionReason = typeof taskAttentionReasons[number];
 
 export function taskAttentionPresentation(reasons: readonly TaskAttentionReason[]) {
   const has = (...values: TaskAttentionReason[]) => values.some(value => reasons.includes(value));
-  if (has("orphaned", "delivery_uncertain", "verification_blocked", "result_checks_unavailable")) return {
+  if (has("blocked", "orphaned", "delivery_uncertain", "verification_blocked", "result_checks_unavailable")) return {
     category: "uncertainty" as const, urgency: has("orphaned", "delivery_uncertain", "verification_blocked") ? "urgent" as const : "soon" as const,
-    ownerQuestion: "What was already recorded, and is it safe to continue?",
+    ownerQuestion: has("blocked") ? "What does this worker need from you before work can continue?"
+      : "What was already recorded, and is it safe to continue?",
   };
   if (has("failed", "delivery_rejected")) return { category: "failure" as const, urgency: "urgent" as const,
     ownerQuestion: "What failed, and what evidence should be reviewed before new work?" };
@@ -28,6 +30,7 @@ export function taskAttentionPresentation(reasons: readonly TaskAttentionReason[
 
 const attentionItemSchema = z.object({ task: taskSummarySchema, inputDigest: approvalDigestSchema,
   reasons: z.array(z.enum(taskAttentionReasons)).min(1).max(15),
+  blocker: taskBlockerRecordSchema.optional(),
   category: z.enum(taskAttentionCategories).optional(), urgency: z.enum(taskAttentionUrgencies).optional(),
   ownerQuestion: z.string().max(160).optional() }).strict()
   .transform(item => ({ ...item, ...taskAttentionPresentation(item.reasons) }));

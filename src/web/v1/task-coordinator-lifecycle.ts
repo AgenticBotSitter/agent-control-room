@@ -40,6 +40,8 @@ import { CompletionGateStoreV1 } from "../../completion-gate/v1/store";
 import { CanonicalIdeaTaskResultProjectionServiceV1 } from "../../idea-lab/v1/canonical-result-projection";
 import { IdeaLabCanonicalTaskLinkStoreV1 } from "../../idea-lab/v1/canonical-task-link-store";
 import { IdeaLabProjectRegistryStoreV1 } from "../../idea-lab/v1/store";
+import { TaskBlockerServiceV1 } from "./task-blocker-service";
+import { taskBlockerReportSchema } from "./task-blocker-wire";
 
 export type TaskApprovalOperation = Readonly<{ tenantId: string; workspaceId: string;
   prepare: TaskAssignmentCoordinator["prepareNativeApproval"]; store: TaskAssignmentCoordinator["storeNativeApproval"];
@@ -441,6 +443,17 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
     assign: (...args) => run(() => assignment.assign(...args)), expire: (...args) => run(() => assignment.expire(...args)),
     options: (...args) => run(() => assignment.options(...args)),
     projectOptions: (...args) => run(() => assignment.projectOptions(...args)) });
+  const blockerService = new TaskBlockerServiceV1(db, scope, input.planning.integrityKey, input.clock,
+    assignment.assign.bind(assignment));
+  const blockers = Object.freeze({ ...scope,
+    report: (value: Parameters<TaskBlockerServiceV1["report"]>[0], assertCurrent: () => void | Promise<void>) => {
+      const snapshot = taskBlockerReportSchema.parse(value);
+      return run(() => blockerService.report(snapshot, assertCurrent));
+    },
+    listOpenForOwner: (...args: Parameters<TaskBlockerServiceV1["listOpenForOwner"]>) => run(() => blockerService.listOpenForOwner(...args)),
+    readForWorker: (...args: Parameters<TaskBlockerServiceV1["readForWorker"]>) => run(() => blockerService.readForWorker(...args)),
+    act: (...args: Parameters<TaskBlockerServiceV1["act"]>) => run(() => blockerService.act(...args)),
+  });
   const approvals: TaskApprovalOperation | undefined = input.approvals ? Object.freeze({ ...scope,
     prepare: (...args: Parameters<TaskApprovalOperation["prepare"]>) => run(() => assignment.prepareNativeApproval(...args)),
     read: (...args: Parameters<TaskApprovalOperation["read"]>) => run(() => assignment.readNativeApproval(...args)),
@@ -522,7 +535,7 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
       return run(() => receiver.receive(capturedSession, owned.raw, owned.bytes, signal));
     },
   }) : undefined;
-  return Object.freeze({ planning, assignment: assignments, ...(approvals ? { approvals } : {}), ...(quality ? { quality } : {}),
+  return Object.freeze({ planning, assignment: assignments, blockers, ...(approvals ? { approvals } : {}), ...(quality ? { quality } : {}),
     ...(ideaCreation ? { ideaCreation } : {}),
     ...(ideaResultProjection ? { ideaResultProjection } : {}),
     ...(nativeSubmission && (sessions || hermes021Local || hermesLocal || claudeCodeLocal || codexOwnerTrustedLocal || remoteControllerWorker) ? { queueDelivery: async (ref: Parameters<ManagedNativeSessions["deliverApproved"]>[0], signal: AbortSignal) => {

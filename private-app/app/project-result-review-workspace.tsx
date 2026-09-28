@@ -15,6 +15,7 @@ type State = { state: "loading" } | { state: "ready"; value: TaskProjectAttentio
 
 const reasonLabel: Record<TaskProjectAttentionPage["items"][number]["reasons"][number], string> = {
   proposal: "Needs preparation", assignment: "Needs an assignment", approval: "Needs execution approval",
+  blocked: "Worker reported a blocker",
   failed: "Task failed", orphaned: "Task needs recovery", review: "Returned result needs review",
   changes_requested: "Changes were requested", verification_blocked: "Verification is blocked",
   revision_limit_reached: "Revision limit reached", result_checks_unavailable: "Result or review evidence is unavailable",

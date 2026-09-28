@@ -20,10 +20,13 @@ import { taskRevisionCommandSchema, taskRevisionRequestSchema } from "./task-rev
 import { sha256Digest } from "../../security";
 import { taskDetailSchema } from "./task-wire";
 import { observeTaskLocalRoute, type TrustedConfiguredLocalRoute } from "./task-local-route-observation";
+import type { TaskBlockerOperationV1 } from "./task-blocker-operation";
+import { taskBlockerOwnerActionSchema, taskBlockerRecordSchema } from "./task-blocker-wire";
 
 export function createTaskHttpHandler(options: { origin: string; trust?: AccessTrust; service: WebTaskService;
   ownerReviews?: WebTaskReviewService; ownerVerifications?: WebTaskVerificationService; planning?: Pick<TaskPlanningOperation, "plan" | "ensureProject" | "readSaved" | "readSavedContinuation" | "readPreparedWorker" | "readConfiguredLocalRoute" | "supportsProject" | "templatesForProject">;
   assignment?: TaskAssignmentOperation; approvals?: TaskApprovalOperation; submission?: TaskSubmissionOperation; revisions?: TaskRevisionOperation;
+  blockers?: Pick<TaskBlockerOperationV1, "tenantId" | "workspaceId" | "act">;
   /** Trusted process selection; the browser cannot choose a header/provider. */
   gatewayAssertionProfile?: GatewayAssertionProviderProfileV1; clock?: () => number;
   /** Explicit loopback-only owner-session service; never a generic injected verifier. */
@@ -42,6 +45,23 @@ export function createTaskHttpHandler(options: { origin: string; trust?: AccessT
       else requireSameOrigin(request, options.origin);
       const identity = localOwnerSession ? localOwnerSession.verify(request, (options.clock ?? Date.now)()) : verify!(request, (options.clock ?? Date.now)());
       const url = new URL(request.url);
+      const blockerRoute = /^\/api\/v1\/projects\/([^/]+)\/tasks\/([^/]+)\/blockers\/([^/]+)$/.exec(url.pathname);
+      if (blockerRoute) {
+        if (url.search || request.method !== "POST" || request.headers.has("idempotency-key")
+          || request.headers.get("content-type")?.split(";")[0].trim() !== "application/json" || !request.body)
+          throw new WebAccessError("invalid_request");
+        let ids: string[];
+        try { ids = blockerRoute.slice(1).map(decodeURIComponent); } catch { throw new WebAccessError("invalid_request"); }
+        if (ids.some(value => !catalogProjectIdSchema.safeParse(value).success)) throw new WebAccessError("invalid_request");
+        const [projectId, jobId, blockerId] = ids;
+        const parsed = taskBlockerOwnerActionSchema.safeParse(await readBoundedJson(request.body, 4096));
+        if (!parsed.success) throw new WebAccessError("invalid_request");
+        await options.service.authorize(identity, projectId);
+        if (!options.blockers) throw new Error("task_blocker_not_configured");
+        const result = await options.blockers.act(identity, projectId, jobId, blockerId, parsed.data);
+        return Response.json({ blocker: taskBlockerRecordSchema.parse(result.blocker), replayed: result.replayed },
+          { status: result.replayed ? 200 : 201, headers: privateResponseHeaders });
+      }
       const fileRoute = /^\/api\/v1\/projects\/([^/]+)\/tasks\/([^/]+)\/files\/([^/]+)$/.exec(url.pathname);
       if (fileRoute) {
         if (request.method !== "GET" || [...url.searchParams.keys()].some(key => !["disposition", "token"].includes(key))

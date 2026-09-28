@@ -25,6 +25,7 @@ import type { TaskPlanningOperation } from "./task-execution-planner";
 import type { TaskAssignmentOperation } from "./task-assignment-coordinator";
 import type { IdeaCanonicalResultProjectionOperation, TaskApprovalOperation, TaskSubmissionOperation } from "./task-coordinator-lifecycle";
 import type { TaskRevisionOperation } from "./task-revision-operation";
+import type { TaskBlockerOperationV1 } from "./task-blocker-operation";
 import type { QueueAttentionSource } from "./queue-attention-wire";
 import { taskProjectAgentOptionsSchema } from "./task-project-agents-wire";
 import { newsCollectionStatusSchema, newsCollectionHistorySchema } from "./news-collection-status-wire";
@@ -109,6 +110,7 @@ export interface PrivateWebProcessOptions {
   approvals?: TaskApprovalOperation;
   submission?: TaskSubmissionOperation;
   revisions?: TaskRevisionOperation;
+  blockers?: TaskBlockerOperationV1;
   queueAttention?: QueueAttentionSource;
   /**
    * Project coordination surface: the canonical store adapter for the
@@ -250,6 +252,11 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
     || typeof options.revisions.plan !== "function")) throw new Error("invalid_private_app_config");
   const revisions = options.revisions ? Object.freeze({ tenantId: options.tenantId, workspaceId: options.workspaceId,
     plan: options.revisions.plan.bind(options.revisions) }) : undefined;
+  if (options.blockers && (options.blockers.tenantId !== options.tenantId || options.blockers.workspaceId !== options.workspaceId
+    || typeof options.blockers.act !== "function" || typeof options.blockers.report !== "function"
+    || typeof options.blockers.listOpenForOwner !== "function" || typeof options.blockers.readForWorker !== "function")) throw new Error("invalid_private_app_config");
+  const blockers = options.blockers ? Object.freeze({ tenantId: options.tenantId, workspaceId: options.workspaceId,
+    act: options.blockers.act.bind(options.blockers), listOpenForOwner: options.blockers.listOpenForOwner.bind(options.blockers) }) : undefined;
   if (options.assignment && (options.assignment.tenantId !== options.tenantId || options.assignment.workspaceId !== options.workspaceId
     || [options.assignment.assign, options.assignment.expire, options.assignment.options, options.assignment.projectOptions]
       .some(method => typeof method !== "function")))
@@ -618,8 +625,11 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
           if (url.pathname === "/api/v1/needs-me/tasks") {
             if (request.method !== "GET" || [...url.searchParams.keys()].some(key => key !== "after")
               || url.searchParams.getAll("after").length > 1) throw new WebAccessError("invalid_request");
-            return Response.json(await tasks.attention(identity, url.searchParams.get("after") ?? undefined),
-              { headers: privateResponseHeaders });
+            const page = await tasks.attention(identity, url.searchParams.get("after") ?? undefined);
+            const open = blockers ? await blockers.listOpenForOwner(identity, page.items.map(item => item.task.jobId)) : [];
+            const byJob = new Map(open.map(blocker => [blocker.jobId, blocker]));
+            return Response.json({ ...page, items: page.items.map(item => ({ ...item,
+              ...(byJob.has(item.task.jobId) ? { blocker: byJob.get(item.task.jobId) } : {}) })) }, { headers: privateResponseHeaders });
           }
           if (url.pathname === "/api/v1/needs-me") {
             if (request.method !== "GET" || url.search) throw new WebAccessError("invalid_request");
@@ -681,7 +691,7 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
           }
           if (/^\/api\/v1\/projects\/[^/]+\/tasks(?:\/|$)/.test(url.pathname))
             return await createTaskHttpHandler({ origin: site.origin, trust, service: tasks, ownerReviews, ownerVerifications,
-              planning, assignment, approvals, submission, revisions, gatewayAssertionProfile, clock })(request);
+              planning, assignment, approvals, submission, revisions, blockers, gatewayAssertionProfile, clock })(request);
           if (url.pathname === "/api/v1/connections") {
             if (request.method !== "GET" || url.search) throw new WebAccessError("invalid_request");
             return Response.json(await connections.read(identity), { headers: privateResponseHeaders });

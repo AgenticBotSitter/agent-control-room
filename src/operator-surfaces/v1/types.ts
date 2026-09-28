@@ -49,6 +49,8 @@ export interface LegalResponseV1 {
 export interface ActionInboxItemV1 {
   id: string;
   tenantId: string;
+  /** Optional exact-owner visibility fence. Absence preserves workspace-owner visibility. */
+  ownerIdentityId?: string;
   projectId?: string;
   workItemId?: string;
   kind: AttentionKindV1;

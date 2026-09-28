@@ -26,7 +26,8 @@ GRANT SELECT ON tenants, workspaces, control_identities, control_role_grants, co
   control_project_delegation_policies, control_project_coordination_operation_receipts,
   control_project_coordination_operation_jobs, control_work_resources,
   control_attempt_resource_admissions, control_attempt_resource_scopes,
-  control_installation_transition_revisions
+  control_installation_transition_revisions, control_task_blockers,
+  control_task_blocker_events, control_task_blocker_handoffs, control_task_blocker_handoff_completions
   TO control_room_task_coordinator;
 GRANT SELECT ON control_task_model_selections, control_task_declared_scopes,
   control_assignment_lease_scopes TO control_room_task_coordinator;
@@ -43,7 +44,8 @@ GRANT DELETE ON control_assignment_lease_scopes TO control_room_task_coordinator
 GRANT INSERT ON control_installation_transition_revisions TO control_room_task_coordinator;
 GRANT INSERT ON control_project_coordination_proposals,
   control_project_coordination_operation_receipts, control_project_coordination_operation_jobs,
-  control_action_inbox TO control_room_task_coordinator;
+  control_action_inbox, control_task_blockers, control_task_blocker_events,
+  control_task_blocker_handoffs, control_task_blocker_handoff_completions TO control_room_task_coordinator;
 GRANT INSERT ON control_work_resources, control_attempt_resource_admissions,
   control_attempt_resource_scopes TO control_room_task_coordinator;
 GRANT UPDATE (state,version,retired_at,retirement_kind,retirement_proof_digest)
@@ -55,6 +57,10 @@ GRANT UPDATE (coordinator_lock) ON control_project_coordinator_heads,
 GRANT INSERT ON control_job_dependencies TO control_room_task_coordinator;
 GRANT UPDATE (state, version, payload, updated_at) ON control_requests, control_workflows,
   control_jobs, control_attempts, control_leases TO control_room_task_coordinator;
+GRANT UPDATE (state,resolved_at,payload,auth_tag,disposition_digest)
+  ON control_task_blockers TO control_room_task_coordinator;
+GRANT UPDATE (project_id,work_item_id,kind,state,delivery_state,created_at,expires_at,payload)
+  ON control_action_inbox TO control_room_task_coordinator;
 GRANT UPDATE (coordinator_lock) ON tenants, control_nodes, control_node_keys, control_manual_project_heads, projects
   TO control_room_task_coordinator;
 GRANT UPDATE (web_lock) ON control_identities, control_role_grants, workspaces,
