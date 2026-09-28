@@ -136,6 +136,37 @@ test("data that really is unchanged still backs off to the quiet ceiling", async
   } finally { await view.stop(); }
 });
 
+test("StrictMode remount starts a fresh fetch-like read without surfacing AbortError", async () => {
+  const { dom, restore } = installDom();
+  const states: Array<PolledReadState<number>> = [];
+  let reads = 0;
+  const read = (signal: AbortSignal) => new Promise<number>((resolve, reject) => {
+    reads += 1;
+    const timer = setTimeout(() => resolve(42), 20);
+    signal.addEventListener("abort", () => {
+      clearTimeout(timer);
+      setTimeout(() => reject(signal.reason), 0);
+    }, { once: true });
+  });
+  const Probe = () => {
+    const state = usePolledRead({ key: "use-polled-read:strict-remount", read, baseIntervalMs: 60_000 });
+    states.push(state);
+    return null;
+  };
+  const root = createRoot(dom.window.document.getElementById("root")!);
+  try {
+    await act(async () => root.render(React.createElement(React.StrictMode, null, React.createElement(Probe))));
+    await settle(80);
+    assert.equal(states.some(state => state.error !== undefined), false,
+      `StrictMode remount must not surface an abort; reads=${reads}`);
+    assert.equal(states.at(-1)?.value, 42);
+    assert.ok(reads >= 2, "the remount starts a live replacement read");
+  } finally {
+    await act(async () => root.unmount());
+    restore();
+  }
+});
+
 test("a caller's own unchanged predicate still wins over the default", async () => {
   // A caller that knows better about its data can still say "always changed"
   // and hold the base interval even while the bytes are identical.

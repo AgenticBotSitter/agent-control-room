@@ -48,7 +48,13 @@ export function sharePolledRequest<T>(key: string, request: (signal: AbortSignal
       settled = true;
       signal.removeEventListener("abort", aborted);
       entry.subscribers -= 1;
-      if (entry.subscribers === 0 && inFlight.get(key) === entry) entry.controller.abort();
+      if (entry.subscribers === 0 && inFlight.get(key) === entry) {
+        // An abort rejects asynchronously. Remove this entry first so an
+        // effect remounted in the same commit starts a live request rather
+        // than subscribing to the request we have just cancelled.
+        inFlight.delete(key);
+        entry.controller.abort();
+      }
     };
     const aborted = () => { release(); reject(signal.reason); };
     signal.addEventListener("abort", aborted, { once: true });

@@ -177,6 +177,24 @@ test("unchanged data stretches the interval, and any change returns it to base",
   scheduler.stop();
 });
 
+test("unchanged data holds at the 4x quiet-backoff ceiling", async () => {
+  const time = harness();
+  const scheduler = createPolledReadScheduler<number>({
+    ...time.options, baseIntervalMs: 30_000,
+    read: async () => 1, accept: () => {}, failed: () => {},
+  });
+  scheduler.start();
+  await time.advance(0); // initial value: base interval
+  await time.advance(30_000); // first unchanged read: 2x
+  await time.advance(60_000); // second unchanged read: 4x
+  await time.advance(120_000); // third unchanged read: remains 4x
+  await time.advance(120_000); // fourth unchanged read: still remains 4x
+  const quietDelays = time.intervals.filter(entry => entry.reason === "quiet").map(entry => entry.delayMs);
+  assert.deepEqual(quietDelays, [60_000, 120_000, 120_000, 120_000],
+    "successive unchanged reads never stretch beyond the 4x ceiling");
+  scheduler.stop();
+});
+
 test("focusing or returning to the tab earns the base interval, never a stretched one", async () => {
   const time = harness();
   const scheduler = createPolledReadScheduler<number>({
@@ -326,6 +344,24 @@ test("the underlying shared request is cancelled after every sharer aborts", asy
   ]);
   assert.equal(underlying?.aborted, true, "no subscriber remains to consume the request");
   await new Promise<void>(resolve => setImmediate(resolve));
+  assert.equal(sharedRequestCountForTest(), 0);
+});
+
+test("a subscriber remounted in the abort tick starts a fresh shared request", async () => {
+  const key = "shared-endpoint-abort-remount";
+  let calls = 0;
+  const request = (signal: AbortSignal) => new Promise<number>((resolve, reject) => {
+    const call = ++calls;
+    signal.addEventListener("abort", () => setTimeout(() => reject(signal.reason), 0), { once: true });
+    setTimeout(() => resolve(call), 5);
+  });
+  const first = new AbortController();
+  const abandoned = sharePolledRequest(key, request, first.signal);
+  first.abort();
+  const remounted = sharePolledRequest(key, request, new AbortController().signal);
+  await assert.rejects(abandoned, error => error instanceof DOMException && error.name === "AbortError");
+  assert.equal(await remounted, 2, "the new subscriber must not inherit the aborted request");
+  assert.equal(calls, 2, "the remount starts a fresh request");
   assert.equal(sharedRequestCountForTest(), 0);
 });
 

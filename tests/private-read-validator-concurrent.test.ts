@@ -72,6 +72,24 @@ test("concurrent reads each get their own validator rather than stealing one", a
   assert.notEqual(results[0]!.etag, results[1]!.etag, "different endpoints never share a validator");
 });
 
+test("interleaved sessions revalidate only with their own request scope", async t => {
+  const f = await fixture();
+  t.after(f.close);
+  const sessions = [token(), token({ iat: now / 1000 - 10 })];
+  const paths = ["/api/v1/projects", "/api/v1/home/tasks", "/api/v1/needs-me/tasks"];
+  const plan = sessions.flatMap(jwt => paths.map(path => ({ jwt, path })));
+  const first = await Promise.all(plan.map(({ jwt, path }) => call(f.handler, path, jwt)));
+  for (const result of first) {
+    assert.equal(result.status, 200, result.body);
+    assert.ok(result.etag, "every interleaved request receives a validator");
+  }
+  for (const [index, { jwt, path }] of plan.entries()) {
+    const revalidated = await call(f.handler, path, jwt, first[index]!.etag!);
+    assert.equal(revalidated.status, 304,
+      `request ${index} must revalidate with its own session scope, not a process-wide last scope`);
+  }
+});
+
 test("an unchanged read revalidates to 304, and changed data is never hidden", async t => {
   const f = await fixture();
   t.after(f.close);
