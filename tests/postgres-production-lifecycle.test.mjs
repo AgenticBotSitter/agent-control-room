@@ -502,6 +502,8 @@ test("backup and disposable restore preserve rows, owners, grants and identity",
   assert.deepEqual(restoredRows, sourceRows);
   const ownerOf = async (conn) => (await query(conn, "SELECT pg_get_userbyid(c.relowner) AS owner FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'public' AND c.relname = 'tenants'")).rows[0].owner;
   assert.equal(await ownerOf(target("cr_prod_restored")), await ownerOf(target("cr_prod_source")));
+  const viewOwnerOf = async (conn) => (await query(conn, "SELECT pg_get_userbyid(c.relowner) AS owner FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'public' AND c.relname = 'work_batch_effective_queue_admissions' AND c.relkind = 'v'")).rows[0].owner;
+  assert.equal(await viewOwnerOf(target("cr_prod_restored")), await viewOwnerOf(target("cr_prod_source")));
   // Role model preserved: the reconciled target carries exactly the source's
   // control-room memberships (roles are cluster-global in this fixture, which
   // is why the dedicated reconcile test below revokes first to prove the
