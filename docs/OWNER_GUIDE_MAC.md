@@ -145,6 +145,24 @@ new one-time owner setup is still unproven. It prints no configuration.
 `mac:up` starts the task host even when there are no active projects. Create a project on the website and open its task-planning page; the running host derives its fixed local templates and registers its owner-review profile without a restart. The host supports up to 50 active projects and refuses the fifty-first with `mac_local_project_limit_50` rather than silently omitting templates. If the selected Hermes profile later sets `OPENCODE_GO_BASE_URL`, Hermes tasks fail closed because the saved network allowlist still names `https://opencode.ai:443`. The preparation command creates the protected task-runtime file once; rerunning it does not update an existing file. Stop Hermes task use and ask for a reviewed recovery procedure. Do not edit the protected file by hand or assume rerunning preparation changes its destination.
 Any line ending `database_check_refused` means that role is not reachable.
 
+### Local task run limits
+
+Every new local worker process has a 120-second wall-time limit and a 1 MiB
+combined stdout-and-stderr limit by default. To change both owner-controlled
+settings, stop the task host and run:
+
+```sh
+pnpm mac:configure-task-run-limits -- --protected-root <protected-root> \
+  --wall-time-ms <1000-3600000> --output-bytes <16384-16777216>
+pnpm mac:up -- --protected-root <protected-root>
+```
+
+The new values take effect on the next `mac:up`. The output limit covers only
+bytes written to the worker's stdout and stderr; it does not limit files in the
+task workspace. The current macOS direct-process boundary cannot enforce a
+hard per-run CPU or memory ceiling. Adding those controls requires a separately
+reviewed native process launcher.
+
 ### Owner-review profile v2 upgrade
 
 Database migration 0092 is additive: it does not rewrite existing review profiles or targets.

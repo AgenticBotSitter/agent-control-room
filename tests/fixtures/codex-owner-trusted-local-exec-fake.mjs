@@ -11,6 +11,9 @@ if (prompt === "hang") {
   process.stdout.write("not-json\n");
 } else if (prompt === "nonzero") {
   process.exitCode = 7;
+} else if (prompt === "overflow") {
+  process.stdout.write("x".repeat(9_000));
+  process.stderr.write("x".repeat(9_000));
 } else if (prompt === "leak") {
   // The direct process exits while a child remains in its detached process
   // group unless the adapter verifies and cleans the entire group.

@@ -50,6 +50,11 @@ test("refuses malformed output and cleans a cancelled or deadline-bound process 
   assert.ok(Date.now() - started >= 5_000);
 });
 
+test("enforces a configured combined output-byte limit", async () => {
+  const result = await adapter().execute({ ...input(await taskDirectory(), "overflow"), outputBytes: 16_384 });
+  assert.deepEqual(result, { status: "failed", reason: "process_or_output_refused" });
+});
+
 test("does not call a leaked detached descendant a completed task", async () => {
   assert.notEqual((await adapter().execute(input(await taskDirectory(), "leak"))).status, "completed");
 });

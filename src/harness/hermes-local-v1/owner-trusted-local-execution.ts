@@ -1,6 +1,7 @@
 import { isAbsolute, normalize } from "node:path";
 import type { OwnerTrustedLocalCliExecutionAdapterV1 } from "../v1/owner-trusted-local-cli-execution";
 import type { OwnerTrustedLocalHermesExecV1 } from "./owner-trusted-local-exec";
+import { MAX_TASK_RUN_OUTPUT_BYTES, MIN_TASK_RUN_OUTPUT_BYTES } from "../v1/owner-trusted-local-run-limits";
 
 function unavailable(): never { throw new Error("owner_trusted_local_hermes_execution_unavailable"); }
 const identifier = /^[A-Za-z0-9._:/-]{1,180}$/u;
@@ -23,7 +24,7 @@ function prompt(input: Readonly<{ prompt: string; instructions: string }>) {
  * model/provider are values, not source constants, so a normal model change
  * is a configuration/qualification event rather than a code change. */
 export type OwnerTrustedLocalHermesExecutionConfigurationV1 = Readonly<{
-  executablePath: string; workingDirectory: string; deadlineMs: number;
+  executablePath: string; workingDirectory: string; deadlineMs: number; outputBytes?: number;
 } & ({ profile: string; model: string; provider: string } |
   { select(jobId: string): Promise<{ profile: string; model: string; provider: string }> })>;
 
@@ -33,13 +34,17 @@ function capture(value: unknown): OwnerTrustedLocalHermesExecutionConfigurationV
   const executablePath = item.executablePath, workingDirectory = item.workingDirectory;
   const profile = item.profile, model = item.model, provider = item.provider, deadlineMs = item.deadlineMs;
   const dynamic = typeof item.select === "function";
-  if (Object.keys(item).length !== (dynamic ? 4 : 6) || !path(executablePath) || !path(workingDirectory)
+  const expected = (dynamic ? 4 : 6) + (item.outputBytes === undefined ? 0 : 1);
+  if (Object.keys(item).length !== expected || !path(executablePath) || !path(workingDirectory)
     || !dynamic && (typeof profile !== "string" || !identifier.test(profile)
     || typeof model !== "string" || !identifier.test(model)
     || typeof provider !== "string" || !identifier.test(provider))
     || typeof deadlineMs !== "number" || !Number.isSafeInteger(deadlineMs)
-    || deadlineMs < 100 || deadlineMs > 3_600_000) return unavailable();
+    || deadlineMs < 100 || deadlineMs > 3_600_000
+    || item.outputBytes !== undefined && (typeof item.outputBytes !== "number" || !Number.isSafeInteger(item.outputBytes)
+      || item.outputBytes < MIN_TASK_RUN_OUTPUT_BYTES || item.outputBytes > MAX_TASK_RUN_OUTPUT_BYTES)) return unavailable();
   return Object.freeze({ executablePath, workingDirectory, deadlineMs,
+    ...(item.outputBytes === undefined ? {} : { outputBytes: item.outputBytes as number }),
     ...(dynamic ? { select: item.select as (jobId: string) => Promise<{ profile: string; model: string; provider: string }> }
       : { profile: profile as string, model: model as string, provider: provider as string }) }) as OwnerTrustedLocalHermesExecutionConfigurationV1;
 }
@@ -56,6 +61,7 @@ export function createOwnerTrustedLocalHermesExecutionAdapterV1(executor: OwnerT
     const selected = "select" in fixed ? await fixed.select(input.delivery.identity.jobId) : fixed;
     const result = await executor.execute(Object.freeze({ executablePath: fixed.executablePath,
       workingDirectory: fixed.workingDirectory, deadlineMs: fixed.deadlineMs,
+      ...(fixed.outputBytes === undefined ? {} : { outputBytes: fixed.outputBytes }),
       profile: selected.profile, model: selected.model, provider: selected.provider,
       prompt: prompt(input.delivery.input), signal: input.signal }));
     if (result.status === "completed") return Object.freeze({ kind: "completed" as const, text: result.text });

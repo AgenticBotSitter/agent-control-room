@@ -77,6 +77,11 @@ test("refuses malformed output and nonzero exits", async () => {
     { status: "failed", reason: "process_or_output_refused" });
 });
 
+test("enforces a configured combined output-byte limit", async () => {
+  const result = await adapter().execute({ ...input(await taskDirectory(), "overflow"), outputBytes: 16_384 });
+  assert.deepEqual(result, { status: "failed", reason: "process_or_output_refused" });
+});
+
 test("cancel and deadline stop the complete detached process group", async () => {
   const controller = new AbortController();
   const pending = adapter().execute(input(await taskDirectory(), "wait", 10_000, controller.signal));

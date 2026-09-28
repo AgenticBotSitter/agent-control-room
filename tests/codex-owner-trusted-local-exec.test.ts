@@ -110,6 +110,11 @@ test("refuses malformed output and nonzero exits", async () => {
   assert.deepEqual(await adapter().execute(input(await taskDirectory(), "nonzero")), { status: "failed", reason: "process_or_output_refused" });
 });
 
+test("enforces a configured combined output-byte limit", async () => {
+  const result = await adapter().execute({ ...input(await taskDirectory(), "overflow"), outputBytes: 16_384 });
+  assert.deepEqual(result, { status: "failed", reason: "process_or_output_refused" });
+});
+
 test("deadline kills the detached process group even when its child ignores TERM", async () => {
   const started = Date.now();
   const result = await adapter().execute(input(await taskDirectory(), "hang", 100));

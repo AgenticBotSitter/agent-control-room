@@ -16,6 +16,7 @@ import { createMacLocalCurrentThreeAgentTaskApplicationV1 } from "./mac-local-cu
 import { MAC_LOCAL_TASK_PROVIDER_V1, MAC_LOCAL_THREE_AGENT_KINDS_V1,
   type MacLocalTaskProviderV1 } from "./mac-local-task-provider";
 import { loadMacLocalTaskRuntimeFromRootV1 } from "./mac-local-task-runtime";
+import { loadMacLocalTaskRunLimitsFromRootV1 } from "./mac-local-task-run-limits";
 import { openMacLocalRollbackCheckpointStoreV1 } from "./mac-local-rollback-checkpoint-store";
 import { buildMacLocalTaskTemplatesV1, MAC_LOCAL_MAX_PROJECTS_V1 } from "./mac-local-task-provider-templates";
 import { createMacLocalHumanVerificationRegistryV1, createMacLocalTextScenarioV1 } from "./mac-local-owner-review-profile";
@@ -82,6 +83,7 @@ export const createTaskApplication: MacLocalTaskProviderV1["createTaskApplicatio
   const tenantId = configuration.localOwnerSession.tenantId;
   const workspaceId = configuration.workspaceId;
   const runtime = await loadMacLocalTaskRuntimeFromRootV1(protectedRoot);
+  const runLimits = await loadMacLocalTaskRunLimitsFromRootV1(protectedRoot);
   const rows = await input.database.client.query<{ project_id: string; created_at: string | Date }>(
     `SELECT p.id AS project_id,h.created_at FROM projects p
       JOIN control_manual_project_heads h ON h.tenant_id=p.tenant_id AND h.project_id=p.id
@@ -207,12 +209,13 @@ export const createTaskApplication: MacLocalTaskProviderV1["createTaskApplicatio
           const value = await selectedModel("hermes", jobId); return {
             profile: value.profile!, provider: value.provider!, model: value.model };
         } } : { profile: runtime.hermes.profile, provider: runtime.hermes.provider, model: runtime.hermes.model }),
-        workingDirectory: work.hermes, deadlineMs: 120_000 }) };
+        workingDirectory: work.hermes, deadlineMs: runLimits.wallTimeMs, outputBytes: runLimits.outputBytes }) };
     const claude = createClaudeOwnerTrustedLocalQueueExecutorV1({ tenantId,
       preparation: prepared[1] as ClaudeCodeLocalDispatchPreparationV1,
       delivery: createOwnerTrustedLocalClaudeDeliveryV1(common(1, ClaudeCodeLocalRunRegistrationV1),
         createOwnerTrustedLocalClaudeExecV1(), { executablePath: workers[1]!.worker.executablePath,
-          workingDirectory: work.claude, deadlineMs: 120_000, ...(workers[1]!.worker.modelPolicy ? { select: async (jobId: string) => {
+          workingDirectory: work.claude, deadlineMs: runLimits.wallTimeMs, outputBytes: runLimits.outputBytes,
+          ...(workers[1]!.worker.modelPolicy ? { select: async (jobId: string) => {
             const value = await selectedModel("claude-code", jobId);
             return { model: value.model, effort: value.effort, supportsEffort: true };
           } } : {}) }) });
@@ -224,7 +227,8 @@ export const createTaskApplication: MacLocalTaskProviderV1["createTaskApplicatio
       delivery: createOwnerTrustedLocalCodexDeliveryV1(common(2, (value, time, modelSelection) =>
         codexOwnerTrustedLocalRunRegistrationV1(value, time, codexHarnessVersion, modelSelection)),
       createOwnerTrustedLocalCodexExecV1(), { executablePath: workers[2]!.worker.executablePath,
-        workingDirectory: work.codex, deadlineMs: 120_000, ...(workers[2]!.worker.modelPolicy ? { select: async (jobId: string) => {
+        workingDirectory: work.codex, deadlineMs: runLimits.wallTimeMs, outputBytes: runLimits.outputBytes,
+        ...(workers[2]!.worker.modelPolicy ? { select: async (jobId: string) => {
           const value = await selectedModel("codex", jobId); return { model: value.model, effort: value.effort };
         } } : {}) }) });
     const voidCodex = Object.freeze({ async deliver(target: Parameters<typeof codex.deliver>[0], signal: AbortSignal): Promise<void> {

@@ -11,6 +11,9 @@ if (prompt === "hang") {
   process.stdout.write("not-json\n");
 } else if (prompt === "nonzero") {
   process.exitCode = 7;
+} else if (prompt === "overflow") {
+  process.stdout.write("x".repeat(9_000));
+  process.stderr.write("x".repeat(9_000));
 } else if (prompt === "leak") {
   const child = spawn("sh", ["-c", "trap '' TERM; while :; do sleep 1; done"], { stdio: "ignore" });
   child.unref();

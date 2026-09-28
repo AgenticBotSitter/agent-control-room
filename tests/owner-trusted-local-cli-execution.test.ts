@@ -5,7 +5,8 @@ import { createOwnerTrustedLocalClaudeExecutionAdapterV1, createOwnerTrustedLoca
 import { createOwnerTrustedLocalHermesDeliveryV1 } from "../src/harness/v1/owner-trusted-local-cli-composition";
 import { createOwnerTrustedLocalHermesExecutionAdapterV1 } from "../src/harness/hermes-local-v1";
 
-const configuration = { executablePath: "/Applications/Control Room/bin/agent", workingDirectory: "/private/tmp/acr-empty-task", deadlineMs: 60_000 };
+const configuration = { executablePath: "/Applications/Control Room/bin/agent", workingDirectory: "/private/tmp/acr-empty-task",
+  deadlineMs: 60_000, outputBytes: 16_384 };
 const delivery = { identity: { jobId: "job:test" }, input: { instructions: "Read the supplied task only.", prompt: "Summarize the approved evidence." } };
 
 test("the shared local CLI prompt is bounded and contains only the approved task material", () => {
@@ -77,5 +78,14 @@ test("the execution adapters refuse a canceled call without contacting a CLI", a
     { ...configuration, model: "gpt-test", effort: "high" });
   const aborter = new AbortController(); aborter.abort();
   await assert.rejects(adapter.execute({ delivery, signal: aborter.signal }), /owner_trusted_local_cli_execution_unavailable/);
+  assert.equal(calls, 0);
+});
+
+test("the execution adapters reject an out-of-range output limit before contacting a CLI", async () => {
+  let calls = 0;
+  assert.throws(() => createOwnerTrustedLocalCodexExecutionAdapterV1({ async execute() {
+    calls++; return { status: "completed" as const, text: "no" };
+  } }, { ...configuration, outputBytes: 16_383, model: "gpt-test", effort: "high" }),
+  /owner_trusted_local_cli_execution_unavailable/);
   assert.equal(calls, 0);
 });

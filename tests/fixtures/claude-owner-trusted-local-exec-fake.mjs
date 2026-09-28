@@ -12,6 +12,9 @@ if (prompt === "hang") {
   process.stdout.write("not-json\n");
 } else if (prompt === "nonzero") {
   process.exitCode = 7;
+} else if (prompt === "overflow") {
+  process.stdout.write("x".repeat(9_000));
+  process.stderr.write("x".repeat(9_000));
 } else if (prompt === "leak") {
   // The direct process exits, but its TERM-ignoring child stays in this
   // detached group unless the adapter explicitly cleans it up.
