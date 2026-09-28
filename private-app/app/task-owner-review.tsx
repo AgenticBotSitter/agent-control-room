@@ -67,7 +67,8 @@ function OwnerTaskReviewController({ projectId, jobId, artifactId, targetId, tar
   const reviewRead = usePolledRead<TaskReviewOptions>({
     key: `task-owner-review-${projectId}-${jobId}-${artifactId}-${targetId}-${refresh}`,
     baseIntervalMs: 30_000,
-    read: () => client.options(projectId, jobId, { artifactId, targetId, targetDigest, contentHash }),
+    read: (signal, transport) => client.options(projectId, jobId,
+      { artifactId, targetId, targetDigest, contentHash }, signal, transport),
     onAccept: () => { if (!client.hasPending()) setError(undefined); },
     onFailure: (reason: unknown) => {
       setError(reason instanceof BrowserRequestError ? reason : new BrowserRequestError("unavailable")); },

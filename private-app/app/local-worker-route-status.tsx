@@ -34,9 +34,9 @@ function useLocalTaskWorkerStatus(): TaskWorkerReadState {
   // `setInterval` could start a second read while the first was still open.
   const read = usePolledRead<LocalTaskWorkerStatus>({
     key: "local-workers", baseIntervalMs: 30_000,
-    read: async () => {
-      const response = await fetch("/api/v1/local-workers", { method: "GET", credentials: "same-origin",
-        headers: { accept: "application/json" }, cache: "no-store" });
+    read: async (signal, transport) => {
+      const response = await transport("/api/v1/local-workers", { method: "GET", credentials: "same-origin",
+        headers: { accept: "application/json" }, cache: "no-store", signal });
       if (!response.ok) throw new Error("status unavailable");
       const value: unknown = await response.json();
       if (!isLocalTaskWorkerStatus(value)) throw new Error("invalid status");

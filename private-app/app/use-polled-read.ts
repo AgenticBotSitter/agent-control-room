@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPolledReadScheduler, structuralEqual, type PolledReadIntervalReason } from "../../src/web/v1/polled-read-scheduler";
 import { sharePolledRequest } from "../../src/web/v1/polled-request-sharing";
+import { createPolledReadFetch, type PolledReadFetch } from "../../src/web/v1/polled-conditional-fetch";
 
 /**
  * The one shared polling hook for the owner website.
@@ -34,7 +35,7 @@ export interface PolledReadState<T> {
 export interface UsePolledReadOptions<T> {
   /** Stable identity for the read. Changing it restarts polling. */
   key: string;
-  read: (signal: AbortSignal) => Promise<T>;
+  read: (signal: AbortSignal, transport: PolledReadFetch) => Promise<T>;
   baseIntervalMs: number;
   /** Set false to stop polling entirely (for example a closed panel). */
   enabled?: boolean;
@@ -67,13 +68,10 @@ export function usePolledRead<T>(options: UsePolledReadOptions<T>): PolledReadSt
     // filter) must have its next read built from the new values, not from the
     // values present when this effect last ran.
     beginRead();
+    const transport = createPolledReadFetch();
     const instance = createPolledReadScheduler<T>({
-      // Clearing here rather than in `refresh` means *every* read path drops the
-      // held value: the first read, a scheduled poll, a visibility return, a
-      // focus, and a manual refresh all behave the same. That is what the
-      // hand-written effects did by resetting state at the top of `load()`.
-      read: signal => { beginRead(); return sharePolledRequest(`${shareKey ?? key}`,
-        signal2 => latest.current.read(signal2), signal); },
+      read: signal => sharePolledRequest(`${shareKey ?? key}`,
+        signal2 => latest.current.read(signal2, transport), signal),
       accept: next => { setValue(next); setError(undefined); setLoading(false); latest.current.onAccept?.(next); },
       failed: reason => { setError(reason); setLoading(false); latest.current.onFailure?.(reason); },
       baseIntervalMs,
@@ -107,13 +105,12 @@ export function usePolledRead<T>(options: UsePolledReadOptions<T>): PolledReadSt
     };
   }, [key, shareKey, baseIntervalMs, enabled]);
 
-  // A read is a re-read, never a patch: the held value is dropped the moment a
-  // new read begins, so a page can never keep showing a result the server has
-  // since changed, revoked, or refused. The next successful read replaces it.
-  // This is what the hand-written effects did with their `setX(undefined)`.
+  // Initial load and an explicit refresh deliberately clear presentation.
+  // Background polls retain the last accepted value until their replacement
+  // arrives, matching the hand-written effects and avoiding periodic flicker.
   const beginRead = useCallback(() => { setValue(undefined); setError(undefined); setLoading(true); }, []);
 
-  const refresh = useCallback(() => scheduler.current?.trigger(), []);
-  const clear = useCallback(() => { setValue(undefined); setError(undefined); }, []);
+  const refresh = useCallback(() => { beginRead(); scheduler.current?.trigger(); }, [beginRead]);
+  const clear = useCallback(() => { setValue(undefined); setError(undefined); setLoading(false); }, []);
   return { value, error, loading, refresh, clear };
 }

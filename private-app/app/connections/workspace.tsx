@@ -56,8 +56,8 @@ export function PrivateConnections() {
   const read = usePolledRead<PrivateConnectionViewState>({
     key: `private-connections-${refresh}`,
     baseIntervalMs: 30_000,
-    read: async () => {
-      try { return { state: "ready" as const, snapshot: await readPrivateConnections() }; }
+    read: async (signal, transport) => {
+      try { return { state: "ready" as const, snapshot: await readPrivateConnections(transport, signal) }; }
       catch (error) {
         return { state: "unavailable" as const,
           code: error instanceof ConnectionBrowserError ? error.code : "unavailable" as const };

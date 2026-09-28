@@ -17,9 +17,12 @@ export function createTaskReviewBrowserClient(transport: typeof fetch = fetch, m
   const ids = (...values: string[]) => { if (values.some(value => !catalogProjectIdSchema.safeParse(value).success)) throw new BrowserRequestError("invalid_request"); };
   const failure = (status: number): BrowserFailureCode => ({ 400: "invalid_request", 401: "authentication_required", 403: "access_denied",
     404: "not_found", 409: "conflict" } as Record<number, BrowserFailureCode>)[status] ?? "unavailable";
-  async function call(url: string, command?: { body: string; key: string }) {
-    try { return await transport(url, { method: command ? "POST" : "GET", credentials: "same-origin", cache: "no-store", redirect: "error",
-      signal: AbortSignal.timeout(10_000), headers: { accept: "application/json", "x-requested-with": "XMLHttpRequest",
+  async function call(url: string, command?: { body: string; key: string }, signal?: AbortSignal,
+    transportOverride: typeof fetch = transport) {
+    signal?.throwIfAborted();
+    try { return await transportOverride(url, { method: command ? "POST" : "GET", credentials: "same-origin", cache: "no-store", redirect: "error",
+      signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(10_000)]) : AbortSignal.timeout(10_000),
+      headers: { accept: "application/json", "x-requested-with": "XMLHttpRequest",
         ...(command ? { "content-type": "application/json", "idempotency-key": command.key } : {}) }, ...(command ? { body: command.body } : {}) }); }
     catch { throw new BrowserRequestError(command ? "uncertain" : "unavailable"); }
   }
@@ -61,10 +64,10 @@ export function createTaskReviewBrowserClient(transport: typeof fetch = fetch, m
   }
   return {
     hasPending: () => !!pending,
-    async options(projectId: string, jobId: string, bound: Binding) {
+    async options(projectId: string, jobId: string, bound: Binding, signal?: AbortSignal, readTransport?: typeof fetch) {
       ids(projectId, jobId, bound.artifactId, bound.targetId);
       try {
-        const response = await call(path(projectId, jobId, bound));
+        const response = await call(path(projectId, jobId, bound), undefined, signal, readTransport);
         if (!response.ok) throw new BrowserRequestError(failure(response.status));
         const options = taskReviewOptionsSchema.parse(await json(response));
         if (options.projectId !== projectId || options.jobId !== jobId || options.artifactId !== bound.artifactId

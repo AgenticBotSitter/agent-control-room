@@ -17,10 +17,11 @@ export function NewsArticleReader({ projectId, storyId, storyDigest, canonicalUr
   const query = new URLSearchParams({ storyId, storyDigest });
   const read = usePolledRead<ArticleDetailRecord>({
     key: `news-article-${projectId}-${storyId}-${storyDigest}`, enabled: open, baseIntervalMs: 15_000,
-    read: async () => {
-      const response = await fetch(`/api/v1/projects/${encodeURIComponent(projectId)}/news/article?${query}`, {
+    read: async (signal, transport) => {
+      const response = await transport(`/api/v1/projects/${encodeURIComponent(projectId)}/news/article?${query}`, {
         credentials: "same-origin", cache: "no-store", redirect: "error",
-        signal: AbortSignal.timeout(10000), headers: { accept: "application/json", "x-requested-with": "XMLHttpRequest" } });
+        signal: AbortSignal.any([signal, AbortSignal.timeout(10000)]),
+        headers: { accept: "application/json", "x-requested-with": "XMLHttpRequest" } });
       if (!response.ok) throw new Error(response.status === 404 ? "No saved article text yet. Use the source link above; opening this view does not fetch the article."
         : "Article unavailable. Refresh or check your access.");
       const value = articleDetailRecordSchema.parse(await readBrowserJson(response));

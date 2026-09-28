@@ -31,7 +31,8 @@ test("article reader shows retained text and discards an old project response", 
     assert.match(dom.window.document.body.textContent, /Saved article text/);
     assert.equal(dom.window.document.querySelector("textarea").value, "Saved **article** text");
     await act(async () => dom.window.dispatchEvent(new dom.window.Event("focus")));
-    assert.equal(dom.window.document.querySelector("textarea"), null);
+    assert.equal(dom.window.document.querySelector("textarea").value, "Saved **article** text",
+      "a background focus read retains the last accepted article");
     await act(async () => pending[2](new Response("", { status: 401 })));
     assert.match(dom.window.document.body.textContent, /check your access/);
     assert.equal(dom.window.document.querySelector("textarea"), null);

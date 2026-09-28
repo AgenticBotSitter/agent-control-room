@@ -27,11 +27,11 @@ export function InstallationTopologyProvider({ children }: { children: ReactNode
     key: `installation-topology-${runtime.mode}`,
     baseIntervalMs: 30_000,
     enabled: runtime.mode === "hosted",
-    read: async signal => {
+    read: async (signal, transport) => {
       const [readinessResponse, planResponse] = await Promise.all([
-        fetch("/api/v1/installation-readiness", { method: "GET", credentials: "same-origin",
+        transport("/api/v1/installation-readiness", { method: "GET", credentials: "same-origin",
           cache: "no-store", redirect: "error", signal }),
-        fetch("/api/v1/installation-plan", { method: "GET", credentials: "same-origin",
+        transport("/api/v1/installation-plan", { method: "GET", credentials: "same-origin",
           cache: "no-store", redirect: "error", signal }),
       ]);
       const setup = readinessResponse.ok
