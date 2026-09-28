@@ -45,7 +45,7 @@ test("editing a shipped migration fails and adding a new migration is linted", (
 
 test("Squawk flags adding a NOT NULL column to an existing table", () => {
   const fixture = new URL("fixtures/migrations/dangerous.sql", import.meta.url).pathname;
-  const result = spawnSync("pnpm", ["exec", "squawk", fixture], { encoding: "utf8" });
+  const result = spawnSync("squawk", [fixture], { encoding: "utf8" });
   assert.notEqual(result.status, 0, "dangerous fixture unexpectedly passed Squawk");
   assert.match(result.stdout + result.stderr, /adding-required-field/);
 });

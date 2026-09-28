@@ -3,7 +3,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const repositoryRoot = dirname(dirname(fileURLToPath(import.meta.url)));
-const squawkBin = join(repositoryRoot, "node_modules", ".bin", "squawk");
+const squawkBin = "squawk";
 
 function git(args, options = {}) {
   const result = spawnSync("git", args, { encoding: "utf8", ...options });
