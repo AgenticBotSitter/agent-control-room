@@ -17,7 +17,7 @@ export async function verifyPrivateIdeaAdapter(db: DatabaseClient, scope: { tena
 
 // Generated from public migrations 0001-0097, including generic external-content
 // migrations 0025/0026. Catalog query below; not a mutable database marker.
-export const privateWebSchemaDigest = "89f0536f9b572364fe65f416f08e0f476171d3eac5aa2422a5062927358ec435";
+export const privateWebSchemaDigest = "c16952789a322e8b45f428be81768634db19959294f117f9334d8e93bd869b7a";
 export const privateWebReadTables = ["control_identities", "control_role_grants", "workspaces", "control_web_sessions",
   "tenants", "control_idempotency",
   "control_schedules", "control_schedule_occurrences",
@@ -35,6 +35,7 @@ export const privateWebReadTables = ["control_identities", "control_role_grants"
   "control_task_model_selections", "control_task_declared_scopes", "control_assignment_lease_scopes",
   "control_durable_result_write_reservations", "work_batches", "work_batch_revisions", "work_batch_items",
   "work_batch_queue_admissions", "work_batch_effective_queue_admissions", "work_batch_agent_queue_heads",
+  "control_native_task_queue", "control_job_dependencies",
   "pipeline_templates", "pipeline_runs", "pipeline_stage_runs", "pipeline_ordered_stage_runs",
   "control_action_inbox"] as const;
 const inserts = new Set(["control_web_sessions", "adapter_registry", "projects", "control_manual_project_heads",
@@ -398,14 +399,25 @@ async function verifyDatabase(db: DatabaseClient, config: PrivatePostgresConfigu
           AND (pg_has_role(c.relowner,'MEMBER') OR c.relkind='S' AND
             (has_sequence_privilege(c.oid,'SELECT') OR has_sequence_privilege(c.oid,'UPDATE') OR has_sequence_privilege(c.oid,'USAGE'))))
         OR EXISTS(SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='public'
-          AND (pg_has_role(p.proowner,'MEMBER')
-            OR has_function_privilege(p.oid,'EXECUTE') AND NOT ($2 AND p.oid='commit_agent_review(text,jsonb,jsonb,bytea)'::regprocedure)
-            OR p.prosecdef AND NOT (p.oid='commit_agent_review(text,jsonb,jsonb,bytea)'::regprocedure
+          AND (pg_has_role(p.proowner,'MEMBER') OR (has_function_privilege(p.oid,'EXECUTE') OR p.prosecdef) AND NOT (
+            (p.oid='is_work_intake_session()'::regprocedure
+              AND p.prosecdef AND p.provolatile='s' AND p.prokind='f' AND p.prorettype='boolean'::regtype
+              AND p.pronargs=0 AND NOT p.proleakproof AND p.proparallel='u'
+              AND p.prolang=(SELECT oid FROM pg_language WHERE lanname='sql')
+              AND p.proconfig=ARRAY['search_path=pg_catalog, public']::text[]
+              AND NOT has_function_privilege('public',p.oid,'EXECUTE')
+              AND NOT EXISTS(SELECT 1 FROM aclexplode(COALESCE(p.proacl,acldefault('f',p.proowner))) a
+                WHERE a.privilege_type='EXECUTE' AND a.grantee<>p.proowner AND (a.is_grantable OR a.grantee=0
+                  OR pg_get_userbyid(a.grantee) NOT IN ('control_room_application','control_room_reader','control_room_backup',
+                    'control_room_work_intake','control_room_private_web','control_room_task_coordinator',
+                    'control_room_native_results','control_room_native_evidence','control_room_local_result_publisher',
+                    'control_room_idea_creation','control_room_news_coordinator'))))
+            OR (p.oid='commit_agent_review(text,jsonb,jsonb,bytea)'::regprocedure
               AND NOT has_function_privilege('public','commit_agent_review(text,jsonb,jsonb,bytea)','EXECUTE')
               AND (($2 AND pg_get_userbyid(p.proowner)='control_room_schema_owner'
                 AND p.proconfig=ARRAY['search_path=pg_catalog']::text[]
                 AND NOT p.proleakproof AND p.proparallel='u' AND p.provolatile='v')
-                OR (NOT $2 AND NOT has_function_privilege(p.oid,'EXECUTE'))))))
+                OR (NOT $2 AND NOT has_function_privilege(p.oid,'EXECUTE')))))))
         OR ($2 AND NOT (has_function_privilege('commit_agent_review(text,jsonb,jsonb,bytea)','EXECUTE')
           AND NOT has_function_privilege('public','commit_agent_review(text,jsonb,jsonb,bytea)','EXECUTE')
           AND NOT EXISTS (SELECT 1 FROM pg_proc function_acl
