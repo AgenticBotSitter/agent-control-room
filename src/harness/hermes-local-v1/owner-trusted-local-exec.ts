@@ -13,7 +13,11 @@ import { startTaskRunResourceSupervisorV1, taskRunResourceStopV1,
 
 const MAX_PROMPT_BYTES = 64 * 1024;
 const KILL_AFTER_MS = 5_000;
-const KILL_CONFIRM_MS = 50;
+// A SIGKILLed tree is torn down by the kernel, and on a loaded machine that
+// takes far longer than one short wait, so the confirm after a kill is a
+// polled budget rather than a single check. See awaitGroupAbsent below.
+const KILL_CONFIRM_BUDGET_MS = 2_000;
+const KILL_CONFIRM_STEP_MS = 25;
 const SYSTEM_PATH = "/usr/bin:/bin";
 const identifier = z.string().min(1).max(180).regex(/^[A-Za-z0-9._:/-]+$/u);
 const terminal = z.object({
@@ -79,6 +83,28 @@ function groupSignal(child: ChildProcess, signal: NodeJS.Signals): boolean {
   if (!child.pid || child.pid < 1) return false;
   try { process.kill(-child.pid, signal); return true; } catch { return false; }
 }
+/** Waits for the run's whole process group to be absent, then reports which way
+ * it went.
+ *
+ * A SIGKILLed process tree is torn down by the kernel, and on a loaded machine
+ * that takes far longer than one short wait. Checking once after a fixed 50 ms
+ * reported `cleanup_uncertain` for a group the kernel had not finished reaping,
+ * and discarded the measured stop record with it; Linux CI caught exactly that.
+ * Only a group still present after the whole budget really is still running,
+ * which is what `cleanup_uncertain` is meant to mean. The group is signalled
+ * exactly as before and must still be absent before the run is reported, so
+ * this waits for the teardown rather than weakening the guarantee. */
+function awaitGroupAbsent(child: ChildProcess, schedule: (fn: () => void, ms: number) => void,
+  onAbsent: () => void, onStillRunning: () => void): void {
+  const deadline = Date.now() + KILL_CONFIRM_BUDGET_MS;
+  const check = () => {
+    if (!groupExists(child)) { onAbsent(); return; }
+    if (Date.now() >= deadline) { onStillRunning(); return; }
+    schedule(check, KILL_CONFIRM_STEP_MS);
+  };
+  check();
+}
+
 function groupExists(child: ChildProcess): boolean {
   if (!child.pid || child.pid < 1) return false;
   try { process.kill(-child.pid, 0); return true; } catch { return false; }
@@ -134,7 +160,8 @@ export function createOwnerTrustedLocalHermesExecV1(dependencies: Readonly<{ spa
         if (!groupSignal(child, "SIGTERM")) return final(failed("cleanup_uncertain", "process_group_unavailable"));
         killer = setTimeout(() => {
           if (!groupSignal(child, "SIGKILL")) return final(failed("cleanup_uncertain", "process_group_unavailable"));
-          killer = setTimeout(() => groupExists(child) ? final(failed("cleanup_uncertain", "process_group_still_running")) : final(stopped()), KILL_CONFIRM_MS);
+          awaitGroupAbsent(child, (fn, ms) => { killer = setTimeout(fn, ms); },
+            () => final(stopped()), () => final(failed("cleanup_uncertain", "process_group_still_running")));
         }, KILL_AFTER_MS);
       };
       const accept = (raw: string) => {
@@ -184,7 +211,8 @@ export function createOwnerTrustedLocalHermesExecV1(dependencies: Readonly<{ spa
         const trailing = remainder + decoder.end(); if (trailing) accept(trailing);
         if (stop) { if (!groupExists(child)) final(stopped()); return; }
         if (groupExists(child)) { stop = "failed"; if (!groupSignal(child, "SIGKILL")) return final(failed("cleanup_uncertain", "process_group_unavailable"));
-          killer = setTimeout(() => groupExists(child) ? final(failed("cleanup_uncertain", "process_group_still_running")) : final(stopped()), KILL_CONFIRM_MS); return; }
+          awaitGroupAbsent(child, (fn, ms) => { killer = setTimeout(fn, ms); },
+            () => final(stopped()), () => final(failed("cleanup_uncertain", "process_group_still_running"))); return; }
         if (code !== 0 || !result) return final(failed("failed", "process_or_output_refused"));
         final(Object.freeze({ status: "completed" as const, text: result.text, usage: Object.freeze({ inputTokens: result.tokens.input,
           outputTokens: result.tokens.output, totalTokens: result.tokens.total }) }));

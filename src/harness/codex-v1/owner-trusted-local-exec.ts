@@ -12,7 +12,11 @@ import { startTaskRunResourceSupervisorV1, taskRunResourceStopV1,
 
 const MAX_PROMPT_BYTES = 64 * 1024;
 const KILL_AFTER_MS = 5_000;
-const KILL_CONFIRM_MS = 50;
+// A SIGKILLed tree is torn down by the kernel, and on a loaded machine that
+// takes far longer than one short wait, so the confirm after a kill is a
+// polled budget rather than a single check. See awaitGroupAbsent below.
+const KILL_CONFIRM_BUDGET_MS = 2_000;
+const KILL_CONFIRM_STEP_MS = 25;
 const SYSTEM_PATH = "/usr/bin:/bin";
 
 export type OwnerTrustedLocalCodexExecResultV1 = Readonly<
@@ -79,6 +83,28 @@ function safeResources(value: unknown): value is MacLocalTaskRunResourcesV1 {
 function processGroupSignal(child: ChildProcess, signal: NodeJS.Signals): boolean {
   if (!child.pid || child.pid < 1) return false;
   try { process.kill(-child.pid, signal); return true; } catch { return false; }
+}
+
+/** Waits for the run's whole process group to be absent, then reports which way
+ * it went.
+ *
+ * A SIGKILLed process tree is torn down by the kernel, and on a loaded machine
+ * that takes far longer than one short wait. Checking once after a fixed 50 ms
+ * reported `cleanup_uncertain` for a group the kernel had not finished reaping,
+ * and discarded the measured stop record with it; Linux CI caught exactly that.
+ * Only a group still present after the whole budget really is still running,
+ * which is what `cleanup_uncertain` is meant to mean. The group is signalled
+ * exactly as before and must still be absent before the run is reported, so
+ * this waits for the teardown rather than weakening the guarantee. */
+function awaitGroupAbsent(child: ChildProcess, schedule: (fn: () => void, ms: number) => void,
+  onAbsent: () => void, onStillRunning: () => void): void {
+  const deadline = Date.now() + KILL_CONFIRM_BUDGET_MS;
+  const check = () => {
+    if (!processGroupExists(child)) { onAbsent(); return; }
+    if (Date.now() >= deadline) { onStillRunning(); return; }
+    schedule(check, KILL_CONFIRM_STEP_MS);
+  };
+  check();
 }
 
 function processGroupExists(child: ChildProcess): boolean {
@@ -189,9 +215,8 @@ export function createOwnerTrustedLocalCodexExecV1(dependencies: Readonly<{ spaw
           // KILL is an instruction, not proof that detached descendants are
           // gone. Confirm the whole process group before reporting a normal
           // cancellation, timeout, or malformed-output failure.
-          killer = setTimeout(() => processGroupExists(child)
-            ? finish(failed("cleanup_uncertain", "process_group_still_running"))
-            : finish(stoppedResult()), KILL_CONFIRM_MS);
+          awaitGroupAbsent(child, (fn, ms) => { killer = setTimeout(fn, ms); },
+            () => finish(stoppedResult()), () => finish(failed("cleanup_uncertain", "process_group_still_running")));
         }, KILL_AFTER_MS);
       };
       const cancel = () => terminate("canceled");
@@ -253,9 +278,8 @@ export function createOwnerTrustedLocalCodexExecV1(dependencies: Readonly<{ spaw
         if (processGroupExists(child)) {
           stop = "failed";
           if (!processGroupSignal(child, "SIGKILL")) return finish(failed("cleanup_uncertain", "process_group_unavailable"));
-          killer = setTimeout(() => processGroupExists(child)
-            ? finish(failed("cleanup_uncertain", "process_group_still_running"))
-            : finish(stoppedResult()), KILL_CONFIRM_MS);
+          awaitGroupAbsent(child, (fn, ms) => { killer = setTimeout(fn, ms); },
+            () => finish(stoppedResult()), () => finish(failed("cleanup_uncertain", "process_group_still_running")));
           return;
         }
         if (code !== 0 || !terminal || resultText === undefined) return finish(failed("failed", "process_or_output_refused"));
