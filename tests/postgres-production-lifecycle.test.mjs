@@ -360,6 +360,10 @@ test("work-intake login cannot read or forge another subsystem's shared-ledger r
       'project','project:other','{}'::jsonb,'2026-09-27T12:00:00.000Z',1,'month:2026-09',1,$1,$2,$3)`,
     [`sha256:${"3".repeat(64)}`,`sha256:${"0".repeat(64)}`,`sha256:${"4".repeat(64)}`]),
     /work intake audit event insert rejected/u);
+  await assert.rejects(query(intake,`INSERT INTO control_action_inbox
+    (id,tenant_id,project_id,work_item_id,kind,state,delivery_state,created_at,payload)
+    VALUES('attention:not-a-batch','tenant:intake-guard','project:intake-guard','other','approval','open',
+      'delivered','2026-09-27T12:00:00.000Z','{}'::jsonb)`),/work batch notification insert rejected/u);
   await assert.rejects(query(intake,`UPDATE control_audit_chain_heads SET head_hash=$1,event_count=1
     WHERE tenant_id='tenant:intake-guard' AND chain_partition='month:2026-09'`,[`sha256:${"5".repeat(64)}`]),
     /work intake audit head update rejected/u);
@@ -417,6 +421,18 @@ test("work-intake login cannot read or forge another subsystem's shared-ledger r
   const verified=await new AuditStore(intakeDb).verify("tenant:intake-guard","month:2026-09");
   assert.equal(verified.valid,true); assert.equal(verified.checkedEvents,4);
 
+  await query(db,`INSERT INTO control_action_inbox
+    (id,tenant_id,project_id,work_item_id,kind,state,delivery_state,created_at,payload)
+    VALUES('attention:ordinary','tenant:intake-guard','project:intake-guard','ordinary','question','open',
+      'delivered','2026-09-27T12:04:30.000Z','{"state":"open"}'::jsonb)`);
+  await query(db,await readFile(join(ROOT,"db/roles/private_web_roles.sql"),"utf8"));
+  await query(db,`SET SESSION AUTHORIZATION control_room_private_web;
+    UPDATE control_action_inbox SET state='resolved',payload='{"state":"resolved"}'::jsonb
+    WHERE tenant_id='tenant:intake-guard' AND id='attention:ordinary'`);
+  assert.equal((await query(db,`SELECT state FROM control_action_inbox
+    WHERE tenant_id='tenant:intake-guard' AND id='attention:ordinary'`)).rows[0].state,"resolved");
+  await query(db,"DELETE FROM control_action_inbox WHERE tenant_id='tenant:intake-guard' AND id='attention:ordinary'");
+
   const head=(await query(intake,`SELECT head_hash,event_count::int FROM control_audit_chain_heads
     WHERE tenant_id='tenant:intake-guard' AND chain_partition='month:2026-09'`)).rows[0];
   const orphanMaterial={id:"audit:work-intake-refusal:orphan",tenantId:"tenant:intake-guard",workspaceId:null,
@@ -445,6 +461,7 @@ test("work-intake login cannot read or forge another subsystem's shared-ledger r
     /committed without head advance/u);
 
   const ownerDown=await readFile(join(ROOT,"db/down/0094_work_batch_owner_approval.sql"),"utf8");
+  await query(db,await readFile(join(ROOT,"db/down/0094_work_batch_owner_approval.sql"),"utf8"));
   const down=await readFile(join(ROOT,"db/down/0093_work_batch_intake.sql"),"utf8");
   await query(db,"CREATE POLICY test_dependent_policy ON audit_events AS RESTRICTIVE USING (true)");
   await assert.rejects(query(db,down),/shared-ledger RLS policies depend on it/u);

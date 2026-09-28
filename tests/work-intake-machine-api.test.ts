@@ -164,6 +164,10 @@ test("role creation and least-privilege grants travel through reviewed productio
   assert.doesNotMatch(migration, /NEW\.action LIKE 'work_batches\.%'/u);
   assert.match(ownerMigration, /\(NEW\.payload - 'createdAt'\) IS DISTINCT FROM jsonb_build_object/u);
   assert.match(ownerMigration, /\(NEW\.payload->>'createdAt'\)::timestamptz IS DISTINCT FROM NEW\.created_at/u);
+  assert.match(ownerMigration, /ADD COLUMN auth_material_version integer NOT NULL DEFAULT 1/u);
+  assert.match(ownerMigration, /IF is_work_intake_session\(\)/u);
+  assert.doesNotMatch(ownerMigration, /rolname='control_room_work_intake'/u);
+  assert.doesNotMatch(ownerMigration, /OLD\.id NOT LIKE 'attention:work-batch:%'/u);
   assert.doesNotMatch(ownerMigration, /SELECT \* INTO batch FROM work_batches b[\s\S]*FOR UPDATE/u);
   assert.doesNotMatch(ownerMigration, /work_intake_canonical_jsonb/u);
 });
