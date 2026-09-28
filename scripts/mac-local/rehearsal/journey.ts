@@ -30,7 +30,7 @@ if (!arg || ![3, 4].includes(process.argv.length) || mode !== undefined && !["--
   process.stderr.write("usage: node --import tsx scripts/mac-local/rehearsal/journey.ts ABSOLUTE_REHEARSAL_DIR [--browser-proof|--browser-e2e|--browser-owner-e2e|--browser-adversarial-e2e|--model-allowlists]\n");
   process.exit(2);
 }
-const root = resolve(arg), protectedRoot = join(root, "protected");
+let root = resolve(arg), protectedRoot = join(root, "protected");
 const shutdown = new AbortController();
 type RehearsalProcess = { kind: "journey" | "host" | "child"; pid: number; command: readonly string[]; group: boolean };
 let ownershipReady = false;
@@ -715,7 +715,9 @@ async function require5xxOr201(response: Response, label: string) {
   return JSON.parse(text);
 }
 
-await validateRehearsalOwnership({ root });
+const initialOwnership = (await validateRehearsalOwnership({ root })).ownership;
+root = initialOwnership.root;
+protectedRoot = initialOwnership.protectedRoot;
 ownershipReady = true;
 let cleanupPromise: Promise<void> | undefined;
 const cleanup = () => cleanupPromise ??= (async () => {

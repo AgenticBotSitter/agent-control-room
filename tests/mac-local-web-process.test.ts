@@ -142,7 +142,9 @@ test("the real Mac-local wrapper signs in locally and reaches the existing proje
   const unavailablePage = await app.handle(request("/workers", { headers: { cookie: cookie! } }),
     () => { throw new Error("synthetic local service failure"); });
   assert.equal(unavailablePage.status, 503);
-  assert.match(await unavailablePage.text(), /local service or saved database is temporarily unavailable; reconnecting/i);
+  const unavailableHtml = await unavailablePage.text();
+  assert.match(unavailableHtml, /local service or saved database is temporarily unavailable/i);
+  assert.doesNotMatch(unavailableHtml, /reconnecting/i);
   const needsShell = await app.handle(request("/needs-me", { headers: { cookie: cookie! } }), () => new Response("real needs shell"));
   assert.equal(needsShell.status, 200); assert.equal(await needsShell.text(), "real needs shell");
   for (const section of ["reviews", "activity", "files"]) {

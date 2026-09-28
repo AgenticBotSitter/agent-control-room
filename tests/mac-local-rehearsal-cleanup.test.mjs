@@ -6,6 +6,8 @@ import { join } from "node:path";
 import {
   REHEARSAL_POSTGRES_MARKER,
   createRehearsalOwnership,
+  runBoundedChild,
+  updateRehearsalProcesses,
 } from "../scripts/mac-local/rehearsal/lifecycle.mjs";
 import { cleanupRehearsalRoot, cleanupRegisteredRehearsals } from "../scripts/mac-local/rehearsal/cleanup.mjs";
 import { hostCommand, runtimePaths } from "../scripts/mac-local/stack.mjs";
@@ -184,4 +186,63 @@ test("registry cleanup ignores unrecognized files and cleans only a validated re
   assert.equal(results[0].root, fixtureValue.root);
   assert.equal(results[0].cleaned, true);
   assert.equal(await fs.readFile(join(fixtureValue.registryDirectory, "unrelated.txt"), "utf8"), "leave me\n");
+});
+
+test("cleanup is idempotent for an absent root and refuses an existing legacy root without a marker", async t => {
+  const base = await fs.mkdtemp(join(await fs.realpath(tmpdir()), "acr-rehearsal-absent-"));
+  t.after(() => fs.rm(base, { recursive: true, force: true }));
+  const registryDirectory = join(base, "registry"), root = join(base, "missing");
+  const absent = await cleanupRehearsalRoot({ root, registryDirectory }, fakeRuntime(new Map(), []));
+  assert.deepEqual({ cleaned: absent.cleaned, alreadyCleaned: absent.alreadyCleaned },
+    { cleaned: true, alreadyCleaned: true });
+  await fs.mkdir(root, { mode: 0o700 });
+  const legacy = await cleanupRehearsalRoot({ root, registryDirectory }, fakeRuntime(new Map(), []));
+  assert.equal(legacy.cleaned, false);
+  assert.equal(legacy.reason, "rehearsal_ownership_marker_missing");
+  assert.equal((await fs.lstat(root)).isDirectory(), true);
+});
+
+test("registry cleanup removes an exact stale record after its root is already absent", async t => {
+  const fixtureValue = await fixture(t), actions = [];
+  const registryPath = join(fixtureValue.registryDirectory, `${fixtureValue.ownership.runId}.json`);
+  await fs.rm(fixtureValue.root, { recursive: true });
+  const results = await cleanupRegisteredRehearsals({ registryDirectory: fixtureValue.registryDirectory },
+    fakeRuntime(new Map(), actions));
+  assert.equal(results[0].cleaned, true);
+  assert.equal(results[0].alreadyCleaned, true);
+  await assert.rejects(fs.lstat(registryPath), error => error.code === "ENOENT");
+});
+
+test("cleanup matches and stops the real OS command for a pnpm-wrapped child", async t => {
+  const fixtureValue = await fixture(t);
+  await fs.rm(join(fixtureValue.root, "pg"), { recursive: true });
+  await fs.rm(join(fixtureValue.root, "protected"), { recursive: true });
+  let registeredResolve;
+  const registered = new Promise(resolve => { registeredResolve = resolve; });
+  const childResult = runBoundedChild("pnpm", ["exec", "node", "-e", "setInterval(() => {}, 1000)"], {
+    cwd: process.cwd(), timeoutMs: 10_000, terminateGraceMs: 1_000,
+    async onSpawn(record) {
+      await updateRehearsalProcesses({ root: fixtureValue.root, registryDirectory: fixtureValue.registryDirectory,
+        processes: [{ kind: "child", ...record }] });
+      registeredResolve(record);
+    },
+  });
+  const first = await Promise.race([
+    registered.then(record => ({ record })),
+    childResult.then(result => ({ result })),
+  ]);
+  if ("result" in first) {
+    assert.match(first.result.error?.message ?? "", /rehearsal_child_identity_unavailable/u);
+    t.skip("sandbox denied OS process-command inspection");
+    return;
+  }
+  assert.equal(first.record.command.length, 1);
+  assert.match(first.record.command[0], /pnpm.*exec.*node/u);
+  assert.notEqual(first.record.command[0], "pnpm exec node -e setInterval(() => {}, 1000)");
+  const result = await cleanupRehearsalRoot({ root: fixtureValue.root,
+    registryDirectory: fixtureValue.registryDirectory, graceMs: 1_000 });
+  assert.equal(result.cleaned, true);
+  const stopped = await childResult;
+  assert.notEqual(stopped.signal, null);
+  await assert.rejects(fs.lstat(fixtureValue.root), error => error.code === "ENOENT");
 });

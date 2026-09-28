@@ -1,6 +1,7 @@
 // Local rehearsal database: a throwaway PostgreSQL 17 cluster on 127.0.0.1 with the full
 // migration ledger, the five Mac-local roles, and a protected root pointing at it.
-// Never points at the VPS. Usage: pnpm mac:rehearsal up|down ABSOLUTE_DIR [--port 15499]
+// Never points at the VPS. `down` removes the entire marker-owned disposable root.
+// Usage: pnpm mac:rehearsal up|down ABSOLUTE_DIR [--port 15499]
 import { execFile } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { PgBoss, getConstructionPlans } from "pg-boss";
@@ -40,7 +41,7 @@ if (pgBin !== undefined && (!isAbsolute(pgBin) || resolve(pgBin) !== pgBin)) {
   throw new Error("rehearsal_pg_bin_must_be_absolute");
 }
 const pgExecutable = (name: string) => pgBin ? join(pgBin, name) : name;
-const pg = join(dir, "pg");
+let root = dir, pg = join(root, "pg");
 const shutdown = new AbortController();
 type RehearsalProcess = { kind: "setup" | "child"; pid: number; command: readonly string[]; group: boolean };
 let ownedProcesses: RehearsalProcess[] = [], ownershipReady = false;
@@ -49,7 +50,7 @@ let keepCluster = false;
 const exec = promisify(execFile);
 async function saveProcesses(processes: RehearsalProcess[]) {
   processUpdate = processUpdate.then(async () => {
-    await updateRehearsalProcesses({ root: dir, processes }); ownedProcesses = processes;
+    await updateRehearsalProcesses({ root, processes }); ownedProcesses = processes;
   });
   return processUpdate;
 }
@@ -69,16 +70,24 @@ const pgctl = (...args: string[]) => native(pgExecutable("pg_ctl"), ["-D", pg, .
 
 if (action === "down") {
   const result = await cleanupRehearsalRoot({ root: dir });
-  if (!result.cleaned) throw new Error(`rehearsal_cleanup_failed:${result.reason}`);
-  console.log("rehearsal-owned host, processes and database stopped; disposable root removed");
+  if (!result.cleaned) {
+    console.error(result.reason === "rehearsal_ownership_marker_missing"
+      ? "rehearsal cleanup refused: this root has no ownership marker; use the legacy manual stop procedure and do not delete it automatically"
+      : `rehearsal cleanup retained state: ${result.reason}`);
+    process.exit(1);
+  }
+  console.log("alreadyCleaned" in result && result.alreadyCleaned ? "rehearsal root is already cleaned"
+    : "rehearsal-owned host, processes and database stopped; disposable root removed");
   process.exit(0);
 }
 
-const fresh = !existsSync(pg);
 const existingOwnership = existsSync(join(dir, REHEARSAL_MARKER));
 const ownership = existingOwnership
   ? (await validateRehearsalOwnership({ root: dir })).ownership
   : await createRehearsalOwnership({ root: dir, databasePort: port, webPort, repositoryRoot: repoRoot });
+root = ownership.root;
+pg = join(root, "pg");
+const fresh = !existsSync(pg);
 if (ownership.databasePort !== port || ownership.webPort !== webPort)
   throw new Error("rehearsal_ownership_port_mismatch");
 ownershipReady = true;
@@ -86,7 +95,7 @@ let cleanupPromise: Promise<void> | undefined;
 const cleanup = () => cleanupPromise ??= (async () => {
   shutdown.abort(); await processUpdate.catch(() => {});
   if (!ownershipReady) return;
-  const result = await cleanupRehearsalRoot({ root: dir });
+  const result = await cleanupRehearsalRoot({ root });
   if (!result.cleaned) throw new Error(`rehearsal_cleanup_failed:${result.reason}`);
   ownershipReady = false;
 })();
@@ -103,11 +112,11 @@ try {
     })}\n`, { mode: 0o600, flag: "wx" });
     writeFileSync(join(pg, "pg_hba.conf"), "host all postgres 127.0.0.1/32 trust\nhost all all 127.0.0.1/32 scram-sha-256\n");
   }
-  await pgctl("-l", join(dir, "pg.log"), "-w", "-o", `-p ${port} -k '' -c listen_addresses=127.0.0.1`, "start");
+  await pgctl("-l", join(root, "pg.log"), "-w", "-o", `-p ${port} -k '' -c listen_addresses=127.0.0.1`, "start");
   if (!fresh) {
     await saveProcesses([]);
     keepCluster = true;
-    console.log(`rehearsal database running on 127.0.0.1:${port}; protected root ${join(dir, "protected")}`);
+    console.log(`rehearsal database running on 127.0.0.1:${port}; protected root ${join(root, "protected")}`);
     process.exit(0);
   }
 
@@ -158,7 +167,7 @@ try {
 
 let paths: Readonly<Record<"codex" | "claude-code" | "hermes", string>>;
 if (fakeExecutables) {
-  const fakeRoot = join(dir, "setup-fake-workers");
+  const fakeRoot = join(root, "setup-fake-workers");
   mkdirSync(fakeRoot, { recursive: true, mode: 0o700 });
   paths = Object.freeze({ codex: join(fakeRoot, "codex"), "claude-code": join(fakeRoot, "claude"), hermes: join(fakeRoot, "hermes") });
   for (const [kind, path] of Object.entries(paths)) {
@@ -183,8 +192,8 @@ for (const kind of ["codex", "claude-code", "hermes"] as const)
   workers.push({ workerId: `worker:${kind === "claude-code" ? "claude" : kind}:mac-1`, kind, executablePath: paths[kind],
     recordedVersion: await readPinnedMacExecutableVersion(paths[kind]) });
 
-const root = join(dir, "protected"), config = join(root, "config");
-mkdirSync(config, { recursive: true, mode: 0o700 }); chmodSync(root, 0o700); chmodSync(config, 0o700);
+const protectedRoot = join(root, "protected"), config = join(protectedRoot, "config");
+mkdirSync(config, { recursive: true, mode: 0o700 }); chmodSync(protectedRoot, 0o700); chmodSync(config, 0o700);
 const database = { host: "127.0.0.1", port, database: "control_room", username: "control_room_web", password: local.control_room_web, majorVersion: 17 };
 const role = (username: string) => ({ ...database, username, password: local[username] });
 const roles = { schema: MAC_LOCAL_DATABASE_ROLES_V1, web: role("control_room_web"), coordinator: role("control_room_coordinator"),
@@ -198,7 +207,7 @@ const macLocal = { schema: MAC_LOCAL_PROTECTED_CONFIGURATION_V1, port: webPort, 
 captureMacLocalProtectedConfigurationV1(JSON.parse(JSON.stringify(macLocal)));
 for (const [file, body] of [["mac-local.json", JSON.stringify(macLocal)], ["database-roles.json", JSON.stringify(roles)], ["owner-sign-in.txt", ownerCode]])
   writeFileSync(join(config, file), `${body}\n`, { mode: 0o600 });
-console.log(`rehearsal database ready on 127.0.0.1:${port}; protected root ${root}`);
+console.log(`rehearsal database ready on 127.0.0.1:${port}; protected root ${protectedRoot}`);
 console.log(`next: pnpm mac:bootstrap-owner ${root} && pnpm mac:check-database ${root}`);
   await saveProcesses([]);
   keepCluster = true;
