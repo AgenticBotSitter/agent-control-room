@@ -83,9 +83,11 @@ GRANT UPDATE (web_lock) ON control_identities, control_role_grants TO control_ro
 GRANT UPDATE (coordinator_lock) ON projects TO control_room_work_intake;
 GRANT EXECUTE ON FUNCTION work_intake_canonical_jsonb(jsonb) TO control_room_work_intake;
 GRANT INSERT ON control_action_inbox TO control_room_work_intake;
--- Shared-ledger policies run for every database role. This SECURITY DEFINER
--- predicate exposes only a boolean and reads the protected marker ACL.
-GRANT EXECUTE ON FUNCTION is_work_intake_session() TO PUBLIC, control_room_work_intake;
+-- Shared-ledger policies call this predicate for the roles that can reach the
+-- protected ledgers. Keep it off PUBLIC so unprovisioned roles cannot invoke a
+-- SECURITY DEFINER function.
+GRANT EXECUTE ON FUNCTION is_work_intake_session() TO control_room_application,
+  control_room_reader, control_room_backup, control_room_work_intake;
 
 ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON TABLES FROM PUBLIC;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON SEQUENCES FROM PUBLIC;

@@ -40,4 +40,5 @@ GRANT UPDATE (coordinator_lock) ON projects, control_manual_project_heads, contr
 GRANT UPDATE (state,last_sequence,run_digest,run_auth_tag,payload,updated_at,last_observed_at)
   ON control_harness_runs TO control_room_native_evidence;
 GRANT UPDATE (head_hash,event_count,updated_at) ON control_audit_chain_heads TO control_room_native_evidence;
+GRANT EXECUTE ON FUNCTION is_work_intake_session() TO control_room_native_evidence;
 COMMIT;
