@@ -100,6 +100,8 @@ test("local client shell exposes only reachable routes and reads only local work
     assert.ok(links.includes("/projects/project%3Aalpha/tasks"));
     for (const supported of ["inbox", "agents", "reviews", "activity", "files", "settings"])
       assert.ok(links.includes(`/projects/project%3Aalpha/${supported}`));
+    assert.equal(links.includes("/projects/project%3Aalpha/automations"), false,
+      "a project route the local runtime does not advertise is not navigable");
     for (const unsupported of ["/setup", "/workboard", "/settings", "/ideas", "/connections"])
       assert.equal(links.includes(unsupported), false, unsupported);
     assert.match(dom.window.document.body.textContent ?? "",

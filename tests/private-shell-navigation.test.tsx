@@ -864,6 +864,22 @@ test("capacity panel states stay independent of the connection inventory", () =>
   assert.equal((html.match(/operator-capacity-title/g) ?? []).length, 2);
 });
 
+test("each connection inventory error code gives its own recovery sentence", () => {
+  const sentences = new Map<string, string>();
+  for (const [code, sentence] of [
+    ["authentication_required", "Your session ended before the connection inventory could be read. Sign in again; no sample data is shown."],
+    ["access_denied", "Your account is not allowed to view the connection inventory. No sample data is shown."],
+    ["not_found", "This installation does not serve the connection inventory. No sample data is shown."],
+    ["unavailable", "The saved inventory could not be verified, or its private setup is not configured. No sample or old connection data is shown."],
+  ] as const) {
+    const html = renderToStaticMarkup(createElement(PrivateConnectionView,
+      { data: { state: "unavailable", code }, onRefresh: () => {} }));
+    assert.match(html, new RegExp(sentence.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")), code);
+    sentences.set(code, sentence);
+  }
+  assert.equal(new Set(sentences.values()).size, 4, "each error code must retain a distinct recovery sentence");
+});
+
 test("workers boundary text no longer claims capacity data is unavailable", () => {
   const html = renderToStaticMarkup(createElement(PrivateConnectionView,
     { data: { state: "loading" }, onRefresh: () => {} }));
