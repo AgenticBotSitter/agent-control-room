@@ -11,7 +11,7 @@ import { connect } from "node:net";
 import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { alive, hostCommand, protectedRootFromArguments, readPid, repoRoot, runtimePaths,
-  stopRecordedHost, taskHostCommand } from "./stack.mjs";
+  stopRecorded, stopRecordedHost, taskHostCommand } from "./stack.mjs";
 import { installOrRefreshService, plistPath, serviceInstalled, servicePid, serviceUpToDate } from "./service.mjs";
 import { captureMacLocalBuildSourceV1, macLocalBuildSourceV1 } from "./build-source.mjs";
 import { readHostState } from "./task-host-supervisor.mjs";
@@ -92,13 +92,15 @@ async function startDetached([command, ...args], logPath, pidPath) {
 }
 
 /** Starts a detached child and waits until `ready()`. On any failure the child is stopped and its
- * pid file removed, so a failed start never leaves an orphan behind. */
-async function startAndWait(command, logPath, pidPath, ready, seconds, what) {
+ * pid file removed, so a failed start never leaves an orphan behind. The failure is thrown rather
+ * than reported here, so the one reporter (`main`'s catch, which calls `fail`) owns the message and
+ * the exit code, and so this path can be exercised without ending the test runner. */
+export async function startAndWait(command, logPath, pidPath, ready, seconds, what) {
   const pid = await startDetached(command, logPath, pidPath);
   const ok = await waitFor(async () => !alive(pid, command) || await ready(), seconds) && alive(pid, command);
   if (!ok) {
     await stopRecorded(pidPath, command, 10);
-    fail(`${what} did not start within ${seconds}s (see ${logPath.split("/").slice(-2).join("/")})`);
+    throw new Error(`${what} did not start within ${seconds}s (see ${logPath.split("/").slice(-2).join("/")})`);
   }
   return pid;
 }
