@@ -67,9 +67,18 @@ for (const viewport of viewports) {
   await page.setViewportSize({ width: viewport.width, height: viewport.height });
   for (const route of routes) {
     await page.goto(`${origin}${route.path}`, { waitUntil: "networkidle" });
-    // These pages run bounded client reads; give them a moment to settle so the
-    // capture shows the loaded state rather than the loading state.
-    await page.waitForTimeout(1_500);
+    // These pages run bounded client-side reads, so `networkidle` fires while
+    // they are still showing their loading state. A fixed wait is a guess, and a
+    // guess produced screenshots of "Loading projects..." that proved nothing
+    // about the change under review. So: wait for the shared loading state to
+    // clear. Matching on the word "Loading" does not work — it appears in
+    // permanent copy such as "Loading a project from Idea Lab" — so this keys on
+    // the class the shared LoadingState renders, with a bounded fallback so a
+    // page that never loads is still captured. A screenshot of a stuck page is
+    // evidence, not a reason to hang.
+    await page.waitForFunction(() => !document.querySelector(".private-state-loading"), null,
+      { timeout: 20_000 }).catch(() => { process.stdout.write(`${route.slug} ${viewport.name}: still loading after 20s\n`); });
+    await page.waitForTimeout(500);
     const file = join(outputDir, `${route.slug}-${viewport.name}-${colorScheme}.png`);
     await page.screenshot({ path: file, fullPage: true });
     const painted = await page.evaluate(() => ({
