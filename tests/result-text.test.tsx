@@ -85,6 +85,62 @@ test("result open mounts command readers only for the newest current matching ta
   assert.match(html, /Revision 0/); assert.match(html, /Revision 1/);
 });
 
+test("result open does not mount command readers for a superseded target whose successor is omitted", () => {
+  const contentHash = `sha256:${"1".repeat(64)}`, targetDigest = `sha256:${"2".repeat(64)}`;
+  const artifact = { artifactId: "artifact:superseded", attemptId: "attempt:test", runId: "run:test", contentHash,
+    sizeBytes: 12, receivedAt: "2026-09-08T12:00:00.000Z", byteCheck: "matched_recorded_claim" as const,
+    qualityAccepted: false as const };
+  const review = { targetId: "target:superseded", kind: "document" as const, targetDigest, contentHash, revision: 0,
+    supersedesTargetId: null, status: "superseded" as const, matchingArtifactIds: [artifact.artifactId],
+    additionalEvidenceOmitted: false, reviews: [], verifications: [], findings: [], missingVerificationScenarioIds: [],
+    openFindingCount: 0, grantsApproval: false as const, grantsExecutionAuthority: false as const };
+  const page: TaskResultsPage = { projectId: "project:test", jobId: "job:test", observedAt: artifact.receivedAt,
+    resultSource: "configured", reviewSource: "configured", items: [artifact], reviews: [review],
+    additionalResultsOmitted: false, additionalTargetsOmitted: true, canReadContent: true,
+    reviewCommands: "configured", verificationCommands: "configured" };
+  const content: TaskResultContent = { projectId: page.projectId, jobId: page.jobId, artifact,
+    text: "Historical result", contentVerifiedAt: artifact.receivedAt, untrustedContent: true };
+  const reviewTargets: string[] = [], verificationTargets: string[] = [];
+  const reviewWorkspace = createTaskReviewWorkspace(), verificationWorkspace = createTaskVerificationWorkspace();
+  const html = renderToStaticMarkup(<TaskResultsPanel page={page} content={content} pending={false}
+    onOpen={() => {}} onClose={() => {}}
+    reviewWorkspace={{ ...reviewWorkspace, get(binding) { reviewTargets.push(binding.targetId); return reviewWorkspace.get(binding); } }}
+    verificationWorkspace={{ ...verificationWorkspace,
+      get(binding) { verificationTargets.push(binding.targetId); return verificationWorkspace.get(binding); } }} />);
+  assert.deepEqual(reviewTargets, []); assert.deepEqual(verificationTargets, []);
+  assert.doesNotMatch(html, /Loading owner review|Loading human verification/);
+  assert.match(html, /Replaced by a newer revision/);
+});
+
+test("result open follows lineage even when the successor has different content", () => {
+  const oldHash = `sha256:${"3".repeat(64)}`, newHash = `sha256:${"4".repeat(64)}`;
+  const targetDigest = `sha256:${"5".repeat(64)}`;
+  const artifact = { artifactId: "artifact:old-bytes", attemptId: "attempt:test", runId: "run:test", contentHash: oldHash,
+    sizeBytes: 12, receivedAt: "2026-09-08T12:00:00.000Z", byteCheck: "matched_recorded_claim" as const,
+    qualityAccepted: false as const };
+  const evidence = (targetId: string, contentHash: string, revision: number, supersedesTargetId: string | null,
+    matchingArtifactIds: string[]) => ({ targetId, kind: "document" as const, targetDigest, contentHash, revision,
+    supersedesTargetId, status: "pending" as const, matchingArtifactIds, additionalEvidenceOmitted: false,
+    reviews: [], verifications: [], findings: [], missingVerificationScenarioIds: [], openFindingCount: 0,
+    grantsApproval: false as const, grantsExecutionAuthority: false as const });
+  const page: TaskResultsPage = { projectId: "project:test", jobId: "job:test", observedAt: artifact.receivedAt,
+    resultSource: "configured", reviewSource: "configured", items: [artifact], reviews: [
+      evidence("target:old-bytes", oldHash, 0, null, [artifact.artifactId]),
+      evidence("target:new-bytes", newHash, 1, "target:old-bytes", []),
+    ], additionalResultsOmitted: false, additionalTargetsOmitted: false, canReadContent: true,
+    reviewCommands: "configured", verificationCommands: "configured" };
+  const content: TaskResultContent = { projectId: page.projectId, jobId: page.jobId, artifact,
+    text: "Old result", contentVerifiedAt: artifact.receivedAt, untrustedContent: true };
+  const reviewTargets: string[] = [], verificationTargets: string[] = [];
+  const reviewWorkspace = createTaskReviewWorkspace(), verificationWorkspace = createTaskVerificationWorkspace();
+  renderToStaticMarkup(<TaskResultsPanel page={page} content={content} pending={false}
+    onOpen={() => {}} onClose={() => {}}
+    reviewWorkspace={{ ...reviewWorkspace, get(binding) { reviewTargets.push(binding.targetId); return reviewWorkspace.get(binding); } }}
+    verificationWorkspace={{ ...verificationWorkspace,
+      get(binding) { verificationTargets.push(binding.targetId); return verificationWorkspace.get(binding); } }} />);
+  assert.deepEqual(reviewTargets, []); assert.deepEqual(verificationTargets, []);
+});
+
 test("result open selects the highest revision when stale-first matching leaves are unlinked", () => {
   const contentHash = `sha256:${"d".repeat(64)}`, targetDigest = `sha256:${"e".repeat(64)}`;
   const artifact = { artifactId: "artifact:unlinked", attemptId: "attempt:test", runId: "run:test", contentHash,

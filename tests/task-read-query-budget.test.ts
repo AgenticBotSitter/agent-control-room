@@ -358,6 +358,7 @@ test("task detail reports additional runs only when an attempt has more than ten
   const f = await ownerReviewFixture(); t.after(f.close);
   const row = (index: number): StoredHarnessRunRowV1 => {
     const timestamp = at(3000 + index), run = { ...registration, id: `run:omission:${index}`,
+      nativeSessionKeyDigest: sha256Digest(`session:omission:${index}`),
       createdAt: timestamp, updatedAt: timestamp, lastObservedAt: timestamp };
     const runDigest = sha256Digest(run);
     return { id: run.id, tenant_id: run.tenantId, project_id: run.projectId, job_id: run.jobId,
@@ -371,20 +372,27 @@ test("task detail reports additional runs only when an attempt has more than ten
         createdAt: timestamp, updatedAt: timestamp, lastObservedAt: timestamp }), state: run.state,
       created_at: timestamp, updated_at: timestamp, last_observed_at: timestamp, event_rows: [] };
   };
-  const withRuns = (count: number): DatabaseClient => {
-    const wrap = (tx: DatabaseSession): DatabaseSession => ({ query: async <T>(sql: string, params?: unknown[]) => {
-      if (sql.includes("FROM unnest($4::text[]) WITH ORDINALITY"))
-        return { rows: Array.from({ length: count }, (_, index) => row(index + 1)) as T[] };
-      return tx.query<T>(sql, params);
-    } });
-    return { query: f.db.query.bind(f.db), transaction: work => f.db.transaction(tx => work(wrap(tx))),
-      transactionWithPreCommitCheck: (work, check) => f.db.transactionWithPreCommitCheck(tx => work(wrap(tx)), check) };
+  const insert = async (value: StoredHarnessRunRowV1) => {
+    await f.db.query(`INSERT INTO control_harness_runs
+      (id,tenant_id,project_id,job_id,attempt_id,node_id,adapter_id,harness,native_session_key_digest,parent_run_id,
+       revision_of_run_id,state,run_digest,run_auth_tag,payload,created_at,updated_at,last_observed_at)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15::jsonb,$16,$17,$18)`,
+    [value.id, value.tenant_id, value.project_id, value.job_id, value.attempt_id, value.node_id, value.adapter_id,
+      value.harness, value.native_session_key_digest, value.parent_run_id, value.revision_of_run_id, value.state,
+      value.run_digest, value.run_auth_tag, JSON.stringify(value.payload), value.created_at, value.updated_at,
+      value.last_observed_at]);
   };
-  const detail = (count: number) => new WebTaskService(withRuns(count), f.scope, () => instant + 6000, f.ownerKeys)
+  const detail = () => new WebTaskService(f.db, f.scope, () => instant + 6000, f.ownerKeys)
     .detail(f.identity, binding.projectId, binding.jobId);
-  const ten = await detail(10), eleven = await detail(11);
+  // The fixture owns one real run. Insert through the backing database so the
+  // production LATERAL query and its LIMIT determine the returned rows.
+  for (let index = 1; index <= 9; index += 1) await insert(row(index));
+  const ten = await detail();
+  await insert(row(10));
+  const eleven = await detail();
   assert.equal(ten.attempts[0]!.runs.length, 10); assert.equal(ten.attempts[0]!.additionalRunsOmitted, false);
   assert.equal(eleven.attempts[0]!.runs.length, 10); assert.equal(eleven.attempts[0]!.additionalRunsOmitted, true);
+  assert.equal(eleven.attempts[0]!.runs[0]!.runId, "run:omission:10");
 });
 
 test("full result page stays fixed-query while processing ten populated artifacts", async t => {

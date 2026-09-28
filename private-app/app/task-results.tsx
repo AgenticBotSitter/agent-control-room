@@ -23,7 +23,7 @@ export function TaskResultsPanel({ page, content: suppliedContent, pending, sele
   // Historical targets remain visible as evidence, but only the newest current
   // target for the open bytes may expose commands. This keeps result-open work
   // fixed instead of mounting option readers once per retained revision.
-  const matchingTargets = content ? page.reviews.filter(review => review.kind === "document"
+  const matchingTargets = content ? page.reviews.filter(review => review.kind === "document" && review.status !== "superseded"
     && review.matchingArtifactIds.includes(content.artifact.artifactId)
     && review.contentHash === content.artifact.contentHash) : [];
   const commandTargetId = matchingTargets.filter(candidate =>

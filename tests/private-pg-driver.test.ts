@@ -108,6 +108,53 @@ test("a queued caller receives a fresh operation budget without terminating the 
   await db.close(); assert.equal(terminations, 1);
 });
 
+test("admission wait is bounded by checkoutMs without terminating the pool", async () => {
+  let releaseHolder!: () => void, holderEntered!: () => void;
+  const entered = new Promise<void>(resolve => { holderEntered = resolve; });
+  const held = new Promise<void>(resolve => { releaseHolder = resolve; });
+  let terminations = 0;
+  const db = boundPrivateDatabase({ async acquire() { return {
+    async query(statement) {
+      if (statement === "SELECT holder") { holderEntered(); await held; }
+      return { rows: [] };
+    }, release() {},
+  }; }, async terminate() { terminations++; } },
+  { connections: 1, checkoutMs: 100, statementMs: 1_000, transactionMs: 1_000, closeMs: 1_000 });
+
+  const holder = db.client.query("SELECT holder"); await entered;
+  const started = performance.now();
+  const queued = db.client.query("SELECT queued");
+  let waitTimer: ReturnType<typeof setTimeout> | undefined;
+  const outcome = await Promise.race([queued.then(() => "resolved", error => error?.message as string),
+    new Promise<"still_waiting">(resolve => { waitTimer = setTimeout(() => resolve("still_waiting"), 600); })]);
+  clearTimeout(waitTimer);
+  const elapsedMs = performance.now() - started;
+  releaseHolder(); await holder;
+  if (outcome === "still_waiting") await queued;
+  const available = db.isAvailable(), terminationsBeforeClose = terminations;
+  await db.close();
+  assert.equal(outcome, "database_unavailable");
+  assert.ok(elapsedMs >= 90 && elapsedMs < 600, `admission elapsed ${elapsedMs}ms`);
+  assert.equal(available, true); assert.equal(terminationsBeforeClose, 0); assert.equal(terminations, 1);
+});
+
+test("transaction operation budget quarantines a pool that exceeds transactionMs", async () => {
+  let terminations = 0;
+  const db = boundPrivateDatabase({ async acquire() { return {
+    async query() { await new Promise(resolve => setTimeout(resolve, 20)); return { rows: [] }; },
+    release() {},
+  }; }, async terminate() { terminations++; } },
+  { connections: 1, checkoutMs: 100, statementMs: 100, transactionMs: 200, closeMs: 100 });
+
+  const started = performance.now();
+  await assert.rejects(db.client.transaction(async session => {
+    for (let index = 0; index < 20; index += 1) await session.query(`SELECT ${index}`);
+  }), { message: "database_outcome_uncertain" });
+  const elapsedMs = performance.now() - started;
+  assert.ok(elapsedMs < 600, `transaction elapsed ${elapsedMs}ms`);
+  assert.equal(db.isAvailable(), false); assert.equal(terminations, 1);
+});
+
 test("an aborted queued operation leaves admission immediately for the next caller", async () => {
   let releaseFirst!: () => void, firstEntered!: () => void, thirdEntered = false;
   const entered = new Promise<void>(resolve => { firstEntered = resolve; });
