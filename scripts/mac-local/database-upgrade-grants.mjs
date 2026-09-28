@@ -18,7 +18,8 @@ const roleFiles = Object.freeze([
 ]);
 const groups = new Set([...Object.values(macRolePlan), "control_room_agent_reviewer"]);
 const identifier = /^[a-z][a-z0-9_]*$/u;
-const privilege = new Set(["SELECT", "INSERT", "UPDATE", "DELETE", "TRUNCATE", "REFERENCES", "TRIGGER", "USAGE"]);
+const privilege = new Set(["SELECT", "INSERT", "UPDATE", "DELETE", "TRUNCATE", "REFERENCES", "TRIGGER", "USAGE", "EXECUTE"]);
+const agentReviewCommitFunction = "public.commit_agent_review(text, jsonb, jsonb, bytea)";
 const name = value => {
   if (!identifier.test(value)) throw new Error("upgrade_grant_source_refused");
   return value;
@@ -50,23 +51,32 @@ export function desiredMacGrantsV1(sources) {
     if (statements.length !== [...uncommented.matchAll(/\bGRANT\b/gu)].length)
       throw new Error("upgrade_grant_source_refused");
     for (const statement of statements) {
-      const match = /^GRANT\s+([\s\S]*?)\s+ON\s+(?:(SCHEMA)\s+)?([\s\S]*?)\s+TO\s+(control_room_[a-z_]+)\s*;$/u.exec(statement.trim());
+      const match = /^GRANT\s+([\s\S]*?)\s+ON\s+(?:(SCHEMA|FUNCTION)\s+)?([\s\S]*?)\s+TO\s+(control_room_[a-z_]+)\s*;$/u.exec(statement.trim());
       if (!match || !groups.has(match[4])) throw new Error("upgrade_grant_source_refused");
-      const [, rights, schema, objects, role] = match;
+      const [, rights, objectKind, objects, role] = match;
       for (const rawObject of splitCommas(objects)) {
-        const object = schema ? name(rawObject) : rawObject.split(".").map(name).join(".");
-        if (!schema && !object.includes(".")) {
+        const functionMatch = objectKind === "FUNCTION"
+          ? /^([a-z][a-z0-9_]*)(?:\.([a-z][a-z0-9_]*))?\(([^()]*)\)$/u.exec(rawObject)
+          : null;
+        if (objectKind === "FUNCTION" && !functionMatch) throw new Error("upgrade_grant_source_refused");
+        const object = objectKind === "FUNCTION"
+          ? `${functionMatch[2] ? `${name(functionMatch[1])}.${name(functionMatch[2])}` : `public.${name(functionMatch[1])}`}(${splitCommas(functionMatch[3]).map(name).join(", ")})`
+          : objectKind === "SCHEMA" ? name(rawObject) : rawObject.split(".").map(name).join(".");
+        if (!objectKind && !object.includes(".")) {
           if (!identifier.test(object)) throw new Error("upgrade_grant_source_refused");
         }
-        const qualified = schema ? object : object.includes(".") ? object : `public.${object}`;
+        const qualified = objectKind ? object : object.includes(".") ? object : `public.${object}`;
         for (const rawRight of splitCommas(rights)) {
           const parsed = /^([A-Z]+)(?:\s*\(([^)]+)\))?$/u.exec(rawRight);
-          if (!parsed || !privilege.has(parsed[1]) || (schema && (parsed[1] !== "USAGE" || parsed[2])))
+          if (!parsed || !privilege.has(parsed[1])
+            || (objectKind === "SCHEMA" && (parsed[1] !== "USAGE" || parsed[2]))
+            || (objectKind === "FUNCTION" && (parsed[1] !== "EXECUTE" || parsed[2])))
             throw new Error("upgrade_grant_source_refused");
           const columns = parsed[2] ? splitCommas(parsed[2]).map(name) : [""];
-          if (parsed[2] && schema) throw new Error("upgrade_grant_source_refused");
+          if (parsed[2] && objectKind) throw new Error("upgrade_grant_source_refused");
           for (const column of columns) {
-            const item = tuple({ role, kind: schema ? "schema" : "table",
+            const item = tuple({ role, kind: objectKind === "SCHEMA" ? "schema"
+              : objectKind === "FUNCTION" ? "function" : "table",
               object: qualified, column, privilege: parsed[1] });
             if (desired.has(item)) throw new Error("upgrade_grant_source_duplicate");
             desired.add(item);
@@ -110,7 +120,7 @@ SELECT r.rolname, 'database', d.datname, '', a.privilege_type, a.is_grantable
 FROM pg_database d CROSS JOIN LATERAL aclexplode(d.datacl) a
 JOIN pg_roles r ON r.oid=a.grantee WHERE r.rolname = ANY($1::text[])
 UNION ALL
-SELECT r.rolname, 'function', n.nspname || '.' || p.proname || '(' || pg_get_function_identity_arguments(p.oid) || ')', '', a.privilege_type, a.is_grantable
+SELECT r.rolname, 'function', n.nspname || '.' || p.proname || '(' || oidvectortypes(p.proargtypes) || ')', '', a.privilege_type, a.is_grantable
 FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
 CROSS JOIN LATERAL aclexplode(p.proacl) a
 JOIN pg_roles r ON r.oid=a.grantee WHERE r.rolname = ANY($1::text[])`;
@@ -136,7 +146,11 @@ function grantSql(item, verb) {
   if (![...groups, ...Object.keys(macRolePlan)].includes(role) || !privilege.has(right))
     throw new Error("upgrade_grant_catalog_refused");
   if (grantable !== "plain" && grantable !== "grantable") throw new Error("upgrade_grant_catalog_refused");
-  if (kind === "function") throw new Error("upgrade_unexpected_function_grant");
+  if (kind === "function") {
+    if (object !== agentReviewCommitFunction || column || right !== "EXECUTE")
+      throw new Error("upgrade_unexpected_function_grant");
+    return `${verb} EXECUTE ON FUNCTION ${object} ${verb === "GRANT" ? "TO" : "FROM"} ${role}`;
+  }
   if (kind === "database") {
     name(object);
     return `${verb} ${right} ON DATABASE ${object} ${verb === "GRANT" ? "TO" : "FROM"} ${role}`;

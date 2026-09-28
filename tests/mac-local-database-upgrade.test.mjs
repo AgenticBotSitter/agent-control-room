@@ -9,7 +9,8 @@ import { captureProvisionedMacLocalConfigurationV1,
 import { captureMacUpgradeSnapshotV1 } from "../scripts/mac-local/database-upgrade-snapshot.mjs";
 import { checkedPostgresScramVerifierV1, postgresScramVerifierV1 } from
   "../scripts/mac-local/database-upgrade-scram.mjs";
-import { desiredMacGrantsV1, diffMacGrantsV1, readDesiredMacGrantsV1 } from
+import { applyMacGrantDiffV1, desiredMacGrantsV1, diffMacGrantsV1, macGrantCatalogSqlV1,
+  readDesiredMacGrantsV1 } from
   "../scripts/mac-local/database-upgrade-grants.mjs";
 import { MAC_LOCAL_DATABASE_ROLES_V1, captureMacLocalDatabaseRolesV1 } from
   "../src/web/v1/mac-local-database-roles.ts";
@@ -51,6 +52,7 @@ test("grant plan covers the source role files and detects additions and extras e
   assert.ok(desired.size > 300);
   assert.ok([...desired].some(value => value.includes("control_room_local_result_publisher|table|public.control_harness_runs||INSERT|plain")));
   assert.ok([...desired].some(value => value.includes("control_room_task_coordinator|table|public.control_node_fleet_signals||INSERT|plain")));
+  assert.ok(desired.has("control_room_agent_reviewer|function|public.commit_agent_review(text, jsonb, jsonb, bytea)||EXECUTE|plain"));
   for (const item of [
     "control_room_private_web|table|public.control_leases||SELECT|plain",
     "control_room_private_web|table|public.control_task_execution_plans||SELECT|plain",
@@ -82,6 +84,26 @@ test("grant plan covers the source role files and detects additions and extras e
   ].map(async file => [file, await readFile(new URL(`../db/roles/${file}`, import.meta.url), "utf8")])));
   sources["private_web_roles.sql"] += "\nGRANT SELECT ON control_leases TO control_room_private_web;\n";
   assert.throws(() => desiredMacGrantsV1(sources), /upgrade_grant_source_duplicate/u);
+});
+
+test("grant convergence applies only the pinned agent-review function boundary", async () => {
+  const calls = [];
+  const client = { query: async sql => { calls.push(sql); } };
+  const signature = "public.commit_agent_review(text, jsonb, jsonb, bytea)";
+  await applyMacGrantDiffV1(client, {
+    extra: [`control_room_private_web|function|${signature}||EXECUTE|grantable`],
+    missing: [`control_room_agent_reviewer|function|${signature}||EXECUTE|plain`],
+  });
+  assert.deepEqual(calls, [
+    `REVOKE EXECUTE ON FUNCTION ${signature} FROM control_room_private_web`,
+    `GRANT EXECUTE ON FUNCTION ${signature} TO control_room_agent_reviewer`,
+  ]);
+  await assert.rejects(applyMacGrantDiffV1(client, {
+    extra: ["control_room_private_web|function|public.other_function(text)||EXECUTE|plain"], missing: [],
+  }), /upgrade_unexpected_function_grant/u);
+  assert.match(macGrantCatalogSqlV1, /oidvectortypes\(p\.proargtypes\)/u,
+    "catalog signatures use identity types without declared argument names");
+  assert.doesNotMatch(macGrantCatalogSqlV1, /pg_get_function_identity_arguments/u);
 });
 
 test("offline plan rejects a mismatched main commit and malformed snapshot", async t => {
