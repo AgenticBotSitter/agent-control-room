@@ -387,7 +387,7 @@ async function verifyDatabase(db: DatabaseClient, config: PrivatePostgresConfigu
             AND p.prosecdef AND p.provolatile='s' AND p.prokind='f' AND p.prorettype='boolean'::regtype
             AND p.pronargs=0 AND NOT p.proleakproof AND p.proparallel='u'
             AND p.prolang=(SELECT oid FROM pg_language WHERE lanname='sql')
-            AND p.proconfig=ARRAY['search_path=pg_catalog, public']::text[]
+            AND p.proconfig=ARRAY['search_path=pg_catalog, public, pg_temp']::text[]
             AND NOT has_function_privilege('public',p.oid,'EXECUTE')
             AND NOT EXISTS(SELECT 1 FROM aclexplode(COALESCE(p.proacl,acldefault('f',p.proowner))) a
               WHERE a.privilege_type='EXECUTE' AND a.grantee<>p.proowner AND (a.is_grantable OR a.grantee=0

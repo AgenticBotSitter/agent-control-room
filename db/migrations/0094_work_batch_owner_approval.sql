@@ -41,35 +41,35 @@ CREATE TABLE work_batch_items (
 );
 
 CREATE FUNCTION guard_work_batch_item_insert() RETURNS trigger
-LANGUAGE plpgsql AS $$
+LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $$
 BEGIN
-  IF is_work_intake_session()
+  IF public.is_work_intake_session()
     OR NOT EXISTS (
-      SELECT 1 FROM work_batches b
+      SELECT 1 FROM public.work_batches b
       WHERE b.tenant_id=NEW.tenant_id AND b.id=NEW.batch_id AND b.project_id=NEW.project_id
         AND b.state='proposed' AND b.version=NEW.batch_revision
     )
     OR (NEW.job_id IS NOT NULL AND NOT EXISTS (
-      SELECT 1 FROM control_jobs j WHERE j.tenant_id=NEW.tenant_id AND j.id=NEW.job_id
+      SELECT 1 FROM public.control_jobs j WHERE j.tenant_id=NEW.tenant_id AND j.id=NEW.job_id
         AND j.project_id=NEW.project_id AND j.state='proposed'
     )) THEN
     RAISE EXCEPTION 'work batch item insert rejected';
   END IF;
   RETURN NEW;
 END $$;
-REVOKE ALL ON FUNCTION guard_work_batch_item_insert() FROM PUBLIC;
-CREATE TRIGGER work_batch_items_guard BEFORE INSERT ON work_batch_items
-  FOR EACH ROW EXECUTE FUNCTION guard_work_batch_item_insert();
-CREATE TRIGGER work_batch_items_append_only BEFORE UPDATE OR DELETE ON work_batch_items
-  FOR EACH ROW EXECUTE FUNCTION reject_append_only_mutation();
-CREATE TRIGGER work_batch_items_truncate_guard BEFORE TRUNCATE ON work_batch_items
-  FOR EACH STATEMENT EXECUTE FUNCTION reject_append_only_mutation();
+REVOKE ALL ON FUNCTION public.guard_work_batch_item_insert() FROM PUBLIC;
+CREATE TRIGGER work_batch_items_guard BEFORE INSERT ON public.work_batch_items
+  FOR EACH ROW EXECUTE FUNCTION public.guard_work_batch_item_insert();
+CREATE TRIGGER work_batch_items_append_only BEFORE UPDATE OR DELETE ON public.work_batch_items
+  FOR EACH ROW EXECUTE FUNCTION public.reject_append_only_mutation();
+CREATE TRIGGER work_batch_items_truncate_guard BEFORE TRUNCATE ON public.work_batch_items
+  FOR EACH STATEMENT EXECUTE FUNCTION public.reject_append_only_mutation();
 
 CREATE OR REPLACE FUNCTION guard_initial_work_batch_revision_insert() RETURNS trigger
-LANGUAGE plpgsql AS $$
-DECLARE batch work_batches%ROWTYPE;
+LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $$
+DECLARE batch public.work_batches%ROWTYPE;
 BEGIN
-  SELECT * INTO batch FROM work_batches b
+  SELECT * INTO batch FROM public.work_batches b
     WHERE b.tenant_id=NEW.tenant_id AND b.id=NEW.batch_id;
   IF NOT FOUND THEN RAISE EXCEPTION 'work batch revision insert rejected'; END IF;
   IF NEW.revision=1 THEN
@@ -82,13 +82,13 @@ BEGIN
   IF batch.state<>'proposed' OR NEW.revision<>batch.version+1
     OR NEW.reason_code !~ '^[a-z][a-z0-9_]{2,63}$'
     OR NOT EXISTS (
-      SELECT 1 FROM control_identities i JOIN control_role_grants g
+      SELECT 1 FROM public.control_identities i JOIN public.control_role_grants g
         ON g.tenant_id=i.tenant_id AND g.identity_id=i.id
       WHERE i.tenant_id=NEW.tenant_id AND i.id=NEW.edited_by_identity_id
         AND i.actor_type='human' AND i.state='active' AND g.role_key='owner'
-        AND (g.project_ids @> to_jsonb(ARRAY[batch.project_id]::text[]) OR g.project_ids @> '["*"]'::jsonb)
+        AND (g.project_ids @> pg_catalog.to_jsonb(ARRAY[batch.project_id]::text[]) OR g.project_ids @> '["*"]'::jsonb)
         AND (g.allowed_actions @> '["work_batches.decide"]'::jsonb OR g.allowed_actions @> '["*"]'::jsonb)
-        AND g.revoked_at IS NULL AND (g.expires_at IS NULL OR g.expires_at>statement_timestamp())
+        AND g.revoked_at IS NULL AND (g.expires_at IS NULL OR g.expires_at>pg_catalog.statement_timestamp())
     ) THEN
     RAISE EXCEPTION 'work batch revision insert rejected';
   END IF;
@@ -96,10 +96,10 @@ BEGIN
 END $$;
 
 CREATE FUNCTION guard_work_batch_owner_update() RETURNS trigger
-LANGUAGE plpgsql AS $$
+LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $$
 DECLARE item_total integer; approved_total integer; rejected_total integer;
 BEGIN
-  IF is_work_intake_session()
+  IF public.is_work_intake_session()
     OR NEW.id<>OLD.id OR NEW.tenant_id<>OLD.tenant_id OR NEW.project_id<>OLD.project_id
     OR NEW.proposed_by_identity_id<>OLD.proposed_by_identity_id
     OR NEW.proposed_by_actor_type<>OLD.proposed_by_actor_type OR NEW.proposed_at<>OLD.proposed_at
@@ -113,7 +113,7 @@ BEGIN
     IF NEW.version<>OLD.version+1 OR NEW.approval_identity_id IS NOT NULL
       OR NEW.approved_at IS NOT NULL OR NEW.decision_reason_code IS NOT NULL
       OR NEW.decision_digest IS NOT NULL OR NEW.decision_auth_tag IS NOT NULL
-      OR NOT EXISTS (SELECT 1 FROM work_batch_revisions r WHERE r.tenant_id=NEW.tenant_id
+      OR NOT EXISTS (SELECT 1 FROM public.work_batch_revisions r WHERE r.tenant_id=NEW.tenant_id
         AND r.batch_id=NEW.id AND r.revision=NEW.version) THEN
       RAISE EXCEPTION 'work batch revision update rejected';
     END IF;
@@ -123,24 +123,24 @@ BEGIN
     OR NEW.approval_identity_id IS NULL OR NEW.approved_at IS NULL
     OR NEW.decision_digest IS NULL OR NEW.decision_auth_tag IS NULL
     OR NOT EXISTS (
-      SELECT 1 FROM control_identities i JOIN control_role_grants g
+      SELECT 1 FROM public.control_identities i JOIN public.control_role_grants g
         ON g.tenant_id=i.tenant_id AND g.identity_id=i.id
-      JOIN projects p ON p.tenant_id=i.tenant_id AND p.id=NEW.project_id
-      JOIN control_manual_project_heads h ON h.tenant_id=p.tenant_id AND h.project_id=p.id
+      JOIN public.projects p ON p.tenant_id=i.tenant_id AND p.id=NEW.project_id
+      JOIN public.control_manual_project_heads h ON h.tenant_id=p.tenant_id AND h.project_id=p.id
       WHERE i.tenant_id=NEW.tenant_id AND i.id=NEW.approval_identity_id
         AND i.actor_type='human' AND i.state='active' AND h.lifecycle='active'
         AND g.role_key='owner'
-        AND (g.project_ids @> to_jsonb(ARRAY[NEW.project_id]::text[]) OR g.project_ids @> '["*"]'::jsonb)
+        AND (g.project_ids @> pg_catalog.to_jsonb(ARRAY[NEW.project_id]::text[]) OR g.project_ids @> '["*"]'::jsonb)
         AND (g.allowed_actions @> '["work_batches.decide"]'::jsonb OR g.allowed_actions @> '["*"]'::jsonb)
-        AND g.revoked_at IS NULL AND (g.expires_at IS NULL OR g.expires_at>statement_timestamp())
+        AND g.revoked_at IS NULL AND (g.expires_at IS NULL OR g.expires_at>pg_catalog.statement_timestamp())
     ) THEN
     RAISE EXCEPTION 'work batch decision update rejected';
   END IF;
-  SELECT count(*),count(*) FILTER (WHERE decision_state='approved'),
-    count(*) FILTER (WHERE decision_state='rejected')
-    INTO item_total,approved_total,rejected_total FROM work_batch_items
+  SELECT pg_catalog.count(*),pg_catalog.count(*) FILTER (WHERE decision_state='approved'),
+    pg_catalog.count(*) FILTER (WHERE decision_state='rejected')
+    INTO item_total,approved_total,rejected_total FROM public.work_batch_items
     WHERE tenant_id=NEW.tenant_id AND batch_id=NEW.id AND batch_revision=NEW.version;
-  IF item_total<>jsonb_array_length((SELECT proposal->'tasks' FROM work_batch_revisions
+  IF item_total<>pg_catalog.jsonb_array_length((SELECT proposal->'tasks' FROM public.work_batch_revisions
       WHERE tenant_id=NEW.tenant_id AND batch_id=NEW.id AND revision=NEW.version))
     OR (NEW.state='approved' AND approved_total<>item_total)
     OR (NEW.state='rejected' AND rejected_total<>item_total)
@@ -151,24 +151,24 @@ BEGIN
   END IF;
   RETURN NEW;
 END $$;
-REVOKE ALL ON FUNCTION guard_work_batch_owner_update() FROM PUBLIC;
-CREATE TRIGGER work_batches_owner_update BEFORE UPDATE ON work_batches
-  FOR EACH ROW EXECUTE FUNCTION guard_work_batch_owner_update();
+REVOKE ALL ON FUNCTION public.guard_work_batch_owner_update() FROM PUBLIC;
+CREATE TRIGGER work_batches_owner_update BEFORE UPDATE ON public.work_batches
+  FOR EACH ROW EXECUTE FUNCTION public.guard_work_batch_owner_update();
 
 CREATE FUNCTION guard_work_batch_notification_insert() RETURNS trigger
-LANGUAGE plpgsql AS $$
+LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $$
 BEGIN
-  IF is_work_intake_session()
+  IF public.is_work_intake_session()
     AND (NEW.id IS DISTINCT FROM 'attention:work-batch:' || NEW.work_item_id
       OR NEW.kind IS DISTINCT FROM 'approval' OR NEW.state IS DISTINCT FROM 'open'
       OR NEW.delivery_state IS DISTINCT FROM 'delivered' OR NEW.expires_at IS NOT NULL
-      OR NOT EXISTS (SELECT 1 FROM work_batches b WHERE b.tenant_id=NEW.tenant_id AND b.id=NEW.work_item_id
+      OR NOT EXISTS (SELECT 1 FROM public.work_batches b WHERE b.tenant_id=NEW.tenant_id AND b.id=NEW.work_item_id
         AND b.project_id=NEW.project_id AND b.state='proposed')
-      OR (NEW.payload - 'createdAt') IS DISTINCT FROM jsonb_build_object(
+      OR (NEW.payload - 'createdAt') IS DISTINCT FROM pg_catalog.jsonb_build_object(
         'id',NEW.id,'tenantId',NEW.tenant_id,'projectId',NEW.project_id,'workItemId',NEW.work_item_id,
         'kind','approval','state','open','requestedAction','Review proposed work batch',
         'reasonCode','work_batch_proposed','blockedWorkItemIds','[]'::jsonb,
-        'legalResponses',jsonb_build_array(jsonb_build_object('id','open:' || NEW.work_item_id,
+        'legalResponses',pg_catalog.jsonb_build_array(pg_catalog.jsonb_build_object('id','open:' || NEW.work_item_id,
           'kind','open_source','label','Open batch review','requiresConfirmation',false,'available',true)),
         'evidence','[]'::jsonb,'deliveryState','delivered')
       OR (NEW.payload->>'createdAt')::timestamptz IS DISTINCT FROM NEW.created_at) THEN
@@ -176,24 +176,24 @@ BEGIN
   END IF;
   RETURN NEW;
 END $$;
-REVOKE ALL ON FUNCTION guard_work_batch_notification_insert() FROM PUBLIC;
-CREATE TRIGGER control_action_inbox_work_batch_guard BEFORE INSERT ON control_action_inbox
-  FOR EACH ROW EXECUTE FUNCTION guard_work_batch_notification_insert();
+REVOKE ALL ON FUNCTION public.guard_work_batch_notification_insert() FROM PUBLIC;
+CREATE TRIGGER control_action_inbox_work_batch_guard BEFORE INSERT ON public.control_action_inbox
+  FOR EACH ROW EXECUTE FUNCTION public.guard_work_batch_notification_insert();
 
 CREATE FUNCTION guard_work_batch_notification_update() RETURNS trigger
-LANGUAGE plpgsql AS $$
+LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $$
 BEGIN
   IF OLD.id LIKE 'attention:work-batch:%' AND (
     NEW.id<>OLD.id OR NEW.tenant_id<>OLD.tenant_id OR NEW.project_id IS DISTINCT FROM OLD.project_id
     OR NEW.work_item_id IS DISTINCT FROM OLD.work_item_id OR NEW.kind<>OLD.kind
     OR OLD.state<>'open' OR NEW.state<>'resolved' OR NEW.delivery_state<>OLD.delivery_state
     OR NEW.created_at<>OLD.created_at OR NEW.expires_at IS DISTINCT FROM OLD.expires_at
-    OR NEW.payload<>jsonb_set(OLD.payload,'{state}','"resolved"'::jsonb)
-    OR NOT EXISTS (SELECT 1 FROM work_batches b WHERE b.tenant_id=NEW.tenant_id AND b.id=NEW.work_item_id
+    OR NEW.payload<>pg_catalog.jsonb_set(OLD.payload,'{state}','"resolved"'::jsonb)
+    OR NOT EXISTS (SELECT 1 FROM public.work_batches b WHERE b.tenant_id=NEW.tenant_id AND b.id=NEW.work_item_id
       AND b.project_id=NEW.project_id AND b.state IN ('approved','partially_approved','rejected'))
   ) THEN RAISE EXCEPTION 'work batch notification update rejected'; END IF;
   RETURN NEW;
 END $$;
-REVOKE ALL ON FUNCTION guard_work_batch_notification_update() FROM PUBLIC;
-CREATE TRIGGER control_action_inbox_work_batch_update_guard BEFORE UPDATE ON control_action_inbox
-  FOR EACH ROW EXECUTE FUNCTION guard_work_batch_notification_update();
+REVOKE ALL ON FUNCTION public.guard_work_batch_notification_update() FROM PUBLIC;
+CREATE TRIGGER control_action_inbox_work_batch_update_guard BEFORE UPDATE ON public.control_action_inbox
+  FOR EACH ROW EXECUTE FUNCTION public.guard_work_batch_notification_update();
