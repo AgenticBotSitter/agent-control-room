@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { hmacSha256Tag, sha256Digest, type AuthenticatedPrincipal } from "../src/security";
 import { WorkBatchOwnerServiceV1, WorkBatchStoreV1, workBatchProposalDigestV1,
@@ -9,6 +10,7 @@ import { createWorkBatchOwnerHttpHandlerV1 } from "../src/web/v1/work-batch-owne
 import type { WorkBatchQueueAdmissionAuthorityV1, WorkBatchQueueCatalogV1 } from "../src/work-intake/v1";
 import { WebTaskService } from "../src/web/v1/task-service";
 import { captureTaskModelCatalogV1 } from "../src/web/v1/task-model-selection";
+import { workBatchQueueItemSchemaV1 } from "../src/work-intake/v1/owner-schemas";
 
 const key = new Uint8Array(32).fill(7);
 const agent = (): AuthenticatedPrincipal => ({ tenantId: "tenant:web", identityId: "identity:batch-agent",
@@ -108,6 +110,37 @@ test("approval records an exact per-agent queue in dependency order without star
   ]);
   assert.equal((await f.db.query<{ count: number }>("SELECT count(*)::int AS count FROM control_attempts")).rows[0]!.count, 0);
   assert.equal((await f.db.query<{ count: number }>("SELECT count(*)::int AS count FROM control_native_task_queue")).rows[0]!.count, 0);
+});
+
+test("queue projection accepts provider-style and plus-suffixed protected model identifiers", () => {
+  const base = { localId: "build", jobId: "job:build", workerId: "worker:one", workerKind: "hermes",
+    nodeId: "node:one", position: 1, queueDepthLimit: 4, effort: "default",
+    state: "awaiting_preparation" as const };
+  assert.equal(workBatchQueueItemSchemaV1.parse({ ...base,
+    selectionKey: "provider/profile+", model: "provider/model+",
+    provider: "provider/api+", profile: "provider/profile+" }).model, "provider/model+");
+});
+
+test("the restricted private-web role can render queued batch state", async t => {
+  const f = await ownerFixture(codexCatalog()); t.after(() => void f.db.close());
+  const value = proposal(f.project.projectId);
+  value.tasks[0] = { ...value.tasks[0]!, requestedWorkerId: "worker:codex-one",
+    requestedWorkerKind: "codex", requestedModelKey: "gpt-build" };
+  const batch = await f.submit(value);
+  await f.owner.command(f.identity, f.project.projectId,
+    { operation: "decide", batchId: batch.batchId, expectedRevision: 1,
+      items: [{ localId: "build", decision: "approve" },
+        { localId: "check", decision: "reject", reasonCode: "not_selected" }] },
+    "owner-batch-restricted-role-0001");
+  const jobId = (await f.owner.view(f.identity, f.project.projectId, batch.batchId))
+    .items.find(item => item.localId === "build")!.jobId!;
+  await seedQueueExecution(f, jobId, { state: "leased", queued: true });
+  await f.db.exec(await readFile("db/roles/private_web_roles.sql", "utf8"));
+  await f.db.exec(`CREATE ROLE work_batch_web_test LOGIN INHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE
+    NOREPLICATION NOBYPASSRLS; GRANT control_room_private_web TO work_batch_web_test;
+    SET SESSION AUTHORIZATION work_batch_web_test; SET search_path=pg_catalog,public;`);
+  const view = await f.owner.view(f.identity, f.project.projectId, batch.batchId);
+  assert.equal(view.queue[0]!.state, "queued");
 });
 
 test("queue admission refuses unknown workers, wrong models and depth overflow atomically", async t => {

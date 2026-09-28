@@ -39,7 +39,7 @@ GRANT SELECT ON pipeline_templates, pipeline_runs, pipeline_stage_runs,
   pipeline_ordered_stage_runs, control_pipeline_build_publications, control_codex_result_publications
   TO control_room_private_web;
 GRANT SELECT ON work_batch_queue_admissions, work_batch_effective_queue_admissions,
-  work_batch_agent_queue_heads TO control_room_private_web;
+  work_batch_agent_queue_heads, control_native_task_queue, control_job_dependencies TO control_room_private_web;
 GRANT SELECT ON control_task_model_selections, control_task_declared_scopes,
   control_assignment_lease_scopes TO control_room_private_web;
 GRANT SELECT ON control_durable_result_write_reservations TO control_room_private_web;

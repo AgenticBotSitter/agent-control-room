@@ -35,6 +35,7 @@ export const privateWebReadTables = ["control_identities", "control_role_grants"
   "control_task_model_selections", "control_task_declared_scopes", "control_assignment_lease_scopes",
   "control_durable_result_write_reservations", "work_batches", "work_batch_revisions", "work_batch_items",
   "work_batch_queue_admissions", "work_batch_effective_queue_admissions", "work_batch_agent_queue_heads",
+  "control_native_task_queue", "control_job_dependencies",
   "pipeline_templates", "pipeline_runs", "pipeline_stage_runs", "pipeline_ordered_stage_runs",
   "control_pipeline_build_publications", "control_codex_result_publications",
   "control_action_inbox"] as const;
