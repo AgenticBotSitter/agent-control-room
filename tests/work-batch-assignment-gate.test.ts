@@ -105,6 +105,11 @@ test("batch assignment follows source-to-execution lineage and locks the exact w
     "SELECT worker_id FROM control_attempts WHERE tenant_id=$1 AND job_id=$2",
   [f.scope.tenantId, f.prepared.receipt.jobId])).rows[0];
   assert.equal(attempt?.worker_id, f.route.executorId);
+  await f.db.query("DROP TRIGGER control_attempts_payload_mirror ON control_attempts");
+  await f.db.query(`UPDATE control_attempts SET worker_id=NULL,payload=payload - 'workerId'
+    WHERE tenant_id=$1 AND job_id=$2`, [f.scope.tenantId, f.prepared.receipt.jobId]);
+  await assert.rejects(assign(f), (error: unknown) => (error as { code?: string }).code === "conflict",
+    "a batch-linked replay without its exact worker identity remains fail-closed");
 
   const wrong = await taskAssignmentFixture(); t.after(wrong.close);
   await seedAdmission(wrong, { sourceJobId: wrong.source.receipt.jobId,
