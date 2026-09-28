@@ -27,6 +27,8 @@ test("task detail presents only the server-recorded prepared worker", async t =>
 
   const response = await handler(request(detailPath));
   assert.equal(response.status, 200);
+  assert.match(response.headers.get("x-control-room-authenticated-actor") ?? "", /^sha256:[a-f0-9]{64}$/u);
+  assert.match(response.headers.get("x-control-room-session-epoch") ?? "", /^sha256:[a-f0-9]{64}$/u);
   const detail = await response.json() as { preparedFor: unknown; localRouteObservation: { state: unknown; adapter: unknown } };
   assert.equal(detail.preparedFor, "claude");
   assert.deepEqual(detail.localRouteObservation, { state: "not_observed", adapter: "claude" });

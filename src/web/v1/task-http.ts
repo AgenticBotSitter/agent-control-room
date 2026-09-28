@@ -1,4 +1,5 @@
-import { createAccessVerifier, requireSameOrigin, WebAccessError, type AccessTrust, type GatewayAssertionProviderProfileV1 } from "./access-verifier";
+import { authenticatedWebSessionBindingV1, createAccessVerifier, requireSameOrigin, WebAccessError,
+  type AccessTrust, type GatewayAssertionProviderProfileV1 } from "./access-verifier";
 import type { LocalOwnerSessionServiceV1 } from "./local-owner-session";
 import { privateResponseHeaders, readBoundedJson, webFailure } from "./http-common";
 import type { WebTaskService } from "./task-service";
@@ -41,6 +42,7 @@ export function createTaskHttpHandler(options: { origin: string; trust?: AccessT
       if (localOwnerSession) localOwnerSession.assertLocalRequest(request, !["GET", "HEAD"].includes(request.method));
       else requireSameOrigin(request, options.origin);
       const identity = localOwnerSession ? localOwnerSession.verify(request, (options.clock ?? Date.now)()) : verify!(request, (options.clock ?? Date.now)());
+      const response = await (async () => {
       const url = new URL(request.url);
       const fileRoute = /^\/api\/v1\/projects\/([^/]+)\/tasks\/([^/]+)\/files\/([^/]+)$/.exec(url.pathname);
       if (fileRoute) {
@@ -281,6 +283,11 @@ export function createTaskHttpHandler(options: { origin: string; trust?: AccessT
         return Response.json(result, { status: result.replayed ? 200 : 201, headers: privateResponseHeaders });
       }
       throw new WebAccessError("not_found");
+      })();
+      const authentication = authenticatedWebSessionBindingV1(identity);
+      response.headers.set("x-control-room-authenticated-actor", authentication.actorId);
+      response.headers.set("x-control-room-session-epoch", authentication.sessionEpoch);
+      return response;
     } catch (error) { return webFailure(error); }
   };
 }

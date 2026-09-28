@@ -11,6 +11,9 @@ import type { TaskReviewOptions } from '../src/web/v1/task-review-wire';
 // Reuses the existing private review-workspace regression's synthetic cases.
 const binding = { projectId: 'project:one', jobId: 'job:one', artifactId: 'artifact:one', targetId: 'target:one',
   targetDigest: sha256Digest('target'), contentHash: sha256Digest('content') };
+const authentication = { actorId: sha256Digest('actor:one'), sessionEpoch: sha256Digest('session:one') };
+const bind = <T extends ReturnType<typeof createTaskReviewWorkspace>>(workspace: T,
+  value = authentication) => { workspace.bindAuthenticatedSession(value); return workspace; };
 
 test('review drafts survive detached subscribers but never follow a different exact binding', () => {
   const workspace = createTaskReviewWorkspace();
@@ -48,8 +51,9 @@ test('a lost acceptance reply retries the exact read attestation', async () => {
       contentHash: binding.contentHash, reviewId: 'review:one', findingId: null, decision: 'accepted' as const,
       feedbackDigest: sha256Digest(''), recordedAt: '2026-09-27T00:00:00.000Z', grantsApproval: false as const,
       grantsExecutionAuthority: false as const, startsRevision: false as const }; } };
-  const workspace = createTaskReviewWorkspace(() => client as never);
+  const workspace = bind(createTaskReviewWorkspace(() => client as never));
   const session = workspace.get(binding);
+  session.setAttested(attestation, true);
   assert.equal(await session.save('accepted', attestation), undefined);
   const receipt = await session.save();
   assert.equal(receipt?.decision, 'accepted');
@@ -125,6 +129,9 @@ async function mountReview(current: () => ReviewWorkspaceBinding, workspace: Ret
       await act(async () => { input.click(); });
       await act(async () => { await new Promise(resolve => dom.window.setTimeout(resolve, 5)); });
     },
+    authenticate: async (value: typeof authentication | undefined) => {
+      await act(async () => { value ? workspace.bindAuthenticatedSession(value) : workspace.invalidateAuthenticatedSession(); });
+    },
     show: async () => {
       // Re-render with a different result binding, exactly as opening another
       // result in the same task page does. The controller's key changes, so
@@ -151,7 +158,7 @@ test('the read-and-correct gesture is scoped to one exact result, not shared acr
   // as one attestation.
   const second: ReviewWorkspaceBinding = { ...binding, artifactId: 'artifact:two', targetId: 'target:two',
     targetDigest: sha256Digest('target-two'), contentHash: sha256Digest('content-two') };
-  const workspace = createTaskReviewWorkspace(() => reviewingClient(bound => availableOptions(bound)) as never);
+  const workspace = bind(createTaskReviewWorkspace(() => reviewingClient(bound => availableOptions(bound)) as never));
   let current = first;
   const page = await mountReview(() => current, workspace);
   try {
@@ -194,7 +201,7 @@ test('the gesture resets when any part of the exact review identity changes', as
   // The workspace key is the full identity, so every field of it is load-bearing.
   // Project, job, artifact, target, target digest and content hash each produce a
   // separate session; a tick in one must not be visible in any other.
-  const workspace = createTaskReviewWorkspace();
+  const workspace = bind(createTaskReviewWorkspace());
   const session = workspace.get(binding);
   assert.equal(session.attested({ scenarioId: scenario, instructionsDigest }), false);
   session.setAttested({ scenarioId: scenario, instructionsDigest }, true);
@@ -225,7 +232,7 @@ test('a saved decision spends the gesture that authorised it', async () => {
     grantsApproval: false as const, grantsExecutionAuthority: false as const, startsRevision: false as const };
   const client = { hasPending: () => false, options: async () => { throw new Error('unused'); },
     record: async () => receipt, retrySave: async () => receipt };
-  const workspace = createTaskReviewWorkspace(() => client as never);
+  const workspace = bind(createTaskReviewWorkspace(() => client as never));
   const session = workspace.get(binding);
   const identity = { scenarioId: scenario, instructionsDigest };
   session.setAttested(identity, true);
@@ -233,4 +240,55 @@ test('a saved decision spends the gesture that authorised it', async () => {
   assert.equal(saved?.decision, 'accepted');
   assert.equal(session.attested(identity), false,
     'the gesture authorised this decision, so it is not left behind to enable a second one');
+});
+
+test('a direct authenticated-session handoff clears the mounted gesture for the same exact result', async () => {
+  const workspace = bind(createTaskReviewWorkspace(() => reviewingClient(bound => availableOptions(bound)) as never));
+  const page = await mountReview(() => binding, workspace);
+  try {
+    await page.tick();
+    assert.equal(page.acceptEnabled(), true);
+    await page.authenticate({ ...authentication, sessionEpoch: sha256Digest('session:two') });
+    await page.show();
+    assert.equal(page.checked(), false, 'the previous authenticated session cannot donate its gesture');
+    assert.equal(page.acceptEnabled(), false, 'Accept fails closed after a session handoff');
+  } finally { await page.close(); }
+});
+
+test('sign-out followed by sign-in invalidates the earlier session gesture', () => {
+  const workspace = bind(createTaskReviewWorkspace());
+  const session = workspace.get(binding);
+  const identity = { scenarioId: scenario, instructionsDigest };
+  session.setAttested(identity, true);
+  assert.equal(session.attested(identity), true);
+  workspace.invalidateAuthenticatedSession();
+  workspace.bindAuthenticatedSession({ actorId: sha256Digest('actor:two'), sessionEpoch: sha256Digest('session:three') });
+  assert.equal(session.attested(identity), false, 'sign-out/sign-in must require a new owner gesture');
+});
+
+test('every authenticated binding field is load-bearing for a review gesture', () => {
+  for (const [field, value] of Object.entries({
+    actorId: sha256Digest('actor:mutated'), sessionEpoch: sha256Digest('session:mutated'),
+  }) as [keyof typeof authentication, string][]) {
+    const workspace = bind(createTaskReviewWorkspace());
+    const session = workspace.get(binding);
+    const identity = { scenarioId: scenario, instructionsDigest };
+    session.setAttested(identity, true);
+    workspace.bindAuthenticatedSession({ ...authentication, [field]: value });
+    assert.equal(session.attested(identity), false, `changed ${field} must invalidate the gesture`);
+  }
+});
+
+test('accepted save without a session-owned live gesture refuses before transport', async () => {
+  let recordCalls = 0;
+  const client = { hasPending: () => false, options: async () => { throw new Error('unused'); },
+    async record() { recordCalls += 1; throw new Error('transport must not run'); },
+    async retrySave() { throw new Error('transport must not run'); } };
+  const workspace = bind(createTaskReviewWorkspace(() => client as never));
+  const session = workspace.get(binding);
+  const result = await session.save('accepted', { scenarioId: scenario, instructionsDigest, confirmed: true });
+  assert.equal(result, undefined);
+  assert.equal(recordCalls, 0, 'acceptance without a live gesture must fail closed before transport');
+  assert.equal(session.getSnapshot().error?.code, 'invalid_request');
+  assert.equal(session.getSnapshot().pending, false);
 });
