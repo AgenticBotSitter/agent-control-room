@@ -134,6 +134,15 @@ export interface RealPostgres {
   ): Promise<{ rows: T[] }>;
   /** True while the postmaster is running. Used to prove cleanup happened. */
   isRunning(): Promise<boolean>;
+  /**
+   * True when the runner retained the postmaster pid, false when the
+   * `postmaster.pid` read did not yield one.
+   *
+   * A caller cannot otherwise tell the healthy path from the degraded one, so a
+   * test asserting only "no cluster survived" would also pass on a run that
+   * never lost the pid and proved nothing about the teardown.
+   */
+  readonly postmasterPidCaptured: boolean;
   /** Destroy the cluster. Idempotent, and safe to call from a finally block. */
   stop(): Promise<void>;
 }
@@ -149,6 +158,29 @@ export interface WithRealPostgresOptions {
   extraRoleFiles?: readonly string[];
   /** Override the PostgreSQL bin directory (must contain initdb + postgres). */
   pgBin?: string;
+  /**
+   * Fault injection for the `postmaster.pid` read, for a test that must prove
+   * the teardown survives losing the pid. `read_fails` replaces the one read
+   * with a function that rejects exactly as a permission or I/O failure would;
+   * the production `.catch` still handles it, so the fault flows through the
+   * real path rather than around it.
+   *
+   * It can only ever LOSE the pid, so it cannot be used to make teardown do
+   * less. Absent in normal use.
+   */
+  pidCaptureFault?: "read_fails";
+  /**
+   * Fault injection for the cooperative `pg_ctl stop`, for a test that must
+   * prove an unconfirmed shutdown is REFUSED rather than reported as a clean
+   * teardown. `no_op` makes the command exit 0 without stopping anything,
+   * which is what a `pg_ctl` reports when a postmaster will not take a fast
+   * shutdown request: the caller is told the stop worked and the server is
+   * still there.
+   *
+   * It can only ever skip a real stop, so it cannot make teardown look better
+   * than it is. Absent in normal use.
+   */
+  stopAttemptFault?: "no_op";
 }
 
 export class PortOccupiedError extends Error {
@@ -419,22 +451,44 @@ async function startCluster(options: WithRealPostgresOptions & { pgBin: string }
    * needed that directory, reported "not running" and the caller was told
    * `cleanedUp: true`. This machine has only 32 SysV shared-memory segments, so
    * exactly that leak blocks every other job.
+   *
+   * The shutdown attempt is keyed on `started`, NOT on a retained pid. A
+   * transient or malformed `postmaster.pid` read leaves the pid undefined even
+   * though `pg_ctl start` succeeded, and the old `if (pid !== undefined)` guard
+   * then skipped shutdown entirely and deleted both the data and the socket
+   * directory — destroying the only means of stopping or diagnosing a postmaster
+   * that was still running. Without a pid the confirmation is made from evidence
+   * that still exists because nothing has been deleted yet: no live
+   * `postmaster.pid` in the data directory AND `pg_ctl status` reporting that
+   * there is no server. If either check fails, both directories are kept and the
+   * failure is reported with their paths.
    */
   const stop = async (): Promise<void> => {
     // A previous stop already completed. The run directory is removed exactly
     // once, on every other path: an early return here would leak the directory
     // whenever `initdb` succeeded but the postmaster never started.
     if (stopped) return;
+    const wasStarted = started;
     started = false;
     const pid = postmasterPid;
     const failures: string[] = [];
-    if (pid !== undefined) {
-      // A cooperative fast shutdown first.
+    if (wasStarted) {
+      // A cooperative fast shutdown first, whether or not the pid was captured.
       try {
-        await native(pgBin, run, "pg_ctl", ["-D", dataDirectory, "-m", "fast", "-w", "-t", "30", "stop"]);
+        if (options.stopAttemptFault === "no_op") {
+          // Report success without stopping anything, as a `pg_ctl` does when a
+          // postmaster will not take the shutdown request. The confirmation
+          // below is what must catch it.
+        } else {
+          await native(pgBin, run, "pg_ctl", ["-D", dataDirectory, "-m", "fast", "-w", "-t", "30", "stop"]);
+        }
       } catch (error) {
+        // Expected when the postmaster never came up, or is already gone; the
+        // confirmation below is what decides whether that is a failure.
         failures.push(`pg_ctl_stop_failed:${firstLineOf(error)}`);
       }
+    }
+    if (pid !== undefined) {
       if (pidAlive(pid)) {
         // Escalate: SIGQUIT is PostgreSQL's immediate shutdown, SIGKILL the
         // last resort. A disposable fixture cluster is ours to end.
@@ -456,6 +510,31 @@ async function startCluster(options: WithRealPostgresOptions & { pgBin: string }
       }
       // `postmasterPid` is intentionally NOT cleared: it is the evidence the
       // post-teardown liveness check needs, and the process is confirmed gone.
+    } else if (wasStarted) {
+      // Started, but the pid was never captured. Nothing has been deleted yet,
+      // so the data directory is still there to be read: a `postmaster.pid` that
+      // is absent or non-numeric is a stopped postmaster (PostgreSQL removes
+      // the file on clean shutdown), and `pg_ctl status` exits non-zero when
+      // there is no server in that data directory. Only BOTH agreeing counts as
+      // a confirmed shutdown.
+      const stillRecorded = await postmasterAlive(dataDirectory);
+      let statusReportsRunning = false;
+      try {
+        await native(pgBin, run, "pg_ctl", ["-D", dataDirectory, "status"]);
+        statusReportsRunning = true;
+      } catch {
+        // pg_ctl status exits non-zero when no postmaster is running.
+      }
+      if (stillRecorded || statusReportsRunning) {
+        // The evidence is what an operator needs to stop this cluster by hand,
+        // so it is preserved and the failure is reported with both paths.
+        throw new Error(`attack_kit_postmaster_shutdown_unconfirmed:${port}`
+          + `:pid_not_captured:postmaster_pid_alive=${stillRecorded}`
+          + `:pg_ctl_status_running=${statusReportsRunning}`
+          + `:${failures.join(",")}`
+          + `:data_directory_preserved=${dataDirectory}:run_directory_preserved=${run}`
+          + `:socket_directory_preserved=${socketDirectory}`);
+      }
     }
     // Both paths are removed: the run directory holds the data directory, and
     // the short socket directory lives outside it, so removing `run` alone
@@ -509,9 +588,18 @@ async function startCluster(options: WithRealPostgresOptions & { pgBin: string }
       "start"]);
     started = true;
     // Retained for the lifetime of the cluster so the teardown can prove the
-    // postmaster is gone without reading files it is about to delete.
-    const recordedPid = (await readFile(join(dataDirectory, "postmaster.pid"), "utf8")
-      .catch(() => "")).split("\n")[0]?.trim();
+    // postmaster is gone without reading files it is about to delete. The read
+    // is behind a function so a test can inject the one failure that used to
+    // orphan a postmaster: a start that succeeded, followed by a pid read that
+    // did not. `stop` no longer depends on the outcome of this read.
+    const readPostmasterPid = async (): Promise<string> => {
+      if (options.pidCaptureFault === "read_fails") {
+        throw Object.assign(new Error(`attack_kit_injected_pid_read_failure:${dataDirectory}`),
+          { code: "EACCES" });
+      }
+      return await readFile(join(dataDirectory, "postmaster.pid"), "utf8");
+    };
+    const recordedPid = (await readPostmasterPid().catch(() => "")).split("\n")[0]?.trim();
     postmasterPid = recordedPid && /^\d+$/.test(recordedPid) ? Number(recordedPid) : undefined;
 
     const adminOptions = (name = "postgres"): ConnectionOptions => ({
@@ -600,6 +688,7 @@ async function startCluster(options: WithRealPostgresOptions & { pgBin: string }
     return {
       port, host: socketDirectory, database, dataDirectory, runDirectory: run,
       socketDirectory, appliedMigrations,
+      postmasterPidCaptured: postmasterPid !== undefined,
       admin: ({ database: name } = {}) => adminOptions(name ?? database),
       connection(role, { database: name, applicationName } = {}) {
         const options = connectionFor(String(role), name ?? database);

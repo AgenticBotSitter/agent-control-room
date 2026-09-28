@@ -786,6 +786,56 @@ SECURITY DEFINER SET search_path = pg_catalog, public, pg_temp AS $$ BEGIN NULL;
     assert.deepEqual(result.unpinned.map(finding => finding.function), ["definer_procedure()"]);
   });
 
+  // `RETURNS event_trigger` is a distinct return type (`pg_event_trigger`) for
+  // a function used as an event trigger. The recogniser matched only
+  // `RETURNS trigger`, which cannot match `RETURNS event_trigger` at all, so an
+  // unpinned event-trigger function produced NO finding: a migration could ship
+  // one and the gate reported zero violations. An event trigger fires on DDL
+  // (`ddl_command_start`, `sql_drop`, `table_rewrite`) and its body resolves
+  // names with the owner's privileges, so it is the same primitive.
+  test("a RETURNS event_trigger function is audited as an event trigger", async () => {
+    const directory = await temporary("attack-kit-event-trigger-");
+    await writeFile(join(directory, "0001.sql"), `
+CREATE FUNCTION refuse_drop() RETURNS event_trigger
+LANGUAGE plpgsql SET search_path = pg_catalog, public AS $$ BEGIN RETURN NULL; END $$;
+
+CREATE FUNCTION refuse_ddl_pinned() RETURNS event_trigger
+LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $$ BEGIN RETURN NULL; END $$;
+`);
+    const result = await securityDefinerAudit(directory);
+    const byName = new Map(result.findings.map(finding => [finding.function, finding]));
+    assert.deepEqual(result.findings.map(finding => finding.function),
+      ["refuse_drop()", "refuse_ddl_pinned()"],
+      "both event-trigger functions must be recognised, not skipped");
+    assert.deepEqual(byName.get("refuse_drop()")?.kinds, ["event-trigger"],
+      "an event trigger is reported as its own kind, not as a row trigger");
+    assert.equal(byName.get("refuse_drop()")?.endsInPgTemp, false);
+    assert.match(byName.get("refuse_drop()")!.reason, /^event-trigger_/,
+      "the reason names the primitive that is unpinned");
+    assert.equal(byName.get("refuse_ddl_pinned()")?.endsInPgTemp, true,
+      "a pinned event trigger is not a violation");
+    assert.deepEqual(result.unpinned.map(finding => finding.function), ["refuse_drop()"]);
+
+    // An event trigger that is ALSO a definer keeps both kinds.
+    await writeFile(join(directory, "0001.sql"), `
+CREATE FUNCTION escalate_ddl() RETURNS event_trigger
+LANGUAGE plpgsql SECURITY DEFINER AS $$ BEGIN RETURN NULL; END $$;
+`);
+    const both = await securityDefinerAudit(directory);
+    assert.deepEqual(both.findings[0]!.kinds, ["security-definer", "event-trigger"]);
+
+    // A row trigger is still a row trigger: the two recognisers must not have
+    // been merged into one that claims `trigger` for an event trigger.
+    await writeFile(join(directory, "0001.sql"), `
+CREATE FUNCTION row_guard() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RETURN NEW; END $$;
+CREATE FUNCTION ddl_guard() RETURNS event_trigger LANGUAGE plpgsql AS $$ BEGIN RETURN NULL; END $$;
+`);
+    const apart = await securityDefinerAudit(directory);
+    const kinds = new Map(apart.findings.map(finding => [finding.function, finding.kinds]));
+    assert.deepEqual(kinds.get("row_guard()"), ["trigger"]);
+    assert.deepEqual(kinds.get("ddl_guard()"), ["event-trigger"]);
+  });
+
   // `ALTER FUNCTION ... SECURITY DEFINER` escalates a function created without
   // it. The privilege is real whether it was granted in the CREATE or a
   // statement later in the same file, so the audit carries the ALTER's clauses
@@ -941,7 +991,9 @@ LANGUAGE plpgsql SECURITY DEFINER AS $$ BEGIN RETURN 1; END $$;
 
     // Each of these is a way an unpinned privileged function could previously
     // have passed the gate silently. The gate is the security control, so all
-    // of them must fail it.
+    // of them must fail it. `0004_procedure` covers the CREATE PROCEDURE head
+    // and `0007_event_trigger` the event-trigger return type: both were invisible
+    // to the parser, so each produced ZERO findings and an exit code of 0.
     const escapes: readonly [string, string][] = [
       ["0003_commented.sql",
         "CREATE FUNCTION commented() RETURNS trigger\nLANGUAGE plpgsql\n"
@@ -952,6 +1004,13 @@ LANGUAGE plpgsql SECURITY DEFINER AS $$ BEGIN RETURN 1; END $$;
       ["0005_alter.sql",
         "CREATE FUNCTION escalated() RETURNS integer LANGUAGE sql AS $$ SELECT 1 $$;\n"
         + "ALTER FUNCTION escalated() SECURITY DEFINER;\n"],
+      ["0007_event_trigger.sql",
+        "CREATE FUNCTION refuse_drop() RETURNS event_trigger\nLANGUAGE plpgsql AS $$ BEGIN RETURN NULL; END $$;\n"],
+      ["0008_or_replace_event_trigger.sql",
+        "CREATE OR REPLACE FUNCTION refuse_rewrite() RETURNS event_trigger\nLANGUAGE plpgsql SET search_path = pg_catalog, public AS $$ BEGIN RETURN NULL; END $$;\n"],
+      ["0009_procedure_or_replace.sql",
+        "CREATE OR REPLACE PROCEDURE escalate_proc() LANGUAGE plpgsql\n"
+        + "SECURITY DEFINER SET search_path = pg_catalog, public AS $$ BEGIN NULL; END $$;\n"],
     ];
     for (const [file, sql] of escapes) {
       await rm(join(migrations, "0002_definer.sql"), { force: true });
@@ -960,16 +1019,65 @@ LANGUAGE plpgsql SECURITY DEFINER AS $$ BEGIN RETURN 1; END $$;
       assert.notEqual(escaped.code, 0,
         `${file} must fail the gate, got exit ${escaped.code}: ${escaped.stderr}`);
     }
+    // The loop leaves the last escape in place, so every one of them is removed
+    // here: the assertions that follow each add exactly one file and expect the
+    // gate to name THAT file and no other.
+    await rm(join(migrations, "0002_definer.sql"), { force: true });
+    for (const [file] of escapes) await rm(join(migrations, file), { force: true });
+
+    // The two named fixtures the round-2 brief calls out, asserted with the
+    // function name in the failure so the CI message is proven to be actionable
+    // rather than merely non-zero.
+    await rm(join(migrations, "0002_definer.sql"), { force: true });
+    await writeFile(join(migrations, "0010_only_procedure.sql"),
+      "CREATE PROCEDURE escalate_proc() LANGUAGE plpgsql\n"
+      + "SECURITY DEFINER AS $$ BEGIN NULL; END $$;\n");
+    const onlyProcedure = await runGate();
+    assert.notEqual(onlyProcedure.code, 0, "an unpinned SECURITY DEFINER procedure fails the gate");
+    assert.match(onlyProcedure.stderr, /0010_only_procedure\.sql:escalate_proc\(\)/,
+      "and the failure names the procedure to fix");
+    assert.match(onlyProcedure.stderr, /security-definer_without_a_search_path_clause/);
+
+    await rm(join(migrations, "0010_only_procedure.sql"), { force: true });
+    await writeFile(join(migrations, "0011_only_event_trigger.sql"),
+      "CREATE FUNCTION refuse_drop() RETURNS event_trigger\n"
+      + "LANGUAGE plpgsql SET search_path = pg_catalog, public AS $$ BEGIN RETURN NULL; END $$;\n");
+    const onlyEventTrigger = await runGate();
+    assert.notEqual(onlyEventTrigger.code, 0, "an unpinned event-trigger function fails the gate");
+    assert.match(onlyEventTrigger.stderr, /0011_only_event_trigger\.sql:refuse_drop\(\)/,
+      "and the failure names the event-trigger function to fix");
+    assert.match(onlyEventTrigger.stderr, /event-trigger/);
+
+    // Pinning it makes the gate pass again, for the event-trigger form too.
+    await writeFile(join(migrations, "0011_only_event_trigger.sql"),
+      "CREATE FUNCTION refuse_drop() RETURNS event_trigger\n"
+      + "LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $$ BEGIN RETURN NULL; END $$;\n");
+    const pinnedEventTrigger = await runGate();
+    assert.equal(pinnedEventTrigger.code, 0,
+      `a pinned event trigger must pass, got: ${pinnedEventTrigger.stderr}`);
 
     // A multi-line pinned list is the same clause as the one-line form, so it
     // must PASS rather than being read as unpinned.
-    await rm(join(migrations, "0002_definer.sql"), { force: true });
+    await rm(join(migrations, "0011_only_event_trigger.sql"), { force: true });
     for (const [file] of escapes) await rm(join(migrations, file), { force: true });
     await writeFile(join(migrations, "0006_multiline.sql"),
       "CREATE FUNCTION multiline() RETURNS trigger\nLANGUAGE plpgsql SET search_path = pg_catalog,\n"
       + "  public,\n  pg_temp AS $$ BEGIN RETURN NEW; END $$;\n");
     const multiline = await runGate();
     assert.equal(multiline.code, 0, `a multi-line pg_temp pin must pass, got: ${multiline.stderr}`);
+
+    // And a pinned event trigger next to an unpinned row trigger fails for the
+    // row trigger alone, so the two forms cannot mask each other.
+    await rm(join(migrations, "0006_multiline.sql"), { force: true });
+    await writeFile(join(migrations, "0012_mixed.sql"),
+      "CREATE FUNCTION ddl_guard() RETURNS event_trigger\n"
+      + "LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $$ BEGIN RETURN NULL; END $$;\n"
+      + "CREATE FUNCTION row_guard() RETURNS trigger\nLANGUAGE plpgsql AS $$ BEGIN RETURN NEW; END $$;\n");
+    const mixed = await runGate();
+    assert.notEqual(mixed.code, 0, "an unpinned row trigger still fails beside a pinned event trigger");
+    assert.doesNotMatch(mixed.stderr, /ddl_guard\(\)/,
+      "the pinned event trigger is not named as a violation");
+    assert.match(mixed.stderr, /row_guard\(\)/);
   });
 
   test("refuses an allowlist entry with no expiry or no issue", async () => {
@@ -1010,6 +1118,41 @@ LANGUAGE plpgsql SECURITY DEFINER AS $$ BEGIN RETURN 1; END $$;
     assert.deepEqual(result.unpinned.map(finding => finding.function), ["trigger_fn()"]);
     assert.deepEqual(result.findings[1]!.kinds, ["trigger"],
       "a trigger function keeps its kind through the live audit");
+  });
+
+  // The live audit's filter selected only `prosecdef OR prorettype = 'trigger'`.
+  // An event-trigger function is neither, so the catalog query returned no row
+  // for it and the audit reported clean on a database holding an unpinned
+  // event trigger. The file parser and the catalog query must cover the same
+  // set of routines, so the filter is asserted literally here: this is the only
+  // place a real catalog is involved, and a `regtype` typo or a dropped
+  // `::regtype` cast would fail at runtime in a live database, not in a fixture.
+  test("the live audit's catalog filter includes event_trigger", async () => {
+    const seen: string[] = [];
+    const result = await securityDefinerAuditLive(async (sql) => {
+      seen.push(sql);
+      return { rows: [
+        { name: "ddl_guard()", definition: "CREATE OR REPLACE FUNCTION public.ddl_guard() RETURNS event_trigger LANGUAGE plpgsql AS $$ BEGIN RETURN NULL; END $$" },
+        { name: "row_guard()", definition: "CREATE OR REPLACE FUNCTION public.row_guard() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RETURN NEW; END $$" },
+        { name: "definer_proc()", definition: "CREATE OR REPLACE PROCEDURE public.definer_proc() LANGUAGE sql SECURITY DEFINER AS $$ SELECT 1 $$" },
+      ] };
+    });
+    const [sql] = seen;
+    assert.ok(sql!.includes("'event_trigger'::regtype"),
+      `the filter must select event_trigger routines, got: ${sql}`);
+    assert.ok(sql!.includes("'trigger'::regtype"), "and row triggers");
+    assert.ok(sql!.includes("p.prosecdef"), "and SECURITY DEFINER routines, which includes procedures");
+    // Both are cast, so a bare string comparison against a regtype cannot
+    // silently compare text to an oid.
+    assert.doesNotMatch(sql!, /= 'trigger'(?!::regtype)/,
+      "a trigger comparison without the regtype cast would never match");
+    assert.deepEqual(result.unpinned.map(finding => finding.function).sort(),
+      ["ddl_guard()", "definer_proc()", "row_guard()"],
+      "every form the filter selects is audited for a pinned search_path");
+    assert.deepEqual(result.findings.find(f => f.function === "ddl_guard()")!.kinds, ["event-trigger"],
+      "an event trigger keeps its kind through the live audit too");
+    assert.deepEqual(result.findings.find(f => f.function === "definer_proc()")!.kinds, ["security-definer"],
+      "a definer procedure is reported as a definer, which is how it reaches this set");
   });
 });
 
@@ -1126,6 +1269,181 @@ describe("attack kit: real PostgreSQL", () => {
       await run(join(pgBin!, "pg_ctl"), ["-D", data, "-m", "fast", "-w", "-t", "30", "stop"], { timeout: 60_000 })
         .catch(() => {});
       await (await import("node:fs/promises")).rm(foreign, { recursive: true, force: true });
+    }
+  });
+
+  // A postmaster that was started and then orphaned. `startCluster` set
+  // `started = true` and caught every `postmaster.pid` read failure, so the pid
+  // could be undefined even though the server was running; `stop` only attempted
+  // `pg_ctl stop` inside `if (pid !== undefined)` and otherwise deleted the data
+  // and socket directories, so the run reported a clean teardown with a live
+  // postmaster behind it and no way left to stop or diagnose it. This injects
+  // exactly that pid-read failure after a REAL start and proves the postmaster
+  // is gone afterwards.
+  test("a failed pid read after a real start leaves no postmaster behind", needsPgOrFail(), async () => {
+    countedRealPostgresRun();
+    const port = PORTS[5]!;
+    const pidRecord = join(await temporary("attack-kit-pid-fault-"), "observed.json");
+    // The pid is read INSIDE the body, from the test's own read of the data
+    // directory, before the runner's teardown deletes anything. That is the only
+    // observation that survives the deletion: afterwards the directory is gone,
+    // the runner holds no pid, the cluster published no TCP listener (`-h ''`),
+    // and the socket has been removed with its directory — so every
+    // post-teardown check the runner and a socket probe can make would report
+    // "gone" for a server that is still running. Holding the pid makes this test
+    // falsifiable rather than self-confirming.
+    let observedPid: number | undefined;
+    let observation: {
+      pidCapturedByRunner: boolean;
+      observedPid: number | undefined;
+      outcome: "resolved" | "rejected";
+      preservedDataDirectory?: string;
+      error?: string;
+    } | undefined;
+    let survivor: number | undefined;
+    const alive = (pid: number): boolean => {
+      try { process.kill(pid, 0); return true; } catch (error) {
+        return (error as { code?: string }).code === "EPERM";
+      }
+    };
+
+    try {
+      try {
+        const result = await withRealPostgres(async postgres => {
+          // The fault must have fired on the real path, or this test would prove
+          // the healthy teardown and say nothing about the degraded one.
+          assert.equal(postgres.postmasterPidCaptured, false,
+            "the injected pid read failure must leave the runner's pid uncaptured");
+          assert.ok(existsSync(postgres.socketDirectory), "the cluster really started and published a socket");
+          const recorded = (await readFile(join(postgres.dataDirectory, "postmaster.pid"), "utf8"))
+            .split("\n")[0]!.trim();
+          observedPid = /^\d+$/.test(recorded) ? Number(recorded) : undefined;
+          assert.ok(observedPid !== undefined, "the postmaster published a readable pid before teardown");
+          assert.equal(alive(observedPid!), true, "and that pid is a live process");
+          // A real server answering a real query: the cluster is genuinely up,
+          // not merely started and immediately dead.
+          const answer = await postgres.query("migrator", "SELECT 1 AS one");
+          assert.equal(answer.rows[0]!.one, 1);
+          return postgres;
+        }, { port, allowedPorts: PORTS, database: "attack_kit_pid_fault", pidCaptureFault: "read_fails" });
+        // The runner's own `stop` already ran in its finally, so `cleanedUp` is
+        // its verdict on the teardown under the fault.
+        observation = { pidCapturedByRunner: false, observedPid, outcome: "resolved" };
+        assert.equal(result.cleanedUp, true,
+          `teardown must be clean after a lost pid, got leftovers: ${result.leftovers.join(",")}`);
+      } catch (error) {
+        // A preserved-evidence outcome is also acceptable per the brief, and is
+        // recorded rather than swallowed so the assertions below can demand the
+        // one property that matters either way: nothing survives.
+        const message = `${(error as Error).message}`;
+        observation = { pidCapturedByRunner: false, observedPid, outcome: "rejected", error: message };
+        assert.match(message, /attack_kit_postmaster_shutdown_unconfirmed|attack_kit_cluster_leaked/,
+          "a failed teardown must name its own reason");
+        const preserved = /data_directory_preserved=([^:]+)/.exec(message)?.[1];
+        if (preserved !== undefined) {
+          // Evidence kept because shutdown could not be confirmed is the other
+          // half of the contract: the directory must still be there to stop the
+          // cluster by hand.
+          assert.equal(existsSync(preserved), true,
+            "when shutdown cannot be confirmed the data directory must be preserved");
+          observation.preservedDataDirectory = preserved;
+        }
+      }
+
+      assert.ok(observedPid !== undefined, "the test observed a real postmaster pid inside the body");
+      survivor = alive(observedPid!) ? observedPid : undefined;
+      assert.equal(survivor, undefined,
+        `postmaster ${observedPid} survived the teardown with no retained pid to stop it`);
+      assert.equal(await portIsOccupied(port), false,
+        `the postmaster must not still hold port ${port} after a lost pid`);
+      // Nothing of ours may be left listening on the short socket path either.
+      assert.equal(existsSync(join("/tmp", `ak${process.pid}-attack-kit-pg-`)), false);
+    } finally {
+      // Reap anything that outlived the run, so a failing assertion costs a test
+      // failure and not a blocked machine. Under the guard this does nothing.
+      if (survivor !== undefined) {
+        try { process.kill(survivor, "SIGQUIT"); } catch { /* already gone */ }
+        const deadline = Date.now() + 10_000;
+        while (Date.now() < deadline && alive(survivor)) {
+          await new Promise(done => { setTimeout(done, 100); });
+        }
+        if (alive(survivor)) { try { process.kill(survivor, "SIGKILL"); } catch { /* already gone */ } }
+      }
+      await writeFile(pidRecord, JSON.stringify(observation ?? { outcome: "never_observed" }));
+    }
+  });
+
+  // The other half of the same contract: when shutdown cannot be confirmed, the
+  // runner must KEEP the data directory and report the failure rather than
+  // delete the evidence and call it clean. This needs a second fault, because
+  // with `pg_ctl stop` working the pid-read fault is enough for the stop to
+  // succeed. `stopAttemptFault: "no_op"` makes the cooperative stop report
+  // success without stopping anything, so the confirmation is the only thing
+  // that can notice.
+  test("an unconfirmed shutdown preserves the data directory and fails the run", needsPgOrFail(), async () => {
+    countedRealPostgresRun();
+    const port = PORTS[6]!;
+    let observedPid: number | undefined;
+    let preserved: string | undefined;
+    let message = "";
+    const alive = (pid: number): boolean => {
+      try { process.kill(pid, 0); return true; } catch (error) {
+        return (error as { code?: string }).code === "EPERM";
+      }
+    };
+    try {
+      try {
+        await withRealPostgres(async postgres => {
+          const recorded = (await readFile(join(postgres.dataDirectory, "postmaster.pid"), "utf8"))
+            .split("\n")[0]!.trim();
+          observedPid = /^\d+$/.test(recorded) ? Number(recorded) : undefined;
+          assert.equal(postgres.postmasterPidCaptured, false, "the pid was not captured");
+          assert.equal(alive(observedPid!), true, "the cluster is really running");
+        }, {
+          port, allowedPorts: PORTS, database: "attack_kit_unconfirmed",
+          pidCaptureFault: "read_fails", stopAttemptFault: "no_op",
+        });
+      } catch (error) {
+        message = `${(error as Error).message}`;
+      }
+      // The run MUST fail, and it must say why in a form an operator can act on.
+      assert.match(message, /attack_kit_postmaster_shutdown_unconfirmed/,
+        `a postmaster that refused to stop must fail the run, got: ${message}`);
+      assert.match(message, /pg_ctl_status_running=true/,
+        "and it must report that the status check saw a running postmaster");
+      assert.match(message, /postmaster_pid_alive=true/,
+        "and that the postmaster.pid read saw a live process");
+      preserved = /data_directory_preserved=([^:]+)/.exec(message)?.[1];
+      assert.ok(preserved, "the message must name the preserved data directory");
+      assert.equal(existsSync(preserved!), true,
+        "the data directory must still be there — it is the only way to stop the cluster");
+      assert.equal(existsSync(join(preserved!, "postmaster.pid")), true,
+        "and it must still hold the postmaster.pid that identifies the survivor");
+      assert.ok(observedPid !== undefined && alive(observedPid),
+        "the postmaster is indeed still running at the moment of refusal");
+    } finally {
+      // The refusal deliberately leaves evidence behind, so this test reaps it
+      // and removes the preserved directories itself. A test that leaves a
+      // cluster running is the defect, not the demonstration of it.
+      if (observedPid !== undefined && alive(observedPid)) {
+        try { process.kill(observedPid, "SIGQUIT"); } catch { /* already gone */ }
+        const deadline = Date.now() + 10_000;
+        while (Date.now() < deadline && alive(observedPid)) {
+          await new Promise(done => { setTimeout(done, 100); });
+        }
+        if (alive(observedPid)) { try { process.kill(observedPid, "SIGKILL"); } catch { /* already gone */ } }
+      }
+      if (preserved !== undefined) {
+        // The preserved evidence is the DATA directory, whose parent is the run
+        // directory the runner would normally remove, and the short socket
+        // directory lives outside it. All three are removed here, or this test
+        // would leave the same leak the refusal exists to report.
+        const runDirectory = join(preserved, "..");
+        await rm(preserved, { recursive: true, force: true });
+        await rm(runDirectory, { recursive: true, force: true });
+        await rm(join("/tmp", `ak${process.pid}-${runDirectory.split("/").pop()}`),
+          { recursive: true, force: true });
+      }
     }
   });
 
@@ -1364,8 +1682,19 @@ test("the kit left no disposable cluster behind", async () => {
   // later), so they are excluded by identity — otherwise the sweep would flag
   // the live run as a leak.
   const mine = new Set(temporaryDirectories);
+  // Every prefix this file uses, and not just the cluster one: a fixture
+  // directory that survives is the same failure mode, and a sweep that only
+  // matched one prefix reported "clean" while orphaned directories sat in the
+  // temp directory. This run's own fixtures are still registered at this point
+  // (the `after` hook removes them later), so they are excluded by identity —
+  // otherwise the sweep would flag the live run as a leak.
   const prefixes = ["attack-kit-pg-", "attack-kit-mutation-", "attack-kit-sql-",
-    "attack-kit-sql2-", "attack-kit-foreign-"];
+    "attack-kit-sql2-", "attack-kit-foreign-", "attack-kit-procedure-",
+    "attack-kit-event-trigger-", "attack-kit-pid-fault-",
+    "attack-kit-cross-a-", "attack-kit-cross-b-", "attack-kit-adjacent-",
+    "attack-kit-body-", "attack-kit-commented-", "attack-kit-multiline-",
+    "attack-kit-alter-", "attack-kit-allowlist-", "attack-kit-allowlist-scope-",
+    "attack-kit-allowlist-bad-", "attack-kit-gate-", "attack-kit-skipprobe-"];
   for (const prefix of prefixes) {
     const leftovers = (await disposableRunDirectories(new RegExp(`^${prefix}`)))
       .filter(directory => !mine.has(directory));

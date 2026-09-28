@@ -20,8 +20,16 @@ export interface FunctionFinding {
   readonly file: string;
   /** `schema.function(identity arguments)`. */
   readonly function: string;
-  /** SECURITY DEFINER, a trigger function, or both. */
-  readonly kinds: readonly ("security-definer" | "trigger")[];
+  /**
+   * SECURITY DEFINER, a row trigger, an event trigger, or a combination.
+   *
+   * `event-trigger` is its own kind rather than folded into `trigger`: an event
+   * trigger fires on DDL (`ddl_command_start`, `sql_drop`, `table_rewrite`)
+   * and runs as the session that issued the statement, which is a different
+   * exposure from a row-level trigger and a different thing for a reader of the
+   * finding to be told about.
+   */
+  readonly kinds: readonly ("security-definer" | "trigger" | "event-trigger")[];
   /** The declared `SET search_path` list, or null when none was declared. */
   readonly searchPath: string | null;
   /** True when the list is pinned and its last element is pg_temp. */
@@ -64,7 +72,19 @@ export interface SecurityDefinerAuditResult {
   readonly auditedFiles: number;
 }
 
+/**
+ * `RETURNS trigger` and `RETURNS event_trigger`, matched separately.
+ *
+ * `event_trigger` is a distinct PostgreSQL return type (`pg_event_trigger`) for
+ * a function used as an event trigger, and the OLD single pattern could not see
+ * it: `\breturns\s+trigger\b` requires whitespace between `returns` and
+ * `trigger`, and the declaration reads `RETURNS event_trigger`. Widening it to
+ * `\breturns\s+event_trigger\b` alone would have been enough to notice the
+ * function, but the two kinds are reported apart so a reader can tell which
+ * primitive is unpinned.
+ */
 const RETURNS_TRIGGER = /\breturns\s+trigger\b/i;
+const RETURNS_EVENT_TRIGGER = /\breturns\s+event_trigger\b/i;
 const SECURITY_DEFINER = /\bsecurity\s+definer\b/i;
 /**
  * `SET search_path = a, b` / `SET search_path TO a, b`.
@@ -289,9 +309,10 @@ function describe(
   // An ALTER's clauses are additive: SECURITY DEFINER cannot be taken back by
   // a later statement, and a `SET` on the ALTER is the effective pin.
   const merged = `${own}\n${alters}`;
+  const isEventTrigger = RETURNS_EVENT_TRIGGER.test(own);
   const isTrigger = RETURNS_TRIGGER.test(own);
   const isDefiner = SECURITY_DEFINER.test(merged);
-  if (!isTrigger && !isDefiner) {
+  if (!isTrigger && !isEventTrigger && !isDefiner) {
     return {
       file: name, function: definition.signature, kinds: [], searchPath: null,
       endsInPgTemp: false, reason: "not_privileged",
@@ -303,9 +324,10 @@ function describe(
   const declared = ownMatch ? ownMatch[1]! : alterMatch ? alterMatch[1]! : "";
   const searchPath = declared.trim().replace(/,\s*$/, "") || null;
   const endsInPgTemp = searchPathEndsInPgTemp(searchPath);
-  const kinds: ("security-definer" | "trigger")[] = [];
+  const kinds: ("security-definer" | "trigger" | "event-trigger")[] = [];
   if (isDefiner) kinds.push("security-definer");
   if (isTrigger) kinds.push("trigger");
+  if (isEventTrigger) kinds.push("event-trigger");
   return {
     file: name,
     function: definition.signature,
@@ -464,11 +486,18 @@ export async function securityDefinerAuditLive(
   options: { schema?: string } = {},
 ): Promise<SecurityDefinerAuditResult> {
   const schema = options.schema ?? "public";
+  // `event_trigger` is its own regtype (`pg_event_trigger`). The filter
+  // selected only `prosecdef OR prorettype = 'trigger'`, so an unpinned
+  // event-trigger function was absent from the live audit exactly as it was from
+  // the file parser: both halves of this audit have to cover the same set of
+  // privileged routines, or the catalog check reports clean on a database whose
+  // migrations the gate would have refused.
   const rows = (await query(
     `SELECT p.proname || '(' || pg_get_function_identity_arguments(p.oid) || ')' AS name,
             pg_get_functiondef(p.oid) AS definition
      FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
-     WHERE n.nspname = $1 AND (p.prosecdef OR p.prorettype = 'trigger'::regtype)
+     WHERE n.nspname = $1
+       AND (p.prosecdef OR p.prorettype IN ('trigger'::regtype, 'event_trigger'::regtype))
      ORDER BY 1`,
     [schema],
   )).rows;
