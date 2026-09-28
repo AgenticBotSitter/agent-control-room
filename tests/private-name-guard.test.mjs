@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import { checkReadmeStatus, checkRepositoryReadme } from "../scripts/check-readme-status.mjs";
 
 const repositoryRoot = fileURLToPath(new URL("..", import.meta.url));
 const guard = join(repositoryRoot, "scripts/check-private-names.mjs");
@@ -89,4 +90,36 @@ test("installer creates an executable, idempotent hook and preserves unrelated h
     assert.equal(refused.status, 1);
     assert.equal(readFileSync(hookPath, "utf8"), "#!/bin/sh\nexit 0\n");
   } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+const truthfulReadme = `# Agent Control Room
+
+## Current product status
+
+**Source-backed today:** The Mac-local owner path is covered against disposable PostgreSQL.
+
+**Not yet owner-accepted:** There is no supported downloadable release. The owner guide remains a draft.
+`;
+
+test("README status guard accepts explicit source, disposable, owner and release boundaries", () => {
+  assert.deepEqual(checkReadmeStatus(truthfulReadme), []);
+  assert.deepEqual(checkRepositoryReadme(repositoryRoot), []);
+});
+
+test("README status guard refuses missing boundaries and audited stale claims", () => {
+  const missing = checkReadmeStatus("# Agent Control Room\n\nReady for everyone.\n");
+  assert.equal(missing.length, 6);
+  assert.ok(missing.every(finding => finding.startsWith("missing ")));
+
+  for (const claim of [
+    "**Still to finish:** real Hermes/Codex integration and recovery",
+    "It passes 30 demo tests.",
+    "This source preview includes an explicit `pnpm demo` command. No live agent-runtime/platform combination is claimed supported by this preview.",
+    "The current baseline has the bounded Claude Code connector foundation.",
+    "Hermes and Codex are the first integration priorities. Claude Code, OpenClaw and other harnesses are proposed contributor tracks, not current compatibility claims.",
+  ]) {
+    const findings = checkReadmeStatus(`${truthfulReadme}\n${claim}\n`);
+    assert.equal(findings.length, 1, claim);
+    assert.match(findings[0], /^stale /u);
+  }
 });
