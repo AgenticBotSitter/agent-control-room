@@ -40,13 +40,12 @@ function eventMaterial(row:Omit<EventRow,"event_auth_tag"|"payload">){return{ten
   occurredAt:iso(row.occurred_at),recordedAt:iso(row.recorded_at)};}
 
 export class ProjectEventStoreV1 {
-  readonly #query:Query;readonly #transaction:Transaction;readonly #key:Uint8Array;readonly #clock:()=>string;
+  readonly #transaction:Transaction;readonly #key:Uint8Array;readonly #clock:()=>string;
   constructor(db:DatabaseClient,integrityKeyValue:unknown,clock:()=>string=()=>new Date().toISOString()){
     if(!db||typeof db!=="object"||isHostProxyV1(db)||typeof clock!=="function"||isHostProxyV1(clock))throw new ProjectEventErrorV1("invalid_input");
     const query=dataMethodV1(db,"query") as Query|undefined,transaction=dataMethodV1(db,"transaction") as Transaction|undefined;
     const key=exactHostUint8ArrayV1(integrityKeyValue,128);
     if(!query||!transaction||!key||key.byteLength!==32)throw new ProjectEventErrorV1("invalid_input");
-    this.#query=((statement,params)=>query.call(db,statement,params))as Query;
     this.#transaction=((callback)=>transaction.call(db,callback))as Transaction;
     this.#key=key.copy();this.#clock=clock;Object.freeze(this);
   }
@@ -112,13 +111,25 @@ export class ProjectEventStoreV1 {
     });}catch(error){if(error instanceof ProjectEventErrorV1)throw error;throw new ProjectEventErrorV1("source_unavailable");}
   }
 
-  async read(requestValue:ProjectEventReadRequestV1):Promise<ProjectEventPageV1>{
+  async read(requestValue:ProjectEventReadRequestV1,session?:DatabaseSession):Promise<ProjectEventPageV1>{
+    // A caller-supplied session already sits inside a transaction; taking one
+    // again here would nest. Both paths still use exactly one connection and
+    // one REPEATABLE READ READ ONLY snapshot, so a read never needs a second
+    // pooled slot and never sees an append land between the head and the events.
+    if(session)return this.#readThrough(session,requestValue);
+    return this.#transaction(async tx=>{
+      await tx.query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY");
+      return this.#readThrough(tx,requestValue);
+    });
+  }
+  async #readThrough(session:DatabaseSession,requestValue:ProjectEventReadRequestV1):Promise<ProjectEventPageV1>{
+    const query=((statement:string,params:unknown[])=>session.query(statement,params)) as Query;
     let request:ProjectEventReadRequestV1;try{request=parseExactProjectWorkspaceV1(projectEventReadRequestSchemaV1,requestValue);}
     catch{throw new ProjectEventErrorV1("invalid_input");}
     const scope={tenantId:request.tenantId,workspaceId:request.workspaceId,projectId:request.projectId};
-    const project=await this.#query<{workspace_id:string}>(`SELECT workspace_id FROM projects WHERE tenant_id=$1 AND id=$2`,[request.tenantId,request.projectId]);
+    const project=await query<{workspace_id:string}>(`SELECT workspace_id FROM projects WHERE tenant_id=$1 AND id=$2`,[request.tenantId,request.projectId]);
     if(!project.rows[0]||project.rows[0].workspace_id!==request.workspaceId)throw new ProjectEventErrorV1("project_not_found");
-    const selected=await this.#query<HeadRow>(`SELECT ${headColumns} FROM control_project_event_stream_heads WHERE tenant_id=$1 AND project_id=$2`,
+    const selected=await query<HeadRow>(`SELECT ${headColumns} FROM control_project_event_stream_heads WHERE tenant_id=$1 AND project_id=$2`,
       [request.tenantId,request.projectId]);
     const requestedCursor=request.afterCursor??request.beforeCursor;
     const decodedCursor=requestedCursor!==undefined?decodeProjectEventCursorV1(requestedCursor):undefined;
@@ -135,18 +146,18 @@ export class ProjectEventStoreV1 {
       if(!cursor||cursor.projectId!==request.projectId||cursor.sequence>Number(head.last_sequence)
         ||request.beforeCursor!==undefined&&cursor.sequence===0){mode="reset";}
       else if(cursor.sequence===0){
-        const first=await this.#query<EventRow>(`SELECT ${eventColumns} FROM control_project_events WHERE tenant_id=$1 AND project_id=$2 AND sequence=1`,
+        const first=await query<EventRow>(`SELECT ${eventColumns} FROM control_project_events WHERE tenant_id=$1 AND project_id=$2 AND sequence=1`,
           [request.tenantId,request.projectId]);
         if(!first.rows[0])mode="reset";else this.#verifiedEvent(first.rows[0],scope);
       }
-      else{const row=await this.#query<EventRow>(`SELECT ${eventColumns} FROM control_project_events WHERE tenant_id=$1 AND project_id=$2 AND sequence=$3`,
+      else{const row=await query<EventRow>(`SELECT ${eventColumns} FROM control_project_events WHERE tenant_id=$1 AND project_id=$2 AND sequence=$3`,
         [request.tenantId,request.projectId,cursor.sequence]);
         if(!row.rows[0]||(cursorEvent=this.#verifiedEvent(row.rows[0],scope)).eventDigest!==cursor.eventDigest)mode="reset";
         else{boundary=cursor.sequence;cursorDigest=cursor.eventDigest;}}
     }
     const history=mode!=="reset"&&request.beforeCursor!==undefined;
     const descending=mode!=="replay";
-    const rows=await this.#query<EventRow>(mode==="replay"
+    const rows=await query<EventRow>(mode==="replay"
       ?`SELECT ${eventColumns} FROM control_project_events WHERE tenant_id=$1 AND project_id=$2 AND sequence>$3 ORDER BY sequence ASC LIMIT $4`
       :history
         ?`SELECT ${eventColumns} FROM control_project_events WHERE tenant_id=$1 AND project_id=$2 AND sequence<$3 ORDER BY sequence DESC LIMIT $4`

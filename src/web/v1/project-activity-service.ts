@@ -24,11 +24,16 @@ export class ProjectActivityServiceV1 {
     cursor: { afterCursor?: string; beforeCursor?: string }, limit: number): Promise<ProjectEventPageV1> {
     if (!catalogProjectIdSchema.safeParse(projectId).success || !Number.isSafeInteger(limit) || limit < 1 || limit > 100
       || cursor.afterCursor !== undefined && cursor.beforeCursor !== undefined) throw new WebAccessError("invalid_request");
-    return this.authority.authenticated(identity, async (_, actor) => {
+    // The event read runs on this transaction's own connection. A second pooled
+    // checkout per request would let as many concurrent readers as the pool has
+    // connections deadlock against themselves, because each already holds one
+    // connection for its own authority check. The shared snapshot also means the
+    // head and the events can never come from two different points in time.
+    return this.authority.authenticated(identity, async (tx, actor) => {
       actor.require("projects.read", projectId, true);
       if (!this.source) throw new Error("project_activity_source_unavailable");
       let value: unknown;
-      try { value = await this.source.read({ ...this.scope, projectId, ...cursor, limit }); }
+      try { value = await this.source.read({ ...this.scope, projectId, ...cursor, limit }, tx); }
       catch (error) {
         if (error instanceof ProjectEventErrorV1 && error.safeCode === "project_not_found") throw new WebAccessError("not_found");
         if (error instanceof ProjectEventErrorV1 && error.safeCode === "invalid_input") throw new WebAccessError("invalid_request");
@@ -39,6 +44,6 @@ export class ProjectActivityServiceV1 {
         || !page.presentationOnly || page.grantsApproval || page.grantsCommandAuthority || page.grantsExecutionAuthority)
         throw new Error("project_activity_scope_mismatch");
       return page;
-    }, { readOnly: true });
+    }, { readOnly: true, repeatableReadSnapshot: true });
   }
 }
