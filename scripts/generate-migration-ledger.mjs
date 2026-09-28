@@ -26,6 +26,7 @@ export async function collectLedgerEntries(rootDir = root) {
   }
   for (const [file, kind] of [["db/roles/production_roles.sql", "grants"],
       ["db/roles/production_table_grants.sql", "grants"],
+      ["db/roles/agent_reviewer_roles.sql", "grants"],
       ["db/roles/production_provision.sql", "provision"]]) {
     order += 1;
     const bytes = await readFile(join(rootDir, file), "utf8");

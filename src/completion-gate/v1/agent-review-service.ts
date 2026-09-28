@@ -6,6 +6,7 @@ import type { AwaitableRollbackCheckpointStoreV1 } from "../../security/rollback
 import type { TaskAssignmentRoute } from "../../web/v1/task-assignment-coordinator";
 import { deriveProtectedAgentPrincipalV1 } from "./protected-agent-principal";
 import { assertReviewerIndependentV1, ReviewerIndependenceErrorV1 } from "./reviewer-independence";
+import { completionAcceptanceProfileSchemaV1 } from "./schemas";
 import { CompletionGateErrorV1, CompletionGateStoreV1 } from "./store";
 import type { CompletionAcceptanceProfileV1, CompletionPrincipalV1, CompletionReviewTargetV1,
   CompletionReviewV1, CompletionFindingV1, CompletionRiskV1 } from "./types";
@@ -146,7 +147,10 @@ export class AgentReviewServiceV1 {
       [this.tenantId, plan.reviewerRunId])).rows[0];
     if (!run || run.state !== "succeeded" || run.job_id !== plan.reviewerJobId || run.project_id !== plan.projectId)
       throw new Error("agent_review_run_incomplete");
-    const profile = await this.#gate.getRecord(this.tenantId, plan.acceptanceProfileId, "profile") as CompletionAcceptanceProfileV1;
+    const profileRow = (await this.db.query<{payload:unknown}>(`SELECT payload FROM control_completion_gate_records
+      WHERE tenant_id=$1 AND project_id=$2 AND id=$3 AND kind='profile'`,
+    [this.tenantId,plan.projectId,plan.acceptanceProfileId])).rows[0];
+    const profile = completionAcceptanceProfileSchemaV1.parse(profileRow?.payload) as CompletionAcceptanceProfileV1;
     const effectiveRisk = riskOrder[Math.max(riskOrder.indexOf(profile.minimumRisk), riskOrder.indexOf(input.assessedRisk))]!;
     const review: CompletionReviewV1 = { schemaVersion: "control-room-completion-gate/v1", id: plan.reviewId,
       tenantId: this.tenantId, projectId: plan.projectId, targetId: plan.targetId, targetDigest: plan.targetDigest,
@@ -161,7 +165,7 @@ export class AgentReviewServiceV1 {
       code: "agent:changes_requested", severity: effectiveRisk, statementDigest: input.findingStatementDigest!,
       evidenceDigests: [...new Set(input.evidenceDigests)].sort(), raisedAt: review.reviewedAt,
     }] : [];
-    const result = await this.#gate.recordReview(review, findings);
+    const result = await this.#gate.commitAgentReview(input.planId, review, findings);
     return Object.freeze({ review: result.review, replayed: result.replayed, grantsApproval: false as const,
       grantsExecutionAuthority: false as const });
   }

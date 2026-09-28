@@ -17,7 +17,7 @@ export async function verifyPrivateIdeaAdapter(db: DatabaseClient, scope: { tena
 
 // Generated from public migrations 0001-0097, including generic external-content
 // migrations 0025/0026. Catalog query below; not a mutable database marker.
-export const privateWebSchemaDigest = "fbd4dc5d8090f0bbb3743f62fa7fadc8b64aad5ddd28d850f27523a471a9eaae";
+export const privateWebSchemaDigest = "89f0536f9b572364fe65f416f08e0f476171d3eac5aa2422a5062927358ec435";
 export const privateWebReadTables = ["control_identities", "control_role_grants", "workspaces", "control_web_sessions",
   "tenants", "control_idempotency",
   "control_schedules", "control_schedule_occurrences",
@@ -213,10 +213,9 @@ const publisherUpdates: Record<string, readonly string[]> = {
 const agentReviewerReads = ["control_agent_review_plans", "control_completion_gate_records",
   "control_completion_gate_integrity", "control_harness_runs", "control_attempts", "control_task_execution_plans",
   "pipeline_stage_runs"];
-const agentReviewerInserts = new Set(["control_completion_gate_records"]);
+const agentReviewerInserts = new Set<string>();
 const agentReviewerUpdates: Record<string, readonly string[]> = {
   control_completion_gate_records: ["web_lock"],
-  control_completion_gate_integrity: ["revision", "record_count", "state_digest", "state_auth_tag"],
 };
 
 /** Structural fingerprint, independent of OIDs, owners, ACLs and row data. PG17 is the pinned target.
@@ -399,10 +398,31 @@ async function verifyDatabase(db: DatabaseClient, config: PrivatePostgresConfigu
           AND (pg_has_role(c.relowner,'MEMBER') OR c.relkind='S' AND
             (has_sequence_privilege(c.oid,'SELECT') OR has_sequence_privilege(c.oid,'UPDATE') OR has_sequence_privilege(c.oid,'USAGE'))))
         OR EXISTS(SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='public'
-          AND (has_function_privilege(p.oid,'EXECUTE') OR pg_has_role(p.proowner,'MEMBER') OR p.prosecdef))
+          AND (pg_has_role(p.proowner,'MEMBER')
+            OR has_function_privilege(p.oid,'EXECUTE') AND NOT ($2 AND p.oid='commit_agent_review(text,jsonb,jsonb,bytea)'::regprocedure)
+            OR p.prosecdef AND NOT (p.oid='commit_agent_review(text,jsonb,jsonb,bytea)'::regprocedure
+              AND pg_get_userbyid(p.proowner)='control_room_schema_owner'
+              AND p.proconfig=ARRAY['search_path=pg_catalog']::text[]
+              AND NOT p.proleakproof AND p.proparallel='u' AND p.provolatile='v'
+              AND NOT has_function_privilege('public','commit_agent_review(text,jsonb,jsonb,bytea)','EXECUTE'))))
+        OR ($2 AND NOT (has_function_privilege('commit_agent_review(text,jsonb,jsonb,bytea)','EXECUTE')
+          AND NOT has_function_privilege('public','commit_agent_review(text,jsonb,jsonb,bytea)','EXECUTE')
+          AND NOT EXISTS (SELECT 1 FROM pg_proc function_acl
+            CROSS JOIN LATERAL aclexplode(COALESCE(function_acl.proacl,acldefault('f',function_acl.proowner))) acl
+            WHERE function_acl.oid='commit_agent_review(text,jsonb,jsonb,bytea)'::regprocedure
+              AND (acl.privilege_type<>'EXECUTE'
+                OR acl.grantee NOT IN (function_acl.proowner,
+                  (SELECT oid FROM pg_roles WHERE rolname='control_room_agent_reviewer'))
+                OR acl.grantee=(SELECT oid FROM pg_roles WHERE rolname='control_room_agent_reviewer')
+                  AND acl.is_grantable))
+          AND 1=(SELECT count(*) FROM pg_proc function_acl
+            CROSS JOIN LATERAL aclexplode(COALESCE(function_acl.proacl,acldefault('f',function_acl.proowner))) acl
+            WHERE function_acl.oid='commit_agent_review(text,jsonb,jsonb,bytea)'::regprocedure
+              AND acl.grantee=(SELECT oid FROM pg_roles WHERE rolname='control_room_agent_reviewer')
+              AND acl.privilege_type='EXECUTE' AND NOT acl.is_grantable)))
         OR EXISTS(SELECT 1 FROM pg_default_acl d CROSS JOIN LATERAL aclexplode(d.defaclacl) a
           WHERE a.grantee=0 OR a.grantee IN (SELECT oid FROM pg_roles WHERE pg_has_role(oid,'MEMBER')))
-        OR NOT has_schema_privilege('public','USAGE') AS unsafe`, [withQueue])).rows[0];
+        OR NOT has_schema_privilege('public','USAGE') AS unsafe`, [withQueue,kind === "agentReviewer"])).rows[0];
       if (unsafe?.unsafe !== false) fail();
       if (withQueue) await verifyPgBossApplicationPermissions(tx,
         kind === "coordinator" && !(queue && "nativeQueueProducer" in queue && queue.nativeQueueProducer === false) || feedProducer, recovery);

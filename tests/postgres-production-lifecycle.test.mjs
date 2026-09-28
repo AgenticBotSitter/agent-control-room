@@ -23,6 +23,13 @@ import { verifyMacLocalDatabaseBackupV1 } from "../scripts/ops/verify-database-b
 import { AuditStore } from "../src/audit/audit-store.ts";
 import { WorkBatchStoreV1 } from "../src/work-intake/v1/store.ts";
 import { sha256Digest } from "../src/security/canonical-digest.ts";
+import { InMemoryRollbackCheckpointStoreV1 } from "../src/security/rollback-checkpoint.ts";
+import { SecurityStore } from "../src/security/security-store.ts";
+import { LinearPipelineServiceV1 } from "../src/pipelines/v1/index.ts";
+import { AgentReviewServiceV1, CompletionGateStoreV1 } from "../src/completion-gate/v1/index.ts";
+import { WebProjectService } from "../src/web/v1/project-service.ts";
+import { createAccessVerifier } from "../src/web/v1/access-verifier.ts";
+import { request as webRequest, trust as webTrust, now as webNow } from "./helpers/web-foundation.ts";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const BIN = process.env.PG_BIN ?? "/usr/lib/postgresql/17/bin";
@@ -148,7 +155,7 @@ async function stageRoot(fileCount) {
   await mkdir(join(stage, "db/setup"), { recursive: true });
   const all = (await readdir(join(ROOT, "db/migrations"))).filter(name => name.endsWith(".sql")).sort().slice(0, fileCount);
   for (const file of all) await cp(join(ROOT, "db/migrations", file), join(stage, "db/migrations", file));
-  for (const file of ["production_roles.sql", "production_table_grants.sql", "production_provision.sql"]) {
+  for (const file of ["production_roles.sql", "production_table_grants.sql", "agent_reviewer_roles.sql", "production_provision.sql"]) {
     await cp(join(ROOT, "db/roles", file), join(stage, "db/roles", file));
   }
   await cp(join(ROOT, "db/setup/production_migration_ledger.sql"), join(stage, "db/setup/production_migration_ledger.sql"));
@@ -466,9 +473,10 @@ test("agent-review down migration removes every surviving direct privilege", nee
     has_table_privilege('control_room_agent_reviewer','control_completion_gate_records','INSERT') AS gate_insert,
     has_column_privilege('control_room_agent_reviewer','control_completion_gate_records','web_lock','UPDATE') AS gate_update,
     has_column_privilege('control_room_agent_reviewer','control_completion_gate_integrity','revision','UPDATE') AS integrity_update,
+    coalesce(has_function_privilege('control_room_agent_reviewer',to_regprocedure('commit_agent_review(text,jsonb,jsonb,bytea)'),'EXECUTE'),false) AS commit_execute,
     has_table_privilege('control_room_agent_reviewer','control_harness_runs','SELECT') AS run_select`)).rows[0];
-  assert.deepEqual(before,{schema_usage:true,direct_schema_usage:true,gate_select:true,gate_insert:true,gate_update:true,
-    integrity_update:true,run_select:true});
+  assert.deepEqual(before,{schema_usage:true,direct_schema_usage:true,gate_select:true,gate_insert:false,gate_update:true,
+    integrity_update:false,commit_execute:true,run_select:true});
   await query(db,await readFile(join(ROOT,"db/down/0097_agent_review_plans.sql"),"utf8"));
   const afterDown=(await query(db,`SELECT
     has_schema_privilege('control_room_agent_reviewer','public','USAGE') AS schema_usage,
@@ -479,9 +487,125 @@ test("agent-review down migration removes every surviving direct privilege", nee
     has_table_privilege('control_room_agent_reviewer','control_completion_gate_records','INSERT') AS gate_insert,
     has_column_privilege('control_room_agent_reviewer','control_completion_gate_records','web_lock','UPDATE') AS gate_update,
     has_column_privilege('control_room_agent_reviewer','control_completion_gate_integrity','revision','UPDATE') AS integrity_update,
+    coalesce(has_function_privilege('control_room_agent_reviewer',to_regprocedure('commit_agent_review(text,jsonb,jsonb,bytea)'),'EXECUTE'),false) AS commit_execute,
     has_table_privilege('control_room_agent_reviewer','control_harness_runs','SELECT') AS run_select`)).rows[0];
   assert.deepEqual(afterDown,{schema_usage:true,direct_schema_usage:false,gate_select:false,gate_insert:false,gate_update:false,
-    integrity_update:false,run_select:false});
+    integrity_update:false,commit_execute:false,run_select:false});
+});
+
+test("real reviewer login cannot replay the three raw authority attacks", needsPg, async () => {
+  const database="cr_agent_review_attacks", login="agent_reviewer_attack_probe", password="reviewer-probe-password-389";
+  await freshDatabase(database);
+  const admin=target(database), client=postgresDatabase(admin), at=new Date(webNow).toISOString();
+  const reviewKey=new Uint8Array(32).fill(52), checkpoints=new InMemoryRollbackCheckpointStoreV1({testOnly:true});
+  await applyMigrations({target:admin,bootstrapTarget:bootstrapTarget(database),migrateTarget:migrateTarget(database),
+    rootDir:ROOT,env:{...process.env,...passwords}});
+  await query(admin,await readFile(join(ROOT,"db/roles/agent_reviewer_roles.sql"),"utf8"));
+  await query(admin,`CREATE ROLE ${login} LOGIN PASSWORD '${password}' INHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS`);
+  await query(admin,`GRANT control_room_agent_reviewer TO ${login}`);
+  await client.query("INSERT INTO tenants(id,display_name) VALUES('tenant:review-probe','Review probe')");
+  await client.query("INSERT INTO workspaces(id,tenant_id,display_name) VALUES('workspace:review-probe','tenant:review-probe','Review probe')");
+  await new SecurityStore(client).bootstrapOwner({tenantId:"tenant:review-probe",provider:webTrust.issuer,subject:"test-owner",
+    identityId:"identity:web",grantId:"grant:web",displayName:"Test owner",verifiedAt:new Date(webNow-60_000).toISOString(),
+    expiresAt:new Date(webNow+300_000).toISOString(),now:at});
+  const identity=createAccessVerifier(webTrust)(webRequest(),webNow);
+  const project=(await new WebProjectService(client,{tenantId:"tenant:review-probe",workspaceId:"workspace:review-probe"},()=>webNow)
+    .create(identity,{title:"Reviewer authority probe",summary:"Exercise the bounded reviewer role."},"review-probe-project-0001")).project;
+  const template={name:"Reviewer authority probe",description:"Build and check one result.",stages:[
+    {ordinal:0,stageKind:"build",role:"builder",description:"Build.",requiredCapability:"code.change",workerId:"worker:build:probe",
+      workerKind:"codex",nodeId:"node:build:probe",selectionKey:"build.standard",model:"build-test",effort:"medium",maxLoops:3},
+    {ordinal:1,stageKind:"check",role:"checker",description:"Check.",requiredCapability:"code.review",workerId:"worker:check:probe",
+      workerKind:"claude-code",nodeId:"node:check:probe",selectionKey:"check.standard",model:"check-test",effort:"high",maxLoops:3},
+    {ordinal:2,stageKind:"signoff",role:"validator",description:"Validate.",requiredCapability:"code.validate",workerId:"worker:validate:probe",
+      workerKind:"hermes",nodeId:"node:validate:probe",selectionKey:"validate.standard",model:"validate-test",effort:"default",
+      provider:"openai",profile:"profile:openai",maxLoops:0}],maxTotalLoops:6,maxDurationSeconds:3600};
+  const pipelines=new LinearPipelineServiceV1(client,{tenantId:"tenant:review-probe",workspaceId:"workspace:review-probe"},reviewKey,
+    {assertCurrent:()=>true,isAcceptedResultCurrent:()=>false},()=>webNow);
+  const saved=await pipelines.createTemplate(identity,project.projectId,template);
+  const pipeline=await pipelines.instantiate(identity,project.projectId,{templateId:saved.templateId,title:"Review bounded result"},"review-probe-pipeline-0001");
+  for(const jobId of pipeline.jobIds.slice(0,2))await client.query(`INSERT INTO control_task_execution_plans
+    (tenant_id,project_id,source_job_id,job_id,plan,auth_tag) VALUES('tenant:review-probe',$1,$2,$2,'{}'::jsonb,$3)`,
+  [project.projectId,jobId,`hmac-sha256:${"9".repeat(64)}`]);
+  const gate=new CompletionGateStoreV1(client,reviewKey,checkpoints,()=>at); await gate.provisionTenant("tenant:review-probe");
+  const profile={schemaVersion:"control-room-completion-gate/v1",id:"profile:review-probe",tenantId:"tenant:review-probe",
+    projectId:project.projectId,name:"Reviewer probe",targetKind:"document",requiredVerificationScenarioIds:["scenario:review-probe"],
+    minimumIndependentReviews:1,reviewerSeparation:{actor:true,worker:true,agentProfile:true,harness:true,modelFamily:true},
+    verificationRequiresProducerSeparation:true,minimumRisk:"critical",maximumRevisionRounds:3,automaticLowRiskDisposition:false,
+    createdBy:{actorId:"identity:web",actorType:"human"},createdAt:at};
+  await gate.registerProfile(profile);
+  const targetRecord={schemaVersion:"control-room-completion-gate/v1",id:"target:review-probe",tenantId:"tenant:review-probe",
+    projectId:project.projectId,kind:"document",subjectId:pipeline.jobIds[0],subjectDigest:sha256Digest("retained result"),
+    acceptanceProfileId:profile.id,acceptanceProfileDigest:sha256Digest(profile),producer:{actorId:"node:build:probe",actorType:"agent",
+      workerId:"worker:build:probe",agentProfileId:"agent-profile:build.standard",harness:"codex",
+      adapterId:"connector:codex-owner-trusted-local-v1",modelFamily:"model-family:openai"},rootTargetId:"target:review-probe",
+    revisionNumber:0,submittedAt:at};
+  await gate.registerTarget(targetRecord);
+  await client.query(`INSERT INTO control_nodes(id,tenant_id,state,version,identity_key_id,payload,created_at,updated_at)
+    VALUES('node:check:probe','tenant:review-probe','active',1,'key:check',$1::jsonb,$2,$2)`,
+  [JSON.stringify({id:"node:check:probe",tenantId:"tenant:review-probe",state:"active",version:1,identityKeyId:"key:check"}),at]);
+  await client.query(`INSERT INTO control_attempts(id,tenant_id,job_id,attempt_number,state,version,worker_id,node_id,lease_epoch,payload,created_at,updated_at)
+    VALUES('attempt:review-probe','tenant:review-probe',$1,1,'succeeded',1,'worker:check:probe','node:check:probe',1,$2::jsonb,$3,$3)`,
+  [pipeline.jobIds[1],JSON.stringify({id:"attempt:review-probe",tenantId:"tenant:review-probe",state:"succeeded",version:1,
+    jobId:pipeline.jobIds[1],attemptNumber:1,workerId:"worker:check:probe",nodeId:"node:check:probe",leaseEpoch:1}),at]);
+  await client.query(`INSERT INTO control_harness_runs(id,tenant_id,project_id,job_id,attempt_id,node_id,adapter_id,harness,
+    native_session_key_digest,parent_run_id,revision_of_run_id,state,last_sequence,run_digest,run_auth_tag,payload,created_at,updated_at,last_observed_at)
+    VALUES('run:review-probe','tenant:review-probe',$1,$2,'attempt:review-probe','node:check:probe','connector:claude-code-local-v1',
+      'claude',$3,NULL,NULL,'succeeded',1,$4,$5,'{}'::jsonb,$6,$6,$6)`,[project.projectId,pipeline.jobIds[1],
+    `sha256:${"1".repeat(64)}`,`sha256:${"2".repeat(64)}`,`hmac-sha256:${"3".repeat(64)}`,at]);
+  const routes=[{nodeId:"node:check:probe",executorId:"worker:check:probe",capabilityProbeId:"harness.claude-code.local.v1",
+    maxConcurrentTasks:1,requiredScratchBytes:0,leaseSeconds:60}];
+  const planner=new AgentReviewServiceV1(client,"tenant:review-probe",reviewKey,checkpoints,routes,()=>at);
+  const plan=await planner.createPlan({projectId:project.projectId,pipelineRunId:pipeline.runId,producerJobId:pipeline.jobIds[0],
+    reviewerJobId:pipeline.jobIds[1],reviewerRunId:"run:review-probe",targetId:targetRecord.id});
+  const reviewerTarget={...target(database,login),password}, reviewer=postgresDatabase(reviewerTarget);
+  const role=(await reviewer.query("SELECT rolsuper,pg_has_role(current_user,'control_room_agent_reviewer','MEMBER') AS member FROM pg_roles WHERE rolname=current_user")).rows[0];
+  assert.deepEqual(role,{rolsuper:false,member:true});
+  const boundary=(await reviewer.query(`SELECT p.prosecdef,pg_get_userbyid(p.proowner) AS owner,p.proconfig,
+    p.proleakproof,p.proparallel,p.provolatile,
+    NOT EXISTS (SELECT 1 FROM aclexplode(COALESCE(p.proacl,acldefault('f',p.proowner))) acl
+      WHERE acl.privilege_type<>'EXECUTE'
+        OR acl.grantee NOT IN (p.proowner,(SELECT oid FROM pg_roles WHERE rolname='control_room_agent_reviewer'))
+        OR acl.grantee=(SELECT oid FROM pg_roles WHERE rolname='control_room_agent_reviewer') AND acl.is_grantable)
+      AND 1=(SELECT count(*) FROM aclexplode(COALESCE(p.proacl,acldefault('f',p.proowner))) acl
+        WHERE acl.grantee=(SELECT oid FROM pg_roles WHERE rolname='control_room_agent_reviewer')
+          AND acl.privilege_type='EXECUTE' AND NOT acl.is_grantable) AS exact_acl
+    FROM pg_proc p WHERE p.oid='commit_agent_review(text,jsonb,jsonb,bytea)'::regprocedure`)).rows[0];
+  assert.deepEqual(boundary,{prosecdef:true,owner:"control_room_schema_owner",proconfig:["search_path=pg_catalog"],
+    proleakproof:false,proparallel:"u",provolatile:"v",exact_acl:true});
+  const state=async()=> (await client.query("SELECT revision,record_count,state_digest,state_auth_tag FROM control_completion_gate_integrity WHERE tenant_id='tenant:review-probe'")).rows[0];
+  const before=await state();
+  await assert.rejects(reviewer.query("UPDATE control_completion_gate_integrity SET record_count=record_count+99 WHERE tenant_id='tenant:review-probe'"),/permission denied/u);
+  const review={schemaVersion:"control-room-completion-gate/v1",id:plan.reviewId,tenantId:"tenant:review-probe",projectId:project.projectId,
+    targetId:targetRecord.id,targetDigest:sha256Digest(targetRecord),acceptanceProfileId:profile.id,acceptanceProfileDigest:sha256Digest(profile),
+    reviewer:plan.reviewer,authority:"completion_gate",decision:"accepted",assessedRisk:"low",effectiveRisk:"low",
+    evidenceDigests:[sha256Digest("probe evidence")],findingIds:[],reviewedAt:at,grantsApproval:false,grantsExecutionAuthority:false};
+  const rawInsert=(payload,tag)=>reviewer.query(`INSERT INTO control_completion_gate_records(id,tenant_id,project_id,kind,record_key,
+    subject_id,parent_id,record_digest,record_auth_tag,payload,occurred_at) VALUES($1,$2,$3,'review',$4,$5,$5,$6,$7,$8::jsonb,$9)`,
+  [payload.id,payload.tenantId,payload.projectId,sha256Digest({kind:"review",targetId:targetRecord.id,authority:"completion_gate",
+    reviewerActorId:plan.reviewer.actorId}),targetRecord.id,sha256Digest(payload),tag,JSON.stringify(payload),at]);
+  await assert.rejects(rawInsert(review,`hmac-sha256:${"5".repeat(64)}`),/permission denied/u);
+  const floored={...review,effectiveRisk:"critical"};
+  await assert.rejects(rawInsert(floored,`hmac-sha256:${"a".repeat(64)}`),/permission denied/u);
+  await assert.rejects(reviewer.query("SELECT * FROM commit_agent_review($1,$2::jsonb,NULL,$3::bytea)",
+    [plan.planId,JSON.stringify(floored),new Uint8Array(32).fill(99)]),/integrity key rejected/u);
+  assert.deepEqual(await state(),before);
+  const service=new AgentReviewServiceV1(reviewer,"tenant:review-probe",reviewKey,checkpoints,routes,()=>at);
+  const committed=await service.record({planId:plan.planId,decision:"accepted",assessedRisk:"low",evidenceDigests:[sha256Digest("probe evidence")]});
+  assert.equal(committed.review.effectiveRisk,"critical");
+  const replayed=await service.record({planId:plan.planId,decision:"accepted",assessedRisk:"low",evidenceDigests:[sha256Digest("probe evidence")]});
+  assert.equal(replayed.replayed,true);
+  await gate.verifyProvisionedTenantV1("tenant:review-probe");
+  const beforeDrift=await state(), checkpointBeforeDrift=await checkpoints.read("completion-gate:tenant:review-probe");
+  const rogue={...committed.review,id:"review:rogue-drift",reviewer:{...committed.review.reviewer,actorId:"node:rogue-drift"}};
+  await client.query(`INSERT INTO control_completion_gate_records(id,tenant_id,project_id,kind,record_key,subject_id,parent_id,
+    record_digest,record_auth_tag,payload,occurred_at) VALUES($1,$2,$3,'review',$4,$5,$5,$6,$7,$8::jsonb,$9)`,
+  [rogue.id,rogue.tenantId,rogue.projectId,sha256Digest({kind:"review",targetId:rogue.targetId,authority:"completion_gate",
+    reviewerActorId:rogue.reviewer.actorId}),rogue.targetId,sha256Digest(rogue),`hmac-sha256:${"b".repeat(64)}`,
+    JSON.stringify(rogue),at]);
+  await assert.rejects(service.record({planId:plan.planId,decision:"accepted",assessedRisk:"low",
+    evidenceDigests:[sha256Digest("probe evidence")]}),/existing record integrity rejected/u);
+  assert.deepEqual(await state(),beforeDrift);
+  assert.deepEqual(await checkpoints.read("completion-gate:tenant:review-probe"),checkpointBeforeDrift);
 });
 
 test("backup and disposable restore preserve rows, owners, grants and identity", needsPg, async () => {
