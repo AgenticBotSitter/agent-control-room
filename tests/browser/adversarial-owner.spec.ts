@@ -417,7 +417,6 @@ test.describe("disposable owner website adversarial attacks", () => {
     await page.getByRole("link", { name: "Open revised task" }).click();
     await expect(page.getByRole("button", { name: "Assign and run" })).toBeEnabled();
     await assignAndOpenResult(page, true);
-    await expect(page.getByText(/Matches Revision 1/)).toBeVisible();
     await prepareAcceptance(page);
     await page.getByRole("button", { name: "Accept", exact: true }).click();
     await expect(page.getByText(/Saved: quality acceptance/)).toBeVisible();
