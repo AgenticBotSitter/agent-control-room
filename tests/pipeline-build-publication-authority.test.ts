@@ -9,6 +9,10 @@ import { sha256Digest } from "../src/security";
 import { hmacSha256Tag } from "../src/security";
 import { LinearPipelineServiceV1 } from "../src/pipelines/v1/service";
 import type { DatabaseClient } from "../src/persistence/database";
+import { createPrivateTaskApplication } from "../src/web/v1/private-task-application";
+import type { InstalledPipelineCodexWorkerCompositionInputV1 } from "../src/node-bridge/codex-worker-composition";
+import { nativeTaskLifecycleFixture } from "./helpers/native-task-lifecycle";
+import { origin } from "./helpers/web-foundation";
 
 const key = new Uint8Array(32).fill(91);
 const delivery = createControllerWorkerDeliveryV1({ identity: { tenantId: "tenant:test", projectId: "project:test",
@@ -126,6 +130,36 @@ test("installed build publication is absent without canonical result and reposit
       loadPullRequestPublication: () => undefined, reservePullRequestPublication: () => "reserved",
       replacePullRequestPublication: () => true, retainedPullRequestPublication: () => undefined },
     openPullRequest: async () => ({ status: "ambiguous" }) }), /unavailable/);
+});
+
+test("private task application mounts and directly invokes the installed pipeline Codex worker factory", async t => {
+  const lifecycle = await nativeTaskLifecycleFixture(); t.after(lifecycle.close);
+  const f = lifecycle.f, pipelineKey = new Uint8Array(32).fill(103);
+  const controllerClient = { query: f.db.query.bind(f.db), transaction: f.db.transaction.bind(f.db),
+    transactionWithPreCommitCheck: f.db.transactionWithPreCommitCheck.bind(f.db) };
+  const webClient = { query: f.db.query.bind(f.db), transaction: f.db.transaction.bind(f.db),
+    transactionWithPreCommitCheck: f.db.transactionWithPreCommitCheck.bind(f.db) };
+  const app = await createPrivateTaskApplication({ ...f.accessTrust, ...f.scope, origin,
+    loadKeys: async () => f.accessTrust.keys, tasks: { ...f.ownerKeys,
+      harnessIntegrityKey: f.ownerKeys.harnessIntegrityKey! },
+    database: { client: webClient, close: async () => {}, isAvailable: () => true },
+    workBatches: { integrityKey: pipelineKey, pipelineRepositories: {
+      resolve: async () => ({ repositoryUrl: "https://example.invalid/controller/repository" }) } } }, {
+    scope: f.scope, planning: f.plannerConfig, routes: [f.route], quality: { ...f.ownerConfig, scenarios: [] },
+    workBatches: { integrityKey: pipelineKey, selectionAuthority: { assertCurrent: () => true } },
+    database: { client: controllerClient, close: async () => {}, isAvailable: () => true } });
+  t.after(() => app.close());
+  const createPipelineCodexWorker = app.createPipelineCodexWorker;
+  assert.equal(typeof createPipelineCodexWorker, "function");
+  let gitCalls = 0, openCalls = 0;
+  const input = { delivery, worker: { initial: {} } as InstalledPipelineCodexWorkerCompositionInputV1["worker"],
+    publication: { runGit: async () => { gitCalls++; return new Uint8Array(); }, journal: {
+      loadPullRequestPublication: () => undefined, reservePullRequestPublication: () => "reserved" as const,
+      replacePullRequestPublication: () => true, retainedPullRequestPublication: () => undefined },
+    openPullRequest: async () => { openCalls++; return { status: "ambiguous" as const }; } } };
+  await assert.rejects(createPipelineCodexWorker!(input), /pipeline_build_publication_unavailable/);
+  assert.equal(gitCalls, 0); assert.equal(openCalls, 0,
+    "missing canonical publication authority must refuse before ordinary worker effects");
 });
 
 test("canonical retained-result history returns authenticated PR evidence after service restart and refuses tampering", async () => {
