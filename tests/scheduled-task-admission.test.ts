@@ -11,6 +11,7 @@ import { CanonicalStore, type ProposedWorkBundle } from "../src/persistence/cano
 import { adaptPglite, type DatabaseClient, type DatabaseSession } from "../src/persistence/database";
 import { computeAuthorityDigest, sha256Digest } from "../src/security";
 import { ScheduleOccurrenceStore } from "../src/services/v1/occurrence-store";
+import { TestClock } from "./support/clock";
 import {
   EMPTY_SCHEDULE_REUSABLE_CONTEXT_BINDING_DIGEST_V1,
   ScheduledTaskAdmissionError,
@@ -92,9 +93,9 @@ async function fixture(now = Date.parse("2026-09-13T12:00:10.000Z")) {
     scheduleDefinitionDigest, source: { requestId: sourceRequestId, workflowId: sourceWorkflowId, jobId: sourceJobId,
       bundleDigest: computeScheduledTaskSourceBundleDigestV1(source) },
     contextBinding: { reusableContexts: [], bindingDigest: EMPTY_SCHEDULE_REUSABLE_CONTEXT_BINDING_DIGEST_V1 } };
-  let current = now;
-  const service = new ScheduledTaskAdmissionServiceV1(db, () => current);
-  return { raw, db, input, service, setNow(value: number) { current = value; } };
+  const clock = new TestClock(now);
+  const service = new ScheduledTaskAdmissionServiceV1(db, clock);
+  return { raw, db, input, service, clock };
 }
 
 function hasCode(code: ScheduledTaskAdmissionError["safeCode"]) {
@@ -187,11 +188,20 @@ test("expired recovery and mid-transaction failure leave no proposal or receipt"
     assert.equal(await count(expired.db, "control_jobs", "WHERE id LIKE 'job:schedule:%'"), 0);
   } finally { await expired.raw.close(); }
 
-  const crossedDeadline = await fixture();
+  const crossedDeadline = await fixture(Date.parse("2026-09-13T12:04:59.000Z"));
   try {
-    const deadline = Date.parse("2026-09-13T12:05:00.000Z");
-    const instants = [Date.parse("2026-09-13T12:04:59.000Z"), deadline];
-    const service = new ScheduledTaskAdmissionServiceV1(crossedDeadline.db, () => instants.shift() ?? deadline);
+    const db = crossedDeadline.db;
+    const original = db.transactionWithPreCommitCheck.bind(db);
+    const crossingDb: DatabaseClient = Object.freeze({
+      query: db.query.bind(db),
+      transaction: db.transaction.bind(db),
+      transactionWithPreCommitCheck: async <T>(run: (session: DatabaseSession) => Promise<T>, check: () => void | Promise<void>) =>
+        original(run, async () => {
+          crossedDeadline.clock.advance(1_000);
+          await check();
+        }),
+    });
+    const service = new ScheduledTaskAdmissionServiceV1(crossingDb, crossedDeadline.clock);
     await assert.rejects(service.admit(crossedDeadline.input), hasCode("recovery_window_expired"));
     assert.equal(await count(crossedDeadline.db, "control_scheduled_task_admissions"), 0);
     assert.equal(await count(crossedDeadline.db, "control_jobs", "WHERE id LIKE 'job:schedule:%'"), 0);
