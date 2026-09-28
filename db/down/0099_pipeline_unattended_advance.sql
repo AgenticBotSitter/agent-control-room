@@ -15,7 +15,7 @@ DO $$ BEGIN
     EXECUTE 'REVOKE UPDATE (unattended, state, started_at, updated_at, version, template_version, template_digest, record_digest, auth_tag) ON pipeline_runs FROM control_room_private_web';
   END IF;
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='control_room_task_coordinator') THEN
-    EXECUTE 'REVOKE UPDATE (state, completed_at, current_stage_ordinal, updated_at, version, record_digest, auth_tag) ON pipeline_runs FROM control_room_task_coordinator';
+    EXECUTE 'REVOKE UPDATE (state, completed_at, current_stage_ordinal, updated_at, version, record_digest, auth_tag, unattended_last_swept_at) ON pipeline_runs FROM control_room_task_coordinator';
   END IF;
 END $$;
 DROP TRIGGER pipeline_advance_receipts_no_truncate ON pipeline_advance_receipts;
@@ -26,6 +26,8 @@ DROP TABLE pipeline_advance_receipts;
 DROP TABLE pipeline_unattended_transitions;
 DROP FUNCTION reject_pipeline_unattended_history_mutation();
 ALTER TABLE pipeline_runs DROP CONSTRAINT pipeline_runs_active_started_at_check;
+DROP INDEX pipeline_runs_unattended_sweep_cursor;
+ALTER TABLE pipeline_runs DROP COLUMN unattended_last_swept_at;
 ALTER TABLE pipeline_templates ADD CONSTRAINT pipeline_templates_may_advance_unattended_check
   CHECK (may_advance_unattended=false);
 ALTER TABLE pipeline_runs ADD CONSTRAINT pipeline_runs_unattended_check CHECK (unattended=false);

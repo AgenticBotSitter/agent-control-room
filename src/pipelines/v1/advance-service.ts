@@ -422,16 +422,20 @@ export class PipelineAdvanceServiceV1 {
       u.policy_digest,u.owner_identity_id,u.enabled,u.idempotency_key,u.request_digest,u.transition_digest,u.auth_tag,u.occurred_at
       FROM pipeline_runs r JOIN LATERAL(SELECT t.* FROM pipeline_unattended_transitions t
         WHERE t.tenant_id=r.tenant_id AND t.pipeline_run_id=r.id ORDER BY t.run_version DESC,t.id DESC LIMIT 1)u ON true
-      WHERE r.tenant_id=$1 AND r.state='active' AND r.unattended AND u.enabled ORDER BY r.updated_at,r.id LIMIT $2`,
+      WHERE r.tenant_id=$1 AND r.state='active' AND r.unattended AND u.enabled
+      ORDER BY r.unattended_last_swept_at NULLS FIRST,r.id LIMIT $2`,
     [this.scope.tenantId,limit]);
     const receipts:PipelineAdvanceReceiptV1[]=[],completed:PipelineTerminalReceiptV1[]=[];
-    for(const row of candidates.rows){const material={id:row.id,tenantId:this.scope.tenantId,projectId:row.project_id,
-      pipelineRunId:row.pipeline_run_id,pipelineTemplateId:row.pipeline_template_id,templateVersion:Number(row.template_version),
-      templateDigest:row.template_digest,runVersion:Number(row.run_version),runDigest:row.run_digest,policyId:row.policy_id,
-      policyVersion:Number(row.policy_version),policyDigest:row.policy_digest,ownerIdentityId:row.owner_identity_id,enabled:row.enabled,
-      idempotencyKey:row.idempotency_key,requestDigest:row.request_digest,occurredAt:iso(row.occurred_at)};
-      verify(this.#key,"pipeline-unattended-transition/v1",material,row.transition_digest,row.auth_tag);
-      try{const outcome=await this.advance(row.pipeline_run_id,row.policy_id,{id:row.id,digest:row.transition_digest});
+    for(const row of candidates.rows){
+      await this.db.query(`UPDATE pipeline_runs SET unattended_last_swept_at=clock_timestamp()
+        WHERE tenant_id=$1 AND id=$2`,[this.scope.tenantId,row.pipeline_run_id]);
+      try{const material={id:row.id,tenantId:this.scope.tenantId,projectId:row.project_id,
+        pipelineRunId:row.pipeline_run_id,pipelineTemplateId:row.pipeline_template_id,templateVersion:Number(row.template_version),
+        templateDigest:row.template_digest,runVersion:Number(row.run_version),runDigest:row.run_digest,policyId:row.policy_id,
+        policyVersion:Number(row.policy_version),policyDigest:row.policy_digest,ownerIdentityId:row.owner_identity_id,enabled:row.enabled,
+        idempotencyKey:row.idempotency_key,requestDigest:row.request_digest,occurredAt:iso(row.occurred_at)};
+        verify(this.#key,"pipeline-unattended-transition/v1",material,row.transition_digest,row.auth_tag);
+        const outcome=await this.advance(row.pipeline_run_id,row.policy_id,{id:row.id,digest:row.transition_digest});
         if(outcome.startsWork)receipts.push(outcome);else completed.push(outcome);}
       catch(error){if(!(error instanceof PipelineAdvanceErrorV1))throw error;}
     }

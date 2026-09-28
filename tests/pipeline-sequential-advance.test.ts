@@ -104,6 +104,7 @@ function fixture(overrides:{unattended?:boolean;tamperStage?:boolean;route?:stri
     if(sql.includes("FROM pipeline_templates")&&sql.includes("FOR UPDATE"))return result([rows.template] as T[]);
     if(sql.includes("FROM pipeline_stage_runs")&&sql.includes("ORDER BY stage_ordinal FOR UPDATE"))return result(rows.stages as T[]);
     if(sql.includes("FROM pipeline_unattended_transitions")&&sql.includes("ORDER BY run_version"))return result([consent] as T[]);
+    if(sql.startsWith("UPDATE pipeline_runs SET unattended_last_swept_at"))return result([] as T[]);
     if(sql.includes("FROM projects p"))return result([{lifecycle:"active"}] as T[]);
     if(sql.includes("FROM pipeline_advance_receipts")&&sql.includes("FOR SHARE"))return result((receipts.has(Number(params[2]))?[receipts.get(Number(params[2]))]:[]) as T[]);
     if(sql.includes("FROM control_jobs")){const id=String(params[2]),ordinal=Number(id.split(":").at(-1)),stage=rows.stages[ordinal]!;
@@ -178,6 +179,43 @@ test("a stale authenticated owner consent refuses before assignment or queue eff
 test("advance cycle refuses a replaced owner transition selected before its transaction",async()=>{
   const f=fixture({driftAfterSweepSelection:true});const page=await f.service.advanceReady();
   assert.equal(page.checked,1);assert.equal(page.advanced.length,0);assert.equal(f.effects,0);});
+test("bounded sweeps rotate past stuck and tampered rows to reach later healthy work",async()=>{
+  const candidates=Array.from({length:10},(_,index)=>{const suffix=String(index).padStart(2,"0"),runId=`pipeline-run:${suffix}`;
+    const material={id:`transition:${suffix}`,tenantId:"tenant:test",projectId:"project:test",pipelineRunId:runId,
+      pipelineTemplateId:"pipeline-template:test",templateVersion:2,templateDigest:digest("t"),runVersion:2,
+      runDigest:digest("r"),policyId:"policy:test",policyVersion:1,policyDigest:digest("p"),
+      ownerIdentityId:"identity:owner",enabled:true,idempotencyKey:`pipeline-sweep-${suffix}`,
+      requestDigest:digest("q"),occurredAt:iso()};
+    return{id:material.id,project_id:material.projectId,pipeline_run_id:runId,pipeline_template_id:material.pipelineTemplateId,
+      template_version:material.templateVersion,template_digest:material.templateDigest,run_version:material.runVersion,
+      run_digest:material.runDigest,policy_id:material.policyId,policy_version:material.policyVersion,
+      policy_digest:material.policyDigest,owner_identity_id:material.ownerIdentityId,enabled:true,
+      idempotency_key:material.idempotencyKey,request_digest:material.requestDigest,
+      transition_digest:sha256Digest(material),auth_tag:index===0?`hmac-sha256:${"0".repeat(64)}`:
+        hmacSha256Tag(key,{purpose:"pipeline-unattended-transition/v1",record:material}),occurred_at:material.occurredAt};});
+  const cursors=new Map<string,number>();let sweep=0;
+  const query:DatabaseClient["query"]=async<T>(sql:string,params:unknown[]=[])=>{
+    if(sql.includes("FROM pipeline_runs r JOIN LATERAL")){const limit=Number(params[1]);
+      const selected=[...candidates].sort((left,right)=>{
+        const a=cursors.get(left.pipeline_run_id),b=cursors.get(right.pipeline_run_id);
+        if(a===undefined&&b!==undefined)return-1;if(a!==undefined&&b===undefined)return 1;
+        return(a??0)-(b??0)||left.pipeline_run_id.localeCompare(right.pipeline_run_id);}).slice(0,limit);
+      return result(selected as T[]);}
+    if(sql.startsWith("UPDATE pipeline_runs SET unattended_last_swept_at")){cursors.set(String(params[1]),++sweep);return result([] as T[]);}
+    throw new Error(`unexpected SQL: ${sql}`);};
+  const db:DatabaseClient={query,transaction:async work=>work({query}),
+    transactionWithPreCommitCheck:async(work,check)=>{const value=await work({query});await check();return value;}};
+  const service=new PipelineAdvanceServiceV1(db,{tenantId:"tenant:test",workspaceId:"workspace:test"},key,
+    {unattendedEnabled:()=>true,capability:{} as PipelineAdvanceCapabilityV1},()=>at+sweep);
+  const controlled=service as unknown as {advance:(runId:string)=>Promise<any>};
+  controlled.advance=async runId=>{if(runId!=="pipeline-run:08")throw new PipelineAdvanceErrorV1("stage_not_eligible");
+    return{runId,stageOrdinal:0,jobId:"job:healthy",attemptId:"attempt:healthy",queueId:"queue:healthy",replayed:false,
+      advancedAt:iso(),startsWork:true,grantsExecutionAuthority:false,claimsCancellation:false};};
+  const first=await service.advanceReady(8);assert.equal(first.checked,8);assert.equal(first.advanced.length,0);
+  const second=await service.advanceReady(8);assert.equal(second.checked,8);
+  assert.deepEqual(second.advanced.map(receipt=>receipt.runId),["pipeline-run:08"]);
+  assert.ok(cursors.has("pipeline-run:00"),"the tampered head row receives a cursor and cannot abort or pin the sweep");
+});
 test("every authenticated stage projection is verified before advance",async()=>{const f=fixture({tamperStage:true});
   await assert.rejects(f.service.advance("pipeline-run:test","policy:test"),
     (error:unknown)=>error instanceof PipelineAdvanceErrorV1&&error.safeReason==="pipeline_integrity_failed");assert.equal(f.effects,0);});
@@ -347,19 +385,23 @@ test("0099 owns append-only records, least-privilege grants, and a guarded down 
   assert.match(web,/GRANT UPDATE \(may_advance_unattended, version, updated_at, record_digest, auth_tag\)[\s\S]*ON pipeline_templates/u);
   assert.match(web,/GRANT UPDATE \(unattended, state, started_at, updated_at, version, template_version, template_digest,[\s\S]*ON pipeline_runs/u);
   assert.match(coordinator,/GRANT INSERT ON pipeline_advance_receipts TO control_room_task_coordinator/u);
-  assert.match(coordinator,/GRANT UPDATE \(state, completed_at, current_stage_ordinal, updated_at, version, record_digest, auth_tag\)[\s\S]*ON pipeline_runs/u);
+  assert.match(coordinator,/GRANT UPDATE \(state, completed_at, current_stage_ordinal, updated_at, version, record_digest, auth_tag, unattended_last_swept_at\)[\s\S]*ON pipeline_runs/u);
   assert.match(preflight,/privateWebReadTables[\s\S]*pipeline_unattended_transitions/u);
   assert.match(preflight,/inserts\.add\("pipeline_unattended_transitions"\)/u);
   assert.match(preflight,/pipeline_templates: \["may_advance_unattended", "version", "updated_at", "record_digest", "auth_tag"\]/u);
   assert.match(preflight,/pipeline_runs: \["unattended", "state", "started_at", "updated_at", "version", "template_version", "template_digest"/u);
   assert.match(preflight,/coordinatorReads\.push\([\s\S]*pipeline_advance_receipts/u);
   assert.match(preflight,/coordinatorInserts\.add\("pipeline_advance_receipts"\)/u);
+  assert.match(preflight,/pipeline_runs: \["state", "completed_at", "current_stage_ordinal",[\s\S]*"unattended_last_swept_at"\]/u);
   assert.match(up,/BEFORE UPDATE OR DELETE/u);assert.match(up,/BEFORE TRUNCATE/u);
+  assert.match(up,/ADD COLUMN unattended_last_swept_at timestamptz/u);
+  assert.match(up,/pipeline_runs_unattended_sweep_cursor[\s\S]*unattended_last_swept_at ASC NULLS FIRST/u);
   assert.match(up,/pipeline_runs_active_started_at_check[\s\S]*state <> 'active'[\s\S]*started_at IS NOT NULL[\s\S]*NOT VALID/u);
   assert.match(down,/REVOKE UPDATE \(may_advance_unattended, version, updated_at, record_digest, auth_tag\)[\s\S]*pipeline_templates FROM control_room_private_web/u);
   assert.match(down,/REVOKE UPDATE \(unattended, state, started_at, updated_at, version, template_version, template_digest,[\s\S]*pipeline_runs FROM control_room_private_web/u);
-  assert.match(down,/REVOKE UPDATE \(state, completed_at, current_stage_ordinal, updated_at, version, record_digest, auth_tag\)[\s\S]*pipeline_runs FROM control_room_task_coordinator/u);
+  assert.match(down,/REVOKE UPDATE \(state, completed_at, current_stage_ordinal, updated_at, version, record_digest, auth_tag, unattended_last_swept_at\)[\s\S]*pipeline_runs FROM control_room_task_coordinator/u);
   assert.match(down,/may_advance_unattended/u);assert.match(down,/unattended/u);
+  assert.match(down,/DROP COLUMN unattended_last_swept_at/u);
   assert.match(down,/DROP CONSTRAINT pipeline_runs_active_started_at_check/u);
 });
 

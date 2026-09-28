@@ -17,7 +17,7 @@ export async function verifyPrivateIdeaAdapter(db: DatabaseClient, scope: { tena
 
 // Generated from public migrations 0001-0098, including generic external-content
 // migrations 0025/0026. Catalog query below; not a mutable database marker.
-export const privateWebSchemaDigest = "d2a18df98e2cf976537136165768e41ebfd886040ec93d6b0ee319437c3bc15d";
+export const privateWebSchemaDigest = "4cec51d6b10a0d03e31fb9ea7f8d4cf9167da78faa396d32c55454ce80e9f773";
 export const privateWebReadTables = ["control_identities", "control_role_grants", "workspaces", "control_web_sessions",
   "tenants", "control_idempotency",
   "control_schedules", "control_schedule_occurrences",
@@ -159,7 +159,8 @@ const coordinatorUpdates: Record<string, readonly string[]> = {
   control_work_resources: ["coordinator_lock"],
   control_attempt_resource_admissions: ["state", "version", "retired_at", "retirement_kind", "retirement_proof_digest"],
   control_attempt_resource_scopes: ["coordinator_lock"],
-  pipeline_runs: ["state", "completed_at", "current_stage_ordinal", "updated_at", "version", "record_digest", "auth_tag"],
+  pipeline_runs: ["state", "completed_at", "current_stage_ordinal", "updated_at", "version", "record_digest", "auth_tag",
+    "unattended_last_swept_at"],
   control_completion_gate_integrity: ["web_lock", "revision", "record_count", "state_digest", "state_auth_tag"],
 };
 const resultReads = ["workspaces", "control_identities", "control_role_grants", "projects",

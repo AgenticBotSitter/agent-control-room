@@ -3,6 +3,12 @@
 
 ALTER TABLE pipeline_templates DROP CONSTRAINT pipeline_templates_may_advance_unattended_check;
 ALTER TABLE pipeline_runs DROP CONSTRAINT pipeline_runs_unattended_check;
+-- Scheduler fairness metadata is deliberately outside the authenticated run
+-- material: moving a scan cursor must not rewrite owner-approved run state.
+ALTER TABLE pipeline_runs ADD COLUMN unattended_last_swept_at timestamptz;
+CREATE INDEX pipeline_runs_unattended_sweep_cursor
+  ON pipeline_runs(tenant_id, unattended_last_swept_at ASC NULLS FIRST, id)
+  WHERE state='active' AND unattended;
 -- Preserve upgrade compatibility with authenticated pre-S7 rows while making
 -- every new or updated active run carry the immutable wall-clock anchor.  The
 -- service refuses any legacy active/null row rather than repairing or re-signing it.
@@ -106,6 +112,6 @@ DO $$ BEGIN
     EXECUTE 'GRANT UPDATE (unattended, state, started_at, updated_at, version, template_version, template_digest, record_digest, auth_tag) ON pipeline_runs TO control_room_private_web';
   END IF;
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='control_room_task_coordinator') THEN
-    EXECUTE 'GRANT UPDATE (state, completed_at, current_stage_ordinal, updated_at, version, record_digest, auth_tag) ON pipeline_runs TO control_room_task_coordinator';
+    EXECUTE 'GRANT UPDATE (state, completed_at, current_stage_ordinal, updated_at, version, record_digest, auth_tag, unattended_last_swept_at) ON pipeline_runs TO control_room_task_coordinator';
   END IF;
 END $$;
