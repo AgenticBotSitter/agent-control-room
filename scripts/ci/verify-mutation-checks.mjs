@@ -11,6 +11,7 @@ import {
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { spawn, spawnSync } from "node:child_process";
 import { constants as osConstants } from "node:os";
+import typescript from "typescript";
 
 const MANIFEST_DIRECTORY = "mutation-checks";
 const FIELDS = ["file", "find", "replace", "test", "why"];
@@ -143,19 +144,26 @@ function stopTestProcess(child, signal) {
 function runTest(command, root, timeoutMs) {
   return new Promise(resolveResult => {
     let timedOut = false;
+    let settled = false;
     const child = spawn(command, { cwd: root, detached: true, env: process.env, shell: true, stdio: "inherit" });
     activeChild = child;
+    const finish = (result, killGroup) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (killGroup) stopTestProcess(child, "SIGKILL");
+      if (activeChild === child) activeChild = undefined;
+      resolveResult(result);
+    };
     const timer = setTimeout(() => {
       timedOut = true;
       stopTestProcess(child, "SIGKILL");
     }, timeoutMs);
     child.once("error", error => {
-      clearTimeout(timer);
-      resolveResult({ error, timedOut });
+      finish({ error, timedOut }, false);
     });
     child.once("close", (status, signal) => {
-      clearTimeout(timer);
-      resolveResult({ status, signal, timedOut });
+      finish({ status, signal, timedOut }, true);
     });
   });
 }
@@ -179,6 +187,46 @@ async function verifyBaseline(root, entry, number, timeoutMs) {
   console.log("PASS: baseline passed.");
 }
 
+async function verifyWhitespaceInsensitive(root, entry, number, timeoutMs) {
+  const original = readFileSync(entry.filePath);
+  const mode = lstatSync(entry.filePath).mode;
+  console.log(`Whitespace check [${number}] ${entry.label}`);
+  try {
+    activeRestore = () => restoreFile(root, entry, original, mode);
+    writeFileSync(entry.filePath, Buffer.concat([original, Buffer.from("\n")]));
+    const result = await runTest(entry.test, root, timeoutMs);
+    const configurationError = describeConfigurationError(entry, result);
+    if (configurationError) throw new Error(configurationError);
+    if (result.timedOut || result.signal || result.status !== 0) {
+      throw new Error(`${entry.label}: test command fails on a whitespace-only edit; it must exercise guard behavior`);
+    }
+  } finally {
+    activeRestore = undefined;
+    restoreFile(root, entry, original, mode);
+  }
+  console.log("PASS: whitespace-only edit passed.");
+}
+
+function requireParsableMutation(entry) {
+  if (/\.(?:[cm]?js)$/u.test(entry.file)) {
+    const result = spawnSync(process.execPath, ["--check", entry.filePath], { encoding: "utf8" });
+    if (result.status !== 0) throw new Error(`${entry.label}: mutation does not parse: ${result.stderr.trim()}`);
+    return;
+  }
+  if (/\.tsx?$/u.test(entry.file)) {
+    const result = typescript.transpileModule(readFileSync(entry.filePath, "utf8"), {
+      compilerOptions: { module: typescript.ModuleKind.ESNext, target: typescript.ScriptTarget.ESNext,
+        jsx: entry.file.endsWith(".tsx") ? typescript.JsxEmit.Preserve : undefined },
+      fileName: entry.filePath,
+      reportDiagnostics: true,
+    });
+    const diagnostics = result.diagnostics?.filter(diagnostic => diagnostic.category === typescript.DiagnosticCategory.Error) ?? [];
+    if (diagnostics.length > 0) {
+      throw new Error(`${entry.label}: mutation does not parse: ${typescript.flattenDiagnosticMessageText(diagnostics[0].messageText, " ")}`);
+    }
+  }
+}
+
 async function verifyEntry(root, entry, number, timeoutMs) {
   const original = readFileSync(entry.filePath);
   const mode = lstatSync(entry.filePath).mode;
@@ -191,9 +239,9 @@ async function verifyEntry(root, entry, number, timeoutMs) {
   try {
     activeRestore = () => restoreFile(root, entry, original, mode);
     writeFileSync(entry.filePath, text.replace(entry.find, () => entry.replace));
+    requireParsableMutation(entry);
     result = await runTest(entry.test, root, timeoutMs);
   } finally {
-    activeChild = undefined;
     activeRestore = undefined;
     restoreFile(root, entry, original, mode);
   }
@@ -272,6 +320,7 @@ async function main() {
     try {
       requireCleanCheckout(root);
       await verifyBaseline(root, entry, index + 1, timeoutMs);
+      await verifyWhitespaceInsensitive(root, entry, index + 1, timeoutMs);
     } catch (error) {
       failures.push(error.message);
       console.error(`FAIL: ${error.message}`);

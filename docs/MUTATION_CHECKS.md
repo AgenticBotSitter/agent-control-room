@@ -6,9 +6,13 @@ replaced by `-`. For example, `feature/owner-refusal` uses
 `mutation-checks/feature-owner-refusal.json`.
 
 Each entry first runs its test command on the unmodified checkout and requires it to pass. It then
-makes one literal replacement and requires the same command to fail. The verifier rejects a
-replacement unless `find` occurs exactly once. It restores the file after every command, including
-timeout, SIGINT, and SIGTERM, and fails if the checkout is dirty before or after the run.
+runs that command after a whitespace-only edit and requires it to pass again, so a command that
+only detects any source edit is not evidence. The verifier then makes one literal replacement and
+requires the same command to fail. The verifier rejects a replacement unless `find` occurs exactly
+once and the mutant parses: it uses `node --check` for `.js`, `.mjs`, and `.cjs`, and TypeScript's
+syntax diagnostics for `.ts` and `.tsx`. Other file extensions are not syntax-checked. It restores
+the file after every command, including timeout, SIGINT, and SIGTERM, and fails if the checkout is
+dirty before or after the run.
 
 ```json
 [
@@ -27,9 +31,11 @@ The fields are all required strings:
 - `file`: a tracked regular file inside the checkout (symlinks are refused).
 - `find`: the exact source text to weaken; it must occur once.
 - `replace`: the weakened text, which may be empty to delete `find`, and must differ from `find`.
-- `test`: a shell command that must pass on the baseline and then return a non-infrastructure
-  nonzero result or terminate on a signal after mutation. Exits 126 and 127 are configuration
-  errors, never evidence that a mutation was caught.
+- `test`: a shell command that runs the relevant tests and must pass on the baseline and the
+  whitespace-only edit, then return a non-infrastructure nonzero result or terminate on a signal
+  after mutation. A diff, snapshot, or hash command that merely detects changed bytes is not test
+  evidence and is rejected by the whitespace check. Exits 126 and 127 are configuration errors,
+  never evidence that a mutation was caught.
 - `why`: a short human-readable name for the guard and its consequence.
 
 Run the same check locally from a clean checkout:
@@ -43,7 +49,11 @@ nonzero exit is reported as an expected test failure unless it is 126 or 127. Te
 signal is also caught, but is reported separately as a crash so reviewers can distinguish it from
 an assertion failure. Each baseline and mutated command has a 10-minute timeout by default; set
 `MUTATION_CHECK_TIMEOUT_MS` to a positive millisecond value to override it. A timeout fails the
-check and restores the file.
+check and restores the file. The verifier starts each command in a private process group and kills
+that group after either timeout or normal command exit, so ordinary background children cannot
+write to the checkout later. A child that deliberately starts a new session can escape that group;
+do not run untrusted commands in a mutation manifest. Never run two local verifier processes in
+the same checkout at once.
 
 ## CI behavior and security boundary
 

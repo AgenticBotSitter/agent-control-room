@@ -133,6 +133,21 @@ test("a malformed manifest fails with a clear message", () => {
   }
 });
 
+test("an empty manifest is refused", () => {
+  const root = fixture();
+  try {
+    const path = join(root, "mutation-checks", "empty.json");
+    writeFileSync(path, "[]\n");
+    git(root, "add", ".");
+    git(root, "commit", "-qm", "empty manifest");
+    const result = run(root, path);
+    assert.equal(result.status, 1);
+    assert.match(output(result), /expected a non-empty JSON array/u);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("a manifest path outside mutation-checks is ignored", () => {
   const root = fixture();
   try {
@@ -189,6 +204,62 @@ test("a test that is already failing is rejected before any mutation is applied"
     assert.equal(result.status, 1);
     assert.match(output(result), /baseline failing with exit 1/u);
     assert.equal(readFileSync(join(root, "src", "guard.mjs"), "utf8"), before);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("A1 rejects a syntax-breaking JavaScript replacement before its test command runs", () => {
+  const root = fixture();
+  try {
+    const path = manifest(root, { replace: 'decision = "allow";\n(', test: 'node -e "process.exit(0)"' });
+    const result = run(root, path);
+    assert.equal(result.status, 1);
+    assert.match(output(result), /mutation does not parse/u);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("A3 rejects a replacement that deletes a JavaScript function header", () => {
+  const root = fixture();
+  try {
+    writeFileSync(join(root, "src", "guard.mjs"), 'export function canRun(owner) { return owner === "owner"; }\n');
+    git(root, "add", "src/guard.mjs");
+    git(root, "commit", "-qm", "function fixture");
+    const path = manifest(root, { find: "export function canRun(owner) {", replace: "", test: 'node -e "process.exit(0)"' });
+    const result = run(root, path);
+    assert.equal(result.status, 1);
+    assert.match(output(result), /mutation does not parse/u);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a syntax-breaking TypeScript replacement is refused", () => {
+  const root = fixture();
+  try {
+    writeFileSync(join(root, "src", "guard.ts"), 'export const decision: string = "refuse";\n');
+    git(root, "add", "src/guard.ts");
+    git(root, "commit", "-qm", "TypeScript fixture");
+    const path = manifest(root, {
+      file: "src/guard.ts", find: 'decision: string = "refuse"', replace: 'decision: string = "allow";\n(', test: 'node -e "process.exit(0)"',
+    });
+    const result = run(root, path);
+    assert.equal(result.status, 1);
+    assert.match(output(result), /mutation does not parse/u);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a test command that fails on a whitespace-only edit is rejected", () => {
+  const root = fixture();
+  try {
+    const path = manifest(root, { test: 'git diff --quiet && node -e "process.exit(0)"' });
+    const result = run(root, path);
+    assert.equal(result.status, 1);
+    assert.match(output(result), /fails on a whitespace-only edit/u);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -265,12 +336,28 @@ test("a timeout kills the test command's whole process group", async () => {
   const root = fixture();
   try {
     const path = manifest(root, {
-      test: 'node -e "const fs=require(\'fs\');if(fs.readFileSync(\'src/guard.mjs\',\'utf8\').includes(\'allow\'))setTimeout(()=>fs.writeFileSync(\'orphan.txt\',\'unexpected\'),100)"',
+      test: "sh -c 'if grep -q allow src/guard.mjs; then (sleep 0.1; printf unexpected > orphan.txt) & wait; fi'",
     });
     const result = run(root, path, { MUTATION_CHECK_TIMEOUT_MS: "50" });
     assert.equal(result.status, 1);
     await new Promise(resolveDone => setTimeout(resolveDone, 200));
     assert.equal(existsSync(join(root, "orphan.txt")), false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a normal test-command exit kills its background child", async () => {
+  const root = fixture();
+  try {
+    const path = manifest(root, {
+      test: "sh -c '(sleep 0.1; printf unexpected > background.txt) & grep -q refuse src/guard.mjs'",
+    });
+    const result = run(root, path);
+    assert.equal(result.status, 0, output(result));
+    await new Promise(resolveDone => setTimeout(resolveDone, 200));
+    assert.equal(existsSync(join(root, "background.txt")), false);
+    assert.equal(git(root, "status", "--porcelain=v1"), "");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -292,6 +379,33 @@ test("SIGTERM during a mutated command restores the file", async () => {
         if (transcript.includes("[1] src/guard.mjs")) {
           clearInterval(ready);
           child.kill("SIGTERM");
+        }
+      }, 10);
+      child.once("close", resolveDone);
+    });
+    assert.equal(readFileSync(join(root, "src", "guard.mjs"), "utf8"), before);
+    assert.equal(git(root, "status", "--porcelain=v1"), "");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("SIGINT during a mutated command restores the file", async () => {
+  const root = fixture();
+  try {
+    const path = manifest(root, {
+      test: 'exec node -e "const fs=require(\'fs\');if(fs.readFileSync(\'src/guard.mjs\',\'utf8\').includes(\'allow\'))setInterval(()=>{},1000)"',
+    });
+    const before = readFileSync(join(root, "src", "guard.mjs"), "utf8");
+    const child = spawn(process.execPath, [verifier, path], { cwd: root, stdio: ["ignore", "pipe", "pipe"] });
+    let transcript = "";
+    child.stdout.on("data", data => { transcript += data; });
+    child.stderr.on("data", data => { transcript += data; });
+    await new Promise(resolveDone => {
+      const ready = setInterval(() => {
+        if (transcript.includes("[1] src/guard.mjs")) {
+          clearInterval(ready);
+          child.kill("SIGINT");
         }
       }, 10);
       child.once("close", resolveDone);
