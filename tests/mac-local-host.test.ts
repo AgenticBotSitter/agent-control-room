@@ -192,3 +192,25 @@ test("closes a rejected queue worker before it closes the local site", async () 
   await assert.rejects(host.start(), /mac_local_startup_failed/);
   assert.deepEqual(trace, ["worker-close", "site-close"]);
 });
+
+test("keeps the local site alive while an explicitly recovering queue worker reconnects", async () => {
+  const trace: string[] = [];
+  const server = new EventEmitter() as Server;
+  server.listen = ((_options: object, callback: () => void) => { trace.push("site-start"); queueMicrotask(callback); return server; }) as Server["listen"];
+  server.close = ((callback?: (error?: Error) => void) => { trace.push("site-close"); queueMicrotask(() => callback?.()); return server; }) as Server["close"];
+  server.closeIdleConnections = () => {}; server.closeAllConnections = () => {};
+  const host = createMacLocalProtectedHostV1({
+    async loadConfiguration() { return configuration; }, async readVersion() { return "codex test"; },
+    openDatabase() { return { client: {} as never, async close() {} }; }, async loadDatabaseRoles() { return databaseRoles; },
+    async createTaskApplication() { return { operations: {}, isReady: () => true, async close() {},
+      async queueDelivery() { return { disposition: "delivered" as const }; } }; },
+    async startQueueWorker() { return { status: () => ({ accepting: false, state: "reconnecting" }),
+      async close() { trace.push("worker-close"); } }; },
+    assets: { count: 0, digest: "test", respond() { return undefined; } }, render() { return new Response("local"); },
+    createServer: () => server, listenerTiming: { bindMs: 100, closeMs: 100 },
+  });
+  const running = await host.start();
+  assert.deepEqual(trace, ["site-start"]);
+  await running.close();
+  assert.deepEqual(trace, ["site-start", "worker-close", "site-close"]);
+});

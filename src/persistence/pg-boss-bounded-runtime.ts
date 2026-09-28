@@ -19,6 +19,7 @@ export interface PgBossBoundedRuntimeDatabase extends DatabaseSession {
   close(): Promise<void>;
 }
 type State = "starting" | "running" | "closing" | "closed" | "uncertain";
+export type PgBossRuntimeTerminalV1 = Readonly<{ cause: "fault" | "requested_close"; cleanup: "closed" | "uncertain" }>;
 const error = (message: string) => {
   const value = new Error(message); value.stack = undefined; return value;
 };
@@ -54,6 +55,9 @@ export async function startPgBossBoundedRuntime<Reference>(
   let worker: { close(): Promise<void> } | undefined;
   let client: RuntimeClient | undefined, stopClient: (() => Promise<unknown>) | undefined;
   let closing: Promise<void> | undefined;
+  let terminalCause: PgBossRuntimeTerminalV1["cause"] | undefined;
+  let resolveTerminal!: (value: PgBossRuntimeTerminalV1) => void;
+  const terminated = new Promise<PgBossRuntimeTerminalV1>(resolve => { resolveTerminal = resolve; });
   const bounded = async <T>(operation: () => Promise<T>): Promise<T> => {
     let timer: ReturnType<typeof setTimeout> | undefined;
     const started = performance.now();
@@ -67,6 +71,7 @@ export async function startPgBossBoundedRuntime<Reference>(
   };
   const close = (): Promise<void> => {
     if (closing) return closing;
+    terminalCause ??= "requested_close";
     state = "closing"; admission.abort();
     closing = (async () => {
       let uncertain = false;
@@ -78,6 +83,8 @@ export async function startPgBossBoundedRuntime<Reference>(
       state = uncertain ? "uncertain" : "closed";
       if (uncertain) throw error(`${prefix}_runtime_close_uncertain`);
     })();
+    void closing.then(() => resolveTerminal(Object.freeze({ cause: terminalCause!, cleanup: "closed" })),
+      () => resolveTerminal(Object.freeze({ cause: terminalCause!, cleanup: "uncertain" })));
     return closing;
   };
   try {
@@ -90,7 +97,7 @@ export async function startPgBossBoundedRuntime<Reference>(
     const captured = client;
     stopClient = captured.stop.bind(captured, { graceful: false });
     // Observe infrastructure errors before start. Never log/serialize their payload.
-    captured.on("error", () => { faulted = true; void close().catch(() => {}); });
+    captured.on("error", () => { faulted = true; terminalCause ??= "fault"; void close().catch(() => {}); });
     await bounded(() => captured.start());
     if (admission.signal.aborted) throw error(`${prefix}_runtime_unavailable`);
     const registration = startWorker(captured, { concurrency,
@@ -115,13 +122,13 @@ export async function startPgBossBoundedRuntime<Reference>(
     if (admission.signal.aborted) throw error(`${prefix}_runtime_unavailable`);
     state = "running";
   } catch {
-    faulted = true;
+    faulted = true; terminalCause ??= "fault";
     try { await close(); } catch { throw error(`${prefix}_runtime_start_cleanup_uncertain`); }
     throw error(`${prefix}_runtime_start_failed`);
   }
   return Object.freeze({
     status: () => Object.freeze({ state, faulted, accepting: state === "running" && !faulted }),
+    whenTerminated: () => terminated,
     close,
   });
 }
-

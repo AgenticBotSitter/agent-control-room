@@ -92,7 +92,8 @@ test("checked-out error quarantines the database and close waits for client end"
     async connect() { pool.emit("connect", client); return client; },
     async end() {},
   });
-  const db = bindPrivatePgPool(pool as unknown as Parameters<typeof bindPrivatePgPool>[0]);
+  let faults = 0;
+  const db = bindPrivatePgPool(pool as unknown as Parameters<typeof bindPrivatePgPool>[0], { reportFault: () => { faults++; } });
   let finish!: () => void;
   let entered!: () => void;
   const ready = new Promise<void>(resolve => { entered = resolve; });
@@ -102,14 +103,14 @@ test("checked-out error quarantines the database and close waits for client end"
   const denied = assert.rejects(operation);
   await ready;
   assert.doesNotThrow(() => client.emit("error", new Error("synthetic disconnect")));
-  assert.equal(db.isAvailable(), false);
+  assert.equal(db.isAvailable(), false); assert.equal(faults, 1);
   let closed = false;
   const closing = db.close().then(() => { closed = true; });
   await new Promise(resolve => setImmediate(resolve));
   assert.equal(closed, false, "pool bookkeeping is not physical closure");
   client.emit("end"); finish();
   await closing; await denied;
-  assert.equal(closed, true);
+  assert.equal(closed, true); assert.equal(faults, 1);
 });
 
 function remoteConfiguration() {

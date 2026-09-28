@@ -10,9 +10,11 @@ import { mkdir, readFile, rename, writeFile, chmod } from "node:fs/promises";
 import { connect } from "node:net";
 import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { alive, hostCommand, protectedRootFromArguments, readPid, repoRoot, runtimePaths, stopRecorded } from "./stack.mjs";
+import { alive, hostCommand, protectedRootFromArguments, readPid, repoRoot, runtimePaths,
+  stopRecordedHost, taskHostCommand } from "./stack.mjs";
 import { installOrRefreshService, plistPath, serviceInstalled, servicePid, serviceUpToDate } from "./service.mjs";
 import { captureMacLocalBuildSourceV1, macLocalBuildSourceV1 } from "./build-source.mjs";
+import { readHostState } from "./task-host-supervisor.mjs";
 
 const PROVIDER_MODULE = "dist-vps/server/macLocalDefaultTaskProvider.js";
 const BUILD_SOURCE = "dist-vps/server/mac-local-build-source.json";
@@ -110,6 +112,13 @@ async function main() {
   const service = args.includes("--install-service") || await serviceInstalled();
   await mkdir(paths.runtime, { recursive: true, mode: 0o700 });
   await chmod(paths.runtime, 0o700);
+  const previous = await readHostState(paths.hostState);
+  const recordedSupervisorAlive = previous?.state === "running" && Number.isSafeInteger(previous.pid)
+    && alive(previous.pid, hostCommand(root));
+  if (previous?.state === "stopped")
+    log(`host stopped because ${previous.reason ?? "no stop reason was recorded"}; starting recovery`);
+  else if (previous?.state === "running" && !recordedSupervisorAlive)
+    log("host stopped because its supervisor disappeared without recording an exit; starting recovery");
   if (!existsSync(join(root, "config/task-runtime.json")))
     fail(missingTaskRuntimeInstruction(root));
   if (!existsSync(join(repoRoot, "dist-vps/server/macLocalHost.js"))) fail("release build missing: run pnpm build first");
@@ -129,6 +138,11 @@ async function main() {
   if (binding !== 0) fail("first-owner binding verification failed");
 
   const hostPid = await readPid(paths.hostPid);
+  if (hostPid && alive(hostPid, taskHostCommand(root))) {
+    log("upgrading the existing direct task host to crash supervision");
+    if (await stopRecordedHost(paths.hostPid, root, 45) === "still_running")
+      fail("the existing direct task host would not stop: run pnpm mac:down first");
+  }
   if (!service && hostPid && alive(hostPid, hostCommand(root))) {
     // A host that is alive but not serving is a failure, never "already running".
     if (await portOpen(mac.port)) { log(`already running (pid ${hostPid})`); return; }
@@ -157,7 +171,7 @@ async function main() {
 
   if (service) return startService(root, paths, mac.port);
   log("5/5 task host");
-  await stopRecorded(paths.hostPid, hostCommand(root), 45);
+  await stopRecordedHost(paths.hostPid, root, 45);
   const pid = await startAndWait(hostCommand(root), paths.hostLog, paths.hostPid, () => portOpen(mac.port), 90, "task host");
   log(`running: http://127.0.0.1:${mac.port} (pid ${pid})`);
 }
@@ -167,7 +181,7 @@ async function main() {
 async function startService(root, paths, port) {
   log("5/5 task host (launchd user agent)");
   const { loaded } = await servicePid();
-  if (!loaded && await stopRecorded(paths.hostPid, hostCommand(root), 45) === "still_running")
+  if (!loaded && await stopRecordedHost(paths.hostPid, root, 45) === "still_running")
     fail("a directly started task host would not stop: run pnpm mac:down first");
   const state = await installOrRefreshService({ protectedRoot: root, logPath: paths.hostLog, env: process.env });
   log(`service ${state}: ${plistPath().split("/").slice(-3).join("/")}`);
