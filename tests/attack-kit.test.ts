@@ -310,9 +310,18 @@ describe("attack kit: identity fixtures", () => {
 });
 
 describe("attack kit: mutation", () => {
-  const fixtureDir = temporary("attack-kit-mutation-");
   /** A tiny git repo, so the dirty-tree refusal has something to inspect. */
-  const repo = fixtureDir.then(async directory => {
+  // Built lazily and memoised, not eagerly at describe scope. An eager
+  // `mkdtemp` runs even when every test in this describe is deselected (a
+  // `--test-name-pattern` run, or a lane that skips the whole suite), so the
+  // directory is allocated and then removed by the `after` hook while its
+  // `git init` is still in flight — producing "unable to get current working
+  // directory" and an unhandled rejection that fails an unrelated run. Only
+  // creating it when a test actually asks means the allocation and the removal
+  // always belong to the same run.
+  let repoPromise: Promise<string> | undefined;
+  const repo = (): Promise<string> => (repoPromise ??= (async () => {
+    const directory = await temporary("attack-kit-mutation-");
     const { execFile } = await import("node:child_process");
     const { promisify } = await import("node:util");
     const run = promisify(execFile);
@@ -321,14 +330,14 @@ describe("attack kit: mutation", () => {
     await run("git", ["add", "-A"], { cwd: directory });
     await run("git", ["-c", "user.email=k@e.invalid", "-c", "user.name=k", "commit", "-qm", "init"], { cwd: directory });
     return directory;
-  });
+  })());
 
   const passing = "node -e \"process.exit(0)\"";
   const failing = "node -e \"process.exit(3)\"";
   const crashing = "node -e \"process.kill(process.pid,'SIGKILL')\"";
 
   test("restores the file after a failing mutation and reports the non-zero exit", async () => {
-    const directory = await repo;
+    const directory = await repo();
     const file = join(directory, "guard.ts");
     const before = await readFile(file, "utf8");
     const result = await assertGuardBites({
@@ -341,7 +350,7 @@ describe("attack kit: mutation", () => {
   });
 
   test("restores the file after a passing mutation and still reports the guard did not bite", async () => {
-    const directory = await repo;
+    const directory = await repo();
     const file = join(directory, "guard.ts");
     const before = await readFile(file, "utf8");
     await assert.rejects(
@@ -357,7 +366,7 @@ describe("attack kit: mutation", () => {
   });
 
   test("restores the file when the test command crashes", async () => {
-    const directory = await repo;
+    const directory = await repo();
     const file = join(directory, "guard.ts");
     const before = await readFile(file, "utf8");
     const result = await assertGuardBites({
@@ -369,7 +378,7 @@ describe("attack kit: mutation", () => {
   });
 
   test("refuses to run with uncommitted changes", async () => {
-    const directory = await repo;
+    const directory = await repo();
     const file = join(directory, "guard.ts");
     await writeFile(file, "export const limit = 42;\n");
     try {
@@ -391,7 +400,7 @@ describe("attack kit: mutation", () => {
   });
 
   test("refuses an absent or ambiguous mutation target", async () => {
-    const directory = await repo;
+    const directory = await repo();
     const file = join(directory, "guard.ts");
     await assert.rejects(assertGuardBites({
       root: directory, file, find: "not-in-this-file", replace: "x", testCmd: failing,
@@ -492,7 +501,7 @@ describe("attack kit: mutation", () => {
   });
 
   test("reports the restored content digest", async () => {
-    const directory = await repo;
+    const directory = await repo();
     const file = join(directory, "guard.ts");
     const before = await readFile(file, "utf8");
     const result = await assertGuardBites({
