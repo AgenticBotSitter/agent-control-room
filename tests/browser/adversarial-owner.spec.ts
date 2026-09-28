@@ -147,7 +147,7 @@ async function disposableAdmin() {
   return client;
 }
 
-async function setDisposableNodeState(nodeId: string, state: "active" | "disabled") {
+async function setDisposableNodeState(nodeId: string, state: "active" | "quarantined") {
   const client = await disposableAdmin();
   try {
     const changed = await client.query(`UPDATE control_nodes SET state=$1,
@@ -330,7 +330,7 @@ test.describe("disposable owner website adversarial attacks", () => {
       `/api/v1/projects/${encodeURIComponent(projectB.projectId)}/tasks/${encodeURIComponent(preparedId)}/assignment`,
       "POST", { action: "assign", nodeId: candidate, expectedInputDigest: assignment.inputDigest });
     expect(crossProjectAssignment.status).toBe(404);
-    await setDisposableNodeState(candidate, "disabled");
+    await setDisposableNodeState(candidate, "quarantined");
     try {
       const disabledWorker = await api(page, `/api/v1/projects/${encodeURIComponent(projectA.projectId)}/tasks/${encodeURIComponent(preparedId)}/assignment`,
         "POST", { action: "assign", nodeId: candidate, expectedInputDigest: assignment.inputDigest });
