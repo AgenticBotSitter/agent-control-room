@@ -169,7 +169,15 @@ export async function assertGuardBites(options: AssertGuardBitesOptions): Promis
       timer = setTimeout(() => reject(new Error(`mutation_test_command_timed_out_after_${boundMs}ms`)), boundMs);
     });
     try {
-      const done = run(command.file, command.args, { cwd: root, maxBuffer: 1 << 26, env: process.env });
+      // NODE_TEST_CONTEXT must be scrubbed. When this harness is itself run
+      // from a `node --test` file, that variable is inherited, and node then
+      // runs a nested test command INLINE as a plain script: no runner, no exit
+      // code, and the command's failures never reach us. Every such command
+      // would look like a clean exit, so `assertGuardBites` would report
+      // "the guard did not bite" for a guard that bites perfectly well.
+      const env = { ...process.env };
+      delete env.NODE_TEST_CONTEXT;
+      const done = run(command.file, command.args, { cwd: root, maxBuffer: 1 << 26, env });
       // execFile resolves only on a clean exit, so a resolved promise IS the
       // "the guard did not bite" case and is reported as such. Anything that
       // rejects is examined for a non-zero status, a signal, or a kill.

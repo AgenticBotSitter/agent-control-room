@@ -56,30 +56,61 @@ Properties worth knowing:
 ### Skipping honestly
 
 `requiresRealPostgres()` is the question a CI lane with PostgreSQL installed
-must be able to answer "yes" to. A lane that *has* the binaries and still
-skipped is a broken lane, so a test in such a lane fails rather than reporting
-a green skip:
+must be able to answer "yes" to. The difficulty is that a bare skip object is
+indistinguishable whether or not PostgreSQL is present, so a predicate alone
+cannot catch a broken lane — you need accounting. The kit's own test file shows
+the working shape: a counter of tests that *must* run, a counter of bodies that
+*did* run, and one closing assertion.
 
 ```ts
 const PG = requiresRealPostgres();
 const message = realPostgresSkipMessage();
 
-// A test in a lane that does not promise PostgreSQL: may skip.
-const maySkip = PG ? undefined : { skip: message };
+let required = 0;
+let ran = 0;
 
-// A test in a lane that DOES promise PostgreSQL (a CI lane with PG_BIN set, or
-// an unsandboxed reviewer's machine): the test above has already proved PG is
-// present, so these must run. If one of them still skips, the lane is broken and
-// the refusal is raised rather than reported as a green skip.
-const mustRun = PG ? undefined : { skip: message };
+// May-skip: a lane with no PostgreSQL install step.
+const maySkip = () => (PG ? undefined : { skip: message });
+
+// Must-run: a lane that promises PostgreSQL. Records the obligation.
+const mustRun = () => {
+  if (!PG) return { skip: message };
+  required += 1;
+  return undefined;
+};
+
+// Each must-run body records that it actually executed.
+test("the web role cannot create a temp table", mustRun(), async () => {
+  ran += 1;
+  await withRealPostgres(async pg => { /* ... */ });
+});
+
+// The closing assertion, which is what actually bites.
+test("this lane ran the real-PostgreSQL tests", () => {
+  if (!PG) {
+    assert.equal(required, 0, "a lane without PostgreSQL registers nothing to run");
+    return;
+  }
+  assert.ok(required > 0, "at least one real-cluster test is registered");
+  assert.equal(ran, required, "a required-but-skipped cluster test must fail the run");
+});
 ```
 
 `realPostgresSkipMessage()` names every directory that was tried, so a skip
 tells you whether PostgreSQL is missing or merely in the wrong place. The
-distinction between the two is a property of the **lane**, not of the helper:
-use `maySkip` in a lane with no PG install step, and gate the lane itself (as
-`tests/attack-kit.test.ts` does with its own `requiresRealPostgres()` assertion)
-where a missing PG must fail.
+distinction between may-skip and must-run is a property of the **lane**, not of
+the helper: use `maySkip` where there is no PG install step, and the counter
+above where a missing PG must fail the run.
+
+### Cleanup is observed, not assumed
+
+`withRealPostgres` returns `cleanedUp: true` and `leftovers: []`, but both are
+computed **after** teardown from the postmaster's real state and the filesystem
+— not asserted as literals. If anything survives, the call throws
+`attack_kit_cluster_leaked:<port>:<evidence>` naming exactly what did, with the
+body's own error attached as `cause` when both failed. Clusters are also torn
+down on `SIGINT`/`SIGTERM` (exiting 130/143), because a leaked postmaster holds
+a SysV segment that can block every other job.
 
 ## Concurrency
 
@@ -98,6 +129,14 @@ const { writes, reads, readErrors } = await concurrentWriters(append, read, {
 so a test cannot pass against a pool that was silently configured larger.
 `concurrentWriters` throws `ConcurrentReadRaceError` with every failure
 collected; pass `allowReadErrors: true` to record the count instead.
+
+**Do not unref a deadline timer here.** It looks like a free optimisation and it
+silently disables the detector. An unref'd timer does not keep the event loop
+alive, and a deadlocked pool is exactly the state where the loop has no work —
+so Node exits with `unsettled top-level await` (code 13) instead of the
+`pool_exhaustion_deadlock` failure, and the deadlock goes unreported. The kit's
+timers are ref'd and cleared in a `finally`, so a successful run still exits
+immediately. If you add a bound of your own, keep the timer ref'd.
 
 ## Identities and leaks
 
@@ -142,6 +181,14 @@ await assertGuardBites({
   quote handling, but an array cannot be misread.
 - Restoration runs in a `finally` and retries once, so a transient write failure
   cannot leave a live mutation in a working tree.
+- The restore is **verified**: the file is re-read and its digest compared with
+  the original, so a silently-failed restore raises rather than being assumed.
+  This also catches a test command that clobbers the file it was mutating.
+- If your `testCmd` spawns another `node --test` process from inside a test,
+  scrub `NODE_TEST_CONTEXT` from its environment. An inherited value makes node
+  run the child file **inline as a plain script** — no runner, no exit code, and
+  its failures never propagate, so every such command would look like a clean
+  exit and report that the guard did not bite.
 
 ## Grants
 

@@ -456,6 +456,41 @@ describe("attack kit: mutation", () => {
     }
   });
 
+  test("detects a failing nested test command instead of trusting a clean exit", async () => {
+    // The NODE_TEST_CONTEXT defect. `assertGuardBites` normally runs from
+    // inside a `node --test` file, so that variable is inherited; a nested
+    // `node --test` child then runs the command file INLINE as a plain script,
+    // never reporting a failing exit code. The harness would see a clean exit
+    // and report GuardDidNotBiteError for a guard that bites perfectly well.
+    // This test is itself running inside a test file, so it is the real
+    // condition — no NODE_TEST_CONTEXT is set by hand.
+    const directory = await temporary("attack-kit-mutation-");
+    const { execFile } = await import("node:child_process");
+    const { promisify } = await import("node:util");
+    const run = promisify(execFile);
+    await run("git", ["init", "-q"], { cwd: directory });
+    // A real guard with a real test, in the kit's own dependency-free style.
+    await writeFile(join(directory, "guard.ts"), "export const limit = 10;\n");
+    await writeFile(join(directory, "guard.test.ts"), `
+      import assert from "node:assert/strict";
+      import test from "node:test";
+      import { limit } from "./guard.ts";
+      test("the limit is 10", () => { assert.equal(limit, 10); });
+    `);
+    await run("git", ["add", "-A"], { cwd: directory });
+    await run("git", ["-c", "user.email=k@e.invalid", "-c", "user.name=k", "commit", "-qm", "init"], { cwd: directory });
+
+    const result = await assertGuardBites({
+      root: directory, file: join(directory, "guard.ts"),
+      find: "limit = 10", replace: "limit = 1_000",
+      testCmd: ["node", "--test", "guard.test.ts"],
+      because: "a widened limit must break the guard's own test",
+    });
+    assert.ok(result.exitCode !== 0, "the mutated guard's test must fail, not exit 0");
+    assert.match(result.output, /not equal|AssertionError|actual/i,
+      "the failure must actually come from the child's test, not a harness error");
+  });
+
   test("reports the restored content digest", async () => {
     const directory = await repo;
     const file = join(directory, "guard.ts");
