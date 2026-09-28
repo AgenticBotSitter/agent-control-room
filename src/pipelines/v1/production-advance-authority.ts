@@ -105,7 +105,8 @@ export class ProductionPipelineAdvanceAuthorityV1 implements Pick<PipelineAdvanc
       (SELECT COUNT(DISTINCT id) FROM control_jobs WHERE tenant_id=$1 AND project_id=$3 AND state IN('leased','running','waiting_approval')) concurrent`,
     [selection.tenantId,policyId,selection.projectId])).rows[0];
     const material={schema:"control-room.pipeline-delegation-receipt/v1",policyId,policyVersion:number(policy.version),
-      policyDigest:policy.policy_digest,coordinatorVersion:number(policy.coordinator_version),action:"tasks.assign" as const,
+      policyDigest:policy.policy_digest,coordinatorVersion:number(policy.coordinator_version),
+      ownerIdentityId:policy.owner_identity_id,action:"tasks.assign" as const,
       routeId:selection.nodeId,executorId:selection.workerId,taskUnits:number(usage?.tasks??"0"),
       committedCostMicroUsd:number(usage?.cost??"0"),nextCost:{kind:"known" as const,microUsd:knownCost.admittedCostMicroUsd,
         evidenceDigest:knownCost.evidenceDigest},concurrentTasks:number(usage?.concurrent??"0"),validUntil:new Date(policy.valid_until).toISOString(),

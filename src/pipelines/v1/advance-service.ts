@@ -70,7 +70,7 @@ type StageRow = { stage_ordinal: number; stage_kind: "build"|"check"|"signoff"; 
   allowed_paths: unknown|null; maximum_changed_files: number|null; maximum_changed_bytes: number|null;
   started_at: string|Date|null; finished_at: string|Date|null; record_digest: string; auth_tag: string; version: number };
 type PolicyRow = { id: string; project_id: string; coordinator_identity_id: string; coordinator_version: number|string;
-  state: string; version: number|string; policy_digest: string; allowed_actions: unknown; eligible_routes: unknown;
+  owner_identity_id: string; state: string; version: number|string; policy_digest: string; allowed_actions: unknown; eligible_routes: unknown;
   risk_ceiling: keyof typeof RISK; max_total_tasks: number|string; max_total_cost_microusd: number|string;
   max_concurrent_tasks: number|string; valid_from: string|Date; valid_until: string|Date };
 type AdvanceReceiptRow = { id: string; project_id: string; pipeline_run_id: string; stage_ordinal: number;
@@ -126,7 +126,7 @@ export type PipelineAdvanceSelectionV1 = Readonly<{ tenantId: string; projectId:
 export type PipelineStageResolutionV1 = Readonly<{ state: "accepted"|"eligible"|"in_flight"|"waiting_approval"|"uncertain"|"terminal_failure";
   executionJobId: string; expectedInputDigest: string }>;
 export type PipelineDelegationReceiptV1 = Readonly<{ receiptId: string; receiptDigest: string; policyId: string;
-  policyVersion: number; policyDigest: string; coordinatorVersion: number; action: typeof ADVANCE_ACTION;
+  policyVersion: number; policyDigest: string; coordinatorVersion: number; ownerIdentityId: string; action: typeof ADVANCE_ACTION;
   routeId: string; executorId: string; taskUnits: number; committedCostMicroUsd: number;
   nextCost: Readonly<{ kind: "known"; microUsd: number; evidenceDigest: string }>|Readonly<{ kind: "unknown" }>;
   concurrentTasks: number; validUntil: string }>;
@@ -139,7 +139,7 @@ export type PipelineAdvanceCapabilityV1 = Readonly<{
   authorizeDelegationInSession: (tx: DatabaseSession, selection: PipelineAdvanceSelectionV1,
     policyId: string) => Promise<PipelineDelegationReceiptV1>;
   assignAndQueueInSession: (tx: DatabaseSession, input: PipelineAdvanceSelectionV1 & Readonly<{ expectedInputDigest: string;
-    policyId: string; idempotencyKey: string; commitDeadline: number }>, authority: Readonly<{ actorId: typeof SERVICE_ACTOR;
+    policyId: string; approvingOwnerIdentityId: string; idempotencyKey: string; commitDeadline: number }>, authority: Readonly<{ actorId: typeof SERVICE_ACTOR;
     assertCurrent: () => void|Promise<void>; commitDeadline: (value:number) => void }>) =>
     Promise<Readonly<{ attemptId: string; queueId: string; replayed: boolean }>>;
 }>;
@@ -327,6 +327,7 @@ export class PipelineAdvanceServiceV1 {
         await Promise.resolve(capability.assertSelectionCurrent(selected)).catch(()=>refuse("selection_not_current"));};
       precommit=authenticate;await authenticate();
       const effect=await capability.assignAndQueueInSession(tx,{...selected,expectedInputDigest,policyId,
+        approvingOwnerIdentityId:delegation.ownerIdentityId,
         idempotencyKey:`pipeline-advance:${run.id}:${selected.stageOrdinal}`,commitDeadline:deadline},
       {actorId:SERVICE_ACTOR,assertCurrent:authenticate,commitDeadline:value=>{
         if(!Number.isSafeInteger(value)||value<0)refuse("deadline_reached");deadline=Math.min(deadline,value);
@@ -522,7 +523,7 @@ export class PipelineAdvanceServiceV1 {
     }
   }
   async #policy(tx:DatabaseSession,projectId:string,policyId:string){const row=(await tx.query<PolicyRow>(`SELECT id,project_id,
-    coordinator_identity_id,coordinator_version,state,version,policy_digest,allowed_actions,eligible_routes,risk_ceiling,
+    coordinator_identity_id,coordinator_version,owner_identity_id,state,version,policy_digest,allowed_actions,eligible_routes,risk_ceiling,
     max_total_tasks,max_total_cost_microusd,max_concurrent_tasks,valid_from,valid_until FROM control_project_delegation_policies
     WHERE tenant_id=$1 AND project_id=$2 AND id=$3 FOR UPDATE`,[this.scope.tenantId,projectId,policyId])).rows[0];
     if(!row)refuse("policy_inactive");return row;}
@@ -533,7 +534,8 @@ export class PipelineAdvanceServiceV1 {
     execution:ReturnType<typeof jobRecordSchema.parse>,now:number){
     this.#assertOwnerPolicyCurrent(policy,new Date(now).toISOString());
     if(receipt.policyId!==policy.id||receipt.policyVersion!==Number(policy.version)||receipt.policyDigest!==policy.policy_digest
-      ||receipt.coordinatorVersion!==Number(policy.coordinator_version)||receipt.action!==ADVANCE_ACTION
+      ||receipt.coordinatorVersion!==Number(policy.coordinator_version)||receipt.ownerIdentityId!==policy.owner_identity_id
+      ||receipt.action!==ADVANCE_ACTION
       ||receipt.executorId!==stage.worker_id||!strings(policy.eligible_routes).includes(receipt.routeId))refuse("policy_route_mismatch");
     if(RISK[execution.authority.maxRisk]>RISK[policy.risk_ceiling])refuse("policy_risk_exceeded");
     if(safeInteger(receipt.taskUnits)>=safeInteger(policy.max_total_tasks))refuse("policy_task_allowance_exhausted");

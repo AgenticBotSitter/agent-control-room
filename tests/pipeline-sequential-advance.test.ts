@@ -78,7 +78,7 @@ function fixture(overrides:{unattended?:boolean;tamperStage?:boolean;route?:stri
   disableDuringDispatch?:boolean;coordinatorDeadline?:number;advanceClockBeforePrecommit?:number;staleConsent?:boolean;
   driftAfterSweepSelection?:boolean}={}){
   const rows=signedRows(overrides),policy={id:"policy:test",project_id:"project:test",coordinator_identity_id:"agent:lead",
-    coordinator_version:1,state:"active",version:1,policy_digest:digest("p"),allowed_actions:["tasks.assign"],
+    coordinator_version:1,owner_identity_id:"identity:owner",state:"active",version:1,policy_digest:digest("p"),allowed_actions:["tasks.assign"],
     eligible_routes:["route:one","route:two","route:three"],risk_ceiling:"low",max_total_tasks:3,max_total_cost_microusd:1000,max_concurrent_tasks:2,
     valid_from:iso(-1000),valid_until:iso(60000)};const receipts=new Map<number,any>();let enabled=true,effects=0,chain=Promise.resolve();
   const consentMaterial={id:"transition:test",tenantId:"tenant:test",projectId:"project:test",pipelineRunId:"pipeline-run:test",
@@ -137,7 +137,7 @@ function fixture(overrides:{unattended?:boolean;tamperStage?:boolean;route?:stri
       executionJobId:`job:execution:${input.stageOrdinal}`,expectedInputDigest:digest("a")}),
     assertAcceptedPredecessorInSession:()=>{},assertSelectionCurrentInSession:()=>{},assertSelectionCurrent:()=>{},
     authorizeDelegationInSession:async(_tx,selection)=>({receiptId:"delegation:one",receiptDigest:digest("d"),policyId:"policy:test",
-      policyVersion:1,policyDigest:digest("p"),coordinatorVersion:1,action:"tasks.assign",routeId:overrides.route??`route:${["one","two","three"][selection.stageOrdinal]}`,
+      policyVersion:1,policyDigest:digest("p"),coordinatorVersion:1,ownerIdentityId:"identity:owner",action:"tasks.assign",routeId:overrides.route??`route:${["one","two","three"][selection.stageOrdinal]}`,
       executorId:selection.workerId,taskUnits:0,committedCostMicroUsd:0,nextCost:{kind:"known",microUsd:10,evidenceDigest:digest("e")},
       concurrentTasks:0,validUntil:iso(60000)}),
     assignAndQueueInSession:async(_tx,_input,gate)=>{if(overrides.coordinatorDeadline!==undefined)
@@ -357,6 +357,7 @@ test("production adapter reserves through ordinary assignment before the existin
     sourceJobId:"job:source:0",executionJobId:"job:execution:0",workerId:"worker:one",workerKind:"codex",nodeId:"node:one",
     selectionKey:"selection:one",model:"model-one",effort:"high",provider:null,profile:null};
   const saved=await capability.assignAndQueueInSession(tx,{...selection,expectedInputDigest:digest("a"),policyId:"policy:test",
+    approvingOwnerIdentityId:"identity:owner",
     idempotencyKey:"pipeline-advance:test",commitDeadline:at+60000},{actorId:"service:pipeline-advance:v1",
     assertCurrent:()=>{current+=1;},commitDeadline:value=>{deadline=value;}});
   assert.deepEqual(calls,["assign","queue"]);assert.equal(saved.queueId,"queue:one");assert.ok(current>=3);

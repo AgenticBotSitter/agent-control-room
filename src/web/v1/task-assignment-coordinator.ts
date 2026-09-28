@@ -1013,11 +1013,12 @@ export class TaskAssignmentCoordinator {
     tenantId:string; projectId:string; runId:string; stageOrdinal:number; sourceJobId:string; executionJobId:string;
     workerId:string; workerKind:"codex"|"claude-code"|"hermes"; nodeId:string; selectionKey:string; model:string;
     effort:string; provider:string|null; profile:string|null; attemptId:string; leaseId:string; leaseEpoch:number;
-    inputDigest:string; idempotencyKey:string; commitDeadline:number;
+    inputDigest:string; policyId:string; approvingOwnerIdentityId:string; idempotencyKey:string; commitDeadline:number;
   }>, authority: Readonly<{actorId:"service:pipeline-advance:v1";assertCurrent:()=>void|Promise<void>}>) {
     if (!this.approvalStore || !this.nativeTaskSubmission || input.tenantId!==this.scope.tenantId
       || !Number.isSafeInteger(input.commitDeadline) || input.commitDeadline<0) conflict();
-    for (const id of [input.projectId,input.executionJobId,input.nodeId,input.attemptId,input.leaseId]) localId.parse(id);
+    for (const id of [input.projectId,input.executionJobId,input.nodeId,input.attemptId,input.leaseId,input.policyId,
+      input.approvingOwnerIdentityId]) localId.parse(id);
     digestSchema.parse(input.inputDigest); await authority.assertCurrent();
     const store=this.approvalStore,job=await this.job(tx,input.projectId,input.executionJobId),
       plan=await this.planner.readInSession(tx,input.executionJobId),stored=await this.stored(tx,job);
@@ -1032,6 +1033,23 @@ export class TaskAssignmentCoordinator {
       deadline=Math.min(Date.parse(stored.lease.expiresAt),Date.parse(job.authority.expiresAt),input.commitDeadline);
     if(!route||route.nodeId!==input.nodeId||route.executorId!==input.workerId||route.executorId!==job.authority.allowedExecutor
       ||route.capabilityProbeId!==HERMES_021_MACOS_LOCAL_CAPABILITY_V1||!Number.isSafeInteger(now)||now<0||now>=deadline) conflict();
+    const approvingOwner=(await tx.query<{owner_identity_id:string}>(`SELECT p.owner_identity_id
+      FROM control_project_delegation_policies p JOIN control_identities i
+        ON i.tenant_id=p.tenant_id AND i.id=p.owner_identity_id AND i.actor_type='human' AND i.state='active'
+      WHERE p.tenant_id=$1 AND p.project_id=$2 AND p.id=$3 AND p.state='active' AND p.owner_identity_id=$4
+        AND EXISTS(SELECT 1 FROM control_role_grants g WHERE g.tenant_id=p.tenant_id
+          AND g.identity_id=p.owner_identity_id AND g.role_key='owner' AND g.revoked_at IS NULL
+          AND (g.expires_at IS NULL OR g.expires_at>$5) AND g.require_strong_factor=false
+          AND (g.project_ids ? $2 OR g.project_ids ? '*')
+          AND (g.allowed_actions ? 'tasks.read' OR g.allowed_actions ? '*'))
+        AND EXISTS(SELECT 1 FROM control_role_grants g WHERE g.tenant_id=p.tenant_id
+          AND g.identity_id=p.owner_identity_id AND g.role_key='owner' AND g.revoked_at IS NULL
+          AND (g.expires_at IS NULL OR g.expires_at>$5) AND g.require_strong_factor=false
+          AND (g.project_ids ? $2 OR g.project_ids ? '*')
+          AND (g.allowed_actions ? 'tasks.approve' OR g.allowed_actions ? '*'))
+      FOR SHARE OF p,i`,[this.scope.tenantId,input.projectId,input.policyId,input.approvingOwnerIdentityId,
+      new Date(now).toISOString()])).rows[0];
+    if(!approvingOwner)conflict();
     await this.assertWorkBatchQueueAdmission(tx,job,route,stored.attempt.workerId??null);await authority.assertCurrent();
     const packetDigest=sha256Digest({schema:"control-room.hermes-021-macos-local-queue-intent/v1",
       planDigest:sha256Digest(plan),authorityDigest:job.authority.digest,tenantId:this.scope.tenantId,
@@ -1044,8 +1062,10 @@ export class TaskAssignmentCoordinator {
       operationDigest:job.authority.digest,bindingDigest:sha256Digest({nodeId:route.nodeId,executorId:route.executorId,
         capability:route.capabilityProbeId,connectorProfileDigest:plan.connectorProfileDigest}),
       enrollmentDigest:sha256Digest({adapter:HERMES_021_MACOS_LOCAL_JOB_TYPE_V1,nodeId:route.nodeId}),
-      deliveryKind:"hermes-021-macos-local",deadline,queuedAt:new Date(now).toISOString(),queuedBy:authority.actorId};
+      deliveryKind:"hermes-021-macos-local",deadline,queuedAt:new Date(now).toISOString(),queuedBy:approvingOwner.owner_identity_id};
     const queued=await store.enqueueHermes021LocalInSession(tx,intent,sha256Digest(plan));
+    const retainedIntent=await store.readQueueIntentInSession(tx,intent);
+    if(!retainedIntent||retainedIntent.queuedBy!==approvingOwner.owner_identity_id)conflict();
     if(!queued.replayed)await this.nativeTaskSubmission.enqueueInSession(tx,{schema:"control-room.native-task-submission/v1",
       tenantId:this.scope.tenantId,projectId:input.projectId,jobId:input.executionJobId,attemptId:stored.attempt.id,
       queueId:queued.queueId,inputDigest:input.inputDigest,packetDigest});

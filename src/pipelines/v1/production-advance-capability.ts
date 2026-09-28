@@ -15,7 +15,7 @@ type SupportingAuthority = Pick<PipelineAdvanceCapabilityV1, "resolveStageInSess
 export type PipelineNativeDeliveryQueueV1 = Readonly<{
   enqueueAssignedInSession: (tx: DatabaseSession, input: PipelineAdvanceSelectionV1 & Readonly<{
     attemptId: string; leaseId: string; leaseEpoch: number; inputDigest: string;
-    idempotencyKey: string; commitDeadline: number;
+    policyId: string; approvingOwnerIdentityId: string; idempotencyKey: string; commitDeadline: number;
   }>, authority: Readonly<{ actorId: "service:pipeline-advance:v1";
     assertCurrent: () => void | Promise<void> }>) => Promise<Readonly<{ queueId: string; replayed: boolean }>>;
 }>;
@@ -42,7 +42,7 @@ export class ProductionPipelineAdvanceCapabilityV1 implements PipelineAdvanceCap
     policyId: string): Promise<PipelineDelegationReceiptV1>{return this.supporting.authorizeDelegationInSession(tx,selection,policyId);}
 
   async assignAndQueueInSession(tx: DatabaseSession, input: PipelineAdvanceSelectionV1 & Readonly<{
-    expectedInputDigest:string;policyId:string;idempotencyKey:string;commitDeadline:number}>,
+    expectedInputDigest:string;policyId:string;approvingOwnerIdentityId:string;idempotencyKey:string;commitDeadline:number}>,
     authority: Readonly<{actorId:"service:pipeline-advance:v1";assertCurrent:()=>void|Promise<void>;
       commitDeadline:(value:number)=>void}>) {
     await authority.assertCurrent();
