@@ -189,6 +189,10 @@ test("a publisher whose witness name is taken by a concurrent writer still settl
   // P's own witness identity, captured when P creates it, so the retirement
   // gate can distinguish P's own final retirement from any recovery unlink.
   let pWitness: { device: bigint; inode: bigint } | undefined;
+  // C's own witness identity, for the same reason from the other side: the
+  // "left strictly alone" claim below is about THIS file, and the only way to
+  // say which file that is, by the only other writer in this test.
+  let cWitness: { device: bigint; inode: bigint } | undefined;
 
   /** P is the publisher. Gated on its own final witness retirement. */
   const publisher = new InstallationPlanFilesystemJournalV1({ rootDirectory: root, installationId, ownerUid },
@@ -242,6 +246,7 @@ test("a publisher whose witness name is taken by a concurrent writer still settl
           // Once past the gate, hold the newly created witness live so it is
           // still present when P resumes and looks for its own.
           if (isWitness && cPastClaim) {
+            cWitness = identity;
             cHoldsWitness.reachedNow();
             await cHoldsWitness.opened;
           }
@@ -291,6 +296,27 @@ test("a publisher whose witness name is taken by a concurrent writer still settl
     assert.equal(settled.planDigest, plan.planDigest);
     assert.equal(settled.revision, 0);
 
+    // THE ASSERTION THIS TEST WAS MISSING. The comment on
+    // `unlinkExact(name, identity, allowMissing = true)` in
+    // src/installer/v1/installation-plan-journal-storage-session.ts claims the
+    // foreign entry "is left strictly alone … removing it would destroy evidence
+    // belonging to another writer". Nothing proved that: replacing the early
+    // return with an unlink of the foreign entry left this file green, because
+    // the only later check is the final `readdir`, which happens *after* C is
+    // released and after recovery has legitimately retired the witness anyway
+    // — so the two outcomes are indistinguishable from there.
+    //
+    // This is the earliest point where the difference is observable, and the
+    // only one that names a writer: C is still frozen holding its witness, so
+    // the file on disk can only be C's. Reading it back by device and inode is
+    // what makes the claim falsifiable — a file another writer recreated under
+    // the same name has a different inode, and `unlinkExact` only treats an
+    // entry as its own when the identity matches.
+    const foreignWitness = `${installationId}.installation-plan.revision-0000000000.publish.json`;
+    assert.ok(cWitness, "C must have created a witness, or this test is not the intended interleaving");
+    assert.deepEqual(await entryIdentity(root, foreignWitness), cWitness,
+      "P must leave C's live witness strictly alone: it is another writer's evidence, and only a later recovery read may retire it");
+
     // Now let C finish, and let recovery converge the journal.
     cHoldsWitness.release();
     await claimerAppend;
@@ -313,6 +339,21 @@ test("a publisher whose witness name is taken by a concurrent writer still settl
 async function entryExists(root: string, entryName: string): Promise<boolean> {
   try { await lstat(join(root, entryName)); return true; }
   catch { return false; }
+}
+
+/**
+ * The device and inode of `entryName` in `root`, read straight off disk, or
+ * `undefined` when it is absent. Compared by identity rather than by name
+ * because a name is not an identity: the whole point of the assertion using
+ * this is that a *differently owned* file can sit under a name a writer is
+ * about to retire, so a name comparison would pass for exactly the wrong
+ * reason.
+ */
+async function entryIdentity(root: string, entryName: string): Promise<{ device: bigint; inode: bigint } | undefined> {
+  try {
+    const entry = await lstat(join(root, entryName), { bigint: true });
+    return { device: entry.dev, inode: entry.ino };
+  } catch { return undefined; }
 }
 
 test("a crash temp is never read as proof and foreign files are left alone", async () => {

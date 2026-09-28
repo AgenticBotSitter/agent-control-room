@@ -260,7 +260,18 @@ export function PrivateHome() {
         workspace heading, so attention clears the fold on a 375x812 phone in
         hosted mode as well as Mac-local — which the old painted order could
         not promise, because the install panels are two full panels of text.
-        tests/owner-ui.test.tsx asserts no `order` can be reintroduced. */}
+
+        Four guards keep this from coming back, and each covers a different
+        spelling of it. tests/owner-home-reading-order.test.tsx scans the
+        shipped stylesheet for `order`, `*-reverse` and explicit grid placement
+        on these blocks, and every owner component for a positive tabindex; it
+        also renders both runtime modes against the real stylesheet and
+        requires paint order to be monotonic.
+        tests/browser/owner-phone-width.spec.ts then walks `main` in real
+        Chromium in both runtime modes and requires the keyboard to reach
+        controls in painted order. jsdom cannot measure painted order, so that
+        second one is the only check that would have caught the original defect
+        on a real page. */}
     <HomeDashboard data={data} />
     {runtime.mode === "local" ? <MacLocalWorkerEvidence status={runtime.status} />
       : <HomeInstallationStatus topology={installationTopology} showSetupGuidance={runtime.mode === "hosted"} />}

@@ -2,14 +2,17 @@
 //
 // The owner interface is read on a phone, so "it looked fine at desktop width"
 // is not evidence. This walks every owner page at 375px — the narrowest of the
-// two audited devices (375x812 and 390x844) — and fails on the two defects that
+// two audited devices (375x812 and 390x844) — and fails on the defects that
 // make a page unusable there:
 //
-//   1. horizontal overflow (document.scrollingElement.scrollWidth > clientWidth),
-//      which pushes controls off the right edge where no amount of scrolling in
-//      the intended axis reaches them;
+//   1. horizontal overflow, measured as each element's painted right edge
+//      against the viewport rather than `document.scrollingElement.scrollWidth`
+//      (the shell clips, so the document number is blind to it);
 //   2. any standalone interactive control smaller than 44x44, which is below the
-//      WCAG 2.2 SC 2.5.8 target size and too small to hit reliably with a thumb.
+//      WCAG 2.2 SC 2.5.8 target size and too small to hit reliably with a thumb;
+//   3. text clipped rather than wrapped;
+//   4. the first status or attention element below the fold;
+//   5. focus order disagreeing with the order the page paints in.
 //
 // It runs against the same disposable rehearsal stack the other owner browser
 // suites use, and refuses any origin that is not that stack — in particular the
@@ -22,6 +25,24 @@
 // separates the two groups rather than skipping small targets wholesale, so a
 // new undersized *control* fails the lane while a prose link is asserted to keep
 // its own documented floor.
+//
+// WHY (5) is here, in a browser, and not only in a jsdom assertion. PR #404
+// first shipped Home as a phone-width flex column with CSS `order` pushing the
+// framing copy below the panels, which desynchronised the tab sequence from the
+// paint order: a keyboard reached the "Check saved dashboard again" button first
+// while it painted last. jsdom has no layout engine, so the jsdom guard could
+// only read a cascade — and the first version of it read a cascade that was
+// never loaded, which made it pass against anything. Tab-walking in real
+// Chromium is the check that cannot be argued with: it measures where the owner
+// actually looks and where the keyboard actually lands.
+//
+// The walk runs twice: once against the real rehearsal stack (Mac-local Home)
+// and once with `/api/v1/local-workers` answered 404, which is exactly how
+// `LocalRuntimeProvider` decides this browser is not on a Mac-local host. That
+// is the app's own runtime detection, running normally, with only the HTTP
+// response intercepted — no stubbed component, no injected state — so hosted
+// Home's focus order is measured rather than assumed. Hosted Home is where the
+// original defect was worse, and nothing in the rehearsal stack serves it.
 import { expect, test, type Page } from "@playwright/test";
 import { assertDisposableBrowserOrigin } from "../../private-app/app/browser-test-origin";
 
@@ -180,12 +201,119 @@ async function signIn(page: Page) {
   await expect(page.getByRole("heading", { name: "Projects" })).toBeVisible();
 }
 
-test("every owner page is usable at phone width", async ({ page }) => {
-  await page.setViewportSize({ width: PHONE_WIDTH, height: PHONE_HEIGHT });
-  await signIn(page);
+/**
+ * Press Tab through every control in `main` and return them in the order the
+ * keyboard reaches them, with where each one paints.
+ *
+ * Focus is seeded on `main` itself rather than left wherever the previous
+ * measurement left it. `main` carries `tabIndex={-1}`, so it is focusable but
+ * not a tab stop, and focusing it sets the sequential navigation start point to
+ * the top of the page content — the first Tab then lands on the first control
+ * inside `main`, which is what this walk means to measure. (Walking from the
+ * document body instead reaches the header's controls first, so a walk that
+ * simply pressed Tab until it entered `main` would have to model a
+ * legitimate exception: a skip link is *supposed* to paint at the very top and
+ * be reached first. That is the document tab sequence working as designed, not
+ * a desynchronisation, and it belongs to the header rather than to this page.)
+ *
+ * The walk is bounded three ways — a tab budget, a repeat-detection set, and
+ * the first stop outside `main` — so a focus cycle cannot hang the lane.
+ *
+ * A positive `tabindex` moves an element to the FRONT of the document's tab
+ * order, so seeding focus on `main` does not put the walk past it: the
+ * re-check button is reached first, and the walk legitimately stops there
+ * having left `main`. That is the defect being reported, and the walk must not
+ * be reshaped to hide it — so the result carries how far it got, and the
+ * per-mode tests say what a complete walk looks like rather than accepting a
+ * short one.
+ */
+async function tabWalkInMain(page: Page, tabBudget = 400): Promise<readonly Stop[]> {
+  await page.evaluate(() => {
+    const main = document.querySelector("main");
+    if (!(main instanceof HTMLElement)) throw new Error("owner pages must render a <main>");
+    // A fresh navigation start point, and a page scrolled to the top so the
+    // document offsets below are the ones the owner first sees.
+    main.focus();
+    window.scrollTo(0, 0);
+  });
+  const seen = new Set<string>();
+  const stops: Stop[] = [];
+  for (let pressed = 0; pressed < tabBudget; pressed += 1) {
+    await page.keyboard.press("Tab");
+    const stop = await page.evaluate(() => {
+      const element = document.activeElement;
+      if (!(element instanceof HTMLElement)) return null;
+      const style = getComputedStyle(element);
+      const rect = element.getBoundingClientRect();
+      return {
+        inMain: element.closest("main") !== null,
+        // A stable identity for cycle detection that survives re-layout.
+        key: `${element.tagName}#${element.id}.${element.className}|${(element.textContent ?? "").replace(/\s+/g, " ").trim().slice(0, 40)}`,
+        label: `${element.tagName.toLowerCase()}${element.className ? `.${element.className.split(/\s+/).join(".")}` : ""} "${(element.textContent ?? "").replace(/\s+/g, " ").trim().slice(0, 40)}"`,
+        tabIndex: element.getAttribute("tabindex"),
+        // Document offset, so the comparison is unaffected by scroll position.
+        top: rect.top + window.scrollY,
+        left: rect.left + window.scrollX,
+        painted: style.display !== "none" && style.visibility !== "hidden"
+          && (rect.width > 0 || rect.height > 0),
+      };
+    });
+    if (!stop || !stop.inMain) break;
+    if (seen.has(stop.key)) break;
+    seen.add(stop.key);
+    stops.push(stop);
+  }
+  return stops;
+}
 
-  // A populated project and task: empty states render none of the status,
-  // attention or control markup a phone owner actually has to operate.
+/** One stop on the tab walk: a control, where it paints, and its tabindex. */
+type Stop = {
+  inMain: boolean;
+  key: string;
+  label: string;
+  tabIndex: string | null;
+  top: number;
+  left: number;
+  painted: boolean;
+};
+
+/**
+ * Failures from a tab walk, as owner-visible sentences.
+ *
+ * The rule is that the keyboard and the eye agree: a control reached later must
+ * not paint above one reached earlier. Two controls legitimately share a top —
+ * they sit side by side in one grid row — so a step that does not move down is
+ * only accepted if it also does not move left.
+ *
+ * `tolerance` exists because sub-pixel layout puts a control's border box a
+ * fraction of a pixel off its neighbour's when a row of four is distributed
+ * across a 375px viewport. It is 1px, which is far below any real reordering.
+ */
+function focusOrderFailures(route: string, mode: string, stops: readonly Stop[]): string[] {
+  const tolerance = 1;
+  const failures: string[] = [];
+  for (const stop of stops) {
+    if (stop.tabIndex !== null && Number(stop.tabIndex) > 0) {
+      failures.push(`${route} (${mode}): ${stop.label} carries tabindex="${stop.tabIndex}", which moves it to the front of the tab sequence independently of where it paints`);
+    }
+    if (!stop.painted) {
+      failures.push(`${route} (${mode}): ${stop.label} takes keyboard focus but is not painted, so a keyboard owner lands on something they cannot see`);
+    }
+  }
+  for (const [index, stop] of stops.entries()) {
+    if (index === 0) continue;
+    const previous = stops[index - 1]!;
+    if (stop.top < previous.top - tolerance) {
+      failures.push(`${route} (${mode}): the keyboard reaches ${stop.label} at y=${Math.round(stop.top)} after ${previous.label} at y=${Math.round(previous.top)}, so focus order disagrees with the order the page paints in`);
+    } else if (Math.abs(stop.top - previous.top) <= tolerance && stop.left < previous.left - tolerance) {
+      failures.push(`${route} (${mode}): ${stop.label} paints left of ${previous.label} on the same line but is reached after it`);
+    }
+  }
+  return failures;
+}
+
+/** Sign in and create one project and one task, returning the routes to walk. */
+async function seedOwnerFixture(page: Page) {
   const projectTitle = "Phone width coverage project with a deliberately long title";
   await page.goto("/projects");
   await page.getByRole("textbox", { name: "Project name", exact: true }).fill(projectTitle);
@@ -206,6 +334,13 @@ test("every owner page is usable at phone width", async ({ page }) => {
 
   const routes = [...OWNER_ROUTES, projectPath, `${projectPath}/tasks`, taskPath,
     `${projectPath}/reviews`, `${projectPath}/activity`, `${projectPath}/files`];
+  return { projectId, routes };
+}
+
+test("every owner page is usable at phone width", async ({ page }) => {
+  await page.setViewportSize({ width: PHONE_WIDTH, height: PHONE_HEIGHT });
+  await signIn(page);
+  const { projectId, routes } = await seedOwnerFixture(page);
 
   const failures: string[] = [];
   for (const route of routes) {
@@ -237,8 +372,80 @@ test("every owner page is usable at phone width", async ({ page }) => {
     if (measured.firstAttention && !measured.firstAttention.aboveFold) {
       failures.push(`${route}: the first status/attention element ${measured.firstAttention.label} sits at ${measured.firstAttention.top}px, below the ${PHONE_HEIGHT}px fold, so the owner has to scroll to see it`);
     }
+    // The same real page, walked by keyboard rather than measured.
+    const stops = await tabWalkInMain(page);
+    // A walk that reached nothing would satisfy every comparison above, so
+    // each route has to prove it was actually walked. Every owner route has
+    // controls in `main` — a back link or a panel action at minimum — and a
+    // route that loses them all is a route whose controls a keyboard cannot
+    // reach, which is the defect this walk is here to find.
+    if (stops.length < 1) failures.push(`${route}: the keyboard reached no control in main at all, so its focus order cannot be checked`);
+    failures.push(...focusOrderFailures(route, "mac-local", stops));
   }
 
   expect(failures, failures.join("\n")).toEqual([]);
   expect(projectId).toBeTruthy();
 });
+
+for (const mode of ["mac-local", "hosted"] as const) {
+  test(`Home reads in one order in ${mode} mode at phone width`, async ({ page }) => {
+    await page.setViewportSize({ width: PHONE_WIDTH, height: PHONE_HEIGHT });
+
+    if (mode === "hosted") {
+      // Hosted mode is reached the way the app itself decides it.
+      // `LocalRuntimeProvider` treats HTTP 404 from /api/v1/local-workers as
+      // "this browser is not on a Mac-local host" — see
+      // private-app/app/local-runtime.tsx. Fulfilling that one response runs
+      // the app's real detection, its real rendering and its real focus order;
+      // no component is stubbed and no state is injected. The rehearsal stack
+      // only ever serves Mac-local, so without this the hosted Home that the
+      // original defect hurt worst would go unmeasured.
+      await page.route("**/api/v1/local-workers", route => route.fulfill({ status: 404 }));
+    }
+
+    await signIn(page);
+    await page.goto("/");
+    await expect(page.locator("main")).toBeVisible();
+    // Prove the mode really is the one under test rather than whatever the
+    // stack happened to serve. Hosted Home shows the operator-capacity panel and
+    // no local-worker-evidence panel; Mac-local Home is the reverse.
+    const operatorCapacity = page.locator('main section[aria-labelledby="operator-capacity-title"]');
+    const localEvidence = page.locator("main .private-local-worker-evidence");
+    await expect(operatorCapacity, `${mode} mode must be the one under test`).toHaveCount(mode === "hosted" ? 1 : 0, { timeout: 30_000 });
+    await expect(localEvidence).toHaveCount(mode === "hosted" ? 0 : 1);
+    await expect(page.locator('[role="status"]').filter({ hasText: /Loading|Checking saved|Reading|Saving…/i }))
+      .toHaveCount(0, { timeout: 30_000 });
+
+    const stops = await tabWalkInMain(page);
+    // Every focusable in `main`, read from the DOM rather than from the walk.
+    // A positive `tabindex` moves an element to the FRONT of the document's
+    // tab order, and Chromium's sequential navigation from a seeded start
+    // point does not necessarily visit it — so the walk alone can report a
+    // positive tabindex only as "something is wrong upstream". This reads the
+    // attribute directly, on every control the page actually rendered, and
+    // names the control when it is wrong.
+    const positiveTabIndex = await page.evaluate(() => [...document.querySelectorAll("main *")]
+      .map(element => ({ element, tabIndex: element.getAttribute("tabindex") }))
+      .filter(entry => entry.tabIndex !== null && Number(entry.tabIndex) > 0)
+      .map(({ element, tabIndex }) => `main element ${element.tagName.toLowerCase()}${element.className ? `.${String(element.className).split(/\s+/).join(".")}` : ""} carries tabindex="${tabIndex}", which moves it ahead of every other control in the document's tab sequence`));
+    const failures = [...positiveTabIndex, ...focusOrderFailures("/", mode, stops)];
+    // A walk that reached nothing, or stopped before the last control, would
+    // satisfy every comparison above — so a complete walk is asserted rather
+    // than assumed. The re-check button is the one control the original defect
+    // moved, and it is last by design, so a walk that never reached it did not
+    // walk the whole of `main` and its verdict is not a verdict.
+    //
+    // A positive `tabindex` also produces a short walk, because the element
+    // jumps to the front of the document's tab order and the walk stops there.
+    // That case is already reported above with the element named, so the count
+    // is only asked for once the walk itself is known to be clean.
+    if (failures.length === 0) {
+      expect(stops.some(stop => stop.label.includes("Check saved dashboard again")),
+        `${mode}: the walk reached ${stops.length} controls and stopped before the re-check button, so it did not walk the whole of main`)
+        .toBe(true);
+      expect(stops.length, `${mode}: the tab walk reached ${stops.length} controls in main, too few to judge the order`)
+        .toBeGreaterThanOrEqual(6);
+    }
+    expect(failures, failures.join("\n")).toEqual([]);
+  });
+}

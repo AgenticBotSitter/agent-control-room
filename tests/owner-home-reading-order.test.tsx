@@ -12,44 +12,104 @@
 //
 // The browser suite only ever serves Mac-local Home, so this is where hosted
 // coverage has to live. These render the real `PrivateHome` in both runtime
-// modes and check three separate things:
+// modes and check four separate things:
 //
-//   1. no `order` may separate two children of Home's `main`. This is the
-//      direct guard: it fails the moment any `order:` is reintroduced, whether
-//      or not it happens to produce a visually acceptable page today.
+//   1. no reordering construct of any kind may separate two children of Home's
+//      `main`. This is the direct guard: it fails the moment `order`,
+//      `*-reverse` or an explicit grid row/area is reintroduced on one of those
+//      children, whether or not it happens to produce an acceptable page today.
 //   2. the painted order of every focusable in `main` is monotonic, so tab
 //      order and paint order cannot disagree even if (1) is worked around.
-//   3. "Needs attention" precedes the other panels, so the attention-first
+//   3. no owner page may use a positive `tabindex`, which reorders the tab
+//      sequence independently of the DOM and of the paint order alike.
+//   4. "Needs attention" precedes the other panels, so the attention-first
 //      result is a consequence of position rather than of a paint trick.
 //
-// It is also a mutation-resistant test: check (1) reads the shipped stylesheet
-// rather than trusting the component, and check (2) is computed from the DOM
-// the component produced, so re-adding the `order` rules fails even if the
-// JSX is left alone.
+// It is also a mutation-resistant test: checks (1) and (3) read the shipped
+// stylesheet and markup rather than trusting the component, and check (2) is
+// computed from the real `private.css` cascade, so re-adding the `order` rules
+// fails even if the JSX is left alone.
+//
+// A limitation worth stating rather than implying away. The first version of
+// (2) read `getComputedStyle` in a JSDOM that had loaded no stylesheet, so
+// `display` was always `block` and `order` always `""`, and the check passed
+// against anything. The stylesheet is now injected into the document, and
+// jsdom's cascade does compute it (verified: an injected
+// `.private-home-main{display:flex}` resolves `display` to `flex`). But jsdom
+// **ignores `@media` blocks entirely**, so this covers unconditional rules
+// only — the shipped `.private-home-lead` border, declared only inside
+// `@media (max-width: 560px)`, does not resolve here. That is precisely why
+// the raw-stylesheet scan in (1) exists alongside this rather than instead of
+// it: the scan sees every rule, media-scoped or not.
+//
+// Chromium covers the rest. `tests/browser/owner-phone-width.spec.ts` walks
+// `main` with real Tab presses in both runtime modes and compares focus order
+// to painted top-to-bottom order, which no jsdom assertion can approximate.
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { JSDOM } from "jsdom";
 
 import { PrivateHome } from "../private-app/app/home-workspace";
 import { LocalRuntimeContextV1 } from "../private-app/app/local-runtime";
 
-const STYLESHEET = readFileSync(
-  new URL("../private-app/app/private.css", import.meta.url), "utf8");
+const APP_DIRECTORY = fileURLToPath(new URL("../private-app/app", import.meta.url));
+
+const STYLESHEET = readFileSync(join(APP_DIRECTORY, "private.css"), "utf8");
 
 const LOCAL_STATUS = { taskWorkersStarted: true, workers: [], projectSections: [] } as const;
 
+/** Every `rule { … }` block in `css`, as its selector text and its declarations. */
+function rulesOf(css: string): { selector: string; declarations: string[] }[] {
+  return [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)].map(match => ({
+    selector: (match[1] ?? "").trim().replace(/\s+/g, " "),
+    declarations: (match[2] ?? "").split(";").map(declaration => declaration.trim()).filter(Boolean),
+  }));
+}
+
+/**
+ * Selectors naming one of Home's own top-level blocks. A reordering construct
+ * on any of these is the finding this file exists to close, whatever property
+ * carries it.
+ */
+const HOME_TOP_LEVEL = /\.private-home-(?:main|lead|intro)\b/;
+
 /** Every rule that assigns `order` to one of Home's `main` children. */
-const homeOrderDeclarations = [...STYLESHEET.matchAll(/([^{}]+)\{([^{}]*)\}/g)]
-  .flatMap(match => (match[2] ?? "").split(";")
-    .filter(declaration => /^\s*order\s*:/.test(declaration))
-    .map(declaration => ({ selector: (match[1] ?? "").trim().replace(/\s+/g, " "), declaration: declaration.trim() })));
+const homeOrderDeclarations = rulesOf(STYLESHEET)
+  .flatMap(rule => rule.declarations.filter(declaration => /^\s*order\s*:/.test(declaration))
+    .map(declaration => ({ selector: rule.selector, declaration })));
+
+/** Every rule anywhere in the owner stylesheet that assigns `order`. */
+const everyOrderDeclaration = rulesOf(STYLESHEET)
+  .flatMap(rule => rule.declarations.filter(declaration => /^\s*order\s*:/.test(declaration))
+    .map(declaration => ({ selector: rule.selector, declaration })));
+
+/**
+ * Reversed flow directions. `-reverse` on a flex or grid axis paints children
+ * in the opposite order to the DOM and to the tab sequence, so it is `order`
+ * that follows a different spelling.
+ */
+const REVERSED_FLOW = /(?:^|[\s;{])(?:-moz-|-webkit-)?(?:flex-direction|direction)\s*:\s*[^;]*\breverse\b/;
+
+/** Explicit grid placement: an item's row or area assigned by rule, not by source. */
+const GRID_PLACEMENT = /^\s*(?:grid-row|grid-row-start|grid-row-end|grid-area|grid-area-start|grid-area-end|grid-template-areas)\s*:/;
+
+/** Every `.tsx` in the owner app, for the static markup scans below. */
+const OWNER_SOURCES = readdirSync(APP_DIRECTORY)
+  .filter(entry => entry.endsWith(".tsx"))
+  .map(entry => ({ path: join(APP_DIRECTORY, entry), source: readFileSync(join(APP_DIRECTORY, entry), "utf8") }));
 
 /** Mount the real Home in one runtime mode with every protected read settled. */
 async function mountHome(mode: "local" | "hosted") {
   const { createRoot } = await import("react-dom/client");
   const { act, createElement } = await import("react");
-  const dom = new JSDOM("<!doctype html><div id='root'></div>",
+  // The real stylesheet, injected into the document rather than merely read:
+  // without it `getComputedStyle` resolves nothing this page ships, which is
+  // what made the paint-order check below inert. See the header.
+  const dom = new JSDOM(
+    `<!doctype html><html><head><style>${STYLESHEET}</style></head><body><div id='root'></div></body></html>`,
     { url: "https://control.invalid/", pretendToBeVisual: true });
   const saved = Object.fromEntries(["window", "document", "IS_REACT_ACT_ENVIRONMENT", "fetch"]
     .map(key => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
@@ -104,28 +164,32 @@ function mainChildren(document: Document) {
 }
 
 /**
- * The painted order of a flex item, which is what a sighted owner sees, and
- * the order a keyboard does NOT follow. Returns the DOM index each child would
- * paint at, so any disagreement between paint and tab order is directly visible.
+ * The painted order of a flex or grid item, which is what a sighted owner
+ * sees, and the order a keyboard does NOT follow. Returns the DOM index each
+ * child would paint at, so any disagreement between paint and tab order is
+ * directly visible.
  *
- * A non-flex `main` has no `order` to honour and paints in source order, so it
- * returns the identity ranking rather than pretending to measure layout — jsdom
- * has no layout engine, so "painted" can only ever mean "as this stylesheet
- * orders it".
+ * A block container has no `order` to honour and paints in source order, so it
+ * returns the identity ranking. jsdom has no layout engine, so "painted" can
+ * only mean "as this stylesheet orders it" — which is real now that the
+ * stylesheet is loaded (see the header), and is the whole reason the ranking is
+ * read from the cascade rather than from the DOM.
  */
 function paintedOrderOf(document: Document, window: Window) {
   const main = document.querySelector("main")!;
   const siblings = [...main.children] as HTMLElement[];
   const style = window.getComputedStyle.bind(window);
-  const isFlex = style(main).display.includes("flex");
+  const display = style(main).display;
+  const isFlex = display.includes("flex");
+  const isGrid = display.includes("grid");
+  /** `order` applies to flex and grid items alike; block children have none. */
+  const rank = (element: HTMLElement) => (isFlex || isGrid ? Number(style(element).order) || 0 : 0);
   const painted = siblings.map((_, index) => index)
     .sort((left, right) => {
-      if (!isFlex) return left - right;
-      const a = Number(style(siblings[left]!).order) || 0;
-      const b = Number(style(siblings[right]!).order) || 0;
+      const a = rank(siblings[left]!), b = rank(siblings[right]!);
       return a === b ? left - right : a - b;
     });
-  return { isFlex, painted };
+  return { isFlex, isGrid, painted };
 }
 
 test("no CSS order may separate Home's main children, because order breaks tab order", () => {
@@ -139,16 +203,82 @@ test("no CSS order may separate Home's main children, because order breaks tab o
     `CSS "order" must not reorder Home's main children: ${JSON.stringify(homeOrderDeclarations)}`);
 });
 
+test("no owner rule anywhere may use order, so nothing can grow a second reordering mechanism", () => {
+  // The scan above is scoped to Home's own blocks because that is where the
+  // finding was. This one is not scoped, and it is deliberately so: the next
+  // page that needs a panel to paint somewhere other than its source position
+  // is exactly the situation that produced this bug, and the cheapest place to
+  // stop it is a stylesheet where `order` is not used at all. The shipped file
+  // has none, so this is a property worth holding rather than a cost.
+  assert.deepEqual(everyOrderDeclaration, [],
+    `CSS "order" must not be used anywhere in the owner stylesheet: ${JSON.stringify(everyOrderDeclaration)}`);
+});
+
 test("Home's main children are siblings of one plain block flow at phone width", () => {
   // The rule that made `order` possible in the first place was turning `main`
-  // into a flex column. Without it there is no paint order to diverge from
-  // source order, so this asserts the precondition of the rule above.
-  const flexRules = [...STYLESHEET.matchAll(/([^{}]+)\{([^{}]*)\}/g)]
+  // into a flex column. Without a formatting context on `main` there is no
+  // paint order to diverge from source order, so this asserts the precondition
+  // of the rule above — and `grid` is included alongside `flex` because
+  // `grid-row` on a child is the same defect wearing a different property.
+  const formattingRules = [...STYLESHEET.matchAll(/([^{}]+)\{([^{}]*)\}/g)]
     .filter(match => /(^|\s)\.private-home-main\b/.test(match[1] ?? ""))
     .flatMap(match => (match[2] ?? "").split(";").map(declaration => declaration.trim())
-      .filter(declaration => /^(display\s*:\s*flex|flex-direction)/.test(declaration)));
-  assert.deepEqual(flexRules, [],
-    `.private-home-main must stay in normal flow: ${JSON.stringify(flexRules)}`);
+      .filter(declaration => /^(display\s*:\s*(?:inline-)?(?:flex|grid)|flex-direction|grid-template)/.test(declaration)));
+  assert.deepEqual(formattingRules, [],
+    `.private-home-main must stay in normal flow: ${JSON.stringify(formattingRules)}`);
+});
+
+test("no grid row or area may be placed on Home's own top-level blocks", () => {
+  // `grid-row: 1` is a paint reorder with no `order` and no `flex` anywhere, so
+  // neither the check above nor the `order` scan can see it. It moves a block
+  // to the top of its container while leaving the DOM, and therefore the tab
+  // sequence, exactly where it was — the original defect, spelled differently.
+  //
+  // Scoped to Home's own blocks rather than blanket, and that is a real
+  // judgement: this stylesheet ships two legitimate grid placements
+  // (`.private-dashboard-projects { grid-column: 1 / -1 }` and the projects
+  // page's `.private-create { grid-row: 1 }` → `auto`), both inside panels and
+  // both about columns or about a page that is not Home. A blanket ban would
+  // fail on shipped behaviour and teach the next person that the test is
+  // arbitrary.
+  const placements = rulesOf(STYLESHEET)
+    .filter(rule => HOME_TOP_LEVEL.test(rule.selector))
+    .flatMap(rule => rule.declarations.filter(declaration => GRID_PLACEMENT.test(declaration))
+      .map(declaration => ({ selector: rule.selector, declaration })));
+  assert.deepEqual(placements, [],
+    `no explicit grid placement on Home's top-level blocks: ${JSON.stringify(placements)}`);
+});
+
+test("no flow direction may be reversed in the owner stylesheet", () => {
+  // `column-reverse` / `row-reverse` is `order` applied to a whole axis, so it
+  // can desynchronise paint from tab order in a single declaration with no
+  // `order` to grep for and no `display: flex` on Home to catch it.
+  const reversed = rulesOf(STYLESHEET)
+    .filter(rule => rule.declarations.some(declaration => REVERSED_FLOW.test(declaration)))
+    .map(rule => ({ selector: rule.selector, declarations: rule.declarations.filter(d => REVERSED_FLOW.test(d)) }));
+  assert.deepEqual(reversed, [],
+    `a reversed flow direction paints against the tab sequence: ${JSON.stringify(reversed)}`);
+});
+
+test("no owner page may use a positive tabindex", () => {
+  // The third way to decouple tab order from reading order, and the one no CSS
+  // check can see. `tabIndex={1}` on a late block moves that control to the
+  // FRONT of the tab sequence, so a keyboard and a screen reader reach it
+  // first while it paints last — the same defect as `order`, arriving through
+  // markup instead of a stylesheet. It is a genuinely useful tool for exactly
+  // one thing (implementing the document tab sequence itself), which this app
+  // does through a skip link and not through per-control indices.
+  //
+  // Scanned across every owner component rather than just `home-workspace.tsx`,
+  // because nothing about the defect is Home-specific. All sixteen shipped uses
+  // are the same `tabIndex={-1}` skip target, so the invariant needs no
+  // exceptions.
+  const positive = OWNER_SOURCES.flatMap(({ path, source }) =>
+    [...source.matchAll(/tab[Ii]ndex\s*=\s*\{?\s*(-?\d+)\s*\}?/g)]
+      .map(match => ({ file: path.slice(path.lastIndexOf("/") + 1), value: Number(match[1]) }))
+      .filter(entry => entry.value > 0));
+  assert.deepEqual(positive, [],
+    `a positive tabindex reorders the tab sequence independently of the DOM: ${JSON.stringify(positive)}`);
 });
 
 for (const mode of ["local", "hosted"] as const) {
@@ -156,9 +286,9 @@ for (const mode of ["local", "hosted"] as const) {
     const mounted = await mountHome(mode);
     try {
       const { document, window, restore } = mounted;
-      const { isFlex, painted } = paintedOrderOf(document, window);
-      assert.equal(isFlex, false,
-        "main must not be a flex container, or paint order could diverge from source order again");
+      const { isFlex, isGrid, painted } = paintedOrderOf(document, window);
+      assert.ok(!isFlex && !isGrid,
+        "main must not be a flex or grid container, or paint order could diverge from source order again");
 
       // Every control a keyboard can reach inside `main`, in the order it is
       // reached, mapped to where it paints.
@@ -169,10 +299,8 @@ for (const mode of ["local", "hosted"] as const) {
       const paintedRank = new Map(painted.map((domIndex, rank) => [domIndex, rank]));
       const describe = (element: Element) => `${element.tagName.toLowerCase()}` +
         `${element.className ? `.${element.className}` : ""} "${(element.textContent ?? "").trim().slice(0, 30)}"`;
-      // jsdom carries no layout engine, so `getComputedStyle` resolves the
-      // `display` this page actually ships — which is the whole point of the
-      // check. The window's own implementation is the one that sees the
-      // stylesheet React imported alongside the component.
+      // The window's own implementation, against the real `private.css` now
+      // loaded into this document — not a cascade that resolves nothing.
       const style = mounted.window.getComputedStyle.bind(mounted.window);
 
       let previousRank = -1;
@@ -186,13 +314,19 @@ for (const mode of ["local", "hosted"] as const) {
         assert.ok(rank >= previousRank,
           `paint order disagrees with tab order in ${mode} mode: ${describe(control)} paints at rank ${rank} after rank ${previousRank}`);
         previousRank = rank;
-        // A second, computed-style guard on the same property. jsdom reports an
-        // unset `order` as "" and an explicit one as its number, so "no order
-        // was set" is exactly `order === ""` — and a stylesheet that
-        // reintroduced one is caught here even if the scan above were removed.
+        // A second, computed-style guard on the same property, now reading a
+        // real cascade. jsdom reports an unset `order` as "" and an explicit one
+        // as its number, so "no order was set" is exactly `order === ""`.
         const computedOrder = style(owner as HTMLElement).order;
         assert.ok(computedOrder === "" || Number(computedOrder) === 0,
           `${describe(owner)} has a computed CSS order of "${computedOrder}" in ${mode} mode, so its paint position can diverge from its tab position`);
+        // `order` and a positive `tabindex` are the two mechanisms that move
+        // a control away from its painted position; the static scans above
+        // cover both, and this is the same claim made of the rendered result
+        // so a rule the scan cannot parse still has to show up here.
+        const tabIndex = (control as HTMLElement).getAttribute("tabindex");
+        assert.ok(tabIndex === null || Number(tabIndex) <= 0,
+          `${describe(control)} carries tabindex="${tabIndex}" in ${mode} mode, so it is reached out of painted order`);
       }
 
       // Within one painted block the controls keep their own source order.

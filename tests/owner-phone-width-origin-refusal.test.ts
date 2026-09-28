@@ -20,14 +20,26 @@
 //      fails in that case, which is precisely the mutation that previously
 //      survived, so it is the mutation this file is written to catch.
 //
-// A real subprocess check runs too, because the review's mutation was applied
-// to the spec and observed through Playwright discovery. Import-time refusal
-// and discovery-time refusal are the same mechanism here, but the subprocess
-// proves the failure actually reaches a caller as a nonzero exit rather than
-// only throwing inside this process.
+// (3) is a check on the spec's SOURCE TEXT, and that is not enough, which is
+// what the second review established. Wrapping the real call as
+// `try { assertDisposableBrowserOrigin(...) } catch {}` — or gating it behind
+// `if (false)` — keeps the literal text that (3) greps for, and a manual
+// `pnpm test:owner-phone-width-browser` would then drive the live app while
+// every test in this file stayed green. No regex over source text can decide
+// whether a call is reachable.
+//
+// So the load-bearing check here is (4): real Playwright discovery, in a
+// subprocess, pointed at the live app. It asserts what the operator would
+// actually observe — a nonzero exit, the refusal message, and no test listed —
+// and no source-level trick can satisfy it. `--list` does not launch a browser
+// or contact the origin, so it costs about a quarter of a second and belongs
+// in this ordinary node lane rather than the browser lane. A cheaper
+// subprocess check also runs, proving the throw reaches a caller as a nonzero
+// exit rather than only failing inside this process.
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 
@@ -132,3 +144,48 @@ test("the refusal reaches a caller as a nonzero exit, not only as a throw", () =
   }
   assert.ok(failed, "pointed at the live app, importing the guard must fail the process");
 });
+
+test("Playwright discovery pointed at the live app lists no test and fails", () => {
+  // The mutation that survived the second review. `try {} catch {}` and
+  // `if (false)` around the spec's guard call both leave the source text (3)
+  // greps for intact, and both let this command exit 0 with the test listed —
+  // at which point a manual `pnpm test:owner-phone-width-browser` signs in as
+  // the owner against the live app on 3210 and writes to the live database.
+  //
+  // So the check is behavioural, not textual: run the real Playwright CLI over
+  // the real spec and require the refusal to be what the operator sees. Three
+  // separate requirements, because each can fail on its own — a nonzero exit
+  // alone is also what "no tests found" produces, and the message alone does
+  // not prove the test was never registered.
+  //
+  // `--list` runs discovery and no test, so this launches no browser and makes
+  // no request to 3210. The owner code is a placeholder: the spec reads it
+  // before it reaches the guard, and only to throw if it is absent.
+  const spec = "tests/browser/owner-phone-width.spec.ts";
+  let exitCode = 0, output = "";
+  try {
+    output = execFileSync(process.execPath,
+      [require.resolve("@playwright/test/cli"), "test", spec, "--list"],
+      { cwd: REPO_ROOT, encoding: "utf8", stdio: "pipe", timeout: 120_000,
+        env: { ...process.env, CONTROL_ROOM_E2E_ORIGIN: "http://127.0.0.1:3210",
+          CONTROL_ROOM_E2E_OWNER_CODE: "refusal-probe-not-a-real-owner-code" } });
+  } catch (error) {
+    exitCode = (error as { status?: number }).status ?? 0;
+    output = `${(error as { stdout?: string }).stdout ?? ""}\n${(error as { stderr?: string }).stderr ?? ""}`;
+  }
+
+  assert.notEqual(exitCode, 0,
+    `discovery against the live app must fail; it exited 0 and reported: ${output.trim()}`);
+  assert.ok(output.includes(PHONE_WIDTH_BROWSER_REFUSAL),
+    `discovery must print the exact refusal, got: ${output.slice(-600)}`);
+  // Playwright's own "Total: N tests in M files" line is the proof nothing was
+  // registered. Asserting on it rather than on the absence of the test's title
+  // keeps this honest if the spec's test name ever changes.
+  assert.match(output, /Total:\s+0 tests in 0 files/,
+    `no test may be listed once the live-app origin is refused, got: ${output.slice(-600)}`);
+  assert.doesNotMatch(output, /every owner page is usable at phone width/,
+    "the test must never be listed against the live app");
+});
+
+/** `require.resolve` from this ESM module, so the path is pnpm-lockfile-derived. */
+const require = createRequire(import.meta.url);

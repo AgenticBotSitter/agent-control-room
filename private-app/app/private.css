@@ -216,13 +216,23 @@
  *    skip link. `.private-back` and `.private-tabs a` carried no height at
  *    all, so they measured 24px tall and 33-41px wide.
  * 2. Attention first. Home's "Needs attention" panel measured top=1150px on a
- *    812px-tall phone, below the fold. It is NOT moved in the DOM: the reading
- *    order stays heading -> copy -> panels so the tab and screen-reader
- *    sequence is unchanged, and only the painted order at phone width moves.
- *    `main` becomes a flex column and the framing copy — which describes how
- *    the page reads rather than anything the owner needs on arrival — is
- *    placed after the panels. Measured result: top=451px, above the fold on
- *    both devices, with the heading still above it. Desktop is untouched.
+ *    812px-tall phone, below the fold. The fix is a REAL DOM reorder in
+ *    home-workspace.tsx, not a paint trick: the framing copy — which describes
+ *    how the page reads rather than anything the owner needs on arrival — was
+ *    moved to be the last child of `main`, after the panels, and the panels
+ *    that followed it moved up with it. The reading order is heading ->
+ *    panels -> copy, so a keyboard, a screen reader and a sighted owner all
+ *    walk the page in the same sequence.
+ *
+ *    An earlier attempt here used a flex column plus CSS `order` to achieve the
+ *    same painted result without touching the DOM. That was reverted: `order`
+ *    changes paint order only, so the focusable "Check saved dashboard again"
+ *    button was the first control in `main` for a keyboard while painting last
+ *    for a sighted owner, and in hosted mode it was worse still. The shipped
+ *    measurement on the real stack is in the PR body, and the guard that keeps
+ *    `order` out — along with grid placement, reversed axes and positive
+ *    tabindex — is tests/owner-home-reading-order.test.tsx plus the real
+ *    Chromium tab walk in tests/browser/owner-phone-width.spec.ts.
  * ---------------------------------------------------------------- */
 
 /* Standalone controls that measured under 44px on a phone. These are their own
@@ -286,25 +296,28 @@
   .private-local-worker-evidence > p { margin-block: .3rem; }
 
   /* Attention first, with no paint reordering anywhere.
-     An earlier version made `main` a flex column here and gave the intro,
-     the dashboard, the worker-evidence panel and this copy explicit `order`
-     values, so the panels could be painted above the copy without touching
-     the DOM. That was the wrong tool. CSS `order` changes paint order only:
-     keyboard focus and screen-reader reading order still follow the DOM, so
-     the focusable "Check saved dashboard again" button was the first control
-     in `main` for a keyboard while painting last for a sighted owner. In
-     hosted mode it was worse — the installation panels, the "New task" link
-     and operator capacity carry no `order`, so they painted at the default 0,
-     ahead of the dashboard's `order: 1`, and the attention-first result did
-     not hold at all.
+     The attention-first result is delivered by the DOM order in
+     home-workspace.tsx, not by this block: `main`'s children are already in
+     their reading order in the markup, and the framing copy is the last of
+     them, so the dashboard — whose "Needs attention" panel is its first panel
+     — leads. This block only keeps that last block compact, and adds the
+     divider that makes the change of section legible.
 
-     The rule is now: Home's children are in their reading order in the
-     markup, and that is the only order. The copy is last in the DOM, so this
-     block only has to keep it compact — and note the dashboard's "Needs
-     attention" panel is already the first panel inside the grid, which is
-     what puts attention above the fold. tests/owner-ui.test.tsx asserts no
-     `order` can be reintroduced across these siblings. */
-  .private-home-main { gap: 1rem; }
+     An earlier version made `main` a flex column here and gave the intro, the
+     dashboard, the worker-evidence panel and this copy explicit `order`
+     values, so the panels could be painted above the copy without touching the
+     DOM. That was the wrong tool and it is reverted. CSS `order` changes paint
+     order only: keyboard focus and screen-reader reading order still follow
+     the DOM, so the focusable "Check saved dashboard again" button was the
+     first control in `main` for a keyboard while painting last for a sighted
+     owner. In hosted mode it was worse — the installation panels, the "New
+     task" link and operator capacity carry no `order`, so they painted at the
+     default 0, ahead of the dashboard's `order: 1`, and the attention-first
+     result did not hold at all.
+
+     tests/owner-home-reading-order.test.tsx asserts none of this can come
+     back, in any spelling: `order`, `*-reverse`, explicit grid placement on
+     these blocks, a formatting context on `main`, or a positive tabindex. */
   .private-home-intro { margin-bottom: 0; }
   .private-home-lead { border-top: 1px solid var(--border); padding-top: 1rem; }
 
