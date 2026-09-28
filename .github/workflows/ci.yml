@@ -93,16 +93,20 @@ jobs:
         run: |
           set -euo pipefail
           postgres_root="$(mktemp -d "${RUNNER_TEMP}/affected-tests-postgres.XXXXXX")"
+          postgres_port="$(python3 -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()')"
           echo "AFFECTED_TESTS_POSTGRES_ROOT=${postgres_root}" >> "$GITHUB_ENV"
           echo "$PG_BIN" >> "$GITHUB_PATH"
           "$PG_BIN/initdb" -D "${postgres_root}/data" -U postgres --auth=trust --encoding=UTF8 --no-locale
-          "$PG_BIN/pg_ctl" -D "${postgres_root}/data" -l "${postgres_root}/postgres.log" -w -t 30 \
-            -o "-p 15497 -c listen_addresses=127.0.0.1" start
+          if ! "$PG_BIN/pg_ctl" -D "${postgres_root}/data" -l "${postgres_root}/postgres.log" -w -t 30 \
+            -o "-p ${postgres_port} -c listen_addresses=127.0.0.1" start; then
+            cat "${postgres_root}/postgres.log" >&2 || true
+            exit 1
+          fi
           {
             echo "CONTROL_ROOM_PG17_UPGRADE_REHEARSAL=1"
             echo "CONTROL_ROOM_PG_CONCURRENCY_GATE=1"
-            echo "CONTROL_ROOM_TEST_PG_URL_A=postgresql://postgres@127.0.0.1:15497/postgres"
-            echo "CONTROL_ROOM_TEST_PG_URL_B=postgresql://postgres@127.0.0.1:15497/postgres"
+            echo "CONTROL_ROOM_TEST_PG_URL_A=postgresql://postgres@127.0.0.1:${postgres_port}/postgres"
+            echo "CONTROL_ROOM_TEST_PG_URL_B=postgresql://postgres@127.0.0.1:${postgres_port}/postgres"
           } >> "$GITHUB_ENV"
       - name: Run tests affected by this change
         env:

@@ -278,7 +278,10 @@ test("the affected-test lane gives selected PostgreSQL tests a disposable, gated
   assert.match(job, /Start disposable PostgreSQL for selected database tests/u);
   assert.match(job, /CONTROL_ROOM_PG17_UPGRADE_REHEARSAL=1/u);
   assert.match(job, /CONTROL_ROOM_PG_CONCURRENCY_GATE=1/u);
-  assert.match(job, /CONTROL_ROOM_TEST_PG_URL_A=postgresql:\/\/postgres@127\.0\.0\.1:15497\/postgres/u);
+  assert.match(job, /postgres_port=.*socket\.socket/u, "the disposable cluster must avoid a fixed-port collision");
+  assert.match(job, /CONTROL_ROOM_TEST_PG_URL_A=postgresql:\/\/postgres@127\.0\.0\.1:\$\{postgres_port\}\/postgres/u);
+  assert.match(job, /cat "\$\{postgres_root\}\/postgres\.log" >&2/u,
+    "a disposable database startup failure must preserve its diagnostic in the CI log");
   assert.match(job, /npm exec --yes --package=squawk-cli@2\.61\.0 -- pnpm test:affected/u,
     "selected migration tests must inherit the same pinned Squawk setup as migration-lint");
   assert.match(job, /Stop disposable PostgreSQL for selected database tests/u);
