@@ -17,7 +17,7 @@ async function signIn(page: Page) {
   await page.goto("/session");
   await page.getByLabel("Owner code").fill(ownerCode!);
   await page.getByRole("button", { name: "Sign in" }).click();
-  await expect(page.getByRole("heading", { name: "Projects" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Projects", exact: true })).toBeVisible();
 }
 
 async function api(page: Page, path: string, method = "GET", body?: unknown, key?: string): Promise<ApiResult> {
@@ -65,8 +65,12 @@ function observeBrowserErrors(page: Page, errors: string[], observeHttpFailures 
 
 async function prepareAcceptance(page: Page) {
   const attestation = page.getByLabel("I read it and it’s correct");
-  if (await attestation.count()) await attestation.check();
-  await expect(page.getByRole("button", { name: "Accept", exact: true })).toBeEnabled();
+  const accept = page.getByRole("button", { name: "Accept", exact: true });
+  const available = page.getByRole("region", { name: "Owner quality decision" })
+    .getByRole("heading", { name: "Review this exact result" });
+  await expect(available).toBeVisible({ timeout: 10_000 });
+  if (await attestation.isVisible()) await attestation.check();
+  await expect(accept).toBeEnabled();
 }
 
 async function activateTwice(locator: Locator) {
@@ -227,7 +231,7 @@ test.describe("disposable owner website adversarial attacks", () => {
     await page.reload();
     await expect(page.getByRole("heading", { name: hostileTitle })).toBeVisible();
     await page.goBack();
-    await expect(page.getByRole("heading", { name: "Projects" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Projects", exact: true })).toBeVisible();
     await page.goForward();
     await expect(page.getByRole("heading", { name: hostileTitle })).toBeVisible();
 
