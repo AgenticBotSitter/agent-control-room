@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createHash } from "node:crypto";
-import { chmod, mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { createGitWorkspacePort } from "../src/harness/codex-v1/git-workspace-port";
 import { CodexWorkspaceManagerV1 } from "../src/harness/codex-v1/workspace";
 import { captureGitWorktreeDiffEvidenceV1, recordWorkspaceWriteRefusalV1 }
@@ -19,7 +20,7 @@ const execute = promisify(execFile);
 const git = async (cwd: string, args: string[]) => (await execute("git", args, { cwd, encoding: "utf8" })).stdout;
 
 async function fixture() {
-  const root = await mkdtemp("/private/tmp/control-room-coding-worktree-");
+  const root = await mkdtemp(join(await realpath(tmpdir()), "control-room-coding-worktree-"));
   const repository = join(root, "repository"), workspace = join(root, "workspaces"), owner = join(root, "owner-checkout");
   await mkdir(repository, { mode: 0o700 }); await mkdir(workspace, { mode: 0o700 }); await mkdir(owner, { mode: 0o700 });
   await git(repository, ["init", "-q"]); await git(repository, ["config", "user.name", "Control Room Test"]);
