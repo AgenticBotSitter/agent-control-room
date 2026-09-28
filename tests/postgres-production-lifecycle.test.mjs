@@ -425,6 +425,7 @@ test("work-intake login cannot read or forge another subsystem's shared-ledger r
     [JSON.stringify(orphanMaterial.safeMetadata),orphanSequence,orphanDigest,head.head_hash,orphanHash]),
     /committed without head advance/u);
 
+  const ownerDown=await readFile(join(ROOT,"db/down/0094_work_batch_owner_approval.sql"),"utf8");
   const down=await readFile(join(ROOT,"db/down/0093_work_batch_intake.sql"),"utf8");
   await query(db,"CREATE POLICY test_dependent_policy ON audit_events AS RESTRICTIVE USING (true)");
   await assert.rejects(query(db,down),/shared-ledger RLS policies depend on it/u);
@@ -434,6 +435,9 @@ test("work-intake login cannot read or forge another subsystem's shared-ledger r
     (SELECT count(*)::int FROM pg_policies WHERE policyname='audit_events_work_intake_scope') AS policy_count`)).rows[0];
   assert.deepEqual(retained,{column_update:true,guard_count:1,policy_count:1});
   await query(db,"DROP POLICY test_dependent_policy ON audit_events");
+  // The owner-approval slice depends on the intake tables. Exercise the
+  // reviewed recovery order before removing the proposal-only base slice.
+  await query(db,ownerDown);
   await query(db,down);
   const remaining=(await query(db,`SELECT
     has_table_privilege('control_room_work_intake','control_idempotency','SELECT') AS table_select,

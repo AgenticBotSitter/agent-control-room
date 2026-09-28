@@ -131,7 +131,9 @@ export async function installFixedQueueSchemaV1(client) {
     await boss.start();
     try { await boss.createQueue("native-task-delivery", { retryLimit: 0 }); }
     finally { await boss.stop({ graceful: false }); }
-    if ((await fixedQueueShape(client)) !== expectedShapeDigest) throw new Error("upgrade_queue_shape_refused");
+    const actualShapeDigest = await fixedQueueShape(client);
+    if (actualShapeDigest !== expectedShapeDigest)
+      throw new Error(`upgrade_queue_shape_refused:${actualShapeDigest}`);
   } catch (error) {
     try { await removeQueueCreatedByThisAttempt(client, createdOid); }
     catch { throw new Error("upgrade_queue_cleanup_refused", { cause: error }); }
