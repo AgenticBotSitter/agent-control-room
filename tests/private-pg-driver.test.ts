@@ -79,6 +79,35 @@ test("one bounded pool-width waits for a connection instead of failing an ordina
   await db.close();
 });
 
+test("a queued caller receives a fresh operation budget without terminating the pool", async () => {
+  let releaseFirst!: () => void, firstEntered!: () => void, secondEntered!: () => void;
+  let finishSecond!: () => void, bystanderRan = false, terminations = 0;
+  const firstStarted = new Promise<void>(resolve => { firstEntered = resolve; });
+  const firstHeld = new Promise<void>(resolve => { releaseFirst = resolve; });
+  const secondStarted = new Promise<void>(resolve => { secondEntered = resolve; });
+  const secondHeld = new Promise<void>(resolve => { finishSecond = resolve; });
+  const db = boundPrivateDatabase({ async acquire() { return {
+    async query(statement) {
+      if (statement === "SELECT first") { firstEntered(); await firstHeld; }
+      if (statement === "SELECT slow_after_queue") { secondEntered(); await secondHeld; }
+      if (statement === "SELECT bystander") bystanderRan = true;
+      return { rows: [] };
+    }, release() {},
+  }; }, async terminate() { terminations++; } },
+  { connections: 1, checkoutMs: 500, statementMs: 500, transactionMs: 500, closeMs: 500 });
+
+  const first = db.client.query("SELECT first"); await firstStarted;
+  const slowAfterQueue = db.client.query("SELECT slow_after_queue");
+  await new Promise(resolve => setTimeout(resolve, 300));
+  releaseFirst(); await first; await secondStarted;
+  const bystander = db.client.query("SELECT bystander");
+  await new Promise(resolve => setTimeout(resolve, 300));
+  finishSecond(); await Promise.all([slowAfterQueue, bystander]);
+
+  assert.equal(bystanderRan, true); assert.equal(db.isAvailable(), true); assert.equal(terminations, 0);
+  await db.close(); assert.equal(terminations, 1);
+});
+
 test("an aborted queued operation leaves admission immediately for the next caller", async () => {
   let releaseFirst!: () => void, firstEntered!: () => void, thirdEntered = false;
   const entered = new Promise<void>(resolve => { firstEntered = resolve; });

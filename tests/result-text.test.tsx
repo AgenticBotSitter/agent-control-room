@@ -4,6 +4,8 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { ResultText } from "../private-app/app/result-text";
 import { TaskResultsPanel } from "../private-app/app/task-results";
 import type { TaskResultsPage, TaskResultContent } from "../src/web/v1/task-result-wire";
+import { createTaskReviewWorkspace } from "../src/web/v1/task-review-workspace";
+import { createTaskVerificationWorkspace } from "../src/web/v1/task-verification-workspace";
 
 test("formatted results show Markdown but never fetch images or interpret raw HTML", () => {
   const html = renderToStaticMarkup(<ResultText text={'# Heading\n\n**Bold**\n\n![remote](https://example.invalid/a.png)\n\n<script>alert(1)</script>\n\n[bad](javascript:alert(1))\n\n[good](https://example.invalid)'} />);
@@ -59,21 +61,27 @@ test("result open mounts command readers only for the newest current matching ta
   const artifact = { artifactId: "artifact:test", attemptId: "attempt:test", runId: "run:test", contentHash,
     sizeBytes: 12, receivedAt: "2026-09-08T12:00:00.000Z", byteCheck: "matched_recorded_claim" as const,
     qualityAccepted: false as const };
-  const evidence = (targetId: string, revision: number, status: "pending" | "superseded") => ({ targetId,
-    kind: "document" as const, targetDigest, contentHash, revision, supersedesTargetId: null, status,
+  const evidence = (targetId: string, revision: number, supersedesTargetId: string | null) => ({ targetId,
+    kind: "document" as const, targetDigest, contentHash, revision, supersedesTargetId, status: "pending" as const,
     matchingArtifactIds: [artifact.artifactId], additionalEvidenceOmitted: false, reviews: [], verifications: [], findings: [],
     missingVerificationScenarioIds: [], openFindingCount: 0, grantsApproval: false as const, grantsExecutionAuthority: false as const });
   const page: TaskResultsPage = { projectId: "project:test", jobId: "job:test", observedAt: artifact.receivedAt,
     resultSource: "configured", reviewSource: "configured", items: [artifact],
-    reviews: [evidence("target:current", 1, "pending"), evidence("target:historical", 0, "superseded")],
+    reviews: [evidence("target:stale", 0, null), evidence("target:current", 1, "target:stale")],
     additionalResultsOmitted: false, additionalTargetsOmitted: false, canReadContent: true,
     reviewCommands: "configured", verificationCommands: "configured" };
   const content: TaskResultContent = { projectId: page.projectId, jobId: page.jobId, artifact,
     text: "Current result", contentVerifiedAt: artifact.receivedAt, untrustedContent: true };
+  const reviewTargets: string[] = [], verificationTargets: string[] = [];
+  const reviewWorkspace = createTaskReviewWorkspace(), verificationWorkspace = createTaskVerificationWorkspace();
   const html = renderToStaticMarkup(<TaskResultsPanel page={page} content={content} pending={false}
-    onOpen={() => {}} onClose={() => {}} />);
+    onOpen={() => {}} onClose={() => {}}
+    reviewWorkspace={{ ...reviewWorkspace, get(binding) { reviewTargets.push(binding.targetId); return reviewWorkspace.get(binding); } }}
+    verificationWorkspace={{ ...verificationWorkspace,
+      get(binding) { verificationTargets.push(binding.targetId); return verificationWorkspace.get(binding); } }} />);
   assert.equal(html.match(/Loading owner review/g)?.length, 1);
   assert.equal(html.match(/Loading human verification/g)?.length, 1);
+  assert.deepEqual(reviewTargets, ["target:current"]); assert.deepEqual(verificationTargets, ["target:current"]);
   assert.match(html, /Revision 0/); assert.match(html, /Revision 1/);
 });
 

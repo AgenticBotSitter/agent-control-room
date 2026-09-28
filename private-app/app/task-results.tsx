@@ -23,9 +23,11 @@ export function TaskResultsPanel({ page, content: suppliedContent, pending, sele
   // Historical targets remain visible as evidence, but only the newest current
   // target for the open bytes may expose commands. This keeps result-open work
   // fixed instead of mounting option readers once per retained revision.
-  const commandTargetId = content ? page.reviews.find(review => review.status !== "superseded" && review.kind === "document"
+  const matchingTargets = content ? page.reviews.filter(review => review.kind === "document"
     && review.matchingArtifactIds.includes(content.artifact.artifactId)
-    && review.contentHash === content.artifact.contentHash)?.targetId : undefined;
+    && review.contentHash === content.artifact.contentHash) : [];
+  const commandTargetId = matchingTargets.find(candidate =>
+    !page.reviews.some(next => next.supersedesTargetId === candidate.targetId))?.targetId;
   // Keyboard focus follows the open file: into the content region when one
   // opens, and back to the button that opened it when it closes, so a keyboard
   // user is never returned to the top of a long list.
