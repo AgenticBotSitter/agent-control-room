@@ -62,10 +62,12 @@ ALTER TABLE control_jobs ADD COLUMN stage_ordinal integer
 ALTER TABLE control_jobs ADD COLUMN pipeline_run_id text;
 ALTER TABLE control_jobs ADD CONSTRAINT ck_control_jobs_pipeline_columns_all_or_none CHECK (
   (stage_kind IS NULL AND stage_ordinal IS NULL AND pipeline_run_id IS NULL)
-  OR (stage_kind IS NOT NULL AND stage_ordinal IS NOT NULL AND pipeline_run_id IS NOT NULL));
+  OR (stage_kind IS NOT NULL AND stage_ordinal IS NOT NULL AND pipeline_run_id IS NOT NULL)) NOT VALID;
 ALTER TABLE control_jobs ADD CONSTRAINT fk_control_jobs_pipeline_run
   FOREIGN KEY (tenant_id,pipeline_run_id,project_id)
-    REFERENCES pipeline_runs(tenant_id,id,project_id) ON DELETE RESTRICT;
+    REFERENCES pipeline_runs(tenant_id,id,project_id) ON DELETE RESTRICT NOT VALID;
+ALTER TABLE control_jobs VALIDATE CONSTRAINT ck_control_jobs_pipeline_columns_all_or_none;
+ALTER TABLE control_jobs VALIDATE CONSTRAINT fk_control_jobs_pipeline_run;
 
 CREATE TABLE pipeline_stage_runs (
   id text NOT NULL,

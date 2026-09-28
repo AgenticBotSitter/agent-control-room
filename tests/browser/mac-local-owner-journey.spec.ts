@@ -5,17 +5,17 @@ import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { promisify } from "node:util";
 import { Client } from "pg";
+import { CompletionGateStoreV1, type CompletionAcceptanceProfileV1 } from "../../src/completion-gate/v1";
+import { sha256Digest } from "../../src/security";
+import { createPrivatePostgresDatabase } from "../../src/web/v1/private-postgres";
+import { openMacLocalRollbackCheckpointStoreV1 } from "../../src/web/v1/mac-local-rollback-checkpoint-store";
+import { loadMacLocalTaskRuntimeFromRootV1 } from "../../src/web/v1/mac-local-task-runtime";
 import { AuditStore, auditPartition } from "../../src/audit/audit-store";
 import type { DatabaseClient } from "../../src/persistence/database";
 import { workBatchProposalDigestV1 } from "../../src/work-intake/v1/digest";
 import { captureWorkIntakeClientConfigurationV1, captureWorkIntakeServerConfigurationV1,
   workIntakeClientFileNameV1,
 } from "../../src/work-intake/v1";
-import { CompletionGateStoreV1, type CompletionAcceptanceProfileV1 } from "../../src/completion-gate/v1";
-import { sha256Digest } from "../../src/security";
-import { createPrivatePostgresDatabase } from "../../src/web/v1/private-postgres";
-import { openMacLocalRollbackCheckpointStoreV1 } from "../../src/web/v1/mac-local-rollback-checkpoint-store";
-import { loadMacLocalTaskRuntimeFromRootV1 } from "../../src/web/v1/mac-local-task-runtime";
 
 const ownerCode = process.env.CONTROL_ROOM_E2E_OWNER_CODE;
 if (!ownerCode) throw new Error("CONTROL_ROOM_E2E_OWNER_CODE is required");

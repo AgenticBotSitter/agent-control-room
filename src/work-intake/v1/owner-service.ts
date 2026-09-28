@@ -16,7 +16,7 @@ import { workBatchOwnerCommandSchemaV1, workBatchOwnerPageSchemaV1, workBatchOwn
 type BatchRow = { id: string; tenant_id: string; project_id: string; proposed_by_identity_id: string;
   proposed_at: string | Date; state: string; approval_identity_id: string | null; approved_at: string | Date | null;
   decision_reason_code: string | null; proposal: unknown; queue_depth_limit: number; batch_digest: string;
-  auth_tag: string; decision_digest: string | null; decision_auth_tag: string | null;
+  auth_tag: string; auth_material_version: number; decision_digest: string | null; decision_auth_tag: string | null;
   version: number; created_at: string | Date; updated_at: string | Date };
 type RevisionRow = { revision: number; edited_by_identity_id: string; edited_at: string | Date;
   reason_code: string; proposal: unknown; revision_digest: string; auth_tag: string };
@@ -164,7 +164,8 @@ export class WorkBatchOwnerServiceV1 {
       proposal, queueDepthLimit: Number(row.queue_depth_limit), batchDigest: row.batch_digest,
       version: 1, createdAt: iso(row.created_at), updatedAt: iso(row.created_at) };
     const expected = hmacSha256Tag(this.#key, { purpose: "work-batch/v1", record: material });
-    if (workBatchProposalDigestV1(proposal) !== row.batch_digest || !same(expected, row.auth_tag))
+    if (Number(row.auth_material_version) !== 1
+      || workBatchProposalDigestV1(proposal) !== row.batch_digest || !same(expected, row.auth_tag))
       throw new Error("work_batch_integrity_failed");
     return proposal;
   }
@@ -178,6 +179,16 @@ export class WorkBatchOwnerServiceV1 {
     if (workBatchProposalDigestV1(proposal) !== row.revision_digest || !same(expected, row.auth_tag))
       throw new Error("work_batch_integrity_failed");
     return proposal;
+  }
+
+  async #currentProposal(tx: DatabaseSession, row: BatchRow): Promise<WorkBatchProposalV1> {
+    const original = this.#verifyBatch(row);
+    const revision = (await tx.query<RevisionRow>(`SELECT revision,edited_by_identity_id,edited_at,reason_code,proposal,
+      revision_digest,auth_tag FROM work_batch_revisions WHERE tenant_id=$1 AND batch_id=$2
+      ORDER BY revision DESC LIMIT 1`, [this.scope.tenantId, row.id])).rows[0];
+    if (!revision) return original;
+    if (Number(revision.revision) !== Number(row.version)) throw new Error("work_batch_integrity_failed");
+    return this.#verifyRevision(revision, row.id);
   }
 
   #verifyItem(row: ItemRow) {
@@ -221,7 +232,7 @@ export class WorkBatchOwnerServiceV1 {
 
   async #batch(tx: DatabaseSession, projectId: string, batchId: string, lock: boolean): Promise<BatchRow> {
     const row = (await tx.query<BatchRow>(`SELECT id,tenant_id,project_id,proposed_by_identity_id,proposed_at,state,
-      approval_identity_id,approved_at,decision_reason_code,proposal,queue_depth_limit,batch_digest,auth_tag,
+      approval_identity_id,approved_at,decision_reason_code,proposal,queue_depth_limit,batch_digest,auth_tag,auth_material_version,
       decision_digest,decision_auth_tag,version,
       created_at,updated_at FROM work_batches WHERE tenant_id=$1 AND project_id=$2 AND id=$3${lock ? " FOR UPDATE" : ""}`,
     [this.scope.tenantId, projectId, batchId])).rows[0];
@@ -510,7 +521,7 @@ export class WorkBatchOwnerServiceV1 {
     return this.#authority.authenticated(identity, async (tx, actor) => {
       actor.require("tasks.read", projectId);
       const rows = (await tx.query<BatchRow>(`SELECT id,tenant_id,project_id,proposed_by_identity_id,proposed_at,state,
-        approval_identity_id,approved_at,decision_reason_code,proposal,queue_depth_limit,batch_digest,auth_tag,
+        approval_identity_id,approved_at,decision_reason_code,proposal,queue_depth_limit,batch_digest,auth_tag,auth_material_version,
         decision_digest,decision_auth_tag,version,
         created_at,updated_at FROM work_batches WHERE tenant_id=$1 AND project_id=$2 ORDER BY proposed_at DESC,id LIMIT 100`,
       [this.scope.tenantId, projectId])).rows;
@@ -522,9 +533,10 @@ export class WorkBatchOwnerServiceV1 {
           job_attempt_count,item_digest,auth_tag,created_at FROM work_batch_items
           WHERE tenant_id=$1 AND batch_id=$2 ORDER BY ordinal`, [this.scope.tenantId, row.id])).rows;
         this.#verifyDecision(row, items);
+        const proposal = await this.#currentProposal(tx, row);
         summaries.push({ batchId: row.id, projectId,
         state: row.state, revision: Number(row.version), proposedByIdentityId: row.proposed_by_identity_id,
-        proposedAt: iso(row.proposed_at), taskCount: this.#verifyBatch(row).tasks.length,
+        proposedAt: iso(row.proposed_at), taskCount: proposal.tasks.length,
         approvalIdentityId: row.approval_identity_id, decidedAt: row.approved_at ? iso(row.approved_at) : null });
       }
       return workBatchOwnerPageSchemaV1.parse({ batches: summaries,
@@ -536,18 +548,21 @@ export class WorkBatchOwnerServiceV1 {
     return this.#authority.authenticated(identity, async (tx, actor) => {
       const rows = (await tx.query<BatchRow>(`SELECT b.id,b.tenant_id,b.project_id,b.proposed_by_identity_id,
         b.proposed_at,b.state,b.approval_identity_id,b.approved_at,b.decision_reason_code,b.proposal,
-        b.queue_depth_limit,b.batch_digest,b.auth_tag,b.decision_digest,b.decision_auth_tag,b.version,
+        b.queue_depth_limit,b.batch_digest,b.auth_tag,b.auth_material_version,b.decision_digest,b.decision_auth_tag,b.version,
         b.created_at,b.updated_at FROM work_batches b JOIN control_action_inbox a
           ON a.tenant_id=b.tenant_id AND a.work_item_id=b.id AND a.project_id=b.project_id
         WHERE b.tenant_id=$1 AND b.state='proposed' AND a.id='attention:work-batch:' || b.id
           AND a.state='open' ORDER BY b.proposed_at,b.id LIMIT 100`, [this.scope.tenantId])).rows
         .filter(row => actor.can("tasks.read", row.project_id) && actor.can("work_batches.decide", row.project_id, true));
-      return workBatchOwnerPageSchemaV1.parse({ batches: rows.map(row => {
+      const batches = [];
+      for (const row of rows) {
         this.#verifyDecision(row, []);
-        return { batchId: row.id, projectId: row.project_id, state: row.state, revision: Number(row.version),
+        const proposal = await this.#currentProposal(tx, row);
+        batches.push({ batchId: row.id, projectId: row.project_id, state: row.state, revision: Number(row.version),
           proposedByIdentityId: row.proposed_by_identity_id, proposedAt: iso(row.proposed_at),
-          taskCount: this.#verifyBatch(row).tasks.length, approvalIdentityId: null, decidedAt: null };
-      }), startsWork: false, grantsExecutionAuthority: false });
+          taskCount: proposal.tasks.length, approvalIdentityId: null, decidedAt: null });
+      }
+      return workBatchOwnerPageSchemaV1.parse({ batches, startsWork: false, grantsExecutionAuthority: false });
     });
   }
 }

@@ -16,9 +16,6 @@ import type { TaskRevisionOperation } from "./task-revision-operation";
 import type { MacLocalWorkerReadinessV1 } from "./mac-local-worker-readiness";
 import type { LocalOwnerSessionStoreV1 } from "./local-owner-session-store";
 import type { PersistedLocalOwnerSessionV1 } from "./local-owner-session";
-import { taskAttentionPageSchema } from "./task-attention-wire";
-import { taskPlanningReceiptSchema } from "./task-planning-wire";
-import { taskDeliveryStatusSchema } from "./task-delivery-wire";
 import { WorkBatchOwnerServiceV1, type WorkBatchQueueAdmissionAuthorityV1,
   type WorkBatchQueueCatalogV1 } from "../../work-intake/v1";
 import { createWorkBatchOwnerHttpHandlerV1 } from "./work-batch-owner-http";

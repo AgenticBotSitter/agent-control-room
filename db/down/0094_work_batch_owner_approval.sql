@@ -31,7 +31,7 @@ DROP TRIGGER work_batch_items_append_only ON work_batch_items;
 DROP TRIGGER work_batch_items_guard ON work_batch_items;
 DROP FUNCTION guard_work_batch_item_insert();
 DROP TABLE work_batch_items;
-ALTER TABLE work_batches DROP COLUMN decision_auth_tag, DROP COLUMN decision_digest;
+ALTER TABLE work_batches DROP COLUMN decision_auth_tag, DROP COLUMN decision_digest, DROP COLUMN auth_material_version;
 CREATE OR REPLACE FUNCTION guard_initial_work_batch_revision_insert() RETURNS trigger
 LANGUAGE plpgsql AS $$
 BEGIN

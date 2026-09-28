@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
-import { sha256Digest, type AuthenticatedPrincipal } from "../src/security";
+import { hmacSha256Tag, sha256Digest, type AuthenticatedPrincipal } from "../src/security";
 import { WorkBatchOwnerServiceV1, WorkBatchStoreV1, workBatchProposalDigestV1,
   workBatchOwnerNotificationV1, type WorkBatchProposalV1 } from "../src/work-intake/v1";
 import { taskFixture } from "./helpers/web-task";
@@ -9,6 +10,7 @@ import { createWorkBatchOwnerHttpHandlerV1 } from "../src/web/v1/work-batch-owne
 import type { WorkBatchQueueAdmissionAuthorityV1, WorkBatchQueueCatalogV1 } from "../src/work-intake/v1";
 import { WebTaskService } from "../src/web/v1/task-service";
 import { captureTaskModelCatalogV1 } from "../src/web/v1/task-model-selection";
+import { workBatchQueueItemSchemaV1 } from "../src/work-intake/v1/owner-schemas";
 
 const key = new Uint8Array(32).fill(7);
 const agent = (): AuthenticatedPrincipal => ({ tenantId: "tenant:web", identityId: "identity:batch-agent",
@@ -108,6 +110,37 @@ test("approval records an exact per-agent queue in dependency order without star
   ]);
   assert.equal((await f.db.query<{ count: number }>("SELECT count(*)::int AS count FROM control_attempts")).rows[0]!.count, 0);
   assert.equal((await f.db.query<{ count: number }>("SELECT count(*)::int AS count FROM control_native_task_queue")).rows[0]!.count, 0);
+});
+
+test("queue projection accepts provider-style and plus-suffixed protected model identifiers", () => {
+  const base = { localId: "build", jobId: "job:build", workerId: "worker:one", workerKind: "hermes",
+    nodeId: "node:one", position: 1, queueDepthLimit: 4, effort: "default",
+    state: "awaiting_preparation" as const };
+  assert.equal(workBatchQueueItemSchemaV1.parse({ ...base,
+    selectionKey: "provider/profile+", model: "provider/model+",
+    provider: "provider/api+", profile: "provider/profile+" }).model, "provider/model+");
+});
+
+test("the restricted private-web role can render queued batch state", async t => {
+  const f = await ownerFixture(codexCatalog()); t.after(() => void f.db.close());
+  const value = proposal(f.project.projectId);
+  value.tasks[0] = { ...value.tasks[0]!, requestedWorkerId: "worker:codex-one",
+    requestedWorkerKind: "codex", requestedModelKey: "gpt-build" };
+  const batch = await f.submit(value);
+  await f.owner.command(f.identity, f.project.projectId,
+    { operation: "decide", batchId: batch.batchId, expectedRevision: 1,
+      items: [{ localId: "build", decision: "approve" },
+        { localId: "check", decision: "reject", reasonCode: "not_selected" }] },
+    "owner-batch-restricted-role-0001");
+  const jobId = (await f.owner.view(f.identity, f.project.projectId, batch.batchId))
+    .items.find(item => item.localId === "build")!.jobId!;
+  await seedQueueExecution(f, jobId, { state: "leased", queued: true });
+  await f.db.exec(await readFile("db/roles/private_web_roles.sql", "utf8"));
+  await f.db.exec(`CREATE ROLE work_batch_web_test LOGIN INHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE
+    NOREPLICATION NOBYPASSRLS; GRANT control_room_private_web TO work_batch_web_test;
+    SET SESSION AUTHORIZATION work_batch_web_test; SET search_path=pg_catalog,public;`);
+  const view = await f.owner.view(f.identity, f.project.projectId, batch.batchId);
+  assert.equal(view.queue[0]!.state, "queued");
 });
 
 test("queue admission refuses unknown workers, wrong models and depth overflow atomically", async t => {
@@ -356,6 +389,52 @@ test("revision history and rejected items remain visible", async t => {
   assert.equal(view.revisions.length, 2); assert.equal(view.revisions[0]!.proposal.tasks[0]!.title, "Build the change");
   assert.equal(view.proposal.tasks[0]!.title, "Build the revised change");
   assert.equal(view.items[1]!.decisionReasonCode, "needs_different_check");
+});
+
+test("current revision task count is consistent across owner and intake summaries", async t => {
+  const f = await ownerFixture(); t.after(() => void f.db.close());
+  const batch = await f.submit(), changed = proposal(f.project.projectId);
+  changed.tasks.push({ localId: "validate", title: "Validate the change", instructions: "Validate the bounded change.",
+    requiredCapability: "code.validate", role: "validator", acceptanceCriteria: "The validation is independent.",
+    acceptanceTests: "Run the focused validation tests." });
+  await f.owner.command(f.identity, f.project.projectId,
+    { operation: "revise", batchId: batch.batchId, expectedRevision: 1, reasonCode: "owner_edit", proposal: changed },
+    "owner-batch-task-count-0001");
+
+  const listed = await f.owner.list(f.identity, f.project.projectId);
+  const attention = await f.owner.attention(f.identity);
+  const status = await f.store.status(agent(), f.project.projectId, batch.batchId, new Date(now).toISOString());
+  assert.equal(listed.batches[0]?.revision, 2);
+  assert.equal(listed.batches[0]?.taskCount, 3);
+  assert.equal(attention.batches[0]?.revision, 2);
+  assert.equal(attention.batches[0]?.taskCount, 3);
+  assert.equal(status.taskCount, 3);
+});
+
+test("an S1-authenticated batch remains readable after the S2 migration and first revision", async t => {
+  const f = await ownerFixture(); t.after(() => void f.db.close());
+  const batch = await f.submit();
+  const before = (await f.db.query<{ id: string; project_id: string; proposed_by_identity_id: string;
+    proposed_at: string | Date; proposal: WorkBatchProposalV1; queue_depth_limit: number; batch_digest: string;
+    auth_tag: string; auth_material_version: number; created_at: string | Date }>(`SELECT id,project_id,
+      proposed_by_identity_id,proposed_at,proposal,queue_depth_limit,batch_digest,auth_tag,
+      auth_material_version,created_at FROM work_batches WHERE id=$1`, [batch.batchId])).rows[0]!;
+  const createdAt = new Date(before.created_at).toISOString();
+  assert.equal(before.auth_material_version, 1, "0094 backfills the S1 auth-material version");
+  assert.equal(before.auth_tag, hmacSha256Tag(key, { purpose: "work-batch/v1", record: {
+    id: before.id, tenantId: "tenant:web", projectId: before.project_id,
+    proposedByIdentityId: before.proposed_by_identity_id, proposedAt: new Date(before.proposed_at).toISOString(),
+    state: "proposed", proposal: before.proposal, queueDepthLimit: Number(before.queue_depth_limit),
+    batchDigest: before.batch_digest, version: 1, createdAt, updatedAt: createdAt } }));
+  const changed = proposal(f.project.projectId);
+  changed.tasks[0] = { ...changed.tasks[0]!, title: "Build after the S2 upgrade" };
+  await f.owner.command(f.identity, f.project.projectId,
+    { operation: "revise", batchId: batch.batchId, expectedRevision: 1, reasonCode: "owner_edit", proposal: changed },
+    "owner-cross-version-revision-0001");
+  assert.equal((await f.store.status(agent(), f.project.projectId, batch.batchId,
+    new Date(now).toISOString())).state, "proposed");
+  assert.equal((await f.store.list(agent(), f.project.projectId, new Date(now).toISOString())).length, 1);
+  assert.equal((await f.owner.view(f.identity, f.project.projectId, batch.batchId)).revision, 2);
 });
 
 test("a missing durable notification rolls the whole owner decision back", async t => {

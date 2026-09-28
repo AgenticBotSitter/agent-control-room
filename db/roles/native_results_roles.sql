@@ -35,4 +35,5 @@ GRANT UPDATE (web_lock) ON control_completion_gate_records TO control_room_nativ
 GRANT UPDATE (web_lock, revision, record_count, state_digest, state_auth_tag)
   ON control_completion_gate_integrity TO control_room_native_results;
 GRANT UPDATE (head_hash, event_count, updated_at) ON control_audit_chain_heads TO control_room_native_results;
+GRANT EXECUTE ON FUNCTION is_work_intake_session() TO control_room_native_results;
 COMMIT;

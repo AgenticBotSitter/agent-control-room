@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { workBatchProposalSchemaV1 } from "./schemas";
+import { workBatchQueueModelIdSchemaV1 } from "./queue-catalog";
 
 const id = z.string().min(3).max(180).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/u);
 const reason = z.string().min(3).max(64).regex(/^[a-z][a-z0-9_]*$/u);
@@ -41,7 +42,8 @@ export const workBatchOwnerItemSchemaV1 = z.object({ localId: id, ordinal: z.num
   decisionState: z.enum(["approved", "rejected"]), decisionReasonCode: reason.nullable(), jobId: id.nullable() }).strict();
 export const workBatchQueueItemSchemaV1 = z.object({ localId: id, jobId: id, workerId: id, workerKind: id,
   nodeId: id, position: z.number().int().min(1), queueDepthLimit: z.number().int().min(1).max(20),
-  selectionKey: id, model: id, effort: id, provider: id.nullable(), profile: id.nullable(),
+  selectionKey: workBatchQueueModelIdSchemaV1, model: workBatchQueueModelIdSchemaV1, effort: id,
+  provider: workBatchQueueModelIdSchemaV1.nullable(), profile: workBatchQueueModelIdSchemaV1.nullable(),
   state: z.enum(["awaiting_preparation", "waiting_dependency", "waiting_turn", "ready_for_assignment",
     "assigned", "queued", "running", "completed", "failed", "uncertain"]) }).strict();
 export const workBatchOwnerViewSchemaV1 = z.object({ batchId: id, projectId: id,

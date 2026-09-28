@@ -128,7 +128,13 @@ test("browser read is bounded, project-bound and never mutates or follows redire
  */
 async function mountPanel(options: {
   response?: Response | (() => Response);
-  delayMs?: number;
+  /**
+   * Hold every read open until the test releases it. The in-flight window is
+   * then decided by the test instead of a fixed sleep racing a longer fake
+   * delay, so the disabled/in-flight assertions cannot depend on how loaded
+   * the machine running them is.
+   */
+  deferReads?: boolean;
 } = {}) {
   const jsdomModule = await import("jsdom");
   const JSDOM = (jsdomModule as { JSDOM: unknown }).JSDOM as new (
@@ -145,16 +151,20 @@ async function mountPanel(options: {
     if (typeof options.response === "function") return (options.response as () => Response)();
     return options.response ?? Response.json(value);
   };
+  // Every read is registered here with a per-request settle function, so a
+  // deferred mount exposes `settleReads` and the test decides exactly when the
+  // read resolves. Reads are counted, not timed: nothing here waits on a clock.
+  const pendingReads: Array<{ settle: () => void }> = [];
   globalThis.fetch = ((url: string, init?: RequestInit) => new Promise<Response>((resolve, reject) => {
     const requestUrl = String(url);
     const signal = init?.signal as AbortSignal | undefined;
     if (signal) signal.addEventListener("abort", () => { const entry = requests.find(item => item.url === requestUrl); if (entry) entry.aborted = true; reject(new DOMException("aborted", "AbortError")); });
     requests.push({ url: requestUrl, aborted: false });
-    if ((options.delayMs ?? 0) > 0) {
-      setTimeout(() => resolve(resolveResponse()), options.delayMs);
-    } else {
-      resolve(resolveResponse());
+    if (options.deferReads) {
+      pendingReads.push({ settle: () => resolve(resolveResponse()) });
+      return;
     }
+    resolve(resolveResponse());
   })) as typeof fetch;
   const root = createRoot(dom.window.document.getElementById("root")!);
   const { act } = React;
@@ -168,21 +178,34 @@ async function mountPanel(options: {
       else delete (globalThis as Record<string, unknown>)[key];
     }
   };
-  return { dom, root, requests, act, restore };
+  return { dom, root, requests, act, restore, settleReads: () => { for (const read of pendingReads.splice(0)) read.settle(); } };
 }
 
 test("mounted panel: refresh button is disabled while a read is in flight", async () => {
-  const handle = await mountPanel({ delayMs: 30 });
+  // The read is held open by the test, not by a timer. The panel's in-flight
+  // state is asserted while the read provably has not settled, then the test
+  // resolves the read and asserts the idle state. There is no sleep and no
+  // fake network delay, so this holds on an idle laptop and on a loaded CI
+  // runner alike — the previous version raced a 5ms sleep against a 30ms
+  // delay and failed whenever the read had already settled.
+  const handle = await mountPanel({ deferReads: true });
   try {
-    await handle.act(async () => { await new Promise(resolve => handle.dom.window.setTimeout(resolve, 5)); });
+    await handle.act(async () => {});
     const button = handle.dom.window.document.querySelector("button");
     assert.ok(button, "expected refresh button");
+    // The first read is in flight and has not been settled by the test.
+    assert.equal(handle.requests.length, 1, "the mounted read must be in flight before it is settled");
     assert.equal(button?.textContent?.trim(), "Refreshing…");
     assert.equal(button?.hasAttribute("disabled"), true);
-    for (let attempt = 0; attempt < 200 && button?.hasAttribute("disabled"); attempt += 1) {
-      await handle.act(async () => { await new Promise(resolve => handle.dom.window.setTimeout(resolve, 10)); });
-    }
-    assert.equal(button?.hasAttribute("disabled"), false);
+    assert.equal(button?.getAttribute("aria-busy"), "true");
+
+    // Now let the read finish and assert the idle control, still without
+    // waiting on any clock: settling is an explicit test action.
+    await handle.act(async () => { handle.settleReads(); });
+    assert.equal(button?.hasAttribute("disabled"), false, "the refresh control must be enabled once the read settles");
+    assert.equal(button?.textContent?.trim(), "Refresh schedule status");
+    assert.equal(button?.getAttribute("aria-busy"), "false");
+    assert.match(handle.dom.window.document.body.textContent ?? "", /Delivery recorded — execution unverified/);
   } finally { await handle.restore(); }
 });
 

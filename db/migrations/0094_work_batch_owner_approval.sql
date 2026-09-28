@@ -2,6 +2,7 @@
 -- ordinary proposed tasks; this migration grants no queue or execution access.
 
 ALTER TABLE work_batches
+  ADD COLUMN auth_material_version integer NOT NULL DEFAULT 1 CHECK (auth_material_version=1),
   ADD COLUMN decision_digest text CHECK (decision_digest IS NULL OR decision_digest ~ '^sha256:[a-f0-9]{64}$'),
   ADD COLUMN decision_auth_tag text CHECK (decision_auth_tag IS NULL OR decision_auth_tag ~ '^hmac-sha256:[a-f0-9]{64}$');
 
@@ -42,9 +43,7 @@ CREATE TABLE work_batch_items (
 CREATE FUNCTION guard_work_batch_item_insert() RETURNS trigger
 LANGUAGE plpgsql AS $$
 BEGIN
-  IF EXISTS (SELECT 1 FROM pg_roles r WHERE r.rolname='control_room_work_intake'
-      AND pg_has_role(session_user,r.oid,'member')
-      AND EXISTS (SELECT 1 FROM pg_roles s WHERE s.rolname=session_user AND NOT s.rolsuper))
+  IF is_work_intake_session()
     OR NOT EXISTS (
       SELECT 1 FROM work_batches b
       WHERE b.tenant_id=NEW.tenant_id AND b.id=NEW.batch_id AND b.project_id=NEW.project_id
@@ -100,14 +99,13 @@ CREATE FUNCTION guard_work_batch_owner_update() RETURNS trigger
 LANGUAGE plpgsql AS $$
 DECLARE item_total integer; approved_total integer; rejected_total integer;
 BEGIN
-  IF EXISTS (SELECT 1 FROM pg_roles r WHERE r.rolname='control_room_work_intake'
-      AND pg_has_role(session_user,r.oid,'member')
-      AND EXISTS (SELECT 1 FROM pg_roles s WHERE s.rolname=session_user AND NOT s.rolsuper))
+  IF is_work_intake_session()
     OR NEW.id<>OLD.id OR NEW.tenant_id<>OLD.tenant_id OR NEW.project_id<>OLD.project_id
     OR NEW.proposed_by_identity_id<>OLD.proposed_by_identity_id
     OR NEW.proposed_by_actor_type<>OLD.proposed_by_actor_type OR NEW.proposed_at<>OLD.proposed_at
     OR NEW.proposal<>OLD.proposal OR NEW.queue_depth_limit<>OLD.queue_depth_limit
-    OR NEW.batch_digest<>OLD.batch_digest OR NEW.auth_tag<>OLD.auth_tag OR NEW.created_at<>OLD.created_at
+    OR NEW.batch_digest<>OLD.batch_digest OR NEW.auth_tag<>OLD.auth_tag
+    OR NEW.auth_material_version<>OLD.auth_material_version OR NEW.created_at<>OLD.created_at
     OR OLD.state<>'proposed' OR NEW.updated_at<OLD.updated_at THEN
     RAISE EXCEPTION 'work batch owner update rejected';
   END IF;
@@ -160,9 +158,7 @@ CREATE TRIGGER work_batches_owner_update BEFORE UPDATE ON work_batches
 CREATE FUNCTION guard_work_batch_notification_insert() RETURNS trigger
 LANGUAGE plpgsql AS $$
 BEGIN
-  IF EXISTS (SELECT 1 FROM pg_roles r WHERE r.rolname='control_room_work_intake'
-      AND pg_has_role(session_user,r.oid,'member')
-      AND EXISTS (SELECT 1 FROM pg_roles s WHERE s.rolname=session_user AND NOT s.rolsuper))
+  IF is_work_intake_session()
     AND (NEW.id IS DISTINCT FROM 'attention:work-batch:' || NEW.work_item_id
       OR NEW.kind IS DISTINCT FROM 'approval' OR NEW.state IS DISTINCT FROM 'open'
       OR NEW.delivery_state IS DISTINCT FROM 'delivered' OR NEW.expires_at IS NOT NULL
@@ -187,12 +183,6 @@ CREATE TRIGGER control_action_inbox_work_batch_guard BEFORE INSERT ON control_ac
 CREATE FUNCTION guard_work_batch_notification_update() RETURNS trigger
 LANGUAGE plpgsql AS $$
 BEGIN
-  IF EXISTS (SELECT 1 FROM pg_roles r WHERE r.rolname='control_room_private_web'
-      AND pg_has_role(session_user,r.oid,'member')
-      AND EXISTS (SELECT 1 FROM pg_roles s WHERE s.rolname=session_user AND NOT s.rolsuper))
-    AND OLD.id NOT LIKE 'attention:work-batch:%' THEN
-    RAISE EXCEPTION 'private web action inbox update rejected';
-  END IF;
   IF OLD.id LIKE 'attention:work-batch:%' AND (
     NEW.id<>OLD.id OR NEW.tenant_id<>OLD.tenant_id OR NEW.project_id IS DISTINCT FROM OLD.project_id
     OR NEW.work_item_id IS DISTINCT FROM OLD.work_item_id OR NEW.kind<>OLD.kind

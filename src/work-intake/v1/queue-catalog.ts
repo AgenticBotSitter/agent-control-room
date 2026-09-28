@@ -4,14 +4,17 @@ import { captureTaskModelCatalogV1, resolveTaskModelV1, type ResolvedTaskModelV1
   type TaskModelWorkerKindV1 } from "../../web/v1/task-model-selection";
 
 const id = z.string().min(3).max(180).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/u);
-const modelId = z.string().min(1).max(180).regex(/^[A-Za-z0-9][A-Za-z0-9._:/+-]*$/u);
+export const workBatchQueueModelIdSchemaV1 = z.string().min(1).max(180)
+  .regex(/^[A-Za-z0-9][A-Za-z0-9._:/+-]*$/u);
 const effort = z.enum(["low", "medium", "high", "xhigh", "max"]);
 const modelPolicy = z.union([
-  z.object({ models: z.array(modelId).min(1).max(32), defaultModel: modelId,
+  z.object({ models: z.array(workBatchQueueModelIdSchemaV1).min(1).max(32), defaultModel: workBatchQueueModelIdSchemaV1,
     efforts: z.array(effort).min(1).max(5), defaultEffort: effort,
-    limitedModels: z.array(modelId).max(32).optional() }).strict(),
-  z.object({ profiles: z.array(z.object({ name: modelId, provider: modelId, model: modelId }).strict()).min(1).max(32),
-    defaultProfile: modelId, efforts: z.tuple([z.literal("default")]), defaultEffort: z.literal("default") }).strict(),
+    limitedModels: z.array(workBatchQueueModelIdSchemaV1).max(32).optional() }).strict(),
+  z.object({ profiles: z.array(z.object({ name: workBatchQueueModelIdSchemaV1,
+    provider: workBatchQueueModelIdSchemaV1, model: workBatchQueueModelIdSchemaV1 }).strict()).min(1).max(32),
+    defaultProfile: workBatchQueueModelIdSchemaV1,
+    efforts: z.tuple([z.literal("default")]), defaultEffort: z.literal("default") }).strict(),
 ]);
 export type WorkBatchQueueWorkerV1 = Readonly<{ workerId: string; workerKind: TaskModelWorkerKindV1;
   nodeId: string; modelPolicy?: OwnerTrustedLocalModelPolicyV1 }>;

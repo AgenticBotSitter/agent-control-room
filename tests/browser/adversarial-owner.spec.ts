@@ -64,6 +64,7 @@ function observeBrowserErrors(page: Page, errors: string[], observeHttpFailures 
 }
 
 async function prepareAcceptance(page: Page) {
+  await expect(page.getByRole("region", { name: "Owner quality decision" })).toBeVisible();
   const attestation = page.getByLabel("I read it and it’s correct");
   if (await attestation.count()) await attestation.check();
   await expect(page.getByRole("button", { name: "Accept", exact: true })).toBeEnabled();

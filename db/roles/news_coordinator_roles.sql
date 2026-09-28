@@ -24,4 +24,5 @@ GRANT UPDATE (coordinator_lock) ON tenants, projects, control_manual_project_hea
 GRANT UPDATE (web_lock) ON workspaces, control_identities, control_role_grants TO control_room_news_coordinator;
 GRANT UPDATE (revoked_at) ON control_web_sessions TO control_room_news_coordinator;
 GRANT UPDATE (head_hash, event_count, updated_at) ON control_audit_chain_heads TO control_room_news_coordinator;
+GRANT EXECUTE ON FUNCTION is_work_intake_session() TO control_room_news_coordinator;
 COMMIT;

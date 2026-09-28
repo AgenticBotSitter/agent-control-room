@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "digest": "d9257d90a7ca7b9f3d394125c33a5ace9546d7f52f23e2b582d13339a9fb9909",
+  "digest": "13dd08ad2717c1cd137d33fff7999dbff40c9948febbc8fceaea756a723e7b22",
   "entries": [
     {
       "file": "db/migrations/0001_control_room_core.sql",
@@ -557,13 +557,13 @@
     {
       "file": "db/migrations/0093_work_batch_intake.sql",
       "order": 93,
-      "sha256": "31eeec08f5328f7347ded24cdda71eb5692aea046d4fb4d949d2613d875b0dce",
+      "sha256": "ca575fd61389837ce091322c889c0a879bc7be5bed1950335ca496f232e1e0b0",
       "kind": "migrate"
     },
     {
       "file": "db/migrations/0094_work_batch_owner_approval.sql",
       "order": 94,
-      "sha256": "2b3a5a8447087bb3fff27a80d936a80d7ca67be893b7db0e3c06c0b1e78e690d",
+      "sha256": "6f77ee0501cac319ee22520a0596dc1e5a009cc8b99f69fdb367ef069cf4252f",
       "kind": "migrate"
     },
     {
@@ -575,7 +575,7 @@
     {
       "file": "db/migrations/0096_linear_pipeline_runs.sql",
       "order": 96,
-      "sha256": "ab3a71dac9a369c65d0577b2a071fbbfdfc03c877cd232ae6a079ff76355b92c",
+      "sha256": "d9abaa4a8537484c214d3dbe8a7792efc3ed01cf7da33590a147a2ddbe4edc46",
       "kind": "migrate"
     },
     {
@@ -593,7 +593,7 @@
     {
       "file": "db/roles/production_table_grants.sql",
       "order": 99,
-      "sha256": "99cbc04d156f589c362c6b08f67e8c067b07e4d3a9db935d2797e1f42c0955f8",
+      "sha256": "e0565345e9deb05985a0b9c9d82956d772475fe0ebab9f16545c4b0b8c66e9bd",
       "kind": "grants"
     },
     {

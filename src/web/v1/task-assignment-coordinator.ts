@@ -2054,7 +2054,7 @@ export class TaskAssignmentCoordinator {
       if (prior && !canReassign) {
         if (prior.lease.nodeId !== nodeId) conflict();
         const priorRoute = this.routes.find(route => route.nodeId === prior.lease.nodeId
-          && route.executorId === job.authority.allowedExecutor && route.executorId === prior.attempt.workerId);
+          && route.executorId === job.authority.allowedExecutor);
         if (!priorRoute) conflict();
         await this.assertWorkBatchQueueAdmission(tx, job, priorRoute, prior.attempt.workerId ?? null);
         return { receipt: this.receipt(job, prior.attempt, prior.lease), replayed: true };

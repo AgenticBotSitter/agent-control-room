@@ -15,6 +15,7 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON SEQUENCES FROM PUBLIC;
 -- Function defaults are global; a per-schema revoke cannot undo the global PUBLIC default.
 ALTER DEFAULT PRIVILEGES REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;
 GRANT USAGE ON SCHEMA public TO control_room_private_web;
+GRANT EXECUTE ON FUNCTION is_work_intake_session() TO control_room_private_web;
 -- Lead-approved read-only schedule presentation; no occurrence or schedule mutation.
 GRANT SELECT ON control_schedules, control_schedule_occurrences TO control_room_private_web;
 GRANT SELECT ON control_identities, control_role_grants, workspaces, control_web_sessions,
@@ -37,7 +38,7 @@ GRANT SELECT ON control_identities, control_role_grants, workspaces, control_web
 GRANT SELECT ON pipeline_templates, pipeline_runs, pipeline_stage_runs,
   pipeline_ordered_stage_runs TO control_room_private_web;
 GRANT SELECT ON work_batch_queue_admissions, work_batch_effective_queue_admissions,
-  work_batch_agent_queue_heads TO control_room_private_web;
+  work_batch_agent_queue_heads, control_native_task_queue, control_job_dependencies TO control_room_private_web;
 GRANT SELECT ON control_task_model_selections, control_task_declared_scopes,
   control_assignment_lease_scopes TO control_room_private_web;
 GRANT SELECT ON control_durable_result_write_reservations TO control_room_private_web;

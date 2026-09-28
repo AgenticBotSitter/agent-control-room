@@ -367,9 +367,27 @@ test("work-intake login cannot read or forge another subsystem's shared-ledger r
       'project','project:other','{}'::jsonb,'2026-09-27T12:00:00.000Z',1,'month:2026-09',1,$1,$2,$3)`,
     [`sha256:${"3".repeat(64)}`,`sha256:${"0".repeat(64)}`,`sha256:${"4".repeat(64)}`]),
     /work intake audit event insert rejected/u);
+  await assert.rejects(query(intake,`INSERT INTO control_action_inbox
+    (id,tenant_id,project_id,work_item_id,kind,state,delivery_state,created_at,payload)
+    VALUES('attention:not-a-batch','tenant:intake-guard','project:intake-guard','other','approval','open',
+      'delivered','2026-09-27T12:00:00.000Z','{}'::jsonb)`),/work batch notification insert rejected/u);
   await assert.rejects(query(intake,`UPDATE control_audit_chain_heads SET head_hash=$1,event_count=1
     WHERE tenant_id='tenant:intake-guard' AND chain_partition='month:2026-09'`,[`sha256:${"5".repeat(64)}`]),
     /work intake audit head update rejected/u);
+
+  // Grants and the binding retain the group OID across a rename. Every guard
+  // and restrictive policy must therefore remain active without matching the
+  // group's original display name.
+  await query(db,"ALTER ROLE control_room_work_intake RENAME TO control_room_work_intake_renamed");
+  try {
+    assert.deepEqual((await query(intake,"SELECT operation_scope FROM control_idempotency")).rows,[]);
+    await assert.rejects(query(intake,`INSERT INTO control_idempotency
+      (tenant_id,operation_scope,idempotency_key,request_digest,status)
+      VALUES('tenant:intake-guard','other.operation/v1','renamed-key-0001',$1,'processing')`,
+      [`sha256:${"a".repeat(64)}`]),/work intake idempotency insert rejected/u);
+  } finally {
+    await query(db,"ALTER ROLE control_room_work_intake_renamed RENAME TO control_room_work_intake");
+  }
 
   await query(db,"GRANT control_room_work_intake TO control_room_scheduler");
   try {
@@ -391,6 +409,11 @@ test("work-intake login cannot read or forge another subsystem's shared-ledger r
   assert.deepEqual(lockPrivileges,{identity_lock:true,grant_lock:true,project_lock:true,identity_state:false,project_state:false});
   const principal={tenantId:"tenant:intake-guard",identityId:"identity:intake-guard",actorType:"agent",
     authenticatedAt:"2026-09-27T11:00:00.000Z",expiresAt:"2027-09-27T12:00:00.000Z"};
+  const auditCountBeforeNonAgent=(await query(intake,"SELECT count(*)::int AS count FROM audit_events")).rows[0].count;
+  assert.deepEqual(await store.authorize({...principal,actorType:"human"},"project:intake-guard",
+    "2026-09-27T12:00:30.000Z"),{allowed:false,safeReasonCode:"credential_inactive"});
+  assert.equal((await query(intake,"SELECT count(*)::int AS count FROM audit_events")).rows[0].count,
+    auditCountBeforeNonAgent,"non-agent refusal is not misattributed as intake-agent activity");
   assert.equal((await store.authorizeAction(principal,"project:intake-other","work_batches.propose",
     "2026-09-27T12:01:00.000Z")).allowed,false,"wrong-project refusal is recorded");
   await query(db,"UPDATE control_role_grants SET revoked_at='2026-09-27T12:01:30.000Z' WHERE id='grant:intake-guard'");
@@ -404,6 +427,18 @@ test("work-intake login cannot read or forge another subsystem's shared-ledger r
     "2026-09-27T12:04:00.000Z")).allowed,false,"inactive-identity refusal is recorded");
   const verified=await new AuditStore(intakeDb).verify("tenant:intake-guard","month:2026-09");
   assert.equal(verified.valid,true); assert.equal(verified.checkedEvents,4);
+
+  await query(db,`INSERT INTO control_action_inbox
+    (id,tenant_id,project_id,work_item_id,kind,state,delivery_state,created_at,payload)
+    VALUES('attention:ordinary','tenant:intake-guard','project:intake-guard','ordinary','question','open',
+      'delivered','2026-09-27T12:04:30.000Z','{"state":"open"}'::jsonb)`);
+  await query(db,await readFile(join(ROOT,"db/roles/private_web_roles.sql"),"utf8"));
+  await query(db,`SET SESSION AUTHORIZATION control_room_private_web;
+    UPDATE control_action_inbox SET state='resolved',payload='{"state":"resolved"}'::jsonb
+    WHERE tenant_id='tenant:intake-guard' AND id='attention:ordinary'`);
+  assert.equal((await query(db,`SELECT state FROM control_action_inbox
+    WHERE tenant_id='tenant:intake-guard' AND id='attention:ordinary'`)).rows[0].state,"resolved");
+  await query(db,"DELETE FROM control_action_inbox WHERE tenant_id='tenant:intake-guard' AND id='attention:ordinary'");
 
   const head=(await query(intake,`SELECT head_hash,event_count::int FROM control_audit_chain_heads
     WHERE tenant_id='tenant:intake-guard' AND chain_partition='month:2026-09'`)).rows[0];
