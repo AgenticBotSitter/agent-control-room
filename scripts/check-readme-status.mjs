@@ -16,6 +16,7 @@ const staleClaims = Object.freeze([
   ["drifting demo test count", /\b\d+ demo tests\b/iu],
   ["demo-only status claim", /This source preview includes an explicit `pnpm demo` command[\s\S]{0,700}No live agent-runtime\/platform combination/iu],
   ["obsolete connector baseline", /the bounded Claude Code\s+connector foundation/iu],
+  ["obsolete proposed Claude Code track", /Hermes and Codex are the first integration priorities\.\s+Claude Code, OpenClaw and other\s+harnesses are proposed contributor tracks, not current compatibility claims\./iu],
 ]);
 
 export function checkReadmeStatus(source) {

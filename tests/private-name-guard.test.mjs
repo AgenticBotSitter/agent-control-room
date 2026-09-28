@@ -116,6 +116,7 @@ test("README status guard refuses missing boundaries and audited stale claims", 
     "It passes 30 demo tests.",
     "This source preview includes an explicit `pnpm demo` command. No live agent-runtime/platform combination is claimed supported by this preview.",
     "The current baseline has the bounded Claude Code connector foundation.",
+    "Hermes and Codex are the first integration priorities. Claude Code, OpenClaw and other harnesses are proposed contributor tracks, not current compatibility claims.",
   ]) {
     const findings = checkReadmeStatus(`${truthfulReadme}\n${claim}\n`);
     assert.equal(findings.length, 1, claim);

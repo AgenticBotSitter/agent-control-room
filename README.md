@@ -101,8 +101,9 @@ shared project → task → local worker → result → review → revision path
 Claude Code and Codex. It includes owner sign-in, dynamic projects, protected text-file
 preview/download, linked revisions, separate human verification, verified database
 backup/restore tooling, optional owner-installed login auto-start, and explicit
-database-down reporting. Automated journeys exercise the owner pages and local worker
-routes against disposable PostgreSQL and fake worker executables.
+database checking at startup plus a safe unavailable page. Automated journeys exercise
+the owner pages and local worker routes against disposable PostgreSQL and fake worker
+executables.
 
 **Not yet owner-accepted:** there is no supported downloadable release or production
 installation. The source journeys do not prove that an installed worker, recovery path,
@@ -261,9 +262,10 @@ production acceptance.
 - [Security, portable configuration and recovery contract](docs/SECURITY_CONFIGURATION_CONTRACT.md)
 - [Honest platform and connector support matrix](docs/SUPPORT_MATRIX.md)
 
-Hermes and Codex are the first integration priorities. Claude Code, OpenClaw and other
-harnesses are proposed contributor tracks, not current compatibility claims. Start with
-the minimum usable project-to-task-to-result-to-revision experience before expansion.
+Hermes, Claude Code and Codex have source-backed local adapters, but are not yet
+owner-accepted installed integrations. OpenClaw and other harnesses remain proposed
+contributor tracks. Start with the minimum usable project-to-task-to-result-to-revision
+experience before expansion.
 
 Run ordinary checks locally and use the public CI checks on pull requests and main.
 Standard GitHub-hosted runners are free for this public repository. External
