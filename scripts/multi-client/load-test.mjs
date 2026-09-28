@@ -233,9 +233,13 @@ async function send(handler, { path, token, conditional }) {
   });
   handler.handle(exchange.input, exchange.output);
   await completed;
+  // The body is read once here, eagerly, so the report can state how many bytes
+  // the conditional protocol actually saved. A 304 sends no body, and that byte
+  // saving is the real, measurable win of the conditional read.
+  const body = exchange.body();
   return { status: exchange.output.statusCode, ms: Number(process.hrtime.bigint() - started) / 1e6,
     etag: exchange.headers.get("etag"), cacheControl: exchange.headers.get("cache-control"),
-    body: () => exchange.body() };
+    bytes: Buffer.byteLength(body, "utf8"), body: () => body };
 }
 
 async function main() {
@@ -309,10 +313,15 @@ async function main() {
       assets: { read: async () => undefined, list: async () => [] } });
 
     const samples = new Map(), statusCounts = new Map();
+    // Bytes actually served, split by status. The conditional protocol's real
+    // saving is here: a 304 transfers nothing, while the 200 it replaces would
+    // have transferred the whole representation.
+    const bytesByStatus = new Map();
     const record = (path, result) => {
       if (!samples.has(path)) samples.set(path, []);
       samples.get(path).push(result.ms);
       statusCounts.set(`${path} ${result.status}`, (statusCounts.get(`${path} ${result.status}`) ?? 0) + 1);
+      bytesByStatus.set(result.status, (bytesByStatus.get(result.status) ?? 0) + result.bytes);
     };
 
     /** The real client loop: read, revalidate on the next poll, and back off
@@ -376,6 +385,17 @@ async function main() {
     const p95 = Math.max(0, ...[...samples.values()].map(values => percentile(values, 0.95)));
     const notModified = [...statusCounts.entries()].filter(([key]) => key.endsWith(" 304")).reduce((sum, [, count]) => sum + count, 0);
     const unavailableTotal = unavailable.reduce((sum, [, count]) => sum + count, 0);
+    const okBytes = [...bytesByStatus.entries()].filter(([status]) => status === 200).reduce((sum, [, bytes]) => sum + bytes, 0);
+    const notModifiedBytes = bytesByStatus.get(304) ?? 0;
+    // What a 304 costs to produce versus what the 200 it replaces would have
+    // cost to transfer. This is the honest, measurable saving of a conditional
+    // read: response bytes and the render they would have caused, and nothing
+    // else. The database was still queried, because authorization and the read
+    // both happen before the validator is applied.
+    const meanOkBytes = (() => { const count = [...statusCounts.entries()]
+      .filter(([key]) => key.endsWith(" 200")).reduce((sum, [, n]) => sum + n, 0);
+      return count ? Math.round(okBytes / count) : 0; })();
+    const notModifiedSavedBytes = meanOkBytes * notModified;
 
     const lines = [
       `# Multi-client load test — policy: ${QUIET_BACKOFF ? "after (polling discipline + conditional reads)" : "before (existing setInterval polling)"}`,
@@ -396,6 +416,9 @@ async function main() {
       ...[...statusCounts.entries()].sort().map(([key, count]) => `| ${key} | ${count} |`),
       "",
       `- 304 Not Modified responses: ${notModified}`,
+      `- bytes transferred on 200 responses: ${okBytes} (mean ${meanOkBytes} per response)`,
+      `- bytes transferred on 304 responses: ${notModifiedBytes} (a 304 carries no body)`,
+      `- response bytes avoided by the ${notModified} conditional reads: ${notModifiedSavedBytes}`,
       `- unavailable responses (4xx/5xx): ${unavailableTotal}`,
       `- worst p95 across endpoints: ${p95.toFixed(0)}ms`,
       "",
