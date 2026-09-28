@@ -12,6 +12,7 @@ import { Pool } from "pg";
 import { createPrivatePgDatabase } from "../src/web/v1/private-pg-database.ts";
 import { bindPrivatePgPool } from "../src/web/v1/private-pg-database.ts";
 import { privatePgOptions } from "../src/web/v1/private-pg-options.ts";
+import { qualifyPrivatePgSession } from "../src/web/v1/private-pg-qualification.ts";
 import { recoveringPrivateDatabase } from "../src/web/v1/recovering-private-database.ts";
 import { startRecoveringMacLocalQueueWorkerV1 } from "../src/web/v1/mac-local-queue-worker-recovery.ts";
 import { PrivateDatabaseError } from "../src/web/v1/bounded-database.ts";
@@ -29,6 +30,9 @@ const native = (name, args) => exec(join(bin, name), args,
   { env: { PATH: "/usr/bin:/bin", LC_ALL: "C", TMPDIR: root, NODE_ENV: "test" }, timeout: 30_000, maxBuffer: 1 << 20 });
 const proveTcpReady = () => native("psql", ["-h", "127.0.0.1", "-p", String(port), "-d", "postgres",
   "-U", "fixture_recovery", "-Atqc", "SELECT 1"]);
+const sanitizedCode = error => error instanceof PrivateDatabaseError ? error.code
+  : typeof error === "object" && error !== null && typeof error.code === "string" && /^[0-9A-Z]{5}$/u.test(error.code)
+    ? error.code : "unexpected_refusal";
 const start = async () => {
   // Mark ownership before pg_ctl: a timeout can still leave postgres running.
   clusterMayBeRunning = true;
@@ -132,6 +136,17 @@ test("one stable private client resumes reads and writes after its PostgreSQL cl
     assert.equal(database.isAvailable(), false);
     await start();
     assert.equal((await proveTcpReady()).stdout.trim(), "1");
+    const directPool = new Pool(options); let directClient, directStage = "connect";
+    try {
+      directClient = await directPool.connect(); directStage = "qualification";
+      await qualifyPrivatePgSession(directClient); directStage = "probe";
+      assert.deepEqual((await directClient.query("SELECT 1 AS ready")).rows, [{ ready: 1 }]);
+      directStage = "passed";
+    } catch (error) {
+      assert.fail(`fresh_pool_${directStage}_failed code=${sanitizedCode(error)}`);
+    } finally {
+      directClient?.release(true); await directPool.end();
+    }
 
     let restored, lastRefusal = "none";
     // A bounded recovery may spend 5s retiring the old pool, then up to 5s
@@ -147,7 +162,7 @@ test("one stable private client resumes reads and writes after its PostgreSQL cl
       }
     }
     assert.ok(restored,
-      `recovery_not_observed available=${database.isAvailable()} last_refusal=${lastRefusal} generations_opened=${generationsOpened}`);
+      `recovery_not_observed available=${database.isAvailable()} last_refusal=${lastRefusal} generations_opened=${generationsOpened} direct_stage=${directStage}`);
     assert.deepEqual(restored?.rows, [{ value: "before" }]);
     assert.equal(database.client, stableClient);
     await stableClient.query("INSERT INTO public.recovery_values VALUES ($1,$2)", [2, "after"]);
