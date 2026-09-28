@@ -261,6 +261,21 @@ test("a timed-out mutated command restores the file", () => {
   }
 });
 
+test("a timeout kills the test command's whole process group", async () => {
+  const root = fixture();
+  try {
+    const path = manifest(root, {
+      test: 'node -e "const fs=require(\'fs\');if(fs.readFileSync(\'src/guard.mjs\',\'utf8\').includes(\'allow\'))setTimeout(()=>fs.writeFileSync(\'orphan.txt\',\'unexpected\'),100)"',
+    });
+    const result = run(root, path, { MUTATION_CHECK_TIMEOUT_MS: "50" });
+    assert.equal(result.status, 1);
+    await new Promise(resolveDone => setTimeout(resolveDone, 200));
+    assert.equal(existsSync(join(root, "orphan.txt")), false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("SIGTERM during a mutated command restores the file", async () => {
   const root = fixture();
   try {
@@ -296,14 +311,17 @@ test("concurrent verifiers refuse the second run on the first run's dirty tree",
     });
     const before = readFileSync(join(root, "src", "guard.mjs"), "utf8");
     const first = spawn(process.execPath, [verifier, path], { cwd: root, stdio: ["ignore", "pipe", "pipe"] });
-    let transcript = "";
-    await new Promise(resolveStarted => {
-      const observe = data => {
-        transcript += data;
-        if (transcript.includes("[1] src/guard.mjs")) resolveStarted();
-      };
-      first.stdout.on("data", observe);
-      first.stderr.on("data", observe);
+    await new Promise((resolveStarted, rejectStarted) => {
+      const startedAt = Date.now();
+      const ready = setInterval(() => {
+        if (readFileSync(join(root, "src", "guard.mjs"), "utf8").includes("allow")) {
+          clearInterval(ready);
+          resolveStarted();
+        } else if (Date.now() - startedAt > 5_000) {
+          clearInterval(ready);
+          rejectStarted(new Error("first verifier did not apply its mutation"));
+        }
+      }, 10);
     });
     const second = run(root, path);
     assert.equal(second.status, 1);
