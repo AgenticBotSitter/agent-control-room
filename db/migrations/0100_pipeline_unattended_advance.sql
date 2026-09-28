@@ -90,17 +90,18 @@ CREATE TABLE pipeline_advance_receipts (
     REFERENCES control_project_delegation_policies(tenant_id,id,project_id) ON DELETE RESTRICT
 );
 
-CREATE FUNCTION reject_pipeline_unattended_history_mutation() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE FUNCTION reject_pipeline_unattended_history_mutation() RETURNS trigger
+LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $$
 BEGIN RAISE EXCEPTION 'pipeline unattended history is append only'; END $$;
-REVOKE ALL ON FUNCTION reject_pipeline_unattended_history_mutation() FROM PUBLIC;
-CREATE TRIGGER pipeline_unattended_transitions_immutable BEFORE UPDATE OR DELETE ON pipeline_unattended_transitions
-  FOR EACH ROW EXECUTE FUNCTION reject_pipeline_unattended_history_mutation();
-CREATE TRIGGER pipeline_unattended_transitions_no_truncate BEFORE TRUNCATE ON pipeline_unattended_transitions
-  FOR EACH STATEMENT EXECUTE FUNCTION reject_pipeline_unattended_history_mutation();
-CREATE TRIGGER pipeline_advance_receipts_immutable BEFORE UPDATE OR DELETE ON pipeline_advance_receipts
-  FOR EACH ROW EXECUTE FUNCTION reject_pipeline_unattended_history_mutation();
-CREATE TRIGGER pipeline_advance_receipts_no_truncate BEFORE TRUNCATE ON pipeline_advance_receipts
-  FOR EACH STATEMENT EXECUTE FUNCTION reject_pipeline_unattended_history_mutation();
+REVOKE ALL ON FUNCTION public.reject_pipeline_unattended_history_mutation() FROM PUBLIC;
+CREATE TRIGGER pipeline_unattended_transitions_immutable BEFORE UPDATE OR DELETE ON public.pipeline_unattended_transitions
+  FOR EACH ROW EXECUTE FUNCTION public.reject_pipeline_unattended_history_mutation();
+CREATE TRIGGER pipeline_unattended_transitions_no_truncate BEFORE TRUNCATE ON public.pipeline_unattended_transitions
+  FOR EACH STATEMENT EXECUTE FUNCTION public.reject_pipeline_unattended_history_mutation();
+CREATE TRIGGER pipeline_advance_receipts_immutable BEFORE UPDATE OR DELETE ON public.pipeline_advance_receipts
+  FOR EACH ROW EXECUTE FUNCTION public.reject_pipeline_unattended_history_mutation();
+CREATE TRIGGER pipeline_advance_receipts_no_truncate BEFORE TRUNCATE ON public.pipeline_advance_receipts
+  FOR EACH STATEMENT EXECUTE FUNCTION public.reject_pipeline_unattended_history_mutation();
 
 REVOKE ALL ON pipeline_unattended_transitions, pipeline_advance_receipts FROM PUBLIC;
 
