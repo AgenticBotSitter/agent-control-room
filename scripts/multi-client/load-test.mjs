@@ -26,6 +26,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { createConditionalByteAccounting } from "./conditional-byte-accounting.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const DURATION_MS = Number(process.env.MULTI_CLIENT_DURATION_MS ?? 120_000);
@@ -313,15 +314,18 @@ async function main() {
       assets: { read: async () => undefined, list: async () => [] } });
 
     const samples = new Map(), statusCounts = new Map();
-    // Bytes actually served, split by status. The conditional protocol's real
-    // saving is here: a 304 transfers nothing, while the 200 it replaces would
-    // have transferred the whole representation.
+    // Bytes actually served, split by status, plus exact conditional savings.
+    // Each 304 is matched to the prior 200 representation for the same resource
+    // and request validator; unrelated 200 responses never enter that saving.
     const bytesByStatus = new Map();
-    const record = (path, result) => {
-      if (!samples.has(path)) samples.set(path, []);
-      samples.get(path).push(result.ms);
-      statusCounts.set(`${path} ${result.status}`, (statusCounts.get(`${path} ${result.status}`) ?? 0) + 1);
+    const conditionalBytes = createConditionalByteAccounting();
+    const record = (reportPath, result, conditional, resource = reportPath) => {
+      if (!samples.has(reportPath)) samples.set(reportPath, []);
+      samples.get(reportPath).push(result.ms);
+      statusCounts.set(`${reportPath} ${result.status}`, (statusCounts.get(`${reportPath} ${result.status}`) ?? 0) + 1);
       bytesByStatus.set(result.status, (bytesByStatus.get(result.status) ?? 0) + result.bytes);
+      conditionalBytes.record({ resource, status: result.status, bytes: result.bytes,
+        etag: result.etag, conditional });
     };
 
     /** The real client loop: read, revalidate on the next poll, and back off
@@ -338,7 +342,7 @@ async function main() {
         await sleep(delay);
         if (stopped) break;
         const next = await send(handler, { path: client.pattern.path, token: client.token, conditional: etag });
-        record(client.pattern.path, next);
+        record(client.pattern.path, next, etag);
         if (QUIET_BACKOFF && next.status === 304) {
           unchangedPolls++;
           delay = Math.min(client.pattern.intervalMs * 2 ** Math.min(unchangedPolls, 2), client.pattern.intervalMs * 4);
@@ -373,7 +377,7 @@ async function main() {
       const result = await send(handler, { path: client.pattern.path, token: client.token });
       if (process.env.MULTI_CLIENT_DEBUG && result.status >= 400)
         process.stderr.write(`[debug] return-to-tab ${client.pattern.path} -> ${result.status} ${result.body().slice(0, 200)}\n`);
-      record(`${client.pattern.path} (return-to-tab)`, result);
+      record(`${client.pattern.path} (return-to-tab)`, result, undefined, client.pattern.path);
     }
 
     await application.close();
@@ -387,15 +391,13 @@ async function main() {
     const unavailableTotal = unavailable.reduce((sum, [, count]) => sum + count, 0);
     const okBytes = [...bytesByStatus.entries()].filter(([status]) => status === 200).reduce((sum, [, bytes]) => sum + bytes, 0);
     const notModifiedBytes = bytesByStatus.get(304) ?? 0;
-    // What a 304 costs to produce versus what the 200 it replaces would have
-    // cost to transfer. This is the honest, measurable saving of a conditional
-    // read: response bytes and the render they would have caused, and nothing
-    // else. The database was still queried, because authorization and the read
-    // both happen before the validator is applied.
+    // What a 304 costs to produce versus what its endpoint-matched 200
+    // representation would have cost to transfer. The database was still
+    // queried, because authorization and the read happen before validation.
     const meanOkBytes = (() => { const count = [...statusCounts.entries()]
       .filter(([key]) => key.endsWith(" 200")).reduce((sum, [, n]) => sum + n, 0);
       return count ? Math.round(okBytes / count) : 0; })();
-    const notModifiedSavedBytes = meanOkBytes * notModified;
+    const notModifiedSavedBytes = conditionalBytes.avoidedBytes();
 
     const lines = [
       `# Multi-client load test — policy: ${QUIET_BACKOFF ? "after (polling discipline + conditional reads)" : "before (existing setInterval polling)"}`,
@@ -418,7 +420,7 @@ async function main() {
       `- 304 Not Modified responses: ${notModified}`,
       `- bytes transferred on 200 responses: ${okBytes} (mean ${meanOkBytes} per response)`,
       `- bytes transferred on 304 responses: ${notModifiedBytes} (a 304 carries no body)`,
-      `- response bytes avoided by the ${notModified} conditional reads: ${notModifiedSavedBytes}`,
+      `- response bytes actually avoided by the ${notModified} conditional reads (sum of each matching 200 representation): ${notModifiedSavedBytes}`,
       `- unavailable responses (4xx/5xx): ${unavailableTotal}`,
       `- worst p95 across endpoints: ${p95.toFixed(0)}ms`,
       "",
