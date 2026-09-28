@@ -35,6 +35,7 @@ import { taskPlanningReceiptSchema, type TaskPlanningReceipt } from "./task-plan
 import { taskRevisionContextSchema, taskRevisionRequestSchema, type TaskRevisionRequest } from "./task-revision-wire";
 import { inheritTaskModelRequestV1, resolveTaskModelV1, type TaskModelCatalogV1,
   type RequestedTaskModelV1, type TaskModelWorkerKindV1 } from "./task-model-selection";
+import { deriveProjectEventIntegrityKeyV1, ProjectEventStoreV1, TaskProjectEventWriterV1 } from "../../project-events/v1";
 
 const instant = z.string().datetime().refine(value => new Date(value).toISOString() === value);
 /** Server-owned template, never accepted from a browser or worker request. This first planning
@@ -453,6 +454,7 @@ export class TaskExecutionPlanner {
   private readonly projects: WebProjectService;
   private readonly revisionSource?: NativeResultSubmissionService | TaskResultInspectionSourceV1;
   private readonly modelCatalog?: TaskModelCatalogV1;
+  private readonly projectEvents?: TaskProjectEventWriterV1;
   constructor(private readonly db: DatabaseClient, private readonly scope: { tenantId: string; workspaceId: string },
     config: { template?: NativeTaskTemplate; additionalTemplates?: readonly NativeTaskTemplate[]; templateRegistry?: NativeTaskTemplateRegistryV1;
       integrityKey: Uint8Array; reviewIntegrityKey: Uint8Array;
@@ -481,6 +483,8 @@ export class TaskExecutionPlanner {
     if (revisionResults) {
       if (revisionResults.integrityKey.length !== this.reviewKey.length || !timingSafeEqual(revisionResults.integrityKey, this.reviewKey)) fail();
       this.revisionSource = new NativeResultSubmissionService(db, { ...revisionResults, checkpoints: this.checkpoints });
+      this.projectEvents = new TaskProjectEventWriterV1(new ProjectEventStoreV1(db,
+        deriveProjectEventIntegrityKeyV1(revisionResults.harnessIntegrityKey), () => new Date(this.clock()).toISOString()));
     }
     if (revisionSource) this.revisionSource = revisionSource;
     taskExecutionPlannerDatabases.set(this, db);
@@ -1033,6 +1037,9 @@ export class TaskExecutionPlanner {
       await appendAuditWith(tx, { id: `audit:revision:${suffix}`, tenantId: plan.tenantId, projectId, actorId: actor.id, actorType: "human",
         action: "tasks.revisions.plan", targetType: "job", targetId: plan.job.id, idempotencyKey: `revision:${suffix}`, occurredAt: actor.now,
         safeMetadata: { sourceJobId, fromTargetId: input.targetId, sourceDigest, templateDigest, inputDigest: plan.job.inputDigest, startsWork: false } });
+      if (this.projectEvents) await this.projectEvents.appendInSession(tx, { ...this.scope, projectId,
+        subjectId: plan.job.id, action: "task_revised", sourceId: plan.job.id,
+        sourceVersion: `revision-${plan.revision.revisionNumber}`, occurredAt: actor.now });
       current(); return { receipt: this.revisionReceipt(plan), replayed: false };
     });
     // Commit acknowledgement may arrive after cancellation or the operation budget.

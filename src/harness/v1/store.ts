@@ -4,6 +4,7 @@ import { canTransitionHarnessRun, isTerminalHarnessRunState } from "./lifecycle"
 import { harnessRunEventSchemaV1, harnessRunSchemaV1 } from "./schemas";
 import type { HarnessRunEventV1, HarnessRunState, HarnessRunV1 } from "./types";
 import { assertNativeSnapshotProgress, nativeTaskSnapshotBodySchema, type NativeTaskSnapshotBody } from "./native-observation";
+import { deriveProjectEventIntegrityKeyV1, ProjectEventStoreV1, TaskProjectEventWriterV1 } from "../../project-events/v1";
 
 export interface StoredHarnessRunEventRowV1 {
   tenant_id: string; run_id: string; sequence: number | string; occurred_at: string | Date; source: string;
@@ -64,8 +65,10 @@ export function verifyStoredHarnessRunV1(row: StoredHarnessRunRowV1, integrityKe
 }
 
 export class HarnessRunStoreV1 {
+  private readonly projectEventKey: Uint8Array;
   constructor(private readonly db: DatabaseClient, private readonly integrityKey: Uint8Array) {
     hmacSha256Tag(integrityKey,{ purpose:"harness-run-store-key-check" });
+    this.projectEventKey = deriveProjectEventIntegrityKeyV1(integrityKey);
   }
 
   async create(input: HarnessRunV1): Promise<{ run: HarnessRunV1; replayed: boolean }> {
@@ -169,6 +172,18 @@ export class HarnessRunStoreV1 {
       await tx.query(`INSERT INTO control_harness_run_events (tenant_id,run_id,sequence,occurred_at,source,source_event_key_digest,event_digest,event_auth_tag,payload,recorded_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10)`, [event.tenantId,event.runId,event.sequence,event.occurredAt,event.source,event.sourceEventKeyDigest,eventDigest,eventAuthTag,JSON.stringify(event),event.occurredAt]);
       const updatedDigest=sha256Digest(updated); const runAuthTag=hmacSha256Tag(this.integrityKey,runAuthMaterial({...row,payload:updated,last_sequence:event.sequence,run_digest:updatedDigest,state:updated.state,updated_at:event.occurredAt,last_observed_at:event.occurredAt}));
       await tx.query(`UPDATE control_harness_runs SET state=$1,last_sequence=$2,run_digest=$3,run_auth_tag=$4,payload=$5::jsonb,updated_at=$6,last_observed_at=$6 WHERE tenant_id=$7 AND id=$8`, [updated.state,event.sequence,updatedDigest,runAuthTag,JSON.stringify(updated),event.occurredAt,event.tenantId,event.runId]);
+      const action = nextState === "running" ? "task_started" : nextState === "succeeded" ? "task_finished"
+        : nextState === "failed" ? "task_failed" : undefined;
+      if (action && nextState !== run.state) {
+        const project = (await tx.query<{ workspace_id: string }>(
+          "SELECT workspace_id FROM projects WHERE tenant_id=$1 AND id=$2", [run.tenantId, run.projectId])).rows[0];
+        if (!project) throw new Error("harness run project unavailable");
+        const projectEvents = new TaskProjectEventWriterV1(
+          new ProjectEventStoreV1(this.db, this.projectEventKey, () => event.occurredAt));
+        await projectEvents.appendInSession(tx, { tenantId: run.tenantId, workspaceId: project.workspace_id,
+          projectId: run.projectId, subjectId: run.jobId, action, sourceId: event.runId,
+          sourceVersion: `run-event-${event.sequence}`, occurredAt: event.occurredAt });
+      }
       return { run: updated, replayed: false };
   }
 

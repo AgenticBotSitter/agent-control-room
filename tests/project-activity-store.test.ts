@@ -4,7 +4,7 @@ import test from "node:test";
 import { PGlite } from "@electric-sql/pglite";
 import { adaptPglite } from "../src/persistence/database";
 import { buildProjectEventV1, encodeProjectEventCursorV1, formatProjectEventSseV1, PROJECT_EVENT_INPUT_V1,
-  ProjectEventStoreV1, type ProjectEventInputV1 } from "../src/project-events/v1";
+  ProjectEventStoreV1, TaskProjectEventWriterV1, taskProjectEventActionsV1, type ProjectEventInputV1 } from "../src/project-events/v1";
 import { sha256Digest } from "../src/security";
 import { mergeProjectActivityEventsV1 } from "../src/web/v1/project-activity-browser-client";
 
@@ -25,7 +25,8 @@ async function setup() {
     source_record_id,source_version,title,normalized_state,domain_state,health,authority_mode,observed_at,payload)
     VALUES($1,$2,$3,'adapter:timeline',$1,'fixture-v1',$1,'running','active','healthy','control_room_native',$4,'{}')`,
   [projectId, scope.tenantId, scope.workspaceId, now]);
-  return { raw, store: new ProjectEventStoreV1(adaptPglite(raw), key, () => now) };
+  const db = adaptPglite(raw);
+  return { raw, db, store: new ProjectEventStoreV1(db, key, () => now) };
 }
 
 function input(index: number, projectId = scope.projectId): ProjectEventInputV1 {
@@ -103,5 +104,39 @@ test("B-093 anchors an empty stream so a bounded first replay cannot skip a burs
     const second = await store.read({ ...scope, afterCursor: first.nextCursor!, limit: 100 });
     assert.deepEqual(second.events.map(event => event.sequence), [101]); assert.equal(second.hasMore, false);
     assert.equal(mergeProjectActivityEventsV1(first.events, second.events, scope.projectId).length, 101);
+  } finally { await raw.close(); }
+});
+
+test("task and project lifecycle actions append exactly once, roll back atomically, and resume in order", async () => {
+  const { raw, db, store } = await setup();
+  try {
+    const writer = new TaskProjectEventWriterV1(store);
+    const privateSentinel = "PRIVATE-PROMPT-MUST-NOT-APPEAR";
+    for (const [index, action] of taskProjectEventActionsV1.entries()) {
+      const lifecycle = { ...scope, subjectId: action.startsWith("project_")
+        ? scope.projectId : `job:lifecycle:${index}`, action, sourceId: `source:lifecycle:${index}`,
+        sourceVersion: `action-${index}`, occurredAt: now,
+        ...(index === 0 ? { privateText: privateSentinel } : {}) };
+      await db.transaction(tx => writer.appendInSession(tx, lifecycle));
+    }
+    const snapshot = await store.read({ ...scope, limit: 6 });
+    assert.deepEqual(snapshot.events.map(event => event.sequence), [6, 7, 8, 9, 10, 11]);
+    assert.equal(snapshot.events.length, 6);
+    const older = await store.read({ ...scope, beforeCursor: encodeProjectEventCursorV1(snapshot.events[0]!), limit: 10 });
+    assert.deepEqual(older.events.map(event => event.sequence), [1, 2, 3, 4, 5]);
+    assert.doesNotMatch(JSON.stringify([...older.events, ...snapshot.events]), new RegExp(privateSentinel));
+    assert.ok([...older.events, ...snapshot.events].every(event => event.presentationOnly
+      && !event.grantsApproval && !event.grantsCommandAuthority && !event.grantsExecutionAuthority));
+    const cursor = encodeProjectEventCursorV1(snapshot.events.at(-1)!);
+
+    await assert.rejects(db.transaction(async tx => {
+      await writer.appendInSession(tx, { ...scope, subjectId: "job:rolled-back", action: "task_failed",
+        sourceId: "source:rolled-back", sourceVersion: "rollback-v1", occurredAt: now });
+      throw new Error("force rollback");
+    }), /force rollback/);
+    const replay = await store.read({ ...scope, afterCursor: cursor, limit: 10 });
+    assert.deepEqual(replay.events, []);
+    assert.equal((await raw.query<{ count: string }>("SELECT count(*)::text AS count FROM control_project_events WHERE tenant_id=$1 AND project_id=$2",
+      [scope.tenantId, scope.projectId])).rows[0]?.count, String(taskProjectEventActionsV1.length));
   } finally { await raw.close(); }
 });

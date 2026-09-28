@@ -15,7 +15,7 @@ export async function verifyPrivateIdeaAdapter(db: DatabaseClient, scope: { tena
   if (rows.length !== 1 || rows[0].valid !== true) throw new Error("private_idea_adapter_unavailable");
 }
 
-// Generated from public migrations 0001-0092, including generic external-content
+// Generated from public migrations 0001-0093, including generic external-content
 // migrations 0025/0026. Catalog query below; not a mutable database marker.
 export const privateWebSchemaDigest = "514f57093dbace5f491721b631507324491753ddd36a9d2a78e3d793f8a9a623";
 export const privateWebReadTables = ["control_identities", "control_role_grants", "workspaces", "control_web_sessions",
@@ -39,7 +39,7 @@ const inserts = new Set(["control_web_sessions", "adapter_registry", "projects",
   "control_web_project_commands", "audit_events", "control_audit_chain_heads", "control_requests", "control_workflows",
   "control_jobs", "control_web_task_commands", "control_idea_canonical_task_sessions", "control_idea_canonical_task_links",
   "control_completion_gate_records", "control_web_task_review_commands", "control_news_source_settings", "control_news_story_archives",
-  "control_policy_decisions", "control_project_lifecycle_events", "control_project_coordinator_heads",
+  "control_policy_decisions", "control_project_lifecycle_events", "control_project_event_stream_heads", "control_project_events", "control_project_coordinator_heads",
   "control_project_delegation_policies", "control_task_model_selections", "control_task_declared_scopes"]);
 
 /** Tables whose INSERT grant is column-scoped rather than table-wide. Every
@@ -61,6 +61,7 @@ const updates: Record<string, readonly string[]> = {
     "assigned_at", "updated_at", "revoked_at", "payload"],
   control_project_delegation_policies: ["state", "version", "updated_at"],
   control_idempotency: ["status", "result", "completed_at"],
+  control_project_event_stream_heads: ["last_sequence", "last_event_digest", "head_auth_tag", "updated_at"],
   tenants: ["coordinator_lock"],
 };
 const fail = () => { throw new Error("private_database_preflight_failed"); };
@@ -105,7 +106,7 @@ const coordinatorReads = ["tenants", "workspaces", "control_identities", "contro
   "control_project_delegation_policies", "control_project_coordination_operation_receipts",
   "control_project_coordination_operation_jobs", "control_work_resources",
   "control_attempt_resource_admissions", "control_attempt_resource_scopes", "control_task_model_selections",
-  "control_task_declared_scopes", "control_assignment_lease_scopes"];
+  "control_task_declared_scopes", "control_assignment_lease_scopes", "control_project_event_stream_heads", "control_project_events"];
 const coordinatorInserts = new Set(["control_web_sessions", "control_requests", "control_workflows", "control_jobs",
   "control_attempts", "control_leases", "control_task_execution_plans", "control_transition_events", "control_outbox",
   "audit_events", "control_audit_chain_heads", "control_native_approval_packets", "control_native_task_queue", "control_native_delivery_preparations", "control_native_delivery_envelopes", "control_native_transmission_intents", "control_native_delivery_receipts",
@@ -115,7 +116,8 @@ const coordinatorInserts = new Set(["control_web_sessions", "control_requests", 
   "control_project_coordination_operation_jobs", "control_action_inbox", "control_work_resources",
   "control_attempt_resource_admissions", "control_attempt_resource_scopes", "control_job_dependencies",
   "control_installation_transition_revisions", "control_node_fleet_signals", "control_node_fleet_current",
-  "control_task_model_selections", "control_task_declared_scopes", "control_assignment_lease_scopes"]);
+  "control_task_model_selections", "control_task_declared_scopes", "control_assignment_lease_scopes",
+  "control_project_event_stream_heads", "control_project_events"]);
 const coordinatorDeletes = new Set(["control_assignment_lease_scopes"]);
 const coordinatorUpdates: Record<string, readonly string[]> = {
   ...Object.fromEntries(["control_requests", "control_workflows", "control_jobs", "control_attempts", "control_leases"]
@@ -135,6 +137,7 @@ const coordinatorUpdates: Record<string, readonly string[]> = {
   control_attempt_resource_admissions: ["state", "version", "retired_at", "retirement_kind", "retirement_proof_digest"],
   control_attempt_resource_scopes: ["coordinator_lock"],
   control_completion_gate_integrity: ["web_lock", "revision", "record_count", "state_digest", "state_auth_tag"],
+  control_project_event_stream_heads: ["last_sequence", "last_event_digest", "head_auth_tag", "updated_at"],
 };
 const resultReads = ["workspaces", "control_identities", "control_role_grants", "projects",
   "control_jobs", "control_workflows", "control_requests", "control_task_execution_plans",
@@ -157,12 +160,13 @@ const evidenceReads = ["workspaces", "control_identities", "control_role_grants"
   "control_worker_delivery_receipts", "control_worktree_change_audit_plans", "control_worktree_change_audit_records",
   "control_task_execution_plans", "control_codex_activation_transmission_intents", "control_codex_result_publications",
   "control_artifact_manifests", "control_native_artifact_receipts", "control_native_result_write_reservations",
-  "control_durable_result_write_reservations",
+  "control_durable_result_write_reservations", "control_project_event_stream_heads", "control_project_events",
   "audit_events", "control_audit_chain_heads"];
 const evidenceInserts = new Set(["control_harness_runs", "control_harness_run_events", "control_codex_result_publications", "control_artifact_manifests",
   "control_native_artifact_receipts", "control_native_result_write_reservations",
   "control_worktree_change_audit_plans", "control_worktree_change_audit_records",
-  "control_durable_result_write_reservations", "audit_events", "control_audit_chain_heads"]);
+  "control_durable_result_write_reservations", "control_project_event_stream_heads", "control_project_events",
+  "audit_events", "control_audit_chain_heads"]);
 const evidenceUpdates: Record<string, readonly string[]> = {
   control_jobs: ["result_lock"], control_attempts: ["evidence_lock"], control_leases: ["evidence_lock"],
   projects: ["coordinator_lock"], control_manual_project_heads: ["coordinator_lock"],
@@ -171,6 +175,7 @@ const evidenceUpdates: Record<string, readonly string[]> = {
   control_native_result_write_reservations: ["state", "contract_digest", "reservation", "auth_tag", "updated_at"],
   control_durable_result_write_reservations: ["state", "contract_digest", "reservation", "auth_tag", "updated_at"],
   control_audit_chain_heads: ["head_hash", "event_count", "updated_at"],
+  control_project_event_stream_heads: ["last_sequence", "last_event_digest", "head_auth_tag", "updated_at"],
 };
 const sessionReads = ["workspaces", "control_identities", "control_role_grants", "control_nodes", "control_node_keys",
   "node_protocol_connections", "node_protocol_replay"];
@@ -182,18 +187,19 @@ const sessionUpdates: Record<string, readonly string[]> = {
  * `createOwnerTrustedLocalCliPublishV1` (run registration + `workflowIdForJob`)
  * and `publishDurableResultV1` (with the durable reservation Postgres port)
  * execute in one transaction. Review-tray registration stays on `results`. */
-const publisherReads = ["workspaces", "control_identities", "control_role_grants", "control_jobs", "control_attempts", "adapter_registry",
+const publisherReads = ["workspaces", "control_identities", "control_role_grants", "projects", "control_jobs", "control_attempts", "adapter_registry",
   "control_task_model_selections",
   "control_harness_runs", "control_harness_run_events", "control_artifact_manifests", "control_native_artifact_receipts",
   "control_durable_result_write_reservations", "control_native_review_plans",
-  "audit_events", "control_audit_chain_heads"];
+  "audit_events", "control_audit_chain_heads", "control_project_event_stream_heads", "control_project_events"];
 const publisherInserts = new Set(["control_harness_runs", "control_harness_run_events", "control_artifact_manifests", "control_native_artifact_receipts",
   "control_durable_result_write_reservations", "control_native_review_plans",
-  "audit_events", "control_audit_chain_heads"]);
+  "audit_events", "control_audit_chain_heads", "control_project_event_stream_heads", "control_project_events"]);
 const publisherUpdates: Record<string, readonly string[]> = {
   control_harness_runs: ["publisher_lock", "state", "last_sequence", "run_digest", "run_auth_tag", "payload", "updated_at", "last_observed_at"], control_native_review_plans: ["publisher_lock"],
   control_durable_result_write_reservations: ["state", "contract_digest", "reservation", "auth_tag", "updated_at"],
   control_audit_chain_heads: ["head_hash", "event_count", "updated_at"],
+  control_project_event_stream_heads: ["last_sequence", "last_event_digest", "head_auth_tag", "updated_at"],
 };
 
 /** Structural fingerprint, independent of OIDs, owners, ACLs and row data. PG17 is the pinned target.

@@ -19,6 +19,7 @@ import { PRODUCT_CONFIGURATION_SCHEMA_V1, parseProductConfigurationV1, type Prod
 import { buildProjectPresentationV1, computeEffectiveProjectPresentationV1, parseStoredProjectPresentationV1,
   ProjectPresentationError, verifyProjectTemplateSelectionV1,
   type EffectiveProjectPresentationV1, type ProjectPresentationV1 } from "../../config/v1/project-presentation";
+import { deriveProjectEventIntegrityKeyV1, ProjectEventStoreV1, TaskProjectEventWriterV1 } from "../../project-events/v1";
 const iso = (value: string | Date) => new Date(value).toISOString();
 type CatalogRow = { id: string; adapter_id: string; payload: unknown; title: string; summary: string;
   lifecycle: WebProject["lifecycle"] | null; version: number | string | null; created_at: string | Date | null;
@@ -38,16 +39,19 @@ export class WebProjectService {
   private readonly ideas?: IdeaLabProjectRegistryStoreV1;
   private readonly productConfiguration?: Readonly<ProductConfigurationV1>;
   private readonly configurationDigest?: string;
+  private readonly projectEvents?: TaskProjectEventWriterV1;
   constructor(private readonly db: DatabaseClient, private readonly scope: { tenantId: string; workspaceId: string },
     clock: () => number = Date.now, ideaIntegrityKey?: Uint8Array,
     private readonly ideaLifecycle?: WebIdeaProjectLifecycleOperation,
-    productConfiguration?: Readonly<ProductConfigurationV1>) {
+    productConfiguration?: Readonly<ProductConfigurationV1>, projectEventRootKey?: Uint8Array) {
     this.authority = new WebSessionAuthority(db, scope, clock);
     if (ideaIntegrityKey !== undefined) this.ideas = new IdeaLabProjectRegistryStoreV1(db, ideaIntegrityKey);
     if (productConfiguration !== undefined) {
       this.productConfiguration = productConfiguration;
       this.configurationDigest = configurationDigestFor(productConfiguration);
     }
+    if (projectEventRootKey !== undefined) this.projectEvents = new TaskProjectEventWriterV1(new ProjectEventStoreV1(db,
+      deriveProjectEventIntegrityKeyV1(projectEventRootKey), () => new Date(clock()).toISOString()));
   }
 
   private async authorized<T>(identity: VerifiedWebIdentity, action: string, projectId: string | undefined,
@@ -298,6 +302,11 @@ export class WebProjectService {
           WHEN $1='manual_project_active' THEN 'planned' WHEN $1='manual_project_paused' THEN 'waiting' ELSE normalized_state END
         WHERE tenant_id=$4 AND id=$5`,
         [`manual_project_${lifecycle}`, String(project.version), actor.now, this.scope.tenantId, projectId]);
+      if (this.projectEvents && (lifecycle === "completed" || lifecycle === "archived")) {
+        await this.projectEvents.appendInSession(tx, { ...this.scope, projectId, subjectId: projectId,
+          action: lifecycle === "completed" ? "project_completed" : "project_archived", sourceId: projectId,
+          sourceVersion: `project-v${project.version}`, occurredAt: actor.now });
+      }
       // Project lifecycle never cancels a job, changes a lease or creates an external effect.
       return project;
     });

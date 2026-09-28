@@ -47,6 +47,9 @@ GRANT INSERT ON control_web_sessions, adapter_registry, projects, control_manual
   control_policy_decisions, control_project_lifecycle_events,
   control_project_coordinator_heads, control_project_delegation_policies TO control_room_private_web;
 GRANT INSERT ON control_task_model_selections, control_task_declared_scopes TO control_room_private_web;
+GRANT INSERT ON control_project_event_stream_heads, control_project_events TO control_room_private_web;
+GRANT UPDATE (last_sequence,last_event_digest,head_auth_tag,updated_at)
+  ON control_project_event_stream_heads TO control_room_private_web;
 -- Coordinator lifecycle idempotency ledger: exact-match replay before any
 -- head mutation. SELECT plus the five inserted columns plus the completion
 -- update; INSERT is column-scoped so the role can never smuggle

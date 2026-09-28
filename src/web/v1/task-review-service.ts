@@ -20,6 +20,7 @@ import { taskReviewDraftSchema, taskReviewReceiptSchema, taskReviewNoteSchema, t
   type TaskReviewDraft, type TaskReviewReceipt } from "./task-review-wire";
 import { manualVerificationScenarioInstructionsDigestV1, manualVerificationScenarioSchema, MAX_MANUAL_VERIFICATION_DESCRIPTORS_V1,
   type ManualVerificationScenario, type ManualVerificationScenarioSource } from "./task-verification-service";
+import { deriveProjectEventIntegrityKeyV1, ProjectEventStoreV1, TaskProjectEventWriterV1 } from "../../project-events/v1";
 
 export interface WebTaskReviewConfiguration { integrityKey: Uint8Array; checkpoints: AwaitableRollbackCheckpointStoreV1;
   acceptanceVerificationScenarios?: readonly ManualVerificationScenario[] | ManualVerificationScenarioSource }
@@ -38,6 +39,7 @@ export class WebTaskReviewService {
   private readonly results: PlanSelectedTaskResultReaderV1;
   private readonly projects: WebProjectService;
   private readonly acceptanceVerificationScenarios?: () => readonly z.infer<typeof manualVerificationScenarioSchema>[];
+  private readonly projectEvents: TaskProjectEventWriterV1;
   constructor(private readonly db: DatabaseClient, private readonly scope: { tenantId: string; workspaceId: string },
     config: WebTaskReviewConfiguration & { harnessIntegrityKey: Uint8Array; results: NativeResultReadConfiguration; ideaIntegrityKey?: Uint8Array },
     private readonly clock: () => number = Date.now) {
@@ -47,6 +49,8 @@ export class WebTaskReviewService {
       advance: config.checkpoints.advance.bind(config.checkpoints), initialize: () => { throw new Error("review_provisioning_unavailable"); } });
     this.results = new PlanSelectedTaskResultReaderV1(db, { harnessIntegrityKey: config.harnessIntegrityKey,
       results: config.results, reviewIntegrityKey: config.integrityKey });
+    this.projectEvents = new TaskProjectEventWriterV1(new ProjectEventStoreV1(db,
+      deriveProjectEventIntegrityKeyV1(config.harnessIntegrityKey), () => new Date(this.clock()).toISOString()));
     this.projects = new WebProjectService(db, scope, clock, config.ideaIntegrityKey);
     if (config.acceptanceVerificationScenarios) {
       const source = config.acceptanceVerificationScenarios;
@@ -265,6 +269,9 @@ export class WebTaskReviewService {
       await appendAuditWith(tx, { id: `audit:${randomUUID()}`, tenantId: this.scope.tenantId, projectId, actorId: actor.id, actorType: "human",
         action: "tasks.reviews.record", targetType: "completion_review", targetId: reviewId, idempotencyKey: key, occurredAt: actor.now,
         safeMetadata: { targetDigest: draft.targetDigest, decision: draft.decision, feedbackDigest } });
+      await this.projectEvents.appendInSession(tx, { ...this.scope, projectId, subjectId: jobId,
+        action: draft.decision === "accepted" ? "task_accepted" : "task_changes_requested",
+        sourceId: reviewId, sourceVersion: "owner-review-v1", occurredAt: actor.now });
       return { receipt, replayed: false };
     });
   }
