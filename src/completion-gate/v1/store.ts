@@ -287,8 +287,20 @@ export class CompletionGateStoreV1 {
    * integrity and rollback evidence are verified once, then the same snapshots
    * are computed from the authenticated record set in memory. */
   async inspectSubjects(tenantId:string,subjects:readonly {projectId:string;subjectId:string}[]){
-    return this.db.transaction(async(tx)=>{
-      const records=await this.lockAndVerifyTenantState(tx,tenantId);
+    return this.db.transaction(async(tx)=>this.inspectSubjectsFromRecords(await this.lockAndVerifyTenantState(tx,tenantId),subjects));
+  }
+
+  /** One authenticated tenant snapshot shared by summary projections that need
+   * both subject evidence and exact records. */
+  async inspectSubjectsAndRecords(tenantId:string,subjects:readonly {projectId:string;subjectId:string}[],
+    ids:readonly string[],kind:CompletionGateRecordKindV1){
+    return this.db.transaction(async(tx)=>{const authenticated=await this.lockAndVerifyTenantState(tx,tenantId),wanted=new Set(ids);
+      return{subjects:this.inspectSubjectsFromRecords(authenticated,subjects),records:new Map(authenticated
+        .filter(entry=>entry.kind===kind&&wanted.has(entry.record.id)).map(entry=>[entry.record.id,entry.record]))};});
+  }
+
+  private inspectSubjectsFromRecords(records:{kind:CompletionGateRecordKindV1;record:CompletionGateRecordV1}[],
+    subjects:readonly {projectId:string;subjectId:string}[]){
       const output=new Map<string,{targets:{snapshot:CompletionGateSnapshotV1;reviews:CompletionReviewV1[];
         verifications:CompletionVerificationV1[];findings:CompletionFindingV1[];additionalEvidenceOmitted:boolean}[];
         additionalTargetsOmitted:boolean}>();
@@ -329,7 +341,6 @@ export class CompletionGateStoreV1 {
         output.set(JSON.stringify([subject.projectId,subject.subjectId]),{targets:projected,additionalTargetsOmitted:targets.length>20});
       }
       return output;
-    });
   }
 
   /** Checkpoint-authenticated, writer-serialized evidence for a server-side context consumer.
@@ -475,31 +486,12 @@ export class CompletionGateStoreV1 {
   private async assertCheckpoint(tenantId:string,row:CompletionIntegrityRow){try{const expected=this.checkpoint(tenantId,Number(row.revision),Number(row.record_count),row.state_digest,row.state_auth_tag),known=await this.readCheckpoint(tenantId);if(!known||rollbackCheckpointDigestV1(known)!==rollbackCheckpointDigestV1(expected))throw new Error("mismatch");return expected;}catch{throw new CompletionGateErrorV1("integrity_failed");}}
   private async computedTenantState(source:QuerySource,tenantId:string){const result=await source.query<CompletionRow>(`SELECT ${columns} FROM control_completion_gate_records WHERE tenant_id=$1 ORDER BY kind,id`,[tenantId]);const verified=result.rows.map(row=>({kind:row.kind,record:this.verifiedRow(row)}));const records=result.rows.map((row)=>({id:row.id,projectId:row.project_id,kind:row.kind,recordKey:row.record_key,subjectId:row.subject_id,parentId:row.parent_id,recordDigest:row.record_digest,recordAuthTag:row.record_auth_tag,occurredAt:iso(row.occurred_at)}));return{recordCount:records.length,stateDigest:sha256Digest({tenantId,records}),verified};}
   private async lockAndVerifyTenantState(source:DatabaseSession,tenantId:string){
-    type JoinedIntegrityRow=CompletionIntegrityRow&{record_id:string|null;record_project_id:string|null;
-      record_kind:CompletionGateRecordKindV1|null;record_key:string|null;record_subject_id:string|null;
-      record_parent_id:string|null;record_digest:string|null;record_auth_tag:string|null;
-      record_payload:CompletionGateRecordV1|null;record_occurred_at:string|Date|null};
-    const result=await source.query<JoinedIntegrityRow>(`SELECT i.tenant_id,i.revision,i.record_count,i.state_digest,i.state_auth_tag,
-      r.id AS record_id,r.project_id AS record_project_id,r.kind AS record_kind,r.record_key,r.subject_id AS record_subject_id,
-      r.parent_id AS record_parent_id,r.record_digest,r.record_auth_tag,r.payload AS record_payload,r.occurred_at AS record_occurred_at
-      FROM control_completion_gate_integrity i LEFT JOIN control_completion_gate_records r ON r.tenant_id=i.tenant_id
-      WHERE i.tenant_id=$1 ORDER BY r.kind,r.id FOR UPDATE OF i`,[tenantId]);
-    const first=result.rows[0];if(!first)throw new CompletionGateErrorV1("integrity_failed");
-    const integrity:CompletionIntegrityRow={tenant_id:first.tenant_id,revision:first.revision,record_count:first.record_count,
-      state_digest:first.state_digest,state_auth_tag:first.state_auth_tag};
-    const rows:CompletionRow[]=result.rows.filter(row=>row.record_id!==null).map(row=>({id:row.record_id!,tenant_id:row.tenant_id,
-      project_id:row.record_project_id!,kind:row.record_kind!,record_key:row.record_key!,subject_id:row.record_subject_id!,
-      parent_id:row.record_parent_id,record_digest:row.record_digest!,record_auth_tag:row.record_auth_tag!,payload:row.record_payload!,
-      occurred_at:row.record_occurred_at!}));
-    const verified=rows.map(row=>({kind:row.kind,record:this.verifiedRow(row)}));
-    const records=rows.map(row=>({id:row.id,projectId:row.project_id,kind:row.kind,recordKey:row.record_key,
-      subjectId:row.subject_id,parentId:row.parent_id,recordDigest:row.record_digest,recordAuthTag:row.record_auth_tag,
-      occurredAt:iso(row.occurred_at)}));
-    const stateDigest=sha256Digest({tenantId,records});
-    if(Number(integrity.revision)<1||Number(integrity.record_count)!==records.length||integrity.state_digest!==stateDigest
-      ||!sameTag(integrity.state_auth_tag,this.tenantStateTag(tenantId,Number(integrity.revision),records.length,stateDigest)))
+    const result=await source.query<CompletionIntegrityRow>("SELECT * FROM control_completion_gate_integrity WHERE tenant_id=$1 FOR UPDATE",[tenantId]);
+    const integrity=result.rows[0],computed=await this.computedTenantState(source,tenantId);
+    if(!integrity||Number(integrity.revision)<1||Number(integrity.record_count)!==computed.recordCount||integrity.state_digest!==computed.stateDigest
+      ||!sameTag(integrity.state_auth_tag,this.tenantStateTag(tenantId,Number(integrity.revision),computed.recordCount,computed.stateDigest)))
       throw new CompletionGateErrorV1("integrity_failed");
-    await this.assertCheckpoint(tenantId,integrity);return verified;
+    await this.assertCheckpoint(tenantId,integrity);return computed.verified;
   }
   private async refreshTenantState(source:DatabaseSession,tenantId:string){const priorResult=await source.query<CompletionIntegrityRow>("SELECT * FROM control_completion_gate_integrity WHERE tenant_id=$1 FOR UPDATE",[tenantId]);const prior=priorResult.rows[0];if(!prior)throw new CompletionGateErrorV1("integrity_failed");const expected=await this.assertCheckpoint(tenantId,prior),computed=await this.computedTenantState(source,tenantId),revision=Number(prior.revision)+1,stateAuthTag=this.tenantStateTag(tenantId,revision,computed.recordCount,computed.stateDigest),next=this.checkpoint(tenantId,revision,computed.recordCount,computed.stateDigest,stateAuthTag);
     const result=await source.query<{tenant_id:string}>(`UPDATE control_completion_gate_integrity SET revision=$2,record_count=$3,state_digest=$4,state_auth_tag=$5 WHERE tenant_id=$1 AND revision=$6 RETURNING tenant_id`,[tenantId,revision,computed.recordCount,computed.stateDigest,stateAuthTag,Number(prior.revision)]);if(!result.rows[0])throw new CompletionGateErrorV1("integrity_failed");

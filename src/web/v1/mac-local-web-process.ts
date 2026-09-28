@@ -16,7 +16,6 @@ import type { TaskRevisionOperation } from "./task-revision-operation";
 import type { MacLocalWorkerReadinessV1 } from "./mac-local-worker-readiness";
 import type { LocalOwnerSessionStoreV1 } from "./local-owner-session-store";
 import type { PersistedLocalOwnerSessionV1 } from "./local-owner-session";
-import { taskAttentionPageSchema } from "./task-attention-wire";
 
 export interface MacLocalWebProcessOptionsV1 {
   origin: string;
@@ -193,17 +192,8 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
       if (url.pathname === "/api/v1/needs-me/tasks") {
         if (request.method !== "GET" || [...url.searchParams.keys()].some(key => key !== "after")
           || url.searchParams.getAll("after").length > 1) throw new WebAccessError("invalid_request");
-        const page = await tasks.attention(identity, url.searchParams.get("after") ?? undefined);
-        if (options.planning?.readSavedMany) {
-          const candidates = page.items.filter(item => item.reasons.includes("proposal"));
-          const saved = await options.planning.readSavedMany(identity,
-            candidates.map(item => ({ projectId: item.task.projectId, sourceJobId: item.task.jobId })));
-          for (const item of candidates) if (saved.get(JSON.stringify([item.task.projectId, item.task.jobId])))
-            item.reasons = item.reasons.filter(reason => reason !== "proposal");
-        }
-        return Response.json(taskAttentionPageSchema.parse({ ...page,
-          planningSource: options.planning?.readSavedMany ? "configured" : "not_configured", deliverySource: "not_configured",
-          items: page.items.filter(item => item.reasons.length) }), { headers: privateResponseHeaders });
+        return Response.json(await tasks.attention(identity, url.searchParams.get("after") ?? undefined),
+          { headers: privateResponseHeaders });
       }
       const projectOverview = /^\/api\/v1\/projects\/([^/]+)\/overview$/.exec(url.pathname);
       if (projectOverview) {

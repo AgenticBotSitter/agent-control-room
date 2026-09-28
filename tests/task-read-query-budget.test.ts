@@ -7,11 +7,14 @@ import type { DatabaseClient, DatabaseSession } from "../src/persistence/databas
 import { ownerReviewFixture } from "./helpers/web-owner-review";
 import { binding, instant } from "./hermes-native-fixture";
 import { at } from "./native-task-fixture";
-import { sha256Digest } from "../src/security";
+import { computeAuthorityDigest, sha256Digest } from "../src/security";
 import type { CompletionReviewV1, CompletionVerificationV1 } from "../src/completion-gate/v1";
+import { TaskExecutionPlanner, type NativeTaskTemplate } from "../src/web/v1/task-execution-planner";
+import { CONTROLLER_WORKER_REMOTE_ADAPTER_V1, CONTROLLER_WORKER_REMOTE_START_OPERATION_V1 } from "../src/harness/v1/remote-worker-delivery";
+import { taskDraft } from "./helpers/web-task";
 
 function observed(db: DatabaseClient, delayMs: number) {
-  let queries = 0;
+  let queries = 0, transactions = 0;
   const wrap = (tx: DatabaseSession): DatabaseSession => ({ query: async <T>(sql: string, params?: unknown[]) => {
     queries += 1;
     if (delayMs) await new Promise(resolve => setTimeout(resolve, delayMs));
@@ -21,9 +24,10 @@ function observed(db: DatabaseClient, delayMs: number) {
     queries += 1;
     if (delayMs) await new Promise(resolve => setTimeout(resolve, delayMs));
     return db.query<T>(sql, params);
-  }, transaction: work => db.transaction(tx => work(wrap(tx))),
-  transactionWithPreCommitCheck: (work, check) => db.transactionWithPreCommitCheck(tx => work(wrap(tx)), check) };
-  return { client, count: () => queries };
+  }, transaction: work => { transactions += 1; return db.transaction(tx => work(wrap(tx))); },
+  transactionWithPreCommitCheck: (work, check) => { transactions += 1;
+    return db.transactionWithPreCommitCheck(tx => work(wrap(tx)), check); } };
+  return { client, count: () => queries, transactionCount: () => transactions };
 }
 
 async function state(db: DatabaseClient, jobIds: readonly string[], next: "succeeded" | "proposed" | "running", version: number) {
@@ -71,7 +75,7 @@ test("task list, needs-me and Home keep a fixed query budget as the page grows",
 
   const list = await measure(50, reads.list);
   assert.equal(list.queries, one.list.queries, `list query count grew: ${JSON.stringify({ one: one.list, ten: list })}`);
-  assert.ok(list.queries <= 8, `list exceeded the eight-query remote budget: ${list.queries}`);
+  assert.ok(list.queries <= 9, `list exceeded the nine-query remote budget: ${list.queries}`);
   assert.ok(list.queries * 50 < 500, `list network budget exceeded 500ms: ${list.queries * 50}`);
   assert.ok(list.elapsedMs < 500, `list exceeded the 500ms wall target: ${list.elapsedMs}`);
 
@@ -79,19 +83,70 @@ test("task list, needs-me and Home keep a fixed query budget as the page grows",
   const attention = await measure(50, reads.attention);
   assert.equal(attention.queries, one.attention.queries,
     `needs-me query count grew: ${JSON.stringify({ one: one.attention, ten: attention })}`);
-  assert.ok(attention.queries <= 8, `needs-me exceeded the eight-query remote budget: ${attention.queries}`);
+  assert.ok(attention.queries <= 9, `needs-me exceeded the nine-query remote budget: ${attention.queries}`);
   assert.ok(attention.queries * 50 < 500, `needs-me network budget exceeded 500ms: ${attention.queries * 50}`);
   assert.ok(attention.elapsedMs < 500, `needs-me exceeded the 500ms wall target: ${attention.elapsedMs}`);
 
   await state(f.db, extra, "running", 5);
   const home = await measure(50, reads.home);
   assert.equal(home.queries, one.home.queries, `Home query count grew: ${JSON.stringify({ one: one.home, ten: home })}`);
-  assert.ok(home.queries <= 8, `Home exceeded the eight-query remote budget: ${home.queries}`);
+  assert.ok(home.queries <= 9, `Home exceeded the nine-query remote budget: ${home.queries}`);
   assert.ok(home.queries * 50 < 500, `Home network budget exceeded 500ms: ${home.queries * 50}`);
   assert.ok(home.elapsedMs < 500, `Home exceeded the 500ms wall target: ${home.elapsedMs}`);
   t.diagnostic(JSON.stringify({ injectedLatencyMs: 50, oneTaskQueries: {
     list: one.list.queries, attention: one.attention.queries, home: one.home.queries,
   }, tenTask: { list, attention, home } }));
+});
+
+test("needs-me suppresses authentic saved plans in-session without hiding unplanned proposals or growing its query budget", async t => {
+  const f = await ownerReviewFixture(); t.after(f.close);
+  const planIntegrityKey = new Uint8Array(32).fill(117);
+  const authority: NativeTaskTemplate["authority"] = { projectId: binding.projectId, allowedExecutor: "executor:budget-remote",
+    allowedOperations: [CONTROLLER_WORKER_REMOTE_START_OPERATION_V1], credentialRefs: ["credential:budget-remote"],
+    filesystemRoots: [], networkPolicy: "none", allowedNetworkDestinations: [], effectPolicy: "approval_required",
+    maxRisk: "low", maxDurationSeconds: 60, maxConcurrentEffects: 1, expiresAt: at(300_000), digest: "" };
+  authority.digest = computeAuthorityDigest(authority);
+  const template: NativeTaskTemplate = { id: "template:attention-budget", adapter: CONTROLLER_WORKER_REMOTE_ADAPTER_V1,
+    authority, instructions: "Return a bounded plain-text review only.", connectorProfileDigest: sha256Digest("budget-profile"),
+    acceptanceProfileId: f.profile.id, acceptanceProfileDigest: sha256Digest(f.profile) };
+  const planner = new TaskExecutionPlanner(f.db, f.scope, { template, integrityKey: planIntegrityKey,
+    reviewIntegrityKey: f.reviewKey, checkpoints: f.checkpoints }, () => instant + 7_000);
+  const saveProposal = async (index: number) => {
+    const source = await f.tasks.propose(f.identity, binding.projectId, taskDraft, `attention-budget-saved-${index}`);
+    await planner.plan(f.identity, binding.projectId, source.receipt.jobId, sha256Digest(taskDraft));
+    return source.receipt.jobId;
+  };
+  const firstSavedJobId = await saveProposal(1);
+  const unplanned = await f.tasks.propose(f.identity, binding.projectId, taskDraft, "attention-budget-unplanned");
+  const measure = async (delayMs: number) => {
+    const watched = observed(f.db, delayMs);
+    const tasks = new WebTaskService(watched.client, f.scope, () => instant + 8_000,
+      { ...f.ownerKeys, taskPlanIntegrityKey: planIntegrityKey });
+    const started = performance.now(), page = await tasks.attention(f.identity);
+    return { page, queries: watched.count(), transactions: watched.transactionCount(), elapsedMs: performance.now() - started };
+  };
+
+  const one = await measure(0);
+  assert.equal(one.transactions, 1, "saved-plan verification shares the attention authentication transaction");
+  assert.equal(one.page.planningSource, "configured");
+  assert.equal(one.page.items.some(item => item.task.jobId === firstSavedJobId), false,
+    "an authenticated saved plan suppresses its source proposal inside WebTaskService.attention");
+  assert.deepEqual(one.page.items.find(item => item.task.jobId === unplanned.receipt.jobId)?.reasons, ["proposal"],
+    "a proposal with no saved plan remains visible and does not fail completion-profile authentication");
+
+  const additionalSavedJobIds = [];
+  for (let index = 2; index <= 5; index += 1) additionalSavedJobIds.push(await saveProposal(index));
+  const many = await measure(50);
+  assert.equal(many.transactions, 1, "batched saved-plan verification does not open a per-plan transaction");
+  for (const jobId of [firstSavedJobId, ...additionalSavedJobIds])
+    assert.equal(many.page.items.some(item => item.task.jobId === jobId), false, `saved proposal remained visible: ${jobId}`);
+  assert.deepEqual(many.page.items.find(item => item.task.jobId === unplanned.receipt.jobId)?.reasons, ["proposal"]);
+  assert.equal(many.queries, one.queries,
+    `saved-plan attention query count grew with proposal count: ${JSON.stringify({ one: one.queries, many: many.queries })}`);
+  assert.ok(many.queries * 50 < 500, `saved-plan attention network budget exceeded 500ms: ${many.queries * 50}`);
+  assert.ok(many.elapsedMs < 500, `saved-plan attention exceeded the 500ms wall target: ${many.elapsedMs}`);
+  t.diagnostic(JSON.stringify({ injectedLatencyMs: 50, oneSavedPlanQueries: one.queries,
+    fiveSavedPlans: { queries: many.queries, elapsedMs: many.elapsedMs } }));
 });
 
 test("Home project catalog stays fixed-query as ordinary projects grow", async t => {

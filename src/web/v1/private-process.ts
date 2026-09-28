@@ -26,7 +26,6 @@ import type { TaskAssignmentOperation } from "./task-assignment-coordinator";
 import type { IdeaCanonicalResultProjectionOperation, TaskApprovalOperation, TaskSubmissionOperation } from "./task-coordinator-lifecycle";
 import type { TaskRevisionOperation } from "./task-revision-operation";
 import type { QueueAttentionSource } from "./queue-attention-wire";
-import { taskAttentionPageSchema } from "./task-attention-wire";
 import { taskProjectAgentOptionsSchema } from "./task-project-agents-wire";
 import { newsCollectionStatusSchema, newsCollectionHistorySchema } from "./news-collection-status-wire";
 import { ideaCreationOptionsSchema } from "./idea-wire";
@@ -619,17 +618,8 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
           if (url.pathname === "/api/v1/needs-me/tasks") {
             if (request.method !== "GET" || [...url.searchParams.keys()].some(key => key !== "after")
               || url.searchParams.getAll("after").length > 1) throw new WebAccessError("invalid_request");
-            const page = await tasks.attention(identity, url.searchParams.get("after") ?? undefined);
-            if (planning?.readSavedMany) {
-              const candidates = page.items.filter(item => item.reasons.includes("proposal"));
-              const saved = await planning.readSavedMany(identity,
-                candidates.map(item => ({ projectId: item.task.projectId, sourceJobId: item.task.jobId })));
-              for (const item of candidates) if (saved.get(JSON.stringify([item.task.projectId, item.task.jobId])))
-                item.reasons = item.reasons.filter(reason => reason !== "proposal");
-            }
-            return Response.json(taskAttentionPageSchema.parse({ ...page,
-              planningSource: planning?.readSavedMany ? "configured" : "not_configured", deliverySource: "not_configured",
-              items: page.items.filter(item => item.reasons.length) }), { headers: privateResponseHeaders });
+            return Response.json(await tasks.attention(identity, url.searchParams.get("after") ?? undefined),
+              { headers: privateResponseHeaders });
           }
           if (url.pathname === "/api/v1/needs-me") {
             if (request.method !== "GET" || url.search) throw new WebAccessError("invalid_request");

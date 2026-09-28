@@ -32,13 +32,14 @@ import { HERMES_LOCAL_ADAPTER_V1 } from "../../harness/hermes-local-v1/task-plan
 import { CLAUDE_CODE_LOCAL_ADAPTER_V1 } from "../../harness/claude-code-v1";
 import { CODEX_APP_SERVER_ADAPTER } from "../../harness/codex-v1/delivery-contract";
 import { CODEX_OWNER_TRUSTED_LOCAL_ADAPTER_V1 } from "../../harness/codex-v1/owner-trusted-local-task-planning-contract";
-import { taskPlanningOptionsSchema } from "./task-planning-wire";
+import { taskPlanningOptionsSchema, taskPlanningReceiptSchema } from "./task-planning-wire";
 import { taskHomeActivitySchema } from "./task-home-wire";
 import { taskProjectOverviewSchema } from "./task-project-overview-wire";
 import { taskProjectFilesSchema } from "./task-project-files-wire";
 import type { TaskWorktreeChangeSummary } from "./task-result-wire";
 import { taskModelOptionsV1, validateRequestedTaskModelV1, type TaskModelCatalogV1 } from "./task-model-selection";
-import { readTaskRevisionLinksV1 } from "./task-execution-planner";
+import { readSavedTaskPlansInSessionV1, readTaskRevisionLinksV1, savedTaskPlanProfileIdsV1,
+  type SavedTaskPlanRowV1 } from "./task-execution-planner";
 import { issueTaskFileAccessV1, verifyTaskFileAccessV1 } from "./task-file-access";
 
 /** Joins existing stores to the caller-owned session transaction. No nested BEGIN/COMMIT and no
@@ -537,23 +538,32 @@ export class WebTaskService {
    * resultPage it deliberately does not mint file links, inspect worktrees, or
    * load harness model metadata. */
   private async batchResultEvidence(tx: DatabaseSession, actor: WebActor,
-    tasks: readonly { projectId: string; jobId: string }[]) {
+    tasks: readonly { projectId: string; jobId: string }[], savedProfiles?: { ids: readonly string[]; records?: ReadonlyMap<string, unknown> }) {
     type Projection = { resultSource: "configured" | "not_configured"; reviewSource: "configured" | "not_configured";
       items: ReturnType<typeof resultMetadata>[]; reviews: ReturnType<typeof taskReviewEvidenceSchema.parse>[];
       additionalResultsOmitted: boolean; additionalTargetsOmitted: boolean; canReadContent: boolean };
     const unique = [...new Map(tasks.map(task => [taskReviewPlanKeyV1(task.projectId, task.jobId), task])).values()];
     const output = new Map<string, Projection>();
+    if (!unique.length && !savedProfiles?.ids.length) return output;
     if (!this.resultStore) {
       for (const task of unique) output.set(taskReviewPlanKeyV1(task.projectId, task.jobId), { resultSource: "not_configured",
         reviewSource: this.reviewConfig ? "configured" : "not_configured", items: [], reviews: [],
         additionalResultsOmitted: false, additionalTargetsOmitted: false, canReadContent: false });
+      if (savedProfiles && this.reviewConfig) savedProfiles.records = await new CompletionGateStoreV1(joined(tx),
+        this.reviewConfig.integrityKey, this.reviewConfig.checkpoints).getRecords(this.scope.tenantId, savedProfiles.ids, "profile");
       return output;
     }
     const batch = await this.resultStore.listMany(tx, this.scope.tenantId, unique);
     const subjects = unique.map(task => ({ projectId: task.projectId,
       subjectId: taskReviewRootSubjectIdV1(batch.plans.get(taskReviewPlanKeyV1(task.projectId, task.jobId)), task.jobId) }));
-    const inspected = this.reviewConfig ? await new CompletionGateStoreV1(joined(tx), this.reviewConfig.integrityKey,
-      this.reviewConfig.checkpoints).inspectSubjects(this.scope.tenantId, subjects) : new Map();
+    let inspected = new Map();
+    if (this.reviewConfig) {
+      const gate = new CompletionGateStoreV1(joined(tx), this.reviewConfig.integrityKey, this.reviewConfig.checkpoints);
+      if (savedProfiles) {
+        const combined = await gate.inspectSubjectsAndRecords(this.scope.tenantId, subjects, savedProfiles.ids, "profile");
+        inspected = combined.subjects; savedProfiles.records = combined.records;
+      } else inspected = await gate.inspectSubjects(this.scope.tenantId, subjects);
+    }
     for (const task of unique) {
       const key = taskReviewPlanKeyV1(task.projectId, task.jobId), page = batch.pages.get(key);
       if (!page) throw new Error("task_result_model_unavailable");
@@ -676,8 +686,24 @@ export class WebTaskService {
     if (after !== undefined) this.id(after);
     return this.authority.authenticated(identity, async (tx, actor) => {
       const sources = this.attentionSources(actor);
-      const rows = (await tx.query<TaskRow & { has_artifacts: boolean }>(`SELECT EXISTS(
-        SELECT 1 FROM control_native_artifact_receipts a WHERE a.tenant_id=j.tenant_id AND a.project_id=j.project_id AND a.job_id=j.id) AS has_artifacts, ${selection}
+      type AttentionRow = TaskRow & { has_artifacts: boolean; source_job_created_at: string | Date;
+        source_job_updated_at: string | Date; plan_tenant_id: string | null; plan_project_id: string | null;
+        plan_source_job_id: string | null; plan_job_id: string | null; plan_payload: unknown; plan_auth_tag: string | null;
+        prepared_job_payload: unknown; prepared_job_state: string | null; prepared_job_version: number | null;
+        prepared_job_workflow_id: string | null; prepared_job_created_at: string | Date | null;
+        prepared_job_updated_at: string | Date | null; prepared_workflow_payload: unknown; prepared_request_payload: unknown };
+      const rows = (await tx.query<AttentionRow>(`SELECT EXISTS(
+        SELECT 1 FROM control_native_artifact_receipts a WHERE a.tenant_id=j.tenant_id AND a.project_id=j.project_id AND a.job_id=j.id) AS has_artifacts,
+        j.created_at AS source_job_created_at,j.updated_at AS source_job_updated_at,
+        ep.tenant_id AS plan_tenant_id,ep.project_id AS plan_project_id,ep.source_job_id AS plan_source_job_id,
+        ep.job_id AS plan_job_id,ep.plan AS plan_payload,ep.auth_tag AS plan_auth_tag,
+        pj.payload AS prepared_job_payload,pj.state AS prepared_job_state,pj.version AS prepared_job_version,
+        pj.workflow_id AS prepared_job_workflow_id,pj.created_at AS prepared_job_created_at,pj.updated_at AS prepared_job_updated_at,
+        pw.payload AS prepared_workflow_payload,pr.payload AS prepared_request_payload, ${selection}
+        LEFT JOIN control_task_execution_plans ep ON ep.tenant_id=j.tenant_id AND ep.project_id=j.project_id AND ep.source_job_id=j.id
+        LEFT JOIN control_jobs pj ON pj.tenant_id=ep.tenant_id AND pj.project_id=ep.project_id AND pj.id=ep.job_id
+        LEFT JOIN control_workflows pw ON pw.tenant_id=pj.tenant_id AND pw.id=pj.workflow_id
+        LEFT JOIN control_requests pr ON pr.tenant_id=pw.tenant_id AND pr.id=pw.request_id
         JOIN projects p ON p.tenant_id=j.tenant_id AND p.id=j.project_id
         WHERE j.tenant_id=$1 AND p.workspace_id=$2 AND ($3::text IS NULL OR j.id COLLATE "C">$3 COLLATE "C")
           AND ((p.adapter_id=$4 AND $6::boolean AND EXISTS(SELECT 1 FROM control_manual_project_heads h
@@ -689,13 +715,50 @@ export class WebTaskService {
         `adapter:manual:${sha256Digest(this.scope).slice(7, 39)}`, CONTROL_ROOM_IDEA_ADAPTER_V1, sources.ordinary === "included", sources.ideas === "included"])).rows;
       await this.projects.getViewsInSession(tx, actor, rows.slice(0, 25).map(row => row.project_id));
       for (const row of rows.slice(0, 25)) actor.require("tasks.read", row.project_id, true);
-      const evidence = await this.batchResultEvidence(tx, actor, rows.slice(0, 25).filter(row => row.has_artifacts)
-        .map(row => ({ projectId: row.project_id, jobId: row.id })));
+      const pageRows = rows.slice(0, 25).map(row => ({ row, ...validated(row, this.scope.tenantId, row.project_id) }));
+      const planningConfigured = !!this.taskPlanIntegrityKey && !!this.reviewConfig;
+      const planCandidates = pageRows.filter(({ summary, job }) => summary.state === "proposed" && job.jobType === "task.proposal")
+        .map(({ row }) => ({ projectId: row.project_id, sourceJobId: row.id }));
+      const planCandidateKeys = new Set(planCandidates.map(candidate => JSON.stringify([candidate.projectId, candidate.sourceJobId])));
+      const preloadedPlans: SavedTaskPlanRowV1[] = pageRows.filter(({ row }) => row.plan_tenant_id !== null
+        && planCandidateKeys.has(JSON.stringify([row.project_id, row.id]))).map(({ row }) => ({
+        tenant_id: row.plan_tenant_id!, project_id: row.plan_project_id!, source_job_id: row.plan_source_job_id!,
+        job_id: row.plan_job_id!, plan: row.plan_payload, auth_tag: row.plan_auth_tag!, source_job_payload: row.job,
+        source_job_state: row.state, source_job_version: row.version, source_job_workflow_id: row.workflow_id,
+        source_job_created_at: row.source_job_created_at, source_job_updated_at: row.source_job_updated_at,
+        source_workflow_payload: row.workflow, source_request_payload: row.request,
+        prepared_job_payload: row.prepared_job_payload, prepared_job_state: row.prepared_job_state!,
+        prepared_job_version: row.prepared_job_version!, prepared_job_workflow_id: row.prepared_job_workflow_id!,
+        prepared_job_created_at: row.prepared_job_created_at!, prepared_job_updated_at: row.prepared_job_updated_at!,
+        prepared_workflow_payload: row.prepared_workflow_payload, prepared_request_payload: row.prepared_request_payload,
+      }));
+      const savedProfileIds = planningConfigured ? savedTaskPlanProfileIdsV1({ tenantId: this.scope.tenantId,
+        planIntegrityKey: this.taskPlanIntegrityKey! }, preloadedPlans) : [];
+      const savedProfiles = planningConfigured && savedProfileIds.length
+        ? { ids: savedProfileIds, records: undefined as ReadonlyMap<string, unknown> | undefined }
+        : undefined;
+      const evidence = await this.batchResultEvidence(tx, actor, pageRows.filter(({ row }) => row.has_artifacts)
+        .map(({ row }) => ({ projectId: row.project_id, jobId: row.id })), savedProfiles);
+      const savedPlans = planningConfigured ? await readSavedTaskPlansInSessionV1(tx, {
+        tenantId: this.scope.tenantId, planIntegrityKey: this.taskPlanIntegrityKey!,
+        reviewIntegrityKey: this.reviewConfig!.integrityKey, checkpoints: this.reviewConfig!.checkpoints,
+        preloadedRows: preloadedPlans, authenticatedProfiles: savedProfiles?.records,
+      }, planCandidates) : new Map<string, null>();
+      const plannedSources = new Set<string>();
+      for (const candidate of planCandidates) {
+        const key = JSON.stringify([candidate.projectId, candidate.sourceJobId]), value = savedPlans.get(key);
+        if (!value) continue;
+        const receipt = taskPlanningReceiptSchema.parse(value);
+        if (receipt.projectId !== candidate.projectId || receipt.sourceJobId !== candidate.sourceJobId
+          || receipt.jobId === candidate.sourceJobId) throw new Error("planning_receipt_scope_mismatch");
+        plannedSources.add(key);
+      }
       const items: TaskAttentionPage["items"] = [];
-      for (const row of rows.slice(0, 25)) {
-        const { summary, job } = validated(row, this.scope.tenantId, row.project_id);
+      for (const { row, summary, job } of pageRows) {
         const reasons: TaskAttentionPage["items"][number]["reasons"] = [];
-        if (summary.state === "proposed") reasons.push(job.jobType === "task.proposal" ? "proposal" : "assignment");
+        if (summary.state === "proposed" && !(job.jobType === "task.proposal"
+          && plannedSources.has(JSON.stringify([row.project_id, row.id]))))
+          reasons.push(job.jobType === "task.proposal" ? "proposal" : "assignment");
         if (summary.state === "waiting_approval") reasons.push("approval");
         if (summary.state === "failed" || summary.state === "orphaned") reasons.push(summary.state);
         if (job.jobType === "harness.hermes.native.task" && ["leased", "running", "waiting_approval", "orphaned", "failed"].includes(summary.state))
@@ -711,7 +774,8 @@ export class WebTaskService {
         }
       }
       return taskAttentionPageSchema.parse({ items, sources, examined: Math.min(rows.length, 25),
-        nextCursor: rows.length > 25 ? rows[24].id : null, observedAt: actor.now, startsWork: false });
+        nextCursor: rows.length > 25 ? rows[24].id : null, observedAt: actor.now, startsWork: false,
+        planningSource: planningConfigured ? "configured" : "not_configured" });
     });
   }
 
