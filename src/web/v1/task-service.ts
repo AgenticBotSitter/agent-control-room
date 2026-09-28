@@ -89,10 +89,10 @@ export interface WebTaskKeys {
   manualVerificationScenarios?: readonly ManualVerificationScenario[] | ManualVerificationScenarioSource;
   /** Installation-owned aggregate reader. The web layer cannot receive a raw
    * evidence table, receipt key, worktree plan, or filesystem path. */
-  worktreeChangeEvidence?: { inspect(identity: { tenantId: string; projectId: string; jobId: string; attemptId: string;
-    runId: string; artifactId: string }):
-    Promise<Readonly<{ changedFiles: number; changedBytes: number; addedFiles: number; modifiedFiles: number;
-      deletedFiles: number; evidenceDigest: string }> | undefined> };
+  worktreeChangeEvidence?: { inspectMany(identities: readonly { tenantId: string; projectId: string; jobId: string;
+    attemptId: string; runId: string; artifactId: string }[]):
+    Promise<readonly (Readonly<{ changedFiles: number; changedBytes: number; addedFiles: number; modifiedFiles: number;
+      deletedFiles: number; evidenceDigest: string }> | undefined)[]> };
   /** Bound installation-owned read only. The web service never receives its
    * receipt key, storage port, runner, profile, model, or workspace settings. */
   hermesDeliveryRecovery?: { inspect(scope: { tenantId: string; projectId: string; jobId: string; attemptId: string }):
@@ -149,8 +149,8 @@ export class WebTaskService {
       this.fileAccessKey = Uint8Array.from(keys.results.integrityKey);
     }
     if (keys?.worktreeChangeEvidence) {
-      if (typeof keys.worktreeChangeEvidence.inspect !== "function") throw new Error("task_key_invalid");
-      this.worktreeChangeEvidence = Object.freeze({ inspect: keys.worktreeChangeEvidence.inspect.bind(keys.worktreeChangeEvidence) });
+      if (typeof keys.worktreeChangeEvidence.inspectMany !== "function") throw new Error("task_key_invalid");
+      this.worktreeChangeEvidence = Object.freeze({ inspectMany: keys.worktreeChangeEvidence.inspectMany.bind(keys.worktreeChangeEvidence) });
     }
     if (keys?.reviews) {
       if (!(keys.reviews.integrityKey instanceof Uint8Array) || keys.reviews.integrityKey.length !== 32) throw new Error("task_key_invalid");
@@ -171,10 +171,14 @@ export class WebTaskService {
     } catch { return { source: "unavailable" }; }
   }
   private id(value: string) { if (!catalogProjectIdSchema.safeParse(value).success) throw new WebAccessError("invalid_request"); }
+  private authenticatedRead<T>(identity: VerifiedWebIdentity,
+    operation: (tx: DatabaseSession, actor: WebActor) => Promise<T>) {
+    return this.authority.authenticated(identity, operation, { readOnly: true });
+  }
 
   async authorize(identity: VerifiedWebIdentity, projectId: string) {
     this.id(projectId);
-    await this.authority.authenticated(identity, async (tx, actor) => {
+    await this.authenticatedRead(identity, async (tx, actor) => {
       actor.require("tasks.read", projectId); await this.projects.getViewInSession(tx, actor, projectId);
     });
   }
@@ -183,7 +187,7 @@ export class WebTaskService {
    * and exact source/template inside its own transaction before creating anything. */
   async planningOptions(identity: VerifiedWebIdentity, projectId: string, jobId: string, configured: boolean) {
     this.id(projectId); this.id(jobId);
-    return this.authority.authenticated(identity, async (tx, actor) => {
+    return this.authenticatedRead(identity, async (tx, actor) => {
       actor.require("tasks.read", projectId);
       const project = await this.projects.getViewInSession(tx, actor, projectId);
       const row = (await tx.query<TaskRow>(`SELECT ${selection} WHERE j.tenant_id=$1 AND j.project_id=$2 AND j.id=$3`,
@@ -199,7 +203,7 @@ export class WebTaskService {
 
   async list(identity: VerifiedWebIdentity, projectId: string, after?: string) {
     this.id(projectId); if (after !== undefined) this.id(after);
-    return this.authority.authenticated(identity, async (tx, actor) => {
+    return this.authenticatedRead(identity, async (tx, actor) => {
       actor.require("tasks.read", projectId);
       const project = await this.projects.getViewInSession(tx, actor, projectId);
       const rows = (await tx.query<TaskRow>(`SELECT ${selection} WHERE j.tenant_id=$1 AND j.project_id=$2
@@ -322,22 +326,28 @@ export class WebTaskService {
 
   async detail(identity: VerifiedWebIdentity, projectId: string, jobId: string) {
     this.id(projectId); this.id(jobId);
-    return this.authority.authenticated(identity, async (tx, actor) => {
+    return this.authenticatedRead(identity, async (tx, actor) => {
       actor.require("tasks.read", projectId);
       const project = await this.projects.getViewInSession(tx, actor, projectId);
       const row = (await tx.query<TaskRow>(`SELECT ${selection} WHERE j.tenant_id=$1 AND j.project_id=$2 AND j.id=$3`,
         [this.scope.tenantId, projectId, jobId])).rows[0];
       if (!row) throw new WebAccessError("not_found");
       const { job, request, summary } = validated(row, this.scope.tenantId, projectId);
-      const modelRow = (await tx.query<{ worker_kind: string | null; selection_key: string | null; model: string | null;
-        effort: string | null; provider: string | null; profile: string | null; inherited_from_job_id: string | null }>(
-        `SELECT worker_kind,selection_key,model,effort,provider,profile,inherited_from_job_id
-         FROM control_task_model_selections WHERE tenant_id=$1 AND job_id=$2`, [this.scope.tenantId, jobId])).rows[0];
-      const leaseRows = (await tx.query<{ node_id: string; expires_at: string | Date; state: string;
-        scope_kind: "file" | "tree"; path: string }>(`SELECT s.node_id,l.expires_at,l.state,s.scope_kind,s.path
-        FROM control_assignment_lease_scopes s JOIN control_leases l ON l.tenant_id=s.tenant_id AND l.id=s.lease_id
-        WHERE s.tenant_id=$1 AND s.job_id=$2 ORDER BY l.expires_at DESC,s.scope_kind,s.path`,
-      [this.scope.tenantId, jobId])).rows;
+      type DetailBindingRow = { model_job_id: string | null; worker_kind: string | null; selection_key: string | null;
+        model: string | null; effort: string | null; provider: string | null; profile: string | null;
+        inherited_from_job_id: string | null; node_id: string | null; expires_at: string | Date | null; state: string | null;
+        scope_kind: "file" | "tree" | null; path: string | null };
+      const bindingRows = (await tx.query<DetailBindingRow>(`SELECT m.job_id AS model_job_id,m.worker_kind,m.selection_key,
+        m.model,m.effort,m.provider,m.profile,m.inherited_from_job_id,s.node_id,l.expires_at,l.state,s.scope_kind,s.path
+        FROM (SELECT 1) anchor
+        LEFT JOIN control_task_model_selections m ON m.tenant_id=$1 AND m.job_id=$2
+        LEFT JOIN control_assignment_lease_scopes s ON s.tenant_id=$1 AND s.job_id=$2
+        LEFT JOIN control_leases l ON l.tenant_id=s.tenant_id AND l.id=s.lease_id
+        ORDER BY l.expires_at DESC,s.scope_kind,s.path`, [this.scope.tenantId, jobId])).rows;
+      const modelRow = bindingRows[0]?.model_job_id ? bindingRows[0] : undefined;
+      const leaseRows = bindingRows.filter((row): row is DetailBindingRow & { node_id: string; expires_at: string | Date;
+        state: string; scope_kind: "file" | "tree"; path: string } => row.node_id !== null && row.expires_at !== null
+          && row.state !== null && row.scope_kind !== null && row.path !== null);
       const leaseGroups = new Map<string, { nodeId: string; expiresAt: string; state: "active" | "released" | "expired" | "revoked";
         current: boolean; scopes: { kind: "file" | "tree"; path: string }[] }>();
       for (const lease of leaseRows) {
@@ -351,20 +361,20 @@ export class WebTaskService {
         `SELECT id,state,attempt_number,payload FROM control_attempts WHERE tenant_id=$1 AND job_id=$2 ORDER BY attempt_number DESC LIMIT 11`,
       [this.scope.tenantId, jobId])).rows;
       const store = this.harnessKey ? new HarnessRunStoreV1(joined(tx), this.harnessKey) : undefined;
+      const boundedAttempts = attemptRows.slice(0, 10);
+      const inspectedRuns = store ? await store.inspectAttempts(this.scope.tenantId, projectId, jobId,
+        boundedAttempts.map(attempt => attempt.id)) : undefined;
       const attempts = [];
-      for (const a of attemptRows.slice(0, 10)) {
+      for (const a of boundedAttempts) {
         const attempt = attemptRecordSchema.parse(a.payload);
         if (attempt.tenantId !== this.scope.tenantId || attempt.jobId !== jobId || attempt.id !== a.id
           || attempt.state !== a.state || attempt.attemptNumber !== Number(a.attempt_number)) throw new Error("task_attempt_unavailable");
-        const ids = store ? (await tx.query<{ id: string }>(`SELECT id FROM control_harness_runs WHERE tenant_id=$1
-          AND project_id=$2 AND job_id=$3 AND attempt_id=$4 ORDER BY created_at DESC,id DESC LIMIT 11`,
-        [this.scope.tenantId, projectId, jobId, attempt.id])).rows : [];
+        const inspected = inspectedRuns?.get(attempt.id) ?? [];
         const runs: TaskRun[] = [];
-        for (const { id } of ids.slice(0, 10)) {
-          const inspected = await store!.inspect(this.scope.tenantId, id);
-          if (!inspected || inspected.run.projectId !== projectId || inspected.run.jobId !== jobId
-            || inspected.run.attemptId !== attempt.id || inspected.run.nodeId !== attempt.nodeId) throw new Error("task_run_unavailable");
-          const { run, events } = inspected;
+        for (const value of inspected.slice(0, 10)) {
+          if (value.run.projectId !== projectId || value.run.jobId !== jobId
+            || value.run.attemptId !== attempt.id || value.run.nodeId !== attempt.nodeId) throw new Error("task_run_unavailable");
+          const { run, events } = value;
           const snapshots = events.flatMap(event => event.payload.category === "native_snapshot" ? [event.payload.snapshot] : []);
           const last = snapshots.at(-1);
           runs.push(taskRunSchema.parse({ runId: run.id, harness: run.harness, routeEvidence: routeEvidence(run.adapterId), state: run.state, lastObservedAt: run.lastObservedAt,
@@ -380,7 +390,7 @@ export class WebTaskService {
               observedAt: item.observedAt, availability: item.availability })), earlierObservationsOmitted: snapshots.length > 50 }));
         }
         attempts.push({ attemptId: attempt.id, attemptNumber: attempt.attemptNumber, state: attempt.state,
-          runs, additionalRunsOmitted: ids.length > 10 });
+          runs, additionalRunsOmitted: inspected.length > 10 });
       }
       const hermesDeliveryRecovery = await this.inspectHermesDeliveryRecovery(job, projectId, jobId, attempts);
       const revisionLinks = this.taskPlanIntegrityKey
@@ -408,7 +418,7 @@ export class WebTaskService {
   async readScopedResult<T>(identity: VerifiedWebIdentity, projectId: string, jobId: string,
     read: (scope: { tenantId: string; projectId: string; jobId: string }) => Promise<T>) {
     this.id(projectId); this.id(jobId);
-    return this.authority.authenticated(identity, async (tx, actor) => {
+    return this.authenticatedRead(identity, async (tx, actor) => {
       actor.require("tasks.read", projectId); actor.require("tasks.results.read", projectId);
       await this.projects.getViewInSession(tx, actor, projectId);
       const row = (await tx.query<TaskRow>(`SELECT ${selection} WHERE j.tenant_id=$1 AND j.project_id=$2 AND j.id=$3`,
@@ -421,7 +431,7 @@ export class WebTaskService {
 
   async results(identity: VerifiedWebIdentity, projectId: string, jobId: string, artifactId?: string) {
     this.id(projectId); this.id(jobId); if (artifactId !== undefined) this.id(artifactId);
-    return this.authority.authenticated(identity, async (tx, actor) => {
+    return this.authenticatedRead(identity, async (tx, actor) => {
       actor.require("tasks.read", projectId); await this.projects.getViewInSession(tx, actor, projectId);
       const row = (await tx.query<TaskRow>(`SELECT ${selection} WHERE j.tenant_id=$1 AND j.project_id=$2 AND j.id=$3`,
         [this.scope.tenantId, projectId, jobId])).rows[0];
@@ -453,7 +463,7 @@ export class WebTaskService {
   async file(identity: VerifiedWebIdentity, projectId: string, jobId: string, artifactId: string,
     disposition: "preview" | "download", token: string) {
     this.id(projectId); this.id(jobId); this.id(artifactId);
-    return this.authority.authenticated(identity, async (tx, actor) => {
+    return this.authenticatedRead(identity, async (tx, actor) => {
       actor.require("tasks.read", projectId); actor.require("tasks.results.read", projectId);
       await this.projects.getViewInSession(tx, actor, projectId);
       if (!this.resultStore || !this.fileAccessKey) throw new WebAccessError("not_found");
@@ -471,18 +481,33 @@ export class WebTaskService {
   private async resultPage(tx: DatabaseSession, actor: WebActor, projectId: string, jobId: string) {
       const result = this.resultStore ? await this.resultStore.list(tx, this.scope.tenantId, projectId, jobId)
         : { receipts: [], additionalResultsOmitted: false };
+      const runEvidence = this.harnessKey
+        ? await new HarnessRunStoreV1(joined(tx), this.harnessKey).inspectMany(this.scope.tenantId,
+          result.receipts.map(receipt => receipt.runId))
+        : new Map();
+      const evidenceScopes = actor.can("tasks.results.read", projectId) && this.worktreeChangeEvidence
+        ? result.receipts.filter(receipt => receipt.artifactId.startsWith("artifact:result:")).map(receipt => ({
+          tenantId: this.scope.tenantId, projectId, jobId, attemptId: receipt.attemptId,
+          runId: receipt.runId, artifactId: receipt.artifactId,
+        })) : [];
+      let evidenceByArtifact = new Map<string, Awaited<ReturnType<NonNullable<WebTaskKeys["worktreeChangeEvidence"]>["inspectMany"]>>[number]>();
+      if (evidenceScopes.length && this.worktreeChangeEvidence) {
+        try {
+          const summaries = await this.worktreeChangeEvidence.inspectMany(evidenceScopes);
+          if (summaries.length !== evidenceScopes.length) throw new Error("worktree_change_evidence_unavailable");
+          evidenceByArtifact = new Map(evidenceScopes.map((scope, index) => [scope.artifactId, summaries[index]]));
+        } catch { evidenceByArtifact = new Map(); }
+      }
       const items = await Promise.all(result.receipts.map(async receipt => {
-        const runEvidence = this.harnessKey ? await new HarnessRunStoreV1(joined(tx), this.harnessKey).get(this.scope.tenantId, receipt.runId) : undefined;
-        if (runEvidence && (runEvidence.projectId !== projectId || runEvidence.jobId !== jobId
-          || runEvidence.attemptId !== receipt.attemptId)) throw new Error("task_result_model_unavailable");
+        const inspectedRun = runEvidence.get(receipt.runId)?.run;
+        if (inspectedRun && (inspectedRun.projectId !== projectId || inspectedRun.jobId !== jobId
+          || inspectedRun.attemptId !== receipt.attemptId)) throw new Error("task_result_model_unavailable");
         let worktreeChangeSummary: TaskWorktreeChangeSummary;
         if (!actor.can("tasks.results.read", projectId)) worktreeChangeSummary = { source: "not_authorized" };
         else if (!this.worktreeChangeEvidence) worktreeChangeSummary = { source: "not_configured" };
         else if (!receipt.artifactId.startsWith("artifact:result:")) worktreeChangeSummary = { source: "not_applicable" };
         else {
-          let summary: Awaited<ReturnType<NonNullable<WebTaskKeys["worktreeChangeEvidence"]>["inspect"]>>;
-          try { summary = await this.worktreeChangeEvidence.inspect({ tenantId: this.scope.tenantId, projectId,
-            jobId, attemptId: receipt.attemptId, runId: receipt.runId, artifactId: receipt.artifactId }); } catch { summary = undefined; }
+          const summary = evidenceByArtifact.get(receipt.artifactId);
           worktreeChangeSummary = summary ? { source: "recorded", changedFiles: summary.changedFiles,
             changedBytes: summary.changedBytes, addedFiles: summary.addedFiles, modifiedFiles: summary.modifiedFiles,
             deletedFiles: summary.deletedFiles, evidenceDigest: summary.evidenceDigest, startsWork: false,
@@ -490,7 +515,7 @@ export class WebTaskService {
             permitsMerge: false } : { source: "unavailable" };
         }
         return taskResultMetadataSchema.parse({ ...resultMetadata(receipt),
-          ...(runEvidence?.modelSelection ? { modelSelection: runEvidence.modelSelection } : {}),
+          ...(inspectedRun?.modelSelection ? { modelSelection: inspectedRun.modelSelection } : {}),
           fileAccess: this.fileAccess(projectId, jobId, receipt), worktreeChangeSummary });
       }));
       const lineage = this.reviewConfig ? await readTaskReviewPlanV1(tx, this.reviewConfig.integrityKey,
@@ -526,32 +551,12 @@ export class WebTaskService {
     if (!["leased", "running", "waiting_approval", "succeeded"].includes(summary.state) || !this.resultStore
       || !actor.can("tasks.results.read", summary.projectId)) return summary;
     try {
-      const page = await this.resultPage(tx, actor, summary.projectId, summary.jobId);
-      let latestAttemptOutcome = knownLatestAttemptOutcome;
-      if (!latestAttemptOutcome && summary.state !== "succeeded" && this.harnessKey) {
-        const attemptRow = (await tx.query<{ id: string; state: string; attempt_number: number; payload: unknown }>(
-          `SELECT id,state,attempt_number,payload FROM control_attempts WHERE tenant_id=$1 AND job_id=$2
-           ORDER BY attempt_number DESC LIMIT 1`, [this.scope.tenantId, summary.jobId])).rows[0];
-        if (attemptRow) {
-          const attempt = attemptRecordSchema.parse(attemptRow.payload);
-          if (attempt.tenantId !== this.scope.tenantId || attempt.jobId !== summary.jobId || attempt.id !== attemptRow.id
-            || attempt.state !== attemptRow.state || attempt.attemptNumber !== Number(attemptRow.attempt_number))
-            throw new Error("task_attempt_unavailable");
-          const runRow = (await tx.query<{ id: string }>(`SELECT id FROM control_harness_runs WHERE tenant_id=$1
-            AND project_id=$2 AND job_id=$3 AND attempt_id=$4 ORDER BY created_at DESC,id DESC LIMIT 1`,
-          [this.scope.tenantId, summary.projectId, summary.jobId, attempt.id])).rows[0];
-          if (runRow) {
-            const inspected = await new HarnessRunStoreV1(joined(tx), this.harnessKey).inspect(this.scope.tenantId, runRow.id);
-            if (!inspected || inspected.run.projectId !== summary.projectId || inspected.run.jobId !== summary.jobId
-              || inspected.run.attemptId !== attempt.id || inspected.run.nodeId !== attempt.nodeId)
-              throw new Error("task_run_unavailable");
-            latestAttemptOutcome = { attemptId: attempt.id, attemptState: attempt.state,
-              runId: inspected.run.id, runState: inspected.run.state };
-          }
-        }
-      }
-      return projectTaskDisplayStateV1(summary, { latestAttemptOutcome, results: page.items, reviews: page.reviews,
-        additionalResultsOmitted: page.additionalResultsOmitted, additionalTargetsOmitted: page.additionalTargetsOmitted });
+      const evidence = await this.batchResultEvidence(tx, actor, [summary]);
+      const page = evidence.get(taskReviewPlanKeyV1(summary.projectId, summary.jobId));
+      if (!page) return summary;
+      return projectTaskDisplayStateV1(summary, { latestAttemptOutcome: knownLatestAttemptOutcome ?? page.latestAttemptOutcome,
+        results: page.items, reviews: page.reviews, additionalResultsOmitted: page.additionalResultsOmitted,
+        additionalTargetsOmitted: page.additionalTargetsOmitted });
     } catch {
       // Display completion and acceptance are optional enrichment. Failure to
       // authenticate either retains the canonical task state.
@@ -703,7 +708,7 @@ export class WebTaskService {
   /** The empty shared shell is useful with either recovery or task-inbox access.
    * Each panel's data endpoint retains its own independent permission checks. */
   async authorizeAttentionPage(identity: VerifiedWebIdentity): Promise<void> {
-    await this.authority.authenticated(identity, async (_, actor) => {
+    await this.authenticatedRead(identity, async (_, actor) => {
       if (actor.can("connections.read", undefined, true)) actor.require("connections.read", undefined, true);
       else this.attentionSources(actor);
     });
@@ -711,7 +716,7 @@ export class WebTaskService {
 
   async attention(identity: VerifiedWebIdentity, after?: string) {
     if (after !== undefined) this.id(after);
-    return this.authority.authenticated(identity, async (tx, actor) => {
+    return this.authenticatedRead(identity, async (tx, actor) => {
       const sources = this.attentionSources(actor);
       type AttentionRow = TaskRow & { has_artifacts: boolean; source_job_created_at: string | Date;
         source_job_updated_at: string | Date; plan_tenant_id: string | null; plan_project_id: string | null;
@@ -812,7 +817,7 @@ export class WebTaskService {
    * is no longer waiting_approval. */
   async projectAttention(identity: VerifiedWebIdentity, projectId: string, mode: "inbox" | "reviews", after?: string) {
     this.id(projectId); if (after !== undefined) this.id(after);
-    return this.authority.authenticated(identity, async (tx, actor) => {
+    return this.authenticatedRead(identity, async (tx, actor) => {
       actor.require("tasks.read", projectId);
       await this.projects.getViewInSession(tx, actor, projectId);
       const hasArtifact = `EXISTS(SELECT 1 FROM control_native_artifact_receipts a
@@ -860,7 +865,7 @@ export class WebTaskService {
    * endpoint. Result candidates are re-read through the signed result store before
    * any metadata is returned. */
   async home(identity: VerifiedWebIdentity) {
-    return this.authority.authenticated(identity, async (tx, actor) => {
+    return this.authenticatedRead(identity, async (tx, actor) => {
       const sources = this.attentionSources(actor);
       const visibleProject = `((p.adapter_id=$2 AND $4::boolean AND EXISTS(SELECT 1 FROM control_manual_project_heads h
         WHERE h.tenant_id=p.tenant_id AND h.project_id=p.id)) OR (p.adapter_id=$3 AND $5::boolean))`;
@@ -927,7 +932,7 @@ export class WebTaskService {
    * current, review-waiting and recent task sets complete within their stated limits. */
   async projectOverview(identity: VerifiedWebIdentity, projectId: string) {
     this.id(projectId);
-    return this.authority.authenticated(identity, async (tx, actor) => {
+    return this.authenticatedRead(identity, async (tx, actor) => {
       actor.require("tasks.read", projectId);
       await this.projects.getViewInSession(tx, actor, projectId);
       const read = async (states: readonly string[] | undefined, maximum: number) => {
@@ -965,7 +970,7 @@ export class WebTaskService {
    * available only through the exact task result route; no storage locator is exposed. */
   async projectFiles(identity: VerifiedWebIdentity, projectId: string) {
     this.id(projectId);
-    return this.authority.authenticated(identity, async (tx, actor) => {
+    return this.authenticatedRead(identity, async (tx, actor) => {
       actor.require("tasks.read", projectId);
       await this.projects.getViewInSession(tx, actor, projectId);
       if (!actor.can("tasks.results.read", projectId)) return taskProjectFilesSchema.parse({ projectId, items: [],

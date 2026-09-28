@@ -287,14 +287,32 @@ export class CompletionGateStoreV1 {
    * integrity and rollback evidence are verified once, then the same snapshots
    * are computed from the authenticated record set in memory. */
   async inspectSubjects(tenantId:string,subjects:readonly {projectId:string;subjectId:string}[]){
-    return this.db.transaction(async(tx)=>this.inspectSubjectsFromRecords(await this.lockAndVerifyTenantState(tx,tenantId),subjects));
+    return this.db.transaction(async(tx)=>this.inspectSubjectsFromRecords(await this.lockAndVerifyTenantState(tx,tenantId,"read"),subjects));
+  }
+
+  /** One checkpoint-authenticated read model for result-open option panels.
+   * The caller receives the target snapshot, its profile, and the already
+   * authenticated record set so it never re-scans the tenant per review or
+   * verification descriptor. */
+  async inspectTargetContext(tenantId:string,targetId:string){
+    return this.db.transaction(async tx=>{
+      const records=await this.lockAndVerifyTenantState(tx,tenantId,"read");
+      const targetEntry=records.find(entry=>entry.kind==="target"&&entry.record.id===targetId);
+      if(!targetEntry)throw new CompletionGateErrorV1("record_not_found");
+      const target=targetEntry.record as CompletionReviewTargetV1;
+      const profileEntry=records.find(entry=>entry.kind==="profile"&&entry.record.id===target.acceptanceProfileId);
+      if(!profileEntry)throw new CompletionGateErrorV1("record_not_found");
+      const evidence=this.inspectTargetFromRecords(records,target,profileEntry.record as CompletionAcceptanceProfileV1);
+      return{snapshot:evidence.snapshot,profile:profileEntry.record as CompletionAcceptanceProfileV1,
+        records:new Map(records.map(entry=>[JSON.stringify([entry.kind,entry.record.id]),entry.record] as const))};
+    });
   }
 
   /** One authenticated tenant snapshot shared by summary projections that need
    * both subject evidence and exact records. */
   async inspectSubjectsAndRecords(tenantId:string,subjects:readonly {projectId:string;subjectId:string}[],
     ids:readonly string[],kind:CompletionGateRecordKindV1){
-    return this.db.transaction(async(tx)=>{const authenticated=await this.lockAndVerifyTenantState(tx,tenantId),wanted=new Set(ids);
+    return this.db.transaction(async(tx)=>{const authenticated=await this.lockAndVerifyTenantState(tx,tenantId,"read"),wanted=new Set(ids);
       return{subjects:this.inspectSubjectsFromRecords(authenticated,subjects),records:new Map(authenticated
         .filter(entry=>entry.kind===kind&&wanted.has(entry.record.id)).map(entry=>[entry.record.id,entry.record]))};});
   }
@@ -313,34 +331,39 @@ export class CompletionGateStoreV1 {
         for(const target of targets.slice(0,20)){
           const profile=records.find(entry=>entry.kind==="profile"&&entry.record.id===target.acceptanceProfileId)?.record as CompletionAcceptanceProfileV1|undefined;
           if(!profile)throw new CompletionGateErrorV1("record_not_found");
-          const reviews=records.filter(entry=>entry.kind==="review"&&entry.record.projectId===subject.projectId
-            &&(entry.record as CompletionReviewV1).targetId===target.id).map(entry=>entry.record) as CompletionReviewV1[];
-          const verifications=records.filter(entry=>entry.kind==="verification"&&entry.record.projectId===subject.projectId
-            &&(entry.record as CompletionVerificationV1).targetId===target.id).map(entry=>entry.record) as CompletionVerificationV1[];
-          const findings=records.filter(entry=>entry.kind==="finding"&&entry.record.projectId===subject.projectId
-            &&(entry.record as CompletionFindingV1).targetId===target.id).map(entry=>entry.record) as CompletionFindingV1[];
-          const revisions=records.filter(entry=>entry.kind==="revision"&&entry.record.projectId===subject.projectId
-            &&(entry.record as CompletionRevisionV1).fromTargetId===target.id).map(entry=>entry.record) as CompletionRevisionV1[];
-          const byTimeAndId=(kind:CompletionGateRecordKindV1)=>(left:CompletionGateRecordV1,right:CompletionGateRecordV1)=>describe(kind,left).occurredAt
-            .localeCompare(describe(kind,right).occurredAt)||left.id.localeCompare(right.id);
-          reviews.sort(byTimeAndId("review"));verifications.sort(byTimeAndId("verification"));findings.sort(byTimeAndId("finding"));
-          const accepted=[...new Set(reviews.filter(review=>review.authority==="completion_gate"&&review.decision==="accepted").map(review=>review.id))].sort();
-          const passed=new Set(verifications.filter(verification=>verification.outcome==="passed").map(verification=>verification.scenarioId));
-          const missing=profile.requiredVerificationScenarioIds.filter(scenario=>!passed.has(scenario));
-          const blocked=verifications.some(verification=>profile.requiredVerificationScenarioIds.includes(verification.scenarioId)&&verification.outcome!=="passed");
-          const openFindings=findings.map(finding=>finding.id).sort();let status:CompletionGateSnapshotV1["status"]="pending";
-          if(revisions.length)status="superseded";else if(openFindings.length&&target.revisionNumber>=profile.maximumRevisionRounds)status="revision_limit_reached";
-          else if(openFindings.length)status="changes_requested";else if(blocked)status="verification_blocked";
-          else if(missing.length===0&&accepted.length>=profile.minimumIndependentReviews)status="ready";
-          const snapshot:CompletionGateSnapshotV1={target,targetDigest:sha256Digest(target),status,acceptedReviewIds:accepted,
-            missingVerificationScenarioIds:missing,openFindingIds:openFindings,revisionNumber:target.revisionNumber,
-            requiresSeparateApproval:true,grantsApproval:false,grantsExecutionAuthority:false};
-          projected.push({snapshot,reviews:reviews.slice(-50),verifications:verifications.slice(-50),findings:findings.slice(-100),
-            additionalEvidenceOmitted:reviews.length>50||verifications.length>50||findings.length>100});
+          projected.push(this.inspectTargetFromRecords(records,target,profile));
         }
         output.set(JSON.stringify([subject.projectId,subject.subjectId]),{targets:projected,additionalTargetsOmitted:targets.length>20});
       }
       return output;
+  }
+
+  private inspectTargetFromRecords(records:{kind:CompletionGateRecordKindV1;record:CompletionGateRecordV1}[],
+    target:CompletionReviewTargetV1,profile:CompletionAcceptanceProfileV1){
+    const reviews=records.filter(entry=>entry.kind==="review"&&entry.record.projectId===target.projectId
+      &&(entry.record as CompletionReviewV1).targetId===target.id).map(entry=>entry.record) as CompletionReviewV1[];
+    const verifications=records.filter(entry=>entry.kind==="verification"&&entry.record.projectId===target.projectId
+      &&(entry.record as CompletionVerificationV1).targetId===target.id).map(entry=>entry.record) as CompletionVerificationV1[];
+    const findings=records.filter(entry=>entry.kind==="finding"&&entry.record.projectId===target.projectId
+      &&(entry.record as CompletionFindingV1).targetId===target.id).map(entry=>entry.record) as CompletionFindingV1[];
+    const revisions=records.filter(entry=>entry.kind==="revision"&&entry.record.projectId===target.projectId
+      &&(entry.record as CompletionRevisionV1).fromTargetId===target.id).map(entry=>entry.record) as CompletionRevisionV1[];
+    const byTimeAndId=(kind:CompletionGateRecordKindV1)=>(left:CompletionGateRecordV1,right:CompletionGateRecordV1)=>describe(kind,left).occurredAt
+      .localeCompare(describe(kind,right).occurredAt)||left.id.localeCompare(right.id);
+    reviews.sort(byTimeAndId("review"));verifications.sort(byTimeAndId("verification"));findings.sort(byTimeAndId("finding"));
+    const accepted=[...new Set(reviews.filter(review=>review.authority==="completion_gate"&&review.decision==="accepted").map(review=>review.id))].sort();
+    const passed=new Set(verifications.filter(verification=>verification.outcome==="passed").map(verification=>verification.scenarioId));
+    const missing=profile.requiredVerificationScenarioIds.filter(scenario=>!passed.has(scenario));
+    const blocked=verifications.some(verification=>profile.requiredVerificationScenarioIds.includes(verification.scenarioId)&&verification.outcome!=="passed");
+    const openFindings=findings.map(finding=>finding.id).sort();let status:CompletionGateSnapshotV1["status"]="pending";
+    if(revisions.length)status="superseded";else if(openFindings.length&&target.revisionNumber>=profile.maximumRevisionRounds)status="revision_limit_reached";
+    else if(openFindings.length)status="changes_requested";else if(blocked)status="verification_blocked";
+    else if(missing.length===0&&accepted.length>=profile.minimumIndependentReviews)status="ready";
+    const snapshot:CompletionGateSnapshotV1={target,targetDigest:sha256Digest(target),status,acceptedReviewIds:accepted,
+      missingVerificationScenarioIds:missing,openFindingIds:openFindings,revisionNumber:target.revisionNumber,
+      requiresSeparateApproval:true,grantsApproval:false,grantsExecutionAuthority:false};
+    return{snapshot,reviews:reviews.slice(-50),verifications:verifications.slice(-50),findings:findings.slice(-100),
+      additionalEvidenceOmitted:reviews.length>50||verifications.length>50||findings.length>100};
   }
 
   /** Checkpoint-authenticated, writer-serialized evidence for a server-side context consumer.
@@ -387,7 +410,7 @@ export class CompletionGateStoreV1 {
 
   /** Fixed-query authenticated lookup for bounded read projections. */
   async getRecords(tenantId:string,ids:readonly string[],kind:CompletionGateRecordKindV1){
-    return this.db.transaction(async(tx)=>{const records=await this.lockAndVerifyTenantState(tx,tenantId),wanted=new Set(ids);
+    return this.db.transaction(async(tx)=>{const records=await this.lockAndVerifyTenantState(tx,tenantId,"read"),wanted=new Set(ids);
       return new Map(records.filter(entry=>entry.kind===kind&&wanted.has(entry.record.id)).map(entry=>[entry.record.id,entry.record]));});
   }
 
@@ -485,8 +508,8 @@ export class CompletionGateStoreV1 {
   private async readCheckpoint(tenantId:string){try{return await this.checkpointOperation(signal => this.checkpointRead(this.checkpointScope(tenantId), signal));}catch{throw new CompletionGateErrorV1("integrity_failed");}}
   private async assertCheckpoint(tenantId:string,row:CompletionIntegrityRow){try{const expected=this.checkpoint(tenantId,Number(row.revision),Number(row.record_count),row.state_digest,row.state_auth_tag),known=await this.readCheckpoint(tenantId);if(!known||rollbackCheckpointDigestV1(known)!==rollbackCheckpointDigestV1(expected))throw new Error("mismatch");return expected;}catch{throw new CompletionGateErrorV1("integrity_failed");}}
   private async computedTenantState(source:QuerySource,tenantId:string){const result=await source.query<CompletionRow>(`SELECT ${columns} FROM control_completion_gate_records WHERE tenant_id=$1 ORDER BY kind,id`,[tenantId]);const verified=result.rows.map(row=>({kind:row.kind,record:this.verifiedRow(row)}));const records=result.rows.map((row)=>({id:row.id,projectId:row.project_id,kind:row.kind,recordKey:row.record_key,subjectId:row.subject_id,parentId:row.parent_id,recordDigest:row.record_digest,recordAuthTag:row.record_auth_tag,occurredAt:iso(row.occurred_at)}));return{recordCount:records.length,stateDigest:sha256Digest({tenantId,records}),verified};}
-  private async lockAndVerifyTenantState(source:DatabaseSession,tenantId:string){
-    const result=await source.query<CompletionIntegrityRow>("SELECT * FROM control_completion_gate_integrity WHERE tenant_id=$1 FOR UPDATE",[tenantId]);
+  private async lockAndVerifyTenantState(source:DatabaseSession,tenantId:string,mode:"read"|"write"="write"){
+    const result=await source.query<CompletionIntegrityRow>(`SELECT * FROM control_completion_gate_integrity WHERE tenant_id=$1 ${mode==="read"?"FOR SHARE":"FOR UPDATE"}`,[tenantId]);
     const integrity=result.rows[0],computed=await this.computedTenantState(source,tenantId);
     if(!integrity||Number(integrity.revision)<1||Number(integrity.record_count)!==computed.recordCount||integrity.state_digest!==computed.stateDigest
       ||!sameTag(integrity.state_auth_tag,this.tenantStateTag(tenantId,Number(integrity.revision),computed.recordCount,computed.stateDigest)))

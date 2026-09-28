@@ -215,6 +215,48 @@ export class HarnessRunStoreV1 {
     return row ? { run: verifyStoredHarnessRunV1(row, this.integrityKey), events: row.event_rows.map(event => verifiedEvent(event, this.integrityKey)) } : undefined;
   }
 
+  /** Fixed-query equivalent of inspect for bounded presentation reads. */
+  async inspectMany(tenantId: string, runIds: readonly string[]): Promise<ReadonlyMap<string,
+    { run: HarnessRunV1; events: HarnessRunEventV1[] }>> {
+    const ids = [...new Set(runIds)];
+    if (!ids.length) return new Map();
+    const rows = (await this.db.query<StoredHarnessRunRowV1>(`SELECT ${harnessRunProjectionV1()}
+      FROM control_harness_runs r WHERE r.tenant_id=$1 AND r.id=ANY($2::text[]) ORDER BY r.id COLLATE "C"`,
+    [tenantId, ids])).rows;
+    const requested = new Set(ids), output = new Map<string, { run: HarnessRunV1; events: HarnessRunEventV1[] }>();
+    for (const row of rows) {
+      if (!requested.has(row.id) || output.has(row.id)) throw new Error("harness run integrity failure");
+      const run = verifyStoredHarnessRunV1(row, this.integrityKey);
+      output.set(row.id, { run, events: row.event_rows.map(event => verifiedEvent(event, this.integrityKey)) });
+    }
+    return output;
+  }
+
+  /** One bounded query for task-detail attempt histories. */
+  async inspectAttempts(tenantId: string, projectId: string, jobId: string,
+    attemptIds: readonly string[]): Promise<ReadonlyMap<string, readonly { run: HarnessRunV1; events: HarnessRunEventV1[] }[]>> {
+    const ids = [...new Set(attemptIds)];
+    if (!ids.length) return new Map();
+    const rows = (await this.db.query<StoredHarnessRunRowV1>(`SELECT ${harnessRunProjectionV1()}
+      FROM unnest($4::text[]) WITH ORDINALITY wanted(attempt_id,attempt_order)
+      CROSS JOIN LATERAL (SELECT candidate.* FROM control_harness_runs candidate
+        WHERE candidate.tenant_id=$1 AND candidate.project_id=$2 AND candidate.job_id=$3
+          AND candidate.attempt_id=wanted.attempt_id
+        ORDER BY candidate.created_at DESC,candidate.id DESC LIMIT 11) r
+      ORDER BY wanted.attempt_order,r.created_at DESC,r.id DESC`, [tenantId, projectId, jobId, ids])).rows;
+    const requested = new Set(ids), output = new Map<string, { run: HarnessRunV1; events: HarnessRunEventV1[] }[]>();
+    for (const row of rows) {
+      const run = verifyStoredHarnessRunV1(row, this.integrityKey);
+      if (!requested.has(run.attemptId) || run.tenantId !== tenantId || run.projectId !== projectId || run.jobId !== jobId)
+        throw new Error("harness run integrity failure");
+      const values = output.get(run.attemptId) ?? [];
+      if (values.some(value => value.run.id === run.id)) throw new Error("harness run integrity failure");
+      values.push({ run, events: row.event_rows.map(event => verifiedEvent(event, this.integrityKey)) });
+      output.set(run.attemptId, values);
+    }
+    return output;
+  }
+
   async events(tenantId: string, runId: string, limit = 200): Promise<HarnessRunEventV1[]> {
     if (!Number.isInteger(limit) || limit < 1 || limit > 500) throw new Error("invalid harness event limit");
     const run=await this.get(tenantId,runId); if (!run) return [];

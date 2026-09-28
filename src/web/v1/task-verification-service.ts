@@ -71,7 +71,7 @@ export class WebTaskVerificationService {
     return `verification:owner:${sha256Digest({ tenantId: this.scope.tenantId, actorId: actor.id, targetId, scenarioId }).slice(7)}`;
   }
   private async context(tx: DatabaseSession, actor: WebActor, projectId: string, jobId: string, artifactId: string, targetId: string,
-    gate = this.gate(tx)) {
+    gate = this.gate(tx), readOnly = false) {
     actor.require("tasks.read", projectId); actor.require("tasks.results.read", projectId);
     const project = await this.projects.getViewInSession(tx, actor, projectId);
     const row = (await tx.query<{ payload: unknown; state: string; version: number }>(
@@ -82,9 +82,11 @@ export class WebTaskVerificationService {
     if (job.tenantId !== this.scope.tenantId || job.projectId !== projectId || job.id !== jobId || job.state !== row.state
       || job.version !== Number(row.version) || job.authority.projectId !== projectId || computeAuthorityDigest(job.authority) !== job.authority.digest)
       throw new Error("verification_task_unavailable");
-    const snapshot = await gate.snapshot(this.scope.tenantId, targetId), target = snapshot.target;
+    const inspected = readOnly ? await gate.inspectTargetContext(this.scope.tenantId, targetId) : undefined;
+    const snapshot = inspected?.snapshot ?? await gate.snapshot(this.scope.tenantId, targetId), target = snapshot.target;
     if (target.projectId !== projectId || target.kind !== "document") throw new WebAccessError("not_found");
-    const profile = await gate.getRecord(this.scope.tenantId, target.acceptanceProfileId, "profile") as CompletionAcceptanceProfileV1;
+    const profile = inspected?.profile ?? await gate.getRecord(this.scope.tenantId,
+      target.acceptanceProfileId, "profile") as CompletionAcceptanceProfileV1;
     const result = await this.results.read(tx, this.scope.tenantId, projectId, jobId, artifactId);
     if (!result || result.receipt.contentHash !== target.subjectDigest || result.receipt.nodeId !== target.producer.actorId
       || target.producer.actorType !== "agent") throw new WebAccessError("conflict");
@@ -94,13 +96,14 @@ export class WebTaskVerificationService {
       && value.acceptanceProfileDigest === sha256Digest(profile) && profile.requiredVerificationScenarioIds.includes(value.scenarioId));
     const acceptedReviews: CompletionReviewV1[] = [];
     for (const reviewId of snapshot.acceptedReviewIds) {
-      const review = await gate.getRecord(this.scope.tenantId, reviewId, "review") as CompletionReviewV1 | undefined;
+      const review = (inspected ? inspected.records.get(JSON.stringify(["review", reviewId]))
+        : await gate.getRecord(this.scope.tenantId, reviewId, "review")) as CompletionReviewV1 | undefined;
       if (!review || review.targetId !== target.id || review.targetDigest !== snapshot.targetDigest
         || review.authority !== "completion_gate" || review.decision !== "accepted") throw new Error("verification_history_unavailable");
       acceptedReviews.push(review);
     }
     const ownAcceptedReview = acceptedReviews.some(review => review.reviewer.actorType === "human" && review.reviewer.actorId === actor.id);
-    return { project, snapshot, profile, result, descriptors, gate, ownAcceptedReview,
+    return { project, snapshot, profile, result, descriptors, gate, records: inspected?.records, ownAcceptedReview,
       risk: risks[Math.max(risks.indexOf(profile.minimumRisk), risks.indexOf(job.authority.maxRisk))] };
   }
   private availability(actor: WebActor, context: Awaited<ReturnType<WebTaskVerificationService["context"]>>, prior: boolean,
@@ -115,7 +118,8 @@ export class WebTaskVerificationService {
   }
   private async prior(actor: WebActor, context: Awaited<ReturnType<WebTaskVerificationService["context"]>>, descriptor: ManualVerificationScenario) {
     const recordId = this.recordId(actor, context.snapshot.target.id, descriptor.scenarioId);
-    const value = await context.gate.getRecord(this.scope.tenantId, recordId, "verification") as CompletionVerificationV1 | undefined;
+    const value = (context.records ? context.records.get(JSON.stringify(["verification", recordId]))
+      : await context.gate.getRecord(this.scope.tenantId, recordId, "verification")) as CompletionVerificationV1 | undefined;
     if (value && (value.id !== recordId || value.tenantId !== this.scope.tenantId || value.projectId !== context.project.projectId
       || value.targetId !== context.snapshot.target.id || value.targetDigest !== context.snapshot.targetDigest
       || value.acceptanceProfileId !== context.profile.id || value.acceptanceProfileDigest !== sha256Digest(context.profile)
@@ -128,7 +132,7 @@ export class WebTaskVerificationService {
   async options(identity: VerifiedWebIdentity, projectId: string, jobId: string, artifactId: string, targetId: string) {
     this.ids(projectId, jobId, artifactId, targetId);
     return new WebSessionAuthority(this.db, this.scope, this.clock, "task").authenticated(identity, async (tx, actor) => {
-      const context = await this.context(tx, actor, projectId, jobId, artifactId, targetId);
+      const context = await this.context(tx, actor, projectId, jobId, artifactId, targetId, this.gate(tx), true);
       const binding = { projectId, jobId, artifactId, targetId, targetDigest: context.snapshot.targetDigest, contentHash: context.result.receipt.contentHash };
       const scenarios = [];
       for (const descriptor of context.descriptors) {
@@ -142,7 +146,7 @@ export class WebTaskVerificationService {
             grantsExecutionAuthority: false, completesJob: false } : null });
       }
       return taskVerificationOptionsSchema.parse({ ...binding, scenarios, source: scenarios.length ? "configured" : "not_configured", grantsExecutionAuthority: false });
-    });
+    }, { readOnly: true });
   }
   async record(identity: VerifiedWebIdentity, projectId: string, jobId: string, input: unknown) {
     this.ids(projectId, jobId); const parsed = taskVerificationDraftSchema.safeParse(input);
