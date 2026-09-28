@@ -34,6 +34,13 @@ proposal semantics but cannot distinguish one bearer identity from another.
 Per-agent database logins would be a separate authority design and are not part
 of this slice.
 
+The intake group can read the shared authorization metadata required to lock
+and validate its caller (`control_identities`, `control_role_grants`, and
+`projects`). That read scope crosses tenant rows by design because the
+authorization query must resolve the caller before applying project scope; it
+does not grant proposal, task, assignment, or execution authority outside the
+validated project.
+
 The migration is forward-only in normal operation. If an operator prepares a
 database recovery that removes this source-only slice, the reviewed recovery
 SQL must lock both new tables and refuse while any batch exists. The executable,
