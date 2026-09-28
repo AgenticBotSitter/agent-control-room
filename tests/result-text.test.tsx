@@ -85,6 +85,28 @@ test("result open mounts command readers only for the newest current matching ta
   assert.match(html, /Revision 0/); assert.match(html, /Revision 1/);
 });
 
+test("result open selects the highest revision when stale-first matching leaves are unlinked", () => {
+  const contentHash = `sha256:${"d".repeat(64)}`, targetDigest = `sha256:${"e".repeat(64)}`;
+  const artifact = { artifactId: "artifact:unlinked", attemptId: "attempt:test", runId: "run:test", contentHash,
+    sizeBytes: 12, receivedAt: "2026-09-08T12:00:00.000Z", byteCheck: "matched_recorded_claim" as const,
+    qualityAccepted: false as const };
+  const evidence = (targetId: string, revision: number) => ({ targetId, kind: "document" as const, targetDigest,
+    contentHash, revision, supersedesTargetId: null, status: "pending" as const, matchingArtifactIds: [artifact.artifactId],
+    additionalEvidenceOmitted: false, reviews: [], verifications: [], findings: [], missingVerificationScenarioIds: [],
+    openFindingCount: 0, grantsApproval: false as const, grantsExecutionAuthority: false as const });
+  const page: TaskResultsPage = { projectId: "project:test", jobId: "job:test", observedAt: artifact.receivedAt,
+    resultSource: "configured", reviewSource: "configured", items: [artifact],
+    reviews: [evidence("target:stale-first", 0), evidence("target:newest-second", 2), evidence("target:equal-later", 2)],
+    additionalResultsOmitted: false, additionalTargetsOmitted: false, canReadContent: true,
+    reviewCommands: "configured", verificationCommands: "not_connected" };
+  const content: TaskResultContent = { projectId: page.projectId, jobId: page.jobId, artifact,
+    text: "Current result", contentVerifiedAt: artifact.receivedAt, untrustedContent: true };
+  const targets: string[] = [], workspace = createTaskReviewWorkspace();
+  renderToStaticMarkup(<TaskResultsPanel page={page} content={content} pending={false} onOpen={() => {}} onClose={() => {}}
+    reviewWorkspace={{ ...workspace, get(binding) { targets.push(binding.targetId); return workspace.get(binding); } }} />);
+  assert.deepEqual(targets, ["target:newest-second"]);
+});
+
 test("oversized results retain full plain text without Markdown parsing", () => {
   const text = "x".repeat(32769);
   const html = renderToStaticMarkup(<ResultText text={text} />);

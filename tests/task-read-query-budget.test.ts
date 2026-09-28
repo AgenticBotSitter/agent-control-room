@@ -6,14 +6,14 @@ import { WebProjectService } from "../src/web/v1/project-service";
 import type { DatabaseClient, DatabaseSession } from "../src/persistence/database";
 import { ownerReviewFixture } from "./helpers/web-owner-review";
 import { binding, instant } from "./hermes-native-fixture";
-import { at } from "./native-task-fixture";
-import { computeAuthorityDigest, sha256Digest } from "../src/security";
+import { at, registration } from "./native-task-fixture";
+import { computeAuthorityDigest, hmacSha256Tag, sha256Digest } from "../src/security";
 import type { CompletionReviewV1, CompletionVerificationV1 } from "../src/completion-gate/v1";
 import { TaskExecutionPlanner, type NativeTaskTemplate } from "../src/web/v1/task-execution-planner";
 import { CONTROLLER_WORKER_REMOTE_ADAPTER_V1, CONTROLLER_WORKER_REMOTE_START_OPERATION_V1 } from "../src/harness/v1/remote-worker-delivery";
 import { taskDraft } from "./helpers/web-task";
 import { WebTaskVerificationService } from "../src/web/v1/task-verification-service";
-import { HarnessRunStoreV1 } from "../src/harness/v1/store";
+import { HarnessRunStoreV1, type StoredHarnessRunRowV1 } from "../src/harness/v1/store";
 import { readResultBoundWorktreeChangeAuditSummariesV1 } from "../src/harness/v1/worktree-change-audit-record-store";
 import { NativeResultStore } from "../src/artifacts/v1/native-results";
 
@@ -352,6 +352,39 @@ test("full task detail stays fixed-query while processing ten populated attempts
   const one = await measure(1), ten = await measure(10);
   assert.equal(one.attempts, 1); assert.equal(ten.attempts, 10);
   assert.equal(ten.queries, one.queries, `task detail added per-attempt queries: ${JSON.stringify({ one, ten })}`);
+});
+
+test("task detail reports additional runs only when an attempt has more than ten", async t => {
+  const f = await ownerReviewFixture(); t.after(f.close);
+  const row = (index: number): StoredHarnessRunRowV1 => {
+    const timestamp = at(3000 + index), run = { ...registration, id: `run:omission:${index}`,
+      createdAt: timestamp, updatedAt: timestamp, lastObservedAt: timestamp };
+    const runDigest = sha256Digest(run);
+    return { id: run.id, tenant_id: run.tenantId, project_id: run.projectId, job_id: run.jobId,
+      attempt_id: run.attemptId, node_id: run.nodeId, adapter_id: run.adapterId, harness: run.harness,
+      native_session_key_digest: run.nativeSessionKeyDigest, parent_run_id: run.parentRunId ?? null,
+      revision_of_run_id: run.revisionOfRunId ?? null, payload: run, last_sequence: 0, run_digest: runDigest,
+      run_auth_tag: hmacSha256Tag(f.harnessKey, { id: run.id, tenantId: run.tenantId, projectId: run.projectId,
+        jobId: run.jobId, attemptId: run.attemptId, nodeId: run.nodeId, adapterId: run.adapterId, harness: run.harness,
+        nativeSessionKeyDigest: run.nativeSessionKeyDigest, parentRunId: run.parentRunId ?? null,
+        revisionOfRunId: run.revisionOfRunId ?? null, state: run.state, lastSequence: 0, runDigest,
+        createdAt: timestamp, updatedAt: timestamp, lastObservedAt: timestamp }), state: run.state,
+      created_at: timestamp, updated_at: timestamp, last_observed_at: timestamp, event_rows: [] };
+  };
+  const withRuns = (count: number): DatabaseClient => {
+    const wrap = (tx: DatabaseSession): DatabaseSession => ({ query: async <T>(sql: string, params?: unknown[]) => {
+      if (sql.includes("FROM unnest($4::text[]) WITH ORDINALITY"))
+        return { rows: Array.from({ length: count }, (_, index) => row(index + 1)) as T[] };
+      return tx.query<T>(sql, params);
+    } });
+    return { query: f.db.query.bind(f.db), transaction: work => f.db.transaction(tx => work(wrap(tx))),
+      transactionWithPreCommitCheck: (work, check) => f.db.transactionWithPreCommitCheck(tx => work(wrap(tx)), check) };
+  };
+  const detail = (count: number) => new WebTaskService(withRuns(count), f.scope, () => instant + 6000, f.ownerKeys)
+    .detail(f.identity, binding.projectId, binding.jobId);
+  const ten = await detail(10), eleven = await detail(11);
+  assert.equal(ten.attempts[0]!.runs.length, 10); assert.equal(ten.attempts[0]!.additionalRunsOmitted, false);
+  assert.equal(eleven.attempts[0]!.runs.length, 10); assert.equal(eleven.attempts[0]!.additionalRunsOmitted, true);
 });
 
 test("full result page stays fixed-query while processing ten populated artifacts", async t => {

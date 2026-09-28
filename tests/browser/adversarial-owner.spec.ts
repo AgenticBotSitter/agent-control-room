@@ -66,10 +66,10 @@ function observeBrowserErrors(page: Page, errors: string[], observeHttpFailures 
 async function prepareAcceptance(page: Page) {
   const attestation = page.getByLabel("I read it and it’s correct");
   const accept = page.getByRole("button", { name: "Accept", exact: true });
-  await expect.poll(async () => {
-    if (await attestation.isVisible().catch(() => false)) { await attestation.check(); return true; }
-    return accept.isEnabled().catch(() => false);
-  }, { timeout: 20_000 }).toBe(true);
+  const available = page.getByRole("region", { name: "Owner quality decision" })
+    .getByRole("heading", { name: "Review this exact result" });
+  await expect(available).toBeVisible({ timeout: 10_000 });
+  if (await attestation.isVisible()) await attestation.check();
   await expect(accept).toBeEnabled();
 }
 

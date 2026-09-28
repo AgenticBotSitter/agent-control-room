@@ -26,8 +26,9 @@ export function TaskResultsPanel({ page, content: suppliedContent, pending, sele
   const matchingTargets = content ? page.reviews.filter(review => review.kind === "document"
     && review.matchingArtifactIds.includes(content.artifact.artifactId)
     && review.contentHash === content.artifact.contentHash) : [];
-  const commandTargetId = matchingTargets.find(candidate =>
-    !page.reviews.some(next => next.supersedesTargetId === candidate.targetId))?.targetId;
+  const commandTargetId = matchingTargets.filter(candidate =>
+    !page.reviews.some(next => next.supersedesTargetId === candidate.targetId)).reduce<TaskReviewEvidence | undefined>(
+      (newest, candidate) => !newest || candidate.revision > newest.revision ? candidate : newest, undefined)?.targetId;
   // Keyboard focus follows the open file: into the content region when one
   // opens, and back to the button that opened it when it closes, so a keyboard
   // user is never returned to the top of a long list.
