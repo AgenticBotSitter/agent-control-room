@@ -785,8 +785,10 @@ test("documented clean-cluster provision/migrate/backup/restore/verify journey",
   }
   assert.deepEqual(await roleMemberships(cleanTarget), memberships, "restored target carries the clean install memberships");
   const restoredOwners = (await cleanQuery(targetSocket, TARGET_PORT, "cr_clean_restored",
-    "SELECT DISTINCT pg_get_userbyid(c.relowner) AS owner FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'public'")).rows;
-  assert.deepEqual(restoredOwners.map(row => row.owner), ["control_room_schema_owner"]);
+    `SELECT c.relname,c.relkind,pg_get_userbyid(c.relowner) AS owner FROM pg_class c
+      JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' ORDER BY c.relname`)).rows;
+  assert.deepEqual([...new Set(restoredOwners.map(row => row.owner))], ["control_room_schema_owner"],
+    `unexpected restored public owners: ${JSON.stringify(restoredOwners.filter(row => row.owner!=="control_room_schema_owner"))}`);
   // Database ownership matches the source: the recorded owner is re-applied,
   // not the invoking administrator.
   const targetDbOwner = (await cleanQuery(targetSocket, TARGET_PORT, "postgres",
