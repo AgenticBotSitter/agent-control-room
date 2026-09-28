@@ -163,6 +163,31 @@ test("result open selects the highest revision when stale-first matching leaves 
   assert.deepEqual(targets, ["target:newest-second"]);
 });
 
+test("result open target selection excludes other kinds and hashes before comparing revisions", () => {
+  const contentHash = `sha256:${"6".repeat(64)}`, otherHash = `sha256:${"7".repeat(64)}`;
+  const targetDigest = `sha256:${"8".repeat(64)}`;
+  const artifact = { artifactId: "artifact:filter-pin", attemptId: "attempt:test", runId: "run:test", contentHash,
+    sizeBytes: 12, receivedAt: "2026-09-08T12:00:00.000Z", byteCheck: "matched_recorded_claim" as const,
+    qualityAccepted: false as const };
+  const evidence = (targetId: string, revision: number, kind: "document" | "code", hash: string) => ({ targetId,
+    kind, targetDigest, contentHash: hash, revision, supersedesTargetId: null, status: "pending" as const,
+    matchingArtifactIds: [artifact.artifactId], additionalEvidenceOmitted: false, reviews: [], verifications: [], findings: [],
+    missingVerificationScenarioIds: [], openFindingCount: 0, grantsApproval: false as const, grantsExecutionAuthority: false as const });
+  const page: TaskResultsPage = { projectId: "project:test", jobId: "job:test", observedAt: artifact.receivedAt,
+    resultSource: "configured", reviewSource: "configured", items: [artifact], reviews: [
+      evidence("target:matching-document", 1, "document", contentHash),
+      evidence("target:wrong-hash", 2, "document", otherHash),
+      evidence("target:wrong-kind", 3, "code", contentHash),
+    ], additionalResultsOmitted: false, additionalTargetsOmitted: false, canReadContent: true,
+    reviewCommands: "configured", verificationCommands: "not_connected" };
+  const content: TaskResultContent = { projectId: page.projectId, jobId: page.jobId, artifact,
+    text: "Filter pin", contentVerifiedAt: artifact.receivedAt, untrustedContent: true };
+  const targets: string[] = [], workspace = createTaskReviewWorkspace();
+  renderToStaticMarkup(<TaskResultsPanel page={page} content={content} pending={false} onOpen={() => {}} onClose={() => {}}
+    reviewWorkspace={{ ...workspace, get(binding) { targets.push(binding.targetId); return workspace.get(binding); } }} />);
+  assert.deepEqual(targets, ["target:matching-document"]);
+});
+
 test("oversized results retain full plain text without Markdown parsing", () => {
   const text = "x".repeat(32769);
   const html = renderToStaticMarkup(<ResultText text={text} />);

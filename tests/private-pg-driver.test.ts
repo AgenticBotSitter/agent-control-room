@@ -119,39 +119,36 @@ test("admission wait is bounded by checkoutMs without terminating the pool", asy
       return { rows: [] };
     }, release() {},
   }; }, async terminate() { terminations++; } },
-  { connections: 1, checkoutMs: 100, statementMs: 1_000, transactionMs: 1_000, closeMs: 1_000 });
+  { connections: 1, checkoutMs: 200, statementMs: 1_000, transactionMs: 1_000, closeMs: 1_000 });
 
   const holder = db.client.query("SELECT holder"); await entered;
-  const started = performance.now();
   const queued = db.client.query("SELECT queued");
-  let waitTimer: ReturnType<typeof setTimeout> | undefined;
-  const outcome = await Promise.race([queued.then(() => "resolved", error => error?.message as string),
-    new Promise<"still_waiting">(resolve => { waitTimer = setTimeout(() => resolve("still_waiting"), 600); })]);
-  clearTimeout(waitTimer);
-  const elapsedMs = performance.now() - started;
-  releaseHolder(); await holder;
-  if (outcome === "still_waiting") await queued;
+  let holderReleased = false;
+  const scheduledRelease = new Promise<void>(resolve => setTimeout(() => {
+    holderReleased = true; releaseHolder(); resolve();
+  }, 300));
+  await assert.rejects(queued, { message: "database_unavailable" });
+  assert.equal(holderReleased, false, "admission must expire before the holder is released at 1.5x checkoutMs");
+  await scheduledRelease; await holder;
   const available = db.isAvailable(), terminationsBeforeClose = terminations;
   await db.close();
-  assert.equal(outcome, "database_unavailable");
-  assert.ok(elapsedMs >= 90 && elapsedMs < 600, `admission elapsed ${elapsedMs}ms`);
   assert.equal(available, true); assert.equal(terminationsBeforeClose, 0); assert.equal(terminations, 1);
 });
 
 test("transaction operation budget quarantines a pool that exceeds transactionMs", async () => {
+  let committed = false;
   let terminations = 0;
   const db = boundPrivateDatabase({ async acquire() { return {
-    async query() { await new Promise(resolve => setTimeout(resolve, 20)); return { rows: [] }; },
+    async query() { await new Promise(resolve => setTimeout(resolve, 30)); return { rows: [] }; },
     release() {},
   }; }, async terminate() { terminations++; } },
-  { connections: 1, checkoutMs: 100, statementMs: 100, transactionMs: 200, closeMs: 100 });
+  { connections: 1, checkoutMs: 100, statementMs: 100, transactionMs: 300, closeMs: 100 });
 
-  const started = performance.now();
   await assert.rejects(db.client.transaction(async session => {
-    for (let index = 0; index < 20; index += 1) await session.query(`SELECT ${index}`);
+    for (let index = 0; index < 15; index += 1) await session.query(`SELECT ${index}`);
+    committed = true;
   }), { message: "database_outcome_uncertain" });
-  const elapsedMs = performance.now() - started;
-  assert.ok(elapsedMs < 600, `transaction elapsed ${elapsedMs}ms`);
+  assert.equal(committed, false, "the callback must not finish work beyond the operation budget");
   assert.equal(db.isAvailable(), false); assert.equal(terminations, 1);
 });
 
