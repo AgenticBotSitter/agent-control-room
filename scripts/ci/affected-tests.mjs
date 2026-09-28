@@ -88,7 +88,7 @@ export function requestedBaseRef(arguments_) {
   return arguments_.filter(argument => argument !== "--run" && argument !== "--")[0] ?? "origin/main";
 }
 
-function run(command, arguments_, root) {
+function executeCommand(command, arguments_, root) {
   const child = spawnSync(command, arguments_, { cwd: root, stdio: "inherit" });
   if (child.error) throw child.error;
   if (child.status !== 0) return child.status ?? 1;
@@ -108,12 +108,20 @@ export function affectedTestCommands(result, tests, repositoryRoot = process.cwd
   return [...preparation, [process.execPath, ["--import", "tsx", "--test", "--test-concurrency=1", ...tests]]];
 }
 
+export function runAffectedTests(result, tests, repositoryRoot, execute = executeCommand) {
+  for (const [command, arguments_] of affectedTestCommands(result, tests, repositoryRoot)) {
+    const status = execute(command, arguments_, repositoryRoot);
+    if (status !== 0) return status;
+  }
+  return 0;
+}
+
 function main() {
-  const run = process.argv.includes("--run");
+  const shouldRun = process.argv.includes("--run");
   const baseRef = requestedBaseRef(process.argv.slice(2));
   const root = process.cwd();
   const result = affectedTests(root, changedFiles(root, baseRef));
-  if (!run) {
+  if (!shouldRun) {
     console.log(result === "ALL" ? result : result.join("\n"));
     return;
   }
@@ -125,10 +133,7 @@ function main() {
   if (result === "ALL")
     console.log("Preparing generated application and contributor-demo artifacts for the complete test set.");
   console.log(`Running ${tests.length} affected test file(s).`);
-  for (const [command, arguments_] of affectedTestCommands(result, tests, root)) {
-    const status = run(command, arguments_, root);
-    if (status !== 0) { process.exitCode = status; return; }
-  }
+  process.exitCode = runAffectedTests(result, tests, root);
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) main();

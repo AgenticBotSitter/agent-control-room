@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, unlinkSync, writeFileSync } from "node:
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { affectedTestCommands, affectedTests, requestedBaseRef } from "../scripts/ci/affected-tests.mjs";
+import { affectedTestCommands, affectedTests, requestedBaseRef, runAffectedTests } from "../scripts/ci/affected-tests.mjs";
 
 function fixture(files) {
   const root = mkdtempSync(join(tmpdir(), "control-room-affected-tests-"));
@@ -66,6 +66,17 @@ test("a normal source selection prepares artifacts required by its built-output 
     assert.deepEqual(selected, ["tests/built.test.ts"]);
     assert.deepEqual(affectedTestCommands(selected, selected, root)[0], ["pnpm", ["build"]]);
   } finally { rmSync(root, { recursive: true }); }
+});
+
+test("the runner executes every planned ALL command in order", () => {
+  const executed = [];
+  const status = runAffectedTests("ALL", ["tests/example.test.ts"], "/repo", (command, arguments_, root) => {
+    executed.push([command, arguments_, root]);
+    return 0;
+  });
+  assert.equal(status, 0);
+  assert.equal(executed.length, 3);
+  assert.deepEqual(executed.map(call => call[0]), ["pnpm", "pnpm", process.execPath]);
 });
 
 test("a literal dynamic import is followed", () => {
