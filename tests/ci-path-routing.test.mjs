@@ -278,6 +278,8 @@ test("the affected-test lane gives selected PostgreSQL tests a disposable, gated
   assert.match(job, /Prepare the reviewed pre-0086 database-upgrade fixture/u);
   assert.match(job, /git archive --format=tar 88941c0414407be5b226c9b1d78fb17c53ec9810/u,
     "the gated PG17 upgrade test must receive its reviewed pre-0086 input tree");
+  assert.match(job, /CONTROL_ROOM_PG17_UPGRADE_FIXTURE_ROOT=\$\{fixture_root\}/u,
+    "the PG17 upgrade test must receive the runner-owned historical fixture root");
   assert.match(job, /! grep -q '0086_mac_local_owner_review_profile'/u,
     "the fixture setup must fail rather than silently use a current migration ledger");
   assert.match(job, /Start disposable PostgreSQL for selected database tests/u);
@@ -301,6 +303,7 @@ test("the affected-test automation has the required budget and security review",
   assert.match(budgetSecurityReview, /squawk-cli@2\.61\.0/u);
   assert.match(budgetSecurityReview, /fails if that stream reports any skipped test/u);
   assert.match(budgetSecurityReview, /pre-0086 repository input/u);
+  assert.match(budgetSecurityReview, /RUNNER_TEMP/u);
 });
 
 test("the full Mac-local rehearsal is isolated, fake, PG17, and runs every supported mode", () => {

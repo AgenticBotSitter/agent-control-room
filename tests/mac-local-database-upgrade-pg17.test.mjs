@@ -20,7 +20,7 @@ import { provisionMacLocalNarrowRolesV1 } from "../scripts/mac-local/narrow-role
 import { postgresScramVerifierV1 } from "../scripts/mac-local/database-upgrade-scram.mjs";
 import { fixedQueueShapeDigestForTestV1 } from "../scripts/mac-local/fixed-queue-schema.mjs";
 
-const oldRoot = "/private/tmp/acr-db-0085";
+const oldRoot = process.env.CONTROL_ROOM_PG17_UPGRADE_FIXTURE_ROOT ?? "/private/tmp/acr-db-0085";
 const headRoot = resolve(fileURLToPath(new URL("../", import.meta.url)));
 const oldRoles = Object.entries(macRolePlan).filter(([login]) => login !== "control_room_publisher");
 const exec = (file, args) => execFileSync(file, args, { encoding: "utf8", timeout: 120_000,
