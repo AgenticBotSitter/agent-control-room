@@ -1,0 +1,16 @@
+[
+  {
+    "file": "scripts/ci/verify-mutation-checks.mjs",
+    "find": "if (matches !== 1) throw new Error(`${entry.label}: find matched ${matches} times; expected exactly once`);",
+    "replace": "if (matches < 0) throw new Error(`${entry.label}: find matched ${matches} times; expected exactly once`);",
+    "test": "node --test tests/verify-mutation-checks.test.mjs",
+    "why": "ambiguous mutation targets must be refused"
+  },
+  {
+    "file": "scripts/ci/verify-mutation-checks.mjs",
+    "find": "if (result.stdout !== \"\") throw new Error(\"refusing to run on a dirty Git checkout\");",
+    "replace": "if (false) throw new Error(\"refusing to run on a dirty Git checkout\");",
+    "test": "node --test tests/verify-mutation-checks.test.mjs",
+    "why": "mutation checks must not overwrite an existing dirty checkout"
+  }
+]
