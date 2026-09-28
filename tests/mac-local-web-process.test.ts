@@ -64,6 +64,20 @@ test("the real Mac-local wrapper signs in locally and reaches the existing proje
     "idempotency-key": "mac-local-project-create-001" }, body: JSON.stringify({ title: "Local wrapper project", summary: "Disposable route proof" }) }),
   () => new Response("unused"));
   assert.equal(created.status, 201); const projectId = (await created.json() as { project: { projectId: string } }).project.projectId;
+  const foreignTenantId = "tenant:mac-local-web-foreign", foreignWorkspaceId = "workspace:mac-local-web-foreign";
+  const foreignAdapterId = "adapter:mac-local-web-foreign", foreignProjectId = "project:mac-local-web-foreign";
+  await fixture.client.query("INSERT INTO tenants(id,display_name) VALUES($1,'Foreign fixture tenant') ON CONFLICT(id) DO NOTHING",
+    [foreignTenantId]);
+  await fixture.client.query(`INSERT INTO workspaces(id,tenant_id,display_name) VALUES($1,$2,'Foreign fixture workspace')
+    ON CONFLICT(id) DO NOTHING`, [foreignWorkspaceId, foreignTenantId]);
+  await fixture.client.query(`INSERT INTO adapter_registry(id,tenant_id,source_system,contract_version,authority_mode,status,
+    redaction_policy_version,cursor_retention_days) VALUES($1,$2,'control-room-manual','1.0.0','control_room_native','disabled','v1',30)
+    ON CONFLICT(id) DO NOTHING`, [foreignAdapterId, foreignTenantId]);
+  await fixture.client.query(`INSERT INTO projects(id,tenant_id,workspace_id,adapter_id,source_record_id,source_version,title,
+    description,normalized_state,domain_state,health,authority_mode,observed_at,payload,updated_at)
+    VALUES($1,$2,$3,$4,$1,'1','Foreign fixture project','Tenant isolation proof','ready','active','healthy',
+      'control_room_native',$5,'{}'::jsonb,$5) ON CONFLICT(id) DO NOTHING`,
+  [foreignProjectId, foreignTenantId, foreignWorkspaceId, foreignAdapterId, new Date(conformanceNow).toISOString()]);
   const detailApi = await app.handle(request(`/api/v1/projects/${encodeURIComponent(projectId)}`, { headers: { cookie: cookie! } }),
     () => new Response("unused"));
   assert.equal(detailApi.status, 200);
@@ -131,6 +145,25 @@ test("the real Mac-local wrapper signs in locally and reaches the existing proje
     additionalTasksOmitted: false, candidateEvidence: "configured_routes_only",
     observedAt: new Date(conformanceNow).toISOString(), startsWork: false,
     grantsAssignmentAuthority: false, grantsExecutionAuthority: false });
+  const foreignAgents = await app.handle(request(`/api/v1/projects/${encodeURIComponent(foreignProjectId)}/agents`,
+    { headers: { cookie: cookie! } }), () => new Response("unused"));
+  assert.equal(foreignAgents.status, 404, "the agents fallback must authorize the project before synthesizing a response");
+  assert.deepEqual(await foreignAgents.json(), { error: "not_found" });
+  for (const section of ["agents", "settings"]) {
+    for (const refusedProjectId of ["project:missing", foreignProjectId]) {
+      const refusedPage = await app.handle(request(`/projects/${encodeURIComponent(refusedProjectId)}/${section}`,
+        { headers: { cookie: cookie! } }), () => { throw new Error("an unavailable project section must not render"); });
+      assert.equal(refusedPage.status, 404, `${section} must refuse ${refusedProjectId}`);
+    }
+  }
+  for (const section of ["inbox", "agents"]) {
+    for (const method of ["POST", "PUT", "DELETE"]) {
+      const refusedMethod = await app.handle(request(`/api/v1/projects/${encodeURIComponent(projectId)}/${section}`,
+        { method, headers: { cookie: cookie! } }), () => new Response("unused"));
+      assert.equal(refusedMethod.status, 400, `${method} ${section} must be refused`);
+      assert.deepEqual(await refusedMethod.json(), { error: "invalid_request" });
+    }
+  }
   const files = await app.handle(request(`/api/v1/projects/${encodeURIComponent(projectId)}/files`,
     { headers: { cookie: cookie! } }), () => new Response("unused"));
   assert.equal(files.status, 200);
