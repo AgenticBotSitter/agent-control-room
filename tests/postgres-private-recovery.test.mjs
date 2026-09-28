@@ -108,12 +108,14 @@ test("one stable private client resumes reads and writes after its PostgreSQL cl
     username: "fixture_recovery", password: "fixture-only", majorVersion: 17 });
   const stableClient = database.client;
   try {
-    await stableClient.query("CREATE TABLE recovery_values (id integer PRIMARY KEY, value text NOT NULL)");
-    await stableClient.query("INSERT INTO recovery_values VALUES ($1,$2)", [1, "before"]);
-    assert.deepEqual((await stableClient.query("SELECT value FROM recovery_values WHERE id=$1", [1])).rows, [{ value: "before" }]);
+    // Private sessions deliberately put pg_catalog first. Keep this recovery
+    // fixture in the application schema instead of attempting catalog DDL.
+    await stableClient.query("CREATE TABLE public.recovery_values (id integer PRIMARY KEY, value text NOT NULL)");
+    await stableClient.query("INSERT INTO public.recovery_values VALUES ($1,$2)", [1, "before"]);
+    assert.deepEqual((await stableClient.query("SELECT value FROM public.recovery_values WHERE id=$1", [1])).rows, [{ value: "before" }]);
 
     await stop();
-    await assert.rejects(stableClient.query("SELECT value FROM recovery_values WHERE id=$1", [1]));
+    await assert.rejects(stableClient.query("SELECT value FROM public.recovery_values WHERE id=$1", [1]));
     assert.equal(database.client, stableClient);
     assert.equal(database.isAvailable(), false);
     await start();
@@ -121,13 +123,13 @@ test("one stable private client resumes reads and writes after its PostgreSQL cl
     let restored;
     const deadline = Date.now() + 20_000;
     while (Date.now() < deadline) {
-      try { restored = await stableClient.query("SELECT value FROM recovery_values WHERE id=$1", [1]); break; }
+      try { restored = await stableClient.query("SELECT value FROM public.recovery_values WHERE id=$1", [1]); break; }
       catch { await new Promise(resolve => setTimeout(resolve, 100)); }
     }
     assert.deepEqual(restored?.rows, [{ value: "before" }]);
     assert.equal(database.client, stableClient);
-    await stableClient.query("INSERT INTO recovery_values VALUES ($1,$2)", [2, "after"]);
-    assert.deepEqual((await stableClient.query("SELECT id,value FROM recovery_values ORDER BY id")).rows,
+    await stableClient.query("INSERT INTO public.recovery_values VALUES ($1,$2)", [2, "after"]);
+    assert.deepEqual((await stableClient.query("SELECT id,value FROM public.recovery_values ORDER BY id")).rows,
       [{ id: 1, value: "before" }, { id: 2, value: "after" }]);
   } finally { await database.close(); }
 });
