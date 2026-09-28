@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createElement } from "react";
+import { createElement, type ReactElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { JSDOM } from "jsdom";
 import { readFileSync } from "node:fs";
@@ -8,6 +8,9 @@ import { fileURLToPath } from "node:url";
 
 import { StateChip, chipToneForStateV1, stateLabelV1, stateToneKeysV1, EmptyState, UnavailableState, LoadingState,
   PanelHeading, PrivateCount, workerChipToneV1 } from "../private-app/app/owner-ui";
+import { HomeDashboard, type HomeDashboardState } from "../private-app/app/home-workspace";
+import { PrivateNeedsMe } from "../private-app/app/needs-me/workspace";
+import { LocalRuntimeContextV1 } from "../private-app/app/local-runtime";
 import { artifactStates, approvalStates, attemptStates, checkpointStates, effectIntentStates, jobStates, leaseStates,
   nodeStates, requestStates, serviceStates } from "../src/domain/v1/types";
 import { harnessRunStates } from "../src/harness/v1/types";
@@ -350,4 +353,135 @@ test("dark mode is reachable from the OS preference and stays overridable", () =
   // The block the existing contrast test reads must survive untouched.
   assert.ok(stylesheet.includes(':root[data-theme="dark"] {'),
     "tests/mac-local-accessibility.test.tsx reads this exact selector");
+});
+
+/* ------------------------------------------------------------------ *
+ * The REAL call sites, not the shared component.
+ *
+ * The three tests above render `UnavailableState`/`LoadingState` directly. That
+ * proves the component honours its own `urgent` prop, and nothing more: a page
+ * that passes the wrong prop, or renders its failure as a bare <p role="alert">
+ * and never touches the component at all, still passes. These render the actual
+ * pages instead, mounted, so the assertion is about the role a browser ends up
+ * with on Home and on Needs attention.
+ * ------------------------------------------------------------------ */
+
+/** Every `[role]` a page announced, with the text it announced, so an assertion
+ * can name a region and not just count one. Takes a Document or a JSDOM. */
+function liveRegions(source: Document | JSDOM) {
+  const document = "window" in source ? source.window.document : source;
+  return [...document.querySelectorAll('[role="status"], [role="alert"]')].map(region => ({
+    role: region.getAttribute("role"),
+    text: (region.textContent ?? "").replace(/\s+/g, " ").trim(),
+  }));
+}
+
+const allLoading: HomeDashboardState = { projects: { state: "loading" }, activity: { state: "loading" },
+  attention: { state: "loading" }, connections: { state: "loading" } };
+const allUnavailable: HomeDashboardState = { projects: { state: "unavailable" }, activity: { state: "unavailable" },
+  attention: { state: "unavailable" }, connections: { state: "unavailable" } };
+
+test("the real Home panels announce loading politely and a failed read as its own thing", () => {
+  // Home renders the shared vocabulary, but it wraps `UnavailableState` in its
+  // own `Unavailable`, and it is `UnavailableState` (role="status") rather than
+  // role="alert" it uses — one unread section beside three healthy ones. These
+  // are the two states the dashboard can actually be in, rendered as Home
+  // renders them.
+  const loading = documentFor(renderToStaticMarkup(createElement(HomeDashboard, { data: allLoading })));
+  const loadingRegions = liveRegions(loading);
+  assert.equal(loadingRegions.length, 5,
+    `every one of the five Home panels is loading and each announces: ${JSON.stringify(loadingRegions)}`);
+  for (const region of loadingRegions) {
+    assert.equal(region.role, "status", "a load in progress is new but not urgent");
+    assert.ok(region.text.length > 0, "a status region with no text announces nothing");
+  }
+  assert.match(loading.body.textContent ?? "", /Loading saved work…/);
+  assert.equal(loading.querySelector('[role="alert"]'), null,
+    "nothing on Home has failed yet, so nothing may interrupt the owner");
+
+  const failed = documentFor(renderToStaticMarkup(createElement(HomeDashboard, { data: allUnavailable })));
+  const failedRegions = liveRegions(failed);
+  assert.equal(failedRegions.length, 5, `each failed panel announces once: ${JSON.stringify(failedRegions)}`);
+  for (const region of failedRegions) {
+    assert.equal(region.role, "status", "one unread section is a polite report, not an interruption");
+    // Each carries its OWN sentence, so an owner can tell which read failed and
+    // that no all-clear was invented for it.
+    assert.match(region.text, /unavailable\.? No zero count or all-clear is inferred\./i,
+      `the unavailable treatment must name the failure and refuse an all-clear: ${region.text}`);
+  }
+  const unavailable = failed.querySelectorAll(".private-state-unavailable");
+  assert.equal(unavailable.length, 5, "a failed read is visibly distinct from an empty one");
+  // The four different sentences, so a glance can tell which panel failed.
+  const texts = new Set([...unavailable].map(node => (node.textContent ?? "").split(" No zero")[0]));
+  assert.deepEqual([...texts].sort(), ["Attention items are unavailable.", "Projects are unavailable.",
+    "Running work is unavailable.", "Verified result records are unavailable.", "Worker status is unavailable."],
+    "each Home panel must name its own failed read");
+});
+
+test("the real Needs-attention read failure keeps role=alert, and the loading state does not", async () => {
+  // Needs attention is a page whose whole purpose IS the attention items, so a
+  // failed read there is the one thing that must interrupt — it keeps
+  // `<UnavailableState urgent>`. The component test can only prove the prop
+  // works; only mounting the page proves the page passes it.
+  const { createRoot } = await import("react-dom/client");
+  const { act } = await import("react");
+  const dom = new JSDOM("<!doctype html><div id='root'></div>", { url: "https://control.invalid/", pretendToBeVisual: true });
+  const saved = Object.fromEntries(["window", "document", "IS_REACT_ACT_ENVIRONMENT", "fetch"]
+    .map(key => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
+  // A read that never settles, so the page is genuinely mid-check and the
+  // assertions below are about the in-flight state rather than about a race.
+  const never = () => new Promise<never>(() => {});
+  Object.assign(globalThis, { window: dom.window, document: dom.window.document, IS_REACT_ACT_ENVIRONMENT: true,
+    fetch: async () => never() });
+  const root = createRoot(dom.window.document.getElementById("root")!);
+  try {
+    await act(async () => { root.render(createElement(LocalRuntimeContextV1.Provider, { value: { mode: "hosted" } },
+      createElement(PrivateNeedsMe))); });
+    await act(async () => { await new Promise(resolve => dom.window.setTimeout(resolve, 25)); });
+    const document = dom.window.document;
+    // While the check is in flight the page says "Checking…" politely, and must
+    // not be alerting about a failure that has not happened.
+    const checking = liveRegions(dom).filter(region => /Checking…/.test(region.text));
+    assert.equal(checking.length, 1, `the in-flight check announces politely: ${JSON.stringify(liveRegions(dom))}`);
+    assert.equal(checking[0].role, "status", "an in-flight check must not interrupt the owner");
+    assert.equal(document.querySelector('[role="alert"]'), null,
+      "nothing has failed yet, so nothing may be announced as a failure");
+
+    // Now every protected read fails, which is the state under test: the
+    // recovery read and the saved-task inbox read both land on their branches.
+    // A fresh mount is used rather than the re-check button, because the
+    // in-flight read from the phase above holds that button disabled.
+    Object.assign(globalThis, { fetch: async () => { throw new TypeError("network"); } });
+    const failed = new JSDOM("<!doctype html><div id='root'></div>", { url: "https://control.invalid/", pretendToBeVisual: true });
+    const failedRoot = createRoot(failed.window.document.getElementById("root")!);
+    failed.window.document.body.id = "failed-root";
+    await act(async () => { root.render(createElement("div", { hidden: true })); });
+    await act(async () => { failedRoot.render(createElement(LocalRuntimeContextV1.Provider, { value: { mode: "hosted" } },
+      createElement(PrivateNeedsMe))); });
+    for (let attempt = 0; attempt < 60; attempt += 1) {
+      await act(async () => { await new Promise(resolve => failed.window.setTimeout(resolve, 5)); });
+      if (/Recovery status is unavailable/.test(failed.window.document.body.textContent ?? "")) break;
+    }
+    const failedDocument = failed.window.document;
+    const alert = failedDocument.querySelector('[role="alert"].private-state-unavailable');
+    assert.ok(alert, `a failed recovery read keeps the interrupted alert, not a quiet status: ${failedDocument.body.textContent}`);
+    assert.match(alert.textContent ?? "", /Recovery status is unavailable or not configured\. No all-clear is claimed\./);
+    assert.equal(failedDocument.querySelectorAll('[role="alert"].private-state-unavailable').length, 1,
+      "the failure is announced once, not once per re-render");
+    assert.equal(failedDocument.querySelector('[role="status"].private-state-unavailable'), null,
+      "it must not also be a polite status region");
+    // The saved-task inbox on the same page has its own alert, and the two must
+    // both be interrupted: a page that quietly swallowed one of them would pass
+    // an assertion on the other.
+    assert.match(failedDocument.body.textContent ?? "", /The saved task database or protected read could not be checked\./);
+    await act(async () => { failedRoot.unmount(); });
+    failed.window.close();
+  } finally {
+    await act(async () => { root.unmount(); });
+    dom.window.close();
+    for (const [key, descriptor] of Object.entries(saved)) {
+      if (descriptor) Object.defineProperty(globalThis, key, descriptor);
+      else delete (globalThis as Record<string, unknown>)[key];
+    }
+  }
 });

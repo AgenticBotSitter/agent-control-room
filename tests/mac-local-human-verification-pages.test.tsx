@@ -51,8 +51,12 @@ test("owner acceptance presents the configured read-and-correct attestation besi
     acceptanceAttestation: { scenarioId: MAC_LOCAL_HUMAN_VERIFICATION_SCENARIO_V1,
       label: "Owner human verification", instructions: "Read the protected text result and confirm it satisfies the task.",
       instructionsDigest }, grantsExecutionAuthority: false };
-  const markup = renderToStaticMarkup(<OwnerReviewPanel options={reviewOptions} feedback="" pending={false} held={false}
-    onFeedback={() => {}} onRecord={() => {}} />);
+  // The panel is presentation only: it renders the gesture the result-bound
+  // session hands it. What the gesture MEANS — that it belongs to exactly this
+  // result and never to another one — is proven in tests/review-memory.test.tsx
+  // against the real workspace rather than a prop supplied here.
+  const markup = renderToStaticMarkup(<OwnerReviewPanel options={reviewOptions} feedback="" attested={false}
+    pending={false} held={false} onFeedback={() => {}} onAttest={() => {}} onRecord={() => {}} />);
   assert.match(markup, /I read it and it’s correct/);
   assert.match(markup, />Accept</);
   assert.match(markup, /Request changes/);

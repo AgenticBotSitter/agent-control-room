@@ -309,10 +309,11 @@
      the form is a deliberate action, so at phone width only the catalog leads
      and the form follows it.
 
-     Scoped to `.private-shell` on purpose: a bare `.private-create` would also
-     match the form on the Task-planning page, and `grid-row: auto` there moves
-     a control the owner needs to reach. */
-  .private-shell .private-columns .private-create { grid-row: auto; }
+     Scoped to the projects page on purpose. `.private-create` alone also matches
+     the proposal form on the Task page, which is itself inside a
+     `.private-columns`; `grid-row: auto` there moves a control the owner needs
+     to reach, and the Task page has no filter-tabs nav to key off. */
+  .private-shell .private-filter-tabs ~ .private-columns .private-create { grid-row: auto; }
 }
 @media (max-width: 560px) {
   .private-header { gap: .75rem; }
