@@ -110,15 +110,28 @@ export function requestedBaseRef(arguments_) {
   return arguments_.filter(argument => argument !== "--run" && argument !== "--github-output" && argument !== "--")[0] ?? "origin/main";
 }
 
-function executeCommand(command, arguments_, root) {
-  const child = spawnSync(command, arguments_, { cwd: root, stdio: "inherit" });
+const postgresEnvironmentNames = [
+  "CONTROL_ROOM_PG17_UPGRADE_REHEARSAL",
+  "CONTROL_ROOM_PG_CONCURRENCY_GATE",
+  "CONTROL_ROOM_TEST_PG_URL_A",
+  "CONTROL_ROOM_TEST_PG_URL_B",
+];
+
+function withoutPostgresTestEnvironment() {
+  const environment = { ...process.env };
+  for (const name of postgresEnvironmentNames) delete environment[name];
+  return environment;
+}
+
+function executeCommand(command, arguments_, root, environment = process.env) {
+  const child = spawnSync(command, arguments_, { cwd: root, stdio: "inherit", env: environment });
   if (child.error) throw child.error;
   if (child.status !== 0) return child.status ?? 1;
   return 0;
 }
 
-function executeCommandCapturingOutput(command, arguments_, root) {
-  const env = { ...process.env };
+function executeCommandCapturingOutput(command, arguments_, root, environment = process.env) {
+  const env = { ...environment };
   // A focused guard test invokes this runner from node:test. Its child is the
   // actual test process, not a recursive discovery run.
   delete env.NODE_TEST_CONTEXT;
@@ -196,8 +209,9 @@ export function runAffectedTests(result, tests, repositoryRoot, execute = execut
   const commands = affectedTestCommands(result, tests, repositoryRoot);
   const hasPostgresTestCommand = postgresTests(result, tests, repositoryRoot).length > 0;
   for (const [index, [command, arguments_]] of commands.entries()) {
-    if (hasPostgresTestCommand && index === commands.length - 1) {
-      const execution = executeCapturingOutput(command, arguments_, repositoryRoot);
+    const isPostgresTestCommand = hasPostgresTestCommand && index === commands.length - 1;
+    if (isPostgresTestCommand) {
+      const execution = executeCapturingOutput(command, arguments_, repositoryRoot, process.env);
       const status = typeof execution === "number" ? execution : execution.status;
       if (status !== 0) return status;
       if (hasSkippedTests(typeof execution === "number" ? "" : execution.output)) {
@@ -206,7 +220,10 @@ export function runAffectedTests(result, tests, repositoryRoot, execute = execut
       }
       continue;
     }
-    const status = execute(command, arguments_, repositoryRoot);
+    // The PGDG lane exports its database settings at job scope. Do not let an
+    // unrelated selected test take an optional database-only branch merely
+    // because this invocation also contains a PostgreSQL-marked test.
+    const status = execute(command, arguments_, repositoryRoot, withoutPostgresTestEnvironment());
     if (status !== 0) return status;
   }
   return 0;

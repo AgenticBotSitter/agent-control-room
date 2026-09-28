@@ -156,6 +156,35 @@ test("a positive skip count for a selected PostgreSQL plan fails the lane", () =
   } finally { rmSync(root, { recursive: true }); }
 });
 
+test("PostgreSQL settings are scoped to the selected PostgreSQL subprocess", () => {
+  const root = fixture({
+    "tests/normal.test.mjs": "",
+    "tests/postgres.test.mjs": "const requiresRealPostgres = true;",
+  });
+  const original = process.env.CONTROL_ROOM_PG_CONCURRENCY_GATE;
+  process.env.CONTROL_ROOM_PG_CONCURRENCY_GATE = "1";
+  const environments = [];
+  let postgresEnvironment;
+  try {
+    assert.equal(runAffectedTests(["tests/normal.test.mjs", "tests/postgres.test.mjs"],
+      ["tests/normal.test.mjs", "tests/postgres.test.mjs"], root,
+      (_command, _arguments, _root, environment) => {
+        environments.push(environment);
+        return 0;
+      }, () => true,
+      (_command, _arguments, _root, environment) => {
+        postgresEnvironment = environment;
+        return { status: 0, output: "" };
+      }), 0);
+    assert.equal(environments[0].CONTROL_ROOM_PG_CONCURRENCY_GATE, undefined);
+    assert.equal(postgresEnvironment.CONTROL_ROOM_PG_CONCURRENCY_GATE, "1");
+  } finally {
+    if (original === undefined) delete process.env.CONTROL_ROOM_PG_CONCURRENCY_GATE;
+    else process.env.CONTROL_ROOM_PG_CONCURRENCY_GATE = original;
+    rmSync(root, { recursive: true });
+  }
+});
+
 test("a selected migration test uses the pinned Squawk runner from migration-lint", () => {
   const root = fixture({ "tests/migration-change-check.test.mjs": "spawnSync('squawk', []);" });
   try {
