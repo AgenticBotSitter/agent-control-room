@@ -10,6 +10,7 @@ import type { FleetSignalEnvelope } from "../src/node-fleet/v1/schemas";
 import { binding, instant } from "./hermes-native-fixture";
 import { at } from "./native-task-fixture";
 import { ownerReviewFixture } from "./helpers/web-owner-review";
+import { captureTaskModelCatalogV1 } from "../src/web/v1/task-model-selection";
 
 test("assignment scopes refuse overlap, allow disjoint work, and recover after expiry or a crash", async t => {
   const f = await ownerReviewFixture(); t.after(f.close);
@@ -24,6 +25,8 @@ test("assignment scopes refuse overlap, allow disjoint work, and recover after e
     acceptanceProfileId: f.profile.id, acceptanceProfileDigest: sha256Digest(f.profile) };
   const planner = new TaskExecutionPlanner(f.db, f.scope, { template, integrityKey: new Uint8Array(32).fill(61),
     reviewIntegrityKey: f.reviewKey, checkpoints: f.checkpoints,
+    modelCatalog: captureTaskModelCatalogV1([{ kind: "codex", policy: { models: ["gpt-build"], defaultModel: "gpt-build",
+      efforts: ["medium"], defaultEffort: "medium" } }]),
     localAdapterAdmission: { enabledAdapters: [CODEX_OWNER_TRUSTED_LOCAL_ADAPTER_V1] } }, () => now);
   const route = [{ nodeId: binding.nodeId, executorId: authority.allowedExecutor,
     capabilityProbeId: CODEX_OWNER_TRUSTED_LOCAL_CAPABILITY_V1, maxConcurrentTasks: 8,
@@ -54,6 +57,10 @@ test("assignment scopes refuse overlap, allow disjoint work, and recover after e
   const first = await prepare("first", "src/shared");
   const firstAssignment = await assignments.assign(f.identity, binding.projectId, first.jobId, binding.nodeId, first.inputDigest);
   assert.equal(firstAssignment.receipt.leaseCurrent, true);
+  const firstAttempt = await f.db.query<{ payload: { modelSelection?: unknown } }>(
+    "SELECT payload FROM control_attempts WHERE tenant_id=$1 AND id=$2", [binding.tenantId, firstAssignment.receipt.attemptId]);
+  assert.deepEqual(firstAttempt.rows[0]?.payload.modelSelection,
+    { workerKind: "codex", selectionKey: "gpt-build", model: "gpt-build", effort: "medium" });
 
   const overlapping = await prepare("overlap", "src/shared/child.ts", "file");
   await assert.rejects(assignments.assign(f.identity, binding.projectId, overlapping.jobId, binding.nodeId, overlapping.inputDigest),

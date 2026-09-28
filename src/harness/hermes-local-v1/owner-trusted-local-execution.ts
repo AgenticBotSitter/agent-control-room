@@ -1,9 +1,10 @@
 import { isAbsolute, normalize } from "node:path";
 import type { OwnerTrustedLocalCliExecutionAdapterV1 } from "../v1/owner-trusted-local-cli-execution";
 import type { OwnerTrustedLocalHermesExecV1 } from "./owner-trusted-local-exec";
+import { MODEL_IDENTIFIER_PATTERN_V1 } from "../../domain/v1/model-identifier";
 
 function unavailable(): never { throw new Error("owner_trusted_local_hermes_execution_unavailable"); }
-const identifier = /^[A-Za-z0-9._:/-]{1,180}$/u;
+const identifier = MODEL_IDENTIFIER_PATTERN_V1;
 const MAX_PROMPT_BYTES = 49_152;
 function path(value: unknown): value is string { return typeof value === "string" && value.length > 0 && value.length <= 4096
   && isAbsolute(value) && normalize(value) === value && !/[\u0000-\u001f\u007f]/u.test(value); }

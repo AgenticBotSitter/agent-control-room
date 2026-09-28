@@ -4,13 +4,14 @@ import { isAbsolute, normalize } from "node:path";
 import { StringDecoder } from "node:string_decoder";
 import { types } from "node:util";
 import { z } from "zod";
+import { MODEL_IDENTIFIER_PATTERN_V1 } from "../../domain/v1/model-identifier";
 
 const MAX_PROMPT_BYTES = 64 * 1024;
 const MAX_OUTPUT_BYTES = 1024 * 1024;
 const KILL_AFTER_MS = 5_000;
 const KILL_CONFIRM_MS = 50;
 const SYSTEM_PATH = "/usr/bin:/bin";
-const identifier = z.string().min(1).max(180).regex(/^[A-Za-z0-9._:/-]+$/u);
+const identifier = z.string().regex(MODEL_IDENTIFIER_PATTERN_V1);
 const terminal = z.object({
   type: z.literal("result"), session_id: z.string().min(1), exit_code: z.number().int(), text: z.string(),
   tokens: z.object({ input: z.number().int().nonnegative(), output: z.number().int().nonnegative(),

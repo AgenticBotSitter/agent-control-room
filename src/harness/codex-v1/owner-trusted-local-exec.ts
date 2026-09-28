@@ -3,6 +3,7 @@ import { readdir } from "node:fs/promises";
 import { isAbsolute, normalize } from "node:path";
 import { StringDecoder } from "node:string_decoder";
 import { types } from "node:util";
+import { MODEL_IDENTIFIER_PATTERN_V1 } from "../../domain/v1/model-identifier";
 
 const MAX_PROMPT_BYTES = 64 * 1024;
 const MAX_OUTPUT_BYTES = 1024 * 1024;
@@ -52,7 +53,7 @@ function safeInput(input: unknown): input is Parameters<OwnerTrustedLocalCodexEx
     && typeof value.deadlineMs === "number" && Number.isSafeInteger(value.deadlineMs)
     && value.deadlineMs >= 100 && value.deadlineMs <= 3_600_000
     && ((value.model === undefined && value.effort === undefined)
-      || typeof value.model === "string" && /^[A-Za-z0-9][A-Za-z0-9._:/+-]{0,179}$/u.test(value.model)
+      || typeof value.model === "string" && MODEL_IDENTIFIER_PATTERN_V1.test(value.model)
         && typeof value.effort === "string" && /^(?:low|medium|high|xhigh|max)$/u.test(value.effort))
     && (value.signal === undefined || value.signal instanceof AbortSignal);
 }

@@ -1,7 +1,9 @@
 import { z } from "zod";
 import { catalogProjectIdSchema as id } from "./project-wire";
+import { MODEL_IDENTIFIER_PATTERN_V1 } from "../../domain/v1/model-identifier";
 
 const digest = z.string().regex(/^sha256:[a-f0-9]{64}$/), time = z.string().datetime();
+const modelIdentifier = z.string().regex(MODEL_IDENTIFIER_PATTERN_V1);
 export const taskReviewEvidenceSchema = z.object({ targetId: id, kind: z.enum(["code", "media", "document", "operation"]),
   targetDigest: digest, contentHash: digest, revision: z.number().int().min(0).max(20), supersedesTargetId: id.nullable(),
   status: z.enum(["pending", "changes_requested", "verification_blocked", "revision_limit_reached", "ready", "superseded"]),
@@ -32,10 +34,9 @@ export const taskWorktreeChangeSummarySchema = worktreeChangeSummarySchema;
 export type TaskWorktreeChangeSummary = z.infer<typeof taskWorktreeChangeSummarySchema>;
 export const taskResultMetadataSchema = z.object({ artifactId: id, attemptId: id, runId: id, contentHash: digest,
   sizeBytes: z.number().int().min(0).max(65_536), receivedAt: time, byteCheck: z.literal("matched_recorded_claim"),
-  modelSelection: z.object({ model: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:/+-]{0,179}$/),
+  modelSelection: z.object({ model: modelIdentifier,
     effort: z.enum(["default", "low", "medium", "high", "xhigh", "max"]),
-    provider: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:/+-]{0,179}$/).optional(),
-    profile: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:/+-]{0,179}$/).optional() }).strict().optional(),
+    provider: modelIdentifier.optional(), profile: modelIdentifier.optional() }).strict().optional(),
   qualityAccepted: z.literal(false),
   fileAccess: z.object({ previewHref: z.string().startsWith("/api/v1/").max(4096),
     downloadHref: z.string().startsWith("/api/v1/").max(4096), expiresAt: time }).strict().optional(),

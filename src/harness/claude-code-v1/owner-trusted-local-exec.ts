@@ -5,6 +5,7 @@ import { StringDecoder } from "node:string_decoder";
 import { types } from "node:util";
 import { userInfo } from "node:os";
 import { createClaudeCodeStreamDecoderV1 } from "./stream-json-decode";
+import { MODEL_IDENTIFIER_PATTERN_V1 } from "../../domain/v1/model-identifier";
 
 const MAX_PROMPT_BYTES = 64 * 1024;
 const MAX_OUTPUT_BYTES = 1024 * 1024;
@@ -15,8 +16,8 @@ const localUser = userInfo().username;
 
 /** These are the Mac-local CLI arguments reviewed in Packet B. They are
  * intentionally separate from the legacy installed-admission arguments. */
-// Sonnet is pinned because the CLI default is Opus, which spends the owner's limited
-// Opus allowance on every task. Per-task model choice is W8.
+// Sonnet remains the pre-W8 fallback because the CLI default can spend the owner's
+// more limited allowance. Protected per-task selection replaces it when configured.
 export const OWNER_TRUSTED_LOCAL_CLAUDE_ARGS_V1 = Object.freeze([
   "-p", "--model", "sonnet", "--output-format", "stream-json", "--verbose", "--tools", "",
   "--strict-mcp-config", "--setting-sources", "", "--no-session-persistence",
@@ -66,7 +67,7 @@ function safeInput(input: unknown): input is Parameters<OwnerTrustedLocalClaudeE
     && typeof value.deadlineMs === "number" && Number.isSafeInteger(value.deadlineMs)
     && value.deadlineMs >= 100 && value.deadlineMs <= 3_600_000
     && ((value.model === undefined && value.effort === undefined && value.supportsEffort === undefined)
-      || typeof value.model === "string" && /^[A-Za-z0-9][A-Za-z0-9._:/+-]{0,179}$/u.test(value.model)
+      || typeof value.model === "string" && MODEL_IDENTIFIER_PATTERN_V1.test(value.model)
         && typeof value.effort === "string" && /^(?:low|medium|high|max)$/u.test(value.effort)
         && typeof value.supportsEffort === "boolean")
     && (value.signal === undefined || value.signal instanceof AbortSignal);
