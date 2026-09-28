@@ -37,7 +37,7 @@ export function recoveringPrivateDatabase(open: (reportFault: () => void) => Rec
   let recovery: Promise<void> | undefined, closing: Promise<void> | undefined;
   let closed = false, cleanupUncertain = false;
   const shutdown = new AbortController();
-  const generationClosures = new Map<RecoveringPrivateDatabaseGeneration, Promise<void>>();
+  const generationClosures = new WeakMap<RecoveringPrivateDatabaseGeneration, Promise<void>>();
 
   const closeGeneration = (generation: RecoveringPrivateDatabaseGeneration) => {
     let closingGeneration = generationClosures.get(generation);

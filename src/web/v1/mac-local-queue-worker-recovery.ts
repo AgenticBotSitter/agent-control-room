@@ -1,5 +1,8 @@
 import type { PgBossRuntimeTerminalV1 } from "../../persistence/pg-boss-bounded-runtime";
 
+/** Nominal capability held only by the queue-recovery owner returned below. */
+export const MAC_LOCAL_QUEUE_RECOVERY_OWNER = Symbol("mac-local-queue-recovery-owner");
+
 export interface RecoverableMacLocalQueueWorkerV1 {
   status(): { accepting: boolean };
   close(): Promise<void>;
@@ -79,6 +82,7 @@ export async function startRecoveringMacLocalQueueWorkerV1(startOne: () => Promi
   })().catch(() => { state = "uncertain"; });
   const isUncertain = () => state === "uncertain";
   return Object.freeze({
+    [MAC_LOCAL_QUEUE_RECOVERY_OWNER]: true as const,
     status: () => Object.freeze({ state, faulted, accepting: state === "running" && worker?.status().accepting === true }),
     close: () => closing ??= (async () => {
       closeRequested = true;
