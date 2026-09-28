@@ -154,15 +154,19 @@ export async function readLocalOwnerCodeV1(request: Request): Promise<string> {
 /** The sign-in page is served before any session exists, so it cannot import the
  * application stylesheets through the app router. It inlines the shared colour,
  * type and spacing tokens instead, which is why the values below are copied from
- * `styles/control-room.css` rather than invented. They are deliberately the only
- * duplicated values in this file, and each one has a token name in the comment so
- * a palette change has an obvious single place to be reflected here. */
+ * `styles/control-room.css` rather than invented. A comment saying so is not a
+ * guard, so `tests/local-owner-session.test.ts` parses this page's own
+ * declarations and asserts every token equals the one the stylesheet declares
+ * for the same name: a palette edit in either file fails that test until both are
+ * updated, and trimming the copy here fails it too rather than quietly dropping
+ * the page out of the guard. */
 const signInPageV1 = (): string => `<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Control Room sign in</title>
 <style>
 /* Tokens mirrored from styles/control-room.css (:root and :root[data-theme="dark"]).
-   Duplicated because this page is served before the app's stylesheet exists. */
+   Duplicated because this page is served before the app's stylesheet exists, and
+   checked against it by tests/local-owner-session.test.ts. */
 :root{color-scheme:light;--bg:#f1f0ea;--surface:#fbfaf6;--surface-2:#f5f4ee;--surface-3:#ebeae3;--border:#d9d8cf;--border-strong:#c4c3b9;--text:#20241e;--muted:#535850;--green:#4b6d43;--radius:18px}
 @media (prefers-color-scheme:dark){:root:not([data-theme="light"]){color-scheme:dark;--bg:#10130f;--surface:#171b15;--surface-2:#1c211a;--surface-3:#252b22;--border:#30372d;--border-strong:#465043;--text:#edf0e9;--muted:#a1aa9b;--green:#91b686}}
 *{box-sizing:border-box}
@@ -175,7 +179,15 @@ input{width:100%;min-height:44px;font:inherit;color:var(--text);border:1px solid
 button{width:100%;min-height:44px;margin-top:1rem;border:1px solid transparent;border-radius:.55rem;background:var(--green);color:var(--surface);padding:.6rem .9rem;font:inherit;font-weight:700;cursor:pointer}
 input:focus-visible,button:focus-visible{outline:3px solid var(--green);outline-offset:2px}
 #message{margin:1rem 0 0;color:var(--text);font-weight:650;overflow-wrap:anywhere}
-</style></head><body><main id="private-main" tabindex="-1">
+/* The skip link and its focus treatment are mirrored from styles/control-room.css
+   for the same reason the tokens are. <main> is the skip target here exactly as it
+   is in the app shell, and a focusable target nothing links to is not a skip
+   link — the app shell's own <a class="skip-link" href="#private-main"> is the
+   precedent. tests/local-owner-session.test.ts asserts the pairing structurally. */
+.skip-link{position:fixed;top:8px;left:8px;z-index:100;background:var(--text);color:var(--surface);transform:translateY(-150%)}
+.skip-link:focus{transform:translateY(0)}
+</style></head><body><a class="skip-link" href="#private-main">Skip to the owner code field</a>
+<main id="private-main" tabindex="-1">
 <h1>Control Room</h1><p>Enter the local owner code to continue.</p>
 <form id="sign-in"><label>Owner code <input name="ownerCode" type="password" autocomplete="one-time-code" required></label><button>Sign in</button></form>
 <p id="message" role="status"></p>
