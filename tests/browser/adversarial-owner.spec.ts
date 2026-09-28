@@ -357,11 +357,12 @@ test.describe("disposable owner website adversarial attacks", () => {
     await signIn(page);
     const project = await createProject(page, "Review state consistency", "advreviewproject001");
     const projectPath = `/projects/${encodeURIComponent(project.projectId)}`;
-    const reviewPosts: { path: string; body: Record<string, unknown> }[] = [];
+    const reviewPosts: { path: string; body: Record<string, unknown>; key: string }[] = [];
     const captureReview = (request: Request) => {
       const path = new URL(request.url()).pathname;
       if (request.method() === "POST" && path.includes("/reviews/")) {
-        reviewPosts.push({ path, body: request.postDataJSON() as Record<string, unknown> });
+        reviewPosts.push({ path, body: request.postDataJSON() as Record<string, unknown>,
+          key: request.headers()["idempotency-key"] ?? "" });
       }
     };
     page.on("request", captureReview);
@@ -408,8 +409,15 @@ test.describe("disposable owner website adversarial attacks", () => {
     await page.getByLabel("Changes you want").fill("Return a corrected harmless line in a linked revision.");
     const reviewsBeforeRevision = reviewPosts.length;
     await activateTwice(page.getByRole("button", { name: "Request changes" }));
-    await expect(page.getByText(/Saved: changes requested/)).toBeVisible();
+    const savedChanges = page.getByText(/Saved: changes requested/);
+    const checkExactSave = page.getByRole("button", { name: "Check this exact review save" });
+    await expect(savedChanges.or(checkExactSave)).toBeVisible();
     expect(reviewPosts.length - reviewsBeforeRevision).toBe(1);
+    if (await checkExactSave.isVisible()) await checkExactSave.click();
+    await expect(savedChanges).toBeVisible();
+    const revisionReviewPosts = reviewPosts.slice(reviewsBeforeRevision);
+    expect(new Set(revisionReviewPosts.map(request => request.key)).size).toBe(1);
+    expect(revisionReviewPosts.every(request => request.key)).toBe(true);
     const revisionPosts: string[] = [];
     const captureRevision = (request: Request) => {
       if (request.method() === "POST" && request.url().endsWith("/revisions")) revisionPosts.push(request.url());
