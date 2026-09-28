@@ -38,6 +38,25 @@ export async function verifyMacLocalBuildCurrentV1(root = repoRoot) {
 const log = line => console.log(`mac:up ${line}`);
 const fail = (line, code = 1) => { console.error(`mac:up FAILED ${line}`); process.exit(code); };
 
+/** The recorded stop reason only ever produces a log line, so a state file this stack cannot read
+ * must not stop the start. A restored backup, a manual edit or any non-private file in runtime/ is
+ * a recovery situation, and the checks below it are the ones that can act on it, so the reason is
+ * dropped, the owner is told what to clear and why, and the preflight continues. */
+export async function readPreviousHostState(path) {
+  try { return await readHostState(path); }
+  catch (error) {
+    const name = path.split("/").slice(-2).join("/");
+    // The cause is named in plain words, not by its internal identifier: the owner needs to know
+    // the file is not private enough to read, and an identifier is not a thing they can act on.
+    const why = error instanceof Error && /mac_local_host_state_invalid/u.test(error.message)
+      ? "it is not a private regular file this account owns"
+      : "it is not readable as recorded host state";
+    log(`host state file ${name} is unreadable (${why}); starting without a recorded stop reason`);
+    log(`to clear it: rm ${path} — it records the last stop and is not state this stack needs`);
+    return undefined;
+  }
+}
+
 function run(args) {
   return new Promise(resolve => {
     const child = spawn(process.execPath, args, { cwd: repoRoot, stdio: "inherit", env: process.env });
@@ -114,7 +133,7 @@ async function main() {
   const service = args.includes("--install-service") || await serviceInstalled();
   await mkdir(paths.runtime, { recursive: true, mode: 0o700 });
   await chmod(paths.runtime, 0o700);
-  const previous = await readHostState(paths.hostState);
+  const previous = await readPreviousHostState(paths.hostState);
   const recordedSupervisorAlive = previous?.state === "running" && Number.isSafeInteger(previous.pid)
     && alive(previous.pid, hostCommand(root));
   if (previous?.state === "stopped")
