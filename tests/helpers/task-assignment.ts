@@ -12,7 +12,7 @@ import type { TaskDraft } from "../../src/web/v1/task-wire";
 
 export type TaskSourcePreparation = (fixture: Awaited<ReturnType<typeof ownerReviewFixture>>) => Promise<{
   draft: TaskDraft;
-  source: Awaited<ReturnType<Awaited<ReturnType<typeof ownerReviewFixture>>["tasks"]["propose"]>>;
+  source: Readonly<{ receipt: Readonly<{ jobId: string }> }>;
 }>;
 
 export async function taskAssignmentFixture(prepareSource?: TaskSourcePreparation) {

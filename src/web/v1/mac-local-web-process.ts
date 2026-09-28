@@ -22,6 +22,8 @@ import { taskDeliveryStatusSchema } from "./task-delivery-wire";
 import { WorkBatchOwnerServiceV1, type WorkBatchQueueAdmissionAuthorityV1,
   type WorkBatchQueueCatalogV1 } from "../../work-intake/v1";
 import { createWorkBatchOwnerHttpHandlerV1 } from "./work-batch-owner-http";
+import { LinearPipelineServiceV1 } from "../../pipelines/v1";
+import { createLinearPipelineHttpHandlerV1 } from "./linear-pipeline-http";
 
 export interface MacLocalWebProcessOptionsV1 {
   origin: string;
@@ -96,6 +98,11 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
     options.workBatchQueueCatalog, options.workBatchQueueAdmissionAuthority) : undefined;
   const workBatchHttp = workBatches ? createWorkBatchOwnerHttpHandlerV1({ origin: options.origin,
     localOwnerSession: sessions, service: workBatches, clock }) : undefined;
+  const pipelines = options.workBatchIntegrityKey ? new LinearPipelineServiceV1(options.database.client,
+    { tenantId: profile.tenantId, workspaceId: options.workspaceId }, options.workBatchIntegrityKey,
+    options.workBatchQueueAdmissionAuthority, clock) : undefined;
+  const pipelineHttp = pipelines ? createLinearPipelineHttpHandlerV1({ origin: options.origin,
+    localOwnerSession: sessions, service: pipelines, clock }) : undefined;
   let closed: Promise<void> | undefined;
 
   function pageRedirect(path: "/session" | "/projects", requestOrigin = options.origin): Response {
@@ -272,6 +279,8 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
         || /^\/api\/v1\/projects\/[^/]+(?:\/(?:lifecycle|idea-lifecycle))?$/.test(url.pathname)) return projectHttp(request);
       if (/^\/api\/v1\/projects\/[^/]+\/tasks(?:\/|$)/.test(url.pathname)) return taskHttp(request);
       if (workBatchHttp && /^\/api\/v1\/projects\/[^/]+\/pipelines(?:\/|$)/.test(url.pathname)) return workBatchHttp(request);
+      if (pipelineHttp && /^\/api\/v1\/projects\/[^/]+\/pipeline-(?:templates|runs)(?:\/|$)/.test(url.pathname))
+        return pipelineHttp(request);
       if (request.method !== "GET") throw new WebAccessError("invalid_request");
       const response = await renderProductRoute(identity, url, render);
       for (const [name, value] of Object.entries(privateResponseHeaders)) response.headers.set(name, value);
