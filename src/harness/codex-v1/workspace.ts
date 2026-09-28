@@ -187,5 +187,7 @@ function sameLease(left: CodexWorkspaceLeaseV1, right: CodexWorkspaceLeaseV1): b
 }
 
 function sameIdentity(left: CodexWorkspaceIdentityV1, right: CodexWorkspaceIdentityV1): boolean {
-  return left.realPath === right.realPath && left.device === right.device && left.inode === right.inode;
+  // Canonical paths are checked independently. Device + inode identify the
+  // same directory even when the OS exposes it through a distinct bind path.
+  return left.device === right.device && left.inode === right.inode;
 }

@@ -75,7 +75,10 @@ export async function createGitWorkspacePort(input: {
       throw new Error("workspace_git_identity_changed");
   };
   return {
-    inspectOwnerCheckout: path => identity(path),
+    inspectOwnerCheckout: async path => {
+      await roots();
+      return identity(path);
+    },
     inspectRootIdentities: async () => {
       await roots();
       return { repository: { ...repo }, workspace: { ...root }, commonGit: { ...commonIdentity } };

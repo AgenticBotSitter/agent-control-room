@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createHash } from "node:crypto";
-import { chmod, mkdtemp, mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, mkdir, readFile, realpath, rename, rm, writeFile } from "node:fs/promises";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { join } from "node:path";
@@ -57,6 +57,31 @@ test("two attempts receive disjoint named worktrees and the owner's live checkou
     ownerCheckoutRoot: f.repository, workspaceRoot: f.workspace, revision: f.base }), /live checkout/);
 });
 
+test("owner checkout identity alias is refused before a coding worktree is created", async () => {
+  const repository = "/fixture/repository", owner = "/fixture/owner-alias", workspace = "/fixture/workspaces";
+  let creates = 0;
+  const manager = new CodexWorkspaceManagerV1({
+    inspectExisting: async path => path === repository
+      ? { realPath: repository, device: "7", inode: "11" }
+      : { realPath: workspace, device: "7", inode: "12" },
+    inspectOwnerCheckout: async () => ({ realPath: owner, device: "7", inode: "11" }),
+    createDetachedWorktree: async () => { throw new Error("must_not_create"); },
+    createCodingWorktree: async () => { creates += 1; throw new Error("must_not_create"); },
+    removeWorktree: async () => { throw new Error("must_not_remove"); },
+  });
+  await assert.rejects(manager.prepareCoding({ runId: "run:owner-alias", repositoryRoot: repository,
+    ownerCheckoutRoot: owner, workspaceRoot: workspace, revision: "a".repeat(40) }), /live checkout/);
+  assert.equal(creates, 0);
+});
+
+test("owner checkout inspection rechecks pinned repository roots", async t => {
+  const f = await fixture(); t.after(f.close);
+  const moved = `${f.workspace}-moved`;
+  await rename(f.workspace, moved);
+  await mkdir(f.workspace, { mode: 0o700 });
+  await assert.rejects(f.port.inspectOwnerCheckout!(f.owner), /workspace_root_identity_changed/);
+});
+
 test("diff evidence matches Git, binds commits and full bytes, and truncates honestly", async t => {
   const f = await fixture(); t.after(f.close);
   const manager = new CodexWorkspaceManagerV1(f.port);
@@ -91,6 +116,36 @@ test("diff evidence matches Git, binds commits and full bytes, and truncates hon
   assert.match(truncated.git?.unifiedDiff.text ?? "", /CONTROL ROOM: unified diff truncated/);
   assert.equal(Buffer.byteLength(truncated.git?.unifiedDiff.text ?? ""), truncated.git?.unifiedDiff.retainedBytes);
   assert.ok((truncated.git?.unifiedDiff.originalBytes ?? 0) > (truncated.git?.unifiedDiff.retainedBytes ?? 0));
+});
+
+test("diff truncation preserves literal U+FFFD and complete multi-byte lines near the cut", async t => {
+  const f = await fixture(); t.after(f.close);
+  const manager = new CodexWorkspaceManagerV1(f.port);
+  const lease = await manager.prepareCoding({ ownerCheckoutRoot: f.owner, runId: "run:utf8-evidence",
+    repositoryRoot: f.repository, workspaceRoot: f.workspace, revision: f.base });
+  const lines = ["export const literal = \"\uFFFD\";", "export const afterLiteral = \"still here\";",
+    ...Array.from({ length: 600 }, (_, index) => `export const row${index} = \"snow 雪 and smile 🙂\";`)];
+  await commitChange(lease.checkoutPath, `${lines.join("\n")}\n`, "utf8 evidence");
+  const plan = planFor(lease), confinement = recordWorkspaceWriteRefusalV1({ worktreeLeaseDigest: lease.leaseId,
+    attemptedPath: join(f.owner, "refused.txt"), safeReasonCode: "sandbox_denied" });
+  const actualDiff = Buffer.from((await execute("git",
+    ["diff", "--binary", "--full-index", "--no-ext-diff", "--no-renames", f.base, "--"],
+    { cwd: lease.checkoutPath, encoding: "buffer" })).stdout);
+  const contentDigest = `sha256:${createHash("sha256").update(actualDiff).digest("hex")}`;
+  const markerBytes = Buffer.byteLength(`\n[CONTROL ROOM: unified diff truncated; original ${actualDiff.byteLength} bytes; ${contentDigest}]\n`);
+  let maximumDiffBytes = 1024;
+  while (maximumDiffBytes < Math.min(actualDiff.byteLength, 65_536)
+    && (actualDiff[maximumDiffBytes - markerBytes]! & 0xc0) !== 0x80) maximumDiffBytes += 1;
+  assert.ok(maximumDiffBytes < Math.min(actualDiff.byteLength, 65_536), "raw cut lands inside a multi-byte character");
+  const evidence = await captureGitWorktreeDiffEvidenceV1({ plan, checkoutPath: lease.checkoutPath,
+    confinement, maximumDiffBytes });
+  const stored = evidence.git!.unifiedDiff;
+  assert.equal(stored.truncated, true);
+  assert.match(stored.text, /literal = "\uFFFD"/u);
+  assert.match(stored.text, /afterLiteral = "still here"/u);
+  assert.match(stored.text, /snow 雪 and smile 🙂/u);
+  assert.equal([...stored.text.matchAll(/\uFFFD/gu)].length, 1);
+  assert.ok(stored.retainedBytes <= maximumDiffBytes);
 });
 
 test("terminal cleanup covers accept, reject, expiry and execution terminals, including restart", async t => {
@@ -134,6 +189,26 @@ test("restart finishes cleanup after a crash between worktree and branch removal
   const restarted = await createGitWorkspacePort({ repositoryRoot: f.repository, workspaceRoot: f.workspace, runGit: git });
   assert.equal(await cleanupTerminalCodingWorkspaceV1({ port: restarted, lease, authorization }), "already_absent");
   assert.equal((await git(f.repository, ["branch", "--list", `control-room/${lease.checkoutPath.split("/").at(-1)}`])).trim(), "");
+});
+
+test("terminal cleanup refuses a worktree whose HEAD changed after evidence capture", async t => {
+  const f = await fixture(); t.after(f.close);
+  const manager = new CodexWorkspaceManagerV1(f.port);
+  const lease = await manager.prepareCoding({ ownerCheckoutRoot: f.owner, runId: "run:changed-terminal-head",
+    repositoryRoot: f.repository, workspaceRoot: f.workspace, revision: f.base });
+  await commitChange(lease.checkoutPath, "export const reviewed = true;\n", "reviewed head");
+  const plan = planFor(lease), confinement = recordWorkspaceWriteRefusalV1({ worktreeLeaseDigest: lease.leaseId,
+    attemptedPath: join(f.owner, "refused.txt"), safeReasonCode: "sandbox_denied" });
+  const evidence = await captureGitWorktreeDiffEvidenceV1({ plan, checkoutPath: lease.checkoutPath, confinement });
+  const authorization = createCodingWorkspaceCleanupAuthorizationV1({ lease, plan, evidence, disposition: "accepted" });
+  await commitChange(lease.checkoutPath, "export const reviewed = false;\n", "unreviewed head");
+  const changedHead = (await git(lease.checkoutPath, ["rev-parse", "HEAD"])).trim();
+  const restarted = await createGitWorkspacePort({ repositoryRoot: f.repository, workspaceRoot: f.workspace, runGit: git });
+  await assert.rejects(cleanupTerminalCodingWorkspaceV1({ port: restarted, lease, authorization }),
+    /workspace_terminal_head_changed/);
+  assert.equal((await git(lease.checkoutPath, ["rev-parse", "HEAD"])).trim(), changedHead);
+  assert.equal((await git(f.repository,
+    ["branch", "--format=%(objectname)", "--list", `control-room/${lease.checkoutPath.split("/").at(-1)}`])).trim(), changedHead);
 });
 
 test("outside-worktree refusal evidence is path-redacted and hash-bound", async t => {

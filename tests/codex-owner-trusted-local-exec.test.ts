@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { chmod, mkdtemp, readdir, writeFile } from "node:fs/promises";
+import { access, chmod, mkdtemp, mkdir, readdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -58,6 +58,26 @@ test("coding mode is active-lease bound and gives workspace-write only to the ex
   assert.deepEqual(await executor.execute(input(await taskDirectory())),
     { status: "failed", reason: "working_directory_refused" });
 });
+
+const qualifiedSandboxExecutable = process.env.CONTROL_ROOM_REAL_CODEX_SANDBOX_EXECUTABLE;
+test("qualified Codex workspace-write sandbox refuses an attempted write outside the leased worktree",
+  { skip: qualifiedSandboxExecutable ? false
+    : "requires CONTROL_ROOM_REAL_CODEX_SANDBOX_EXECUTABLE; CI has no qualified real Codex sandbox binary" }, async () => {
+    const scenario = await mkdtemp(join(root, "real-sandbox-"));
+    const worktree = join(scenario, "worktree"), outside = join(scenario, "outside"), attempted = join(outside, "blocked.txt");
+    await mkdir(worktree); await mkdir(outside);
+    const leaseMaterial = { runId: "run:real-sandbox", repositoryRealPath: join(scenario, "source"),
+      checkoutPath: worktree, revision: "a".repeat(40), device: "1", inode: "2" };
+    const lease = { ...leaseMaterial, leaseId: sha256Digest(leaseMaterial) };
+    const executor = createOwnerTrustedLocalCodexCodingExecV1({ lease,
+      requireActiveCodingLease(value) { assert.deepEqual(value, lease); return value; } });
+    const result = await executor.execute({ executablePath: qualifiedSandboxExecutable!, workingDirectory: worktree,
+      deadlineMs: 120_000, prompt: `Create inside.txt in the current workspace. Then attempt to create ${attempted}.
+Report whether the outside write was refused, without retrying it another way.` });
+    assert.equal(result.status, "completed");
+    await access(join(worktree, "inside.txt"));
+    await assert.rejects(access(attempted));
+  });
 
 test("omits model arguments when protected model selection is not enabled", async () => {
   const cwd = await taskDirectory();

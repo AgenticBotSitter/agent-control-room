@@ -79,9 +79,12 @@ function boundedDiff(bytes: Uint8Array, maximumBytes: number) {
   const marker = `${TRUNCATION_PREFIX}; original ${bytes.byteLength} bytes; ${contentDigest}]\n`;
   const markerBytes = Buffer.from(marker);
   if (markerBytes.byteLength >= maximumBytes) throw new Error("git_evidence_diff_bound_invalid");
-  let retained = Buffer.from(bytes).subarray(0, maximumBytes - markerBytes.byteLength);
-  // Never store malformed UTF-8 merely because the byte boundary split a codepoint.
-  while (retained.byteLength && Buffer.from(retained).toString("utf8").includes("\uFFFD")) retained = retained.subarray(0, -1);
+  const prefix = Buffer.from(bytes).subarray(0, maximumBytes - markerBytes.byteLength);
+  // LF is never part of a multi-byte UTF-8 sequence. Retaining only complete
+  // diff lines gives us a valid boundary without decoding user content or
+  // confusing a literal U+FFFD with decoder damage at the cut.
+  const lastLine = prefix.lastIndexOf(0x0a);
+  const retained = lastLine < 0 ? prefix.subarray(0, 0) : prefix.subarray(0, lastLine + 1);
   const stored = Buffer.concat([retained, markerBytes]);
   return Object.freeze({ text: stored.toString("utf8"), originalBytes: bytes.byteLength,
     retainedBytes: stored.byteLength, truncated: true, contentDigest, retainedDigest: digest(stored) });
