@@ -11,7 +11,6 @@ import {
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { spawn, spawnSync } from "node:child_process";
 import { constants as osConstants } from "node:os";
-import typescript from "typescript";
 
 const MANIFEST_DIRECTORY = "mutation-checks";
 const FIELDS = ["file", "find", "replace", "test", "why"];
@@ -207,13 +206,19 @@ async function verifyWhitespaceInsensitive(root, entry, number, timeoutMs) {
   console.log("PASS: whitespace-only edit passed.");
 }
 
-function requireParsableMutation(entry) {
+async function requireParsableMutation(entry) {
   if (/\.(?:[cm]?js)$/u.test(entry.file)) {
     const result = spawnSync(process.execPath, ["--check", entry.filePath], { encoding: "utf8" });
     if (result.status !== 0) throw new Error(`${entry.label}: mutation does not parse: ${result.stderr.trim()}`);
     return;
   }
   if (/\.tsx?$/u.test(entry.file)) {
+    let typescript;
+    try {
+      ({ default: typescript } = await import("typescript"));
+    } catch (error) {
+      throw new Error(`${entry.label}: TypeScript parser is unavailable: ${error.message}`);
+    }
     const result = typescript.transpileModule(readFileSync(entry.filePath, "utf8"), {
       compilerOptions: { module: typescript.ModuleKind.ESNext, target: typescript.ScriptTarget.ESNext,
         jsx: entry.file.endsWith(".tsx") ? typescript.JsxEmit.Preserve : undefined },
@@ -239,7 +244,7 @@ async function verifyEntry(root, entry, number, timeoutMs) {
   try {
     activeRestore = () => restoreFile(root, entry, original, mode);
     writeFileSync(entry.filePath, text.replace(entry.find, () => entry.replace));
-    requireParsableMutation(entry);
+    await requireParsableMutation(entry);
     result = await runTest(entry.test, root, timeoutMs);
   } finally {
     activeRestore = undefined;

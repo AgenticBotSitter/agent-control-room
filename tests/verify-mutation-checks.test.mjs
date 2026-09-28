@@ -3,10 +3,14 @@ import { existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, 
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { spawn, spawnSync } from "node:child_process";
+import { createRequire } from "node:module";
 import test from "node:test";
 
 const verifier = resolve("scripts/ci/verify-mutation-checks.mjs");
 const workflow = readFileSync(resolve(".github/workflows/ci.yml"), "utf8");
+const typescriptAvailable = (() => {
+  try { createRequire(import.meta.url).resolve("typescript"); return true; } catch { return false; }
+})();
 
 function git(root, ...args) {
   const result = spawnSync("git", args, { cwd: root, encoding: "utf8" });
@@ -236,7 +240,7 @@ test("A3 rejects a replacement that deletes a JavaScript function header", () =>
   }
 });
 
-test("a syntax-breaking TypeScript replacement is refused", () => {
+test("a syntax-breaking TypeScript replacement is refused", { skip: !typescriptAvailable }, () => {
   const root = fixture();
   try {
     writeFileSync(join(root, "src", "guard.ts"), 'export const decision: string = "refuse";\n');
