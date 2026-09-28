@@ -9,13 +9,22 @@ import test from "node:test";
 import { pathToFileURL } from "node:url";
 import { monitorActiveTaskHost } from "../scripts/mac-local/start-task-host.mjs";
 import { inspectMacLocalHost } from "../scripts/mac-local/status.mjs";
+import { startAndWait } from "../scripts/mac-local/up.mjs";
 import { RotatingHostLog, readHostState, rotateHostLog, stoppedBecause,
   superviseTaskHost } from "../scripts/mac-local/task-host-supervisor.mjs";
-import { hostCommand, recordedHostCommand, runtimePaths, taskHostCommand } from "../scripts/mac-local/stack.mjs";
+import { hostCommand, readPid, recordedHostCommand, runtimePaths, taskHostCommand } from "../scripts/mac-local/stack.mjs";
 
 const repoRoot = join(import.meta.dirname, "..");
 const supervisorModule = pathToFileURL(join(repoRoot, "scripts/mac-local/task-host-supervisor.mjs")).href;
 const taskHostModule = pathToFileURL(join(repoRoot, "scripts/mac-local/start-task-host.mjs")).href;
+const upModule = pathToFileURL(join(repoRoot, "scripts/mac-local/up.mjs")).href;
+
+/** The accepting connection handler every fixture server shares. The "error" guard is load-bearing:
+ * a readiness probe that connects and destroys its socket sends an RST on macOS, which reaches the
+ * server as an unhandled "error" event and kills the fixture instead of the connection. The
+ * earlier per-test copies of this line were one missed guard away from the same crash, so the
+ * handler is written once here and every fixture uses it. */
+const ACK_SERVER_SOURCE = `const server = createServer(socket => { socket.on("error", () => {}); socket.end("ok"); });\n`;
 
 async function rootFixture(t) {
   const root = await mkdtemp(join(tmpdir(), "acr-host-supervisor-"));
@@ -245,7 +254,7 @@ test("a hard-killed supervisor cannot orphan its port-holding child and restart 
   const root = await rootFixture(t), port = await unusedPort();
   const childSource = `import { createServer } from "node:net";\n`
     + `import { monitorActiveTaskHost } from ${JSON.stringify(taskHostModule)};\n`
-    + `const server = createServer(socket => { socket.on("error", () => {}); socket.end("ok"); });\n`
+    + ACK_SERVER_SOURCE
     + `await new Promise((resolve, reject) => { server.once("error", reject); server.listen(${port}, "127.0.0.1", resolve); });\n`
     + `monitorActiveTaskHost({ close: () => new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve())) }, process, globalThis, process.stdin);\n`;
   const args = ["--input-type=module", "-e", childSource];
@@ -285,7 +294,7 @@ test("child-side escalation survives supervisor death during a hung shutdown", a
   const root = await rootFixture(t), port = await unusedPort();
   const childSource = `import { createServer } from "node:net";\n`
     + `import { monitorActiveTaskHost } from ${JSON.stringify(taskHostModule)};\n`
-    + `const server = createServer(socket => { socket.on("error", () => {}); socket.end("ok"); });\n`
+    + ACK_SERVER_SOURCE
     + `await new Promise((resolve, reject) => { server.once("error", reject); server.listen(${port}, "127.0.0.1", resolve); });\n`
     + `const timers = { setTimeout: (callback) => setTimeout(callback, 1000), clearTimeout };\n`
     + `monitorActiveTaskHost({ close: () => new Promise(() => {}) }, process, timers, process.stdin);\n`
@@ -413,7 +422,7 @@ test("mac:status distinguishes serving, unhealthy, and dead/restarting hosts", a
 test("mac:status recognizes a serving legacy host with no supervisor state", async t => {
   const root = await rootFixture(t), paths = runtimePaths(root), port = await unusedPort();
   const bootstrap = `import { createServer } from "node:net";\n`
-    + `const server = createServer(socket => socket.end("ok"));\n`
+    + ACK_SERVER_SOURCE
     + `server.listen(${port}, "127.0.0.1");\n`;
   const [command, ...args] = taskHostCommand(root);
   const legacy = spawn(command, args, {
@@ -433,6 +442,73 @@ test("mac:status recognizes a serving legacy host with no supervisor state", asy
   assert.equal(status.status, "running");
   assert.equal(status.pid, legacy.pid);
   assert.equal(status.reason, undefined);
+});
+
+test("mac:up's start-failure path stops the process it started, removes the pid file, and reports the hint", async t => {
+  // This is the path the removed import broke: a supervised host that never became ready. The
+  // reference error fired before the cleanup and before the message, so the owner lost the hint
+  // and the host was left running unsupervised behind a stale pid file.
+  const root = await rootFixture(t), paths = runtimePaths(root);
+  // A command that starts cleanly, records its own pid, and then exits without ever serving:
+  // exactly the shape of a host that fails its own startup.
+  const command = [process.execPath, "-e", "process.exit(1)"];
+  await assert.rejects(
+    startAndWait(command, paths.hostLog, paths.hostPid, async () => false, 1, "task host"),
+    (error) => {
+      assert.equal(error.message, "task host did not start within 1s (see runtime/task-host.log)");
+      assert.doesNotMatch(error.message, /is not defined/u, "the failure must be the reported hint, not a reference error");
+      return true;
+    },
+  );
+  // The pid file is the only handle mac:down has on the process, so a failed start must not leave it.
+  await assert.rejects(readFile(paths.hostPid, "utf8"), error => error.code === "ENOENT");
+});
+
+test("mac:up's start-failure path stops a process that is alive but not serving", async t => {
+  // A supervisor can be alive and not yet serving (a slow database), which is precisely the case
+  // that must not be left behind. The wait gives up on time, so the stop has to happen on that
+  // path too, not only when the child died on its own.
+  const root = await rootFixture(t), paths = runtimePaths(root);
+  const source = "setInterval(() => {}, 1000);";
+  const command = [process.execPath, "-e", source];
+  try {
+    await assert.rejects(
+      startAndWait(command, paths.hostLog, paths.hostPid, async () => false, 1, "task host"),
+      /task host did not start within 1s/u,
+    );
+  } finally { await killProcessGroup(Number((await readPid(paths.hostPid).catch(() => 0)) ?? 0)); }
+  await assert.rejects(readFile(paths.hostPid, "utf8"), error => error.code === "ENOENT");
+});
+
+test("mac:up reports a successful start instead of treating a ready host as a failure", async t => {
+  const root = await rootFixture(t), paths = runtimePaths(root), port = await unusedPort();
+  // Single-line, because startAndWait confirms the process by exact `ps` command-line match, and
+  // a multi-line -e argument does not survive that comparison intact.
+  const source = `import { createServer } from "node:net"; const server = createServer(socket => { socket.on("error", () => {}); socket.end("ok"); }); server.listen(${port}, "127.0.0.1"); setInterval(() => {}, 1000);`;
+  const command = [process.execPath, "-e", source];
+  const started = [];
+  t.after(async () => { for (const pid of started) await killProcessGroup(pid); });
+  const pid = await startAndWait(command, paths.hostLog, paths.hostPid, () => portOpen(port), 5, "task host");
+  started.push(pid);
+  assert.equal(await readPid(paths.hostPid), pid);
+  assert.equal(await readFile(paths.hostPid, "utf8"), `${pid}\n`);
+});
+
+test("mac:up binds every stack helper its start-failure cleanup calls", async t => {
+  // The regression was a call site left behind when the import was renamed. Nothing type-checks
+  // .mjs here, so the guard is that mac:up still binds every helper it uses: a dropped name can
+  // only ever be a ReferenceError, which fires before the stop and before the message.
+  const source = await readFile(new URL(upModule), "utf8");
+  const imported = new Set([...source.matchAll(/^import\s*\{([^}]*)\}\s*from\s*"\.\/stack\.mjs"/gms)]
+    .flatMap(match => match[1].split(",").map(name => name.trim()).filter(Boolean)));
+  for (const name of ["alive", "hostCommand", "protectedRootFromArguments", "readPid", "repoRoot",
+    "runtimePaths", "stopRecorded", "stopRecordedHost", "taskHostCommand"]) {
+    assert.ok(imported.has(name), `up.mjs must import ${name} from stack.mjs`);
+  }
+  assert.match(source, /await stopRecorded\(pidPath, command, 10\);/u,
+    "the start-failure branch must stop the process it started");
+  assert.match(source, /throw new Error\(`\$\{what\} did not start within \$\{seconds\}s/u,
+    "a failed start must surface the startup hint instead of reporting it and continuing");
 });
 
 test("upgrade selection recognizes only the current supervisor or exact legacy host", () => {
