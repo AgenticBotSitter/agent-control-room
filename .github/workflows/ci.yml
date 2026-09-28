@@ -94,11 +94,12 @@ jobs:
           set -euo pipefail
           postgres_root="$(mktemp -d "${RUNNER_TEMP}/affected-tests-postgres.XXXXXX")"
           postgres_port="$(python3 -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()')"
+          mkdir -m 700 "${postgres_root}/socket"
           echo "AFFECTED_TESTS_POSTGRES_ROOT=${postgres_root}" >> "$GITHUB_ENV"
           echo "$PG_BIN" >> "$GITHUB_PATH"
           "$PG_BIN/initdb" -D "${postgres_root}/data" -U postgres --auth=trust --encoding=UTF8 --no-locale
           if ! "$PG_BIN/pg_ctl" -D "${postgres_root}/data" -l "${postgres_root}/postgres.log" -w -t 30 \
-            -o "-p ${postgres_port} -c listen_addresses=127.0.0.1" start; then
+            -o "-p ${postgres_port} -c listen_addresses=127.0.0.1 -c unix_socket_directories='${postgres_root}/socket'" start; then
             cat "${postgres_root}/postgres.log" >&2 || true
             exit 1
           fi
