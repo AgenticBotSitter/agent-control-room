@@ -30,6 +30,15 @@ test("ownership refuses a nonempty root, reserved ports, and an owner protected 
   await assert.rejects(createRehearsalOwnership({ ...input, forbiddenProtectedRoots: [rehearsal] }), /protected_root_refused/u);
 });
 
+test("ownership stores an absolute repository helper path without its trailing separator", async t => {
+  const base = await temporaryRoot(t), root = join(base, "run"), registryDirectory = join(base, "registry");
+  await mkdir(root, { mode: 0o700 });
+  const repositoryRoot = `${await realpath(process.cwd())}/`;
+  const ownership = await createRehearsalOwnership({ root, databasePort: 15499, webPort: 3217,
+    repositoryRoot, registryDirectory });
+  assert.equal(ownership.repositoryRoot, repositoryRoot.slice(0, -1));
+});
+
 test("bounded child reports its process group and kills it after the timeout", async () => {
   let spawned;
   const result = await runBoundedChild(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {

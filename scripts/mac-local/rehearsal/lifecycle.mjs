@@ -72,8 +72,9 @@ async function atomicPrivateJson(path, value, runtime) {
 
 export async function createRehearsalOwnership({ root, databasePort, webPort, repositoryRoot,
   registryDirectory = defaultRegistryDirectory(), processes = [], forbiddenProtectedRoots = [] }, runtime = productionFiles) {
-  if (!isAbsolute(root) || resolve(root) !== root || !isAbsolute(repositoryRoot)
-    || resolve(repositoryRoot) !== repositoryRoot) throw new Error("rehearsal_root_must_be_absolute");
+  if (!isAbsolute(root) || resolve(root) !== root || !isAbsolute(repositoryRoot))
+    throw new Error("rehearsal_root_must_be_absolute");
+  const canonicalRepositoryRoot = resolve(repositoryRoot);
   if (databasePort === RESERVED_DATABASE_PORT || webPort === RESERVED_WEB_PORT)
     throw new Error("rehearsal_reserved_port_refused");
   if (forbiddenOwnerRoots(forbiddenProtectedRoots).some(protectedRoot => overlaps(root, protectedRoot)))
@@ -97,7 +98,7 @@ export async function createRehearsalOwnership({ root, databasePort, webPort, re
     uid: uid ?? 0,
     device: Number(rootEntry.dev),
     inode: Number(rootEntry.ino),
-    repositoryRoot,
+    repositoryRoot: canonicalRepositoryRoot,
     databaseDirectory: join(root, "pg"),
     protectedRoot: join(root, "protected"),
     databasePort,
