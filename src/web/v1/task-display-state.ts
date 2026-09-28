@@ -5,6 +5,7 @@ type DisplayReview = Readonly<{
   status: string;
   contentHash: string;
   matchingArtifactIds: readonly string[];
+  additionalEvidenceOmitted: boolean;
 }>;
 
 export type TaskDisplayEvidenceV1 = Readonly<{
@@ -62,6 +63,7 @@ export function projectTaskDisplayStateV1(summary: TaskSummary, evidence: TaskDi
 
   if (state !== "succeeded") return summary;
   const accepted = evidence.results.length > 0 && !evidence.additionalResultsOmitted && !evidence.additionalTargetsOmitted
+    && evidence.reviews.every(review => !review.additionalEvidenceOmitted)
     && evidence.results.every(result => evidence.reviews.some(review => review.status === "ready"
       && review.matchingArtifactIds.includes(result.artifactId) && review.contentHash === result.contentHash));
   return taskSummarySchema.parse({ ...summary, state, ...(accepted ? { qualityStatus: "accepted" as const } : {}) });

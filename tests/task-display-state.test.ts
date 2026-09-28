@@ -20,16 +20,19 @@ test("a canonical leased attempt with a succeeded latest run and matching result
   assert.equal(projected.qualityStatus, undefined);
 });
 
-test("ready review evidence displays accepted only for the same received artifact and digest", () => {
-  const accepted = evidence({ reviews: [{ status: "ready", contentHash: hash, matchingArtifactIds: ["artifact:result"] }] });
+test("ready review evidence displays accepted only for the same complete received artifact and digest", () => {
+  const accepted = evidence({ reviews: [{ status: "ready", contentHash: hash, matchingArtifactIds: ["artifact:result"],
+    additionalEvidenceOmitted: false }] });
   assert.equal(projectTaskDisplayStateV1(task("leased"), accepted).qualityStatus, "accepted");
   assert.equal(projectTaskDisplayStateV1(task("leased"), evidence({ reviews: [{ ...accepted.reviews[0]!,
     contentHash: `sha256:${"b".repeat(64)}` }] })).qualityStatus, undefined);
+  assert.equal(projectTaskDisplayStateV1(task("leased"), evidence({ reviews: [{ ...accepted.reviews[0]!,
+    additionalEvidenceOmitted: true }] })).qualityStatus, undefined);
 });
 
 test("changes-requested review stays separate from the completed execution display", () => {
   const projected = projectTaskDisplayStateV1(task("leased"), evidence({ reviews: [{ status: "changes_requested",
-    contentHash: hash, matchingArtifactIds: ["artifact:result"] }] }));
+    contentHash: hash, matchingArtifactIds: ["artifact:result"], additionalEvidenceOmitted: false }] }));
   assert.equal(projected.state, "succeeded");
   assert.equal(projected.qualityStatus, undefined);
 });
@@ -44,7 +47,8 @@ test("missing, stale-attempt, nonterminal, and partial evidence fail closed", ()
     evidence({ results: [{ ...evidence().results[0]!, runId: "run:1" }] }),
   ];
   for (const value of cases) assert.deepEqual(projectTaskDisplayStateV1(task("leased"), value), task("leased"));
-  const partial = evidence({ reviews: [{ status: "ready", contentHash: hash, matchingArtifactIds: ["artifact:result"] }],
+  const partial = evidence({ reviews: [{ status: "ready", contentHash: hash, matchingArtifactIds: ["artifact:result"],
+    additionalEvidenceOmitted: false }],
     additionalTargetsOmitted: true });
   assert.equal(projectTaskDisplayStateV1(task("leased"), partial).state, "succeeded");
   assert.equal(projectTaskDisplayStateV1(task("leased"), partial).qualityStatus, undefined);
