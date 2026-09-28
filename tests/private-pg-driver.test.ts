@@ -79,6 +79,79 @@ test("one bounded pool-width waits for a connection instead of failing an ordina
   await db.close();
 });
 
+test("a queued caller receives a fresh operation budget without terminating the pool", async () => {
+  let releaseFirst!: () => void, firstEntered!: () => void, secondEntered!: () => void;
+  let finishSecond!: () => void, bystanderRan = false, terminations = 0;
+  const firstStarted = new Promise<void>(resolve => { firstEntered = resolve; });
+  const firstHeld = new Promise<void>(resolve => { releaseFirst = resolve; });
+  const secondStarted = new Promise<void>(resolve => { secondEntered = resolve; });
+  const secondHeld = new Promise<void>(resolve => { finishSecond = resolve; });
+  const db = boundPrivateDatabase({ async acquire() { return {
+    async query(statement) {
+      if (statement === "SELECT first") { firstEntered(); await firstHeld; }
+      if (statement === "SELECT slow_after_queue") { secondEntered(); await secondHeld; }
+      if (statement === "SELECT bystander") bystanderRan = true;
+      return { rows: [] };
+    }, release() {},
+  }; }, async terminate() { terminations++; } },
+  { connections: 1, checkoutMs: 500, statementMs: 500, transactionMs: 500, closeMs: 500 });
+
+  const first = db.client.query("SELECT first"); await firstStarted;
+  const slowAfterQueue = db.client.query("SELECT slow_after_queue");
+  await new Promise(resolve => setTimeout(resolve, 300));
+  releaseFirst(); await first; await secondStarted;
+  const bystander = db.client.query("SELECT bystander");
+  await new Promise(resolve => setTimeout(resolve, 300));
+  finishSecond(); await Promise.all([slowAfterQueue, bystander]);
+
+  assert.equal(bystanderRan, true); assert.equal(db.isAvailable(), true); assert.equal(terminations, 0);
+  await db.close(); assert.equal(terminations, 1);
+});
+
+test("admission wait is bounded by checkoutMs without terminating the pool", async () => {
+  let releaseHolder!: () => void, holderEntered!: () => void;
+  const entered = new Promise<void>(resolve => { holderEntered = resolve; });
+  const held = new Promise<void>(resolve => { releaseHolder = resolve; });
+  let terminations = 0;
+  const db = boundPrivateDatabase({ async acquire() { return {
+    async query(statement) {
+      if (statement === "SELECT holder") { holderEntered(); await held; }
+      return { rows: [] };
+    }, release() {},
+  }; }, async terminate() { terminations++; } },
+  { connections: 1, checkoutMs: 200, statementMs: 1_000, transactionMs: 1_000, closeMs: 1_000 });
+
+  const holder = db.client.query("SELECT holder"); await entered;
+  const queued = db.client.query("SELECT queued");
+  let holderReleased = false;
+  const scheduledRelease = new Promise<void>(resolve => setTimeout(() => {
+    holderReleased = true; releaseHolder(); resolve();
+  }, 300));
+  await assert.rejects(queued, { message: "database_unavailable" });
+  assert.equal(holderReleased, false, "admission must expire before the holder is released at 1.5x checkoutMs");
+  await scheduledRelease; await holder;
+  const available = db.isAvailable(), terminationsBeforeClose = terminations;
+  await db.close();
+  assert.equal(available, true); assert.equal(terminationsBeforeClose, 0); assert.equal(terminations, 1);
+});
+
+test("transaction operation budget quarantines a pool that exceeds transactionMs", async () => {
+  let committed = false;
+  let terminations = 0;
+  const db = boundPrivateDatabase({ async acquire() { return {
+    async query() { await new Promise(resolve => setTimeout(resolve, 30)); return { rows: [] }; },
+    release() {},
+  }; }, async terminate() { terminations++; } },
+  { connections: 1, checkoutMs: 100, statementMs: 100, transactionMs: 300, closeMs: 100 });
+
+  await assert.rejects(db.client.transaction(async session => {
+    for (let index = 0; index < 15; index += 1) await session.query(`SELECT ${index}`);
+    committed = true;
+  }), { message: "database_outcome_uncertain" });
+  assert.equal(committed, false, "the callback must not finish work beyond the operation budget");
+  assert.equal(db.isAvailable(), false); assert.equal(terminations, 1);
+});
+
 test("an aborted queued operation leaves admission immediately for the next caller", async () => {
   let releaseFirst!: () => void, firstEntered!: () => void, thirdEntered = false;
   const entered = new Promise<void>(resolve => { firstEntered = resolve; });
