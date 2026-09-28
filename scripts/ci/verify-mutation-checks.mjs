@@ -125,7 +125,7 @@ function parseManifest(root, manifestPath) {
       throw new Error(`malformed manifest entry ${index + 1}: find and replace must differ`);
     }
     const filePath = resolve(root, entry.file);
-    if (!isInside(root, filePath)) throw new Error(`malformed manifest entry ${index + 1}: file must stay inside the checkout`);
+    if (isAbsolute(entry.file) || !isInside(root, filePath)) throw new Error(`malformed manifest entry ${index + 1}: file must stay inside the checkout`);
     if (!existsSync(filePath)) throw new Error(`malformed manifest entry ${index + 1}: file must exist`);
     if (lstatSync(filePath).isSymbolicLink()) throw new Error(`malformed manifest entry ${index + 1}: file must not be a symbolic link`);
     if (!lstatSync(filePath).isFile()) throw new Error(`malformed manifest entry ${index + 1}: file must be a regular file`);
