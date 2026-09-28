@@ -6,7 +6,7 @@ import { PgBoss, getConstructionPlans } from "pg-boss";
 import { macRolePlan } from "./database-upgrade-grants.mjs";
 
 // Updated only after a fresh PostgreSQL 17 construction and negative tests.
-const expectedShapeDigest = "sha256:c7ac7af7bb4b466fb108743d14f66539fa2131d8414588dfabafd1e523a69256";
+const expectedShapeDigest = "sha256:18f9164b213d17ffc97fc14d63c7b7eb290d567a0e973be841755e940c7d1963";
 const hash = value => `sha256:${createHash("sha256").update(JSON.stringify(value)).digest("hex")}`;
 const macPrincipals = [...Object.keys(macRolePlan), ...Object.values(macRolePlan)];
 
