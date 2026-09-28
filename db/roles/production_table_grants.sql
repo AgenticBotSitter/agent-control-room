@@ -56,6 +56,9 @@ GRANT USAGE ON SEQUENCE control_github_worker_wake_hints_hint_id_seq TO control_
 -- shared-ledger authority.
 REVOKE ALL ON ALL TABLES IN SCHEMA public FROM control_room_work_intake;
 REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM control_room_work_intake;
+REVOKE ALL ON work_intake_role_anchor FROM control_room_application, control_room_reader,
+  control_room_backup, control_room_schedule_admissions, control_room_github_broker;
+GRANT SELECT ON work_intake_role_anchor TO control_room_work_intake;
 REVOKE ALL ON work_batches, work_batch_revisions, work_batch_items, work_batch_queue_admissions,
   work_batch_effective_queue_admissions, work_batch_agent_queue_heads FROM control_room_application,
   control_room_reader, control_room_schedule_admissions, control_room_github_broker;
@@ -80,6 +83,9 @@ GRANT UPDATE (web_lock) ON control_identities, control_role_grants TO control_ro
 GRANT UPDATE (coordinator_lock) ON projects TO control_room_work_intake;
 GRANT EXECUTE ON FUNCTION work_intake_canonical_jsonb(jsonb) TO control_room_work_intake;
 GRANT INSERT ON control_action_inbox TO control_room_work_intake;
+-- Shared-ledger policies run for every database role. This SECURITY DEFINER
+-- predicate exposes only a boolean and reads the protected marker ACL.
+GRANT EXECUTE ON FUNCTION is_work_intake_session() TO PUBLIC;
 
 ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON TABLES FROM PUBLIC;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON SEQUENCES FROM PUBLIC;

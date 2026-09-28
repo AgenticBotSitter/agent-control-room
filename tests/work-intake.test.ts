@@ -218,10 +218,10 @@ test("project scope, expiry, revocation, and forbidden actions fail before propo
     idempotencyKey: "revoked-agent-0001", now: NOW }), /no_matching_grant/);
   assert.equal(rawRead, false);
   const events = await f.raw.query<{ count: number }>("SELECT count(*)::int AS count FROM audit_events");
-  assert.equal(events.rows[0]!.count, 12);
+  assert.equal(events.rows[0]!.count, 9);
   const refusalActors = (await f.raw.query<{ actor_type: string }>(
     "SELECT DISTINCT actor_type FROM audit_events WHERE actor_type IN ('human','service','worker') ORDER BY actor_type")).rows;
-  assert.deepEqual(refusalActors.map(row => row.actor_type), ["human", "service", "worker"]);
+  assert.deepEqual(refusalActors, [], "non-agent refusals are not misattributed as intake-agent audit events");
   assert.equal((await new AuditStore(f.db).verify("tenant:test", auditPartition(NOW))).valid, true);
 });
 

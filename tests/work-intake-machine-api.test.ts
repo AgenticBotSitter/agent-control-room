@@ -142,7 +142,10 @@ test("role creation and least-privilege grants travel through reviewed productio
   assert.match(browser, /work_batches, work_batch_revisions, work_batch_items, control_action_inbox TO control_room_private_web/u);
   assert.match(browser, /GRANT INSERT ON work_batch_revisions, work_batch_items TO control_room_private_web/u);
   assert.doesNotMatch(browser, /GRANT .*control_room_queue.* TO control_room_private_web/u);
-  assert.match(migration, /pg_has_role\(session_user,r\.oid,'member'\)/u);
+  assert.match(migration, /CREATE TABLE work_intake_role_anchor/u);
+  assert.match(migration, /pg_has_role\(s\.oid,a\.grantee,'member'\)/u);
+  assert.doesNotMatch(migration, /r\.rolname='control_room_work_intake'/u);
+  assert.match(grants, /GRANT SELECT ON work_intake_role_anchor TO control_room_work_intake/u);
   assert.match(migration, /NOT s\.rolsuper/u);
   assert.match(migration, /CREATE POLICY control_idempotency_work_intake_scope/u);
   assert.match(migration, /CREATE POLICY audit_events_work_intake_scope/u);

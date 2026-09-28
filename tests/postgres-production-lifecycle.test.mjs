@@ -371,6 +371,20 @@ test("work-intake login cannot read or forge another subsystem's shared-ledger r
     WHERE tenant_id='tenant:intake-guard' AND chain_partition='month:2026-09'`,[`sha256:${"5".repeat(64)}`]),
     /work intake audit head update rejected/u);
 
+  // Grants and the binding retain the group OID across a rename. Every guard
+  // and restrictive policy must therefore remain active without matching the
+  // group's original display name.
+  await query(db,"ALTER ROLE control_room_work_intake RENAME TO control_room_work_intake_renamed");
+  try {
+    assert.deepEqual((await query(intake,"SELECT operation_scope FROM control_idempotency")).rows,[]);
+    await assert.rejects(query(intake,`INSERT INTO control_idempotency
+      (tenant_id,operation_scope,idempotency_key,request_digest,status)
+      VALUES('tenant:intake-guard','other.operation/v1','renamed-key-0001',$1,'processing')`,
+      [`sha256:${"a".repeat(64)}`]),/work intake idempotency insert rejected/u);
+  } finally {
+    await query(db,"ALTER ROLE control_room_work_intake_renamed RENAME TO control_room_work_intake");
+  }
+
   await query(db,"GRANT control_room_work_intake TO control_room_scheduler");
   try {
     const alternate={...target("cr_prod_intake_guard","control_room_scheduler"),
@@ -391,6 +405,11 @@ test("work-intake login cannot read or forge another subsystem's shared-ledger r
   assert.deepEqual(lockPrivileges,{identity_lock:true,grant_lock:true,project_lock:true,identity_state:false,project_state:false});
   const principal={tenantId:"tenant:intake-guard",identityId:"identity:intake-guard",actorType:"agent",
     authenticatedAt:"2026-09-27T11:00:00.000Z",expiresAt:"2027-09-27T12:00:00.000Z"};
+  const auditCountBeforeNonAgent=(await query(intake,"SELECT count(*)::int AS count FROM audit_events")).rows[0].count;
+  assert.deepEqual(await store.authorize({...principal,actorType:"human"},"project:intake-guard",
+    "2026-09-27T12:00:30.000Z"),{allowed:false,safeReasonCode:"credential_inactive"});
+  assert.equal((await query(intake,"SELECT count(*)::int AS count FROM audit_events")).rows[0].count,
+    auditCountBeforeNonAgent,"non-agent refusal is not misattributed as intake-agent activity");
   assert.equal((await store.authorizeAction(principal,"project:intake-other","work_batches.propose",
     "2026-09-27T12:01:00.000Z")).allowed,false,"wrong-project refusal is recorded");
   await query(db,"UPDATE control_role_grants SET revoked_at='2026-09-27T12:01:30.000Z' WHERE id='grant:intake-guard'");

@@ -46,6 +46,8 @@ DROP FUNCTION enforce_work_intake_audit_event_head();
 DROP FUNCTION guard_work_intake_audit_event_insert();
 DROP FUNCTION work_intake_canonical_jsonb(jsonb);
 DROP FUNCTION guard_work_intake_idempotency_write();
+DROP FUNCTION is_work_intake_session();
+DROP TABLE work_intake_role_anchor;
 DROP FUNCTION guard_initial_work_batch_revision_insert();
 DROP FUNCTION guard_proposal_only_work_batch_insert();
 COMMIT;
