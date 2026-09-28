@@ -10,6 +10,7 @@ const materialSchema = z.object({
   schema: z.literal("control-room.pipeline-build-publication-authority/v1"),
   deliveryDigest: digest,
   tenantId: id, projectId: id, sourceJobId: id, executionJobId: id, attemptId: id, runId: id,
+  artifactId: id, resultRevision: z.number().int().positive(),
   pipelineRunId: id, stageOrdinal: z.number().int().nonnegative(), stageRecordDigest: digest,
   workerId: id, model: z.string().min(1).max(180), effort: z.string().min(1).max(80),
   allowedPaths: z.array(z.string().min(1).max(1024)).min(1).max(100),
@@ -29,6 +30,19 @@ function same(left: string, right: string): boolean {
   return a.length === b.length && timingSafeEqual(a, b);
 }
 const unavailable = (): never => { throw new Error("pipeline_build_publication_authority_unavailable"); };
+
+/** One-way, domain-separated worker custody. Possession cannot authenticate
+ * pipeline templates, runs, stages, or any other controller record. */
+function derivedKey(controllerKey: Uint8Array, purpose: string): Uint8Array {
+  if (!(controllerKey instanceof Uint8Array) || controllerKey.length !== 32) return unavailable();
+  const tag = hmacSha256Tag(controllerKey, { purpose });
+  return Uint8Array.from(Buffer.from(tag.slice("hmac-sha256:".length), "hex"));
+}
+
+export const derivePipelineBuildPublicationAuthorityKeyV1 = (controllerKey: Uint8Array) =>
+  derivedKey(controllerKey, "pipeline-build-publication-authority-key/v1");
+export const derivePipelineBuildPublicationEvidenceKeyV1 = (controllerKey: Uint8Array) =>
+  derivedKey(controllerKey, "pipeline-build-publication-evidence-key/v1");
 
 export function createPipelineBuildPublicationAuthoritySnapshotV1(key: Uint8Array,
   value: z.input<typeof materialSchema>): PipelineBuildPublicationAuthoritySnapshotV1 {

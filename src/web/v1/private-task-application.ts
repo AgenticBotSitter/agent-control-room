@@ -4,6 +4,9 @@ import { validateTaskQualityKeys } from "./task-quality-coordinator";
 import { timingSafeEqual } from "node:crypto";
 import { DatabaseOperatorFleetReadSourceV1, OperatorSurfaceReadServiceV1, OperatorSurfaceStoreV1 } from "../../operator-surfaces/v1";
 import { ServiceIncidentStore } from "../../services/v1/incident-store";
+import { LinearPipelineServiceV1 } from "../../pipelines/v1";
+import { createInstalledPipelineCodexWorkerCompositionV1,
+  type InstalledPipelineCodexWorkerCompositionInputV1 } from "../../node-bridge/codex-worker-composition";
 
 /** Trusted composition for two separately verified resources; not a deployment preflight bypass.
  * No pools are opened here. The separate task bootstrap verifies both roles before calling this factory.
@@ -32,6 +35,10 @@ export async function createPrivateTaskApplication(web: Omit<PrivateWebProcessOp
   // Until construction succeeds, the caller retains both resources.
   if (coordinator.quality) validateTaskQualityKeys(coordinator.quality, coordinator.planning.reviewIntegrityKey, web.tasks);
   const tasks = createTaskCoordinatorLifecycle(coordinator);
+  const pipelineController = web.workBatches?.pipelineRepositories && tasks.workBatchAuthority
+    ? new LinearPipelineServiceV1(coordinator.database.client, coordinator.scope,
+      web.workBatches.integrityKey, tasks.workBatchAuthority, web.clock, web.workBatches.pipelineRepositories)
+    : undefined;
   // The coordinator-side pool already owns the canonical task records. Give
   // the web process only a narrow read callback, never that pool or a worker
   // control handle. This uses the existing operator projection rather than a
@@ -72,6 +79,9 @@ export async function createPrivateTaskApplication(web: Omit<PrivateWebProcessOp
   }
   let closing = false, closePromise: Promise<void> | undefined;
   return Object.freeze({
+    ...(pipelineController ? { createPipelineCodexWorker:
+      (input: Omit<InstalledPipelineCodexWorkerCompositionInputV1, "controller">) =>
+        createInstalledPipelineCodexWorkerCompositionV1({ ...input, controller: pipelineController }) } : {}),
     ...(tasks.queueDelivery ? { queueDelivery: tasks.queueDelivery } : {}),
     // Narrow authenticated submission is shared with HTTP; recovery stays server-only.
     ...(tasks.submission ? { submission: tasks.submission } : {}),

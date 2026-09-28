@@ -22,6 +22,8 @@ CREATE TABLE control_pipeline_build_publications (
   job_id text NOT NULL,
   attempt_id text NOT NULL,
   harness_run_id text NOT NULL,
+  artifact_id text NOT NULL,
+  result_revision integer NOT NULL CHECK(result_revision>0),
   delivery_digest text NOT NULL CHECK(delivery_digest ~ '^sha256:[a-f0-9]{64}$'),
   retained_result_digest text NOT NULL CHECK(retained_result_digest ~ '^sha256:[a-f0-9]{64}$'),
   plan_digest text NOT NULL CHECK(plan_digest ~ '^sha256:[a-f0-9]{64}$'),
@@ -40,6 +42,8 @@ CREATE TABLE control_pipeline_build_publications (
     REFERENCES control_attempts(tenant_id,id,job_id) ON DELETE RESTRICT,
   FOREIGN KEY (tenant_id,harness_run_id)
     REFERENCES control_harness_runs(tenant_id,id) ON DELETE RESTRICT,
+  FOREIGN KEY (tenant_id,artifact_id)
+    REFERENCES control_artifact_manifests(tenant_id,id) ON DELETE RESTRICT,
   CHECK (evidence->>'schema'='control-room.pull-request-publication-evidence/v1'
     AND evidence->>'deliveryDigest'=delivery_digest
     AND evidence->>'retainedResultDigest'=retained_result_digest

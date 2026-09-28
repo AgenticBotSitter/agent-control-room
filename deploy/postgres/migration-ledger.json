@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "digest": "1688bb5b43e61a6751c6a41d118bdce3670a9c40139f856d0bb8ffe6979537d8",
+  "digest": "e7871f97e5f90a204c12792cf5b821368886a38aded57f0b6c97c55d5198e316",
   "entries": [
     {
       "file": "db/migrations/0001_control_room_core.sql",
@@ -587,7 +587,7 @@
     {
       "file": "db/migrations/0098_pipeline_build_publications.sql",
       "order": 98,
-      "sha256": "e40fdd0d16894ff9fb40e80d98b284db355280acf7f9e5c1f08d9048c3bf4a42",
+      "sha256": "69a5ed0a204ab5f768e50165b4077379668685781e2662954d372da7c4a4863c",
       "kind": "migrate"
     },
     {

@@ -62,7 +62,8 @@ function fixture(options: { failCreate?: boolean; revokeDuringCreate?: boolean; 
   const snapshot = createPipelineBuildPublicationAuthoritySnapshotV1(integrityKey, {
     schema: 'control-room.pipeline-build-publication-authority/v1', deliveryDigest: packet.deliveryDigest,
     tenantId: intent.tenantId, projectId: intent.projectId, sourceJobId: 'job:source', executionJobId: intent.jobId,
-    attemptId: intent.attemptId, runId: intent.runId, pipelineRunId: 'pipeline-run:test', stageOrdinal: 0,
+    attemptId: intent.attemptId, runId: intent.runId, artifactId: 'artifact:test', resultRevision: 1,
+    pipelineRunId: 'pipeline-run:test', stageOrdinal: 0,
     stageRecordDigest: sha256Digest('stage'), workerId: packet.worker.workerId, model: 'model:current', effort: 'high',
     allowedPaths: ['src/**'], maximumChangedFiles: 5, maximumChangedBytes: 4096,
     retainedResultDigest: sha256Digest('retained-build-result'),

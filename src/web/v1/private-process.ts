@@ -49,7 +49,7 @@ import { createInstallationPlanViewV1 } from "../../installer/v1/installation-pl
 import { WorkBatchOwnerServiceV1, type WorkBatchQueueAdmissionAuthorityV1,
   type WorkBatchQueueCatalogV1 } from "../../work-intake/v1";
 import { createWorkBatchOwnerHttpHandlerV1 } from "./work-batch-owner-http";
-import { LinearPipelineServiceV1 } from "../../pipelines/v1";
+import { LinearPipelineServiceV1, type CanonicalPipelineRepositoryRegistryV1 } from "../../pipelines/v1";
 import { createLinearPipelineHttpHandlerV1 } from "./linear-pipeline-http";
 
 export interface PrivateWebProcessOptions {
@@ -106,7 +106,8 @@ export interface PrivateWebProcessOptions {
   /** Optional proposal-intake integrity key. It enables owner batch review;
    * omission keeps the Pipelines routes absent. */
   workBatches?: { integrityKey: Uint8Array; queueCatalog?: WorkBatchQueueCatalogV1;
-    queueAdmissionAuthority?: WorkBatchQueueAdmissionAuthorityV1 };
+    queueAdmissionAuthority?: WorkBatchQueueAdmissionAuthorityV1;
+    pipelineRepositories?: CanonicalPipelineRepositoryRegistryV1 };
   /** Trusted control-plane operation only. No planner key, privileged pool or native adapter is
    * given to the web SQL service. Its resource lifecycle is owned by the supplying composition. */
   planning?: TaskPlanningOperation;
@@ -295,7 +296,7 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
     options.workBatches.queueCatalog, options.workBatches.queueAdmissionAuthority) : undefined;
   const pipelines = options.workBatches ? new LinearPipelineServiceV1(options.database.client,
     { tenantId: options.tenantId, workspaceId: options.workspaceId }, options.workBatches.integrityKey,
-    options.workBatches.queueAdmissionAuthority, clock) : undefined;
+    options.workBatches.queueAdmissionAuthority, clock, options.workBatches.pipelineRepositories) : undefined;
   // This is a task-planning bridge only. It is deliberately composed from the
   // same private web database and ordinary task service, not from a provider
   // runtime or a second Idea Lab worker system.

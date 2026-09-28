@@ -41,6 +41,7 @@ export type WorkBatchQueueAcceptedResultSelectionV1 = Readonly<{
   sourceJobId: string; workerId: string; nodeId: string;
 }>;
 export type WorkBatchQueueAcceptedResultProofV1 = Readonly<{
+  executionJobId: string; attemptId: string; harnessRunId: string; artifactId: string;
   contentHash: string; revision: number;
 }>;
 /** Protected host-generation authority. Exact-worker admission is unavailable

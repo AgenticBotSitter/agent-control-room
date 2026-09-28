@@ -16,7 +16,10 @@ import { controllerWorkerDeliverySchemaV1 } from "../../harness/v1/controller-wo
 import { verifyPullRequestPublicationEvidenceV1,
   verifyStoredPullRequestPublicationEvidenceV1 } from "../../harness/v1/pull-request-publication";
 import { createPipelineBuildPublicationAuthoritySnapshotV1,
+  createPipelineBuildPublicationAuthorityV1, derivePipelineBuildPublicationAuthorityKeyV1,
+  derivePipelineBuildPublicationEvidenceKeyV1,
   verifyPipelineBuildPublicationAuthoritySnapshotV1 } from "./build-publication-authority";
+import type { CodexBuildStagePublicationCompositionV1 } from "../../harness/codex-v1/delivery-bound-workspace-preparation";
 
 type TemplateRow = { id: string; project_id: string; name: string; description: string; stages: unknown;
   max_stages: number; max_total_loops: number; may_advance_unattended: boolean; max_duration_seconds: number;
@@ -34,7 +37,8 @@ type StageRow = { stage_ordinal: number; stage_kind: "build" | "check" | "signof
   handoff_from_result_digest: string | null; signoff_review_id: string | null; started_at: string | Date | null;
   finished_at: string | Date | null; record_digest: string; auth_tag: string; version: number };
 type BuildPublicationRow = { project_id: string; pipeline_run_id: string; stage_ordinal: number; job_id: string;
-  attempt_id: string; harness_run_id: string; delivery_digest: string; retained_result_digest: string;
+  attempt_id: string; harness_run_id: string; artifact_id: string; result_revision: number;
+  delivery_digest: string; retained_result_digest: string;
   plan_digest: string; evidence_digest: string; evidence: unknown; auth_tag: string; recorded_at: string | Date;
   artifact_content_hash: string; canonical_result_digest: string; source_job_id: string; worker_id: string; node_id: string };
 
@@ -53,8 +57,13 @@ export interface CanonicalPipelineRepositoryRegistryV1 {
     Promise<Readonly<{ repositoryUrl: string }> | undefined>;
 }
 
+type InstalledBuildPublicationPortsV1 = Pick<CodexBuildStagePublicationCompositionV1,
+  "runGit" | "journal" | "openPullRequest">;
+
 export class LinearPipelineServiceV1 {
   readonly #key: Uint8Array;
+  readonly #publicationAuthorityKey: Uint8Array;
+  readonly #publicationEvidenceKey: Uint8Array;
   readonly #authority: WebSessionAuthority;
   constructor(private readonly db: DatabaseClient, private readonly scope: { tenantId: string; workspaceId: string },
     integrityKey: Uint8Array, private readonly selection?: WorkBatchQueueAdmissionAuthorityV1,
@@ -62,6 +71,8 @@ export class LinearPipelineServiceV1 {
     private readonly repositories?: CanonicalPipelineRepositoryRegistryV1) {
     if (!(integrityKey instanceof Uint8Array) || integrityKey.length !== 32) throw new Error("pipeline_configuration_invalid");
     this.#key = Uint8Array.from(integrityKey);
+    this.#publicationAuthorityKey = derivePipelineBuildPublicationAuthorityKeyV1(this.#key);
+    this.#publicationEvidenceKey = derivePipelineBuildPublicationEvidenceKeyV1(this.#key);
     this.#authority = new WebSessionAuthority(db, scope, clock, "pipeline");
   }
 
@@ -99,10 +110,15 @@ export class LinearPipelineServiceV1 {
         workerId: row.worker_id, nodeId: row.node_id });
       const repository = await this.repositories!.resolve(tx, { ...this.scope, projectId: row.project_id });
       if (!proof || !repository) throw new Error("pipeline_build_publication_unavailable");
-      return createPipelineBuildPublicationAuthoritySnapshotV1(this.#key, {
+      if (proof.executionJobId !== identity.jobId || proof.attemptId !== identity.attemptId
+        || proof.harnessRunId !== identity.runId
+        || row.current_attempt_id !== null && row.current_attempt_id !== identity.attemptId)
+        throw new Error("pipeline_build_publication_unavailable");
+      return createPipelineBuildPublicationAuthoritySnapshotV1(this.#publicationAuthorityKey, {
         schema: "control-room.pipeline-build-publication-authority/v1", deliveryDigest: delivery.deliveryDigest,
         tenantId: this.scope.tenantId, projectId: row.project_id, sourceJobId: row.current_job_id,
         executionJobId: identity.jobId, attemptId: identity.attemptId, runId: identity.runId,
+        artifactId: proof.artifactId, resultRevision: proof.revision,
         pipelineRunId: row.pipeline_run_id, stageOrdinal: Number(row.stage_ordinal), stageRecordDigest: row.record_digest,
         workerId: row.worker_id, model: row.model, effort: row.effort,
         ...policy.data, retainedResultDigest: proof.contentHash,
@@ -112,9 +128,22 @@ export class LinearPipelineServiceV1 {
     });
   }
 
+  /** Trusted controller-side assembly. Callers supply only node-owned effects;
+   * canonical authority/currentness/retention and the integrity key remain
+   * closed over by this service. */
+  async createInstalledBuildPublication(delivery: unknown,
+    ports: InstalledBuildPublicationPortsV1): Promise<CodexBuildStagePublicationCompositionV1> {
+    const snapshot = await this.createBuildPublicationAuthority(delivery);
+    const authority = createPipelineBuildPublicationAuthorityV1({ integrityKey: this.#publicationAuthorityKey, snapshot,
+      assertControllerCurrent: value => this.assertBuildPublicationAuthorityCurrent(value) });
+    return Object.freeze({ integrityKey: Uint8Array.from(this.#publicationEvidenceKey), authority,
+      runGit: ports.runGit, journal: ports.journal, openPullRequest: ports.openPullRequest,
+      retainPublished: input => this.retainBuildPublication({ snapshot, ...input }).then(() => undefined) });
+  }
+
   async assertBuildPublicationAuthorityCurrent(snapshotValue: unknown): Promise<void> {
     if (!this.selection?.acceptedResultProof || !this.repositories) throw new Error("pipeline_build_publication_unavailable");
-    const snapshot = verifyPipelineBuildPublicationAuthoritySnapshotV1(this.#key, snapshotValue);
+    const snapshot = verifyPipelineBuildPublicationAuthoritySnapshotV1(this.#publicationAuthorityKey, snapshotValue);
     if (snapshot.tenantId !== this.scope.tenantId) throw new Error("pipeline_build_publication_unavailable");
     await this.db.transaction(async tx => {
       const row = (await tx.query<StageRow & { run_title: string }>(`SELECT stage.project_id,stage.pipeline_run_id,
@@ -154,15 +183,19 @@ export class LinearPipelineServiceV1 {
         || policy.data.allowedPaths.some((path, index) => path !== snapshot.allowedPaths[index])
         || policy.data.maximumChangedFiles !== snapshot.maximumChangedFiles
         || policy.data.maximumChangedBytes !== snapshot.maximumChangedBytes
-        || proof?.contentHash !== snapshot.retainedResultDigest || repository?.repositoryUrl !== snapshot.repositoryUrl
+        || proof?.executionJobId !== snapshot.executionJobId || proof?.attemptId !== snapshot.attemptId
+        || proof?.harnessRunId !== snapshot.runId || proof?.artifactId !== snapshot.artifactId
+        || proof?.revision !== snapshot.resultRevision || proof?.contentHash !== snapshot.retainedResultDigest
+        || row.current_attempt_id !== null && row.current_attempt_id !== snapshot.attemptId
+        || repository?.repositoryUrl !== snapshot.repositoryUrl
         || row.run_title !== snapshot.title || body !== snapshot.body) throw new Error("pipeline_build_publication_unavailable");
     });
   }
 
   async retainBuildPublication(input: Readonly<{ snapshot: unknown; plan: unknown; evidence: unknown }>) {
     if (!this.selection?.acceptedResultProof || !this.repositories) throw new Error("pipeline_build_publication_unavailable");
-    const snapshot = verifyPipelineBuildPublicationAuthoritySnapshotV1(this.#key, input.snapshot);
-    const evidence = verifyPullRequestPublicationEvidenceV1(input.evidence, input.plan, this.#key);
+    const snapshot = verifyPipelineBuildPublicationAuthoritySnapshotV1(this.#publicationAuthorityKey, input.snapshot);
+    const evidence = verifyPullRequestPublicationEvidenceV1(input.evidence, input.plan, this.#publicationEvidenceKey);
     const plan = input.plan as { authoritySnapshotDigest?: string; repositoryUrl?: string };
     if (snapshot.tenantId !== this.scope.tenantId || evidence.deliveryDigest !== snapshot.deliveryDigest
       || evidence.retainedResultDigest !== snapshot.retainedResultDigest
@@ -190,21 +223,25 @@ export class LinearPipelineServiceV1 {
       const repository = await this.repositories!.resolve(tx, { ...this.scope, projectId: stage.project_id });
       if (stage.record_digest !== snapshot.stageRecordDigest || stage.current_job_id !== snapshot.sourceJobId
         || stage.worker_id !== snapshot.workerId || stage.model !== snapshot.model || stage.effort !== snapshot.effort
-        || !proof || proof.contentHash !== snapshot.retainedResultDigest
+        || !proof || proof.executionJobId !== snapshot.executionJobId || proof.attemptId !== snapshot.attemptId
+        || proof.harnessRunId !== snapshot.runId || proof.artifactId !== snapshot.artifactId
+        || proof.revision !== snapshot.resultRevision || proof.contentHash !== snapshot.retainedResultDigest
+        || stage.current_attempt_id !== null && stage.current_attempt_id !== snapshot.attemptId
         || repository?.repositoryUrl !== snapshot.repositoryUrl) throw new Error("pipeline_build_publication_unavailable");
       const record = { tenantId: this.scope.tenantId, projectId: snapshot.projectId,
         pipelineRunId: snapshot.pipelineRunId, stageOrdinal: snapshot.stageOrdinal, jobId: snapshot.executionJobId,
-        attemptId: snapshot.attemptId, harnessRunId: snapshot.runId, deliveryDigest: snapshot.deliveryDigest,
+        attemptId: snapshot.attemptId, harnessRunId: snapshot.runId, artifactId: snapshot.artifactId,
+        resultRevision: snapshot.resultRevision, deliveryDigest: snapshot.deliveryDigest,
         retainedResultDigest: snapshot.retainedResultDigest, planDigest: evidence.planDigest,
         evidenceDigest: evidence.evidenceDigest, evidence, recordedAt: new Date(this.clock()).toISOString() };
-      const authTag = hmacSha256Tag(this.#key, { purpose: "pipeline-build-publication-record/v1", record });
+      const authTag = hmacSha256Tag(this.#publicationAuthorityKey, { purpose: "pipeline-build-publication-record/v1", record });
       const inserted = await tx.query(`INSERT INTO control_pipeline_build_publications(tenant_id,project_id,pipeline_run_id,
-        stage_ordinal,job_id,attempt_id,harness_run_id,delivery_digest,retained_result_digest,plan_digest,evidence_digest,evidence,
-        auth_tag,recorded_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::jsonb,$13,$14)
+        stage_ordinal,job_id,attempt_id,harness_run_id,artifact_id,result_revision,delivery_digest,retained_result_digest,
+        plan_digest,evidence_digest,evidence,auth_tag,recorded_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13::jsonb,$14,$15)
         ON CONFLICT (tenant_id,pipeline_run_id,stage_ordinal) DO NOTHING RETURNING evidence_digest`,
       [record.tenantId, record.projectId, record.pipelineRunId, record.stageOrdinal, record.jobId, record.attemptId,
-        record.harnessRunId, record.deliveryDigest, record.retainedResultDigest, record.planDigest, record.evidenceDigest,
-        JSON.stringify(evidence), authTag, record.recordedAt]);
+        record.harnessRunId, record.artifactId, record.resultRevision, record.deliveryDigest, record.retainedResultDigest,
+        record.planDigest, record.evidenceDigest, JSON.stringify(evidence), authTag, record.recordedAt]);
       if (!inserted.rows.length) {
         const prior = (await tx.query<{ evidence_digest: string }>(`SELECT evidence_digest FROM control_pipeline_build_publications
           WHERE tenant_id=$1 AND pipeline_run_id=$2 AND stage_ordinal=$3`,
@@ -295,8 +332,10 @@ export class LinearPipelineServiceV1 {
     if (!/^sha256:[a-f0-9]{64}$/.test(deliveryDigest)) throw new Error("pipeline_build_publication_unavailable");
     const row = (await tx.query<BuildPublicationRow>(`SELECT publication.project_id,publication.pipeline_run_id,
       publication.stage_ordinal,publication.job_id,publication.attempt_id,publication.harness_run_id,
+      publication.artifact_id,publication.result_revision,
       publication.delivery_digest,publication.retained_result_digest,publication.plan_digest,publication.evidence_digest,
-      publication.evidence,publication.auth_tag,publication.recorded_at,manifest.content_hash AS artifact_content_hash,
+      publication.evidence,publication.auth_tag,publication.recorded_at,artifact.artifact_id,
+      manifest.content_hash AS artifact_content_hash,
       canonical.record_digest AS canonical_result_digest,stage.current_job_id AS source_job_id,
       stage.worker_id,stage.node_id FROM control_pipeline_build_publications publication
       JOIN pipeline_stage_runs stage ON stage.tenant_id=publication.tenant_id
@@ -304,6 +343,7 @@ export class LinearPipelineServiceV1 {
       JOIN control_native_artifact_receipts artifact ON artifact.tenant_id=publication.tenant_id
         AND artifact.run_id=publication.harness_run_id AND artifact.project_id=publication.project_id
         AND artifact.job_id=publication.job_id AND artifact.attempt_id=publication.attempt_id
+        AND artifact.artifact_id=publication.artifact_id
       JOIN control_artifact_manifests manifest ON manifest.tenant_id=artifact.tenant_id AND manifest.id=artifact.artifact_id
         AND manifest.content_hash=publication.retained_result_digest AND manifest.state='verified'
       JOIN control_codex_result_publications canonical ON canonical.tenant_id=publication.tenant_id
@@ -324,16 +364,20 @@ export class LinearPipelineServiceV1 {
       throw new Error("pipeline_build_publication_integrity_failed");
     const proof = await this.selection.acceptedResultProof(tx, { sourceJobId: row.source_job_id,
       workerId: row.worker_id, nodeId: row.node_id });
-    if (proof?.contentHash !== row.retained_result_digest) return undefined;
-    const evidence = verifyStoredPullRequestPublicationEvidenceV1(row.evidence, this.#key);
+    if (proof?.executionJobId !== row.job_id || proof?.attemptId !== row.attempt_id
+      || proof?.harnessRunId !== row.harness_run_id || proof?.artifactId !== row.artifact_id
+      || proof?.revision !== Number(row.result_revision)
+      || proof?.contentHash !== row.retained_result_digest) return undefined;
+    const evidence = verifyStoredPullRequestPublicationEvidenceV1(row.evidence, this.#publicationEvidenceKey);
     const record = { tenantId: this.scope.tenantId, projectId: row.project_id, pipelineRunId: row.pipeline_run_id,
       stageOrdinal: Number(row.stage_ordinal), jobId: row.job_id, attemptId: row.attempt_id,
-      harnessRunId: row.harness_run_id, deliveryDigest: row.delivery_digest,
+      harnessRunId: row.harness_run_id, artifactId: row.artifact_id,
+      resultRevision: Number(row.result_revision), deliveryDigest: row.delivery_digest,
       retainedResultDigest: row.retained_result_digest, planDigest: row.plan_digest,
       evidenceDigest: row.evidence_digest, evidence, recordedAt: iso(row.recorded_at) };
     if (evidence.evidenceDigest !== row.evidence_digest || evidence.planDigest !== row.plan_digest
       || evidence.deliveryDigest !== row.delivery_digest || evidence.retainedResultDigest !== row.retained_result_digest
-      || !same(row.auth_tag, hmacSha256Tag(this.#key, { purpose: "pipeline-build-publication-record/v1", record })))
+      || !same(row.auth_tag, hmacSha256Tag(this.#publicationAuthorityKey, { purpose: "pipeline-build-publication-record/v1", record })))
       throw new Error("pipeline_build_publication_integrity_failed");
     return Object.freeze({ url: evidence.url, commitDigest: evidence.commitDigest,
       modelSelection: evidence.modelSelection, usage: evidence.usage, evidenceDigest: evidence.evidenceDigest });

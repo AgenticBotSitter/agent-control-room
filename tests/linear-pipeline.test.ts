@@ -171,7 +171,8 @@ test("pipeline reads fail closed on template, run, or stage tampering and displa
   const service = new LinearPipelineServiceV1(f.client, { tenantId: "tenant:web", workspaceId: "workspace:web" }, key,
     { assertCurrent: () => true, isAcceptedResultCurrent: () => true,
       acceptedResultProof: (_tx, selection) => selection.sourceJobId.endsWith(":0")
-        ? { contentHash: exact, revision: 7 } : null }, () => now);
+        ? { executionJobId: "job:execution:0", attemptId: "attempt:0", harnessRunId: "run:0",
+          artifactId: "artifact:0", contentHash: exact, revision: 7 } : null }, () => now);
   const saved = await service.createTemplate(f.identity, f.project.projectId, template);
   const run = await service.instantiate(f.identity, f.project.projectId,
     { templateId: saved.templateId, title: "Authenticated read" }, "linear-authenticated-read-0001");
