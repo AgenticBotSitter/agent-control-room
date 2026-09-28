@@ -46,8 +46,25 @@ const production = Object.freeze({
 
 const exactCommand = command => command.join(" ");
 
+/** Classifies one owned pid as genuinely gone, exactly identified, or present-but-unidentified.
+ *
+ * A pid that does not exist at all is proof of absence. A pid that is alive under some *other*
+ * command line is not this record's process: either the OS recycled the pid, or the registration
+ * captured a command line that has since settled (a `pnpm` wrapper `exec`s into `node` within
+ * milliseconds, so a sample taken at spawn can record the transient pre-`exec` string forever).
+ * Both cases are identity uncertainty, never absence — treating the second as "already gone" is
+ * what let cleanup delete the root, the PostgreSQL data directory, the ownership marker and the
+ * registry record while a process the run owned was still executing. */
+async function classifyExactProcess(processRecord, runtime) {
+  const current = await runtime.processCommand(processRecord.pid);
+  if (current === undefined) return "absent";
+  return current === exactCommand(processRecord.command) ? "exact" : "identity_uncertain";
+}
+
 async function stopExactProcess(processRecord, runtime, graceMs) {
-  if (await runtime.processCommand(processRecord.pid) !== exactCommand(processRecord.command)) return "not_running";
+  const initial = await classifyExactProcess(processRecord, runtime);
+  if (initial === "absent") return "not_running";
+  if (initial === "identity_uncertain") return "identity_uncertain";
   runtime.signal(processRecord.group ? -processRecord.pid : processRecord.pid, "SIGTERM");
   const deadline = Date.now() + graceMs;
   while (Date.now() < deadline
@@ -56,8 +73,8 @@ async function stopExactProcess(processRecord, runtime, graceMs) {
     runtime.signal(processRecord.group ? -processRecord.pid : processRecord.pid, "SIGKILL");
     await runtime.wait(100);
   }
-  return await runtime.processCommand(processRecord.pid) === exactCommand(processRecord.command)
-    ? "still_running" : "stopped";
+  if (await runtime.processCommand(processRecord.pid) !== undefined) return "still_running";
+  return "stopped";
 }
 
 async function validatePostgresMarker(ownership, runtime) {
@@ -150,6 +167,8 @@ export async function cleanupRehearsalRoot({ root, registryDirectory = defaultRe
     const state = await stopExactProcess(processRecord, runtime, graceMs);
     outcomes.push(Object.freeze({ kind: processRecord.kind, pid: processRecord.pid, state }));
     if (state === "still_running") return Object.freeze({ root, cleaned: false, reason: "process_cleanup_uncertain", outcomes });
+    if (state === "identity_uncertain")
+      return Object.freeze({ root, cleaned: false, reason: "rehearsal_child_identity_uncertain", outcomes });
   }
   let discoveredHosts;
   try { discoveredHosts = await discoverExactHosts(ownership, runtime); }
@@ -162,6 +181,8 @@ export async function cleanupRehearsalRoot({ root, registryDirectory = defaultRe
     const state = await stopExactProcess(processRecord, runtime, graceMs);
     outcomes.push(Object.freeze({ kind: processRecord.kind, pid: processRecord.pid, state }));
     if (state === "still_running") return Object.freeze({ root, cleaned: false, reason: "process_cleanup_uncertain", outcomes });
+    if (state === "identity_uncertain")
+      return Object.freeze({ root, cleaned: false, reason: "rehearsal_host_identity_uncertain", outcomes });
   }
   let postgres;
   try { postgres = await validatePostgresMarker(ownership, runtime); }
@@ -180,6 +201,24 @@ export async function cleanupRehearsalRoot({ root, registryDirectory = defaultRe
     }
     if (statusUncertain) return Object.freeze({ root, cleaned: false, reason: "postgres_status_uncertain", outcomes });
     if (running) return Object.freeze({ root, cleaned: false, reason: "postgres_cleanup_uncertain", outcomes });
+  }
+  // Re-check every owned pid immediately before deleting, under the same exact-command guard used
+  // to stop them. The loops above prove each pid was gone at the moment it was handled; between
+  // that proof and this `rm` the OS can hand the pid to something else, and a child that was
+  // still in its own pre-`exec` transition can settle into a command line the record never held.
+  // Deletion is the irreversible step, so the last word before it is a fresh sample, not a
+  // conclusion reached earlier in the run. Anything alive — matched or not — retains the root.
+  const preDeleteSurvivors = [];
+  for (const processRecord of [...ownership.processes, ...hosts]) {
+    if (processRecord.pid === runtime.currentPid?.()) continue;
+    const current = await runtime.processCommand(processRecord.pid);
+    if (current === undefined) continue;
+    preDeleteSurvivors.push(Object.freeze({ kind: processRecord.kind, pid: processRecord.pid,
+      state: current === exactCommand(processRecord.command) ? "still_running" : "identity_uncertain" }));
+  }
+  if (preDeleteSurvivors.length > 0) {
+    outcomes.push(...preDeleteSurvivors);
+    return Object.freeze({ root, cleaned: false, reason: "process_cleanup_uncertain", outcomes });
   }
   // Delete only after every owned process and the exact -D cluster are proven stopped.
   try {

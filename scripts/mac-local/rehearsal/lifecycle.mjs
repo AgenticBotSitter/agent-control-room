@@ -173,6 +173,28 @@ const appendBounded = (current, chunk, limit) => {
   return next.length <= limit ? next : next.slice(0, limit);
 };
 
+/** A wrapper binary is not the process it becomes: `pnpm` starts as `/usr/bin/env node …/pnpm`
+ * and `exec`s into `node …/pnpm` a few milliseconds later. A single sample at spawn can therefore
+ * record the transient pre-`exec` string, which `ps` never reports again — and a record that can
+ * never match again is indistinguishable, to cleanup, from a pid that is simply gone. So sample
+ * until two consecutive observations agree, with a short bounded backoff. This closes the race at
+ * its source; cleanup's identity-uncertainty classification is what holds when sampling still
+ * loses, because cleanup is the side about to delete data. */
+async function settledProcessCommand(pid, processCommand, { attempts = 20, delayMs = 25 } = {}) {
+  let previous;
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    const current = await processCommand(pid);
+    if (current === undefined) return previous;
+    if (current === previous) return current;
+    previous = current;
+    if (attempt < attempts - 1) await new Promise(resolveWait => setTimeout(resolveWait, delayMs));
+  }
+  // Never stabilised. The last observation is still a real command line for this pid, and
+  // recording it is strictly better than failing registration; cleanup will refuse to delete if
+  // it can no longer prove this pid's identity.
+  return previous;
+}
+
 /**
  * @param {string} command
  * @param {string[]} [args]
@@ -211,7 +233,7 @@ export function runBoundedChild(command, args = [], { cwd, env = process.env, si
       registrationSettled = true;
     }
     else if (onSpawn) Promise.resolve().then(async () => {
-      const actualCommand = await processCommand(child.pid);
+      const actualCommand = await settledProcessCommand(child.pid, processCommand);
       if (!actualCommand) throw new Error("rehearsal_child_identity_unavailable");
       await onSpawn(Object.freeze({ pid: child.pid,
         command: Object.freeze([actualCommand]), group: true }));

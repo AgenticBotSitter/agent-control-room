@@ -136,8 +136,15 @@ async function invoke(args: string[], timeoutMs = 180_000) {
 async function recordHost() {
   const command = hostCommand(protectedRoot), pid = await readPid(runtimePaths(protectedRoot).hostPid);
   if (!pid || !alive(pid, command)) throw new Error("rehearsal_host_identity_unavailable");
+  // Record the command line the OS reports, not the argv we asked for. Cleanup matches these
+  // records against `ps` output, so a record built from argv only agrees while the argv happens
+  // to be spelled the way the OS spells it. runBoundedChild already records the OS command line;
+  // this puts the host record on the same convention.
+  const reported = (await exec("/bin/ps", ["-ww", "-o", "command=", "-p", String(pid)],
+    { encoding: "utf8", timeout: 10_000 })).stdout.trim();
+  if (!reported) throw new Error("rehearsal_host_identity_unavailable");
   await saveProcesses([...ownedProcesses.filter(value => value.kind !== "host"),
-    { kind: "host", pid, command, group: true }]);
+    { kind: "host", pid, command: [reported], group: true }]);
 }
 async function forgetStoppedHost() {
   const host = ownedProcesses.find(value => value.kind === "host");
