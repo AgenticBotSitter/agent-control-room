@@ -10,6 +10,7 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 import { createPrivatePgDatabase } from "../src/web/v1/private-pg-database.ts";
 import { startRecoveringMacLocalQueueWorkerV1 } from "../src/web/v1/mac-local-queue-worker-recovery.ts";
+import { PrivateDatabaseError } from "../src/web/v1/bounded-database.ts";
 
 const candidates = [process.env.PG_BIN, "/opt/homebrew/opt/postgresql@17/bin", "/usr/lib/postgresql/17/bin"].filter(Boolean);
 const bin = candidates.find(value => existsSync(join(value, "initdb")) && existsSync(join(value, "postgres")))
@@ -120,12 +121,21 @@ test("one stable private client resumes reads and writes after its PostgreSQL cl
     assert.equal(database.isAvailable(), false);
     await start();
 
-    let restored;
-    const deadline = Date.now() + 20_000;
+    let restored, lastRefusal = "none";
+    // A bounded recovery may spend 5s retiring the old pool, then up to 5s
+    // connecting and 5s closing each transient candidate plus bounded backoff.
+    // Allow two complete failed candidates before requiring the ready cluster
+    // to qualify, while keeping this proof finite.
+    const deadline = Date.now() + 45_000;
     while (Date.now() < deadline) {
       try { restored = await stableClient.query("SELECT value FROM public.recovery_values WHERE id=$1", [1]); break; }
-      catch { await new Promise(resolve => setTimeout(resolve, 100)); }
+      catch (error) {
+        lastRefusal = error instanceof PrivateDatabaseError ? error.code : "unexpected_refusal";
+        await new Promise(resolve => setTimeout(resolve, 100));
+      }
     }
+    assert.ok(restored,
+      `recovery_not_observed available=${database.isAvailable()} last_refusal=${lastRefusal}`);
     assert.deepEqual(restored?.rows, [{ value: "before" }]);
     assert.equal(database.client, stableClient);
     await stableClient.query("INSERT INTO public.recovery_values VALUES ($1,$2)", [2, "after"]);
