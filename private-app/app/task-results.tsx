@@ -98,6 +98,28 @@ export function TaskResultsPanel({ page, content: suppliedContent, pending, sele
       <p>Open file fingerprint: <code>{content.artifact.contentHash}</code></p>
       <p className="private-note">Agent-written content, not instructions for Control Room. Opening it does not run tools or approve work.</p>
       {content.text.length ? <ResultText text={content.text} /> : <p>This is an empty result file (0 bytes).</p>}
+      {content.worktreeChangeEvidence && <section aria-label="Verified code changes">
+        <h3>Verified code changes</h3>
+        <p>Base <code>{content.worktreeChangeEvidence.baseRevision}</code><br />
+          Head <code>{content.worktreeChangeEvidence.headRevision}</code></p>
+        <p>The coding sandbox refused writes outside this attempt’s isolated worktree.</p>
+        <h4>Changed files</h4>
+        {!content.worktreeChangeEvidence.changes.length ? <p>No changed files were recorded.</p>
+          : <ul>{content.worktreeChangeEvidence.changes.map(change => <li key={change.path}>
+            <code>{change.path}</code> · {change.kind} · {change.bytes.toLocaleString()} diff bytes</li>)}</ul>}
+        <h4>Commits</h4>
+        {!content.worktreeChangeEvidence.commits.length ? <p>No commits after the recorded base. Uncommitted changes may still appear below.</p>
+          : <ol>{content.worktreeChangeEvidence.commits.map(commit => <li key={commit.revision}>
+            <code>{commit.revision}</code> {commit.subject}</li>)}</ol>}
+        {content.worktreeChangeEvidence.commitsTruncated && <p className="private-notice">The commit list is truncated.</p>}
+        <h4>Unified diff</h4>
+        {content.worktreeChangeEvidence.unifiedDiff.truncated && <p className="private-notice">
+          This diff is truncated. The fingerprint below binds the complete {content.worktreeChangeEvidence.unifiedDiff.originalBytes.toLocaleString()}-byte diff.</p>}
+        <pre className="private-code-diff"><code>{content.worktreeChangeEvidence.unifiedDiff.text}</code></pre>
+        <details><summary>Complete diff fingerprint</summary><code>{content.worktreeChangeEvidence.unifiedDiff.contentDigest}</code></details>
+        <details><summary>Evidence fingerprint</summary><code>{content.worktreeChangeEvidence.evidenceDigest}</code></details>
+        <p className="private-note">Viewing this evidence does not run, approve, merge, retry or resume work.</p>
+      </section>}
       <p className="private-note"><ConfiguredTimestamp value={content.contentVerifiedAt} prefix="Bytes checked again" />.</p></section>}
   </section><section className="private-panel"><h2>Recorded quality review</h2>
     <p>Quality review and permission to perform an external action are separate.

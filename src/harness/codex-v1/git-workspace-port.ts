@@ -16,6 +16,10 @@ export interface ObservableGitWorkspacePort extends CodexWorkspacePortV1 {
   observeCheckout(expected: CodexWorkspaceIdentityV1 & {
     repositoryRealPath: string; headRevision: string;
   }, expectedRoots?: CodexWorkspaceRootIdentitiesV1): Promise<WorkspaceObservation>;
+  removeTerminalWorktree?(request: Readonly<{ repositoryRealPath: string; checkoutPath: string;
+    baseRevision: string; headRevision: string; device: string; inode: string; cleanupDigest: string }>): Promise<void>;
+  removeTerminalBranch?(request: Readonly<{ repositoryRealPath: string; checkoutPath: string;
+    headRevision: string; cleanupDigest: string }>): Promise<void>;
 }
 
 async function identity(path: string): Promise<CodexWorkspaceIdentityV1> {
@@ -43,7 +47,7 @@ export async function createGitWorkspacePort(input: {
   if (beneath(repo.realPath, root.realPath) || beneath(root.realPath, repo.realPath)) throw new Error("workspace_roots_overlap");
   const common = await realpath(resolve(repo.realPath, (await runGit(repo.realPath, ["rev-parse", "--git-common-dir"])).trim()));
   const commonIdentity = await identity(common);
-  const owned = new Map<string, CodexWorkspaceIdentityV1 & { revision: string }>();
+  const owned = new Map<string, CodexWorkspaceIdentityV1 & { revision: string; branch: string }>();
   const pending = new Set<string>(), uncertain = new Set<string>();
   const child = (path: string) => {
     if (dirname(path) !== root.realPath || !/^codex-[a-f0-9]{24}$/.test(basename(path))) throw new Error("workspace_target_not_owned_child");
@@ -52,12 +56,26 @@ export async function createGitWorkspacePort(input: {
     if (!same(repo, await identity(repo.realPath)) || !same(root, await identity(root.realPath))
       || !same(commonIdentity, await identity(common))) throw new Error("workspace_root_identity_changed");
   };
-  const verifyGit = async (path: string) => {
+  const branchFor = (path: string) => `control-room/${basename(path)}`;
+  const removeTerminalBranch = async (request: Readonly<{ repositoryRealPath: string; checkoutPath: string;
+    headRevision: string; cleanupDigest: string }>) => {
+    child(request.checkoutPath);
+    if (request.repositoryRealPath !== repo.realPath || !/^[a-f0-9]{40}$/u.test(request.headRevision)
+      || !/^sha256:[a-f0-9]{64}$/u.test(request.cleanupDigest)) throw new Error("workspace_terminal_removal_invalid");
+    await roots();
+    const branch = branchFor(request.checkoutPath);
+    const current = (await runGit(repo.realPath, ["for-each-ref", "--format=%(objectname)", `refs/heads/${branch}`])).trim();
+    if (!current) return;
+    if (current !== request.headRevision) throw new Error("workspace_terminal_branch_changed");
+    await runGit(repo.realPath, ["branch", "-D", "--", branch]);
+  };
+  const verifyGit = async (path: string, expectedBranch?: string) => {
     const actual = await realpath(resolve(path, (await runGit(path, ["rev-parse", "--git-common-dir"])).trim()));
-    if (actual !== common || (await runGit(path, ["rev-parse", "--abbrev-ref", "HEAD"])).trim() !== "HEAD")
+    if (actual !== common || (await runGit(path, ["rev-parse", "--abbrev-ref", "HEAD"])).trim() !== (expectedBranch ?? "HEAD"))
       throw new Error("workspace_git_identity_changed");
   };
   return {
+    inspectOwnerCheckout: path => identity(path),
     inspectRootIdentities: async () => {
       await roots();
       return { repository: { ...repo }, workspace: { ...root }, commonGit: { ...commonIdentity } };
@@ -84,7 +102,8 @@ export async function createGitWorkspacePort(input: {
         }
         if (!same(expected, await identity(expected.realPath))) return { state: "changed" };
         const actualCommon = await realpath(resolve(expected.realPath, (await read(["rev-parse", "--git-common-dir"])).trim()));
-        if (actualCommon !== common || (await read(["rev-parse", "--abbrev-ref", "HEAD"])).trim() !== "HEAD")
+        const actualBranch = (await read(["rev-parse", "--abbrev-ref", "HEAD"])).trim();
+        if (actualCommon !== common || actualBranch !== "HEAD" && actualBranch !== branchFor(expected.realPath))
           return { state: "changed" };
         const head = (await read(["rev-parse", "HEAD"])).trim();
         const index = await read(["ls-files", "-v", "-z", "--"]);
@@ -118,7 +137,25 @@ export async function createGitWorkspacePort(input: {
         await roots(); const created = await identity(checkoutPath); await verifyGit(checkoutPath);
         const headRevision = (await runGit(checkoutPath, ["rev-parse", "HEAD"])).trim();
         if (headRevision !== revision) throw new Error("workspace_revision_mismatch");
-        owned.set(checkoutPath, { ...created, revision }); uncertain.delete(checkoutPath);
+        owned.set(checkoutPath, { ...created, revision, branch: "" }); uncertain.delete(checkoutPath);
+        return { ...created, repositoryRealPath: repo.realPath, headRevision };
+      } finally { pending.delete(checkoutPath); }
+    },
+    createCodingWorktree: async request => {
+      const { repositoryRealPath, checkoutPath, revision } = request; child(checkoutPath);
+      if (repositoryRealPath !== repo.realPath || !/^[a-f0-9]{40}$/.test(revision)) throw new Error("workspace_create_input_invalid");
+      if (pending.has(checkoutPath) || owned.has(checkoutPath) || uncertain.has(checkoutPath)) throw new Error("workspace_target_reserved");
+      pending.add(checkoutPath);
+      try {
+        await roots();
+        try { await lstat(checkoutPath); throw new Error("workspace_target_exists"); }
+        catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+        const branch = branchFor(checkoutPath); uncertain.add(checkoutPath);
+        await runGit(repo.realPath, ["worktree", "add", "-b", branch, "--", checkoutPath, revision]);
+        await roots(); const created = await identity(checkoutPath); await verifyGit(checkoutPath, branch);
+        const headRevision = (await runGit(checkoutPath, ["rev-parse", "HEAD"])).trim();
+        if (headRevision !== revision) throw new Error("workspace_revision_mismatch");
+        owned.set(checkoutPath, { ...created, revision, branch }); uncertain.delete(checkoutPath);
         return { ...created, repositoryRealPath: repo.realPath, headRevision };
       } finally { pending.delete(checkoutPath); }
     },
@@ -131,7 +168,7 @@ export async function createGitWorkspacePort(input: {
       try {
         await roots();
         if (!same(expected, await identity(checkoutPath))) throw new Error("workspace_identity_changed");
-        await verifyGit(checkoutPath);
+        await verifyGit(checkoutPath, expected.branch || undefined);
         if ((await runGit(checkoutPath, ["rev-parse", "HEAD"])).trim() !== expected.revision)
           throw new Error("workspace_committed_work_requires_preservation");
         const index = await runGit(checkoutPath, ["ls-files", "-v", "-z", "--"]);
@@ -144,8 +181,35 @@ export async function createGitWorkspacePort(input: {
         await runGit(repo.realPath, ["worktree", "remove", "--", checkoutPath]);
         try { await lstat(checkoutPath); throw new Error("workspace_removal_unconfirmed"); }
         catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+        if (expected.branch) await runGit(repo.realPath, ["branch", "-D", "--", expected.branch]);
         owned.delete(checkoutPath); uncertain.delete(checkoutPath);
       } finally { pending.delete(checkoutPath); }
     },
+    removeTerminalWorktree: async request => {
+      const { repositoryRealPath, checkoutPath } = request; child(checkoutPath);
+      if (repositoryRealPath !== repo.realPath || pending.has(checkoutPath)
+        || !/^[a-f0-9]{40}$/u.test(request.baseRevision) || !/^[a-f0-9]{40}$/u.test(request.headRevision)
+        || !/^sha256:[a-f0-9]{64}$/u.test(request.cleanupDigest)) throw new Error("workspace_terminal_removal_invalid");
+      pending.add(checkoutPath);
+      try {
+        await roots();
+        const observed = await identity(checkoutPath);
+        if (observed.realPath !== checkoutPath || observed.device !== request.device || observed.inode !== request.inode)
+          throw new Error("workspace_identity_changed");
+        await verifyGit(checkoutPath, branchFor(checkoutPath));
+        if ((await runGit(checkoutPath, ["rev-parse", "HEAD"])).trim() !== request.headRevision
+          || (await runGit(checkoutPath, ["merge-base", request.baseRevision, request.headRevision])).trim() !== request.baseRevision) {
+          throw new Error("workspace_terminal_head_changed");
+        }
+        uncertain.add(checkoutPath);
+        await runGit(repo.realPath, ["worktree", "remove", "--force", "--", checkoutPath]);
+        try { await lstat(checkoutPath); throw new Error("workspace_removal_unconfirmed"); }
+        catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+        await removeTerminalBranch({ repositoryRealPath, checkoutPath, headRevision: request.headRevision,
+          cleanupDigest: request.cleanupDigest });
+        owned.delete(checkoutPath); uncertain.delete(checkoutPath);
+      } finally { pending.delete(checkoutPath); }
+    },
+    removeTerminalBranch,
   };
 }

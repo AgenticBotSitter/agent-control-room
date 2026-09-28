@@ -6,7 +6,8 @@ import { createManagedWorktreeChangeAuditAuthorityV1 } from "../src/harness/v1/w
 import { createControllerWorkerDeliveryV1, type ControllerWorkerDeliveryV1 } from "../src/harness/v1/controller-worker-delivery";
 import { persistControllerWorkerDeliveryReceiptV1 } from "../src/harness/v1/controller-worker-delivery-receipt-store";
 import { persistManagedWorktreeChangeAuditPlanV1 } from "../src/harness/v1/worktree-change-audit-plan-store";
-import { persistResultBoundWorktreeChangeAuditRecordV1, readResultBoundWorktreeChangeAuditSummaryV1 } from "../src/harness/v1/worktree-change-audit-record-store";
+import { persistResultBoundWorktreeChangeAuditRecordV1, readResultBoundWorktreeChangeAuditDetailV1,
+  readResultBoundWorktreeChangeAuditSummaryV1 } from "../src/harness/v1/worktree-change-audit-record-store";
 import { createWorktreeChangeAuditEvidenceV1 } from "../src/harness/v1/worktree-change-audit";
 import { buildTaskResultManifestV1 } from "../src/artifacts/v1/durable-result-publication";
 import { durableResultArtifactIdV1, durableResultReceiptTagV1 } from "../src/artifacts/v1/durable-result-receipt";
@@ -79,7 +80,10 @@ async function fixture(receiptOverride?: unknown) {
     attemptId: binding.attemptId, runId: registration.id, artifactId };
   const evidence = createWorktreeChangeAuditEvidenceV1(savedPlan.plan, { baseRevision: revision, changes: [
     { path: "src/safe.ts", kind: "modified", bytes: 20, contentDigest: contentHash },
-  ] });
+  ], git: { headRevision: "b".repeat(40), commits: [{ revision: "b".repeat(40), subject: "Safe change" }],
+    commitsTruncated: false, unifiedDiff: { text: "diff --git a/src/safe.ts b/src/safe.ts\n", originalBytes: 41,
+      retainedBytes: 41, truncated: false, contentDigest: sha256Digest("complete diff"), retainedDigest: sha256Digest("complete diff") },
+    confinement: { kind: "workspace_write", outsideWorktree: "refused", evidenceDigest: sha256Digest("refusal") } } });
   return { f, scope, evidence, savedPlan };
 }
 
@@ -116,6 +120,18 @@ test("aggregate reader accepts only a verified complete-lineage record and retur
   await assert.rejects(x.f.db.transaction(tx => readResultBoundWorktreeChangeAuditSummaryV1(tx,
     new Uint8Array(32).fill(60), x.scope)), /worktree_change_audit_record_unavailable/,
     "a retagged/tampered stored record is unavailable, not displayed");
+});
+
+test("detail reader returns the bounded patch only for exact result lineage", async t => {
+  const x = await fixture(); t.after(x.f.close);
+  await x.f.db.transaction(tx => persistResultBoundWorktreeChangeAuditRecordV1(tx, key,
+    { scope: x.scope, evidence: x.evidence, recordedAt: at(6000) }));
+  const detail = await x.f.db.transaction(tx => readResultBoundWorktreeChangeAuditDetailV1(tx, key, x.scope));
+  assert.equal(detail?.headRevision, "b".repeat(40)); assert.equal(detail?.changes[0]?.path, "src/safe.ts");
+  assert.match(detail?.unifiedDiff.text ?? "", /diff --git/);
+  assert.doesNotMatch(JSON.stringify(detail), /fixture\/repo|allowedPaths|resultReceiptDigest|authTag/);
+  assert.equal(await x.f.db.transaction(tx => readResultBoundWorktreeChangeAuditDetailV1(tx, key,
+    { ...x.scope, attemptId: "attempt:wrong" })), undefined);
 });
 
 test("record writer refuses a missing or non-durable legacy receipt and early timestamps", async t => {

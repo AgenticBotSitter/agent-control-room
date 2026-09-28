@@ -5,7 +5,9 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
-import { createOwnerTrustedLocalCodexExecV1 } from "../src/harness/codex-v1/owner-trusted-local-exec";
+import { createOwnerTrustedLocalCodexCodingExecV1,
+  createOwnerTrustedLocalCodexExecV1 } from "../src/harness/codex-v1/owner-trusted-local-exec";
+import { sha256Digest } from "../src/security";
 import { createOwnerTrustedLocalCodexExecutionAdapterV1 } from "../src/harness/v1/owner-trusted-local-cli-execution";
 
 const root = await mkdtemp(join(tmpdir(), "acr-codex-exec-"));
@@ -38,6 +40,23 @@ test("runs fixed arguments once, closes stdin, and exposes only the allowed envi
   assert.deepEqual(Object.keys(captured.env ?? {}).sort(), ["HOME", "LANG", "PATH", "TMPDIR"]);
   assert.equal(result.usage?.inputTokens, 3); assert.equal(result.usage?.outputTokens, 5);
   assert.deepEqual(await readdir(cwd), []);
+});
+
+test("coding mode is active-lease bound and gives workspace-write only to the exact worktree", async () => {
+  const cwd = await taskDirectory(), captured: { args?: readonly string[] } = {};
+  const leaseMaterial = { runId: "run:coding", repositoryRealPath: join(root, "source"), checkoutPath: cwd,
+    revision: "a".repeat(40), device: "1", inode: "2" };
+  const lease = { ...leaseMaterial, leaseId: sha256Digest(leaseMaterial) };
+  const executor = createOwnerTrustedLocalCodexCodingExecV1({ lease, requireActiveCodingLease(value) {
+    assert.deepEqual(value, lease); return value;
+  }, dependencies: { spawn: (file, args, options) => {
+    captured.args = args;
+    return spawn(process.execPath, [fake, ...args], { ...options, env: { ...options.env, NODE_ENV: "test" } });
+  } } });
+  assert.equal((await executor.execute(input(cwd))).status, "completed");
+  assert.deepEqual(captured.args?.slice(0, 4), ["exec", "--json", "--sandbox", "workspace-write"]);
+  assert.deepEqual(await executor.execute(input(await taskDirectory())),
+    { status: "failed", reason: "working_directory_refused" });
 });
 
 test("omits model arguments when protected model selection is not enabled", async () => {
