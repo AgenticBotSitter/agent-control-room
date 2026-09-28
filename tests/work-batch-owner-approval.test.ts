@@ -116,6 +116,26 @@ test("revision history and rejected items remain visible", async t => {
   assert.equal(view.items[1]!.decisionReasonCode, "needs_different_check");
 });
 
+test("current revision task count is consistent across owner and intake summaries", async t => {
+  const f = await ownerFixture(); t.after(() => void f.db.close());
+  const batch = await f.submit(), changed = proposal(f.project.projectId);
+  changed.tasks.push({ localId: "validate", title: "Validate the change", instructions: "Validate the bounded change.",
+    requiredCapability: "code.validate", role: "validator", acceptanceCriteria: "The validation is independent.",
+    acceptanceTests: "Run the focused validation tests." });
+  await f.owner.command(f.identity, f.project.projectId,
+    { operation: "revise", batchId: batch.batchId, expectedRevision: 1, reasonCode: "owner_edit", proposal: changed },
+    "owner-batch-task-count-0001");
+
+  const listed = await f.owner.list(f.identity, f.project.projectId);
+  const attention = await f.owner.attention(f.identity);
+  const status = await f.store.status(agent(), f.project.projectId, batch.batchId, new Date(now).toISOString());
+  assert.equal(listed.batches[0]?.revision, 2);
+  assert.equal(listed.batches[0]?.taskCount, 3);
+  assert.equal(attention.batches[0]?.revision, 2);
+  assert.equal(attention.batches[0]?.taskCount, 3);
+  assert.equal(status.taskCount, 3);
+});
+
 test("an S1-authenticated batch remains readable after the S2 migration and first revision", async t => {
   const f = await ownerFixture(); t.after(() => void f.db.close());
   const batch = await f.submit();
