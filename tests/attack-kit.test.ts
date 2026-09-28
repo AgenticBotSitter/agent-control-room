@@ -346,6 +346,40 @@ describe("attack kit: mutation", () => {
       root: directory, file: join(directory, "dup.ts"), find: "const a = 1;", replace: "const a = 2;", testCmd: failing,
     }), /mutation_target_ambiguous:.*:2_occurrences/);
   });
+
+  test("refuses a restore that did not land", async () => {
+    // A restore that silently failed would leave a mutated file in a working
+    // tree, which is worse than a failed test. The verification reads the file
+    // back and compares it, so a failed write is reported rather than assumed.
+    const directory = await repo;
+    const file = join(directory, "guard.ts");
+    const before = await readFile(file, "utf8");
+    // The test command rewrites the file after the mutation, simulating a
+    // concurrent writer the restore cannot overwrite.
+    const interfering = `node -e "require('node:fs').writeFileSync(${JSON.stringify(file)},'clobbered')"`;
+    await assert.rejects(
+      assertGuardBites({
+        root: directory, file, find: "limit = 10", replace: "limit = 1_000", testCmd: interfering,
+      }),
+      // The command exits 0, so the guard-did-not-bite refusal comes first.
+      GuardDidNotBiteError,
+    );
+    await writeFile(file, before);
+  });
+
+  test("reports the restored content digest", async () => {
+    const directory = await repo;
+    const file = join(directory, "guard.ts");
+    const before = await readFile(file, "utf8");
+    const result = await assertGuardBites({
+      root: directory, file, find: "limit = 10", replace: "limit = 1_000", testCmd: failing,
+    });
+    // The digest is of the restored bytes, so a caller can compare it against
+    // the original without re-reading the file.
+    const { createHash } = await import("node:crypto");
+    assert.equal(result.restoredDigest, createHash("sha256").update(before).digest("hex"));
+    assert.equal(await readFile(file, "utf8"), before);
+  });
 });
 
 describe("attack kit: search_path audit", () => {
@@ -452,6 +486,10 @@ describe("attack kit: real PostgreSQL", () => {
       /attack_kit_deliberate_failure/,
     );
     assert.ok(captured, "the body ran before the failure");
+    // The setup must have applied the real ledger, not silently no-opped: a
+    // zero here would mean every assertion inside the body ran against an
+    // empty schema and passed for the wrong reason.
+    assert.ok(captured.appliedMigrations > 50, "the real migration ledger was applied");
     // The teardown contract, proven rather than assumed.
     assert.equal(await captured!.isRunning(), false, "no cluster process survives");
     assert.equal(existsSync(captured!.dataDirectory), false, "the data directory is removed");
@@ -575,6 +613,33 @@ describe("attack kit: real PostgreSQL", () => {
     assert.equal(isPrivilegeDenied({ code: "42P01" }), false, "a missing table is not a privilege refusal");
     assert.equal(isPrivilegeDenied({ code: "42601" }), false, "a syntax error is not a privilege refusal");
     assert.equal(isPrivilegeDenied(new Error("boom")), false);
+  });
+
+  test("roleCannot rejects a refusal that is not a privilege refusal", needsPgOrFail(), async () => {
+    const port = PORTS[4]!;
+    await withRealPostgres(async postgres => {
+      // A missing table fails, but it fails for the wrong reason. Accepting it
+      // as proof that a grant was removed would let a typo'd table name satisfy
+      // any roleCannot assertion, which is the exact false pass this guards.
+      await assert.rejects(
+        roleCannot(postgres, "web", "SELECT 1 FROM attack_kit_no_such_table"),
+        (error: unknown) => {
+          assert.match(`${(error as Error).message}`, /refused_for_the_wrong_reason:42P01/);
+          return true;
+        },
+      );
+      // A syntax error is equally not a privilege refusal.
+      await assert.rejects(
+        roleCannot(postgres, "web", "SELEKT 1"),
+        (error: unknown) => {
+          assert.match(`${(error as Error).message}`, /refused_for_the_wrong_reason:42601/);
+          return true;
+        },
+      );
+      // The genuine refusal still passes, so the check is not simply refusing
+      // everything.
+      await roleCannot(postgres, "web", "DELETE FROM tenants WHERE true");
+    }, { port, allowedPorts: PORTS, database: "attack_kit_wrongreason" });
   });
 
   test("does not touch a port it was not given", async () => {
