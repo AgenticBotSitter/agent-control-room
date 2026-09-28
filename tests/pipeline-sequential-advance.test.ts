@@ -2,19 +2,22 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import type { DatabaseClient, DatabaseSession, QueryResult } from "../src/persistence/database";
-import { LinearPipelineServiceV1, PipelineAdvanceErrorV1, PipelineAdvanceServiceV1, ProductionPipelineAdvanceCapabilityV1,
+import { LinearPipelineServiceV1, PipelineAdvanceErrorV1, PipelineAdvanceServiceV1, ProductionPipelineAdvanceAuthorityV1,
+  ProductionPipelineAdvanceCapabilityV1,
   type PipelineAdvanceCapabilityV1 } from "../src/pipelines/v1";
 import type { PipelineStageResolutionV1 } from "../src/pipelines/v1";
 import { computeAuthorityDigest, hmacSha256Tag, sha256Digest } from "../src/security";
 import { taskFixture } from "./helpers/web-task";
 import { now as webNow } from "./helpers/web-foundation";
+import { createPipelineAdvanceCycleV1 } from "../src/web/v1/private-task-startup";
 
 const key=new Uint8Array(32).fill(41), at=Date.parse("2026-09-27T12:00:00.000Z"), iso=(n=0)=>new Date(at+n).toISOString();
 const digest=(c:string)=>`sha256:${c.repeat(64)}`;
 const result=<T>(rows:T[]):QueryResult<T>=>({rows});
 const templateDefinition={name:"Pipeline",description:"Bounded pipeline.",stages:[
   {ordinal:0,stageKind:"build",role:"builder",description:"Build.",requiredCapability:"code.change",workerId:"worker:one",
-    workerKind:"codex",nodeId:"node:one",selectionKey:"selection:one",model:"model-one",effort:"high",provider:null,profile:null,maxLoops:1},
+    workerKind:"codex",nodeId:"node:one",selectionKey:"selection:one",model:"model-one",effort:"high",provider:null,profile:null,
+    allowedPaths:["src/**"],maximumChangedFiles:12,maximumChangedBytes:65536,maxLoops:1},
   {ordinal:1,stageKind:"check",role:"checker",description:"Check.",requiredCapability:"code.review",workerId:"worker:two",
     workerKind:"claude-code",nodeId:"node:two",selectionKey:"selection:two",model:"model-two",effort:"high",provider:null,profile:null,maxLoops:1},
   {ordinal:2,stageKind:"signoff",role:"validator",description:"Validate.",requiredCapability:"code.validate",workerId:"worker:three",
@@ -47,12 +50,16 @@ function signedRows(overrides:{unattended?:boolean;tamperStage?:boolean;currentO
     worker_id:stage.workerId,worker_kind:stage.workerKind,node_id:stage.nodeId,selection_key:stage.selectionKey,model:stage.model,
     effort:stage.effort,provider:"provider" in stage?stage.provider:null,profile:"profile" in stage?stage.profile:null,
     current_attempt_id:null,current_lease_id:null,state:"proposed",max_loops:stage.maxLoops,handoff_from_result_digest:null,
+    allowed_paths:"allowedPaths" in stage?stage.allowedPaths:null,
+    maximum_changed_files:"maximumChangedFiles" in stage?stage.maximumChangedFiles:null,
+    maximum_changed_bytes:"maximumChangedBytes" in stage?stage.maximumChangedBytes:null,
     signoff_review_id:null,started_at:null,finished_at:null,version:1};
     const material={id:`${run.id}:stage:${stage.ordinal}`,tenantId:"tenant:test",projectId:"project:test",pipelineRunId:run.id,
       stageOrdinal:stage.ordinal,stageKind:stage.stageKind,role:stage.role,workerId:stage.workerId,workerKind:stage.workerKind,
       nodeId:stage.nodeId,selectionKey:stage.selectionKey,model:stage.model,effort:stage.effort,provider:row.provider,profile:row.profile,
       currentJobId:row.current_job_id,currentAttemptId:null,currentLeaseId:null,state:"proposed",maxLoops:stage.maxLoops,
-      handoffFromResultDigest:null,signoffReviewId:null,startedAt:null,finishedAt:null,version:1};
+      handoffFromResultDigest:null,allowedPaths:row.allowed_paths,maximumChangedFiles:row.maximum_changed_files,
+      maximumChangedBytes:row.maximum_changed_bytes,signoffReviewId:null,startedAt:null,finishedAt:null,version:1};
     row.record_digest=sha256Digest(material);row.auth_tag=hmacSha256Tag(key,{purpose:"pipeline-stage-run/v1",record:material});return row;});
   if(overrides.tamperStage)stages[1]!.model="tampered";
   return{template,run,stages};
@@ -68,17 +75,35 @@ function job(id:string){const authority:any={projectId:"project:test",allowedExe
 function fixture(overrides:{unattended?:boolean;tamperStage?:boolean;route?:string;currentOrdinal?:number|null;
   startedAt?:number|null;updatedAt?:number;
   states?: PipelineStageResolutionV1["state"][];
-  disableDuringDispatch?:boolean;coordinatorDeadline?:number;advanceClockBeforePrecommit?:number}={}){
+  disableDuringDispatch?:boolean;coordinatorDeadline?:number;advanceClockBeforePrecommit?:number;staleConsent?:boolean;
+  driftAfterSweepSelection?:boolean}={}){
   const rows=signedRows(overrides),policy={id:"policy:test",project_id:"project:test",coordinator_identity_id:"agent:lead",
     coordinator_version:1,state:"active",version:1,policy_digest:digest("p"),allowed_actions:["tasks.assign"],
     eligible_routes:["route:one","route:two","route:three"],risk_ceiling:"low",max_total_tasks:3,max_total_cost_microusd:1000,max_concurrent_tasks:2,
     valid_from:iso(-1000),valid_until:iso(60000)};const receipts=new Map<number,any>();let enabled=true,effects=0,chain=Promise.resolve();
+  const consentMaterial={id:"transition:test",tenantId:"tenant:test",projectId:"project:test",pipelineRunId:"pipeline-run:test",
+    pipelineTemplateId:rows.template.id,templateVersion:Number(rows.template.version),templateDigest:rows.template.record_digest,
+    runVersion:Number(rows.run.version),runDigest:rows.run.record_digest,policyId:"policy:test",policyVersion:1,
+    policyDigest:overrides.staleConsent?digest("z"):digest("p"),ownerIdentityId:"identity:owner",enabled:true,idempotencyKey:"pipeline-consent-test-0001",
+    requestDigest:digest("q"),occurredAt:iso()};
+  const consent={id:consentMaterial.id,project_id:consentMaterial.projectId,pipeline_run_id:consentMaterial.pipelineRunId,
+    pipeline_template_id:consentMaterial.pipelineTemplateId,template_version:consentMaterial.templateVersion,
+    template_digest:consentMaterial.templateDigest,run_version:consentMaterial.runVersion,run_digest:consentMaterial.runDigest,
+    policy_id:consentMaterial.policyId,policy_version:1,policy_digest:consentMaterial.policyDigest,
+    owner_identity_id:consentMaterial.ownerIdentityId,enabled:true,idempotency_key:consentMaterial.idempotencyKey,
+    request_digest:consentMaterial.requestDigest,transition_digest:sha256Digest(consentMaterial),
+    auth_tag:hmacSha256Tag(key,{purpose:"pipeline-unattended-transition/v1",record:consentMaterial}),occurred_at:iso()};
   let states=overrides.states??["eligible","terminal_failure","terminal_failure"],clock=at;
   const query:DatabaseSession["query"]=async<T>(sql:string,params:unknown[]=[]):Promise<QueryResult<T>>=>{
+    if(sql.includes("FROM pipeline_runs r JOIN LATERAL")){const selected={...consent};if(overrides.driftAfterSweepSelection){
+      const replacement={...consentMaterial,id:"transition:replacement"};Object.assign(consent,{id:replacement.id,
+        transition_digest:sha256Digest(replacement),auth_tag:hmacSha256Tag(key,{purpose:"pipeline-unattended-transition/v1",record:replacement})});}
+      return result([selected] as T[]);}
     if(sql.startsWith("SELECT project_id FROM pipeline_runs"))return result([{project_id:"project:test"}] as T[]);
     if(sql.includes("FROM pipeline_runs")&&sql.includes("FOR UPDATE"))return result([rows.run] as T[]);
     if(sql.includes("FROM pipeline_templates")&&sql.includes("FOR UPDATE"))return result([rows.template] as T[]);
     if(sql.includes("FROM pipeline_stage_runs")&&sql.includes("ORDER BY stage_ordinal FOR UPDATE"))return result(rows.stages as T[]);
+    if(sql.includes("FROM pipeline_unattended_transitions")&&sql.includes("ORDER BY occurred_at"))return result([consent] as T[]);
     if(sql.includes("FROM projects p"))return result([{lifecycle:"active"}] as T[]);
     if(sql.includes("FROM pipeline_advance_receipts")&&sql.includes("FOR SHARE"))return result((receipts.has(Number(params[2]))?[receipts.get(Number(params[2]))]:[]) as T[]);
     if(sql.includes("FROM control_jobs")){const id=String(params[2]),ordinal=Number(id.split(":").at(-1)),stage=rows.stages[ordinal]!;
@@ -92,7 +117,9 @@ function fixture(overrides:{unattended?:boolean;tamperStage?:boolean;route?:stri
       stage_ordinal:params[4],source_job_id:params[5],execution_job_id:params[6],attempt_id:params[7],queue_id:params[8],
       selection_digest:params[9],template_version:params[10],template_digest:params[11],run_version:params[12],run_digest:params[13],
       policy_id:params[14],policy_version:params[15],policy_digest:params[16],delegation_receipt_id:params[17],
-      delegation_receipt_digest:params[18],request_digest:params[19],receipt_digest:params[20],auth_tag:params[21],advanced_at:params[22]};
+      delegation_receipt_digest:params[18],delegation_task_units:params[19],delegation_cost_microusd:params[20],
+      delegation_cost_evidence_digest:params[21],request_digest:params[22],receipt_digest:params[23],auth_tag:params[24],
+      advanced_at:params[25]};
       receipts.set(Number(params[4]),receipt);
       return result([] as T[]);}
     if(sql.includes("SELECT event_digest,event_hash FROM audit_events"))return result([] as T[]);
@@ -136,10 +163,16 @@ test("concurrent exact transitions create one delivery and one durable receipt",
   assert.equal(f.effects,1);assert.deepEqual(values.map(value=>value.replayed).sort(),[false,true]);});
 test("changed policy content cannot replay a durable transition",async()=>{const f=fixture();await f.service.advance("pipeline-run:test","policy:test");
   await assert.rejects(f.service.advance("pipeline-run:test","policy:changed"),
-    (error:unknown)=>error instanceof PipelineAdvanceErrorV1&&error.safeReason==="advance_conflict");});
+    (error:unknown)=>error instanceof PipelineAdvanceErrorV1&&error.safeReason==="unattended_not_authorized");});
 test("template and run unattended consent are both required",async()=>{const f=fixture({unattended:false});
   await assert.rejects(f.service.advance("pipeline-run:test","policy:test"),
     (error:unknown)=>error instanceof PipelineAdvanceErrorV1&&error.safeReason==="unattended_not_authorized");assert.equal(f.effects,0);});
+test("a stale authenticated owner consent refuses before assignment or queue effects",async()=>{const f=fixture({staleConsent:true});
+  await assert.rejects(f.service.advance("pipeline-run:test","policy:test"),
+    (error:unknown)=>error instanceof PipelineAdvanceErrorV1&&error.safeReason==="unattended_not_authorized");assert.equal(f.effects,0);});
+test("advance cycle refuses a replaced owner transition selected before its transaction",async()=>{
+  const f=fixture({driftAfterSweepSelection:true});const page=await f.service.advanceReady();
+  assert.equal(page.checked,1);assert.equal(page.advanced.length,0);assert.equal(f.effects,0);});
 test("every authenticated stage projection is verified before advance",async()=>{const f=fixture({tamperStage:true});
   await assert.rejects(f.service.advance("pipeline-run:test","policy:test"),
     (error:unknown)=>error instanceof PipelineAdvanceErrorV1&&error.safeReason==="pipeline_integrity_failed");assert.equal(f.effects,0);});
@@ -285,9 +318,10 @@ test("shared template activation is monotonic while sibling run consent remains 
 });
 
 test("0099 owns append-only records, least-privilege grants, and a guarded down path",async()=>{
-  const [up,down,grants,web,coordinator]=await Promise.all([readFile("db/migrations/0099_pipeline_unattended_advance.sql","utf8"),
+  const [up,down,grants,web,coordinator,preflight]=await Promise.all([readFile("db/migrations/0099_pipeline_unattended_advance.sql","utf8"),
     readFile("db/down/0099_pipeline_unattended_advance.sql","utf8"),readFile("db/roles/production_table_grants.sql","utf8"),
-    readFile("db/roles/private_web_roles.sql","utf8"),readFile("db/roles/task_coordinator_roles.sql","utf8")]);
+    readFile("db/roles/private_web_roles.sql","utf8"),readFile("db/roles/task_coordinator_roles.sql","utf8"),
+    readFile("src/web/v1/private-database-preflight.ts","utf8")]);
   for(const table of ["pipeline_unattended_transitions","pipeline_advance_receipts"]){
     assert.match(up,new RegExp(`CREATE TABLE ${table}`));assert.match(up,new RegExp(`REVOKE ALL ON[\\s\\S]*${table}`));
     assert.match(grants,new RegExp(table));assert.match(down,new RegExp(`EXISTS \\(SELECT 1 FROM ${table}\\)`));}
@@ -295,6 +329,10 @@ test("0099 owns append-only records, least-privilege grants, and a guarded down 
   assert.match(web,/GRANT UPDATE \(may_advance_unattended, version, updated_at, record_digest, auth_tag\)[\s\S]*ON pipeline_templates/u);
   assert.match(web,/GRANT UPDATE \(unattended, updated_at, version, template_version, template_digest,[\s\S]*ON pipeline_runs/u);
   assert.match(coordinator,/GRANT INSERT ON pipeline_advance_receipts TO control_room_task_coordinator/u);
+  assert.match(preflight,/privateWebReadTables[\s\S]*pipeline_unattended_transitions/u);
+  assert.match(preflight,/inserts\.add\("pipeline_unattended_transitions"\)/u);
+  assert.match(preflight,/coordinatorReads\.push\([\s\S]*pipeline_advance_receipts/u);
+  assert.match(preflight,/coordinatorInserts\.add\("pipeline_advance_receipts"\)/u);
   assert.match(up,/BEFORE UPDATE OR DELETE/u);assert.match(up,/BEFORE TRUNCATE/u);
   assert.match(up,/pipeline_runs_active_started_at_check[\s\S]*state <> 'active'[\s\S]*started_at IS NOT NULL[\s\S]*NOT VALID/u);
   assert.match(down,/REVOKE UPDATE \(may_advance_unattended, version, updated_at, record_digest, auth_tag\)[\s\S]*pipeline_templates FROM control_room_private_web/u);
@@ -323,6 +361,42 @@ test("production adapter reserves through ordinary assignment before the existin
     assertCurrent:()=>{current+=1;},commitDeadline:value=>{deadline=value;}});
   assert.deepEqual(calls,["assign","queue"]);assert.equal(saved.queueId,"queue:one");assert.ok(current>=3);
   assert.equal(deadline,at+30000);assert.equal(queuedDeadline,at+30000);
+});
+
+test("production authority derives policy usage and cost from canonical records and refuses unknown cost",async()=>{
+  const selection:any={tenantId:"tenant:test",projectId:"project:test",runId:"pipeline-run:test",stageOrdinal:0,
+    sourceJobId:"job:source:0",executionJobId:"job:execution:0",workerId:"worker:one",workerKind:"hermes",nodeId:"route:one",
+    selectionKey:"selection:one",model:"model-one",effort:"high",provider:"provider:test",profile:"profile:test"};
+  const query:DatabaseSession["query"]=async<T>(sql:string)=>{
+    if(sql.includes("FROM control_project_delegation_policies"))return result([{id:"policy:test",version:2,
+      policy_digest:digest("p"),coordinator_version:3,coordinator_identity_id:"agent:lead",owner_identity_id:"identity:owner",
+      state:"active",valid_from:iso(-1000),valid_until:iso(60000),allowed_actions:["tasks.assign"],eligible_routes:["route:one"]}] as T[]);
+    if(sql.includes("FROM control_project_coordinator_heads"))return result([{version:3,state:"active",coordinator_identity_id:"agent:lead"}] as T[]);
+    if(sql.includes("FROM control_identities i"))return result([{present:true}] as T[]);
+    if(sql.includes("SELECT required_capability FROM control_jobs"))return result([{required_capability:"code.review"}] as T[]);
+    if(sql.includes("SELECT\n      (SELECT COALESCE"))return result([{tasks:"1",cost:"25",concurrent:"1"}] as T[]);
+    throw new Error(`unexpected SQL: ${sql}`);};
+  const tx={query},current={assertCurrent:()=>true},accepted={isAcceptedResultCurrent:async()=>true,
+    acceptedResultProof:async()=>null};
+  const authority=new ProductionPipelineAdvanceAuthorityV1({tenantId:"tenant:test",workspaceId:"workspace:test"},current,
+    accepted,{currentCost:()=>({kind:"known",admittedCostMicroUsd:10,evidenceDigest:digest("e")})},()=>at);
+  const receipt=await authority.authorizeDelegationInSession(tx,selection,"policy:test");
+  assert.deepEqual({taskUnits:receipt.taskUnits,cost:receipt.committedCostMicroUsd,next:receipt.nextCost,concurrent:receipt.concurrentTasks},
+    {taskUnits:1,cost:25,next:{kind:"known",microUsd:10,evidenceDigest:digest("e")},concurrent:1});
+  const unknown=new ProductionPipelineAdvanceAuthorityV1({tenantId:"tenant:test",workspaceId:"workspace:test"},current,
+    accepted,{currentCost:()=>({kind:"unknown"})},()=>at);
+  await assert.rejects(unknown.authorizeDelegationInSession(tx,selection,"policy:test"),
+    (error:unknown)=>error instanceof PipelineAdvanceErrorV1&&error.safeReason==="policy_cost_unknown");
+});
+
+test("installed advance cycle is default-off, non-overlapping, and drains before close",async()=>{
+  let scheduled:()=>void=()=>{},cleared=0,enabled=false,calls=0,release!:()=>void;
+  const blocked=new Promise<void>(resolve=>{release=resolve;});
+  const cycle=createPipelineAdvanceCycleV1({enabled:()=>enabled,intervalMs:1000,sweep:async()=>{calls++;await blocked;}},{
+    schedule:run=>{scheduled=run;return"timer";},clear:handle=>{assert.equal(handle,"timer");cleared++;}});
+  scheduled();assert.equal(calls,0);enabled=true;scheduled();scheduled();assert.equal(calls,1);
+  let closed=false;const closing=cycle.close().then(()=>{closed=true;});await Promise.resolve();assert.equal(closed,false);
+  scheduled();assert.equal(calls,1);release();await closing;assert.equal(closed,true);assert.equal(cleared,1);
 });
 
 test("history filters before its bound and maps the complete explicit lifecycle vocabulary",async()=>{

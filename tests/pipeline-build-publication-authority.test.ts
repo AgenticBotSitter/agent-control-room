@@ -139,6 +139,7 @@ test("private task application mounts and directly invokes the installed pipelin
     transactionWithPreCommitCheck: f.db.transactionWithPreCommitCheck.bind(f.db) };
   const webClient = { query: f.db.query.bind(f.db), transaction: f.db.transaction.bind(f.db),
     transactionWithPreCommitCheck: f.db.transactionWithPreCommitCheck.bind(f.db) };
+  let unattendedQueueCalls=0;
   const app = await createPrivateTaskApplication({ ...f.accessTrust, ...f.scope, origin,
     loadKeys: async () => f.accessTrust.keys, tasks: { ...f.ownerKeys,
       harnessIntegrityKey: f.ownerKeys.harnessIntegrityKey! },
@@ -147,10 +148,16 @@ test("private task application mounts and directly invokes the installed pipelin
       resolve: async () => ({ repositoryUrl: "https://example.invalid/controller/repository" }) } } }, {
     scope: f.scope, planning: f.plannerConfig, routes: [f.route], quality: { ...f.ownerConfig, scenarios: [] },
     workBatches: { integrityKey: pipelineKey, selectionAuthority: { assertCurrent: () => true } },
+    approvals:{enrollments:[{enrollment:f.prepared.enrollment,nodeClass:"personal-compute"}],store:f.store},
+    nativeSubmission:{enqueueInSession:async()=>{unattendedQueueCalls++;}},
+    pipelineAdvance:{enabled:()=>false,costEvidence:{currentCost:()=>({kind:"unknown"})}},
     database: { client: controllerClient, close: async () => {}, isAvailable: () => true } });
   t.after(() => app.close());
   const createPipelineCodexWorker = app.createPipelineCodexWorker;
   assert.equal(typeof createPipelineCodexWorker, "function");
+  assert.equal(typeof app.advancePipeline,"function");
+  await assert.rejects(app.advancePipeline!("pipeline-run:absent","policy:absent"),/unattended_disabled/u);
+  assert.equal(unattendedQueueCalls,0,"default-off composition must not reach the shared queue");
   let gitCalls = 0, openCalls = 0;
   const input = { delivery, worker: { initial: {} } as InstalledPipelineCodexWorkerCompositionInputV1["worker"],
     publication: { runGit: async () => { gitCalls++; return new Uint8Array(); }, journal: {

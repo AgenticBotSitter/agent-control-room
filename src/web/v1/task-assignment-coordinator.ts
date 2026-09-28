@@ -1004,6 +1004,57 @@ export class TaskAssignmentCoordinator {
       return Object.freeze({ ...queued, startsWork: false as const, grantsExecutionAuthority: false as const });
     });
   }
+
+  /** Server-only pipeline continuation.  It deliberately supports one already
+   * existing native route and writes the identical protected queue intent used
+   * by the owner-start path.  Unsupported adapters never fall through to a
+   * generic/native queue and this method is not included in webOperation(). */
+  async enqueuePipelineHermes021InSession(tx: DatabaseSession, input: Readonly<{
+    tenantId:string; projectId:string; runId:string; stageOrdinal:number; sourceJobId:string; executionJobId:string;
+    workerId:string; workerKind:"codex"|"claude-code"|"hermes"; nodeId:string; selectionKey:string; model:string;
+    effort:string; provider:string|null; profile:string|null; attemptId:string; leaseId:string; leaseEpoch:number;
+    inputDigest:string; idempotencyKey:string; commitDeadline:number;
+  }>, authority: Readonly<{actorId:"service:pipeline-advance:v1";assertCurrent:()=>void|Promise<void>}>) {
+    if (!this.approvalStore || !this.nativeTaskSubmission || input.tenantId!==this.scope.tenantId
+      || !Number.isSafeInteger(input.commitDeadline) || input.commitDeadline<0) conflict();
+    for (const id of [input.projectId,input.executionJobId,input.nodeId,input.attemptId,input.leaseId]) localId.parse(id);
+    digestSchema.parse(input.inputDigest); await authority.assertCurrent();
+    const store=this.approvalStore,job=await this.job(tx,input.projectId,input.executionJobId),
+      plan=await this.planner.readInSession(tx,input.executionJobId),stored=await this.stored(tx,job);
+    if (!plan||!stored||plan.tenantId!==this.scope.tenantId||plan.projectId!==input.projectId
+      ||job.inputDigest!==input.inputDigest||job.jobType!==HERMES_021_MACOS_LOCAL_JOB_TYPE_V1
+      ||job.requiredCapability!==HERMES_021_MACOS_LOCAL_CAPABILITY_V1
+      ||(plan.schema!=="control-room.task-execution-plan/v5"&&plan.schema!=="control-room.task-execution-plan/v6"
+        &&plan.schema!=="control-room.task-execution-plan/v7"&&plan.schema!=="control-room.task-execution-plan/v8")
+      ||plan.connectorProfileDigest!==HERMES_021_MACOS_CONNECTOR_PROFILE_DIGEST_V1
+      ||stored.attempt.id!==input.attemptId||stored.lease.id!==input.leaseId||stored.lease.epoch!==input.leaseEpoch) conflict();
+    const route=this.routes.find(value=>value.nodeId===stored.lease.nodeId),now=this.clock(),
+      deadline=Math.min(Date.parse(stored.lease.expiresAt),Date.parse(job.authority.expiresAt),input.commitDeadline);
+    if(!route||route.nodeId!==input.nodeId||route.executorId!==input.workerId||route.executorId!==job.authority.allowedExecutor
+      ||route.capabilityProbeId!==HERMES_021_MACOS_LOCAL_CAPABILITY_V1||!Number.isSafeInteger(now)||now<0||now>=deadline) conflict();
+    await this.assertWorkBatchQueueAdmission(tx,job,route,stored.attempt.workerId??null);await authority.assertCurrent();
+    const packetDigest=sha256Digest({schema:"control-room.hermes-021-macos-local-queue-intent/v1",
+      planDigest:sha256Digest(plan),authorityDigest:job.authority.digest,tenantId:this.scope.tenantId,
+      projectId:input.projectId,jobId:input.executionJobId,attemptId:stored.attempt.id,leaseId:stored.lease.id,
+      leaseEpoch:stored.lease.epoch,nodeId:route.nodeId,executorId:route.executorId,capability:route.capabilityProbeId,
+      connectorProfileDigest:plan.connectorProfileDigest});
+    const intent:NativeTaskQueueIntent={schema:"control-room.native-task-queue/v1",tenantId:this.scope.tenantId,
+      projectId:input.projectId,jobId:input.executionJobId,attemptId:stored.attempt.id,nodeId:route.nodeId,
+      leaseId:stored.lease.id,leaseEpoch:stored.lease.epoch,inputDigest:input.inputDigest,packetDigest,
+      operationDigest:job.authority.digest,bindingDigest:sha256Digest({nodeId:route.nodeId,executorId:route.executorId,
+        capability:route.capabilityProbeId,connectorProfileDigest:plan.connectorProfileDigest}),
+      enrollmentDigest:sha256Digest({adapter:HERMES_021_MACOS_LOCAL_JOB_TYPE_V1,nodeId:route.nodeId}),
+      deliveryKind:"hermes-021-macos-local",deadline,queuedAt:new Date(now).toISOString(),queuedBy:authority.actorId};
+    const queued=await store.enqueueHermes021LocalInSession(tx,intent,sha256Digest(plan));
+    if(!queued.replayed)await this.nativeTaskSubmission.enqueueInSession(tx,{schema:"control-room.native-task-submission/v1",
+      tenantId:this.scope.tenantId,projectId:input.projectId,jobId:input.executionJobId,attemptId:stored.attempt.id,
+      queueId:queued.queueId,inputDigest:input.inputDigest,packetDigest});
+    if(!queued.replayed)await appendAuditWith(tx,{id:`audit:hermes-021:${queued.queueId}`,tenantId:this.scope.tenantId,
+      projectId:input.projectId,actorId:authority.actorId,actorType:"service",action:"hermes.021.local.task.queued",
+      targetType:"job",targetId:input.executionJobId,correlationId:queued.queueId,idempotencyKey:`hermes-021:${queued.queueId}`,
+      safeMetadata:{packetDigest},occurredAt:intent.queuedAt});
+    await authority.assertCurrent();return Object.freeze({queueId:queued.queueId,replayed:queued.replayed});
+  }
   /**
    * Server-side pickup lookup for a queued local Hermes task.  The pg-boss message
    * is merely a locator.  This method verifies its HMAC-backed queue intent,

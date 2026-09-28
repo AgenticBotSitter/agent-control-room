@@ -6,7 +6,7 @@ import { hmacSha256Tag, sha256Digest } from "../../security";
 import type { VerifiedWebIdentity } from "../../web/v1/access-verifier";
 import { WebAccessError } from "../../web/v1/access-verifier";
 import { WebSessionAuthority } from "../../web/v1/session-authority";
-import { linearPipelineTemplateInputSchemaV1, pipelineAdvanceReceiptSchemaV1, pipelineHistorySchemaV1,
+import { linearPipelineTemplateInputSchemaV1, pipelineAdvanceReceiptSchemaV1, pipelineBuildWritePolicySchemaV1, pipelineHistorySchemaV1,
   pipelineUnattendedTransitionReceiptSchemaV1, pipelineUnattendedTransitionSchemaV1,
   type PipelineAdvanceReceiptV1, type PipelineHistoryV1 } from "./schemas";
 
@@ -67,6 +67,7 @@ type StageRow = { stage_ordinal: number; stage_kind: "build"|"check"|"signoff"; 
   worker_kind: "codex"|"claude-code"|"hermes"; node_id: string; selection_key: string; model: string;
   effort: string; provider: string|null; profile: string|null; current_attempt_id: string|null; current_lease_id: string|null;
   state: string; max_loops: number; handoff_from_result_digest: string|null; signoff_review_id: string|null;
+  allowed_paths: unknown|null; maximum_changed_files: number|null; maximum_changed_bytes: number|null;
   started_at: string|Date|null; finished_at: string|Date|null; record_digest: string; auth_tag: string; version: number };
 type PolicyRow = { id: string; project_id: string; coordinator_identity_id: string; coordinator_version: number|string;
   state: string; version: number|string; policy_digest: string; allowed_actions: unknown; eligible_routes: unknown;
@@ -76,6 +77,7 @@ type AdvanceReceiptRow = { id: string; project_id: string; pipeline_run_id: stri
   source_job_id: string; execution_job_id: string; attempt_id: string; queue_id: string; selection_digest: string;
   template_version: number; template_digest: string; run_version: number; run_digest: string; policy_id: string;
   policy_version: number|string; policy_digest: string; delegation_receipt_id: string; delegation_receipt_digest: string;
+  delegation_task_units:number|string; delegation_cost_microusd:number|string; delegation_cost_evidence_digest:string;
   request_digest: string; receipt_digest: string; auth_tag: string; advanced_at: string|Date };
 type UnattendedTransitionRow = { id:string; project_id:string; pipeline_run_id:string; pipeline_template_id:string;
   template_version:number|string; template_digest:string; run_version:number|string; run_digest:string; policy_id:string;
@@ -97,13 +99,19 @@ function runMaterial(scope: { tenantId: string }, row: RunRow) { return { id: ro
   completedAt: row.completed_at ? iso(row.completed_at) : null,
   currentStageOrdinal: row.current_stage_ordinal === null ? null : Number(row.current_stage_ordinal),
   unattended: row.unattended, version: Number(row.version) }; }
-function stageMaterial(scope: { tenantId: string }, row: StageRow) { return { id: `${row.pipeline_run_id}:stage:${Number(row.stage_ordinal)}`,
+function stageMaterial(scope: { tenantId: string }, row: StageRow) {
+  const policy = row.stage_kind === "build" && row.allowed_paths !== null
+    ? pipelineBuildWritePolicySchemaV1.parse({ allowedPaths: row.allowed_paths,
+      maximumChangedFiles: row.maximum_changed_files, maximumChangedBytes: row.maximum_changed_bytes }) : null;
+  return { id: `${row.pipeline_run_id}:stage:${Number(row.stage_ordinal)}`,
   tenantId: scope.tenantId, projectId: row.project_id, pipelineRunId: row.pipeline_run_id,
   stageOrdinal: Number(row.stage_ordinal), stageKind: row.stage_kind, role: row.role, workerId: row.worker_id,
   workerKind: row.worker_kind, nodeId: row.node_id, selectionKey: row.selection_key, model: row.model, effort: row.effort,
   provider: row.provider, profile: row.profile, currentJobId: row.current_job_id, currentAttemptId: row.current_attempt_id,
   currentLeaseId: row.current_lease_id, state: row.state, maxLoops: Number(row.max_loops),
   handoffFromResultDigest: row.handoff_from_result_digest, signoffReviewId: row.signoff_review_id,
+  allowedPaths: policy ? [...policy.allowedPaths] : null, maximumChangedFiles: policy?.maximumChangedFiles ?? null,
+  maximumChangedBytes: policy?.maximumChangedBytes ?? null,
   startedAt: row.started_at ? iso(row.started_at) : null, finishedAt: row.finished_at ? iso(row.finished_at) : null,
   version: Number(row.version) }; }
 function verify(key: Uint8Array, purpose: string, material: unknown, digest: string, tag: string) {
@@ -230,7 +238,7 @@ export class PipelineAdvanceServiceV1 {
     });
   }
 
-  async advance(runId: string, policyId: string): Promise<PipelineAdvanceReceiptV1> {
+  async advance(runId: string, policyId: string, expectedConsent?:Readonly<{id:string;digest:string}>): Promise<PipelineAdvanceReceiptV1> {
     const capability = this.#capability;
     if (!this.#enabled() || capability === undefined) throw new PipelineAdvanceErrorV1("unattended_disabled");
     let precommit: () => void|Promise<void> = () => this.#assertInstall();
@@ -240,6 +248,23 @@ export class PipelineAdvanceServiceV1 {
         [this.scope.tenantId,runId])).rows[0]; if (!locator) refuse("advance_conflict");
       const { run, template, stages } = await this.#lockedSnapshot(tx, locator.project_id, runId);
       this.#verifySnapshot(run,template,stages);
+      const consent=(await tx.query<UnattendedTransitionRow>(`SELECT id,project_id,pipeline_run_id,pipeline_template_id,
+        template_version,template_digest,run_version,run_digest,policy_id,policy_version,policy_digest,owner_identity_id,enabled,
+        idempotency_key,request_digest,transition_digest,auth_tag,occurred_at FROM pipeline_unattended_transitions
+        WHERE tenant_id=$1 AND project_id=$2 AND pipeline_run_id=$3 ORDER BY occurred_at DESC,id DESC LIMIT 1 FOR SHARE`,
+      [this.scope.tenantId,run.project_id,run.id])).rows[0];
+      if(!consent)refuse("unattended_not_authorized");
+      const consentMaterial={id:consent.id,tenantId:this.scope.tenantId,projectId:consent.project_id,
+        pipelineRunId:consent.pipeline_run_id,pipelineTemplateId:consent.pipeline_template_id,
+        templateVersion:Number(consent.template_version),templateDigest:consent.template_digest,runVersion:Number(consent.run_version),
+        runDigest:consent.run_digest,policyId:consent.policy_id,policyVersion:Number(consent.policy_version),
+        policyDigest:consent.policy_digest,ownerIdentityId:consent.owner_identity_id,enabled:consent.enabled,
+        idempotencyKey:consent.idempotency_key,requestDigest:consent.request_digest,occurredAt:iso(consent.occurred_at)};
+      verify(this.#key,"pipeline-unattended-transition/v1",consentMaterial,consent.transition_digest,consent.auth_tag);
+      if(!consent.enabled||consent.policy_id!==policyId||consent.pipeline_template_id!==template.id
+        ||expectedConsent&&(expectedConsent.id!==consent.id||expectedConsent.digest!==consent.transition_digest)
+        ||Number(consent.template_version)!==Number(template.version)||consent.template_digest!==template.record_digest
+        )refuse("unattended_not_authorized");
       if (!run.unattended || !template.may_advance_unattended) refuse("unattended_not_authorized");
       if (Number(run.template_version) !== Number(template.version) || run.template_digest !== template.record_digest)
         refuse("pipeline_integrity_failed");
@@ -282,6 +307,8 @@ export class PipelineAdvanceServiceV1 {
         catch { refuse("dependency_not_accepted"); } }
       await Promise.resolve(capability.assertSelectionCurrentInSession(tx,selected)).catch(()=>refuse("selection_not_current"));
       const policy=await this.#policy(tx,run.project_id,policyId);
+      if(Number(consent.policy_version)!==Number(policy.version)||consent.policy_digest!==policy.policy_digest)
+        refuse("unattended_not_authorized");
       const delegation=await capability.authorizeDelegationInSession(tx,selected,policyId);
       this.#assertDelegation(policy,delegation,stage,execution,this.#now());
       const runDeadline=runStartedAtMillis+Number(template.max_duration_seconds)*1000;
@@ -312,15 +339,20 @@ export class PipelineAdvanceServiceV1 {
         queueId:effect.queueId,selectionDigest,templateVersion:Number(template.version),templateDigest:template.record_digest,
         runVersion:Number(effectiveRun.version),runDigest:effectiveRun.record_digest,policyId:policy.id,policyVersion:Number(policy.version),
         policyDigest:policy.policy_digest,delegationReceiptId:delegation.receiptId,
-        delegationReceiptDigest:delegation.receiptDigest,requestDigest,advancedAt};
+        delegationReceiptDigest:delegation.receiptDigest,delegationTaskUnits:1,
+        delegationCostMicroUsd:delegation.nextCost.kind==="known"?delegation.nextCost.microUsd:refuse("policy_cost_unknown"),
+        delegationCostEvidenceDigest:delegation.nextCost.kind==="known"?delegation.nextCost.evidenceDigest:refuse("policy_cost_unknown"),
+        requestDigest,advancedAt};
       const receiptDigest=sha256Digest(material),authTag=hmacSha256Tag(this.#key,{purpose:"pipeline-advance-receipt/v1",record:material});
       await tx.query(`INSERT INTO pipeline_advance_receipts(id,tenant_id,project_id,pipeline_run_id,stage_ordinal,source_job_id,
         execution_job_id,attempt_id,queue_id,selection_digest,template_version,template_digest,run_version,run_digest,policy_id,
-        policy_version,policy_digest,delegation_receipt_id,delegation_receipt_digest,request_digest,receipt_digest,auth_tag,advanced_at)
-        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23)`,
+        policy_version,policy_digest,delegation_receipt_id,delegation_receipt_digest,delegation_task_units,
+        delegation_cost_microusd,delegation_cost_evidence_digest,request_digest,receipt_digest,auth_tag,advanced_at)
+        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26)`,
       [receiptId,this.scope.tenantId,run.project_id,run.id,selected.stageOrdinal,source.id,execution.id,effect.attemptId,effect.queueId,
         selectionDigest,template.version,template.record_digest,effectiveRun.version,effectiveRun.record_digest,policy.id,Number(policy.version),
-        policy.policy_digest,delegation.receiptId,delegation.receiptDigest,requestDigest,receiptDigest,authTag,advancedAt]);
+        policy.policy_digest,delegation.receiptId,delegation.receiptDigest,1,material.delegationCostMicroUsd,
+        material.delegationCostEvidenceDigest,requestDigest,receiptDigest,authTag,advancedAt]);
       await appendAuditWith(tx,{id:`audit:${receiptId}`,...this.scope,projectId:run.project_id,actorId:SERVICE_ACTOR,actorType:"service",
         action:"pipelines.stage.advanced",targetType:"pipeline_run",targetId:run.id,correlationId:execution.id,
         idempotencyKey:receiptId,occurredAt:advancedAt,safeMetadata:{stageOrdinal:selected.stageOrdinal,sourceJobId:source.id,
@@ -329,6 +361,32 @@ export class PipelineAdvanceServiceV1 {
         attemptId:effect.attemptId,queueId:effect.queueId,replayed:false,advancedAt,startsWork:true,
         grantsExecutionAuthority:false,claimsCancellation:false});
     },()=>precommit());
+  }
+
+  /** Bounded controller-cycle entrypoint. It selects only owner-consented
+   * active runs, authenticates the latest owner transition, then delegates
+   * each candidate to the same exact/replay-safe advance operation. */
+  async advanceReady(limit=8){
+    if(!this.#enabled()||!this.#capability)refuse("unattended_disabled");
+    if(!Number.isInteger(limit)||limit<1||limit>32)refuse("advance_conflict");
+    const candidates=await this.db.query<UnattendedTransitionRow>(`SELECT u.id,u.project_id,u.pipeline_run_id,
+      u.pipeline_template_id,u.template_version,u.template_digest,u.run_version,u.run_digest,u.policy_id,u.policy_version,
+      u.policy_digest,u.owner_identity_id,u.enabled,u.idempotency_key,u.request_digest,u.transition_digest,u.auth_tag,u.occurred_at
+      FROM pipeline_runs r JOIN LATERAL(SELECT t.* FROM pipeline_unattended_transitions t
+        WHERE t.tenant_id=r.tenant_id AND t.pipeline_run_id=r.id ORDER BY t.occurred_at DESC,t.id DESC LIMIT 1)u ON true
+      WHERE r.tenant_id=$1 AND r.state='active' AND r.unattended AND u.enabled ORDER BY r.updated_at,r.id LIMIT $2`,
+    [this.scope.tenantId,limit]);
+    const receipts:PipelineAdvanceReceiptV1[]=[];
+    for(const row of candidates.rows){const material={id:row.id,tenantId:this.scope.tenantId,projectId:row.project_id,
+      pipelineRunId:row.pipeline_run_id,pipelineTemplateId:row.pipeline_template_id,templateVersion:Number(row.template_version),
+      templateDigest:row.template_digest,runVersion:Number(row.run_version),runDigest:row.run_digest,policyId:row.policy_id,
+      policyVersion:Number(row.policy_version),policyDigest:row.policy_digest,ownerIdentityId:row.owner_identity_id,enabled:row.enabled,
+      idempotencyKey:row.idempotency_key,requestDigest:row.request_digest,occurredAt:iso(row.occurred_at)};
+      verify(this.#key,"pipeline-unattended-transition/v1",material,row.transition_digest,row.auth_tag);
+      try{receipts.push(await this.advance(row.pipeline_run_id,row.policy_id,{id:row.id,digest:row.transition_digest}));}
+      catch(error){if(!(error instanceof PipelineAdvanceErrorV1))throw error;}
+    }
+    return Object.freeze({checked:candidates.rows.length,advanced:Object.freeze(receipts)});
   }
 
   async history(projectId:string,runId:string,limit=100):Promise<PipelineHistoryV1>{
@@ -375,6 +433,63 @@ export class PipelineAdvanceServiceV1 {
     });
   }
 
+  /** Authenticated owner projection for the private-web history route.  The
+   * server-only history method remains usable by coordinator composition, but
+   * an HTTP caller must prove both current project read access and the current
+   * tenant owner grant before any lineage is read. */
+  async historyForOwner(identity: VerifiedWebIdentity, projectId:string, runId:string, limit=100):Promise<PipelineHistoryV1>{
+    return this.#owner.authenticated(identity, async (tx, actor) => {
+      actor.require("tasks.read", projectId);
+      const owner = (await tx.query<{ id:string }>(`SELECT g.id FROM control_role_grants g JOIN control_identities i
+        ON i.tenant_id=g.tenant_id AND i.id=g.identity_id WHERE g.tenant_id=$1 AND g.identity_id=$2 AND g.role_key='owner'
+        AND g.revoked_at IS NULL AND i.state='active' FOR SHARE OF g,i`, [this.scope.tenantId,actor.id])).rows[0];
+      if (!owner) throw new WebAccessError("access_denied");
+      return this.#historyInSession(tx,projectId,runId,limit);
+    });
+  }
+
+  async #historyInSession(tx:DatabaseSession,projectId:string,runId:string,limit:number):Promise<PipelineHistoryV1>{
+    if(!Number.isInteger(limit)||limit<1||limit>200)refuse("advance_conflict");
+    const run=(await tx.query<{id:string}>(`SELECT id FROM pipeline_runs WHERE tenant_id=$1 AND project_id=$2 AND id=$3`,
+      [this.scope.tenantId,projectId,runId])).rows[0];if(!run)refuse("advance_conflict");
+    const rows=(await tx.query<{id:string;actor_id:string;actor_type:"human"|"agent"|"worker"|"service"|"adapter";
+      action:string;target_type:string;target_id:string;safe_metadata:unknown;occurred_at:string|Date;chain_partition:string;
+      chain_sequence:number|string;event_hash:string}>(`WITH RECURSIVE source_jobs AS (
+        SELECT current_job_id id FROM pipeline_stage_runs WHERE tenant_id=$1 AND project_id=$2 AND pipeline_run_id=$3),
+      execution_jobs AS (SELECT p.job_id id FROM control_task_execution_plans p JOIN source_jobs s ON s.id=p.source_job_id
+        WHERE p.tenant_id=$1 AND p.project_id=$2), attempts AS (
+        SELECT a.id FROM control_attempts a JOIN execution_jobs j ON j.id=a.job_id WHERE a.tenant_id=$1), artifacts AS (
+        SELECT r.artifact_id id FROM control_native_artifact_receipts r JOIN execution_jobs j ON j.id=r.job_id WHERE r.tenant_id=$1),
+      review_targets AS (SELECT p.plan->>'targetId' id FROM control_native_review_plans p JOIN execution_jobs j ON j.id=p.job_id
+        WHERE p.tenant_id=$1 AND p.project_id=$2 AND jsonb_typeof(p.plan)='object' AND p.plan->>'targetId' IS NOT NULL),
+      gate_records AS (SELECT r.id FROM control_completion_gate_records r JOIN review_targets t ON t.id=r.id
+        WHERE r.tenant_id=$1 AND r.project_id=$2 UNION ALL SELECT child.id FROM control_completion_gate_records child
+        JOIN gate_records parent ON child.parent_id=parent.id WHERE child.tenant_id=$1 AND child.project_id=$2),
+      batches AS (SELECT DISTINCT i.batch_id id FROM work_batch_items i JOIN source_jobs s ON s.id=i.job_id
+        WHERE i.tenant_id=$1 AND i.project_id=$2), lineage AS (
+        SELECT $3::text id UNION SELECT id FROM source_jobs UNION SELECT id FROM execution_jobs UNION SELECT id FROM attempts
+        UNION SELECT id FROM artifacts UNION SELECT id FROM review_targets UNION SELECT id FROM gate_records
+        UNION SELECT id FROM batches)
+      SELECT e.id,e.actor_id,e.actor_type,e.action,e.target_type,e.target_id,e.safe_metadata,e.occurred_at,
+        e.chain_partition,e.chain_sequence,e.event_hash FROM audit_events e WHERE e.tenant_id=$1 AND e.project_id=$2
+        AND e.chain_version=1 AND e.action=ANY($5::text[])
+        AND (e.target_id IN(SELECT id FROM lineage) OR e.correlation_id IN(SELECT id FROM lineage))
+        ORDER BY e.chain_partition,e.chain_sequence LIMIT $4`,
+    [this.scope.tenantId,projectId,runId,limit+1,Object.keys(HISTORY_VOCABULARY)])).rows;
+    const audit=new AuditStore({query:tx.query.bind(tx),transaction:async work=>work(tx),
+      transactionWithPreCommitCheck:async(work,check)=>{const value=await work(tx);await check();return value;}});
+    for(const partition of new Set(rows.map(row=>row.chain_partition))){const verified=await audit.verify(this.scope.tenantId,partition);
+      if(!verified.valid)refuse("advance_conflict");}
+    const events=rows.slice(0,limit).flatMap(row=>{const kind=HISTORY_VOCABULARY[row.action as keyof typeof HISTORY_VOCABULARY];
+      if(!kind)return[];
+      const metadata=row.safe_metadata&&typeof row.safe_metadata==="object"?row.safe_metadata as Record<string,unknown>:{};
+      const reason=metadata.reasonCode;return[{id:row.id,kind,actorId:row.actor_id,actorType:row.actor_type,action:row.action,
+        targetType:row.target_type,targetId:row.target_id,safeReason:typeof reason==="string"&&/^[a-z0-9._:-]{1,120}$/.test(reason)?reason:null,
+        occurredAt:iso(row.occurred_at),chainPartition:row.chain_partition,chainSequence:safeInteger(row.chain_sequence),eventHash:row.event_hash}];});
+    return pipelineHistorySchemaV1.parse({runId,projectId,events,truncated:rows.length>limit,chainVerified:true,
+      observedAt:new Date(this.#now()).toISOString(),startsWork:false,grantsExecutionAuthority:false});
+  }
+
   async #lockedSnapshot(tx:DatabaseSession,projectId:string,runId:string){
     const run=(await tx.query<RunRow>(`SELECT id,project_id,request_id,template_id,template_version,template_digest,workflow_id,title,
       state,started_at,updated_at,completed_at,current_stage_ordinal,unattended,record_digest,auth_tag,version FROM pipeline_runs
@@ -385,7 +500,8 @@ export class PipelineAdvanceServiceV1 {
       WHERE tenant_id=$1 AND project_id=$2 AND id=$3 FOR UPDATE`,[this.scope.tenantId,projectId,run.template_id])).rows[0];
     const stages=(await tx.query<StageRow>(`SELECT project_id,pipeline_run_id,stage_ordinal,stage_kind,role,current_job_id,worker_id,
       worker_kind,node_id,selection_key,model,effort,provider,profile,current_attempt_id,current_lease_id,state,max_loops,
-      handoff_from_result_digest,signoff_review_id,started_at,finished_at,record_digest,auth_tag,version FROM pipeline_stage_runs
+      handoff_from_result_digest,allowed_paths,maximum_changed_files,maximum_changed_bytes,
+      signoff_review_id,started_at,finished_at,record_digest,auth_tag,version FROM pipeline_stage_runs
       WHERE tenant_id=$1 AND project_id=$2 AND pipeline_run_id=$3 ORDER BY stage_ordinal FOR UPDATE`,
     [this.scope.tenantId,projectId,runId])).rows;
     if(!template||stages.length!==3||stages.some((value,index)=>Number(value.stage_ordinal)!==index))refuse("pipeline_integrity_failed");
@@ -394,7 +510,16 @@ export class PipelineAdvanceServiceV1 {
   #verifySnapshot(run:RunRow,template:TemplateRow,stages:StageRow[]){
     verify(this.#key,"pipeline-template/v1",templateMaterial(this.scope,template),template.record_digest,template.auth_tag);
     verify(this.#key,"pipeline-run/v1",runMaterial(this.scope,run),run.record_digest,run.auth_tag);
-    for(const stage of stages)verify(this.#key,"pipeline-stage-run/v1",stageMaterial(this.scope,stage),stage.record_digest,stage.auth_tag);
+    for(const stage of stages) {
+      const material = stageMaterial(this.scope,stage);
+      if (sha256Digest(material) === stage.record_digest
+        && same(hmacSha256Tag(this.#key,{purpose:"pipeline-stage-run/v1",record:material}),stage.auth_tag)) continue;
+      const { allowedPaths: _paths, maximumChangedFiles: _files, maximumChangedBytes: _bytes, ...legacy } = material;
+      if (stage.allowed_paths !== null || stage.maximum_changed_files !== null || stage.maximum_changed_bytes !== null
+        || sha256Digest(legacy) !== stage.record_digest
+        || !same(hmacSha256Tag(this.#key,{purpose:"pipeline-stage-run/v1",record:legacy}),stage.auth_tag))
+        refuse("pipeline_integrity_failed");
+    }
   }
   async #policy(tx:DatabaseSession,projectId:string,policyId:string){const row=(await tx.query<PolicyRow>(`SELECT id,project_id,
     coordinator_identity_id,coordinator_version,state,version,policy_digest,allowed_actions,eligible_routes,risk_ceiling,
@@ -426,7 +551,8 @@ export class PipelineAdvanceServiceV1 {
     if(source&&id!==stage.current_job_id)refuse("advance_conflict");return job;}
   async #receipt(tx:DatabaseSession,runId:string,ordinal:number){return(await tx.query<AdvanceReceiptRow>(`SELECT id,project_id,pipeline_run_id,
     stage_ordinal,source_job_id,execution_job_id,attempt_id,queue_id,selection_digest,template_version,template_digest,run_version,
-    run_digest,policy_id,policy_version,policy_digest,delegation_receipt_id,delegation_receipt_digest,request_digest,receipt_digest,
+    run_digest,policy_id,policy_version,policy_digest,delegation_receipt_id,delegation_receipt_digest,delegation_task_units,
+    delegation_cost_microusd,delegation_cost_evidence_digest,request_digest,receipt_digest,
     auth_tag,advanced_at FROM pipeline_advance_receipts WHERE tenant_id=$1 AND pipeline_run_id=$2 AND stage_ordinal=$3 FOR SHARE`,
     [this.scope.tenantId,runId,ordinal])).rows[0];}
   #replayReceipt(row:AdvanceReceiptRow,selection:PipelineAdvanceSelectionV1,policyId:string){const material={id:row.id,
@@ -435,6 +561,8 @@ export class PipelineAdvanceServiceV1 {
     selectionDigest:row.selection_digest,templateVersion:Number(row.template_version),templateDigest:row.template_digest,
     runVersion:Number(row.run_version),runDigest:row.run_digest,policyId:row.policy_id,policyVersion:Number(row.policy_version),
     policyDigest:row.policy_digest,delegationReceiptId:row.delegation_receipt_id,delegationReceiptDigest:row.delegation_receipt_digest,
+    delegationTaskUnits:safeInteger(row.delegation_task_units),delegationCostMicroUsd:safeInteger(row.delegation_cost_microusd),
+    delegationCostEvidenceDigest:row.delegation_cost_evidence_digest,
     requestDigest:row.request_digest,advancedAt:iso(row.advanced_at)};
     verify(this.#key,"pipeline-advance-receipt/v1",material,row.receipt_digest,row.auth_tag);
     if(row.policy_id!==policyId||row.source_job_id!==selection.sourceJobId||row.execution_job_id!==selection.executionJobId

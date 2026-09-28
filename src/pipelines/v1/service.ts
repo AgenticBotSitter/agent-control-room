@@ -638,6 +638,8 @@ export class LinearPipelineServiceV1 {
         accepted.push(own);
       }
       return pipelineRunViewSchemaV1.parse({ runId, projectId, title: run.title, state: run.state,
+        templateId:run.template_id,runVersion:Number(run.version),templateVersion:Number(template.version),
+        unattended:run.unattended,mayAdvanceUnattended:template.may_advance_unattended,
         stages, updatedAt: iso(run.updated_at), startsWork: false, grantsExecutionAuthority: false });
     });
   }

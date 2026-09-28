@@ -7,7 +7,9 @@ import { readBrowserJson } from "../../src/web/v1/browser-json";
 import { workBatchProposalSchemaV1, type WorkBatchProposalV1 } from "../../src/work-intake/v1/schemas";
 import { workBatchOwnerCommandSchemaV1, workBatchOwnerPageSchemaV1, workBatchOwnerReceiptSchemaV1,
   workBatchOwnerViewSchemaV1, type WorkBatchOwnerViewV1 } from "../../src/work-intake/v1/owner-schemas";
-import { pipelineRunPageSchemaV1, pipelineRunViewSchemaV1, type PipelineRunViewV1 } from "../../src/pipelines/v1/schemas";
+import { pipelineHistorySchemaV1,pipelineRunPageSchemaV1,pipelineRunViewSchemaV1,
+  pipelineUnattendedTransitionReceiptSchemaV1,pipelineUnattendedTransitionSchemaV1,
+  type PipelineHistoryV1,type PipelineRunViewV1 } from "../../src/pipelines/v1/schemas";
 import { PrivateHeader } from "./private-header";
 import { ProjectNavigation } from "./project-navigation";
 import { ConfiguredTimestamp } from "./configured-timestamp";
@@ -23,9 +25,27 @@ type ReadState<T> = { state: "loading" } | { state: "ready"; value: T }
 type Choice = "undecided" | "approve" | "reject";
 export type PipelineDecisionDraft = Readonly<Record<string, Readonly<{ decision: Choice; reasonCode: string }>>>;
 
+export function createPipelineRunOwnerBrowserClient(transport:typeof fetch=fetch,
+  makeKey:()=>string=()=>`pipeline-consent:${crypto.randomUUID()}`){
+  const base=(projectId:string,runId:string)=>`/api/v1/projects/${encodeURIComponent(projectId)}/pipeline-runs/${encodeURIComponent(runId)}`;
+  return {async history(projectId:string,runId:string){const response=await transport(`${base(projectId,runId)}/history`,{
+      credentials:"same-origin",cache:"no-store",redirect:"error",headers:{accept:"application/json","x-requested-with":"XMLHttpRequest"}});
+    if(!response.ok)throw new PipelineRequestError(errorCode(response.status));return pipelineHistorySchemaV1.parse(await readBrowserJson(response));},
+    async setUnattended(projectId:string,run:PipelineRunViewV1,policyId:string,enabled:boolean){
+      const value=pipelineUnattendedTransitionSchemaV1.parse({runId:run.runId,templateId:run.templateId,policyId,enabled,
+        expectedRunVersion:run.runVersion,expectedTemplateVersion:run.templateVersion});
+      const response=await transport(`${base(projectId,run.runId)}/unattended`,{method:"POST",credentials:"same-origin",
+        cache:"no-store",redirect:"error",headers:{accept:"application/json","content-type":"application/json",
+          "x-requested-with":"XMLHttpRequest","idempotency-key":makeKey()},body:JSON.stringify(value)});
+      if(!response.ok)throw new PipelineRequestError(errorCode(response.status));
+      return pipelineUnattendedTransitionReceiptSchemaV1.parse(await readBrowserJson(response));},};
+}
+
 function PipelineRuns({ projectId, runId }: { projectId: string; runId?: string }) {
   const [value, setValue] = useState<PipelineRunViewV1 | z.infer<typeof pipelineRunPageSchemaV1>>();
-  const [failed, setFailed] = useState(false);
+  const [failed, setFailed] = useState(false),[history,setHistory]=useState<PipelineHistoryV1>();
+  const [policyId,setPolicyId]=useState(""),[saving,setSaving]=useState(false),[saveError,setSaveError]=useState(false);
+  const [generation,setGeneration]=useState(0);
   useEffect(() => {
     const abort = new AbortController(); setFailed(false);
     const suffix = runId ? `/${encodeURIComponent(runId)}` : "";
@@ -37,8 +57,10 @@ function PipelineRuns({ projectId, runId }: { projectId: string; runId?: string 
       const raw = await readBrowserJson(response);
       setValue(runId ? pipelineRunViewSchemaV1.parse(raw) : pipelineRunPageSchemaV1.parse(raw));
     }).catch(() => { if (!abort.signal.aborted) setFailed(true); });
+    const currentRunId=runId;
+    if(currentRunId)void createPipelineRunOwnerBrowserClient().history(projectId,currentRunId).then(setHistory,()=>setHistory(undefined));
     return () => abort.abort();
-  }, [projectId, runId]);
+  }, [projectId, runId,generation]);
   if (failed) return <section className="private-panel"><h2>Pipeline runs</h2>
     <p role="alert">Saved pipeline runs could not be checked. No run state or empty list is inferred.</p></section>;
   if (!value) return <section className="private-panel"><h2>Pipeline runs</h2><p role="status">Loading saved pipeline runs…</p></section>;
@@ -52,6 +74,16 @@ function PipelineRuns({ projectId, runId }: { projectId: string; runId?: string 
   }
   const run = pipelineRunViewSchemaV1.parse(value);
   return <section className="private-panel"><h2>{run.title}</h2><p>Run state: {run.state}</p>
+    <form className="private-pipeline-decisions" onSubmit={event=>{event.preventDefault();setSaving(true);setSaveError(false);
+      void createPipelineRunOwnerBrowserClient().setUnattended(projectId,run,policyId,!run.unattended)
+        .then(()=>{setPolicyId("");setGeneration(value=>value+1);},()=>setSaveError(true)).finally(()=>setSaving(false));}}>
+      <fieldset><legend>Unattended continuation</legend><p>Current run consent: <strong>{run.unattended?"enabled":"disabled"}</strong>.
+        Enabling records owner consent under one current delegation policy; it does not start work in this request.</p>
+        <label>Delegation policy ID<input value={policyId} required minLength={1} maxLength={180}
+          autoComplete="off" onChange={event=>setPolicyId(event.target.value)}/></label>
+        <button type="submit" disabled={saving||!policyId}>{saving?"Saving…":run.unattended?"Disable unattended continuation":"Enable unattended continuation"}</button>
+        {saveError&&<p role="alert">The consent change was not confirmed. Refresh the saved run before trying again.</p>}</fieldset>
+    </form>
     <ol className="private-pipeline-items">{run.stages.map(stage => <li key={stage.ordinal}>
       <header><h3>{stage.ordinal + 1}. {stage.role}</h3><span className="private-state">{stage.state.replaceAll("_", " ")}</span></header>
       <dl className="private-task-facts"><div><dt>Stored kind</dt><dd>{stage.stageKind}</dd></div>
@@ -59,7 +91,11 @@ function PipelineRuns({ projectId, runId }: { projectId: string; runId?: string 
         <div><dt>Round</dt><dd>{stage.round ?? "unknown"}</dd></div><div><dt>Usage</dt><dd>{stage.usage}</dd></div>
         <div><dt>Previous result</dt><dd>{stage.predecessorResultDigest ?? "not accepted yet"}</dd></div></dl>
       <a href={`/projects/${encodeURIComponent(projectId)}/tasks/${encodeURIComponent(stage.jobId)}`}>Open ordinary task</a>
-    </li>)}</ol><p className="private-note">An eligible stage is not invoked automatically. Start remains an ordinary owner action.</p></section>;
+    </li>)}</ol><section aria-label="Pipeline history"><h3>Verified history</h3>{history?<ul className="private-timeline">
+      {history.events.map(event=><li key={event.id}><strong>{event.kind.replaceAll("_"," ")}</strong>
+        <span>{event.actorId}</span><ConfiguredTimestamp value={event.occurredAt}/></li>)}</ul>
+      :<p role="status">Checking authenticated pipeline history…</p>}</section>
+    <p className="private-note">Only a consented run and the installation’s separate live switch may continue automatically.</p></section>;
 }
 
 const errorCode = (status: number): BrowserFailureCode => ({ 400: "invalid_request", 401: "authentication_required",

@@ -37,6 +37,7 @@ export const privateWebReadTables = ["control_identities", "control_role_grants"
   "work_batch_queue_admissions", "work_batch_effective_queue_admissions", "work_batch_agent_queue_heads",
   "control_native_task_queue", "control_job_dependencies",
   "pipeline_templates", "pipeline_runs", "pipeline_stage_runs", "pipeline_ordered_stage_runs",
+  "pipeline_unattended_transitions",
   "control_pipeline_build_publications", "control_codex_result_publications",
   "control_action_inbox"] as const;
 const inserts = new Set(["control_web_sessions", "adapter_registry", "projects", "control_manual_project_heads",
@@ -48,6 +49,7 @@ const inserts = new Set(["control_web_sessions", "adapter_registry", "projects",
 inserts.add("work_batch_revisions"); inserts.add("work_batch_items");
 inserts.add("work_batch_queue_admissions"); inserts.add("work_batch_agent_queue_heads");
 inserts.add("pipeline_templates"); inserts.add("pipeline_runs"); inserts.add("pipeline_stage_runs");
+inserts.add("pipeline_unattended_transitions");
 
 /** Tables whose INSERT grant is column-scoped rather than table-wide. Every
  * listed column must carry INSERT and every unlisted column must not — a
@@ -130,9 +132,11 @@ const coordinatorInserts = new Set(["control_web_sessions", "control_requests", 
   "control_installation_transition_revisions", "control_node_fleet_signals", "control_node_fleet_current",
   "control_task_model_selections", "control_task_declared_scopes", "control_assignment_lease_scopes"]);
 coordinatorReads.push("pipeline_templates", "pipeline_runs", "pipeline_stage_runs", "pipeline_ordered_stage_runs",
+  "pipeline_unattended_transitions", "pipeline_advance_receipts",
   "control_agent_review_plans", "control_pipeline_build_publications");
 coordinatorInserts.add("control_agent_review_plans");
 coordinatorInserts.add("control_pipeline_build_publications");
+coordinatorInserts.add("pipeline_advance_receipts");
 const coordinatorDeletes = new Set(["control_assignment_lease_scopes"]);
 const coordinatorUpdates: Record<string, readonly string[]> = {
   ...Object.fromEntries(["control_requests", "control_workflows", "control_attempts", "control_leases"]

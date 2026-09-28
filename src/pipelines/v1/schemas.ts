@@ -82,6 +82,8 @@ export const pipelineStageViewSchemaV1 = z.object({ ordinal: z.number().int().mi
   predecessorResultDigest: digest.nullable(), startsWork: z.literal(false), grantsExecutionAuthority: z.literal(false) }).strict();
 export const pipelineRunViewSchemaV1 = z.object({ runId: id, projectId: id, title: z.string().min(1).max(180),
   state: z.enum(["proposed", "active", "paused", "succeeded", "failed", "cancelled"]),
+  templateId:id,runVersion:z.number().int().positive(),templateVersion:z.number().int().positive(),
+  unattended:z.boolean(),mayAdvanceUnattended:z.boolean(),
   stages: z.array(pipelineStageViewSchemaV1).length(3), updatedAt: z.string().datetime({ offset: true }),
   startsWork: z.literal(false), grantsExecutionAuthority: z.literal(false) }).strict();
 export const pipelineRunPageSchemaV1 = z.object({ projectId: id, runs: z.array(z.object({ runId: id,
