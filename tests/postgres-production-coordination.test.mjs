@@ -532,31 +532,31 @@ test("ownership-scope trigger gives exactly one winner under concurrent transact
     await setup.query(`INSERT INTO control_nodes(id,tenant_id,state,version,identity_key_id,payload,created_at,updated_at)
       VALUES('node:scope-race','tenant:test','active',0,'key:scope-race',
         jsonb_build_object('id','node:scope-race','tenantId','tenant:test','state','active','version',0,
-          'identityKeyId','key:scope-race'),$1,$1)`, [acquiredAt]);
+          'identityKeyId','key:scope-race'),$1::timestamptz,$1::timestamptz)`, [acquiredAt]);
     await setup.query(`INSERT INTO control_requests(id,tenant_id,project_id,state,version,idempotency_key,payload,created_at,updated_at)
       VALUES('request:scope-race','tenant:test','project:alpha','accepted',0,'scope-race',
         jsonb_build_object('id','request:scope-race','tenantId','tenant:test','projectId','project:alpha',
-          'state','accepted','version',0,'idempotencyKey','scope-race'),$1,$1)`, [acquiredAt]);
+          'state','accepted','version',0,'idempotencyKey','scope-race'),$1::timestamptz,$1::timestamptz)`, [acquiredAt]);
     await setup.query(`INSERT INTO control_workflows(id,tenant_id,request_id,project_id,definition_digest,state,version,payload,created_at,updated_at)
       VALUES('workflow:scope-race','tenant:test','request:scope-race','project:alpha',$2,'active',0,
         jsonb_build_object('id','workflow:scope-race','tenantId','tenant:test','requestId','request:scope-race',
-          'projectId','project:alpha','definitionDigest',$2,'state','active','version',0),$1,$1)`, [acquiredAt, digest]);
+          'projectId','project:alpha','definitionDigest',$2::text,'state','active','version',0),$1::timestamptz,$1::timestamptz)`, [acquiredAt, digest]);
     await setup.query(`INSERT INTO control_jobs(id,tenant_id,workflow_id,project_id,state,version,priority,required_capability,
         authority_digest,payload,created_at,updated_at)
       SELECT id,'tenant:test','workflow:scope-race','project:alpha','leased',0,50,'fixture',$2,
         jsonb_build_object('id',id,'tenantId','tenant:test','workflowId','workflow:scope-race','projectId','project:alpha',
-          'state','leased','version',0,'priority',50,'requiredCapability','fixture','authority',jsonb_build_object('digest',$2)),$1,$1
+          'state','leased','version',0,'priority',50,'requiredCapability','fixture','authority',jsonb_build_object('digest',$2::text)),$1::timestamptz,$1::timestamptz
       FROM (VALUES('job:scope-race-a'),('job:scope-race-b')) AS jobs(id)`, [acquiredAt, digest]);
     await setup.query(`INSERT INTO control_attempts(id,tenant_id,job_id,attempt_number,state,version,worker_id,node_id,lease_epoch,payload,created_at,updated_at)
       SELECT 'attempt:' || right(id,1),'tenant:test',id,1,'leased',0,'worker:scope-race','node:scope-race',1,
         jsonb_build_object('id','attempt:' || right(id,1),'tenantId','tenant:test','jobId',id,'attemptNumber',1,
-          'state','leased','version',0,'workerId','worker:scope-race','nodeId','node:scope-race','leaseEpoch',1),$1,$1
+          'state','leased','version',0,'workerId','worker:scope-race','nodeId','node:scope-race','leaseEpoch',1),$1::timestamptz,$1::timestamptz
       FROM (VALUES('job:scope-race-a'),('job:scope-race-b')) AS jobs(id)`, [acquiredAt]);
     await setup.query(`INSERT INTO control_leases(id,tenant_id,job_id,attempt_id,node_id,epoch,state,version,acquired_at,expires_at,payload,created_at,updated_at)
       SELECT 'lease:' || right(id,1),'tenant:test',id,'attempt:' || right(id,1),'node:scope-race',1,'active',0,$1,$2,
         jsonb_build_object('id','lease:' || right(id,1),'tenantId','tenant:test','jobId',id,
           'attemptId','attempt:' || right(id,1),'nodeId','node:scope-race','epoch',1,'state','active','version',0,
-          'acquiredAt',$1,'expiresAt',$2),$1,$1
+          'acquiredAt',$1::timestamptz,'expiresAt',$2::timestamptz),$1::timestamptz,$1::timestamptz
       FROM (VALUES('job:scope-race-a'),('job:scope-race-b')) AS jobs(id)`, [acquiredAt, expiresAt]);
     await setup.query(`INSERT INTO control_task_declared_scopes(tenant_id,project_id,job_id,scope_kind,path,path_fold)
       SELECT 'tenant:test','project:alpha',id,'tree','src/race','src/race'
