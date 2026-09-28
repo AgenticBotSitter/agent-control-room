@@ -275,6 +275,7 @@ test("the full Mac-local rehearsal is isolated, fake, PG17, and runs every suppo
   assert.match(job, /--fake-executables/u);
   assert.match(job, /mac:prepare-task-runtime/u);
   assert.match(job, /journey\.ts "\$\{rehearsal_root\}"/u);
+  assert.match(job, /section13\.ts "\$\{rehearsal_root\}"/u);
   assert.match(job, /run_rehearsal "--model-allowlists"/u);
   assert.match(job, /trap cleanup EXIT INT TERM/u);
   assert.ok(!/secrets\./u.test(job), "the fake rehearsal must not receive secrets");

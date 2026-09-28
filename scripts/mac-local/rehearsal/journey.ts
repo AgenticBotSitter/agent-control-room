@@ -177,6 +177,16 @@ async function main() {
     throw new Error("journey_requires_mac_prepare_task_runtime_first");
 
   const target = `host=127.0.0.1 port=${config.database.port} dbname=control_room user=postgres`;
+  const readPersistedOwnerSessions = async () => {
+    const sessionDatabase = connectTarget(target);
+    await sessionDatabase.connect();
+    try {
+      return (await sessionDatabase.query<{ token_digest: string; issued_at: string; expires_at: string; revoked_at: string | null }>(
+        `SELECT token_digest,issued_at::text,expires_at::text,revoked_at::text
+          FROM control_web_sessions WHERE tenant_id=$1 ORDER BY token_digest`,
+        [config.localOwnerSession.tenantId])).rows;
+    } finally { await sessionDatabase.end(); }
+  };
   const admin = connectTarget(target);
   await admin.connect();
   try {
@@ -282,6 +292,16 @@ async function main() {
     return;
   }
   const cookie = await signIn();
+  const sessionToken = cookie.slice("control_room_local_owner=".length);
+  assert.match(sessionToken, /^[A-Za-z0-9_-]{43}$/u);
+  const sessionTokenDigest = sha256Digest({ token: sessionToken, installationBindingDigest: sha256Digest({
+    schema: config.localOwnerSession.schema, origin: config.localOwnerSession.origin,
+    tenantId: config.localOwnerSession.tenantId, provider: config.localOwnerSession.provider,
+    subject: config.localOwnerSession.subject, ownerCodeDigest: config.localOwnerSession.ownerCodeDigest,
+  }) });
+  const sessionBeforeRestart = await readPersistedOwnerSessions();
+  assert.equal(sessionBeforeRestart.length, 1, "the original owner session must be persisted before restart");
+  assert.equal(sessionBeforeRestart[0]?.token_digest, sessionTokenDigest);
   const projectResponse = await fetch(new URL("/api/v1/projects", origin), {
     method: "POST", headers: { origin, cookie, "content-type": "application/json", "idempotency-key": "journey-rehearsal-project" },
     body: JSON.stringify({ title: "Post-startup journey project", summary: "One task per local agent." }),
@@ -336,6 +356,9 @@ async function main() {
   await recordHost();
   const resumedSession = await fetch(new URL("/api/v1/local-workers", origin), { headers: { cookie } });
   assert.equal(resumedSession.status, 200, "the original owner session must survive task-host restart");
+  const sessionAfterRestart = await readPersistedOwnerSessions();
+  assert.deepEqual(sessionAfterRestart, sessionBeforeRestart,
+    "restart must reuse the exact persisted session digest without issuing or replacing a session");
   const legacyPlanOptions = await requireOk(await fetch(new URL(
     `/api/v1/projects/${idOf(projectId)}/tasks/${idOf(legacySourceJobId)}/plan`, origin), { headers: { cookie } }),
   200, "pre-0091-shaped planning options") as { templates?: { id: string }[]; availability: string };
