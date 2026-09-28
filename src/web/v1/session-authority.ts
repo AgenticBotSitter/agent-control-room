@@ -18,7 +18,7 @@ export class WebSessionAuthority {
 
   async authenticated<T>(identity: VerifiedWebIdentity,
     operation: (tx: DatabaseSession, actor: WebActor) => Promise<T>,
-    options?: { repeatableReadSnapshot?: boolean }): Promise<T> {
+    options?: { repeatableReadSnapshot?: boolean; readOnly?: boolean }): Promise<T> {
     identity = { ...identity };
     const nowMs = this.clock();
     const assertFresh = () => {
@@ -40,16 +40,18 @@ export class WebSessionAuthority {
       if (options?.repeatableReadSnapshot) {
         await tx.query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ");
       }
-      // Serialize each identity's requests and lock its current grants through the operation.
-      // Revocation committed before this lock is observed; already-running transactions may finish first.
+      // Writes retain the original exclusive per-identity/session ordering. Explicitly read-only
+      // callers take shared locks instead: concurrent reads may use separate pool connections,
+      // while identity/session revocation still waits for every already-authorized read to finish.
+      const authorityLock = options?.readOnly ? "FOR SHARE" : "FOR UPDATE";
       const row = (await tx.query<{ id: string }>(`SELECT id FROM control_identities
-        WHERE tenant_id=$1 AND auth_provider=$2 AND auth_subject_digest=$3 AND actor_type='human' AND state='active' FOR UPDATE`,
+        WHERE tenant_id=$1 AND auth_provider=$2 AND auth_subject_digest=$3 AND actor_type='human' AND state='active' ${authorityLock}`,
       [this.scope.tenantId, identity.provider, sha256Digest({ provider: identity.provider, subject: identity.subject })])).rows[0];
       if (!row) throw new WebAccessError("access_denied");
       await tx.query(`INSERT INTO control_web_sessions(tenant_id,token_digest,identity_id,issued_at,expires_at)
         VALUES($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING`, [this.scope.tenantId, identity.tokenDigest, row.id, identity.issuedAt, identity.expiresAt]);
       const session = (await tx.query<{ identity_id: string; revoked_at: string | null; expires_at: string; issued_at: string }>(
-        `SELECT identity_id,revoked_at,expires_at,issued_at FROM control_web_sessions WHERE tenant_id=$1 AND token_digest=$2 FOR UPDATE`,
+        `SELECT identity_id,revoked_at,expires_at,issued_at FROM control_web_sessions WHERE tenant_id=$1 AND token_digest=$2 ${authorityLock}`,
         [this.scope.tenantId, identity.tokenDigest])).rows[0];
       if (!session || session.identity_id !== row.id || session.revoked_at || Date.parse(session.expires_at) <= nowMs
         || iso(session.issued_at) !== identity.issuedAt) throw new WebAccessError("authentication_required");

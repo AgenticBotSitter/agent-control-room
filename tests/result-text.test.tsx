@@ -54,6 +54,29 @@ test("coding-change evidence is aggregate-only and never mistaken for authority"
   assert.match(unavailable, /does not mean no files changed/);
 });
 
+test("result open mounts command readers only for the newest current matching target", () => {
+  const contentHash = `sha256:${"a".repeat(64)}`, targetDigest = `sha256:${"b".repeat(64)}`;
+  const artifact = { artifactId: "artifact:test", attemptId: "attempt:test", runId: "run:test", contentHash,
+    sizeBytes: 12, receivedAt: "2026-09-08T12:00:00.000Z", byteCheck: "matched_recorded_claim" as const,
+    qualityAccepted: false as const };
+  const evidence = (targetId: string, revision: number, status: "pending" | "superseded") => ({ targetId,
+    kind: "document" as const, targetDigest, contentHash, revision, supersedesTargetId: null, status,
+    matchingArtifactIds: [artifact.artifactId], additionalEvidenceOmitted: false, reviews: [], verifications: [], findings: [],
+    missingVerificationScenarioIds: [], openFindingCount: 0, grantsApproval: false as const, grantsExecutionAuthority: false as const });
+  const page: TaskResultsPage = { projectId: "project:test", jobId: "job:test", observedAt: artifact.receivedAt,
+    resultSource: "configured", reviewSource: "configured", items: [artifact],
+    reviews: [evidence("target:current", 1, "pending"), evidence("target:historical", 0, "superseded")],
+    additionalResultsOmitted: false, additionalTargetsOmitted: false, canReadContent: true,
+    reviewCommands: "configured", verificationCommands: "configured" };
+  const content: TaskResultContent = { projectId: page.projectId, jobId: page.jobId, artifact,
+    text: "Current result", contentVerifiedAt: artifact.receivedAt, untrustedContent: true };
+  const html = renderToStaticMarkup(<TaskResultsPanel page={page} content={content} pending={false}
+    onOpen={() => {}} onClose={() => {}} />);
+  assert.equal(html.match(/Loading owner review/g)?.length, 1);
+  assert.equal(html.match(/Loading human verification/g)?.length, 1);
+  assert.match(html, /Revision 0/); assert.match(html, /Revision 1/);
+});
+
 test("oversized results retain full plain text without Markdown parsing", () => {
   const text = "x".repeat(32769);
   const html = renderToStaticMarkup(<ResultText text={text} />);

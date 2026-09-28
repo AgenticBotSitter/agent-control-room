@@ -263,9 +263,11 @@ export function createTaskHttpHandler(options: { origin: string; trust?: AccessT
         return Response.json(await options.service.results(identity, projectId, jobId), { headers: privateResponseHeaders });
       }
       if (jobId && request.method === "GET") {
-        const detail = await options.service.detail(identity, projectId, jobId);
-        const preparedFor = await options.planning?.readPreparedWorker?.(identity, projectId, jobId);
-        const configuredLocalRoute = await options.planning?.readConfiguredLocalRoute?.(identity, projectId, jobId) as TrustedConfiguredLocalRoute | undefined;
+        const [detail, preparedFor, configuredLocalRoute] = await Promise.all([
+          options.service.detail(identity, projectId, jobId),
+          options.planning?.readPreparedWorker?.(identity, projectId, jobId),
+          options.planning?.readConfiguredLocalRoute?.(identity, projectId, jobId) as Promise<TrustedConfiguredLocalRoute | undefined> | undefined,
+        ]);
         const withPreparedRoute = { ...detail, preparedFor: preparedFor ?? null };
         return Response.json(taskDetailSchema.parse({ ...withPreparedRoute,
           localRouteObservation: observeTaskLocalRoute(withPreparedRoute, configuredLocalRoute),

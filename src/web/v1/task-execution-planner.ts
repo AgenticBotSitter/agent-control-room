@@ -615,7 +615,7 @@ export class TaskExecutionPlanner {
       await this.projects.getViewsInSession(tx, actor, unique.map(task => task.projectId));
       return readSavedTaskPlansInSessionV1(tx, { tenantId: this.scope.tenantId, planIntegrityKey: this.key,
         reviewIntegrityKey: this.reviewKey, checkpoints: this.checkpoints }, unique);
-    });
+    }, { readOnly: true });
   }
   /** Authenticated source-to-prepared continuation. The status is read from the
    * same canonical job verified against the immutable execution plan. */
@@ -637,7 +637,7 @@ export class TaskExecutionPlanner {
       const prepared = await this.checkedJob(tx, plan);
       return { receipt: this.receipt(plan), preparedTask: { jobId: prepared.id, state: prepared.state,
         version: prepared.version, updatedAt: prepared.updatedAt } };
-    });
+    }, { readOnly: true });
   }
   /** A deliberately small read model for a prepared task page. It verifies the saved plan
    * before translating its adapter to a display category; it never exposes a worker, template,
@@ -660,7 +660,7 @@ export class TaskExecutionPlanner {
       if (plan.schema === "control-room.task-execution-plan/v15" || plan.schema === "control-room.task-execution-plan/v16") return "hermes" as const;
       if (plan.schema === "control-room.task-execution-plan/v9" || plan.schema === "control-room.task-execution-plan/v10") return "claude" as const;
       return "configured_worker" as const;
-    });
+    }, { readOnly: true });
   }
   /** Server-only conclusion about whether this saved task plan still names one
    * exact locally admitted adapter. It intentionally returns no route detail. */
@@ -686,7 +686,7 @@ export class TaskExecutionPlanner {
       if (!adapter || !this.localAdapterAdmission) return "not_configured" as const;
       return this.localAdapterAdmission.enabledAdapters.filter(value => value === adapter).length === 1
         ? "configured" as const : "not_configured" as const;
-    });
+    }, { readOnly: true });
   }
   private verify(row: Row) {
     const plan = planSchema.parse(row.plan), expected = Buffer.from(this.tag(plan)), actual = Buffer.from(row.auth_tag);

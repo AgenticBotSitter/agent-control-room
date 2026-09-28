@@ -13,7 +13,7 @@ const unavailable = (): never => { throw new Error("mac_local_rollback_checkpoin
 const scopePattern = /^(?=.{3,240}$)[A-Za-z0-9._-]+:[A-Za-z0-9:._-]+$/u;
 const MAX_FILE_BYTES = 256 * 1024;
 
-type Runtime = Readonly<{ pid: number; alive(pid: number): boolean }>;
+type Runtime = Readonly<{ pid: number; alive(pid: number): boolean; beforeLoad?(): void | Promise<void> }>;
 const production: Runtime = Object.freeze({ pid: process.pid, alive(pid: number) {
   try { process.kill(pid, 0); return true; } catch (error) { return (error as NodeJS.ErrnoException)?.code === "EPERM"; }
 } });
@@ -68,14 +68,31 @@ export async function openMacLocalRollbackCheckpointStoreV1(protectedRoot: strin
   await privateEntry(directory, "directory").catch(unavailable);
   await acquire(lock, runtime);
 
-  let closed = false, queue: Promise<unknown> = Promise.resolve();
-  const serial = <T>(work: () => Promise<T>): Promise<T> => {
-    const next = queue.then(() => { if (closed) unavailable(); return work(); });
-    queue = next.catch(() => {});
-    return next;
+  let closed = false, activeReaders = 0, writerActive = false;
+  const waitingReaders: (() => void)[] = [], waitingWriters: (() => void)[] = [];
+  const wake = () => {
+    if (writerActive || activeReaders) return;
+    const writer = waitingWriters.shift();
+    if (writer) { writerActive = true; writer(); return; }
+    for (const reader of waitingReaders.splice(0)) { activeReaders += 1; reader(); }
+  };
+  const readConcurrent = async <T>(work: () => Promise<T>): Promise<T> => {
+    if (closed) unavailable();
+    if (writerActive || waitingWriters.length) await new Promise<void>(resolve => { waitingReaders.push(resolve); });
+    else activeReaders += 1;
+    try { if (closed) unavailable(); return await work(); }
+    finally { activeReaders -= 1; wake(); }
+  };
+  const writeExclusive = async <T>(work: () => Promise<T>): Promise<T> => {
+    if (closed) unavailable();
+    if (writerActive || activeReaders) await new Promise<void>(resolve => { waitingWriters.push(resolve); });
+    else writerActive = true;
+    try { if (closed) unavailable(); return await work(); }
+    finally { writerActive = false; wake(); }
   };
 
   async function load(): Promise<Record<string, RollbackCheckpointV1>> {
+    await runtime.beforeLoad?.();
     try { await privateEntry(file, "file"); }
     catch (error) {
       if ((error as NodeJS.ErrnoException)?.code === "ENOENT") return {};
@@ -123,26 +140,26 @@ export async function openMacLocalRollbackCheckpointStoreV1(protectedRoot: strin
   const aborted = (signal?: AbortSignal) => { if (signal?.aborted) unavailable(); };
 
   return Object.freeze({
-    read: (scope: string, signal?: AbortSignal) => serial(async () => {
+    read: (scope: string, signal?: AbortSignal) => readConcurrent(async () => {
       aborted(signal);
       const value = (await load())[scoped(scope)];
       return value ? structuredClone(value) : undefined;
     }),
-    initialize: (value: RollbackCheckpointV1, signal?: AbortSignal) => serial(async () => {
+    initialize: (value: RollbackCheckpointV1, signal?: AbortSignal) => writeExclusive(async () => {
       aborted(signal);
       const next = parseRollbackCheckpointV1(value), all = await load();
       if (Object.hasOwn(all, scoped(next.scope)) || next.revision !== 1) conflict();
       aborted(signal);
       await save({ ...all, [next.scope]: next });
     }),
-    advance: (expected: string, value: RollbackCheckpointV1, signal?: AbortSignal) => serial(async () => {
+    advance: (expected: string, value: RollbackCheckpointV1, signal?: AbortSignal) => writeExclusive(async () => {
       aborted(signal);
       const next = parseRollbackCheckpointV1(value), all = await load(), current = all[scoped(next.scope)];
       if (!current || rollbackCheckpointDigestV1(current) !== expected || next.revision !== current.revision + 1) conflict();
       aborted(signal);
       await save({ ...all, [next.scope]: next });
     }),
-    close: () => serial(async () => { closed = true; await release(lock, runtime); }),
+    close: () => writeExclusive(async () => { closed = true; await release(lock, runtime); }),
   });
 }
 
