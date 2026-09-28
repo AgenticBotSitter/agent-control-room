@@ -14,6 +14,15 @@ export type TaskReviewPlanV1 = NativeReviewPlan | CodexReviewPlanV1 | DurableRes
 export type TaskResultReceiptV1 = TaskResultReceipt | DurableResultReceiptV1;
 type Row = NativeReviewPlanRow & CodexReviewPlanRowV1 & DurableResultReviewPlanRowV1;
 
+export function verifiedTaskReviewPlanV1(key: Uint8Array, row: Row): TaskReviewPlanV1 {
+  if (nativeReviewPlanSchema.safeParse(row.plan).success) return verifyNativeReviewPlan(key, row);
+  if (codexReviewPlanSchemaV1.safeParse(row.plan).success) return verifyCodexReviewPlanV1(key, row);
+  if (durableResultReviewPlanSchemaV1.safeParse(row.plan).success) return verifyDurableResultReviewPlanV1(key, row);
+  throw new Error("task_review_plan_unavailable");
+}
+
+export const taskReviewPlanKeyV1 = (projectId: string, jobId: string) => JSON.stringify([projectId, jobId]);
+
 /** One authenticated reader for the shared review-plan table. The schema decides the harness;
  * callers never select a weaker verifier. */
 export async function readTaskReviewPlanV1(tx: DatabaseSession, key: Uint8Array,
@@ -21,10 +30,7 @@ export async function readTaskReviewPlanV1(tx: DatabaseSession, key: Uint8Array,
   const row = (await tx.query<Row>(`SELECT * FROM control_native_review_plans
     WHERE tenant_id=$1 AND project_id=$2 AND job_id=$3`, [tenantId, projectId, jobId])).rows[0];
   if (!row) return undefined;
-  if (nativeReviewPlanSchema.safeParse(row.plan).success) return verifyNativeReviewPlan(key, row);
-  if (codexReviewPlanSchemaV1.safeParse(row.plan).success) return verifyCodexReviewPlanV1(key, row);
-  if (durableResultReviewPlanSchemaV1.safeParse(row.plan).success) return verifyDurableResultReviewPlanV1(key, row);
-  throw new Error("task_review_plan_unavailable");
+  return verifiedTaskReviewPlanV1(key, row);
 }
 
 export function taskReviewTargetV1(plan: TaskReviewPlanV1, receipt: TaskResultReceiptV1): CompletionReviewTargetV1 {

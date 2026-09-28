@@ -7,6 +7,12 @@ export type LocalProjectSection = "overview" | "work" | "pipelines" | "reviews" 
 export type LocalStatus = Readonly<{ taskWorkersStarted: boolean; instruction?: string; workers: readonly Worker[];
   projectSections: readonly LocalProjectSection[] }>;
 type Runtime = Readonly<{ mode: "checking" | "local" | "hosted"; status?: LocalStatus }>;
+
+export function localWorkerStateLabel(worker: LocalStatus["workers"][number]) {
+  const startup = worker.state === "ready" ? "Startup check passed" : "Startup check unavailable";
+  const proof = worker.proof === "proven" ? "result proof recorded this host run" : "no result proof recorded this host run";
+  return `${startup} · ${proof}`;
+}
 const RuntimeContext = createContext<Runtime>({ mode: "checking" });
 
 export function parseLocalStatusV1(value: unknown): LocalStatus | undefined {

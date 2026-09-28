@@ -32,11 +32,44 @@ export function boundPrivateDatabase(driver: PrivateDatabaseDriver,
       throw new Error("invalid_database_limits");
   }
   let stopped = false, active = 0;
+  type Admission = { resolve(): void; reject(error: PrivateDatabaseError): void; timer: ReturnType<typeof setTimeout> };
+  const waiting: Admission[] = [];
   let closing: Promise<void> | undefined;
   const invalidations = new Set<() => void>();
+  const releaseAdmission = () => {
+    active--;
+    const next = waiting.shift();
+    if (!next) return;
+    clearTimeout(next.timer); active++; next.resolve();
+  };
+  const admit = async (signal: AbortSignal | undefined, timeoutMs: number) => {
+    if (stopped) throw new PrivateDatabaseError("database_unavailable");
+    if (signal?.aborted) throw new PrivateDatabaseError("database_unavailable");
+    if (active < limits.connections) { active++; return; }
+    // Keep overload memory bounded while allowing one pool-width burst to wait
+    // for an already-running read. The wait itself is bounded by checkoutMs.
+    if (waiting.length >= limits.connections) throw new PrivateDatabaseError("database_unavailable");
+    await new Promise<void>((resolve, reject) => {
+      let settled = false;
+      const cleanup = () => { clearTimeout(admission.timer); signal?.removeEventListener("abort", aborted); };
+      const finish = (work: () => void) => { if (settled) return; settled = true; cleanup(); work(); };
+      const remove = () => { const index = waiting.indexOf(admission); if (index >= 0) waiting.splice(index, 1); };
+      const aborted = () => { remove(); finish(() => reject(new PrivateDatabaseError("database_unavailable"))); };
+      const admission: Admission = { resolve: () => finish(resolve), reject: error => finish(() => reject(error)), timer: setTimeout(() => {
+        const index = waiting.indexOf(admission);
+        if (index >= 0) waiting.splice(index, 1);
+        admission.reject(new PrivateDatabaseError("database_unavailable"));
+      }, timeoutMs) };
+      waiting.push(admission);
+      signal?.addEventListener("abort", aborted, { once: true });
+    });
+  };
   function stop(): Promise<void> {
     if (closing) return closing;
     stopped = true;
+    for (const admission of waiting.splice(0)) {
+      clearTimeout(admission.timer); admission.reject(new PrivateDatabaseError("database_unavailable"));
+    }
     for (const invalidate of invalidations) invalidate();
     closing = (async () => {
       let timer: ReturnType<typeof setTimeout> | undefined;
@@ -52,9 +85,14 @@ export function boundPrivateDatabase(driver: PrivateDatabaseDriver,
     return closing;
   }
   async function run<T>(transaction: boolean, callback: (session: DatabaseSession) => Promise<T>, check: () => void | Promise<void>): Promise<T> {
-    if (stopped || active >= limits.connections) throw new PrivateDatabaseError("database_unavailable");
-    active++;
-    const operation = new AbortController(), parent = databaseOperationSignal();
+    const operationStarted = performance.now(), totalMs = transaction ? limits.transactionMs : limits.statementMs;
+    const parent = databaseOperationSignal();
+    await admit(parent, Math.min(limits.checkoutMs, totalMs));
+    // `await` yields even when a slot was immediately available. Close may
+    // have started in that turn; refuse before acquisition and return the slot.
+    if (stopped || parent?.aborted) { releaseAdmission(); throw new PrivateDatabaseError("database_unavailable"); }
+    const remainingMs = () => Math.max(1, totalMs - (performance.now() - operationStarted));
+    const operation = new AbortController();
     const signal = parent ? AbortSignal.any([parent, operation.signal]) : operation.signal;
     let valid = true, busy = false, queryFailed = false;
     let statementSqlState: string | undefined;
@@ -70,7 +108,7 @@ export function boundPrivateDatabase(driver: PrivateDatabaseDriver,
         timer = setTimeout(() => { void stop().catch(() => {}); reject(new PrivateDatabaseError("database_outcome_uncertain")); }, ms);
       })]); } finally { clearTimeout(timer); }
     };
-    const checkoutTimer = setTimeout(() => { void stop().catch(() => {}); }, limits.checkoutMs);
+    const checkoutTimer = setTimeout(() => { void stop().catch(() => {}); }, Math.min(limits.checkoutMs, remainingMs()));
     const work = withDatabaseOperationSignal(signal, async () => {
       // Late checkout can never enter user code; its lease is still released.
       const lease = await driver.acquire();
@@ -125,12 +163,12 @@ export function boundPrivateDatabase(driver: PrivateDatabaseDriver,
     try {
       // Acquire has its own ceiling even when the encompassing transaction has time left.
       // It is measured separately by the wrapper below, before any statement can be issued.
-      return await deadline(work, transaction ? limits.transactionMs : limits.statementMs);
+      return await deadline(work, remainingMs());
     } catch (error) {
       // Invalidating active operations is immediate; reporting completion also awaits bounded termination.
       if (stopped) await stop();
       throw error;
-    } finally { clearTimeout(checkoutTimer); valid = false; operation.abort(); invalidations.delete(invalidate); active--; }
+    } finally { clearTimeout(checkoutTimer); valid = false; operation.abort(); invalidations.delete(invalidate); releaseAdmission(); }
   }
   const client = Object.freeze<DatabaseClient>({
     query: <T>(statement: string, params?: unknown[]) => run(false, session => session.query<T>(statement, params), () => {}),

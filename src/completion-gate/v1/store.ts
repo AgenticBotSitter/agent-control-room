@@ -305,23 +305,91 @@ export class CompletionGateStoreV1 {
 
   /** One checkpoint-verified read, serialized with writers. No checkpoint initialization or advancement. */
   async inspectSubject(tenantId:string,projectId:string,subjectId:string){
-    return this.db.transaction(async(tx)=>{
-      await this.lockAndVerifyTenantState(tx,tenantId);
-      const rows=(await tx.query<CompletionRow>(`SELECT ${columns} FROM control_completion_gate_records
-        WHERE tenant_id=$1 AND project_id=$2 AND kind='target' AND subject_id=$3 ORDER BY occurred_at DESC,id DESC LIMIT 21`,
-      [tenantId,projectId,subjectId])).rows;
-      const targets=[];
-      for(const row of rows.slice(0,20)){
-        const target=this.verifiedRow(row) as CompletionReviewTargetV1;
-        const snapshot=await this.snapshotWith(tx,tenantId,target);
-        const reviews=await this.listByParent(tx,tenantId,projectId,"review",target.id) as CompletionReviewV1[];
-        const verifications=await this.listByParent(tx,tenantId,projectId,"verification",target.id) as CompletionVerificationV1[];
-        const findings=await this.listBySubject(tx,tenantId,projectId,"finding",target.id) as CompletionFindingV1[];
-        targets.push({snapshot,reviews:reviews.slice(-50),verifications:verifications.slice(-50),findings:findings.slice(-100),
-          additionalEvidenceOmitted:reviews.length>50||verifications.length>50||findings.length>100});
-      }
-      return{targets,additionalTargetsOmitted:rows.length>20};
+    const results=await this.inspectSubjects(tenantId,[{projectId,subjectId}]);
+    return results.get(JSON.stringify([projectId,subjectId]))??{targets:[],additionalTargetsOmitted:false};
+  }
+
+  /** Fixed-query equivalent of inspectSubject for bounded summary pages. Tenant
+   * integrity and rollback evidence are verified once, then the same snapshots
+   * are computed from the authenticated record set in memory. */
+  async inspectSubjects(tenantId:string,subjects:readonly {projectId:string;subjectId:string}[]){
+    return this.db.transaction(async(tx)=>this.inspectSubjectsFromRecords(await this.lockAndVerifyTenantState(tx,tenantId,"read"),subjects));
+  }
+
+  /** One checkpoint-authenticated read model for result-open option panels.
+   * The caller receives the target snapshot, its profile, and the already
+   * authenticated record set so it never re-scans the tenant per review or
+   * verification descriptor. */
+  async inspectTargetContext(tenantId:string,targetId:string){
+    return this.db.transaction(async tx=>{
+      const records=await this.lockAndVerifyTenantState(tx,tenantId,"read");
+      const targetEntry=records.find(entry=>entry.kind==="target"&&entry.record.id===targetId);
+      if(!targetEntry)throw new CompletionGateErrorV1("record_not_found");
+      const target=targetEntry.record as CompletionReviewTargetV1;
+      const profileEntry=records.find(entry=>entry.kind==="profile"&&entry.record.id===target.acceptanceProfileId);
+      if(!profileEntry)throw new CompletionGateErrorV1("record_not_found");
+      const evidence=this.inspectTargetFromRecords(records,target,profileEntry.record as CompletionAcceptanceProfileV1);
+      return{snapshot:evidence.snapshot,profile:profileEntry.record as CompletionAcceptanceProfileV1,
+        records:new Map(records.map(entry=>[JSON.stringify([entry.kind,entry.record.id]),entry.record] as const))};
     });
+  }
+
+  /** One authenticated tenant snapshot shared by summary projections that need
+   * both subject evidence and exact records. */
+  async inspectSubjectsAndRecords(tenantId:string,subjects:readonly {projectId:string;subjectId:string}[],
+    ids:readonly string[],kind:CompletionGateRecordKindV1){
+    return this.db.transaction(async(tx)=>{const authenticated=await this.lockAndVerifyTenantState(tx,tenantId,"read"),wanted=new Set(ids);
+      return{subjects:this.inspectSubjectsFromRecords(authenticated,subjects),records:new Map(authenticated
+        .filter(entry=>entry.kind===kind&&wanted.has(entry.record.id)).map(entry=>[entry.record.id,entry.record]))};});
+  }
+
+  private inspectSubjectsFromRecords(records:{kind:CompletionGateRecordKindV1;record:CompletionGateRecordV1}[],
+    subjects:readonly {projectId:string;subjectId:string}[]){
+      const output=new Map<string,{targets:{snapshot:CompletionGateSnapshotV1;reviews:CompletionReviewV1[];
+        verifications:CompletionVerificationV1[];findings:CompletionFindingV1[];additionalEvidenceOmitted:boolean}[];
+        additionalTargetsOmitted:boolean}>();
+      const unique=[...new Map(subjects.map(subject=>[JSON.stringify([subject.projectId,subject.subjectId]),subject])).values()];
+      for(const subject of unique){
+        const targets=records.filter(entry=>entry.kind==="target"&&entry.record.projectId===subject.projectId
+          &&(entry.record as CompletionReviewTargetV1).subjectId===subject.subjectId).map(entry=>entry.record) as CompletionReviewTargetV1[];
+        targets.sort((left,right)=>right.submittedAt.localeCompare(left.submittedAt)||right.id.localeCompare(left.id));
+        const projected=[];
+        for(const target of targets.slice(0,20)){
+          const profile=records.find(entry=>entry.kind==="profile"&&entry.record.id===target.acceptanceProfileId)?.record as CompletionAcceptanceProfileV1|undefined;
+          if(!profile)throw new CompletionGateErrorV1("record_not_found");
+          projected.push(this.inspectTargetFromRecords(records,target,profile));
+        }
+        output.set(JSON.stringify([subject.projectId,subject.subjectId]),{targets:projected,additionalTargetsOmitted:targets.length>20});
+      }
+      return output;
+  }
+
+  private inspectTargetFromRecords(records:{kind:CompletionGateRecordKindV1;record:CompletionGateRecordV1}[],
+    target:CompletionReviewTargetV1,profile:CompletionAcceptanceProfileV1){
+    const reviews=records.filter(entry=>entry.kind==="review"&&entry.record.projectId===target.projectId
+      &&(entry.record as CompletionReviewV1).targetId===target.id).map(entry=>entry.record) as CompletionReviewV1[];
+    const verifications=records.filter(entry=>entry.kind==="verification"&&entry.record.projectId===target.projectId
+      &&(entry.record as CompletionVerificationV1).targetId===target.id).map(entry=>entry.record) as CompletionVerificationV1[];
+    const findings=records.filter(entry=>entry.kind==="finding"&&entry.record.projectId===target.projectId
+      &&(entry.record as CompletionFindingV1).targetId===target.id).map(entry=>entry.record) as CompletionFindingV1[];
+    const revisions=records.filter(entry=>entry.kind==="revision"&&entry.record.projectId===target.projectId
+      &&(entry.record as CompletionRevisionV1).fromTargetId===target.id).map(entry=>entry.record) as CompletionRevisionV1[];
+    const byTimeAndId=(kind:CompletionGateRecordKindV1)=>(left:CompletionGateRecordV1,right:CompletionGateRecordV1)=>describe(kind,left).occurredAt
+      .localeCompare(describe(kind,right).occurredAt)||left.id.localeCompare(right.id);
+    reviews.sort(byTimeAndId("review"));verifications.sort(byTimeAndId("verification"));findings.sort(byTimeAndId("finding"));
+    const accepted=[...new Set(reviews.filter(review=>review.authority==="completion_gate"&&review.decision==="accepted").map(review=>review.id))].sort();
+    const passed=new Set(verifications.filter(verification=>verification.outcome==="passed").map(verification=>verification.scenarioId));
+    const missing=profile.requiredVerificationScenarioIds.filter(scenario=>!passed.has(scenario));
+    const blocked=verifications.some(verification=>profile.requiredVerificationScenarioIds.includes(verification.scenarioId)&&verification.outcome!=="passed");
+    const openFindings=findings.map(finding=>finding.id).sort();let status:CompletionGateSnapshotV1["status"]="pending";
+    if(revisions.length)status="superseded";else if(openFindings.length&&target.revisionNumber>=profile.maximumRevisionRounds)status="revision_limit_reached";
+    else if(openFindings.length)status="changes_requested";else if(blocked)status="verification_blocked";
+    else if(missing.length===0&&accepted.length>=profile.minimumIndependentReviews)status="ready";
+    const snapshot:CompletionGateSnapshotV1={target,targetDigest:sha256Digest(target),status,acceptedReviewIds:accepted,
+      missingVerificationScenarioIds:missing,openFindingIds:openFindings,revisionNumber:target.revisionNumber,
+      requiresSeparateApproval:true,grantsApproval:false,grantsExecutionAuthority:false};
+    return{snapshot,reviews:reviews.slice(-50),verifications:verifications.slice(-50),findings:findings.slice(-100),
+      additionalEvidenceOmitted:reviews.length>50||verifications.length>50||findings.length>100};
   }
 
   /** Checkpoint-authenticated, writer-serialized evidence for a server-side context consumer.
@@ -364,6 +432,12 @@ export class CompletionGateStoreV1 {
   async getRecord(tenantId:string,id:string,kind:CompletionGateRecordKindV1):Promise<CompletionGateRecordV1|undefined>{
     return this.db.transaction(async(tx)=>{await this.lockAndVerifyTenantState(tx,tenantId);const result=await tx.query<CompletionRow>(`SELECT ${columns} FROM control_completion_gate_records WHERE tenant_id=$1 AND id=$2 AND kind=$3`,[tenantId,id,kind]);
     return result.rows[0]?this.verifiedRow(result.rows[0]):undefined;});
+  }
+
+  /** Fixed-query authenticated lookup for bounded read projections. */
+  async getRecords(tenantId:string,ids:readonly string[],kind:CompletionGateRecordKindV1){
+    return this.db.transaction(async(tx)=>{const records=await this.lockAndVerifyTenantState(tx,tenantId,"read"),wanted=new Set(ids);
+      return new Map(records.filter(entry=>entry.kind===kind&&wanted.has(entry.record.id)).map(entry=>[entry.record.id,entry.record]));});
   }
 
   private async insert(source:DatabaseSession,kind:CompletionGateRecordKindV1,record:CompletionGateRecordV1):Promise<{record:CompletionGateRecordV1;replayed:boolean}>{
@@ -460,9 +534,15 @@ export class CompletionGateStoreV1 {
   private checkpoint(tenantId:string,revision:number,recordCount:number,stateDigest:string,stateAuthTag:string):RollbackCheckpointV1{return{schema:ROLLBACK_CHECKPOINT_SCHEMA_V1,scope:this.checkpointScope(tenantId),revision,recordCount,stateDigest,stateAuthTag};}
   private async readCheckpoint(tenantId:string){try{return await this.checkpointOperation(signal => this.checkpointRead(this.checkpointScope(tenantId), signal));}catch{throw new CompletionGateErrorV1("integrity_failed");}}
   private async assertCheckpoint(tenantId:string,row:CompletionIntegrityRow){try{const expected=this.checkpoint(tenantId,Number(row.revision),Number(row.record_count),row.state_digest,row.state_auth_tag),known=await this.readCheckpoint(tenantId);if(!known||rollbackCheckpointDigestV1(known)!==rollbackCheckpointDigestV1(expected))throw new Error("mismatch");return expected;}catch{throw new CompletionGateErrorV1("integrity_failed");}}
-  private async computedTenantState(source:QuerySource,tenantId:string){const result=await source.query<CompletionRow>(`SELECT ${columns} FROM control_completion_gate_records WHERE tenant_id=$1 ORDER BY kind,id`,[tenantId]);for(const row of result.rows)this.verifiedRow(row);const records=result.rows.map((row)=>({id:row.id,projectId:row.project_id,kind:row.kind,recordKey:row.record_key,subjectId:row.subject_id,parentId:row.parent_id,recordDigest:row.record_digest,recordAuthTag:row.record_auth_tag,occurredAt:iso(row.occurred_at)}));return{recordCount:records.length,stateDigest:sha256Digest({tenantId,records})};}
-  private async lockAndVerifyTenantState(source:DatabaseSession,tenantId:string){const result=await source.query<CompletionIntegrityRow>("SELECT * FROM control_completion_gate_integrity WHERE tenant_id=$1 FOR UPDATE",[tenantId]);
-    const row=result.rows[0],computed=await this.computedTenantState(source,tenantId);if(!row||Number(row.revision)<1||Number(row.record_count)!==computed.recordCount||row.state_digest!==computed.stateDigest||!sameTag(row.state_auth_tag,this.tenantStateTag(tenantId,Number(row.revision),computed.recordCount,computed.stateDigest)))throw new CompletionGateErrorV1("integrity_failed");await this.assertCheckpoint(tenantId,row);}
+  private async computedTenantState(source:QuerySource,tenantId:string){const result=await source.query<CompletionRow>(`SELECT ${columns} FROM control_completion_gate_records WHERE tenant_id=$1 ORDER BY kind,id`,[tenantId]);const verified=result.rows.map(row=>({kind:row.kind,record:this.verifiedRow(row)}));const records=result.rows.map((row)=>({id:row.id,projectId:row.project_id,kind:row.kind,recordKey:row.record_key,subjectId:row.subject_id,parentId:row.parent_id,recordDigest:row.record_digest,recordAuthTag:row.record_auth_tag,occurredAt:iso(row.occurred_at)}));return{recordCount:records.length,stateDigest:sha256Digest({tenantId,records}),verified};}
+  private async lockAndVerifyTenantState(source:DatabaseSession,tenantId:string,mode:"read"|"write"="write"){
+    const result=await source.query<CompletionIntegrityRow>(`SELECT * FROM control_completion_gate_integrity WHERE tenant_id=$1 ${mode==="read"?"FOR SHARE":"FOR UPDATE"}`,[tenantId]);
+    const integrity=result.rows[0],computed=await this.computedTenantState(source,tenantId);
+    if(!integrity||Number(integrity.revision)<1||Number(integrity.record_count)!==computed.recordCount||integrity.state_digest!==computed.stateDigest
+      ||!sameTag(integrity.state_auth_tag,this.tenantStateTag(tenantId,Number(integrity.revision),computed.recordCount,computed.stateDigest)))
+      throw new CompletionGateErrorV1("integrity_failed");
+    await this.assertCheckpoint(tenantId,integrity);return computed.verified;
+  }
   private async refreshTenantState(source:DatabaseSession,tenantId:string){const priorResult=await source.query<CompletionIntegrityRow>("SELECT * FROM control_completion_gate_integrity WHERE tenant_id=$1 FOR UPDATE",[tenantId]);const prior=priorResult.rows[0];if(!prior)throw new CompletionGateErrorV1("integrity_failed");const expected=await this.assertCheckpoint(tenantId,prior),computed=await this.computedTenantState(source,tenantId),revision=Number(prior.revision)+1,stateAuthTag=this.tenantStateTag(tenantId,revision,computed.recordCount,computed.stateDigest),next=this.checkpoint(tenantId,revision,computed.recordCount,computed.stateDigest,stateAuthTag);
     const result=await source.query<{tenant_id:string}>(`UPDATE control_completion_gate_integrity SET revision=$2,record_count=$3,state_digest=$4,state_auth_tag=$5 WHERE tenant_id=$1 AND revision=$6 RETURNING tenant_id`,[tenantId,revision,computed.recordCount,computed.stateDigest,stateAuthTag,Number(prior.revision)]);if(!result.rows[0])throw new CompletionGateErrorV1("integrity_failed");
     try{await this.checkpointOperation(signal => this.checkpointAdvance(rollbackCheckpointDigestV1(expected),next,signal));}catch{throw new CompletionGateErrorV1("integrity_failed");}}

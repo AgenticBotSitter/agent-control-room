@@ -5,7 +5,8 @@
 // worker runs a fake PINNED EXECUTABLE through the production process adapters -> pending review,
 // exactly once per agent, with a replay returning the same receipt and queuing nothing new.
 // The owner then reviews each result through the same HTTP API the website uses.
-// Usage: node --import tsx scripts/mac-local/rehearsal/journey.ts ABSOLUTE_REHEARSAL_DIR [--browser-proof|--browser-e2e|--model-allowlists]
+// Usage: node --import tsx scripts/mac-local/rehearsal/journey.ts ABSOLUTE_REHEARSAL_DIR
+//   [--browser-proof|--browser-e2e|--browser-owner-e2e|--browser-adversarial-e2e|--model-allowlists]
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
@@ -18,9 +19,10 @@ import { applyMacLocalFirstOwnerV1 } from "../first-owner-vps.mjs";
 import { serviceInstalled } from "../service.mjs";
 
 const [arg, mode] = process.argv.slice(2);
-if (!arg || ![3, 4].includes(process.argv.length) || mode !== undefined && !["--browser-proof", "--browser-e2e", "--model-allowlists"].includes(mode)
+if (!arg || ![3, 4].includes(process.argv.length) || mode !== undefined && !["--browser-proof", "--browser-e2e",
+  "--browser-owner-e2e", "--browser-adversarial-e2e", "--model-allowlists"].includes(mode)
   || !isAbsolute(arg) || resolve(arg) !== arg) {
-  process.stderr.write("usage: node --import tsx scripts/mac-local/rehearsal/journey.ts ABSOLUTE_REHEARSAL_DIR [--browser-proof|--browser-e2e|--model-allowlists]\n");
+  process.stderr.write("usage: node --import tsx scripts/mac-local/rehearsal/journey.ts ABSOLUTE_REHEARSAL_DIR [--browser-proof|--browser-e2e|--browser-owner-e2e|--browser-adversarial-e2e|--model-allowlists]\n");
   process.exit(2);
 }
 const root = resolve(arg), protectedRoot = join(root, "protected");
@@ -55,13 +57,14 @@ case " $* " in *" --model model-rehearsal "*) ;; *) exit 41 ;; esac
 case " $* " in *" --provider provider-rehearsal "*) ;; *) exit 41 ;; esac` : ""}
 case " $* " in *" --max-turns 4 "*) ;; *) exit 44 ;; esac
 cat >/dev/null
+session_id="fake-hermes-session-$(printf '%012d' "$$")"
 printf '%s\\n' 'rehearsal output' > "$PWD/hermes-result.txt"
-printf '%s\\n' '{"type":"system","subtype":"init","session_id":"fake-hermes-session-0001","model":"fake-model","timestamp":1}'
+printf '%s\\n' '{"type":"system","subtype":"init","session_id":"'"$session_id"'","model":"fake-model","timestamp":1}'
 printf '%s\\n' '{"type":"text","text":"I will write the requested result.","timestamp":2}'
 printf '%s\\n' '{"type":"tool_use","name":"write_file","tool_call_id":"tool-1","input":{"path":"hermes-result.txt"},"timestamp":3}'
 printf '%s\\n' '{"type":"tool_result","name":"write_file","tool_call_id":"tool-1","output":"Wrote hermes-result.txt","duration_ms":1,"is_error":false,"timestamp":4}'
-printf '%s\\n' '{"type":"result","session_id":"fake-hermes-session-0001","exit_code":0,"text":"Fake Hermes pinned executable result.","tokens":{"input":3,"output":5,"total":8,"cache_read":0,"cache_write":0},"duration_ms":5,"timestamp":5}'
-printf '%s\\n' 'session_id: fake-hermes-session-0001' >&2
+printf '%s\\n' '{"type":"result","session_id":"'"$session_id"'","exit_code":0,"text":"Fake Hermes pinned executable result '"$session_id"'.","tokens":{"input":3,"output":5,"total":8,"cache_read":0,"cache_write":0},"duration_ms":5,"timestamp":5}'
+printf 'session_id: %s\\n' "$session_id" >&2
 exit 0
 `;
 }
@@ -75,11 +78,12 @@ for a in "$@"; do [ "$a" = "--version" ] && printf '%s\\n' '${version}' && exit 
 ${selected ? `case " $* " in *" --model sonnet-rehearsal "*) ;; *) exit 42 ;; esac
 case " $* " in *" --effort high "*) ;; *) exit 42 ;; esac` : ""}
 cat >/dev/null
-printf '%s\\n' '{"type":"system","subtype":"init","session_id":"00000000-0000-4000-8000-00000000fa01","model":"fake-model"}'
-printf '%s\\n' '{"type":"rate_limit_event","session_id":"00000000-0000-4000-8000-00000000fa01","rate_limit_info":{"status":"allowed"}}'
-printf '%s\\n' '{"type":"system","subtype":"thinking_tokens","session_id":"00000000-0000-4000-8000-00000000fa01","thinking_tokens":2}'
-printf '%s\\n' '{"type":"assistant","session_id":"00000000-0000-4000-8000-00000000fa01","message":{"role":"assistant","content":[{"type":"text","text":"Fake Claude Code pinned executable result."}]}}'
-printf '%s\\n' '{"type":"result","subtype":"success","is_error":false,"session_id":"00000000-0000-4000-8000-00000000fa01","result":"Fake Claude Code pinned executable result.","terminal_reason":"completed","total_cost_usd":0,"usage":{}}'
+session_id="00000000-0000-4000-8000-$(printf '%012d' "$$")"
+printf '%s\\n' '{"type":"system","subtype":"init","session_id":"'"$session_id"'","model":"fake-model"}'
+printf '%s\\n' '{"type":"rate_limit_event","session_id":"'"$session_id"'","rate_limit_info":{"status":"allowed"}}'
+printf '%s\\n' '{"type":"system","subtype":"thinking_tokens","session_id":"'"$session_id"'","thinking_tokens":2}'
+printf '%s\\n' '{"type":"assistant","session_id":"'"$session_id"'","message":{"role":"assistant","content":[{"type":"text","text":"Fake Claude Code pinned executable result '"$session_id"'."}]}}'
+printf '%s\\n' '{"type":"result","subtype":"success","is_error":false,"session_id":"'"$session_id"'","result":"Fake Claude Code pinned executable result '"$session_id"'.","terminal_reason":"completed","total_cost_usd":0,"usage":{}}'
 exit 0
 `;
 }
@@ -94,10 +98,11 @@ for a in "$@"; do [ "$a" = "--version" ] && printf '%s\\n' '${version}' && exit 
 ${selected ? `case " $* " in *" -m gpt-rehearsal "*) ;; *) exit 43 ;; esac
 case " $* " in *" model_reasoning_effort=high "*) ;; *) exit 43 ;; esac` : ""}
 cat >/dev/null
-printf '%s\\n' '{"type":"thread.started","thread_id":"00000000-0000-4000-8000-00000000fc01"}'
+thread_id="00000000-0000-4000-8000-$(printf '%012d' "$$")"
+printf '%s\\n' '{"type":"thread.started","thread_id":"'"$thread_id"'"}'
 printf '%s\\n' '{"type":"turn.started"}'
 printf '%s\\n' '{"type":"item.completed","item":{"type":"reasoning"}}'
-printf '%s\\n' '{"type":"item.completed","item":{"type":"agent_message","text":"Fake Codex pinned executable result."}}'
+printf '%s\\n' '{"type":"item.completed","item":{"type":"agent_message","text":"Fake Codex pinned executable result '"$thread_id"'."}}'
 printf '%s\\n' '{"type":"turn.completed","usage":{"input_tokens":3,"output_tokens":5}}'
 exit 0
 `;
@@ -222,9 +227,11 @@ async function main() {
     assert.ok(cookie.startsWith("control_room_local_owner="));
     return cookie;
   };
-  if (mode === "--browser-e2e") {
-    const browser = spawnSync("pnpm", ["exec", "playwright", "test", "tests/browser/mac-local-owner-journey.spec.ts"], {
-      cwd: process.cwd(), encoding: "utf8", timeout: 12 * 60_000, stdio: "inherit",
+  if (["--browser-e2e", "--browser-owner-e2e", "--browser-adversarial-e2e"].includes(mode ?? "")) {
+    const browserScript = mode === "--browser-owner-e2e" ? "test:mac-local-owner-journey-browser"
+      : mode === "--browser-adversarial-e2e" ? "test:adversarial-owner-browser" : "test:mac-local-owner-browser";
+    const browser = spawnSync("pnpm", ["run", browserScript], {
+      cwd: process.cwd(), encoding: "utf8", timeout: 25 * 60_000, stdio: "inherit",
       env: { ...process.env, CONTROL_ROOM_E2E_ORIGIN: origin, CONTROL_ROOM_E2E_OWNER_CODE: ownerCode,
         CONTROL_ROOM_E2E_ROOT: root },
     });
@@ -439,7 +446,8 @@ async function main() {
     const reviewPath = `/api/v1/projects/${idOf(projectId)}/tasks/${idOf(jobId)}/results/${idOf(artifact.artifactId)}/reviews/${idOf(target.targetId)}`;
     const options = await requireOk(await fetch(new URL(reviewPath, origin), { headers: { cookie } }), 200,
       `${agent.kind} review options`) as { canReview: boolean; availability: string; targetDigest: string;
-        contentHash: string; ownReview: null | { decision: string; reviewId: string } };
+        contentHash: string; ownReview: null | { decision: string; reviewId: string };
+        acceptanceAttestation?: null | { scenarioId: string; instructionsDigest: string } };
     assert.equal(options.canReview, true, `${agent.kind}: owner must be able to review the pending result`);
     assert.equal(options.availability, "available");
     assert.equal(options.ownReview, null);
@@ -447,8 +455,12 @@ async function main() {
     assert.equal(options.contentHash, artifact.contentHash);
     const decision = agent.kind === "hermes" ? "changes_requested" : "accepted";
     const feedback = decision === "changes_requested" ? "Please revise the harmless test response." : "";
+    if (decision === "accepted") assert.ok(options.acceptanceAttestation,
+      `${agent.kind}: public owner acceptance must expose its explicit human-read attestation`);
     const draft = { artifactId: artifact.artifactId, targetId: target.targetId,
-      targetDigest: options.targetDigest, contentHash: options.contentHash, decision, feedback };
+      targetDigest: options.targetDigest, contentHash: options.contentHash, decision, feedback,
+      ...(decision === "accepted" ? { acceptanceAttestation: { scenarioId: options.acceptanceAttestation!.scenarioId,
+        instructionsDigest: options.acceptanceAttestation!.instructionsDigest, confirmed: true } } : {}) };
     const reviewKey = `journey-${agent.kind}-owner-review-0001`;
     const writeReview = () => fetch(new URL(reviewPath, origin), { method: "POST",
       headers: { origin, cookie, "content-type": "application/json", "idempotency-key": reviewKey },
@@ -478,38 +490,27 @@ async function main() {
     const taskUrl = new URL(`/api/v1/projects/${idOf(projectId)}/tasks/${idOf(jobId)}`, origin);
     let taskState = "", attemptState = "";
     if (decision === "accepted") {
-      // Profile v2 also requires an owner-observed human verification. Discover
-      // its protected descriptor through the same endpoint as the task page,
-      // then prove the exact write and replay without treating it as approval.
+      // Acceptance atomically records the explicitly configured owner-read
+      // verification. The separate endpoint must see that same canonical row
+      // as already recorded, never offer a second manual decision.
       const verificationPath = `/api/v1/projects/${idOf(projectId)}/tasks/${idOf(jobId)}/results/${idOf(artifact.artifactId)}/verifications/${idOf(target.targetId)}`;
       const verificationOptions = await requireOk(await fetch(new URL(verificationPath, origin), { headers: { cookie } }), 200,
         `${agent.kind} human verification options`) as { source: string; grantsExecutionAuthority: boolean; targetDigest: string;
-          contentHash: string; scenarios: { scenarioId: string; instructionsDigest: string; availability: string; ownVerification: null }[] };
+          contentHash: string; scenarios: { scenarioId: string; instructionsDigest: string; availability: string;
+            ownVerification: null | { outcome: string; grantsApproval: boolean; grantsExecutionAuthority: boolean; completesJob: boolean } }[] };
       assert.equal(verificationOptions.source, "configured");
       assert.equal(verificationOptions.grantsExecutionAuthority, false);
       assert.equal(verificationOptions.targetDigest, target.targetDigest);
       assert.equal(verificationOptions.contentHash, artifact.contentHash);
       assert.equal(verificationOptions.scenarios.length, 1);
       const scenario = verificationOptions.scenarios[0]!;
-      assert.equal(scenario.availability, "available");
-      assert.equal(scenario.ownVerification, null);
-      const verificationDraft = { artifactId: artifact.artifactId, targetId: target.targetId,
-        targetDigest: verificationOptions.targetDigest, contentHash: verificationOptions.contentHash,
-        scenarioId: scenario.scenarioId, instructionsDigest: scenario.instructionsDigest,
-        outcome: "passed", note: "Observed the harmless rehearsal result." };
-      const writeVerification = () => fetch(new URL(verificationPath, origin), { method: "POST",
-        headers: { origin, cookie, "content-type": "application/json" }, body: JSON.stringify(verificationDraft) });
-      const verified = await requireOk(await writeVerification(), 201, `${agent.kind} human verification`) as
-        { receipt: { verificationId: string; outcome: string; grantsApproval: boolean; grantsExecutionAuthority: boolean;
-          completesJob: boolean }; replayed: boolean };
-      assert.equal(verified.replayed, false);
-      assert.equal(verified.receipt.outcome, "passed");
-      assert.equal(verified.receipt.grantsApproval, false);
-      assert.equal(verified.receipt.grantsExecutionAuthority, false);
-      assert.equal(verified.receipt.completesJob, false);
-      const verificationReplay = await requireOk(await writeVerification(), 200, `${agent.kind} human verification replay`) as typeof verified;
-      assert.equal(verificationReplay.replayed, true);
-      assert.deepEqual(verificationReplay.receipt, verified.receipt);
+      assert.equal(scenario.scenarioId, options.acceptanceAttestation!.scenarioId);
+      assert.equal(scenario.instructionsDigest, options.acceptanceAttestation!.instructionsDigest);
+      assert.equal(scenario.availability, "already_recorded");
+      assert.equal(scenario.ownVerification?.outcome, "passed");
+      assert.equal(scenario.ownVerification?.grantsApproval, false);
+      assert.equal(scenario.ownVerification?.grantsExecutionAuthority, false);
+      assert.equal(scenario.ownVerification?.completesJob, false);
       const completed = await waitFor(async () => {
         const taskResponse = await fetch(taskUrl, { headers: { cookie } });
         if (taskResponse.status !== 200) return false;
@@ -539,7 +540,8 @@ async function main() {
       const unchangedTask = await requireOk(await fetch(taskUrl, { headers: { cookie } }), 200, `${agent.kind} changes-requested task`) as
         { task: { state: string } };
       taskState = unchangedTask.task.state;
-      assert.notEqual(taskState, "succeeded", `${agent.kind}: changes-requested result must not complete`);
+      assert.equal(taskState, "succeeded",
+        `${agent.kind}: the received successful attempt must display complete independently of its changes-requested review`);
       assert.equal(after.reviews[0]?.status, "changes_requested");
     }
     outcomes[agent.kind] = { jobId: jobId.slice(0, 24), packetDigest: packetDigest.slice(0, 19),

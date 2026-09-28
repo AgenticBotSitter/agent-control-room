@@ -3,9 +3,11 @@ import { ConfiguredTimestamp } from "./configured-timestamp";
 
 export const taskStateLabel: Record<TaskPage["tasks"][number]["state"], string> = {
   proposed: "Proposal saved", ready: "Ready for assignment", leased: "Assigned", running: "In progress",
-  waiting_approval: "Waiting for approval", succeeded: "Job recorded complete", failed: "Job failed", cancelled: "Job cancelled",
+  waiting_approval: "Waiting for approval", succeeded: "Completed", failed: "Job failed", cancelled: "Job cancelled",
   orphaned: "Assignment lost", rejected: "Proposal rejected",
 };
+export const taskSummaryStateLabel = (task: TaskPage["tasks"][number]) => task.state === "succeeded" && task.qualityStatus === "accepted"
+  ? "Completed · Accepted" : taskStateLabel[task.state];
 const nativeLabel: Record<NonNullable<TaskRun["nativeState"]>, string> = { prepared: "Prepared", dispatching: "Starting",
   queued: "Agent queued", running: "Agent working", waiting_approval: "Agent waiting for approval", stopping: "Stop requested",
   completed: "Agent reports completion", failed: "Agent reports failure", cancelled: "Agent reports cancellation",
@@ -115,7 +117,7 @@ export function TaskCatalogPanel({ page, after, href = (projectId, jobId, cursor
     <h2>Saved tasks</h2>
     {!page.tasks.length ? <p>{after ? "No more tasks on this page." : "No tasks have been saved for this project."}</p>
       : <ul className="private-task-list">{page.tasks.map(task => <li key={task.jobId}><a href={href(task.projectId, task.jobId)}>
-        <span className="private-state">{taskStateLabel[task.state]}</span><h3>{task.title}</h3>
+        <span className="private-state">{taskSummaryStateLabel(task)}</span><h3>{task.title}</h3>
         <span className="private-note"><ConfiguredTimestamp value={task.createdAt} prefix="Saved" /></span><span className="private-open">View task →</span>
       </a></li>)}</ul>}
     <nav className="private-actions" aria-label="Task pages">
@@ -219,7 +221,7 @@ export function TaskDetailPanel({ detail }: { detail: TaskDetail }) {
         : detail.preparedFor === "configured_worker"
           ? "This route is a saved plan category. Assignment still checks the configured route and does not start a worker." : undefined;
   return <div className="private-task-detail">
-    <section className="private-panel"><span className="private-state">{taskStateLabel[detail.task.state]}</span><h2>{detail.task.title}</h2>
+    <section className="private-panel"><span className="private-state">{taskSummaryStateLabel(detail.task)}</span><h2>{detail.task.title}</h2>
       <h3>Requested result</h3><p className="private-summary">{detail.instructions}</p>
       {detail.modelSelection?.model && <p><strong>Chosen model:</strong> {detail.modelSelection.profile ? `${detail.modelSelection.profile} · ` : ""}
         {detail.modelSelection.model} · effort {detail.modelSelection.effort}{detail.modelSelection.provider ? ` · ${detail.modelSelection.provider}` : ""}</p>}

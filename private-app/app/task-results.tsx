@@ -11,7 +11,7 @@ import type { TaskVerificationWorkspace } from "../../src/web/v1/task-verificati
 import { ConfiguredTimestamp } from "./configured-timestamp";
 
 const reviewLabel: Record<TaskReviewEvidence["status"], string> = { pending: "Review in progress", changes_requested: "Changes requested",
-  verification_blocked: "Verification blocked", revision_limit_reached: "Revision limit reached", ready: "Quality review complete", superseded: "Replaced by a newer revision" };
+  verification_blocked: "Verification blocked", revision_limit_reached: "Revision limit reached", ready: "Accepted", superseded: "Replaced by a newer revision" };
 
 export function TaskResultsPanel({ page, content: suppliedContent, pending, selectedArtifactId, onOpen, onClose, onReviewSaved, reviewWorkspace, verificationWorkspace }: { page: TaskResultsPage; content?: TaskResultContent;
   pending: boolean; selectedArtifactId?: string; onOpen: (artifactId: string) => void; onClose: () => void; onReviewSaved?: () => void; reviewWorkspace?: TaskReviewWorkspace;
@@ -20,6 +20,12 @@ export function TaskResultsPanel({ page, content: suppliedContent, pending, sele
     && suppliedContent.jobId === page.jobId && page.items.some(item =>
       item.artifactId === suppliedContent.artifact.artifactId && item.contentHash === suppliedContent.artifact.contentHash)
     ? suppliedContent : undefined;
+  // Historical targets remain visible as evidence, but only the newest current
+  // target for the open bytes may expose commands. This keeps result-open work
+  // fixed instead of mounting option readers once per retained revision.
+  const commandTargetId = content ? page.reviews.find(review => review.status !== "superseded" && review.kind === "document"
+    && review.matchingArtifactIds.includes(content.artifact.artifactId)
+    && review.contentHash === content.artifact.contentHash)?.targetId : undefined;
   // Keyboard focus follows the open file: into the content region when one
   // opens, and back to the button that opened it when it closes, so a keyboard
   // user is never returned to the top of a long list.
@@ -127,12 +133,14 @@ export function TaskResultsPanel({ page, content: suppliedContent, pending, sele
             : "The replacement revision is outside this displayed history."}</p>}
           {review.additionalEvidenceOmitted && <p>Only recent review evidence is displayed; the recorded quality status uses the full verified history.</p>}
           {page.reviewCommands === "configured" && content && review.kind === "document"
+            && review.targetId === commandTargetId
             && review.matchingArtifactIds.includes(content.artifact.artifactId) && review.contentHash === content.artifact.contentHash
             && <OwnerTaskReview key={`${review.targetId}:${content.artifact.artifactId}:${content.artifact.contentHash}`}
               projectId={page.projectId} jobId={page.jobId} artifactId={content.artifact.artifactId} targetId={review.targetId}
               targetDigest={review.targetDigest} contentHash={review.contentHash} workspace={reviewWorkspace} onSaved={() => onReviewSaved?.()}
               runId={content.artifact.runId} revisionEligible={review.status === "changes_requested"} />}
           {page.verificationCommands === "configured" && content && review.kind === "document"
+            && review.targetId === commandTargetId
             && review.matchingArtifactIds.includes(content.artifact.artifactId) && review.contentHash === content.artifact.contentHash
             && <OwnerTaskVerification key={`verification:${review.targetId}:${content.artifact.artifactId}:${content.artifact.contentHash}`}
               projectId={page.projectId} jobId={page.jobId} artifactId={content.artifact.artifactId} targetId={review.targetId}

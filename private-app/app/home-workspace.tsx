@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createProjectBrowserClient } from "../../src/web/v1/browser-client";
 import { readPrivateConnections, type PrivateConnectionSnapshot } from "../../src/web/v1/connection-browser-client";
 import { readTaskAttention } from "../../src/web/v1/queue-attention-browser-client";
@@ -16,11 +16,21 @@ import { useInstallationTopology } from "./installation-topology";
 import { InstallationTopologySummary } from "./installation-topology-summary";
 import { LocalWorkerRouteStatus, type TaskWorkerReadState } from "./local-worker-route-status";
 import { PrivateOperatorCapacityWorkspace } from "./operator-capacity-workspace";
-import { useLocalRuntime, type LocalStatus } from "./local-runtime";
+import { localWorkerStateLabel, useLocalRuntime, type LocalStatus } from "./local-runtime";
 
 type WorkerRead = PrivateConnectionSnapshot | { source: "local"; value: LocalStatus };
 function isLocalWorkerRead(value: WorkerRead): value is { source: "local"; value: LocalStatus } {
   return "source" in value && value.source === "local";
+}
+
+export function MacLocalWorkerEvidence({ status }: { status?: LocalStatus }) {
+  return <section className="private-panel" aria-labelledby="local-worker-evidence-title">
+    <h2 id="local-worker-evidence-title">Local worker evidence</h2>
+    <p>{status ? `The current local host reports ${status.workers.length} configured route${status.workers.length === 1 ? "" : "s"} separately from saved result proof.`
+      : "The current local host route inventory is unavailable."} A passed startup check means the pinned executable was verified when this host started. Result proof means this host generation has saved a result from that route.</p>
+    <p><strong>Neither signal says a worker is currently running, has capacity, is eligible for a particular task, or has owner acceptance.</strong> Check the exact task before assignment.</p>
+    {!status && <p role="status">The local host status could not be checked, so no startup or result proof is inferred.</p>}
+  </section>;
 }
 
 type ReadState<T> = { state: "loading" } | { state: "ready"; value: T } | { state: "unavailable" };
@@ -36,6 +46,21 @@ const loadingState: HomeDashboardState = Object.freeze({ projects: { state: "loa
 const taskHref = (projectId: string, jobId: string) =>
   `/projects/${encodeURIComponent(projectId)}/tasks/${encodeURIComponent(jobId)}`;
 
+/** Home reads are safe to repeat, but only the admission-pressure refusal is
+ * transient here. Authentication, authorization, routing and malformed-data
+ * failures retain their normal fail-closed handling. */
+export function createHomeReadTransport(parentSignal: AbortSignal, transport: typeof fetch = fetch): typeof fetch {
+  return (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const signal = init?.signal ? AbortSignal.any([parentSignal, init.signal]) : parentSignal;
+    const options = { ...init, signal };
+    const response = await transport(input, options);
+    if (response.status !== 503 || (init?.method ?? "GET") !== "GET") return response;
+    await response.body?.cancel().catch(() => {});
+    signal.throwIfAborted();
+    return transport(input, options);
+  }) as typeof fetch;
+}
+
 function Unavailable({ children }: { children: React.ReactNode }) {
   return <p className="private-note" role="status">{children} No zero count or all-clear is inferred.</p>;
 }
@@ -49,7 +74,7 @@ export function HomeDashboard({ data }: { data: HomeDashboardState }) {
             <a href={taskHref(task.projectId, task.jobId)}>{task.title}</a><span>{task.state.replaceAll("_", " ")}</span></li>)}</ul>
             : <p>No running or approval-waiting work is recorded.</p>}
       {data.activity.state === "ready" && data.activity.value.additionalActiveOmitted
-        ? <p className="private-note">More running work exists. Open Projects to inspect it.</p> : null}
+        ? <p className="private-note">More running work may exist. Open Projects to inspect it.</p> : null}
       <a className="private-action-link" href="/projects">Open projects</a>
     </section>
 
@@ -71,7 +96,7 @@ export function HomeDashboard({ data }: { data: HomeDashboardState }) {
           ? <Unavailable>Verified result records are unavailable.</Unavailable>
           : data.activity.value.recentResults.length ? <ul className="private-dashboard-list">{data.activity.value.recentResults.slice(0, 5).map(({ task, artifact }) =>
             <li key={artifact.artifactId}><a href={taskResultHrefV1(task.projectId, task.jobId, artifact.artifactId)}>{task.title}</a>
-              <span>{artifact.sizeBytes.toLocaleString()} bytes · <ConfiguredTimestamp value={artifact.receivedAt} prefix="Received" /></span></li>)}</ul>
+              <span>{task.state === "succeeded" ? `Completed${task.qualityStatus === "accepted" ? " · Accepted" : ""} · ` : ""}{artifact.sizeBytes.toLocaleString()} bytes · <ConfiguredTimestamp value={artifact.receivedAt} prefix="Received" /></span></li>)}</ul>
             : <p>No verified result records are available yet.</p>}
       {data.activity.state === "ready" && data.activity.value.additionalResultsOmitted
         ? <p className="private-note">More recent results exist. Open the affected projects to inspect them.</p> : null}
@@ -83,7 +108,7 @@ export function HomeDashboard({ data }: { data: HomeDashboardState }) {
           : isLocalWorkerRead(data.connections.value)
             ? <><p>{data.connections.value.value.workers.length} configured local worker route{data.connections.value.value.workers.length === 1 ? "" : "s"}.</p>
               <ul className="private-dashboard-list">{data.connections.value.value.workers.map(worker => <li key={worker.kind}>
-                <span>{worker.kind}</span><span>{worker.state} · readiness {worker.proof.replaceAll("_", " ")}</span></li>)}</ul>
+                <span>{worker.kind}</span><span>{localWorkerStateLabel(worker)}</span></li>)}</ul>
               <p className="private-note">Current assignment, capacity and resource usage are unknown here. Open Workers and the exact task before assigning work.</p></>
             : <><p>{data.connections.value.projection.summary.connectionCount} enrolled workers · {data.connections.value.projection.summary.currentSignalCount} current signals.</p>
               <p>{data.connections.value.projection.summary.staleSignalCount} stale · {data.connections.value.projection.summary.missingSignalCount} missing · {data.connections.value.projection.summary.attentionCount} need setup or review.</p>
@@ -130,46 +155,72 @@ export function PrivateHome() {
   const displayName = useProductDisplayName();
   const ideaLab = useProductModule("ideaLab");
   const installationTopology = useInstallationTopology();
-  const [projects] = useState(() => createProjectBrowserClient());
   const [data, setData] = useState<HomeDashboardState>(loadingState);
-  const [generation, setGeneration] = useState(0);
+  const [runtimeDetectionTimedOut, setRuntimeDetectionTimedOut] = useState(false);
+  const refresh = useRef<() => void>(() => {});
   useEffect(() => {
-    let live = true;
+    if (runtime.mode !== "checking") { setRuntimeDetectionTimedOut(false); return; }
+    const timeout = setTimeout(() => setRuntimeDetectionTimedOut(true), 5_000);
+    return () => clearTimeout(timeout);
+  }, [runtime.mode]);
+  useEffect(() => {
+    refresh.current = () => {};
+    setData(loadingState);
+    if (runtime.mode === "checking" && !runtimeDetectionTimedOut) return;
+    let live = true, inFlight = false;
+    let poll: ReturnType<typeof setTimeout> | undefined;
+    let request: AbortController | undefined;
     setData(runtime.mode === "local" ? { ...loadingState,
       connections: runtime.status ? { state: "ready", value: { source: "local", value: runtime.status } } : { state: "unavailable" } }
       : loadingState);
-    const settle = <T,>(promise: Promise<T>, key: keyof HomeDashboardState) => promise.then(value => {
-      if (live) setData(current => ({ ...current, [key]: { state: "ready", value } }));
-    }, () => { if (live) setData(current => ({ ...current, [key]: { state: "unavailable" } })); });
-    const reads = [settle(projects.list(), "projects"), settle(readTaskHomeActivity(), "activity"),
-      settle(readTaskAttention(), "attention")];
-    if (runtime.mode !== "local") reads.push(settle(readPrivateConnections(), "connections"));
-    void Promise.all(reads);
-    return () => { live = false; };
-  }, [generation, projects, runtime.mode, runtime.status]);
-  useEffect(() => {
     // This dashboard only reads already-saved records.  Keep an open local
     // Control Room view useful without inventing browser-side scheduling or
     // treating an old page load as a current worker status.  Hidden tabs do
-    // not poll; they refresh once when the owner returns to the tab.
-    const refreshWhenVisible = () => {
-      if (!document.hidden) setGeneration(value => value + 1);
+    // not poll; they refresh once when the owner returns to the tab. Schedule
+    // the next poll only after this one settles, and coalesce every other
+    // trigger while it is in flight.
+    const schedulePoll = () => { if (live) poll = setTimeout(refreshWhenVisible, 30_000); };
+    const load = async () => {
+      if (!live || inFlight) return;
+      inFlight = true;
+      clearTimeout(poll);
+      request = new AbortController();
+      const transport = createHomeReadTransport(request.signal);
+      const settle = <T,>(promise: Promise<T>, key: keyof HomeDashboardState) => promise.then(value => {
+        if (live) setData(current => ({ ...current, [key]: { state: "ready", value } }));
+      }, () => { if (live) setData(current => ({ ...current, [key]: { state: "unavailable" } })); });
+      const reads = [settle(createProjectBrowserClient(transport).list(), "projects"),
+        settle(readTaskHomeActivity(transport), "activity"), settle(readTaskAttention(undefined, transport), "attention")];
+      if (runtime.mode === "hosted") reads.push(settle(readPrivateConnections(transport), "connections"));
+      try { await Promise.all(reads); }
+      finally { request = undefined; inFlight = false; schedulePoll(); }
     };
-    const interval = setInterval(refreshWhenVisible, 30_000);
+    const refreshWhenVisible = () => {
+      if (!document.hidden) void load();
+    };
+    refresh.current = refreshWhenVisible;
+    // Deferring the first read lets React's development StrictMode clean up
+    // its probe effect before any network request begins.
+    const initial = setTimeout(refreshWhenVisible, 0);
     window.addEventListener("focus", refreshWhenVisible);
     document.addEventListener("visibilitychange", refreshWhenVisible);
     return () => {
-      clearInterval(interval);
+      live = false;
+      refresh.current = () => {};
+      clearTimeout(initial);
+      clearTimeout(poll);
+      request?.abort();
       window.removeEventListener("focus", refreshWhenVisible);
       document.removeEventListener("visibilitychange", refreshWhenVisible);
     };
-  }, []);
+  }, [runtime.mode, runtime.status, runtimeDetectionTimedOut]);
   return <div className="private-shell"><PrivateHeader /><main id="private-main" tabIndex={-1}>
     <section className="private-home-intro" aria-labelledby="home-title"><p className="private-eyebrow">Private workspace</p>
       <h1 id="home-title">{displayName}</h1><p>Current saved work, results and attention from the protected Control Room services. This page refreshes while it is open and again when you return to it. Each section reports unavailable data instead of replacing it with a zero.</p>
       <p className="private-note">Unavailable means the saved database or protected read could not be checked. Checking again only rereads saved records; it does not start, assign, approve or retry work.</p>
-      <button type="button" onClick={() => setGeneration(value => value + 1)}>Check saved dashboard again</button></section>
-    <HomeInstallationStatus topology={installationTopology} showSetupGuidance={runtime.mode === "hosted"} />
+      <button type="button" onClick={() => refresh.current()}>Check saved dashboard again</button></section>
+    {runtime.mode === "local" ? <MacLocalWorkerEvidence status={runtime.status} />
+      : <HomeInstallationStatus topology={installationTopology} showSetupGuidance={runtime.mode === "hosted"} />}
     <HomeDashboard data={data} />
     {runtime.mode === "hosted" && <PrivateOperatorCapacityWorkspace />}
     {runtime.mode === "hosted" && ideaLab && <aside className="private-note private-home-note" aria-label="Optional module"><strong>Idea Lab is optional.</strong>{" "}

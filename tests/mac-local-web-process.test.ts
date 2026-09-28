@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test, { after } from "node:test";
-import { sha256Digest } from "../src/security";
+import { InMemoryRollbackCheckpointStoreV1, sha256Digest } from "../src/security";
 import { LOCAL_OWNER_SESSION_PROFILE_V1 } from "../src/web/v1/local-owner-session";
 import { createMacLocalWebProcessV1 } from "../src/web/v1/mac-local-web-process";
 import { createContributorDemoNodeHandler, createMacLocalNodeHandler } from "../src/web/v1/private-node-handler";
@@ -137,6 +137,15 @@ test("the real Mac-local wrapper signs in locally and reaches the existing proje
   const projectShell = await app.handle(request(`/projects/${encodeURIComponent(projectId)}`, { headers: { cookie: cookie! } }),
     () => new Response("real project shell"));
   assert.equal(projectShell.status, 200); assert.equal(await projectShell.text(), "real project shell");
+  const missingPage = await app.handle(request("/projects/project:missing", { headers: { cookie: cookie! } }),
+    () => { throw new Error("a missing project must not render the product shell"); });
+  assert.equal(missingPage.status, 404);
+  assert.match(missingPage.headers.get("content-type") ?? "", /^text\/html/);
+  const missingHtml = await missingPage.text();
+  assert.match(missingHtml, /<main>/);
+  assert.match(missingHtml, /Page unavailable/);
+  assert.match(missingHtml, /This page or saved item is not available/);
+  assert.doesNotMatch(missingHtml, /\{"error"/);
   const workersShell = await app.handle(request("/workers", { headers: { cookie: cookie! } }), () => new Response("real workers shell"));
   assert.equal(workersShell.status, 200); assert.equal(await workersShell.text(), "real workers shell");
   const needsShell = await app.handle(request("/needs-me", { headers: { cookie: cookie! } }), () => new Response("real needs shell"));
@@ -152,6 +161,15 @@ test("the real Mac-local wrapper signs in locally and reaches the existing proje
   const detailShell = await app.handle(request(`/projects/${encodeURIComponent(projectId)}/tasks/${encodeURIComponent(proposedReceipt.receipt.jobId)}`,
     { headers: { cookie: cookie! } }), () => new Response("real task detail shell"));
   assert.equal(detailShell.status, 200); assert.equal(await detailShell.text(), "real task detail shell");
+  const selectedResultShell = await app.handle(request(`/projects/${encodeURIComponent(projectId)}/tasks/${encodeURIComponent(proposedReceipt.receipt.jobId)}`
+    + `?result=${encodeURIComponent("artifact:test")}`, { headers: { cookie: cookie! } }), () => new Response("real selected result shell"));
+  assert.equal(selectedResultShell.status, 200); assert.equal(await selectedResultShell.text(), "real selected result shell");
+  for (const search of ["?result=", "?result=bad%00id", "?result=one&result=two", `?result=${"x".repeat(300)}`]) {
+    const staleResultShell = await app.handle(request(`/projects/${encodeURIComponent(projectId)}/tasks/${encodeURIComponent(proposedReceipt.receipt.jobId)}${search}`,
+      { headers: { cookie: cookie! } }), () => new Response("real stale result shell"));
+    assert.equal(staleResultShell.status, 200, `a stale selection must not replace the page for ${search.slice(0, 40)}`);
+    assert.equal(await staleResultShell.text(), "real stale result shell");
+  }
   const results = await app.handle(request(`/api/v1/projects/${encodeURIComponent(projectId)}/tasks/${encodeURIComponent(proposedReceipt.receipt.jobId)}/results`,
     { headers: { cookie: cookie! } }), () => new Response("unused"));
   assert.equal(results.status, 200);
@@ -177,6 +195,30 @@ test("the real Mac-local wrapper signs in locally and reaches the existing proje
   const fakePreview = await app.handle(request("/local-preview", { headers: { cookie: cookie! } }), () => new Response("must not render"));
   assert.equal(fakePreview.status, 404);
   await app.close();
+});
+
+test("the Mac-local needs-me route composes saved-plan verification into the task service", async t => {
+  const fixture = await privateOwnerBootstrapFixture({ fresh: "mac-local-plan-attention" }); t.after(fixture.close);
+  await createPrivateOwnerBootstrapCommand({ openDatabase: fixture.openDatabase(), clock: () => conformanceNow })({
+    configuration: fixture.configuration, database: fixture.database, trust: fixture.trust, assertion: fixture.assertion,
+  });
+  const origin = "http://127.0.0.1:3210", ownerCode = "mac-local-owner-code-long-enough";
+  const app = createMacLocalWebProcessV1({ origin, workspaceId: fixture.configuration.workspaceId,
+    localOwnerSession: { schema: LOCAL_OWNER_SESSION_PROFILE_V1, origin, tenantId: fixture.configuration.tenantId,
+      provider: fixture.trust.issuer, subject: conformanceSubject, ownerCodeDigest: sha256Digest({ ownerCode }), sessionSeconds: 900 },
+    database: { client: fixture.client, close: async () => {} }, clock: () => conformanceNow,
+    taskReadKeys: { taskPlanIntegrityKey: new Uint8Array(32).fill(3), reviews: {
+      integrityKey: new Uint8Array(32).fill(4), checkpoints: new InMemoryRollbackCheckpointStoreV1({ testOnly: true }) } } });
+  t.after(() => app.close());
+  const request = (path: string, init: RequestInit = {}) => new Request(`${origin}${path}`, init);
+  const signedIn = await app.handle(request("/api/v1/local-owner-session", { method: "POST", headers: {
+    origin, "sec-fetch-site": "same-origin", "content-type": "application/json" }, body: JSON.stringify({ ownerCode }) }),
+  () => new Response("unused"));
+  const cookie = signedIn.headers.get("set-cookie"); assert.ok(cookie);
+  const attention = await app.handle(request("/api/v1/needs-me/tasks", { headers: { cookie: cookie! } }),
+    () => new Response("unused"));
+  assert.equal(attention.status, 200, await attention.clone().text());
+  assert.equal((await attention.json() as { planningSource: string }).planningSource, "configured");
 });
 
 test("the Mac-local wrapper does not accept a forwarded or foreign request", async t => {

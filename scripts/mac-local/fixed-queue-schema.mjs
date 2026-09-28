@@ -6,9 +6,33 @@ import { PgBoss, getConstructionPlans } from "pg-boss";
 import { macRolePlan } from "./database-upgrade-grants.mjs";
 
 // Updated only after a fresh PostgreSQL 17 construction and negative tests.
-const expectedShapeDigest = "sha256:18f9164b213d17ffc97fc14d63c7b7eb290d567a0e973be841755e940c7d1963";
+const expectedShapeDigest = "sha256:e7286b89b0c60f826438b2c49570897c9e3bdb90d534cc5acc5c9b2c0f09e25d";
 const hash = value => `sha256:${createHash("sha256").update(JSON.stringify(value)).digest("hex")}`;
 const macPrincipals = [...Object.keys(macRolePlan), ...Object.values(macRolePlan)];
+
+// pg-boss keeps one queue_stats partition per UTC day (created ahead of time and
+// pruned by retention), so the set of dated names changes with the calendar.
+// Each dated row is compared to a single day template: any number of identical
+// daily partitions collapses to one row, while a partition whose shape differs
+// from the others still yields an extra row and changes the digest.
+const dailyPartition = /queue_stats_[0-9]{8}(?![0-9])/gu;
+export function normalizeQueueCatalogV1(catalog) {
+  return Object.fromEntries(Object.entries(catalog).map(([section, rows]) => {
+    if (!Array.isArray(rows)) return [section, rows];
+    const seen = new Set();
+    const normalized = [];
+    for (const row of rows) {
+      const text = JSON.stringify(row);
+      const template = text.replace(dailyPartition, "queue_stats_<day>");
+      if (template !== text) {
+        if (seen.has(template)) continue;
+        seen.add(template);
+      }
+      normalized.push(JSON.parse(template));
+    }
+    return [section, normalized];
+  }));
+}
 
 async function fixedQueueShape(client) {
   const namespace = (await client.query(`SELECT n.nspname, pg_get_userbyid(n.nspowner) AS owner
@@ -75,7 +99,7 @@ async function fixedQueueShape(client) {
         FROM control_room_queue.queue ORDER BY name`)).rows,
       versions: (await client.query(`SELECT version FROM control_room_queue.version ORDER BY version`)).rows,
     };
-    return hash(catalog);
+    return hash(normalizeQueueCatalogV1(catalog));
   } catch (error) {
     if (error?.code === "42P01" || error?.code === "42703") throw new Error("upgrade_queue_shape_refused", { cause: error });
     throw error;

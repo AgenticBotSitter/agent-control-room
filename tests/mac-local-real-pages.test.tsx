@@ -269,7 +269,8 @@ test("real Mac-local pages complete the signed-in project and task journey witho
 
   assert.equal((await journey.request("/workers", { headers: { cookie: journey.cookie } })).status, 200);
   const workers = await mountPage(journey, "/workers", createElement(WorkersPage));
-  try { assertHealthyPage(workers, [/Workers on this Mac/, /Codex/, /Status: ready/]); } finally { await workers.close(); }
+  try { assertHealthyPage(workers, [/Workers on this Mac/, /Codex/, /Startup check passed/, /result proof recorded this host run/]); }
+  finally { await workers.close(); }
 
   assert.equal((await journey.request("/", { headers: { cookie: journey.cookie } })).status, 200);
   const home = await mountPage(journey, "/", createElement(HomePage));

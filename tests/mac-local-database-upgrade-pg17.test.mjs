@@ -216,7 +216,7 @@ test("live-shaped 0085 PostgreSQL 17 installation converges to fresh HEAD withou
   await publisher.end();
   const upgraded = await snapshot(oldClient);
   assert.equal(upgraded.queue,
-    "sha256:c7ac7af7bb4b466fb108743d14f66539fa2131d8414588dfabafd1e523a69256");
+    "sha256:e7286b89b0c60f826438b2c49570897c9e3bdb90d534cc5acc5c9b2c0f09e25d");
   const repeat = await applyMacDatabaseUpgradeV1(request);
   assert.deepEqual(repeat.before.grants, { extra: [], missing: [] });
   assert.deepEqual(repeat.before.pendingMigrations, []);

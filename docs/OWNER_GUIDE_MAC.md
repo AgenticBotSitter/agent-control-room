@@ -152,8 +152,11 @@ On the first `mac:up` after the upgrade, every active project registers the v2 o
 profile. Existing in-flight review targets keep their recorded v1 profile and digest; newly
 published results bind to v2. The owner can review both versions. Under v2, any future agent
 review must have different recorded worker, agent-profile and harness provenance, and the default
-policy also requires a different coarse model family. Restarting does not accept, reject, migrate,
-or otherwise decide an existing result.
+policy also requires a different coarse model family. For a plain-text result, open the result,
+check “I read it and it’s correct,” then choose Accept; that one explicit owner command records the
+acceptance and its configured human observation together. The separate automatic text check still
+has to pass before the task becomes Completed · Accepted. Restarting does not accept, reject,
+migrate, or otherwise decide an existing result.
 
 ## 7. When something is not working
 

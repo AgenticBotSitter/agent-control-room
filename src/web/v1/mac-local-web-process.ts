@@ -36,7 +36,7 @@ export interface MacLocalWebProcessOptionsV1 {
    * The local wrapper owns no planner, queue, review store, or worker. */
   ownerReviews?: WebTaskReviewService;
   ownerVerifications?: WebTaskVerificationService;
-  planning?: Pick<TaskPlanningOperation, "plan" | "ensureProject" | "readSaved" | "readSavedContinuation" | "readPreparedWorker" | "readConfiguredLocalRoute" | "supportsProject" | "templatesForProject">;
+  planning?: Pick<TaskPlanningOperation, "plan" | "ensureProject" | "readSaved" | "readSavedMany" | "readSavedContinuation" | "readPreparedWorker" | "readConfiguredLocalRoute" | "supportsProject" | "templatesForProject">;
   assignment?: TaskAssignmentOperation;
   approvals?: TaskApprovalOperation;
   submission?: TaskSubmissionOperation;
@@ -110,6 +110,19 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
       location: new URL(path, requestOrigin).href } });
   }
 
+  function pageFailure(error: unknown): Response {
+    const failure = webFailure(error);
+    const message = failure.status === 400 ? "This page address is invalid. Check the link and try again."
+      : failure.status === 403 ? "Your current access does not allow this page."
+        : failure.status === 404 ? "This page or saved item is not available."
+          : failure.status === 409 ? "This saved item changed. Return to Projects and open its current page."
+            : "Control Room could not load this page. No change was made. Try again when the saved service is available.";
+    return new Response(`<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Control Room page unavailable</title><main><h1>Page unavailable</h1><p role="alert">${message}</p><p><a href="/projects">Return to Projects</a></p></main></html>`, {
+      status: failure.status, headers: { ...privateResponseHeaders, "content-type": "text/html; charset=utf-8",
+        "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'" },
+    });
+  }
+
   const routeId = (value: string) => {
     if (!/^[A-Za-z0-9%:_-]{1,600}$/.test(value)) throw new WebAccessError("not_found");
     let decoded: string;
@@ -164,7 +177,9 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
     }
     const taskDetail = /^\/projects\/([^/]+)\/tasks\/([^/]+)$/.exec(url.pathname);
     if (taskDetail) {
-      if (url.search) throw new WebAccessError("invalid_request");
+      // The selected result is an untrusted browser hint. The result endpoint
+      // validates authorization and binding before any content is returned.
+      if ([...url.searchParams.keys()].some(name => name !== "result")) throw new WebAccessError("invalid_request");
       await tasks.detail(identity, routeId(taskDetail[1]), routeId(taskDetail[2]));
       return render();
     }
@@ -224,33 +239,8 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
       if (url.pathname === "/api/v1/needs-me/tasks") {
         if (request.method !== "GET" || [...url.searchParams.keys()].some(key => key !== "after")
           || url.searchParams.getAll("after").length > 1) throw new WebAccessError("invalid_request");
-        const page = await tasks.attention(identity, url.searchParams.get("after") ?? undefined);
-        if (options.planning?.readSaved) for (const item of page.items) {
-          if (!item.reasons.includes("proposal")) continue;
-          const saved = await options.planning.readSaved(identity, item.task.projectId, item.task.jobId);
-          if (saved) {
-            const receipt = taskPlanningReceiptSchema.parse(saved);
-            if (receipt.projectId !== item.task.projectId || receipt.sourceJobId !== item.task.jobId
-              || receipt.jobId === item.task.jobId) throw new Error("planning_receipt_scope_mismatch");
-            item.reasons = item.reasons.filter(reason => reason !== "proposal");
-          }
-        }
-        if (options.submission?.readDelivery) for (const item of page.items) {
-          if (!item.reasons.includes("delivery_check")) continue;
-          const status = taskDeliveryStatusSchema.parse(await options.submission.readDelivery(identity,
-            item.task.projectId, item.task.jobId, item.inputDigest));
-          if (status.projectId !== item.task.projectId || status.jobId !== item.task.jobId)
-            throw new Error("delivery_status_scope_mismatch");
-          item.reasons = item.reasons.filter(reason => reason !== "delivery_check");
-          if (status.state === "not_queued") item.reasons.push("submission_needed");
-          else if (status.state === "transmission_unconfirmed") item.reasons.push("delivery_uncertain");
-          else if (status.state === "receipt_rejected") item.reasons.push("delivery_rejected");
-          else if (status.state !== "receipt_recorded") item.reasons.push("delivery_pending");
-        }
-        return Response.json(taskAttentionPageSchema.parse({ ...page,
-          planningSource: options.planning?.readSaved ? "configured" : "not_configured",
-          deliverySource: options.submission?.readDelivery ? "configured" : "not_configured",
-          items: page.items.filter(item => item.reasons.length) }), { headers: privateResponseHeaders });
+        return Response.json(await tasks.attention(identity, url.searchParams.get("after") ?? undefined),
+          { headers: privateResponseHeaders });
       }
       if (url.pathname === "/api/v1/needs-me/pipelines") {
         if (request.method !== "GET" || url.search || !workBatches) throw new WebAccessError("not_found");
@@ -290,6 +280,7 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
         && !new URL(request.url).pathname.startsWith("/api/")) {
         return pageRedirect("/session", new URL(request.url).origin);
       }
+      if (request.method === "GET" && !new URL(request.url).pathname.startsWith("/api/")) return pageFailure(error);
       return webFailure(error);
     }
   }

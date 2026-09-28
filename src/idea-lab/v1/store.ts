@@ -302,10 +302,14 @@ export class IdeaLabProjectRegistryStoreV1 {
   async #projectWith(query:Query,tenantId:string,projectId:string):Promise<ProjectRegistryProjectionV1|undefined>{
     const projects=await query<ProjectRow>(`SELECT id,tenant_id,workspace_id,title,description,priority,normalized_state,domain_state,
       observed_at,updated_at,payload FROM projects WHERE tenant_id=$1 AND id=$2 AND adapter_id=$3`,[tenantId,projectId,CONTROL_ROOM_IDEA_ADAPTER_V1]);
-    if(!projects.rows[0])return undefined; const row=projects.rows[0], payload=parseExactIdeaLabV1(projectPayloadSchema,row.payload);
+    if(!projects.rows[0])return undefined; const row=projects.rows[0];
     const events=await query<LifecycleRow>(`SELECT payload,event_auth_tag FROM control_project_lifecycle_events WHERE tenant_id=$1 AND project_id=$2 ORDER BY version DESC LIMIT 1`,[tenantId,projectId]);
-    if(!events.rows[0])throw new IdeaLabErrorV1("integrity_failed"); const event=parseProjectLifecycleEventV1(events.rows[0].payload);
-    this.#verifyTag("project_lifecycle",tenantId,event.eventId,event.eventDigest,events.rows[0].event_auth_tag);
+    if(!events.rows[0])throw new IdeaLabErrorV1("integrity_failed");
+    return this.#projectFromRows(tenantId,row,events.rows[0]);
+  }
+  #projectFromRows(tenantId:string,row:ProjectRow,lifecycle:LifecycleRow):ProjectRegistryProjectionV1{
+    const payload=parseExactIdeaLabV1(projectPayloadSchema,row.payload),event=parseProjectLifecycleEventV1(lifecycle.payload);
+    this.#verifyTag("project_lifecycle",tenantId,event.eventId,event.eventDigest,lifecycle.event_auth_tag);
     const expectedState=event.toState, expectedNormalized=expectedState==="active"?"running":expectedState==="paused"?"waiting":"complete";
     const expectedDomain=`idea_project_${expectedState}`;
     if(row.normalized_state!==expectedNormalized||row.domain_state!==expectedDomain||payload.lifecycleVersion!==event.version
@@ -326,6 +330,27 @@ export class IdeaLabProjectRegistryStoreV1 {
     if(!project||project.tenantId!==tenantId||project.workspaceId!==workspaceId||project.projectId!==projectId)
       throw new IdeaLabErrorV1("integrity_failed");
     return project;
+  }
+  /** Fixed-query project projection for an already authorized catalog page. */
+  async getProjectsInSession(session:DatabaseSession,tenantIdValue:string,workspaceIdValue:string,projectIds:readonly string[]){
+    const tenantId=ideaIdSchemaV1.parse(tenantIdValue),workspaceId=ideaIdSchemaV1.parse(workspaceIdValue);
+    const ids=[...new Set(projectIds.map(value=>ideaIdSchemaV1.parse(value)))];
+    if(!ids.length)return new Map<string,ProjectRegistryProjectionV1>();
+    const projects=await session.query<ProjectRow>(`SELECT id,tenant_id,workspace_id,title,description,priority,normalized_state,domain_state,
+      observed_at,updated_at,payload FROM projects WHERE tenant_id=$1 AND workspace_id=$2 AND id=ANY($3::text[])
+      AND adapter_id=$4 ORDER BY id COLLATE "C" FOR SHARE`,[tenantId,workspaceId,ids,CONTROL_ROOM_IDEA_ADAPTER_V1]);
+    const events=await session.query<LifecycleRow&{project_id:string}>(`SELECT DISTINCT ON (project_id) project_id,payload,event_auth_tag
+      FROM control_project_lifecycle_events WHERE tenant_id=$1 AND project_id=ANY($2::text[])
+      ORDER BY project_id,version DESC`,[tenantId,ids]);
+    const eventByProject=new Map(events.rows.map(row=>[row.project_id,row]));
+    const output=new Map<string,ProjectRegistryProjectionV1>();
+    for(const row of projects.rows){const event=eventByProject.get(row.id);if(!event)throw new IdeaLabErrorV1("integrity_failed");
+      const project=this.#projectFromRows(tenantId,row,event);
+      if(project.tenantId!==tenantId||project.workspaceId!==workspaceId||project.projectId!==row.id)
+        throw new IdeaLabErrorV1("integrity_failed");
+      output.set(row.id,project);}
+    if(output.size!==ids.length)throw new IdeaLabErrorV1("integrity_failed");
+    return output;
   }
   async getLatestProjectLifecycleEvent(tenantId:string,projectId:string):Promise<ProjectLifecycleEventV1|undefined>{
     const result=await this.#query<LifecycleRow>(`SELECT payload,event_auth_tag FROM control_project_lifecycle_events

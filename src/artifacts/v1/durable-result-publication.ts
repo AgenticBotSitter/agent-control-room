@@ -277,9 +277,10 @@ export interface DurableResultReviewSubmissionPortV1 {
 }
 
 type NeutralReservationRow = NeutralReservationRowV1;
-type NeutralReceiptRow = { tenant_id: string; project_id: string; job_id: string; attempt_id: string; run_id: string;
+export type DurableStoredResultRowV1 = { tenant_id: string; project_id: string; job_id: string; attempt_id: string; run_id: string;
   artifact_id: string; receipt: unknown; auth_tag: string; manifest: unknown; content_hash: string; state: string;
   version: number; workflow_id: string; created_at: string | Date; updated_at: string | Date };
+type NeutralReceiptRow = DurableStoredResultRowV1;
 type NeutralReviewRow = { tenant_id: string; project_id: string; job_id: string; run_id: string;
   plan: unknown; auth_tag: string };
 
@@ -288,6 +289,11 @@ const neutralSelection = `r.tenant_id,r.project_id,r.job_id,r.attempt_id,r.run_i
   FROM control_native_artifact_receipts r JOIN control_artifact_manifests m
   ON m.tenant_id=r.tenant_id AND m.id=r.artifact_id AND m.project_id=r.project_id
     AND m.job_id=r.job_id AND m.attempt_id=r.attempt_id`;
+
+export function verifyDurableStoredResultRowV1(row: DurableStoredResultRowV1, key: Uint8Array,
+  storageClass: "local" | "r2") {
+  return verifyNeutralReceiptRow(row, key, storageClass).receipt;
+}
 
 function checkKeys(integrityKey: unknown, reviewKey: unknown): { integrityKey: Uint8Array; reviewKey: Uint8Array } {
   if (!(integrityKey instanceof Uint8Array) || integrityKey.length !== 32
@@ -715,7 +721,7 @@ export function reconcileDurableResultReservationCrashV1(value: unknown) {
 /** Exact verified durable receipt metadata. It does not acquire artifact bytes. */
 export async function readDurableResultReceiptV1(tx: DatabaseSession, key: Uint8Array, storageClass: "local" | "r2",
   tenantId: string, projectId: string, jobId: string, artifactId: string): Promise<DurableResultReceiptV1 | undefined> {
-  const row = (await tx.query<NeutralReceiptRow>(`SELECT ${neutralSelection}
+  const row = (await tx.query<DurableStoredResultRowV1>(`SELECT ${neutralSelection}
     WHERE r.tenant_id=$1 AND r.project_id=$2 AND r.job_id=$3 AND r.artifact_id=$4`,
   [tenantId, projectId, jobId, artifactId])).rows[0];
   if (!row) return undefined;
@@ -725,7 +731,7 @@ export async function readDurableResultReceiptV1(tx: DatabaseSession, key: Uint8
 /** Bounded verified durable receipt metadata for one task. It does not acquire artifact bytes. */
 export async function listDurableResultReceiptsV1(tx: DatabaseSession, key: Uint8Array, storageClass: "local" | "r2",
   tenantId: string, projectId: string, jobId: string): Promise<{ receipts: DurableResultReceiptV1[]; additionalResultsOmitted: boolean }> {
-  const rows = (await tx.query<NeutralReceiptRow>(`SELECT ${neutralSelection}
+  const rows = (await tx.query<DurableStoredResultRowV1>(`SELECT ${neutralSelection}
     WHERE r.tenant_id=$1 AND r.project_id=$2 AND r.job_id=$3
     ORDER BY r.artifact_id COLLATE "C" LIMIT 51`, [tenantId, projectId, jobId])).rows;
   return { receipts: rows.slice(0, 50).map(row => verifyNeutralReceiptRow(row, key, storageClass).receipt),

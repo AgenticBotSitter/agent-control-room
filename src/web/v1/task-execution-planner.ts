@@ -31,6 +31,7 @@ import { WebAccessError, type VerifiedWebIdentity } from "./access-verifier";
 import { WebSessionAuthority } from "./session-authority";
 import { WebProjectService } from "./project-service";
 import { taskDraftSchema } from "./task-wire";
+import { taskPlanningReceiptSchema, type TaskPlanningReceipt } from "./task-planning-wire";
 import { taskRevisionContextSchema, taskRevisionRequestSchema, type TaskRevisionRequest } from "./task-revision-wire";
 import { inheritTaskModelRequestV1, resolveTaskModelV1, type TaskModelCatalogV1,
   type RequestedTaskModelV1, type TaskModelWorkerKindV1 } from "./task-model-selection";
@@ -250,7 +251,8 @@ export type TaskPlanningTemplateChoice = Readonly<{ id: string; adapter: NativeT
 export type TaskPlanningOperation = Readonly<{ tenantId: string; workspaceId: string; plan: TaskExecutionPlanner["plan"];
   ensureProject?: (projectId: string) => Promise<void>;
   supportsProject?: (projectId: string) => boolean; templatesForProject?: (projectId: string) => readonly TaskPlanningTemplateChoice[];
-  readSaved?: TaskExecutionPlanner["readSaved"]; readSavedContinuation?: TaskExecutionPlanner["readSavedContinuation"];
+  readSaved?: TaskExecutionPlanner["readSaved"]; readSavedMany?: TaskExecutionPlanner["readSavedMany"];
+  readSavedContinuation?: TaskExecutionPlanner["readSavedContinuation"];
   readPreparedWorker?: TaskExecutionPlanner["readPreparedWorker"];
   readConfiguredLocalRoute?: TaskExecutionPlanner["readConfiguredLocalRoute"] }>;
 type Row = { tenant_id: string; project_id: string; source_job_id: string; job_id: string; plan: unknown; auth_tag: string };
@@ -285,6 +287,111 @@ export async function readTaskRevisionLinksV1(tx: DatabaseSession, integrityKey:
   return Object.freeze({ previousJobId, nextJobId, revisionNumber });
 }
 const immutableJob = (job: JobRecord) => ({ ...job, state: "proposed", version: 0, updatedAt: job.createdAt });
+const savedPlanReceipt = (plan: Plan): TaskPlanningReceipt => taskPlanningReceiptSchema.parse({
+  projectId: plan.projectId, sourceJobId: plan.sourceJobId, jobId: plan.job.id,
+  sourceInputDigest: plan.sourceInputDigest, inputDigest: plan.job.inputDigest, plannedAt: plan.plannedAt,
+  startsWork: false, grantsExecutionAuthority: false,
+});
+export type SavedTaskPlanRowV1 = Row & { source_job_payload: unknown; source_job_state: string; source_job_version: number;
+  source_job_workflow_id: string; source_job_created_at: string | Date; source_job_updated_at: string | Date;
+  source_workflow_payload: unknown; source_request_payload: unknown; prepared_job_payload: unknown;
+  prepared_job_state: string; prepared_job_version: number; prepared_job_workflow_id: string;
+  prepared_job_created_at: string | Date; prepared_job_updated_at: string | Date;
+  prepared_workflow_payload: unknown; prepared_request_payload: unknown };
+function verifiedSavedPlans(config:{tenantId:string;planIntegrityKey:Uint8Array},rows:readonly SavedTaskPlanRowV1[]){
+  return rows.map(row=>{const plan=planSchema.parse(row.plan),expected=Buffer.from(taskExecutionPlanTagV1(config.planIntegrityKey,plan));
+    const actual=Buffer.from(row.auth_tag);
+    if(expected.length!==actual.length||!timingSafeEqual(expected,actual)||row.tenant_id!==config.tenantId||row.tenant_id!==plan.tenantId
+      ||row.project_id!==plan.projectId||row.source_job_id!==plan.sourceJobId||row.job_id!==plan.job.id)fail();return plan;});
+}
+export function savedTaskPlanProfileIdsV1(config:{tenantId:string;planIntegrityKey:Uint8Array},rows:readonly SavedTaskPlanRowV1[]){
+  return [...new Set(verifiedSavedPlans(config,rows).map(plan=>plan.acceptanceProfileId))];
+}
+
+/** Server-only fixed-query plan verification for callers that already own an authenticated
+ * transaction and have checked project access. This helper grants no authority of its own. */
+export async function readSavedTaskPlansInSessionV1(tx: DatabaseSession, config: {
+  tenantId: string; planIntegrityKey: Uint8Array; reviewIntegrityKey: Uint8Array;
+  checkpoints: AwaitableRollbackCheckpointStoreV1; preloadedRows?: readonly SavedTaskPlanRowV1[];
+  authenticatedProfiles?: ReadonlyMap<string, unknown>;
+}, tasks: readonly { projectId: string; sourceJobId: string }[]) {
+  localId.parse(config.tenantId);
+  if (!(config.planIntegrityKey instanceof Uint8Array) || config.planIntegrityKey.length !== 32
+    || !(config.reviewIntegrityKey instanceof Uint8Array) || config.reviewIntegrityKey.length !== 32) fail();
+  const unique = [...new Map(tasks.map(task => [JSON.stringify([task.projectId, task.sourceJobId]), task])).values()];
+  for (const task of unique) { localId.parse(task.projectId); localId.parse(task.sourceJobId); }
+  const output = new Map<string, TaskPlanningReceipt | null>();
+  for (const task of unique) output.set(JSON.stringify([task.projectId, task.sourceJobId]), null);
+  if (!unique.length) return output;
+  const projectIds = [...new Set(unique.map(task => task.projectId))], sourceJobIds = unique.map(task => task.sourceJobId);
+  const rows = (config.preloadedRows ? [...config.preloadedRows] : (await tx.query<SavedTaskPlanRowV1>(`SELECT p.tenant_id,p.project_id,p.source_job_id,p.job_id,p.plan,p.auth_tag,
+    sj.payload AS source_job_payload,sj.state AS source_job_state,sj.version AS source_job_version,
+    sj.workflow_id AS source_job_workflow_id,sj.created_at AS source_job_created_at,sj.updated_at AS source_job_updated_at,
+    sw.payload AS source_workflow_payload,sr.payload AS source_request_payload,
+    pj.payload AS prepared_job_payload,pj.state AS prepared_job_state,pj.version AS prepared_job_version,
+    pj.workflow_id AS prepared_job_workflow_id,pj.created_at AS prepared_job_created_at,pj.updated_at AS prepared_job_updated_at,
+    pw.payload AS prepared_workflow_payload,pr.payload AS prepared_request_payload
+    FROM control_task_execution_plans p
+    JOIN control_jobs sj ON sj.tenant_id=p.tenant_id AND sj.project_id=p.project_id AND sj.id=p.source_job_id
+    JOIN control_workflows sw ON sw.tenant_id=sj.tenant_id AND sw.id=sj.workflow_id
+    JOIN control_requests sr ON sr.tenant_id=sw.tenant_id AND sr.id=sw.request_id
+    JOIN control_jobs pj ON pj.tenant_id=p.tenant_id AND pj.project_id=p.project_id AND pj.id=p.job_id
+    JOIN control_workflows pw ON pw.tenant_id=pj.tenant_id AND pw.id=pj.workflow_id
+    JOIN control_requests pr ON pr.tenant_id=pw.tenant_id AND pr.id=pw.request_id
+    WHERE p.tenant_id=$1 AND p.project_id=ANY($2::text[]) AND p.source_job_id=ANY($3::text[])
+    ORDER BY p.project_id COLLATE "C",p.source_job_id COLLATE "C" FOR UPDATE OF sj`,
+  [config.tenantId, projectIds, sourceJobIds])).rows).filter(row => output.has(JSON.stringify([row.project_id, row.source_job_id])));
+  if (!rows.length) return output;
+  const plans = verifiedSavedPlans(config,rows);
+  const profiles = config.authenticatedProfiles ?? await new CompletionGateStoreV1(joined(tx), config.reviewIntegrityKey, config.checkpoints)
+    .getRecords(config.tenantId, [...new Set(plans.map(plan => plan.acceptanceProfileId))], "profile");
+  const verifiedJob = (payload: unknown, state: string, version: number, workflowId: string,
+    createdAt: string | Date, updatedAt: string | Date, projectId: string, jobId: string) => {
+    const job = jobRecordSchema.parse(payload);
+    if (job.id !== jobId || job.projectId !== projectId || job.tenantId !== config.tenantId || job.state !== state
+      || job.version !== Number(version) || job.workflowId !== workflowId
+      || job.createdAt !== new Date(createdAt).toISOString() || job.updatedAt !== new Date(updatedAt).toISOString()) fail();
+    return job;
+  };
+  for (let index = 0; index < rows.length; index += 1) {
+    const row = rows[index]!, plan = plans[index]!;
+    const sourceJob = verifiedJob(row.source_job_payload, row.source_job_state, row.source_job_version,
+      row.source_job_workflow_id, row.source_job_created_at, row.source_job_updated_at, row.project_id, row.source_job_id);
+    const sourceWorkflow = workflowRecordSchema.parse(row.source_workflow_payload);
+    const sourceRequest = requestRecordSchema.parse(row.source_request_payload);
+    const draft = taskDraftSchema.parse({ title: sourceRequest.title, instructions: sourceRequest.objective }), a = sourceJob.authority;
+    if (sourceJob.jobType !== "task.proposal" || sourceJob.state !== "proposed" || sourceJob.version !== 0
+      || sourceWorkflow.projectId !== row.project_id || sourceRequest.projectId !== row.project_id
+      || sourceWorkflow.tenantId !== sourceJob.tenantId || sourceRequest.tenantId !== sourceJob.tenantId
+      || sourceWorkflow.jobIds.length !== 1 || sourceWorkflow.jobIds[0] !== row.source_job_id
+      || sourceWorkflow.id !== sourceJob.workflowId || sourceRequest.id !== sourceWorkflow.requestId
+      || sourceWorkflow.state !== "proposed" || sourceRequest.state !== "draft" || sourceWorkflow.version !== 0 || sourceRequest.version !== 0
+      || sourceJob.inputDigest !== sha256Digest(draft) || a.digest !== computeAuthorityDigest(a)
+      || a.allowedExecutor !== "executor:unassigned" || a.networkPolicy !== "none" || a.effectPolicy !== "none"
+      || a.credentialRefs.length || a.filesystemRoots.length || a.allowedNetworkDestinations.length || a.maxConcurrentEffects) fail();
+    const source = { job: sourceJob, workflow: sourceWorkflow, request: sourceRequest };
+    assertNoSecretMaterial(source);
+    if (["control-room.task-execution-plan/v2", "control-room.task-execution-plan/v4", "control-room.task-execution-plan/v6",
+      "control-room.task-execution-plan/v8", "control-room.task-execution-plan/v10", "control-room.task-execution-plan/v12",
+      "control-room.task-execution-plan/v14", "control-room.task-execution-plan/v16"].includes(plan.schema)
+      || plan.projectId !== row.project_id || plan.sourceJobId !== row.source_job_id
+      || plan.sourceDigest !== sha256Digest(source) || plan.sourceInputDigest !== sourceJob.inputDigest) fail();
+    const preparedJob = verifiedJob(row.prepared_job_payload, row.prepared_job_state, row.prepared_job_version,
+      row.prepared_job_workflow_id, row.prepared_job_created_at, row.prepared_job_updated_at, row.project_id, row.job_id);
+    const preparedWorkflow = workflowRecordSchema.parse(row.prepared_workflow_payload);
+    const preparedRequest = requestRecordSchema.parse(row.prepared_request_payload);
+    const profile = completionAcceptanceProfileSchemaV1.parse(profiles.get(plan.acceptanceProfileId));
+    if (sha256Digest(immutableJob(preparedJob)) !== sha256Digest(plan.job) || sha256Digest(plan.input) !== preparedJob.inputDigest
+      || sha256Digest({ ...preparedWorkflow, state: "proposed", version: 0, updatedAt: preparedWorkflow.createdAt }) !== sha256Digest(plan.workflow)
+      || sha256Digest({ ...preparedRequest, state: "draft", version: 0, updatedAt: preparedRequest.createdAt }) !== sha256Digest(plan.request)
+      || profile.tenantId !== plan.tenantId || profile.projectId !== plan.projectId || profile.targetKind !== "document"
+      || sha256Digest(profile) !== plan.acceptanceProfileDigest || Date.parse(profile.createdAt) > Date.parse(plan.plannedAt)) fail();
+    const receipt = savedPlanReceipt(plan);
+    if (receipt.projectId !== row.project_id || receipt.sourceJobId !== row.source_job_id || receipt.jobId === row.source_job_id) fail();
+    output.set(JSON.stringify([row.project_id, row.source_job_id]), receipt);
+  }
+  return output;
+}
 const taskExecutionPlannerDatabases = new WeakMap<object, DatabaseClient>();
 export const SCHEDULE_ASSIGNMENT_SERVICE_ACTOR_V1 = "service:schedule-assignment:v1";
 export const SCHEDULED_CONTEXT_REFERENCE_BLOCK_V1 = "control-room-scheduled-context-references/v1";
@@ -476,7 +583,8 @@ export class TaskExecutionPlanner {
   webOperation(): TaskPlanningOperation {
     return Object.freeze({ tenantId: this.scope.tenantId, workspaceId: this.scope.workspaceId, plan: this.plan.bind(this),
       supportsProject: this.supportsProject.bind(this), templatesForProject: this.templatesForProject.bind(this),
-      readSaved: this.readSaved.bind(this), readSavedContinuation: this.readSavedContinuation.bind(this),
+      readSaved: this.readSaved.bind(this), readSavedMany: this.readSavedMany.bind(this),
+      readSavedContinuation: this.readSavedContinuation.bind(this),
       readPreparedWorker: this.readPreparedWorker.bind(this) });
   }
   supportsProject(projectId: string) {
@@ -508,6 +616,18 @@ export class TaskExecutionPlanner {
   async readSaved(identity: VerifiedWebIdentity, projectId: string, sourceJobId: string) {
     return (await this.readSavedContinuation(identity, projectId, sourceJobId))?.receipt ?? null;
   }
+  /** Fixed-query authenticated saved-plan receipts for a bounded summary page. */
+  async readSavedMany(identity: VerifiedWebIdentity, tasks: readonly { projectId: string; sourceJobId: string }[]) {
+    const unique = [...new Map(tasks.map(task => [JSON.stringify([task.projectId, task.sourceJobId]), task])).values()];
+    for (const task of unique) { localId.parse(task.projectId); localId.parse(task.sourceJobId); }
+    if (!unique.length) return new Map<string, TaskPlanningReceipt | null>();
+    return new WebSessionAuthority(this.db, this.scope, this.clock, "task").authenticated(identity, async (tx, actor) => {
+      for (const task of unique) actor.require("tasks.read", task.projectId);
+      await this.projects.getViewsInSession(tx, actor, unique.map(task => task.projectId));
+      return readSavedTaskPlansInSessionV1(tx, { tenantId: this.scope.tenantId, planIntegrityKey: this.key,
+        reviewIntegrityKey: this.reviewKey, checkpoints: this.checkpoints }, unique);
+    }, { readOnly: true });
+  }
   /** Authenticated source-to-prepared continuation. The status is read from the
    * same canonical job verified against the immutable execution plan. */
   async readSavedContinuation(identity: VerifiedWebIdentity, projectId: string, sourceJobId: string) {
@@ -528,7 +648,7 @@ export class TaskExecutionPlanner {
       const prepared = await this.checkedJob(tx, plan);
       return { receipt: this.receipt(plan), preparedTask: { jobId: prepared.id, state: prepared.state,
         version: prepared.version, updatedAt: prepared.updatedAt } };
-    });
+    }, { readOnly: true });
   }
   /** A deliberately small read model for a prepared task page. It verifies the saved plan
    * before translating its adapter to a display category; it never exposes a worker, template,
@@ -551,7 +671,7 @@ export class TaskExecutionPlanner {
       if (plan.schema === "control-room.task-execution-plan/v15" || plan.schema === "control-room.task-execution-plan/v16") return "hermes" as const;
       if (plan.schema === "control-room.task-execution-plan/v9" || plan.schema === "control-room.task-execution-plan/v10") return "claude" as const;
       return "configured_worker" as const;
-    });
+    }, { readOnly: true });
   }
   /** Server-only conclusion about whether this saved task plan still names one
    * exact locally admitted adapter. It intentionally returns no route detail. */
@@ -577,7 +697,7 @@ export class TaskExecutionPlanner {
       if (!adapter || !this.localAdapterAdmission) return "not_configured" as const;
       return this.localAdapterAdmission.enabledAdapters.filter(value => value === adapter).length === 1
         ? "configured" as const : "not_configured" as const;
-    });
+    }, { readOnly: true });
   }
   private verify(row: Row) {
     const plan = planSchema.parse(row.plan), expected = Buffer.from(this.tag(plan)), actual = Buffer.from(row.auth_tag);
@@ -946,9 +1066,7 @@ export class TaskExecutionPlanner {
     fromContentHash: plan.revision.fromContentHash, reviewId: plan.revision.reviewId, feedbackDigest: plan.revision.feedbackDigest,
     fromTargetId: plan.revision.fromTargetId, revisionNumber: plan.revision.revisionNumber,
     executionAvailability: "requires_separate_assignment_and_approval" as const }; }
-  private receipt(plan: Plan) { return { projectId: plan.projectId, sourceJobId: plan.sourceJobId, jobId: plan.job.id,
-    sourceInputDigest: plan.sourceInputDigest, inputDigest: plan.job.inputDigest, plannedAt: plan.plannedAt,
-    startsWork: false as const, grantsExecutionAuthority: false as const }; }
+  private receipt(plan: Plan) { return savedPlanReceipt(plan); }
   private async jobWith(tx: DatabaseSession, projectId: string, jobId: string, lock = false) {
     const row = (await tx.query<{ payload: unknown; state: string; version: number; workflow_id: string;
       created_at: string | Date; updated_at: string | Date }>(`SELECT payload,state,version,workflow_id,created_at,updated_at

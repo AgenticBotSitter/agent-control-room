@@ -28,6 +28,7 @@ export function PrivateNeedsMe() {
   const [loading, setLoading] = useState(true);
   useEffect(() => {
     if (runtime.mode === "local") { setLoading(false); setData(undefined); setError(undefined); return; }
+    if (runtime.mode !== "hosted") return;
     let live = true;
     void readQueueAttention().then(value => { if (live) setData(value); }, failure => {
       if (live) setError(failure instanceof BrowserRequestError && failure.code === "authentication_required"
