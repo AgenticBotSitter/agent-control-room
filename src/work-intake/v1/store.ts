@@ -61,6 +61,10 @@ export class WorkBatchStoreV1 {
   async authorizeAction(principal: AuthenticatedPrincipal, projectId: string, action: string, now: string): Promise<Authorization> {
     return this.db.transaction(async tx => {
       const result = await this.#authority(tx, principal, projectId, now, action);
+      // The production intake login may only write audit events attributed to
+      // its bound agent identity. Non-agent credentials are still refused, but
+      // are not represented as durable intake-agent activity.
+      if (principal.actorType !== "agent") return result;
       if (!result.allowed) await appendAuditWith(tx, { id: `audit:work-intake-refusal:${randomUUID()}`,
         tenantId: principal.tenantId, projectId, actorId: principal.identityId, actorType: auditActor(principal),
         action: "work_batches.action.refused", targetType: "project", targetId: projectId,

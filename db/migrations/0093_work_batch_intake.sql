@@ -46,6 +46,31 @@ CREATE TABLE work_batch_revisions (
   FOREIGN KEY (tenant_id,edited_by_identity_id) REFERENCES control_identities(tenant_id,id) ON DELETE RESTRICT
 );
 
+-- Bind the intake privilege class to a dedicated marker ACL, whose grantees
+-- are stored by PostgreSQL as role OIDs. The production grants file gives
+-- SELECT on this empty relation only to the intake group. This survives a role
+-- rename and is remapped by PostgreSQL backup/restore rather than persisting a
+-- cluster-local numeric OID in application data.
+CREATE TABLE work_intake_role_anchor (
+  singleton boolean PRIMARY KEY CHECK (singleton)
+);
+REVOKE ALL ON work_intake_role_anchor FROM PUBLIC;
+
+CREATE FUNCTION is_work_intake_session() RETURNS boolean
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path=pg_catalog,public AS $$
+  SELECT EXISTS (
+    SELECT 1
+    FROM pg_class c
+    CROSS JOIN LATERAL aclexplode(coalesce(c.relacl,acldefault('r',c.relowner))) a
+    JOIN pg_roles s ON s.rolname=session_user
+    WHERE c.oid='work_intake_role_anchor'::regclass
+      AND a.grantee<>0 AND a.grantee<>c.relowner
+      AND a.privilege_type='SELECT'
+      AND pg_has_role(s.oid,a.grantee,'member')
+      AND NOT s.rolsuper
+  )
+$$;
+
 CREATE FUNCTION guard_proposal_only_work_batch_insert() RETURNS trigger
 LANGUAGE plpgsql AS $$
 BEGIN
@@ -102,9 +127,7 @@ CREATE TRIGGER work_batch_revisions_truncate_guard BEFORE TRUNCATE ON work_batch
 CREATE FUNCTION guard_work_intake_idempotency_write() RETURNS trigger
 LANGUAGE plpgsql AS $$
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_roles r WHERE r.rolname='control_room_work_intake'
-    AND pg_has_role(session_user,r.oid,'member')
-    AND EXISTS (SELECT 1 FROM pg_roles s WHERE s.rolname=session_user AND NOT s.rolsuper)) THEN
+  IF NOT is_work_intake_session() THEN
     RETURN NEW;
   END IF;
   IF TG_OP='INSERT' THEN
@@ -160,13 +183,9 @@ CREATE POLICY control_idempotency_existing_access ON control_idempotency
   AS PERMISSIVE FOR ALL USING (true) WITH CHECK (true);
 CREATE POLICY control_idempotency_work_intake_scope ON control_idempotency
   AS RESTRICTIVE FOR ALL
-  USING (NOT EXISTS (SELECT 1 FROM pg_roles r WHERE r.rolname='control_room_work_intake'
-      AND pg_has_role(session_user,r.oid,'member')
-      AND EXISTS (SELECT 1 FROM pg_roles s WHERE s.rolname=session_user AND NOT s.rolsuper))
+  USING (NOT is_work_intake_session()
     OR operation_scope ~ '^work-batches\.propose/v1:[A-Za-z0-9][A-Za-z0-9._:-]{2,179}$')
-  WITH CHECK (NOT EXISTS (SELECT 1 FROM pg_roles r WHERE r.rolname='control_room_work_intake'
-      AND pg_has_role(session_user,r.oid,'member')
-      AND EXISTS (SELECT 1 FROM pg_roles s WHERE s.rolname=session_user AND NOT s.rolsuper))
+  WITH CHECK (NOT is_work_intake_session()
     OR operation_scope ~ '^work-batches\.propose/v1:[A-Za-z0-9][A-Za-z0-9._:-]{2,179}$');
 
 CREATE FUNCTION work_intake_canonical_jsonb(input jsonb) RETURNS text
@@ -192,9 +211,7 @@ CREATE FUNCTION guard_work_intake_audit_event_insert() RETURNS trigger
 LANGUAGE plpgsql SET search_path=pg_catalog,public AS $$
 DECLARE material jsonb; expected_digest text; expected_hash text;
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_roles r WHERE r.rolname='control_room_work_intake'
-    AND pg_has_role(session_user,r.oid,'member')
-    AND EXISTS (SELECT 1 FROM pg_roles s WHERE s.rolname=session_user AND NOT s.rolsuper)) THEN
+  IF NOT is_work_intake_session() THEN
     RETURN NEW;
   END IF;
   IF NEW.id !~ '^audit:work-intake[-:]' OR NEW.actor_type<>'agent'
@@ -273,9 +290,7 @@ CREATE TRIGGER audit_events_work_intake_guard BEFORE INSERT ON audit_events
 CREATE FUNCTION enforce_work_intake_audit_event_head() RETURNS trigger
 LANGUAGE plpgsql AS $$
 BEGIN
-  IF EXISTS (SELECT 1 FROM pg_roles r WHERE r.rolname='control_room_work_intake'
-      AND pg_has_role(session_user,r.oid,'member')
-      AND EXISTS (SELECT 1 FROM pg_roles s WHERE s.rolname=session_user AND NOT s.rolsuper)) AND NOT EXISTS (
+  IF is_work_intake_session() AND NOT EXISTS (
     SELECT 1 FROM control_audit_chain_heads h
     WHERE h.tenant_id=NEW.tenant_id AND h.chain_partition=NEW.chain_partition
       AND h.event_count>=NEW.chain_sequence
@@ -294,15 +309,11 @@ CREATE POLICY audit_events_existing_access ON audit_events
   AS PERMISSIVE FOR ALL USING (true) WITH CHECK (true);
 CREATE POLICY audit_events_work_intake_scope ON audit_events
   AS RESTRICTIVE FOR ALL
-  USING (NOT EXISTS (SELECT 1 FROM pg_roles r WHERE r.rolname='control_room_work_intake'
-      AND pg_has_role(session_user,r.oid,'member')
-      AND EXISTS (SELECT 1 FROM pg_roles s WHERE s.rolname=session_user AND NOT s.rolsuper))
+  USING (NOT is_work_intake_session()
     OR (id ~ '^audit:work-intake[-:]' AND action IN (
       'work_batches.propose','work_batches.propose.replayed',
       'work_batches.propose.refused','work_batches.action.refused')))
-  WITH CHECK (NOT EXISTS (SELECT 1 FROM pg_roles r WHERE r.rolname='control_room_work_intake'
-      AND pg_has_role(session_user,r.oid,'member')
-      AND EXISTS (SELECT 1 FROM pg_roles s WHERE s.rolname=session_user AND NOT s.rolsuper))
+  WITH CHECK (NOT is_work_intake_session()
     OR (id ~ '^audit:work-intake[-:]' AND action IN (
       'work_batches.propose','work_batches.propose.replayed',
       'work_batches.propose.refused','work_batches.action.refused')));
@@ -311,9 +322,7 @@ CREATE FUNCTION guard_work_intake_audit_head_write() RETURNS trigger
 LANGUAGE plpgsql AS $$
 DECLARE genesis constant text := 'sha256:' || repeat('0',64);
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_roles r WHERE r.rolname='control_room_work_intake'
-    AND pg_has_role(session_user,r.oid,'member')
-    AND EXISTS (SELECT 1 FROM pg_roles s WHERE s.rolname=session_user AND NOT s.rolsuper)) THEN
+  IF NOT is_work_intake_session() THEN
     RETURN NEW;
   END IF;
   IF TG_OP='INSERT' THEN
@@ -343,9 +352,7 @@ CREATE TRIGGER control_audit_chain_heads_work_intake_guard
 CREATE FUNCTION enforce_work_intake_audit_head_nonempty() RETURNS trigger
 LANGUAGE plpgsql AS $$
 BEGIN
-  IF EXISTS (SELECT 1 FROM pg_roles r WHERE r.rolname='control_room_work_intake'
-      AND pg_has_role(session_user,r.oid,'member')
-      AND EXISTS (SELECT 1 FROM pg_roles s WHERE s.rolname=session_user AND NOT s.rolsuper)) AND NOT EXISTS (
+  IF is_work_intake_session() AND NOT EXISTS (
     SELECT 1 FROM control_audit_chain_heads h JOIN audit_events e
       ON e.tenant_id=h.tenant_id AND e.chain_partition=h.chain_partition
       AND e.chain_sequence=h.event_count AND e.event_hash=h.head_hash
