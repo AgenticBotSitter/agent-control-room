@@ -85,9 +85,9 @@ function result(value: unknown): OwnerTrustedLocalCliExecutionV1 {
     || candidateUsage !== null && !usageResult?.success) return unavailable();
   const usage = candidateUsage === null ? null : usageResult!.success ? usageResult!.data : unavailable();
   const common = { startedAt: startedAt.data, finishedAt: finishedAt.data, usage };
-  if (candidate.kind === "completed" && (keys.length === 2 || keys.length === 6) && typeof candidate.text === "string")
+  if (candidate.kind === "completed" && (keys.length === 2 || keys.length === 5) && typeof candidate.text === "string")
     return Object.freeze({ kind: "completed" as const, text: text.parse(candidate.text), ...common });
-  if (candidate.kind === "failed" && (keys.length === 2 || keys.length === 6) && typeof candidate.reason === "string"
+  if (candidate.kind === "failed" && (keys.length === 2 || keys.length === 5) && typeof candidate.reason === "string"
     && candidate.reason.length >= 1 && candidate.reason.length <= 240) return Object.freeze({ kind: "failed" as const, reason: candidate.reason, ...common });
   return unavailable();
 }
