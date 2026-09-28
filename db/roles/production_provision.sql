@@ -93,3 +93,20 @@ GRANT control_room_schema_owner TO control_room_migrator;
 GRANT control_room_application TO control_room_app;
 GRANT control_room_schedule_admissions TO control_room_scheduler;
 GRANT control_room_work_intake TO control_room_work_intake_agent;
+
+-- Restricted services never need session-local relations. Remove PostgreSQL's
+-- default PUBLIC grant first, then make the denial explicit for every service
+-- group/login provisioned here. The database owner keeps its inherent owner
+-- authority; the schema owner and migrator use only durable migration objects.
+DO $$
+BEGIN
+  EXECUTE format('REVOKE TEMPORARY ON DATABASE %I FROM PUBLIC', current_database());
+  EXECUTE format('REVOKE TEMPORARY ON DATABASE %I FROM control_room_application', current_database());
+  EXECUTE format('REVOKE TEMPORARY ON DATABASE %I FROM control_room_app', current_database());
+  EXECUTE format('REVOKE TEMPORARY ON DATABASE %I FROM control_room_schedule_admissions', current_database());
+  EXECUTE format('REVOKE TEMPORARY ON DATABASE %I FROM control_room_scheduler', current_database());
+  EXECUTE format('REVOKE TEMPORARY ON DATABASE %I FROM control_room_github_broker', current_database());
+  EXECUTE format('REVOKE TEMPORARY ON DATABASE %I FROM control_room_work_intake', current_database());
+  EXECUTE format('REVOKE TEMPORARY ON DATABASE %I FROM control_room_work_intake_agent', current_database());
+END;
+$$;
