@@ -142,7 +142,7 @@ jobs:
         run: node scripts/check-test-quarantine.mjs
       - run: pnpm install --frozen-lockfile --ignore-scripts
       - name: Test hygiene guards
-        run: npm exec --yes --package=squawk-cli@2.61.0 -- node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/test-clock.test.ts tests/test-quarantine.test.mjs tests/migration-change-check.test.mjs
+        run: pnpm run test:hygiene
       - name: Type check contributor demo
         run: pnpm run check:demo
       - name: Type check server build

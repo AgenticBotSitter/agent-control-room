@@ -104,7 +104,7 @@
     "db:verify": "node scripts/verify-migration-ledger.mjs",
     "check:test-quarantine": "node scripts/check-test-quarantine.mjs",
     "check:migrations": "node scripts/check-migration-changes.mjs",
-    "test:hygiene": "node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/test-clock.test.ts tests/test-quarantine.test.mjs tests/migration-change-check.test.mjs",
+    "test:hygiene": "npm exec --yes --package=squawk-cli@2.61.0 -- node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/test-clock.test.ts tests/test-quarantine.test.mjs tests/migration-change-check.test.mjs",
     "test:quarantined": "node scripts/run-tests-with-quarantine.mjs --quarantined",
     "check:database:vps": "node --import tsx scripts/check-mac-vps-database.ts",
     "mac:check-database": "node --import tsx scripts/mac-local/check-database.ts",
