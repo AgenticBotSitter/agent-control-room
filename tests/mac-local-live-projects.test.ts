@@ -42,7 +42,8 @@ test("startup provisioning adds the current profile beside an old-shape profile 
   assert.ok(rows.has(`profile:mac-local-owner-review:v2:${project.projectId}`));
   assert.equal(templates.snapshot().length, 3, "startup projects publish all three task templates");
   assert.equal(scenarios.snapshot().length, 1, "startup projects publish the automatic text check");
-  assert.equal(humanVerifications.list().length, 1, "startup projects publish the owner observation descriptor");
+  assert.equal(humanVerifications.list().length, 2,
+    "startup projects publish current and immutable legacy owner observation descriptors");
   assert.deepEqual(live.projectIds(), [project.projectId]);
 
   const replayedStartup = createMacLocalLiveProjectProvisionerV1({ db: {} as DatabaseClient,
@@ -57,7 +58,7 @@ test("startup provisioning adds the current profile beside an old-shape profile 
   await replayedStartup.initialize();
   assert.equal(templates.snapshot().length, 3, "production-shaped preseeded templates replay without growth");
   assert.equal(scenarios.snapshot().length, 1, "production-shaped preseeded scenarios replay without growth");
-  assert.equal(humanVerifications.list().length, 1, "production-shaped preseeded human descriptors replay without growth");
+  assert.equal(humanVerifications.list().length, 2, "production-shaped preseeded human descriptors replay without growth");
 });
 
 test("live Mac-local projects register once under concurrency and exceed the former five-project cap", async () => {
@@ -79,7 +80,7 @@ test("live Mac-local projects register once under concurrency and exceed the for
   assert.equal(new Set(registered).size, 7);
   assert.equal(templates.snapshot().length, 21);
   assert.equal(scenarios.snapshot().length, 7);
-  assert.equal(humanVerifications.list().length, 7);
+  assert.equal(humanVerifications.list().length, 14);
   const planner = new TaskExecutionPlanner(db, { tenantId: "tenant:local", workspaceId: "workspace:local" }, {
     templateRegistry: templates, integrityKey: new Uint8Array(32).fill(1), reviewIntegrityKey: new Uint8Array(32).fill(2),
     checkpoints: { read: async () => undefined, initialize: async () => {}, advance: async () => {} },

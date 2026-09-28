@@ -48,7 +48,6 @@ async function state(db: DatabaseClient, jobIds: readonly string[], next: "succe
 
 test("task list, needs-me and Home keep a fixed query budget as the page grows", async t => {
   const f = await ownerReviewFixture(); t.after(f.close);
-  await state(f.db, [binding.jobId], "succeeded", 3);
 
   const measure = async (delayMs: number, read: (tasks: WebTaskService) => Promise<unknown>) => {
     const watched = observed(f.db, delayMs);
@@ -60,9 +59,16 @@ test("task list, needs-me and Home keep a fixed query budget as the page grows",
     list: (tasks: WebTaskService) => tasks.list(f.identity, binding.projectId),
     attention: (tasks: WebTaskService) => tasks.attention(f.identity),
     home: (tasks: WebTaskService) => tasks.home(f.identity),
+    overview: (tasks: WebTaskService) => tasks.projectOverview(f.identity, binding.projectId),
   };
   const one = { list: await measure(0, reads.list), attention: await measure(0, reads.attention),
-    home: await measure(0, reads.home) };
+    home: await measure(0, reads.home), overview: await measure(0, reads.overview) };
+  const activeList = await f.tasks.list(f.identity, binding.projectId), activeHome = await f.tasks.home(f.identity);
+  assert.equal(activeList.tasks.find(task => task.jobId === binding.jobId)?.state, "succeeded",
+    "the canonical leased task is displayed as completed from its authenticated latest run and result");
+  assert.equal(activeHome.active.some(task => task.jobId === binding.jobId), false,
+    "a displayed-completed task is not retained in Home active work");
+  assert.equal(activeHome.recentResults.find(result => result.task.jobId === binding.jobId)?.task.state, "succeeded");
 
   const source = (await f.db.query<{ payload: Record<string, unknown> }>(
     "SELECT payload FROM control_jobs WHERE tenant_id=$1 AND id=$2", [binding.tenantId, binding.jobId])).rows[0]!.payload;
@@ -72,11 +78,11 @@ test("task list, needs-me and Home keep a fixed query budget as the page grows",
   await f.db.query("UPDATE control_workflows SET payload=$3::jsonb WHERE tenant_id=$1 AND id=$2",
     [binding.tenantId, "workflow:test", JSON.stringify({ ...workflow, jobIds: [binding.jobId, ...extra] })]);
   for (const jobId of extra) {
-    const payload = { ...source, id: jobId, state: "succeeded", version: 3, updatedAt: at(7003) };
+    const payload = { ...source, id: jobId, state: "leased", version: 2, updatedAt: at(7002) };
     await f.db.query(`INSERT INTO control_jobs(id,tenant_id,workflow_id,project_id,state,version,priority,required_capability,
-      authority_digest,payload,created_at,updated_at) SELECT $1,tenant_id,workflow_id,project_id,'succeeded',3,priority,
+      authority_digest,payload,created_at,updated_at) SELECT $1,tenant_id,workflow_id,project_id,'leased',2,priority,
       required_capability,authority_digest,$2::jsonb,created_at,$3 FROM control_jobs WHERE tenant_id=$4 AND id=$5`,
-    [jobId, JSON.stringify(payload), at(7003), binding.tenantId, binding.jobId]);
+    [jobId, JSON.stringify(payload), at(7002), binding.tenantId, binding.jobId]);
   }
 
   const list = await measure(50, reads.list);
@@ -84,6 +90,9 @@ test("task list, needs-me and Home keep a fixed query budget as the page grows",
   assert.ok(list.queries <= 9, `list exceeded the nine-query remote budget: ${list.queries}`);
   assert.ok(list.queries * 50 < 500, `list network budget exceeded 500ms: ${list.queries * 50}`);
   assert.ok(list.elapsedMs < sequentialWallGuardMs, `list exceeded the injected-latency wall guard: ${list.elapsedMs}`);
+  const overview = await measure(0, reads.overview);
+  assert.equal(overview.queries, one.overview.queries,
+    `project overview query count grew: ${JSON.stringify({ one: one.overview, ten: overview })}`);
 
   await state(f.db, extra, "proposed", 4);
   const attention = await measure(50, reads.attention);
@@ -101,8 +110,8 @@ test("task list, needs-me and Home keep a fixed query budget as the page grows",
   assert.ok(home.queries * 50 < 500, `Home network budget exceeded 500ms: ${home.queries * 50}`);
   assert.ok(home.elapsedMs < sequentialWallGuardMs, `Home exceeded the injected-latency wall guard: ${home.elapsedMs}`);
   t.diagnostic(JSON.stringify({ injectedLatencyMs: 50, oneTaskQueries: {
-    list: one.list.queries, attention: one.attention.queries, home: one.home.queries,
-  }, tenTask: { list, attention, home } }));
+    list: one.list.queries, attention: one.attention.queries, home: one.home.queries, overview: one.overview.queries,
+  }, tenTask: { list, attention, home, overview } }));
 });
 
 test("needs-me suppresses authentic saved plans in-session without hiding unplanned proposals or growing its query budget", async t => {

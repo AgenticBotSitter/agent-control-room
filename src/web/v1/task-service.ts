@@ -41,6 +41,7 @@ import { taskModelOptionsV1, validateRequestedTaskModelV1, type TaskModelCatalog
 import { readSavedTaskPlansInSessionV1, readTaskRevisionLinksV1, savedTaskPlanProfileIdsV1,
   type SavedTaskPlanRowV1 } from "./task-execution-planner";
 import { issueTaskFileAccessV1, verifyTaskFileAccessV1 } from "./task-file-access";
+import { projectTaskDisplayStateV1 } from "./task-display-state";
 
 /** Joins existing stores to the caller-owned session transaction. No nested BEGIN/COMMIT and no
  * new authority: this closure stays inside authenticated(). The outer freshness check owns commit. */
@@ -205,7 +206,7 @@ export class WebTaskService {
         AND ($3::text IS NULL OR j.id COLLATE "C">$3 COLLATE "C") ORDER BY j.id COLLATE "C" LIMIT 51`,
       [this.scope.tenantId, projectId, after ?? null])).rows;
       const summaries = rows.slice(0, 50).map(row => validated(row, this.scope.tenantId, projectId).summary);
-      const tasks = await this.withQualityStatuses(tx, actor, summaries);
+      const tasks = await this.withDisplayedStates(tx, actor, summaries);
       return taskPageSchema.parse({ project, tasks, nextCursor: rows.length > 50 ? tasks.at(-1)!.jobId : null,
         canPropose: project.lifecycle === "active" && actor.can("tasks.propose", projectId), dispatch: "not_connected", observedAt: actor.now,
         ...(this.modelCatalog ? { modelOptions: taskModelOptionsV1(this.modelCatalog) } : {}) });
@@ -385,7 +386,10 @@ export class WebTaskService {
       const revisionLinks = this.taskPlanIntegrityKey
         ? await readTaskRevisionLinksV1(tx, this.taskPlanIntegrityKey, this.scope.tenantId, projectId, jobId)
         : { previousJobId: null, nextJobId: null, revisionNumber: 0 };
-      return taskDetailSchema.parse({ project, task: await this.withQualityStatus(tx, actor, summary),
+      const latestAttempt = attempts[0], latestRun = latestAttempt?.runs[0];
+      return taskDetailSchema.parse({ project, task: await this.withDisplayedState(tx, actor, summary,
+        latestAttempt && latestRun ? { attemptId: latestAttempt.attemptId, attemptState: latestAttempt.state,
+          runId: latestRun.runId, runState: latestRun.state } : undefined),
         instructions: request.objective, inputDigest: job.inputDigest,
         modelSelection: modelRow ? { workerKind: modelRow.worker_kind, selectionKey: modelRow.selection_key,
           model: modelRow.model, effort: modelRow.effort, provider: modelRow.provider, profile: modelRow.profile,
@@ -517,19 +521,40 @@ export class WebTaskService {
   /** "Accepted" is derived only from authenticated completion-gate evidence.
    * Execution success alone remains "Completed". Omitted result or review rows
    * fail closed so a partial projection can never overstate acceptance. */
-  private async withQualityStatus(tx: DatabaseSession, actor: WebActor, summary: TaskSummary): Promise<TaskSummary> {
-    if (summary.state !== "succeeded" || !this.resultStore || !this.reviewConfig
+  private async withDisplayedState(tx: DatabaseSession, actor: WebActor, summary: TaskSummary,
+    knownLatestAttemptOutcome?: { attemptId: string; attemptState: string; runId: string; runState: string }): Promise<TaskSummary> {
+    if (!["leased", "running", "waiting_approval", "succeeded"].includes(summary.state) || !this.resultStore
       || !actor.can("tasks.results.read", summary.projectId)) return summary;
     try {
       const page = await this.resultPage(tx, actor, summary.projectId, summary.jobId);
-      const accepted = page.items.length > 0 && !page.additionalResultsOmitted && !page.additionalTargetsOmitted
-        && page.reviews.every(review => !review.additionalEvidenceOmitted)
-        && page.items.every(item => page.reviews.some(review => review.status === "ready"
-          && review.matchingArtifactIds.includes(item.artifactId) && review.contentHash === item.contentHash));
-      return accepted ? taskSummarySchema.parse({ ...summary, qualityStatus: "accepted" }) : summary;
+      let latestAttemptOutcome = knownLatestAttemptOutcome;
+      if (!latestAttemptOutcome && summary.state !== "succeeded" && this.harnessKey) {
+        const attemptRow = (await tx.query<{ id: string; state: string; attempt_number: number; payload: unknown }>(
+          `SELECT id,state,attempt_number,payload FROM control_attempts WHERE tenant_id=$1 AND job_id=$2
+           ORDER BY attempt_number DESC LIMIT 1`, [this.scope.tenantId, summary.jobId])).rows[0];
+        if (attemptRow) {
+          const attempt = attemptRecordSchema.parse(attemptRow.payload);
+          if (attempt.tenantId !== this.scope.tenantId || attempt.jobId !== summary.jobId || attempt.id !== attemptRow.id
+            || attempt.state !== attemptRow.state || attempt.attemptNumber !== Number(attemptRow.attempt_number))
+            throw new Error("task_attempt_unavailable");
+          const runRow = (await tx.query<{ id: string }>(`SELECT id FROM control_harness_runs WHERE tenant_id=$1
+            AND project_id=$2 AND job_id=$3 AND attempt_id=$4 ORDER BY created_at DESC,id DESC LIMIT 1`,
+          [this.scope.tenantId, summary.projectId, summary.jobId, attempt.id])).rows[0];
+          if (runRow) {
+            const inspected = await new HarnessRunStoreV1(joined(tx), this.harnessKey).inspect(this.scope.tenantId, runRow.id);
+            if (!inspected || inspected.run.projectId !== summary.projectId || inspected.run.jobId !== summary.jobId
+              || inspected.run.attemptId !== attempt.id || inspected.run.nodeId !== attempt.nodeId)
+              throw new Error("task_run_unavailable");
+            latestAttemptOutcome = { attemptId: attempt.id, attemptState: attempt.state,
+              runId: inspected.run.id, runState: inspected.run.state };
+          }
+        }
+      }
+      return projectTaskDisplayStateV1(summary, { latestAttemptOutcome, results: page.items, reviews: page.reviews,
+        additionalResultsOmitted: page.additionalResultsOmitted, additionalTargetsOmitted: page.additionalTargetsOmitted });
     } catch {
-      // Acceptance is optional enrichment on these task projections. Failure to
-      // authenticate it removes the claim without hiding the underlying task.
+      // Display completion and acceptance are optional enrichment. Failure to
+      // authenticate either retains the canonical task state.
       return summary;
     }
   }
@@ -541,7 +566,8 @@ export class WebTaskService {
     tasks: readonly { projectId: string; jobId: string }[], savedProfiles?: { ids: readonly string[]; records?: ReadonlyMap<string, unknown> }) {
     type Projection = { resultSource: "configured" | "not_configured"; reviewSource: "configured" | "not_configured";
       items: ReturnType<typeof resultMetadata>[]; reviews: ReturnType<typeof taskReviewEvidenceSchema.parse>[];
-      additionalResultsOmitted: boolean; additionalTargetsOmitted: boolean; canReadContent: boolean };
+      additionalResultsOmitted: boolean; additionalTargetsOmitted: boolean; canReadContent: boolean;
+      latestAttemptOutcome?: { attemptId: string; attemptState: string; runId: string; runState: string } };
     const unique = [...new Map(tasks.map(task => [taskReviewPlanKeyV1(task.projectId, task.jobId), task])).values()];
     const output = new Map<string, Projection>();
     if (!unique.length && !savedProfiles?.ids.length) return output;
@@ -587,30 +613,31 @@ export class WebTaskService {
         grantsApproval: false, grantsExecutionAuthority: false }));
       output.set(key, { resultSource: "configured", reviewSource: this.reviewConfig ? "configured" : "not_configured",
         items: page.receipts.map(resultMetadata), reviews, additionalResultsOmitted: page.additionalResultsOmitted,
-        additionalTargetsOmitted: review.additionalTargetsOmitted, canReadContent: actor.can("tasks.results.read", task.projectId) });
+        additionalTargetsOmitted: review.additionalTargetsOmitted, canReadContent: actor.can("tasks.results.read", task.projectId),
+        ...(batch.latestAttemptOutcomes.get(key) ? { latestAttemptOutcome: batch.latestAttemptOutcomes.get(key)! } : {}) });
     }
     return output;
   }
 
-  private async withQualityStatuses(tx: DatabaseSession, actor: WebActor, summaries: readonly TaskSummary[]): Promise<TaskSummary[]> {
-    const eligible = summaries.filter(summary => summary.state === "succeeded" && this.resultStore && this.reviewConfig
+  private async withDisplayedStates(tx: DatabaseSession, actor: WebActor, summaries: readonly TaskSummary[]): Promise<TaskSummary[]> {
+    const eligible = summaries.filter(summary => ["leased", "running", "waiting_approval", "succeeded"].includes(summary.state)
+      && this.resultStore
       && actor.can("tasks.results.read", summary.projectId));
     if (!eligible.length) return [...summaries];
     let evidence: Awaited<ReturnType<WebTaskService["batchResultEvidence"]>>;
     try { evidence = await this.batchResultEvidence(tx, actor, eligible); }
     catch { return [...summaries]; }
-    return this.applyQualityEvidence(summaries, evidence);
+    return this.applyDisplayEvidence(summaries, evidence);
   }
 
-  private applyQualityEvidence(summaries: readonly TaskSummary[],
+  private applyDisplayEvidence(summaries: readonly TaskSummary[],
     evidence: Awaited<ReturnType<WebTaskService["batchResultEvidence"]>>): TaskSummary[] {
     return summaries.map(summary => {
       const page = evidence.get(taskReviewPlanKeyV1(summary.projectId, summary.jobId));
-      const accepted = !!page && page.items.length > 0 && !page.additionalResultsOmitted && !page.additionalTargetsOmitted
-        && page.reviews.every(review => !review.additionalEvidenceOmitted)
-        && page.items.every(item => page.reviews.some(review => review.status === "ready"
-          && review.matchingArtifactIds.includes(item.artifactId) && review.contentHash === item.contentHash));
-      return accepted ? taskSummarySchema.parse({ ...summary, qualityStatus: "accepted" }) : summary;
+      if (!page) return summary;
+      return projectTaskDisplayStateV1(summary, { latestAttemptOutcome: page.latestAttemptOutcome,
+        results: page.items, reviews: page.reviews, additionalResultsOmitted: page.additionalResultsOmitted,
+        additionalTargetsOmitted: page.additionalTargetsOmitted });
     });
   }
 
@@ -847,7 +874,7 @@ export class WebTaskService {
           JOIN projects p ON p.tenant_id=j.tenant_id AND p.id=j.project_id
           WHERE j.tenant_id=$1 AND p.workspace_id=$6 AND ${visibleProject}
             AND j.state IN ('leased','running','waiting_approval')
-          ORDER BY j.updated_at DESC,j.id COLLATE "C" LIMIT 11
+          ORDER BY j.updated_at DESC,j.id COLLATE "C" LIMIT 251
         ), result_rows AS (
           SELECT 'result'::text AS home_kind,a.artifact_id,${selection}
           JOIN control_native_artifact_receipts a ON a.tenant_id=j.tenant_id AND a.project_id=j.project_id AND a.job_id=j.id
@@ -859,15 +886,15 @@ export class WebTaskService {
       [this.scope.tenantId, ...sourceParameters, this.scope.workspaceId, canReadResults])).rows;
       const activeRows = homeRows.filter(row => row.home_kind === "active");
       await this.projects.getViewsInSession(tx, actor, homeRows.map(row => row.project_id));
-      const active = [];
-      for (const row of activeRows.slice(0, 10)) {
+      const activeSummaries = [];
+      for (const row of activeRows.slice(0, 250)) {
         actor.require("tasks.read", row.project_id);
-        active.push(validated(row, this.scope.tenantId, row.project_id).summary);
+        activeSummaries.push(validated(row, this.scope.tenantId, row.project_id).summary);
       }
-
       const recentResults: { task: ReturnType<typeof validated>["summary"];
         artifact: ReturnType<typeof resultMetadata> }[] = [];
       let additionalResultsOmitted = false;
+      let projectedActive = [...activeSummaries];
       if (this.resultStore && canReadResults) {
         const candidates = homeRows.filter((row): row is typeof row & { artifact_id: string } =>
           row.home_kind === "result" && row.artifact_id !== null);
@@ -875,8 +902,10 @@ export class WebTaskService {
           actor.require("tasks.read", candidate.project_id); actor.require("tasks.results.read", candidate.project_id);
           return validated(candidate, this.scope.tenantId, candidate.project_id).summary;
         });
-        const evidence = await this.batchResultEvidence(tx, actor, summaries);
-        const enriched = this.applyQualityEvidence(summaries, evidence);
+        const displaySummaries = [...activeSummaries, ...summaries];
+        const evidence = await this.batchResultEvidence(tx, actor, displaySummaries);
+        projectedActive = this.applyDisplayEvidence(activeSummaries, evidence);
+        const enriched = this.applyDisplayEvidence(summaries, evidence);
         for (let index = 0; index < selected.length; index += 1) {
           const candidate = selected[index]!, page = evidence.get(taskReviewPlanKeyV1(candidate.project_id, candidate.id));
           const receipt = page?.items.find(item => item.artifactId === candidate.artifact_id);
@@ -885,8 +914,10 @@ export class WebTaskService {
         }
         additionalResultsOmitted = candidates.length > 10;
       }
+      const remainingActive = projectedActive.filter(task => ["leased", "running", "waiting_approval"].includes(task.state));
+      const active = remainingActive.slice(0, 10);
       return taskHomeActivitySchema.parse({ active, recentResults,
-        additionalActiveOmitted: activeRows.length > 10, additionalResultsOmitted,
+        additionalActiveOmitted: remainingActive.length > 10 || activeRows.length > 250, additionalResultsOmitted,
         resultSource: !this.resultStore ? "not_configured" : canReadResults ? "configured" : "not_authorized",
         observedAt: actor.now, startsWork: false });
     });
@@ -899,21 +930,34 @@ export class WebTaskService {
     return this.authority.authenticated(identity, async (tx, actor) => {
       actor.require("tasks.read", projectId);
       await this.projects.getViewInSession(tx, actor, projectId);
-      const read = async (states: readonly string[] | undefined, limit: number) => {
+      const read = async (states: readonly string[] | undefined, maximum: number) => {
         const parameters: unknown[] = [this.scope.tenantId, projectId];
         const stateClause = states ? ` AND j.state=ANY($3::text[])` : "";
         if (states) parameters.push(states);
-        const rows = (await tx.query<TaskRow>(`SELECT ${selection} WHERE j.tenant_id=$1 AND j.project_id=$2${stateClause}
-          ORDER BY j.updated_at DESC,j.id COLLATE "C" LIMIT ${limit + 1}`, parameters)).rows;
-        return { tasks: rows.slice(0, limit).map(row => validated(row, this.scope.tenantId, projectId).summary),
-          omitted: rows.length > limit };
+        const limitParameter = parameters.push(maximum + 1);
+        return (await tx.query<TaskRow>(`SELECT ${selection} WHERE j.tenant_id=$1 AND j.project_id=$2${stateClause}
+          ORDER BY j.updated_at DESC,j.id COLLATE "C" LIMIT $${limitParameter}`, parameters)).rows;
       };
-      const current = await read(["proposed", "ready", "leased", "running", "waiting_approval", "orphaned"], 10);
-      const reviews = await read(["waiting_approval"], 5);
-      const recent = await read(undefined, 10);
-      return taskProjectOverviewSchema.parse({ projectId, current: current.tasks, awaitingReview: reviews.tasks,
-        recent: recent.tasks, additionalCurrentOmitted: current.omitted, additionalReviewsOmitted: reviews.omitted,
-        additionalRecentOmitted: recent.omitted, observedAt: actor.now, startsWork: false });
+      const currentStates = ["proposed", "ready", "leased", "running", "waiting_approval", "orphaned"];
+      const currentRows = await read(currentStates, 250), reviewRows = await read(["waiting_approval"], 250),
+        recentRows = await read(undefined, 10);
+      const summaries = (rows: readonly TaskRow[]) => rows.map(row => validated(row, this.scope.tenantId, projectId).summary);
+      const currentSummaries = summaries(currentRows.slice(0, 250)), reviewSummaries = summaries(reviewRows.slice(0, 250)),
+        recentSummaries = summaries(recentRows.slice(0, 10));
+      const displayCandidates = [...currentSummaries, ...reviewSummaries, ...recentSummaries]
+        .filter(summary => ["leased", "running", "waiting_approval", "succeeded"].includes(summary.state)
+          && this.resultStore && actor.can("tasks.results.read", summary.projectId));
+      const displayEvidence = displayCandidates.length ? await this.batchResultEvidence(tx, actor, displayCandidates) : new Map();
+      const projectedCurrent = this.applyDisplayEvidence(currentSummaries, displayEvidence)
+        .filter(task => currentStates.includes(task.state));
+      const projectedReviews = this.applyDisplayEvidence(reviewSummaries, displayEvidence)
+        .filter(task => task.state === "waiting_approval");
+      const projectedRecent = this.applyDisplayEvidence(recentSummaries, displayEvidence);
+      return taskProjectOverviewSchema.parse({ projectId, current: projectedCurrent.slice(0, 10),
+        awaitingReview: projectedReviews.slice(0, 5), recent: projectedRecent,
+        additionalCurrentOmitted: projectedCurrent.length > 10 || currentRows.length > 250,
+        additionalReviewsOmitted: projectedReviews.length > 5 || reviewRows.length > 250,
+        additionalRecentOmitted: recentRows.length > 10, observedAt: actor.now, startsWork: false });
     });
   }
 
