@@ -777,21 +777,25 @@ test("a PG-present lane that skips its cluster tests fails rather than passing",
   const { execFile } = await import("node:child_process");
   const { promisify } = await import("node:util");
   const run = promisify(execFile);
-  const probeSource = (skipped: boolean) => `
+  const probeSource = (skipped: boolean) => {
+    // The skip is built in plain JS and interpolated, rather than embedding a
+    // quoted literal inside this template literal's own interpolation.
+    const guardExpression = skipped
+      ? '{ ...needsPgOrFail(), skip: "skipped" }'
+      : "needsPgOrFail()";
+    return `
     import assert from "node:assert/strict";
     import test from "node:test";
     const PG = true;
     let required = 0, ran = 0;
     const needsPgOrFail = () => { if (PG) { required += 1; return undefined; } return { skip: "x" }; };
-    // ${skipped
-      ? "The vacuous case: the guard returns undefined, so node runs the body."
-      : "The real case: the cluster test is skipped, so the body never runs."}
-    test("a cluster test", ${skipped ? "undefined" : '{ skip: "skipped" }'}, async () => { ran += 1; });
+    test("a cluster test", ${guardExpression}, async () => { ran += 1; });
     test("the counter catches a required-but-unrun test", () => {
       assert.ok(required > 0, "a cluster test is registered");
       assert.equal(ran, required, "every required cluster test must run");
     });
   `;
+  };
   const execute = async (skipped: boolean) => {
     const probe = join(await temporary("attack-kit-skipprobe-"), `probe-${skipped}.test.ts`);
     await writeFile(probe, probeSource(skipped));
