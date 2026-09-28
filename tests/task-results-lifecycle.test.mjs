@@ -70,10 +70,18 @@ test('result reader ignores late content after leaving its task', async () => {
     await act(async () => pending[4].resolve(Response.json(page('job:second'))));
     await act(async () => [...document.querySelectorAll('button')].find(button => button.textContent === 'Read result').click());
     await act(async () => pending[5].resolve(Response.json(page('job:second'))));
-    await act(async () => {
-      pending[6].resolve(new Response(protectedText, { headers: { 'content-type': 'text/plain' } }));
-      await new Promise(resolve => setTimeout(resolve, 20));
-    });
+    await act(async () => pending[6].resolve(new Response(protectedText, { headers: { 'content-type': 'text/plain' } })));
+    // Wait for the opened content to actually render instead of sleeping a
+    // fixed 20ms and hoping the render had already landed. The deadline only
+    // bounds the failure message; the exit condition is the rendered state, so
+    // a loaded runner can no longer turn a slow render into a false failure.
+    // The poll must sit outside the act scope: React applies the settled read
+    // when that scope closes, so polling inside it would never observe it.
+    const deadline = Date.now() + 5_000;
+    while (!/PRIVATE FIRST TASK CONTENT/.test(document.body.textContent)) {
+      if (Date.now() > deadline) assert.fail('result content was never rendered after the content read settled');
+      await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)); });
+    }
     assert.match(document.body.textContent, /PRIVATE FIRST TASK CONTENT/);
     await act(async () => dom.window.dispatchEvent(new dom.window.Event('focus')));
     assert.doesNotMatch(document.body.textContent, /PRIVATE FIRST TASK CONTENT/);
