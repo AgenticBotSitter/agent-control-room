@@ -7,7 +7,7 @@ import { readBrowserJson } from "../../src/web/v1/browser-json";
 import { workBatchProposalSchemaV1, type WorkBatchProposalV1 } from "../../src/work-intake/v1/schemas";
 import { workBatchOwnerCommandSchemaV1, workBatchOwnerPageSchemaV1, workBatchOwnerReceiptSchemaV1,
   workBatchOwnerViewSchemaV1, type WorkBatchOwnerViewV1 } from "../../src/work-intake/v1/owner-schemas";
-import { pipelineRunPageSchemaV1, pipelineRunViewSchemaV1, type PipelineRunViewV1 } from "../../src/pipelines/v1";
+import { pipelineRunPageSchemaV1, pipelineRunViewSchemaV1, type PipelineRunViewV1 } from "../../src/pipelines/v1/schemas";
 import { PrivateHeader } from "./private-header";
 import { ProjectNavigation } from "./project-navigation";
 import { ConfiguredTimestamp } from "./configured-timestamp";
