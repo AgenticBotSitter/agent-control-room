@@ -1,0 +1,63 @@
+import { expect, type Locator, type Page, type Route } from "@playwright/test";
+
+const reviewOptionsPath = /\/reviews\/[^/?#]+$/;
+
+type DeferredReviewLoad = Readonly<{
+  waitUntilHeld: () => Promise<void>;
+  release: () => void;
+  dispose: () => Promise<void>;
+}>;
+
+/**
+ * Test-only load gate. It holds one options read until the page has rendered
+ * its product loading marker, rather than pausing for an arbitrary duration.
+ */
+export async function deferNextOwnerReviewLoad(page: Page): Promise<DeferredReviewLoad> {
+  let held = false, release!: () => void, markHeld!: () => void;
+  const released = new Promise<void>(resolve => { release = resolve; });
+  const heldOnce = new Promise<void>(resolve => { markHeld = resolve; });
+  const handler = async (route: Route) => {
+    if (held || route.request().method() !== "GET" || !reviewOptionsPath.test(new URL(route.request().url()).pathname)) {
+      await route.continue();
+      return;
+    }
+    held = true;
+    markHeld();
+    await released;
+    await route.continue();
+  };
+  await page.route("**/reviews/**", handler);
+  return Object.freeze({
+    waitUntilHeld: () => heldOnce,
+    release,
+    dispose: () => page.unroute("**/reviews/**", handler),
+  });
+}
+
+export async function ownerReviewControlsWhenReady(page: Page): Promise<Readonly<{
+  panel: Locator; attestation: Locator; accept: Locator;
+}>> {
+  const panel = page.getByRole("region", { name: "Owner quality decision" });
+  await expect(panel).toHaveAttribute("data-state", "ready");
+  await expect(panel.getByRole("heading", { name: "Review this exact result", exact: true })).toBeVisible();
+  const attestation = panel.getByLabel("I read it and it’s correct");
+  const accept = panel.getByRole("button", { name: "Accept", exact: true });
+  await expect(attestation).toBeEnabled();
+  return Object.freeze({ panel, attestation, accept });
+}
+
+/** Opens a result while proving the owner-review panel exposes its loading state before it becomes ready. */
+export async function openResultWithDeferredOwnerReview(page: Page): Promise<void> {
+  const deferred = await deferNextOwnerReviewLoad(page);
+  try {
+    await page.getByRole("button", { name: "Read result" }).first().click();
+    await expect(page.getByRole("heading", { name: "Received result" })).toBeVisible();
+    await deferred.waitUntilHeld();
+    await expect(page.getByRole("status", { name: "Loading owner review…", exact: true }))
+      .toHaveAttribute("data-state", "loading");
+    deferred.release();
+  } finally {
+    deferred.release();
+    await deferred.dispose();
+  }
+}

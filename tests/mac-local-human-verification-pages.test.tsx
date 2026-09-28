@@ -59,6 +59,7 @@ test("owner acceptance presents the configured read-and-correct attestation besi
       instructionsDigest }, grantsExecutionAuthority: false };
   const markup = renderToStaticMarkup(<OwnerReviewPanel options={reviewOptions} feedback="" pending={false} held={false}
     onFeedback={() => {}} onRecord={() => {}} />);
+  assert.match(markup, /data-state="ready"/);
   assert.match(markup, /I read it and it’s correct/);
   assert.match(markup, />Accept</);
   assert.match(markup, /Request changes/);
@@ -99,6 +100,7 @@ test("a delayed revised-target read binds the newest revision and enables Accept
     assert.deepEqual(requestedTargets, ["target:revised"]);
     assert.match(dom.window.document.body.textContent ?? "", /Revision 1 · Review in progress/);
     assert.match(dom.window.document.body.textContent ?? "", /Loading owner review/);
+    assert.ok(dom.window.document.querySelector('[data-state="loading"]'));
 
     resolveOptions({ ...binding, artifactId: artifact.artifactId, targetId: "target:revised",
       canReview: true, availability: "available", ownReview: null, acceptanceAttestation: {
@@ -108,6 +110,7 @@ test("a delayed revised-target read binds the newest revision and enables Accept
     await React.act(async () => { await delayedOptions; });
     const accept = [...dom.window.document.querySelectorAll("button")].find(button => button.textContent === "Accept")!;
     const attestation = dom.window.document.querySelector<HTMLInputElement>('input[type="checkbox"]')!;
+    assert.ok(dom.window.document.querySelector('[data-state="ready"]'));
     assert.equal(accept.disabled, true); assert.ok(attestation);
     await React.act(async () => { attestation.click(); });
     assert.equal(accept.disabled, false);

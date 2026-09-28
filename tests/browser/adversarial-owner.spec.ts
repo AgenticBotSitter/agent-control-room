@@ -2,6 +2,7 @@ import { expect, test, type Locator, type Page, type Request } from "@playwright
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { Client } from "pg";
+import { openResultWithDeferredOwnerReview, ownerReviewControlsWhenReady } from "./owner-review-readiness";
 
 const ownerCode = process.env.CONTROL_ROOM_E2E_OWNER_CODE;
 if (!ownerCode) throw new Error("CONTROL_ROOM_E2E_OWNER_CODE is required");
@@ -64,12 +65,8 @@ function observeBrowserErrors(page: Page, errors: string[], observeHttpFailures 
 }
 
 async function prepareAcceptance(page: Page) {
-  const attestation = page.getByLabel("I read it and it’s correct");
-  const accept = page.getByRole("button", { name: "Accept", exact: true });
-  const available = page.getByRole("region", { name: "Owner quality decision" })
-    .getByRole("heading", { name: "Review this exact result" });
-  await expect(available).toBeVisible({ timeout: 10_000 });
-  if (await attestation.isVisible()) await attestation.check();
+  const { attestation, accept } = await ownerReviewControlsWhenReady(page);
+  await attestation.check();
   await expect(accept).toBeEnabled();
 }
 
@@ -128,8 +125,7 @@ async function assignAndOpenResult(page: Page, doubleClick = false) {
   expect(assignments, "one owner gesture must record at most one assignment").toHaveLength(1);
   expect(submissions, "one owner gesture must queue at most one submission").toHaveLength(1);
   await refreshUntil(page, "Read result");
-  await page.getByRole("button", { name: "Read result" }).first().click();
-  await expect(page.getByRole("heading", { name: "Received result" })).toBeVisible();
+  await openResultWithDeferredOwnerReview(page);
 }
 
 async function disposableAdmin() {
@@ -374,8 +370,7 @@ test.describe("disposable owner website adversarial attacks", () => {
     staleReview.on("request", captureReview);
     await staleReview.goto(completedTaskPath);
     await refreshUntil(staleReview, "Read result");
-    await staleReview.getByRole("button", { name: "Read result" }).first().click();
-    await expect(staleReview.getByRole("heading", { name: "Received result" })).toBeVisible();
+    await openResultWithDeferredOwnerReview(staleReview);
     await prepareAcceptance(page);
     await prepareAcceptance(staleReview);
     await Promise.all([
