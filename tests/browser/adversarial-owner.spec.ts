@@ -17,7 +17,7 @@ async function signIn(page: Page) {
   await page.goto("/session");
   await page.getByLabel("Owner code").fill(ownerCode!);
   await page.getByRole("button", { name: "Sign in" }).click();
-  await expect(page.getByRole("heading", { name: "Projects" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Projects", exact: true })).toBeVisible();
 }
 
 async function api(page: Page, path: string, method = "GET", body?: unknown, key?: string): Promise<ApiResult> {
@@ -228,7 +228,7 @@ test.describe("disposable owner website adversarial attacks", () => {
     await page.reload();
     await expect(page.getByRole("heading", { name: hostileTitle })).toBeVisible();
     await page.goBack();
-    await expect(page.getByRole("heading", { name: "Projects" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Projects", exact: true })).toBeVisible();
     await page.goForward();
     await expect(page.getByRole("heading", { name: hostileTitle })).toBeVisible();
 
