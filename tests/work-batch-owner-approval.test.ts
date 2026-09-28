@@ -6,6 +6,9 @@ import { WorkBatchOwnerServiceV1, WorkBatchStoreV1, workBatchProposalDigestV1,
 import { taskFixture } from "./helpers/web-task";
 import { now, origin, request, trust } from "./helpers/web-foundation";
 import { createWorkBatchOwnerHttpHandlerV1 } from "../src/web/v1/work-batch-owner-http";
+import type { WorkBatchQueueAdmissionAuthorityV1, WorkBatchQueueCatalogV1 } from "../src/work-intake/v1";
+import { WebTaskService } from "../src/web/v1/task-service";
+import { captureTaskModelCatalogV1 } from "../src/web/v1/task-model-selection";
 
 const key = new Uint8Array(32).fill(7);
 const agent = (): AuthenticatedPrincipal => ({ tenantId: "tenant:web", identityId: "identity:batch-agent",
@@ -21,7 +24,9 @@ function proposal(projectId: string): WorkBatchProposalV1 {
   ], edges: [{ fromLocalId: "build", toLocalId: "check" }] };
 }
 
-async function ownerFixture() {
+async function ownerFixture(queueCatalog: WorkBatchQueueCatalogV1 = [],
+  queueAdmissionAuthority: WorkBatchQueueAdmissionAuthorityV1 | null | undefined = queueCatalog.length
+    ? { assertCurrent: () => true, isAcceptedResultCurrent: () => false } : undefined) {
   const f = await taskFixture();
   await f.db.query(`INSERT INTO control_identities(id,tenant_id,actor_type,display_name,auth_provider,
     auth_subject_digest,state,created_at,updated_at) VALUES('identity:batch-agent','tenant:web','agent','Batch agent',
@@ -31,16 +36,253 @@ async function ownerFixture() {
     'identity:batch-agent','work_batch_proposer','["work_batches.propose"]',$1::jsonb,'low',false,false,$2,$2)`,
   [JSON.stringify([f.project.projectId]), new Date(now).toISOString()]);
   const store = new WorkBatchStoreV1(f.client, key);
-  const owner = new WorkBatchOwnerServiceV1(f.client, f.tasks,
-    { tenantId: "tenant:web", workspaceId: "workspace:web" }, key, () => now);
+  const modelCatalog = captureTaskModelCatalogV1(queueCatalog.map(worker =>
+    ({ kind: worker.workerKind, policy: worker.modelPolicy })));
+  const tasks = queueCatalog.length ? new WebTaskService(f.client,
+    { tenantId: "tenant:web", workspaceId: "workspace:web" }, () => now, { modelCatalog }) : f.tasks;
+  const owner = new WorkBatchOwnerServiceV1(f.client, tasks,
+    { tenantId: "tenant:web", workspaceId: "workspace:web" }, key, () => now, queueCatalog,
+    queueAdmissionAuthority ?? undefined);
   let submission = 0;
-  async function submit(value = proposal(f.project.projectId)) {
+  async function submit(value = proposal(f.project.projectId), queueDepthLimit = 10) {
     return store.create({ principal: agent(), proposal: value, proposalDigest: workBatchProposalDigestV1(value),
       idempotencyKey: `owner-test-submit-${String(++submission).padStart(4, "0")}`, now: new Date(now).toISOString(),
-      queueDepthLimit: 10 });
+      queueDepthLimit });
   }
   return { ...f, owner, store, submit };
 }
+
+const codexCatalog = (): WorkBatchQueueCatalogV1 => [{ workerId: "worker:codex-one", workerKind: "codex",
+  nodeId: "node:mac.codex", modelPolicy: { models: ["gpt-build", "gpt-check"], defaultModel: "gpt-build",
+    efforts: ["high"], defaultEffort: "high" } }];
+
+async function seedQueueExecution(f: Awaited<ReturnType<typeof ownerFixture>>, sourceJobId: string,
+  input: { state: "leased" | "running"; workerId?: string; queued?: boolean }) {
+  const at = new Date(now).toISOString(), attemptId = `attempt:${sourceJobId}`;
+  await f.db.query(`INSERT INTO control_task_execution_plans(tenant_id,project_id,source_job_id,job_id,plan,auth_tag)
+    VALUES('tenant:web',$1,$2,$2,'{}'::jsonb,$3)`,
+  [f.project.projectId, sourceJobId, `hmac-sha256:${"5".repeat(64)}`]);
+  await f.db.query(`UPDATE control_task_model_selections SET worker_kind='codex',selection_key='gpt-build',
+    model='gpt-build',effort='high',provider=NULL,profile=NULL WHERE tenant_id='tenant:web' AND job_id=$1`,
+  [sourceJobId]);
+  await f.db.query(`INSERT INTO control_nodes(id,tenant_id,state,version,identity_key_id,payload,created_at,updated_at)
+    VALUES('node:mac.codex','tenant:web','active',1,'key:test',$1::jsonb,$2,$2) ON CONFLICT(id) DO NOTHING`,
+  [JSON.stringify({ id: "node:mac.codex", tenantId: "tenant:web", state: "active", version: 1,
+    identityKeyId: "key:test" }), at]);
+  const workerId = input.workerId ?? "worker:codex-one";
+  await f.db.query(`INSERT INTO control_attempts(id,tenant_id,job_id,attempt_number,state,version,worker_id,node_id,
+    lease_epoch,payload,created_at,updated_at) VALUES($1,'tenant:web',$2,1,$3,1,$4,'node:mac.codex',1,$5::jsonb,$6,$6)`,
+  [attemptId, sourceJobId, input.state, workerId, JSON.stringify({
+    id: attemptId, tenantId: "tenant:web", state: input.state, version: 1, jobId: sourceJobId,
+    attemptNumber: 1, workerId, nodeId: "node:mac.codex", leaseEpoch: 1,
+  }), at]);
+  if (input.queued) {
+    await f.db.query(`INSERT INTO control_native_approval_packets(tenant_id,project_id,job_id,attempt_id,record,auth_tag)
+      VALUES('tenant:web',$1,$2,$3,'{}'::jsonb,$4)`,
+    [f.project.projectId, sourceJobId, attemptId, `hmac-sha256:${"6".repeat(64)}`]);
+    await f.db.query(`INSERT INTO control_native_task_queue(tenant_id,project_id,job_id,attempt_id,record,auth_tag)
+      VALUES('tenant:web',$1,$2,$3,'{}'::jsonb,$4)`,
+    [f.project.projectId, sourceJobId, attemptId, `hmac-sha256:${"7".repeat(64)}`]);
+  }
+}
+
+test("approval records an exact per-agent queue in dependency order without starting work", async t => {
+  const f = await ownerFixture(codexCatalog()); t.after(() => void f.db.close());
+  const value = proposal(f.project.projectId);
+  value.tasks = [
+    { ...value.tasks[1]!, requestedWorkerId: "worker:codex-one", requestedWorkerKind: "codex",
+      requestedModelKey: "gpt-check" },
+    { ...value.tasks[0]!, requestedWorkerId: "worker:codex-one", requestedWorkerKind: "codex",
+      requestedModelKey: "gpt-build" },
+  ];
+  const batch = await f.submit(value);
+  const receipt = await f.owner.command(f.identity, f.project.projectId,
+    { operation: "decide", batchId: batch.batchId, expectedRevision: 1,
+      items: [{ localId: "check", decision: "approve" }, { localId: "build", decision: "approve" }] },
+    "owner-batch-queue-order-0001");
+  assert.equal(receipt.startsWork, false);
+  const view = await f.owner.view(f.identity, f.project.projectId, batch.batchId);
+  assert.deepEqual(view.queue.map(item => [item.localId, item.position, item.workerId, item.model, item.effort, item.state]), [
+    ["build", 1, "worker:codex-one", "gpt-build", "high", "awaiting_preparation"],
+    ["check", 2, "worker:codex-one", "gpt-check", "high", "awaiting_preparation"],
+  ]);
+  assert.equal((await f.db.query<{ count: number }>("SELECT count(*)::int AS count FROM control_attempts")).rows[0]!.count, 0);
+  assert.equal((await f.db.query<{ count: number }>("SELECT count(*)::int AS count FROM control_native_task_queue")).rows[0]!.count, 0);
+});
+
+test("queue admission refuses unknown workers, wrong models and depth overflow atomically", async t => {
+  const f = await ownerFixture(codexCatalog()); t.after(() => void f.db.close());
+  for (const [suffix, workerId, model] of [["worker", "worker:missing", "gpt-build"],
+    ["model", "worker:codex-one", "not-enabled"]] as const) {
+    const value = proposal(f.project.projectId);
+    value.tasks = value.tasks.map(task => ({ ...task, requestedWorkerId: workerId,
+      requestedWorkerKind: "codex", requestedModelKey: model }));
+    const batch = await f.submit(value);
+    await assert.rejects(f.owner.command(f.identity, f.project.projectId,
+      { operation: "decide", batchId: batch.batchId, expectedRevision: 1,
+        items: value.tasks.map(task => ({ localId: task.localId, decision: "approve" as const })) },
+      `owner-batch-queue-invalid-${suffix}`), /conflict/u);
+  }
+  const bounded = proposal(f.project.projectId);
+  bounded.tasks = bounded.tasks.map(task => ({ ...task, requestedWorkerId: "worker:codex-one",
+    requestedWorkerKind: "codex", requestedModelKey: "gpt-build" }));
+  const overflow = await f.submit(bounded, 1);
+  await assert.rejects(f.owner.command(f.identity, f.project.projectId,
+    { operation: "decide", batchId: overflow.batchId, expectedRevision: 1,
+      items: bounded.tasks.map(task => ({ localId: task.localId, decision: "approve" as const })) },
+    "owner-batch-queue-overflow-0001"), /queue_depth_exceeded/u);
+  assert.equal((await f.db.query<{ count: number }>("SELECT count(*)::int AS count FROM control_jobs")).rows[0]!.count, 0);
+  assert.equal((await f.db.query<{ count: number }>("SELECT count(*)::int AS count FROM work_batch_items")).rows[0]!.count, 0);
+  assert.equal((await f.db.query<{ count: number }>("SELECT count(*)::int AS count FROM work_batch_queue_admissions")).rows[0]!.count, 0);
+  assert.equal((await f.db.query<{ count: number }>("SELECT count(*)::int AS count FROM work_batch_agent_queue_heads")).rows[0]!.count, 0);
+});
+
+test("exact-worker admission rechecks current readiness and model policy inside the decision", async t => {
+  let current = false;
+  const f = await ownerFixture(codexCatalog(), { assertCurrent: selection => current
+    && selection.workerId === "worker:codex-one" && selection.selectionKey === "gpt-build",
+  isAcceptedResultCurrent: () => false });
+  t.after(() => void f.db.close());
+  const value = proposal(f.project.projectId);
+  value.tasks[0] = { ...value.tasks[0]!, requestedWorkerId: "worker:codex-one",
+    requestedWorkerKind: "codex", requestedModelKey: "gpt-build" };
+  const first = await f.submit(value);
+  await assert.rejects(f.owner.command(f.identity, f.project.projectId,
+    { operation: "decide", batchId: first.batchId, expectedRevision: 1,
+      items: [{ localId: "build", decision: "approve" },
+        { localId: "check", decision: "reject", reasonCode: "not_selected" }] },
+    "owner-batch-current-refusal-0001"), /conflict/u);
+  assert.equal((await f.db.query<{ count: number }>("SELECT count(*)::int AS count FROM work_batch_items")).rows[0]!.count, 0);
+  current = true;
+  const accepted = await f.owner.command(f.identity, f.project.projectId,
+    { operation: "decide", batchId: first.batchId, expectedRevision: 1,
+      items: [{ localId: "build", decision: "approve" },
+        { localId: "check", decision: "reject", reasonCode: "not_selected" }] },
+    "owner-batch-current-accept-0001");
+  assert.equal(accepted.state, "partially_approved");
+
+  const noAuthority = await ownerFixture(codexCatalog(), null); t.after(() => void noAuthority.db.close());
+  const secondValue = proposal(noAuthority.project.projectId);
+  secondValue.tasks[0] = { ...secondValue.tasks[0]!, requestedWorkerId: "worker:codex-one",
+    requestedWorkerKind: "codex", requestedModelKey: "gpt-build" };
+  const second = await noAuthority.submit(secondValue);
+  await assert.rejects(noAuthority.owner.command(noAuthority.identity, noAuthority.project.projectId,
+    { operation: "decide", batchId: second.batchId, expectedRevision: 1,
+      items: [{ localId: "build", decision: "approve" },
+        { localId: "check", decision: "reject", reasonCode: "not_selected" }] },
+    "owner-batch-current-missing-0001"), /conflict/u);
+});
+
+test("queue view reports running only for the exact admitted worker and model", async t => {
+  const running = await ownerFixture(codexCatalog()); t.after(() => void running.db.close());
+  const value = proposal(running.project.projectId);
+  value.tasks[0] = { ...value.tasks[0]!, requestedWorkerId: "worker:codex-one",
+    requestedWorkerKind: "codex", requestedModelKey: "gpt-build" };
+  const batch = await running.submit(value);
+  await running.owner.command(running.identity, running.project.projectId,
+    { operation: "decide", batchId: batch.batchId, expectedRevision: 1,
+      items: [{ localId: "build", decision: "approve" },
+        { localId: "check", decision: "reject", reasonCode: "not_selected" }] },
+    "owner-batch-running-state-0001");
+  const sourceJobId = (await running.owner.view(running.identity, running.project.projectId, batch.batchId))
+    .items.find(item => item.localId === "build")!.jobId!;
+  await seedQueueExecution(running, sourceJobId, { state: "running" });
+  assert.equal((await running.owner.view(running.identity, running.project.projectId, batch.batchId)).queue[0]!.state, "running");
+
+  const wrong = await ownerFixture(codexCatalog()); t.after(() => void wrong.db.close());
+  const wrongValue = proposal(wrong.project.projectId);
+  wrongValue.tasks[0] = { ...wrongValue.tasks[0]!, requestedWorkerId: "worker:codex-one",
+    requestedWorkerKind: "codex", requestedModelKey: "gpt-build" };
+  const wrongBatch = await wrong.submit(wrongValue);
+  await wrong.owner.command(wrong.identity, wrong.project.projectId,
+    { operation: "decide", batchId: wrongBatch.batchId, expectedRevision: 1,
+      items: [{ localId: "build", decision: "approve" },
+        { localId: "check", decision: "reject", reasonCode: "not_selected" }] },
+    "owner-batch-wrong-worker-0001");
+  const wrongJobId = (await wrong.owner.view(wrong.identity, wrong.project.projectId, wrongBatch.batchId))
+    .items.find(item => item.localId === "build")!.jobId!;
+  await seedQueueExecution(wrong, wrongJobId, { state: "running", workerId: "worker:wrong" });
+  assert.equal((await wrong.owner.view(wrong.identity, wrong.project.projectId, wrongBatch.batchId)).queue[0]!.state, "uncertain");
+});
+
+test("queued unfinished admissions still consume the recorded per-agent depth", async t => {
+  const accepted = new Set<string>();
+  let acceptanceCheckFails = false;
+  const f = await ownerFixture(codexCatalog(), { assertCurrent: () => true,
+    isAcceptedResultCurrent: (_tx, selection) => {
+      if (acceptanceCheckFails) throw new Error("acceptance authority unavailable");
+      return selection.workerId === "worker:codex-one" && selection.nodeId === "node:mac.codex"
+        && accepted.has(selection.sourceJobId);
+    } });
+  t.after(() => void f.db.close());
+  const firstValue = proposal(f.project.projectId);
+  firstValue.tasks[0] = { ...firstValue.tasks[0]!, requestedWorkerId: "worker:codex-one",
+    requestedWorkerKind: "codex", requestedModelKey: "gpt-build" };
+  const first = await f.submit(firstValue, 1);
+  await f.owner.command(f.identity, f.project.projectId,
+    { operation: "decide", batchId: first.batchId, expectedRevision: 1,
+      items: [{ localId: "build", decision: "approve" },
+        { localId: "check", decision: "reject", reasonCode: "not_selected" }] },
+    "owner-batch-depth-first-0001");
+  const firstJobId = (await f.owner.view(f.identity, f.project.projectId, first.batchId))
+    .items.find(item => item.localId === "build")!.jobId!;
+  await seedQueueExecution(f, firstJobId, { state: "leased", queued: true });
+  assert.equal((await f.owner.view(f.identity, f.project.projectId, first.batchId)).queue[0]!.state, "queued");
+
+  const secondValue = proposal(f.project.projectId);
+  secondValue.tasks[0] = { ...secondValue.tasks[0]!, requestedWorkerId: "worker:codex-one",
+    requestedWorkerKind: "codex", requestedModelKey: "gpt-build" };
+  const second = await f.submit(secondValue, 1);
+  await assert.rejects(f.owner.command(f.identity, f.project.projectId,
+    { operation: "decide", batchId: second.batchId, expectedRevision: 1,
+      items: [{ localId: "build", decision: "approve" },
+        { localId: "check", decision: "reject", reasonCode: "not_selected" }] },
+    "owner-batch-depth-second-0001"), /queue_depth_exceeded/u);
+  acceptanceCheckFails = true;
+  await assert.rejects(f.owner.command(f.identity, f.project.projectId,
+    { operation: "decide", batchId: second.batchId, expectedRevision: 1,
+      items: [{ localId: "build", decision: "approve" },
+        { localId: "check", decision: "reject", reasonCode: "not_selected" }] },
+    "owner-batch-depth-second-0002"), /queue_depth_exceeded/u);
+  acceptanceCheckFails = false;
+  accepted.add(firstJobId);
+  const released = await f.owner.command(f.identity, f.project.projectId,
+    { operation: "decide", batchId: second.batchId, expectedRevision: 1,
+      items: [{ localId: "build", decision: "approve" },
+        { localId: "check", decision: "reject", reasonCode: "not_selected" }] },
+    "owner-batch-depth-second-0003");
+  assert.equal(released.state, "partially_approved");
+});
+
+test("queue depth refusal crosses the owner HTTP boundary as a bounded safe reason", async t => {
+  const f = await ownerFixture(codexCatalog()); t.after(() => void f.db.close());
+  const value = proposal(f.project.projectId);
+  value.tasks = value.tasks.map(task => ({ ...task, requestedWorkerId: "worker:codex-one",
+    requestedWorkerKind: "codex", requestedModelKey: "gpt-build" }));
+  const batch = await f.submit(value, 1);
+  const handler = createWorkBatchOwnerHttpHandlerV1({ origin, trust, service: f.owner, clock: () => now });
+  const path = `/api/v1/projects/${encodeURIComponent(f.project.projectId)}/pipelines/${encodeURIComponent(batch.batchId)}`;
+  const response = await handler(request(path, "POST", { operation: "decide", batchId: batch.batchId,
+    expectedRevision: 1, items: value.tasks.map(task => ({ localId: task.localId, decision: "approve" })) },
+  "owner-http-queue-depth-0001"));
+  assert.equal(response.status, 409);
+  assert.deepEqual(await response.json(), { error: "queue_depth_exceeded" });
+});
+
+test("queue admission integrity failures refuse owner reads", async t => {
+  const f = await ownerFixture(codexCatalog()); t.after(() => void f.db.close());
+  const value = proposal(f.project.projectId);
+  value.tasks[0] = { ...value.tasks[0]!, requestedWorkerId: "worker:codex-one",
+    requestedWorkerKind: "codex", requestedModelKey: "gpt-build" };
+  const batch = await f.submit(value);
+  await f.owner.command(f.identity, f.project.projectId,
+    { operation: "decide", batchId: batch.batchId, expectedRevision: 1,
+      items: [{ localId: "build", decision: "approve" }, { localId: "check", decision: "approve" }] },
+    "owner-batch-queue-integrity-0001");
+  await f.db.query("DROP TRIGGER work_batch_queue_admissions_append_only ON work_batch_queue_admissions");
+  await f.db.query("UPDATE work_batch_queue_admissions SET model='tampered'");
+  await assert.rejects(f.owner.view(f.identity, f.project.projectId, batch.batchId), /work_batch_integrity_failed/u);
+});
 
 test("owner approval atomically materializes ordinary proposed tasks and exact replay is inert", async t => {
   const f = await ownerFixture(); t.after(() => void f.db.close());

@@ -25,6 +25,10 @@ export async function createPrivateTaskApplication(web: Omit<PrivateWebProcessOp
     || coordinator.ideaCreation.integrityKey.length !== 32 || web.ideaProjects.integrityKey.length !== 32
     || !timingSafeEqual(coordinator.ideaCreation.integrityKey, web.ideaProjects.integrityKey)))
     throw new Error("private_task_application_config_invalid");
+  if (web.workBatches && (!coordinator.workBatches || !coordinator.quality
+    || web.workBatches.integrityKey.length !== coordinator.workBatches.integrityKey.length
+    || !timingSafeEqual(web.workBatches.integrityKey, coordinator.workBatches.integrityKey)))
+    throw new Error("private_task_application_config_invalid");
   // Until construction succeeds, the caller retains both resources.
   if (coordinator.quality) validateTaskQualityKeys(coordinator.quality, coordinator.planning.reviewIntegrityKey, web.tasks);
   const tasks = createTaskCoordinatorLifecycle(coordinator);
@@ -55,7 +59,12 @@ export async function createPrivateTaskApplication(web: Omit<PrivateWebProcessOp
     return poolClose;
   } };
   let app: ReturnType<typeof createPrivateWebProcess>;
-  try { app = createPrivateWebProcess({ ...web, database, operatorSurface, planning: tasks.planning, assignment: tasks.assignment, approvals: tasks.approvals, submission: tasks.submission, revisions: tasks.revisions, queueAttention: tasks.queueAttention, ideaCreation: tasks.ideaCreation, ideaResultProjection: tasks.ideaResultProjection }); }
+  try { app = createPrivateWebProcess({ ...web, database, operatorSurface,
+    ...(web.workBatches && tasks.workBatchAuthority ? { workBatches: { ...web.workBatches,
+      queueAdmissionAuthority: tasks.workBatchAuthority } } : {}),
+    planning: tasks.planning, assignment: tasks.assignment, approvals: tasks.approvals, submission: tasks.submission,
+    revisions: tasks.revisions, queueAttention: tasks.queueAttention, ideaCreation: tasks.ideaCreation,
+    ideaResultProjection: tasks.ideaResultProjection }); }
   catch {
     const results = await Promise.allSettled([tasks.close(), database.close()]);
     if (results.some(result => result.status === "rejected")) throw new Error("private_task_application_cleanup_uncertain");

@@ -249,7 +249,9 @@ export const createTaskApplication: MacLocalTaskProviderV1["createTaskApplicatio
         nativeSubmission: submission, revisionPlanning: true,
         quality: { integrityKey: keys.review, harnessIntegrityKey: keys.harness, checkpoints: checkpointStore,
           results: { integrityKey: keys.results, storageClass: "local", storage },
-          scenarios: scenarioRegistry.snapshot(), scenarioRegistry } },
+          scenarios: scenarioRegistry.snapshot(), scenarioRegistry },
+        ...(input.workBatches ? { workBatches: { integrityKey: input.workBatches.integrityKey,
+          selectionAuthority: input.workBatches.selectionAuthority } } : {}) },
       hermes, claude: voidClaude, codex: voidCodex,
     });
     // A local host tick invokes the existing canonical quality operation; it

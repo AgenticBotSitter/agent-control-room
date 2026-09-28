@@ -8,6 +8,8 @@ import { WebSessionAuthority, type WebActor } from "../../web/v1/session-authori
 import { WebTaskService } from "../../web/v1/task-service";
 import { workBatchProposalSchemaV1, type WorkBatchProposalV1 } from "./schemas";
 import { workBatchProposalDigestV1 } from "./digest";
+import { captureWorkBatchQueueCatalogV1, resolveWorkBatchQueueWorkerV1,
+  type WorkBatchQueueCatalogV1 } from "./queue-catalog";
 import { workBatchOwnerCommandSchemaV1, workBatchOwnerPageSchemaV1, workBatchOwnerReceiptSchemaV1, workBatchOwnerViewSchemaV1,
   type WorkBatchOwnerReceiptV1 } from "./owner-schemas";
 
@@ -20,10 +22,31 @@ type RevisionRow = { revision: number; edited_by_identity_id: string; edited_at:
   reason_code: string; proposal: unknown; revision_digest: string; auth_tag: string };
 type ItemRow = { id: string; tenant_id: string; batch_id: string; batch_revision: number; project_id: string;
   local_id: string; ordinal: number; role: "builder" | "checker" | "validator";
-  required_capability: string; depends_on_local_ids: string[]; requested_worker_kind: string | null;
+  required_capability: string; depends_on_local_ids: string[]; requested_worker_id: string | null;
+  requested_worker_kind: string | null;
   requested_model_key: string | null; acceptance_criteria: string; acceptance_tests: string;
   decision_state: "approved" | "rejected"; decision_reason_code: string | null; job_id: string | null;
   job_attempt_count: number; item_digest: string; auth_tag: string; created_at: string | Date };
+type AdmissionRow = { admission_id: string; item_id: string; batch_id: string; project_id: string; job_id: string; worker_id: string;
+  worker_kind: "codex" | "claude-code" | "hermes"; node_id: string; queue_position: number;
+  queue_depth_limit: number; selection_key: string; model: string; effort: string; provider: string | null;
+  profile: string | null; assignment_revision: number; supersedes_admission_id: string | null;
+  change_reason_code: string; authorized_by_identity_id: string;
+  admission_digest: string; auth_tag: string; admitted_at: string | Date };
+
+export type WorkBatchQueueAdmissionSelectionV1 = Readonly<{ workerId: string;
+  workerKind: "codex" | "claude-code" | "hermes"; nodeId: string; selectionKey: string;
+  model: string; effort: string; provider: string | null; profile: string | null }>;
+export type WorkBatchQueueAcceptedResultSelectionV1 = Readonly<{
+  sourceJobId: string; workerId: string; nodeId: string;
+}>;
+/** Protected host-generation authority. Exact-worker admission is unavailable
+ * without this current readiness/model-policy recheck. */
+export type WorkBatchQueueAdmissionAuthorityV1 = Readonly<{
+  assertCurrent(selection: WorkBatchQueueAdmissionSelectionV1): boolean | Promise<boolean>;
+  isAcceptedResultCurrent(tx: DatabaseSession,
+    selection: WorkBatchQueueAcceptedResultSelectionV1): boolean | Promise<boolean>;
+}>;
 
 const json = (value: unknown) => JSON.stringify(value);
 const iso = (value: string | Date) => new Date(value).toISOString();
@@ -33,12 +56,93 @@ const same = (left: string, right: string) => { const a = Buffer.from(left), b =
 export class WorkBatchOwnerServiceV1 {
   readonly #key: Uint8Array;
   readonly #authority: WebSessionAuthority;
+  readonly #queueCatalog: WorkBatchQueueCatalogV1;
+  readonly #queueAdmissionAuthority?: WorkBatchQueueAdmissionAuthorityV1;
   constructor(private readonly db: DatabaseClient, private readonly tasks: WebTaskService,
     private readonly scope: { tenantId: string; workspaceId: string }, integrityKey: Uint8Array,
-    private readonly clock: () => number = Date.now) {
+    private readonly clock: () => number = Date.now, queueCatalog: WorkBatchQueueCatalogV1 = [],
+    queueAdmissionAuthority?: WorkBatchQueueAdmissionAuthorityV1) {
     if (!(integrityKey instanceof Uint8Array) || integrityKey.length !== 32) throw new Error("work_batch_owner_configuration_invalid");
     this.#key = Uint8Array.from(integrityKey);
     this.#authority = new WebSessionAuthority(db, scope, clock, "work_batch");
+    this.#queueCatalog = captureWorkBatchQueueCatalogV1(queueCatalog);
+    if (queueAdmissionAuthority && (typeof queueAdmissionAuthority.assertCurrent !== "function"
+      || typeof queueAdmissionAuthority.isAcceptedResultCurrent !== "function"))
+      throw new Error("work_batch_owner_configuration_invalid");
+    this.#queueAdmissionAuthority = queueAdmissionAuthority ? Object.freeze({
+      assertCurrent: queueAdmissionAuthority.assertCurrent.bind(queueAdmissionAuthority),
+      isAcceptedResultCurrent: queueAdmissionAuthority.isAcceptedResultCurrent.bind(queueAdmissionAuthority),
+    }) : undefined;
+  }
+
+  #verifyAdmission(row: AdmissionRow) {
+    const material = { itemId: row.item_id, batchId: row.batch_id, projectId: row.project_id, jobId: row.job_id,
+      workerId: row.worker_id, workerKind: row.worker_kind, nodeId: row.node_id, position: Number(row.queue_position),
+      queueDepthLimit: Number(row.queue_depth_limit), selectionKey: row.selection_key, model: row.model,
+      effort: row.effort, provider: row.provider, profile: row.profile,
+      assignmentRevision: Number(row.assignment_revision), supersedesAdmissionId: row.supersedes_admission_id,
+      changeReasonCode: row.change_reason_code, authorizedByIdentityId: row.authorized_by_identity_id,
+      admittedAt: iso(row.admitted_at) };
+    if (sha256Digest(material) !== row.admission_digest
+      || row.admission_id !== `admission:${row.admission_digest.slice(7)}`
+      || !same(hmacSha256Tag(this.#key, { purpose: "work-batch-queue-admission/v1", record: material }), row.auth_tag))
+      throw new Error("work_batch_integrity_failed");
+    return material;
+  }
+
+  async #acceptedResult(tx: DatabaseSession, selection: WorkBatchQueueAcceptedResultSelectionV1) {
+    if (!this.#queueAdmissionAuthority) return false;
+    try { return await this.#queueAdmissionAuthority.isAcceptedResultCurrent(tx, selection) === true; }
+    catch { return false; }
+  }
+
+  async #queueState(tx: DatabaseSession, row: AdmissionRow) {
+    const plan = (await tx.query<{ job_id: string }>(`SELECT job_id FROM control_task_execution_plans
+      WHERE tenant_id=$1 AND source_job_id=$2`, [this.scope.tenantId, row.job_id])).rows[0];
+    if (!plan) return "awaiting_preparation" as const;
+    const executionJobId = plan.job_id;
+    const job = (await tx.query<{ state: string }>(`SELECT state FROM control_jobs
+      WHERE tenant_id=$1 AND project_id=$2 AND id=$3`, [this.scope.tenantId, row.project_id, executionJobId])).rows[0];
+    if (!job) return "uncertain" as const;
+    if (job.state === "succeeded") return await this.#acceptedResult(tx, {
+      sourceJobId: row.job_id, workerId: row.worker_id, nodeId: row.node_id,
+    }) ? "completed" as const : "uncertain" as const;
+    if (["failed", "cancelled"].includes(job.state)) return "failed" as const;
+    const selection = (await tx.query<{ worker_kind: string | null; selection_key: string | null; model: string | null;
+      effort: string | null; provider: string | null; profile: string | null }>(`SELECT worker_kind,selection_key,
+        model,effort,provider,profile FROM control_task_model_selections WHERE tenant_id=$1 AND job_id=$2`,
+    [this.scope.tenantId, executionJobId])).rows[0];
+    if (!selection || selection.worker_kind !== row.worker_kind || selection.selection_key !== row.selection_key
+      || selection.model !== row.model || selection.effort !== row.effort || selection.provider !== row.provider
+      || selection.profile !== row.profile) return "uncertain" as const;
+    const attempt = (await tx.query<{ state: string; worker_id: string | null; node_id: string | null }>(`SELECT state,worker_id,node_id FROM control_attempts
+      WHERE tenant_id=$1 AND job_id=$2 ORDER BY attempt_number DESC LIMIT 1`,
+    [this.scope.tenantId, executionJobId])).rows[0];
+    if (attempt && (attempt.worker_id !== row.worker_id || attempt.node_id !== row.node_id)) return "uncertain" as const;
+    if (attempt?.state === "running") return "running" as const;
+    const native = await tx.query(`SELECT job_id FROM control_native_task_queue WHERE tenant_id=$1 AND job_id=$2 LIMIT 1`,
+      [this.scope.tenantId, executionJobId]);
+    if (native.rows.length) return attempt && ["offered", "leased", "waiting"].includes(attempt.state)
+      ? "queued" as const : "uncertain" as const;
+    if (attempt && ["offered", "leased", "waiting"].includes(attempt.state)) return "assigned" as const;
+    if (attempt) return "uncertain" as const;
+    const dependencies = (await tx.query<{ depends_on_job_id: string; worker_id: string | null; node_id: string | null }>(
+      `SELECT d.depends_on_job_id,a.worker_id,a.node_id FROM control_job_dependencies d
+      LEFT JOIN work_batch_effective_queue_admissions a
+        ON a.tenant_id=d.tenant_id AND a.job_id=d.depends_on_job_id
+      WHERE d.tenant_id=$1 AND d.job_id=$2 ORDER BY d.depends_on_job_id`,
+    [this.scope.tenantId, row.job_id])).rows;
+    for (const dependency of dependencies) if (!dependency.worker_id || !dependency.node_id
+      || !await this.#acceptedResult(tx, { sourceJobId: dependency.depends_on_job_id,
+        workerId: dependency.worker_id, nodeId: dependency.node_id }))
+      return "waiting_dependency" as const;
+    const earlier = (await tx.query<{ job_id: string; worker_id: string; node_id: string }>(`SELECT job_id,worker_id,node_id
+      FROM work_batch_effective_queue_admissions
+      WHERE tenant_id=$1 AND worker_id=$2 AND queue_position<$3 ORDER BY queue_position`,
+    [this.scope.tenantId, row.worker_id, Number(row.queue_position)])).rows;
+    for (const prior of earlier) if (!await this.#acceptedResult(tx, { sourceJobId: prior.job_id,
+      workerId: prior.worker_id, nodeId: prior.node_id })) return "waiting_turn" as const;
+    return "ready_for_assignment" as const;
   }
 
   #verifyBatch(row: BatchRow): WorkBatchProposalV1 {
@@ -68,7 +172,9 @@ export class WorkBatchOwnerServiceV1 {
     const material = { id: row.id, tenantId: row.tenant_id, batchId: row.batch_id,
       batchRevision: Number(row.batch_revision), projectId: row.project_id, localId: row.local_id,
       ordinal: Number(row.ordinal), role: row.role, requiredCapability: row.required_capability,
-      dependsOnLocalIds: row.depends_on_local_ids, requestedWorkerKind: row.requested_worker_kind,
+      dependsOnLocalIds: row.depends_on_local_ids,
+      ...(row.requested_worker_id ? { requestedWorkerId: row.requested_worker_id } : {}),
+      requestedWorkerKind: row.requested_worker_kind,
       requestedModelKey: row.requested_model_key, acceptanceCriteria: row.acceptance_criteria,
       acceptanceTests: row.acceptance_tests, decisionState: row.decision_state,
       decisionReasonCode: row.decision_reason_code, jobId: row.job_id,
@@ -194,6 +300,22 @@ export class WorkBatchOwnerServiceV1 {
       if (!ready.length) throw new WebAccessError("conflict");
       for (const task of ready) { ordered.push(task); remaining.delete(task.localId); }
     }
+    const resolvedTasks = new Map<string, NonNullable<ReturnType<typeof resolveWorkBatchQueueWorkerV1>>>();
+    for (const task of ordered) {
+      let resolved: ReturnType<typeof resolveWorkBatchQueueWorkerV1>;
+      try { resolved = resolveWorkBatchQueueWorkerV1(this.#queueCatalog, task); }
+      catch { throw new WebAccessError("conflict"); }
+      if (resolved) {
+        if (!this.#queueAdmissionAuthority) throw new WebAccessError("conflict");
+        const current = { workerId: resolved.worker.workerId, workerKind: resolved.worker.workerKind,
+          nodeId: resolved.worker.nodeId, selectionKey: resolved.model.selectionKey, model: resolved.model.model,
+          effort: resolved.model.effort, provider: resolved.model.provider ?? null, profile: resolved.model.profile ?? null };
+        try { if (await this.#queueAdmissionAuthority.assertCurrent(Object.freeze(current)) !== true)
+          throw new Error("not_current"); }
+        catch { throw new WebAccessError("conflict"); }
+        resolvedTasks.set(task.localId, resolved);
+      }
+    }
     const jobs = new Map<string, string>();
     for (const task of ordered) {
       const dependsOnJobIds = proposal.edges.filter(edge => edge.toLocalId === task.localId)
@@ -205,6 +327,46 @@ export class WorkBatchOwnerServiceV1 {
       if (command.receipt.startsWork !== false) throw new Error("work_batch_task_authority_invalid");
       jobs.set(task.localId, command.receipt.jobId);
     }
+    const queue = new Map<string, { workerId: string; workerKind: "codex" | "claude-code" | "hermes";
+      nodeId: string; position: number; selectionKey: string; model: string; effort: string;
+      provider: string | null; profile: string | null }>();
+    const byWorker = new Map<string, { task: typeof proposal.tasks[number]; jobId: string;
+      resolved: NonNullable<ReturnType<typeof resolveWorkBatchQueueWorkerV1>> }[]>();
+    for (const task of ordered) {
+      if (!approved.has(task.localId)) continue;
+      const resolved = resolvedTasks.get(task.localId);
+      if (!resolved) continue;
+      const list = byWorker.get(resolved.worker.workerId) ?? [];
+      list.push({ task, jobId: jobs.get(task.localId)!, resolved });
+      byWorker.set(resolved.worker.workerId, list);
+    }
+    for (const workerId of [...byWorker.keys()].sort()) {
+      const incoming = byWorker.get(workerId)!;
+      await tx.query(`INSERT INTO work_batch_agent_queue_heads(tenant_id,worker_id,next_position,updated_at)
+        VALUES($1,$2,1,$3) ON CONFLICT(tenant_id,worker_id) DO NOTHING`,
+      [this.scope.tenantId, workerId, actor.now]);
+      const head = (await tx.query<{ next_position: string | number }>(`SELECT next_position
+        FROM work_batch_agent_queue_heads WHERE tenant_id=$1 AND worker_id=$2 FOR UPDATE`,
+      [this.scope.tenantId, workerId])).rows[0];
+      const next = Number(head?.next_position);
+      const existing = (await tx.query<{ job_id: string; worker_id: string; node_id: string }>(`SELECT job_id,worker_id,node_id
+        FROM work_batch_effective_queue_admissions
+        WHERE tenant_id=$1 AND worker_id=$2 ORDER BY queue_position`, [this.scope.tenantId, workerId])).rows;
+      let depth = 0;
+      for (const admitted of existing) if (!await this.#acceptedResult(tx, { sourceJobId: admitted.job_id,
+        workerId: admitted.worker_id, nodeId: admitted.node_id })) depth += 1;
+      if (!Number.isSafeInteger(next) || next < 1 || !Number.isSafeInteger(depth) || depth < 0
+        || depth + incoming.length > Number(batch.queue_depth_limit)) throw new WebAccessError("queue_depth_exceeded");
+      const advanced = await tx.query<{ next_position: string | number }>(`UPDATE work_batch_agent_queue_heads
+        SET next_position=next_position+$1,updated_at=$2 WHERE tenant_id=$3 AND worker_id=$4 AND next_position=$5
+        RETURNING next_position`, [incoming.length, actor.now, this.scope.tenantId, workerId, next]);
+      if (Number(advanced.rows[0]?.next_position) !== next + incoming.length) throw new WebAccessError("conflict");
+      incoming.forEach(({ task, resolved }, index) => queue.set(task.localId, {
+        workerId, workerKind: resolved.worker.workerKind, nodeId: resolved.worker.nodeId,
+        position: next + index, selectionKey: resolved.model.selectionKey, model: resolved.model.model,
+        effort: resolved.model.effort, provider: resolved.model.provider ?? null, profile: resolved.model.profile ?? null,
+      }));
+    }
     const itemDigests: string[] = [];
     for (const [ordinal, task] of proposal.tasks.entries()) {
       const decision = byLocal.get(task.localId)!;
@@ -212,6 +374,7 @@ export class WorkBatchOwnerServiceV1 {
         batchRevision: Number(batch.version), projectId: batch.project_id, localId: task.localId, ordinal,
         role: task.role, requiredCapability: task.requiredCapability,
         dependsOnLocalIds: proposal.edges.filter(edge => edge.toLocalId === task.localId).map(edge => edge.fromLocalId).sort(),
+        ...(task.requestedWorkerId ? { requestedWorkerId: task.requestedWorkerId } : {}),
         requestedWorkerKind: task.requestedWorkerKind ?? null, requestedModelKey: task.requestedModelKey ?? null,
         acceptanceCriteria: task.acceptanceCriteria, acceptanceTests: task.acceptanceTests,
         decisionState: decision.decision === "approve" ? "approved" as const : "rejected" as const,
@@ -220,13 +383,35 @@ export class WorkBatchOwnerServiceV1 {
       const digest = sha256Digest(item), tag = hmacSha256Tag(this.#key, { purpose: "work-batch-item/v1", record: item });
       itemDigests.push(digest);
       await tx.query(`INSERT INTO work_batch_items(id,tenant_id,batch_id,batch_revision,project_id,local_id,ordinal,role,
-        required_capability,depends_on_local_ids,requested_worker_kind,requested_model_key,acceptance_criteria,
-        acceptance_tests,decision_state,decision_reason_code,job_id,job_attempt_count,item_digest,auth_tag,created_at)
-        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,0,$18,$19,$20)`,
+        required_capability,depends_on_local_ids,requested_worker_id,requested_worker_kind,requested_model_key,
+        acceptance_criteria,acceptance_tests,decision_state,decision_reason_code,job_id,job_attempt_count,item_digest,auth_tag,created_at)
+        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,0,$19,$20,$21)`,
       [item.id, item.tenantId, item.batchId, item.batchRevision, item.projectId, item.localId, item.ordinal, item.role,
-        item.requiredCapability, item.dependsOnLocalIds, item.requestedWorkerKind, item.requestedModelKey,
+        item.requiredCapability, item.dependsOnLocalIds, item.requestedWorkerId ?? null, item.requestedWorkerKind, item.requestedModelKey,
         item.acceptanceCriteria, item.acceptanceTests, item.decisionState, item.decisionReasonCode, item.jobId,
         digest, tag, item.createdAt]);
+      const admitted = queue.get(task.localId);
+      if (admitted && item.jobId) {
+        const material = { itemId: item.id, batchId: batch.id, projectId: batch.project_id, jobId: item.jobId,
+          workerId: admitted.workerId, workerKind: admitted.workerKind, nodeId: admitted.nodeId,
+          position: admitted.position, queueDepthLimit: Number(batch.queue_depth_limit),
+          selectionKey: admitted.selectionKey, model: admitted.model, effort: admitted.effort,
+          provider: admitted.provider, profile: admitted.profile, assignmentRevision: 1,
+          supersedesAdmissionId: null, changeReasonCode: "initial_owner_approval",
+          authorizedByIdentityId: actor.id, admittedAt: actor.now };
+        const admissionDigest = sha256Digest(material);
+        const admissionId = `admission:${admissionDigest.slice(7)}`;
+        const admissionTag = hmacSha256Tag(this.#key, { purpose: "work-batch-queue-admission/v1", record: material });
+        await tx.query(`INSERT INTO work_batch_queue_admissions(tenant_id,admission_id,item_id,batch_id,project_id,job_id,
+          worker_id,worker_kind,node_id,queue_position,queue_depth_limit,selection_key,model,effort,provider,profile,
+          assignment_revision,supersedes_admission_id,change_reason_code,authorized_by_identity_id,
+          admission_digest,auth_tag,admitted_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,
+            $17,$18,$19,$20,$21,$22,$23)`,
+        [this.scope.tenantId, admissionId, item.id, batch.id, batch.project_id, item.jobId, admitted.workerId,
+          admitted.workerKind, admitted.nodeId, admitted.position, Number(batch.queue_depth_limit),
+          admitted.selectionKey, admitted.model, admitted.effort, admitted.provider, admitted.profile,
+          1, null, "initial_owner_approval", actor.id, admissionDigest, admissionTag, actor.now]);
+      }
     }
     const state = approved.size === proposal.tasks.length ? "approved" : approved.size === 0 ? "rejected" : "partially_approved";
     const reasonCode = state === "rejected" ? "all_items_rejected" : null;
@@ -251,7 +436,7 @@ export class WorkBatchOwnerServiceV1 {
     await appendAuditWith(tx, { id: `audit:${randomUUID()}`, ...this.scope, projectId: batch.project_id,
       actorId: actor.id, actorType: "human", action: `work_batches.${state}`, targetType: "work_batch", targetId: batch.id,
       safeMetadata: { revision: Number(batch.version), approvedCount: approved.size,
-        rejectedCount: proposal.tasks.length - approved.size }, occurredAt: actor.now });
+        rejectedCount: proposal.tasks.length - approved.size, admittedCount: queue.size }, occurredAt: actor.now });
     return workBatchOwnerReceiptSchemaV1.parse({ schema: "control-room.work-batch-owner-receipt/v1", batchId: batch.id,
       projectId: batch.project_id, state, revision: Number(batch.version), jobIds, replayed: false,
       startsWork: false, grantsExecutionAuthority: false });
@@ -267,20 +452,44 @@ export class WorkBatchOwnerServiceV1 {
         editedAt: iso(row.edited_at), reasonCode: row.reason_code, proposal: this.#verifyRevision(row, batchId) }));
       const items = (await tx.query<ItemRow>(`SELECT id,tenant_id,batch_id,batch_revision,project_id,local_id,ordinal,
         role,required_capability,depends_on_local_ids,
-        requested_worker_kind,requested_model_key,acceptance_criteria,acceptance_tests,decision_state,
+        requested_worker_id,requested_worker_kind,requested_model_key,acceptance_criteria,acceptance_tests,decision_state,
         decision_reason_code,job_id,job_attempt_count,item_digest,auth_tag,created_at
         FROM work_batch_items WHERE tenant_id=$1 AND batch_id=$2 ORDER BY ordinal`,
       [this.scope.tenantId, batchId])).rows;
       this.#verifyDecision(batch, items);
+      const admissionColumns = `admission_id,item_id,batch_id,project_id,job_id,worker_id,worker_kind,
+        node_id,queue_position,queue_depth_limit,selection_key,model,effort,provider,profile,assignment_revision,
+        supersedes_admission_id,change_reason_code,authorized_by_identity_id,admission_digest,auth_tag,admitted_at`;
+      const admissionHistory = (await tx.query<AdmissionRow>(`SELECT ${admissionColumns}
+        FROM work_batch_queue_admissions WHERE tenant_id=$1 AND batch_id=$2 ORDER BY item_id,assignment_revision`,
+      [this.scope.tenantId, batchId])).rows;
+      for (const row of admissionHistory) this.#verifyAdmission(row);
+      const admissions = (await tx.query<AdmissionRow>(`SELECT admission_id,item_id,batch_id,project_id,job_id,worker_id,worker_kind,
+        node_id,queue_position,queue_depth_limit,selection_key,model,effort,provider,profile,assignment_revision,
+        supersedes_admission_id,change_reason_code,authorized_by_identity_id,admission_digest,auth_tag,admitted_at
+        FROM work_batch_effective_queue_admissions WHERE tenant_id=$1 AND batch_id=$2 ORDER BY worker_id,queue_position`,
+      [this.scope.tenantId, batchId])).rows;
+      const localByItem = new Map(items.map(item => [item.id, item.local_id]));
+      const queue = [];
+      for (const row of admissions) {
+        const material = this.#verifyAdmission(row), localId = localByItem.get(row.item_id);
+        if (!localId) throw new Error("work_batch_integrity_failed");
+        queue.push({ localId, jobId: row.job_id, workerId: material.workerId, workerKind: material.workerKind,
+          nodeId: material.nodeId, position: material.position, queueDepthLimit: material.queueDepthLimit,
+          selectionKey: material.selectionKey, model: material.model, effort: material.effort,
+          provider: material.provider, profile: material.profile, state: await this.#queueState(tx, row) });
+      }
       const publicItems = items.map(row => ({ localId: row.local_id, ordinal: Number(row.ordinal), role: row.role,
         requiredCapability: row.required_capability, dependsOnLocalIds: row.depends_on_local_ids,
-        requestedWorkerKind: row.requested_worker_kind, requestedModelKey: row.requested_model_key,
+        requestedWorkerId: row.requested_worker_id, requestedWorkerKind: row.requested_worker_kind,
+        requestedModelKey: row.requested_model_key,
         acceptanceCriteria: row.acceptance_criteria, acceptanceTests: row.acceptance_tests,
         decisionState: row.decision_state, decisionReasonCode: row.decision_reason_code, jobId: row.job_id }));
       return workBatchOwnerViewSchemaV1.parse({ batchId: batch.id, projectId, state: batch.state,
         revision: Number(batch.version), proposedByIdentityId: batch.proposed_by_identity_id, proposedAt: iso(batch.proposed_at),
         approvalIdentityId: batch.approval_identity_id, decidedAt: batch.approved_at ? iso(batch.approved_at) : null,
-        proposal: revisions.at(-1)?.proposal ?? original, revisions, items: publicItems,
+        proposal: revisions.at(-1)?.proposal ?? original, revisions, items: publicItems, queue,
+        queueDepthLimit: Number(batch.queue_depth_limit),
         startsWork: false, grantsExecutionAuthority: false });
     });
   }
@@ -296,7 +505,7 @@ export class WorkBatchOwnerServiceV1 {
       const summaries = [];
       for (const row of rows) {
         const items = row.state === "proposed" ? [] : (await tx.query<ItemRow>(`SELECT id,tenant_id,batch_id,batch_revision,
-          project_id,local_id,ordinal,role,required_capability,depends_on_local_ids,requested_worker_kind,
+          project_id,local_id,ordinal,role,required_capability,depends_on_local_ids,requested_worker_id,requested_worker_kind,
           requested_model_key,acceptance_criteria,acceptance_tests,decision_state,decision_reason_code,job_id,
           job_attempt_count,item_digest,auth_tag,created_at FROM work_batch_items
           WHERE tenant_id=$1 AND batch_id=$2 ORDER BY ordinal`, [this.scope.tenantId, row.id])).rows;

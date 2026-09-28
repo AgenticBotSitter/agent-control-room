@@ -19,7 +19,8 @@ import type { PersistedLocalOwnerSessionV1 } from "./local-owner-session";
 import { taskAttentionPageSchema } from "./task-attention-wire";
 import { taskPlanningReceiptSchema } from "./task-planning-wire";
 import { taskDeliveryStatusSchema } from "./task-delivery-wire";
-import { WorkBatchOwnerServiceV1 } from "../../work-intake/v1";
+import { WorkBatchOwnerServiceV1, type WorkBatchQueueAdmissionAuthorityV1,
+  type WorkBatchQueueCatalogV1 } from "../../work-intake/v1";
 import { createWorkBatchOwnerHttpHandlerV1 } from "./work-batch-owner-http";
 
 export interface MacLocalWebProcessOptionsV1 {
@@ -44,6 +45,11 @@ export interface MacLocalWebProcessOptionsV1 {
   /** Same protected installation key used by proposal intake. Omission keeps
    * the Pipelines owner module absent. */
   workBatchIntegrityKey?: Uint8Array;
+  /** Exact protected worker, node and model-policy snapshot used only to
+   * admit approved batch items to the existing per-agent queue. */
+  workBatchQueueCatalog?: WorkBatchQueueCatalogV1;
+  /** The same protected authority captured by the coordinator lifecycle. */
+  workBatchQueueAdmissionAuthority?: WorkBatchQueueAdmissionAuthorityV1;
   /** Host-generation display state built only after pinned executable
    * verification. It is not a delivery, queue, or result authority. */
   workerReadiness?: Pick<MacLocalWorkerReadinessV1, "read">;
@@ -86,7 +92,8 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
     ...(options.revisions ? { revisions: options.revisions } : {}),
   });
   const workBatches = options.workBatchIntegrityKey ? new WorkBatchOwnerServiceV1(options.database.client, tasks,
-    { tenantId: profile.tenantId, workspaceId: options.workspaceId }, options.workBatchIntegrityKey, clock) : undefined;
+    { tenantId: profile.tenantId, workspaceId: options.workspaceId }, options.workBatchIntegrityKey, clock,
+    options.workBatchQueueCatalog, options.workBatchQueueAdmissionAuthority) : undefined;
   const workBatchHttp = workBatches ? createWorkBatchOwnerHttpHandlerV1({ origin: options.origin,
     localOwnerSession: sessions, service: workBatches, clock }) : undefined;
   let closed: Promise<void> | undefined;

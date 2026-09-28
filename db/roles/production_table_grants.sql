@@ -56,7 +56,8 @@ GRANT USAGE ON SEQUENCE control_github_worker_wake_hints_hint_id_seq TO control_
 -- shared-ledger authority.
 REVOKE ALL ON ALL TABLES IN SCHEMA public FROM control_room_work_intake;
 REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM control_room_work_intake;
-REVOKE ALL ON work_batches, work_batch_revisions, work_batch_items FROM control_room_application,
+REVOKE ALL ON work_batches, work_batch_revisions, work_batch_items, work_batch_queue_admissions,
+  work_batch_effective_queue_admissions, work_batch_agent_queue_heads FROM control_room_application,
   control_room_reader, control_room_schedule_admissions, control_room_github_broker;
 GRANT SELECT ON control_identities, control_role_grants, projects, work_batches,
   work_batch_revisions, work_batch_items, control_idempotency, audit_events, control_audit_chain_heads
@@ -73,6 +74,16 @@ GRANT UPDATE (web_lock) ON control_identities, control_role_grants TO control_ro
 GRANT UPDATE (coordinator_lock) ON projects TO control_room_work_intake;
 GRANT EXECUTE ON FUNCTION work_intake_canonical_jsonb(jsonb) TO control_room_work_intake;
 GRANT INSERT ON control_action_inbox TO control_room_work_intake;
+
+-- Owner web records and reads queue admission metadata but cannot mutate an
+-- admitted item. The task coordinator can only read it to enforce exact
+-- assignee, dependency, and head-of-line eligibility before assignment.
+GRANT SELECT, INSERT ON work_batch_queue_admissions TO control_room_private_web;
+GRANT SELECT ON work_batch_effective_queue_admissions TO control_room_private_web;
+GRANT SELECT, INSERT ON work_batch_agent_queue_heads TO control_room_private_web;
+GRANT UPDATE (next_position,updated_at) ON work_batch_agent_queue_heads TO control_room_private_web;
+GRANT SELECT ON work_batch_effective_queue_admissions, work_batch_items, work_batches,
+  control_web_task_review_commands, control_native_artifact_receipts TO control_room_task_coordinator;
 
 ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON TABLES FROM PUBLIC;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON SEQUENCES FROM PUBLIC;
