@@ -8,7 +8,11 @@ import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
+import { Pool } from "pg";
 import { createPrivatePgDatabase } from "../src/web/v1/private-pg-database.ts";
+import { bindPrivatePgPool } from "../src/web/v1/private-pg-database.ts";
+import { privatePgOptions } from "../src/web/v1/private-pg-options.ts";
+import { recoveringPrivateDatabase } from "../src/web/v1/recovering-private-database.ts";
 import { startRecoveringMacLocalQueueWorkerV1 } from "../src/web/v1/mac-local-queue-worker-recovery.ts";
 import { PrivateDatabaseError } from "../src/web/v1/bounded-database.ts";
 
@@ -23,6 +27,8 @@ let root = "", data = "", socket = "", clusterMayBeRunning = false;
 
 const native = (name, args) => exec(join(bin, name), args,
   { env: { PATH: "/usr/bin:/bin", LC_ALL: "C", TMPDIR: root, NODE_ENV: "test" }, timeout: 30_000, maxBuffer: 1 << 20 });
+const proveTcpReady = () => native("psql", ["-h", "127.0.0.1", "-p", String(port), "-d", "postgres",
+  "-U", "fixture_recovery", "-Atqc", "SELECT 1"]);
 const start = async () => {
   // Mark ownership before pg_ctl: a timeout can still leave postgres running.
   clusterMayBeRunning = true;
@@ -105,8 +111,13 @@ const startDatabaseBackedWorker = async () => {
 };
 
 test("one stable private client resumes reads and writes after its PostgreSQL cluster restarts", needsPg, async () => {
-  const database = createPrivatePgDatabase({ host: "127.0.0.1", port, database: "postgres",
-    username: "fixture_recovery", password: "fixture-only", majorVersion: 17 });
+  const config = { host: "127.0.0.1", port, database: "postgres",
+    username: "fixture_recovery", password: "fixture-only", majorVersion: 17 };
+  const options = privatePgOptions(config); let generationsOpened = 0;
+  const database = recoveringPrivateDatabase(reportFault => {
+    generationsOpened++;
+    return bindPrivatePgPool(new Pool(options), { reportFault });
+  });
   const stableClient = database.client;
   try {
     // Private sessions deliberately put pg_catalog first. Keep this recovery
@@ -120,6 +131,7 @@ test("one stable private client resumes reads and writes after its PostgreSQL cl
     assert.equal(database.client, stableClient);
     assert.equal(database.isAvailable(), false);
     await start();
+    assert.equal((await proveTcpReady()).stdout.trim(), "1");
 
     let restored, lastRefusal = "none";
     // A bounded recovery may spend 5s retiring the old pool, then up to 5s
@@ -135,7 +147,7 @@ test("one stable private client resumes reads and writes after its PostgreSQL cl
       }
     }
     assert.ok(restored,
-      `recovery_not_observed available=${database.isAvailable()} last_refusal=${lastRefusal}`);
+      `recovery_not_observed available=${database.isAvailable()} last_refusal=${lastRefusal} generations_opened=${generationsOpened}`);
     assert.deepEqual(restored?.rows, [{ value: "before" }]);
     assert.equal(database.client, stableClient);
     await stableClient.query("INSERT INTO public.recovery_values VALUES ($1,$2)", [2, "after"]);
