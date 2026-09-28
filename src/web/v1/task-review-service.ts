@@ -18,7 +18,8 @@ import { PlanSelectedTaskResultReaderV1 } from "./task-result-reader";
 import { catalogProjectIdSchema } from "./project-wire";
 import { taskReviewDraftSchema, taskReviewReceiptSchema, taskReviewNoteSchema, taskReviewOptionsSchema,
   type TaskReviewDraft, type TaskReviewReceipt } from "./task-review-wire";
-import { manualVerificationScenarioSchema, type ManualVerificationScenario, type ManualVerificationScenarioSource } from "./task-verification-service";
+import { manualVerificationScenarioInstructionsDigestV1, manualVerificationScenarioSchema, MAX_MANUAL_VERIFICATION_DESCRIPTORS_V1,
+  type ManualVerificationScenario, type ManualVerificationScenarioSource } from "./task-verification-service";
 
 export interface WebTaskReviewConfiguration { integrityKey: Uint8Array; checkpoints: AwaitableRollbackCheckpointStoreV1;
   acceptanceVerificationScenarios?: readonly ManualVerificationScenario[] | ManualVerificationScenarioSource }
@@ -49,7 +50,7 @@ export class WebTaskReviewService {
     this.projects = new WebProjectService(db, scope, clock, config.ideaIntegrityKey);
     if (config.acceptanceVerificationScenarios) {
       const source = config.acceptanceVerificationScenarios;
-      this.acceptanceVerificationScenarios = () => z.array(manualVerificationScenarioSchema).max(50)
+      this.acceptanceVerificationScenarios = () => z.array(manualVerificationScenarioSchema).max(MAX_MANUAL_VERIFICATION_DESCRIPTORS_V1)
         .parse(Array.isArray(source) ? source : (source as ManualVerificationScenarioSource).list());
       this.acceptanceVerificationScenarios();
     }
@@ -168,7 +169,7 @@ export class WebTaskReviewService {
           contentHash: prior.receipt.contentHash, targetDigest: prior.receipt.targetDigest,
           recordedAt: prior.receipt.recordedAt, feedback: prior.draft.feedback }) : null,
         acceptanceAttestation: attestation ? { scenarioId: attestation.scenarioId, label: attestation.label,
-          instructions: attestation.instructions, instructionsDigest: sha256Digest(attestation) } : null,
+          instructions: attestation.instructions, instructionsDigest: manualVerificationScenarioInstructionsDigestV1(attestation) } : null,
         grantsExecutionAuthority: false });
     });
   }
@@ -201,7 +202,7 @@ export class WebTaskReviewService {
       const attestation = this.acceptanceAttestation(context);
       if (draft.decision === "accepted" && (!!attestation !== !!draft.acceptanceAttestation
         || attestation && (draft.acceptanceAttestation?.scenarioId !== attestation.scenarioId
-          || draft.acceptanceAttestation.instructionsDigest !== sha256Digest(attestation)))) throw new WebAccessError("conflict");
+          || draft.acceptanceAttestation.instructionsDigest !== manualVerificationScenarioInstructionsDigestV1(attestation)))) throw new WebAccessError("conflict");
       const existing = (await tx.query("SELECT review_id FROM control_web_task_review_commands WHERE tenant_id=$1 AND identity_id=$2 AND target_id=$3",
         [this.scope.tenantId, actor.id, draft.targetId])).rows;
       if (existing.length) throw new WebAccessError("conflict");
@@ -227,7 +228,7 @@ export class WebTaskReviewService {
           tenantId: this.scope.tenantId, projectId, targetId: draft.targetId, targetDigest: draft.targetDigest,
           acceptanceProfileId: context.profile.id, acceptanceProfileDigest: sha256Digest(context.profile), scenarioId: attestation.scenarioId,
           outcome: "passed", verifier: { actorId: actor.id, actorType: "human" },
-          evidenceDigests: [...new Set([draft.contentHash, sha256Digest(attestation), digest])].sort(), verifiedAt: actor.now,
+          evidenceDigests: [...new Set([draft.contentHash, manualVerificationScenarioInstructionsDigestV1(attestation), digest])].sort(), verifiedAt: actor.now,
           grantsApproval: false, grantsExecutionAuthority: false };
         await this.gate(tx, staged.checkpoints).recordVerification(verification);
         await appendAuditWith(tx, { id: `audit:${randomUUID()}`, tenantId: this.scope.tenantId, projectId, actorId: actor.id,

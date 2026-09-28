@@ -49,7 +49,7 @@ export function HomeDashboard({ data }: { data: HomeDashboardState }) {
             <a href={taskHref(task.projectId, task.jobId)}>{task.title}</a><span>{task.state.replaceAll("_", " ")}</span></li>)}</ul>
             : <p>No running or approval-waiting work is recorded.</p>}
       {data.activity.state === "ready" && data.activity.value.additionalActiveOmitted
-        ? <p className="private-note">More running work exists. Open Projects to inspect it.</p> : null}
+        ? <p className="private-note">More running work may exist. Open Projects to inspect it.</p> : null}
       <a className="private-action-link" href="/projects">Open projects</a>
     </section>
 
