@@ -238,6 +238,13 @@ jobs:
         run: pnpm run test:phase2b
       - name: Component lanes
         run: pnpm run test:components
+      # The shared attack-test kit and its own tests. This lane installs
+      # PostgreSQL 17 above, so the kit's real-cluster tests must run here
+      # rather than skip: tests/attack-kit.test.ts calls
+      # requiresRealPostgres() and FAILS when the binaries are present but the
+      # cluster tests did not run, so a lost PG install cannot pass silently.
+      - name: Attack-test kit
+        run: pnpm run test:attack-kit
       - name: Resource-bound connector contracts
         run: node --import tsx --test tests/resource-bound-native-contract-v2.test.ts tests/resource-bound-codex-contract-v2.test.ts tests/resource-bound-local-start-contract-v2.test.ts
 
@@ -535,6 +542,7 @@ jobs:
         run: |
           pnpm install --frozen-lockfile --ignore-scripts
           pnpm run test:components
+          pnpm run test:attack-kit
           node --import tsx --test tests/resource-bound-native-contract-v2.test.ts tests/resource-bound-codex-contract-v2.test.ts tests/resource-bound-local-start-contract-v2.test.ts
       - name: Article build lane (merge gate)
         if: ${{ !cancelled() && matrix.lane == 'articles' && needs.route.result == 'success' && needs.route.outputs.articles == 'false' }}

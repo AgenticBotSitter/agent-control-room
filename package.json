@@ -120,6 +120,7 @@
     "mac:prepare-task-runtime": "node --import tsx scripts/mac-local/prepare-task-runtime.ts",
     "db:ledger": "node scripts/generate-migration-ledger.mjs",
     "test:postgres-production": "node --test tests/postgres-production-ledger.test.mjs && PG_BIN=\"${PG_BIN:-/usr/lib/postgresql/17/bin}\" node --import tsx --test --test-concurrency=1 tests/postgres-production-lifecycle.test.mjs tests/postgres-production-coordination.test.mjs",
+    "test:attack-kit": "PG_BIN=\"${PG_BIN:-/usr/lib/postgresql/17/bin}\" node --import tsx --test --test-concurrency=1 --test-timeout=180000 tests/attack-kit.test.ts",
     "test:windows-preparation": "node --test tests/windows-preparation.test.mjs",
     "test:windows-line-endings": "node --test tests/windows-line-endings.test.mjs",
     "test:windows-launcher-modes": "node --test tests/windows-launcher-modes.test.mjs",
