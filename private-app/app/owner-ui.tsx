@@ -84,8 +84,12 @@ export function EmptyState({ children }: { children?: React.ReactNode }) {
   return <p className="private-state-empty">{children ?? "Nothing is recorded in this checked view."}</p>;
 }
 
-export function UnavailableState({ children }: { children?: React.ReactNode }) {
-  return <p className="private-state-unavailable" role="status">
+export function UnavailableState({ children, urgent }: { children?: React.ReactNode; urgent?: boolean }) {
+  // `urgent` keeps role="alert" for the case where the read failed and the owner
+  // must be interrupted, versus a panel that merely reports one section as
+  // unreadable alongside others. Downgrading an alert to a polite status region
+  // would be a behaviour change, so it is opt-in rather than automatic.
+  return <p className="private-state-unavailable" role={urgent ? "alert" : "status"}>
     {children ?? "This could not be read. No count or all-clear is inferred."}</p>;
 }
 

@@ -509,6 +509,7 @@ jobs:
           CONTROL_ROOM_SCREENSHOT_ORIGIN="http://127.0.0.1:3219" \
           CONTROL_ROOM_SCREENSHOT_ROOT="${rehearsal_root}" \
             node scripts/owner-page-screenshots.mjs test-results/owner-screenshots dark
+          pnpm mac:down -- --protected-root "${rehearsal_root}/protected"
       - name: Upload owner page screenshots
         if: ${{ always() }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

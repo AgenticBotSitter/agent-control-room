@@ -94,6 +94,18 @@ test("an unavailable state is announced, and an empty one is not", () => {
     .querySelector('[role="status"]') !== null, true);
 });
 
+test("an urgent unavailable state keeps role=alert, and adopting the component never downgrades one", () => {
+  // Both call sites this replaced already announced with role="alert"
+  // (ProjectCatalog's unavailable branch, and Needs attention's read failure).
+  // Routing them through a shared component that always used role="status" would
+  // have silently made a failed read quieter — a behaviour change dressed as a
+  // refactor. `urgent` restores the alert explicitly, and this pins both.
+  const urgent = documentFor(renderToStaticMarkup(createElement(UnavailableState, { urgent: true })));
+  assert.ok(urgent.querySelector('[role="alert"]'), "an urgent unavailable state must still alert");
+  assert.equal(urgent.querySelector('[role="status"]'), null, "it must not be both");
+  assert.match(urgent.body.textContent ?? "", /could not be read/i, "the text is unchanged");
+});
+
 test("a live region never wraps a control", () => {
   // Same rule the existing accessibility suite enforces elsewhere.
   for (const node of [createElement(UnavailableState, {}), createElement(LoadingState, {}),
