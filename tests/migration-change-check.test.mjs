@@ -1,15 +1,24 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { classifyMigrationChanges } from "../scripts/check-migration-changes.mjs";
+import { checkMigrations, classifyMigrationChanges } from "../scripts/check-migration-changes.mjs";
 
 function command(command, args, cwd) {
   const result = spawnSync(command, args, { cwd, encoding: "utf8" });
   assert.equal(result.status, 0, result.stderr);
   return result.stdout.trim();
+}
+
+function checkerGit(cwd) {
+  return args => command("git", args, cwd);
+}
+
+async function commit(t, root, message) {
+  command("git", ["add", "."], root);
+  command("git", ["commit", "--quiet", "-m", message], root);
 }
 
 async function repository(t) {
@@ -50,7 +59,41 @@ test("Squawk flags adding a NOT NULL column to an existing table", () => {
   assert.match(result.stdout + result.stderr, /adding-required-field/);
 });
 
-test("the migration CLI rejects a shipped edit and accepts a lint-clean addition", async t => {
+test("the migration checker rejects every symlink under db/migrations", async t => {
+  const internal = await repository(t);
+  await writeFile(join(internal.root, "db/payload.sql"), "SELECT 1;\n");
+  await symlink("../payload.sql", join(internal.root, "db/migrations/0002_internal_link.sql"));
+  await commit(t, internal.root, "add internal link");
+  const internalResult = checkMigrations({ base: internal.base, cwd: internal.root, runGit: checkerGit(internal.root) });
+  assert.match(internalResult.violations.join("\n"), /0002_internal_link\.sql is not a regular file/);
+
+  const outside = await repository(t);
+  const payload = join(outside.root, "..", "outside-migration-payload.sql");
+  await writeFile(payload, "SELECT 1;\n");
+  t.after(() => rm(payload, { force: true }));
+  await symlink(payload, join(outside.root, "db/migrations/0002_outside_link.sql"));
+  await commit(t, outside.root, "add outside link");
+  const outsideResult = checkMigrations({ base: outside.base, cwd: outside.root, runGit: checkerGit(outside.root) });
+  assert.match(outsideResult.violations.join("\n"), /0002_outside_link\.sql is not a regular file/);
+
+  const directory = await repository(t);
+  const linkedDirectory = join(directory.root, "..", "outside-migration-directory");
+  await mkdir(linkedDirectory);
+  t.after(() => rm(linkedDirectory, { recursive: true, force: true }));
+  await symlink(linkedDirectory, join(directory.root, "db/migrations/0002_linked_directory"));
+  await commit(t, directory.root, "add linked directory");
+  const directoryResult = checkMigrations({ base: directory.base, cwd: directory.root, runGit: checkerGit(directory.root) });
+  assert.match(directoryResult.violations.join("\n"), /0002_linked_directory is not a regular file/);
+
+  const nested = await repository(t);
+  await mkdir(join(nested.root, "db/migrations/0002_nested"));
+  await writeFile(join(nested.root, "db/migrations/0002_nested/hidden.sql"), "SELECT 1;\n");
+  await commit(t, nested.root, "add nested migration directory");
+  const nestedResult = checkMigrations({ base: nested.base, cwd: nested.root, runGit: checkerGit(nested.root) });
+  assert.match(nestedResult.violations.join("\n"), /0002_nested is not a regular file/);
+});
+
+test("the migration CLI rejects a shipped edit, a symlink, and a real Squawk rejection", async t => {
   const checker = new URL("../scripts/check-migration-changes.mjs", import.meta.url).pathname;
   const edited = await repository(t);
   await writeFile(join(edited.root, "db/migrations/0001_base.sql"), "SELECT 1;\n");
@@ -59,6 +102,24 @@ test("the migration CLI rejects a shipped edit and accepts a lint-clean addition
   const refused = spawnSync(process.execPath, [checker, "--base", edited.base], { cwd: edited.root, encoding: "utf8" });
   assert.notEqual(refused.status, 0);
   assert.match(refused.stderr, /exists on main/);
+
+  const linked = await repository(t);
+  await writeFile(join(linked.root, "db/payload.sql"), "SELECT 1;\n");
+  await symlink("../payload.sql", join(linked.root, "db/migrations/0002_link.sql"));
+  await commit(t, linked.root, "add link");
+  const linkedRefused = spawnSync(process.execPath, [checker, "--base", linked.base], { cwd: linked.root, encoding: "utf8" });
+  assert.notEqual(linkedRefused.status, 0);
+  assert.match(linkedRefused.stderr, /0002_link\.sql is not a regular file/);
+
+  const dangerous = await repository(t);
+  await writeFile(join(dangerous.root, "db/migrations/0002_dangerous.sql"),
+    "ALTER TABLE public.base_records ADD COLUMN owner_id bigint NOT NULL;\n");
+  await commit(t, dangerous.root, "add dangerous migration");
+  const checked = checkMigrations({ base: dangerous.base, cwd: dangerous.root, runGit: checkerGit(dangerous.root), runSquawk: files => spawnSync("squawk", files, { encoding: "utf8" }) });
+  assert.match(checked.violations.join("\n"), /Squawk rejected a changed migration/);
+  const squawkRefused = spawnSync(process.execPath, [checker, "--base", dangerous.base], { cwd: dangerous.root, encoding: "utf8" });
+  assert.notEqual(squawkRefused.status, 0, squawkRefused.stdout + squawkRefused.stderr);
+  assert.match(squawkRefused.stderr, /Squawk rejected a changed migration/);
 
   const added = await repository(t);
   await writeFile(join(added.root, "db/migrations/0002_additive.sql"),

@@ -1,4 +1,5 @@
 import { spawnSync } from "node:child_process";
+import { lstatSync, readdirSync, realpathSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -25,6 +26,56 @@ export function parseNameStatus(value) {
 }
 
 const isMigration = path => typeof path === "string" && /^db\/migrations\/[^/]+\.sql$/.test(path);
+const isRegularGitMode = mode => /^100[0-7]{3}$/.test(mode);
+
+function migrationDirectory(root) {
+  return join(root, "db", "migrations");
+}
+
+function scanMigrationDirectory(root) {
+  const directory = migrationDirectory(root);
+  const violations = [];
+  let directoryStat;
+  try {
+    directoryStat = lstatSync(directory);
+  } catch (error) {
+    violations.push(`cannot inspect db/migrations: ${error instanceof Error ? error.message : String(error)}`);
+    return violations;
+  }
+  if (!directoryStat.isDirectory()) {
+    violations.push("db/migrations must be a real directory");
+    return violations;
+  }
+
+  const visit = path => {
+    for (const entry of readdirSync(path, { withFileTypes: true })) {
+      const entryPath = join(path, entry.name);
+      const relative = entryPath.slice(root.length + 1);
+      const stat = lstatSync(entryPath);
+      if (!stat.isFile()) violations.push(`${relative} is not a regular file (symlinks and directories are forbidden in db/migrations)`);
+    }
+  };
+  visit(directory);
+  return violations;
+}
+
+function scanBaseMigrationTree(base, runGit) {
+  const entries = runGit(["ls-tree", "-r", "-z", base, "--", "db/migrations"]).split("\0").filter(Boolean);
+  return entries.flatMap(entry => {
+    const [metadata, path] = entry.split("\t");
+    const [mode] = metadata.split(" ");
+    return isRegularGitMode(mode) ? [] : [`${base}:${path} is not a regular file (symlinks are forbidden in db/migrations)`];
+  });
+}
+
+function resolveRegularMigrationFiles(paths, root) {
+  return paths.map(path => {
+    const absolute = join(root, path);
+    const stat = lstatSync(absolute);
+    if (!stat.isFile()) throw new Error(`${path} is not a regular file`);
+    return realpathSync(absolute);
+  });
+}
 
 export function classifyMigrationChanges(changes, existsOnBase) {
   const violations = [];
@@ -43,19 +94,23 @@ export function classifyMigrationChanges(changes, existsOnBase) {
   return { violations, lint: [...lint].sort() };
 }
 
-export function checkMigrations({ base = "origin/main", runGit = git, runSquawk } = {}) {
+export function checkMigrations({ base = "origin/main", runGit = git, runSquawk, cwd = process.cwd() } = {}) {
   const mergeBase = runGit(["merge-base", base, "HEAD"]).trim();
+  const violations = [...scanMigrationDirectory(cwd), ...scanBaseMigrationTree(base, runGit)];
+  if (violations.length > 0) return { violations, lint: [] };
   const changes = parseNameStatus(runGit(["diff", "--name-status", "-z", `${mergeBase}...HEAD`, "--", "db/migrations"]));
   const existsOnBase = path => {
-    const result = spawnSync("git", ["cat-file", "-e", `${mergeBase}:${path}`], { stdio: "ignore" });
-    return result.status === 0;
+    const listing = runGit(["ls-tree", "-z", mergeBase, "--", path]);
+    const entry = listing.split("\0").filter(Boolean)[0];
+    return Boolean(entry && isRegularGitMode(entry.split("\t", 1)[0].split(" ", 1)[0]));
   };
   const result = classifyMigrationChanges(changes, existsOnBase);
   if (result.violations.length > 0) return result;
   if (result.lint.length > 0) {
+    const resolvedFiles = resolveRegularMigrationFiles(result.lint, cwd);
     const lint = runSquawk
-      ? runSquawk(result.lint)
-      : spawnSync(squawkBin, ["--config", join(repositoryRoot, ".squawk.toml"), ...result.lint],
+      ? runSquawk(resolvedFiles)
+      : spawnSync(squawkBin, ["--config", join(repositoryRoot, ".squawk.toml"), ...resolvedFiles],
         { stdio: "inherit", env: process.env });
     if ((lint.status ?? lint) !== 0) result.violations.push("Squawk rejected a changed migration");
   }
