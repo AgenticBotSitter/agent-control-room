@@ -404,7 +404,7 @@ async function verifyDatabase(db: DatabaseClient, config: PrivatePostgresConfigu
               AND p.prosecdef AND p.provolatile='s' AND p.prokind='f' AND p.prorettype='boolean'::regtype
               AND p.pronargs=0 AND NOT p.proleakproof AND p.proparallel='u'
               AND p.prolang=(SELECT oid FROM pg_language WHERE lanname='sql')
-              AND p.proconfig=ARRAY['search_path=pg_catalog, public']::text[]
+              AND p.proconfig=ARRAY['search_path=pg_catalog, public, pg_temp']::text[]
               AND NOT has_function_privilege('public',p.oid,'EXECUTE')
               AND NOT EXISTS(SELECT 1 FROM aclexplode(COALESCE(p.proacl,acldefault('f',p.proowner))) a
                 WHERE a.privilege_type='EXECUTE' AND a.grantee<>p.proowner AND (a.is_grantable OR a.grantee=0
@@ -415,7 +415,7 @@ async function verifyDatabase(db: DatabaseClient, config: PrivatePostgresConfigu
             OR (p.oid='commit_agent_review(text,jsonb,jsonb,bytea)'::regprocedure
               AND NOT has_function_privilege('public','commit_agent_review(text,jsonb,jsonb,bytea)','EXECUTE')
               AND (($2 AND pg_get_userbyid(p.proowner)='control_room_schema_owner'
-                AND p.proconfig=ARRAY['search_path=pg_catalog']::text[]
+                AND p.proconfig=ARRAY['search_path=pg_catalog, public, pg_temp']::text[]
                 AND NOT p.proleakproof AND p.proparallel='u' AND p.provolatile='v')
                 OR (NOT $2 AND NOT has_function_privilege(p.oid,'EXECUTE')))))))
         OR ($2 AND NOT (has_function_privilege('commit_agent_review(text,jsonb,jsonb,bytea)','EXECUTE')
