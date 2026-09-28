@@ -411,9 +411,13 @@ test.describe("disposable owner website adversarial attacks", () => {
     await activateTwice(page.getByRole("button", { name: "Request changes" }));
     const savedChanges = page.getByText(/Saved: changes requested/);
     const checkExactSave = page.getByRole("button", { name: "Check this exact review save" });
-    await expect(savedChanges.or(checkExactSave)).toBeVisible();
+    await expect.poll(async () => {
+      if (await savedChanges.isVisible()) return "saved";
+      if (await checkExactSave.isEnabled().catch(() => false)) return "retry";
+      return "pending";
+    }, { timeout: 20_000 }).not.toBe("pending");
     expect(reviewPosts.length - reviewsBeforeRevision).toBe(1);
-    if (await checkExactSave.isVisible()) await checkExactSave.click();
+    if (!await savedChanges.isVisible()) await checkExactSave.click();
     await expect(savedChanges).toBeVisible();
     const revisionReviewPosts = reviewPosts.slice(reviewsBeforeRevision);
     expect(new Set(revisionReviewPosts.map(request => request.key)).size).toBe(1);
