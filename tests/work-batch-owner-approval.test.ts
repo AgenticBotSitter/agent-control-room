@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { sha256Digest, type AuthenticatedPrincipal } from "../src/security";
+import { hmacSha256Tag, sha256Digest, type AuthenticatedPrincipal } from "../src/security";
 import { WorkBatchOwnerServiceV1, WorkBatchStoreV1, workBatchProposalDigestV1,
   workBatchOwnerNotificationV1, type WorkBatchProposalV1 } from "../src/work-intake/v1";
 import { taskFixture } from "./helpers/web-task";
@@ -356,6 +356,32 @@ test("revision history and rejected items remain visible", async t => {
   assert.equal(view.revisions.length, 2); assert.equal(view.revisions[0]!.proposal.tasks[0]!.title, "Build the change");
   assert.equal(view.proposal.tasks[0]!.title, "Build the revised change");
   assert.equal(view.items[1]!.decisionReasonCode, "needs_different_check");
+});
+
+test("an S1-authenticated batch remains readable after the S2 migration and first revision", async t => {
+  const f = await ownerFixture(); t.after(() => void f.db.close());
+  const batch = await f.submit();
+  const before = (await f.db.query<{ id: string; project_id: string; proposed_by_identity_id: string;
+    proposed_at: string | Date; proposal: WorkBatchProposalV1; queue_depth_limit: number; batch_digest: string;
+    auth_tag: string; auth_material_version: number; created_at: string | Date }>(`SELECT id,project_id,
+      proposed_by_identity_id,proposed_at,proposal,queue_depth_limit,batch_digest,auth_tag,
+      auth_material_version,created_at FROM work_batches WHERE id=$1`, [batch.batchId])).rows[0]!;
+  const createdAt = new Date(before.created_at).toISOString();
+  assert.equal(before.auth_material_version, 1, "0094 backfills the S1 auth-material version");
+  assert.equal(before.auth_tag, hmacSha256Tag(key, { purpose: "work-batch/v1", record: {
+    id: before.id, tenantId: "tenant:web", projectId: before.project_id,
+    proposedByIdentityId: before.proposed_by_identity_id, proposedAt: new Date(before.proposed_at).toISOString(),
+    state: "proposed", proposal: before.proposal, queueDepthLimit: Number(before.queue_depth_limit),
+    batchDigest: before.batch_digest, version: 1, createdAt, updatedAt: createdAt } }));
+  const changed = proposal(f.project.projectId);
+  changed.tasks[0] = { ...changed.tasks[0]!, title: "Build after the S2 upgrade" };
+  await f.owner.command(f.identity, f.project.projectId,
+    { operation: "revise", batchId: batch.batchId, expectedRevision: 1, reasonCode: "owner_edit", proposal: changed },
+    "owner-cross-version-revision-0001");
+  assert.equal((await f.store.status(agent(), f.project.projectId, batch.batchId,
+    new Date(now).toISOString())).state, "proposed");
+  assert.equal((await f.store.list(agent(), f.project.projectId, new Date(now).toISOString())).length, 1);
+  assert.equal((await f.owner.view(f.identity, f.project.projectId, batch.batchId)).revision, 2);
 });
 
 test("a missing durable notification rolls the whole owner decision back", async t => {

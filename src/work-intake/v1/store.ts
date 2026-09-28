@@ -11,7 +11,7 @@ type Authorization = { allowed: true; workspaceId: string } | { allowed: false; 
 type BatchRow = { id: string; tenant_id: string; project_id: string; proposed_by_identity_id: string;
   proposed_at: string | Date; state: string; approval_identity_id: string | null; approved_at: string | Date | null;
   decision_reason_code: string | null; decision_digest: string | null; decision_auth_tag: string | null;
-  proposal: unknown; queue_depth_limit: number; batch_digest: string; auth_tag: string; version: number;
+  proposal: unknown; queue_depth_limit: number; batch_digest: string; auth_tag: string; auth_material_version: number; version: number;
   created_at: string | Date; updated_at: string | Date };
 type ItemRow = { id: string; tenant_id: string; batch_id: string; batch_revision: number; project_id: string;
   local_id: string; ordinal: number; role: "builder" | "checker" | "validator"; required_capability: string;
@@ -169,7 +169,8 @@ export class WorkBatchStoreV1 {
       proposal, queueDepthLimit: Number(row.queue_depth_limit), batchDigest: row.batch_digest,
       version: 1, createdAt: iso(row.created_at), updatedAt: iso(row.created_at) };
     const expected = hmacSha256Tag(this.#key, { purpose: "work-batch/v1", record: material });
-    if (!new Set(["proposed", "approved", "partially_approved", "rejected"]).has(row.state)
+    if (Number(row.auth_material_version) !== 1
+      || !new Set(["proposed", "approved", "partially_approved", "rejected"]).has(row.state)
       || Number(row.version) < 1 || digest !== row.batch_digest
       || !same(expected, row.auth_tag)) failWorkIntakeV1("integrity_failed");
     return proposal;
@@ -218,7 +219,7 @@ export class WorkBatchStoreV1 {
     const auth = await this.authorize(principal, projectId, now); if (!auth.allowed) failWorkIntakeV1(auth.safeReasonCode);
     const row = (await this.db.query<BatchRow>(`SELECT id,tenant_id,project_id,proposed_by_identity_id,proposed_at,
       state,approval_identity_id,approved_at,decision_reason_code,decision_digest,decision_auth_tag,
-      proposal,queue_depth_limit,batch_digest,auth_tag,version,created_at,updated_at
+      proposal,queue_depth_limit,batch_digest,auth_tag,auth_material_version,version,created_at,updated_at
       FROM work_batches WHERE tenant_id=$1 AND project_id=$2 AND id=$3 AND proposed_by_identity_id=$4`,
     [principal.tenantId, projectId, batchId, principal.identityId])).rows[0];
     if (!row) failWorkIntakeV1("batch_not_found");
@@ -231,7 +232,7 @@ export class WorkBatchStoreV1 {
     const auth = await this.authorize(principal, projectId, now); if (!auth.allowed) failWorkIntakeV1(auth.safeReasonCode);
     const rows = (await this.db.query<BatchRow>(`SELECT id,tenant_id,project_id,proposed_by_identity_id,proposed_at,
       state,approval_identity_id,approved_at,decision_reason_code,decision_digest,decision_auth_tag,
-      proposal,queue_depth_limit,batch_digest,auth_tag,version,created_at,updated_at
+      proposal,queue_depth_limit,batch_digest,auth_tag,auth_material_version,version,created_at,updated_at
       FROM work_batches WHERE tenant_id=$1 AND project_id=$2 AND proposed_by_identity_id=$3 ORDER BY proposed_at,id LIMIT 100`,
     [principal.tenantId, projectId, principal.identityId])).rows;
     return Promise.all(rows.map(async row => { await this.#verifyStoredState(row); return { batchId: row.id,

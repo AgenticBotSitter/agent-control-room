@@ -16,7 +16,7 @@ import { workBatchOwnerCommandSchemaV1, workBatchOwnerPageSchemaV1, workBatchOwn
 type BatchRow = { id: string; tenant_id: string; project_id: string; proposed_by_identity_id: string;
   proposed_at: string | Date; state: string; approval_identity_id: string | null; approved_at: string | Date | null;
   decision_reason_code: string | null; proposal: unknown; queue_depth_limit: number; batch_digest: string;
-  auth_tag: string; decision_digest: string | null; decision_auth_tag: string | null;
+  auth_tag: string; auth_material_version: number; decision_digest: string | null; decision_auth_tag: string | null;
   version: number; created_at: string | Date; updated_at: string | Date };
 type RevisionRow = { revision: number; edited_by_identity_id: string; edited_at: string | Date;
   reason_code: string; proposal: unknown; revision_digest: string; auth_tag: string };
@@ -165,7 +165,8 @@ export class WorkBatchOwnerServiceV1 {
       proposal, queueDepthLimit: Number(row.queue_depth_limit), batchDigest: row.batch_digest,
       version: 1, createdAt: iso(row.created_at), updatedAt: iso(row.created_at) };
     const expected = hmacSha256Tag(this.#key, { purpose: "work-batch/v1", record: material });
-    if (workBatchProposalDigestV1(proposal) !== row.batch_digest || !same(expected, row.auth_tag))
+    if (Number(row.auth_material_version) !== 1
+      || workBatchProposalDigestV1(proposal) !== row.batch_digest || !same(expected, row.auth_tag))
       throw new Error("work_batch_integrity_failed");
     return proposal;
   }
@@ -222,7 +223,7 @@ export class WorkBatchOwnerServiceV1 {
 
   async #batch(tx: DatabaseSession, projectId: string, batchId: string, lock: boolean): Promise<BatchRow> {
     const row = (await tx.query<BatchRow>(`SELECT id,tenant_id,project_id,proposed_by_identity_id,proposed_at,state,
-      approval_identity_id,approved_at,decision_reason_code,proposal,queue_depth_limit,batch_digest,auth_tag,
+      approval_identity_id,approved_at,decision_reason_code,proposal,queue_depth_limit,batch_digest,auth_tag,auth_material_version,
       decision_digest,decision_auth_tag,version,
       created_at,updated_at FROM work_batches WHERE tenant_id=$1 AND project_id=$2 AND id=$3${lock ? " FOR UPDATE" : ""}`,
     [this.scope.tenantId, projectId, batchId])).rows[0];
@@ -511,7 +512,7 @@ export class WorkBatchOwnerServiceV1 {
     return this.#authority.authenticated(identity, async (tx, actor) => {
       actor.require("tasks.read", projectId);
       const rows = (await tx.query<BatchRow>(`SELECT id,tenant_id,project_id,proposed_by_identity_id,proposed_at,state,
-        approval_identity_id,approved_at,decision_reason_code,proposal,queue_depth_limit,batch_digest,auth_tag,
+        approval_identity_id,approved_at,decision_reason_code,proposal,queue_depth_limit,batch_digest,auth_tag,auth_material_version,
         decision_digest,decision_auth_tag,version,
         created_at,updated_at FROM work_batches WHERE tenant_id=$1 AND project_id=$2 ORDER BY proposed_at DESC,id LIMIT 100`,
       [this.scope.tenantId, projectId])).rows;
@@ -537,7 +538,7 @@ export class WorkBatchOwnerServiceV1 {
     return this.#authority.authenticated(identity, async (tx, actor) => {
       const rows = (await tx.query<BatchRow>(`SELECT b.id,b.tenant_id,b.project_id,b.proposed_by_identity_id,
         b.proposed_at,b.state,b.approval_identity_id,b.approved_at,b.decision_reason_code,b.proposal,
-        b.queue_depth_limit,b.batch_digest,b.auth_tag,b.decision_digest,b.decision_auth_tag,b.version,
+        b.queue_depth_limit,b.batch_digest,b.auth_tag,b.auth_material_version,b.decision_digest,b.decision_auth_tag,b.version,
         b.created_at,b.updated_at FROM work_batches b JOIN control_action_inbox a
           ON a.tenant_id=b.tenant_id AND a.work_item_id=b.id AND a.project_id=b.project_id
         WHERE b.tenant_id=$1 AND b.state='proposed' AND a.id='attention:work-batch:' || b.id

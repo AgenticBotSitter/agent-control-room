@@ -85,7 +85,7 @@ GRANT EXECUTE ON FUNCTION work_intake_canonical_jsonb(jsonb) TO control_room_wor
 GRANT INSERT ON control_action_inbox TO control_room_work_intake;
 -- Shared-ledger policies run for every database role. This SECURITY DEFINER
 -- predicate exposes only a boolean and reads the protected marker ACL.
-GRANT EXECUTE ON FUNCTION is_work_intake_session() TO PUBLIC;
+GRANT EXECUTE ON FUNCTION is_work_intake_session() TO PUBLIC, control_room_work_intake;
 
 ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON TABLES FROM PUBLIC;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON SEQUENCES FROM PUBLIC;
