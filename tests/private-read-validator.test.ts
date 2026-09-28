@@ -165,12 +165,27 @@ test("non-GET, error and non-JSON responses are passed through with no validator
 test("an oversized body is returned unchanged rather than buffered to be hashed", async () => {
   const path = "/api/v1/projects";
   const big = "x".repeat(1_048_577);
+  const body = JSON.stringify({ big });
   const outcome = await applyReadValidator(read(path, { "if-none-match": '"stale"' }),
-    new Response(JSON.stringify({ big }), { headers: { ...privateResponseHeaders, "content-type": "application/json" } }),
+    new Response(body, { headers: { ...privateResponseHeaders, "content-type": "application/json" } }),
     scopeFor(tokenA, path), privateResponseHeaders);
   assert.equal(outcome.validated, false, "a body over the limit is not hashed");
   assert.equal(outcome.response.status, 200);
   assert.equal(outcome.response.headers.get("etag"), null);
+  assert.equal(outcome.response.bodyUsed, false, "the original response remains readable by the transport");
+  assert.deepEqual(new Uint8Array(await outcome.response.arrayBuffer()), new TextEncoder().encode(body),
+    "the returned response preserves every original body byte");
+});
+
+test("an undecodable body remains readable when validation fails open", async () => {
+  const path = "/api/v1/projects";
+  const body = new Uint8Array([0x7b, 0x22, 0x78, 0x22, 0x3a, 0xff, 0x7d]);
+  const outcome = await applyReadValidator(read(path),
+    new Response(body, { headers: { ...privateResponseHeaders, "content-type": "application/json" } }),
+    scopeFor(tokenA, path), privateResponseHeaders);
+  assert.equal(outcome.validated, false, "invalid UTF-8 is not hashed");
+  assert.equal(outcome.response.bodyUsed, false, "decode failure does not disturb the original response");
+  assert.deepEqual(new Uint8Array(await outcome.response.arrayBuffer()), body);
 });
 
 test("a 304 response is built from the caller's policy headers and carries no body", async () => {

@@ -111,7 +111,9 @@ export async function applyReadValidator(request: Request, response: Response, s
 
   let body: string;
   try {
-    const buffer = await response.arrayBuffer();
+    // Inspect a separate stream so every fail-open path can still return the
+    // caller's original response with its body readable by the transport.
+    const buffer = await response.clone().arrayBuffer();
     if (buffer.byteLength > readValidatorByteLimit) return untouched(response);
     body = new TextDecoder("utf-8", { fatal: true }).decode(buffer);
   } catch { return untouched(response); }
