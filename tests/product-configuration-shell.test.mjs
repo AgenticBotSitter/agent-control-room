@@ -81,7 +81,7 @@ test("local client shell exposes only reachable routes and reads only local work
     reads.push(path);
     if (path !== "/api/v1/local-workers") throw new Error(`unsupported local fetch: ${path}`);
     return Promise.resolve(Response.json({ taskWorkersStarted: true,
-      projectSections: ["overview", "inbox", "work", "agents", "reviews", "activity", "files", "settings"], workers: [
+      projectSections: ["overview", "inbox", "work", "agents", "reviews", "activity", "files"], workers: [
       { kind: "hermes-021", state: "ready", proof: "not_proven" },
       { kind: "claude-code", state: "ready", proof: "not_proven" },
       { kind: "codex", state: "ready", proof: "not_proven" },
@@ -98,10 +98,10 @@ test("local client shell exposes only reachable routes and reads only local work
     assert.ok(links.includes("/workers"));
     assert.ok(links.includes("/needs-me"));
     assert.ok(links.includes("/projects/project%3Aalpha/tasks"));
-    for (const supported of ["inbox", "agents", "reviews", "activity", "files", "settings"])
+    for (const supported of ["inbox", "agents", "reviews", "activity", "files"])
       assert.ok(links.includes(`/projects/project%3Aalpha/${supported}`));
-    assert.equal(links.includes("/projects/project%3Aalpha/automations"), false,
-      "a project route the local runtime does not advertise is not navigable");
+    assert.equal(links.includes("/projects/project%3Aalpha/settings"), false,
+      "a supported project route the local runtime does not advertise is not navigable");
     for (const unsupported of ["/setup", "/workboard", "/settings", "/ideas", "/connections"])
       assert.equal(links.includes(unsupported), false, unsupported);
     assert.match(dom.window.document.body.textContent ?? "",
