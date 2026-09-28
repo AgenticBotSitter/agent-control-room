@@ -219,8 +219,26 @@ test("shared template activation is monotonic while sibling run consent remains 
   const service=new PipelineAdvanceServiceV1(f.client,{tenantId:"tenant:web",workspaceId:"workspace:web"},key,{},()=>webNow);
   await service.setUnattended(f.identity,f.project.projectId,{runId:first.runId,templateId:saved.templateId,
     policyId:"policy:siblings",enabled:true,expectedRunVersion:1,expectedTemplateVersion:1},"pipeline-sibling-enable-0001");
+  const historical=await linear.view(f.identity,f.project.projectId,second.runId);
+  const before=await linear.list(f.identity,f.project.projectId);
+  assert.equal(historical.runId,second.runId);assert.equal(historical.startsWork,false);
+  assert.deepEqual(new Set(before.runs.map(run=>run.runId)),new Set([first.runId,second.runId]));
+  const unavailable:PipelineAdvanceCapabilityV1={resolveStageInSession:async()=>{throw new Error("must not resolve");},
+    assertAcceptedPredecessorInSession:()=>{throw new Error("must not check predecessor");},
+    assertSelectionCurrentInSession:()=>{throw new Error("must not check selection");},
+    assertSelectionCurrent:()=>{throw new Error("must not check selection");},
+    authorizeDelegationInSession:async()=>{throw new Error("must not authorize");},
+    assignAndQueueInSession:async()=>{throw new Error("must not assign");}};
+  const advance=new PipelineAdvanceServiceV1(f.client,{tenantId:"tenant:web",workspaceId:"workspace:web"},key,
+    {unattendedEnabled:()=>true,capability:unavailable},()=>webNow);
+  await assert.rejects(advance.advance(second.runId,"policy:siblings"),
+    (error:unknown)=>error instanceof PipelineAdvanceErrorV1&&error.safeReason==="unattended_not_authorized");
   await service.setUnattended(f.identity,f.project.projectId,{runId:second.runId,templateId:saved.templateId,
     policyId:"policy:siblings",enabled:true,expectedRunVersion:1,expectedTemplateVersion:2},"pipeline-sibling-enable-0002");
+  assert.equal((await linear.view(f.identity,f.project.projectId,first.runId)).runId,first.runId);
+  assert.equal((await linear.view(f.identity,f.project.projectId,second.runId)).runId,second.runId);
+  assert.deepEqual(new Set((await linear.list(f.identity,f.project.projectId)).runs.map(run=>run.runId)),
+    new Set([first.runId,second.runId]));
   await service.setUnattended(f.identity,f.project.projectId,{runId:first.runId,templateId:saved.templateId,
     policyId:"policy:siblings",enabled:false,expectedRunVersion:2,expectedTemplateVersion:2},"pipeline-sibling-disable-0001");
   const rows=(await f.db.query<{id:string;template_version:number;unattended:boolean}>(`SELECT id,template_version,unattended
