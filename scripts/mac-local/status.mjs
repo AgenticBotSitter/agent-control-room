@@ -2,7 +2,8 @@
 // Usage: pnpm mac:status -- --protected-root ABSOLUTE_PATH
 import { connect } from "node:net";
 import { fileURLToPath } from "node:url";
-import { alive, hostCommand, protectedRootFromArguments, readPid, runtimePaths, taskHostCommand } from "./stack.mjs";
+import { alive, hostCommand, protectedRootFromArguments, readPid, recordedHostCommand,
+  runtimePaths, taskHostCommand } from "./stack.mjs";
 import { serviceInstalled, serviceStatus } from "./service.mjs";
 import { readHostState } from "./task-host-supervisor.mjs";
 
@@ -27,8 +28,11 @@ export async function inspectMacLocalHost(root, port, runtime = {}) {
     && exactAlive(pid, hostCommand(root)));
   const childAlive = Boolean(processAlive && Number.isSafeInteger(state.childPid)
     && exactAlive(state.childPid, taskHostCommand(root)));
-  const serving = childAlive && await (runtime.portOpen ?? portOpen)(port);
+  const legacyAlive = Boolean(pid && !state && recordedHostCommand(pid, root, exactAlive));
+  const serving = (childAlive || legacyAlive) && await (runtime.portOpen ?? portOpen)(port);
   if (serving) return Object.freeze({ status: "running", exitCode: 0, pid, service });
+  if (legacyAlive) return Object.freeze({ status: "unhealthy", exitCode: 1, pid, service,
+    reason: "recorded host process is running but not serving" });
   if (processAlive) return Object.freeze({ status: "unhealthy", exitCode: 1, pid, service,
     reason: childAlive ? "host process is running but not serving" : "host supervisor is running but its task host is not" });
   const reason = state?.state === "stopped" && typeof state.reason === "string" ? state.reason

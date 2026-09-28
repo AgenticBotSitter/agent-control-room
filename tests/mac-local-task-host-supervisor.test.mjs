@@ -38,6 +38,18 @@ const pidAlive = pid => {
   }
 };
 
+const exactProcess = (child, command) => {
+  try {
+    return execFileSync("/bin/ps", ["-ww", "-o", "command=", "-p", String(child.pid)],
+      { encoding: "utf8" }).trim() === command.join(" ");
+  } catch (error) {
+    if (error?.code !== "EPERM") return false;
+    if (JSON.stringify(child.spawnargs) !== JSON.stringify(command)) return false;
+    try { process.kill(child.pid, 0); return true; }
+    catch { return false; }
+  }
+};
+
 async function killProcessGroup(pid) {
   if (!pidAlive(pid)) return;
   try { process.kill(-pid, "SIGKILL"); }
@@ -46,10 +58,13 @@ async function killProcessGroup(pid) {
 }
 
 async function closeWithin(child, timeoutMs = 2_000) {
-  return Promise.race([
-    once(child, "close"),
-    new Promise((_, reject) => setTimeout(() => reject(new Error("supervisor did not exit promptly")), timeoutMs)),
-  ]);
+  let timeout;
+  try {
+    return await Promise.race([
+      once(child, "close"),
+      new Promise((_, reject) => { timeout = setTimeout(() => reject(new Error("supervisor did not exit promptly")), timeoutMs); }),
+    ]);
+  } finally { clearTimeout(timeout); }
 }
 
 async function waitFor(check, message, timeoutMs = 5_000) {
@@ -230,7 +245,7 @@ test("a hard-killed supervisor cannot orphan its port-holding child and restart 
   const root = await rootFixture(t), port = await unusedPort();
   const childSource = `import { createServer } from "node:net";\n`
     + `import { monitorActiveTaskHost } from ${JSON.stringify(taskHostModule)};\n`
-    + `const server = createServer(socket => socket.end("ok"));\n`
+    + `const server = createServer(socket => { socket.on("error", () => {}); socket.end("ok"); });\n`
     + `await new Promise((resolve, reject) => { server.once("error", reject); server.listen(${port}, "127.0.0.1", resolve); });\n`
     + `monitorActiveTaskHost({ close: () => new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve())) }, process, globalThis, process.stdin);\n`;
   const args = ["--input-type=module", "-e", childSource];
@@ -264,6 +279,33 @@ test("a hard-killed supervisor cannot orphan its port-holding child and restart 
   restarted.kill("SIGTERM");
   assert.deepEqual(await closeWithin(restarted), [0, null]);
   await waitFor(async () => !await portOpen(port), "replacement child did not release the port");
+});
+
+test("child-side escalation survives supervisor death during a hung shutdown", async t => {
+  const root = await rootFixture(t), port = await unusedPort();
+  const childSource = `import { createServer } from "node:net";\n`
+    + `import { monitorActiveTaskHost } from ${JSON.stringify(taskHostModule)};\n`
+    + `const server = createServer(socket => { socket.on("error", () => {}); socket.end("ok"); });\n`
+    + `await new Promise((resolve, reject) => { server.once("error", reject); server.listen(${port}, "127.0.0.1", resolve); });\n`
+    + `const timers = { setTimeout: (callback) => setTimeout(callback, 1000), clearTimeout };\n`
+    + `monitorActiveTaskHost({ close: () => new Promise(() => {}) }, process, timers, process.stdin);\n`
+    + `console.log("fixture hung shutdown ready");\n`;
+  const supervisor = startRealSupervisor(root, ["--input-type=module", "-e", childSource]);
+  const state = await runningState(root);
+  t.after(async () => {
+    if (pidAlive(supervisor.pid)) supervisor.kill("SIGKILL");
+    await killProcessGroup(state.childPid);
+  });
+  await waitFor(() => portOpen(port), "hung-shutdown child did not bind its port");
+  await waitFor(async () => (await readFile(runtimePaths(root).hostLog, "utf8")).includes("fixture hung shutdown ready"),
+    "hung-shutdown child did not install its signal handler");
+  supervisor.kill("SIGTERM");
+  await new Promise(resolve => setTimeout(resolve, 50));
+  assert.doesNotThrow(() => process.kill(state.childPid, 0), "fixture must still be in its hung graceful close");
+  supervisor.kill("SIGKILL");
+  assert.deepEqual(await closeWithin(supervisor), [null, "SIGKILL"]);
+  await waitFor(() => !pidAlive(state.childPid), "child-side escalation died with the supervisor");
+  await waitFor(async () => !await portOpen(port), "hung child kept the port after supervisor death");
 });
 
 test("a stop arriving before spawn is retained and forwarded without orphaning the child", async t => {
@@ -366,6 +408,31 @@ test("mac:status distinguishes serving, unhealthy, and dead/restarting hosts", a
   const dead = await inspectMacLocalHost(root, 3210, { ...base, alive: () => false, portOpen: async () => false });
   assert.equal(dead.status, "dead/restarting");
   assert.equal(dead.reason, "host stopped because its supervisor disappeared without recording an exit");
+});
+
+test("mac:status recognizes a serving legacy host with no supervisor state", async t => {
+  const root = await rootFixture(t), paths = runtimePaths(root), port = await unusedPort();
+  const bootstrap = `import { createServer } from "node:net";\n`
+    + `const server = createServer(socket => socket.end("ok"));\n`
+    + `server.listen(${port}, "127.0.0.1");\n`;
+  const [command, ...args] = taskHostCommand(root);
+  const legacy = spawn(command, args, {
+    cwd: repoRoot,
+    detached: true,
+    stdio: "ignore",
+    env: { ...process.env, NODE_OPTIONS: `--import=${`data:text/javascript,${encodeURIComponent(bootstrap)}`}` },
+  });
+  t.after(() => killProcessGroup(legacy.pid));
+  await writeFile(paths.hostPid, `${legacy.pid}\n`, { mode: 0o600 });
+  await waitFor(() => portOpen(port), "legacy host fixture did not bind its port");
+
+  const status = await inspectMacLocalHost(root, port, {
+    serviceInstalled: async () => false,
+    alive: (pid, expected) => pid === legacy.pid && exactProcess(legacy, expected),
+  });
+  assert.equal(status.status, "running");
+  assert.equal(status.pid, legacy.pid);
+  assert.equal(status.reason, undefined);
 });
 
 test("upgrade selection recognizes only the current supervisor or exact legacy host", () => {
