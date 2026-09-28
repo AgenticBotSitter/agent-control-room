@@ -255,6 +255,40 @@ notice; revisions that contain that mode run both the default and `--model-allow
 journeys. The aggregate merge gate depends on this job, so a failed or cancelled
 rehearsal makes the revision non-merge-ready.
 
+## Amendment: affected tests (fast)
+
+The `Affected tests (fast)` job is a second, merge-gated proof for the files changed by
+a pull request. It has a 45-minute timeout. A normal source edit runs its importing test
+files; uncertainty, configuration, assets and other unclassified paths run the complete
+test plan. This duplicates the complete plan when the selector returns `ALL`, which is
+intentional: it exposes a source-to-test failure before the lane catch-up and merge gate
+finish. The maximum additional hosted-run cost is therefore one 45-minute runner plus a
+conditional PostgreSQL installation; observed cost must be re-evaluated before increasing
+that timeout or broadening the selector.
+
+For selected PostgreSQL tests, the job installs PostgreSQL 17 and starts one loopback-only,
+disposable cluster. It exports the narrowly scoped test gates and two URLs to that cluster,
+adds the versioned binary directory to `PATH`, then stops and removes the cluster in an
+`always()` cleanup step. The runner separates PostgreSQL-marked files into a TAP stream and
+fails if that stream reports any skipped test. This prevents missing database prerequisites
+from becoming a green merge-gate result. The job adds no credentials, deployment access,
+private runner, or workflow permission; it retains `pull_request`, read-only contents,
+full-history checkout without persisted credentials, frozen install and pinned actions.
+
+The migration safety tests invoke `squawk` directly. The fast runner is therefore wrapped
+in the same pinned `npm exec --yes --package=squawk-cli@2.61.0` environment as the existing
+`migration-lint` job. This is an explicit, public package download on the disposable hosted
+runner, not a new secret or a persistent install. The version is pinned to the migration
+lane's reviewed version, and the workflow-shape test asserts the wrapper.
+
+Documentation is not blanket-inert for this selector: a literal docs path read by a script
+is followed through the import graph to its tests. For example,
+`scripts/mac-local/provision-database.mjs` reads `docs/claude/SECURE_DB_ROUTE.md`; editing
+that document selects its provisioner tests. Only a docs-only change with no tracked reader
+can report no affected test. This corrects the earlier routing-table wording that described
+all of `docs/` as inert; the path-routing lanes remain protected by their complete
+merge-gate catch-up.
+
 ## Amendment: pull request claim evidence
 
 The `PR evidence claims` job reads the pull request body from GitHub's event

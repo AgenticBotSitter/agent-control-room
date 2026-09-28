@@ -57,10 +57,18 @@ test("an asset-only change selects ALL instead of reporting a silent green", () 
     check({ "tests/example.test.ts": "" }, [file], "ALL");
 });
 
-test("a docs-directory-only change declares that no tests ran", () => {
+test("an inert docs-directory-only change declares that no tests ran", () => {
   assert.equal(isDocumentationOnly(["docs/guide.md", "docs/nested/notes.mdx"]), true);
   check({ "tests/example.test.ts": "" }, ["docs/guide.md"], "DOCS_ONLY");
   assert.match(noTestsAffectedMessage(), /documentation-only change; no tests run/u);
+});
+
+test("a docs file read by a script selects that script's importing test", () => {
+  check({
+    "docs/claude/SECURE_DB_ROUTE.md": "verified route evidence",
+    "scripts/provision.mjs": "import { readFile } from 'node:fs/promises'; export const evidence = readFile('docs/claude/SECURE_DB_ROUTE.md');",
+    "tests/provision.test.mjs": "import '../scripts/provision.mjs';",
+  }, ["docs/claude/SECURE_DB_ROUTE.md"], ["tests/provision.test.mjs"]);
 });
 
 test("root markdown selects ALL because repository lanes read it", () => {
@@ -74,12 +82,15 @@ test("the package-manager argument separator is not mistaken for the base ref", 
 });
 
 test("ALL prepares both generated builds before launching the complete test set", () => {
-  const commands = affectedTestCommands("ALL", ["tests/example.test.ts"]);
-  assert.deepEqual(commands.slice(0, 2), [
-    ["pnpm", ["build"]],
-    ["pnpm", ["run", "build:demo"]],
-  ]);
-  assert.deepEqual(commands[2][1].slice(-1), ["tests/example.test.ts"]);
+  const root = fixture({ "tests/example.test.ts": "" });
+  try {
+    const commands = affectedTestCommands("ALL", ["tests/example.test.ts"], root);
+    assert.deepEqual(commands.slice(0, 2), [
+      ["pnpm", ["build"]],
+      ["pnpm", ["run", "build:demo"]],
+    ]);
+    assert.deepEqual(commands[2][1].slice(-1), ["tests/example.test.ts"]);
+  } finally { rmSync(root, { recursive: true }); }
 });
 
 test("a normal source selection prepares artifacts required by its built-output test", () => {
@@ -120,15 +131,52 @@ test("a selected PostgreSQL test fails before it can skip without binaries", () 
   }
 });
 
+test("an env-gated PostgreSQL fixture cannot skip to a green result", () => {
+  const root = mkdtempSync(join(process.cwd(), ".affected-tests-pg-fixture-"));
+  mkdirSync(join(root, "tests"), { recursive: true });
+  writeFileSync(join(root, "tests", "postgres.test.mjs"),
+    "import test from 'node:test'; const requiresRealPostgres = true; test('gate', { skip: process.env.CONTROL_ROOM_PG17_UPGRADE_REHEARSAL !== '1' }, () => {});");
+  const original = process.env.CONTROL_ROOM_PG17_UPGRADE_REHEARSAL;
+  delete process.env.CONTROL_ROOM_PG17_UPGRADE_REHEARSAL;
+  try {
+    assert.equal(runAffectedTests(["tests/postgres.test.mjs"], ["tests/postgres.test.mjs"], root,
+      () => 0, () => true), 1);
+  } finally {
+    if (original === undefined) delete process.env.CONTROL_ROOM_PG17_UPGRADE_REHEARSAL;
+    else process.env.CONTROL_ROOM_PG17_UPGRADE_REHEARSAL = original;
+    rmSync(root, { recursive: true });
+  }
+});
+
+test("a positive skip count for a selected PostgreSQL plan fails the lane", () => {
+  const root = fixture({ "tests/postgres.test.mjs": "const requiresRealPostgres = true;" });
+  try {
+    assert.equal(runAffectedTests(["tests/postgres.test.mjs"], ["tests/postgres.test.mjs"], root,
+      () => 0, () => true, () => ({ status: 0, output: "# skipped 1\n" })), 1);
+  } finally { rmSync(root, { recursive: true }); }
+});
+
+test("a selected migration test uses the pinned Squawk runner from migration-lint", () => {
+  const root = fixture({ "tests/migration-change-check.test.mjs": "spawnSync('squawk', []);" });
+  try {
+    const commands = affectedTestCommands(["tests/migration-change-check.test.mjs"], ["tests/migration-change-check.test.mjs"], root);
+    assert.deepEqual(commands, [["npm", ["exec", "--yes", "--package=squawk-cli@2.61.0", "--", process.execPath,
+      "--import", "tsx", "--test", "--test-concurrency=1", "--test-reporter=tap", "tests/migration-change-check.test.mjs"]]]);
+  } finally { rmSync(root, { recursive: true }); }
+});
+
 test("the runner executes every planned ALL command in order", () => {
+  const root = fixture({ "tests/example.test.ts": "" });
   const executed = [];
-  const status = runAffectedTests("ALL", ["tests/example.test.ts"], "/repo", (command, arguments_, root) => {
-    executed.push([command, arguments_, root]);
-    return 0;
-  }, () => true);
-  assert.equal(status, 0);
-  assert.equal(executed.length, 3);
-  assert.deepEqual(executed.map(call => call[0]), ["pnpm", "pnpm", process.execPath]);
+  try {
+    const status = runAffectedTests("ALL", ["tests/example.test.ts"], root, (command, arguments_, commandRoot) => {
+      executed.push([command, arguments_, commandRoot]);
+      return 0;
+    }, () => true);
+    assert.equal(status, 0);
+    assert.equal(executed.length, 3);
+    assert.deepEqual(executed.map(call => call[0]), ["pnpm", "pnpm", process.execPath]);
+  } finally { rmSync(root, { recursive: true }); }
 });
 
 test("a literal dynamic import is followed", () => {

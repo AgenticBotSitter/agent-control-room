@@ -54,6 +54,8 @@ jobs:
     timeout-minutes: 45
     env:
       PG_BIN: /usr/lib/postgresql/17/bin
+      LC_ALL: C.UTF-8
+      LANG: C.UTF-8
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -85,11 +87,33 @@ jobs:
           sudo cp /tmp/pgdg.asc /etc/apt/keyrings/pgdg.asc
           echo "deb [signed-by=/etc/apt/keyrings/pgdg.asc] http://apt.postgresql.org/pub/repos/apt $(lsb_release --short --codename)-pgdg main" | sudo tee /etc/apt/sources.list.d/pgdg.list
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends postgresql-17
+          sudo apt-get install -y --no-install-recommends postgresql-17 postgresql-client-17
+      - name: Start disposable PostgreSQL for selected database tests
+        if: ${{ steps.selection.outputs.needs-pg == 'true' }}
+        run: |
+          set -euo pipefail
+          postgres_root="$(mktemp -d "${RUNNER_TEMP}/affected-tests-postgres.XXXXXX")"
+          echo "AFFECTED_TESTS_POSTGRES_ROOT=${postgres_root}" >> "$GITHUB_ENV"
+          echo "$PG_BIN" >> "$GITHUB_PATH"
+          "$PG_BIN/initdb" -D "${postgres_root}/data" -U postgres --auth=trust --encoding=UTF8 --no-locale
+          "$PG_BIN/pg_ctl" -D "${postgres_root}/data" -l "${postgres_root}/postgres.log" -w -t 30 \
+            -o "-p 15497 -c listen_addresses=127.0.0.1" start
+          {
+            echo "CONTROL_ROOM_PG17_UPGRADE_REHEARSAL=1"
+            echo "CONTROL_ROOM_PG_CONCURRENCY_GATE=1"
+            echo "CONTROL_ROOM_TEST_PG_URL_A=postgresql://postgres@127.0.0.1:15497/postgres"
+            echo "CONTROL_ROOM_TEST_PG_URL_B=postgresql://postgres@127.0.0.1:15497/postgres"
+          } >> "$GITHUB_ENV"
       - name: Run tests affected by this change
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
-        run: pnpm test:affected -- "${BASE_SHA:-HEAD^}"
+        run: npm exec --yes --package=squawk-cli@2.61.0 -- pnpm test:affected -- "${BASE_SHA:-HEAD^}"
+      - name: Stop disposable PostgreSQL for selected database tests
+        if: ${{ always() && steps.selection.outputs.needs-pg == 'true' }}
+        run: |
+          set -euo pipefail
+          "$PG_BIN/pg_ctl" -D "${AFFECTED_TESTS_POSTGRES_ROOT}/data" -m fast -w -t 30 stop || true
+          rm -rf -- "${AFFECTED_TESTS_POSTGRES_ROOT}"
 
   route:
     name: Route changed paths

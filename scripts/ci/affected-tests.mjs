@@ -8,7 +8,9 @@ const sourceExtension = /\.(?:[cm]?[jt]sx?)$/;
 const importPattern = /\b(?:import|export)\s+(?:type\s+)?[^;]*?\s+from\s*["']([^"']+)["']|\bimport\s*["']([^"']+)["']|\b(?:import|require)\s*\(\s*["']([^"']+)["']/g;
 const fallbackPath = /^(?:\.github|db)(?:\/|$)|(?:^|\/)(?:migrations?|config)(?:\/|$)|(?:^|\/)(?:package\.json|pnpm-(?:lock|workspace)\.yaml|package-lock\.json|yarn\.lock|bun\.lockb?|npm-shrinkwrap\.json|\.npmrc|\.nvmrc)$|(?:^|\/)(?:tsconfig[^/]*\.json|[^/]+\.config\.[cm]?[jt]s)$/;
 const documentationPath = /^docs\//;
-const postgresTestMarker = /(?:requiresRealPostgres|\bPG_BIN\b|\binitdb\b|\bpg_ctl\b)/;
+const documentationReadPattern = /["'](docs\/[^"'\\]+)["']/g;
+const postgresTestMarker = /(?:requiresRealPostgres|\bPG_BIN\b|\binitdb\b|\bpg_ctl\b|CONTROL_ROOM_PG17_UPGRADE_REHEARSAL|CONTROL_ROOM_PG_CONCURRENCY_GATE|CONTROL_ROOM_TEST_PG_URL_)/;
+const squawkTestMarker = /\bsquawk\b/iu;
 
 function normalized(value) {
   return value.split(sep).join("/").replace(/^\.\//, "");
@@ -48,6 +50,11 @@ export function isDocumentationOnly(changedFiles) {
   return changedFiles.length > 0 && changedFiles.every(file => documentationPath.test(normalized(file)));
 }
 
+function addImporter(importers, target, importer) {
+  if (!importers.has(target)) importers.set(target, new Set());
+  importers.get(target).add(importer);
+}
+
 export function affectedTests(repositoryRoot, changedFiles) {
   const changed = changedFiles.map(normalized);
   if (requiresAll(changed)) return "ALL";
@@ -60,9 +67,13 @@ export function affectedTests(repositoryRoot, changedFiles) {
     for (const match of source.matchAll(importPattern)) {
       const specifier = match.slice(1).find(Boolean);
       for (const target of importTargets(importer, specifier, knownFiles)) {
-        if (!importers.has(target)) importers.set(target, new Set());
-        importers.get(target).add(importer);
+        addImporter(importers, target, importer);
       }
+    }
+    // A literal docs input can be runtime-significant even though it is not an import.
+    for (const match of source.matchAll(documentationReadPattern)) {
+      const target = normalized(match[1]);
+      if (knownFiles.has(target)) addImporter(importers, target, importer);
     }
   }
 
@@ -106,25 +117,57 @@ function executeCommand(command, arguments_, root) {
   return 0;
 }
 
+function executeCommandCapturingOutput(command, arguments_, root) {
+  const env = { ...process.env };
+  // A focused guard test invokes this runner from node:test. Its child is the
+  // actual test process, not a recursive discovery run.
+  delete env.NODE_TEST_CONTEXT;
+  const child = spawnSync(command, arguments_, { cwd: root, encoding: "utf8", env });
+  if (child.error) throw child.error;
+  process.stdout.write(child.stdout ?? "");
+  process.stderr.write(child.stderr ?? "");
+  return { status: child.status ?? 1, output: `${child.stdout ?? ""}${child.stderr ?? ""}` };
+}
+
+function testSources(tests, repositoryRoot) {
+  return tests.map(test => readFileSync(join(repositoryRoot, test), "utf8"));
+}
+
+function postgresTests(result, tests, repositoryRoot) {
+  if (result !== "ALL" && !(result instanceof Array)) return [];
+  return tests.filter(test => postgresTestMarker.test(readFileSync(join(repositoryRoot, test), "utf8")));
+}
+
+function nodeTestCommand(tests, repositoryRoot) {
+  const nodeArguments = ["--import", "tsx", "--test", "--test-concurrency=1", "--test-reporter=tap", ...tests];
+  if (testSources(tests, repositoryRoot).some(source => squawkTestMarker.test(source)))
+    return ["npm", ["exec", "--yes", "--package=squawk-cli@2.61.0", "--", process.execPath, ...nodeArguments]];
+  return [process.execPath, nodeArguments];
+}
+
 export function affectedTestCommands(result, tests, repositoryRoot = process.cwd()) {
-  const testSources = result === "ALL"
-    ? []
-    : tests.map(test => readFileSync(join(repositoryRoot, test), "utf8"));
-  const needsVpsBuild = result === "ALL" || testSources.some(source => source.includes("dist-vps"));
-  const needsDemoBuild = result === "ALL" || testSources.some(source => source.includes("dist-contributor"));
+  const sources = result === "ALL" ? [] : testSources(tests, repositoryRoot);
+  const needsVpsBuild = result === "ALL" || sources.some(source => source.includes("dist-vps"));
+  const needsDemoBuild = result === "ALL" || sources.some(source => source.includes("dist-contributor"));
   const preparation = [
     ...(needsVpsBuild ? [["pnpm", ["build"]]] : []),
     ...(needsDemoBuild ? [["pnpm", ["run", "build:demo"]]] : []),
   ];
-  return [...preparation, [process.execPath, ["--import", "tsx", "--test", "--test-concurrency=1", ...tests]]];
+  const pgTests = postgresTests(result, tests, repositoryRoot);
+  const nonPgTests = tests.filter(test => !pgTests.includes(test));
+  return [...preparation,
+    ...(nonPgTests.length > 0 ? [nodeTestCommand(nonPgTests, repositoryRoot)] : []),
+    // Inspect a dedicated TAP stream: unrelated, intentional skips must not
+    // obscure a database-precondition skip in the selected PostgreSQL tests.
+    ...(pgTests.length > 0 ? [nodeTestCommand(pgTests, repositoryRoot)] : [])];
 }
 
 export function requiresPostgres(result, tests, repositoryRoot = process.cwd()) {
-  return result === "ALL" || tests.some(test => postgresTestMarker.test(readFileSync(join(repositoryRoot, test), "utf8")));
+  return postgresTests(result, tests, repositoryRoot).length > 0;
 }
 
 export function postgresBinariesAvailable(directory = process.env.PG_BIN ?? "/usr/lib/postgresql/17/bin") {
-  return ["initdb", "pg_ctl", "postgres"].every(binary => existsSync(join(directory, binary)));
+  return ["initdb", "pg_ctl", "postgres", "psql"].every(binary => existsSync(join(directory, binary)));
 }
 
 export function noTestsAffectedMessage() {
@@ -139,13 +182,30 @@ export function selectionOutputs(result, tests, repositoryRoot = process.cwd()) 
   ].join("\n");
 }
 
-export function runAffectedTests(result, tests, repositoryRoot, execute = executeCommand, postgresAvailable = postgresBinariesAvailable) {
+function hasSkippedTests(output) {
+  return /^#\s+(?:skipped|skip)\s+[1-9]\d*\b/mu.test(output);
+}
+
+export function runAffectedTests(result, tests, repositoryRoot, execute = executeCommand,
+  postgresAvailable = postgresBinariesAvailable, executeCapturingOutput = executeCommandCapturingOutput) {
   if (result === "DOCS_ONLY") return 0;
   if (requiresPostgres(result, tests, repositoryRoot) && !postgresAvailable()) {
-    console.error("Selected test plan requires PostgreSQL 17 binaries, but PG_BIN does not contain initdb, pg_ctl, and postgres.");
+    console.error("Selected test plan requires PostgreSQL 17 binaries, but PG_BIN does not contain initdb, pg_ctl, postgres, and psql.");
     return 1;
   }
-  for (const [command, arguments_] of affectedTestCommands(result, tests, repositoryRoot)) {
+  const commands = affectedTestCommands(result, tests, repositoryRoot);
+  const hasPostgresTestCommand = postgresTests(result, tests, repositoryRoot).length > 0;
+  for (const [index, [command, arguments_]] of commands.entries()) {
+    if (hasPostgresTestCommand && index === commands.length - 1) {
+      const execution = executeCapturingOutput(command, arguments_, repositoryRoot);
+      const status = typeof execution === "number" ? execution : execution.status;
+      if (status !== 0) return status;
+      if (hasSkippedTests(typeof execution === "number" ? "" : execution.output)) {
+        console.error("Selected PostgreSQL test plan reported skipped tests; database preconditions must run or fail, never skip green.");
+        return 1;
+      }
+      continue;
+    }
     const status = execute(command, arguments_, repositoryRoot);
     if (status !== 0) return status;
   }

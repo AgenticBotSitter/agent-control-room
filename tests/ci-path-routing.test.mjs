@@ -15,6 +15,7 @@ import {
 } from "../scripts/ci-path-routing.mjs";
 
 const workflow = readFileSync(join(process.cwd(), ".github", "workflows", "ci.yml"), "utf8");
+const budgetSecurityReview = readFileSync(join(process.cwd(), "docs", "ci-budget-security-review.md"), "utf8");
 
 function decisionFor(...paths) {
   return routeChanges({ paths });
@@ -265,7 +266,7 @@ test("the merge gate cannot be skipped by anything the pull request controls", (
     "the merge gate must reject a failed affected-tests lane");
 });
 
-test("the affected-test lane installs PostgreSQL for a selected PostgreSQL test", () => {
+test("the affected-test lane gives selected PostgreSQL tests a disposable, gated environment", () => {
   const start = workflow.indexOf("  affected-tests:");
   const end = workflow.indexOf("\n  route:", start);
   assert.ok(start >= 0 && end > start, "the affected-tests job must exist before route");
@@ -274,6 +275,20 @@ test("the affected-test lane installs PostgreSQL for a selected PostgreSQL test"
   assert.match(job, /steps\.selection\.outputs\.needs-pg == 'true'/u,
     "PostgreSQL installation must follow selected PostgreSQL tests, not only ALL");
   assert.match(job, /Install PostgreSQL 17 when selected tests require it/u);
+  assert.match(job, /Start disposable PostgreSQL for selected database tests/u);
+  assert.match(job, /CONTROL_ROOM_PG17_UPGRADE_REHEARSAL=1/u);
+  assert.match(job, /CONTROL_ROOM_PG_CONCURRENCY_GATE=1/u);
+  assert.match(job, /CONTROL_ROOM_TEST_PG_URL_A=postgresql:\/\/postgres@127\.0\.0\.1:15497\/postgres/u);
+  assert.match(job, /npm exec --yes --package=squawk-cli@2\.61\.0 -- pnpm test:affected/u,
+    "selected migration tests must inherit the same pinned Squawk setup as migration-lint");
+  assert.match(job, /Stop disposable PostgreSQL for selected database tests/u);
+});
+
+test("the affected-test automation has the required budget and security review", () => {
+  assert.match(budgetSecurityReview, /## Amendment: affected tests \(fast\)/u);
+  assert.match(budgetSecurityReview, /45-minute timeout/u);
+  assert.match(budgetSecurityReview, /squawk-cli@2\.61\.0/u);
+  assert.match(budgetSecurityReview, /fails if that stream reports any skipped test/u);
 });
 
 test("the full Mac-local rehearsal is isolated, fake, PG17, and runs every supported mode", () => {
