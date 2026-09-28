@@ -43,12 +43,15 @@ export class ProductionPipelineAdvanceCapabilityV1 implements PipelineAdvanceCap
 
   async assignAndQueueInSession(tx: DatabaseSession, input: PipelineAdvanceSelectionV1 & Readonly<{
     expectedInputDigest:string;policyId:string;idempotencyKey:string;commitDeadline:number}>,
-    authority: Readonly<{actorId:"service:pipeline-advance:v1";assertCurrent:()=>void|Promise<void>}>) {
+    authority: Readonly<{actorId:"service:pipeline-advance:v1";assertCurrent:()=>void|Promise<void>;
+      commitDeadline:(value:number)=>void}>) {
     await authority.assertCurrent();
     let deadline = input.commitDeadline;
     const assigned = await this.assignment.assignScheduledInSession(tx,{projectId:input.projectId,
       jobId:input.executionJobId,nodeId:input.nodeId,expectedInputDigest:input.expectedInputDigest},{
-      assertCurrent:authority.assertCurrent,commitDeadline:value=>{deadline=Math.min(deadline,value);},});
+      assertCurrent:authority.assertCurrent,commitDeadline:value=>{
+        deadline=Math.min(deadline,value);authority.commitDeadline(deadline);
+      },});
     await authority.assertCurrent();
     const queued = await this.nativeDelivery.enqueueAssignedInSession(tx,{...input,
       attemptId:assigned.receipt.attemptId,leaseId:assigned.receipt.leaseId,leaseEpoch:assigned.receipt.leaseEpoch,

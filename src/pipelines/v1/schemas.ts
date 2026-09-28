@@ -123,7 +123,10 @@ export const pipelineUnattendedTransitionReceiptSchemaV1 = z.object({
   grantsExecutionAuthority: z.literal(false),
 }).strict();
 
-const historyKind = z.enum(["proposed", "approved", "ran", "checked", "resulted", "advanced"]);
+const historyKind = z.enum(["proposed", "revised", "approved", "rejected", "partially_approved",
+  "revision_planned", "ran", "assignment_expired", "delivery_prepared", "delivery_staged",
+  "transmission_requested", "delivery_received", "queue_recovered", "capacity_released",
+  "received", "checked", "resulted", "completed", "advanced"]);
 export const pipelineHistoryEventSchemaV1 = z.object({
   id,
   kind: historyKind,

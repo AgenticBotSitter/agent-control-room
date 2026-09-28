@@ -63,12 +63,12 @@ function job(id:string){const authority:any={projectId:"project:test",allowedExe
 
 function fixture(overrides:{unattended?:boolean;tamperStage?:boolean;route?:string;currentOrdinal?:number|null;
   states?: PipelineStageResolutionV1["state"][];
-  disableDuringDispatch?:boolean}={}){
+  disableDuringDispatch?:boolean;coordinatorDeadline?:number;advanceClockBeforePrecommit?:number}={}){
   const rows=signedRows(overrides),policy={id:"policy:test",project_id:"project:test",coordinator_identity_id:"agent:lead",
     coordinator_version:1,state:"active",version:1,policy_digest:digest("p"),allowed_actions:["tasks.assign"],
     eligible_routes:["route:one","route:two","route:three"],risk_ceiling:"low",max_total_tasks:3,max_total_cost_microusd:1000,max_concurrent_tasks:2,
     valid_from:iso(-1000),valid_until:iso(60000)};const receipts=new Map<number,any>();let enabled=true,effects=0,chain=Promise.resolve();
-  let states=overrides.states??["eligible","terminal_failure","terminal_failure"];
+  let states=overrides.states??["eligible","terminal_failure","terminal_failure"],clock=at;
   const query:DatabaseSession["query"]=async<T>(sql:string,params:unknown[]=[]):Promise<QueryResult<T>>=>{
     if(sql.startsWith("SELECT project_id FROM pipeline_runs"))return result([{project_id:"project:test"}] as T[]);
     if(sql.includes("FROM pipeline_runs")&&sql.includes("FOR UPDATE"))return result([rows.run] as T[]);
@@ -98,7 +98,8 @@ function fixture(overrides:{unattended?:boolean;tamperStage?:boolean;route?:stri
     throw new Error(`unexpected SQL: ${sql}`);};
   const db:DatabaseClient={query,transaction:async work=>work({query}),transactionWithPreCommitCheck:async(work,check)=>{
     let release!:()=>void;const previous=chain;chain=new Promise<void>(resolve=>{release=resolve;});await previous;
-    try{const value=await work({query});await check();return value;}finally{release();}}};
+    try{const value=await work({query});if(overrides.advanceClockBeforePrecommit!==undefined)clock=overrides.advanceClockBeforePrecommit;
+      await check();return value;}finally{release();}}};
   const capability:PipelineAdvanceCapabilityV1={
     resolveStageInSession:async(_tx,input)=>({state:states[input.stageOrdinal]??"terminal_failure",
       executionJobId:`job:execution:${input.stageOrdinal}`,expectedInputDigest:digest("a")}),
@@ -107,10 +108,11 @@ function fixture(overrides:{unattended?:boolean;tamperStage?:boolean;route?:stri
       policyVersion:1,policyDigest:digest("p"),coordinatorVersion:1,action:"tasks.assign",routeId:overrides.route??`route:${["one","two","three"][selection.stageOrdinal]}`,
       executorId:selection.workerId,taskUnits:0,committedCostMicroUsd:0,nextCost:{kind:"known",microUsd:10,evidenceDigest:digest("e")},
       concurrentTasks:0,validUntil:iso(60000)}),
-    assignAndQueueInSession:async(_tx,_input,gate)=>{if(overrides.disableDuringDispatch)enabled=false;await gate.assertCurrent();
+    assignAndQueueInSession:async(_tx,_input,gate)=>{if(overrides.coordinatorDeadline!==undefined)
+      gate.commitDeadline(overrides.coordinatorDeadline);if(overrides.disableDuringDispatch)enabled=false;await gate.assertCurrent();
       effects+=1;return{attemptId:"attempt:one",queueId:"queue:one",replayed:false};}};
   const service=new PipelineAdvanceServiceV1(db,{tenantId:"tenant:test",workspaceId:"workspace:test"},key,
-    {unattendedEnabled:()=>enabled,capability},()=>at);
+    {unattendedEnabled:()=>enabled,capability},()=>clock);
   return{service,setStates(value:PipelineStageResolutionV1["state"][]){states=value;},setCurrentOrdinal(value:number|null){
     rows.run.current_stage_ordinal=value;rows.run.version+=1;rows.run.updated_at=iso(rows.run.version);
     const material={id:rows.run.id,tenantId:"tenant:test",projectId:rows.run.project_id,requestId:rows.run.request_id,
@@ -158,6 +160,11 @@ test("accepted current stage advances exactly one ordinal while in-flight lost r
 test("live installation switch is checked at the delivery boundary",async()=>{const f=fixture({disableDuringDispatch:true});
   await assert.rejects(f.service.advance("pipeline-run:test","policy:test"),
     (error:unknown)=>error instanceof PipelineAdvanceErrorV1&&error.safeReason==="unattended_disabled");assert.equal(f.effects,0);});
+test("the coordinator's stricter deadline is enforced by the outer precommit boundary",async()=>{
+  const f=fixture({coordinatorDeadline:at+30000,advanceClockBeforePrecommit:at+30001});
+  await assert.rejects(f.service.advance("pipeline-run:test","policy:test"),
+    (error:unknown)=>error instanceof PipelineAdvanceErrorV1&&error.safeReason==="deadline_reached");
+});
 
 test("0099 owner transition authenticates and persists both unattended consents with exact replay",async t=>{
   const f=await taskFixture();t.after(()=>void f.db.close());
@@ -194,6 +201,39 @@ test("0099 owner transition authenticates and persists both unattended consents 
   await assert.rejects(f.db.exec(down),/down migration refused/u);await f.db.exec("ROLLBACK");
 });
 
+test("shared template activation is monotonic while sibling run consent remains independent",async t=>{
+  const f=await taskFixture();t.after(()=>void f.db.close());
+  const linear=new LinearPipelineServiceV1(f.client,{tenantId:"tenant:web",workspaceId:"workspace:web"},key,
+    {assertCurrent:()=>true,isAcceptedResultCurrent:()=>false},()=>webNow);
+  const saved=await linear.createTemplate(f.identity,f.project.projectId,templateDefinition);
+  const first=await linear.instantiate(f.identity,f.project.projectId,{templateId:saved.templateId,title:"First run"},
+    "pipeline-unattended-run-0002");
+  const second=await linear.instantiate(f.identity,f.project.projectId,{templateId:saved.templateId,title:"Second run"},
+    "pipeline-unattended-run-0003");
+  await f.db.query(`INSERT INTO control_project_delegation_policies(tenant_id,id,project_id,coordinator_identity_id,
+    coordinator_version,state,version,policy_digest,owner_identity_id,owner_identity_digest,allowed_actions,eligible_routes,
+    risk_ceiling,effect_ceiling,max_total_tasks,max_total_cost_microusd,max_concurrent_tasks,valid_from,valid_until,payload,
+    created_at,updated_at) VALUES('tenant:web','policy:siblings',$1,'identity:web',1,'active',1,$2,'identity:web',$2,
+    '["tasks.assign"]','["route:one"]','low','none',3,1000,2,$3,$4,'{}',$3,$3)`,
+  [f.project.projectId,digest("b"),new Date(webNow-1000).toISOString(),new Date(webNow+60000).toISOString()]);
+  const service=new PipelineAdvanceServiceV1(f.client,{tenantId:"tenant:web",workspaceId:"workspace:web"},key,{},()=>webNow);
+  await service.setUnattended(f.identity,f.project.projectId,{runId:first.runId,templateId:saved.templateId,
+    policyId:"policy:siblings",enabled:true,expectedRunVersion:1,expectedTemplateVersion:1},"pipeline-sibling-enable-0001");
+  await service.setUnattended(f.identity,f.project.projectId,{runId:second.runId,templateId:saved.templateId,
+    policyId:"policy:siblings",enabled:true,expectedRunVersion:1,expectedTemplateVersion:2},"pipeline-sibling-enable-0002");
+  await service.setUnattended(f.identity,f.project.projectId,{runId:first.runId,templateId:saved.templateId,
+    policyId:"policy:siblings",enabled:false,expectedRunVersion:2,expectedTemplateVersion:2},"pipeline-sibling-disable-0001");
+  const rows=(await f.db.query<{id:string;template_version:number;unattended:boolean}>(`SELECT id,template_version,unattended
+    FROM pipeline_runs WHERE id IN($1,$2) ORDER BY id`,[first.runId,second.runId])).rows;
+  const byId=new Map(rows.map(row=>[row.id,row]));
+  assert.deepEqual({templateVersion:Number(byId.get(first.runId)?.template_version),unattended:byId.get(first.runId)?.unattended},
+    {templateVersion:2,unattended:false});
+  assert.deepEqual({templateVersion:Number(byId.get(second.runId)?.template_version),unattended:byId.get(second.runId)?.unattended},
+    {templateVersion:2,unattended:true});
+  assert.deepEqual((await f.db.query<{version:number;may_advance_unattended:boolean}>(`SELECT version,may_advance_unattended
+    FROM pipeline_templates WHERE id=$1`,[saved.templateId])).rows[0],{version:2,may_advance_unattended:true});
+});
+
 test("0099 owns append-only records, least-privilege grants, and a guarded down path",async()=>{
   const [up,down,grants,web,coordinator]=await Promise.all([readFile("db/migrations/0099_pipeline_unattended_advance.sql","utf8"),
     readFile("db/down/0099_pipeline_unattended_advance.sql","utf8"),readFile("db/roles/production_table_grants.sql","utf8"),
@@ -212,7 +252,7 @@ test("0099 owns append-only records, least-privilege grants, and a guarded down 
 });
 
 test("production adapter reserves through ordinary assignment before the existing native delivery queue",async()=>{
-  const calls:string[]=[],tx={query:async<T>()=>result([] as T[])};let current=0;
+  const calls:string[]=[],tx={query:async<T>()=>result([] as T[])};let current=0,deadline=Infinity,queuedDeadline=Infinity;
   const assignment:any={assignScheduledInSession:async(_tx:DatabaseSession,_input:unknown,authority:{assertCurrent:()=>void|Promise<void>;
     commitDeadline:(value:number)=>void})=>{calls.push("assign");await authority.assertCurrent();authority.commitDeadline(at+30000);
     return{receipt:{attemptId:"attempt:one",leaseId:"lease:one",leaseEpoch:1},replayed:false};}};
@@ -220,24 +260,44 @@ test("production adapter reserves through ordinary assignment before the existin
     assertAcceptedPredecessorInSession:()=>{},assertSelectionCurrentInSession:()=>{},assertSelectionCurrent:()=>{},
     authorizeDelegationInSession:async()=>({})};
   const queue={enqueueAssignedInSession:async(_tx:DatabaseSession,input:any,authority:any)=>{calls.push("queue");
-    assert.equal(input.attemptId,"attempt:one");await authority.assertCurrent();return{queueId:"queue:one",replayed:false};}};
+    assert.equal(input.attemptId,"attempt:one");queuedDeadline=input.commitDeadline;
+    await authority.assertCurrent();return{queueId:"queue:one",replayed:false};}};
   const capability=new ProductionPipelineAdvanceCapabilityV1(supporting,assignment,queue);
   const selection:any={tenantId:"tenant:test",projectId:"project:test",runId:"pipeline-run:test",stageOrdinal:0,
     sourceJobId:"job:source:0",executionJobId:"job:execution:0",workerId:"worker:one",workerKind:"codex",nodeId:"node:one",
     selectionKey:"selection:one",model:"model-one",effort:"high",provider:null,profile:null};
   const saved=await capability.assignAndQueueInSession(tx,{...selection,expectedInputDigest:digest("a"),policyId:"policy:test",
-    idempotencyKey:"pipeline-advance:test",commitDeadline:at+60000},{actorId:"service:pipeline-advance:v1",assertCurrent:()=>{current+=1;}});
+    idempotencyKey:"pipeline-advance:test",commitDeadline:at+60000},{actorId:"service:pipeline-advance:v1",
+    assertCurrent:()=>{current+=1;},commitDeadline:value=>{deadline=value;}});
   assert.deepEqual(calls,["assign","queue"]);assert.equal(saved.queueId,"queue:one");assert.ok(current>=3);
+  assert.equal(deadline,at+30000);assert.equal(queuedDeadline,at+30000);
 });
 
-test("history traverses batch, task, run, attempt, artifact and explicit review actions in audit-chain order",async()=>{
+test("history filters before its bound and maps the complete explicit lifecycle vocabulary",async()=>{
   const partition="month:2026-09",genesis=digest("0"),specs=[
+    ...Array.from({length:12},(_,index)=>[`audit:unknown:${index}`,"service:other","unrelated.action","job","job:execution:0"] as const),
     ["audit:batch","agent:proposer","work_batches.propose","work_batch","batch:one"],
+    ["audit:batch-revise","identity:owner","work_batches.revise","work_batch","batch:one"],
     ["audit:approval","identity:owner","work_batches.approved","work_batch","batch:one"],
+    ["audit:reject","identity:owner","work_batches.rejected","work_batch","batch:one"],
+    ["audit:partial","identity:owner","work_batches.partially_approved","work_batch","batch:one"],
+    ["audit:revision","identity:owner","tasks.revisions.plan","job","job:execution:0"],
     ["audit:assign","service:assignment","tasks.assign","job","job:execution:0"],
+    ["audit:expire","service:assignment","tasks.assignment.expire","job","job:execution:0"],
+    ["audit:prepare","identity:owner","native.delivery.prepared","job","job:execution:0"],
+    ["audit:native-stage","identity:owner","native.delivery.staged","job","job:execution:0"],
+    ["audit:native-transmit","identity:owner","native.delivery.transmission_requested","job","job:execution:0"],
+    ["audit:native-receipt","worker:one","native.delivery.receipt_recorded","attempt","attempt:one"],
+    ["audit:recover","identity:owner","native.queue.unsent_recovered","job","job:execution:0"],
+    ["audit:codex-stage","identity:owner","codex.delivery.staged","job","job:execution:0"],
+    ["audit:codex-transmit","identity:owner","codex.delivery.transmission_requested","job","job:execution:0"],
+    ["audit:codex-receipt","worker:one","codex.delivery.receipt_recorded","attempt","attempt:one"],
+    ["audit:capacity","service:capacity","task.native.capacity_released","job","job:execution:0"],
+    ["audit:received","worker:one","task.result.received","artifact","artifact:one"],
     ["audit:result","worker:one","task.result.submitted_for_review","artifact","artifact:one"],
     ["audit:review","agent:checker","tasks.reviews.record","job","job:execution:0"],
-    ["audit:unknown","service:other","unrelated.action","job","job:execution:0"],
+    ["audit:completed","service:completion","task.native.completed","job","job:execution:0"],
+    ["audit:advanced","service:pipeline","pipelines.stage.advanced","pipeline_run","pipeline-run:test"],
   ] as const;let previous=genesis;
   const stored=specs.map((spec,index)=>{const [id,actorId,action,targetType,targetId]=spec,occurredAt=iso(index),safeMetadata={};
     const material={id,tenantId:"tenant:test",workspaceId:"workspace:test",projectId:"project:test",actorId,
@@ -245,16 +305,22 @@ test("history traverses batch, task, run, attempt, artifact and explicit review 
       action,targetType,targetId,correlationId:null,idempotencyKey:null,safeMetadata,occurredAt};const event_digest=sha256Digest(material),
       event_hash=sha256Digest({chainVersion:1,partition,sequence:index+1,previousHash:previous,eventDigest:event_digest});
     const row={...material,chain_sequence:index+1,event_digest,prev_hash:previous,event_hash};previous=event_hash;return row;});
-  const query:DatabaseSession["query"]=async<T>(sql:string)=>{if(sql.startsWith("SELECT id FROM pipeline_runs"))return result([{id:"pipeline-run:test"}] as T[]);
-    if(sql.includes("WITH RECURSIVE source_jobs AS"))return result(stored.map(row=>({id:row.id,actor_id:row.actorId,actor_type:row.actorType,
+  const query:DatabaseSession["query"]=async<T>(sql:string,params:unknown[]=[])=>{if(sql.startsWith("SELECT id FROM pipeline_runs"))return result([{id:"pipeline-run:test"}] as T[]);
+    if(sql.includes("WITH RECURSIVE source_jobs AS")){assert.match(sql,/e\.action=ANY\(\$5::text\[\]\)/u);
+      const actions=params[4] as string[],bound=Number(params[3]);return result(stored.filter(row=>actions.includes(row.action)).slice(0,bound).map(row=>({id:row.id,actor_id:row.actorId,actor_type:row.actorType,
       action:row.action,target_type:row.targetType,target_id:row.targetId,safe_metadata:row.safeMetadata,occurred_at:row.occurredAt,
-      chain_partition:partition,chain_sequence:row.chain_sequence,event_hash:row.event_hash})) as T[]);
+      chain_partition:partition,chain_sequence:row.chain_sequence,event_hash:row.event_hash})) as T[]);}
     if(sql.includes("tenant_id as \"tenantId\""))return result(stored as T[]);
     if(sql.includes("SELECT head_hash,event_count FROM control_audit_chain_heads"))return result([{head_hash:previous,event_count:stored.length}] as T[]);
     throw new Error(`unexpected SQL: ${sql}`);};
   const db:DatabaseClient={query,transaction:async work=>work({query}),transactionWithPreCommitCheck:async(work,check)=>{const value=await work({query});await check();return value;}};
-  const history=await new PipelineAdvanceServiceV1(db,{tenantId:"tenant:test",workspaceId:"workspace:test"},key,{},()=>at)
-    .history("project:test","pipeline-run:test",20);
-  assert.equal(history.chainVerified,true);assert.deepEqual(history.events.map(event=>event.kind),
-    ["proposed","approved","ran","resulted","checked"]);assert.deepEqual(history.events.map(event=>event.chainSequence),[1,2,3,4,5]);
+  const service=new PipelineAdvanceServiceV1(db,{tenantId:"tenant:test",workspaceId:"workspace:test"},key,{},()=>at);
+  const bounded=await service.history("project:test","pipeline-run:test",6);
+  assert.equal(bounded.chainVerified,true);assert.equal(bounded.truncated,true);assert.deepEqual(bounded.events.map(event=>event.kind),
+    ["proposed","revised","approved","rejected","partially_approved","revision_planned"]);
+  const complete=await service.history("project:test","pipeline-run:test",30);
+  assert.equal(complete.truncated,false);assert.deepEqual(complete.events.map(event=>event.kind),
+    ["proposed","revised","approved","rejected","partially_approved","revision_planned","ran","assignment_expired",
+      "delivery_prepared","delivery_staged","transmission_requested","delivery_received","queue_recovered","delivery_staged",
+      "transmission_requested","delivery_received","capacity_released","received","resulted","checked","completed","advanced"]);
 });

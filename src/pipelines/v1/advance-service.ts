@@ -13,6 +13,26 @@ import { linearPipelineTemplateInputSchemaV1, pipelineAdvanceReceiptSchemaV1, pi
 const ADVANCE_ACTION = "tasks.assign" as const;
 const SERVICE_ACTOR = "service:pipeline-advance:v1" as const;
 const RISK = { low: 0, medium: 1, high: 2, critical: 3 } as const;
+const HISTORY_VOCABULARY = {
+  "work_batches.propose":"proposed", "work_batches.revise":"revised",
+  "work_batches.approved":"approved", "work_batches.rejected":"rejected",
+  "work_batches.partially_approved":"partially_approved", "pipelines.run.instantiate":"proposed",
+  "tasks.propose":"proposed", "tasks.plan":"approved", "tasks.revisions.plan":"revision_planned",
+  "tasks.assign":"ran", "tasks.assignment.expire":"assignment_expired",
+  "native.task.queued":"ran", "hermes.021.local.task.queued":"ran",
+  "hermes.local.task.queued":"ran", "claude.code.local.task.queued":"ran",
+  "codex.owner_trusted.local.task.queued":"ran", "codex.task.queued":"ran",
+  "native.delivery.prepared":"delivery_prepared", "native.delivery.staged":"delivery_staged",
+  "native.delivery.transmission_requested":"transmission_requested",
+  "native.delivery.receipt_recorded":"delivery_received", "native.queue.unsent_recovered":"queue_recovered",
+  "codex.delivery.staged":"delivery_staged", "codex.delivery.transmission_requested":"transmission_requested",
+  "codex.delivery.receipt_recorded":"delivery_received", "task.native.capacity_released":"capacity_released",
+  "task.result.received":"received", "task.result.submitted_for_review":"resulted",
+  "task.result.structure_verified":"checked", "tasks.reviews.record":"checked",
+  "tasks.verifications.record":"checked", "task.native.completed":"completed",
+  "pipelines.stage.advanced":"advanced", "pipelines.unattended.enabled":"approved",
+  "pipelines.unattended.disabled":"approved",
+} as const;
 const iso = (value: string | Date) => new Date(value).toISOString();
 const millis = (value: string | Date) => new Date(value).getTime();
 const same = (left: string, right: string) => { const a = Buffer.from(left), b = Buffer.from(right);
@@ -112,7 +132,8 @@ export type PipelineAdvanceCapabilityV1 = Readonly<{
     policyId: string) => Promise<PipelineDelegationReceiptV1>;
   assignAndQueueInSession: (tx: DatabaseSession, input: PipelineAdvanceSelectionV1 & Readonly<{ expectedInputDigest: string;
     policyId: string; idempotencyKey: string; commitDeadline: number }>, authority: Readonly<{ actorId: typeof SERVICE_ACTOR;
-    assertCurrent: () => void|Promise<void> }>) => Promise<Readonly<{ attemptId: string; queueId: string; replayed: boolean }>>;
+    assertCurrent: () => void|Promise<void>; commitDeadline: (value:number) => void }>) =>
+    Promise<Readonly<{ attemptId: string; queueId: string; replayed: boolean }>>;
 }>;
 type AdvanceConfiguration = Readonly<{ unattendedEnabled?: () => boolean; capability?: PipelineAdvanceCapabilityV1 }>;
 
@@ -161,17 +182,22 @@ export class PipelineAdvanceServiceV1 {
       this.#verifySnapshot(run, template, stages);
       const policy = await this.#policy(tx, projectId, parsed.data.policyId);
       if (parsed.data.enabled) this.#assertOwnerPolicyCurrent(policy, actor.now);
-      const now = actor.now, nextTemplate = { ...template, may_advance_unattended: parsed.data.enabled,
-        version: Number(template.version)+1, updated_at: now };
+      // Template consent is a monotonic owner-authorized capability ceiling. A
+      // per-run disable must not revoke or version-drift sibling runs that share
+      // this reusable template; the live installation switch and each run's
+      // independently versioned consent remain the two current execution gates.
+      const now = actor.now, activatesTemplate = parsed.data.enabled && !template.may_advance_unattended;
+      const nextTemplate = activatesTemplate ? { ...template, may_advance_unattended: true,
+        version: Number(template.version)+1, updated_at: now } : template;
       const nextTemplateMaterial = templateMaterial(this.scope, nextTemplate), nextTemplateDigest = sha256Digest(nextTemplateMaterial);
       const nextTemplateTag = hmacSha256Tag(this.#key, { purpose: "pipeline-template/v1", record: nextTemplateMaterial });
       const nextRun = { ...run, unattended: parsed.data.enabled, updated_at: now, version: Number(run.version)+1,
         template_version: nextTemplate.version, template_digest: nextTemplateDigest };
       const nextRunMaterial = runMaterial(this.scope, nextRun), nextRunDigest = sha256Digest(nextRunMaterial);
       const nextRunTag = hmacSha256Tag(this.#key, { purpose: "pipeline-run/v1", record: nextRunMaterial });
-      await tx.query(`UPDATE pipeline_templates SET may_advance_unattended=$1,version=$2,updated_at=$3,record_digest=$4,auth_tag=$5
-        WHERE tenant_id=$6 AND project_id=$7 AND id=$8 AND version=$9`, [parsed.data.enabled, nextTemplate.version, now,
-        nextTemplateDigest, nextTemplateTag, this.scope.tenantId, projectId, template.id, template.version]);
+      if (activatesTemplate) await tx.query(`UPDATE pipeline_templates SET may_advance_unattended=true,version=$1,updated_at=$2,
+        record_digest=$3,auth_tag=$4 WHERE tenant_id=$5 AND project_id=$6 AND id=$7 AND version=$8`,
+      [nextTemplate.version,now,nextTemplateDigest,nextTemplateTag,this.scope.tenantId,projectId,template.id,template.version]);
       await tx.query(`UPDATE pipeline_runs SET unattended=$1,updated_at=$2,version=$3,template_version=$4,
         template_digest=$5,record_digest=$6,auth_tag=$7 WHERE tenant_id=$8 AND project_id=$9 AND id=$10 AND version=$11`,
       [parsed.data.enabled,now,nextRun.version,nextTemplate.version,nextTemplateDigest,nextRunDigest,nextRunTag,
@@ -253,7 +279,7 @@ export class PipelineAdvanceServiceV1 {
       const delegation=await capability.authorizeDelegationInSession(tx,selected,policyId);
       this.#assertDelegation(policy,delegation,stage,execution,this.#now());
       const runDeadline=millis(run.started_at??run.updated_at)+Number(template.max_duration_seconds)*1000;
-      const deadline=Math.min(runDeadline,millis(policy.valid_until),Date.parse(execution.authority.expiresAt),Date.parse(delegation.validUntil));
+      let deadline=Math.min(runDeadline,millis(policy.valid_until),Date.parse(execution.authority.expiresAt),Date.parse(delegation.validUntil));
       if (!Number.isFinite(deadline)||this.#now()>=deadline) refuse("deadline_reached");
       const selectionDigest=sha256Digest(selected);
       const requestDigest=sha256Digest({schema:"control-room.pipeline-advance-request/v1",runId:run.id,
@@ -269,7 +295,9 @@ export class PipelineAdvanceServiceV1 {
       precommit=authenticate;await authenticate();
       const effect=await capability.assignAndQueueInSession(tx,{...selected,expectedInputDigest,policyId,
         idempotencyKey:`pipeline-advance:${run.id}:${selected.stageOrdinal}`,commitDeadline:deadline},
-      {actorId:SERVICE_ACTOR,assertCurrent:authenticate}).catch((error:unknown)=>{if(error instanceof PipelineAdvanceErrorV1)throw error;
+      {actorId:SERVICE_ACTOR,assertCurrent:authenticate,commitDeadline:value=>{
+        if(!Number.isSafeInteger(value)||value<0)refuse("deadline_reached");deadline=Math.min(deadline,value);
+      }}).catch((error:unknown)=>{if(error instanceof PipelineAdvanceErrorV1)throw error;
         return refuse("execution_authority_missing");});
       await authenticate();
       const advancedAt=new Date(this.#now()).toISOString(),receiptId=`pipeline-advance:${run.id}:${selected.stageOrdinal}`;
@@ -322,20 +350,16 @@ export class PipelineAdvanceServiceV1 {
           UNION SELECT id FROM batches)
         SELECT e.id,e.actor_id,e.actor_type,e.action,e.target_type,e.target_id,e.safe_metadata,e.occurred_at,
           e.chain_partition,e.chain_sequence,e.event_hash FROM audit_events e WHERE e.tenant_id=$1 AND e.project_id=$2
-          AND e.chain_version=1 AND (e.target_id IN(SELECT id FROM lineage) OR e.correlation_id IN(SELECT id FROM lineage))
-          ORDER BY e.chain_partition,e.chain_sequence LIMIT $4`,[this.scope.tenantId,projectId,runId,limit+1])).rows;
+          AND e.chain_version=1 AND e.action=ANY($5::text[])
+          AND (e.target_id IN(SELECT id FROM lineage) OR e.correlation_id IN(SELECT id FROM lineage))
+          ORDER BY e.chain_partition,e.chain_sequence LIMIT $4`,
+      [this.scope.tenantId,projectId,runId,limit+1,Object.keys(HISTORY_VOCABULARY)])).rows;
       const audit=new AuditStore({query:tx.query.bind(tx),transaction:async work=>work(tx),
         transactionWithPreCommitCheck:async(work,check)=>{const value=await work(tx);await check();return value;}});
       for(const partition of new Set(rows.map(row=>row.chain_partition))){const verified=await audit.verify(this.scope.tenantId,partition);
         if(!verified.valid)refuse("advance_conflict");}
-      const vocabulary:Record<string,"proposed"|"approved"|"ran"|"checked"|"resulted"|"advanced">={
-        "work_batches.propose":"proposed","work_batches.approved":"approved","pipelines.run.instantiate":"proposed",
-        "tasks.propose":"proposed","tasks.plan":"approved","tasks.assign":"ran","native.task.queued":"ran",
-        "hermes.021.local.task.queued":"ran","hermes.local.task.queued":"ran","claude.code.local.task.queued":"ran",
-        "codex.owner_trusted.local.task.queued":"ran","codex.task.queued":"ran","task.result.submitted_for_review":"resulted",
-        "task.result.structure_verified":"checked","tasks.reviews.record":"checked","tasks.verifications.record":"checked",
-        "pipelines.stage.advanced":"advanced","pipelines.unattended.enabled":"approved","pipelines.unattended.disabled":"approved"};
-      const events=rows.slice(0,limit).flatMap(row=>{const kind=vocabulary[row.action];if(!kind)return[];
+      const events=rows.slice(0,limit).flatMap(row=>{const kind=HISTORY_VOCABULARY[row.action as keyof typeof HISTORY_VOCABULARY];
+        if(!kind)return[];
         const metadata=row.safe_metadata&&typeof row.safe_metadata==="object"?row.safe_metadata as Record<string,unknown>:{};
         const reason=metadata.reasonCode;return[{id:row.id,kind,actorId:row.actor_id,actorType:row.actor_type,action:row.action,
           targetType:row.target_type,targetId:row.target_id,safeReason:typeof reason==="string"&&/^[a-z0-9._:-]{1,120}$/.test(reason)?reason:null,
