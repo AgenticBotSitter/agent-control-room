@@ -23,7 +23,7 @@ export const browserErrorMessage: Record<BrowserFailureCode, string> = {
   invalid_request: "Check the project title and summary, then try again.",
   conflict: "This project changed in another tab. Refresh it before saving again.",
   not_found: "This project is not available.",
-  unavailable: "The local service or saved database is temporarily unavailable; reconnecting… No project change was retried and no sample data was substituted. Check saved state again in a moment.",
+  unavailable: "The local service or saved database is temporarily unavailable. No project change was retried and no sample data was substituted. Check saved state again in a moment.",
   uncertain: "The save could not be confirmed. Retry the same save or check your projects before starting another.",
 };
 
