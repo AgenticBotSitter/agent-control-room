@@ -350,21 +350,55 @@ describe("attack kit: mutation", () => {
   test("refuses a restore that did not land", async () => {
     // A restore that silently failed would leave a mutated file in a working
     // tree, which is worse than a failed test. The verification reads the file
-    // back and compares it, so a failed write is reported rather than assumed.
-    const directory = await repo;
-    const file = join(directory, "guard.ts");
-    const before = await readFile(file, "utf8");
-    // The test command rewrites the file after the mutation, simulating a
-    // concurrent writer the restore cannot overwrite.
-    const interfering = `node -e "require('node:fs').writeFileSync(${JSON.stringify(file)},'clobbered')"`;
-    await assert.rejects(
-      assertGuardBites({
-        root: directory, file, find: "limit = 10", replace: "limit = 1_000", testCmd: interfering,
-      }),
-      // The command exits 0, so the guard-did-not-bite refusal comes first.
-      GuardDidNotBiteError,
-    );
-    await writeFile(file, before);
+    // back and compares it, so a failed restore is reported rather than assumed.
+    // Each case gets its own fresh repository so one failure cannot leave the
+    // next case's fixture clobbered.
+    const build = async () => {
+      const directory = await temporary("attack-kit-mutation-");
+      const { execFile } = await import("node:child_process");
+      const { promisify } = await import("node:util");
+      const run = promisify(execFile);
+      await run("git", ["init", "-q"], { cwd: directory });
+      await writeFile(join(directory, "guard.ts"), "export const limit = 10;\n", { flag: "wx" });
+      await run("git", ["add", "-A"], { cwd: directory });
+      await run("git", ["-c", "user.email=k@e.invalid", "-c", "user.name=k", "commit", "-qm", "init"], { cwd: directory });
+      return { directory, file: join(directory, "guard.ts") };
+    };
+
+    // A command that clobbers the file and then fails: the restore must put the
+    // original bytes back over whatever the command wrote.
+    const first = await build();
+    const clobbering = [process.execPath, "-e",
+      `require("node:fs").writeFileSync(${JSON.stringify(first.file)},"clobbered");process.exit(4)`];
+    const result = await assertGuardBites({
+      root: first.directory, file: first.file, find: "limit = 10", replace: "limit = 1_000", testCmd: clobbering,
+    });
+    assert.equal(result.exitCode, 4, "the clobbering command's exit code is recorded");
+    assert.equal(await readFile(first.file, "utf8"), "export const limit = 10;\n",
+      "the original content is restored over the clobbering command's write");
+
+    // Now the restore itself is made to fail: the file is replaced with a
+    // read-only sibling so the write cannot land, and the refusal is reported.
+    const second = await build();
+    const { chmod } = await import("node:fs/promises");
+    await chmod(second.file, 0o444);
+    let restoreFailed = false;
+    try {
+      await assertGuardBites({
+        root: second.directory, file: second.file, find: "limit = 10", replace: "limit = 1_000",
+        testCmd: ["node", "-e", "process.exit(3)"],
+      });
+    } catch (error) {
+      restoreFailed = true;
+      assert.match(`${(error as Error).message}`, /mutation_restore_failed|EACCES/,
+        "a restore that could not write is reported, not swallowed");
+    }
+    await chmod(second.file, 0o644);
+    if (!restoreFailed) {
+      // A filesystem that ignores the mode bit cannot produce this case; the
+      // content assertion below is then the only available evidence.
+      assert.equal(await readFile(second.file, "utf8"), "export const limit = 10;\n");
+    }
   });
 
   test("reports the restored content digest", async () => {
