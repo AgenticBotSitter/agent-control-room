@@ -18,6 +18,13 @@ const terminal = z.object({
   duration_ms: z.number().int().nonnegative(), error: z.string().optional(), timestamp: z.number().int().nonnegative(),
 }).strict();
 
+export function parseHermesTerminalUsageV1(value: unknown) {
+  const parsed = terminal.parse(value);
+  if (parsed.tokens.total < parsed.tokens.input + parsed.tokens.output) throw new Error("malformed_usage");
+  return Object.freeze({ inputTokens: parsed.tokens.input, outputTokens: parsed.tokens.output,
+    totalTokens: parsed.tokens.total, durationMs: parsed.duration_ms });
+}
+
 /** Fixed controls; profile/model/provider come only from protected worker configuration. */
 export const OWNER_TRUSTED_LOCAL_HERMES_FIXED_ARGS_V1 = Object.freeze([
   "chat", "--query-file", "-", "--oneshot", "--quiet", "--format", "stream-json",
@@ -127,8 +134,9 @@ export function createOwnerTrustedLocalHermesExecV1(dependencies: Readonly<{ spa
         if (!frame || typeof frame !== "object" || Array.isArray(frame)) return terminate("failed");
         if ((frame as { type?: unknown }).type !== "result") return;
         const parsed = terminal.safeParse(frame);
-        if (!parsed.success || result !== undefined || parsed.data.exit_code !== 0 || parsed.data.tokens.total < parsed.data.tokens.input + parsed.data.tokens.output)
+        if (!parsed.success || result !== undefined || parsed.data.exit_code !== 0)
           return terminate("failed");
+        try { parseHermesTerminalUsageV1(parsed.data); } catch { return terminate("failed"); }
         result = parsed.data;
       };
       const receive = (chunk: Buffer) => {

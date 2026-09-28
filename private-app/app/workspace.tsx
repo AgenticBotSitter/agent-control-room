@@ -306,7 +306,8 @@ export function PrivateProjectWorkspace({ projectId, section = "overview", after
             <p className="private-note">Status changes preserve history. They do not stop running work. Closing this tab does not change the project.</p>
             <p className="private-note">Saved revision {project.version} · <ConfiguredTimestamp value={project.updatedAt} prefix="Updated" /></p>
           </section>}
-          {section === "overview" && runtime.mode === "hosted" && <><ProjectOverviewActivity key={projectId} projectId={projectId} />
+          {section === "overview" && <ProjectOverviewActivity key={projectId} projectId={projectId} />}
+          {section === "overview" && runtime.mode === "hosted" && <>
             <section className="private-panel"><h2>Worker availability</h2>
               <p>Open Project agents to compare task-specific eligibility with separately recorded availability, capacity, connections, and current project work.</p>
               <a className="private-action-link" href={`/projects/${encodeURIComponent(projectId)}/agents`}>Open project agents</a>

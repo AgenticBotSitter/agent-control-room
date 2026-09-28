@@ -67,7 +67,7 @@ function processGroupExists(child: ChildProcess): boolean {
   try { process.kill(-child.pid, 0); return true; } catch { return false; }
 }
 
-function parseLine(line: string): { kind: "message"; text: string } | { kind: "complete"; usage?: { inputTokens?: number; outputTokens?: number } } | undefined {
+export function parseCodexJsonLineV1(line: string): { kind: "message"; text: string } | { kind: "complete"; usage?: { inputTokens?: number; outputTokens?: number } } | undefined {
   let value: unknown;
   try { value = JSON.parse(line); } catch { throw new Error("malformed_jsonl"); }
   if (!value || typeof value !== "object" || Array.isArray(value) || types.isProxy(value)
@@ -178,7 +178,7 @@ export function createOwnerTrustedLocalCodexExecV1(dependencies: Readonly<{ spaw
         for (const raw of lines) {
           if (raw.length === 0) continue;
           try {
-            const frame = parseLine(raw.endsWith("\r") ? raw.slice(0, -1) : raw);
+            const frame = parseCodexJsonLineV1(raw.endsWith("\r") ? raw.slice(0, -1) : raw);
             if (!frame) continue;
             if (frame.kind === "message") resultText = frame.text;
             else { terminal = true; usage = frame.usage; }
@@ -194,7 +194,7 @@ export function createOwnerTrustedLocalCodexExecV1(dependencies: Readonly<{ spaw
       child.once("close", code => {
         if (stdout.length) {
           try {
-            const frame = parseLine(stdout);
+            const frame = parseCodexJsonLineV1(stdout);
             if (frame?.kind === "message") resultText = frame.text;
             if (frame?.kind === "complete") { terminal = true; usage = frame.usage; }
           } catch { stop = "failed"; }

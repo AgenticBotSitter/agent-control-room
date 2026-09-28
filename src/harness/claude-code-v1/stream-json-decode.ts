@@ -123,6 +123,7 @@ export interface ClaudeCodeResultFrameV1 {
   readonly resultTextDigest: string | undefined;
   readonly totalCostUsd: number | undefined;
   readonly usageReported: boolean;
+  readonly usage: Readonly<{ inputTokens: number; outputTokens: number; totalTokens: number }> | undefined;
   readonly frameDigest: string;
 }
 
@@ -309,6 +310,16 @@ export function createClaudeCodeStreamDecoderV1(input: Readonly<{ expectedSessio
       totalCostUsd = parsed.total_cost_usd;
     }
     if (parsed.usage !== undefined && !plainObject(parsed.usage)) return fail("malformed_usage");
+    let usage: ClaudeCodeResultFrameV1["usage"];
+    if (plainObject(parsed.usage)) {
+      const inputTokens = parsed.usage.input_tokens, outputTokens = parsed.usage.output_tokens;
+      if (inputTokens !== undefined || outputTokens !== undefined) {
+        if (typeof inputTokens !== "number" || !Number.isSafeInteger(inputTokens) || inputTokens < 0
+          || typeof outputTokens !== "number" || !Number.isSafeInteger(outputTokens) || outputTokens < 0)
+          return fail("malformed_usage");
+        usage = Object.freeze({ inputTokens, outputTokens, totalTokens: inputTokens + outputTokens });
+      }
+    }
     let resultText: string | undefined;
     let resultBytes = 0;
     let resultTextDigest: string | undefined;
@@ -338,6 +349,7 @@ export function createClaudeCodeStreamDecoderV1(input: Readonly<{ expectedSessio
       resultTextDigest,
       totalCostUsd,
       usageReported: parsed.usage !== undefined,
+      usage,
       frameDigest,
     });
   };

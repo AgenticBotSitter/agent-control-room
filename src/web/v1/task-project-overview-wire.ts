@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { catalogProjectIdSchema } from "./project-wire";
-import { taskSummarySchema } from "./task-wire";
+import { taskSummarySchema, usageRollupSchema } from "./task-wire";
 
 const currentTask = taskSummarySchema.refine(task =>
   ["proposed", "ready", "leased", "running", "waiting_approval", "orphaned"].includes(task.state),
@@ -16,6 +16,9 @@ export const taskProjectOverviewSchema = z.object({
   additionalCurrentOmitted: z.boolean(),
   additionalReviewsOmitted: z.boolean(),
   additionalRecentOmitted: z.boolean(),
+  usageRollup: usageRollupSchema,
+  priceTable: z.object({ state: z.enum(["recorded", "not_recorded"]), tableId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:/+-]{0,179}$/).nullable(),
+    recordedAt: z.string().datetime().nullable() }).strict(),
   observedAt: z.string().datetime(),
   startsWork: z.literal(false),
 }).strict().superRefine((value, context) => {
