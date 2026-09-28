@@ -286,9 +286,22 @@ test("the process table parser refuses anything it cannot read", () => {
     "macOS prints total minutes, never a separate hours field");
   assert.equal(parsePsTimeToMillisecondsV1("144:06.26"), 8_646_260,
     "a long-lived process exceeds 99 minutes and must still parse");
+  // procps switches to a three-field clock once cumulative CPU passes 24
+  // hours. A three-field form is disambiguated by field count, not guessed:
+  // `144:06.26` has a fraction so it is minutes, `04:05:06` is hours.
+  // Linux CI showed the enforcement is INERT if this shape is refused.
+  assert.equal(parsePsTimeToMillisecondsV1("04:05:06"), 4 * 3_600_000 + 5 * 60_000 + 6_000,
+    "procps hours:minutes:seconds, which macOS never emits");
+  assert.equal(parsePsTimeToMillisecondsV1("3-04:05:06"), 3 * 86_400_000 + 4 * 3_600_000 + 5 * 60_000 + 6_000,
+    "procps days-hours:minutes:seconds");
+  assert.equal(parsePsTimeToMillisecondsV1("144:06:26"), 144 * 3_600_000 + 6 * 60_000 + 26_000,
+    "three fields with no fraction is hours:minutes:seconds");
   assert.equal(parsePsTimeToMillisecondsV1("12:34"), undefined, "whole seconds are not this format");
   assert.equal(parsePsTimeToMillisecondsV1("12:60.00"), undefined, "seconds must be 0-59");
+  assert.equal(parsePsTimeToMillisecondsV1("1:02:03.45"), undefined,
+    "four components is not a shape either ps emits");
   assert.equal(parsePsTimeToMillisecondsV1("not-a-time"), undefined);
+  assert.equal(parsePsTimeToMillisecondsV1(""), undefined);
   // `ps` pads columns, so leading whitespace is expected input, not an error.
   assert.deepEqual(parsePsGroupRowV1("  123  122  0:01.50  2048"),
     { pid: 123, pgid: 122, cpuTimeMs: 1_500, rssKilobytes: 2048 });

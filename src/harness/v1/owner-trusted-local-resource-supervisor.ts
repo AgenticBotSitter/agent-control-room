@@ -70,19 +70,49 @@ function groupExists(child: ChildProcess): boolean {
 
 /** `ps` reports CPU as [hh:]mm:ss.ss. Only the two rightmost fields matter
  * and both are fixed-width with two decimals, so this parses exactly. */
-/** `ps` prints CPU time as `MM:SS.CC` where MM is TOTAL MINUTES, unbounded:
- * rows such as `9:24.42`, `144:06.26` and `295:12.09` were all read
- * directly from /bin/ps on this host. It is minutes, not hours: `9:24.42`
- * is 9m24s, and reading it as 9h24m would over-report by 60x. Seconds are
- * zero-padded to two digits and the fraction is centiseconds. */
-const PS_TIME = /^(\d+):(\d{2})\.(\d{2})$/u;
+/** Both `ps` implementations this supervisor must read on:
+ *
+ *   macOS/BSD  `MM:SS.CC`   TOTAL MINUTES, unbounded. Rows such as
+ *                          `9:24.42`, `144:06.26` and `295:12.09` were read
+ *                          directly from /bin/ps on the macOS host.
+ *   procps     `MM:SS.cc`   TOTAL MINUTES, the same shape.
+ *   procps     `[DD-]HH:MM:SS`  once cumulative CPU passes 24 hours.
+ *
+ * The first shape is minutes, not hours: `9:24.42` is 9m24s, and reading it
+ * as 9h24m over-reports by 60x. The three-field form is disambiguated by
+ * field COUNT, not by guessing: `144:06.26` has a fraction so its first
+ * field is minutes, while `04:05:06` has three fields and no fraction so it
+ * is hours:minutes:seconds. A day prefix is unambiguous.
+ *
+ * Anything else is refused. Refusing stops the run (see the supervisor's
+ * measurement_unavailable path) rather than under-measuring it, but a format
+ * this parser cannot read must never read as "under the limit" -- on Linux a
+ * refusal on every sample made the whole enforcement inert while the runs
+ * simply hit their wall-clock deadline instead. */
+const PS_TIME_MINUTES = /^(\d+):(\d{2})\.(\d{2})$/u;
+const PS_TIME_HOURS = /^(?:(\d+)-)?(\d+):(\d{2}):(\d{2})$/u;
 
 export function parsePsTimeToMillisecondsV1(value: string): number | undefined {
-  const match = PS_TIME.exec(value.trim());
-  if (match === null) return undefined;
-  const minutes = Number(match[1]), seconds = Number(match[2]), centis = Number(match[3]);
-  if (!Number.isSafeInteger(minutes) || seconds > 59) return undefined;
-  const ms = minutes * 60_000 + seconds * 1_000 + centis * 10;
+  const text = value.trim();
+  const fraction = PS_TIME_MINUTES.exec(text);
+  if (fraction !== null) {
+    const minutes = Number(fraction[1]), seconds = Number(fraction[2]), centis = Number(fraction[3]);
+    if (!Number.isSafeInteger(minutes) || seconds > 59) return undefined;
+    return finite(minutes * 60_000 + seconds * 1_000 + centis * 10);
+  }
+  const clock = PS_TIME_HOURS.exec(text);
+  if (clock === null) return undefined;
+  const days = clock[1] === undefined ? 0 : Number(clock[1]);
+  const hours = Number(clock[2]), minutes = Number(clock[3]), seconds = Number(clock[4]);
+  if (!Number.isSafeInteger(days) || !Number.isSafeInteger(hours) || minutes > 59 || seconds > 59) {
+    return undefined;
+  }
+  return finite(((days * 24 + hours) * 60 + minutes) * 60_000 + seconds * 1_000);
+}
+
+/** Guards against a runaway row producing an unrepresentable total, which
+ * would read as "no data" instead of a real measurement. */
+function finite(ms: number): number | undefined {
   return Number.isSafeInteger(ms) ? ms : undefined;
 }
 
