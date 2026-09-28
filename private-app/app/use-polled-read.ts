@@ -62,20 +62,26 @@ export function usePolledRead<T>(options: UsePolledReadOptions<T>): PolledReadSt
 
   useEffect(() => {
     if (!enabled) { setLoading(false); return; }
-    const current = latest.current;
-    // Deferring the first read lets React's development StrictMode clean up its
-    // probe effect before any network request begins.
+    // The read and its callbacks are read through the ref at *call* time, not
+    // snapshotted here: a caller whose inputs change (a new projectId, a new
+    // filter) must have its next read built from the new values, not from the
+    // values present when this effect last ran.
+    beginRead();
     const instance = createPolledReadScheduler<T>({
-      read: signal => sharePolledRequest(`${shareKey ?? key}`,
-        signal2 => current.read(signal2), signal),
-      accept: next => { setValue(next); setError(undefined); setLoading(false); current.onAccept?.(next); },
-      failed: reason => { setError(reason); setLoading(false); current.onFailure?.(reason); },
+      // Clearing here rather than in `refresh` means *every* read path drops the
+      // held value: the first read, a scheduled poll, a visibility return, a
+      // focus, and a manual refresh all behave the same. That is what the
+      // hand-written effects did by resetting state at the top of `load()`.
+      read: signal => { beginRead(); return sharePolledRequest(`${shareKey ?? key}`,
+        signal2 => latest.current.read(signal2), signal); },
+      accept: next => { setValue(next); setError(undefined); setLoading(false); latest.current.onAccept?.(next); },
+      failed: reason => { setError(reason); setLoading(false); latest.current.onFailure?.(reason); },
       baseIntervalMs,
       hidden: () => typeof document === "undefined" ? false : document.hidden,
       schedule: (callback, delayMs) => setTimeout(callback, delayMs),
       cancel: timer => clearTimeout(timer as ReturnType<typeof setTimeout>),
-      unchanged: current.unchanged,
-      observe: current.onInterval,
+      unchanged: (previous, next) => latest.current.unchanged?.(previous, next) ?? true,
+      observe: (delayMs, reason) => latest.current.onInterval?.(delayMs, reason),
     });
     scheduler.current = instance;
     setLoading(true);
@@ -83,7 +89,10 @@ export function usePolledRead<T>(options: UsePolledReadOptions<T>): PolledReadSt
     // A tab that was hidden when this effect ran still needs its first read
     // once it is shown, so a hidden mount does not wait for the first interval.
     const visible = () => { if (!document.hidden) instance.trigger(); };
-    const focused = () => instance.trigger();
+    // A `focus` event only reaches a tab the owner is actually looking at, so
+    // it is a visible-tab signal even where `document.hidden` is unreliable
+    // (a test DOM, or a prerendered document that has never been shown).
+    const focused = () => instance.trigger(true);
     window.addEventListener("focus", focused);
     document.addEventListener("visibilitychange", visible);
     return () => {
@@ -93,6 +102,12 @@ export function usePolledRead<T>(options: UsePolledReadOptions<T>): PolledReadSt
       document.removeEventListener("visibilitychange", visible);
     };
   }, [key, shareKey, baseIntervalMs, enabled]);
+
+  // A read is a re-read, never a patch: the held value is dropped the moment a
+  // new read begins, so a page can never keep showing a result the server has
+  // since changed, revoked, or refused. The next successful read replaces it.
+  // This is what the hand-written effects did with their `setX(undefined)`.
+  const beginRead = useCallback(() => { setValue(undefined); setError(undefined); setLoading(true); }, []);
 
   const refresh = useCallback(() => scheduler.current?.trigger(), []);
   const clear = useCallback(() => { setValue(undefined); setError(undefined); }, []);

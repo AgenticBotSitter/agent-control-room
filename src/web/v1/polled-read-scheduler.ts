@@ -55,8 +55,8 @@ export interface PolledReadSchedulerOptions<T> {
 export interface PolledReadScheduler {
   /** Begins polling. `startDelayMs` defers the first read (default 0). */
   start(startDelayMs?: number): void;
-  /** Owner pressed refresh, or the tab became visible or focused. */
-  trigger(): void;
+  /** Owner pressed refresh, the tab became visible, or the window was focused. */
+  trigger(force?: boolean): void;
   /** Ends polling and aborts any read still in flight. Safe to call twice. */
   stop(): void;
   readonly stopped: boolean;
@@ -96,10 +96,12 @@ export function createPolledReadScheduler<T>(options: PolledReadSchedulerOptions
     timer = options.schedule(() => { timer = undefined; void run(); }, delayMs);
   }
 
-  async function run(): Promise<void> {
-    // A hidden tab never reads. A trigger that arrived while hidden is honoured
-    // the moment the tab is visible again, so nothing is silently dropped.
-    if (stopped || reading || options.hidden()) return;
+  async function run(initial = false): Promise<void> {
+    // A hidden tab never polls. A trigger that arrived while hidden is honoured
+    // the moment the tab is visible again, so nothing is silently dropped. The
+    // one exception is the very first read of a freshly mounted page, which is
+    // a load rather than a poll and must still settle.
+    if (stopped || reading || (options.hidden() && !initial)) return;
     reading = true;
     clearTimer();
     try {
@@ -130,17 +132,22 @@ export function createPolledReadScheduler<T>(options: PolledReadSchedulerOptions
     start(startDelayMs = 0) {
       if (stopped || timer !== undefined || reading) return;
       if (startDelayMs > 0) timer = options.schedule(() => { timer = undefined; void run(); }, startDelayMs);
+      // The first read of a mounted page is a page load, not a poll: it runs
+      // even in a hidden tab, which is what the pages this replaces did. Only
+      // *subsequent* polling is gated on visibility, so a background tab
+      // settles once and then stops instead of holding a request open.
+      else if (options.hidden()) void run(true);
       else void run();
     },
-    trigger() {
+    trigger(force = false) {
       if (stopped) return;
-      if (options.hidden()) { coalesced = true; return; }
+      if (options.hidden() && !force) { coalesced = true; return; }
       // A focus or visibility return always earns the base interval, so a tab
       // the owner came back to is never served a stretched interval.
       quiet = 0;
       if (reading) { coalesced = true; return; }
       clearTimer();
-      void run();
+      void run(force);
     },
     stop() {
       if (stopped) return;

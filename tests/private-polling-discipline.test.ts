@@ -294,3 +294,73 @@ test("an invalid base interval is refused rather than silently polling at zero",
     assert.throws(() => createPolledReadScheduler({ ...time.options, baseIntervalMs, read: async () => 1, accept: () => {}, failed: () => {} }),
       /polled_read_interval_invalid/, `interval ${baseIntervalMs}`);
 });
+
+// The three regressions below were all found by the real owner-page suites
+// after the first version of this hook shipped. Each is a behaviour the
+// hand-written effects had and the shared hook initially lost.
+
+test("a page mounted while hidden still settles its first read, then stops polling", async () => {
+  const time = harness();
+  time.setHidden(true);
+  let reads = 0;
+  const scheduler = createPolledReadScheduler<number>({
+    ...time.options, baseIntervalMs: 30_000,
+    read: async () => { reads++; return reads; },
+    accept: () => {}, failed: () => {},
+  });
+  scheduler.start();
+  await time.advance(0);
+  assert.equal(reads, 1, "the first read of a mounted page is a page load, not a poll");
+  await time.advance(120_000);
+  assert.equal(reads, 1, "a hidden tab must not keep polling after it has settled");
+  assert.equal(time.pending, 0, "a hidden tab arms no successor");
+  scheduler.stop();
+});
+
+test("a forced trigger reads even where document.hidden is unreliable", async () => {
+  const time = harness();
+  time.setHidden(true);
+  let reads = 0;
+  const scheduler = createPolledReadScheduler<number>({
+    ...time.options, baseIntervalMs: 30_000,
+    read: async () => { reads++; return reads; },
+    accept: () => {}, failed: () => {},
+  });
+  scheduler.start();
+  await time.advance(0);
+  assert.equal(reads, 1);
+  // A focus event only reaches a tab the owner is looking at, so it must read
+  // even in a DOM that reports itself hidden.
+  scheduler.trigger(true);
+  await time.advance(0);
+  assert.equal(reads, 2, "focus forces a read");
+  // An unforced trigger in a hidden tab still waits for visibility.
+  scheduler.trigger();
+  await time.advance(0);
+  assert.equal(reads, 2, "an ordinary trigger in a hidden tab does not read");
+  scheduler.stop();
+});
+
+test("a failed read arms a bounded backoff instead of retrying at the base interval", async () => {
+  const time = harness();
+  let reads = 0, failures = 0;
+  const scheduler = createPolledReadScheduler<number>({
+    ...time.options, baseIntervalMs: 1_000,
+    read: async () => { reads++; throw new Error("upstream unavailable"); },
+    accept: () => {}, failed: () => { failures++; },
+  });
+  scheduler.start();
+  await time.advance(0);
+  assert.equal(failures, 1);
+  const delays: number[] = [];
+  for (let attempt = 0; attempt < 6; attempt += 1) {
+    const before = time.intervals.length;
+    await time.advance(60_000);
+    if (time.intervals.length > before) delays.push(time.intervals[time.intervals.length - 1]!.delayMs);
+  }
+  assert.ok(delays.length >= 3, `expected repeated retries, saw ${delays.length}`);
+  assert.ok(delays[0]! > 1_000, `the first retry must back off past the base interval, got ${delays[0]}`);
+  assert.ok(delays[2]! >= delays[0]!, "backoff grows while the read keeps failing");
+  assert.ok(delays[delays.length - 1]! <= 1_000 * 64, "backoff stays bounded");
+  scheduler.stop();
+});

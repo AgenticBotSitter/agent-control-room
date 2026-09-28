@@ -8,14 +8,14 @@
 
 | endpoint | reads | p50 ms | p95 ms | max ms |
 | --- | ---: | ---: | ---: | ---: |
-| /api/v1/connections (return-to-tab) | 2 | 53 | 63 | 63 |
-| /api/v1/home/tasks (return-to-tab) | 1 | 75 | 75 | 75 |
-| /api/v1/home/tasks | 3 | 68 | 74 | 74 |
-| /api/v1/needs-me/tasks (return-to-tab) | 1 | 56 | 56 | 56 |
-| /api/v1/needs-me/tasks | 3 | 68 | 78 | 78 |
+| /api/v1/connections (return-to-tab) | 2 | 58 | 62 | 62 |
+| /api/v1/home/tasks (return-to-tab) | 1 | 69 | 69 | 69 |
+| /api/v1/home/tasks | 3 | 62 | 80 | 80 |
+| /api/v1/needs-me/tasks (return-to-tab) | 1 | 61 | 61 | 61 |
+| /api/v1/needs-me/tasks | 3 | 63 | 69 | 69 |
 | /api/v1/operator-surface (return-to-tab) | 1 | 67 | 67 | 67 |
-| /api/v1/projects (return-to-tab) | 2 | 57 | 58 | 58 |
-| /api/v1/projects | 3 | 68 | 69 | 69 |
+| /api/v1/projects (return-to-tab) | 2 | 57 | 60 | 60 |
+| /api/v1/projects | 3 | 62 | 70 | 70 |
 
 | status | count |
 | --- | ---: |
@@ -33,10 +33,10 @@
 
 - 304 Not Modified responses: 6
 - unavailable responses (4xx/5xx): 0
-- worst p95 across endpoints: 78ms
+- worst p95 across endpoints: 80ms
 
 Acceptance: zero unavailable — PASS (allowed 0)
 
-Acceptance: p95 < 1500ms — PASS (78ms)
+Acceptance: p95 < 1500ms — PASS (80ms)
 
 Result: PASS
