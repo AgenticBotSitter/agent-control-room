@@ -129,14 +129,20 @@ jobs:
       # These two need no dependencies, so they report in seconds, before the
       # install that the type checks require.
       - name: Test the lane coverage checker and the path routing
-        run: node --test tests/check-test-lane-coverage.test.mjs tests/ci-path-routing.test.mjs tests/private-name-guard.test.mjs
+        # The quarantine wrapper delegates the original invocation after applying
+        # its exact-name exclusions: node --test tests/check-test-lane-coverage.test.mjs
+        run: node scripts/run-tests-with-quarantine.mjs --test tests/check-test-lane-coverage.test.mjs tests/ci-path-routing.test.mjs tests/private-name-guard.test.mjs
       - name: Fail if any test file is unreachable from GitHub Actions
         run: node scripts/check-test-lane-coverage.mjs
       - name: Reject configured private names
         env:
           CONTROL_ROOM_PRIVATE_NAMES: ${{ secrets.CONTROL_ROOM_PRIVATE_NAMES }}
         run: node scripts/check-private-names.mjs
+      - name: Reject stale or incomplete test quarantines
+        run: node scripts/check-test-quarantine.mjs
       - run: pnpm install --frozen-lockfile --ignore-scripts
+      - name: Test hygiene guards
+        run: pnpm run test:hygiene
       - name: Type check contributor demo
         run: pnpm run check:demo
       - name: Type check server build
@@ -239,7 +245,9 @@ jobs:
       - name: Component lanes
         run: pnpm run test:components
       - name: Resource-bound connector contracts
-        run: node --import tsx --test tests/resource-bound-native-contract-v2.test.ts tests/resource-bound-codex-contract-v2.test.ts tests/resource-bound-local-start-contract-v2.test.ts
+        # The wrapper preserves this command's flags/files after filtering:
+        # node --import tsx --test tests/resource-bound-native-contract-v2.test.ts tests/resource-bound-codex-contract-v2.test.ts tests/resource-bound-local-start-contract-v2.test.ts
+        run: node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/resource-bound-native-contract-v2.test.ts tests/resource-bound-codex-contract-v2.test.ts tests/resource-bound-local-start-contract-v2.test.ts
 
   test-articles:
     name: Article build lane
@@ -259,6 +267,42 @@ jobs:
       - run: pnpm install --frozen-lockfile --ignore-scripts
       - name: Article build lane
         run: pnpm run test:build:articles
+
+  migration-lint:
+    name: New migration safety
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile --ignore-scripts
+      - name: Reject edits to shipped migrations and lint new PostgreSQL 17 migrations
+        run: node scripts/check-migration-changes.mjs --base origin/main
+
+  quarantined-tests:
+    name: Quarantined tests (non-blocking)
+    continue-on-error: true
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile --ignore-scripts
+      - name: Report quarantined test results
+        run: pnpm run test:quarantined
 
   test-unified-product:
     name: Unified local and multi-computer product tests
@@ -283,7 +327,7 @@ jobs:
           pnpm run test:private-local-runtime-assembly
       - name: Local adapters, recovery, transitions and product surfaces
         run: |
-          node --import tsx --test \
+          node scripts/run-tests-with-quarantine.mjs --import tsx --test \
             tests/claude-code-local-delivery-composition.test.ts \
             tests/claude-code-local-executor.test.ts \
             tests/claude-code-local-process-readiness.test.ts \
@@ -535,7 +579,7 @@ jobs:
         run: |
           pnpm install --frozen-lockfile --ignore-scripts
           pnpm run test:components
-          node --import tsx --test tests/resource-bound-native-contract-v2.test.ts tests/resource-bound-codex-contract-v2.test.ts tests/resource-bound-local-start-contract-v2.test.ts
+          node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/resource-bound-native-contract-v2.test.ts tests/resource-bound-codex-contract-v2.test.ts tests/resource-bound-local-start-contract-v2.test.ts
       - name: Article build lane (merge gate)
         if: ${{ !cancelled() && matrix.lane == 'articles' && needs.route.result == 'success' && needs.route.outputs.articles == 'false' }}
         run: |
@@ -548,7 +592,7 @@ jobs:
   merge-gate:
     name: Full suite (merge gate)
     if: ${{ always() }}
-    needs: [route, quick, test-demo, test-server, test-components, test-articles, test-unified-product, full-mac-local-rehearsal, owner-browser-journey, full-gate]
+    needs: [route, quick, test-demo, test-server, test-components, test-articles, migration-lint, test-unified-product, full-mac-local-rehearsal, owner-browser-journey, full-gate]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -574,6 +618,7 @@ jobs:
           check server "${{ needs.test-server.result }}"
           check components "${{ needs.test-components.result }}"
           check articles "${{ needs.test-articles.result }}"
+          check migration-lint "${{ needs.migration-lint.result }}"
           check unified-product "${{ needs.test-unified-product.result }}"
           check full-mac-local-rehearsal "${{ needs.full-mac-local-rehearsal.result }}"
           check owner-browser-journey "${{ needs.owner-browser-journey.result }}"
