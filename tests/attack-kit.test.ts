@@ -25,10 +25,14 @@ import {
   exhaustPool,
   expectNoLeak,
   GuardDidNotBiteError,
+  InvalidTestCommandError,
   isPrivilegeDenied,
   loadSearchPathAllowlist,
   MutationTimeoutError,
+  NoWritesSucceededError,
+  parseGucList,
   portIsOccupied,
+  proconfigSearchPath,
   realPostgresSkipMessage,
   requiresRealPostgres,
   roleCan,
@@ -36,12 +40,15 @@ import {
   searchPathEndsInPgTemp,
   securityDefinerAudit,
   securityDefinerAuditLive,
+  shortSocketDirectories,
+  splitSqlStatements,
+  staleAllowlistEntries,
+  stripSqlComments,
   twoOwners,
   twoSessions,
   twoTenants,
   UnpinnedSearchPathError,
   withRealPostgres,
-  withStaleAllowlist,
   type RealPostgres,
 } from "./support/attack-kit/index.ts";
 import { REPOSITORY_ROOT } from "./support/attack-kit/real-postgres.ts";
@@ -278,6 +285,57 @@ describe("attack kit: concurrency", () => {
     await assert.rejects(concurrentWriters(async () => 1, async () => 1, { durationMs: 10, readers: 0 }),
       /concurrent_writers_concurrency_invalid/);
   });
+
+  // A writer that always throws used to return `{writes: 0, reads: 35,
+  // writeErrors: 35}` and PASS. Nothing raced: the reader loop was reading a
+  // world nothing was writing. A read-race test then "passed" against a writer
+  // that is denied, misconfigured, or broken — which is the case such a test
+  // exists to catch.
+  test("concurrentWriters refuses to pass when no write ever succeeded", async () => {
+    let reads = 0;
+    await assert.rejects(
+      concurrentWriters(
+        async () => { throw new Error("permission denied for table events"); },
+        async () => { reads += 1; return 1; },
+        { durationMs: 150, writers: 1, readers: 2 },
+      ),
+      (error: unknown) => {
+        assert.ok(error instanceof NoWritesSucceededError,
+          `a writer that never succeeds must fail the helper, got: ${(error as Error).name}`);
+        assert.match(error.message, /concurrent_writers_no_successful_write/);
+        assert.match(error.message, /permission denied for table events/,
+          "and the error that stopped every write is reported, not swallowed");
+        return true;
+      },
+    );
+    // The refusal is raised AFTER the loops finish, so the read count is
+    // reported rather than guessed at.
+    assert.ok(reads > 0, "the readers really did run — the writers are what failed");
+  });
+
+  test("concurrentWriters refuses a write error even when some writes succeeded", async () => {
+    // Opting into tolerated write errors is a deliberate choice, but it is
+    // still a choice: a writer that fails half the time is reporting a defect
+    // the caller has to acknowledge.
+    let n = 0;
+    await assert.rejects(
+      concurrentWriters(
+        async () => { n += 1; if (n % 2 === 0) throw new Error("deadlock detected"); },
+        async () => 1,
+        { durationMs: 150, writers: 1, readers: 1 },
+      ),
+      /concurrent_writers_write_failed:.*deadlock detected/,
+    );
+    // With the opt-in, the same run is allowed through — and still reports the
+    // count, so the acknowledgement is recorded rather than forgotten.
+    const tolerated = await concurrentWriters(
+      async () => { n += 1; if (n % 2 === 0) throw new Error("deadlock detected"); },
+      async () => 1,
+      { durationMs: 150, writers: 1, readers: 1, allowWriteErrors: true },
+    );
+    assert.ok(tolerated.writes > 0, "some writes still succeeded");
+    assert.ok(tolerated.writeErrors.length > 0, "and the failures are reported, not hidden");
+  });
 });
 
 describe("attack kit: identity fixtures", () => {
@@ -330,81 +388,161 @@ describe("attack kit: identity fixtures", () => {
 });
 
 describe("attack kit: mutation", () => {
-  /** A tiny git repo, so the dirty-tree refusal has something to inspect. */
+  // Every case below runs the REAL experiment: a repository with a real guard
+  // and a real test, mutated, and the test must fail. A command that always
+  // exits non-zero cannot be used any more, and that is the point: it used to
+  // be accepted as a "bite" while never reading the file under mutation.
+  //
   // Built lazily and memoised, not eagerly at describe scope. An eager
   // `mkdtemp` runs even when every test in this describe is deselected (a
   // `--test-name-pattern` run, or a lane that skips the whole suite), so the
   // directory is allocated and then removed by the `after` hook while its
   // `git init` is still in flight — producing "unable to get current working
-  // directory" and an unhandled rejection that fails an unrelated run. Only
-  // creating it when a test actually asks means the allocation and the removal
-  // always belong to the same run.
-  let repoPromise: Promise<string> | undefined;
-  const repo = (): Promise<string> => (repoPromise ??= (async () => {
-    const directory = await temporary("attack-kit-mutation-");
+  // directory" and an unhandled rejection that fails an unrelated run.
+  const GUARD = "export const limit = 10;\n";
+  const GUARD_TEST = `
+    import assert from "node:assert/strict";
+    import test from "node:test";
+    import { limit } from "./guard.ts";
+    test("the limit is 10", () => { assert.equal(limit, 10); });
+  `;
+  const git = async (directory: string, ...args: string[]) => {
     const { execFile } = await import("node:child_process");
     const { promisify } = await import("node:util");
-    const run = promisify(execFile);
-    await run("git", ["init", "-q"], { cwd: directory });
-    await writeFile(join(directory, "guard.ts"), "export const limit = 10;\n", { flag: "wx" });
-    await run("git", ["add", "-A"], { cwd: directory });
-    await run("git", ["-c", "user.email=k@e.invalid", "-c", "user.name=k", "commit", "-qm", "init"], { cwd: directory });
-    return directory;
-  })());
+    await promisify(execFile)("git", args, { cwd: directory });
+  };
+  /** A committed repo holding `guard.ts` and its test. */
+  const buildRepo = async (prefix = "attack-kit-mutation-") => {
+    const directory = await temporary(prefix);
+    await git(directory, "init", "-q");
+    await writeFile(join(directory, "guard.ts"), GUARD, { flag: "wx" });
+    await writeFile(join(directory, "guard.test.ts"), GUARD_TEST, { flag: "wx" });
+    await git(directory, "add", "-A");
+    await git(directory, "-c", "user.email=k@e.invalid", "-c", "user.name=k", "commit", "-qm", "init");
+    return { directory, file: join(directory, "guard.ts") };
+  };
+  /** The test command: passes unmutated, fails when the guard is widened. */
+  const guardTest = ["node", "--test", "guard.test.ts"];
 
-  const passing = "node -e \"process.exit(0)\"";
-  const failing = "node -e \"process.exit(3)\"";
-  const crashing = "node -e \"process.kill(process.pid,'SIGKILL')\"";
-
-  test("restores the file after a failing mutation and reports the non-zero exit", async () => {
-    const directory = await repo();
-    const file = join(directory, "guard.ts");
+  test("a real guard's test bites, and the file is restored", async () => {
+    const { directory, file } = await buildRepo();
     const before = await readFile(file, "utf8");
     const result = await assertGuardBites({
       root: directory, file, find: "limit = 10", replace: "limit = 1_000",
-      testCmd: failing, because: "a widened bound must be caught",
+      testCmd: guardTest, because: "a widened bound must be caught",
     });
-    assert.notEqual(result.exitCode, 0);
+    assert.notEqual(result.exitCode, 0, "the mutated guard's test must fail");
     assert.ok(result.applied);
+    assert.match(result.output, /not equal|AssertionError|actual/i,
+      "and the failure comes from the child's test, not a harness error");
     assert.equal(await readFile(file, "utf8"), before, "the file is restored");
   });
 
-  test("restores the file after a passing mutation and still reports the guard did not bite", async () => {
-    const directory = await repo();
-    const file = join(directory, "guard.ts");
+  test("reports the restored content digest", async () => {
+    const { directory, file } = await buildRepo();
+    const before = await readFile(file, "utf8");
+    const result = await assertGuardBites({
+      root: directory, file, find: "limit = 10", replace: "limit = 1_000", testCmd: guardTest,
+    });
+    const { createHash } = await import("node:crypto");
+    assert.equal(result.restoredDigest, createHash("sha256").update(before).digest("hex"));
+    assert.equal(await readFile(file, "utf8"), before);
+  });
+
+  test("a mutation the guard does not catch is reported, and the file is still restored", async () => {
+    // The guard's own test asserts on `limit`, so the mutation has to be one
+    // the test genuinely cannot see: an added export. Widening `limit` would
+    // bite, which is what the case above proves, so the "did not bite" path
+    // needs a mutation that leaves every assertion the test makes intact.
+    const { directory, file } = await buildRepo();
     const before = await readFile(file, "utf8");
     await assert.rejects(
       assertGuardBites({
-        root: directory, file, find: "limit = 10", replace: "limit = 1_000", testCmd: passing,
+        root: directory, file, find: "export const limit = 10;",
+        replace: "export const limit = 10;\nexport const bypass = true;", testCmd: guardTest,
       }),
       (error: unknown) => {
-        assert.ok(error instanceof GuardDidNotBiteError);
+        assert.ok(error instanceof GuardDidNotBiteError,
+          `expected the guard not to bite, got: ${(error as Error).name}: ${(error as Error).message}`);
         return true;
       },
     );
     assert.equal(await readFile(file, "utf8"), before, "restored even though the guard did not bite");
   });
 
-  test("restores the file when the test command crashes", async () => {
-    const directory = await repo();
-    const file = join(directory, "guard.ts");
+  // ---- the baseline: a command that fails on its own is not a bite ----
+
+  test("a test command that already fails is refused as invalid, not counted as a bite", async () => {
+    // Both of these exited non-zero WITHOUT the mutation and were reported as
+    // "guard bites". Every other pull request's Mutation-checks evidence
+    // depends on this helper, so a false bite here manufactures evidence for a
+    // guard nobody checked.
+    const { directory, file } = await buildRepo();
     const before = await readFile(file, "utf8");
-    const result = await assertGuardBites({
-      root: directory, file, find: "limit = 10", replace: "limit = 1_000", testCmd: crashing,
-    });
-    assert.equal(result.exitCode, null, "a signal is not an exit code");
-    assert.ok(result.signal, "the crash is reported as a signal");
-    assert.equal(await readFile(file, "utf8"), before, "restored after a crash");
+    for (const testCmd of [
+      ["node", "--test", join(directory, "does-not-exist.test.mjs")],
+      ["node", "-e", "process.exit(1)"],
+    ]) {
+      await assert.rejects(
+        assertGuardBites({ root: directory, file, find: "limit = 10", replace: "limit = 1_000", testCmd }),
+        (error: unknown) => {
+          assert.ok(error instanceof InvalidTestCommandError,
+            `expected invalid_test_command for ${testCmd.join(" ")}, got: ${(error as Error).name}`);
+          assert.match(error.message, /invalid_test_command/);
+          assert.match(error.message, /fails_without_the_mutation|not_a_test|does_not_exist|Cannot find/i);
+          return true;
+        },
+      );
+      assert.equal(await readFile(file, "utf8"), before,
+        "a refused baseline must not have left a mutation behind");
+    }
   });
 
+  test("a baseline that hangs is refused as invalid, not counted as a bite", async () => {
+    const { directory, file } = await buildRepo();
+    await assert.rejects(
+      assertGuardBites({
+        root: directory, file, find: "limit = 10", replace: "limit = 1_000",
+        testCmd: [process.execPath, "-e", "setTimeout(() => {}, 60000)"], boundMs: 400,
+      }),
+      (error: unknown) => {
+        assert.ok(error instanceof InvalidTestCommandError,
+          `a hanging baseline is an invalid command, got: ${(error as Error).name}: ${(error as Error).message}`);
+        assert.match(error.message, /timed_out_without_the_mutation/);
+        return true;
+      },
+    );
+  });
+
+  test("a mutated command that hangs is still a timeout, not an invalid command", async () => {
+    // The control for the case above: the SAME command, which passes
+    // unmutated, must reach the mutation. Without this, "always report a
+    // timeout as invalid" would satisfy the previous test.
+    const { directory, file } = await buildRepo();
+    await assert.rejects(
+      assertGuardBites({
+        root: directory, file, find: "limit = 10", replace: "limit = 1_000",
+        testCmd: [process.execPath, "-e",
+          `if (!require("node:fs").readFileSync(${JSON.stringify(file)}, "utf8").includes("limit = 1_000")) { process.exit(0); } setTimeout(() => {}, 60000);`],
+        boundMs: 2_000,
+      }),
+      (error: unknown) => {
+        assert.ok(error instanceof MutationTimeoutError,
+          `a mutated hang is a timeout, got: ${(error as Error).name}: ${(error as Error).message}`);
+        return true;
+      },
+    );
+  });
+
+  // ---- refusals that do not depend on the command ----
+
   test("refuses to run with uncommitted changes", async () => {
-    const directory = await repo();
-    const file = join(directory, "guard.ts");
+    const { directory, file } = await buildRepo();
     await writeFile(file, "export const limit = 42;\n");
     try {
       await assert.rejects(
         assertGuardBites({
-          root: directory, file, find: "limit = 42", replace: "limit = 99", testCmd: failing,
+          root: directory, file, find: "limit = 42", replace: "limit = 99", testCmd: guardTest,
         }),
         (error: unknown) => {
           assert.ok(error instanceof DirtyTreeError);
@@ -413,174 +551,107 @@ describe("attack kit: mutation", () => {
         },
       );
     } finally {
-      const { execFile } = await import("node:child_process");
-      const { promisify } = await import("node:util");
-      await promisify(execFile)("git", ["checkout", "--", "guard.ts"], { cwd: directory });
+      await git(directory, "checkout", "--", "guard.ts");
     }
   });
 
   test("refuses an absent or ambiguous mutation target", async () => {
-    const directory = await repo();
-    const file = join(directory, "guard.ts");
+    const { directory, file } = await buildRepo();
     await assert.rejects(assertGuardBites({
-      root: directory, file, find: "not-in-this-file", replace: "x", testCmd: failing,
+      root: directory, file, find: "not-in-this-file", replace: "x", testCmd: guardTest,
     }), /mutation_target_absent/);
     await writeFile(join(directory, "dup.ts"), "const a = 1; const a = 1;\n");
     await assert.rejects(assertGuardBites({
-      root: directory, file: join(directory, "dup.ts"), find: "const a = 1;", replace: "const a = 2;", testCmd: failing,
+      root: directory, file: join(directory, "dup.ts"), find: "const a = 1;", replace: "const a = 2;", testCmd: guardTest,
     }), /mutation_target_ambiguous:.*:2_occurrences/);
   });
 
-  test("refuses a restore that did not land", async () => {
+  test("a restore that could not write is reported, not swallowed", async () => {
     // A restore that silently failed would leave a mutated file in a working
-    // tree, which is worse than a failed test. The verification reads the file
-    // back and compares it, so a failed restore is reported rather than assumed.
-    // Each case gets its own fresh repository so one failure cannot leave the
-    // next case's fixture clobbered.
-    const build = async () => {
-      const directory = await temporary("attack-kit-mutation-");
-      const { execFile } = await import("node:child_process");
-      const { promisify } = await import("node:util");
-      const run = promisify(execFile);
-      await run("git", ["init", "-q"], { cwd: directory });
-      await writeFile(join(directory, "guard.ts"), "export const limit = 10;\n", { flag: "wx" });
-      await run("git", ["add", "-A"], { cwd: directory });
-      await run("git", ["-c", "user.email=k@e.invalid", "-c", "user.name=k", "commit", "-qm", "init"], { cwd: directory });
-      return { directory, file: join(directory, "guard.ts") };
-    };
-
-    // A command that clobbers the file and then fails: the restore must put the
-    // original bytes back over whatever the command wrote.
-    const first = await build();
-    const clobbering = [process.execPath, "-e",
-      `require("node:fs").writeFileSync(${JSON.stringify(first.file)},"clobbered");process.exit(4)`];
-    const result = await assertGuardBites({
-      root: first.directory, file: first.file, find: "limit = 10", replace: "limit = 1_000", testCmd: clobbering,
-    });
-    assert.equal(result.exitCode, 4, "the clobbering command's exit code is recorded");
-    assert.equal(await readFile(first.file, "utf8"), "export const limit = 10;\n",
-      "the original content is restored over the clobbering command's write");
-
-    // Now the restore itself is made to fail: the file is replaced with a
-    // read-only sibling so the write cannot land, and the refusal is reported.
-    const second = await build();
+    // tree, which is worse than a failed test. The file is made read-only so
+    // the write cannot land, and the refusal must be surfaced.
+    const { directory, file } = await buildRepo();
     const { chmod } = await import("node:fs/promises");
-    await chmod(second.file, 0o444);
+    // A command that fails cleanly when mutated, so the experiment itself is
+    // sound; only the restore is broken.
+    const clobbering = [process.execPath, "-e",
+      `const fs=require("node:fs");const t=fs.readFileSync(${JSON.stringify(file)},"utf8");
+       if (t.includes("limit = 1_000")) { fs.writeFileSync(${JSON.stringify(file)},"clobbered"); process.exit(4); }
+       process.exit(0);`];
+    await chmod(file, 0o444);
     let restoreFailed = false;
     try {
       await assertGuardBites({
-        root: second.directory, file: second.file, find: "limit = 10", replace: "limit = 1_000",
-        testCmd: ["node", "-e", "process.exit(3)"],
+        root: directory, file, find: "limit = 10", replace: "limit = 1_000", testCmd: clobbering,
       });
     } catch (error) {
       restoreFailed = true;
-      assert.match(`${(error as Error).message}`, /mutation_restore_failed|EACCES/,
+      assert.match(`${(error as Error).message}`, /mutation_restore_failed|EACCES|EPERM/,
         "a restore that could not write is reported, not swallowed");
     }
-    await chmod(second.file, 0o644);
+    await chmod(file, 0o644);
     if (!restoreFailed) {
       // A filesystem that ignores the mode bit cannot produce this case; the
       // content assertion below is then the only available evidence.
-      assert.equal(await readFile(second.file, "utf8"), "export const limit = 10;\n");
+      assert.equal(await readFile(file, "utf8"), GUARD);
     }
   });
 
-  test("detects a failing nested test command instead of trusting a clean exit", async () => {
-    // The NODE_TEST_CONTEXT defect. `assertGuardBites` normally runs from
-    // inside a `node --test` file, so that variable is inherited; a nested
-    // `node --test` child then runs the command file INLINE as a plain script,
-    // never reporting a failing exit code. The harness would see a clean exit
-    // and report GuardDidNotBiteError for a guard that bites perfectly well.
-    // This test is itself running inside a test file, so it is the real
-    // condition — no NODE_TEST_CONTEXT is set by hand.
-    const directory = await temporary("attack-kit-mutation-");
-    const { execFile } = await import("node:child_process");
-    const { promisify } = await import("node:util");
-    const run = promisify(execFile);
-    await run("git", ["init", "-q"], { cwd: directory });
-    // A real guard with a real test, in the kit's own dependency-free style.
-    await writeFile(join(directory, "guard.ts"), "export const limit = 10;\n");
-    await writeFile(join(directory, "guard.test.ts"), `
-      import assert from "node:assert/strict";
-      import test from "node:test";
-      import { limit } from "./guard.ts";
-      test("the limit is 10", () => { assert.equal(limit, 10); });
-    `);
-    await run("git", ["add", "-A"], { cwd: directory });
-    await run("git", ["-c", "user.email=k@e.invalid", "-c", "user.name=k", "commit", "-qm", "init"], { cwd: directory });
-
+  test("a command that clobbers the file is restored over its write", async () => {
+    const { directory, file } = await buildRepo();
+    const clobbering = [process.execPath, "-e",
+      `const fs=require("node:fs");const t=fs.readFileSync(${JSON.stringify(file)},"utf8");
+       if (t.includes("limit = 1_000")) { fs.writeFileSync(${JSON.stringify(file)},"clobbered"); process.exit(4); }
+       process.exit(0);`];
     const result = await assertGuardBites({
-      root: directory, file: join(directory, "guard.ts"),
-      find: "limit = 10", replace: "limit = 1_000",
-      testCmd: ["node", "--test", "guard.test.ts"],
-      because: "a widened limit must break the guard's own test",
+      root: directory, file, find: "limit = 10", replace: "limit = 1_000", testCmd: clobbering,
     });
-    assert.ok(result.exitCode !== 0, "the mutated guard's test must fail, not exit 0");
-    assert.match(result.output, /not equal|AssertionError|actual/i,
-      "the failure must actually come from the child's test, not a harness error");
-  });
-
-  test("reports the restored content digest", async () => {
-    const directory = await repo();
-    const file = join(directory, "guard.ts");
-    const before = await readFile(file, "utf8");
-    const result = await assertGuardBites({
-      root: directory, file, find: "limit = 10", replace: "limit = 1_000", testCmd: failing,
-    });
-    // The digest is of the restored bytes, so a caller can compare it against
-    // the original without re-reading the file.
-    const { createHash } = await import("node:crypto");
-    assert.equal(result.restoredDigest, createHash("sha256").update(before).digest("hex"));
-    assert.equal(await readFile(file, "utf8"), before);
+    assert.equal(result.exitCode, 4, "the clobbering command's exit code is recorded");
+    assert.equal(await readFile(file, "utf8"), GUARD,
+      "the original content is restored over the clobbering command's write");
   });
 
   // A timed-out command used to be abandoned, not stopped: the harness rejected
   // and restored the file while the child kept running, and any GRANDCHILD it
   // had spawned kept running too. An orphaned CPU-burner from an earlier job
   // ran for over 30 minutes on this machine after its harness had reported the
-  // bound. The child is now spawned in its own process group, the whole group
-  // is signalled on expiry, and the exit is awaited BEFORE the file is
-  // restored — so nothing is left running against the repository.
+  // bound. The child is spawned in its own process group, the whole group is
+  // signalled on expiry, and the exit is awaited BEFORE the file is restored.
   test("a timed-out command leaves no survivors and the file is already restored", async () => {
-    const directory = await temporary("attack-kit-mutation-timeout-");
-    const { execFile } = await import("node:child_process");
-    const { promisify } = await import("node:util");
-    const run = promisify(execFile);
-    await run("git", ["init", "-q"], { cwd: directory });
-    const file = join(directory, "guard.ts");
-    await writeFile(file, "export const limit = 10;\n");
-    await run("git", ["add", "-A"], { cwd: directory });
-    await run("git", ["-c", "user.email=k@e.invalid", "-c", "user.name=k", "commit", "-qm", "init"], { cwd: directory });
-
+    const { directory, file } = await buildRepo("attack-kit-mutation-timeout-");
     const marker = join(directory, "child-survived");
     const pidFile = join(directory, "pids");
-    // The command records its own pid and a GRANDCHILD's pid, spawns a
-    // CPU-burning grandchild, schedules a marker write well past the bound, and
-    // then never exits. Signalling only the direct child would leave both the
-    // grandchild and the scheduled write alive.
+    // The command passes unmutated, and when mutated it records its own pid and
+    // a GRANDCHILD's pid, spawns a CPU-burning grandchild, schedules a marker
+    // write well past the bound, and then never exits. Signalling only the
+    // direct child would leave both the grandchild and the scheduled write
+    // alive. The marker is scheduled ONLY in the mutated run, so the baseline
+    // (which must pass cleanly) never writes it.
     const hang = `
       const fs = require("node:fs");
+      const target = ${JSON.stringify(file)};
+      if (!fs.readFileSync(target, "utf8").includes("limit = 1_000")) { process.exit(0); }
       const { spawn } = require("node:child_process");
       const burner = spawn(process.execPath, ["-e", "const t=Date.now();while(Date.now()-t<60000){}"], { stdio: "ignore" });
       fs.appendFileSync(${JSON.stringify(pidFile)}, process.pid + " " + burner.pid + "\\n");
-      setTimeout(() => fs.writeFileSync(${JSON.stringify(marker)}, "survived"), 1500);
-      setTimeout(() => {}, 60000);
+      setTimeout(() => fs.writeFileSync(${JSON.stringify(marker)}, "survived"), 30000);
+      setTimeout(() => {}, 120000);
     `;
     await assert.rejects(
       assertGuardBites({
         root: directory, file, find: "limit = 10", replace: "limit = 1_000",
-        testCmd: [process.execPath, "-e", hang], boundMs: 400,
+        testCmd: [process.execPath, "-e", hang], boundMs: 2_000,
       }),
       (error: unknown) => {
         assert.ok(error instanceof MutationTimeoutError,
-          "a hang is reported as a timeout, not as a passing guard");
+          `a hang is reported as a timeout, not as a passing guard: ${(error as Error).name}`);
         return true;
       },
     );
 
     // The restore must already have landed at rejection time, because the
-    // teardown order is: kill the group, await the exit, then restore.
-    assert.equal(await readFile(file, "utf8"), "export const limit = 10;\n",
+    // teardown order is: kill the group, await the exit, reap, then restore.
+    assert.equal(await readFile(file, "utf8"), GUARD,
       "the file is restored by the time the timeout is reported");
 
     // Wait past the marker window, then look for survivors.
@@ -595,657 +666,674 @@ describe("attack kit: mutation", () => {
     });
     assert.deepEqual(alive, [], "no descendant of the timed-out command survives");
   });
+
+  // The defect the second-pass review reproduced: `pg_ctl start` runs the
+  // postmaster with `setsid`, so it is a session leader with its own process
+  // group. Signalling the test command's group cannot reach it, and the helper
+  // used to restore the file and report the timeout while a LIVE postmaster
+  // kept a SysV segment — on a machine with 32 of them.
+  test("a timeout with a live kit cluster behind it reaps the cluster", needsPgOrFail(), async () => {
+    countedRealPostgresRun();
+    const { directory, file } = await buildRepo("attack-kit-mutation-leak-");
+    const port = PORTS[6]!;
+    // A real script file, not `-e`: the command needs a top-level await to
+    // import the kit, and `node -e` runs as CommonJS where that is a syntax
+    // error — which the baseline would (correctly) report as an invalid command.
+    //
+    // `--import tsx` is resolved against the CWD, which for this command is the
+    // fixture repo — a directory with no node_modules. A bare `tsx` specifier
+    // there dies with ERR_MODULE_NOT_FOUND before the script runs, which the
+    // baseline would correctly refuse as an invalid command. So the loader is
+    // named by its ABSOLUTE resolved path, which resolves from anywhere.
+    const tsxLoader = await import.meta.resolve("tsx");
+    const script = join(await temporary("attack-kit-mutation-leak-script-"), "leak.mts");
+    const pidFile = join(directory, "cluster-pids");
+    await writeFile(script, `
+      import { readFileSync, appendFileSync } from "node:fs";
+      import { withRealPostgres } from ${JSON.stringify(join(REPOSITORY_ROOT, "tests/support/attack-kit/index.ts"))};
+      import { join } from "node:path";
+      if (!readFileSync(${JSON.stringify(file)}, "utf8").includes("limit = 1_000")) { process.exit(0); }
+      // The body NEVER resolves, so the cluster is still live when the bound
+      // fires and the process is killed — which is the case a group kill cannot
+      // handle. The interval is what keeps the event loop alive: a bare pending
+      // promise drains the loop and node exits 13 (unsettled top-level await)
+      // in a few seconds, which is a fast exit rather than the hang this test
+      // needs to reproduce.
+      await withRealPostgres(async (postgres) => {
+        const pid = readFileSync(join(postgres.dataDirectory, "postmaster.pid"), "utf8").split("\\n")[0]?.trim();
+        appendFileSync(${JSON.stringify(pidFile)}, pid + "\\n");
+        setInterval(() => {}, 1000);
+        await new Promise(() => {});
+      }, { port: ${port}, allowedPorts: [${port}], database: "attack_kit_mutation_leak" });
+    `);
+    // No commit here: the script lives outside the fixture repo, so there is
+    // nothing of ours to commit. What the mutation acts on is still the
+    // fixture's committed guard.ts, which buildRepo committed.
+    const alive = (pid: number): boolean => {
+      try { process.kill(pid, 0); return true; } catch (error) {
+        return (error as { code?: string }).code === "EPERM";
+      }
+    };
+    let survivor: number | undefined;
+    try {
+      await assert.rejects(
+        assertGuardBites({
+          root: directory, file, find: "limit = 10", replace: "limit = 1_000",
+          testCmd: [process.execPath, "--import", tsxLoader, script],
+          boundMs: 60_000, baselineBoundMs: 30_000,
+        }),
+        (error: unknown) => {
+          // Either outcome is acceptable, and each is checked for its own
+          // property below: a timeout, or the explicit leftover-cluster
+          // refusal. What is NOT acceptable is a postmaster left running.
+          assert.ok(error instanceof MutationTimeoutError
+            || /mutation_leftover_cluster/.test((error as Error).message),
+          `unexpected failure: ${(error as Error).name}: ${(error as Error).message}`);
+          return true;
+        },
+      );
+      // The command must have really started a cluster, or the reap proved
+      // nothing: it had nothing to reap.
+      const recorded = (await readFile(pidFile, "utf8").catch(() => "")).trim().split(/\s+/).filter(Boolean);
+      assert.equal(recorded.length, 1,
+        "the timed-out command really did start a kit cluster, and its postmaster pid was recorded");
+      const postmasterPid = Number(recorded[0]);
+      assert.ok(Number.isInteger(postmasterPid) && postmasterPid > 0);
+      assert.equal(alive(postmasterPid), false,
+        `the postmaster ${postmasterPid} survived a mutation timeout; a group kill cannot reach it`);
+      // Nothing of ours may be left holding the port.
+      assert.equal(await portIsOccupied(port), false,
+        `the kit cluster must be reaped after the timeout, port ${port} is still held`);
+      assert.equal(await readFile(file, "utf8"), GUARD, "and the file is restored");
+    } finally {
+      // Reap anything that outlived the run, so a failing assertion costs a
+      // test failure and not a blocked machine. Under the fix this does nothing.
+      if (survivor !== undefined) {
+        try { process.kill(survivor, "SIGKILL"); } catch { /* already gone */ }
+      }
+    }
+  });
 });
 
-describe("attack kit: search_path audit", () => {
-  test("flags a fixture function without pg_temp and passes a correct one", async () => {
-    const directory = await temporary("attack-kit-sql-");
-    await writeFile(join(directory, "0001_bad.sql"), `
+describe("attack kit: search_path gate (catalog)", () => {
+  // The GATE. Everything here is about `securityDefinerAuditLive`, because the
+  // gate reads a real catalog. The file scanner has its own, smaller, block at
+  // the end of this section: it is a local hint and is never a gate.
+
+  /** One catalog row, as `pg` returns it. */
+  const row = (over: Partial<{
+    schema: string; name: string; identity_arguments: string;
+    security_definer: boolean; return_type: string; proconfig: string[] | null;
+  }> = {}) => ({
+    schema: over.schema ?? "public",
+    name: over.name ?? "f",
+    identity_arguments: over.identity_arguments ?? "",
+    security_definer: over.security_definer ?? true,
+    return_type: over.return_type ?? "integer",
+    proconfig: over.proconfig ?? null,
+  });
+
+  /** A catalog that answers with `rows` and records what it was asked. */
+  const catalog = (rows: ReturnType<typeof row>[]) => {
+    const seen: { sql: string; params: readonly unknown[] }[] = [];
+    const query = async (sql: string, params: readonly unknown[]) => {
+      seen.push({ sql, params });
+      return { rows };
+    };
+    return { query, seen, last: () => seen[seen.length - 1]! };
+  };
+
+  // ---- the set of privileged routines ----
+
+  test("a SECURITY DEFINER routine is audited whatever its return type", async () => {
+    const { query, seen } = catalog([
+      row({ name: "escalate", return_type: "integer" }),
+      row({ name: "escalate_proc", return_type: "record" }),
+      row({ name: "plain", security_definer: false, return_type: "integer" }),
+    ]);
+    const result = await securityDefinerAuditLive(query);
+    assert.equal(seen.length, 1, "the catalog is read exactly once");
+    assert.deepEqual(seen[0]!.params, [], "and the query takes no bound parameters");
+    assert.deepEqual(result.findings.map(f => f.routine).sort(),
+      ["public.escalate()", "public.escalate_proc()"],
+      "a definer PROCEDURE is privileged exactly like a definer function");
+    assert.deepEqual(result.findings[0]!.kinds, ["security-definer"]);
+  });
+
+  test("row triggers and event triggers are both audited, and a plain routine is not", async () => {
+    const { query } = catalog([
+      row({ name: "row_guard", security_definer: false, return_type: "trigger" }),
+      row({ name: "ddl_guard", security_definer: false, return_type: "event_trigger" }),
+      row({ name: "boring", security_definer: false, return_type: "integer" }),
+    ]);
+    const result = await securityDefinerAuditLive(query);
+    assert.deepEqual(result.findings.map(f => f.routine).sort(),
+      ["public.ddl_guard()", "public.row_guard()"]);
+    assert.deepEqual(result.findings.find(f => f.routine === "public.ddl_guard()")!.kinds, ["event-trigger"],
+      "an event trigger keeps its own kind");
+    assert.deepEqual(result.findings.find(f => f.routine === "public.row_guard()")!.kinds, ["trigger"]);
+  });
+
+  // ---- proconfig parsing: the single-string decoy and the quoted-case decoy ----
+
+  test("proconfigSearchPath finds the search_path element and nothing else", () => {
+    assert.equal(proconfigSearchPath(["search_path=pg_catalog, public, pg_temp"]), "pg_catalog, public, pg_temp");
+    assert.equal(proconfigSearchPath(["work_mem=4MB", "search_path=pg_temp"]), "pg_temp");
+    assert.equal(proconfigSearchPath(["SEARCH_PATH=pg_temp"]), "pg_temp",
+      "a GUC name is case-insensitive and the author may spell it any way");
+    assert.equal(proconfigSearchPath(null), null, "no clause means no pin");
+    assert.equal(proconfigSearchPath(["work_mem=4MB"]), null, "another setting is not a pin");
+    assert.equal(proconfigSearchPath([]), null);
+    assert.equal(proconfigSearchPath(["search_path="]), null, "an empty value is not a pin");
+  });
+
+  test("a RESET leaves no search_path element, which is how PostgreSQL records it", async () => {
+    // `ALTER FUNCTION ... RESET search_path` REMOVES the element. proconfig is
+    // then null or holds only other settings, and a null here is a real answer
+    // about an unpinned routine — not a missing measurement.
+    assert.equal(proconfigSearchPath(null), null);
+    const result = await securityDefinerAuditLive(catalog([row({ name: "reset", proconfig: null })]).query);
+    assert.equal(result.findings[0]!.searchPath, null);
+    assert.equal(result.findings[0]!.endsInPgTemp, false);
+    assert.match(result.findings[0]!.reason, /without_a_search_path_clause/);
+  });
+
+  test("parseGucList splits a configuration value the way PostgreSQL does", () => {
+    // A single-quoted value becomes ONE quoted element; the comma inside it is
+    // part of the name, not a separator. This is the decoy the old live audit
+    // split on every comma and therefore false-pinned.
+    assert.deepEqual(parseGucList('"public, pg_temp"'),
+      [{ value: "public, pg_temp", quoted: true }]);
+    // An unquoted element is folded; a quoted one is not.
+    assert.deepEqual(parseGucList('public, "PG_TEMP"'),
+      [{ value: "public", quoted: false }, { value: "PG_TEMP", quoted: true }]);
+    assert.deepEqual(parseGucList("PUBLIC, pg_temp"),
+      [{ value: "public", quoted: false }, { value: "pg_temp", quoted: false }],
+      "an unquoted identifier is case-insensitive");
+    // Escaped quotes are one character.
+    assert.deepEqual(parseGucList('pg_catalog, "we""ird", pg_temp').map(e => e.value),
+      ["pg_catalog", 'we"ird', "pg_temp"]);
+    // Whitespace and empty elements.
+    assert.deepEqual(parseGucList("  a  ,  b  ,, c ").map(e => e.value), ["a", "b", "c"]);
+  });
+
+  test("a one-string decoy and a quoted-uppercase decoy both fail the pin check", () => {
+    // `SET search_path = 'public, pg_temp'` is ONE schema named "public, pg_temp";
+    // pg_temp in it is searched FIRST, which is the exposure. And `"PG_TEMP"` is
+    // a different schema from `pg_temp`, so it closes nothing.
+    assert.equal(searchPathEndsInPgTemp('"public, pg_temp"'), false);
+    assert.equal(searchPathEndsInPgTemp('public, "PG_TEMP"'), false);
+    assert.equal(searchPathEndsInPgTemp("pg_catalog, pg_temp"), true);
+    // A quoted `pg_temp` is refused even though the value is the same name. This
+    // is strict on purpose and costs nothing: PostgreSQL drops redundant
+    // quoting from an identifier, so `SET search_path = pg_catalog, "pg_temp"`
+    // stores the bare `search_path=pg_catalog, pg_temp` (verified against
+    // PostgreSQL 17). The catalog never produces the quoted form, so requiring
+    // the bare one cannot reject a real routine — and it means the check can
+    // never be satisfied by a value that merely LOOKS like the pin.
+    assert.equal(searchPathEndsInPgTemp('pg_catalog, "pg_temp"'), false,
+      "only the bare identifier pg_temp satisfies the pin");
+  });
+
+  test("the live audit reports a one-string decoy as unpinned, not pinned", async () => {
+    // The old live audit returned endsInPgTemp: true for this. The catalog now
+    // carries the value verbatim and the parser splits it as PostgreSQL does.
+    const { query } = catalog([
+      row({ name: "single_literal", proconfig: ['search_path="public, pg_temp"'] }),
+      row({ name: "quoted_upper", proconfig: ['search_path=public, "PG_TEMP"'] }),
+    ]);
+    const result = await securityDefinerAuditLive(query);
+    assert.deepEqual(result.findings.map(f => f.endsInPgTemp), [false, false]);
+    assert.deepEqual(result.unpinned.map(f => f.routine).sort(),
+      ["public.quoted_upper()", "public.single_literal()"]);
+  });
+
+  // ---- the allowlist, keyed on catalog identity ----
+
+  const entry = (over: Partial<{ routine: string; searchPath: string | null; added: string; expires: string; issue: string }> = {}) => ({
+    routine: over.routine ?? "public.f()",
+    searchPath: over.searchPath ?? null,
+    added: over.added ?? "2026-09-28",
+    expires: over.expires ?? "2027-01-01",
+    issue: over.issue ?? "999",
+  });
+
+  test("an allowlist entry waives exactly one catalog identity", async () => {
+    const directory = await temporary("attack-kit-allow-identity-");
+    const allowlistFile = join(directory, "allowlist.json");
+    await writeFile(allowlistFile, JSON.stringify({ entries: [entry()] }));
+    const allowlist = await loadSearchPathAllowlist(allowlistFile, new Date("2026-12-31T00:00:00Z"));
+    const { query } = catalog([
+      row({ name: "f" }),
+      row({ name: "g" }),
+      row({ name: "f", identity_arguments: "integer" }),
+    ]);
+    const result = await securityDefinerAuditLive(query, { allowlist });
+    // Only the bare public.f() is covered. public.f(integer) is a different
+    // routine and public.g() is a different routine.
+    assert.deepEqual(result.allowlisted.map(f => f.routine), ["public.f()"]);
+    assert.deepEqual(result.unpinned.map(f => f.routine).sort(),
+      ["public.f(integer)", "public.g()"],
+      "a waiver for one identity must not cover an overload or a neighbour");
+  });
+
+  test("an allowlist entry stops applying once it expires", async () => {
+    const directory = await temporary("attack-kit-allow-expiry-");
+    const allowlistFile = join(directory, "allowlist.json");
+    await writeFile(allowlistFile, JSON.stringify({ entries: [entry({ expires: "2027-01-01" })] }));
+
+    const inDate = await loadSearchPathAllowlist(allowlistFile, new Date("2026-12-31T00:00:00Z"));
+    const waived = await securityDefinerAuditLive(catalog([row()]).query, { allowlist: inDate });
+    assert.equal(waived.unpinned.length, 0, "an in-date waiver suppresses the violation");
+    assert.equal(waived.allowlisted.length, 1, "and the suppression is reported, not hidden");
+
+    const after = await loadSearchPathAllowlist(allowlistFile, new Date("2027-01-02T00:00:00Z"));
+    assert.equal(after.active.size, 0, "an expired entry covers nothing");
+    assert.equal(after.expired.length, 1);
+    const counted = await securityDefinerAuditLive(catalog([row()]).query, { allowlist: after });
+    assert.equal(counted.unpinned.length, 1, "the violation counts again");
+    assert.equal(counted.expiredAllowlistEntries.length, 1,
+      "and the lapsed waiver is surfaced so the check fails, not silently re-allows");
+    await assert.rejects(
+      assertSearchPathPinned(catalog([row()]).query, { allowlist: after }),
+      (error: unknown) => {
+        assert.ok(error instanceof UnpinnedSearchPathError);
+        assert.match(error.message, /allowlist_entry_expired_2027-01-01_issue_999/);
+        return true;
+      },
+    );
+  });
+
+  test("an allowlist entry that matches nothing is a failure, not a note", async () => {
+    // It used to print a console message and pass. An allowlist that no longer
+    // describes reality is not evidence of anything; letting it survive means
+    // the next entry nobody checks is equally invisible.
+    const directory = await temporary("attack-kit-allow-stale-");
+    const allowlistFile = join(directory, "allowlist.json");
+    await writeFile(allowlistFile, JSON.stringify({ entries: [entry({ routine: "public.gone()" })] }));
+    const allowlist = await loadSearchPathAllowlist(allowlistFile, new Date("2026-12-31T00:00:00Z"));
+    const result = await securityDefinerAuditLive(catalog([row({ name: "f" })]).query, { allowlist });
+    assert.equal(result.unpinned.length, 1, "the live violation still counts");
+    const stale = staleAllowlistEntries(allowlist, [...result.allowlisted.map(f => f.routine)]);
+    assert.deepEqual(stale.map(e => e.routine), ["public.gone()"]);
+    await assert.rejects(
+      assertSearchPathPinned(catalog([row({ name: "f" })]).query, { allowlist, staleAllowlistEntries: stale }),
+      /public\.gone\(\):allowlist_entry_stale/,
+    );
+  });
+
+  test("the allowlist refuses an invalid date, an over-long horizon, and a bad key", async () => {
+    const directory = await temporary("attack-kit-allow-bounds-");
+    const allowlistFile = join(directory, "allowlist.json");
+    const load = (entries: unknown) => writeFile(allowlistFile, JSON.stringify({ entries }))
+      .then(() => loadSearchPathAllowlist(allowlistFile, new Date("2026-12-31T00:00:00Z")));
+
+    // 9999-99-99 matched the shape but is not a date: month 99 and day 99 roll
+    // forward in Date, so a shape check alone accepted a self-waiver that
+    // never expires.
+    await assert.rejects(load([entry({ expires: "9999-99-99" })]), /allowlist_entry_expiry_not_a_date/);
+    await assert.rejects(load([entry({ added: "2026-02-30" })]), /allowlist_entry_added_not_a_date/);
+    // An expiry more than 180 days after the added date is a waiver with no end.
+    await assert.rejects(load([entry({ added: "2026-09-28", expires: "2027-09-28" })]),
+      /allowlist_entry_horizon_too_long:.*max_days=180/);
+    // Expiry before it was added is nonsense.
+    await assert.rejects(load([entry({ added: "2026-09-28", expires: "2026-09-01" })]),
+      /allowlist_entry_expires_before_it_was_added/);
+    // The key must be a catalog identity, so it cannot be a bare function name.
+    await assert.rejects(load([entry({ routine: "f()" })]), /allowlist_entry_not_a_catalog_identity/);
+    // A missing issue, and a missing routine.
+    await assert.rejects(load([{ ...entry(), issue: "" }]), /allowlist_entry_incomplete/);
+    // The boundary itself is allowed: exactly 180 days.
+    await load([entry({ added: "2026-01-01", expires: "2026-06-30" })]);
+  });
+
+  // ---- the schema coverage refusal ----
+
+  test("a narrowed audit refuses a schema it did not look at", async () => {
+    const { query } = catalog([
+      row({ schema: "public", name: "a" }),
+      row({ schema: "audit", name: "b" }),
+    ]);
+    const result = await securityDefinerAuditLive(query, { schemas: ["public"] });
+    assert.deepEqual(result.auditedSchemas, ["public"]);
+    assert.deepEqual(result.unclassifiedSchemas, ["audit"],
+      "a schema the gate could not classify is a failure, not a skip");
+    await assert.rejects(
+      assertSearchPathPinned(query, { schemas: ["public"] }),
+      /search_path_audit_failed/,
+    );
+  });
+
+  test("an unrestricted audit covers every non-system schema the catalog reports", async () => {
+    const { query, last } = catalog([
+      row({ schema: "public", name: "a" }),
+      row({ schema: "audit", name: "b" }),
+      row({ schema: "control_room_queue", name: "c", security_definer: false, return_type: "integer" }),
+    ]);
+    const result = await securityDefinerAuditLive(query);
+    assert.deepEqual(result.auditedSchemas, ["audit", "control_room_queue", "public"]);
+    assert.deepEqual(result.unclassifiedSchemas, []);
+    const sql = last().sql;
+    assert.ok(sql.includes("pg_proc") && sql.includes("pg_namespace"));
+    assert.ok(sql.includes("information_schema"), "system schemas are excluded from the scan");
+    assert.ok(!sql.includes("$1"), "the query takes no placeholder, so it cannot be called unbound");
+  });
+});
+
+describe("attack kit: search_path gate (real PostgreSQL)", () => {
+  // Every attack scenario from the re-scope, applied to a REAL cluster built
+  // from the real migration ledger, and read through the real CI gate script
+  // with an EMPTY allowlist. A green gate on any of these is a gate that missed
+  // the hole, which is the whole reason the gate is catalog-based.
+
+  /** Run the CI gate as CI runs it, against `pg`'s own cluster. */
+  const runGate = (pg: RealPostgres, allowlistPath: string, extra: readonly string[] = []) =>
+    runNode([join(REPOSITORY_ROOT, "scripts/check-migration-search-path.mjs"),
+      "--host", pg.socketDirectory, "--port", String(pg.port),
+      "--user", "fixture_admin", "--database", "control_room",
+      "--allowlist", allowlistPath, ...extra]);
+
+  /** Apply a scenario to the cluster and return the gate's verdict. */
+  const gateOn = async (postgres: RealPostgres, emptyAllowlist: string, statements: readonly string[]) => {
+    const { Client } = await import("pg");
+    const client = new Client(postgres.admin());
+    await client.connect();
+    try {
+      await client.query("DROP SCHEMA IF EXISTS probe CASCADE; CREATE SCHEMA probe;");
+      for (const sql of statements) await client.query(sql);
+    } finally {
+      await client.end();
+    }
+    const run = await runGate(postgres, emptyAllowlist, ["--json"]);
+    return { code: run.code, stdout: run.stdout, stderr: run.stderr };
+  };
+
+  test("the gate passes on the real migrations, and fails on every attack scenario", needsPgOrFail(), async () => {
+    countedRealPostgresRun();
+    const port = PORTS[7]!;
+    await withRealPostgres(async postgres => {
+      assert.ok(postgres.appliedMigrations > 50, "the real ledger was applied before the gate runs");
+      const directory = await temporary("attack-kit-gate-real-");
+      const empty = join(directory, "empty.json");
+      await writeFile(empty, JSON.stringify({ entries: [] }));
+
+      // The baseline: the real migrations, with the real allowlist, must pass.
+      // This is what a green CI step is.
+      const clean = await runGate(postgres,
+        join(REPOSITORY_ROOT, "tests/support/attack-kit/search-path-allowlist.json"), ["--json"]);
+      assert.equal(clean.code, 0,
+        `the shipped migrations must pass the gate with their allowlist, got: ${clean.stderr.slice(0, 600)}`);
+      const cleanSummary = JSON.parse(clean.stdout.slice(clean.stdout.indexOf("{"))) as {
+        findings: number; unpinned: number; allowlisted: number; expired: number; stale: number;
+        catalogRows: number; unclassifiedSchemas: string[];
+      };
+      assert.ok(cleanSummary.findings > 0, "the real migrations DO hold privileged routines");
+      assert.equal(cleanSummary.unpinned, 0);
+      assert.equal(cleanSummary.expired, 0);
+      assert.equal(cleanSummary.stale, 0);
+      assert.deepEqual(cleanSummary.unclassifiedSchemas, []);
+
+      // And with the allowlist emptied, the same database fails: the shipped
+      // violations are real and the gate reports them.
+      const bare = await runGate(postgres, empty, ["--json"]);
+      assert.notEqual(bare.code, 0, "an empty allowlist must fail on the shipped violations");
+
+      /**
+       * The routines a scenario is expected to be caught ON, per planted routine.
+       *
+       * The empty allowlist means the gate also fails on the 23 violations the
+       * shipped migrations already contain, so a non-zero exit alone proves
+       * nothing: a scenario whose own routine stopped being flagged would still
+       * fail the gate for the other 23. Every scenario therefore names the
+       * identities it planted, and the assertion is that the gate NAMED THOSE. That
+       * is what makes a disabled `prosecdef` branch, a disabled trigger branch, or
+       * a disabled last-element-is-pg_temp check fail a test here instead of
+       * hiding behind the shipped baseline.
+       */
+      const scenarios: readonly [name: string, statements: readonly string[], caught: readonly string[]][] = [
+        // A named-argument CREATE pinned, then a LATER migration RESETs it.
+        // A regex-per-file model read the CREATE's own pin and passed; the
+        // catalog has proconfig with no search_path and must fail.
+        ["a later migration RESET search_path",
+          [`CREATE FUNCTION probe.later_reset(p_id uuid) RETURNS integer LANGUAGE sql
+              SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$ SELECT 1 $$;`,
+            `ALTER FUNCTION probe.later_reset(uuid) RESET search_path;`],
+          ["probe.later_reset(p_id uuid)"]],
+        // A later file escalates an unpinned function to SECURITY DEFINER. The
+        // ALTER carries identity args; a model keyed on CREATE text never met it.
+        ["a later file ALTERs SECURITY DEFINER onto an unpinned function",
+          [`CREATE FUNCTION probe.cross_file(a int) RETURNS integer LANGUAGE sql AS $$ SELECT 1 $$;`,
+            `ALTER FUNCTION probe.cross_file(int) SECURITY DEFINER;`],
+          ["probe.cross_file(a integer)"]],
+        // A later file replaces a safe pin with an unsafe one.
+        ["a later file replaces a pin with an unsafe search_path",
+          [`CREATE FUNCTION probe.later_set() RETURNS integer LANGUAGE sql
+              SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$ SELECT 1 $$;`,
+            `ALTER FUNCTION probe.later_set() SET search_path = public;`],
+          ["probe.later_set()"]],
+        // A nested-comment fake pin: the pin text is inside a comment.
+        ["a nested-comment fake pin",
+          [`CREATE FUNCTION probe.nested_fake() RETURNS integer LANGUAGE sql SECURITY DEFINER
+              AS $$ SELECT 1 $$ /* outer /* inner */ SET search_path = pg_catalog, pg_temp */;`],
+          ["probe.nested_fake()"]],
+        // A quoted identifier with a space and an escaped quote.
+        ["a quoted identifier with a space and an escaped quote",
+          [`CREATE FUNCTION probe."guard fn""x"(a text) RETURNS integer LANGUAGE sql
+              SECURITY DEFINER AS $$ SELECT 1 $$;`],
+          [`probe.guard fn"x(a text)`]],
+        // An unpinned event trigger, and a SECURITY DEFINER procedure. Both are
+        // caught for DIFFERENT reasons: the first is not `prosecdef` at all, the
+        // second is. Disabling either branch must lose one of these two.
+        ["an unpinned event trigger and a definer procedure",
+          [`CREATE FUNCTION probe.ddl_guard() RETURNS event_trigger LANGUAGE plpgsql AS $$ BEGIN RETURN; END $$;`,
+            `CREATE PROCEDURE probe.escalate_proc() LANGUAGE plpgsql SECURITY DEFINER AS $$ BEGIN NULL; END $$;`],
+          ["probe.ddl_guard()", "probe.escalate_proc()"]],
+        // The single-string decoy, and the quoted-uppercase decoy. Each is
+        // caught ONLY by the last-element rule, so this is the scenario that
+        // holds that check load-bearing.
+        ["a one-string and a quoted-uppercase search_path decoy",
+          [`CREATE FUNCTION probe.single_literal() RETURNS integer LANGUAGE sql SECURITY DEFINER
+              SET search_path = 'public, pg_temp' AS $$ SELECT 1 $$;`,
+            `CREATE FUNCTION probe.quoted_upper() RETURNS integer LANGUAGE sql SECURITY DEFINER
+              SET search_path = public, "PG_TEMP" AS $$ SELECT 1 $$;`],
+          ["probe.single_literal()", "probe.quoted_upper()"]],
+        // pg_temp present but not last.
+        ["pg_temp that is not last",
+          [`CREATE FUNCTION probe.not_last() RETURNS integer LANGUAGE sql SECURITY DEFINER
+              SET search_path = pg_temp, pg_catalog AS $$ SELECT 1 $$;`],
+          ["probe.not_last()"]],
+        // An unpinned row trigger: a privileged kind with no `prosecdef` at all,
+        // so it holds the trigger branch load-bearing independently.
+        ["an unpinned row trigger",
+          [`CREATE TABLE probe.t(id integer);`,
+            `CREATE FUNCTION probe.row_guard() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RETURN NEW; END $$;`],
+          ["probe.row_guard()"]],
+      ];
+      for (const [name, statements, caught] of scenarios) {
+        const verdict = await gateOn(postgres, empty, statements);
+        assert.notEqual(verdict.code, 0,
+          `the gate must FAIL on: ${name}\n${verdict.stderr.slice(0, 800)}`);
+        assert.match(verdict.stderr, /search_path_audit_failed/,
+          `and name the failure for: ${name}`);
+        // Per-routine attribution, as above: the exit code is not the evidence.
+        for (const identity of caught) {
+          assert.ok(verdict.stderr.includes(identity),
+            `the gate must name ${identity} for: ${name}\n${verdict.stderr.slice(0, 1200)}`);
+        }
+      }
+
+      // The control: a correctly pinned function does NOT fail. Without it, a
+      // gate that failed on everything would pass every scenario above.
+      const control = await gateOn(postgres, empty, [
+        `CREATE FUNCTION probe.pinned_ok() RETURNS integer LANGUAGE sql SECURITY DEFINER
+           SET search_path = pg_catalog, public, pg_temp AS $$ SELECT 1 $$;`]);
+      const controlSummary = JSON.parse(control.stdout.slice(control.stdout.indexOf("{"))) as { unpinned: number };
+      assert.equal(controlSummary.unpinned, 23,
+        "the control adds no unpinned routine beyond the 23 the migrations already ship");
+      assert.doesNotMatch(control.stderr, /pinned_ok/,
+        "a correctly pinned routine is not named as a violation");
+    }, { port, allowedPorts: PORTS, database: "control_room" });
+  });
+
+  test("an allowlisted routine passes the gate until its expiry", needsPgOrFail(), async () => {
+    countedRealPostgresRun();
+    const port = PORTS[8]!;
+    await withRealPostgres(async postgres => {
+      const directory = await temporary("attack-kit-gate-expiry-real-");
+      const allowlistFile = join(directory, "allowlist.json");
+      const { Client } = await import("pg");
+      const client = new Client(postgres.admin());
+      await client.connect();
+      try {
+        await client.query("DROP SCHEMA IF EXISTS probe CASCADE; CREATE SCHEMA probe;");
+        await client.query(`CREATE FUNCTION probe.waived() RETURNS integer LANGUAGE sql SECURITY DEFINER
+          SET search_path = pg_catalog, public AS $$ SELECT 1 $$;`);
+      } finally {
+        await client.end();
+      }
+      // In date, and covering this identity: the gate passes this routine. The
+      // shipped entries are kept, because they are what the migrations need;
+      // this case is about the ONE extra routine.
+      const shipped = JSON.parse(await readFile(
+        join(REPOSITORY_ROOT, "tests/support/attack-kit/search-path-allowlist.json"), "utf8")) as { entries: unknown[] };
+      const extra = {
+        routine: "probe.waived()", searchPath: "pg_catalog, public",
+        added: "2026-09-28", expires: "2027-03-01", issue: "999",
+      };
+      await writeFile(allowlistFile, JSON.stringify({ entries: [...shipped.entries, extra] }));
+      const waived = await runGate(postgres, allowlistFile, ["--json"]);
+      assert.equal(waived.code, 0,
+        `an in-date waiver must suppress its own routine, got: ${waived.stderr.slice(0, 600)}`);
+      const waivedSummary = JSON.parse(waived.stdout.slice(waived.stdout.indexOf("{"))) as { allowlisted: number };
+      assert.equal(waivedSummary.allowlisted, 24, "the shipped 23 plus this one");
+
+      // Past its expiry: the same entry no longer suppresses it, and the lapsed
+      // entry is itself reported so the check fails. `added` moves back with it
+      // so the window stays inside the 180-day horizon — the loader REFUSES a
+      // back-dated entry whose expiry precedes `added`, and refuses any window
+      // longer than 180 days, so a lapsed entry can only be written as a
+      // well-formed one that time has since overtaken.
+      await writeFile(allowlistFile, JSON.stringify({ entries: [
+        ...shipped.entries, { ...extra, added: "2025-08-01", expires: "2025-12-01" }] }));
+      const expired = await runGate(postgres, allowlistFile);
+      assert.notEqual(expired.code, 0, "a lapsed waiver must fail the gate");
+      assert.match(expired.stderr, /search_path_allowlist_entry_expired:probe\.waived\(\)/);
+      assert.match(expired.stderr, /probe\.waived\(\):security-definer_search_path_does_not_end_in_pg_temp/,
+        "and the routine it named counts again");
+    }, { port, allowedPorts: PORTS, database: "control_room" });
+  });
+
+  test("the gate refuses a database whose migrations were never applied", needsPgOrFail(), async () => {
+    countedRealPostgresRun();
+    const port = PORTS[9]!;
+    await withRealPostgres(async postgres => {
+      // A database with no routines at all. A gate that reported "clean" here
+      // would be vacuous: it would pass on any database, including one whose
+      // migrations silently did not run.
+      const empty = join(await temporary("attack-kit-gate-vacuous-"), "empty.json");
+      await writeFile(empty, JSON.stringify({ entries: [] }));
+      const { Client } = await import("pg");
+      const maintenance = new Client({ ...postgres.admin(), database: "postgres" });
+      await maintenance.connect();
+      try {
+        await maintenance.query("DROP DATABASE IF EXISTS attack_kit_empty_catalog");
+        await maintenance.query("CREATE DATABASE attack_kit_empty_catalog");
+      } finally {
+        await maintenance.end();
+      }
+      const bare = new Client({ ...postgres.admin(), database: "attack_kit_empty_catalog" });
+      await bare.connect();
+      try {
+        const gate = await runNode([join(REPOSITORY_ROOT, "scripts/check-migration-search-path.mjs"),
+          "--host", postgres.socketDirectory, "--port", String(postgres.port),
+          "--user", "fixture_admin", "--database", "attack_kit_empty_catalog", "--allowlist", empty]);
+        assert.notEqual(gate.code, 0, "an empty catalog must not pass the gate");
+        assert.match(gate.stderr, /search_path_gate_empty_catalog/);
+      } finally {
+        await bare.end();
+      }
+    }, { port, allowedPorts: PORTS, database: "control_room" });
+  });
+});
+
+describe("attack kit: search_path file hint (not a gate)", () => {
+  // The file scanner is a LOCAL HINT. It is not wired to CI and the gate never
+  // consults it, because a regex model of PostgreSQL SQL cannot be made sound.
+  // These tests pin down only what a caller may rely on: it finds the obvious
+  // shapes, it never borrows a neighbour's clause, and a commented-out pin is
+  // inert. They are NOT a claim that it is complete.
+
+  test("finds the obvious shapes and reads a multi-line list whole", async () => {
+    const directory = await temporary("attack-kit-hint-");
+    await writeFile(join(directory, "0001.sql"), `
 CREATE FUNCTION guard_bad() RETURNS trigger
 LANGUAGE plpgsql SET search_path = pg_catalog, public AS $$ BEGIN RETURN NEW; END $$;
-`);
-    await writeFile(join(directory, "0002_good.sql"), `
 CREATE FUNCTION guard_good() RETURNS trigger
-LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $$ BEGIN RETURN NEW; END $$;
-`);
-    await writeFile(join(directory, "0003_definer.sql"), `
+LANGUAGE plpgsql SET search_path = pg_catalog,
+  public,
+  pg_temp AS $$ BEGIN RETURN NEW; END $$;
 CREATE FUNCTION escalate() RETURNS integer
 LANGUAGE plpgsql SECURITY DEFINER AS $$ BEGIN RETURN 1; END $$;
 `);
     const result = await securityDefinerAudit(directory);
-    const byName = new Map(result.findings.map(finding => [finding.function, finding]));
+    const byName = new Map(result.findings.map(f => [f.routine, f]));
     assert.equal(byName.get("guard_bad()")?.endsInPgTemp, false);
-    assert.equal(byName.get("guard_good()")?.endsInPgTemp, true);
+    assert.equal(byName.get("guard_good()")?.endsInPgTemp, true, "pg_temp on a later line still pins");
     assert.equal(byName.get("escalate()")?.endsInPgTemp, false);
-    const names = result.unpinned.map(finding => finding.function);
-    assert.ok(names.includes("guard_bad()") && names.includes("escalate()"));
-    assert.ok(!names.includes("guard_good()"), "a correctly pinned function is not listed as unpinned");
+    assert.deepEqual(result.unpinned.map(f => f.routine).sort(), ["escalate()", "guard_bad()"]);
   });
 
-  test("recognises a SECURITY DEFINER function that pins pg_temp last", async () => {
-    const directory = await temporary("attack-kit-sql2-");
-    await writeFile(join(directory, "0001_ok.sql"), `
-CREATE FUNCTION escalate_pinned() RETURNS integer
-LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$ BEGIN RETURN 1; END $$;
-`);
-    const result = await securityDefinerAudit(directory);
-    assert.equal(result.findings.length, 1);
-    assert.deepEqual(result.unpinned, []);
+  test("never borrows a neighbouring function's clause, in either order", async () => {
+    for (const [label, sql, expected] of [
+      ["unpinned then pinned",
+        `CREATE FUNCTION first() RETURNS integer LANGUAGE sql SECURITY DEFINER AS $$ SELECT 1 $$;
+         CREATE FUNCTION second() RETURNS integer LANGUAGE sql SECURITY DEFINER
+           SET search_path = pg_catalog, public, pg_temp AS $$ SELECT 1 $$;`, "first()"],
+      ["pinned then unpinned",
+        `CREATE FUNCTION first() RETURNS integer LANGUAGE sql SECURITY DEFINER
+           SET search_path = pg_catalog, public, pg_temp AS $$ SELECT 1 $$;
+         CREATE FUNCTION second() RETURNS integer LANGUAGE sql SECURITY DEFINER AS $$ SELECT 1 $$;`, "second()"],
+    ] as const) {
+      const directory = await temporary("attack-kit-hint-cross-");
+      await writeFile(join(directory, "0001.sql"), sql);
+      const result = await securityDefinerAudit(directory);
+      assert.deepEqual(result.unpinned.map(f => f.routine), [expected],
+        `${label}: only its own unpinned routine is reported`);
+    }
   });
 
-  test("searchPathEndsInPgTemp rejects pg_temp in the middle and an empty list", () => {
-    assert.equal(searchPathEndsInPgTemp("pg_catalog, pg_temp, public"), false);
-    assert.equal(searchPathEndsInPgTemp("pg_catalog, public, pg_temp"), true);
-    assert.equal(searchPathEndsInPgTemp('"pg_temp"'), true);
-    assert.equal(searchPathEndsInPgTemp(""), false);
-    assert.equal(searchPathEndsInPgTemp(null), false);
-  });
-
-  // The cross-function false clean. The audit used to read a fixed 2,000-char
-  // window after each `CREATE FUNCTION`, so a pinned function declared AFTER an
-  // unpinned one lent its `search_path` to the first, and the unpinned function
-  // was reported as safe. Each function is now parsed as one complete
-  // statement, so the boundary is what this test pins down.
-  test("never borrows a neighbouring function's search_path, in either order", async () => {
-    const unpinnedThenPinned = await temporary("attack-kit-cross-a-");
-    await writeFile(join(unpinnedThenPinned, "0001.sql"), `
-CREATE FUNCTION first_unpinned() RETURNS integer
-LANGUAGE plpgsql SECURITY DEFINER AS $$ BEGIN RETURN 1; END $$;
-CREATE FUNCTION second_pinned() RETURNS integer
-LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public, pg_temp AS $$ BEGIN RETURN 1; END $$;
-`);
-    const first = await securityDefinerAudit(unpinnedThenPinned);
-    const a = new Map(first.findings.map(finding => [finding.function, finding]));
-    assert.equal(a.get("first_unpinned()")?.searchPath, null,
-      "the first function declares no search_path and must not inherit the second's");
-    assert.equal(a.get("first_unpinned()")?.endsInPgTemp, false);
-    assert.equal(a.get("second_pinned()")?.endsInPgTemp, true);
-    assert.deepEqual(first.unpinned.map(finding => finding.function), ["first_unpinned()"]);
-
-    // The reverse order, so a fix cannot simply special-case the first function.
-    const pinnedThenUnpinned = await temporary("attack-kit-cross-b-");
-    await writeFile(join(pinnedThenUnpinned, "0001.sql"), `
-CREATE FUNCTION first_pinned() RETURNS integer
-LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public, pg_temp AS $$ BEGIN RETURN 1; END $$;
-CREATE FUNCTION second_unpinned() RETURNS integer
-LANGUAGE plpgsql SECURITY DEFINER AS $$ BEGIN RETURN 1; END $$;
-`);
-    const second = await securityDefinerAudit(pinnedThenUnpinned);
-    const b = new Map(second.findings.map(finding => [finding.function, finding]));
-    assert.equal(b.get("second_unpinned()")?.endsInPgTemp, false,
-      "a later unpinned function must not be excused by an earlier pinned one");
-    assert.deepEqual(second.unpinned.map(finding => finding.function), ["second_unpinned()"]);
-  });
-
-  // Two trigger functions in ONE file where only the second is hardened: the
-  // exact shape the review reported, with the real trigger kind rather than
-  // SECURITY DEFINER. Both definitions are on ONE line, which is what makes
-  // this a real regression test: the original 2,000-character window then runs
-  // straight from the first function's body into the second function's clause
-  // and reports the first as pinned.
-  test("flags the first of two adjacent trigger functions when only the second is hardened", async () => {
-    const directory = await temporary("attack-kit-adjacent-");
-    await writeFile(join(directory, "0001.sql"),
-      "CREATE FUNCTION guard_first() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RETURN NEW; END $$; "
-      + "CREATE FUNCTION guard_second() RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $$ BEGIN RETURN NEW; END $$;\n");
-    const result = await securityDefinerAudit(directory);
-    assert.deepEqual(result.findings.map(finding => finding.function), ["guard_first()", "guard_second()"]);
-    const first = result.findings.find(finding => finding.function === "guard_first()")!;
-    assert.equal(first.endsInPgTemp, false, "guard_first must not borrow guard_second's pg_temp clause");
-    assert.equal(first.searchPath, null);
-    assert.deepEqual(result.unpinned.map(finding => finding.function), ["guard_first()"]);
-  });
-
-  // A `SET search_path` INSIDE a plpgsql body is not the function's option, so
-  // the parser must not read past the body's `AS`.
-  test("does not mistake a search_path inside a body for the function's own clause", async () => {
-    const directory = await temporary("attack-kit-body-");
-    await writeFile(join(directory, "0001.sql"), `
-CREATE FUNCTION uses_set_locally() RETURNS integer
-LANGUAGE plpgsql SECURITY DEFINER AS $$
-BEGIN
-  PERFORM set_config('search_path', 'pg_catalog, pg_temp', true);
-  RETURN 1;
-END $$;
-`);
-    const result = await securityDefinerAudit(directory);
-    assert.equal(result.findings.length, 1);
-    assert.equal(result.findings[0]!.searchPath, null,
-      "a body-level set_config is not a declared search_path");
-    assert.equal(result.findings[0]!.endsInPgTemp, false, "and it does not make the function safe");
-  });
-
-  // A commented-out pin is the most natural way to DISABLE a pin while leaving
-  // the function looking hardened, and the clause region used to be a raw slice
-  // that read the comment as a real clause. Comments are stripped before any
-  // clause is located, so this is now a violation.
   test("a pin that only appears in a comment does not count as pinned", async () => {
-    const directory = await temporary("attack-kit-commented-");
+    const directory = await temporary("attack-kit-hint-comment-");
     await writeFile(join(directory, "0001.sql"), `
 CREATE FUNCTION line_comment() RETURNS trigger
 LANGUAGE plpgsql
 -- SET search_path = pg_catalog, public, pg_temp
 AS $$ BEGIN RETURN NEW; END $$;
-
 CREATE FUNCTION block_comment() RETURNS trigger
 LANGUAGE plpgsql
 /* SET search_path = pg_catalog, public, pg_temp */
 AS $$ BEGIN RETURN NEW; END $$;
 `);
     const result = await securityDefinerAudit(directory);
-    assert.deepEqual(result.findings.map(finding => finding.function), ["line_comment()", "block_comment()"]);
-    assert.deepEqual(result.unpinned.map(finding => finding.function), ["line_comment()", "block_comment()"],
+    assert.deepEqual(result.unpinned.map(f => f.routine).sort(),
+      ["block_comment()", "line_comment()"],
       "a pin that exists only in a comment must not satisfy the check");
-    for (const finding of result.findings) {
-      assert.equal(finding.endsInPgTemp, false);
-      assert.equal(finding.searchPath, null);
-    }
   });
 
-  // A multi-line pinned list is the same clause as the one-line form, and the
-  // old line-bounded pattern read only the first line and reported it unpinned.
-  test("a search_path list spread over several lines is read whole", async () => {
-    const directory = await temporary("attack-kit-multiline-");
-    await writeFile(join(directory, "0001.sql"), `
-CREATE FUNCTION multiline_pinned() RETURNS trigger
-LANGUAGE plpgsql SET search_path = pg_catalog,
-  public,
-  pg_temp AS $$ BEGIN RETURN NEW; END $$;
-
-CREATE FUNCTION multiline_bad() RETURNS trigger
-LANGUAGE plpgsql SET search_path = pg_catalog,
-  public AS $$ BEGIN RETURN NEW; END $$;
-`);
-    const result = await securityDefinerAudit(directory);
-    const pinned = result.findings.find(finding => finding.function === "multiline_pinned()")!;
-    assert.equal(pinned.endsInPgTemp, true, "pg_temp on the last line still pins the function");
-    assert.equal(pinned.searchPath?.replace(/\s+/g, " "), "pg_catalog, public, pg_temp");
-    const bad = result.findings.find(finding => finding.function === "multiline_bad()")!;
-    assert.equal(bad.endsInPgTemp, false, "and a list that does not end in pg_temp is still caught");
+  test("searchPathEndsInPgTemp unit behaviour", () => {
+    assert.equal(searchPathEndsInPgTemp("pg_catalog, pg_temp, public"), false);
+    assert.equal(searchPathEndsInPgTemp("pg_catalog, public, pg_temp"), true);
+    assert.equal(searchPathEndsInPgTemp(""), false);
+    assert.equal(searchPathEndsInPgTemp(null), false);
+    assert.equal(searchPathEndsInPgTemp("pg_catalog, public,"), false, "a trailing comma is not an element");
   });
 
-  // PostgreSQL allows SECURITY DEFINER on a PROCEDURE, and a procedure body
-  // resolves names with the owner's privileges exactly as a trigger body's
-  // does. The old head pattern matched only CREATE FUNCTION, so a definer
-  // procedure was invisible.
-  test("a SECURITY DEFINER procedure is audited like a function", async () => {
-    const directory = await temporary("attack-kit-procedure-");
-    await writeFile(join(directory, "0001.sql"), `
-CREATE PROCEDURE definer_procedure() LANGUAGE plpgsql
-SECURITY DEFINER AS $$ BEGIN NULL; END $$;
-
-CREATE PROCEDURE pinned_procedure() LANGUAGE plpgsql
-SECURITY DEFINER SET search_path = pg_catalog, public, pg_temp AS $$ BEGIN NULL; END $$;
-`);
-    const result = await securityDefinerAudit(directory);
-    const byName = new Map(result.findings.map(finding => [finding.function, finding]));
-    assert.equal(byName.get("definer_procedure()")?.endsInPgTemp, false,
-      "an unpinned definer procedure must be reported");
-    assert.deepEqual(byName.get("definer_procedure()")?.kinds, ["security-definer"]);
-    assert.equal(byName.get("pinned_procedure()")?.endsInPgTemp, true);
-    assert.deepEqual(result.unpinned.map(finding => finding.function), ["definer_procedure()"]);
-  });
-
-  // `RETURNS event_trigger` is a distinct return type (`pg_event_trigger`) for
-  // a function used as an event trigger. The recogniser matched only
-  // `RETURNS trigger`, which cannot match `RETURNS event_trigger` at all, so an
-  // unpinned event-trigger function produced NO finding: a migration could ship
-  // one and the gate reported zero violations. An event trigger fires on DDL
-  // (`ddl_command_start`, `sql_drop`, `table_rewrite`) and its body resolves
-  // names with the owner's privileges, so it is the same primitive.
-  test("a RETURNS event_trigger function is audited as an event trigger", async () => {
-    const directory = await temporary("attack-kit-event-trigger-");
-    await writeFile(join(directory, "0001.sql"), `
-CREATE FUNCTION refuse_drop() RETURNS event_trigger
-LANGUAGE plpgsql SET search_path = pg_catalog, public AS $$ BEGIN RETURN NULL; END $$;
-
-CREATE FUNCTION refuse_ddl_pinned() RETURNS event_trigger
-LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $$ BEGIN RETURN NULL; END $$;
-`);
-    const result = await securityDefinerAudit(directory);
-    const byName = new Map(result.findings.map(finding => [finding.function, finding]));
-    assert.deepEqual(result.findings.map(finding => finding.function),
-      ["refuse_drop()", "refuse_ddl_pinned()"],
-      "both event-trigger functions must be recognised, not skipped");
-    assert.deepEqual(byName.get("refuse_drop()")?.kinds, ["event-trigger"],
-      "an event trigger is reported as its own kind, not as a row trigger");
-    assert.equal(byName.get("refuse_drop()")?.endsInPgTemp, false);
-    assert.match(byName.get("refuse_drop()")!.reason, /^event-trigger_/,
-      "the reason names the primitive that is unpinned");
-    assert.equal(byName.get("refuse_ddl_pinned()")?.endsInPgTemp, true,
-      "a pinned event trigger is not a violation");
-    assert.deepEqual(result.unpinned.map(finding => finding.function), ["refuse_drop()"]);
-
-    // An event trigger that is ALSO a definer keeps both kinds.
-    await writeFile(join(directory, "0001.sql"), `
-CREATE FUNCTION escalate_ddl() RETURNS event_trigger
-LANGUAGE plpgsql SECURITY DEFINER AS $$ BEGIN RETURN NULL; END $$;
-`);
-    const both = await securityDefinerAudit(directory);
-    assert.deepEqual(both.findings[0]!.kinds, ["security-definer", "event-trigger"]);
-
-    // A row trigger is still a row trigger: the two recognisers must not have
-    // been merged into one that claims `trigger` for an event trigger.
-    await writeFile(join(directory, "0001.sql"), `
-CREATE FUNCTION row_guard() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RETURN NEW; END $$;
-CREATE FUNCTION ddl_guard() RETURNS event_trigger LANGUAGE plpgsql AS $$ BEGIN RETURN NULL; END $$;
-`);
-    const apart = await securityDefinerAudit(directory);
-    const kinds = new Map(apart.findings.map(finding => [finding.function, finding.kinds]));
-    assert.deepEqual(kinds.get("row_guard()"), ["trigger"]);
-    assert.deepEqual(kinds.get("ddl_guard()"), ["event-trigger"]);
-  });
-
-  // `ALTER FUNCTION ... SECURITY DEFINER` escalates a function created without
-  // it. The privilege is real whether it was granted in the CREATE or a
-  // statement later in the same file, so the audit carries the ALTER's clauses
-  // into the function's own view.
-  test("a privilege granted by a later ALTER counts as a violation", async () => {
-    const directory = await temporary("attack-kit-alter-");
-    await writeFile(join(directory, "0001.sql"), `
-CREATE FUNCTION escalated() RETURNS integer LANGUAGE sql AS $$ SELECT 1 $$;
-ALTER FUNCTION escalated() SECURITY DEFINER;
-`);
-    const result = await securityDefinerAudit(directory);
-    assert.equal(result.findings.length, 1);
-    assert.equal(result.findings[0]!.function, "escalated()");
-    assert.deepEqual(result.findings[0]!.kinds, ["security-definer"],
-      "the function is a definer function because a later ALTER made it one");
-    assert.equal(result.findings[0]!.endsInPgTemp, false);
-    assert.equal(result.unpinned.length, 1, "an escalated function must be reported");
-
-    // A trigger function escalated by an ALTER keeps BOTH kinds.
-    await writeFile(join(directory, "0001.sql"), `
-CREATE FUNCTION escalated_trigger() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RETURN NEW; END $$;
-ALTER FUNCTION escalated_trigger() SECURITY DEFINER;
-`);
-    const both = await securityDefinerAudit(directory);
-    assert.deepEqual(both.findings[0]!.kinds, ["security-definer", "trigger"]);
-
-    // An ALTER that DOES pin the function satisfies the gate.
-    await writeFile(join(directory, "0001.sql"), `
-CREATE FUNCTION alter_pinned() RETURNS integer LANGUAGE sql AS $$ SELECT 1 $$;
-ALTER FUNCTION alter_pinned() SECURITY DEFINER SET search_path = pg_catalog, public, pg_temp;
-`);
-    const pinned = await securityDefinerAudit(directory);
-    assert.equal(pinned.findings[0]!.endsInPgTemp, true,
-      "a pin supplied by the ALTER is the effective pin");
-    assert.deepEqual(pinned.unpinned, []);
-  });
-
-  // A `(` or `)` inside a quoted default is one character of text, not
-  // nesting. The argument-list walk counted them as nesting, so `depth` went to
-  // -1, the whole head was DROPPED, and the file produced no finding at all —
-  // which is how an unpinned SECURITY DEFINER function passed a gate whose only
-  // job is to stop that.
-  test("a parenthesis inside a quoted default is text, not nesting", async () => {
-    const directory = await temporary("attack-kit-quoted-");
-    await writeFile(join(directory, "0001.sql"), `
-CREATE FUNCTION escalate_default(a text DEFAULT 'x(y') RETURNS integer
-LANGUAGE sql SECURITY DEFINER AS $$ SELECT 1 $$;
-
-CREATE FUNCTION trigger_default(a text DEFAULT 'x(y') RETURNS trigger
-LANGUAGE plpgsql AS $$ BEGIN RETURN NEW; END $$;
-`);
-    const result = await securityDefinerAudit(directory);
-    // The string is closed, so the walk reads the argument list to its real
-    // `)` and the signature is reported in full. The point of the test is that
-    // these two functions are FOUND at all.
-    assert.deepEqual(result.findings.map(finding => finding.function),
-      ["escalate_default(a text DEFAULT 'x(y')", "trigger_default(a text DEFAULT 'x(y')"],
-      "a paren inside a string default must not hide the definition");
-    assert.equal(result.findings.length, 2,
-      "the whole statement must not disappear from the audit");
-    assert.deepEqual(result.unpinned.map(finding => finding.function),
-      ["escalate_default(a text DEFAULT 'x(y')", "trigger_default(a text DEFAULT 'x(y')"]);
-    assert.deepEqual(result.findings[0]!.kinds, ["security-definer"]);
-    assert.deepEqual(result.findings[1]!.kinds, ["trigger"]);
-
-    // The control: a balanced default, and a real nested call in one, are both
-    // read normally, so the quote-awareness has not broken ordinary parsing.
-    await writeFile(join(directory, "0001.sql"), `
-CREATE FUNCTION escalate_balanced(a text DEFAULT 'x(y)') RETURNS integer
-LANGUAGE sql SECURITY DEFINER AS $$ SELECT 1 $$;
-
-CREATE FUNCTION nextval_default(a text DEFAULT nextval('s')) RETURNS integer
-LANGUAGE sql SECURITY DEFINER SET search_path = pg_catalog, public, pg_temp AS $$ SELECT 1 $$;
-
-CREATE FUNCTION doubled_quote(a text DEFAULT 'it''s (fine)') RETURNS integer
-LANGUAGE sql SECURITY DEFINER AS $$ SELECT 1 $$;
-`);
-    const balanced = await securityDefinerAudit(directory);
-    assert.deepEqual(balanced.findings.map(finding => finding.function), [
-      "escalate_balanced(a text DEFAULT 'x(y)')",
-      "nextval_default(a text DEFAULT nextval('s'))",
-      "doubled_quote(a text DEFAULT 'it''s (fine)')",
-    ], "an escaped quote and a real nested call are both part of the argument list");
-    assert.deepEqual(balanced.unpinned.map(finding => finding.function),
-      ["escalate_balanced(a text DEFAULT 'x(y)')", "doubled_quote(a text DEFAULT 'it''s (fine)')"],
-      "and the pinned one is still clean");
-
-    // A definition whose argument list genuinely cannot be closed is emitted as
-    // `<unreadable>` and reported UNPINNED. Dropping it was the defect: a
-    // parser that cannot read a definition must not be able to make it
-    // invisible.
-    await writeFile(join(directory, "0001.sql"), `
-CREATE FUNCTION unterminated(a text DEFAULT 'never closed
-LANGUAGE sql SECURITY DEFINER AS $$ SELECT 1 $$;
-`);
-    const unreadable = await securityDefinerAudit(directory);
-    assert.deepEqual(unreadable.findings.map(finding => finding.function),
-      ["unterminated(<unreadable>)"],
-      "an unclosable argument list is reported, not dropped");
-    assert.equal(unreadable.unpinned.length, 1,
-      "and it is reported as unpinned rather than read as safe");
-    assert.deepEqual(unreadable.findings[0]!.kinds, ["security-definer"]);
-  });
-
-  test("audits the repository's own migrations", async () => {
-    const result = await securityDefinerAudit(join(REPOSITORY_ROOT, "db/migrations"));
-    assert.ok(result.auditedFiles > 50, "the real migration set is audited");
-    assert.ok(result.findings.length > 0, "privileged functions are found");
-    // Recorded, not asserted as clean: the repository's existing functions are
-    // a separate job's call, and this kit's job is to make the fact visible.
-    if (result.unpinned.length > 0) {
-      assert.ok(result.unpinned.every(finding => finding.reason.includes("pg_temp") || finding.reason.includes("search_path")));
-    }
-  });
-
-  // The allowlist is the mechanism that lets a NEW violation fail today without
-  // editing 28 shipped migrations. Its whole value is that a waiver RUNS OUT:
-  // an in-date entry suppresses its violation, and the same entry one day past
-  // its expiry stops suppressing it and becomes a failure in its own right.
-  test("an allowlist entry stops applying once it expires", async () => {
-    const directory = await temporary("attack-kit-allowlist-");
-    await writeFile(join(directory, "0001.sql"), `
-CREATE FUNCTION legacy_guard() RETURNS trigger
-LANGUAGE plpgsql SET search_path = pg_catalog, public AS $$ BEGIN RETURN NEW; END $$;
-`);
-    const allowlistFile = join(directory, "allowlist.json");
-    const entry = {
-      file: "0001.sql", function: "legacy_guard()", searchPath: "pg_catalog, public",
-      issue: "999",
-    };
-    await writeFile(allowlistFile, JSON.stringify({ entries: [{ ...entry, expires: "2027-01-01" }] }));
-
-    const inDate = await loadSearchPathAllowlist(allowlistFile, new Date("2026-12-31T00:00:00Z"));
-    const inDateResult = await securityDefinerAudit(directory, { allowlist: inDate });
-    assert.equal(inDateResult.unpinned.length, 0, "an in-date waiver suppresses the violation");
-    assert.equal(inDateResult.allowlisted.length, 1, "and the suppression is reported, not hidden");
-    assert.equal(inDate.expired.length, 0);
-
-    // The day after the expiry the SAME file is a failure again.
-    const afterExpiry = await loadSearchPathAllowlist(allowlistFile, new Date("2027-01-02T00:00:00Z"));
-    assert.equal(afterExpiry.active.size, 0, "an expired entry covers nothing");
-    assert.equal(afterExpiry.expired.length, 1, "and is reported as lapsed");
-    const expiredResult = await securityDefinerAudit(directory, { allowlist: afterExpiry });
-    assert.equal(expiredResult.unpinned.length, 1, "the violation counts again");
-    assert.equal(expiredResult.expiredAllowlistEntries.length, 1,
-      "the lapsed waiver is surfaced so the check fails rather than silently re-allowing");
-    await assert.rejects(
-      assertSearchPathPinned(directory, { allowlist: afterExpiry }),
-      (error: unknown) => {
-        assert.ok(error instanceof UnpinnedSearchPathError);
-        assert.match(error.message, /allowlist_entry_expired_2027-01-01_issue_999/);
-        assert.match(error.message, /0001\.sql:legacy_guard\(\)/);
-        return true;
-      },
-    );
-  });
-
-  test("an allowlist entry only covers the exact violation it was written for", async () => {
-    const directory = await temporary("attack-kit-allowlist-scope-");
-    await writeFile(join(directory, "0001.sql"), `
-CREATE FUNCTION legacy_guard() RETURNS trigger
-LANGUAGE plpgsql SET search_path = pg_catalog, public AS $$ BEGIN RETURN NEW; END $$;
-CREATE FUNCTION brand_new_bug() RETURNS trigger
-LANGUAGE plpgsql AS $$ BEGIN RETURN NEW; END $$;
-`);
-    const allowlistFile = join(directory, "allowlist.json");
-    await writeFile(allowlistFile, JSON.stringify({ entries: [{
-      file: "0001.sql", function: "legacy_guard()", searchPath: "pg_catalog, public",
-      expires: "2027-01-01", issue: "999",
-    }] }));
-    const allowlist = await loadSearchPathAllowlist(allowlistFile, new Date("2026-12-31T00:00:00Z"));
-    const result = await securityDefinerAudit(directory, { allowlist });
-    assert.deepEqual(result.unpinned.map(finding => finding.function), ["brand_new_bug()"],
-      "a new function in a waived file is NOT covered by that file's entry");
-    // An entry that matches no current violation is debt to remove.
-    assert.deepEqual(withStaleAllowlist(allowlist, result).stale, []);
-  });
-
-  // The gate itself, driven as a child process the way CI drives it. The
-  // repository's own 28 shipped violations are waived, so this proves the
-  // thing that matters: a NEW unpinned privileged function fails the check,
-  // and adding the pg_temp clause makes it pass again.
-  test("the CI gate fails on a new unpinned privileged migration", async () => {
-    const directory = await temporary("attack-kit-gate-");
-    const migrations = join(directory, "migrations");
-    await mkdir(migrations, { recursive: true });
-    const allowlistFile = join(directory, "allowlist.json");
-    await writeFile(allowlistFile, JSON.stringify({ entries: [] }));
-    const gate = join(REPOSITORY_ROOT, "scripts/check-migration-search-path.mjs");
-
-    const runGate = () => runNode([gate, "--dir", migrations, "--allowlist", allowlistFile]);
-    const badMigration = `
-CREATE FUNCTION guard_new_unpinned() RETURNS trigger
-LANGUAGE plpgsql SET search_path = pg_catalog, public AS $$ BEGIN RETURN NEW; END $$;
-`;
-    const goodMigration = badMigration.replace("pg_catalog, public", "pg_catalog, public, pg_temp");
-
-    // A SECURITY DEFINER function must fail too, not only a trigger.
-    const badDefiner = `
-CREATE FUNCTION escalate_new() RETURNS integer
-LANGUAGE plpgsql SECURITY DEFINER AS $$ BEGIN RETURN 1; END $$;
-`;
-
-    await writeFile(join(migrations, "0001_bad.sql"), badMigration);
-    const failed = await runGate();
-    assert.notEqual(failed.code, 0, "a new unpinned trigger function fails the gate");
-    assert.match(failed.stderr, /0001_bad\.sql:guard_new_unpinned\(\)/,
-      "and the failure names the function to fix");
-    assert.match(failed.stderr, /pg_temp/);
-
-    await writeFile(join(migrations, "0001_bad.sql"), goodMigration);
-    const passed = await runGate();
-    assert.equal(passed.code, 0,
-      `pinning pg_temp makes the gate pass, got: ${passed.stderr}`);
-
-    await writeFile(join(migrations, "0002_definer.sql"), badDefiner);
-    const definerFailed = await runGate();
-    assert.notEqual(definerFailed.code, 0, "a new unpinned SECURITY DEFINER function fails the gate too");
-    assert.match(definerFailed.stderr, /0002_definer\.sql:escalate_new\(\)/);
-
-    // Each of these is a way an unpinned privileged function could previously
-    // have passed the gate silently. The gate is the security control, so all
-    // of them must fail it. `0004_procedure` covers the CREATE PROCEDURE head
-    // and `0007_event_trigger` the event-trigger return type: both were invisible
-    // to the parser, so each produced ZERO findings and an exit code of 0.
-    const escapes: readonly [string, string][] = [
-      ["0003_commented.sql",
-        "CREATE FUNCTION commented() RETURNS trigger\nLANGUAGE plpgsql\n"
-        + "-- SET search_path = pg_catalog, public, pg_temp\nAS $$ BEGIN RETURN NEW; END $$;\n"],
-      ["0004_procedure.sql",
-        "CREATE PROCEDURE definer_proc() LANGUAGE plpgsql\n"
-        + "SECURITY DEFINER AS $$ BEGIN NULL; END $$;\n"],
-      ["0005_alter.sql",
-        "CREATE FUNCTION escalated() RETURNS integer LANGUAGE sql AS $$ SELECT 1 $$;\n"
-        + "ALTER FUNCTION escalated() SECURITY DEFINER;\n"],
-      ["0007_event_trigger.sql",
-        "CREATE FUNCTION refuse_drop() RETURNS event_trigger\nLANGUAGE plpgsql AS $$ BEGIN RETURN NULL; END $$;\n"],
-      ["0008_or_replace_event_trigger.sql",
-        "CREATE OR REPLACE FUNCTION refuse_rewrite() RETURNS event_trigger\nLANGUAGE plpgsql SET search_path = pg_catalog, public AS $$ BEGIN RETURN NULL; END $$;\n"],
-      ["0009_procedure_or_replace.sql",
-        "CREATE OR REPLACE PROCEDURE escalate_proc() LANGUAGE plpgsql\n"
-        + "SECURITY DEFINER SET search_path = pg_catalog, public AS $$ BEGIN NULL; END $$;\n"],
-      // A `(` inside a string default is one character of text, not nesting.
-      // The argument walk used to count it, drove its own depth to -1, dropped
-      // the whole head, and reported NOTHING: the gate exited 0 on an unpinned
-      // SECURITY DEFINER function.
-      ["0013_unbalanced_default.sql",
-        "CREATE FUNCTION escalate_unbalanced(a text DEFAULT 'x(y') RETURNS integer\n"
-        + "LANGUAGE sql SECURITY DEFINER AS $$ SELECT 1 $$;\n"],
-      ["0014_unbalanced_trigger_default.sql",
-        "CREATE FUNCTION row_unbalanced(a text DEFAULT 'x(y') RETURNS trigger\n"
-        + "LANGUAGE plpgsql AS $$ BEGIN RETURN NEW; END $$;\n"],
-      ["0015_unbalanced_event_trigger_default.sql",
-        "CREATE FUNCTION ddl_unbalanced(a text DEFAULT 'x(y') RETURNS event_trigger\n"
-        + "LANGUAGE plpgsql AS $$ BEGIN RETURN NULL; END $$;\n"],
-    ];
-    for (const [file, sql] of escapes) {
-      await rm(join(migrations, "0002_definer.sql"), { force: true });
-      await writeFile(join(migrations, file), sql);
-      const escaped = await runGate();
-      assert.notEqual(escaped.code, 0,
-        `${file} must fail the gate, got exit ${escaped.code}: ${escaped.stderr}`);
-    }
-    // The loop leaves the last escape in place, so every one of them is removed
-    // here: the assertions that follow each add exactly one file and expect the
-    // gate to name THAT file and no other.
-    await rm(join(migrations, "0002_definer.sql"), { force: true });
-    for (const [file] of escapes) await rm(join(migrations, file), { force: true });
-
-    // The two named fixtures the round-2 brief calls out, asserted with the
-    // function name in the failure so the CI message is proven to be actionable
-    // rather than merely non-zero.
-    await rm(join(migrations, "0002_definer.sql"), { force: true });
-    await writeFile(join(migrations, "0010_only_procedure.sql"),
-      "CREATE PROCEDURE escalate_proc() LANGUAGE plpgsql\n"
-      + "SECURITY DEFINER AS $$ BEGIN NULL; END $$;\n");
-    const onlyProcedure = await runGate();
-    assert.notEqual(onlyProcedure.code, 0, "an unpinned SECURITY DEFINER procedure fails the gate");
-    assert.match(onlyProcedure.stderr, /0010_only_procedure\.sql:escalate_proc\(\)/,
-      "and the failure names the procedure to fix");
-    assert.match(onlyProcedure.stderr, /security-definer_without_a_search_path_clause/);
-
-    await rm(join(migrations, "0010_only_procedure.sql"), { force: true });
-    await writeFile(join(migrations, "0011_only_event_trigger.sql"),
-      "CREATE FUNCTION refuse_drop() RETURNS event_trigger\n"
-      + "LANGUAGE plpgsql SET search_path = pg_catalog, public AS $$ BEGIN RETURN NULL; END $$;\n");
-    const onlyEventTrigger = await runGate();
-    assert.notEqual(onlyEventTrigger.code, 0, "an unpinned event-trigger function fails the gate");
-    assert.match(onlyEventTrigger.stderr, /0011_only_event_trigger\.sql:refuse_drop\(\)/,
-      "and the failure names the event-trigger function to fix");
-    assert.match(onlyEventTrigger.stderr, /event-trigger/);
-
-    // Pinning it makes the gate pass again, for the event-trigger form too.
-    await writeFile(join(migrations, "0011_only_event_trigger.sql"),
-      "CREATE FUNCTION refuse_drop() RETURNS event_trigger\n"
-      + "LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $$ BEGIN RETURN NULL; END $$;\n");
-    const pinnedEventTrigger = await runGate();
-    assert.equal(pinnedEventTrigger.code, 0,
-      `a pinned event trigger must pass, got: ${pinnedEventTrigger.stderr}`);
-
-    // A multi-line pinned list is the same clause as the one-line form, so it
-    // must PASS rather than being read as unpinned.
-    await rm(join(migrations, "0011_only_event_trigger.sql"), { force: true });
-    for (const [file] of escapes) await rm(join(migrations, file), { force: true });
-    await writeFile(join(migrations, "0006_multiline.sql"),
-      "CREATE FUNCTION multiline() RETURNS trigger\nLANGUAGE plpgsql SET search_path = pg_catalog,\n"
-      + "  public,\n  pg_temp AS $$ BEGIN RETURN NEW; END $$;\n");
-    const multiline = await runGate();
-    assert.equal(multiline.code, 0, `a multi-line pg_temp pin must pass, got: ${multiline.stderr}`);
-
-    // And a pinned event trigger next to an unpinned row trigger fails for the
-    // row trigger alone, so the two forms cannot mask each other.
-    await rm(join(migrations, "0006_multiline.sql"), { force: true });
-    await writeFile(join(migrations, "0012_mixed.sql"),
-      "CREATE FUNCTION ddl_guard() RETURNS event_trigger\n"
-      + "LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $$ BEGIN RETURN NULL; END $$;\n"
-      + "CREATE FUNCTION row_guard() RETURNS trigger\nLANGUAGE plpgsql AS $$ BEGIN RETURN NEW; END $$;\n");
-    const mixed = await runGate();
-    assert.notEqual(mixed.code, 0, "an unpinned row trigger still fails beside a pinned event trigger");
-    assert.doesNotMatch(mixed.stderr, /ddl_guard\(\)/,
-      "the pinned event trigger is not named as a violation");
-    assert.match(mixed.stderr, /row_guard\(\)/);
-
-    // A balanced string default is still read as an argument list, so the
-    // function is reported by its real signature and not as unreadable. Without
-    // this, "report anything the parser cannot close" would also cover a
-    // function it can close, and the CI message would lose the name to fix.
-    await rm(join(migrations, "0012_mixed.sql"), { force: true });
-    await writeFile(join(migrations, "0016_balanced_default.sql"),
-      "CREATE FUNCTION escalate_balanced(a text DEFAULT 'x(y)') RETURNS integer\n"
-      + "LANGUAGE sql SECURITY DEFINER AS $$ SELECT 1 $$;\n");
-    const balanced = await runGate();
-    assert.notEqual(balanced.code, 0, "an unbalanced-looking default is still a real violation");
-    assert.match(balanced.stderr, /0016_balanced_default\.sql:escalate_balanced\(a text DEFAULT 'x\(y\)'\)/,
-      "and the whole argument list is reported, so the message names the function");
-  });
-
-  test("refuses an allowlist entry with no expiry or no issue", async () => {
-    const directory = await temporary("attack-kit-allowlist-bad-");
-    const allowlistFile = join(directory, "allowlist.json");
-    await writeFile(allowlistFile, JSON.stringify({ entries: [{
-      file: "0001.sql", function: "f()", searchPath: null, issue: "999",
-    }] }));
-    await assert.rejects(loadSearchPathAllowlist(allowlistFile), /allowlist_entry_expiry_not_a_date/);
-    await writeFile(allowlistFile, JSON.stringify({ entries: [{
-      file: "0001.sql", function: "f()", searchPath: null, expires: "2027-01-01",
-    }] }));
-    await assert.rejects(loadSearchPathAllowlist(allowlistFile), /allowlist_entry_without_issue/);
-  });
-
-  // The live audit used to take a callback that received only the SQL, while
-  // the SQL itself filters on `n.nspname = $1`. A real `pg` query called that
-  // way fails with SQLSTATE 08P01 ("bind message supplies 0 parameters"), so
-  // the documented live audit could not run at all. The parameter array is
-  // asserted here, and the trigger kind must survive into the findings.
-  test("the live audit binds its schema placeholder and keeps the trigger kind", async () => {
-    const seen: { sql: string; params: readonly unknown[] }[] = [];
-    const result = await securityDefinerAuditLive(async (sql, params) => {
-      seen.push({ sql, params });
-      // A real driver refuses a $1 with no bound value; refuse identically.
-      if (sql.includes("$1") && params.length === 0) {
-        throw Object.assign(new Error("bind message supplies 0 parameters"), { code: "08P01" });
-      }
-      return { rows: [
-        { name: "pinned_fn()", definition: "CREATE OR REPLACE FUNCTION public.pinned_fn() RETURNS integer LANGUAGE sql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$ SELECT 1 $$" },
-        { name: "trigger_fn()", definition: "CREATE OR REPLACE FUNCTION public.trigger_fn() RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog AS $$ BEGIN RETURN NEW; END $$" },
-      ] };
-    }, { schema: "review_schema" });
-
-    assert.equal(seen.length, 1, "the catalog is queried exactly once");
-    assert.ok(seen[0]!.sql.includes("$1"), "the query keeps its placeholder");
-    assert.deepEqual(seen[0]!.params, ["review_schema"], "and the schema is bound to it");
-    assert.deepEqual(result.unpinned.map(finding => finding.function), ["trigger_fn()"]);
-    assert.deepEqual(result.findings[1]!.kinds, ["trigger"],
-      "a trigger function keeps its kind through the live audit");
-  });
-
-  // The live audit's filter selected only `prosecdef OR prorettype = 'trigger'`.
-  // An event-trigger function is neither, so the catalog query returned no row
-  // for it and the audit reported clean on a database holding an unpinned
-  // event trigger. The file parser and the catalog query must cover the same
-  // set of routines, so the filter is asserted literally here: this is the only
-  // place a real catalog is involved, and a `regtype` typo or a dropped
-  // `::regtype` cast would fail at runtime in a live database, not in a fixture.
-  test("the live audit's catalog filter includes event_trigger", async () => {
-    const seen: string[] = [];
-    const result = await securityDefinerAuditLive(async (sql) => {
-      seen.push(sql);
-      return { rows: [
-        { name: "ddl_guard()", definition: "CREATE OR REPLACE FUNCTION public.ddl_guard() RETURNS event_trigger LANGUAGE plpgsql AS $$ BEGIN RETURN NULL; END $$" },
-        { name: "row_guard()", definition: "CREATE OR REPLACE FUNCTION public.row_guard() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RETURN NEW; END $$" },
-        { name: "definer_proc()", definition: "CREATE OR REPLACE PROCEDURE public.definer_proc() LANGUAGE sql SECURITY DEFINER AS $$ SELECT 1 $$" },
-      ] };
-    });
-    const [sql] = seen;
-    assert.ok(sql!.includes("'event_trigger'::regtype"),
-      `the filter must select event_trigger routines, got: ${sql}`);
-    assert.ok(sql!.includes("'trigger'::regtype"), "and row triggers");
-    assert.ok(sql!.includes("p.prosecdef"), "and SECURITY DEFINER routines, which includes procedures");
-    // Both are cast, so a bare string comparison against a regtype cannot
-    // silently compare text to an oid.
-    assert.doesNotMatch(sql!, /= 'trigger'(?!::regtype)/,
-      "a trigger comparison without the regtype cast would never match");
-    assert.deepEqual(result.unpinned.map(finding => finding.function).sort(),
-      ["ddl_guard()", "definer_proc()", "row_guard()"],
-      "every form the filter selects is audited for a pinned search_path");
-    assert.deepEqual(result.findings.find(f => f.function === "ddl_guard()")!.kinds, ["event-trigger"],
-      "an event trigger keeps its kind through the live audit too");
-    assert.deepEqual(result.findings.find(f => f.function === "definer_proc()")!.kinds, ["security-definer"],
-      "a definer procedure is reported as a definer, which is how it reaches this set");
+  test("splitSqlStatements and stripSqlComments are still exported and behave", () => {
+    assert.deepEqual(splitSqlStatements("SELECT 1; SELECT 2;"), ["SELECT 1", "SELECT 2"]);
+    // Comments are blanked, not deleted, so a clause before one keeps its
+    // position and the newlines a multi-line list needs survive.
+    assert.equal(stripSqlComments("a -- b\nc").replace(/\s+$/mu, ""), "a\nc");
+    assert.match(stripSqlComments("a -- b\nc"), /a\s+\nc/);
   });
 });
 
@@ -1279,6 +1367,48 @@ describe("attack kit: port discipline", () => {
   test("a free port in the block is accepted", async () => {
     assert.equal(await portIsOccupied(PORTS[9]!), false);
     await assertPortAvailable(PORTS[9]!, PORTS);
+  });
+
+  // The kit publishes its own sockets into `/tmp/ak<pid>-<run>/`, not into a
+  // `socket` subdirectory of the run directory, because a macOS `tmpdir()` is 47
+  // characters and a socket path is capped at ~103. The old scan read the temp
+  // directory and its immediate children only, so it could not see a kit
+  // cluster at all — and since `-h ''` publishes no TCP listener, a second kit
+  // cluster would start happily on a port another kit cluster was holding. That
+  // is the most likely foreigner on a machine running concurrent kit jobs, and
+  // the port-block discipline exists precisely to stop it.
+  test("the port probe sees another kit cluster's own socket", needsPgOrFail(), async () => {
+    countedRealPostgresRun();
+    const port = PORTS[7]!;
+    await withRealPostgres(async first => {
+      // The kit's own socket directory is under /tmp, not the temp directory.
+      const sockets = await shortSocketDirectories();
+      assert.ok(sockets.some(directory => directory.startsWith("/tmp/ak")),
+        `the kit's short socket directory must be discoverable, saw: ${sockets.join(", ")}`);
+      assert.ok(existsSync(join(first.socketDirectory, `.s.PGSQL.${port}`)),
+        "the running cluster really published its socket");
+      // A caller that knows nothing but the port must still see it occupied.
+      assert.equal(await portIsOccupied(port), true,
+        "a second kit cluster's port must read as occupied");
+      await assert.rejects(assertPortAvailable(port, PORTS), (error: unknown) => {
+        assert.equal((error as { name: string }).name, "PortOccupiedError");
+        return true;
+      });
+      // And a SECOND kit cluster must refuse to start there, not silently
+      // create a cluster that answers on the same port number.
+      await assert.rejects(
+        withRealPostgres(async () => "never reached", { port, allowedPorts: PORTS, database: "attack_kit_second" }),
+        (error: unknown) => {
+          assert.equal((error as { name: string }).name, "PortOccupiedError",
+            `a second kit cluster must be refused, got: ${(error as Error).name}: ${(error as Error).message}`);
+          assert.match(`${(error as Error).message}`, new RegExp(`refusing_occupied_port:${port}`));
+          return true;
+        },
+      );
+      // The first cluster was not stopped or reused by the refusal.
+      assert.equal(await first.isRunning(), true, "the first cluster is untouched");
+      assert.equal((await first.query("migrator", "SELECT 1 AS one")).rows[0]!.one, 1);
+    }, { port, allowedPorts: PORTS, database: "attack_kit_port_holder" });
   });
 });
 
@@ -1540,6 +1670,50 @@ describe("attack kit: real PostgreSQL", () => {
     }
   });
 
+  // `started = true` was set only after `pg_ctl start` returned 0. A start that
+  // fails AFTER the postmaster has forked — `-w -t 60` "server did not start in
+  // time" under load, or the 120 s exec timeout while the server is still
+  // coming up — left `started` false, so `stop` skipped the shutdown, and the
+  // data directory and socket directory were deleted underneath a LIVE
+  // postmaster. Reproduced with a shim `pg_ctl` that runs the real start and
+  // then exits 1: withRealPostgres threw, the postmaster was still alive, the
+  // data directory was gone, and a new SysV segment was held — on a machine with
+  // 32 segments in total.
+  test("a start that fails after launching a postmaster leaves nothing behind", needsPgOrFail(), async () => {
+    countedRealPostgresRun();
+    const port = PORTS[1]!;
+    const alive = (pid: number): boolean => {
+      try { process.kill(pid, 0); return true; } catch (error) {
+        return (error as { code?: string }).code === "EPERM";
+      }
+    };
+    let message = "";
+    let observedPid: number | undefined;
+    try {
+      await withRealPostgres(async () => "never reached", {
+        port, allowedPorts: PORTS, database: "attack_kit_start_fail",
+        startAttemptFault: "exit_non_zero_after_start",
+      });
+      assert.fail("a start that reported failure must not resolve the promise");
+    } catch (error) {
+      message = `${(error as Error).message}`;
+    }
+    // The failure is reported as a start failure, and it carries the pid it
+    // captured while stopping the orphan.
+    assert.match(message, /attack_kit_cluster_start_failed/,
+      `the run must name the start failure, got: ${message}`);
+    const pid = /postmaster_pid=(\d+)/.exec(message)?.[1];
+    observedPid = pid ? Number(pid) : undefined;
+    assert.ok(observedPid !== undefined && observedPid > 0,
+      `the failure must report the pid it found, got: ${message}`);
+    // THE ASSERTION: the postmaster the failed start launched is gone, and the
+    // port it held is free. Under the old code it was still running.
+    assert.equal(alive(observedPid), false,
+      `postmaster ${observedPid} survived a start that reported failure`);
+    assert.equal(await portIsOccupied(port), false,
+      `the port must be released after a failed start, still held on ${port}`);
+  });
+
   test("hands out connections as named production roles and enforces their grants", needsPgOrFail(), async () => {
     countedRealPostgresRun();
     const port = PORTS[2]!;
@@ -1781,16 +1955,15 @@ test("the kit left no disposable cluster behind", async () => {
   // temp directory. This run's own fixtures are still registered at this point
   // (the `after` hook removes them later), so they are excluded by identity —
   // otherwise the sweep would flag the live run as a leak.
-  const prefixes = ["attack-kit-pg-", "attack-kit-mutation-", "attack-kit-sql-",
-    "attack-kit-sql2-", "attack-kit-foreign-", "attack-kit-procedure-",
-    "attack-kit-event-trigger-", "attack-kit-pid-fault-", "attack-kit-quoted-",
-    "attack-kit-cross-a-", "attack-kit-cross-b-", "attack-kit-adjacent-",
-    "attack-kit-body-", "attack-kit-commented-", "attack-kit-multiline-",
-    "attack-kit-alter-", "attack-kit-allowlist-", "attack-kit-allowlist-scope-",
-    "attack-kit-allowlist-bad-", "attack-kit-gate-", "attack-kit-skipprobe-",
+  const prefixes = ["attack-kit-pg-", "attack-kit-mutation-", "attack-kit-mutation-timeout-",
+    "attack-kit-mutation-run-", "attack-kit-mutation-leak-", "attack-kit-foreign-",
+    "attack-kit-pid-fault-", "attack-kit-allow-identity-", "attack-kit-allow-expiry-",
+    "attack-kit-allow-stale-", "attack-kit-allow-bounds-", "attack-kit-gate-real-",
+    "attack-kit-gate-expiry-real-", "attack-kit-gate-vacuous-", "attack-kit-hint-",
+    "attack-kit-hint-cross-", "attack-kit-hint-comment-", "attack-kit-skipprobe-",
     // A timeout test that never reached its own `finally` would leave a
     // directory holding a still-running CPU burner. The sweep has to see it.
-    "attack-kit-mutation-timeout-"];
+    ];
   for (const prefix of prefixes) {
     const leftovers = (await disposableRunDirectories(new RegExp(`^${prefix}`)))
       .filter(directory => !mine.has(directory));

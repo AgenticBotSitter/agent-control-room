@@ -205,23 +205,69 @@ checks that the refusal was a privilege refusal (`42501`) and not a missing
 table or a typo, so a statement that fails for the wrong reason cannot pass as
 proof of a grant. Mutating statements are wrapped in `BEGIN … ROLLBACK`.
 
-## `securityDefinerAudit`
+## `securityDefinerAuditLive` — the CI GATE
+
+```ts
+const { findings, unpinned } = await securityDefinerAuditLive(query, { allowlist });
+assert.deepEqual(unpinned, []);
+```
+
+Lists every routine whose `prosecdef` is true, or whose `prorettype` is
+`trigger` or `event_trigger`, in the app schemas, whose `proconfig` has no
+`search_path` element or one whose last element is not the bare identifier
+`pg_temp`. A privileged routine with a default `search_path` resolves names with
+the **owner's** privileges, so an attacker-influenced schema earlier in the path
+can shadow a function the body calls. `pg_temp` must be last: it is searched
+first for relations, so a name resolving to a temp object is caught by refusing
+to let it sit anywhere else.
+
+**This is the gate, and it is a CATALOG gate.** `scripts/check-migration-search-path.mjs`
+runs it in CI over a disposable PostgreSQL 17 cluster built from the real
+migration ledger and the real role files, and the attack-kit CI step runs it in
+the lane that already installs PostgreSQL 17 — so it costs no second job.
+
+The answer comes from PostgreSQL, not from the migration text: `prosecdef` and
+`prorettype` as they are after every statement, and `proconfig` after every
+`ALTER FUNCTION … SET/RESET search_path`, across files, with real identifier
+parsing. `proconfig` is a `text[]`, one `name=value` per element, and the
+`search_path=` value is split as a GUC list — a comma list, double quotes
+respected, case-sensitive once quoted. So `SET search_path = 'public, pg_temp'`
+(one schema literally named `public, pg_temp`, with `pg_temp` searched first) and
+`"PG_TEMP"` (a different schema from `pg_temp`) both fail, as does `pg_temp`
+anywhere but last. A `RESET` removes the element entirely, which is how
+PostgreSQL records "this routine pins nothing", and a null there is a real answer
+rather than a missing measurement.
+
+**Why not read the migrations as text?** Two fix rounds of the text audit each
+closed the reported holes and each review found new ones: a cross-file
+`ALTER FUNCTION … SECURITY DEFINER`, a later `SET`/`RESET search_path`, a
+nested-comment decoy, a quoted identifier. A regex model of PostgreSQL SQL
+cannot be made sound, so the text audit was removed from CI entirely. The
+catalog is the parser.
+
+The allowlist (`search-path-allowlist.json`) is keyed on the routine's **catalog
+identity** — `schema.name(identity arguments)` from
+`pg_get_function_identity_arguments` — with an `added` date, an `expires` date
+within 180 days of it, and a tracking issue. A new unpinned routine fails
+immediately. So does an entry that has expired, an entry that no longer matches
+any violation, an entry with an invalid date such as `9999-99-99`, and an audit
+that could not classify a schema it was asked to cover. Known violations in the
+shipped migrations are baselined there and tracked by issue 421.
+
+## `securityDefinerAudit` — a local HINT, not a gate
 
 ```ts
 const { findings, unpinned } = await securityDefinerAudit("db/migrations");
 assert.deepEqual(unpinned, []);
 ```
 
-Lists SECURITY DEFINER and trigger functions whose `search_path` is missing or
-does not end in `pg_temp`. A privileged function with a default `search_path`
-resolves names with the **owner's** privileges, so an attacker-influenced
-schema earlier in the path can shadow a function the body calls. `pg_temp` must
-be last: it is searched first for relations, so a name resolving to a temp
-object is caught by refusing to let it sit anywhere else.
-
-`assertSearchPathPinned(dir)` throws instead of returning, and
-`securityDefinerAuditLive(query)` runs the same audit against a live catalog for
-bodies a later migration replaced.
+The text-over-migration-files version above. It is kept as a fast local
+convenience — it needs no PostgreSQL, so it gives an answer in milliseconds
+while you are still writing the migration — and it is **not** wired to any CI
+job. Nothing in CI runs it, the gate above does not consult it, and it is not
+evidence of anything. If the two disagree, the gate is right and the hint is
+wrong. It cannot be made sound: that is the whole reason the gate reads a
+catalog.
 
 ## What the kit will not do
 

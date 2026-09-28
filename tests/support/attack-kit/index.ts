@@ -9,15 +9,19 @@ export {
   PortOccupiedError,
   REPOSITORY_DATABASE_NAME,
   REPOSITORY_ROOT,
+  CLUSTER_REGISTRY_NAME,
   NAMED_ROLES,
   ROLE_LOGINS,
   assertClusterDestroyed,
   assertPortAvailable,
   disposableRunDirectories,
   portIsOccupied,
+  readClusterRegistry,
   realPostgresSkipMessage,
   requiresRealPostgres,
   resolvePgBin,
+  shortSocketDirectories,
+  socketClaimed,
   withRealPostgres,
 } from "./real-postgres";
 export type {
@@ -33,6 +37,7 @@ export type {
 export {
   ConcurrencyTimeoutError,
   ConcurrentReadRaceError,
+  NoWritesSucceededError,
   concurrently,
   concurrentWriters,
   exhaustPool,
@@ -62,7 +67,9 @@ export {
   DirtyTreeError,
   fileExists,
   GuardDidNotBiteError,
+  InvalidTestCommandError,
   MutationTimeoutError,
+  reapKitClusters,
   tokenizeCommand,
 } from "./mutation";
 export type { AssertGuardBitesOptions, GuardBitesResult } from "./mutation";
@@ -70,22 +77,34 @@ export type { AssertGuardBitesOptions, GuardBitesResult } from "./mutation";
 export { isPrivilegeDenied, privilegeMatrix, roleCan, roleCannot, PrivilegeAssertionError } from "./privileges";
 export type { PrivilegeMatrixRow, PrivilegeOptions } from "./privileges";
 
+// The GATE is `securityDefinerAuditLive`, read from a real catalog.
+// `securityDefinerAudit` is a local hint over migration text, not a gate: it
+// cannot be made sound, and nothing in CI runs it.
 export {
+  ALLOWLIST_MAX_DAYS,
   allowlistKey,
   assertSearchPathPinned,
   loadSearchPathAllowlist,
+  parseGucList,
+  parseIsoDate,
   parseSearchPath,
+  proconfigSearchPath,
   searchPathEndsInPgTemp,
+  SearchPathAllowlistError,
   securityDefinerAudit,
   securityDefinerAuditLive,
   splitSqlStatements,
+  staleAllowlistEntries,
   stripSqlComments,
   UnpinnedSearchPathError,
-  withStaleAllowlist,
 } from "./search-path-audit";
 export type {
+  CatalogAuditOptions,
   FunctionFinding,
+  GucElement,
   LoadedSearchPathAllowlist,
+  PrivilegedKind,
   SearchPathAllowlistEntry,
+  SecurityDefinerAuditOptions,
   SecurityDefinerAuditResult,
 } from "./search-path-audit";

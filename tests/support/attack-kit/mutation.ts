@@ -11,9 +11,10 @@
 // leave the mutation in someone's working tree.
 
 import { spawn } from "node:child_process";
-import { readFile, writeFile, stat } from "node:fs/promises";
+import { readFile, writeFile, stat, mkdir, mkdtemp, readdir, rm, appendFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
-import { dirname, isAbsolute, resolve } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
+import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 
 /** Grace period between SIGTERM and SIGKILL when a group is torn down. */
@@ -188,6 +189,112 @@ export class DirtyTreeError extends Error {
   }
 }
 
+export class InvalidTestCommandError extends Error {
+  constructor(readonly testCommand: string, readonly detail: string) {
+    super(`invalid_test_command:${testCommand}:${detail}`);
+    this.name = "InvalidTestCommandError";
+  }
+}
+
+/** The registry file the kit's runner writes for each cluster it starts. */
+const CLUSTER_REGISTRY = "attack-kit-clusters.json";
+
+interface RegistryEntry {
+  readonly port: number;
+  readonly dataDirectory: string;
+  readonly pgBin: string;
+}
+
+/** Every `attack-kit-pg-*` run directory directly under `parent`. */
+async function runDirectories(parent: string): Promise<string[]> {
+  const entries = await readdir(parent, { withFileTypes: true }).catch(() => []);
+  return entries
+    .filter(entry => entry.isDirectory() && entry.name.startsWith("attack-kit-pg-"))
+    .map(entry => join(parent, entry.name));
+}
+
+const readRegistry = async (run: string): Promise<RegistryEntry[]> => {
+  const text = await readFile(join(run, CLUSTER_REGISTRY), "utf8").catch(() => "");
+  const entries: RegistryEntry[] = [];
+  for (const line of text.split("\n")) {
+    if (line.trim() === "") continue;
+    try {
+      const parsed = JSON.parse(line) as Partial<RegistryEntry>;
+      if (typeof parsed.port === "number" && typeof parsed.dataDirectory === "string" && typeof parsed.pgBin === "string") {
+        entries.push({ port: parsed.port, dataDirectory: parsed.dataDirectory, pgBin: parsed.pgBin });
+      }
+    } catch {
+      // A truncated line from a killed process names no cluster.
+    }
+  }
+  return entries;
+};
+
+const pidAlive = (pid: number): boolean => {
+  try { process.kill(pid, 0); return true; } catch (error) {
+    return (error as { code?: string }).code === "EPERM";
+  }
+};
+
+const readPostmasterPid = async (dataDirectory: string): Promise<number | undefined> => {
+  const first = (await readFile(join(dataDirectory, "postmaster.pid"), "utf8").catch(() => ""))
+    .split("\n")[0]?.trim();
+  return first && /^\d+$/.test(first) ? Number(first) : undefined;
+};
+
+/**
+ * Stop every cluster the command started under `parent`, and report any that
+ * survived.
+ *
+ * This exists because a group kill cannot reach a PostgreSQL postmaster.
+ * `pg_ctl start` runs the postmaster with `setsid`, so the postmaster is a
+ * session leader with its own process group and PPID 1: signalling the test
+ * command's group leaves it running, holding a SysV segment and a data
+ * directory, on a machine that has 32 segments in total. So after the group is
+ * down, every cluster the command registered is stopped cooperatively, then by
+ * pid, and a survivor is an error naming the pid.
+ *
+ * The scan is bounded to the private `TMPDIR` this helper gave the command, so
+ * it can only ever stop clusters that command started.
+ */
+export async function reapKitClusters(
+  parent: string,
+  options: { timeoutMs?: number } = {},
+): Promise<{ reaped: RegistryEntry[]; survivors: string[] }> {
+  const timeoutMs = options.timeoutMs ?? 30_000;
+  const reaped: RegistryEntry[] = [];
+  const survivors: string[] = [];
+  for (const run of await runDirectories(parent)) {
+    for (const entry of await readRegistry(run)) {
+      const { execFile } = await import("node:child_process");
+      const { promisify } = await import("node:util");
+      const run_ = promisify(execFile);
+      await run_(join(entry.pgBin, "pg_ctl"),
+        ["-D", entry.dataDirectory, "-m", "fast", "-w", "-t", "30", "stop"],
+        { timeout: 60_000, env: { PATH: "/usr/bin:/bin", LC_ALL: "C", TMPDIR: run, NODE_ENV: "test" } })
+        .catch(() => { /* the pid escalation below is what decides */ });
+      let pid = await readPostmasterPid(entry.dataDirectory);
+      if (pid !== undefined && pidAlive(pid)) {
+        for (const signal of ["SIGQUIT", "SIGKILL"] as const) {
+          try { process.kill(pid, signal); } catch { /* already gone */ }
+          const deadline = Date.now() + timeoutMs;
+          while (Date.now() < deadline && pidAlive(pid)) {
+            await new Promise(done => { setTimeout(done, 100); });
+          }
+          if (!pidAlive(pid)) break;
+        }
+      }
+      pid = await readPostmasterPid(entry.dataDirectory);
+      if (pid !== undefined && pidAlive(pid)) {
+        survivors.push(`${entry.port}:pid=${pid}:${entry.dataDirectory}`);
+      } else {
+        reaped.push(entry);
+      }
+    }
+  }
+  return { reaped, survivors };
+}
+
 export interface AssertGuardBitesOptions {
   /** File to mutate, absolute or relative to the repository root. */
   file: string;
@@ -205,6 +312,26 @@ export interface AssertGuardBitesOptions {
   because?: string;
   /** Skip the dirty-tree refusal, for a caller that already checked. */
   allowDirtyTree?: boolean;
+  /**
+   * Skip the unmutated baseline run. Off by default, and it should stay on.
+   *
+   * The baseline is what makes a failure mean "the guard bit". Without it a
+   * typo in a test path, a test that already fails at HEAD, or a mutation that
+   * breaks compilation all read as a bite — and every other pull request's
+   * "Mutation checks" evidence depends on this helper. Only a caller with its
+   * own reason should turn it off, and it is named in the report.
+   */
+  skipBaseline?: boolean;
+  /**
+   * Bound for the unmutated baseline run, when it must be shorter than the
+   * mutated one. The baseline should finish quickly — it has no cluster to
+   * start and nothing to prove — so a caller whose mutated run legitimately
+   * takes a minute can keep its own suite fast. The baseline timing out is
+   * still reported as an invalid command.
+   */
+  baselineBoundMs?: number;
+  /** Seconds to wait for each reaped cluster to exit. */
+  reapTimeoutMs?: number;
 }
 
 export interface GuardBitesResult {
@@ -312,24 +439,79 @@ export async function assertGuardBites(options: AssertGuardBitesOptions): Promis
   let exitCode: number | null = null;
   let signal: NodeJS.Signals | null = null;
   let restoredDigest = digest(original);
+  // A private TMPDIR for the command. Every cluster the kit's runner starts is
+  // created under it and registered there, so after the group is torn down the
+  // helper can find and stop the ones a group kill could not reach.
+  const privateTmp = await mkdtemp(join(tmpdir(), "attack-kit-mutation-run-"));
+  const commandEnv = (): NodeJS.ProcessEnv => {
+    // NODE_TEST_CONTEXT must be scrubbed. When this harness is itself run from a
+    // `node --test` file, that variable is inherited, and node then runs a
+    // nested test command INLINE as a plain script: no runner, no exit code,
+    // and the command's failures never reach us. Every such command would look
+    // like a clean exit, so `assertGuardBites` would report "the guard did not
+    // bite" for a guard that bites perfectly well.
+    // Both are set, not just `TMPDIR`: on macOS `tmpdir()` ignores `TMPDIR`
+    // and returns a `confstr` path, so a run directory created from it would
+    // land outside the scan the reap does below. `ATTACK_KIT_RUN_ROOT` is what
+    // actually pins the run directory; `TMPDIR` is set too because the
+    // reaper's own `pg_ctl` and any child the command runs both use it.
+    const env: NodeJS.ProcessEnv = {
+      ...process.env, TMPDIR: privateTmp, ATTACK_KIT_RUN_ROOT: privateTmp,
+    };
+    delete env.NODE_TEST_CONTEXT;
+    return env;
+  };
+  // Every exit path reaps, and the reaped set is reported rather than assumed.
+  const reap = async (): Promise<void> => {
+    const { survivors } = await reapKitClusters(privateTmp, { timeoutMs: options.reapTimeoutMs ?? 30_000 });
+    if (survivors.length > 0) {
+      throw new Error(`mutation_leftover_cluster:${survivors.join(",")}:${privateTmp}`);
+    }
+    await rm(privateTmp, { recursive: true, force: true }).catch(() => {});
+  };
   try {
+    // ---- The baseline, UNMUTATED. This is what makes a failure mean
+    // "the guard bit". `node --test does-not-exist.mjs` and
+    // `node -e "process.exit(1)"` both exit non-zero without ever reading the
+    // file under mutation, and both were reported as bites: a typo in a test
+    // path, a test that already failed at HEAD, or a mutation that breaks
+    // compilation all read as proof the guard works. Every other pull request's
+    // "Mutation checks" evidence depends on this helper, so a false bite here
+    // manufactures evidence for a guard nobody checked.
+    if (options.skipBaseline !== true) {
+      let baselineError: { stdout: string; stderr: string; code: string } | undefined;
+      try {
+        await runGrouped(command.file, command.args,
+          { cwd: root, maxBuffer: 1 << 26, env: commandEnv(), boundMs: options.baselineBoundMs ?? boundMs });
+      } catch (error) {
+        const failure = error as { stdout?: string; stderr?: string; code?: number | string; signal?: string };
+        if (error instanceof MutationTimeoutError) {
+          // A baseline that hangs is a broken test command, not a bite.
+          await reap();
+          throw new InvalidTestCommandError([command.file, ...command.args].join(" "),
+            `the_test_command_timed_out_without_the_mutation:${error.message}`);
+        }
+        baselineError = {
+          stdout: failure.stdout ?? "", stderr: failure.stderr ?? "",
+          code: `${failure.code ?? failure.signal ?? "unknown"}`,
+        };
+      }
+      await reap();
+      if (baselineError !== undefined) {
+        throw new InvalidTestCommandError(
+          [command.file, ...command.args].join(" "),
+          `the_test_command_fails_without_the_mutation:exit=${baselineError.code}`
+          + `:stdout_tail=${baselineError.stdout.trim().split("\n").slice(-3).join(" | ").slice(0, 300)}`
+          + `:stderr_tail=${baselineError.stderr.trim().split("\n").slice(-3).join(" | ").slice(0, 300)}`);
+      }
+    }
     await writeFile(file, original.replace(options.find, options.replace));
     try {
-      // NODE_TEST_CONTEXT must be scrubbed. When this harness is itself run
-      // from a `node --test` file, that variable is inherited, and node then
-      // runs a nested test command INLINE as a plain script: no runner, no exit
-      // code, and the command's failures never reach us. Every such command
-      // would look like a clean exit, so `assertGuardBites` would report
-      // "the guard did not bite" for a guard that bites perfectly well.
-      const env = { ...process.env };
-      delete env.NODE_TEST_CONTEXT;
       // `runGrouped` returns only once the child has exited — including on the
       // expiry path, where it signals the whole process group and awaits the
-      // exit before rejecting. So by the time the catch below runs, nothing the
-      // command started is still alive, and the restore in the outer `finally`
-      // cannot race a live child that is still writing to `file`.
+      // exit before rejecting.
       const result = await runGrouped(command.file, command.args,
-        { cwd: root, maxBuffer: 1 << 26, env, boundMs });
+        { cwd: root, maxBuffer: 1 << 26, env: commandEnv(), boundMs });
       // A resolved command IS the "the guard did not bite" case: exit 0 with
       // the mutation applied. Anything that rejects is examined for a non-zero
       // status, a signal, or a kill.
@@ -358,6 +540,9 @@ export async function assertGuardBites(options: AssertGuardBitesOptions): Promis
       signal = (failure.signal as NodeJS.Signals | undefined) ?? null;
     }
   } finally {
+    // The reap runs BEFORE the restore, so a cluster that survived the timeout
+    // is stopped while the evidence that names it is still on disk.
+    await reap();
     restoredDigest = digest(await restore());
   }
   return {

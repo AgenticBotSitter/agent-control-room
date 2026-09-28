@@ -15,7 +15,7 @@
 import { execFile } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, readFile, readdir, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, appendFile } from "node:fs/promises";
 import { createConnection } from "node:net";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -181,6 +181,19 @@ export interface WithRealPostgresOptions {
    * than it is. Absent in normal use.
    */
   stopAttemptFault?: "no_op";
+  /**
+   * Fault injection for the `pg_ctl start` exit code, for a test that must
+   * prove a start which launched a postmaster and then FAILED leaves nothing
+   * behind. `exit_non_zero_after_start` runs the real `pg_ctl start`, waits for
+   * the cluster to publish its pid, and then throws exactly as a `pg_ctl`
+   * exits non-zero after a fork — a `-w -t 60` "server did not start in time"
+   * under load, or the 120 s exec timeout while the postmaster is still coming
+   * up.
+   *
+   * It can only ever report a failure that really happened, so it cannot make
+   * teardown look better than it is. Absent in normal use.
+   */
+  startAttemptFault?: "exit_non_zero_after_start";
 }
 
 export class PortOccupiedError extends Error {
@@ -222,15 +235,65 @@ export function realPostgresSkipMessage(explicit?: string): string {
 const socketName = (port: number) => `.s.PGSQL.${port}`;
 
 /**
+ * Name of the registry file that records every cluster this process started.
+ *
+ * The mutation helper gives its test command a PRIVATE `TMPDIR` and then
+ * reaps any postmaster that published a `postmaster.pid` under it. That only
+ * works if the runner says where its clusters went, because a group kill
+ * cannot reach them: `pg_ctl start` runs the postmaster with `setsid`, so the
+ * postmaster's PGID is its own pid with PPID 1, and signalling the test's
+ * process group misses it entirely. The registry is what turns "something may
+ * still be running" into a specific, reapable data directory.
+ */
+export const CLUSTER_REGISTRY_NAME = "attack-kit-clusters.json";
+
+/** Record a started cluster so a supervisor can find and stop it later. */
+async function registerCluster(run: string, entry: { port: number; dataDirectory: string; pgBin: string }): Promise<void> {
+  const file = join(run, CLUSTER_REGISTRY_NAME);
+  // Append-only as one JSON object per line: concurrent kit clusters in the
+  // same process must not lose each other's entries to a read-modify-write.
+  await appendFile(file, `${JSON.stringify(entry)}\n`, "utf8");
+}
+
+/** Read the registry of a run directory, ignoring any unparsable line. */
+export async function readClusterRegistry(run: string): Promise<
+  { port: number; dataDirectory: string; pgBin: string }[]
+> {
+  const text = await readFile(join(run, CLUSTER_REGISTRY_NAME), "utf8").catch(() => "");
+  const entries: { port: number; dataDirectory: string; pgBin: string }[] = [];
+  for (const line of text.split("\n")) {
+    if (line.trim() === "") continue;
+    try {
+      const parsed = JSON.parse(line) as { port?: unknown; dataDirectory?: unknown; pgBin?: unknown };
+      if (typeof parsed.port === "number" && typeof parsed.dataDirectory === "string" && typeof parsed.pgBin === "string") {
+        entries.push({ port: parsed.port, dataDirectory: parsed.dataDirectory, pgBin: parsed.pgBin });
+      }
+    } catch {
+      // A half-written line from a killed process is not a cluster.
+    }
+  }
+  return entries;
+}
+
+/**
  * True when a postmaster publishes its socket for `port`.
  *
  * This is how a socket-only cluster is detected: `-h ''` publishes no TCP
  * listener at all, so the published socket is the only evidence that the port
- * is taken. Every disposable cluster in this repository — this kit's, the
- * production lifecycle tests', the rehearsal's — places its socket in a
- * `socket` directory inside a `mkdtemp` directory, so the scan is the temp
- * directory plus its immediate children. That is bounded, and it is what makes
- * a foreign cluster from another job visible instead of silently reused.
+ * is taken. Four places are scanned, because the one that matters is the one
+ * that gets missed:
+ *
+ *  - the temp directory's own entries, for a cluster that published there;
+ *  - a `socket` subdirectory of any temp-directory child, the shape the
+ *    production lifecycle tests and the rehearsal use;
+ *  - `SHORT_SOCKET_ROOT/ak*` — THIS KIT'S OWN sockets. The kit cannot use a
+ *    `socket` subdirectory under the run directory (a macOS `tmpdir()` is 47
+ *    characters and the socket path is capped at ~103), so its clusters publish
+ *    into `/tmp/ak<pid>-<run>/`. A scan that looked only at the temp directory
+ *    and its immediate children could not see them, so a second kit cluster
+ *    would happily start on a port another kit cluster was already holding —
+ *    which is exactly the port-block discipline this kit exists to enforce,
+ *    and the most likely foreigner on a machine running concurrent kit jobs.
  */
 export async function socketClaimed(port: number, directory?: string): Promise<boolean> {
   const name = socketName(port);
@@ -243,7 +306,18 @@ export async function socketClaimed(port: number, directory?: string): Promise<b
     // cluster that holds the port is exactly the case that must be refused.
     if (existsSync(join(tmpdir(), entry.name, "socket", name))) return true;
   }
+  for (const directory of await shortSocketDirectories()) {
+    if (existsSync(join(directory, name))) return true;
+  }
   return false;
+}
+
+/** Every `/tmp/ak*` socket directory the kit's own runner publishes into. */
+export async function shortSocketDirectories(): Promise<string[]> {
+  const entries = await readdir(SHORT_SOCKET_ROOT, { withFileTypes: true }).catch(() => []);
+  return entries
+    .filter(entry => entry.isDirectory() && entry.name.startsWith("ak"))
+    .map(entry => join(SHORT_SOCKET_ROOT, entry.name));
 }
 
 /** First line of an error message, for a one-token teardown failure summary. */
@@ -409,11 +483,24 @@ function shortSocketDirectory(run: string, port: number): string {
   return candidate;
 }
 
+/**
+ * Where run directories are created.
+ *
+ * `tmpdir()` is the default, and on macOS it resolves through `confstr` to
+ * `/var/folders/...` — it does NOT honour `TMPDIR`. That matters for the
+ * mutation helper, which gives the command it runs a private `TMPDIR` and then
+ * scans that directory for the clusters the command started. A run directory
+ * that ignores `TMPDIR` lands outside the scan, so a postmaster a timed-out
+ * command started would survive the reap. `ATTACK_KIT_RUN_ROOT` lets a caller
+ * put every run directory somewhere it can enumerate, and the helper sets it.
+ */
+const runRoot = (): string => process.env.ATTACK_KIT_RUN_ROOT?.trim() || tmpdir();
+
 /** One start/stop cycle, from `initdb` to a migrated, role-provisioned database. */
 async function startCluster(options: WithRealPostgresOptions & { pgBin: string }): Promise<RealPostgres> {
   const { pgBin, port } = options;
   const database = options.database ?? REPOSITORY_DATABASE_NAME;
-  const run = await mkdtemp(join(tmpdir(), "attack-kit-pg-"));
+  const run = await mkdtemp(join(runRoot(), "attack-kit-pg-"));
   const socketDirectory = shortSocketDirectory(run, port);
   const dataDirectory = join(run, "data");
   let started = false;
@@ -580,18 +667,11 @@ async function startCluster(options: WithRealPostgresOptions & { pgBin: string }
     if (asPostgres) await exec("chown", ["-R", `${POSTGRES_UID}:${POSTGRES_GID}`, run], { timeout: 30_000 });
     await native(pgBin, run, "initdb", ["-D", dataDirectory, "-U", "fixture_admin",
       "--auth-local=trust", "--auth-host=reject", "--no-locale", "--encoding=UTF8"]);
-    // Socket-only: `-h ''` publishes no TCP listener at all, so the cluster is
-    // reachable only through the run directory even if a port were forwarded.
-    await native(pgBin, run, "pg_ctl", ["-D", dataDirectory, "-l", join(run, "server.log"),
-      "-w", "-t", "60", "-o",
-      `-k ${socketDirectory} -p ${port} -h '' -c unix_socket_permissions=0700 -c shared_buffers=32MB -c max_connections=60`,
-      "start"]);
-    started = true;
     // Retained for the lifetime of the cluster so the teardown can prove the
     // postmaster is gone without reading files it is about to delete. The read
     // is behind a function so a test can inject the one failure that used to
     // orphan a postmaster: a start that succeeded, followed by a pid read that
-    // did not. `stop` no longer depends on the outcome of this read.
+    // did not. `stop` does not depend on the outcome of this read.
     const readPostmasterPid = async (): Promise<string> => {
       if (options.pidCaptureFault === "read_fails") {
         throw Object.assign(new Error(`attack_kit_injected_pid_read_failure:${dataDirectory}`),
@@ -599,8 +679,69 @@ async function startCluster(options: WithRealPostgresOptions & { pgBin: string }
       }
       return await readFile(join(dataDirectory, "postmaster.pid"), "utf8");
     };
-    const recordedPid = (await readPostmasterPid().catch(() => "")).split("\n")[0]?.trim();
-    postmasterPid = recordedPid && /^\d+$/.test(recordedPid) ? Number(recordedPid) : undefined;
+    const recordedPid = (text: string): number | undefined => {
+      const first = text.split("\n")[0]?.trim();
+      return first && /^\d+$/.test(first) ? Number(first) : undefined;
+    };
+    // `started` is set BEFORE `pg_ctl start` is invoked, not after it returns
+    // zero. A start that fails after the postmaster has forked — `-w -t 60`
+    // "server did not start in time" under load, or the 120 s exec timeout
+    // while the postmaster is still coming up — leaves a LIVE server behind, and
+    // the old code skipped the shutdown entirely because `started` was still
+    // false, then deleted the data directory and the socket directory. The
+    // orphan survived with a SysV segment held: on a machine with 32 of them,
+    // that blocks every other job. So from here on "may have started" is the
+    // state `stop` acts on, and the pid is read from the data directory before
+    // anything is deleted.
+    started = true;
+    let startFailure: unknown;
+    try {
+      // Socket-only: `-h ''` publishes no TCP listener at all, so the cluster is
+      // reachable only through the run directory even if a port were forwarded.
+      await native(pgBin, run, "pg_ctl", ["-D", dataDirectory, "-l", join(run, "server.log"),
+        "-w", "-t", "60", "-o",
+        `-k ${socketDirectory} -p ${port} -h '' -c unix_socket_permissions=0700 -c shared_buffers=32MB -c max_connections=60`,
+        "start"]);
+      if (options.startAttemptFault === "exit_non_zero_after_start") {
+        // The injected failure is raised only after the cluster is REALLY up —
+        // the pid is polled from disk first — so the teardown this test
+        // exercises is the teardown of a live postmaster whose start reported a
+        // failure. Raising it without a running postmaster would prove nothing.
+        const deadline = Date.now() + 60_000;
+        while (postmasterPid === undefined && Date.now() < deadline) {
+          await new Promise(done => { setTimeout(done, 100); });
+          postmasterPid = recordedPid(await readPostmasterPid().catch(() => ""));
+        }
+        if (postmasterPid === undefined) {
+          throw new Error("attack_kit_injected_start_failure_without_a_live_postmaster");
+        }
+        startFailure = new Error("attack_kit_injected_start_failure_after_launch");
+      }
+    } catch (error) {
+      // Re-read the pid from disk BEFORE the teardown deletes the data
+      // directory. A failed start is exactly the case where no pid has been
+      // captured yet, and this read is the only handle on a postmaster that
+      // may nonetheless be running.
+      postmasterPid ??= recordedPid(await readPostmasterPid().catch(() => ""));
+      startFailure ??= error;
+    }
+    if (startFailure !== undefined) {
+      // The postmaster's own log is the only diagnostic a start failure has,
+      // and `stop` is about to delete the run directory that holds it, so it is
+      // surfaced in the error rather than discarded with the directory.
+      const log = (await readFile(join(run, "server.log"), "utf8").catch(() => "")).trim();
+      const tail = log.split("\n").slice(-8).join(" | ").slice(0, 800);
+      throw new Error(`attack_kit_cluster_start_failed:${port}`
+        + `:${firstLineOf(startFailure)}`
+        + `:postmaster_pid=${postmasterPid ?? "none"}`
+        + `:${tail === "" ? "no_server_log" : `server_log=${tail}`}`);
+    }
+    // Registered as soon as there is a running postmaster, and BEFORE the pid
+    // is read: the registry is what a supervisor reaps from, and a run whose
+    // pid read fails still leaves a registered, reapable data directory. It is
+    // removed with the run directory, so it cannot outlive the cluster.
+    await registerCluster(run, { port, dataDirectory, pgBin });
+    postmasterPid = recordedPid(await readPostmasterPid().catch(() => ""));
 
     const adminOptions = (name = "postgres"): ConnectionOptions => ({
       host: socketDirectory, port, database: name, user: "fixture_admin", password: FIXTURE_ADMIN_PASSWORD,

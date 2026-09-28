@@ -24,6 +24,25 @@ export class ConcurrentReadRaceError extends Error {
   }
 }
 
+/**
+ * Raised when no write ever succeeded.
+ *
+ * A helper whose whole point is interleaving writes with reads used to return
+ * `{writes: 0, reads: 35, writeErrors: 35}` and pass: a writer that always
+ * throws, or a role that is denied INSERT, produced no concurrency at all and
+ * every read raced against nothing. A read-race test then "passes" against a
+ * writer that cannot write, which is the case the test exists to detect.
+ */
+export class NoWritesSucceededError extends Error {
+  constructor(readonly errors: readonly unknown[], readonly elapsedMs: number) {
+    const first = errors[0];
+    const detail = first instanceof Error ? first.message : String(first);
+    super(`concurrent_writers_no_successful_write:${errors.length}_write_error(s):${detail}`
+      + `:elapsed=${elapsedMs}ms`);
+    this.name = "NoWritesSucceededError";
+  }
+}
+
 const DEADLINE_PADDING_MS = 50;
 
 /**
@@ -146,7 +165,19 @@ export interface ConcurrentWritersOptions {
   thinkMs?: number;
   boundMs?: number;
   /** Return the failures instead of throwing. Off by default: a read race is a defect. */
-  allowReadErrors?: boolean;
+  readonly allowReadErrors?: boolean;
+  /**
+   * Tolerate a WRITE that fails, as long as at least one write succeeded.
+   *
+   * Off by default, and off is the safe direction: a writer that is denied
+   * INSERT, or that throws on every call, means nothing raced. A caller that
+   * genuinely expects some write failures — contention, a deliberate
+   * constraint — sets this and is still refused by the zero-writes rule below,
+   * which is not optional.
+   */
+  readonly allowWriteErrors?: boolean;
+  /** Require at least this many successful writes. One by default. */
+  readonly minWrites?: number;
 }
 
 export interface ConcurrentWritersResult {
@@ -230,7 +261,19 @@ export async function concurrentWriters(
     if (settled === "timeout") {
       throw new ConcurrencyTimeoutError("concurrent_writers_no_completion", bound, Date.now() - started);
     }
-    const result: ConcurrentWritersResult = { writes, reads, writeErrors, readErrors, elapsedMs: Date.now() - started };
+    const elapsedMs = Date.now() - started;
+    const result: ConcurrentWritersResult = { writes, reads, writeErrors, readErrors, elapsedMs };
+    // Nothing raced if nothing was written. Checked FIRST, before the read
+    // errors, because a reader against a writer that cannot write is not a
+    // read race — it is a test that proved nothing, and reporting it as clean
+    // is the defect.
+    const minWrites = options.minWrites ?? 1;
+    if (writes < minWrites) throw new NoWritesSucceededError(writeErrors, elapsedMs);
+    if (writeErrors.length > 0 && !options.allowWriteErrors) {
+      const first = writeErrors[0];
+      const detail = first instanceof Error ? first.message : String(first);
+      throw new Error(`concurrent_writers_write_failed:${writeErrors.length}_write_error(s):${detail}`);
+    }
     if (readErrors.length > 0 && !options.allowReadErrors) throw new ConcurrentReadRaceError(readErrors);
     return result;
   } finally {
