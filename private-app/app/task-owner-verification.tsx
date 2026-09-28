@@ -7,6 +7,7 @@ import { READ_CORRECT_ATTESTATION_NOTE_V1,
 import { createTaskVerificationWorkspace, type TaskVerificationSession, type TaskVerificationWorkspace,
   type VerificationWorkspaceBinding } from "../../src/web/v1/task-verification-workspace";
 import { ConfiguredTimestamp } from "./configured-timestamp";
+import { usePolledRead } from "./use-polled-read";
 
 type Scenario = TaskVerificationOptions["scenarios"][number];
 const availability: Record<Scenario["availability"], string> = {
@@ -75,29 +76,27 @@ function OwnerTaskVerificationController({ projectId, jobId, artifactId, targetI
   const { client } = session;
   const { scenarioId, outcome: result, note, pending, receipt, error: saveError } =
     useSyncExternalStore(session.subscribe, session.getSnapshot, session.getSnapshot);
-  const [options, setOptions] = useState<TaskVerificationOptions>();
   const [error, setError] = useState<BrowserRequestError>(), [refresh, setRefresh] = useState(0);
-  useEffect(() => {
-    let live = true, busy = false;
-    const load = async () => {
-      if (busy || client.hasPending()) return; busy = true;
-      try {
-        const next = await client.options(projectId, jobId, { artifactId, targetId, targetDigest, contentHash });
-        if (live) { setOptions(next); setError(undefined); session.clearError(); }
-      } catch (reason) {
-        if (live) { setOptions(undefined); setError(reason instanceof BrowserRequestError ? reason : new BrowserRequestError("unavailable")); }
-      } finally { busy = false; }
-    };
-    void load();
-    const timer = setInterval(() => { if (!document.hidden) void load(); }, 30_000);
-    const focus = () => { void load(); }; window.addEventListener("focus", focus);
-    return () => { live = false; clearInterval(timer); window.removeEventListener("focus", focus); };
-  }, [client, session, projectId, jobId, artifactId, targetId, targetDigest, contentHash, refresh]);
+  // The shared polling hook owns the schedule: it pauses while the tab is
+  // hidden, refreshes on focus, never overlaps a read, and backs off when
+  // nothing changes or the read fails. A pending save owns the client, so
+  // polling suspends until the write settles rather than racing it.
+  const held = client.hasPending();
+  const verificationRead = usePolledRead<TaskVerificationOptions>({
+    key: `task-owner-verification-${projectId}-${jobId}-${artifactId}-${targetId}-${refresh}`,
+    baseIntervalMs: 30_000,
+    enabled: !held,
+    read: () => client.options(projectId, jobId, { artifactId, targetId, targetDigest, contentHash }),
+    onAccept: () => { setError(undefined); session.clearError(); },
+    onFailure: (reason: unknown) => {
+      setError(reason instanceof BrowserRequestError ? reason : new BrowserRequestError("unavailable")); },
+  });
+  const options = verificationRead.value;
   const save = async (scenario?: Scenario) => {
     setError(undefined);
     const saved = await session.save(scenario && { scenarioId: scenario.scenarioId, instructionsDigest: scenario.instructionsDigest });
     if (saved) { setRefresh(value => value + 1); onSaved(); }
-    else setOptions(undefined);
+    else verificationRead.clear();
   };
   return <>
     {!options && !error && !saveError && !client.hasPending() && <p role="status">Loading human verification…</p>}

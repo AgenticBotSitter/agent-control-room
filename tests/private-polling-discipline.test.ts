@@ -1,0 +1,296 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { createPolledReadScheduler, type PolledReadIntervalReason } from "../src/web/v1/polled-read-scheduler";
+import { sharePolledRequest, sharedRequestCountForTest } from "../src/web/v1/polled-request-sharing";
+
+/** A hand-driven clock and timer queue, so these tests need no DOM and no waits. */
+function harness() {
+  let now = 0, nextTimer = 1;
+  const timers = new Map<number, { at: number; callback: () => void }>();
+  const intervals: Array<{ delayMs: number; reason: PolledReadIntervalReason }> = [];
+  let hidden = false;
+  return {
+    options: {
+      hidden: () => hidden,
+      schedule: (callback: () => void, delayMs: number) => { const id = nextTimer++; timers.set(id, { at: now + delayMs, callback }); return id; },
+      cancel: (timer: unknown) => { timers.delete(timer as number); },
+      observe: (delayMs: number, reason: PolledReadIntervalReason) => { intervals.push({ delayMs, reason }); },
+    },
+    intervals,
+    setHidden(value: boolean) { hidden = value; },
+    get now() { return now; },
+    /** Advances time, firing every timer whose deadline has passed, in order.
+     * Each fired callback is followed by a full microtask drain so that an async
+     * `read` settles (and arms its successor) before the next timer is due. */
+    async advance(ms: number) {
+      const target = now + ms;
+      for (let guard = 0; guard < 10_000; guard++) {
+        const due = [...timers.entries()].filter(([, timer]) => timer.at <= target).sort((a, b) => a[1].at - b[1].at);
+        if (!due.length) break;
+        const [id, timer] = due[0]!;
+        timers.delete(id);
+        now = timer.at;
+        timer.callback();
+        await new Promise<void>(resolve => setImmediate(resolve));
+      }
+      now = target;
+      await new Promise<void>(resolve => setImmediate(resolve));
+    },
+    get pending() { return timers.size; },
+  };
+}
+
+test("a read never overlaps itself: the next poll is armed only after the previous settles", async () => {
+  const time = harness();
+  let inFlight = 0, maxInFlight = 0, reads = 0, release!: () => void;
+  const scheduler = createPolledReadScheduler<number>({
+    ...time.options,
+    baseIntervalMs: 30_000,
+    // The read stays outstanding until the test releases it, which is the
+    // condition that would make a `setInterval` implementation overlap.
+    read: () => { reads++; inFlight++; maxInFlight = Math.max(maxInFlight, inFlight); return new Promise<number>(resolve => { release = () => { inFlight--; resolve(reads); }; }); },
+    accept: () => {}, failed: () => {},
+  });
+  scheduler.start();
+  await time.advance(0);
+  assert.equal(reads, 1);
+  // Four whole intervals pass while that one read is still open.
+  await time.advance(120_000);
+  assert.equal(reads, 1, "no second request may start while the first is in flight");
+  assert.equal(maxInFlight, 1);
+  release();
+  await time.advance(0);
+  assert.equal(reads, 1, "settling the read does not fire an immediate extra read");
+  assert.equal(time.pending, 1, "it arms exactly one successor");
+  await time.advance(30_000);
+  assert.equal(reads, 2, "the next poll starts only once the previous one settled");
+  release();
+  await time.advance(0);
+  scheduler.stop();
+});
+
+test("a trigger during a read is coalesced into exactly one follow-up", async () => {
+  const time = harness();
+  let reads = 0, release!: () => void;
+  const scheduler = createPolledReadScheduler<number>({
+    ...time.options,
+    baseIntervalMs: 30_000,
+    read: () => { reads++; return new Promise<number>(resolve => { release = () => resolve(reads); }); },
+    accept: () => {}, failed: () => {},
+  });
+  scheduler.start();
+  await time.advance(0);
+  assert.equal(reads, 1);
+  // Four separate triggers while one read is outstanding.
+  scheduler.trigger(); scheduler.trigger(); scheduler.trigger(); scheduler.trigger();
+  assert.equal(reads, 1, "triggers during a read must not start requests");
+  release();
+  await time.advance(0);
+  assert.equal(reads, 2, "coalesced triggers produce exactly one follow-up read");
+  release();
+  await time.advance(0);
+  assert.equal(reads, 2, "and only one");
+  scheduler.stop();
+});
+
+test("a hidden tab is never read, and returning to it refreshes immediately", async () => {
+  const time = harness();
+  let reads = 0;
+  const scheduler = createPolledReadScheduler<number>({
+    ...time.options, baseIntervalMs: 30_000,
+    read: async () => ++reads, accept: () => {}, failed: () => {},
+  });
+  scheduler.start();
+  await time.advance(0);
+  assert.equal(reads, 1);
+  time.setHidden(true);
+  await time.advance(120_000);
+  assert.equal(reads, 1, "a background tab must not poll");
+  time.setHidden(false);
+  scheduler.trigger();
+  await time.advance(0);
+  assert.equal(reads, 2, "returning to the tab refreshes at once");
+  scheduler.stop();
+});
+
+test("failures back off exponentially and reset on the next success", async () => {
+  const time = harness();
+  let attempt = 0;
+  const scheduler = createPolledReadScheduler<number>({
+    ...time.options, baseIntervalMs: 10_000,
+    read: async () => { if (attempt++ < 3) throw new Error("server unavailable"); return 1; },
+    accept: () => {}, failed: () => {},
+  });
+  scheduler.start();
+  await time.advance(0);
+  assert.deepEqual(time.intervals.map(entry => entry.delayMs), [20_000], "first failure doubles");
+  await time.advance(20_000);
+  assert.deepEqual(time.intervals.map(entry => entry.delayMs), [20_000, 40_000], "second failure doubles again");
+  await time.advance(40_000);
+  assert.deepEqual(time.intervals.map(entry => entry.delayMs), [20_000, 40_000, 80_000], "third failure doubles again");
+  // The fourth attempt succeeds, so the backoff must reset to the base interval.
+  await time.advance(80_000);
+  assert.equal(time.intervals.at(-1)?.delayMs, 10_000, "a success returns the page to the base interval");
+  assert.equal(time.intervals.at(-1)?.reason, "base");
+  scheduler.stop();
+});
+
+test("error backoff is bounded so a long outage still recovers on a fixed schedule", async () => {
+  const time = harness();
+  const scheduler = createPolledReadScheduler<number>({
+    ...time.options, baseIntervalMs: 10_000, maxErrorMultiplier: 8,
+    read: async () => { throw new Error("down"); }, accept: () => {}, failed: () => {},
+  });
+  scheduler.start();
+  // Step well past the ceiling each round so the ceiling itself is exercised
+  // without depending on which multiplier the previous round happened to pick.
+  for (let round = 0; round < 12; round++) await time.advance(80_000);
+  assert.ok(time.intervals.length >= 10, `expected many rounds, saw ${time.intervals.length}`);
+  assert.equal(Math.max(...time.intervals.map(entry => entry.delayMs)), 80_000, "never exceeds 8x base");
+  assert.equal(Math.min(...time.intervals.map(entry => entry.delayMs)), 20_000, "and never collapses below 2x base");
+  assert.ok(time.intervals.every(entry => entry.reason === "error"), "a failing read stays in the error schedule");
+  scheduler.stop();
+});
+
+test("unchanged data stretches the interval, and any change returns it to base", async () => {
+  const time = harness();
+  let value = 1;
+  const scheduler = createPolledReadScheduler<number>({
+    ...time.options, baseIntervalMs: 30_000,
+    read: async () => value, accept: () => {}, failed: () => {},
+  });
+  scheduler.start();
+  await time.advance(0);
+  // The first read has no predecessor, so it can only be judged "base".
+  assert.equal(time.intervals.at(-1)?.delayMs, 30_000, "the first read is always at base");
+  await time.advance(60_000);
+  assert.equal(time.intervals.at(-1)?.delayMs, 60_000, "an unchanged read stretches to 2x");
+  await time.advance(60_000);
+  assert.equal(time.intervals.at(-1)?.delayMs, 120_000, "and then to the 4x ceiling");
+  await time.advance(120_000);
+  // A real change must take effect at once rather than at the stretched rate:
+  // once it is read, the page is back at the base interval.
+  value = 2;
+  await time.advance(120_000);
+  assert.ok(time.intervals.some(entry => entry.delayMs === 30_000 && entry.reason === "base"),
+    `changed data returns to the base interval, saw ${JSON.stringify(time.intervals)}`);
+  scheduler.stop();
+});
+
+test("focusing or returning to the tab earns the base interval, never a stretched one", async () => {
+  const time = harness();
+  const scheduler = createPolledReadScheduler<number>({
+    ...time.options, baseIntervalMs: 30_000,
+    read: async () => 1, accept: () => {}, failed: () => {},
+  });
+  scheduler.start();
+  await time.advance(0);
+  await time.advance(180_000);
+  assert.equal(time.intervals.at(-1)?.delayMs, 120_000, "idle page is stretched to the ceiling");
+  const before = time.intervals.length;
+  scheduler.trigger();
+  // The trigger's own read runs immediately, and the interval it then arms
+  // starts again from the base rather than resuming the stretched one.
+  await time.advance(0);
+  const armed = time.intervals.slice(before);
+  assert.equal(armed.length, 1, "the trigger arms exactly one successor");
+  assert.ok(armed[0]!.delayMs <= 60_000,
+    `a focus must not resume a stretched interval, armed ${armed[0]!.delayMs}`);
+  assert.equal(armed[0]!.delayMs, 60_000, "and it starts the stretch over from the beginning");
+  scheduler.stop();
+});
+
+test("structural equality compares objects by value, so a reserialised body counts as unchanged", async () => {
+  const time = harness();
+  let reads = 0;
+  const scheduler = createPolledReadScheduler<{ items: number[]; at: string }>({
+    ...time.options, baseIntervalMs: 10_000,
+    read: async () => { reads++; return { items: [1, 2], at: "same" }; },
+    accept: () => {}, failed: () => {},
+  });
+  scheduler.start();
+  await time.advance(0);
+  // Every read returns a fresh object with identical content, which is what a
+  // re-serialised JSON body looks like to the client.
+  await time.advance(20_000);
+  assert.equal(time.intervals.at(-1)?.delayMs, 20_000, "a new but equal object still counts as unchanged");
+  assert.equal(time.intervals.at(-1)?.reason, "quiet");
+  await time.advance(20_000);
+  assert.equal(time.intervals.at(-1)?.delayMs, 40_000, "and the stretch keeps growing");
+  assert.ok(reads >= 3);
+  scheduler.stop();
+});
+
+test("a value that really differs is not mistaken for unchanged", async () => {
+  const time = harness();
+  let reads = 0;
+  const scheduler = createPolledReadScheduler<{ items: number[] }>({
+    ...time.options, baseIntervalMs: 10_000,
+    read: async () => ({ items: [reads++] }), accept: () => {}, failed: () => {},
+  });
+  scheduler.start();
+  await time.advance(0);
+  await time.advance(10_000);
+  assert.equal(time.intervals.at(-1)?.delayMs, 10_000, "differing content stays at base");
+  assert.equal(time.intervals.at(-1)?.reason, "base");
+  scheduler.stop();
+});
+
+test("stopping ends polling and aborts the read that is still in flight", async () => {
+  const time = harness();
+  let signal: AbortSignal | undefined, reads = 0;
+  const scheduler = createPolledReadScheduler<number>({
+    ...time.options, baseIntervalMs: 10_000,
+    read: received => { reads++; signal = received; return new Promise<number>(() => {}); },
+    accept: () => {}, failed: () => {},
+  });
+  scheduler.start();
+  await time.advance(0);
+  assert.equal(reads, 1);
+  assert.equal(signal?.aborted, false);
+  scheduler.stop();
+  assert.equal(signal?.aborted, true, "the in-flight read is aborted");
+  assert.equal(scheduler.stopped, true);
+  await time.advance(120_000);
+  assert.equal(reads, 1, "a stopped scheduler never reads again");
+  assert.equal(time.pending, 0, "and leaves no timer behind");
+  scheduler.stop();
+  assert.equal(scheduler.stopped, true, "stop is idempotent");
+});
+
+test("concurrent readers of one endpoint share a single request", async () => {
+  assert.equal(sharedRequestCountForTest(), 0);
+  let requests = 0, release!: (value: string) => void;
+  const key = "shared-endpoint-test";
+  const request = () => { requests++; return new Promise<string>(resolve => { release = resolve; }); };
+  const signal = new AbortController().signal;
+  const first = sharePolledRequest(key, request, signal);
+  const second = sharePolledRequest(key, request, signal);
+  const third = sharePolledRequest(key, request, signal);
+  assert.equal(requests, 1, "three concurrent readers issue one request");
+  release("value");
+  assert.deepEqual(await Promise.all([first, second, third]), ["value", "value", "value"]);
+  assert.equal(sharedRequestCountForTest(), 0, "the entry is dropped once it settles");
+  // A later reader must start a fresh request: this collapses concurrency, it
+  // never stores a response.
+  const later = sharePolledRequest(key, request, signal);
+  assert.equal(requests, 2, "a settled request is never replayed");
+  release("second");
+  assert.equal(await later, "second");
+  assert.equal(sharedRequestCountForTest(), 0);
+});
+
+test("a rejected shared request is not left behind for the next reader", async () => {
+  const key = "shared-endpoint-failure";
+  const signal = new AbortController().signal;
+  await assert.rejects(sharePolledRequest(key, () => Promise.reject(new Error("read failed")), signal));
+  assert.equal(sharedRequestCountForTest(), 0);
+  assert.equal(await sharePolledRequest(key, () => Promise.resolve("recovered"), signal), "recovered");
+});
+
+test("an invalid base interval is refused rather than silently polling at zero", () => {
+  const time = harness();
+  for (const baseIntervalMs of [0, -1, Number.NaN, Number.POSITIVE_INFINITY])
+    assert.throws(() => createPolledReadScheduler({ ...time.options, baseIntervalMs, read: async () => 1, accept: () => {}, failed: () => {} }),
+      /polled_read_interval_invalid/, `interval ${baseIntervalMs}`);
+});

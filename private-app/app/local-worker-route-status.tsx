@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
 import type { InstallationSetupViewV1 } from "../../src/harness/v1/installation-setup-view";
+import { usePolledRead } from "./use-polled-read";
 
 type SetupReadState = "loading" | "available" | "unavailable";
 
@@ -28,28 +28,23 @@ function isLocalTaskWorkerStatus(value: unknown): value is LocalTaskWorkerStatus
 }
 
 function useLocalTaskWorkerStatus(): TaskWorkerReadState {
-  const [status, setStatus] = useState<TaskWorkerReadState>({ state: "loading" });
-  useEffect(() => {
-    let live = true;
-    const read = async () => {
-      try {
-        const response = await fetch("/api/v1/local-workers", { method: "GET", credentials: "same-origin",
-          headers: { accept: "application/json" }, cache: "no-store" });
-        if (!response.ok) throw new Error("status unavailable");
-        const value: unknown = await response.json();
-        if (!isLocalTaskWorkerStatus(value)) throw new Error("invalid status");
-        if (live) setStatus({ state: "available", value });
-      } catch {
-        if (live) setStatus({ state: "unavailable" });
-      }
-    };
-    void read();
-    const interval = setInterval(() => { if (!document.hidden) void read(); }, 30_000);
-    const focus = () => { void read(); };
-    window.addEventListener("focus", focus);
-    return () => { live = false; clearInterval(interval); window.removeEventListener("focus", focus); };
-  }, []);
-  return status;
+  // The shared polling hook owns the schedule: it pauses while the tab is
+  // hidden, refreshes on focus, never overlaps a read, and backs off when
+  // nothing changes or the host status read fails. The old local
+  // `setInterval` could start a second read while the first was still open.
+  const read = usePolledRead<LocalTaskWorkerStatus>({
+    key: "local-workers", baseIntervalMs: 30_000,
+    read: async () => {
+      const response = await fetch("/api/v1/local-workers", { method: "GET", credentials: "same-origin",
+        headers: { accept: "application/json" }, cache: "no-store" });
+      if (!response.ok) throw new Error("status unavailable");
+      const value: unknown = await response.json();
+      if (!isLocalTaskWorkerStatus(value)) throw new Error("invalid status");
+      return value;
+    },
+  });
+  if (read.error !== undefined) return { state: "unavailable" };
+  return read.value ? { state: "available", value: read.value } : { state: "loading" };
 }
 
 /**

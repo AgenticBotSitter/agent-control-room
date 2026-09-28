@@ -28,9 +28,14 @@ export const privateHttpLimits = Object.freeze({ headersBytes: 24_576, headerCou
   bodyMs: 5000, requestMs: 30_000, drainMs: 30_000 });
 export interface PrivateServingApplication { isReady(): boolean; close(): Promise<void> }
 export type PrivateBuiltHandler = (request: Request) => Promise<Response> | Response;
+// `if-none-match` is a conditional-read request header, not a credential: it
+// carries only a validator this same session previously received, and a
+// mismatch is answered with the full representation. It is relayed so an
+// unchanged protected read can be answered with 304. It is deliberately added
+// alone; no other header is admitted, and no cache directive is changed.
 const forwarded = new Set(["accept", "accept-language", "origin", "sec-fetch-site",
   "content-type", "idempotency-key", "x-requested-with", "rsc", "next-router-state-tree", "next-router-prefetch",
-  "next-router-segment-prefetch", "next-url"]);
+  "next-router-segment-prefetch", "next-url", "if-none-match"]);
 class RequestFailure extends Error { constructor(readonly status: number) { super("private_request_rejected"); } }
 
 type NodeHandlerMode = Readonly<{

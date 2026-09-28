@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState, type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { ConnectionCenterPanel } from "../../../app/components/connection-center";
 import { ConnectionBrowserError, readPrivateConnections, type PrivateConnectionSnapshot } from "../../../src/web/v1/connection-browser-client";
 import { PrivateHeader } from "../private-header";
@@ -7,6 +7,7 @@ import { PrivateOperatorCapacityWorkspace } from "../operator-capacity-workspace
 import { useInstallationTopology } from "../installation-topology";
 import { InstallationTopologySummary } from "../installation-topology-summary";
 import { LocalWorkerRouteStatus } from "../local-worker-route-status";
+import { usePolledRead } from "../use-polled-read";
 
 export type PrivateConnectionViewState = { state: "loading" } | { state: "ready"; snapshot: PrivateConnectionSnapshot }
   | { state: "unavailable"; code: ConnectionBrowserError["code"] };
@@ -47,28 +48,24 @@ export function PrivateConnectionView({ data, onRefresh, children }: { data: Pri
 }
 
 export function PrivateConnections() {
-  const [data, setData] = useState<PrivateConnectionViewState>({ state: "loading" });
   const [refresh, setRefresh] = useState(0);
   const installationTopology = useInstallationTopology();
-  useEffect(() => {
-    let live = true, generation = 0;
-    const load = async () => {
-      const current = ++generation;
-      setData({ state: "loading" });
-      try {
-        const snapshot = await readPrivateConnections();
-        if (live && current === generation) setData({ state: "ready", snapshot });
-      } catch (error) {
-        if (live && current === generation) setData({ state: "unavailable", code: error instanceof ConnectionBrowserError ? error.code : "unavailable" });
+  // The shared polling hook owns the schedule: it pauses while the tab is
+  // hidden, refreshes on focus, never overlaps a read, and backs off when
+  // nothing changes or a read fails.
+  const read = usePolledRead<PrivateConnectionViewState>({
+    key: `private-connections-${refresh}`,
+    baseIntervalMs: 30_000,
+    read: async () => {
+      try { return { state: "ready" as const, snapshot: await readPrivateConnections() }; }
+      catch (error) {
+        return { state: "unavailable" as const,
+          code: error instanceof ConnectionBrowserError ? error.code : "unavailable" as const };
       }
-    };
-    void load();
-    const interval = setInterval(() => { if (!document.hidden) void load(); }, 30_000);
-    const focus = () => { void load(); };
-    window.addEventListener("focus", focus);
-    return () => { live = false; generation++; clearInterval(interval); window.removeEventListener("focus", focus); };
-  }, [refresh]);
-  return <PrivateConnectionView data={data} onRefresh={() => setRefresh(value => value + 1)}>
+    },
+  });
+  const data: PrivateConnectionViewState = read.value ?? { state: "loading" };
+  return <PrivateConnectionView data={data} onRefresh={() => { void read.refresh(); setRefresh(value => value + 1); }}>
     <InstallationTopologySummary setup={installationTopology?.setup} status={installationTopology?.state} />
     <LocalWorkerRouteStatus setup={installationTopology?.setup} state={installationTopology?.state ?? "loading"} />
   </PrivateConnectionView>;

@@ -19,6 +19,7 @@ import { createIdeaBrowserClient } from "../../src/web/v1/idea-browser-client";
 import { canPrepareIdeaExperiment, prepareIdeaExperimentDraft } from "../../src/web/v1/idea-experiment-draft";
 import { useLocalRuntime } from "./local-runtime";
 import type { PreparedTaskStatus } from "../../src/web/v1/task-planning-wire";
+import { usePolledRead } from "./use-polled-read";
 
 /** Polling the same task must retain its object identity. The planning,
  * assignment and result children key their protected reads to this value; a
@@ -91,31 +92,32 @@ export function PrivateTaskWorkspace({ projectId, jobId, after }: { projectId: s
   useEffect(() => installNewsNavigationGuard(window, document,
     () => busy.current || client.hasPending() || reviewWorkspace.hasPending() || verificationWorkspace.hasPending() || executionWorkspace.hasPending(),
     () => setNavigationNotice(true)), [client, reviewWorkspace, verificationWorkspace, executionWorkspace]);
+  // `alive` fences the write handlers below from setting state after unmount.
+  useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
   const failure = (reason: unknown) => reason instanceof BrowserRequestError ? reason : new BrowserRequestError("unavailable");
-  useEffect(() => {
-    // Busy belongs to this effect generation: a retired request must not suppress
-    // the new refresh. Old results remain fenced by live/current below.
-    let live = true, readBusy = false; alive.current = true;
-    const load = async () => {
-      if (busy.current || preparingRef.current || readBusy) return;
-      readBusy = true; const current = ++generation.current;
+  // Refresh only reads. Closing a browser tab, reconnecting or focusing cannot
+  // start/retry a task. The shared polling hook owns the schedule: it pauses
+  // while the tab is hidden, refreshes on focus, never overlaps a read, and
+  // backs off when nothing changes or the read fails. `generation` fences a
+  // retired read from overwriting a newer result, exactly as before.
+  usePolledRead<true>({
+    key: `task-workspace-${projectId}-${jobId ?? "list"}-${after ?? ""}-${refresh}`,
+    baseIntervalMs: 30_000,
+    read: async () => {
+      if (busy.current || preparingRef.current) return true;
+      const current = ++generation.current;
       try {
         const value = jobId ? await client.detail(projectId, jobId) : await client.list(projectId, after);
-        if (live && current === generation.current) {
+        if (current === generation.current) {
           if ("task" in value) setDetail(previous => retainEquivalentTaskDetailV1(previous, value)); else setPage(value);
           setError(client.hasPending() ? new BrowserRequestError("uncertain") : undefined);
         }
       } catch (reason) {
-        if (live && current === generation.current) { setPage(undefined); setDetail(undefined); setError(failure(reason)); }
-      } finally { readBusy = false; if (live && current === generation.current) setLoading(false); }
-    };
-    void load();
-    // Refresh only reads. Closing a browser tab, reconnecting or focusing cannot start/retry a task.
-    const timer = setInterval(() => { if (!document.hidden) void load(); }, 30_000);
-    const focus = () => { void load(); }; window.addEventListener("focus", focus);
-    return () => { live = false; alive.current = false; clearInterval(timer); window.removeEventListener("focus", focus); };
-  }, [client, projectId, jobId, after, refresh]);
-
+        if (current === generation.current) { setPage(undefined); setDetail(undefined); setError(failure(reason)); }
+      } finally { if (current === generation.current) setLoading(false); }
+      return true;
+    },
+  });
   async function save(retry = false) {
     if (busy.current || preparingRef.current || !page || (!retry && !page.canPropose)) return;
     busy.current = true; generation.current++; setPending(true); setError(undefined);
