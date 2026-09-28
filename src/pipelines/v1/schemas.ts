@@ -102,6 +102,14 @@ export const pipelineAdvanceReceiptSchemaV1 = z.object({
   grantsExecutionAuthority: z.literal(false),
   claimsCancellation: z.literal(false),
 }).strict();
+export const pipelineTerminalReceiptSchemaV1 = z.object({
+  runId: id,
+  state: z.literal("succeeded"),
+  completedAt: z.string().datetime({ offset: true }),
+  startsWork: z.literal(false),
+  grantsExecutionAuthority: z.literal(false),
+  claimsCancellation: z.literal(false),
+}).strict();
 
 export const pipelineUnattendedTransitionSchemaV1 = z.object({
   runId: id,
@@ -158,5 +166,6 @@ export type LinearPipelineTemplateInputV1 = z.infer<typeof linearPipelineTemplat
 export type PipelineStageTemplateV1 = z.infer<typeof pipelineStageTemplateSchemaV1>;
 export type PipelineRunViewV1 = z.infer<typeof pipelineRunViewSchemaV1>;
 export type PipelineAdvanceReceiptV1 = z.infer<typeof pipelineAdvanceReceiptSchemaV1>;
+export type PipelineTerminalReceiptV1 = z.infer<typeof pipelineTerminalReceiptSchemaV1>;
 export type PipelineHistoryV1 = z.infer<typeof pipelineHistorySchemaV1>;
 export type PipelineUnattendedTransitionV1 = z.infer<typeof pipelineUnattendedTransitionSchemaV1>;

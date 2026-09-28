@@ -75,6 +75,8 @@ const updates: Record<string, readonly string[]> = {
     "decision_auth_tag", "version", "updated_at"],
   work_batch_agent_queue_heads: ["next_position", "updated_at"],
   control_jobs: ["stage_kind", "stage_ordinal", "pipeline_run_id"],
+  pipeline_runs: ["unattended", "state", "started_at", "updated_at", "version", "template_version", "template_digest",
+    "record_digest", "auth_tag"],
   tenants: ["coordinator_lock"],
 };
 const fail = () => { throw new Error("private_database_preflight_failed"); };
@@ -156,6 +158,7 @@ const coordinatorUpdates: Record<string, readonly string[]> = {
   control_work_resources: ["coordinator_lock"],
   control_attempt_resource_admissions: ["state", "version", "retired_at", "retirement_kind", "retirement_proof_digest"],
   control_attempt_resource_scopes: ["coordinator_lock"],
+  pipeline_runs: ["state", "completed_at", "current_stage_ordinal", "updated_at", "version", "record_digest", "auth_tag"],
   control_completion_gate_integrity: ["web_lock", "revision", "record_count", "state_digest", "state_auth_tag"],
 };
 const resultReads = ["workspaces", "control_identities", "control_role_grants", "projects",

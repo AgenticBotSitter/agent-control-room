@@ -50,6 +50,8 @@ GRANT INSERT ON control_project_coordination_proposals,
   control_project_coordination_operation_receipts, control_project_coordination_operation_jobs,
   control_action_inbox TO control_room_task_coordinator;
 GRANT INSERT ON pipeline_advance_receipts TO control_room_task_coordinator;
+GRANT UPDATE (state, completed_at, current_stage_ordinal, updated_at, version, record_digest, auth_tag)
+  ON pipeline_runs TO control_room_task_coordinator;
 GRANT INSERT ON control_work_resources, control_attempt_resource_admissions,
   control_attempt_resource_scopes TO control_room_task_coordinator;
 GRANT UPDATE (state,version,retired_at,retirement_kind,retirement_proof_digest)

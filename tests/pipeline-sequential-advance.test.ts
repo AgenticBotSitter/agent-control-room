@@ -103,7 +103,7 @@ function fixture(overrides:{unattended?:boolean;tamperStage?:boolean;route?:stri
     if(sql.includes("FROM pipeline_runs")&&sql.includes("FOR UPDATE"))return result([rows.run] as T[]);
     if(sql.includes("FROM pipeline_templates")&&sql.includes("FOR UPDATE"))return result([rows.template] as T[]);
     if(sql.includes("FROM pipeline_stage_runs")&&sql.includes("ORDER BY stage_ordinal FOR UPDATE"))return result(rows.stages as T[]);
-    if(sql.includes("FROM pipeline_unattended_transitions")&&sql.includes("ORDER BY occurred_at"))return result([consent] as T[]);
+    if(sql.includes("FROM pipeline_unattended_transitions")&&sql.includes("ORDER BY run_version"))return result([consent] as T[]);
     if(sql.includes("FROM projects p"))return result([{lifecycle:"active"}] as T[]);
     if(sql.includes("FROM pipeline_advance_receipts")&&sql.includes("FOR SHARE"))return result((receipts.has(Number(params[2]))?[receipts.get(Number(params[2]))]:[]) as T[]);
     if(sql.includes("FROM control_jobs")){const id=String(params[2]),ordinal=Number(id.split(":").at(-1)),stage=rows.stages[ordinal]!;
@@ -113,6 +113,15 @@ function fixture(overrides:{unattended?:boolean;tamperStage?:boolean;route?:stri
     if(sql.includes("FROM control_task_execution_plans")){const ordinal=Number(String(params[2]).split(":").at(-1));
       return result([{source_job_id:`job:source:${ordinal}`}] as T[]);}
     if(sql.includes("FROM control_project_delegation_policies"))return result([policy] as T[]);
+    if(sql.startsWith("UPDATE pipeline_runs")&&sql.includes("SET current_stage_ordinal=")){
+      rows.run.current_stage_ordinal=Number(params[0]);rows.run.updated_at=String(params[1]);rows.run.version=Number(params[2]);
+      rows.run.record_digest=String(params[3]);rows.run.auth_tag=String(params[4]);
+      return result([{version:rows.run.version,record_digest:rows.run.record_digest,auth_tag:rows.run.auth_tag}] as T[]);}
+    if(sql.startsWith("UPDATE pipeline_runs")&&sql.includes("SET state='succeeded'")){
+      rows.run.state="succeeded";rows.run.completed_at=String(params[0]);rows.run.current_stage_ordinal=null;
+      rows.run.updated_at=String(params[0]);rows.run.version=Number(params[1]);rows.run.record_digest=String(params[2]);
+      rows.run.auth_tag=String(params[3]);return result([{version:rows.run.version,record_digest:rows.run.record_digest,
+        auth_tag:rows.run.auth_tag}] as T[]);}
     if(sql.startsWith("INSERT INTO pipeline_advance_receipts")){const receipt={id:params[0],project_id:params[2],pipeline_run_id:params[3],
       stage_ordinal:params[4],source_job_id:params[5],execution_job_id:params[6],attempt_id:params[7],queue_id:params[8],
       selection_digest:params[9],template_version:params[10],template_digest:params[11],run_version:params[12],run_digest:params[13],
@@ -145,22 +154,18 @@ function fixture(overrides:{unattended?:boolean;tamperStage?:boolean;route?:stri
       effects+=1;return{attemptId:"attempt:one",queueId:"queue:one",replayed:false};}};
   const service=new PipelineAdvanceServiceV1(db,{tenantId:"tenant:test",workspaceId:"workspace:test"},key,
     {unattendedEnabled:()=>enabled,capability},()=>clock);
-  return{service,setStates(value:PipelineStageResolutionV1["state"][]){states=value;},setCurrentOrdinal(value:number|null){
-    rows.run.current_stage_ordinal=value;rows.run.version+=1;rows.run.updated_at=iso(rows.run.version);
-    const material={id:rows.run.id,tenantId:"tenant:test",projectId:rows.run.project_id,requestId:rows.run.request_id,
-      templateId:rows.run.template_id,templateVersion:rows.run.template_version,templateDigest:rows.run.template_digest,
-      workflowId:rows.run.workflow_id,title:rows.run.title,state:rows.run.state,startedAt:iso(),updatedAt:rows.run.updated_at,
-      completedAt:null,currentStageOrdinal:value,unattended:rows.run.unattended,version:rows.run.version};
-    rows.run.record_digest=sha256Digest(material);rows.run.auth_tag=hmacSha256Tag(key,{purpose:"pipeline-run/v1",record:material});
-  },get effects(){return effects;},get receipts(){return receipts;}};
+  return{service,setStates(value:PipelineStageResolutionV1["state"][]){states=value;},get currentOrdinal(){return rows.run.current_stage_ordinal;},
+    get runVersion(){return rows.run.version;},get effects(){return effects;},get receipts(){return receipts;}};
 }
 
 test("durable advance replays with a stable timestamp after a lost response or restart",async()=>{const f=fixture();
   const first=await f.service.advance("pipeline-run:test","policy:test");const replay=await f.service.advance("pipeline-run:test","policy:test");
+  if(!first.startsWork||!replay.startsWork)assert.fail("expected queued stage receipts");
   assert.equal(first.advancedAt,replay.advancedAt);assert.equal(replay.replayed,true);assert.equal(f.effects,1);});
 test("concurrent exact transitions create one delivery and one durable receipt",async()=>{const f=fixture();
   const values=await Promise.all([f.service.advance("pipeline-run:test","policy:test"),f.service.advance("pipeline-run:test","policy:test")]);
-  assert.equal(f.effects,1);assert.deepEqual(values.map(value=>value.replayed).sort(),[false,true]);});
+  assert.equal(f.effects,1);assert.equal(values.every(value=>value.startsWork),true);
+  assert.deepEqual(values.flatMap(value=>value.startsWork?[value.replayed]:[]).sort(),[false,true]);});
 test("changed policy content cannot replay a durable transition",async()=>{const f=fixture();await f.service.advance("pipeline-run:test","policy:test");
   await assert.rejects(f.service.advance("pipeline-run:test","policy:changed"),
     (error:unknown)=>error instanceof PipelineAdvanceErrorV1&&error.safeReason==="unattended_not_authorized");});
@@ -182,18 +187,30 @@ test("server-resolved route must match the exact policy route",async()=>{const f
 test("current stage ordinal cannot move backwards",async()=>{const f=fixture({currentOrdinal:1});
   await assert.rejects(f.service.advance("pipeline-run:test","policy:test"),
     (error:unknown)=>error instanceof PipelineAdvanceErrorV1&&error.safeReason==="advance_conflict");});
-test("null or lower current stage ordinal refuses instead of selecting a later stage",async()=>{
-  for(const currentOrdinal of [null,0] as const){const states=currentOrdinal===null?["eligible"]:["accepted","eligible"];
-    const f=fixture({currentOrdinal,states:states as PipelineStageResolutionV1["state"][]});await assert.rejects(f.service.advance("pipeline-run:test","policy:test"),
+test("null or a successor leap refuses instead of selecting a later stage",async()=>{
+  for(const [currentOrdinal,states] of [[null,["eligible"]],[0,["accepted","accepted","eligible"]]] as const){
+    const f=fixture({currentOrdinal,states:[...states] as PipelineStageResolutionV1["state"][]});
+    await assert.rejects(f.service.advance("pipeline-run:test","policy:test"),
       (error:unknown)=>error instanceof PipelineAdvanceErrorV1&&error.safeReason==="advance_conflict");}
 });
 test("accepted current stage advances exactly one ordinal while in-flight lost response replays prior receipt",async()=>{
   const f=fixture();const first=await f.service.advance("pipeline-run:test","policy:test");
-  const lost=await f.service.advance("pipeline-run:test","policy:test");assert.equal(lost.replayed,true);
+  const lost=await f.service.advance("pipeline-run:test","policy:test");
+  if(!lost.startsWork)assert.fail("expected queued stage receipt");assert.equal(lost.replayed,true);
   f.setStates(["accepted","eligible","terminal_failure"]);
-  f.setCurrentOrdinal(1);
   const next=await f.service.advance("pipeline-run:test","policy:test");
+  assert.equal(first.startsWork,true);assert.equal(next.startsWork,true);
+  if(!first.startsWork||!next.startsWork)assert.fail("expected queued stage receipts");
   assert.equal(first.stageOrdinal,0);assert.equal(next.stageOrdinal,1);assert.equal(next.replayed,false);assert.equal(f.effects,2);
+  assert.equal(f.currentOrdinal,1);assert.equal(f.runVersion,3);
+  assert.equal(Number(f.receipts.get(1)?.run_version),3);
+});
+test("accepted final stage terminalizes the authenticated run without another queue effect",async()=>{
+  const f=fixture({currentOrdinal:2,states:["accepted","accepted","accepted"]});
+  const outcome=await f.service.advance("pipeline-run:test","policy:test");
+  assert.equal(outcome.startsWork,false);assert.deepEqual(outcome,{runId:"pipeline-run:test",state:"succeeded",
+    completedAt:iso(),startsWork:false,grantsExecutionAuthority:false,claimsCancellation:false});
+  assert.equal(f.currentOrdinal,null);assert.equal(f.runVersion,3);assert.equal(f.effects,0);
 });
 test("live installation switch is checked at the delivery boundary",async()=>{const f=fixture({disableDuringDispatch:true});
   await assert.rejects(f.service.advance("pipeline-run:test","policy:test"),
@@ -233,14 +250,15 @@ test("0099 owner transition authenticates and persists both unattended consents 
   const first=await service.setUnattended(f.identity,f.project.projectId,command,"pipeline-unattended-enable-0001");
   const replay=await service.setUnattended(f.identity,f.project.projectId,command,"pipeline-unattended-enable-0001");
   assert.equal(first.replayed,false);assert.equal(replay.replayed,true);assert.equal(first.occurredAt,replay.occurredAt);
-  assert.deepEqual((await f.db.query<{may_advance_unattended:boolean;unattended:boolean;state:string;started_at:string|null}>(
+  const activated=(await f.db.query<{may_advance_unattended:boolean;unattended:boolean;state:string;started_at:string|Date|null}>(
     `SELECT t.may_advance_unattended,r.unattended,r.state,r.started_at FROM pipeline_templates t JOIN pipeline_runs r
-    ON r.tenant_id=t.tenant_id AND r.template_id=t.id WHERE r.id=$1`,[run.runId])).rows[0],
-  {may_advance_unattended:true,unattended:true,state:"proposed",started_at:null});
+    ON r.tenant_id=t.tenant_id AND r.template_id=t.id WHERE r.id=$1`,[run.runId])).rows[0]!;
+  assert.deepEqual({...activated,started_at:activated.started_at?new Date(activated.started_at).toISOString():null},
+    {may_advance_unattended:true,unattended:true,state:"active",started_at:new Date(webNow).toISOString()});
   assert.equal((await f.db.query<{count:number}>(`SELECT count(*)::int count FROM pipeline_unattended_transitions`)).rows[0]!.count,1);
   await assert.rejects(service.setUnattended(f.identity,f.project.projectId,{...command,enabled:false},
     "pipeline-unattended-enable-0001"),/conflict/u);
-  await assert.rejects(f.db.query("UPDATE pipeline_runs SET state='active' WHERE id=$1",[run.runId]),
+  await assert.rejects(f.db.query("UPDATE pipeline_runs SET started_at=NULL WHERE id=$1",[run.runId]),
     /pipeline_runs_active_started_at_check/u);
   // Simulate an authenticated legacy row created before 0099's NOT VALID
   // lifecycle constraint.  Owner consent must not re-sign this active/null-start
@@ -327,8 +345,9 @@ test("0099 owns append-only records, least-privilege grants, and a guarded down 
     assert.match(grants,new RegExp(table));assert.match(down,new RegExp(`EXISTS \\(SELECT 1 FROM ${table}\\)`));}
   assert.match(web,/GRANT INSERT ON pipeline_unattended_transitions TO control_room_private_web/u);
   assert.match(web,/GRANT UPDATE \(may_advance_unattended, version, updated_at, record_digest, auth_tag\)[\s\S]*ON pipeline_templates/u);
-  assert.match(web,/GRANT UPDATE \(unattended, updated_at, version, template_version, template_digest,[\s\S]*ON pipeline_runs/u);
+  assert.match(web,/GRANT UPDATE \(unattended, state, started_at, updated_at, version, template_version, template_digest,[\s\S]*ON pipeline_runs/u);
   assert.match(coordinator,/GRANT INSERT ON pipeline_advance_receipts TO control_room_task_coordinator/u);
+  assert.match(coordinator,/GRANT UPDATE \(state, completed_at, current_stage_ordinal, updated_at, version, record_digest, auth_tag\)[\s\S]*ON pipeline_runs/u);
   assert.match(preflight,/privateWebReadTables[\s\S]*pipeline_unattended_transitions/u);
   assert.match(preflight,/inserts\.add\("pipeline_unattended_transitions"\)/u);
   assert.match(preflight,/coordinatorReads\.push\([\s\S]*pipeline_advance_receipts/u);
@@ -336,7 +355,8 @@ test("0099 owns append-only records, least-privilege grants, and a guarded down 
   assert.match(up,/BEFORE UPDATE OR DELETE/u);assert.match(up,/BEFORE TRUNCATE/u);
   assert.match(up,/pipeline_runs_active_started_at_check[\s\S]*state <> 'active'[\s\S]*started_at IS NOT NULL[\s\S]*NOT VALID/u);
   assert.match(down,/REVOKE UPDATE \(may_advance_unattended, version, updated_at, record_digest, auth_tag\)[\s\S]*pipeline_templates FROM control_room_private_web/u);
-  assert.match(down,/REVOKE UPDATE \(unattended, updated_at, version, template_version, template_digest,[\s\S]*pipeline_runs FROM control_room_private_web/u);
+  assert.match(down,/REVOKE UPDATE \(unattended, state, started_at, updated_at, version, template_version, template_digest,[\s\S]*pipeline_runs FROM control_room_private_web/u);
+  assert.match(down,/REVOKE UPDATE \(state, completed_at, current_stage_ordinal, updated_at, version, record_digest, auth_tag\)[\s\S]*pipeline_runs FROM control_room_task_coordinator/u);
   assert.match(down,/may_advance_unattended/u);assert.match(down,/unattended/u);
   assert.match(down,/DROP CONSTRAINT pipeline_runs_active_started_at_check/u);
 });

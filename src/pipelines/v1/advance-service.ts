@@ -7,8 +7,9 @@ import type { VerifiedWebIdentity } from "../../web/v1/access-verifier";
 import { WebAccessError } from "../../web/v1/access-verifier";
 import { WebSessionAuthority } from "../../web/v1/session-authority";
 import { linearPipelineTemplateInputSchemaV1, pipelineAdvanceReceiptSchemaV1, pipelineBuildWritePolicySchemaV1, pipelineHistorySchemaV1,
+  pipelineTerminalReceiptSchemaV1,
   pipelineUnattendedTransitionReceiptSchemaV1, pipelineUnattendedTransitionSchemaV1,
-  type PipelineAdvanceReceiptV1, type PipelineHistoryV1 } from "./schemas";
+  type PipelineAdvanceReceiptV1, type PipelineHistoryV1, type PipelineTerminalReceiptV1 } from "./schemas";
 
 const ADVANCE_ACTION = "tasks.assign" as const;
 const SERVICE_ACTOR = "service:pipeline-advance:v1" as const;
@@ -30,7 +31,7 @@ const HISTORY_VOCABULARY = {
   "task.result.received":"received", "task.result.submitted_for_review":"resulted",
   "task.result.structure_verified":"checked", "tasks.reviews.record":"checked",
   "tasks.verifications.record":"checked", "task.native.completed":"completed",
-  "pipelines.stage.advanced":"advanced", "pipelines.unattended.enabled":"approved",
+  "pipelines.stage.advanced":"advanced", "pipelines.run.succeeded":"completed", "pipelines.unattended.enabled":"approved",
   "pipelines.unattended.disabled":"approved",
 } as const;
 const iso = (value: string | Date) => new Date(value).toISOString();
@@ -192,6 +193,7 @@ export class PipelineAdvanceServiceV1 {
       // that legacy-invalid state: updated_at is mutable owner-transition
       // metadata and must not become a substitute deadline anchor.
       if (run.state === "active" && run.started_at === null) refuse("pipeline_integrity_failed");
+      if (parsed.data.enabled && !["proposed","active"].includes(run.state)) refuse("run_not_active");
       const policy = await this.#policy(tx, projectId, parsed.data.policyId);
       if (parsed.data.enabled) this.#assertOwnerPolicyCurrent(policy, actor.now);
       // Template consent is a monotonic owner-authorized capability ceiling. A
@@ -203,16 +205,20 @@ export class PipelineAdvanceServiceV1 {
         version: Number(template.version)+1, updated_at: now } : template;
       const nextTemplateMaterial = templateMaterial(this.scope, nextTemplate), nextTemplateDigest = sha256Digest(nextTemplateMaterial);
       const nextTemplateTag = hmacSha256Tag(this.#key, { purpose: "pipeline-template/v1", record: nextTemplateMaterial });
-      const nextRun = { ...run, unattended: parsed.data.enabled, updated_at: now, version: Number(run.version)+1,
+      const activatesRun = parsed.data.enabled && run.state === "proposed";
+      const nextRun = { ...run, unattended: parsed.data.enabled,
+        state: activatesRun ? "active" as const : run.state,
+        started_at: activatesRun ? now : run.started_at,
+        updated_at: now, version: Number(run.version)+1,
         template_version: nextTemplate.version, template_digest: nextTemplateDigest };
       const nextRunMaterial = runMaterial(this.scope, nextRun), nextRunDigest = sha256Digest(nextRunMaterial);
       const nextRunTag = hmacSha256Tag(this.#key, { purpose: "pipeline-run/v1", record: nextRunMaterial });
       if (activatesTemplate) await tx.query(`UPDATE pipeline_templates SET may_advance_unattended=true,version=$1,updated_at=$2,
         record_digest=$3,auth_tag=$4 WHERE tenant_id=$5 AND project_id=$6 AND id=$7 AND version=$8`,
       [nextTemplate.version,now,nextTemplateDigest,nextTemplateTag,this.scope.tenantId,projectId,template.id,template.version]);
-      await tx.query(`UPDATE pipeline_runs SET unattended=$1,updated_at=$2,version=$3,template_version=$4,
-        template_digest=$5,record_digest=$6,auth_tag=$7 WHERE tenant_id=$8 AND project_id=$9 AND id=$10 AND version=$11`,
-      [parsed.data.enabled,now,nextRun.version,nextTemplate.version,nextTemplateDigest,nextRunDigest,nextRunTag,
+      await tx.query(`UPDATE pipeline_runs SET unattended=$1,state=$2,started_at=$3,updated_at=$4,version=$5,template_version=$6,
+        template_digest=$7,record_digest=$8,auth_tag=$9 WHERE tenant_id=$10 AND project_id=$11 AND id=$12 AND version=$13`,
+      [parsed.data.enabled,nextRun.state,nextRun.started_at,now,nextRun.version,nextTemplate.version,nextTemplateDigest,nextRunDigest,nextRunTag,
         this.scope.tenantId,projectId,run.id,run.version]);
       const transitionId = `pipeline-unattended:${randomUUID()}`;
       const material = { id: transitionId, tenantId: this.scope.tenantId, projectId, pipelineRunId: run.id,
@@ -238,7 +244,7 @@ export class PipelineAdvanceServiceV1 {
     });
   }
 
-  async advance(runId: string, policyId: string, expectedConsent?:Readonly<{id:string;digest:string}>): Promise<PipelineAdvanceReceiptV1> {
+  async advance(runId: string, policyId: string, expectedConsent?:Readonly<{id:string;digest:string}>): Promise<PipelineAdvanceReceiptV1|PipelineTerminalReceiptV1> {
     const capability = this.#capability;
     if (!this.#enabled() || capability === undefined) throw new PipelineAdvanceErrorV1("unattended_disabled");
     let precommit: () => void|Promise<void> = () => this.#assertInstall();
@@ -251,7 +257,7 @@ export class PipelineAdvanceServiceV1 {
       const consent=(await tx.query<UnattendedTransitionRow>(`SELECT id,project_id,pipeline_run_id,pipeline_template_id,
         template_version,template_digest,run_version,run_digest,policy_id,policy_version,policy_digest,owner_identity_id,enabled,
         idempotency_key,request_digest,transition_digest,auth_tag,occurred_at FROM pipeline_unattended_transitions
-        WHERE tenant_id=$1 AND project_id=$2 AND pipeline_run_id=$3 ORDER BY occurred_at DESC,id DESC LIMIT 1 FOR SHARE`,
+        WHERE tenant_id=$1 AND project_id=$2 AND pipeline_run_id=$3 ORDER BY run_version DESC,id DESC LIMIT 1 FOR SHARE`,
       [this.scope.tenantId,run.project_id,run.id])).rows[0];
       if(!consent)refuse("unattended_not_authorized");
       const consentMaterial={id:consent.id,tenantId:this.scope.tenantId,projectId:consent.project_id,
@@ -264,6 +270,8 @@ export class PipelineAdvanceServiceV1 {
       if(!consent.enabled||consent.policy_id!==policyId||consent.pipeline_template_id!==template.id
         ||expectedConsent&&(expectedConsent.id!==consent.id||expectedConsent.digest!==consent.transition_digest)
         ||Number(consent.template_version)!==Number(template.version)||consent.template_digest!==template.record_digest
+        ||Number(consent.run_version)>Number(run.version)
+        ||Number(consent.run_version)===Number(run.version)&&consent.run_digest!==run.record_digest
         )refuse("unattended_not_authorized");
       if (!run.unattended || !template.may_advance_unattended) refuse("unattended_not_authorized");
       if (Number(run.template_version) !== Number(template.version) || run.template_digest !== template.record_digest)
@@ -289,10 +297,49 @@ export class PipelineAdvanceServiceV1 {
         if (resolved.state!=="eligible") refuse("stage_not_eligible");
         stage=candidate;selection=selected;expectedInputDigest=resolved.expectedInputDigest;break;
       }
-      if (!stage || !selection) throw new PipelineAdvanceErrorV1("stage_not_eligible");
+      if (!stage || !selection) {
+        const finalOrdinal=stages.length-1;
+        if(finalOrdinal<0||Number(run.current_stage_ordinal)!==finalOrdinal)refuse("advance_conflict");
+        const completedAt=new Date(this.#now()).toISOString(),completedRun={...run,state:"succeeded" as const,
+          completed_at:completedAt,current_stage_ordinal:null,updated_at:completedAt,version:Number(run.version)+1};
+        const completedMaterial=runMaterial(this.scope,completedRun),completedDigest=sha256Digest(completedMaterial),
+          completedTag=hmacSha256Tag(this.#key,{purpose:"pipeline-run/v1",record:completedMaterial});
+        const changed=await tx.query<{version:number|string;record_digest:string;auth_tag:string}>(`UPDATE pipeline_runs
+          SET state='succeeded',completed_at=$1,current_stage_ordinal=NULL,updated_at=$1,version=$2,record_digest=$3,auth_tag=$4
+          WHERE tenant_id=$5 AND project_id=$6 AND id=$7 AND version=$8 RETURNING version,record_digest,auth_tag`,
+        [completedAt,completedRun.version,completedDigest,completedTag,this.scope.tenantId,run.project_id,run.id,run.version]);
+        const persisted=changed.rows[0];
+        if(changed.rows.length!==1||Number(persisted?.version)!==completedRun.version
+          ||persisted?.record_digest!==completedDigest||persisted?.auth_tag!==completedTag)refuse("advance_conflict");
+        await appendAuditWith(tx,{id:`audit:pipeline-complete:${run.id}:${completedRun.version}`,...this.scope,projectId:run.project_id,
+          actorId:SERVICE_ACTOR,actorType:"service",action:"pipelines.run.succeeded",targetType:"pipeline_run",targetId:run.id,
+          idempotencyKey:`pipeline-complete:${run.id}:${completedRun.version}`,occurredAt:completedAt,
+          safeMetadata:{finalStageOrdinal:finalOrdinal,runDigest:completedDigest}});
+        const persistedRun={...completedRun,record_digest:completedDigest,auth_tag:completedTag};
+        precommit=()=>{this.#assertInstall();this.#verifySnapshot(persistedRun,template,stages);};
+        return pipelineTerminalReceiptSchemaV1.parse({runId:run.id,state:"succeeded",completedAt,startsWork:false,
+          grantsExecutionAuthority:false,claimsCancellation:false});
+      }
       const selected=selection;
-      if(run.current_stage_ordinal===null||Number(run.current_stage_ordinal)!==selected.stageOrdinal)refuse("advance_conflict");
-      const effectiveRun=run;
+      if(run.current_stage_ordinal===null)refuse("advance_conflict");
+      const currentOrdinal=Number(run.current_stage_ordinal);
+      if(selected.stageOrdinal!==currentOrdinal&&selected.stageOrdinal!==currentOrdinal+1)refuse("advance_conflict");
+      let effectiveRun=run;
+      if(selected.stageOrdinal===currentOrdinal+1){
+        const advancedRun={...run,current_stage_ordinal:selected.stageOrdinal,updated_at:new Date(this.#now()).toISOString(),
+          version:Number(run.version)+1};
+        const advancedMaterial=runMaterial(this.scope,advancedRun),advancedDigest=sha256Digest(advancedMaterial),
+          advancedTag=hmacSha256Tag(this.#key,{purpose:"pipeline-run/v1",record:advancedMaterial});
+        const changed=await tx.query<{version:number|string;record_digest:string;auth_tag:string}>(`UPDATE pipeline_runs
+          SET current_stage_ordinal=$1,updated_at=$2,version=$3,record_digest=$4,auth_tag=$5
+          WHERE tenant_id=$6 AND project_id=$7 AND id=$8 AND version=$9 RETURNING version,record_digest,auth_tag`,
+        [selected.stageOrdinal,advancedRun.updated_at,advancedRun.version,advancedDigest,advancedTag,
+          this.scope.tenantId,run.project_id,run.id,run.version]);
+        const persisted=changed.rows[0];
+        if(changed.rows.length!==1||Number(persisted?.version)!==advancedRun.version
+          ||persisted?.record_digest!==advancedDigest||persisted?.auth_tag!==advancedTag)refuse("advance_conflict");
+        effectiveRun={...advancedRun,record_digest:advancedDigest,auth_tag:advancedTag};
+      }
       const source = await this.#job(tx,effectiveRun,stage.current_job_id,stage,true);
       const execution = await this.#job(tx,effectiveRun,selected.executionJobId,stage,false);
       if (execution.inputDigest!==expectedInputDigest || !["proposed","ready"].includes(execution.state)
@@ -374,20 +421,21 @@ export class PipelineAdvanceServiceV1 {
       u.pipeline_template_id,u.template_version,u.template_digest,u.run_version,u.run_digest,u.policy_id,u.policy_version,
       u.policy_digest,u.owner_identity_id,u.enabled,u.idempotency_key,u.request_digest,u.transition_digest,u.auth_tag,u.occurred_at
       FROM pipeline_runs r JOIN LATERAL(SELECT t.* FROM pipeline_unattended_transitions t
-        WHERE t.tenant_id=r.tenant_id AND t.pipeline_run_id=r.id ORDER BY t.occurred_at DESC,t.id DESC LIMIT 1)u ON true
+        WHERE t.tenant_id=r.tenant_id AND t.pipeline_run_id=r.id ORDER BY t.run_version DESC,t.id DESC LIMIT 1)u ON true
       WHERE r.tenant_id=$1 AND r.state='active' AND r.unattended AND u.enabled ORDER BY r.updated_at,r.id LIMIT $2`,
     [this.scope.tenantId,limit]);
-    const receipts:PipelineAdvanceReceiptV1[]=[];
+    const receipts:PipelineAdvanceReceiptV1[]=[],completed:PipelineTerminalReceiptV1[]=[];
     for(const row of candidates.rows){const material={id:row.id,tenantId:this.scope.tenantId,projectId:row.project_id,
       pipelineRunId:row.pipeline_run_id,pipelineTemplateId:row.pipeline_template_id,templateVersion:Number(row.template_version),
       templateDigest:row.template_digest,runVersion:Number(row.run_version),runDigest:row.run_digest,policyId:row.policy_id,
       policyVersion:Number(row.policy_version),policyDigest:row.policy_digest,ownerIdentityId:row.owner_identity_id,enabled:row.enabled,
       idempotencyKey:row.idempotency_key,requestDigest:row.request_digest,occurredAt:iso(row.occurred_at)};
       verify(this.#key,"pipeline-unattended-transition/v1",material,row.transition_digest,row.auth_tag);
-      try{receipts.push(await this.advance(row.pipeline_run_id,row.policy_id,{id:row.id,digest:row.transition_digest}));}
+      try{const outcome=await this.advance(row.pipeline_run_id,row.policy_id,{id:row.id,digest:row.transition_digest});
+        if(outcome.startsWork)receipts.push(outcome);else completed.push(outcome);}
       catch(error){if(!(error instanceof PipelineAdvanceErrorV1))throw error;}
     }
-    return Object.freeze({checked:candidates.rows.length,advanced:Object.freeze(receipts)});
+    return Object.freeze({checked:candidates.rows.length,advanced:Object.freeze(receipts),completed:Object.freeze(completed)});
   }
 
   async history(projectId:string,runId:string,limit=100):Promise<PipelineHistoryV1>{

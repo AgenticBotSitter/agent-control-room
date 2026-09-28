@@ -97,3 +97,15 @@ CREATE TRIGGER pipeline_advance_receipts_no_truncate BEFORE TRUNCATE ON pipeline
   FOR EACH STATEMENT EXECUTE FUNCTION reject_pipeline_unattended_history_mutation();
 
 REVOKE ALL ON pipeline_unattended_transitions, pipeline_advance_receipts FROM PUBLIC;
+
+-- Existing installations already have these NOLOGIN roles. Keep the upgrade
+-- grant as narrow as the fresh-install role files; absence is valid while an
+-- operator is still applying migrations before role provisioning.
+DO $$ BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='control_room_private_web') THEN
+    EXECUTE 'GRANT UPDATE (unattended, state, started_at, updated_at, version, template_version, template_digest, record_digest, auth_tag) ON pipeline_runs TO control_room_private_web';
+  END IF;
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='control_room_task_coordinator') THEN
+    EXECUTE 'GRANT UPDATE (state, completed_at, current_stage_ordinal, updated_at, version, record_digest, auth_tag) ON pipeline_runs TO control_room_task_coordinator';
+  END IF;
+END $$;

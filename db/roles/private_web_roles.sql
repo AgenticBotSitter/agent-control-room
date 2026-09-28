@@ -60,7 +60,7 @@ GRANT INSERT ON pipeline_templates, pipeline_runs, pipeline_stage_runs TO contro
 GRANT INSERT ON pipeline_unattended_transitions TO control_room_private_web;
 GRANT UPDATE (may_advance_unattended, version, updated_at, record_digest, auth_tag)
   ON pipeline_templates TO control_room_private_web;
-GRANT UPDATE (unattended, updated_at, version, template_version, template_digest,
+GRANT UPDATE (unattended, state, started_at, updated_at, version, template_version, template_digest,
   record_digest, auth_tag) ON pipeline_runs TO control_room_private_web;
 GRANT UPDATE (stage_kind, stage_ordinal, pipeline_run_id) ON control_jobs TO control_room_private_web;
 -- Coordinator lifecycle idempotency ledger: exact-match replay before any

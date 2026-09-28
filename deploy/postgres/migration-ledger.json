@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "digest": "c5aef2f0a917f793079365e7dcc71e8b76070eac7e8819b8fd37df7a02c95259",
+  "digest": "9eb0910e32538f011d62691de2ca350316bd1e70be5b83a4868679a4496e525c",
   "entries": [
     {
       "file": "db/migrations/0001_control_room_core.sql",
@@ -593,7 +593,7 @@
     {
       "file": "db/migrations/0099_pipeline_unattended_advance.sql",
       "order": 99,
-      "sha256": "87e4c9654f35daa2a8fc0d207f269289a1d4d5d209ac72584fbc06458af82f41",
+      "sha256": "02184d77ff50939ae2cfc3b1dd3faac9ced5d80aa01950a1d5fc4427bcd656b1",
       "kind": "migrate"
     },
     {

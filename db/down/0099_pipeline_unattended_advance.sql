@@ -12,7 +12,10 @@ END $$;
 DO $$ BEGIN
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='control_room_private_web') THEN
     EXECUTE 'REVOKE UPDATE (may_advance_unattended, version, updated_at, record_digest, auth_tag) ON pipeline_templates FROM control_room_private_web';
-    EXECUTE 'REVOKE UPDATE (unattended, updated_at, version, template_version, template_digest, record_digest, auth_tag) ON pipeline_runs FROM control_room_private_web';
+    EXECUTE 'REVOKE UPDATE (unattended, state, started_at, updated_at, version, template_version, template_digest, record_digest, auth_tag) ON pipeline_runs FROM control_room_private_web';
+  END IF;
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='control_room_task_coordinator') THEN
+    EXECUTE 'REVOKE UPDATE (state, completed_at, current_stage_ordinal, updated_at, version, record_digest, auth_tag) ON pipeline_runs FROM control_room_task_coordinator';
   END IF;
 END $$;
 DROP TRIGGER pipeline_advance_receipts_no_truncate ON pipeline_advance_receipts;
