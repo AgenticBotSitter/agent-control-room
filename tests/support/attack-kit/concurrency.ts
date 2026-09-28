@@ -214,17 +214,26 @@ export async function concurrentWriters(
   })();
 
   const bound = options.boundMs ?? options.durationMs + 30_000;
-  const settled = await Promise.race([
-    Promise.all([
-      ...Array.from({ length: writers }, (_, index) => writer(index)),
-      ...Array.from({ length: readers }, (_, index) => reader(index)),
-    ]),
-    wait(bound).then(() => "timeout" as const),
-  ]);
-  if (settled === "timeout") {
-    throw new ConcurrencyTimeoutError("concurrent_writers_no_completion", bound, Date.now() - started);
+  // The deadline is cancelled on every exit path. Retaining it made every
+  // SUCCESSFUL run keep Node's event loop alive for the full fallback bound:
+  // the test bodies finished in ~2s but the process did not exit until ~31s,
+  // so each consumer of this helper paid the deadlock deadline in CI time.
+  const timer = deadline(bound);
+  try {
+    const settled = await Promise.race([
+      Promise.all([
+        ...Array.from({ length: writers }, (_, index) => writer(index)),
+        ...Array.from({ length: readers }, (_, index) => reader(index)),
+      ]),
+      timer.promise,
+    ]);
+    if (settled === "timeout") {
+      throw new ConcurrencyTimeoutError("concurrent_writers_no_completion", bound, Date.now() - started);
+    }
+    const result: ConcurrentWritersResult = { writes, reads, writeErrors, readErrors, elapsedMs: Date.now() - started };
+    if (readErrors.length > 0 && !options.allowReadErrors) throw new ConcurrentReadRaceError(readErrors);
+    return result;
+  } finally {
+    timer.cancel();
   }
-  const result: ConcurrentWritersResult = { writes, reads, writeErrors, readErrors, elapsedMs: Date.now() - started };
-  if (readErrors.length > 0 && !options.allowReadErrors) throw new ConcurrentReadRaceError(readErrors);
-  return result;
 }

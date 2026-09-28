@@ -214,6 +214,10 @@ export async function socketClaimed(port: number, directory?: string): Promise<b
   return false;
 }
 
+/** First line of an error message, for a one-token teardown failure summary. */
+const firstLineOf = (error: unknown): string =>
+  `${(error as Error)?.message ?? String(error)}`.split("\n")[0]!.slice(0, 200);
+
 /** True when `dataDirectory` holds a postmaster pid that is still running. */
 async function postmasterAlive(dataDirectory: string): Promise<boolean> {
   const pid = (await readFile(join(dataDirectory, "postmaster.pid"), "utf8").catch(() => "")).split("\n")[0]?.trim();
@@ -260,16 +264,26 @@ export async function portIsOccupied(port: number, dataDirectory?: string, socke
  * Refuse a port that already answers, and refuse one that is not a number the
  * caller is entitled to use. A reused foreign cluster would make every grant
  * assertion in the test meaningless, so this is checked before `initdb`.
+ *
+ * The allowlist is REQUIRED and must be non-empty. Making it optional meant a
+ * caller that forgot it (or mistyped the option name) silently lost the
+ * boundary: the check passed on ANY port, so a typo could probe and start a
+ * cluster somewhere outside the block this job was authorized for. Refusing
+ * here happens before any socket or TCP probe, so an unauthorized port is
+ * never even touched.
  */
 export async function assertPortAvailable(
   port: number,
-  allowed?: readonly number[],
+  allowed: readonly number[],
   probe: { dataDirectory?: string; socketDirectory?: string } = {},
 ): Promise<void> {
   if (!Number.isInteger(port) || port < 1 || port > 65535) {
     throw new AttackKitPortError(`attack_kit_port_invalid:${String(port)}`);
   }
-  if (allowed && !allowed.includes(port)) {
+  if (!Array.isArray(allowed) || allowed.length === 0) {
+    throw new AttackKitPortError("attack_kit_allowed_ports_required");
+  }
+  if (!allowed.includes(port)) {
     throw new AttackKitPortError(`attack_kit_port_outside_block:${port}`);
   }
   if (await portIsOccupied(port, probe.dataDirectory, probe.socketDirectory)) throw new PortOccupiedError(port);
@@ -348,15 +362,84 @@ async function startCluster(options: WithRealPostgresOptions & { pgBin: string }
   const socketDirectory = join(run, "socket");
   const dataDirectory = join(run, "data");
   let started = false;
+  // The postmaster pid is RETAINED, because it is the only piece of cleanup
+  // evidence that survives deleting the data directory. `pg_ctl status` and a
+  // `postmaster.pid` read both need files that `stop` removes, so a check made
+  // after teardown could not tell "the postmaster is gone" from "the evidence
+  // was deleted". Holding the pid lets liveness be asked directly, and it is
+  // what makes a failed stop detectable instead of silently erased.
+  let postmasterPid: number | undefined;
+  // Set once `stop` has completed. The pid itself is deliberately RETAINED
+  // after a successful stop so the post-teardown liveness check stays
+  // authoritative; this flag is what makes a second `stop` a no-op.
+  let stopped = false;
   const asPostgres = process.getuid?.() === ROOT_UID;
 
-  const stop = async () => {
-    if (started) {
-      started = false;
-      await native(pgBin, run, "pg_ctl", ["-D", dataDirectory, "-m", "fast", "-w", "-t", "30", "stop"])
-        .catch(() => {});
+  const pidAlive = (pid: number | undefined): boolean => {
+    if (pid === undefined) return false;
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch (error) {
+      // EPERM means the process exists and belongs to another user.
+      return (error as { code?: string }).code === "EPERM";
+    }
+  };
+
+  /**
+   * Stop the postmaster and prove it is gone, or throw.
+   *
+   * Every failure is propagated. The previous version cleared `started`,
+   * swallowed every `pg_ctl stop` error and deleted the run directory
+   * unconditionally, so a postmaster that refused to stop survived with its
+   * data directory already removed — and the later `isRunning()` check, which
+   * needed that directory, reported "not running" and the caller was told
+   * `cleanedUp: true`. This machine has only 32 SysV shared-memory segments, so
+   * exactly that leak blocks every other job.
+   */
+  const stop = async (): Promise<void> => {
+    // Nothing was ever started, or a previous stop already completed.
+    if (stopped || (!started && postmasterPid === undefined)) return;
+    started = false;
+    const pid = postmasterPid;
+    const failures: string[] = [];
+    if (pid !== undefined) {
+      // A cooperative fast shutdown first.
+      try {
+        await native(pgBin, run, "pg_ctl", ["-D", dataDirectory, "-m", "fast", "-w", "-t", "30", "stop"]);
+      } catch (error) {
+        failures.push(`pg_ctl_stop_failed:${firstLineOf(error)}`);
+      }
+      if (pidAlive(pid)) {
+        // Escalate: SIGQUIT is PostgreSQL's immediate shutdown, SIGKILL the
+        // last resort. A disposable fixture cluster is ours to end.
+        for (const signal of ["SIGQUIT", "SIGKILL"] as const) {
+          try { process.kill(pid, signal); } catch { /* already gone */ }
+          const deadline = Date.now() + 10_000;
+          while (Date.now() < deadline && pidAlive(pid)) {
+            await new Promise(resolve => { setTimeout(resolve, 100); });
+          }
+          if (!pidAlive(pid)) break;
+        }
+      }
+      if (pidAlive(pid)) {
+        // Refuse to delete the evidence and refuse to report success. The
+        // caller gets the pid so the cluster can be reaped by hand.
+        throw new Error(`attack_kit_postmaster_would_not_stop:${port}:pid=${pid}`
+          + `:${[...failures, "postmaster_still_alive"].join(",")}`
+          + `:data_directory_preserved=${dataDirectory}`);
+      }
+      // `postmasterPid` is intentionally NOT cleared: it is the evidence the
+      // post-teardown liveness check needs, and the process is confirmed gone.
     }
     await rm(run, { recursive: true, force: true });
+    stopped = true;
+    if (failures.length > 0) {
+      // The postmaster is confirmed gone, so this is not a leak, but the
+      // cooperative path did fail and that is worth surfacing rather than
+      // swallowing.
+      throw new Error(`attack_kit_cluster_stop_degraded:${port}:${failures.join(",")}`);
+    }
   };
 
   // A signal must not leave a postmaster behind. This machine has 32 SysV
@@ -394,6 +477,11 @@ async function startCluster(options: WithRealPostgresOptions & { pgBin: string }
       `-k ${socketDirectory} -p ${port} -h '' -c unix_socket_permissions=0700 -c shared_buffers=32MB -c max_connections=60`,
       "start"]);
     started = true;
+    // Retained for the lifetime of the cluster so the teardown can prove the
+    // postmaster is gone without reading files it is about to delete.
+    const recordedPid = (await readFile(join(dataDirectory, "postmaster.pid"), "utf8")
+      .catch(() => "")).split("\n")[0]?.trim();
+    postmasterPid = recordedPid && /^\d+$/.test(recordedPid) ? Number(recordedPid) : undefined;
 
     const adminOptions = (name = "postgres"): ConnectionOptions => ({
       host: socketDirectory, port, database: name, user: "fixture_admin", password: FIXTURE_ADMIN_PASSWORD,
@@ -492,6 +580,13 @@ async function startCluster(options: WithRealPostgresOptions & { pgBin: string }
         return oneShot(connectionFor(role, name ?? database), sql, params);
       },
       async isRunning() {
+        // The RETAINED pid is authoritative, and it is checked FIRST. The old
+        // implementation asked `pg_ctl status` against a data directory that
+        // teardown had already deleted, so it necessarily reported false and a
+        // surviving postmaster was read as "gone". The data-directory probe
+        // remains as a fallback for a cluster whose pid was never captured.
+        if (postmasterPid !== undefined) return pidAlive(postmasterPid);
+        if (await postmasterAlive(dataDirectory)) return true;
         try {
           await native(pgBin, run, "pg_ctl", ["-D", dataDirectory, "status"]);
           return true;
@@ -521,8 +616,14 @@ export interface WithRealPostgresResult<T> {
 }
 
 export interface WithRealPostgresFullOptions extends WithRealPostgresOptions {
-  /** Ports the caller is entitled to use. Any other port is refused. */
-  allowedPorts?: readonly number[];
+  /**
+   * Ports the caller is entitled to use. Any other port is refused.
+   *
+   * Required and non-empty: an omitted allowlist used to be accepted, which
+   * silently removed the boundary and let a mistyped port reach a probe and an
+   * `initdb`. `withRealPostgres` refuses before touching the port.
+   */
+  allowedPorts: readonly number[];
   /** Wall-clock bound for the body. */
   boundMs?: number;
 }

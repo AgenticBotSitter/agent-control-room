@@ -10,14 +10,166 @@
 // uncommitted work cannot be restored, and a silently swallowed restore would
 // leave the mutation in someone's working tree.
 
-import { execFile } from "node:child_process";
+import { spawn } from "node:child_process";
 import { readFile, writeFile, stat } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { dirname, isAbsolute, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { promisify } from "node:util";
 
-const run = promisify(execFile);
+/** Grace period between SIGTERM and SIGKILL when a group is torn down. */
+const KILL_GRACE_MS = 2_000;
+
+/** Upper bound on captured child output, so a chatty command cannot exhaust memory. */
+const MAX_CAPTURE_BYTES = 1 << 26;
+
+/** Bound for a bookkeeping command such as `git status`. */
+const BOOKKEEPING_BOUND_MS = 30_000;
+
+export class MutationTimeoutError extends Error {
+  constructor(readonly boundMs: number) {
+    super(`mutation_test_command_timed_out_after_${boundMs}ms`);
+    this.name = "MutationTimeoutError";
+  }
+}
+
+interface RunOutcome {
+  readonly stdout: string;
+  readonly stderr: string;
+}
+
+/**
+ * A spawned command in its own process group, with a teardown that can be
+ * awaited.
+ *
+ * `detached: true` puts the child in a NEW process group, which is the whole
+ * point. Signalling the child's own pid kills only the child: a grandchild it
+ * spawned survives, keeps burning CPU, and outlives the test that made it. On
+ * 2026-09-28 an orphaned CPU-burner from an earlier job ran for over half an
+ * hour after its harness had already reported the bound. Killing the group
+ * reaches every descendant.
+ */
+interface GroupRun {
+  /** Resolves on a clean exit; rejects with `{ code, signal, stdout, stderr, killed }`. */
+  readonly result: Promise<RunOutcome>;
+  /** Resolves once the child process itself has exited. */
+  readonly exited: Promise<void>;
+  /**
+   * Terminate the whole process group and resolve only after the exit is
+   * confirmed. Idempotent, and still correct after the child has exited: the
+   * group signal reaches anything the child left behind.
+   */
+  kill(): Promise<void>;
+  readonly pid: number | undefined;
+}
+
+const signalGroup = (pid: number | undefined, signal: NodeJS.Signals): void => {
+  // A negative pid addresses the process GROUP led by `pid`. ESRCH means the
+  // group is already gone, which is the outcome we want.
+  if (pid === undefined) return;
+  try {
+    process.kill(-pid, signal);
+  } catch {
+    // Already reaped, or the child never became a group leader.
+  }
+};
+
+const delay = (ms: number): Promise<void> => new Promise(resolve => { setTimeout(resolve, ms); });
+
+function spawnGroup(
+  file: string,
+  args: readonly string[],
+  options: { cwd: string; env: NodeJS.ProcessEnv; maxBuffer: number },
+): GroupRun {
+  const child = spawn(file, [...args], {
+    cwd: options.cwd,
+    env: options.env,
+    detached: true,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let stdout = "";
+  let stderr = "";
+  let captured = 0;
+  const collect = (chunk: Buffer, target: "out" | "err") => {
+    if (captured >= options.maxBuffer) return;
+    captured += chunk.length;
+    if (target === "out") stdout += chunk.toString("utf8");
+    else stderr += chunk.toString("utf8");
+  };
+  child.stdout?.on("data", (chunk: Buffer) => collect(chunk, "out"));
+  child.stderr?.on("data", (chunk: Buffer) => collect(chunk, "err"));
+
+  let markExited!: () => void;
+  const exited = new Promise<void>(resolve => { markExited = resolve; });
+  let done = false;
+  child.once("exit", () => { done = true; markExited(); });
+  child.once("error", () => { if (!done) { done = true; markExited(); } });
+
+  const result = new Promise<RunOutcome>((resolve, reject) => {
+    child.once("error", (error: NodeJS.ErrnoException) => {
+      reject(Object.assign(
+        new Error(`mutation_command_failed_to_start:${file}:${error.code ?? error.message}`),
+        { code: error.code, stdout, stderr, killed: false },
+      ));
+    });
+    child.once("close", (code, signal) => {
+      if (code === 0) resolve({ stdout, stderr });
+      else reject(Object.assign(
+        new Error(`mutation_command_failed:${code ?? signal ?? "unknown"}`),
+        { code, signal, stdout, stderr, killed: true },
+      ));
+    });
+  });
+  // Nothing may observe an unhandled rejection from a race the caller abandons
+  // when the bound wins.
+  result.catch(() => {});
+
+  let killed = false;
+  const kill = async (): Promise<void> => {
+    if (killed) return;
+    killed = true;
+    if (child.exitCode !== null || child.signalCode !== null) {
+      // The child is gone, but a descendant it left behind may not be. The
+      // group signal still reaches it, so this is not an early return.
+      signalGroup(child.pid, "SIGKILL");
+      return;
+    }
+    signalGroup(child.pid, "SIGTERM");
+    await Promise.race([exited, delay(KILL_GRACE_MS)]);
+    signalGroup(child.pid, "SIGKILL");
+    await exited;
+  };
+
+  return { result, exited, kill, pid: child.pid };
+}
+
+/**
+ * Run a command to completion in its own process group.
+ *
+ * On expiry the WHOLE group is terminated and the exit is awaited, so the
+ * caller can restore a file knowing that nothing is still running against it.
+ */
+async function runGrouped(
+  file: string,
+  args: readonly string[],
+  options: { cwd: string; env?: NodeJS.ProcessEnv; maxBuffer?: number; boundMs?: number },
+): Promise<RunOutcome> {
+  const group = spawnGroup(file, args, {
+    cwd: options.cwd,
+    env: options.env ?? { ...process.env },
+    maxBuffer: options.maxBuffer ?? MAX_CAPTURE_BYTES,
+  });
+  let timer: NodeJS.Timeout | undefined;
+  const bound = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new MutationTimeoutError(options.boundMs ?? BOOKKEEPING_BOUND_MS)),
+      options.boundMs ?? BOOKKEEPING_BOUND_MS);
+  });
+  try {
+    return await Promise.race([group.result, bound]);
+  } finally {
+    if (timer) clearTimeout(timer);
+    await group.kill();
+  }
+}
 
 /** tests/support/attack-kit -> repository root. */
 export const ATTACK_KIT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
@@ -70,9 +222,9 @@ export interface GuardBitesResult {
 
 /** Files `git status --porcelain` reports, ignoring untracked build output. */
 async function dirtyFiles(root: string): Promise<string[]> {
-  const { stdout } = await run("git", ["status", "--porcelain", "--untracked-files=no"],
+  const { stdout } = await runGrouped("git", ["status", "--porcelain", "--untracked-files=no"],
     { cwd: root, maxBuffer: 1 << 24 });
-  return stdout.split("\n").filter(Boolean).map(line => line.slice(3).trim()).filter(Boolean);
+  return stdout.split("\n").filter(Boolean).map((line: string) => line.slice(3).trim()).filter(Boolean);
 }
 
 const digest = (value: string) => createHash("sha256").update(value).digest("hex");
@@ -159,15 +311,9 @@ export async function assertGuardBites(options: AssertGuardBitesOptions): Promis
   let output = "";
   let exitCode: number | null = null;
   let signal: NodeJS.Signals | null = null;
-  let timer: NodeJS.Timeout | undefined;
   let restoredDigest = digest(original);
   try {
     await writeFile(file, original.replace(options.find, options.replace));
-    const bound = new Promise<never>((_, reject) => {
-      // Not unref'd: a mutation experiment that hangs must hit the bound and
-      // restore the file, not let the process exit with the mutation still live.
-      timer = setTimeout(() => reject(new Error(`mutation_test_command_timed_out_after_${boundMs}ms`)), boundMs);
-    });
     try {
       // NODE_TEST_CONTEXT must be scrubbed. When this harness is itself run
       // from a `node --test` file, that variable is inherited, and node then
@@ -177,12 +323,17 @@ export async function assertGuardBites(options: AssertGuardBitesOptions): Promis
       // "the guard did not bite" for a guard that bites perfectly well.
       const env = { ...process.env };
       delete env.NODE_TEST_CONTEXT;
-      const done = run(command.file, command.args, { cwd: root, maxBuffer: 1 << 26, env });
-      // execFile resolves only on a clean exit, so a resolved promise IS the
-      // "the guard did not bite" case and is reported as such. Anything that
-      // rejects is examined for a non-zero status, a signal, or a kill.
-      const result = await Promise.race([done, bound]);
-      output = `${result.stdout ?? ""}${result.stderr ?? ""}`;
+      // `runGrouped` returns only once the child has exited — including on the
+      // expiry path, where it signals the whole process group and awaits the
+      // exit before rejecting. So by the time the catch below runs, nothing the
+      // command started is still alive, and the restore in the outer `finally`
+      // cannot race a live child that is still writing to `file`.
+      const result = await runGrouped(command.file, command.args,
+        { cwd: root, maxBuffer: 1 << 26, env, boundMs });
+      // A resolved command IS the "the guard did not bite" case: exit 0 with
+      // the mutation applied. Anything that rejects is examined for a non-zero
+      // status, a signal, or a kill.
+      output = `${result.stdout}${result.stderr}`;
       exitCode = 0;
       throw new GuardDidNotBiteError(file, command.args.join(" "));
     } catch (error) {
@@ -192,8 +343,12 @@ export async function assertGuardBites(options: AssertGuardBitesOptions): Promis
       const bited = (typeof failure.code === "number" && failure.code !== 0)
         || Boolean(failure.signal) || failure.killed === true;
       if (!bited) {
-        // The command never ran (ENOENT, bad cwd) or the bound elapsed. Neither
-        // is evidence that the guard bit, so neither is reported as a bite.
+        // The command never ran (ENOENT, bad cwd) or the bound elapsed and the
+        // group was torn down. Neither is evidence that the guard bit, so
+        // neither is reported as a bite. A timeout keeps its own error, because
+        // "the command hung" and "the command could not start" call for
+        // different investigations.
+        if (error instanceof MutationTimeoutError) throw error;
         if (typeof failure.code === "number" && failure.code === 0) {
           throw new GuardDidNotBiteError(file, command.args.join(" "));
         }
@@ -201,8 +356,6 @@ export async function assertGuardBites(options: AssertGuardBitesOptions): Promis
       }
       exitCode = typeof failure.code === "number" ? failure.code : null;
       signal = (failure.signal as NodeJS.Signals | undefined) ?? null;
-    } finally {
-      if (timer) clearTimeout(timer);
     }
   } finally {
     restoredDigest = digest(await restore());

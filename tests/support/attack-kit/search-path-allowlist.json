@@ -1,0 +1,201 @@
+{
+  "$comment": "Known search_path violations in shipped migrations, tracked by issue 421.\nPR #420 does not edit shipped migrations; this file records each violation so the\nCI check fails on NEW ones while these are fixed.\nAn entry applies only while it is in date AND still matches the real declaration\n(file + function + declared search_path). Expired or stale entries are reported.\nRemove an entry as soon as the function it names is hardened.",
+  "entries": [
+    {
+      "file": "0002_allocation_simulation_audit.sql",
+      "function": "reject_append_only_mutation()",
+      "searchPath": null,
+      "expires": "2027-03-01",
+      "issue": "421"
+    },
+    {
+      "file": "0003_canonical_domain_delivery.sql",
+      "function": "validate_control_payload_mirror()",
+      "searchPath": null,
+      "expires": "2027-03-01",
+      "issue": "421"
+    },
+    {
+      "file": "0004_cr4b_review_hardening.sql",
+      "function": "validate_control_payload_mirror()",
+      "searchPath": null,
+      "expires": "2027-03-01",
+      "issue": "421"
+    },
+    {
+      "file": "0006_cr4d_audit_chain.sql",
+      "function": "validate_audit_chain_fields()",
+      "searchPath": null,
+      "expires": "2027-03-01",
+      "issue": "421"
+    },
+    {
+      "file": "0008_cr5a_node_protocol_identity.sql",
+      "function": "protect_enrollment_token()",
+      "searchPath": null,
+      "expires": "2027-03-01",
+      "issue": "421"
+    },
+    {
+      "file": "0008_cr5a_node_protocol_identity.sql",
+      "function": "protect_enrollment_challenge()",
+      "searchPath": null,
+      "expires": "2027-03-01",
+      "issue": "421"
+    },
+    {
+      "file": "0008_cr5a_node_protocol_identity.sql",
+      "function": "protect_node_key_identity()",
+      "searchPath": null,
+      "expires": "2027-03-01",
+      "issue": "421"
+    },
+    {
+      "file": "0008_cr5a_node_protocol_identity.sql",
+      "function": "reject_node_key_delete()",
+      "searchPath": null,
+      "expires": "2027-03-01",
+      "issue": "421"
+    },
+    {
+      "file": "0040_cr14b_private_web_lock_support.sql",
+      "function": "protect_private_web_session()",
+      "searchPath": "pg_catalog, public",
+      "expires": "2027-03-01",
+      "issue": "421"
+    },
+    {
+      "file": "0041_cr14c_private_task_proposals.sql",
+      "function": "guard_private_web_proposal_insert()",
+      "searchPath": "pg_catalog, public",
+      "expires": "2027-03-01",
+      "issue": "421"
+    },
+    {
+      "file": "0043_cr14c_owner_result_review.sql",
+      "function": "guard_private_web_quality_insert()",
+      "searchPath": "pg_catalog, public",
+      "expires": "2027-03-01",
+      "issue": "421"
+    },
+    {
+      "file": "0046_cr14c_coordinator_lock_support.sql",
+      "function": "guard_task_coordinator_outbox_insert()",
+      "searchPath": "pg_catalog, public",
+      "expires": "2027-03-01",
+      "issue": "421"
+    },
+    {
+      "file": "0053_cr14c_owner_result_verification.sql",
+      "function": "guard_private_web_quality_insert()",
+      "searchPath": "pg_catalog, public",
+      "expires": "2027-03-01",
+      "issue": "421"
+    },
+    {
+      "file": "0054_cr14c_quality_coordinator.sql",
+      "function": "guard_task_coordinator_quality_insert()",
+      "searchPath": "pg_catalog, public",
+      "expires": "2027-03-01",
+      "issue": "421"
+    },
+    {
+      "file": "0055_cr14c_native_result_writer.sql",
+      "function": "guard_native_results_gate_insert()",
+      "searchPath": "pg_catalog, public",
+      "expires": "2027-03-01",
+      "issue": "421"
+    },
+    {
+      "file": "0071_cr15b_native_result_write_reservations.sql",
+      "function": "guard_native_result_write_reservation_update()",
+      "searchPath": "pg_catalog, public",
+      "expires": "2027-03-01",
+      "issue": "421"
+    },
+    {
+      "file": "0075_project_coordination_authority.sql",
+      "function": "guard_project_coordinator_head_update()",
+      "searchPath": null,
+      "expires": "2027-03-01",
+      "issue": "421"
+    },
+    {
+      "file": "0075_project_coordination_authority.sql",
+      "function": "guard_project_delegation_policy_update()",
+      "searchPath": null,
+      "expires": "2027-03-01",
+      "issue": "421"
+    },
+    {
+      "file": "0076_project_work_resource_admission.sql",
+      "function": "guard_attempt_resource_admission_update()",
+      "searchPath": null,
+      "expires": "2027-03-01",
+      "issue": "421"
+    },
+    {
+      "file": "0077_durable_result_write_reservations.sql",
+      "function": "guard_durable_result_write_reservation_update()",
+      "searchPath": "pg_catalog, public",
+      "expires": "2027-03-01",
+      "issue": "421"
+    },
+    {
+      "file": "0078_github_webhook_replays.sql",
+      "function": "guard_github_webhook_replay_update()",
+      "searchPath": null,
+      "expires": "2027-03-01",
+      "issue": "421"
+    },
+    {
+      "file": "0078_github_webhook_replays.sql",
+      "function": "guard_github_webhook_replay_delete()",
+      "searchPath": null,
+      "expires": "2027-03-01",
+      "issue": "421"
+    },
+    {
+      "file": "0079_github_worker_wake_hints.sql",
+      "function": "guard_github_worker_wake_hint_update()",
+      "searchPath": null,
+      "expires": "2027-03-01",
+      "issue": "421"
+    },
+    {
+      "file": "0079_github_worker_wake_hints.sql",
+      "function": "guard_github_worker_wake_hint_delete()",
+      "searchPath": null,
+      "expires": "2027-03-01",
+      "issue": "421"
+    },
+    {
+      "file": "0086_mac_local_owner_review_profile.sql",
+      "function": "guard_private_web_quality_insert()",
+      "searchPath": "pg_catalog, public",
+      "expires": "2027-03-01",
+      "issue": "421"
+    },
+    {
+      "file": "0087_mac_local_fleet_signals.sql",
+      "function": "guard_task_coordinator_fleet_signal()",
+      "searchPath": "pg_catalog, public",
+      "expires": "2027-03-01",
+      "issue": "421"
+    },
+    {
+      "file": "0092_phase2b_mac_local_quality_profile.sql",
+      "function": "guard_private_web_quality_insert()",
+      "searchPath": "pg_catalog, public",
+      "expires": "2027-03-01",
+      "issue": "421"
+    },
+    {
+      "file": "0092_phase2b_mac_local_quality_profile.sql",
+      "function": "guard_native_results_gate_insert()",
+      "searchPath": "pg_catalog, public",
+      "expires": "2027-03-01",
+      "issue": "421"
+    }
+  ]
+}

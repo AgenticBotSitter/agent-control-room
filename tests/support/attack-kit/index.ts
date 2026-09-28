@@ -62,6 +62,7 @@ export {
   DirtyTreeError,
   fileExists,
   GuardDidNotBiteError,
+  MutationTimeoutError,
   tokenizeCommand,
 } from "./mutation";
 export type { AssertGuardBitesOptions, GuardBitesResult } from "./mutation";
@@ -70,11 +71,20 @@ export { isPrivilegeDenied, privilegeMatrix, roleCan, roleCannot, PrivilegeAsser
 export type { PrivilegeMatrixRow, PrivilegeOptions } from "./privileges";
 
 export {
+  allowlistKey,
   assertSearchPathPinned,
+  loadSearchPathAllowlist,
   parseSearchPath,
   searchPathEndsInPgTemp,
   securityDefinerAudit,
   securityDefinerAuditLive,
+  splitSqlStatements,
   UnpinnedSearchPathError,
+  withStaleAllowlist,
 } from "./search-path-audit";
-export type { FunctionFinding, SecurityDefinerAuditResult } from "./search-path-audit";
+export type {
+  FunctionFinding,
+  LoadedSearchPathAllowlist,
+  SearchPathAllowlistEntry,
+  SecurityDefinerAuditResult,
+} from "./search-path-audit";

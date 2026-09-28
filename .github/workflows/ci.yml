@@ -155,6 +155,13 @@ jobs:
           CONTROL_ROOM_PRIVATE_NAMES: ${{ secrets.CONTROL_ROOM_PRIVATE_NAMES }}
         run: node scripts/check-private-names.mjs
       - run: pnpm install --frozen-lockfile --ignore-scripts
+      # A SECURITY DEFINER or trigger function resolves the names in its body
+      # with the OWNER's privileges, so an unpinned `search_path` lets a
+      # writable schema shadow a function the body calls. This reads migration
+      # files, so it needs no PostgreSQL. It runs after the install because it
+      # imports the audited module as TypeScript, which `tsx` provides.
+      - name: Fail on a privileged function without a pg_temp-pinned search_path
+        run: node --import tsx scripts/check-migration-search-path.mjs
       - name: Type check contributor demo
         run: pnpm run check:demo
       - name: Type check server build

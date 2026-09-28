@@ -11,8 +11,18 @@ import type { ConnectionOptions, RealPostgres } from "./real-postgres";
 import { AttackKitPortError } from "./real-postgres";
 import { Client } from "pg";
 
-/** PostgreSQL's own privilege-denied classes. */
-const DENIED = new Set(["42501", "42000"]);
+/**
+ * PostgreSQL's own "insufficient privilege" SQLSTATE.
+ *
+ * ONLY `42501` counts. `42000` (syntax_error_or_access_rule_violation) and
+ * `0A000` (feature_not_supported) are broad classes that a typo, a missing
+ * table, a revoked TEMP privilege on a *database* and an unimplemented feature
+ * all land in, and accepting either as proof of denial makes a grant test pass
+ * against a database where the role COULD have done the thing. An operation
+ * that genuinely refuses with a different exact code must be listed here with
+ * the version and statement it was observed on.
+ */
+const DENIED = new Set(["42501"]);
 
 interface PgFailure {
   code?: string;
@@ -24,14 +34,15 @@ const deniedCode = (error: unknown): string | null => {
   return typeof failure?.code === "string" ? failure.code : null;
 };
 
-/** True when the failure is a privilege refusal rather than any other error. */
+/**
+ * True ONLY when the failure is PostgreSQL's privilege refusal.
+ *
+ * A refusal for any other reason — a syntax error, a missing relation, a
+ * feature that does not exist — is explicitly NOT a denial, because it carries
+ * no information about the grant under test.
+ */
 export function isPrivilegeDenied(error: unknown): boolean {
-  const code = deniedCode(error);
-  if (code === null) return false;
-  if (DENIED.has(code)) return true;
-  // Some refusals surface as 0A000 (feature not supported) for a privilege the
-  // role does not hold on the object, e.g. CREATE TEMP in a revoked ACL.
-  return code === "0A000";
+  return DENIED.has(deniedCode(error) ?? "");
 }
 
 async function execute(options: ConnectionOptions, sql: string, params: readonly unknown[]): Promise<void> {

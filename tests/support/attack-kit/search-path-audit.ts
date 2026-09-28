@@ -12,7 +12,7 @@
 // This module reads migration files rather than a live catalog, so it can run
 // in a lane with no PostgreSQL at all and can be pointed at a fixture file.
 
-import { readdir, readFile } from "node:fs/promises";
+import { readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
 
 export interface FunctionFinding {
@@ -30,18 +30,53 @@ export interface FunctionFinding {
   readonly reason: string;
 }
 
+export interface SearchPathAllowlistEntry {
+  /** Migration file, relative to the audited directory. */
+  readonly file: string;
+  /** `schema.function(identity arguments)`. */
+  readonly function: string;
+  /** The `search_path` the entry was written for, or null. */
+  readonly searchPath: string | null;
+  /** ISO date after which the entry stops applying and the check fails again. */
+  readonly expires: string;
+  /** The issue that tracks fixing the violation. */
+  readonly issue: string;
+}
+
+export interface LoadedSearchPathAllowlist {
+  readonly entries: readonly SearchPathAllowlistEntry[];
+  /** Entries that are in date and match a current violation, by key. */
+  readonly active: ReadonlyMap<string, SearchPathAllowlistEntry>;
+  /** Entries past their expiry date, by key. Their violations count again. */
+  readonly expired: readonly SearchPathAllowlistEntry[];
+  /** In-date entries that match no current violation: dead weight to remove. */
+  readonly stale: readonly SearchPathAllowlistEntry[];
+}
+
 export interface SecurityDefinerAuditResult {
   readonly findings: readonly FunctionFinding[];
   /** Findings whose search_path is missing or does not end in pg_temp. */
   readonly unpinned: readonly FunctionFinding[];
+  /** Unpinned findings covered by an in-date allowlist entry. */
+  readonly allowlisted: readonly FunctionFinding[];
+  /** Allowlist entries past their expiry, which are counted as violations. */
+  readonly expiredAllowlistEntries: readonly SearchPathAllowlistEntry[];
   readonly auditedFiles: number;
 }
 
-const CREATE_FUNCTION = /CREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+([A-Za-z0-9_."]+)\s*\(([^)]*)\)/gi;
-const RETURNS_TRIGGER = /RETURNS\s+trigger\b/i;
-const SECURITY_DEFINER = /SECURITY\s+DEFINER\b/i;
-/** `SET search_path = a, b` / `SET search_path TO a, b`, in or after the options. */
-const SET_SEARCH_PATH = /SET\s+search_path\s*(?:=|TO)\s*([^;]*?)(?=\s*(?:AS\b|LANGUAGE\b|RETURNS\b|;|\$\$))/i;
+const RETURNS_TRIGGER = /\breturns\s+trigger\b/i;
+const SECURITY_DEFINER = /\bsecurity\s+definer\b/i;
+/**
+ * `SET search_path = a, b` / `SET search_path TO a, b`.
+ *
+ * The list stops at the end of its line or at a `;`, whichever comes first, so
+ * it can never run past the clause it belongs to.
+ */
+const SET_SEARCH_PATH = /\bset\s+search_path\b\s*(?:=|to)\s*([^\n;]*?)(?=\s*(?:\bas\b|\blanguage\b|\breturns\b|[;\n]|$))/i;
+
+const FUNCTION_HEAD = /create\s+(?:or\s+replace\s+)?function\s+([A-Za-z0-9_."]+)\s*\(/i;
+/** The body's `AS` clause: `AS $$...$$`, `AS $tag$...$tag$` or `AS 'file'`. */
+const BODY_AS = /\bas\b(?=\s*(?:'|"))|\bas\b(?=\s*\$)/i;
 
 /** Split a declared search_path list into its entries, honouring quotes. */
 export function parseSearchPath(declared: string): string[] {
@@ -61,15 +96,157 @@ export function searchPathEndsInPgTemp(declared: string | null): boolean {
   return entries[entries.length - 1]!.toLowerCase() === "pg_temp";
 }
 
-/** The function body region that a `SET` clause could appear in. */
-function optionsWindow(source: string, from: number): string {
-  return source.slice(from, from + 2_000);
+/**
+ * Split a migration into complete statements.
+ *
+ * The audit MUST NOT look past the statement it is reading. A fixed character
+ * window is what let an unpinned function inherit the pinned `search_path` of
+ * the function declared after it, so a file with two adjacent functions
+ * reported a false clean. Splitting on statement boundaries means there is no
+ * text left for one definition to borrow from another.
+ *
+ * Dollar-quoted bodies are the reason this is a scanner and not a `split(";")`:
+ * every body in this repository ends its statements with `;` inside `$$ ... $$`,
+ * and a naive split would cut every trigger function in half. Single-quoted
+ * strings, `--` comments and (possibly nested) `/* ... *\/` blocks are tracked
+ * for the same reason.
+ */
+export function splitSqlStatements(source: string): string[] {
+  const statements: string[] = [];
+  let start = 0;
+  let index = 0;
+  const length = source.length;
+  while (index < length) {
+    const character = source[index]!;
+    if (character === "'") {
+      index += 1;
+      while (index < length) {
+        if (source[index] === "'" && source[index + 1] === "'") { index += 2; continue; }
+        if (source[index] === "'") { index += 1; break; }
+        index += 1;
+      }
+      continue;
+    }
+    if (character === "-" && source[index + 1] === "-") {
+      const newline = source.indexOf("\n", index);
+      index = newline === -1 ? length : newline + 1;
+      continue;
+    }
+    if (character === "/" && source[index + 1] === "*") {
+      let depth = 1;
+      index += 2;
+      while (index < length && depth > 0) {
+        if (source[index] === "/" && source[index + 1] === "*") { depth += 1; index += 2; continue; }
+        if (source[index] === "*" && source[index + 1] === "/") { depth -= 1; index += 2; continue; }
+        index += 1;
+      }
+      continue;
+    }
+    if (character === "$") {
+      // A dollar-quoted string: an opening `$tag$` matched by the same tag.
+      const tag = /^\$([A-Za-z_][A-Za-z0-9_]*)?\$/u.exec(source.slice(index, index + 64));
+      if (tag) {
+        const close = source.indexOf(tag[0], index + tag[0].length);
+        index = close === -1 ? length : close + tag[0].length;
+        continue;
+      }
+    }
+    if (character === ";") {
+      statements.push(source.slice(start, index));
+      start = index + 1;
+    }
+    index += 1;
+  }
+  statements.push(source.slice(start));
+  return statements.map(statement => statement.trim()).filter(statement => statement.length > 0);
 }
 
-function parseSearchPathFor(source: string, from: number): string | null {
-  const window = optionsWindow(source, from);
-  const match = SET_SEARCH_PATH.exec(window);
-  return match ? match[1]!.trim() : null;
+interface FunctionDefinition {
+  /** `name(arg, arg)`, matching the finding's `function` field. */
+  readonly signature: string;
+  /** The clause text between the argument list and the body's `AS`. */
+  readonly options: string;
+}
+
+/**
+ * The clause region of one `CREATE FUNCTION` inside `statement`.
+ *
+ * Two boundaries matter and both are respected here:
+ *  - the statement itself, so a sibling function's clause is out of reach;
+ *  - the body's `AS`, so a `SET search_path` inside a plpgsql body is never
+ *    mistaken for the function's own option.
+ *
+ * When one statement declares more than one function (a `DO` block), each
+ * definition is bounded by the next `CREATE FUNCTION` so they stay separate.
+ */
+function functionDefinitions(statement: string): FunctionDefinition[] {
+  const heads: { start: number; open: number; name: string }[] = [];
+  for (const match of statement.matchAll(new RegExp(FUNCTION_HEAD.source, "giu"))) {
+    heads.push({
+      start: match.index,
+      open: match.index + match[0].length - 1,
+      name: match[1]!,
+    });
+  }
+  const definitions: FunctionDefinition[] = [];
+  heads.forEach((head, position) => {
+    // The argument list is balanced, so a default such as `nextval('s')` does
+    // not terminate it early.
+    let depth = 0;
+    let cursor = head.open;
+    for (; cursor < statement.length; cursor += 1) {
+      if (statement[cursor] === "(") depth += 1;
+      else if (statement[cursor] === ")") {
+        depth -= 1;
+        if (depth === 0) break;
+      }
+    }
+    if (depth !== 0) return;
+    const args = statement.slice(head.open + 1, cursor);
+    const optionsEnd = Math.min(
+      statement.slice(cursor + 1).search(BODY_AS) === -1 ? statement.length : cursor + 1 + statement.slice(cursor + 1).search(BODY_AS),
+      heads[position + 1]?.start ?? statement.length,
+    );
+    definitions.push({
+      signature: `${head.name}(${args.trim()})`,
+      options: statement.slice(cursor + 1, optionsEnd),
+    });
+  });
+  return definitions;
+}
+
+/** One parsed privileged function, before it is attributed to a file. */
+function auditStatement(statement: string, name: string): FunctionFinding[] {
+  const findings: FunctionFinding[] = [];
+  for (const definition of functionDefinitions(statement)) {
+    const isTrigger = RETURNS_TRIGGER.test(definition.options);
+    const isDefiner = SECURITY_DEFINER.test(definition.options);
+    if (!isTrigger && !isDefiner) continue;
+    const match = SET_SEARCH_PATH.exec(definition.options);
+    const searchPath = match ? match[1]!.trim().replace(/,\s*$/, "") || null : null;
+    const endsInPgTemp = searchPathEndsInPgTemp(searchPath);
+    const kinds: ("security-definer" | "trigger")[] = [];
+    if (isDefiner) kinds.push("security-definer");
+    if (isTrigger) kinds.push("trigger");
+    findings.push({
+      file: name,
+      function: definition.signature,
+      kinds,
+      searchPath,
+      endsInPgTemp,
+      reason: endsInPgTemp
+        ? "pinned"
+        : searchPath === null
+          ? `${kinds.join("+")}_without_a_search_path_clause`
+          : `${kinds.join("+")}_search_path_does_not_end_in_pg_temp:${searchPath}`,
+    });
+  }
+  return findings;
+}
+
+export interface SecurityDefinerAuditOptions {
+  /** Allowlist to subtract, normally from `loadSearchPathAllowlist`. */
+  readonly allowlist?: LoadedSearchPathAllowlist;
 }
 
 /**
@@ -81,56 +258,101 @@ function parseSearchPathFor(source: string, from: number): string | null {
  * whoever wrote the row, and the row's author is not necessarily the owner of
  * the table the trigger guards.
  */
-export async function securityDefinerAudit(migrationsDir: string): Promise<SecurityDefinerAuditResult> {
+export async function securityDefinerAudit(
+  migrationsDir: string,
+  options: SecurityDefinerAuditOptions = {},
+): Promise<SecurityDefinerAuditResult> {
   const entries = (await readdir(migrationsDir)).filter(name => name.endsWith(".sql")).sort();
   const findings: FunctionFinding[] = [];
   for (const name of entries) {
     const source = await readFile(join(migrationsDir, name), "utf8");
-    for (const match of source.matchAll(CREATE_FUNCTION)) {
-      const at = match.index ?? 0;
-      const window = optionsWindow(source, at);
-      const isTrigger = RETURNS_TRIGGER.test(window);
-      const isDefiner = SECURITY_DEFINER.test(window);
-      if (!isTrigger && !isDefiner) continue;
-      const searchPath = parseSearchPathFor(source, at);
-      const endsInPgTemp = searchPathEndsInPgTemp(searchPath);
-      const kinds: ("security-definer" | "trigger")[] = [];
-      if (isDefiner) kinds.push("security-definer");
-      if (isTrigger) kinds.push("trigger");
-      findings.push({
-        file: name,
-        function: `${match[1]}(${match[2]!.trim()})`,
-        kinds,
-        searchPath,
-        endsInPgTemp,
-        reason: endsInPgTemp
-          ? "pinned"
-          : searchPath === null
-            ? `${kinds.join("+")}_without_a_search_path_clause`
-            : `${kinds.join("+")}_search_path_does_not_end_in_pg_temp:${searchPath}`,
-      });
-    }
+    for (const statement of splitSqlStatements(source)) findings.push(...auditStatement(statement, name));
   }
+  const unpinned = findings.filter(finding => !finding.endsInPgTemp);
+  const active = options.allowlist?.active ?? new Map<string, SearchPathAllowlistEntry>();
+  const allowlisted = unpinned.filter(finding => active.has(allowlistKey(finding)));
+  const allowed = new Set(allowlisted.map(allowlistKey));
   return {
     findings,
-    unpinned: findings.filter(finding => !finding.endsInPgTemp),
+    unpinned: unpinned.filter(finding => !allowed.has(allowlistKey(finding))),
+    allowlisted,
+    expiredAllowlistEntries: options.allowlist?.expired ?? [],
     auditedFiles: entries.length,
   };
+}
+
+/** Stable identity of one violation, so an allowlist entry cannot drift. */
+export function allowlistKey(value: {
+  file: string; function: string; searchPath: string | null;
+}): string {
+  return `${value.file}::${value.function}::${value.searchPath ?? ""}`;
+}
+
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * Read and validate the allowlist.
+ *
+ * An entry applies only while it is in date AND it still describes a real
+ * violation: same file, same function, same declared `search_path`. Pinning
+ * all three means a migration that is later hardened stops matching its entry
+ * (and the entry is reported as stale), and a migration that gains a NEW
+ * unpinned function is never covered by an entry written for a different one.
+ */
+export async function loadSearchPathAllowlist(
+  path: string,
+  now: Date = new Date(),
+): Promise<LoadedSearchPathAllowlist> {
+  const parsed = JSON.parse(await readFile(path, "utf8")) as {
+    entries?: readonly SearchPathAllowlistEntry[];
+  };
+  const entries = parsed.entries ?? [];
+  for (const entry of entries) {
+    if (!entry.file || !entry.function) throw new Error(`allowlist_entry_incomplete:${path}`);
+    if (!ISO_DATE.test(entry.expires)) throw new Error(`allowlist_entry_expiry_not_a_date:${entry.file}:${entry.function}`);
+    if (!entry.issue) throw new Error(`allowlist_entry_without_issue:${entry.file}:${entry.function}`);
+  }
+  const active = new Map<string, SearchPathAllowlistEntry>();
+  const expired: SearchPathAllowlistEntry[] = [];
+  const today = now.toISOString().slice(0, 10);
+  for (const entry of entries) {
+    if (entry.expires < today) expired.push(entry);
+    else active.set(allowlistKey(entry), entry);
+  }
+  return { entries, active, expired, stale: [] };
+}
+
+/** Mark allowlist entries that no longer match any current violation. */
+export function withStaleAllowlist(
+  allowlist: LoadedSearchPathAllowlist,
+  result: SecurityDefinerAuditResult,
+): LoadedSearchPathAllowlist {
+  const used = new Set([
+    ...result.allowlisted.map(allowlistKey),
+    ...result.expiredAllowlistEntries.map(allowlistKey),
+  ]);
+  return { ...allowlist, stale: allowlist.entries.filter(entry => !used.has(allowlistKey(entry))) };
 }
 
 export class UnpinnedSearchPathError extends Error {
   constructor(readonly result: SecurityDefinerAuditResult) {
     const detail = result.unpinned
-      .map(finding => `${finding.file}:${finding.function}:${finding.reason}`)
+      .map(finding => `${finding.file}:${finding.function}:${finding.reason}`).join("; ");
+    const lapsed = result.expiredAllowlistEntries
+      .map(entry => `${entry.file}:${entry.function}:allowlist_entry_expired_${entry.expires}_issue_${entry.issue}`)
       .join("; ");
-    super(`search_path_audit_failed:${result.unpinned.length}_unpinned_of_${result.findings.length}:${detail}`);
+    super(`search_path_audit_failed:${result.unpinned.length}_unpinned_of_${result.findings.length}`
+      + `:${[detail, lapsed].filter(Boolean).join("; ")}`);
     this.name = "UnpinnedSearchPathError";
   }
 }
 
 /** `securityDefinerAudit` that throws instead of returning, for a test gate. */
-export async function assertSearchPathPinned(migrationsDir: string): Promise<SecurityDefinerAuditResult> {
-  const result = await securityDefinerAudit(migrationsDir);
+export async function assertSearchPathPinned(
+  migrationsDir: string,
+  options: SecurityDefinerAuditOptions = {},
+): Promise<SecurityDefinerAuditResult> {
+  const result = await securityDefinerAudit(migrationsDir, options);
   if (result.unpinned.length > 0) throw new UnpinnedSearchPathError(result);
   return result;
 }
@@ -139,9 +361,14 @@ export async function assertSearchPathPinned(migrationsDir: string): Promise<Sec
  * The same audit against a live catalog, for the function bodies that a
  * migration has since replaced. `pg_get_functiondef` is the source of truth
  * the role files and the rehearsal install.
+ *
+ * The callback takes the parameter values as well as the SQL: the query
+ * filters on `n.nspname = $1`, so a `pg` client called with SQL alone fails
+ * with SQLSTATE 08P01 ("bind message supplies 0 parameters") and the audit
+ * never runs.
  */
 export async function securityDefinerAuditLive(
-  query: (sql: string) => Promise<{ rows: { name: string; definition: string }[] }>,
+  query: (sql: string, params: readonly unknown[]) => Promise<{ rows: { name: string; definition: string }[] }>,
   options: { schema?: string } = {},
 ): Promise<SecurityDefinerAuditResult> {
   const schema = options.schema ?? "public";
@@ -151,19 +378,15 @@ export async function securityDefinerAuditLive(
      FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
      WHERE n.nspname = $1 AND (p.prosecdef OR p.prorettype = 'trigger'::regtype)
      ORDER BY 1`,
+    [schema],
   )).rows;
-  const findings = rows.map(({ name, definition }) => {
-    const match = SET_SEARCH_PATH.exec(definition);
-    const searchPath = match ? match[1]!.trim().replace(/,\s*$/, "") : null;
-    const endsInPgTemp = searchPathEndsInPgTemp(searchPath);
-    return {
-      file: "<live catalog>",
-      function: name,
-      kinds: (/security\s+definer/i.test(definition) ? ["security-definer" as const] : []),
-      searchPath,
-      endsInPgTemp,
-      reason: endsInPgTemp ? "pinned" : `search_path_not_pinned:${searchPath ?? "none"}`,
-    };
-  });
-  return { findings, unpinned: findings.filter(finding => !finding.endsInPgTemp), auditedFiles: rows.length };
+  const findings = rows.flatMap(({ name, definition }) =>
+    auditStatement(definition, "<live catalog>").map(finding => ({ ...finding, function: name })));
+  return {
+    findings,
+    unpinned: findings.filter(finding => !finding.endsInPgTemp),
+    allowlisted: [],
+    expiredAllowlistEntries: [],
+    auditedFiles: rows.length,
+  };
 }
