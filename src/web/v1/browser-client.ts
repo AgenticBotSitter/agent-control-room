@@ -14,7 +14,7 @@ const digest = /^sha256:[a-f0-9]{64}$/;
 export function observeBrowserAuthentication(response: Response, observer?: BrowserAuthenticationObserver): void {
   if (!observer) return;
   if (response.status === 401) { observer(undefined); return; }
-  if (!response.ok) return;
+  if (!response.ok && response.headers.get("x-control-room-review-refusal") !== "authenticated-session-changed") return;
   const actorId = response.headers.get("x-control-room-authenticated-actor");
   const sessionEpoch = response.headers.get("x-control-room-session-epoch");
   if (!actorId || !sessionEpoch || !digest.test(actorId) || !digest.test(sessionEpoch))

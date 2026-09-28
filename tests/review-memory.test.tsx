@@ -6,6 +6,7 @@ import { createTaskReviewWorkspace, type ReviewWorkspaceBinding } from '../src/w
 import { OwnerTaskReview } from '../private-app/app/task-owner-review';
 import { sha256Digest } from '../src/security';
 import { BrowserRequestError } from '../src/web/v1/browser-client';
+import { createTaskReviewBrowserClient } from '../src/web/v1/task-review-browser-client';
 import type { TaskReviewOptions } from '../src/web/v1/task-review-wire';
 
 // Reuses the existing private review-workspace regression's synthetic cases.
@@ -60,6 +61,49 @@ test('a lost acceptance reply retries the exact read attestation', async () => {
   assert.deepEqual(calls, [{ artifactId: binding.artifactId, targetId: binding.targetId,
     targetDigest: binding.targetDigest, contentHash: binding.contentHash, decision: 'accepted', feedback: '',
     acceptanceAttestation: attestation }, calls[0]]);
+});
+
+test('an attested review retry reuses the byte-identical session-bound POST', async () => {
+  const attestation = { scenarioId: 'scenario:human', instructionsDigest: sha256Digest('instructions'), confirmed: true as const };
+  const draft = { artifactId: binding.artifactId, targetId: binding.targetId, targetDigest: binding.targetDigest,
+    contentHash: binding.contentHash, decision: 'accepted' as const, feedback: '', acceptanceAttestation: attestation };
+  const receipt = { projectId: binding.projectId, jobId: binding.jobId, artifactId: draft.artifactId, targetId: draft.targetId,
+    targetDigest: draft.targetDigest, contentHash: draft.contentHash, decision: draft.decision, reviewId: 'review:one', findingId: null,
+    feedbackDigest: sha256Digest(''), recordedAt: '2026-09-27T00:00:00.000Z', grantsApproval: false as const,
+    grantsExecutionAuthority: false as const, startsRevision: false as const };
+  const posts: RequestInit[] = [];
+  const client = createTaskReviewBrowserClient(async (_input, init) => {
+    posts.push(init!);
+    if (posts.length === 1) throw new Error('reply lost');
+    return Response.json({ receipt, replayed: true }, { headers: {
+      'x-control-room-authenticated-actor': authentication.actorId,
+      'x-control-room-session-epoch': authentication.sessionEpoch,
+    } });
+  }, () => 'review-session-bound-key');
+  await assert.rejects(client.record(binding.projectId, binding.jobId, draft, authentication),
+    (error: unknown) => error instanceof BrowserRequestError && error.code === 'uncertain');
+  assert.equal((await client.retrySave()).reviewId, receipt.reviewId);
+  assert.equal(posts.length, 2);
+  assert.equal(posts[0]!.body, posts[1]!.body, 'the retry must reuse the exact serialized request bytes');
+  assert.equal((posts[0]!.headers as Record<string, string>)['idempotency-key'], 'review-session-bound-key');
+  assert.equal((posts[1]!.headers as Record<string, string>)['idempotency-key'], 'review-session-bound-key');
+  assert.deepEqual(JSON.parse(posts[0]!.body as string), { review: draft, expectedAuthentication: authentication });
+});
+
+test('a server session-handoff refusal clears the old gesture and requires re-confirmation', async () => {
+  const replacement = { ...authentication, sessionEpoch: sha256Digest('session:replacement') };
+  const workspace = bind(createTaskReviewWorkspace(observe => createTaskReviewBrowserClient(async () =>
+    Response.json({ error: 'conflict', refusal: 'authenticated-session-changed' }, { status: 409, headers: {
+      'x-control-room-review-refusal': 'authenticated-session-changed',
+      'x-control-room-authenticated-actor': replacement.actorId,
+      'x-control-room-session-epoch': replacement.sessionEpoch,
+    } }), () => 'review-session-mismatch-key', observe)));
+  const session = workspace.get(binding);
+  const identity = { scenarioId: scenario, instructionsDigest };
+  session.setAttested(identity, true);
+  await session.save('accepted', { ...identity, confirmed: true });
+  assert.equal(session.attested(identity), false, 'the gesture belongs to the replaced session and must be cleared');
+  assert.equal(session.getSnapshot().error?.code, 'conflict');
 });
 
 /* ------------------------------------------------------------------ *
