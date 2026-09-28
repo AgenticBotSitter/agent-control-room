@@ -460,6 +460,7 @@ test("work-intake login cannot read or forge another subsystem's shared-ledger r
     [JSON.stringify(orphanMaterial.safeMetadata),orphanSequence,orphanDigest,head.head_hash,orphanHash]),
     /committed without head advance/u);
 
+  const queueDown=await readFile(join(ROOT,"db/down/0095_work_batch_agent_queue.sql"),"utf8");
   const ownerDown=await readFile(join(ROOT,"db/down/0094_work_batch_owner_approval.sql"),"utf8");
   const down=await readFile(join(ROOT,"db/down/0093_work_batch_intake.sql"),"utf8");
   await query(db,"CREATE POLICY test_dependent_policy ON audit_events AS RESTRICTIVE USING (true)");
@@ -472,6 +473,7 @@ test("work-intake login cannot read or forge another subsystem's shared-ledger r
   await query(db,"DROP POLICY test_dependent_policy ON audit_events");
   // The owner-approval slice depends on the intake tables. Exercise the
   // reviewed recovery order before removing the proposal-only base slice.
+  await query(db,queueDown);
   await query(db,ownerDown);
   await query(db,down);
   const remaining=(await query(db,`SELECT

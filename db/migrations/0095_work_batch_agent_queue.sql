@@ -178,6 +178,7 @@ CREATE VIEW work_batch_effective_queue_admissions AS
   WHERE NOT EXISTS (SELECT 1 FROM work_batch_queue_admissions newer
     WHERE newer.tenant_id=a.tenant_id AND newer.item_id=a.item_id
       AND newer.assignment_revision>a.assignment_revision);
+ALTER VIEW work_batch_effective_queue_admissions OWNER TO CURRENT_USER;
 REVOKE ALL ON work_batch_effective_queue_admissions FROM PUBLIC;
 
 CREATE INDEX work_batch_queue_agent_order
