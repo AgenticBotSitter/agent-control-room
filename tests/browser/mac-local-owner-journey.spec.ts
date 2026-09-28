@@ -10,7 +10,7 @@ import { sha256Digest } from "../../src/security";
 import { createPrivatePostgresDatabase } from "../../src/web/v1/private-postgres";
 import { openMacLocalRollbackCheckpointStoreV1 } from "../../src/web/v1/mac-local-rollback-checkpoint-store";
 import { loadMacLocalTaskRuntimeFromRootV1 } from "../../src/web/v1/mac-local-task-runtime";
-import { openResultWithDeferredOwnerReview, ownerReviewControlsWhenReady } from "./owner-review-readiness";
+import { openResultWithDeferredOwnerReview, ownerReviewControlsWhenReady, requestChangesControlWhenReady } from "./owner-review-readiness";
 
 const ownerCode = process.env.CONTROL_ROOM_E2E_OWNER_CODE;
 if (!ownerCode) throw new Error("CONTROL_ROOM_E2E_OWNER_CODE is required");
@@ -199,11 +199,12 @@ test("owner completes the real local website journey for every configured worker
 
   await createPreparedTask(page, projectPath, "Hermes browser task", "Hermes Agent", true, true, true);
   await openResult(page);
-  await ownerReviewControlsWhenReady(page);
-  await page.getByLabel("Changes you want").fill("Return a second harmless line in a linked revision.");
-  await page.getByRole("button", { name: "Request changes" }).click();
+  const requestChanges = await requestChangesControlWhenReady(page, "Return a second harmless line in a linked revision.");
+  await requestChanges.click();
   await expect(page.getByText(/Saved: changes requested/)).toBeVisible();
-  await page.getByRole("button", { name: "Prepare revised task" }).click();
+  const prepareRevision = page.getByRole("button", { name: "Prepare revised task" });
+  await expect(prepareRevision).toBeEnabled();
+  await prepareRevision.click();
   await expect(page.getByRole("link", { name: "Open revised task" })).toBeVisible();
 
   await createPreparedTask(page, projectPath, "Claude browser task", "Claude Code");

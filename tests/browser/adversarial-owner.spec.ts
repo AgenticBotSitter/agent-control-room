@@ -2,7 +2,7 @@ import { expect, test, type Locator, type Page, type Request } from "@playwright
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { Client } from "pg";
-import { openResultWithDeferredOwnerReview, ownerReviewControlsWhenReady } from "./owner-review-readiness";
+import { openResultWithDeferredOwnerReview, ownerReviewControlsWhenReady, requestChangesControlWhenReady } from "./owner-review-readiness";
 
 const ownerCode = process.env.CONTROL_ROOM_E2E_OWNER_CODE;
 if (!ownerCode) throw new Error("CONTROL_ROOM_E2E_OWNER_CODE is required");
@@ -399,9 +399,9 @@ test.describe("disposable owner website adversarial attacks", () => {
 
     await prepareTask(page, project.projectId, "Revision lifecycle task");
     await assignAndOpenResult(page);
-    await page.getByLabel("Changes you want").fill("Return a corrected harmless line in a linked revision.");
+    const requestChanges = await requestChangesControlWhenReady(page, "Return a corrected harmless line in a linked revision.");
     const reviewsBeforeRevision = reviewPosts.length;
-    await activateTwice(page.getByRole("button", { name: "Request changes" }));
+    await activateTwice(requestChanges);
     await expect(page.getByText(/Saved: changes requested/)).toBeVisible();
     expect(reviewPosts.length - reviewsBeforeRevision).toBe(1);
     const revisionPosts: string[] = [];
@@ -409,7 +409,9 @@ test.describe("disposable owner website adversarial attacks", () => {
       if (request.method() === "POST" && request.url().endsWith("/revisions")) revisionPosts.push(request.url());
     };
     page.on("request", captureRevision);
-    await activateTwice(page.getByRole("button", { name: "Prepare revised task" }));
+    const prepareRevision = page.getByRole("button", { name: "Prepare revised task" });
+    await expect(prepareRevision).toBeEnabled();
+    await activateTwice(prepareRevision);
     await expect(page.getByRole("link", { name: "Open revised task" })).toBeVisible();
     page.off("request", captureRevision);
     expect(revisionPosts).toHaveLength(1);

@@ -49,6 +49,16 @@ export async function ownerReviewControlsWhenReady(page: Page): Promise<Readonly
   return Object.freeze({ panel, attestation, accept });
 }
 
+export async function requestChangesControlWhenReady(page: Page, feedback: string): Promise<Locator> {
+  const { panel } = await ownerReviewControlsWhenReady(page);
+  const changes = panel.getByLabel("Changes you want");
+  const requestChanges = panel.getByRole("button", { name: "Request changes", exact: true });
+  await expect(changes).toBeEnabled();
+  await changes.fill(feedback);
+  await expect(requestChanges).toBeEnabled();
+  return requestChanges;
+}
+
 /** Opens a result while proving the owner-review panel exposes its loading state before it becomes ready. */
 export async function openResultWithDeferredOwnerReview(page: Page): Promise<void> {
   const deferred = await deferNextOwnerReviewLoad(page);
