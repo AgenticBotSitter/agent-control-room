@@ -5,7 +5,11 @@ import { StringDecoder } from "node:string_decoder";
 import { types } from "node:util";
 import { z } from "zod";
 import { DEFAULT_MAC_LOCAL_TASK_RUN_LIMITS_V1, MAX_TASK_RUN_OUTPUT_BYTES,
-  MIN_TASK_RUN_OUTPUT_BYTES } from "../v1/owner-trusted-local-run-limits";
+  MIN_TASK_RUN_OUTPUT_BYTES, DEFAULT_TASK_RUN_RESOURCES_V1, captureMacLocalTaskRunResourcesV1,
+  type MacLocalTaskRunResourcesV1 } from "../v1/owner-trusted-local-run-limits";
+import { startTaskRunResourceSupervisorV1, taskRunResourceStopV1,
+  type TaskRunResourceStopV1, type TaskRunResourceSupervisorV1 }
+  from "../v1/owner-trusted-local-resource-supervisor";
 
 const MAX_PROMPT_BYTES = 64 * 1024;
 const KILL_AFTER_MS = 5_000;
@@ -27,12 +31,17 @@ export const OWNER_TRUSTED_LOCAL_HERMES_FIXED_ARGS_V1 = Object.freeze([
 
 export type OwnerTrustedLocalHermesExecResultV1 = Readonly<
   | { status: "completed"; text: string; usage: Readonly<{ inputTokens: number; outputTokens: number; totalTokens: number }> }
-  | { status: "failed" | "canceled" | "timed_out" | "cleanup_uncertain"; reason: string }
+  | { status: "failed" | "canceled" | "timed_out" | "cleanup_uncertain" | "limit_exceeded"; reason: string;
+      /** Present only when a resource limit stopped the run. */
+      limit?: TaskRunResourceStopV1 }
 >;
 
 export type OwnerTrustedLocalHermesExecV1 = Readonly<{ execute(input: Readonly<{
   executablePath: string; profile: string; model: string; provider: string;
-  prompt: string; workingDirectory: string; deadlineMs: number; outputBytes?: number; signal?: AbortSignal;
+  prompt: string; workingDirectory: string; deadlineMs: number; outputBytes?: number;
+  /** Per-run CPU and memory limits. Enforced by the supervisor; an
+   * absent value falls back to the bounded defaults, never to none. */
+  resources?: MacLocalTaskRunResourcesV1; signal?: AbortSignal;
 }>): Promise<OwnerTrustedLocalHermesExecResultV1> }>;
 
 type Spawn = (file: string, args: readonly string[], options: Readonly<{
@@ -41,8 +50,9 @@ type Spawn = (file: string, args: readonly string[], options: Readonly<{
 }>) => ChildProcess;
 type ReadDirectory = (path: string) => Promise<readonly string[]>;
 
-function failed(status: Exclude<OwnerTrustedLocalHermesExecResultV1["status"], "completed">, reason: string) {
-  return Object.freeze({ status, reason }) as OwnerTrustedLocalHermesExecResultV1;
+function failed(status: Exclude<OwnerTrustedLocalHermesExecResultV1["status"], "completed">, reason: string,
+  limit?: TaskRunResourceStopV1) {
+  return Object.freeze(limit ? { status, reason, limit } : { status, reason }) as OwnerTrustedLocalHermesExecResultV1;
 }
 function safePath(value: unknown): value is string {
   return typeof value === "string" && value.length > 0 && value.length <= 4096 && isAbsolute(value)
@@ -52,14 +62,18 @@ function safeInput(input: unknown): input is Parameters<OwnerTrustedLocalHermesE
   if (!input || typeof input !== "object" || Array.isArray(input) || types.isProxy(input)
     || Object.getPrototypeOf(input) !== Object.prototype) return false;
   const value = input as Record<string, unknown>;
-  return Object.keys(value).every(key => ["executablePath", "profile", "model", "provider", "prompt", "workingDirectory", "deadlineMs", "outputBytes", "signal"].includes(key))
+  return Object.keys(value).every(key => ["executablePath", "profile", "model", "provider", "prompt", "workingDirectory", "deadlineMs", "outputBytes", "resources", "signal"].includes(key))
     && safePath(value.executablePath) && safePath(value.workingDirectory)
     && [value.profile, value.model, value.provider].every(value => identifier.safeParse(value).success)
     && typeof value.prompt === "string" && Buffer.byteLength(value.prompt, "utf8") <= MAX_PROMPT_BYTES
     && typeof value.deadlineMs === "number" && Number.isSafeInteger(value.deadlineMs) && value.deadlineMs >= 100 && value.deadlineMs <= 3_600_000
     && (value.outputBytes === undefined || typeof value.outputBytes === "number" && Number.isSafeInteger(value.outputBytes)
       && value.outputBytes >= MIN_TASK_RUN_OUTPUT_BYTES && value.outputBytes <= MAX_TASK_RUN_OUTPUT_BYTES)
+    && (value.resources === undefined || safeResources(value.resources))
     && (value.signal === undefined || value.signal instanceof AbortSignal);
+}
+function safeResources(value: unknown): value is MacLocalTaskRunResourcesV1 {
+  try { captureMacLocalTaskRunResourcesV1(value); return true; } catch { return false; }
 }
 function groupSignal(child: ChildProcess, signal: NodeJS.Signals): boolean {
   if (!child.pid || child.pid < 1) return false;
@@ -102,13 +116,18 @@ export function createOwnerTrustedLocalHermesExecV1(dependencies: Readonly<{ spa
       let settled = false, bytes = 0, remainder = "", result: z.infer<typeof terminal> | undefined;
       let stop: "canceled" | "timed_out" | "failed" | undefined;
       let killer: ReturnType<typeof setTimeout> | undefined;
+      let supervisor: TaskRunResourceSupervisorV1 | undefined;
+      let resourceStop: TaskRunResourceStopV1 | undefined;
       const decoder = new StringDecoder("utf8");
       const final = (value: OwnerTrustedLocalHermesExecResultV1) => {
         if (settled) return; settled = true; clearTimeout(deadline); if (killer) clearTimeout(killer);
+        supervisor?.close();
         input.signal?.removeEventListener("abort", cancel); resolve(value);
       };
-      const stopped = () => stop === "canceled" ? failed("canceled", "aborted")
-        : stop === "timed_out" ? failed("timed_out", "deadline_exceeded") : failed("failed", "process_or_output_refused");
+      const stopped = () => resourceStop ? failed("limit_exceeded", resourceStop.reason, resourceStop)
+        : stop === "canceled" ? failed("canceled", "aborted")
+          : stop === "timed_out" ? failed("timed_out", "deadline_exceeded")
+            : failed("failed", "process_or_output_refused");
       const terminate = (reason: "canceled" | "timed_out" | "failed") => {
         if (stop) { if (!groupExists(child)) final(stopped()); return; }
         stop = reason;
@@ -143,6 +162,17 @@ export function createOwnerTrustedLocalHermesExecV1(dependencies: Readonly<{ spa
       const stderr = (chunk: Buffer) => { bytes += chunk.byteLength; if (bytes > outputBytes) terminate("failed"); };
       const cancel = () => terminate("canceled");
       const deadline = setTimeout(() => terminate("timed_out"), input.deadlineMs);
+      // Enforced per-run CPU and memory limits. The supervisor is the
+      // authority: macOS setrlimit is advisory (a child that catches
+      // SIGXCPU outlives both the soft and hard limit), so the run is
+      // stopped here and the breach recorded. It escalates through this
+      // executor's own terminate, keeping one cleanup acknowledgement.
+      try { supervisor = startTaskRunResourceSupervisorV1(child,
+        captureMacLocalTaskRunResourcesV1(input.resources ?? DEFAULT_TASK_RUN_RESOURCES_V1),
+        breach => { resourceStop = taskRunResourceStopV1(breach); terminate("failed"); }); }
+      catch { resourceStop = taskRunResourceStopV1({ limit: "cpu_time", cause: "measurement_unavailable",
+        measuredCpuTimeMs: 0, measuredResidentBytes: 0, limitCpuTimeMs: input.deadlineMs,
+        limitResidentBytes: 0 }); terminate("failed"); }
       input.signal?.addEventListener("abort", cancel, { once: true });
       child.on("error", () => terminate("failed")); stdin.on("error", () => terminate("failed"));
       stdoutStream.on("error", () => terminate("failed")); stderrStream.on("error", () => terminate("failed"));

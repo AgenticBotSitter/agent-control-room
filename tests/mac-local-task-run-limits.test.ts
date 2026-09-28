@@ -5,8 +5,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { captureMacLocalTaskRunLimitsV1, DEFAULT_MAC_LOCAL_TASK_RUN_LIMITS_V1,
-  MAC_LOCAL_TASK_RUN_LIMITS_V1, MAX_TASK_RUN_OUTPUT_BYTES, MAX_TASK_RUN_WALL_TIME_MS,
-  MIN_TASK_RUN_OUTPUT_BYTES, MIN_TASK_RUN_WALL_TIME_MS } from "../src/harness/v1/owner-trusted-local-run-limits";
+  MAC_LOCAL_TASK_RUN_LIMITS_V1, MAX_TASK_RUN_CPU_TIME_MS, MAX_TASK_RUN_OUTPUT_BYTES,
+  MAX_TASK_RUN_RESIDENT_BYTES, MAX_TASK_RUN_WALL_TIME_MS, MIN_TASK_RUN_CPU_TIME_MS,
+  MIN_TASK_RUN_OUTPUT_BYTES, MIN_TASK_RUN_RESIDENT_BYTES, MIN_TASK_RUN_WALL_TIME_MS }
+  from "../src/harness/v1/owner-trusted-local-run-limits";
 import { loadMacLocalTaskRunLimitsFromRootV1,
   writeMacLocalTaskRunLimitsToRootV1 } from "../src/web/v1/mac-local-task-run-limits";
 import { parseConfigureTaskRunLimitsArgumentsV1 } from "../scripts/mac-local/configure-task-run-limits";
@@ -19,16 +21,19 @@ async function protectedRoot(t: { after(fn: () => unknown): void }) {
   return root;
 }
 
-const limits = (wallTimeMs = 45_000, outputBytes = 262_144) => ({
-  schema: MAC_LOCAL_TASK_RUN_LIMITS_V1, wallTimeMs, outputBytes,
+const limits = (wallTimeMs = 45_000, outputBytes = 262_144, cpuTimeMs = 30_000,
+  maxResidentBytes = 536_870_912) => ({
+  schema: MAC_LOCAL_TASK_RUN_LIMITS_V1, wallTimeMs, outputBytes, cpuTimeMs, maxResidentBytes,
 });
 
 test("the exact schema accepts safe integer boundaries and rejects malformed or out-of-range values", () => {
   assert.deepEqual(captureMacLocalTaskRunLimitsV1(limits()), limits());
-  assert.deepEqual(captureMacLocalTaskRunLimitsV1(limits(MIN_TASK_RUN_WALL_TIME_MS, MIN_TASK_RUN_OUTPUT_BYTES)),
-    limits(MIN_TASK_RUN_WALL_TIME_MS, MIN_TASK_RUN_OUTPUT_BYTES));
-  assert.deepEqual(captureMacLocalTaskRunLimitsV1(limits(MAX_TASK_RUN_WALL_TIME_MS, MAX_TASK_RUN_OUTPUT_BYTES)),
-    limits(MAX_TASK_RUN_WALL_TIME_MS, MAX_TASK_RUN_OUTPUT_BYTES));
+  assert.deepEqual(captureMacLocalTaskRunLimitsV1(limits(MIN_TASK_RUN_WALL_TIME_MS, MIN_TASK_RUN_OUTPUT_BYTES,
+    MIN_TASK_RUN_CPU_TIME_MS, MIN_TASK_RUN_RESIDENT_BYTES)),
+    limits(MIN_TASK_RUN_WALL_TIME_MS, MIN_TASK_RUN_OUTPUT_BYTES, MIN_TASK_RUN_CPU_TIME_MS, MIN_TASK_RUN_RESIDENT_BYTES));
+  assert.deepEqual(captureMacLocalTaskRunLimitsV1(limits(MAX_TASK_RUN_WALL_TIME_MS, MAX_TASK_RUN_OUTPUT_BYTES,
+    MAX_TASK_RUN_CPU_TIME_MS, MAX_TASK_RUN_RESIDENT_BYTES)),
+    limits(MAX_TASK_RUN_WALL_TIME_MS, MAX_TASK_RUN_OUTPUT_BYTES, MAX_TASK_RUN_CPU_TIME_MS, MAX_TASK_RUN_RESIDENT_BYTES));
   for (const value of [
     { ...limits(), extra: true },
     { wallTimeMs: 1_000, outputBytes: 16_384 },
@@ -39,6 +44,17 @@ test("the exact schema accepts safe integer boundaries and rejects malformed or 
     limits(MIN_TASK_RUN_WALL_TIME_MS, MAX_TASK_RUN_OUTPUT_BYTES + 1),
     limits(1_000.5, MIN_TASK_RUN_OUTPUT_BYTES),
     limits(1_000, Number.NaN),
+    limits(MIN_TASK_RUN_WALL_TIME_MS, MIN_TASK_RUN_OUTPUT_BYTES, MIN_TASK_RUN_CPU_TIME_MS - 1,
+      MIN_TASK_RUN_RESIDENT_BYTES),
+    limits(MIN_TASK_RUN_WALL_TIME_MS, MIN_TASK_RUN_OUTPUT_BYTES, MAX_TASK_RUN_CPU_TIME_MS + 1,
+      MIN_TASK_RUN_RESIDENT_BYTES),
+    limits(MIN_TASK_RUN_WALL_TIME_MS, MIN_TASK_RUN_OUTPUT_BYTES, MIN_TASK_RUN_CPU_TIME_MS,
+      MIN_TASK_RUN_RESIDENT_BYTES - 1),
+    limits(MIN_TASK_RUN_WALL_TIME_MS, MIN_TASK_RUN_OUTPUT_BYTES, MIN_TASK_RUN_CPU_TIME_MS,
+      MAX_TASK_RUN_RESIDENT_BYTES + 1),
+    // A file written before the resource limits existed is ambiguous, and is
+    // refused rather than silently defaulted on the CPU/memory half.
+    { schema: MAC_LOCAL_TASK_RUN_LIMITS_V1, wallTimeMs: 45_000, outputBytes: 262_144 },
   ]) assert.throws(() => captureMacLocalTaskRunLimitsV1(value), /mac_local_task_run_limits_invalid/u);
 });
 
@@ -54,7 +70,7 @@ test("the writer creates and atomically replaces a private exact settings file",
   assert.equal((await stat(file)).mode & 0o777, 0o600);
   assert.deepEqual(await loadMacLocalTaskRunLimitsFromRootV1(root), limits());
   assert.deepEqual(await readdir(join(root, "config")), ["task-run-limits.json"]);
-  const replacement = limits(90_000, 524_288);
+  const replacement = limits(90_000, 524_288, 50_000, 268_435_456);
   await writeMacLocalTaskRunLimitsToRootV1(root, replacement);
   assert.deepEqual(JSON.parse(await readFile(file, "utf8")), replacement);
   assert.deepEqual(await readdir(join(root, "config")), ["task-run-limits.json"], "no temporary file remains");
@@ -94,32 +110,42 @@ test("loader and writer refuse public files, links, public directories, and non-
 });
 
 test("the configuration command accepts each flag exactly once and validates canonical integers and bounds", () => {
-  const args = ["--protected-root", "/protected", "--wall-time-ms", "120000", "--output-bytes", "1048576"];
+  const args = ["--protected-root", "/protected", "--wall-time-ms", "120000", "--output-bytes", "1048576",
+    "--cpu-time-ms", "60000", "--max-resident-bytes", "1073741824"];
   assert.deepEqual(parseConfigureTaskRunLimitsArgumentsV1(args), parseConfigureTaskRunLimitsArgumentsV1(["--", ...args]));
   assert.deepEqual(parseConfigureTaskRunLimitsArgumentsV1(args), {
     protectedRoot: "/protected", limits: DEFAULT_MAC_LOCAL_TASK_RUN_LIMITS_V1,
   });
   for (const bad of [args.slice(0, -2), [...args, "--wall-time-ms", "1000"], [...args, "--extra", "1"],
-    ["--protected-root", "/protected", "--wall-time-ms", "01000", "--output-bytes", "16384"],
-    ["--protected-root", "/protected", "--wall-time-ms", "999", "--output-bytes", "16384"],
-    ["--protected-root", "/protected", "--wall-time-ms", "1000", "--output-bytes", "16777217"]])
+    ["--protected-root", "/protected", "--wall-time-ms", "01000", "--output-bytes", "16384",
+      "--cpu-time-ms", "60000", "--max-resident-bytes", "1073741824"],
+    ["--protected-root", "/protected", "--wall-time-ms", "999", "--output-bytes", "16384",
+      "--cpu-time-ms", "60000", "--max-resident-bytes", "1073741824"],
+    ["--protected-root", "/protected", "--wall-time-ms", "1000", "--output-bytes", "16777217",
+      "--cpu-time-ms", "60000", "--max-resident-bytes", "1073741824"],
+    ["--protected-root", "/protected", "--wall-time-ms", "1000", "--output-bytes", "16384",
+      "--cpu-time-ms", "999", "--max-resident-bytes", "1073741824"],
+    ["--protected-root", "/protected", "--wall-time-ms", "1000", "--output-bytes", "16384",
+      "--cpu-time-ms", "60000", "--max-resident-bytes", "67108863"]])
     assert.throws(() => parseConfigureTaskRunLimitsArgumentsV1(bad), /mac_local_task_run_limits_(?:arguments_refused|invalid)/u);
 });
 
 test("the direct command reports only its generic outcome, never the configured values", async t => {
   const root = await protectedRoot(t);
-  const configured = ["77777", "333333"];
+  const configured = ["77777", "333333", "44556", "268435456"];
   const result = spawnSync(process.execPath, ["--import", "tsx", "scripts/mac-local/configure-task-run-limits.ts",
-    "--protected-root", root, "--wall-time-ms", configured[0]!, "--output-bytes", configured[1]!],
+    "--protected-root", root, "--wall-time-ms", configured[0]!, "--output-bytes", configured[1]!,
+    "--cpu-time-ms", configured[2]!, "--max-resident-bytes", configured[3]!],
   { cwd: process.cwd(), encoding: "utf8" });
   assert.equal(result.status, 0, result.stderr);
   assert.equal(result.stdout, "mac:configure-task-run-limits updated\n");
   assert.ok(configured.every(value => !result.stdout.includes(value) && !result.stderr.includes(value)));
-  assert.deepEqual(await loadMacLocalTaskRunLimitsFromRootV1(root), limits(77_777, 333_333));
+  assert.deepEqual(await loadMacLocalTaskRunLimitsFromRootV1(root), limits(77_777, 333_333, 44_556, 268_435_456));
 
   const refusedValue = "999999999999";
   const refused = spawnSync(process.execPath, ["--import", "tsx", "scripts/mac-local/configure-task-run-limits.ts",
-    "--protected-root", root, "--wall-time-ms", refusedValue, "--output-bytes", "16384"],
+    "--protected-root", root, "--wall-time-ms", refusedValue, "--output-bytes", "16384",
+    "--cpu-time-ms", "60000", "--max-resident-bytes", "1073741824"],
   { cwd: process.cwd(), encoding: "utf8" });
   assert.equal(refused.status, 1);
   assert.ok(!refused.stdout.includes(refusedValue) && !refused.stderr.includes(refusedValue));

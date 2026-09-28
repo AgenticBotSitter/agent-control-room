@@ -6,7 +6,11 @@ import { types } from "node:util";
 import { userInfo } from "node:os";
 import { createClaudeCodeStreamDecoderV1 } from "./stream-json-decode";
 import { DEFAULT_MAC_LOCAL_TASK_RUN_LIMITS_V1, MAX_TASK_RUN_OUTPUT_BYTES,
-  MIN_TASK_RUN_OUTPUT_BYTES } from "../v1/owner-trusted-local-run-limits";
+  MIN_TASK_RUN_OUTPUT_BYTES, DEFAULT_TASK_RUN_RESOURCES_V1, captureMacLocalTaskRunResourcesV1,
+  type MacLocalTaskRunResourcesV1 } from "../v1/owner-trusted-local-run-limits";
+import { startTaskRunResourceSupervisorV1, taskRunResourceStopV1,
+  type TaskRunResourceStopV1, type TaskRunResourceSupervisorV1 }
+  from "../v1/owner-trusted-local-resource-supervisor";
 
 const MAX_PROMPT_BYTES = 64 * 1024;
 const KILL_AFTER_MS = 5_000;
@@ -26,7 +30,9 @@ export const OWNER_TRUSTED_LOCAL_CLAUDE_ARGS_V1 = Object.freeze([
 
 export type OwnerTrustedLocalClaudeExecResultV1 = Readonly<
   | { status: "completed"; text: string; usageReported: boolean }
-  | { status: "failed" | "canceled" | "timed_out" | "cleanup_uncertain"; reason: string }
+  | { status: "failed" | "canceled" | "timed_out" | "cleanup_uncertain" | "limit_exceeded"; reason: string;
+      /** Present only when a resource limit stopped the run. */
+      limit?: TaskRunResourceStopV1 }
 >;
 
 export type OwnerTrustedLocalClaudeExecV1 = Readonly<{
@@ -36,6 +42,9 @@ export type OwnerTrustedLocalClaudeExecV1 = Readonly<{
     workingDirectory: string;
     deadlineMs: number;
     outputBytes?: number;
+    /** Per-run CPU and memory limits. Enforced by the supervisor; an
+     * absent value falls back to the bounded defaults, never to none. */
+    resources?: MacLocalTaskRunResourcesV1;
     model?: string;
     effort?: string;
     supportsEffort?: boolean;
@@ -49,8 +58,9 @@ type Spawn = (file: string, args: readonly string[], options: Readonly<{
 }>) => ChildProcess;
 type ReadDirectory = (path: string) => Promise<readonly string[]>;
 
-function failed(status: Exclude<OwnerTrustedLocalClaudeExecResultV1["status"], "completed">, reason: string) {
-  return Object.freeze({ status, reason }) as OwnerTrustedLocalClaudeExecResultV1;
+function failed(status: Exclude<OwnerTrustedLocalClaudeExecResultV1["status"], "completed">, reason: string,
+  limit?: TaskRunResourceStopV1) {
+  return Object.freeze(limit ? { status, reason, limit } : { status, reason }) as OwnerTrustedLocalClaudeExecResultV1;
 }
 
 function safePath(value: unknown): value is string {
@@ -62,18 +72,23 @@ function safeInput(input: unknown): input is Parameters<OwnerTrustedLocalClaudeE
   if (!input || typeof input !== "object" || Array.isArray(input) || types.isProxy(input)
     || Object.getPrototypeOf(input) !== Object.prototype) return false;
   const value = input as Record<string, unknown>;
-  return Object.keys(value).every(key => ["executablePath", "prompt", "workingDirectory", "deadlineMs", "outputBytes", "model", "effort", "supportsEffort", "signal"].includes(key))
+  return Object.keys(value).every(key => ["executablePath", "prompt", "workingDirectory", "deadlineMs", "outputBytes", "resources", "model", "effort", "supportsEffort", "signal"].includes(key))
     && safePath(value.executablePath) && safePath(value.workingDirectory)
     && typeof value.prompt === "string" && Buffer.byteLength(value.prompt, "utf8") <= MAX_PROMPT_BYTES
     && typeof value.deadlineMs === "number" && Number.isSafeInteger(value.deadlineMs)
     && value.deadlineMs >= 100 && value.deadlineMs <= 3_600_000
     && (value.outputBytes === undefined || typeof value.outputBytes === "number" && Number.isSafeInteger(value.outputBytes)
       && value.outputBytes >= MIN_TASK_RUN_OUTPUT_BYTES && value.outputBytes <= MAX_TASK_RUN_OUTPUT_BYTES)
+    && (value.resources === undefined || safeResources(value.resources))
     && ((value.model === undefined && value.effort === undefined && value.supportsEffort === undefined)
       || typeof value.model === "string" && /^[A-Za-z0-9][A-Za-z0-9._:/+-]{0,179}$/u.test(value.model)
         && typeof value.effort === "string" && /^(?:low|medium|high|max)$/u.test(value.effort)
         && typeof value.supportsEffort === "boolean")
     && (value.signal === undefined || value.signal instanceof AbortSignal);
+}
+
+function safeResources(value: unknown): value is MacLocalTaskRunResourcesV1 {
+  try { captureMacLocalTaskRunResourcesV1(value); return true; } catch { return false; }
 }
 
 function processGroupSignal(child: ChildProcess, signal: NodeJS.Signals): boolean {
@@ -128,15 +143,19 @@ export function createOwnerTrustedLocalClaudeExecV1(dependencies: Readonly<{ spa
       let settled = false, bytes = 0, remainder = "", terminalText: string | undefined, usageReported = false;
       let stop: "canceled" | "timed_out" | "failed" | undefined;
       let killer: ReturnType<typeof setTimeout> | undefined;
+      let supervisor: TaskRunResourceSupervisorV1 | undefined;
+      let resourceStop: TaskRunResourceStopV1 | undefined;
       const utf8 = new StringDecoder("utf8");
       const finish = (value: OwnerTrustedLocalClaudeExecResultV1) => {
         if (settled) return;
         settled = true; clearTimeout(deadline); if (killer) clearTimeout(killer);
+        supervisor?.close();
         input.signal?.removeEventListener("abort", cancel); resolve(value);
       };
-      const stopped = () => stop === "canceled" ? failed("canceled", "aborted")
-        : stop === "timed_out" ? failed("timed_out", "deadline_exceeded")
-          : failed("failed", "process_or_output_refused");
+      const stopped = () => resourceStop ? failed("limit_exceeded", resourceStop.reason, resourceStop)
+        : stop === "canceled" ? failed("canceled", "aborted")
+          : stop === "timed_out" ? failed("timed_out", "deadline_exceeded")
+            : failed("failed", "process_or_output_refused");
       const terminate = (reason: "canceled" | "timed_out" | "failed") => {
         if (stop) {
           if (!processGroupExists(child)) { if (killer) clearTimeout(killer); finish(stopped()); }
@@ -172,6 +191,17 @@ export function createOwnerTrustedLocalClaudeExecV1(dependencies: Readonly<{ spa
       const receiveStderr = (chunk: Buffer) => { bytes += chunk.byteLength; if (bytes > outputBytes) terminate("failed"); };
       const cancel = () => terminate("canceled");
       const deadline = setTimeout(() => terminate("timed_out"), input.deadlineMs);
+      // Enforced per-run CPU and memory limits. The supervisor is the
+      // authority: macOS setrlimit is advisory (a child that catches
+      // SIGXCPU outlives both the soft and hard limit), so the run is
+      // stopped here and the breach recorded. It escalates through this
+      // executor's own terminate, keeping one cleanup acknowledgement.
+      try { supervisor = startTaskRunResourceSupervisorV1(child,
+        captureMacLocalTaskRunResourcesV1(input.resources ?? DEFAULT_TASK_RUN_RESOURCES_V1),
+        breach => { resourceStop = taskRunResourceStopV1(breach); terminate("failed"); }); }
+      catch { resourceStop = taskRunResourceStopV1({ limit: "cpu_time", cause: "measurement_unavailable",
+        measuredCpuTimeMs: 0, measuredResidentBytes: 0, limitCpuTimeMs: input.deadlineMs,
+        limitResidentBytes: 0 }); terminate("failed"); }
       input.signal?.addEventListener("abort", cancel, { once: true });
       // Cover the interval between the pre-spawn recheck and listener setup.
       if (input.signal?.aborted) { cancel(); return; }

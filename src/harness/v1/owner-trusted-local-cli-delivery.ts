@@ -7,6 +7,7 @@ import { controllerWorkerDeliverySchemaV1, controllerWorkerRouteSchemaV1,
 import { persistControllerWorkerDeliveryReceiptV1, readControllerWorkerDeliveryReceiptV1 }
   from "./controller-worker-delivery-receipt-store";
 import { canonicalJson, sha256Digest } from "../../security/canonical-digest";
+import { captureTaskRunResourceStopV1 } from "./owner-trusted-local-resource-supervisor";
 
 const text = z.string().min(1).refine(value => Buffer.byteLength(value, "utf8") <= 65_536);
 function unavailable(): never { throw new Error("owner_trusted_local_cli_delivery_unavailable"); }
@@ -16,7 +17,7 @@ function unavailable(): never { throw new Error("owner_trusted_local_cli_deliver
  * into the existing canonical result/review lifecycle. */
 export type OwnerTrustedLocalCliExecutionV1 = Readonly<
   | { kind: "completed"; text: string }
-  | { kind: "failed"; reason: string }
+  | { kind: "failed"; reason: string; limit?: unknown }
 >;
 
 export type OwnerTrustedLocalCliDeliveryBindingV1 = Readonly<{
@@ -42,9 +43,12 @@ export type OwnerTrustedLocalCliDeliveryV1 = Readonly<{
    * publisher. This bridge neither creates a result record nor a second store. */
   publish(input: Readonly<{ delivery: ControllerWorkerDeliveryV1; receipt: ControllerWorkerDeliveryReceiptV1;
     text: string; signal: AbortSignal }>): Promise<void>;
-  /** Records an observed failed process without creating a result. */
+  /** Records an observed failed process without creating a result. When
+   * the process was stopped by a resource limit, `limit` carries the
+   * limit, its configured value and the measured value so the run record
+   * states which bound stopped it and by how much. */
   recordFailure(input: Readonly<{ delivery: ControllerWorkerDeliveryV1; receipt: ControllerWorkerDeliveryReceiptV1;
-    signal: AbortSignal }>): Promise<void>;
+    signal: AbortSignal; limit?: unknown }>): Promise<void>;
 }>;
 
 function validBinding(binding: unknown): binding is OwnerTrustedLocalCliDeliveryBindingV1 {
@@ -70,8 +74,18 @@ function result(value: unknown): OwnerTrustedLocalCliExecutionV1 {
   const candidate = value as Record<string, unknown>;
   if (candidate.kind === "completed" && Object.keys(candidate).length === 2 && typeof candidate.text === "string")
     return Object.freeze({ kind: "completed" as const, text: text.parse(candidate.text) });
-  if (candidate.kind === "failed" && Object.keys(candidate).length === 2 && typeof candidate.reason === "string"
-    && candidate.reason.length >= 1 && candidate.reason.length <= 240) return Object.freeze({ kind: "failed" as const, reason: candidate.reason });
+  if (candidate.kind === "failed" && (Object.keys(candidate).length === 2 || Object.keys(candidate).length === 3)
+    && typeof candidate.reason === "string"
+    && candidate.reason.length >= 1 && candidate.reason.length <= 240) {
+    // A claimed limit is validated, never trusted: a malformed stop record
+    // must not be able to name a limit in the owner-visible run record.
+    if (candidate.limit !== undefined) {
+      const stop = captureTaskRunResourceStopV1(candidate.limit);
+      return Object.freeze({ kind: "failed" as const, reason: candidate.reason, limit: stop });
+    }
+    if (Object.keys(candidate).length === 2)
+      return Object.freeze({ kind: "failed" as const, reason: candidate.reason });
+  }
   return unavailable();
 }
 
@@ -117,7 +131,8 @@ export async function deliverOwnerTrustedLocalCliTaskV1(config: OwnerTrustedLoca
       startsWork: false as const, grantsExecutionAuthority: false as const });
     const execution = result(await config.execute(Object.freeze({ delivery, receipt, signal })));
     if (execution.kind === "failed") {
-      await config.recordFailure(Object.freeze({ delivery, receipt, signal }));
+      await config.recordFailure(Object.freeze({ delivery, receipt, signal,
+        ...(execution.limit === undefined ? {} : { limit: execution.limit }) }));
       return Object.freeze({ delivery, receipt, state: "execution_failed" as const,
         reason: execution.reason, startsWork: false as const, grantsExecutionAuthority: false as const });
     }

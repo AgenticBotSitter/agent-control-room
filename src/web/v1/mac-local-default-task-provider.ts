@@ -84,6 +84,10 @@ export const createTaskApplication: MacLocalTaskProviderV1["createTaskApplicatio
   const workspaceId = configuration.workspaceId;
   const runtime = await loadMacLocalTaskRuntimeFromRootV1(protectedRoot);
   const runLimits = await loadMacLocalTaskRunLimitsFromRootV1(protectedRoot);
+  // The enforced per-run CPU and memory bounds. Derived once from the
+  // owner's validated limits file and handed to every local executor, so
+  // no worker can be wired without them.
+  const runResources = Object.freeze({ cpuTimeMs: runLimits.cpuTimeMs, maxResidentBytes: runLimits.maxResidentBytes });
   const rows = await input.database.client.query<{ project_id: string; created_at: string | Date }>(
     `SELECT p.id AS project_id,h.created_at FROM projects p
       JOIN control_manual_project_heads h ON h.tenant_id=p.tenant_id AND h.project_id=p.id
@@ -209,12 +213,14 @@ export const createTaskApplication: MacLocalTaskProviderV1["createTaskApplicatio
           const value = await selectedModel("hermes", jobId); return {
             profile: value.profile!, provider: value.provider!, model: value.model };
         } } : { profile: runtime.hermes.profile, provider: runtime.hermes.provider, model: runtime.hermes.model }),
-        workingDirectory: work.hermes, deadlineMs: runLimits.wallTimeMs, outputBytes: runLimits.outputBytes }) };
+        workingDirectory: work.hermes, deadlineMs: runLimits.wallTimeMs, outputBytes: runLimits.outputBytes,
+        resources: runResources }) };
     const claude = createClaudeOwnerTrustedLocalQueueExecutorV1({ tenantId,
       preparation: prepared[1] as ClaudeCodeLocalDispatchPreparationV1,
       delivery: createOwnerTrustedLocalClaudeDeliveryV1(common(1, ClaudeCodeLocalRunRegistrationV1),
         createOwnerTrustedLocalClaudeExecV1(), { executablePath: workers[1]!.worker.executablePath,
           workingDirectory: work.claude, deadlineMs: runLimits.wallTimeMs, outputBytes: runLimits.outputBytes,
+          resources: runResources,
           ...(workers[1]!.worker.modelPolicy ? { select: async (jobId: string) => {
             const value = await selectedModel("claude-code", jobId);
             return { model: value.model, effort: value.effort, supportsEffort: true };
@@ -228,6 +234,7 @@ export const createTaskApplication: MacLocalTaskProviderV1["createTaskApplicatio
         codexOwnerTrustedLocalRunRegistrationV1(value, time, codexHarnessVersion, modelSelection)),
       createOwnerTrustedLocalCodexExecV1(), { executablePath: workers[2]!.worker.executablePath,
         workingDirectory: work.codex, deadlineMs: runLimits.wallTimeMs, outputBytes: runLimits.outputBytes,
+        resources: runResources,
         ...(workers[2]!.worker.modelPolicy ? { select: async (jobId: string) => {
           const value = await selectedModel("codex", jobId); return { model: value.model, effort: value.effort };
         } } : {}) }) });

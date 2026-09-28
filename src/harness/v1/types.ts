@@ -64,6 +64,11 @@ export type HarnessEventPayloadV1 =
   | NativeSnapshotEventPayload
   | { category: "lifecycle"; state: HarnessRunState; reasonCode?: string }
   | { category: "activity"; activity: "tool" | "file" | "test" | "checkpoint"; phase: "started" | "progress" | "completed" | "failed"; count?: number }
+  /** A per-run resource limit that stopped this run, with the value
+   * measured at the sample which crossed it. Additive: the run state is
+   * unchanged, so this records evidence rather than granting anything. */
+  | { category: "resource"; limit: "cpu_time" | "resident_memory"; cause: "exceeded" | "measurement_unavailable";
+      measuredCpuTimeMs: number; measuredResidentBytes: number; limitCpuTimeMs: number; limitResidentBytes: number }
   | { category: "attention"; attention: "input" | "approval"; state: "requested" | "resolved" }
   | { category: "usage"; inputTokens: number; outputTokens: number; cachedInputTokens: number; reasoningTokens: number; estimatedCostUsd?: string }
   | { category: "transport"; state: "connected" | "disconnected" | "reconnected" | "drift"; reasonCode?: string };

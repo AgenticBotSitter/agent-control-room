@@ -2,11 +2,12 @@ import { z } from "zod";
 import type { DatabaseClient } from "../../persistence/database";
 import { HarnessRunStoreV1 } from "./store";
 import type { HarnessRunV1 } from "./types";
-import type { HarnessRunState } from "./types";
+import type { HarnessRunEventV1, HarnessRunState } from "./types";
 import { sha256Digest } from "../../security";
 import { controllerWorkerDeliverySchemaV1, controllerWorkerDeliveryReceiptSchemaV1 } from "./controller-worker-delivery";
 import { publishDurableResultV1, type DurableResultBindingV1,
   type DurableResultPublicationConfigurationV1 } from "../../artifacts/v1/durable-result-publication";
+import { captureTaskRunResourceStopV1 } from "./owner-trusted-local-resource-supervisor";
 
 function unavailable(): never { throw new Error("owner_trusted_local_cli_publish_unavailable"); }
 const id = z.string().min(3).max(180).regex(/^[a-zA-Z0-9][a-zA-Z0-9._:-]*$/);
@@ -54,8 +55,20 @@ export function createOwnerTrustedLocalCliLifecycleV1(config: OwnerTrustedLocalC
   if (!config || !config.db || !(config.runIntegrityKey instanceof Uint8Array) || config.runIntegrityKey.length !== 32
     || !config.publication || typeof config.registerRun !== "function") unavailable();
   const runs = new HarnessRunStoreV1(config.db, config.runIntegrityKey);
-  async function record(input: Readonly<{ delivery: unknown; receipt: unknown; signal: AbortSignal }>, terminal: "succeeded" | "failed") {
+  /** The owner-visible reason code for a run stopped by a resource bound.
+   * Distinct per limit so a stopped run is diagnosable from the run
+   * record alone, without reading the CLI transcript. */
+  const RESOURCE_REASON_CODES = Object.freeze({
+    cpu_time: "local_cli_cpu_time_exceeded",
+    resident_memory: "local_cli_memory_exceeded",
+    measurement_unavailable: "local_cli_resource_measurement_unavailable",
+  } as const);
+
+  async function record(input: Readonly<{ delivery: unknown; receipt: unknown; signal: AbortSignal; limit?: unknown }>, terminal: "succeeded" | "failed") {
     if (!input || !(input.signal instanceof AbortSignal) || input.signal.aborted) unavailable();
+    // Validate before any write: a claimed bound that is malformed must not
+    // reach the run record, and must not suppress the ordinary failure.
+    const stop = input.limit === undefined ? undefined : captureTaskRunResourceStopV1(input.limit);
     const delivery = controllerWorkerDeliverySchemaV1.parse(input.delivery);
     const receipt = controllerWorkerDeliveryReceiptSchemaV1.parse(input.receipt);
     if (receipt.deliveryId !== delivery.deliveryId || receipt.deliveryDigest !== delivery.deliveryDigest) unavailable();
@@ -76,6 +89,25 @@ export function createOwnerTrustedLocalCliLifecycleV1(config: OwnerTrustedLocalC
       delete initial.startedAt; delete initial.finishedAt; delete initial.safeReasonCode;
       if (sha256Digest(initial) !== sha256Digest(run)) unavailable();
     }
+    const appendAt = async (build: (sequence: number, occurredAt: string) => HarnessRunEventV1) => {
+      if (input.signal.aborted) unavailable();
+      const snapshot = await runs.inspect(run.tenantId, run.id);
+      if (!snapshot) return unavailable();
+      const occurredAt = new Date(Math.max(Date.now(), Date.parse(snapshot.run.lastObservedAt))).toISOString();
+      return runs.append(build(snapshot.events.length + 1, occurredAt));
+    };
+    // Evidence first: a run is never terminal before the record explains
+    // which bound stopped it and what was measured.
+    if (stop && terminal === "failed") {
+      const reasonCode = RESOURCE_REASON_CODES[stop.reason === "measurement_unavailable"
+        ? "measurement_unavailable" : stop.limit];
+      await appendAt((sequence, occurredAt) => ({ schemaVersion: "control-room-harness-event/v1",
+        tenantId: run.tenantId, runId: run.id, sequence, occurredAt, source: "adapter",
+        sourceEventKeyDigest: sha256Digest({ runId: run.id, localCliResourceStop: stop }),
+        payload: { category: "resource", limit: stop.limit, cause: stop.cause,
+          measuredCpuTimeMs: stop.measuredCpuTimeMs, measuredResidentBytes: stop.measuredResidentBytes,
+          limitCpuTimeMs: stop.limitCpuTimeMs, limitResidentBytes: stop.limitResidentBytes } }));
+    }
     for (const state of (terminal === "succeeded" ? ["starting", "running", "succeeded"] : ["failed"]) as HarnessRunState[]) {
       if (input.signal.aborted) unavailable();
       const snapshot = await runs.inspect(run.tenantId, run.id);
@@ -88,7 +120,8 @@ export function createOwnerTrustedLocalCliLifecycleV1(config: OwnerTrustedLocalC
         sequence: snapshot.events.length + 1, occurredAt, source: "adapter",
         sourceEventKeyDigest: sha256Digest({ runId: run.id, localCliOutcome: state }),
         payload: { category: "lifecycle", state,
-          ...(state === "failed" ? { reasonCode: "local_cli_execution_failed" } : {}) } });
+          ...(state === "failed" ? { reasonCode: stop ? RESOURCE_REASON_CODES[stop.reason === "measurement_unavailable"
+            ? "measurement_unavailable" : stop.limit] : "local_cli_execution_failed" } : {}) } });
     }
     const current = await runs.get(run.tenantId, run.id);
     if (!current || current.state !== terminal) return unavailable();
@@ -122,7 +155,7 @@ export function createOwnerTrustedLocalCliLifecycleV1(config: OwnerTrustedLocalC
     await publishDurableResultV1(config.publication, { binding, bytes, receivedAt: run.finishedAt,
       assertAuthority: () => { if (input.signal.aborted) unavailable(); } });
   };
-  return Object.freeze({ publish, recordFailure: (input: Readonly<{ delivery: unknown; receipt: unknown; signal: AbortSignal }>) => record(input, "failed").then(() => {}) });
+  return Object.freeze({ publish, recordFailure: (input: Readonly<{ delivery: unknown; receipt: unknown; signal: AbortSignal; limit?: unknown }>) => record(input, "failed").then(() => {}) });
 }
 
 export function createOwnerTrustedLocalCliPublishV1(config: OwnerTrustedLocalCliPublishConfigurationV1) {

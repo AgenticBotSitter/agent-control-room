@@ -1,3 +1,4 @@
+import type { MacLocalTaskRunResourcesV1 } from "./owner-trusted-local-run-limits";
 import type { OwnerTrustedLocalClaudeExecV1 } from "../claude-code-v1/owner-trusted-local-exec";
 import type { OwnerTrustedLocalCodexExecV1 } from "../codex-v1/owner-trusted-local-exec";
 import type { OwnerTrustedLocalHermesExecV1 } from "../hermes-local-v1/owner-trusted-local-exec";
@@ -7,7 +8,8 @@ import { createOwnerTrustedLocalClaudeExecutionAdapterV1, createOwnerTrustedLoca
 import { deliverOwnerTrustedLocalCliTaskV1, type OwnerTrustedLocalCliDeliveryV1 } from "./owner-trusted-local-cli-delivery";
 
 type Base = Omit<OwnerTrustedLocalCliDeliveryV1, "execute">;
-type Configuration = Readonly<{ executablePath: string; workingDirectory: string; deadlineMs: number; outputBytes?: number } & (
+type Configuration = Readonly<{ executablePath: string; workingDirectory: string; deadlineMs: number; outputBytes?: number;
+  resources?: MacLocalTaskRunResourcesV1 } & (
   Record<never, never> |
   { model: string; effort: string; supportsEffort?: boolean } |
   { select(jobId: string): Promise<{ model: string; effort: string; supportsEffort?: boolean }> }
