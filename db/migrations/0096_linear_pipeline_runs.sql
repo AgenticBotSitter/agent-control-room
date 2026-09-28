@@ -115,10 +115,11 @@ CREATE TABLE pipeline_stage_runs (
   CHECK (current_lease_id IS NULL OR current_attempt_id IS NOT NULL)
 );
 
-CREATE FUNCTION guard_pipeline_stage_run_write() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE FUNCTION guard_pipeline_stage_run_write() RETURNS trigger
+LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $$
 DECLARE linked record;
 BEGIN
-  SELECT project_id,pipeline_run_id,stage_kind,stage_ordinal INTO linked FROM control_jobs
+  SELECT project_id,pipeline_run_id,stage_kind,stage_ordinal INTO linked FROM public.control_jobs
     WHERE tenant_id=NEW.tenant_id AND id=NEW.current_job_id;
   IF linked.project_id IS DISTINCT FROM NEW.project_id
     OR linked.pipeline_run_id IS DISTINCT FROM NEW.pipeline_run_id
@@ -135,9 +136,9 @@ BEGIN
   END IF;
   RETURN NEW;
 END $$;
-REVOKE ALL ON FUNCTION guard_pipeline_stage_run_write() FROM PUBLIC;
-CREATE TRIGGER pipeline_stage_runs_guard BEFORE INSERT OR UPDATE ON pipeline_stage_runs
-  FOR EACH ROW EXECUTE FUNCTION guard_pipeline_stage_run_write();
+REVOKE ALL ON FUNCTION public.guard_pipeline_stage_run_write() FROM PUBLIC;
+CREATE TRIGGER pipeline_stage_runs_guard BEFORE INSERT OR UPDATE ON public.pipeline_stage_runs
+  FOR EACH ROW EXECUTE FUNCTION public.guard_pipeline_stage_run_write();
 
 CREATE VIEW pipeline_ordered_stage_runs AS
   SELECT s.* FROM pipeline_stage_runs s ORDER BY s.tenant_id,s.pipeline_run_id,s.stage_ordinal;
