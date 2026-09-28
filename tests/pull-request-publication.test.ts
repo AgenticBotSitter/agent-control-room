@@ -245,7 +245,8 @@ test("build-stage composition inventories the committed tree and retains publica
   const composed = await composeBuildStagePullRequestPublicationV1({ integrityKey: key,
     workspaceManager: f.manager, workspacePort: f.port, delivery, lease: f.lease,
     auditPlan: f.auditPlan, auditAuthority: f.auditAuthority,
-    publicationAuthority: { current: () => current, assertCurrent: value => assert.deepEqual(value, current) },
+    publicationAuthority: { current: () => current, assertCurrent: value => assert.deepEqual(value, current),
+      assertControllerCurrent: async value => assert.deepEqual(value, current) },
     runGit: git, store, openPullRequest: async () => ({ status: "opened",
       url: `${repositoryUrl}/pull/19`, observedCommit: head }) });
   assert.equal(composed.auditEvidence.changes.length, 1);

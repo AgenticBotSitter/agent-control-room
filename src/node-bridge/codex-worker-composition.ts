@@ -53,6 +53,9 @@ export function createCodexWorkerCompositionV1(value: CodexWorkerCompositionInpu
       assertCurrent() { fence(); } },
     acquireProcess: (request, signal) => { fence(); return initial.acquireProcess(request, signal); },
   });
+  if (start.mode !== 'initial' || !('publishBuildPullRequest' in start)) unavailable();
+  const initialStart = start as Extract<typeof start, { mode: 'initial' }>;
+  const publishBuildPullRequest = initialStart.publishBuildPullRequest.bind(initialStart);
   const recover = createCodexLocalHostV1({ ...recovery,
     authority: { assertCurrent(identity: Parameters<CodexLocalRecoverHostInputV1['authority']['assertCurrent']>[0]) {
       fence(); return recovery.authority.assertCurrent(identity);
@@ -89,6 +92,10 @@ export function createCodexWorkerCompositionV1(value: CodexWorkerCompositionInpu
         identity: observed.identity, exactPackageResult: observed.exactPackageResult,
       }, signal);
       return Object.freeze({ disposition: 'receipted' as const, receipt });
+    },
+    async publishBuildPullRequest() {
+      fence();
+      return publishBuildPullRequest();
     },
     async close() { closed = true; await start.close(); await recover.close(); },
   });

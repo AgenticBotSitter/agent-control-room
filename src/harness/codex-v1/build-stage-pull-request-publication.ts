@@ -19,6 +19,7 @@ const currentPublicationSchema = z.object({
     effort: z.string().min(1).max(80) }).strict(),
   repositoryUrl: z.string().url().max(2048), title: z.string().min(1).max(240),
   body: z.string().max(64 * 1024), authorityDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/),
+  authoritySnapshotDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/).optional(),
 }).strict();
 
 export interface CurrentBuildStagePublicationAuthorityV1 {
@@ -26,6 +27,11 @@ export interface CurrentBuildStagePublicationAuthorityV1 {
   current(delivery: unknown): unknown;
   /** Synchronous protected-state recheck immediately around publication planning. */
   assertCurrent(value: unknown): void;
+  /** Fresh controller-side canonical recheck used immediately before the external effect. */
+  assertControllerCurrent(value: unknown): Promise<void>;
+  /** Optional authenticated build-stage policy; installed S6 composition requires it. */
+  workspacePolicy?(delivery: unknown): Readonly<{ allowedPaths: readonly string[];
+    maximumChangedFiles: number; maximumChangedBytes: number }>;
 }
 
 function currentPublication(authority: CurrentBuildStagePublicationAuthorityV1, deliveryValue: unknown) {
@@ -60,6 +66,7 @@ export async function composeBuildStagePullRequestPublicationV1(input: Readonly<
   openPullRequest: PullRequestOpenEffectV1;
 }>) {
   const current = currentPublication(input.publicationAuthority, input.delivery);
+  await input.publicationAuthority.assertControllerCurrent(current);
   const auditEvidence = await inventoryManagedGitWorktreeChangesV1({ workspaceManager: input.workspaceManager,
     workspacePort: input.workspacePort, lease: input.lease, auditPlan: input.auditPlan, runGit: input.runGit });
   const authenticatedModelSelection = createAuthenticatedModelSelectionV1(input.integrityKey,
@@ -70,16 +77,19 @@ export async function composeBuildStagePullRequestPublicationV1(input: Readonly<
     lease: input.lease, auditAuthority: input.auditAuthority, auditPlan: input.auditPlan,
     auditEvidence, authenticatedModelSelection,
     retainedResultDigest: current.retainedResultDigest, repositoryUrl: current.repositoryUrl,
+    authoritySnapshotDigest: current.authoritySnapshotDigest ?? current.authorityDigest,
     publicationContent: { title: current.title, body: current.body },
     runGit: input.runGit });
   const rechecked = currentPublication(input.publicationAuthority, input.delivery);
+  await input.publicationAuthority.assertControllerCurrent(rechecked);
   if (canonicalJson(rechecked) !== canonicalJson(current)) throw new Error("build_stage_publication_authority_changed");
   const publisher = createPullRequestPublisherV1({ integrityKey: input.integrityKey, plan: publicationPlan,
     publicationContent: { title: current.title, body: current.body },
     port: createPullRequestOpenPortV1(input.openPullRequest), store: input.store,
-    assertCurrent: () => {
+    assertCurrent: async () => {
       const latest = currentPublication(input.publicationAuthority, input.delivery);
       if (canonicalJson(latest) !== canonicalJson(current)) throw new Error("build_stage_publication_authority_changed");
+      await input.publicationAuthority.assertControllerCurrent(latest);
     } });
   return Object.freeze({ auditEvidence, publicationPlan,
     publish: publisher.publish.bind(publisher) });

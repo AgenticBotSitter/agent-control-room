@@ -5,6 +5,8 @@ import { createCodexDeliveryBoundWorkspacePreparationV1 }
 import type { CodexLocalStartBindingV1 } from '../src/harness/codex-v1/local-start-runtime';
 import { createControllerWorkerDeliveryV1 } from '../src/harness/v1/controller-worker-delivery';
 import { sha256Digest } from '../src/security/canonical-digest';
+import { createPipelineBuildPublicationAuthoritySnapshotV1, createPipelineBuildPublicationAuthorityV1 }
+  from '../src/pipelines/v1/build-publication-authority';
 
 const revision = 'a'.repeat(40);
 const intent = Object.freeze({ schema: 'control-room.workspace-intent/v1' as const,
@@ -37,8 +39,10 @@ function binding(packet = delivery()): CodexLocalStartBindingV1 {
   }, dispatchFrameDigest } as CodexLocalStartBindingV1;
 }
 
-function fixture(options: { failCreate?: boolean; revokeDuringCreate?: boolean; publication?: boolean } = {}) {
-  let creates = 0, removes = 0, inspections = 0, opens = 0, current = true;
+function fixture(options: { failCreate?: boolean; revokeDuringCreate?: boolean; publication?: boolean;
+  driftBeforeOpen?: boolean } = {}) {
+  let creates = 0, removes = 0, inspections = 0, opens = 0, retains = 0, controllerChecks = 0, current = true;
+  let canonicalSelectedModel = 'model:current';
   const publications = new Map<string, unknown>();
   const journal = {
     reserveWorkspaceIntent: () => 'recorded' as const,
@@ -54,15 +58,25 @@ function fixture(options: { failCreate?: boolean; revokeDuringCreate?: boolean; 
       publications.set(id, structuredClone(value)); return true; },
   };
   const packet = delivery();
-  const material = { deliveryDigest: packet.deliveryDigest, stageKind: 'build' as const,
+  const integrityKey = new Uint8Array(32).fill(19);
+  const snapshot = createPipelineBuildPublicationAuthoritySnapshotV1(integrityKey, {
+    schema: 'control-room.pipeline-build-publication-authority/v1', deliveryDigest: packet.deliveryDigest,
+    tenantId: intent.tenantId, projectId: intent.projectId, sourceJobId: 'job:source', executionJobId: intent.jobId,
+    attemptId: intent.attemptId, runId: intent.runId, pipelineRunId: 'pipeline-run:test', stageOrdinal: 0,
+    stageRecordDigest: sha256Digest('stage'), workerId: packet.worker.workerId, model: 'model:current', effort: 'high',
+    allowedPaths: ['src/**'], maximumChangedFiles: 5, maximumChangedBytes: 4096,
     retainedResultDigest: sha256Digest('retained-build-result'),
-    modelSelection: { workerId: packet.worker.workerId, model: 'model:current', effort: 'high' },
-    repositoryUrl: 'https://example.invalid/controller/repository', title: 'Server title', body: 'Server body' };
-  const authorityValue = { ...material, authorityDigest: sha256Digest(material) };
+    repositoryUrl: 'https://example.invalid/controller/repository', title: 'Server title', body: 'Server body',
+  });
+  const authority = createPipelineBuildPublicationAuthorityV1({ integrityKey, snapshot,
+    assertControllerCurrent: async () => {
+      controllerChecks++;
+      if (options.driftBeforeOpen && controllerChecks >= 4) canonicalSelectedModel = 'model:changed';
+      if (canonicalSelectedModel !== snapshot.model) throw new Error('canonical_selection_changed');
+    } });
   const preparation = createCodexDeliveryBoundWorkspacePreparationV1({ workspaceIntent: intent, journal,
     policy: { allowedPaths: ['src/**'], maximumChangedFiles: 5, maximumChangedBytes: 4096 },
-    ...(options.publication ? { publication: { integrityKey: new Uint8Array(32).fill(19), journal,
-      authority: { current: () => authorityValue, assertCurrent: (value: unknown) => assert.deepEqual(value, authorityValue) },
+    ...(options.publication ? { publication: { integrityKey, journal, authority,
       runGit: async (_cwd: string, args: readonly string[]) => {
         if (args.includes('status')) return Buffer.from('');
         if (args.includes('diff')) return Buffer.from('M\0src/change.ts\0');
@@ -73,6 +87,7 @@ function fixture(options: { failCreate?: boolean; revokeDuringCreate?: boolean; 
       },
       openPullRequest: async () => { opens++; return { status: 'opened' as const,
         url: 'https://example.invalid/controller/repository/pull/31', observedCommit: 'b'.repeat(40) }; },
+      retainPublished: async () => { retains++; },
     } } : {}),
     workspacePort: {
       async inspectRootIdentities() { return {
@@ -93,7 +108,8 @@ function fixture(options: { failCreate?: boolean; revokeDuringCreate?: boolean; 
     },
   });
   const assertCurrent = () => { if (!current) throw new Error('revoked'); };
-  return { preparation, assertCurrent, counts: () => ({ creates, removes, inspections, opens }) };
+  return { preparation, assertCurrent, counts: () => ({ creates, removes, inspections, opens }),
+    retains: () => retains };
 }
 
 test('one exact shared delivery prepares and retains one workspace while its digest stays distinct from dispatch', async () => {
@@ -145,4 +161,16 @@ test('the production delivery-bound holder publishes only through its active lea
   const replay = await f.preparation.publishBuildPullRequest();
   assert.deepEqual(replay, first);
   assert.equal(f.counts().opens, 1);
+  assert.equal(f.retains(), 2, 'canonical retention is retried after a durable local publication replay');
+});
+
+test('fresh controller drift after snapshot burns the durable intent and opens no pull request', async () => {
+  const f = fixture({ publication: true, driftBeforeOpen: true }), packet = delivery();
+  f.preparation.bindDelivery(packet);
+  await f.preparation.prepare(binding(packet), f.assertCurrent);
+  await assert.rejects(f.preparation.publishBuildPullRequest(), /canonical_selection_changed/);
+  assert.equal(f.counts().opens, 0);
+  assert.deepEqual(await f.preparation.publishBuildPullRequest(), { status: 'reconciliation_required' });
+  assert.equal(f.counts().opens, 0, 'a restart/replay cannot reopen after the post-reservation fence failed');
+  assert.equal(f.retains(), 0);
 });

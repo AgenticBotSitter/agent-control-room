@@ -28,6 +28,7 @@ type StageRow = { project_id: string; pipeline_run_id: string; current_job_id: s
   node_id: string; selection_key: string; model: string; effort: "default" | "low" | "medium" | "high" | "xhigh" | "max";
   provider: string | null; profile: string | null; current_attempt_id: string | null; current_lease_id: string | null;
   state: string; max_loops: number; handoff_from_result_digest: string | null; signoff_review_id: string | null;
+  allowed_paths: unknown | null; maximum_changed_files: number | null; maximum_changed_bytes: number | null;
   started_at: string | Date | null; finished_at: string | Date | null; record_digest: string; auth_tag: string; version: number };
 type PlanRow = { id: string; tenant_id: string; project_id: string; pipeline_run_id: string; producer_job_id: string;
   reviewer_job_id: string; reviewer_run_id: string; target_id: string; target_digest: string;
@@ -76,7 +77,8 @@ export class AgentReviewServiceV1 {
     const stage = (await this.db.query<StageRow>(`SELECT stage.project_id,stage.pipeline_run_id,stage.current_job_id,
       stage.stage_ordinal,stage.stage_kind,stage.role,stage.worker_id,stage.worker_kind,stage.node_id,stage.selection_key,
       stage.model,stage.effort,stage.provider,stage.profile,stage.current_attempt_id,stage.current_lease_id,stage.state,
-      stage.max_loops,stage.handoff_from_result_digest,stage.signoff_review_id,stage.started_at,stage.finished_at,
+      stage.max_loops,stage.allowed_paths,stage.maximum_changed_files,stage.maximum_changed_bytes,
+      stage.handoff_from_result_digest,stage.signoff_review_id,stage.started_at,stage.finished_at,
       stage.record_digest,stage.auth_tag,stage.version FROM pipeline_stage_runs stage
       JOIN control_task_execution_plans execution ON execution.tenant_id=stage.tenant_id
         AND execution.project_id=stage.project_id AND execution.source_job_id=stage.current_job_id
@@ -104,12 +106,19 @@ export class AgentReviewServiceV1 {
       provider: stage.provider, profile: stage.profile, currentJobId: stage.current_job_id,
       currentAttemptId: stage.current_attempt_id, currentLeaseId: stage.current_lease_id, state: stage.state,
       maxLoops: Number(stage.max_loops), handoffFromResultDigest: stage.handoff_from_result_digest,
+      allowedPaths: null, maximumChangedFiles: null, maximumChangedBytes: null,
       signoffReviewId: stage.signoff_review_id, startedAt: stage.started_at ? new Date(stage.started_at).toISOString() : null,
       finishedAt: stage.finished_at ? new Date(stage.finished_at).toISOString() : null, version: Number(stage.version) };
     const expected = Buffer.from(hmacSha256Tag(this.#pipelineKey, { purpose: "pipeline-stage-run/v1", record: stageMaterial }));
     const actual = Buffer.from(stage.auth_tag);
-    if (sha256Digest(stageMaterial) !== stage.record_digest || expected.length !== actual.length || !timingSafeEqual(expected, actual))
-      throw new Error("agent_review_plan_unavailable");
+    if (sha256Digest(stageMaterial) !== stage.record_digest || expected.length !== actual.length || !timingSafeEqual(expected, actual)) {
+      const { allowedPaths: _paths, maximumChangedFiles: _files, maximumChangedBytes: _bytes, ...legacy } = stageMaterial;
+      const legacyExpected = Buffer.from(hmacSha256Tag(this.#pipelineKey,
+        { purpose: "pipeline-stage-run/v1", record: legacy }));
+      if (stage.allowed_paths !== null || stage.maximum_changed_files !== null || stage.maximum_changed_bytes !== null
+        || sha256Digest(legacy) !== stage.record_digest || legacyExpected.length !== actual.length
+        || !timingSafeEqual(legacyExpected, actual)) throw new Error("agent_review_plan_unavailable");
+    }
     const route = this.routes.find(item => item.nodeId === stage.node_id);
     if (!route) throw new Error("agent_review_plan_unavailable");
     const reviewer = deriveProtectedAgentPrincipalV1(route, { workerId: stage.worker_id, workerKind: stage.worker_kind,

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { LinearPipelineServiceV1 } from "../src/pipelines/v1";
-import { sha256Digest } from "../src/security";
+import { hmacSha256Tag, sha256Digest } from "../src/security";
 import { createLinearPipelineHttpHandlerV1 } from "../src/web/v1/linear-pipeline-http";
 import { TaskAssignmentCoordinator, type WorkBatchAssignmentAdmissionAuthority } from "../src/web/v1/task-assignment-coordinator";
 import { taskFixture } from "./helpers/web-task";
@@ -14,6 +14,7 @@ const key = new Uint8Array(32).fill(12);
 const template = { name: "Build, check, validate", description: "Complete one bounded change and review it.",
   stages: [
     { ordinal: 0, stageKind: "build", role: "builder", description: "Build the bounded change.",
+      allowedPaths: ["src/**"], maximumChangedFiles: 20, maximumChangedBytes: 262144,
       requiredCapability: "code.change", workerId: "worker:codex:one", workerKind: "codex", nodeId: "node:codex:one",
       selectionKey: "codex.standard", model: "gpt-test", effort: "medium", maxLoops: 3 },
     { ordinal: 1, stageKind: "check", role: "checker", description: "Check the bounded change.",
@@ -74,6 +75,75 @@ test("pipeline instantiation replays exactly and changed content under one key i
   await assert.rejects(f.service.instantiate(f.identity, f.project.projectId,
     { templateId: saved.templateId, title: "Changed replay" }, "linear-pipeline-replay-0001"), /conflict/u);
   assert.equal((await f.db.query<{ count: number }>("SELECT count(*)::int count FROM pipeline_runs")).rows[0]!.count, 1);
+});
+
+test("pre-0098 authenticated pipelines remain readable but cannot publish or instantiate without owner revision", async t => {
+  const f = await fixture(); t.after(() => void f.db.close());
+  const saved = await f.service.createTemplate(f.identity, f.project.projectId, template);
+  const run = await f.service.instantiate(f.identity, f.project.projectId,
+    { templateId: saved.templateId, title: "Legacy upgrade fixture" }, "linear-legacy-upgrade-0001");
+  const templateRow = (await f.db.query<{ id: string; project_id: string; name: string; description: string;
+    stages: Array<Record<string, unknown>>; max_stages: number; max_total_loops: number;
+    may_advance_unattended: boolean; max_duration_seconds: number; version: number;
+    created_at: string | Date; updated_at: string | Date }>(`SELECT id,project_id,name,description,stages,max_stages,
+      max_total_loops,may_advance_unattended,max_duration_seconds,version,created_at,updated_at
+      FROM pipeline_templates WHERE id=$1`, [saved.templateId])).rows[0]!;
+  const legacyStages = templateRow.stages.map(stage => {
+    if (stage.stageKind !== "build") return stage;
+    const { allowedPaths: _paths, maximumChangedFiles: _files, maximumChangedBytes: _bytes, ...legacy } = stage;
+    return legacy;
+  });
+  const templateMaterial = { id: templateRow.id, tenantId: "tenant:web", projectId: templateRow.project_id,
+    name: templateRow.name, description: templateRow.description, stages: legacyStages,
+    maxStages: Number(templateRow.max_stages), maxTotalLoops: Number(templateRow.max_total_loops),
+    mayAdvanceUnattended: false, maxDurationSeconds: Number(templateRow.max_duration_seconds),
+    version: Number(templateRow.version), createdAt: new Date(templateRow.created_at).toISOString(),
+    updatedAt: new Date(templateRow.updated_at).toISOString() };
+  const legacyTemplateDigest = sha256Digest(templateMaterial);
+  await f.db.query(`UPDATE pipeline_templates SET stages=$1::jsonb,record_digest=$2,auth_tag=$3 WHERE id=$4`,
+    [JSON.stringify(legacyStages), legacyTemplateDigest,
+      hmacSha256Tag(key, { purpose: "pipeline-template/v1", record: templateMaterial }), saved.templateId]);
+
+  const runRow = (await f.db.query<{ id: string; project_id: string; request_id: string; template_id: string;
+    template_version: number; workflow_id: string; title: string; state: string; started_at: string | Date | null;
+    updated_at: string | Date; completed_at: string | Date | null; current_stage_ordinal: number | null;
+    unattended: boolean; version: number }>(`SELECT id,project_id,request_id,template_id,template_version,workflow_id,title,
+      state,started_at,updated_at,completed_at,current_stage_ordinal,unattended,version FROM pipeline_runs WHERE id=$1`,
+  [run.runId])).rows[0]!;
+  const runMaterial = { id: runRow.id, tenantId: "tenant:web", projectId: runRow.project_id,
+    requestId: runRow.request_id, templateId: runRow.template_id, templateVersion: Number(runRow.template_version),
+    templateDigest: legacyTemplateDigest, workflowId: runRow.workflow_id, title: runRow.title, state: runRow.state,
+    startedAt: runRow.started_at ? new Date(runRow.started_at).toISOString() : null,
+    updatedAt: new Date(runRow.updated_at).toISOString(),
+    completedAt: runRow.completed_at ? new Date(runRow.completed_at).toISOString() : null,
+    currentStageOrdinal: runRow.current_stage_ordinal === null ? null : Number(runRow.current_stage_ordinal),
+    unattended: runRow.unattended, version: Number(runRow.version) };
+  await f.db.query(`UPDATE pipeline_runs SET template_digest=$1,record_digest=$2,auth_tag=$3 WHERE id=$4`,
+    [legacyTemplateDigest, sha256Digest(runMaterial),
+      hmacSha256Tag(key, { purpose: "pipeline-run/v1", record: runMaterial }), run.runId]);
+
+  const stage = (await f.db.query<Record<string, unknown>>(`SELECT * FROM pipeline_stage_runs
+    WHERE pipeline_run_id=$1 AND stage_ordinal=0`, [run.runId])).rows[0]!;
+  const stageMaterial = { id: stage.id, tenantId: "tenant:web", projectId: stage.project_id,
+    pipelineRunId: stage.pipeline_run_id, stageOrdinal: Number(stage.stage_ordinal), stageKind: stage.stage_kind,
+    role: stage.role, workerId: stage.worker_id, workerKind: stage.worker_kind, nodeId: stage.node_id,
+    selectionKey: stage.selection_key, model: stage.model, effort: stage.effort, provider: stage.provider,
+    profile: stage.profile, currentJobId: stage.current_job_id, currentAttemptId: stage.current_attempt_id,
+    currentLeaseId: stage.current_lease_id, state: stage.state, maxLoops: Number(stage.max_loops),
+    handoffFromResultDigest: stage.handoff_from_result_digest, signoffReviewId: stage.signoff_review_id,
+    startedAt: stage.started_at ? new Date(stage.started_at as string | Date).toISOString() : null,
+    finishedAt: stage.finished_at ? new Date(stage.finished_at as string | Date).toISOString() : null,
+    version: Number(stage.version) };
+  await f.db.exec("ALTER TABLE pipeline_stage_runs DISABLE TRIGGER pipeline_stage_runs_guard");
+  await f.db.query(`UPDATE pipeline_stage_runs SET allowed_paths=NULL,maximum_changed_files=NULL,
+    maximum_changed_bytes=NULL,record_digest=$1,auth_tag=$2 WHERE pipeline_run_id=$3 AND stage_ordinal=0`,
+  [sha256Digest(stageMaterial), hmacSha256Tag(key, { purpose: "pipeline-stage-run/v1", record: stageMaterial }), run.runId]);
+  await f.db.exec("ALTER TABLE pipeline_stage_runs ENABLE TRIGGER pipeline_stage_runs_guard");
+
+  const view = await f.service.view(f.identity, f.project.projectId, run.runId);
+  assert.equal(view.stages[0]?.writePolicy, null, "the authenticated legacy row is readable without invented bounds");
+  await assert.rejects(f.service.instantiate(f.identity, f.project.projectId,
+    { templateId: saved.templateId, title: "Legacy must be revised" }, "linear-legacy-upgrade-0002"), /conflict/u);
 });
 
 test("template creation authorizes before consulting protected selection and instantiation revalidates it", async t => {
@@ -185,13 +255,23 @@ test("schema constraints refuse partial pipeline columns, unknown kinds and cros
     [run.runId, otherTask.receipt.jobId]), /foreign key constraint/u);
 });
 
-test("0096 down migration refuses retained pipeline records and removes all owned objects when empty", async t => {
+test("0098 and 0096 down migrations refuse retained policy/history and remove owned objects only when empty", async t => {
   const populated = await fixture(); t.after(() => void populated.db.close());
-  await populated.service.createTemplate(populated.identity, populated.project.projectId, template);
+  const populatedTemplate = await populated.service.createTemplate(populated.identity, populated.project.projectId, template);
+  await populated.service.instantiate(populated.identity, populated.project.projectId,
+    { templateId: populatedTemplate.templateId, title: "Retained down guard" }, "linear-down-guard-0001");
   const down = await readFile("db/down/0096_linear_pipeline_runs.sql", "utf8");
   const agentReviewDown = await readFile("db/down/0097_agent_review_plans.sql", "utf8");
+  const publicationDown = await readFile("db/down/0098_pipeline_build_publications.sql", "utf8");
+  await assert.rejects(populated.db.exec(publicationDown), /0098 down migration refused/u);
+  await populated.db.exec("ROLLBACK");
+  await populated.db.exec(`ALTER TABLE pipeline_stage_runs DISABLE TRIGGER pipeline_stage_runs_guard;
+    UPDATE pipeline_stage_runs SET allowed_paths=NULL,maximum_changed_files=NULL,maximum_changed_bytes=NULL;
+    ALTER TABLE pipeline_stage_runs ENABLE TRIGGER pipeline_stage_runs_guard;`);
+  await populated.db.exec(publicationDown);
   await assert.rejects(populated.db.exec(down), /down migration refused/u); await populated.db.exec("ROLLBACK");
   const empty = await taskFixture(); t.after(() => void empty.db.close());
+  await empty.db.exec(publicationDown);
   await empty.db.exec(agentReviewDown);
   await empty.db.exec(down);
   assert.deepEqual((await empty.db.query<{ templates: string | null; runs: string | null; stages: string | null }>(`SELECT

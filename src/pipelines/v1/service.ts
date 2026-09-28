@@ -8,9 +8,15 @@ import type { VerifiedWebIdentity } from "../../web/v1/access-verifier";
 import { WebAccessError } from "../../web/v1/access-verifier";
 import { WebSessionAuthority } from "../../web/v1/session-authority";
 import type { WorkBatchQueueAdmissionAuthorityV1, WorkBatchQueueAdmissionSelectionV1 } from "../../work-intake/v1/owner-service";
-import { instantiateLinearPipelineSchemaV1, linearPipelineTemplateInputSchemaV1, pipelineRunPageSchemaV1,
+import { instantiateLinearPipelineSchemaV1, legacyLinearPipelineTemplateInputSchemaV1,
+  linearPipelineTemplateInputSchemaV1, pipelineBuildWritePolicySchemaV1, pipelineRunPageSchemaV1,
   pipelineRunReceiptSchemaV1, pipelineRunViewSchemaV1, pipelineTemplateReceiptSchemaV1,
   type LinearPipelineTemplateInputV1, type PipelineStageTemplateV1 } from "./schemas";
+import { controllerWorkerDeliverySchemaV1 } from "../../harness/v1/controller-worker-delivery";
+import { verifyPullRequestPublicationEvidenceV1,
+  verifyStoredPullRequestPublicationEvidenceV1 } from "../../harness/v1/pull-request-publication";
+import { createPipelineBuildPublicationAuthoritySnapshotV1,
+  verifyPipelineBuildPublicationAuthoritySnapshotV1 } from "./build-publication-authority";
 
 type TemplateRow = { id: string; project_id: string; name: string; description: string; stages: unknown;
   max_stages: number; max_total_loops: number; may_advance_unattended: boolean; max_duration_seconds: number;
@@ -24,8 +30,13 @@ type StageRow = { stage_ordinal: number; stage_kind: "build" | "check" | "signof
   worker_kind: "codex" | "claude-code" | "hermes"; node_id: string; selection_key: string; model: string;
   effort: "default" | "low" | "medium" | "high" | "xhigh" | "max"; provider: string | null; profile: string | null;
   current_attempt_id: string | null; current_lease_id: string | null; state: string; max_loops: number;
+  allowed_paths: unknown | null; maximum_changed_files: number | null; maximum_changed_bytes: number | null;
   handoff_from_result_digest: string | null; signoff_review_id: string | null; started_at: string | Date | null;
   finished_at: string | Date | null; record_digest: string; auth_tag: string; version: number };
+type BuildPublicationRow = { project_id: string; pipeline_run_id: string; stage_ordinal: number; job_id: string;
+  attempt_id: string; harness_run_id: string; delivery_digest: string; retained_result_digest: string;
+  plan_digest: string; evidence_digest: string; evidence: unknown; auth_tag: string; recorded_at: string | Date;
+  artifact_content_hash: string; canonical_result_digest: string; source_job_id: string; worker_id: string; node_id: string };
 
 function joined(tx: DatabaseSession): DatabaseClient {
   return Object.freeze({ query: tx.query.bind(tx), transaction: async <T>(work: (session: DatabaseSession) => Promise<T>) => work(tx),
@@ -37,15 +48,175 @@ const iso = (value: string | Date) => new Date(value).toISOString();
 const same = (left: string, right: string) => { const a = Buffer.from(left), b = Buffer.from(right);
   return a.length === b.length && timingSafeEqual(a, b); };
 
+export interface CanonicalPipelineRepositoryRegistryV1 {
+  resolve(tx: DatabaseSession, scope: Readonly<{ tenantId: string; workspaceId: string; projectId: string }>):
+    Promise<Readonly<{ repositoryUrl: string }> | undefined>;
+}
+
 export class LinearPipelineServiceV1 {
   readonly #key: Uint8Array;
   readonly #authority: WebSessionAuthority;
   constructor(private readonly db: DatabaseClient, private readonly scope: { tenantId: string; workspaceId: string },
     integrityKey: Uint8Array, private readonly selection?: WorkBatchQueueAdmissionAuthorityV1,
-    private readonly clock: () => number = Date.now) {
+    private readonly clock: () => number = Date.now,
+    private readonly repositories?: CanonicalPipelineRepositoryRegistryV1) {
     if (!(integrityKey instanceof Uint8Array) || integrityKey.length !== 32) throw new Error("pipeline_configuration_invalid");
     this.#key = Uint8Array.from(integrityKey);
     this.#authority = new WebSessionAuthority(db, scope, clock, "pipeline");
+  }
+
+  async createBuildPublicationAuthority(deliveryValue: unknown) {
+    if (!this.selection?.acceptedResultProof || !this.repositories) throw new Error("pipeline_build_publication_unavailable");
+    const delivery = controllerWorkerDeliverySchemaV1.parse(deliveryValue), identity = delivery.identity;
+    if (identity.tenantId !== this.scope.tenantId) throw new Error("pipeline_build_publication_unavailable");
+    return this.db.transaction(async tx => {
+      const row = (await tx.query<StageRow & { run_title: string }>(`SELECT stage.project_id,stage.pipeline_run_id,
+        stage.stage_ordinal,stage.stage_kind,stage.role,stage.current_job_id,stage.worker_id,stage.worker_kind,stage.node_id,
+        stage.selection_key,stage.model,stage.effort,stage.provider,stage.profile,stage.current_attempt_id,stage.current_lease_id,
+        stage.state,stage.max_loops,stage.allowed_paths,stage.maximum_changed_files,stage.maximum_changed_bytes,
+        stage.handoff_from_result_digest,stage.signoff_review_id,stage.started_at,stage.finished_at,stage.record_digest,
+        stage.auth_tag,stage.version,run.title AS run_title FROM pipeline_stage_runs stage
+        JOIN pipeline_runs run ON run.tenant_id=stage.tenant_id AND run.id=stage.pipeline_run_id
+        JOIN control_task_execution_plans execution ON execution.tenant_id=stage.tenant_id
+          AND execution.project_id=stage.project_id AND execution.source_job_id=stage.current_job_id
+        JOIN control_harness_runs harness ON harness.tenant_id=stage.tenant_id AND harness.job_id=execution.job_id
+        JOIN control_attempts attempt ON attempt.tenant_id=harness.tenant_id AND attempt.id=harness.attempt_id
+          AND attempt.job_id=harness.job_id AND attempt.node_id=stage.node_id AND attempt.worker_id=stage.worker_id
+        JOIN control_task_model_selections selected ON selected.tenant_id=stage.tenant_id
+          AND selected.project_id=stage.project_id AND selected.job_id=execution.job_id
+          AND selected.worker_kind=stage.worker_kind AND selected.selection_key=stage.selection_key
+          AND selected.model=stage.model AND selected.effort=stage.effort
+          AND selected.provider IS NOT DISTINCT FROM stage.provider AND selected.profile IS NOT DISTINCT FROM stage.profile
+        WHERE stage.tenant_id=$1 AND stage.project_id=$2 AND execution.job_id=$3 AND harness.id=$4
+          AND harness.attempt_id=$5 AND harness.node_id=$6 AND stage.stage_kind='build' AND stage.role='builder' FOR SHARE`,
+      [this.scope.tenantId, identity.projectId, identity.jobId, identity.runId, identity.attemptId, identity.nodeId])).rows[0];
+      if (!row || row.worker_id !== delivery.worker.workerId || row.node_id !== identity.nodeId) throw new Error("pipeline_build_publication_unavailable");
+      this.#verifyStage(row);
+      const policy = pipelineBuildWritePolicySchemaV1.safeParse({ allowedPaths: row.allowed_paths,
+        maximumChangedFiles: row.maximum_changed_files, maximumChangedBytes: row.maximum_changed_bytes });
+      if (!policy.success) throw new Error("pipeline_build_publication_unavailable");
+      const proof = await this.selection!.acceptedResultProof!(tx, { sourceJobId: row.current_job_id,
+        workerId: row.worker_id, nodeId: row.node_id });
+      const repository = await this.repositories!.resolve(tx, { ...this.scope, projectId: row.project_id });
+      if (!proof || !repository) throw new Error("pipeline_build_publication_unavailable");
+      return createPipelineBuildPublicationAuthoritySnapshotV1(this.#key, {
+        schema: "control-room.pipeline-build-publication-authority/v1", deliveryDigest: delivery.deliveryDigest,
+        tenantId: this.scope.tenantId, projectId: row.project_id, sourceJobId: row.current_job_id,
+        executionJobId: identity.jobId, attemptId: identity.attemptId, runId: identity.runId,
+        pipelineRunId: row.pipeline_run_id, stageOrdinal: Number(row.stage_ordinal), stageRecordDigest: row.record_digest,
+        workerId: row.worker_id, model: row.model, effort: row.effort,
+        ...policy.data, retainedResultDigest: proof.contentHash,
+        repositoryUrl: repository.repositoryUrl, title: row.run_title,
+        body: `Automated build-stage proposal for ${row.pipeline_run_id}, stage ${Number(row.stage_ordinal)}.`,
+      });
+    });
+  }
+
+  async assertBuildPublicationAuthorityCurrent(snapshotValue: unknown): Promise<void> {
+    if (!this.selection?.acceptedResultProof || !this.repositories) throw new Error("pipeline_build_publication_unavailable");
+    const snapshot = verifyPipelineBuildPublicationAuthoritySnapshotV1(this.#key, snapshotValue);
+    if (snapshot.tenantId !== this.scope.tenantId) throw new Error("pipeline_build_publication_unavailable");
+    await this.db.transaction(async tx => {
+      const row = (await tx.query<StageRow & { run_title: string }>(`SELECT stage.project_id,stage.pipeline_run_id,
+        stage.stage_ordinal,stage.stage_kind,stage.role,stage.current_job_id,stage.worker_id,stage.worker_kind,stage.node_id,
+        stage.selection_key,stage.model,stage.effort,stage.provider,stage.profile,stage.current_attempt_id,stage.current_lease_id,
+        stage.state,stage.max_loops,stage.allowed_paths,stage.maximum_changed_files,stage.maximum_changed_bytes,
+        stage.handoff_from_result_digest,stage.signoff_review_id,stage.started_at,stage.finished_at,stage.record_digest,
+        stage.auth_tag,stage.version,run.title AS run_title FROM pipeline_stage_runs stage
+        JOIN pipeline_runs run ON run.tenant_id=stage.tenant_id AND run.id=stage.pipeline_run_id
+        JOIN control_task_execution_plans execution ON execution.tenant_id=stage.tenant_id
+          AND execution.project_id=stage.project_id AND execution.source_job_id=stage.current_job_id
+          AND execution.job_id=$4
+        JOIN control_harness_runs harness ON harness.tenant_id=stage.tenant_id AND harness.job_id=execution.job_id
+          AND harness.id=$6 AND harness.attempt_id=$5 AND harness.node_id=stage.node_id
+        JOIN control_attempts attempt ON attempt.tenant_id=harness.tenant_id AND attempt.id=harness.attempt_id
+          AND attempt.job_id=harness.job_id AND attempt.node_id=stage.node_id AND attempt.worker_id=stage.worker_id
+        JOIN control_task_model_selections selected ON selected.tenant_id=stage.tenant_id
+          AND selected.project_id=stage.project_id AND selected.job_id=execution.job_id
+          AND selected.worker_kind=stage.worker_kind AND selected.selection_key=stage.selection_key
+          AND selected.model=stage.model AND selected.effort=stage.effort
+          AND selected.provider IS NOT DISTINCT FROM stage.provider AND selected.profile IS NOT DISTINCT FROM stage.profile
+        WHERE stage.tenant_id=$1 AND stage.project_id=$2 AND stage.pipeline_run_id=$3
+          AND stage.stage_ordinal=$7 AND stage.stage_kind='build' AND stage.role='builder' FOR SHARE`,
+      [this.scope.tenantId, snapshot.projectId, snapshot.pipelineRunId, snapshot.executionJobId,
+        snapshot.attemptId, snapshot.runId, snapshot.stageOrdinal])).rows[0];
+      if (!row) throw new Error("pipeline_build_publication_unavailable");
+      this.#verifyStage(row);
+      const policy = pipelineBuildWritePolicySchemaV1.safeParse({ allowedPaths: row.allowed_paths,
+        maximumChangedFiles: row.maximum_changed_files, maximumChangedBytes: row.maximum_changed_bytes });
+      const proof = await this.selection!.acceptedResultProof!(tx, { sourceJobId: row.current_job_id,
+        workerId: row.worker_id, nodeId: row.node_id });
+      const repository = await this.repositories!.resolve(tx, { ...this.scope, projectId: row.project_id });
+      const body = `Automated build-stage proposal for ${row.pipeline_run_id}, stage ${Number(row.stage_ordinal)}.`;
+      if (!policy.success || row.record_digest !== snapshot.stageRecordDigest || row.current_job_id !== snapshot.sourceJobId
+        || row.worker_id !== snapshot.workerId || row.model !== snapshot.model || row.effort !== snapshot.effort
+        || policy.data.allowedPaths.length !== snapshot.allowedPaths.length
+        || policy.data.allowedPaths.some((path, index) => path !== snapshot.allowedPaths[index])
+        || policy.data.maximumChangedFiles !== snapshot.maximumChangedFiles
+        || policy.data.maximumChangedBytes !== snapshot.maximumChangedBytes
+        || proof?.contentHash !== snapshot.retainedResultDigest || repository?.repositoryUrl !== snapshot.repositoryUrl
+        || row.run_title !== snapshot.title || body !== snapshot.body) throw new Error("pipeline_build_publication_unavailable");
+    });
+  }
+
+  async retainBuildPublication(input: Readonly<{ snapshot: unknown; plan: unknown; evidence: unknown }>) {
+    if (!this.selection?.acceptedResultProof || !this.repositories) throw new Error("pipeline_build_publication_unavailable");
+    const snapshot = verifyPipelineBuildPublicationAuthoritySnapshotV1(this.#key, input.snapshot);
+    const evidence = verifyPullRequestPublicationEvidenceV1(input.evidence, input.plan, this.#key);
+    const plan = input.plan as { authoritySnapshotDigest?: string; repositoryUrl?: string };
+    if (snapshot.tenantId !== this.scope.tenantId || evidence.deliveryDigest !== snapshot.deliveryDigest
+      || evidence.retainedResultDigest !== snapshot.retainedResultDigest
+      || plan.authoritySnapshotDigest !== snapshot.snapshotDigest || plan.repositoryUrl !== snapshot.repositoryUrl)
+      throw new Error("pipeline_build_publication_unavailable");
+    return this.db.transaction(async tx => {
+      const stage = (await tx.query<StageRow>(`SELECT project_id,pipeline_run_id,stage_ordinal,stage_kind,role,current_job_id,
+        worker_id,worker_kind,node_id,selection_key,model,effort,provider,profile,current_attempt_id,current_lease_id,state,max_loops,
+        allowed_paths,maximum_changed_files,maximum_changed_bytes,handoff_from_result_digest,signoff_review_id,started_at,finished_at,
+        record_digest,auth_tag,version FROM pipeline_stage_runs stage
+        WHERE stage.tenant_id=$1 AND stage.project_id=$2 AND stage.pipeline_run_id=$3
+          AND stage.stage_ordinal=$4 AND stage.stage_kind='build'
+          AND EXISTS (SELECT 1 FROM control_task_model_selections selected WHERE selected.tenant_id=stage.tenant_id
+            AND selected.project_id=stage.project_id AND selected.job_id=$5
+            AND selected.worker_kind=stage.worker_kind AND selected.selection_key=stage.selection_key
+            AND selected.model=stage.model AND selected.effort=stage.effort
+            AND selected.provider IS NOT DISTINCT FROM stage.provider AND selected.profile IS NOT DISTINCT FROM stage.profile)
+          FOR SHARE OF stage`,
+      [this.scope.tenantId, snapshot.projectId, snapshot.pipelineRunId, snapshot.stageOrdinal,
+        snapshot.executionJobId])).rows[0];
+      if (!stage) throw new Error("pipeline_build_publication_unavailable");
+      this.#verifyStage(stage);
+      const proof = await this.selection!.acceptedResultProof!(tx, { sourceJobId: stage.current_job_id,
+        workerId: stage.worker_id, nodeId: stage.node_id });
+      const repository = await this.repositories!.resolve(tx, { ...this.scope, projectId: stage.project_id });
+      if (stage.record_digest !== snapshot.stageRecordDigest || stage.current_job_id !== snapshot.sourceJobId
+        || stage.worker_id !== snapshot.workerId || stage.model !== snapshot.model || stage.effort !== snapshot.effort
+        || !proof || proof.contentHash !== snapshot.retainedResultDigest
+        || repository?.repositoryUrl !== snapshot.repositoryUrl) throw new Error("pipeline_build_publication_unavailable");
+      const record = { tenantId: this.scope.tenantId, projectId: snapshot.projectId,
+        pipelineRunId: snapshot.pipelineRunId, stageOrdinal: snapshot.stageOrdinal, jobId: snapshot.executionJobId,
+        attemptId: snapshot.attemptId, harnessRunId: snapshot.runId, deliveryDigest: snapshot.deliveryDigest,
+        retainedResultDigest: snapshot.retainedResultDigest, planDigest: evidence.planDigest,
+        evidenceDigest: evidence.evidenceDigest, evidence, recordedAt: new Date(this.clock()).toISOString() };
+      const authTag = hmacSha256Tag(this.#key, { purpose: "pipeline-build-publication-record/v1", record });
+      const inserted = await tx.query(`INSERT INTO control_pipeline_build_publications(tenant_id,project_id,pipeline_run_id,
+        stage_ordinal,job_id,attempt_id,harness_run_id,delivery_digest,retained_result_digest,plan_digest,evidence_digest,evidence,
+        auth_tag,recorded_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::jsonb,$13,$14)
+        ON CONFLICT (tenant_id,pipeline_run_id,stage_ordinal) DO NOTHING RETURNING evidence_digest`,
+      [record.tenantId, record.projectId, record.pipelineRunId, record.stageOrdinal, record.jobId, record.attemptId,
+        record.harnessRunId, record.deliveryDigest, record.retainedResultDigest, record.planDigest, record.evidenceDigest,
+        JSON.stringify(evidence), authTag, record.recordedAt]);
+      if (!inserted.rows.length) {
+        const prior = (await tx.query<{ evidence_digest: string }>(`SELECT evidence_digest FROM control_pipeline_build_publications
+          WHERE tenant_id=$1 AND pipeline_run_id=$2 AND stage_ordinal=$3`,
+        [record.tenantId, record.pipelineRunId, record.stageOrdinal])).rows[0];
+        if (prior?.evidence_digest !== evidence.evidenceDigest) throw new Error("pipeline_build_publication_conflict");
+      }
+      return Object.freeze({ evidenceDigest: evidence.evidenceDigest, replayed: !inserted.rows.length });
+    });
+  }
+
+  async readRetainedBuildPublication(deliveryDigest: string) {
+    return this.db.transaction(tx => this.#readBuildPublication(tx, deliveryDigest));
   }
 
   async #project(tx: DatabaseSession, projectId: string, active: boolean) {
@@ -58,17 +229,21 @@ export class LinearPipelineServiceV1 {
   }
 
   #templateMaterial(row: Omit<TemplateRow, "auth_tag">) {
+    const raw = { name: row.name, description: row.description, stages: row.stages,
+      maxTotalLoops: Number(row.max_total_loops), maxDurationSeconds: Number(row.max_duration_seconds) };
+    const current = linearPipelineTemplateInputSchemaV1.safeParse(raw);
+    const parsed = current.success ? current.data : legacyLinearPipelineTemplateInputSchemaV1.parse(raw);
     return { id: row.id, tenantId: this.scope.tenantId, projectId: row.project_id, name: row.name,
-      description: row.description, stages: linearPipelineTemplateInputSchemaV1.parse({ name: row.name,
-        description: row.description, stages: row.stages, maxTotalLoops: Number(row.max_total_loops),
-        maxDurationSeconds: Number(row.max_duration_seconds) }).stages,
+      description: row.description, stages: parsed.stages,
       maxStages: Number(row.max_stages), maxTotalLoops: Number(row.max_total_loops), mayAdvanceUnattended: false,
       maxDurationSeconds: Number(row.max_duration_seconds), version: Number(row.version),
       createdAt: iso(row.created_at), updatedAt: iso(row.updated_at) };
   }
-  #verifyTemplate(row: TemplateRow): LinearPipelineTemplateInputV1 {
-    const value = linearPipelineTemplateInputSchemaV1.parse({ name: row.name, description: row.description,
-      stages: row.stages, maxTotalLoops: Number(row.max_total_loops), maxDurationSeconds: Number(row.max_duration_seconds) });
+  #verifyTemplate(row: TemplateRow) {
+    const raw = { name: row.name, description: row.description, stages: row.stages,
+      maxTotalLoops: Number(row.max_total_loops), maxDurationSeconds: Number(row.max_duration_seconds) };
+    const current = linearPipelineTemplateInputSchemaV1.safeParse(raw);
+    const value = current.success ? current.data : legacyLinearPipelineTemplateInputSchemaV1.parse(raw);
     const material = this.#templateMaterial(row);
     if (sha256Digest(material) !== row.record_digest
       || !same(hmacSha256Tag(this.#key, { purpose: "pipeline-template/v1", record: material }), row.auth_tag))
@@ -90,6 +265,9 @@ export class LinearPipelineServiceV1 {
       throw new Error("pipeline_integrity_failed");
   }
   #stageMaterial(row: StageRow) {
+    const policy = row.stage_kind === "build" && row.allowed_paths !== null
+      ? pipelineBuildWritePolicySchemaV1.parse({ allowedPaths: row.allowed_paths,
+        maximumChangedFiles: row.maximum_changed_files, maximumChangedBytes: row.maximum_changed_bytes }) : null;
     return { id: `${row.pipeline_run_id}:stage:${Number(row.stage_ordinal)}`, tenantId: this.scope.tenantId,
       projectId: row.project_id, pipelineRunId: row.pipeline_run_id, stageOrdinal: Number(row.stage_ordinal),
       stageKind: row.stage_kind, role: row.role, workerId: row.worker_id, workerKind: row.worker_kind,
@@ -97,14 +275,68 @@ export class LinearPipelineServiceV1 {
       provider: row.provider, profile: row.profile, currentJobId: row.current_job_id,
       currentAttemptId: row.current_attempt_id, currentLeaseId: row.current_lease_id, state: row.state,
       maxLoops: Number(row.max_loops), handoffFromResultDigest: row.handoff_from_result_digest,
+      allowedPaths: policy ? [...policy.allowedPaths] : null,
+      maximumChangedFiles: policy?.maximumChangedFiles ?? null,
+      maximumChangedBytes: policy?.maximumChangedBytes ?? null,
       signoffReviewId: row.signoff_review_id, startedAt: row.started_at ? iso(row.started_at) : null,
       finishedAt: row.finished_at ? iso(row.finished_at) : null, version: Number(row.version) };
   }
   #verifyStage(row: StageRow) {
     const material = this.#stageMaterial(row);
-    if (sha256Digest(material) !== row.record_digest
-      || !same(hmacSha256Tag(this.#key, { purpose: "pipeline-stage-run/v1", record: material }), row.auth_tag))
+    if (sha256Digest(material) === row.record_digest
+      && same(hmacSha256Tag(this.#key, { purpose: "pipeline-stage-run/v1", record: material }), row.auth_tag)) return;
+    const { allowedPaths: _paths, maximumChangedFiles: _files, maximumChangedBytes: _bytes, ...legacy } = material;
+    if (row.allowed_paths !== null || row.maximum_changed_files !== null || row.maximum_changed_bytes !== null
+      || sha256Digest(legacy) !== row.record_digest
+      || !same(hmacSha256Tag(this.#key, { purpose: "pipeline-stage-run/v1", record: legacy }), row.auth_tag))
       throw new Error("pipeline_integrity_failed");
+  }
+  async #readBuildPublication(tx: DatabaseSession, deliveryDigest: string) {
+    if (!/^sha256:[a-f0-9]{64}$/.test(deliveryDigest)) throw new Error("pipeline_build_publication_unavailable");
+    const row = (await tx.query<BuildPublicationRow>(`SELECT publication.project_id,publication.pipeline_run_id,
+      publication.stage_ordinal,publication.job_id,publication.attempt_id,publication.harness_run_id,
+      publication.delivery_digest,publication.retained_result_digest,publication.plan_digest,publication.evidence_digest,
+      publication.evidence,publication.auth_tag,publication.recorded_at,manifest.content_hash AS artifact_content_hash,
+      canonical.record_digest AS canonical_result_digest,stage.current_job_id AS source_job_id,
+      stage.worker_id,stage.node_id FROM control_pipeline_build_publications publication
+      JOIN pipeline_stage_runs stage ON stage.tenant_id=publication.tenant_id
+        AND stage.pipeline_run_id=publication.pipeline_run_id AND stage.stage_ordinal=publication.stage_ordinal
+      JOIN control_native_artifact_receipts artifact ON artifact.tenant_id=publication.tenant_id
+        AND artifact.run_id=publication.harness_run_id AND artifact.project_id=publication.project_id
+        AND artifact.job_id=publication.job_id AND artifact.attempt_id=publication.attempt_id
+      JOIN control_artifact_manifests manifest ON manifest.tenant_id=artifact.tenant_id AND manifest.id=artifact.artifact_id
+        AND manifest.content_hash=publication.retained_result_digest AND manifest.state='verified'
+      JOIN control_codex_result_publications canonical ON canonical.tenant_id=publication.tenant_id
+        AND canonical.run_id=publication.harness_run_id AND canonical.project_id=publication.project_id
+        AND canonical.job_id=publication.job_id AND canonical.attempt_id=publication.attempt_id
+      WHERE publication.tenant_id=$1 AND publication.delivery_digest=$2`,
+    [this.scope.tenantId, deliveryDigest])).rows[0];
+    if (!row || !this.selection?.acceptedResultProof || row.artifact_content_hash !== row.retained_result_digest
+      || !/^sha256:[a-f0-9]{64}$/.test(row.canonical_result_digest)) return undefined;
+    const stage = (await tx.query<StageRow>(`SELECT project_id,pipeline_run_id,stage_ordinal,stage_kind,role,current_job_id,
+      worker_id,worker_kind,node_id,selection_key,model,effort,provider,profile,current_attempt_id,current_lease_id,state,max_loops,
+      allowed_paths,maximum_changed_files,maximum_changed_bytes,handoff_from_result_digest,signoff_review_id,started_at,finished_at,
+      record_digest,auth_tag,version FROM pipeline_stage_runs WHERE tenant_id=$1 AND pipeline_run_id=$2 AND stage_ordinal=$3`,
+    [this.scope.tenantId, row.pipeline_run_id, Number(row.stage_ordinal)])).rows[0];
+    if (!stage) return undefined;
+    this.#verifyStage(stage);
+    if (stage.current_job_id !== row.source_job_id || stage.worker_id !== row.worker_id || stage.node_id !== row.node_id)
+      throw new Error("pipeline_build_publication_integrity_failed");
+    const proof = await this.selection.acceptedResultProof(tx, { sourceJobId: row.source_job_id,
+      workerId: row.worker_id, nodeId: row.node_id });
+    if (proof?.contentHash !== row.retained_result_digest) return undefined;
+    const evidence = verifyStoredPullRequestPublicationEvidenceV1(row.evidence, this.#key);
+    const record = { tenantId: this.scope.tenantId, projectId: row.project_id, pipelineRunId: row.pipeline_run_id,
+      stageOrdinal: Number(row.stage_ordinal), jobId: row.job_id, attemptId: row.attempt_id,
+      harnessRunId: row.harness_run_id, deliveryDigest: row.delivery_digest,
+      retainedResultDigest: row.retained_result_digest, planDigest: row.plan_digest,
+      evidenceDigest: row.evidence_digest, evidence, recordedAt: iso(row.recorded_at) };
+    if (evidence.evidenceDigest !== row.evidence_digest || evidence.planDigest !== row.plan_digest
+      || evidence.deliveryDigest !== row.delivery_digest || evidence.retainedResultDigest !== row.retained_result_digest
+      || !same(row.auth_tag, hmacSha256Tag(this.#key, { purpose: "pipeline-build-publication-record/v1", record })))
+      throw new Error("pipeline_build_publication_integrity_failed");
+    return Object.freeze({ url: evidence.url, commitDigest: evidence.commitDigest,
+      modelSelection: evidence.modelSelection, usage: evidence.usage, evidenceDigest: evidence.evidenceDigest });
   }
   async #assertSelection(stage: PipelineStageTemplateV1) {
     if (!this.selection) throw new WebAccessError("conflict");
@@ -155,10 +387,13 @@ export class LinearPipelineServiceV1 {
       [this.scope.tenantId, projectId, parsed.data.templateId])).rows[0];
       if (!template) throw new WebAccessError("not_found");
       const definition = this.#verifyTemplate(template);
-      for (const stage of definition.stages) await this.#assertSelection(stage);
+      const currentDefinition = linearPipelineTemplateInputSchemaV1.safeParse(definition);
+      if (!currentDefinition.success) throw new WebAccessError("conflict");
+      const boundedDefinition: LinearPipelineTemplateInputV1 = currentDefinition.data;
+      for (const stage of boundedDefinition.stages) await this.#assertSelection(stage);
       const requestDigest = sha256Digest({ schema: "control-room.pipeline-instantiation/v1", tenantId: this.scope.tenantId,
         projectId, title: parsed.data.title, templateId: template.id, templateVersion: Number(template.version),
-        templateDigest: template.record_digest, stages: definition.stages });
+        templateDigest: template.record_digest, stages: boundedDefinition.stages });
       const operation = "pipeline-runs.instantiate/v1";
       const inserted = await tx.query(`INSERT INTO control_idempotency(tenant_id,operation_scope,idempotency_key,request_digest,status)
         VALUES($1,$2,$3,$4,'processing') ON CONFLICT DO NOTHING RETURNING idempotency_key`,
@@ -173,11 +408,11 @@ export class LinearPipelineServiceV1 {
       }
       const suffix = randomUUID(), runId = `pipeline-run:${suffix}`, requestId = `request:pipeline:${suffix}`,
         workflowId = `workflow:pipeline:${suffix}`, now = actor.now;
-      const jobIds = definition.stages.map(stage => `job:pipeline:${suffix}:${stage.ordinal}`);
+      const jobIds = boundedDefinition.stages.map(stage => `job:pipeline:${suffix}:${stage.ordinal}`);
       const common = { contractVersion: DOMAIN_CONTRACT_VERSION, tenantId: this.scope.tenantId, version: 0,
         createdAt: now, updatedAt: now } as const;
       const request: RequestRecord = { ...common, kind: "request", id: requestId, projectId, title: parsed.data.title,
-        objective: definition.description, state: "draft", priority: 50, requestedBy: { actorId: actor.id, actorType: "human" },
+        objective: boundedDefinition.description, state: "draft", priority: 50, requestedBy: { actorId: actor.id, actorType: "human" },
         idempotencyKey: `pipeline:${sha256Digest({ projectId, idempotencyKey }).slice(7, 39)}` };
       const workflow: WorkflowRecord = { ...common, kind: "workflow", id: workflowId, requestId, projectId,
         definitionVersion: "linear-pipeline/v1", definitionDigest: template.record_digest,
@@ -194,17 +429,17 @@ export class LinearPipelineServiceV1 {
         VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,'proposed',NULL,$10,NULL,0,false,$11,$12,1)`,
       [runId, this.scope.tenantId, projectId, requestId, template.id, Number(template.version), template.record_digest,
         workflowId, parsed.data.title, now, runDigest, runTag]);
-      for (const stage of definition.stages) {
+      for (const stage of boundedDefinition.stages) {
         const authority: AuthorityEnvelope = { projectId, allowedExecutor: "executor:unassigned", allowedOperations: ["task.propose"],
           credentialRefs: [], filesystemRoots: [], networkPolicy: "none", allowedNetworkDestinations: [], effectPolicy: "none",
-          maxRisk: "low", maxDurationSeconds: Math.min(definition.maxDurationSeconds, 86400), maxConcurrentEffects: 0,
-          expiresAt: new Date(Date.parse(now) + Math.min(definition.maxDurationSeconds, 86400) * 1000).toISOString(), digest: "" };
+          maxRisk: "low", maxDurationSeconds: Math.min(boundedDefinition.maxDurationSeconds, 86400), maxConcurrentEffects: 0,
+          expiresAt: new Date(Date.parse(now) + Math.min(boundedDefinition.maxDurationSeconds, 86400) * 1000).toISOString(), digest: "" };
         authority.digest = computeAuthorityDigest(authority);
         // The canonical domain currently stores task instructions on the one
         // request shared by this workflow.  Stage-specific intent remains in
         // the authenticated template/stage projection; the ordinary proposal
         // digest must match the existing planner's request-derived draft.
-        const instructions = definition.description;
+        const instructions = boundedDefinition.description;
         const job: JobRecord = { ...common, kind: "job", id: jobIds[stage.ordinal]!, workflowId, projectId,
           jobType: "task.proposal", specVersion: "1.0.0", inputDigest: sha256Digest({ title: parsed.data.title, instructions }),
           state: "proposed", priority: 50, requiredCapability: stage.requiredCapability,
@@ -226,16 +461,23 @@ export class LinearPipelineServiceV1 {
           effort: stage.effort, provider: stage.provider, profile: stage.profile,
           currentJobId: job.id, currentAttemptId: null, currentLeaseId: null,
           state: "proposed", maxLoops: stage.maxLoops, handoffFromResultDigest: null, signoffReviewId: null,
+          allowedPaths: stage.stageKind === "build" ? [...stage.allowedPaths] : null,
+          maximumChangedFiles: stage.stageKind === "build" ? stage.maximumChangedFiles : null,
+          maximumChangedBytes: stage.stageKind === "build" ? stage.maximumChangedBytes : null,
           startedAt: null, finishedAt: null, version: 1 };
         const stageDigest = sha256Digest(stageMaterial), stageTag = hmacSha256Tag(this.#key,
           { purpose: "pipeline-stage-run/v1", record: stageMaterial });
         await tx.query(`INSERT INTO pipeline_stage_runs(id,tenant_id,project_id,pipeline_run_id,stage_ordinal,stage_kind,role,
           worker_id,worker_kind,node_id,selection_key,model,effort,provider,profile,current_job_id,current_attempt_id,current_lease_id,state,max_loops,
-          handoff_from_result_digest,signoff_review_id,started_at,finished_at,record_digest,auth_tag,version)
-          VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,NULL,NULL,'proposed',$17,NULL,NULL,NULL,NULL,$18,$19,1)`,
+          allowed_paths,maximum_changed_files,maximum_changed_bytes,handoff_from_result_digest,signoff_review_id,started_at,finished_at,
+          record_digest,auth_tag,version)
+          VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,NULL,NULL,'proposed',$17,$18::jsonb,$19,$20,
+            NULL,NULL,NULL,NULL,$21,$22,1)`,
         [stageId, this.scope.tenantId, projectId, runId, stage.ordinal, stage.stageKind, stage.role, stage.workerId,
           stage.workerKind, stage.nodeId, stage.selectionKey, stage.model, stage.effort, stage.provider, stage.profile,
-          job.id, stage.maxLoops, stageDigest, stageTag]);
+          job.id, stage.maxLoops, stage.stageKind === "build" ? JSON.stringify(stage.allowedPaths) : null,
+          stage.stageKind === "build" ? stage.maximumChangedFiles : null,
+          stage.stageKind === "build" ? stage.maximumChangedBytes : null, stageDigest, stageTag]);
       }
       await appendAuditWith(tx, { id: `audit:${randomUUID()}`, ...this.scope, projectId, actorId: actor.id, actorType: "human",
         action: "pipelines.run.instantiate", targetType: "pipeline_run", targetId: runId, idempotencyKey,
@@ -288,7 +530,8 @@ export class LinearPipelineServiceV1 {
       this.#verifyTemplate(template);
       const rows = (await tx.query<StageRow>(`SELECT project_id,pipeline_run_id,stage_ordinal,stage_kind,role,current_job_id,
         worker_id,worker_kind,node_id,selection_key,model,effort,provider,profile,current_attempt_id,current_lease_id,
-        state,max_loops,handoff_from_result_digest,signoff_review_id,started_at,finished_at,record_digest,auth_tag,version
+        state,max_loops,allowed_paths,maximum_changed_files,maximum_changed_bytes,handoff_from_result_digest,signoff_review_id,
+        started_at,finished_at,record_digest,auth_tag,version
         FROM pipeline_stage_runs WHERE tenant_id=$1 AND project_id=$2 AND pipeline_run_id=$3 ORDER BY stage_ordinal`,
       [this.scope.tenantId, projectId, runId])).rows;
       if (rows.length !== 3) throw new Error("pipeline_integrity_failed");
@@ -318,9 +561,19 @@ export class LinearPipelineServiceV1 {
         else if (row.stage_ordinal > 0 && !accepted[row.stage_ordinal - 1]?.ok) state = "waiting_dependency";
         else if (!job || job.state !== "proposed") state = "uncertain";
         else state = "eligible";
+        let pullRequestEvidence = null;
+        if (row.stage_kind === "build") {
+          const publication = (await tx.query<{ delivery_digest: string }>(`SELECT delivery_digest
+            FROM control_pipeline_build_publications WHERE tenant_id=$1 AND pipeline_run_id=$2 AND stage_ordinal=$3`,
+          [this.scope.tenantId, row.pipeline_run_id, Number(row.stage_ordinal)])).rows[0];
+          if (publication) pullRequestEvidence = await this.#readBuildPublication(tx, publication.delivery_digest) ?? null;
+        }
         stages.push({ ordinal: Number(row.stage_ordinal), stageKind: row.stage_kind, role: row.role,
           jobId: row.current_job_id, workerId: row.worker_id, nodeId: row.node_id, model: row.model, effort: row.effort,
           state, round: own.round, usage: "unknown" as const,
+          writePolicy: row.stage_kind === "build" && row.allowed_paths !== null ? { allowedPaths: row.allowed_paths,
+            maximumChangedFiles: Number(row.maximum_changed_files), maximumChangedBytes: Number(row.maximum_changed_bytes) } : null,
+          pullRequestEvidence,
           predecessorResultDigest: row.stage_ordinal ? accepted[row.stage_ordinal - 1]?.digest ?? null : null,
           startsWork: false as const, grantsExecutionAuthority: false as const });
         accepted.push(own);

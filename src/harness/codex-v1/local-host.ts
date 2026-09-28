@@ -37,7 +37,7 @@ export interface CodexLocalInitialHostInputV1 extends CommonHostInputV1 {
   bridgeJournal: BridgeJournal;
   authority: CodexLocalStartAuthorityV1;
   workspacePort: ObservableGitWorkspacePort;
-  workspacePolicy: CodexDeliveryBoundWorkspacePolicyV1;
+  workspacePolicy?: CodexDeliveryBoundWorkspacePolicyV1;
   buildPublication?: CodexBuildStagePublicationCompositionV1;
   acquireProcess: AcquireCodexAppServerProcessV1;
   startTimeoutMs: number;
@@ -107,7 +107,7 @@ export function createCodexLocalHostV1(inputValue: CodexLocalHostInputV1) {
       threadStartRequestId: input.threadStartRequestId, turnStartRequestId: input.turnStartRequestId,
       workspaceIntent: input.workspaceIntent, bridgeJournal: input.bridgeJournal,
       startJournal: input.startJournal, workspacePort: input.workspacePort,
-      workspacePolicy: input.workspacePolicy,
+      ...(input.workspacePolicy ? { workspacePolicy: input.workspacePolicy } : {}),
       ...(input.buildPublication ? { buildPublication: input.buildPublication } : {}),
       authority, ownedStart, clock: input.clock.bind(input),
     });

@@ -6,7 +6,6 @@ import type { CodexWorkspaceLeaseV1, CodexWorkspaceManagerV1 } from "../codex-v1
 import { controllerWorkerDeliverySchemaV1 } from "./controller-worker-delivery";
 import { verifyWorktreeChangeAuditEvidenceV1, verifyWorktreeChangeAuditPlanV1 } from "./worktree-change-audit";
 import type { ManagedWorktreeChangeAuditAuthorityV1 } from "./worktree-change-audit-authority";
-import { assertSynchronousFence } from "../../security/synchronous-fence";
 
 const digest = z.string().regex(/^sha256:[a-f0-9]{64}$/), tag = z.string().regex(/^hmac-sha256:[a-f0-9]{64}$/);
 const commit = z.string().regex(/^[a-f0-9]{40}$/);
@@ -21,7 +20,8 @@ const publicationContentSchema = z.object({ title: z.string().min(1).max(240),
 const planMaterialSchema = z.object({ schema: z.literal("control-room.pull-request-publication-plan/v1"),
   deliveryDigest: digest, worktreeLeaseDigest: digest, worktreeAuditPlanDigest: digest,
   worktreeAuditEvidenceDigest: digest, commitDigest: commit, repositoryUrl: z.string().url().max(2048),
-  modelSelection: modelSelectionSchema, retainedResultDigest: digest, publicationContentDigest: digest }).strict();
+  modelSelection: modelSelectionSchema, retainedResultDigest: digest, publicationContentDigest: digest,
+  authoritySnapshotDigest: digest }).strict();
 const planSchema = planMaterialSchema.extend({ planDigest: digest, authenticationTag: tag }).strict();
 const evidenceMaterialSchema = z.object({ schema: z.literal("control-room.pull-request-publication-evidence/v1"),
   planDigest: digest, deliveryDigest: digest, worktreeAuditEvidenceDigest: digest,
@@ -115,6 +115,7 @@ export async function createPullRequestPublicationPlanV1(input: Readonly<{
   authenticatedDelivery: unknown; lease: CodexWorkspaceLeaseV1; auditAuthority: ManagedWorktreeChangeAuditAuthorityV1;
   auditPlan: unknown; auditEvidence: unknown;
   authenticatedModelSelection: unknown; retainedResultDigest: string; repositoryUrl: string; publicationContent: unknown;
+  authoritySnapshotDigest?: string;
   runGit(cwd: string, args: readonly string[]): Promise<Uint8Array>;
 }>): Promise<PullRequestPublicationPlanV1> {
   const delivery = verifyAuthenticatedDelivery(input.integrityKey, input.authenticatedDelivery);
@@ -149,7 +150,8 @@ export async function createPullRequestPublicationPlanV1(input: Readonly<{
     worktreeAuditPlanDigest: auditPlan.planDigest, worktreeAuditEvidenceDigest: evidence.evidenceDigest,
     commitDigest: head, repositoryUrl: input.repositoryUrl, modelSelection: selected.modelSelection,
     retainedResultDigest: digest.parse(input.retainedResultDigest),
-    publicationContentDigest: sha256Digest(publicationContent) });
+    publicationContentDigest: sha256Digest(publicationContent),
+    authoritySnapshotDigest: digest.parse(input.authoritySnapshotDigest ?? delivery.authorityDigest) });
   const planDigest = sha256Digest(material), signed = { ...material, planDigest };
   return Object.freeze({ ...signed, modelSelection: Object.freeze({ ...material.modelSelection }),
     authenticationTag: auth(input.integrityKey, "pull-request-publication-plan/v1", signed) });
@@ -178,10 +180,19 @@ function verifyRecord(key: Uint8Array, plan: PullRequestPublicationPlanV1, value
   return parsed;
 }
 
+/** Authenticates a delivery-indexed node record without reconstructing a now-stale publication plan. */
+export function verifyRetainedPullRequestPublicationForDeliveryV1(integrityKey: Uint8Array, value: unknown,
+  deliveryDigest: string): Readonly<{ state: "pending" | "published" | "reconciliation_required" }> {
+  const parsed = recordSchema.parse(value), { authenticationTag, ...material } = parsed;
+  if (parsed.deliveryDigest !== digest.parse(deliveryDigest)
+    || !sameTag(authenticationTag, auth(integrityKey, "pull-request-publication-record/v1", material))) unavailable();
+  return Object.freeze({ state: parsed.state });
+}
+
 /** Durable intent is reserved before the single open effect; pending always reconciles after restart. */
 export function createPullRequestPublisherV1(input: Readonly<{ integrityKey: Uint8Array;
   plan: unknown; publicationContent: unknown; port: PullRequestOpenPortV1; store: DurablePullRequestPublicationStoreV1;
-  assertCurrent(): void;
+  assertCurrent(): void | Promise<void>;
 }>): Readonly<{ publish(): Promise<PullRequestPublicationResultV1> }> {
   const plan = verifyPlan(input.integrityKey, input.plan), candidateEffect = openEffects.get(input.port as object);
   if (candidateEffect === undefined) throw new Error("pull_request_publication_unavailable");
@@ -190,7 +201,6 @@ export function createPullRequestPublisherV1(input: Readonly<{ integrityKey: Uin
   if (sha256Digest(content) !== plan.publicationContentDigest) unavailable();
   const effect: PullRequestOpenEffectV1 = candidateEffect;
   const publicationId = `publication:${plan.planDigest.slice(7)}`;
-  const assertCurrent = () => assertSynchronousFence(input.assertCurrent, unavailable);
   return Object.freeze({ async publish(): Promise<PullRequestPublicationResultV1> {
     const priorValue = await input.store.load(publicationId);
     if (priorValue !== undefined) {
@@ -198,7 +208,7 @@ export function createPullRequestPublisherV1(input: Readonly<{ integrityKey: Uin
       if (prior.state === "published" && prior.evidence) return Object.freeze({ status: "published", evidence: prior.evidence });
       return Object.freeze({ status: "reconciliation_required" });
     }
-    assertCurrent();
+    await input.assertCurrent();
     const pending = makeRecord(input.integrityKey, plan, "pending", null);
     if (await input.store.reserve(publicationId, pending) !== "reserved") {
       const raced = await input.store.load(publicationId); if (raced === undefined) unavailable();
@@ -207,7 +217,7 @@ export function createPullRequestPublisherV1(input: Readonly<{ integrityKey: Uin
         ? Object.freeze({ status: "published", evidence: verified.evidence })
         : Object.freeze({ status: "reconciliation_required" });
     }
-    assertCurrent();
+    await input.assertCurrent();
     let opened: Awaited<ReturnType<PullRequestOpenEffectV1>>;
     try { opened = await effect(Object.freeze({ ...content, commitDigest: plan.commitDigest })); }
     catch { return Object.freeze({ status: "reconciliation_required" }); }
@@ -247,5 +257,16 @@ export function verifyPullRequestPublicationEvidenceV1(value: unknown, planValue
     || parsed.worktreeAuditEvidenceDigest !== plan.worktreeAuditEvidenceDigest
     || canonicalJson(parsed.modelSelection) !== canonicalJson(plan.modelSelection)) unavailable();
   requireAllowedPullRequestUrl(parsed.url, plan.repositoryUrl);
+  return Object.freeze({ ...parsed, modelSelection: Object.freeze({ ...parsed.modelSelection }) });
+}
+
+/** Verifies a retained evidence object when its plan is joined independently by digest. */
+export function verifyStoredPullRequestPublicationEvidenceV1(value: unknown,
+  integrityKey: Uint8Array): PullRequestPublicationEvidenceV1 {
+  const parsed = evidenceSchema.parse(value), { evidenceDigest, ...material } = parsed;
+  const { authenticationTag, ...unsignedMaterial } = material;
+  if (evidenceDigest !== sha256Digest(unsignedMaterial)
+    || !sameTag(authenticationTag, auth(integrityKey, "pull-request-publication-evidence/v1",
+      { ...unsignedMaterial, evidenceDigest }))) unavailable();
   return Object.freeze({ ...parsed, modelSelection: Object.freeze({ ...parsed.modelSelection }) });
 }

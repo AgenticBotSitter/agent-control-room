@@ -50,7 +50,7 @@ export function createCodexLocalStartCompositionV1(input: {
   bridgeJournal: BridgeStartJournal;
   startJournal: StartJournal;
   workspacePort: ObservableGitWorkspacePort;
-  workspacePolicy: CodexDeliveryBoundWorkspacePolicyV1;
+  workspacePolicy?: CodexDeliveryBoundWorkspacePolicyV1;
   buildPublication?: CodexBuildStagePublicationCompositionV1;
   authority: CodexLocalStartAuthorityV1;
   ownedStart: CodexOwnedStartV1;
@@ -82,7 +82,7 @@ export function createCodexLocalStartCompositionV1(input: {
   });
 
   const workspace = createCodexDeliveryBoundWorkspacePreparationV1({ workspaceIntent: intent,
-    workspacePort: input.workspacePort, journal: bridge, policy: input.workspacePolicy,
+    workspacePort: input.workspacePort, journal: bridge, ...(input.workspacePolicy ? { policy: input.workspacePolicy } : {}),
     ...(input.buildPublication ? { publication: input.buildPublication } : {}) });
   const runtime = createCodexLocalStartRuntimeV1({
     queueId: input.queueId,

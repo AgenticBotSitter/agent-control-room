@@ -15,7 +15,7 @@ export async function verifyPrivateIdeaAdapter(db: DatabaseClient, scope: { tena
   if (rows.length !== 1 || rows[0].valid !== true) throw new Error("private_idea_adapter_unavailable");
 }
 
-// Generated from public migrations 0001-0097, including generic external-content
+// Generated from public migrations 0001-0098, including generic external-content
 // migrations 0025/0026. Catalog query below; not a mutable database marker.
 export const privateWebSchemaDigest = "89f0536f9b572364fe65f416f08e0f476171d3eac5aa2422a5062927358ec435";
 export const privateWebReadTables = ["control_identities", "control_role_grants", "workspaces", "control_web_sessions",
@@ -36,6 +36,7 @@ export const privateWebReadTables = ["control_identities", "control_role_grants"
   "control_durable_result_write_reservations", "work_batches", "work_batch_revisions", "work_batch_items",
   "work_batch_queue_admissions", "work_batch_effective_queue_admissions", "work_batch_agent_queue_heads",
   "pipeline_templates", "pipeline_runs", "pipeline_stage_runs", "pipeline_ordered_stage_runs",
+  "control_pipeline_build_publications", "control_codex_result_publications",
   "control_action_inbox"] as const;
 const inserts = new Set(["control_web_sessions", "adapter_registry", "projects", "control_manual_project_heads",
   "control_web_project_commands", "audit_events", "control_audit_chain_heads", "control_requests", "control_workflows",
@@ -127,8 +128,10 @@ const coordinatorInserts = new Set(["control_web_sessions", "control_requests", 
   "control_attempt_resource_admissions", "control_attempt_resource_scopes", "control_job_dependencies",
   "control_installation_transition_revisions", "control_node_fleet_signals", "control_node_fleet_current",
   "control_task_model_selections", "control_task_declared_scopes", "control_assignment_lease_scopes"]);
-coordinatorReads.push("pipeline_templates", "pipeline_runs", "pipeline_stage_runs", "pipeline_ordered_stage_runs", "control_agent_review_plans");
+coordinatorReads.push("pipeline_templates", "pipeline_runs", "pipeline_stage_runs", "pipeline_ordered_stage_runs",
+  "control_agent_review_plans", "control_pipeline_build_publications");
 coordinatorInserts.add("control_agent_review_plans");
+coordinatorInserts.add("control_pipeline_build_publications");
 const coordinatorDeletes = new Set(["control_assignment_lease_scopes"]);
 const coordinatorUpdates: Record<string, readonly string[]> = {
   ...Object.fromEntries(["control_requests", "control_workflows", "control_attempts", "control_leases"]

@@ -35,7 +35,8 @@ GRANT SELECT ON control_identities, control_role_grants, workspaces, control_web
   control_attempt_resource_admissions, control_attempt_resource_scopes,
   work_batches, work_batch_revisions, work_batch_items, control_action_inbox TO control_room_private_web;
 GRANT SELECT ON pipeline_templates, pipeline_runs, pipeline_stage_runs,
-  pipeline_ordered_stage_runs TO control_room_private_web;
+  pipeline_ordered_stage_runs, control_pipeline_build_publications, control_codex_result_publications
+  TO control_room_private_web;
 GRANT SELECT ON work_batch_queue_admissions, work_batch_effective_queue_admissions,
   work_batch_agent_queue_heads TO control_room_private_web;
 GRANT SELECT ON control_task_model_selections, control_task_declared_scopes,
