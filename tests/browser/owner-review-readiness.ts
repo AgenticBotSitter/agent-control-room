@@ -13,9 +13,10 @@ type DeferredReviewLoad = Readonly<{
  * its product loading marker, rather than pausing for an arbitrary duration.
  */
 export async function deferNextOwnerReviewLoad(page: Page): Promise<DeferredReviewLoad> {
-  let held = false, release!: () => void, markHeld!: () => void;
+  let held = false, release!: () => void, markHeld!: () => void, markFinished!: () => void;
   const released = new Promise<void>(resolve => { release = resolve; });
   const heldOnce = new Promise<void>(resolve => { markHeld = resolve; });
+  const finished = new Promise<void>(resolve => { markFinished = resolve; });
   const handler = async (route: Route) => {
     if (held || route.request().method() !== "GET" || !reviewOptionsPath.test(new URL(route.request().url()).pathname)) {
       await route.continue();
@@ -23,14 +24,16 @@ export async function deferNextOwnerReviewLoad(page: Page): Promise<DeferredRevi
     }
     held = true;
     markHeld();
-    await released;
-    await route.continue();
+    try {
+      await released;
+      await route.continue();
+    } finally { markFinished(); }
   };
   await page.route("**/reviews/**", handler);
   return Object.freeze({
     waitUntilHeld: () => heldOnce,
     release,
-    dispose: () => page.unroute("**/reviews/**", handler),
+    dispose: async () => { release(); await finished; await page.unroute("**/reviews/**", handler); },
   });
 }
 
