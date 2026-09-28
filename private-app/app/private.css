@@ -201,6 +201,119 @@
   color: var(--muted); padding: .1rem .55rem; font-size: .8rem; font-weight: 700; text-align: center; }
 
 @media (max-width: 800px) { .private-columns, .private-settings-grid, .private-dashboard-grid { grid-template-columns: 1fr; } .private-dashboard-projects { grid-column: auto; } .private-create { grid-row: 1; } .private-shell main { padding: 1.25rem; } .private-header { padding: 1rem; flex-wrap: wrap; } }
+
+/* ---------------------------------------------------------------- *
+ * Phone width (M12, plan item A-071)
+ *
+ * Everything below was measured on a real disposable rehearsal stack
+ * at 375x812 and 390x844, not reasoned about in the abstract.
+ *
+ * 1. Tap targets. WCAG 2.2 SC 2.5.8 asks for 44x44. The inline-in-a-sentence
+ *    exemption is real, and the existing 24px prose floor for links inside a
+ *    paragraph is a correct reading of it, so that judgement is kept. What was
+ *    missing is the standalone controls: the brand, the back links, the
+ *    project tabs, the status filter pills, the worker-choice select and the
+ *    skip link. `.private-back` and `.private-tabs a` carried no height at
+ *    all, so they measured 24px tall and 33-41px wide.
+ * 2. Attention first. Home's "Needs attention" panel measured top=1150px on a
+ *    812px-tall phone, below the fold. It is NOT moved in the DOM: the reading
+ *    order stays heading -> copy -> panels so the tab and screen-reader
+ *    sequence is unchanged, and only the painted order at phone width moves.
+ *    `main` becomes a flex column and the framing copy — which describes how
+ *    the page reads rather than anything the owner needs on arrival — is
+ *    placed after the panels. Measured result: top=451px, above the fold on
+ *    both devices, with the heading still above it. Desktop is untouched.
+ * ---------------------------------------------------------------- */
+
+/* Standalone controls that measured under 44px on a phone. These are their own
+ * targets, not links inside a sentence, so they take the full size.
+ *
+ * `select` is deliberately absent from the display change: it is a replaced
+ * element, and an inline-flex box stops it painting its own control. It takes
+ * the height and padding below instead.
+ *
+ * The project tab row is `flex-wrap: wrap` with a 1.5rem gap, so a tab is only
+ * as wide as its own label ("Files" measured 36.3px). It is a standalone
+ * target, so it takes a horizontal floor too rather than relying on the label. */
+@media (max-width: 560px) {
+  .private-brand, .private-back, .private-tabs a, .private-filter-tabs a,
+  .private-shell summary { min-height: 44px; display: inline-flex; align-items: center; }
+  .private-shell select { min-height: 44px; padding-block: .5rem; }
+  .private-back { padding: .5rem 0; }
+  /* The project tabs already have a 3px current-page underline; centring the
+     text inside the taller target keeps that underline where it was. */
+  .private-tabs a { min-width: 44px; padding: 0 .25rem; justify-content: center; }
+  .private-filter-tabs a { padding: 0 .8rem; }
+  /* The brand is a flex child of the header, so it needs the target in both
+     axes without becoming a block. */
+  .private-brand { min-width: 44px; }
+  /* A paragraph whose only child is a single link is a standalone target, not a
+     link inside a sentence — "Open projects" on Workers measured 102x28.8. The
+     prose rule below cannot tell the two apart from the element alone, and
+     `:has()` is used rather than a class so a future call site is covered by
+     the same reasoning instead of needing to be remembered. */
+  .private-shell main p > a:only-child { min-height: 44px; }
+  /* The skip link is the keyboard owner's first stop, so it is a real target
+     and not a decorative one; 10px+14px padding on a 15px/1.5 line-height
+     measured 42.5px, 1.5px under the floor. */
+  .skip-link { padding-block: 14px; }
+}
+
+/* List rows: the task/project title link is the whole row's target, so the
+ * 24px inline floor the prose rule sets is too small for it.
+ *
+ * The selectors are qualified with `.private-shell main` on purpose. The prose
+ * rule above (`.private-shell main li a`) is (0,1,3) and would otherwise outrank
+ * a bare `.private-dashboard-list a` at (0,1,1), so these declarations would
+ * simply not apply — which is exactly what the first version of this block did
+ * when it was measured and changed nothing. */
+@media (max-width: 560px) {
+  .private-shell main .private-dashboard-list a,
+  .private-shell main .private-task-list a,
+  .private-shell main .private-summary { min-height: 44px; }
+  .private-dashboard-list li { padding-block: .35rem; }
+  /* Home's intro is a paragraph of framing copy above the panels. At phone
+     width the owner needs the counts and the attention box first, and the
+     full wording stays one scroll away. */
+  .private-home-intro { margin-bottom: 1rem; }
+  .private-home-lead > p:not(.private-eyebrow) { margin-block: .4rem; }
+  .private-home-lead button { min-height: 44px; }
+  .private-heading { margin-bottom: 1rem; }
+  .private-heading p, .private-heading .private-note { margin-block: .35rem; }
+  /* The local-worker-evidence panel is a paragraph wall on a phone. Tighten it
+     rather than removing it: its "neither signal means a worker is running"
+     line is the honesty this app exists to keep. */
+  .private-local-worker-evidence > p { margin-block: .3rem; }
+
+  /* Attention first, without a DOM reorder. `main` becomes a flex column at
+     phone width so the framing copy can be placed after the panels with
+     `order`. Every child of `main` is a direct sibling, so the reordering
+     applies to real top-level blocks rather than to a nested grid's items.
+
+     The reading order in the DOM is unchanged — heading, copy, panels — so
+     the tab and screen-reader sequence is exactly what it was before; only
+     the painted order at phone width differs. The eyebrow and <h1> stay above
+     the panels on purpose: the owner should know which workspace they are in
+     before the counts. Only the explanatory copy moves. */
+  .private-home-main { display: flex; flex-direction: column; }
+  .private-home-intro { order: 0; }
+  .private-dashboard-grid { order: 1; }
+  .private-local-worker-evidence { order: 2; }
+  .private-home-lead { order: 3; }
+
+  /* The status chips must be the first thing on the page. At 800px and below
+     `.private-columns` becomes one column and `.private-create` is pinned to
+     grid-row 1, so the "New project" form (measured 392px tall) sits above
+     the project catalog and pushes the first lifecycle chip to 866px — below
+     the fold on a 812px-tall phone. The catalog is what reports status, and
+     the form is a deliberate action, so at phone width only the catalog leads
+     and the form follows it.
+
+     Scoped to `.private-shell` on purpose: a bare `.private-create` would also
+     match the form on the Task-planning page, and `grid-row: auto` there moves
+     a control the owner needs to reach. */
+  .private-shell .private-columns .private-create { grid-row: auto; }
+}
 @media (max-width: 560px) {
   .private-header { gap: .75rem; }
   .private-context { font-size: .875rem; }

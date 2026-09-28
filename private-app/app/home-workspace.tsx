@@ -25,7 +25,7 @@ function isLocalWorkerRead(value: WorkerRead): value is { source: "local"; value
 }
 
 export function MacLocalWorkerEvidence({ status }: { status?: LocalStatus }) {
-  return <section className="private-panel" aria-labelledby="local-worker-evidence-title">
+  return <section className="private-panel private-local-worker-evidence" aria-labelledby="local-worker-evidence-title">
     <h2 id="local-worker-evidence-title">Local worker evidence</h2>
     <p>{status ? `The current local host reports ${status.workers.length} configured route${status.workers.length === 1 ? "" : "s"} separately from saved result proof.`
       : "The current local host route inventory is unavailable."} A passed startup check means the pinned executable was verified when this host started. Result proof means this host generation has saved a result from that route.</p>
@@ -231,11 +231,22 @@ export function PrivateHome() {
       document.removeEventListener("visibilitychange", refreshWhenVisible);
     };
   }, [runtime.mode, runtime.status, runtimeDetectionTimedOut]);
-  return <div className="private-shell"><PrivateHeader /><main id="private-main" tabIndex={-1}>
+  return <div className="private-shell"><PrivateHeader /><main id="private-main" tabIndex={-1} className="private-home-main">
     <section className="private-home-intro" aria-labelledby="home-title"><p className="private-eyebrow">Private workspace</p>
-      <h1 id="home-title">{displayName}</h1><p>Current saved work, results and attention from the protected Control Room services. This page refreshes while it is open and again when you return to it. Each section reports unavailable data instead of replacing it with a zero.</p>
+      <h1 id="home-title">{displayName}</h1></section>
+    {/* The block below is framing copy about how this page reads, not part of
+        the titled section above it. It sat between the heading and the only
+        thing the owner opened the page for: "Needs attention" measured
+        top=1150px on a 812px-tall phone. It is a direct child of `main` so
+        that `order` on the phone-width flex column can place it after the
+        dashboard. It stays in the DOM in its original reading order — the
+        heading, then this copy, then the panels — and is moved only
+        visually, at phone width only. */}
+    <div className="private-home-lead">
+      <p>Current saved work, results and attention from the protected Control Room services. This page refreshes while it is open and again when you return to it. Each section reports unavailable data instead of replacing it with a zero.</p>
       <p className="private-note">Unavailable means the saved database or protected read could not be checked. Checking again only rereads saved records; it does not start, assign, approve or retry work.</p>
-      <button type="button" onClick={() => refresh.current()}>Check saved dashboard again</button></section>
+      <button type="button" onClick={() => refresh.current()}>Check saved dashboard again</button>
+    </div>
     {runtime.mode === "local" ? <MacLocalWorkerEvidence status={runtime.status} />
       : <HomeInstallationStatus topology={installationTopology} showSetupGuidance={runtime.mode === "hosted"} />}
     <HomeDashboard data={data} />

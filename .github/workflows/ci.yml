@@ -482,6 +482,13 @@ jobs:
           pnpm build
           run_browser_suite --browser-owner-e2e 15501 3219
           run_browser_suite --browser-adversarial-e2e 15502 3220
+          # Phone-width usability (M12). A third disposable stack on its own
+          # port pair, so the measurement never shares state with the journey
+          # above it — the test signs in as the owner and creates its own
+          # project and task. It is a separate suite in the existing
+          # owner-browser-journey job rather than a new job or workflow, so
+          # this adds no runner, no new required check, and no new artifact.
+          run_browser_suite --browser-phone-width-e2e 15503 3221
       # NOTE: there is deliberately no "capture owner page screenshots" step
       # here, and no owner-screenshots artifact upload.
       #
