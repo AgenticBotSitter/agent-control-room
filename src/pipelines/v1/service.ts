@@ -360,7 +360,11 @@ export class LinearPipelineServiceV1 {
     [this.scope.tenantId, row.pipeline_run_id, Number(row.stage_ordinal)])).rows[0];
     if (!stage) return undefined;
     this.#verifyStage(stage);
-    if (stage.current_job_id !== row.source_job_id || stage.worker_id !== row.worker_id || stage.node_id !== row.node_id)
+    // A stage retry may advance the current source between the joined read
+    // above and this authenticated re-read. The retained publication belongs
+    // to the prior source and is therefore absent, not corrupt.
+    if (stage.current_job_id !== row.source_job_id) return undefined;
+    if (stage.worker_id !== row.worker_id || stage.node_id !== row.node_id)
       throw new Error("pipeline_build_publication_integrity_failed");
     const proof = await this.selection.acceptedResultProof(tx, { sourceJobId: row.source_job_id,
       workerId: row.worker_id, nodeId: row.node_id });

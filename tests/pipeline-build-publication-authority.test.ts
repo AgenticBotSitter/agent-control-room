@@ -204,9 +204,9 @@ test("canonical retained-result history returns authenticated PR evidence after 
     handoff_from_result_digest: null, signoff_review_id: null, started_at: null, finished_at: null,
     record_digest: sha256Digest(stageMaterial), auth_tag: hmacSha256Tag(key,
       { purpose: "pipeline-stage-run/v1", record: stageMaterial }), version: 1 };
-  const database = (selected: typeof row) => {
+  const database = (selected: typeof row, selectedStage = stageRow) => {
     const query = async (sql: string) => ({ rows: [structuredClone(sql.includes("FROM pipeline_stage_runs WHERE")
-      ? stageRow : selected)], rowCount: 1 });
+      ? selectedStage : selected)], rowCount: 1 });
     return { query,
     transaction: async <T>(work: (tx: any) => Promise<T>) => work({ query }),
     transactionWithPreCommitCheck: async <T>(work: (tx: any) => Promise<T>, check: () => void | Promise<void>) => {
@@ -228,6 +228,16 @@ test("canonical retained-result history returns authenticated PR evidence after 
         attemptId: delivery.identity.attemptId, harnessRunId: delivery.identity.runId,
         artifactId: "artifact:test", contentHash: resultDigest, revision: 1 }) });
   assert.deepEqual(await restarted.readRetainedBuildPublication(delivery.deliveryDigest), expected);
+  const retriedMaterial = { ...stageMaterial, currentJobId: "job:source:retry" };
+  const retriedStage = { ...stageRow, current_job_id: retriedMaterial.currentJobId,
+    record_digest: sha256Digest(retriedMaterial), auth_tag: hmacSha256Tag(key,
+      { purpose: "pipeline-stage-run/v1", record: retriedMaterial }) };
+  const advanced = new LinearPipelineServiceV1(database(row, retriedStage) as never,
+    { tenantId: delivery.identity.tenantId, workspaceId: "workspace:test" }, key,
+    { assertCurrent: () => true, isAcceptedResultCurrent: () => true,
+      acceptedResultProof: async () => { throw new Error("advanced source must not be checked against the prior proof"); } });
+  assert.equal(await advanced.readRetainedBuildPublication(delivery.deliveryDigest), undefined,
+    "a legitimate stage retry hides stale publication evidence without treating it as record corruption");
   const tampered = { ...row, evidence: { ...evidence, url: "https://example.invalid/controller/repository/pull/8" } };
   const unsafe = new LinearPipelineServiceV1(database(tampered) as never,
     { tenantId: delivery.identity.tenantId, workspaceId: "workspace:test" }, key,
