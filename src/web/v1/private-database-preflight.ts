@@ -17,7 +17,7 @@ export async function verifyPrivateIdeaAdapter(db: DatabaseClient, scope: { tena
 
 // Generated from public migrations 0001-0094, including generic external-content
 // migrations 0025/0026. Catalog query below; not a mutable database marker.
-export const privateWebSchemaDigest = "aa6024e7a183654d4657a73afff048d3cd7518bf6764dd8c387831980cabba2f";
+export const privateWebSchemaDigest = "8454f6c09631a9848382e09f92f588c8aabdb4620b8f3380b019c785907b8228";
 export const privateWebReadTables = ["control_identities", "control_role_grants", "workspaces", "control_web_sessions",
   "tenants", "control_idempotency",
   "control_schedules", "control_schedule_occurrences",
