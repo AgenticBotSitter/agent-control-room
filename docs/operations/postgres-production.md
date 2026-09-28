@@ -19,6 +19,20 @@ tool prints its plan and exits 0.
 | `deploy/postgres/restore-database.mjs` | `pg_restore --no-owner` into an explicit target only: `--target` must equal `--confirm-target`, non-empty targets are refused (empty explicitly first — a second restore starts from `DROP SCHEMA public`). The operator provisions the target logins first (`production_provision.sql`); restore itself ensures the remaining group roles (`production_roles.sql`, CREATE-only, before the dump's GRANTs replay), reconciles the recorded memberships (fail closed on a missing login) and re-applies the recorded database owner (fail closed on a malformed owner name), and the restored identity — now including `databaseOwnerDigest` — is verified field by field from the target's observed state. **Rollback is restore from a prior backup set**: same command, same check, no separate path. |
 | `deploy/postgres/evidence.mjs`, `restore-identity.mjs` | Shared evidence collection and identity computation/verification. |
 
+## Expand then contract
+
+Treat every migration present on `main` as immutable. Never rewrite, rename, or
+delete a shipped file under `db/migrations/`, even to correct a typo: create a
+new, ordered migration containing the corrective change. Pull-request CI
+compares the branch with `main` and rejects changes to shipped migration paths.
+
+Schema changes must remain compatible across a rolling release. Expand first
+with additive, nullable structures; deploy code that can read both shapes;
+backfill in a bounded operation; then enforce constraints or remove the old
+shape in a later migration after all old code has retired. Squawk checks only
+new migration files against PostgreSQL 17. Passing the linter is necessary but
+does not replace review, a backup, or disposable PostgreSQL verification.
+
 ## Operator flows
 
 Fresh install (two-phase connections: bootstrap superuser provisions roles, restricted migrator applies schema):
