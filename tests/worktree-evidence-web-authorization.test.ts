@@ -24,10 +24,10 @@ test("a task reader without result permission cannot invoke the protected change
   let inspections = 0;
   const tasks = new WebTaskService(f.db, f.scope, () => instant + 6000, {
     ...f.taskKeys,
-    worktreeChangeEvidence: { inspect: async () => {
+    worktreeChangeEvidence: { inspectMany: async scopes => {
       inspections++;
-      return { changedFiles: 1, changedBytes: 1, addedFiles: 1, modifiedFiles: 0, deletedFiles: 0,
-        evidenceDigest: `sha256:${"c".repeat(64)}` };
+      return scopes.map(() => ({ changedFiles: 1, changedBytes: 1, addedFiles: 1, modifiedFiles: 0, deletedFiles: 0,
+        evidenceDigest: `sha256:${"c".repeat(64)}` }));
     } },
   });
   const jwt = token({ sub: "result-metadata-reader", iat: instant / 1000 - 60, exp: instant / 1000 + 600 });

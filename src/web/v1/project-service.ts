@@ -51,13 +51,13 @@ export class WebProjectService {
   }
 
   private async authorized<T>(identity: VerifiedWebIdentity, action: string, projectId: string | undefined,
-    operation: (tx: DatabaseSession, actor: Actor) => Promise<T>): Promise<T> {
-    return this.authenticated(identity, (tx, actor) => { actor.require(action, projectId); return operation(tx, actor); });
+    operation: (tx: DatabaseSession, actor: Actor) => Promise<T>, readOnly = false): Promise<T> {
+    return this.authenticated(identity, (tx, actor) => { actor.require(action, projectId); return operation(tx, actor); }, readOnly);
   }
 
   private authenticated<T>(identity: VerifiedWebIdentity,
-    operation: (tx: DatabaseSession, actor: Actor) => Promise<T>): Promise<T> {
-    return this.authority.authenticated(identity, operation);
+    operation: (tx: DatabaseSession, actor: Actor) => Promise<T>, readOnly = false): Promise<T> {
+    return this.authority.authenticated(identity, operation, readOnly ? { readOnly: true } : undefined);
   }
 
   async list(identity: VerifiedWebIdentity): Promise<WebProject[]> {
@@ -70,11 +70,11 @@ export class WebProjectService {
       // Do not silently present a partial catalog. Pagination is required before expanding this beta limit.
       if (rows.rows.length > 200) throw new WebAccessError("conflict");
       return rows.rows.map(row => ({ ...row, version: Number(row.version), createdAt: iso(row.createdAt), updatedAt: iso(row.updatedAt) }));
-    });
+    }, true);
   }
 
   async authorizeCatalog(identity: VerifiedWebIdentity): Promise<void> {
-    await this.authenticated(identity, async (_, actor) => { this.catalogAccess(actor); });
+    await this.authenticated(identity, async (_, actor) => { this.catalogAccess(actor); }, true);
   }
 
   private catalogAccess(actor: Actor): ProjectCatalogPage["sources"] {
@@ -112,11 +112,11 @@ export class WebProjectService {
         projects.push(await this.readViewWithPayload(tx, actor, row.id, row.adapter_id, row.payload, row, ideaProjects.get(row.id)));
       return { projects, nextCursor: rows.rows.length > 50 ? projects.at(-1)!.projectId : null,
         canCreate: actor.can("projects.create"), sources };
-    });
+    }, true);
   }
 
   async getView(identity: VerifiedWebIdentity, projectId: string): Promise<ProjectView> {
-    return this.authenticated(identity, (tx, actor) => this.getViewInSession(tx, actor, projectId));
+    return this.authenticated(identity, (tx, actor) => this.getViewInSession(tx, actor, projectId), true);
   }
 
   /** Fixed-query project verification for task pages that already hold one
@@ -274,7 +274,7 @@ export class WebProjectService {
       return { ...rest, version: Number(rest.version), createdAt: iso(rest.createdAt),
         updatedAt: iso(rest.updatedAt),
         ...(presentation ? { presentation: presentation as EffectiveProjectPresentation } : {}) };
-    });
+    }, true);
   }
 
   async transition(identity: VerifiedWebIdentity, projectId: string, value: unknown, key: string) {

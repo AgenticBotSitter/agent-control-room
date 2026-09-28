@@ -4,6 +4,7 @@ import { createPrivatePgDriver } from "../src/web/v1/private-pg-driver";
 import { boundPrivateDatabase } from "../src/web/v1/bounded-database";
 import { qualifyPrivatePgSession } from "../src/web/v1/private-pg-qualification";
 import { sanitizedDatabaseFailureV1 } from "../src/web/v1/sanitized-database-failure";
+import { withDatabaseOperationSignal } from "../src/persistence/operation-signal";
 
 test("qualification refusal destroys the lease before returning application access", async () => {
   for (const rows of [[], [{ qualified: false }], [{ qualified: "true" }], [{ qualified: true }, { qualified: true }]]) {
@@ -56,6 +57,58 @@ test("failed acquisition is sanitized and shutdown still finishes", async () => 
   const driver = createPrivatePgDriver({ async connect() { throw new Error("private connection detail"); }, async end() { ends++; } });
   await assert.rejects(driver.acquire(), { message: "database_unavailable" });
   await driver.terminate(); assert.equal(ends, 1);
+});
+
+test("one bounded pool-width waits for a connection instead of failing an ordinary burst", async () => {
+  let releaseFirst!: () => void, firstEntered!: () => void, secondEntered = false, acquisitions = 0;
+  const entered = new Promise<void>(resolve => { firstEntered = resolve; });
+  const held = new Promise<void>(resolve => { releaseFirst = resolve; });
+  const db = boundPrivateDatabase({ async acquire() { acquisitions++; return {
+    async query(statement) {
+      if (statement === "SELECT first") { firstEntered(); await held; }
+      if (statement === "SELECT second") secondEntered = true;
+      return { rows: [] };
+    }, release() {},
+  }; }, async terminate() {} }, { connections: 1, checkoutMs: 1_000, statementMs: 1_000, transactionMs: 1_000, closeMs: 1_000 });
+  const first = db.client.query("SELECT first"); await entered;
+  const second = db.client.query("SELECT second");
+  await assert.rejects(db.client.query("SELECT overload"), { message: "database_unavailable" });
+  assert.equal(secondEntered, false); assert.equal(acquisitions, 1);
+  releaseFirst(); await Promise.all([first, second]);
+  assert.equal(secondEntered, true); assert.equal(acquisitions, 2);
+  await db.close();
+});
+
+test("an aborted queued operation leaves admission immediately for the next caller", async () => {
+  let releaseFirst!: () => void, firstEntered!: () => void, thirdEntered = false;
+  const entered = new Promise<void>(resolve => { firstEntered = resolve; });
+  const held = new Promise<void>(resolve => { releaseFirst = resolve; });
+  const db = boundPrivateDatabase({ async acquire() { return {
+    async query(statement) {
+      if (statement === "SELECT first") { firstEntered(); await held; }
+      if (statement === "SELECT third") thirdEntered = true;
+      return { rows: [] };
+    }, release() {},
+  }; }, async terminate() {} }, { connections: 1, checkoutMs: 1_000, statementMs: 1_000, transactionMs: 1_000, closeMs: 1_000 });
+  const first = db.client.query("SELECT first"); await entered;
+  const controller = new AbortController();
+  const aborted = withDatabaseOperationSignal(controller.signal, () => db.client.query("SELECT aborted"));
+  controller.abort(); await assert.rejects(aborted, { message: "database_unavailable" });
+  const third = db.client.query("SELECT third");
+  releaseFirst(); await Promise.all([first, third]);
+  assert.equal(thirdEntered, true);
+  await db.close();
+});
+
+test("close wins the immediate-admission yield before any lease is acquired", async () => {
+  let acquisitions = 0, terminations = 0;
+  const db = boundPrivateDatabase({ async acquire() { acquisitions++; return {
+    async query() { return { rows: [] }; }, release() {},
+  }; }, async terminate() { terminations++; } });
+  const operation = db.client.query("SELECT never_acquired");
+  await db.close();
+  await assert.rejects(operation, { message: "database_unavailable" });
+  assert.equal(acquisitions, 0); assert.equal(terminations, 1);
 });
 
 test("never-settling acquisition still starts pool shutdown and reports bounded uncertainty", async () => {

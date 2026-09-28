@@ -12,6 +12,10 @@ import type { CompletionReviewV1, CompletionVerificationV1 } from "../src/comple
 import { TaskExecutionPlanner, type NativeTaskTemplate } from "../src/web/v1/task-execution-planner";
 import { CONTROLLER_WORKER_REMOTE_ADAPTER_V1, CONTROLLER_WORKER_REMOTE_START_OPERATION_V1 } from "../src/harness/v1/remote-worker-delivery";
 import { taskDraft } from "./helpers/web-task";
+import { WebTaskVerificationService } from "../src/web/v1/task-verification-service";
+import { HarnessRunStoreV1 } from "../src/harness/v1/store";
+import { readResultBoundWorktreeChangeAuditSummariesV1 } from "../src/harness/v1/worktree-change-audit-record-store";
+import { NativeResultStore } from "../src/artifacts/v1/native-results";
 
 function observed(db: DatabaseClient, delayMs: number) {
   let queries = 0, transactions = 0;
@@ -216,6 +220,174 @@ test("three concurrent Home reads stay inside the injected remote-latency target
     assert.ok(result.elapsedMs < burstWallGuardMs, `${name} burst exceeded the injected-latency wall guard: ${result.elapsedMs}`);
   }
   t.diagnostic(JSON.stringify({ injectedLatencyMs: 50, concurrentReads: 3, burst }));
+});
+
+test("task detail and result-open reads stay within fixed remote-query budgets", async t => {
+  const f = await ownerReviewFixture(); t.after(f.close);
+  const listed = await f.tasks.results(f.identity, binding.projectId, binding.jobId);
+  if (!("items" in listed)) throw new Error("result_page_unavailable");
+  const preview = new URL(listed.items.find(item => item.artifactId === f.artifact.artifactId)!.fileAccess!.previewHref,
+    "http://control-room.invalid");
+  const previewToken = preview.searchParams.get("token")!;
+  const scenarios = f.profile.requiredVerificationScenarioIds.map((scenarioId, index) => ({
+    scenarioId, label: `Scenario ${index + 1}`, instructions: "Inspect the exact saved result.",
+    acceptanceProfileId: f.profile.id, acceptanceProfileDigest: sha256Digest(f.profile),
+  }));
+  const measure = async (delayMs: number, read: (db: DatabaseClient) => Promise<unknown>) => {
+    const watched = observed(f.db, delayMs), started = performance.now();
+    await read(watched.client);
+    return { queries: watched.count(), elapsedMs: performance.now() - started };
+  };
+  const reads = {
+    detail: (db: DatabaseClient) => new WebTaskService(db, f.scope, () => instant + 6000, f.ownerKeys)
+      .detail(f.identity, binding.projectId, binding.jobId),
+    results: (db: DatabaseClient) => new WebTaskService(db, f.scope, () => instant + 6000, f.ownerKeys)
+      .results(f.identity, binding.projectId, binding.jobId),
+    content: (db: DatabaseClient) => new WebTaskService(db, f.scope, () => instant + 6000, f.ownerKeys)
+      .file(f.identity, binding.projectId, binding.jobId, f.artifact.artifactId, "preview", previewToken),
+    review: (db: DatabaseClient) => f.createReviews(db).options(f.identity, binding.projectId, binding.jobId,
+      f.artifact.artifactId, f.target.id),
+    verification: (db: DatabaseClient) => new WebTaskVerificationService(db, f.scope, {
+      integrityKey: f.reviewKey, checkpoints: f.checkpoints, harnessIntegrityKey: f.harnessKey,
+      results: f.config, manualVerificationScenarios: scenarios,
+    }, () => instant + 6000).options(f.identity, binding.projectId, binding.jobId, f.artifact.artifactId, f.target.id),
+  };
+  const collect = async (delayMs: number) => {
+    const entries: [string, { queries: number; elapsedMs: number }][] = [];
+    for (const [name, read] of Object.entries(reads)) entries.push([name, await measure(delayMs, read)]);
+    return Object.fromEntries(entries) as Record<keyof typeof reads, { queries: number; elapsedMs: number }>;
+  };
+  const baseline = await collect(0), delayed = await collect(50);
+  assert.ok(delayed.detail!.queries <= 13, `task detail exceeded 13 queries: ${JSON.stringify(delayed.detail)}`);
+  assert.ok(delayed.detail!.elapsedMs < 700, `task detail exceeded 700ms: ${JSON.stringify(delayed.detail)}`);
+  for (const name of ["results", "content", "review", "verification"] as const) {
+    assert.equal(delayed[name]!.queries, baseline[name]!.queries, `${name} query count changed under latency`);
+    assert.ok(delayed[name]!.queries <= 13, `${name} exceeded 13 queries: ${JSON.stringify(delayed[name])}`);
+    assert.ok(delayed[name]!.elapsedMs < 700, `${name} exceeded 700ms: ${JSON.stringify(delayed[name])}`);
+  }
+  const resultOpenCriticalQueries = delayed.results!.queries + delayed.content!.queries
+    + Math.max(delayed.review!.queries, delayed.verification!.queries);
+  assert.ok(resultOpenCriticalQueries * 50 < 1_600,
+    `composed result-open network budget exceeded 1.6s: ${resultOpenCriticalQueries * 50}`);
+  t.diagnostic(JSON.stringify({ injectedLatencyMs: 50, baseline, delayed,
+    resultOpenCriticalPathMs: resultOpenCriticalQueries * 50 }));
+});
+
+test("verification options stay fixed-query as reviews and configured scenarios grow", async t => {
+  const scenarioIds = Array.from({ length: 5 }, (_, index) => `scenario:budget:${index + 1}`);
+  const f = await ownerReviewFixture({ profile: { requiredVerificationScenarioIds: scenarioIds } }); t.after(f.close);
+  const descriptors = scenarioIds.map((scenarioId, index) => ({ scenarioId, label: `Budget scenario ${index + 1}`,
+    instructions: `Inspect bounded evidence ${index + 1}.`, acceptanceProfileId: f.profile.id,
+    acceptanceProfileDigest: sha256Digest(f.profile) }));
+  const measure = async (configured: typeof descriptors) => {
+    const watched = observed(f.db, 0);
+    const service = new WebTaskVerificationService(watched.client, f.scope, { integrityKey: f.reviewKey,
+      checkpoints: f.checkpoints, harnessIntegrityKey: f.harnessKey, results: f.config,
+      manualVerificationScenarios: configured }, () => instant + 6000);
+    await service.options(f.identity, binding.projectId, binding.jobId, f.artifact.artifactId, f.target.id);
+    return watched.count();
+  };
+  const oneScenario = await measure(descriptors.slice(0, 1));
+  for (let index = 0; index < 5; index += 1) {
+    const review: CompletionReviewV1 = { schemaVersion: "control-room-completion-gate/v1",
+      id: `review:options-budget:${index}`, tenantId: binding.tenantId, projectId: binding.projectId,
+      targetId: f.target.id, targetDigest: sha256Digest(f.target), acceptanceProfileId: f.profile.id,
+      acceptanceProfileDigest: sha256Digest(f.profile), reviewer: { actorId: `identity:options-budget:${index}`, actorType: "human" },
+      authority: "completion_gate", decision: "accepted", assessedRisk: "low", effectiveRisk: "low",
+      evidenceDigests: [f.artifact.contentHash], findingIds: [], reviewedAt: at(5000 + index),
+      grantsApproval: false, grantsExecutionAuthority: false };
+    await f.reviewStore.recordReview(review);
+  }
+  const fiveScenariosAndReviews = await measure(descriptors);
+  assert.equal(fiveScenariosAndReviews, oneScenario,
+    `verification options added per-review or per-scenario queries: ${JSON.stringify({ oneScenario, fiveScenariosAndReviews })}`);
+  assert.ok(fiveScenariosAndReviews <= 11, `verification options exceeded fixed query budget: ${fiveScenariosAndReviews}`);
+});
+
+test("attempt, run and artifact aggregate readers stay one-query as cardinality grows", async () => {
+  let queries = 0;
+  const db: DatabaseClient = { query: async () => { queries++; return { rows: [] }; },
+    transaction: async work => work({ query: async () => { queries++; return { rows: [] }; } }),
+    transactionWithPreCommitCheck: async (work, check) => {
+      const value = await work({ query: async () => { queries++; return { rows: [] }; } }); await check(); return value;
+    } };
+  const runs = new HarnessRunStoreV1(db, new Uint8Array(32).fill(17));
+  const count = async (read: () => Promise<unknown>) => { queries = 0; await read(); return queries; };
+  const oneAttempt = await count(() => runs.inspectAttempts(binding.tenantId, binding.projectId, binding.jobId, [binding.attemptId]));
+  const manyAttempts = await count(() => runs.inspectAttempts(binding.tenantId, binding.projectId, binding.jobId,
+    Array.from({ length: 20 }, (_, index) => `attempt:budget:${index}`)));
+  assert.equal(oneAttempt, 1); assert.equal(manyAttempts, oneAttempt);
+  const oneRun = await count(() => runs.inspectMany(binding.tenantId, [binding.runId]));
+  const manyRuns = await count(() => runs.inspectMany(binding.tenantId, Array.from({ length: 50 }, (_, index) => `run:budget:${index}`)));
+  assert.equal(oneRun, 1); assert.equal(manyRuns, oneRun);
+  const scope = (index: number) => ({ tenantId: binding.tenantId, projectId: binding.projectId, jobId: binding.jobId,
+    attemptId: `attempt:budget:${index}`, runId: `run:budget:${index}`,
+    artifactId: `artifact:result:${index.toString(16).padStart(64, "0")}` });
+  const oneArtifact = await count(() => readResultBoundWorktreeChangeAuditSummariesV1(db, new Uint8Array(32).fill(19), [scope(1)]));
+  const manyArtifacts = await count(() => readResultBoundWorktreeChangeAuditSummariesV1(db, new Uint8Array(32).fill(19),
+    Array.from({ length: 50 }, (_, index) => scope(index + 1))));
+  assert.equal(oneArtifact, 1); assert.equal(manyArtifacts, oneArtifact);
+});
+
+test("full task detail stays fixed-query while processing ten populated attempts", async t => {
+  const f = await ownerReviewFixture(); t.after(f.close);
+  const withAttempts = (count: number): DatabaseClient => {
+    const wrap = (tx: DatabaseSession): DatabaseSession => ({ query: async <T>(sql: string, params?: unknown[]) => {
+      const result = await tx.query<T>(sql, params);
+      if (!sql.includes("FROM control_attempts WHERE tenant_id=$1 AND job_id=$2")) return result;
+      const source = result.rows[0] as unknown as { id: string; state: string; attempt_number: number; payload: Record<string, unknown> };
+      return { rows: Array.from({ length: count }, (_, index) => ({ ...source,
+        id: `attempt:detail-budget:${index + 1}`, attempt_number: index + 1,
+        payload: { ...source.payload, id: `attempt:detail-budget:${index + 1}`, attemptNumber: index + 1 } })) as T[] };
+    } });
+    return { query: f.db.query.bind(f.db), transaction: work => f.db.transaction(tx => work(wrap(tx))),
+      transactionWithPreCommitCheck: (work, check) => f.db.transactionWithPreCommitCheck(tx => work(wrap(tx)), check) };
+  };
+  const measure = async (count: number) => {
+    const watched = observed(withAttempts(count), 0);
+    const detail = await new WebTaskService(watched.client, f.scope, () => instant + 6000, f.ownerKeys)
+      .detail(f.identity, binding.projectId, binding.jobId);
+    return { queries: watched.count(), attempts: detail.attempts.length };
+  };
+  const one = await measure(1), ten = await measure(10);
+  assert.equal(one.attempts, 1); assert.equal(ten.attempts, 10);
+  assert.equal(ten.queries, one.queries, `task detail added per-attempt queries: ${JSON.stringify({ one, ten })}`);
+});
+
+test("full result page stays fixed-query while processing ten populated artifacts", async t => {
+  const f = await ownerReviewFixture(); t.after(f.close);
+  const prototype = NativeResultStore.prototype, original = prototype.list;
+  let artifactCount = 1;
+  prototype.list = async function(this: NativeResultStore, ...args: Parameters<NativeResultStore["list"]>) {
+    const result = await original.apply(this, args), receipt = result.receipts[0]!;
+    return { ...result, receipts: Array.from({ length: artifactCount }, (_, index) => ({ ...receipt,
+      artifactId: `artifact:result:${(index + 1).toString(16).padStart(64, "0")}` })) };
+  };
+  t.after(() => { prototype.list = original; });
+  const measure = async (count: number) => {
+    artifactCount = count;
+    const watched = observed(f.db, 0);
+    const page = await new WebTaskService(watched.client, f.scope, () => instant + 6000, f.ownerKeys)
+      .results(f.identity, binding.projectId, binding.jobId);
+    if (!("items" in page)) throw new Error("result_page_unavailable");
+    return { queries: watched.count(), artifacts: page.items.length };
+  };
+  const one = await measure(1), ten = await measure(10);
+  assert.equal(one.artifacts, 1); assert.equal(ten.artifacts, 10);
+  assert.equal(ten.queries, one.queries, `result page added per-artifact queries: ${JSON.stringify({ one, ten })}`);
+});
+
+test("review options inspect an exact target independently of the bounded result-page projection", async t => {
+  const f = await ownerReviewFixture(); t.after(f.close);
+  // The result page deliberately omits older targets after its display bound.
+  // Exact option reads must use the authenticated record set directly, not
+  // rediscover their target through that bounded page projection.
+  const prototype = Object.getPrototypeOf(f.reviewStore) as { inspectSubjectsFromRecords(): Map<string, unknown> };
+  const original = prototype.inspectSubjectsFromRecords;
+  prototype.inspectSubjectsFromRecords = () => new Map();
+  t.after(() => { prototype.inspectSubjectsFromRecords = original; });
+  const options = await f.reviews.options(f.identity, binding.projectId, binding.jobId, f.artifact.artifactId, f.target.id);
+  assert.equal(options.targetId, f.target.id);
 });
 
 test("batched quality status fails closed when authenticated review evidence is omitted", async t => {

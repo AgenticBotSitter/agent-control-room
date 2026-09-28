@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { chmod, copyFile, mkdir, mkdtemp, readdir, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { performance } from "node:perf_hooks";
 import test from "node:test";
 import { openMacLocalRollbackCheckpointStoreV1 } from "../src/web/v1/mac-local-rollback-checkpoint-store";
 import { ROLLBACK_CHECKPOINT_SCHEMA_V1, rollbackCheckpointDigestV1, type RollbackCheckpointV1 } from "../src/security/rollback-checkpoint";
@@ -120,6 +121,41 @@ test("an aborted signal and a closed store both refuse", async t => {
   assert.equal(await store.read(scope), undefined);
   await store.close();
   await assert.rejects(Promise.resolve().then(() => store.read(scope)), /unavailable/u);
+});
+
+test("concurrent reads overlap while compare-and-swap writes remain exclusive", async t => {
+  const r = await root(t);
+  let activeLoads = 0, maximumLoads = 0, delayed = false;
+  const runtime: { pid: number; alive(): boolean; beforeLoad?: () => Promise<void> } = {
+    pid: process.pid, alive: () => true, beforeLoad: async () => {
+    if (!delayed) return;
+    activeLoads += 1; maximumLoads = Math.max(maximumLoads, activeLoads);
+    try { await new Promise(resolve => setTimeout(resolve, 50)); }
+    finally { activeLoads -= 1; }
+  } };
+  const store = await openMacLocalRollbackCheckpointStoreV1(r, runtime);
+  await store.initialize(checkpoint(1));
+  delayed = true;
+  const started = performance.now();
+  const values = await Promise.all([store.read(scope), store.read(scope), store.read(scope)]);
+  const elapsedMs = performance.now() - started;
+  assert.deepEqual(values, [checkpoint(1), checkpoint(1), checkpoint(1)]);
+  assert.equal(maximumLoads, 3, "all checkpoint reads should be inside the file load together");
+  assert.ok(elapsedMs < 120, `three 50ms reads should complete near max, not sum: ${elapsedMs}`);
+
+  let release!: () => void, heldEntered = false, writeFinished = false;
+  const held = new Promise<void>(resolve => { release = resolve; });
+  runtime.beforeLoad = async () => { heldEntered = true; await held; };
+  const read = store.read(scope);
+  while (!heldEntered) await new Promise(resolve => setTimeout(resolve, 1));
+  const write = Promise.resolve(store.advance(rollbackCheckpointDigestV1(checkpoint(1)), checkpoint(2)))
+    .then(() => { writeFinished = true; });
+  await new Promise(resolve => setTimeout(resolve, 20));
+  assert.equal(writeFinished, false, "a checkpoint write must wait for active readers");
+  runtime.beforeLoad = undefined; release();
+  await Promise.all([read, write]);
+  assert.deepEqual(await store.read(scope), checkpoint(2));
+  await store.close();
 });
 
 test("two processes taking over the same dead lock at once: exactly one wins", async t => {
