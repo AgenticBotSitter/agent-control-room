@@ -23,6 +23,12 @@ if (prompt === "hang") {
   }
   process.stdout.write(`${JSON.stringify({ type: "result", subtype: "success", is_error: false,
     session_id: session, result: "valid terminal result", usage: {} })}\n`);
+} else if (prompt === "exit-on-overflow") {
+  // Overflow the configured byte limit and exit in the same tick. The adapter detects the limit in
+  // a `data` event and then signals the group; this process is already gone by then, so the signal
+  // fails with ESRCH. That is the window where a stop must not be reported as cleanup uncertainty.
+  process.stdout.write("x".repeat(40_000));
+  process.exit(0);
 } else if (prompt === "leak") {
   // The direct process exits, but its TERM-ignoring child stays in this
   // detached group unless the adapter explicitly cleans it up.

@@ -169,8 +169,21 @@ export async function superviseTaskHost(root, runtime = {}) {
   try {
     log = await RotatingHostLog.open(paths.hostLog, runtime.maxLogBytes, runtime.backups);
     runtime.beforeSpawn?.();
-    const previous = await readHostState(paths.hostState);
+    // The recorded stop reason is diagnostic context, not state this host needs. A file that is
+    // not a private regular file we own — a restored backup, a manual edit, anything that landed
+    // in runtime/ from outside — must not be able to stop the host from serving. The read is
+    // narrowed rather than propagated, exactly as status.mjs narrows its own reason, and the
+    // condition is written to the log so the owner can see and clear it.
+    let previous, stateUnreadable;
+    try { previous = await readHostState(paths.hostState); }
+    catch (error) {
+      previous = undefined;
+      stateUnreadable = error instanceof Error ? error.message : "unknown";
+    }
     await log.line("task host supervisor started");
+    if (stateUnreadable)
+      await log.line(`host state file task-host-state.json could not be read (${cleanDetail(stateUnreadable)}); `
+        + "starting without a recorded stop reason");
     const lastStop = previous?.state === "stopped" ? { reason: previous.reason, at: previous.at }
       : previous?.state === "running" ? { reason: "supervisor disappeared without recording an exit", at: new Date().toISOString() }
         : previous?.lastStop;

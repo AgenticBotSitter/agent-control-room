@@ -126,6 +126,20 @@ function processGroupExists(child: ChildProcess): boolean {
   if (!child.pid || child.pid < 1) return false;
   try { process.kill(-child.pid, 0); return true; } catch { return false; }
 }
+/** Signals the owned group, and reports whether the group was still there to receive it.
+ *
+ * A process group disappears between the decision to stop a task and the signal reaching it — the
+ * child can exit on its own, or in response to whatever tripped the stop. `kill` then fails with
+ * ESRCH, which is the outcome the caller wanted rather than an uncertainty about cleanup: there
+ * is nothing left to clean up. EPERM is the genuine uncertainty, because the group exists and
+ * this account may not signal it. */
+function processGroupStop(child: ChildProcess, signal: NodeJS.Signals): boolean {
+  if (!child.pid || child.pid < 1) return false;
+  try { process.kill(-child.pid, signal); return true; }
+  catch (error) {
+    return (error as NodeJS.ErrnoException).code === "ESRCH" ? false : !processGroupExists(child);
+  }
+}
 
 /** Runs one owner-trusted, text-only Claude Code task. It has no task queue,
  * credential, tool, session-resume, or retry authority. Its caller must hold
@@ -188,9 +202,20 @@ export function createOwnerTrustedLocalClaudeExecV1(dependencies: Readonly<{ spa
           return;
         }
         stop = reason;
-        if (!processGroupSignal(child, "SIGTERM")) return finish(failed("cleanup_uncertain", "process_group_unavailable"));
+        // An already-exited group is a completed stop, not an uncertain one: there is nothing
+        // left to clean up, and `cleanup_uncertain` here reports an unfinishable task for a child
+        // that has already gone. The group is only "unavailable" while it still exists.
+        if (!processGroupStop(child, "SIGTERM")) {
+          if (!processGroupExists(child)) { if (killer) clearTimeout(killer); finish(stopped()); }
+          else finish(failed("cleanup_uncertain", "process_group_unavailable"));
+          return;
+        }
         killer = setTimeout(() => {
-          if (!processGroupSignal(child, "SIGKILL")) return finish(failed("cleanup_uncertain", "process_group_unavailable"));
+          if (!processGroupStop(child, "SIGKILL")) {
+            if (!processGroupExists(child)) { finish(stopped()); return; }
+            finish(failed("cleanup_uncertain", "process_group_unavailable"));
+            return;
+          }
           // Sending KILL is not evidence that a detached child group is gone.
           // Confirm absence before reporting a normal cancellation or timeout.
           awaitGroupAbsent(child, (fn, ms) => { killer = setTimeout(fn, ms); },
@@ -245,6 +270,9 @@ export function createOwnerTrustedLocalClaudeExecV1(dependencies: Readonly<{ spa
         // the descendant can keep running.
         if (processGroupExists(child)) {
           stop = "failed";
+          // The group was just observed alive, so a failed signal here is a genuine uncertainty
+          // rather than a race with an exit: nothing has closed the window between the check and
+          // the signal the way there is in `terminate`.
           if (!processGroupSignal(child, "SIGKILL")) return finish(failed("cleanup_uncertain", "process_group_unavailable"));
           awaitGroupAbsent(child, (fn, ms) => { killer = setTimeout(fn, ms); },
             () => finish(stopped()), () => finish(failed("cleanup_uncertain", "process_group_still_running")));

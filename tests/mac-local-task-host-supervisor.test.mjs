@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
 import { EventEmitter, once } from "node:events";
 import { chmod, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { readFileSync } from "node:fs";
 import { connect, createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -9,10 +10,11 @@ import test from "node:test";
 import { pathToFileURL } from "node:url";
 import { monitorActiveTaskHost } from "../scripts/mac-local/start-task-host.mjs";
 import { inspectMacLocalHost } from "../scripts/mac-local/status.mjs";
-import { startAndWait } from "../scripts/mac-local/up.mjs";
-import { RotatingHostLog, readHostState, rotateHostLog, stoppedBecause,
+import { readPreviousHostState, startAndWait } from "../scripts/mac-local/up.mjs";
+import { RotatingHostLog, openHostLog, readHostState, rotateHostLog, stoppedBecause,
   superviseTaskHost } from "../scripts/mac-local/task-host-supervisor.mjs";
-import { hostCommand, readPid, recordedHostCommand, runtimePaths, taskHostCommand } from "../scripts/mac-local/stack.mjs";
+import { alive, hostCommand, readPid, recordedHostCommand, runtimePaths, stopRecorded,
+  stopRecordedHost, taskHostCommand } from "../scripts/mac-local/stack.mjs";
 
 const repoRoot = join(import.meta.dirname, "..");
 const supervisorModule = pathToFileURL(join(repoRoot, "scripts/mac-local/task-host-supervisor.mjs")).href;
@@ -74,6 +76,16 @@ async function closeWithin(child, timeoutMs = 2_000) {
       new Promise((_, reject) => { timeout = setTimeout(() => reject(new Error("supervisor did not exit promptly")), timeoutMs); }),
     ]);
   } finally { clearTimeout(timeout); }
+}
+
+/** Runs a real child to completion and returns its exit code with everything it wrote. Used where
+ * the claim is about what the owner sees on stdout and stderr, not just about an exit code. */
+async function runToCompletion(child, timeoutMs = 30_000) {
+  const chunks = [];
+  child.stdout?.on("data", chunk => chunks.push(chunk));
+  child.stderr?.on("data", chunk => chunks.push(chunk));
+  const [code, signal] = await closeWithin(child, timeoutMs);
+  return { code: code ?? 1, signal, output: Buffer.concat(chunks).toString("utf8") };
 }
 
 async function waitFor(check, message, timeoutMs = 5_000) {
@@ -206,21 +218,6 @@ test("a later owner signal cannot reclassify an earlier hangup as deliberate", a
   assert.equal(await result, 1);
   assert.deepEqual(seen, ["SIGHUP", "SIGTERM"]);
   assert.equal((await readHostState(runtimePaths(root).hostState)).reason, "signal SIGHUP");
-});
-
-test("a replacement supervisor removes only an exact stale child before spawning", async t => {
-  const root = await rootFixture(t), paths = runtimePaths(root), stalePid = 4_242, signals = [];
-  await writeFile(paths.hostState, `${JSON.stringify({ state: "running", pid: 4_241,
-    childPid: stalePid, at: new Date().toISOString() })}\n`, { mode: 0o600 });
-  let staleAlive = true;
-  const exactAlive = (pid, command) => pid === stalePid && staleAlive
-    && JSON.stringify(command) === JSON.stringify(taskHostCommand(root));
-  assert.equal(await superviseTaskHost(root, {
-    alive: exactAlive,
-    signal: (pid, signal) => { signals.push([pid, signal]); staleAlive = false; },
-    spawn: () => fakeChild({ code: 0, stdout: "", stderr: "" }),
-  }), 1);
-  assert.deepEqual(signals, [[-stalePid, "SIGKILL"]]);
 });
 
 test("real SIGHUP requests recovery while real SIGTERM and SIGINT remain deliberate", async t => {
@@ -496,19 +493,304 @@ test("mac:up reports a successful start instead of treating a ready host as a fa
 
 test("mac:up binds every stack helper its start-failure cleanup calls", async t => {
   // The regression was a call site left behind when the import was renamed. Nothing type-checks
-  // .mjs here, so the guard is that mac:up still binds every helper it uses: a dropped name can
-  // only ever be a ReferenceError, which fires before the stop and before the message.
+  // .mjs here, and a dropped name can only ever be a ReferenceError, which fires before the stop
+  // and before the message. This asserts the property that actually matters — every identifier
+  // mac:up uses from stack.mjs is bound to an import of that module — rather than that nine
+  // known names are present, so it also catches a name that was never imported at all, and it
+  // survives a legitimate refactor of the call sites.
   const source = await readFile(new URL(upModule), "utf8");
-  const imported = new Set([...source.matchAll(/^import\s*\{([^}]*)\}\s*from\s*"\.\/stack\.mjs"/gms)]
-    .flatMap(match => match[1].split(",").map(name => name.trim()).filter(Boolean)));
-  for (const name of ["alive", "hostCommand", "protectedRootFromArguments", "readPid", "repoRoot",
-    "runtimePaths", "stopRecorded", "stopRecordedHost", "taskHostCommand"]) {
-    assert.ok(imported.has(name), `up.mjs must import ${name} from stack.mjs`);
+  const imported = new Map(), bodies = [];
+  for (const match of source.matchAll(/^import\s*\{[^}]*\}\s*from\s*"[^"]+";?/gms)) {
+    for (const entry of (match[0].match(/\{([^}]*)\}/u)?.[1] ?? "").split(",").map(name => name.trim()).filter(Boolean)) {
+      const bound = imported.get(entry) ?? [];
+      bound.push(/\bfrom\s*"([^"]+)"/u.exec(match[0])?.[1]);
+      imported.set(entry, bound);
+    }
+    bodies.push(match[0]);
   }
-  assert.match(source, /await stopRecorded\(pidPath, command, 10\);/u,
-    "the start-failure branch must stop the process it started");
-  assert.match(source, /throw new Error\(`\$\{what\} did not start within \$\{seconds\}s/u,
-    "a failed start must surface the startup hint instead of reporting it and continuing");
+  const stackNames = Object.keys(await import(new URL("./stack.mjs", upModule)));
+  // Every `stack.mjs` export that up.mjs mentions, which is the broader form of the original bug:
+  // an identifier used in the file and never bound, rather than a missing one of nine known names.
+  const body = source.split(bodies.join("\n")).join("\n");
+  for (const name of stackNames) {
+    if (!new RegExp(`(?<![\\w.$])${name}(?![\\w$])`, "u").test(body)) continue;
+    assert.deepEqual(imported.get(name), ["./stack.mjs"],
+      `up.mjs uses ${name} and must bind it from ./stack.mjs`);
+  }
+  assert.ok(stackNames.length > 0, "stack.mjs must export its helpers for the binding check to mean anything");
+});
+
+test("mac:up's whole preflight survives a host state file it cannot read", async t => {
+  // The recorded stop reason only feeds a log line, so an unreadable state file — a restored
+  // backup, a manual edit, any loose file in runtime/ — must not be the one thing that stops the
+  // stack. The checks below it are the ones that can act, so the start continues and the owner
+  // gets the reason plus how to clear it.
+  for (const [name, body, mode] of [
+    ["loose mode", `${JSON.stringify({ state: "stopped", reason: "exit code 0", at: "2026-09-27T00:00:00.000Z" })}\n`, 0o644],
+    ["truncated json", `{"state":"stopped","reason":"exit code 0"`, 0o600],
+    ["unknown state", `${JSON.stringify({ state: "paused", at: "2026-09-27T00:00:00.000Z" })}\n`, 0o600],
+  ]) {
+    await t.test(name, async t => {
+      const root = await rootFixture(t), paths = runtimePaths(root);
+      await writeFile(paths.hostState, body);
+      await chmod(paths.hostState, mode);
+      const output = [];
+      const original = console.log;
+      console.log = line => { output.push(line); };
+      try { assert.equal(await readPreviousHostState(paths.hostState), undefined); }
+      finally { console.log = original; }
+      const logged = output.join("\n");
+      assert.match(logged, /is unreadable/u);
+      assert.match(logged, new RegExp(`to clear it: rm ${paths.hostState.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&")}`, "u"),
+        "the owner must be told what to clear");
+      assert.doesNotMatch(logged, /mac:up FAILED/u);
+    });
+  }
+  // A readable state file is still read, and an absent one is still simply absent.
+  const clean = await rootFixture(t), paths = runtimePaths(clean);
+  assert.equal(await readPreviousHostState(paths.hostState), undefined);
+  await writeFile(paths.hostState, `${JSON.stringify({ state: "stopped", reason: "exit code 9",
+    at: "2026-09-27T00:00:00.000Z" })}\n`, { mode: 0o600 });
+  assert.equal((await readPreviousHostState(paths.hostState)).reason, "exit code 9");
+});
+
+test("mac:up continues past an unreadable state file to its own actionable refusal", async t => {
+  // End to end through the real entry point: the remedy for the missing task runtime is the
+  // owner's next action, so it is what a loose state file must produce, not an internal identifier.
+  const root = await rootFixture(t), paths = runtimePaths(root);
+  await writeFile(paths.hostState, `${JSON.stringify({ state: "stopped", reason: "exit code 0",
+    at: "2026-09-27T00:00:00.000Z" })}\n`, { mode: 0o600 });
+  await chmod(paths.hostState, 0o644);
+  await mkdir(join(root, "config"), { recursive: true });
+  await writeFile(join(root, "config/mac-local.json"), `${JSON.stringify({ port: 3210 })}\n`);
+  const result = spawn(process.execPath, [join(repoRoot, "scripts/mac-local/up.mjs"), "--protected-root", root],
+    { cwd: repoRoot, stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, HOME: join(root, "home") } });
+  t.after(async () => { if (pidAlive(result.pid)) result.kill("SIGKILL"); });
+  const { code, output } = await runToCompletion(result);
+  assert.equal(code, 1);
+  assert.match(output, /is unreadable/u, "the unreadable state file must be reported, not swallowed");
+  assert.match(output, /task settings missing: run pnpm mac:prepare-task-runtime/u,
+    "the actionable remedy must be the failure the owner sees");
+  assert.doesNotMatch(output, /mac_local_host_state_invalid/u, "an internal identifier is not a remedy");
+});
+
+test("the task host serves even when its recorded stop reason is unreadable", async t => {
+  // mac:up narrowing its own read is not sufficient on its own. mac:up launches the supervisor as a
+  // separate process, and the supervisor re-reads the same file for the same log line. If only the
+  // wrapper is narrowed, a loose state file moves the failure rather than removing it: mac:up
+  // reports it and continues, the supervisor then dies on its own read, and the owner is left with
+  // "supervisor error" after 90 seconds. Both halves have to be narrowed, so this drives the real
+  // supervisor and requires the host to actually reach serving.
+  const root = await rootFixture(t), paths = runtimePaths(root);
+  await writeFile(paths.hostState, `${JSON.stringify({ state: "stopped", reason: "exit code 0",
+    at: "2026-09-27T00:00:00.000Z" })}\n`, { mode: 0o600 });
+  await chmod(paths.hostState, 0o644);
+  const child = spawn(process.execPath, [join(repoRoot, "scripts/mac-local/task-host-supervisor.mjs"),
+    "--protected-root", root],
+    { cwd: repoRoot, stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, HOME: join(root, "home") } });
+  t.after(async () => { if (pidAlive(child.pid)) child.kill("SIGKILL"); });
+  const started = await waitFor(() => {
+    if (child.exitCode !== null) return false;
+    return readFileSync(paths.hostState, "utf8").includes("\"state\":\"running\"");
+  }, "supervisor never reached running with an unreadable state file", 30_000)
+    .then(() => true, () => false);
+  const log = readFileSync(paths.hostLog, "utf8");
+  assert.ok(started, `the host must serve, not die, on an unreadable state file. log:\n${log}`);
+  assert.match(log, /could not be read/u, "the condition must be recorded so the owner can see it");
+  assert.doesNotMatch(log, /supervisor error/u, "an unreadable stop reason is not a supervisor error");
+});
+
+test("the exact-command selector refuses a recycled or unrelated pid", async t => {
+  // This selector is the authority boundary for the whole stack: it decides which PID mac:status
+  // reports and which PID mac:down signals. A PID the OS recycled onto an unrelated process is
+  // exactly the case it exists to refuse, so a real process with the wrong command line must not
+  // be reported, claimed or signalled.
+  const root = await rootFixture(t), paths = runtimePaths(root);
+  const impostor = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"],
+    { cwd: repoRoot, stdio: "ignore" });
+  t.after(async () => { if (pidAlive(impostor.pid)) impostor.kill("SIGKILL"); await waitFor(() => !pidAlive(impostor.pid), "impostor survived cleanup"); });
+  await waitFor(() => pidAlive(impostor.pid), "impostor fixture did not start");
+  await writeFile(paths.hostPid, `${impostor.pid}\n`, { mode: 0o600 });
+  t.after(() => rm(paths.hostPid, { force: true }));
+
+  assert.equal(recordedHostCommand(impostor.pid, root), undefined,
+    "a live pid whose command line is not this root's host must not be selected");
+  assert.equal(alive(impostor.pid, hostCommand(root)), false);
+  assert.equal(alive(impostor.pid, taskHostCommand(root)), false);
+
+  // mac:status must not call it running, and must not claim it is serving either.
+  const status = await inspectMacLocalHost(root, await unusedPort(), {
+    serviceInstalled: async () => false,
+    readHostState: async () => undefined,
+    portOpen: async () => true,
+  });
+  assert.notEqual(status.status, "running");
+  assert.equal(status.pid, undefined);
+
+  // mac:down's selector must refuse it and send no signal at all.
+  assert.equal(await stopRecordedHost(paths.hostPid, root, 1), "not_running");
+  assert.ok(pidAlive(impostor.pid), "an unrelated pid must never be signalled");
+  // The recorded pid file is cleared, because the refusal is "not this stack's process", not a
+  // promise that some other stack's process is being stopped.
+  await assert.rejects(readFile(paths.hostPid, "utf8"), error => error.code === "ENOENT");
+
+  // The positive control: the exact command for this root is still selected, and a *different*
+  // root's exact command is not.
+  assert.deepEqual(recordedHostCommand(impostor.pid, root, (pid, command) => {
+    assert.equal(pid, impostor.pid);
+    return JSON.stringify(command) === JSON.stringify(hostCommand(root));
+  }), hostCommand(root));
+  assert.equal(recordedHostCommand(impostor.pid, root, (_pid, command) =>
+    JSON.stringify(command) === JSON.stringify(hostCommand("/some/other/root"))), undefined);
+});
+
+test("alive is an exact command-line match, not a substring one", async t => {
+  // `alive` is the primitive under every authority boundary in this stack: if it accepted a
+  // command line that merely *contains* the expected command, then any process able to put our
+  // command in its own argv — which a wrapper, a shell or an unrelated program can do by accident
+  // or on purpose — would be treated as this root's task host and would be reported and signalled
+  // as such. So a real process whose command line embeds the exact command must still be refused.
+  const root = await rootFixture(t);
+  const expected = hostCommand(root).join(" ");
+  // The fixture's own argv carries the full expected command after a separator, so ps reports a
+  // command line that contains it verbatim and is nonetheless a different program.
+  const impostor = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)", "--", expected],
+    { cwd: repoRoot, stdio: "ignore" });
+  t.after(async () => { if (pidAlive(impostor.pid)) impostor.kill("SIGKILL"); await waitFor(() => !pidAlive(impostor.pid), "impostor survived cleanup"); });
+  await waitFor(() => pidAlive(impostor.pid), "impostor fixture did not start");
+
+  const reported = execFileSync("/bin/ps", ["-ww", "-o", "command=", "-p", String(impostor.pid)],
+    { encoding: "utf8" }).trim();
+  assert.ok(reported.includes(expected),
+    `the fixture must contain the expected command for this test to mean anything: ${reported}`);
+  assert.notEqual(reported, expected, "the fixture must not be an exact match");
+  assert.equal(alive(impostor.pid, hostCommand(root)), false, "a containing command line is not this root's host");
+  assert.equal(alive(impostor.pid, taskHostCommand(root)), false);
+  // The positive control, on the same real process: the command it actually runs is alive.
+  assert.equal(alive(impostor.pid, [process.execPath, "-e", "setInterval(() => {}, 1000)", "--", expected]), true,
+    "alive must still recognise a process by its own exact command line");
+});
+
+test("stopRecorded never signals a pid whose command line is not the recorded command", async t => {
+  // The exact-alive guard is the second half of the same boundary: stopRecorded reads the command
+  // from its own caller, so the only thing standing between a recycled pid and a SIGTERM is that
+  // it re-checks the live command line before signalling.
+  const root = await rootFixture(t), paths = runtimePaths(root);
+  const impostor = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"],
+    { cwd: repoRoot, stdio: "ignore" });
+  t.after(async () => { if (pidAlive(impostor.pid)) impostor.kill("SIGKILL"); await waitFor(() => !pidAlive(impostor.pid), "impostor survived cleanup"); });
+  await waitFor(() => pidAlive(impostor.pid), "impostor fixture did not start");
+  await writeFile(paths.hostPid, `${impostor.pid}\n`, { mode: 0o600 });
+
+  assert.equal(await stopRecorded(paths.hostPid, hostCommand(root), 1), "not_running");
+  assert.ok(pidAlive(impostor.pid), "a pid that is not the recorded command must not be signalled");
+  await assert.rejects(readFile(paths.hostPid, "utf8"), error => error.code === "ENOENT");
+});
+
+test("a host log and a host state file inside the protected root stay private and unfollowed", async t => {
+  // These two are the privacy boundary for files inside the protected root: a symlink or a
+  // world-readable file in runtime/ must not receive the host's log, and a foreign state file must
+  // not steer the recorded reason. The write path creates them 0600; this proves the open and read
+  // paths refuse anything that is not private, same-uid and a real file.
+  const root = await rootFixture(t), paths = runtimePaths(root);
+  const stateBody = `${JSON.stringify({ state: "stopped", reason: "exit code 3",
+    at: "2026-09-27T00:00:00.000Z" })}\n`;
+  const target = join(root, "target");
+  await writeFile(target, "unchanged");
+
+  // A symlink at either path must never be written through, and the state read must refuse it.
+  for (const [name, path] of [["hostLog", paths.hostLog], ["hostState", paths.hostState]]) {
+    await symlink(target, path);
+    if (name === "hostLog") {
+      // O_NOFOLLOW refuses at open time (ELOOP) rather than writing through to the target; the
+      // assertion that matters is the refusal plus the untouched target, not the error's wording.
+      assert.throws(() => openHostLog(path), `O_NOFOLLOW must refuse a symlink at ${name}`);
+      await assert.rejects(rotateHostLog(path, 1, 2), /host_log_invalid/u);
+    } else {
+      await assert.rejects(readHostState(path), /host_state_invalid/u, "a symlinked state file must be refused");
+    }
+    await rm(path);
+    assert.equal(await readFile(target, "utf8"), "unchanged", `${name} must not write through a symlink`);
+  }
+
+  // A world-readable file in the private runtime must be refused too, on both read paths.
+  await writeFile(paths.hostLog, "loose\n", { mode: 0o644 });
+  await chmod(paths.hostLog, 0o644);
+  assert.throws(() => openHostLog(paths.hostLog), /host_log_invalid/u, "a loose log must be refused, not appended to");
+  await assert.rejects(rotateHostLog(paths.hostLog, 1, 2), /host_log_invalid/u);
+  await rm(paths.hostLog);
+  await writeFile(paths.hostState, stateBody, { mode: 0o644 });
+  await chmod(paths.hostState, 0o644);
+  await assert.rejects(readHostState(paths.hostState), /host_state_invalid/u,
+    "a world-readable state file must not steer the recorded reason");
+  await rm(paths.hostState);
+
+  // The private case still works, so the refusals above are about the file, not the path.
+  await writeFile(paths.hostState, stateBody, { mode: 0o600 });
+  assert.equal((await readHostState(paths.hostState)).reason, "exit code 3");
+  assert.equal(typeof openHostLog(paths.hostLog), "number");
+  assert.equal((await stat(paths.hostLog)).mode & 0o777, 0o600);
+  // The supervisor's own write path produces exactly that private file, so a first start works.
+  assert.equal(await superviseTaskHost(root, { spawn: () => fakeChild({ code: 0, stdout: "", stderr: "" }) }), 1);
+  assert.equal((await stat(paths.hostState)).mode & 0o777, 0o600);
+  assert.equal((await stat(paths.hostLog)).mode & 0o777, 0o600);
+});
+
+test("a replacement supervisor removes only an exact stale child before spawning", async t => {
+  const root = await rootFixture(t), paths = runtimePaths(root), stalePid = 4_242, signals = [];
+  await writeFile(paths.hostState, `${JSON.stringify({ state: "running", pid: 4_241,
+    childPid: stalePid, at: new Date().toISOString() })}\n`, { mode: 0o600 });
+  let staleAlive = true;
+  const exactAlive = (pid, command) => pid === stalePid && staleAlive
+    && JSON.stringify(command) === JSON.stringify(taskHostCommand(root));
+  assert.equal(await superviseTaskHost(root, {
+    alive: exactAlive,
+    signal: (pid, signal) => { signals.push([pid, signal]); staleAlive = false; },
+    spawn: () => fakeChild({ code: 0, stdout: "", stderr: "" }),
+  }), 1);
+  assert.deepEqual(signals, [[-stalePid, "SIGKILL"]]);
+  assert.equal(staleAlive, false, "the stale child must be gone before the replacement spawns");
+});
+
+test("a replacement supervisor never signals a recorded child pid that is not the exact task host", async t => {
+  // stopStaleChild kills a recorded child only while that pid is *still* this root's exact task
+  // host — the orphan the replacement must clear so it can bind. A recorded childPid that is
+  // alive but under some other command is a pid the OS has recycled, and the exact-command check
+  // is the only thing standing between that and a SIGKILL to an unrelated process group. The
+  // existing stale-child test pins the kill side, so removing the check outright still satisfies
+  // it; only the refusal side proves the guard exists.
+  const root = await rootFixture(t), paths = runtimePaths(root), recycledPid = 4_242, signals = [];
+  await writeFile(paths.hostState, `${JSON.stringify({ state: "running", pid: 4_241,
+    childPid: recycledPid, at: new Date().toISOString() })}\n`, { mode: 0o600 });
+  // The recorded supervisor is gone. The recorded childPid is alive, but never as this root's
+  // task host: it has been recycled onto an unrelated process.
+  const code = await superviseTaskHost(root, {
+    alive: (pid, command) => pid === recycledPid
+      && JSON.stringify(command) !== JSON.stringify(taskHostCommand(root)),
+    signal: (pid, signal) => signals.push([pid, signal]),
+    spawn: () => fakeChild({ code: 0, stdout: "", stderr: "" }),
+  });
+  assert.equal(code, 1, "the replacement still runs and requests recovery for its own child exit");
+  assert.deepEqual(signals, [], "a recycled child pid must never be signalled");
+});
+
+test("a replacement supervisor refuses to clean up beside a live exact supervisor", async t => {
+  // The first half of the same guard: if the recorded supervisor is still the exact supervisor for
+  // this root, its child is already supervised and there is nothing to clean up. Without this the
+  // replacement would kill a perfectly healthy supervised child.
+  const root = await rootFixture(t), paths = runtimePaths(root), livePid = 4_242, signals = [];
+  await writeFile(paths.hostState, `${JSON.stringify({ state: "running", pid: 4_241,
+    childPid: livePid, at: new Date().toISOString() })}\n`, { mode: 0o600 });
+  // The old supervisor is alive; its child is an unrelated (already recycled) pid.
+  const exactAlive = (pid, command) => pid === 4_241
+    && JSON.stringify(command) === JSON.stringify(hostCommand(root));
+  const code = await superviseTaskHost(root, {
+    alive: exactAlive,
+    signal: (pid, signal) => signals.push([pid, signal]),
+    spawn: () => fakeChild({ code: 0, stdout: "", stderr: "" }),
+  });
+  assert.equal(code, 1);
+  assert.deepEqual(signals, [], "a live exact supervisor means there is no orphan to clean up");
 });
 
 test("upgrade selection recognizes only the current supervisor or exact legacy host", () => {
