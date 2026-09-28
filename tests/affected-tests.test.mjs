@@ -3,7 +3,16 @@ import { mkdirSync, mkdtempSync, rmSync, unlinkSync, writeFileSync } from "node:
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { affectedTestCommands, affectedTests, requestedBaseRef, runAffectedTests } from "../scripts/ci/affected-tests.mjs";
+import {
+  affectedTestCommands,
+  affectedTests,
+  isDocumentationOnly,
+  noTestsAffectedMessage,
+  requestedBaseRef,
+  requiresPostgres,
+  runAffectedTests,
+  selectionOutputs,
+} from "../scripts/ci/affected-tests.mjs";
 
 function fixture(files) {
   const root = mkdtempSync(join(tmpdir(), "control-room-affected-tests-"));
@@ -43,8 +52,25 @@ test("configuration, package manifests, and database paths select ALL", () => {
     check({ "tests/example.test.ts": "" }, [file], "ALL");
 });
 
+test("an asset-only change selects ALL instead of reporting a silent green", () => {
+  for (const file of ["public/favicon.svg", "styles/app.css", "public/robots.txt"])
+    check({ "tests/example.test.ts": "" }, [file], "ALL");
+});
+
+test("a docs-directory-only change declares that no tests ran", () => {
+  assert.equal(isDocumentationOnly(["docs/guide.md", "docs/nested/notes.mdx"]), true);
+  check({ "tests/example.test.ts": "" }, ["docs/guide.md"], "DOCS_ONLY");
+  assert.match(noTestsAffectedMessage(), /documentation-only change; no tests run/u);
+});
+
+test("root markdown selects ALL because repository lanes read it", () => {
+  for (const file of ["README.md", "THIRD_PARTY.md"])
+    check({ "tests/example.test.ts": "" }, [file], "ALL");
+});
+
 test("the package-manager argument separator is not mistaken for the base ref", () => {
   assert.equal(requestedBaseRef(["--run", "--", "origin/main"]), "origin/main");
+  assert.equal(requestedBaseRef(["--github-output", "origin/main"]), "origin/main");
 });
 
 test("ALL prepares both generated builds before launching the complete test set", () => {
@@ -68,12 +94,38 @@ test("a normal source selection prepares artifacts required by its built-output 
   } finally { rmSync(root, { recursive: true }); }
 });
 
+test("a selected PostgreSQL test is detected from its source marker", () => {
+  const root = fixture({
+    "deploy/postgres/apply.mjs": "export const apply = true;",
+    "tests/postgres.test.mjs": "import '../deploy/postgres/apply.mjs'; const requiresRealPostgres = true;",
+  });
+  try {
+    const selected = affectedTests(root, ["deploy/postgres/apply.mjs"]);
+    assert.deepEqual(selected, ["tests/postgres.test.mjs"]);
+    assert.equal(requiresPostgres(selected, selected, root), true);
+    assert.match(selectionOutputs(selected, selected, root), /all=false\nneeds-pg=true/u);
+  } finally { rmSync(root, { recursive: true }); }
+});
+
+test("a selected PostgreSQL test fails before it can skip without binaries", () => {
+  const root = fixture({ "tests/postgres.test.mjs": "const requiresRealPostgres = true;" });
+  const original = process.env.PG_BIN;
+  process.env.PG_BIN = join(root, "missing-postgres");
+  try {
+    assert.equal(runAffectedTests(["tests/postgres.test.mjs"], ["tests/postgres.test.mjs"], root, () => 0), 1);
+  } finally {
+    if (original === undefined) delete process.env.PG_BIN;
+    else process.env.PG_BIN = original;
+    rmSync(root, { recursive: true });
+  }
+});
+
 test("the runner executes every planned ALL command in order", () => {
   const executed = [];
   const status = runAffectedTests("ALL", ["tests/example.test.ts"], "/repo", (command, arguments_, root) => {
     executed.push([command, arguments_, root]);
     return 0;
-  });
+  }, () => true);
   assert.equal(status, 0);
   assert.equal(executed.length, 3);
   assert.deepEqual(executed.map(call => call[0]), ["pnpm", "pnpm", process.execPath]);

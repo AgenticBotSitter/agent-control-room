@@ -260,6 +260,20 @@ test("the merge gate cannot be skipped by anything the pull request controls", (
     "routing must never gate the merge-check job itself, only which lanes run early",
   );
   assert.match(header, /full-mac-local-rehearsal/u, "the full rehearsal must be required by the merge gate");
+  assert.match(header, /affected-tests/u, "the affected-tests lane must be required by the merge gate");
+  assert.match(gateJob, /check affected-tests "\$\{\{ needs\.affected-tests\.result \}\}"/u,
+    "the merge gate must reject a failed affected-tests lane");
+});
+
+test("the affected-test lane installs PostgreSQL for a selected PostgreSQL test", () => {
+  const start = workflow.indexOf("  affected-tests:");
+  const end = workflow.indexOf("\n  route:", start);
+  assert.ok(start >= 0 && end > start, "the affected-tests job must exist before route");
+  const job = workflow.slice(start, end);
+  assert.match(job, /--github-output/u, "selection must expose its requirements to CI");
+  assert.match(job, /steps\.selection\.outputs\.needs-pg == 'true'/u,
+    "PostgreSQL installation must follow selected PostgreSQL tests, not only ALL");
+  assert.match(job, /Install PostgreSQL 17 when selected tests require it/u);
 });
 
 test("the full Mac-local rehearsal is isolated, fake, PG17, and runs every supported mode", () => {

@@ -37,6 +37,7 @@ on:
   push:
     branches: [main]
   pull_request:
+    types: [opened, synchronize, reopened, edited]
   workflow_dispatch:
 
 permissions:
@@ -64,18 +65,13 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile --ignore-scripts
-      - name: Check whether conservative fallback requires every test
+      - name: Calculate affected-test requirements
         id: selection
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
-        run: |
-          if [ "$(node scripts/ci/affected-tests.mjs "${BASE_SHA:-HEAD^}")" = "ALL" ]; then
-            echo "all=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "all=false" >> "$GITHUB_OUTPUT"
-          fi
-      - name: Install PostgreSQL 17 for the complete-test fallback
-        if: ${{ steps.selection.outputs.all == 'true' }}
+        run: node scripts/ci/affected-tests.mjs --github-output "${BASE_SHA:-HEAD^}"
+      - name: Install PostgreSQL 17 when selected tests require it
+        if: ${{ steps.selection.outputs.needs-pg == 'true' }}
         env:
           DEBIAN_FRONTEND: noninteractive
         run: |
@@ -161,6 +157,23 @@ jobs:
             echo "Every lane not run early is run by \`full-gate\`, so the complete suite still runs before merge."
           } >> "$GITHUB_STEP_SUMMARY"
 
+  pr-claims:
+    name: PR evidence claims
+    if: ${{ github.event_name == 'pull_request' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha }}
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+      - name: Validate claims against head-tree evidence
+        run: node scripts/ci/check-pr-claims.mjs
+
   quick:
     name: Quick checks
     runs-on: ubuntu-latest
@@ -176,8 +189,8 @@ jobs:
           cache: pnpm
       # These two need no dependencies, so they report in seconds, before the
       # install that the type checks require.
-      - name: Test the lane coverage checker and the path routing
-        run: node --test tests/check-test-lane-coverage.test.mjs tests/affected-tests.test.mjs tests/ci-path-routing.test.mjs tests/private-name-guard.test.mjs
+      - name: Test the CI guards and path routing
+        run: node --test tests/check-test-lane-coverage.test.mjs tests/affected-tests.test.mjs tests/ci-path-routing.test.mjs tests/private-name-guard.test.mjs tests/check-pr-claims.test.mjs
       - name: Fail if any test file is unreachable from GitHub Actions
         run: node scripts/check-test-lane-coverage.mjs
       - name: Reject configured private names
@@ -596,7 +609,7 @@ jobs:
   merge-gate:
     name: Full suite (merge gate)
     if: ${{ always() }}
-    needs: [affected-tests, route, quick, test-demo, test-server, test-components, test-articles, test-unified-product, full-mac-local-rehearsal, owner-browser-journey, full-gate]
+    needs: [affected-tests, route, pr-claims, quick, test-demo, test-server, test-components, test-articles, test-unified-product, full-mac-local-rehearsal, owner-browser-journey, full-gate]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -618,6 +631,7 @@ jobs:
           echo "Lane results:"
           check affected-tests "${{ needs.affected-tests.result }}"
           check route "${{ needs.route.result }}"
+          check pr-claims "${{ needs.pr-claims.result }}"
           check quick "${{ needs.quick.result }}"
           check demo "${{ needs.test-demo.result }}"
           check server "${{ needs.test-server.result }}"

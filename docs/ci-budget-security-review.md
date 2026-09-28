@@ -254,3 +254,18 @@ Current main predates the model-allowlist journey and records an explicit compat
 notice; revisions that contain that mode run both the default and `--model-allowlists`
 journeys. The aggregate merge gate depends on this job, so a failed or cancelled
 rehearsal makes the revision non-merge-ready.
+
+## Amendment: pull request claim evidence
+
+The `PR evidence claims` job reads the pull request body from GitHub's event
+payload and compares references with the checked-out head tree. It uses no
+network calls or dependencies, has read-only repository permissions, checks out
+full history only to calculate the base-to-head path list, and is skipped for
+push and manual-dispatch events. Its result is included in the merge gate.
+
+Untrusted prose is bounded to 64 KiB and is never logged. Diagnostics use fixed
+codes and counts, with the existing private-name redactor as a second safety
+layer when a list is available in the environment. The job receives no secret,
+so its no-echo rule has no secret dependency and works the same way for fork
+pull requests. See `docs/PR_CLAIMS_EVIDENCE.md` for the contributor-facing
+format.
