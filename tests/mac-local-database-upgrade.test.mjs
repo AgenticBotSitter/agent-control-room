@@ -155,3 +155,24 @@ test("SCRAM verifier is deterministic for a fixed salt and rejects malformed mat
   assert.equal(checkedPostgresScramVerifierV1(first), first);
   assert.throws(() => checkedPostgresScramVerifierV1("SCRAM-SHA-256$4096:bad$bad:bad"), /upgrade_scram_verifier_refused/u);
 });
+
+test("queue fingerprint ignores which UTC days have queue_stats partitions but not their shape", async () => {
+  const { normalizeQueueCatalogV1 } = await import("../scripts/mac-local/fixed-queue-schema.mjs");
+  const day = date => ({
+    relations: [{ relname: "queue_stats" }, { relname: `queue_stats_${date}` }, { relname: `queue_stats_${date}_pkey` }],
+    types: [{ typname: `_queue_stats_${date}` }],
+    indexes: [{ relname: `queue_stats_${date}_pkey`,
+      definition: `CREATE UNIQUE INDEX queue_stats_${date}_pkey ON control_room_queue.queue_stats_${date} USING btree (id, captured_on)` }],
+  });
+  const merge = (...days) => Object.fromEntries(Object.keys(day("x")).map(section =>
+    [section, days.flatMap(value => value[section]).filter((row, index, rows) =>
+      rows.findIndex(other => JSON.stringify(other) === JSON.stringify(row)) === index)]));
+  const before = normalizeQueueCatalogV1(merge(day("20260927"), day("20260928")));
+  assert.deepEqual(normalizeQueueCatalogV1(merge(day("20260928"), day("20260929"))), before);
+  assert.deepEqual(normalizeQueueCatalogV1(merge(day("20260928"), day("20260929"), day("20261005"))), before);
+  const altered = merge(day("20260928"), day("20260929"));
+  altered.indexes.push({ relname: "queue_stats_20260929_rogue",
+    definition: "CREATE INDEX queue_stats_20260929_rogue ON control_room_queue.queue_stats_20260929 USING btree (name)" });
+  assert.notDeepEqual(normalizeQueueCatalogV1(altered), before);
+  assert.equal(normalizeQueueCatalogV1({ namespace: [{ nspname: "control_room_queue" }] }).namespace[0].nspname, "control_room_queue");
+});
