@@ -548,7 +548,8 @@ test("real reviewer login cannot replay the three raw authority attacks", needsP
     .create(identity,{title:"Reviewer authority probe",summary:"Exercise the bounded reviewer role."},"review-probe-project-0001")).project;
   const template={name:"Reviewer authority probe",description:"Build and check one result.",stages:[
     {ordinal:0,stageKind:"build",role:"builder",description:"Build.",requiredCapability:"code.change",workerId:"worker:build:probe",
-      workerKind:"codex",nodeId:"node:build:probe",selectionKey:"build.standard",model:"build-test",effort:"medium",maxLoops:3},
+      workerKind:"codex",nodeId:"node:build:probe",selectionKey:"build.standard",model:"build-test",effort:"medium",maxLoops:3,
+      allowedPaths:["src/**"],maximumChangedFiles:10,maximumChangedBytes:100_000},
     {ordinal:1,stageKind:"check",role:"checker",description:"Check.",requiredCapability:"code.review",workerId:"worker:check:probe",
       workerKind:"claude-code",nodeId:"node:check:probe",selectionKey:"check.standard",model:"check-test",effort:"high",maxLoops:3},
     {ordinal:2,stageKind:"signoff",role:"validator",description:"Validate.",requiredCapability:"code.validate",workerId:"worker:validate:probe",
