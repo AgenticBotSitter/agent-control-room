@@ -79,6 +79,7 @@ export {
   securityDefinerAudit,
   securityDefinerAuditLive,
   splitSqlStatements,
+  stripSqlComments,
   UnpinnedSearchPathError,
   withStaleAllowlist,
 } from "./search-path-audit";

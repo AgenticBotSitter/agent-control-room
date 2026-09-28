@@ -69,14 +69,55 @@ const SECURITY_DEFINER = /\bsecurity\s+definer\b/i;
 /**
  * `SET search_path = a, b` / `SET search_path TO a, b`.
  *
- * The list stops at the end of its line or at a `;`, whichever comes first, so
- * it can never run past the clause it belongs to.
+ * The list may span newlines: a pin written as
+ *
+ *     SET search_path = pg_catalog,
+ *                        public,
+ *                        pg_temp
+ *
+ * is the same clause as the one-line form, and reading only the first line
+ * reported it as unpinned. The list therefore ends at the first `;`, at a
+ * following clause keyword, or at the end of the region — never at a newline.
  */
-const SET_SEARCH_PATH = /\bset\s+search_path\b\s*(?:=|to)\s*([^\n;]*?)(?=\s*(?:\bas\b|\blanguage\b|\breturns\b|[;\n]|$))/i;
+const SET_SEARCH_PATH =
+  /\bset\s+search_path\b\s*(?:=|to)\s*([^;]*?)(?=\s*(?:\bas\b|\blanguage\b|\breturns\b|\bset\b|;|$))/i;
 
-const FUNCTION_HEAD = /create\s+(?:or\s+replace\s+)?function\s+([A-Za-z0-9_."]+)\s*\(/i;
+/**
+ * `CREATE [OR REPLACE] FUNCTION|PROCEDURE name(...)` and `ALTER FUNCTION name`.
+ *
+ * PROCEDURE matters: PostgreSQL allows `SECURITY DEFINER` on a procedure, and
+ * a procedure body resolves names the same way a trigger body's does, so a
+ * definer procedure is exactly the primitive this gate exists to catch.
+ */
+const FUNCTION_HEAD =
+  /create\s+(?:or\s+replace\s+)?(function|procedure)\s+([A-Za-z0-9_."]+)\s*(?=\()/gi;
+/**
+ * `ALTER FUNCTION name(args) <clauses>`.
+ *
+ * The trailing `;` is OPTIONAL because `splitSqlStatements` has already
+ * removed it: the terminator belongs to the statement boundary, and requiring
+ * it here meant the pattern never matched a real statement, so
+ * `ALTER FUNCTION ... SECURITY DEFINER` was invisible and a function
+ * escalated after its CREATE passed the gate.
+ */
+const ALTER_HEAD = /alter\s+(?:function|procedure)\s+([A-Za-z0-9_."]+)\s*\(([^)]*)\)\s*([\s\S]*)/gi;
 /** The body's `AS` clause: `AS $$...$$`, `AS $tag$...$tag$` or `AS 'file'`. */
 const BODY_AS = /\bas\b(?=\s*(?:'|"))|\bas\b(?=\s*\$)/i;
+
+/**
+ * Remove comments from a region, preserving line structure.
+ *
+ * A `--` line whose text is `SET search_path = pg_catalog, public, pg_temp` is
+ * the most natural way to DISABLE a pin while leaving the function looking
+ * hardened, and the raw clause slice read it as a real clause. Comments are
+ * blanked rather than deleted so a clause before the comment keeps its
+ * position, and the newlines a multi-line list needs survive.
+ */
+export function stripSqlComments(region: string): string {
+  return region
+    .replace(/\/\*[\s\S]*?\*\//g, match => match.replace(/[^\n]/g, " "))
+    .replace(/--[^\n]*/g, match => " ".repeat(match.length));
+}
 
 /** Split a declared search_path list into its entries, honouring quotes. */
 export function parseSearchPath(declared: string): string[] {
@@ -180,12 +221,17 @@ interface FunctionDefinition {
  * definition is bounded by the next `CREATE FUNCTION` so they stay separate.
  */
 function functionDefinitions(statement: string): FunctionDefinition[] {
+  // Comments are removed BEFORE anything is located, so a commented-out
+  // `SET search_path` and a commented-out `CREATE FUNCTION` are both inert.
+  // Working on the cleaned text also keeps every index below consistent with
+  // the region that is actually read.
+  const source = stripSqlComments(statement);
   const heads: { start: number; open: number; name: string }[] = [];
-  for (const match of statement.matchAll(new RegExp(FUNCTION_HEAD.source, "giu"))) {
+  for (const match of source.matchAll(new RegExp(FUNCTION_HEAD.source, "giu"))) {
     heads.push({
       start: match.index,
-      open: match.index + match[0].length - 1,
-      name: match[1]!,
+      open: match.index + match[0].length,
+      name: match[2]!,
     });
   }
   const definitions: FunctionDefinition[] = [];
@@ -194,22 +240,22 @@ function functionDefinitions(statement: string): FunctionDefinition[] {
     // not terminate it early.
     let depth = 0;
     let cursor = head.open;
-    for (; cursor < statement.length; cursor += 1) {
-      if (statement[cursor] === "(") depth += 1;
-      else if (statement[cursor] === ")") {
+    for (; cursor < source.length; cursor += 1) {
+      if (source[cursor] === "(") depth += 1;
+      else if (source[cursor] === ")") {
         depth -= 1;
         if (depth === 0) break;
       }
     }
     if (depth !== 0) return;
-    const args = statement.slice(head.open + 1, cursor);
+    const args = source.slice(head.open + 1, cursor);
     const optionsEnd = Math.min(
-      statement.slice(cursor + 1).search(BODY_AS) === -1 ? statement.length : cursor + 1 + statement.slice(cursor + 1).search(BODY_AS),
-      heads[position + 1]?.start ?? statement.length,
+      source.slice(cursor + 1).search(BODY_AS) === -1 ? source.length : cursor + 1 + source.slice(cursor + 1).search(BODY_AS),
+      heads[position + 1]?.start ?? source.length,
     );
     definitions.push({
       signature: `${head.name}(${args.trim()})`,
-      options: statement.slice(cursor + 1, optionsEnd),
+      options: source.slice(cursor + 1, optionsEnd),
     });
   });
   return definitions;
@@ -219,29 +265,59 @@ function functionDefinitions(statement: string): FunctionDefinition[] {
 function auditStatement(statement: string, name: string): FunctionFinding[] {
   const findings: FunctionFinding[] = [];
   for (const definition of functionDefinitions(statement)) {
-    const isTrigger = RETURNS_TRIGGER.test(definition.options);
-    const isDefiner = SECURITY_DEFINER.test(definition.options);
-    if (!isTrigger && !isDefiner) continue;
-    const match = SET_SEARCH_PATH.exec(definition.options);
-    const searchPath = match ? match[1]!.trim().replace(/,\s*$/, "") || null : null;
-    const endsInPgTemp = searchPathEndsInPgTemp(searchPath);
-    const kinds: ("security-definer" | "trigger")[] = [];
-    if (isDefiner) kinds.push("security-definer");
-    if (isTrigger) kinds.push("trigger");
-    findings.push({
-      file: name,
-      function: definition.signature,
-      kinds,
-      searchPath,
-      endsInPgTemp,
-      reason: endsInPgTemp
-        ? "pinned"
-        : searchPath === null
-          ? `${kinds.join("+")}_without_a_search_path_clause`
-          : `${kinds.join("+")}_search_path_does_not_end_in_pg_temp:${searchPath}`,
-    });
+    findings.push(describe(definition, name, ""));
   }
   return findings;
+}
+
+/**
+ * Build the finding for one definition, merging any clause an `ALTER FUNCTION`
+ * applied to the same signature later in the file.
+ *
+ * `ALTER FUNCTION f() SECURITY DEFINER` escalates a function that was created
+ * without it, and the audit used to miss that entirely because it only looked
+ * at `CREATE`. A privilege granted by a later `ALTER` is still a privilege the
+ * deployment holds, so the file-level audit carries each function's ALTER
+ * clauses into its CREATE-time view.
+ */
+function describe(
+  definition: FunctionDefinition,
+  name: string,
+  alters: string,
+): FunctionFinding {
+  const own = definition.options;
+  // An ALTER's clauses are additive: SECURITY DEFINER cannot be taken back by
+  // a later statement, and a `SET` on the ALTER is the effective pin.
+  const merged = `${own}\n${alters}`;
+  const isTrigger = RETURNS_TRIGGER.test(own);
+  const isDefiner = SECURITY_DEFINER.test(merged);
+  if (!isTrigger && !isDefiner) {
+    return {
+      file: name, function: definition.signature, kinds: [], searchPath: null,
+      endsInPgTemp: false, reason: "not_privileged",
+    };
+  }
+  // The CREATE's own clause wins when it has one; otherwise the ALTER's.
+  const ownMatch = SET_SEARCH_PATH.exec(own);
+  const alterMatch = ownMatch ? null : SET_SEARCH_PATH.exec(alters);
+  const declared = ownMatch ? ownMatch[1]! : alterMatch ? alterMatch[1]! : "";
+  const searchPath = declared.trim().replace(/,\s*$/, "") || null;
+  const endsInPgTemp = searchPathEndsInPgTemp(searchPath);
+  const kinds: ("security-definer" | "trigger")[] = [];
+  if (isDefiner) kinds.push("security-definer");
+  if (isTrigger) kinds.push("trigger");
+  return {
+    file: name,
+    function: definition.signature,
+    kinds,
+    searchPath,
+    endsInPgTemp,
+    reason: endsInPgTemp
+      ? "pinned"
+      : searchPath === null
+        ? `${kinds.join("+")}_without_a_search_path_clause`
+        : `${kinds.join("+")}_search_path_does_not_end_in_pg_temp:${searchPath}`,
+  };
 }
 
 export interface SecurityDefinerAuditOptions {
@@ -266,7 +342,23 @@ export async function securityDefinerAudit(
   const findings: FunctionFinding[] = [];
   for (const name of entries) {
     const source = await readFile(join(migrationsDir, name), "utf8");
-    for (const statement of splitSqlStatements(source)) findings.push(...auditStatement(statement, name));
+    const statements = splitSqlStatements(source);
+    // ALTER clauses are collected across the WHOLE FILE, because a function
+    // created in one statement can be escalated by a later one. Keyed by the
+    // same `name(args)` signature the findings use.
+    const alters = new Map<string, string>();
+    for (const statement of statements) {
+      for (const match of stripSqlComments(statement).matchAll(ALTER_HEAD)) {
+        const signature = `${match[1]!}(${(match[2] ?? "").trim()})`;
+        alters.set(signature, `${alters.get(signature) ?? ""}\n${match[3] ?? ""}`);
+      }
+    }
+    for (const statement of statements) {
+      for (const definition of functionDefinitions(statement)) {
+        const finding = describe(definition, name, alters.get(definition.signature) ?? "");
+        if (finding.kinds.length > 0) findings.push(finding);
+      }
+    }
   }
   const unpinned = findings.filter(finding => !finding.endsInPgTemp);
   const active = options.allowlist?.active ?? new Map<string, SearchPathAllowlistEntry>();

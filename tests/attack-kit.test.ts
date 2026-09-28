@@ -715,6 +715,114 @@ END $$;
     assert.equal(result.findings[0]!.endsInPgTemp, false, "and it does not make the function safe");
   });
 
+  // A commented-out pin is the most natural way to DISABLE a pin while leaving
+  // the function looking hardened, and the clause region used to be a raw slice
+  // that read the comment as a real clause. Comments are stripped before any
+  // clause is located, so this is now a violation.
+  test("a pin that only appears in a comment does not count as pinned", async () => {
+    const directory = await temporary("attack-kit-commented-");
+    await writeFile(join(directory, "0001.sql"), `
+CREATE FUNCTION line_comment() RETURNS trigger
+LANGUAGE plpgsql
+-- SET search_path = pg_catalog, public, pg_temp
+AS $$ BEGIN RETURN NEW; END $$;
+
+CREATE FUNCTION block_comment() RETURNS trigger
+LANGUAGE plpgsql
+/* SET search_path = pg_catalog, public, pg_temp */
+AS $$ BEGIN RETURN NEW; END $$;
+`);
+    const result = await securityDefinerAudit(directory);
+    assert.deepEqual(result.findings.map(finding => finding.function), ["line_comment()", "block_comment()"]);
+    assert.deepEqual(result.unpinned.map(finding => finding.function), ["line_comment()", "block_comment()"],
+      "a pin that exists only in a comment must not satisfy the check");
+    for (const finding of result.findings) {
+      assert.equal(finding.endsInPgTemp, false);
+      assert.equal(finding.searchPath, null);
+    }
+  });
+
+  // A multi-line pinned list is the same clause as the one-line form, and the
+  // old line-bounded pattern read only the first line and reported it unpinned.
+  test("a search_path list spread over several lines is read whole", async () => {
+    const directory = await temporary("attack-kit-multiline-");
+    await writeFile(join(directory, "0001.sql"), `
+CREATE FUNCTION multiline_pinned() RETURNS trigger
+LANGUAGE plpgsql SET search_path = pg_catalog,
+  public,
+  pg_temp AS $$ BEGIN RETURN NEW; END $$;
+
+CREATE FUNCTION multiline_bad() RETURNS trigger
+LANGUAGE plpgsql SET search_path = pg_catalog,
+  public AS $$ BEGIN RETURN NEW; END $$;
+`);
+    const result = await securityDefinerAudit(directory);
+    const pinned = result.findings.find(finding => finding.function === "multiline_pinned()")!;
+    assert.equal(pinned.endsInPgTemp, true, "pg_temp on the last line still pins the function");
+    assert.equal(pinned.searchPath?.replace(/\s+/g, " "), "pg_catalog, public, pg_temp");
+    const bad = result.findings.find(finding => finding.function === "multiline_bad()")!;
+    assert.equal(bad.endsInPgTemp, false, "and a list that does not end in pg_temp is still caught");
+  });
+
+  // PostgreSQL allows SECURITY DEFINER on a PROCEDURE, and a procedure body
+  // resolves names with the owner's privileges exactly as a trigger body's
+  // does. The old head pattern matched only CREATE FUNCTION, so a definer
+  // procedure was invisible.
+  test("a SECURITY DEFINER procedure is audited like a function", async () => {
+    const directory = await temporary("attack-kit-procedure-");
+    await writeFile(join(directory, "0001.sql"), `
+CREATE PROCEDURE definer_procedure() LANGUAGE plpgsql
+SECURITY DEFINER AS $$ BEGIN NULL; END $$;
+
+CREATE PROCEDURE pinned_procedure() LANGUAGE plpgsql
+SECURITY DEFINER SET search_path = pg_catalog, public, pg_temp AS $$ BEGIN NULL; END $$;
+`);
+    const result = await securityDefinerAudit(directory);
+    const byName = new Map(result.findings.map(finding => [finding.function, finding]));
+    assert.equal(byName.get("definer_procedure()")?.endsInPgTemp, false,
+      "an unpinned definer procedure must be reported");
+    assert.deepEqual(byName.get("definer_procedure()")?.kinds, ["security-definer"]);
+    assert.equal(byName.get("pinned_procedure()")?.endsInPgTemp, true);
+    assert.deepEqual(result.unpinned.map(finding => finding.function), ["definer_procedure()"]);
+  });
+
+  // `ALTER FUNCTION ... SECURITY DEFINER` escalates a function created without
+  // it. The privilege is real whether it was granted in the CREATE or a
+  // statement later in the same file, so the audit carries the ALTER's clauses
+  // into the function's own view.
+  test("a privilege granted by a later ALTER counts as a violation", async () => {
+    const directory = await temporary("attack-kit-alter-");
+    await writeFile(join(directory, "0001.sql"), `
+CREATE FUNCTION escalated() RETURNS integer LANGUAGE sql AS $$ SELECT 1 $$;
+ALTER FUNCTION escalated() SECURITY DEFINER;
+`);
+    const result = await securityDefinerAudit(directory);
+    assert.equal(result.findings.length, 1);
+    assert.equal(result.findings[0]!.function, "escalated()");
+    assert.deepEqual(result.findings[0]!.kinds, ["security-definer"],
+      "the function is a definer function because a later ALTER made it one");
+    assert.equal(result.findings[0]!.endsInPgTemp, false);
+    assert.equal(result.unpinned.length, 1, "an escalated function must be reported");
+
+    // A trigger function escalated by an ALTER keeps BOTH kinds.
+    await writeFile(join(directory, "0001.sql"), `
+CREATE FUNCTION escalated_trigger() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RETURN NEW; END $$;
+ALTER FUNCTION escalated_trigger() SECURITY DEFINER;
+`);
+    const both = await securityDefinerAudit(directory);
+    assert.deepEqual(both.findings[0]!.kinds, ["security-definer", "trigger"]);
+
+    // An ALTER that DOES pin the function satisfies the gate.
+    await writeFile(join(directory, "0001.sql"), `
+CREATE FUNCTION alter_pinned() RETURNS integer LANGUAGE sql AS $$ SELECT 1 $$;
+ALTER FUNCTION alter_pinned() SECURITY DEFINER SET search_path = pg_catalog, public, pg_temp;
+`);
+    const pinned = await securityDefinerAudit(directory);
+    assert.equal(pinned.findings[0]!.endsInPgTemp, true,
+      "a pin supplied by the ALTER is the effective pin");
+    assert.deepEqual(pinned.unpinned, []);
+  });
+
   test("audits the repository's own migrations", async () => {
     const result = await securityDefinerAudit(join(REPOSITORY_ROOT, "db/migrations"));
     assert.ok(result.auditedFiles > 50, "the real migration set is audited");
@@ -830,6 +938,38 @@ LANGUAGE plpgsql SECURITY DEFINER AS $$ BEGIN RETURN 1; END $$;
     const definerFailed = await runGate();
     assert.notEqual(definerFailed.code, 0, "a new unpinned SECURITY DEFINER function fails the gate too");
     assert.match(definerFailed.stderr, /0002_definer\.sql:escalate_new\(\)/);
+
+    // Each of these is a way an unpinned privileged function could previously
+    // have passed the gate silently. The gate is the security control, so all
+    // of them must fail it.
+    const escapes: readonly [string, string][] = [
+      ["0003_commented.sql",
+        "CREATE FUNCTION commented() RETURNS trigger\nLANGUAGE plpgsql\n"
+        + "-- SET search_path = pg_catalog, public, pg_temp\nAS $$ BEGIN RETURN NEW; END $$;\n"],
+      ["0004_procedure.sql",
+        "CREATE PROCEDURE definer_proc() LANGUAGE plpgsql\n"
+        + "SECURITY DEFINER AS $$ BEGIN NULL; END $$;\n"],
+      ["0005_alter.sql",
+        "CREATE FUNCTION escalated() RETURNS integer LANGUAGE sql AS $$ SELECT 1 $$;\n"
+        + "ALTER FUNCTION escalated() SECURITY DEFINER;\n"],
+    ];
+    for (const [file, sql] of escapes) {
+      await rm(join(migrations, "0002_definer.sql"), { force: true });
+      await writeFile(join(migrations, file), sql);
+      const escaped = await runGate();
+      assert.notEqual(escaped.code, 0,
+        `${file} must fail the gate, got exit ${escaped.code}: ${escaped.stderr}`);
+    }
+
+    // A multi-line pinned list is the same clause as the one-line form, so it
+    // must PASS rather than being read as unpinned.
+    await rm(join(migrations, "0002_definer.sql"), { force: true });
+    for (const [file] of escapes) await rm(join(migrations, file), { force: true });
+    await writeFile(join(migrations, "0006_multiline.sql"),
+      "CREATE FUNCTION multiline() RETURNS trigger\nLANGUAGE plpgsql SET search_path = pg_catalog,\n"
+      + "  public,\n  pg_temp AS $$ BEGIN RETURN NEW; END $$;\n");
+    const multiline = await runGate();
+    assert.equal(multiline.code, 0, `a multi-line pg_temp pin must pass, got: ${multiline.stderr}`);
   });
 
   test("refuses an allowlist entry with no expiry or no issue", async () => {
