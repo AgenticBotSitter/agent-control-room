@@ -873,6 +873,73 @@ ALTER FUNCTION alter_pinned() SECURITY DEFINER SET search_path = pg_catalog, pub
     assert.deepEqual(pinned.unpinned, []);
   });
 
+  // A `(` or `)` inside a quoted default is one character of text, not
+  // nesting. The argument-list walk counted them as nesting, so `depth` went to
+  // -1, the whole head was DROPPED, and the file produced no finding at all —
+  // which is how an unpinned SECURITY DEFINER function passed a gate whose only
+  // job is to stop that.
+  test("a parenthesis inside a quoted default is text, not nesting", async () => {
+    const directory = await temporary("attack-kit-quoted-");
+    await writeFile(join(directory, "0001.sql"), `
+CREATE FUNCTION escalate_default(a text DEFAULT 'x(y') RETURNS integer
+LANGUAGE sql SECURITY DEFINER AS $$ SELECT 1 $$;
+
+CREATE FUNCTION trigger_default(a text DEFAULT 'x(y') RETURNS trigger
+LANGUAGE plpgsql AS $$ BEGIN RETURN NEW; END $$;
+`);
+    const result = await securityDefinerAudit(directory);
+    // The string is closed, so the walk reads the argument list to its real
+    // `)` and the signature is reported in full. The point of the test is that
+    // these two functions are FOUND at all.
+    assert.deepEqual(result.findings.map(finding => finding.function),
+      ["escalate_default(a text DEFAULT 'x(y')", "trigger_default(a text DEFAULT 'x(y')"],
+      "a paren inside a string default must not hide the definition");
+    assert.equal(result.findings.length, 2,
+      "the whole statement must not disappear from the audit");
+    assert.deepEqual(result.unpinned.map(finding => finding.function),
+      ["escalate_default(a text DEFAULT 'x(y')", "trigger_default(a text DEFAULT 'x(y')"]);
+    assert.deepEqual(result.findings[0]!.kinds, ["security-definer"]);
+    assert.deepEqual(result.findings[1]!.kinds, ["trigger"]);
+
+    // The control: a balanced default, and a real nested call in one, are both
+    // read normally, so the quote-awareness has not broken ordinary parsing.
+    await writeFile(join(directory, "0001.sql"), `
+CREATE FUNCTION escalate_balanced(a text DEFAULT 'x(y)') RETURNS integer
+LANGUAGE sql SECURITY DEFINER AS $$ SELECT 1 $$;
+
+CREATE FUNCTION nextval_default(a text DEFAULT nextval('s')) RETURNS integer
+LANGUAGE sql SECURITY DEFINER SET search_path = pg_catalog, public, pg_temp AS $$ SELECT 1 $$;
+
+CREATE FUNCTION doubled_quote(a text DEFAULT 'it''s (fine)') RETURNS integer
+LANGUAGE sql SECURITY DEFINER AS $$ SELECT 1 $$;
+`);
+    const balanced = await securityDefinerAudit(directory);
+    assert.deepEqual(balanced.findings.map(finding => finding.function), [
+      "escalate_balanced(a text DEFAULT 'x(y)')",
+      "nextval_default(a text DEFAULT nextval('s'))",
+      "doubled_quote(a text DEFAULT 'it''s (fine)')",
+    ], "an escaped quote and a real nested call are both part of the argument list");
+    assert.deepEqual(balanced.unpinned.map(finding => finding.function),
+      ["escalate_balanced(a text DEFAULT 'x(y)')", "doubled_quote(a text DEFAULT 'it''s (fine)')"],
+      "and the pinned one is still clean");
+
+    // A definition whose argument list genuinely cannot be closed is emitted as
+    // `<unreadable>` and reported UNPINNED. Dropping it was the defect: a
+    // parser that cannot read a definition must not be able to make it
+    // invisible.
+    await writeFile(join(directory, "0001.sql"), `
+CREATE FUNCTION unterminated(a text DEFAULT 'never closed
+LANGUAGE sql SECURITY DEFINER AS $$ SELECT 1 $$;
+`);
+    const unreadable = await securityDefinerAudit(directory);
+    assert.deepEqual(unreadable.findings.map(finding => finding.function),
+      ["unterminated(<unreadable>)"],
+      "an unclosable argument list is reported, not dropped");
+    assert.equal(unreadable.unpinned.length, 1,
+      "and it is reported as unpinned rather than read as safe");
+    assert.deepEqual(unreadable.findings[0]!.kinds, ["security-definer"]);
+  });
+
   test("audits the repository's own migrations", async () => {
     const result = await securityDefinerAudit(join(REPOSITORY_ROOT, "db/migrations"));
     assert.ok(result.auditedFiles > 50, "the real migration set is audited");
@@ -1011,6 +1078,19 @@ LANGUAGE plpgsql SECURITY DEFINER AS $$ BEGIN RETURN 1; END $$;
       ["0009_procedure_or_replace.sql",
         "CREATE OR REPLACE PROCEDURE escalate_proc() LANGUAGE plpgsql\n"
         + "SECURITY DEFINER SET search_path = pg_catalog, public AS $$ BEGIN NULL; END $$;\n"],
+      // A `(` inside a string default is one character of text, not nesting.
+      // The argument walk used to count it, drove its own depth to -1, dropped
+      // the whole head, and reported NOTHING: the gate exited 0 on an unpinned
+      // SECURITY DEFINER function.
+      ["0013_unbalanced_default.sql",
+        "CREATE FUNCTION escalate_unbalanced(a text DEFAULT 'x(y') RETURNS integer\n"
+        + "LANGUAGE sql SECURITY DEFINER AS $$ SELECT 1 $$;\n"],
+      ["0014_unbalanced_trigger_default.sql",
+        "CREATE FUNCTION row_unbalanced(a text DEFAULT 'x(y') RETURNS trigger\n"
+        + "LANGUAGE plpgsql AS $$ BEGIN RETURN NEW; END $$;\n"],
+      ["0015_unbalanced_event_trigger_default.sql",
+        "CREATE FUNCTION ddl_unbalanced(a text DEFAULT 'x(y') RETURNS event_trigger\n"
+        + "LANGUAGE plpgsql AS $$ BEGIN RETURN NULL; END $$;\n"],
     ];
     for (const [file, sql] of escapes) {
       await rm(join(migrations, "0002_definer.sql"), { force: true });
@@ -1078,6 +1158,19 @@ LANGUAGE plpgsql SECURITY DEFINER AS $$ BEGIN RETURN 1; END $$;
     assert.doesNotMatch(mixed.stderr, /ddl_guard\(\)/,
       "the pinned event trigger is not named as a violation");
     assert.match(mixed.stderr, /row_guard\(\)/);
+
+    // A balanced string default is still read as an argument list, so the
+    // function is reported by its real signature and not as unreadable. Without
+    // this, "report anything the parser cannot close" would also cover a
+    // function it can close, and the CI message would lose the name to fix.
+    await rm(join(migrations, "0012_mixed.sql"), { force: true });
+    await writeFile(join(migrations, "0016_balanced_default.sql"),
+      "CREATE FUNCTION escalate_balanced(a text DEFAULT 'x(y)') RETURNS integer\n"
+      + "LANGUAGE sql SECURITY DEFINER AS $$ SELECT 1 $$;\n");
+    const balanced = await runGate();
+    assert.notEqual(balanced.code, 0, "an unbalanced-looking default is still a real violation");
+    assert.match(balanced.stderr, /0016_balanced_default\.sql:escalate_balanced\(a text DEFAULT 'x\(y\)'\)/,
+      "and the whole argument list is reported, so the message names the function");
   });
 
   test("refuses an allowlist entry with no expiry or no issue", async () => {
@@ -1690,11 +1783,14 @@ test("the kit left no disposable cluster behind", async () => {
   // otherwise the sweep would flag the live run as a leak.
   const prefixes = ["attack-kit-pg-", "attack-kit-mutation-", "attack-kit-sql-",
     "attack-kit-sql2-", "attack-kit-foreign-", "attack-kit-procedure-",
-    "attack-kit-event-trigger-", "attack-kit-pid-fault-",
+    "attack-kit-event-trigger-", "attack-kit-pid-fault-", "attack-kit-quoted-",
     "attack-kit-cross-a-", "attack-kit-cross-b-", "attack-kit-adjacent-",
     "attack-kit-body-", "attack-kit-commented-", "attack-kit-multiline-",
     "attack-kit-alter-", "attack-kit-allowlist-", "attack-kit-allowlist-scope-",
-    "attack-kit-allowlist-bad-", "attack-kit-gate-", "attack-kit-skipprobe-"];
+    "attack-kit-allowlist-bad-", "attack-kit-gate-", "attack-kit-skipprobe-",
+    // A timeout test that never reached its own `finally` would leave a
+    // directory holding a still-running CPU burner. The sweep has to see it.
+    "attack-kit-mutation-timeout-"];
   for (const prefix of prefixes) {
     const leftovers = (await disposableRunDirectories(new RegExp(`^${prefix}`)))
       .filter(directory => !mine.has(directory));

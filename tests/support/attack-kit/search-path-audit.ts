@@ -257,17 +257,62 @@ function functionDefinitions(statement: string): FunctionDefinition[] {
   const definitions: FunctionDefinition[] = [];
   heads.forEach((head, position) => {
     // The argument list is balanced, so a default such as `nextval('s')` does
-    // not terminate it early.
+    // not terminate it early. The walk is QUOTE-AWARE for the same reason: a
+    // `(` or `)` inside a string default (`DEFAULT 'x(y'`) is one character of
+    // text, not nesting. Counting it as nesting drove `depth` to -1, the head
+    // was dropped, and an unpinned SECURITY DEFINER function passed the gate
+    // with NO finding at all — the exact false negative this gate exists to
+    // prevent. Quoted strings, `$$`-quoted strings and dollar-quoted bodies are
+    // skipped whole, exactly as `splitSqlStatements` does.
     let depth = 0;
     let cursor = head.open;
-    for (; cursor < source.length; cursor += 1) {
-      if (source[cursor] === "(") depth += 1;
-      else if (source[cursor] === ")") {
+    while (cursor < source.length) {
+      const character = source[cursor]!;
+      if (character === "'") {
+        cursor += 1;
+        while (cursor < source.length) {
+          if (source[cursor] === "'" && source[cursor + 1] === "'") { cursor += 2; continue; }
+          if (source[cursor] === "'") { cursor += 1; break; }
+          cursor += 1;
+        }
+        continue;
+      }
+      if (character === "$") {
+        const tag = /^\$([A-Za-z_][A-Za-z0-9_]*)?\$/u.exec(source.slice(cursor, cursor + 64));
+        if (tag) {
+          const close = source.indexOf(tag[0], cursor + tag[0].length);
+          cursor = close === -1 ? source.length : close + tag[0].length;
+          continue;
+        }
+      }
+      if (character === "(") depth += 1;
+      else if (character === ")") {
         depth -= 1;
         if (depth === 0) break;
       }
+      cursor += 1;
     }
-    if (depth !== 0) return;
+    if (depth !== 0) {
+      // An argument list this reader cannot close is NOT a reason to report
+      // nothing. Dropping the head made the whole `CREATE` invisible, so an
+      // unpinned SECURITY DEFINER function passed the gate with no finding at
+      // all — the exact false negative this gate exists to prevent.
+      //
+      // The option region is the rest of the statement (bounded by the body's
+      // `AS` and by the next head, as above). An empty region would report the
+      // definition as "not privileged" and drop it again; keeping the text
+      // means `SECURITY DEFINER` and `RETURNS event_trigger` are still seen and
+      // the definition is reported as unpinned, which is the safe direction.
+      const restStart = head.open;
+      const restEnd = Math.min(
+        source.slice(restStart).search(BODY_AS) === -1
+          ? source.length
+          : restStart + source.slice(restStart).search(BODY_AS),
+        heads[position + 1]?.start ?? source.length,
+      );
+      definitions.push({ signature: `${head.name}(<unreadable>)`, options: source.slice(restStart, restEnd) });
+      return;
+    }
     const args = source.slice(head.open + 1, cursor);
     const optionsEnd = Math.min(
       source.slice(cursor + 1).search(BODY_AS) === -1 ? source.length : cursor + 1 + source.slice(cursor + 1).search(BODY_AS),
