@@ -56,6 +56,12 @@ test("attested review refuses a two-session cookie handoff before recording", as
   assert.equal(recordCalls, 0);
   assert.equal(rows.length, 0);
 
+  const forgedActorBinding = { ...secondBinding, actorId: sha256Digest("forged-actor") };
+  assert.equal((await handler(post(secondCookie, JSON.stringify({ review, expectedAuthentication: forgedActorBinding })))).status, 409,
+    "a matching epoch with a forged actor must be refused before recording");
+  assert.equal(recordCalls, 0);
+  assert.equal(rows.length, 0, "a forged actor must create zero review rows");
+
   const matchingBody = JSON.stringify({ review, expectedAuthentication: secondBinding });
   assert.equal((await handler(post(secondCookie, matchingBody))).status, 201);
   assert.equal(recordCalls, 1);
