@@ -272,7 +272,8 @@ export class LinearPipelineServiceV1 {
     const parsed = current.success ? current.data : legacyLinearPipelineTemplateInputSchemaV1.parse(raw);
     return { id: row.id, tenantId: this.scope.tenantId, projectId: row.project_id, name: row.name,
       description: row.description, stages: parsed.stages,
-      maxStages: Number(row.max_stages), maxTotalLoops: Number(row.max_total_loops), mayAdvanceUnattended: false,
+      maxStages: Number(row.max_stages), maxTotalLoops: Number(row.max_total_loops),
+      mayAdvanceUnattended: row.may_advance_unattended,
       maxDurationSeconds: Number(row.max_duration_seconds), version: Number(row.version),
       createdAt: iso(row.created_at), updatedAt: iso(row.updated_at) };
   }

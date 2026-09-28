@@ -88,6 +88,70 @@ export const pipelineRunPageSchemaV1 = z.object({ projectId: id, runs: z.array(z
   title: z.string().min(1).max(180), state: z.string(), updatedAt: z.string().datetime({ offset: true }) }).strict()).max(100),
   startsWork: z.literal(false), grantsExecutionAuthority: z.literal(false) }).strict();
 
+export const pipelineAdvanceReceiptSchemaV1 = z.object({
+  runId: id,
+  stageOrdinal: z.number().int().min(0).max(31),
+  jobId: id,
+  attemptId: id,
+  queueId: id,
+  replayed: z.boolean(),
+  advancedAt: z.string().datetime({ offset: true }),
+  startsWork: z.literal(true),
+  grantsExecutionAuthority: z.literal(false),
+  claimsCancellation: z.literal(false),
+}).strict();
+
+export const pipelineUnattendedTransitionSchemaV1 = z.object({
+  runId: id,
+  templateId: id,
+  policyId: id,
+  enabled: z.boolean(),
+  expectedRunVersion: z.number().int().positive(),
+  expectedTemplateVersion: z.number().int().positive(),
+}).strict();
+export const pipelineUnattendedTransitionReceiptSchemaV1 = z.object({
+  transitionId: id,
+  runId: id,
+  templateId: id,
+  policyId: id,
+  enabled: z.boolean(),
+  runVersion: z.number().int().positive(),
+  templateVersion: z.number().int().positive(),
+  occurredAt: z.string().datetime({ offset: true }),
+  replayed: z.boolean(),
+  startsWork: z.literal(false),
+  grantsExecutionAuthority: z.literal(false),
+}).strict();
+
+const historyKind = z.enum(["proposed", "approved", "ran", "checked", "resulted", "advanced"]);
+export const pipelineHistoryEventSchemaV1 = z.object({
+  id,
+  kind: historyKind,
+  actorId: id,
+  actorType: z.enum(["human", "agent", "worker", "service", "adapter"]),
+  action: z.string().min(1).max(180).regex(/^[A-Za-z0-9._:-]+$/),
+  targetType: z.string().min(1).max(80).regex(/^[A-Za-z0-9._:-]+$/),
+  targetId: id,
+  safeReason: z.string().min(1).max(120).regex(/^[a-z0-9._:-]+$/).nullable(),
+  occurredAt: z.string().datetime({ offset: true }),
+  chainPartition: z.string().regex(/^month:\d{4}-\d{2}$/),
+  chainSequence: z.number().int().positive(),
+  eventHash: digest,
+}).strict();
+export const pipelineHistorySchemaV1 = z.object({
+  runId: id,
+  projectId: id,
+  events: z.array(pipelineHistoryEventSchemaV1).max(200),
+  truncated: z.boolean(),
+  chainVerified: z.literal(true),
+  observedAt: z.string().datetime({ offset: true }),
+  startsWork: z.literal(false),
+  grantsExecutionAuthority: z.literal(false),
+}).strict();
+
 export type LinearPipelineTemplateInputV1 = z.infer<typeof linearPipelineTemplateInputSchemaV1>;
 export type PipelineStageTemplateV1 = z.infer<typeof pipelineStageTemplateSchemaV1>;
 export type PipelineRunViewV1 = z.infer<typeof pipelineRunViewSchemaV1>;
+export type PipelineAdvanceReceiptV1 = z.infer<typeof pipelineAdvanceReceiptSchemaV1>;
+export type PipelineHistoryV1 = z.infer<typeof pipelineHistorySchemaV1>;
+export type PipelineUnattendedTransitionV1 = z.infer<typeof pipelineUnattendedTransitionSchemaV1>;

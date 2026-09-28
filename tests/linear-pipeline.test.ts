@@ -365,9 +365,11 @@ test("0098 and 0096 down migrations refuse retained policy/history and remove ow
   const populatedTemplate = await populated.service.createTemplate(populated.identity, populated.project.projectId, template);
   await populated.service.instantiate(populated.identity, populated.project.projectId,
     { templateId: populatedTemplate.templateId, title: "Retained down guard" }, "linear-down-guard-0001");
+  const unattendedDown = await readFile("db/down/0099_pipeline_unattended_advance.sql", "utf8");
   const down = await readFile("db/down/0096_linear_pipeline_runs.sql", "utf8");
   const agentReviewDown = await readFile("db/down/0097_agent_review_plans.sql", "utf8");
   const publicationDown = await readFile("db/down/0098_pipeline_build_publications.sql", "utf8");
+  await populated.db.exec(unattendedDown);
   await assert.rejects(populated.db.exec(publicationDown), /0098 down migration refused/u);
   await populated.db.exec("ROLLBACK");
   await populated.db.exec(`ALTER TABLE pipeline_stage_runs DISABLE TRIGGER pipeline_stage_runs_guard;
@@ -376,6 +378,7 @@ test("0098 and 0096 down migrations refuse retained policy/history and remove ow
   await populated.db.exec(publicationDown);
   await assert.rejects(populated.db.exec(down), /down migration refused/u); await populated.db.exec("ROLLBACK");
   const empty = await taskFixture(); t.after(() => void empty.db.close());
+  await empty.db.exec(unattendedDown);
   await empty.db.exec(publicationDown);
   await empty.db.exec(agentReviewDown);
   await empty.db.exec(down);

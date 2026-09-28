@@ -1,0 +1,260 @@
+import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import test from "node:test";
+import type { DatabaseClient, DatabaseSession, QueryResult } from "../src/persistence/database";
+import { LinearPipelineServiceV1, PipelineAdvanceErrorV1, PipelineAdvanceServiceV1, ProductionPipelineAdvanceCapabilityV1,
+  type PipelineAdvanceCapabilityV1 } from "../src/pipelines/v1";
+import type { PipelineStageResolutionV1 } from "../src/pipelines/v1";
+import { computeAuthorityDigest, hmacSha256Tag, sha256Digest } from "../src/security";
+import { taskFixture } from "./helpers/web-task";
+import { now as webNow } from "./helpers/web-foundation";
+
+const key=new Uint8Array(32).fill(41), at=Date.parse("2026-09-27T12:00:00.000Z"), iso=(n=0)=>new Date(at+n).toISOString();
+const digest=(c:string)=>`sha256:${c.repeat(64)}`;
+const result=<T>(rows:T[]):QueryResult<T>=>({rows});
+const templateDefinition={name:"Pipeline",description:"Bounded pipeline.",stages:[
+  {ordinal:0,stageKind:"build",role:"builder",description:"Build.",requiredCapability:"code.change",workerId:"worker:one",
+    workerKind:"codex",nodeId:"node:one",selectionKey:"selection:one",model:"model-one",effort:"high",provider:null,profile:null,maxLoops:1},
+  {ordinal:1,stageKind:"check",role:"checker",description:"Check.",requiredCapability:"code.review",workerId:"worker:two",
+    workerKind:"claude-code",nodeId:"node:two",selectionKey:"selection:two",model:"model-two",effort:"high",provider:null,profile:null,maxLoops:1},
+  {ordinal:2,stageKind:"signoff",role:"validator",description:"Validate.",requiredCapability:"code.validate",workerId:"worker:three",
+    workerKind:"hermes",nodeId:"node:three",selectionKey:"selection:three",model:"model-three",effort:"medium",
+    provider:"provider:test",profile:"profile:test",maxLoops:0}],maxTotalLoops:2,maxDurationSeconds:3600} as const;
+
+function signedRows(overrides:{unattended?:boolean;tamperStage?:boolean;currentOrdinal?:number|null}={}){
+  const template:any={id:"pipeline-template:test",project_id:"project:test",name:templateDefinition.name,
+    description:templateDefinition.description,stages:templateDefinition.stages,max_stages:3,max_total_loops:2,
+    may_advance_unattended:overrides.unattended??true,max_duration_seconds:3600,version:2,created_at:iso(),updated_at:iso()};
+  const templateMaterial={id:template.id,tenantId:"tenant:test",projectId:template.project_id,name:template.name,
+    description:template.description,stages:template.stages,maxStages:3,maxTotalLoops:2,
+    mayAdvanceUnattended:template.may_advance_unattended,maxDurationSeconds:3600,version:2,createdAt:iso(),updatedAt:iso()};
+  template.record_digest=sha256Digest(templateMaterial);template.auth_tag=hmacSha256Tag(key,{purpose:"pipeline-template/v1",record:templateMaterial});
+  const run:any={id:"pipeline-run:test",project_id:"project:test",request_id:"request:test",template_id:template.id,
+    template_version:2,template_digest:template.record_digest,workflow_id:"workflow:test",title:"Run",state:"active",
+    started_at:iso(),updated_at:iso(),completed_at:null,
+    current_stage_ordinal:Object.prototype.hasOwnProperty.call(overrides,"currentOrdinal")?overrides.currentOrdinal:0,
+    unattended:overrides.unattended??true,version:2};
+  const runMaterial={id:run.id,tenantId:"tenant:test",projectId:run.project_id,requestId:run.request_id,templateId:run.template_id,
+    templateVersion:2,templateDigest:run.template_digest,workflowId:run.workflow_id,title:run.title,state:run.state,
+    startedAt:iso(),updatedAt:iso(),completedAt:null,currentStageOrdinal:run.current_stage_ordinal,unattended:run.unattended,version:2};
+  run.record_digest=sha256Digest(runMaterial);run.auth_tag=hmacSha256Tag(key,{purpose:"pipeline-run/v1",record:runMaterial});
+  const stages=templateDefinition.stages.map(stage=>{const row:any={project_id:"project:test",pipeline_run_id:run.id,
+    stage_ordinal:stage.ordinal,stage_kind:stage.stageKind,role:stage.role,current_job_id:`job:source:${stage.ordinal}`,
+    worker_id:stage.workerId,worker_kind:stage.workerKind,node_id:stage.nodeId,selection_key:stage.selectionKey,model:stage.model,
+    effort:stage.effort,provider:"provider" in stage?stage.provider:null,profile:"profile" in stage?stage.profile:null,
+    current_attempt_id:null,current_lease_id:null,state:"proposed",max_loops:stage.maxLoops,handoff_from_result_digest:null,
+    signoff_review_id:null,started_at:null,finished_at:null,version:1};
+    const material={id:`${run.id}:stage:${stage.ordinal}`,tenantId:"tenant:test",projectId:"project:test",pipelineRunId:run.id,
+      stageOrdinal:stage.ordinal,stageKind:stage.stageKind,role:stage.role,workerId:stage.workerId,workerKind:stage.workerKind,
+      nodeId:stage.nodeId,selectionKey:stage.selectionKey,model:stage.model,effort:stage.effort,provider:row.provider,profile:row.profile,
+      currentJobId:row.current_job_id,currentAttemptId:null,currentLeaseId:null,state:"proposed",maxLoops:stage.maxLoops,
+      handoffFromResultDigest:null,signoffReviewId:null,startedAt:null,finishedAt:null,version:1};
+    row.record_digest=sha256Digest(material);row.auth_tag=hmacSha256Tag(key,{purpose:"pipeline-stage-run/v1",record:material});return row;});
+  if(overrides.tamperStage)stages[1]!.model="tampered";
+  return{template,run,stages};
+}
+function job(id:string){const authority:any={projectId:"project:test",allowedExecutor:"worker:one",allowedOperations:["task.execute"],
+  credentialRefs:[],filesystemRoots:["/synthetic"],networkPolicy:"none",allowedNetworkDestinations:[],effectPolicy:"none",
+  maxRisk:"low",maxDurationSeconds:3600,maxConcurrentEffects:0,expiresAt:iso(3600000),digest:""};authority.digest=computeAuthorityDigest(authority);
+  return{contractVersion:"control-room-domain/v1",kind:"job",id,tenantId:"tenant:test",workflowId:"workflow:test",
+    projectId:"project:test",jobType:"task.proposal",specVersion:"1.0.0",inputDigest:digest("a"),state:"proposed",priority:50,
+    requiredCapability:"code.change",dependsOnJobIds:[],authority,retryPolicy:{maxAttempts:1,backoffSeconds:0,
+      retryableFailureCodes:[],retryAfterOrphan:false,ambiguousEffectPolicy:"attention"},version:0,createdAt:iso(),updatedAt:iso()};}
+
+function fixture(overrides:{unattended?:boolean;tamperStage?:boolean;route?:string;currentOrdinal?:number|null;
+  states?: PipelineStageResolutionV1["state"][];
+  disableDuringDispatch?:boolean}={}){
+  const rows=signedRows(overrides),policy={id:"policy:test",project_id:"project:test",coordinator_identity_id:"agent:lead",
+    coordinator_version:1,state:"active",version:1,policy_digest:digest("p"),allowed_actions:["tasks.assign"],
+    eligible_routes:["route:one","route:two","route:three"],risk_ceiling:"low",max_total_tasks:3,max_total_cost_microusd:1000,max_concurrent_tasks:2,
+    valid_from:iso(-1000),valid_until:iso(60000)};const receipts=new Map<number,any>();let enabled=true,effects=0,chain=Promise.resolve();
+  let states=overrides.states??["eligible","terminal_failure","terminal_failure"];
+  const query:DatabaseSession["query"]=async<T>(sql:string,params:unknown[]=[]):Promise<QueryResult<T>>=>{
+    if(sql.startsWith("SELECT project_id FROM pipeline_runs"))return result([{project_id:"project:test"}] as T[]);
+    if(sql.includes("FROM pipeline_runs")&&sql.includes("FOR UPDATE"))return result([rows.run] as T[]);
+    if(sql.includes("FROM pipeline_templates")&&sql.includes("FOR UPDATE"))return result([rows.template] as T[]);
+    if(sql.includes("FROM pipeline_stage_runs")&&sql.includes("ORDER BY stage_ordinal FOR UPDATE"))return result(rows.stages as T[]);
+    if(sql.includes("FROM projects p"))return result([{lifecycle:"active"}] as T[]);
+    if(sql.includes("FROM pipeline_advance_receipts")&&sql.includes("FOR SHARE"))return result((receipts.has(Number(params[2]))?[receipts.get(Number(params[2]))]:[]) as T[]);
+    if(sql.includes("FROM control_jobs")){const id=String(params[2]),ordinal=Number(id.split(":").at(-1)),stage=rows.stages[ordinal]!;
+      const value=job(id);value.authority.allowedExecutor=stage.worker_id;value.authority.digest=computeAuthorityDigest(value.authority);
+      return result([{payload:value,project_id:"project:test",workflow_id:"workflow:test",pipeline_run_id:"pipeline-run:test",
+        stage_kind:stage.stage_kind,stage_ordinal:ordinal}] as T[]);}
+    if(sql.includes("FROM control_task_execution_plans")){const ordinal=Number(String(params[2]).split(":").at(-1));
+      return result([{source_job_id:`job:source:${ordinal}`}] as T[]);}
+    if(sql.includes("FROM control_project_delegation_policies"))return result([policy] as T[]);
+    if(sql.startsWith("INSERT INTO pipeline_advance_receipts")){const receipt={id:params[0],project_id:params[2],pipeline_run_id:params[3],
+      stage_ordinal:params[4],source_job_id:params[5],execution_job_id:params[6],attempt_id:params[7],queue_id:params[8],
+      selection_digest:params[9],template_version:params[10],template_digest:params[11],run_version:params[12],run_digest:params[13],
+      policy_id:params[14],policy_version:params[15],policy_digest:params[16],delegation_receipt_id:params[17],
+      delegation_receipt_digest:params[18],request_digest:params[19],receipt_digest:params[20],auth_tag:params[21],advanced_at:params[22]};
+      receipts.set(Number(params[4]),receipt);
+      return result([] as T[]);}
+    if(sql.includes("SELECT event_digest,event_hash FROM audit_events"))return result([] as T[]);
+    if(sql.includes("INSERT INTO control_audit_chain_heads")||sql.includes("INSERT INTO audit_events"))return result([] as T[]);
+    if(sql.includes("SELECT head_hash,event_count FROM control_audit_chain_heads")&&sql.includes("FOR UPDATE"))
+      return result([{head_hash:digest("0"),event_count:0}] as T[]);
+    if(sql.includes("UPDATE control_audit_chain_heads"))return result([{event_hash:digest("b")}] as T[]);
+    throw new Error(`unexpected SQL: ${sql}`);};
+  const db:DatabaseClient={query,transaction:async work=>work({query}),transactionWithPreCommitCheck:async(work,check)=>{
+    let release!:()=>void;const previous=chain;chain=new Promise<void>(resolve=>{release=resolve;});await previous;
+    try{const value=await work({query});await check();return value;}finally{release();}}};
+  const capability:PipelineAdvanceCapabilityV1={
+    resolveStageInSession:async(_tx,input)=>({state:states[input.stageOrdinal]??"terminal_failure",
+      executionJobId:`job:execution:${input.stageOrdinal}`,expectedInputDigest:digest("a")}),
+    assertAcceptedPredecessorInSession:()=>{},assertSelectionCurrentInSession:()=>{},assertSelectionCurrent:()=>{},
+    authorizeDelegationInSession:async(_tx,selection)=>({receiptId:"delegation:one",receiptDigest:digest("d"),policyId:"policy:test",
+      policyVersion:1,policyDigest:digest("p"),coordinatorVersion:1,action:"tasks.assign",routeId:overrides.route??`route:${["one","two","three"][selection.stageOrdinal]}`,
+      executorId:selection.workerId,taskUnits:0,committedCostMicroUsd:0,nextCost:{kind:"known",microUsd:10,evidenceDigest:digest("e")},
+      concurrentTasks:0,validUntil:iso(60000)}),
+    assignAndQueueInSession:async(_tx,_input,gate)=>{if(overrides.disableDuringDispatch)enabled=false;await gate.assertCurrent();
+      effects+=1;return{attemptId:"attempt:one",queueId:"queue:one",replayed:false};}};
+  const service=new PipelineAdvanceServiceV1(db,{tenantId:"tenant:test",workspaceId:"workspace:test"},key,
+    {unattendedEnabled:()=>enabled,capability},()=>at);
+  return{service,setStates(value:PipelineStageResolutionV1["state"][]){states=value;},setCurrentOrdinal(value:number|null){
+    rows.run.current_stage_ordinal=value;rows.run.version+=1;rows.run.updated_at=iso(rows.run.version);
+    const material={id:rows.run.id,tenantId:"tenant:test",projectId:rows.run.project_id,requestId:rows.run.request_id,
+      templateId:rows.run.template_id,templateVersion:rows.run.template_version,templateDigest:rows.run.template_digest,
+      workflowId:rows.run.workflow_id,title:rows.run.title,state:rows.run.state,startedAt:iso(),updatedAt:rows.run.updated_at,
+      completedAt:null,currentStageOrdinal:value,unattended:rows.run.unattended,version:rows.run.version};
+    rows.run.record_digest=sha256Digest(material);rows.run.auth_tag=hmacSha256Tag(key,{purpose:"pipeline-run/v1",record:material});
+  },get effects(){return effects;},get receipts(){return receipts;}};
+}
+
+test("durable advance replays with a stable timestamp after a lost response or restart",async()=>{const f=fixture();
+  const first=await f.service.advance("pipeline-run:test","policy:test");const replay=await f.service.advance("pipeline-run:test","policy:test");
+  assert.equal(first.advancedAt,replay.advancedAt);assert.equal(replay.replayed,true);assert.equal(f.effects,1);});
+test("concurrent exact transitions create one delivery and one durable receipt",async()=>{const f=fixture();
+  const values=await Promise.all([f.service.advance("pipeline-run:test","policy:test"),f.service.advance("pipeline-run:test","policy:test")]);
+  assert.equal(f.effects,1);assert.deepEqual(values.map(value=>value.replayed).sort(),[false,true]);});
+test("changed policy content cannot replay a durable transition",async()=>{const f=fixture();await f.service.advance("pipeline-run:test","policy:test");
+  await assert.rejects(f.service.advance("pipeline-run:test","policy:changed"),
+    (error:unknown)=>error instanceof PipelineAdvanceErrorV1&&error.safeReason==="advance_conflict");});
+test("template and run unattended consent are both required",async()=>{const f=fixture({unattended:false});
+  await assert.rejects(f.service.advance("pipeline-run:test","policy:test"),
+    (error:unknown)=>error instanceof PipelineAdvanceErrorV1&&error.safeReason==="unattended_not_authorized");assert.equal(f.effects,0);});
+test("every authenticated stage projection is verified before advance",async()=>{const f=fixture({tamperStage:true});
+  await assert.rejects(f.service.advance("pipeline-run:test","policy:test"),
+    (error:unknown)=>error instanceof PipelineAdvanceErrorV1&&error.safeReason==="pipeline_integrity_failed");assert.equal(f.effects,0);});
+test("server-resolved route must match the exact policy route",async()=>{const f=fixture({route:"route:other"});
+  await assert.rejects(f.service.advance("pipeline-run:test","policy:test"),
+    (error:unknown)=>error instanceof PipelineAdvanceErrorV1&&error.safeReason==="policy_route_mismatch");assert.equal(f.effects,0);});
+test("current stage ordinal cannot move backwards",async()=>{const f=fixture({currentOrdinal:1});
+  await assert.rejects(f.service.advance("pipeline-run:test","policy:test"),
+    (error:unknown)=>error instanceof PipelineAdvanceErrorV1&&error.safeReason==="advance_conflict");});
+test("null or lower current stage ordinal refuses instead of selecting a later stage",async()=>{
+  for(const currentOrdinal of [null,0] as const){const states=currentOrdinal===null?["eligible"]:["accepted","eligible"];
+    const f=fixture({currentOrdinal,states:states as PipelineStageResolutionV1["state"][]});await assert.rejects(f.service.advance("pipeline-run:test","policy:test"),
+      (error:unknown)=>error instanceof PipelineAdvanceErrorV1&&error.safeReason==="advance_conflict");}
+});
+test("accepted current stage advances exactly one ordinal while in-flight lost response replays prior receipt",async()=>{
+  const f=fixture();const first=await f.service.advance("pipeline-run:test","policy:test");
+  const lost=await f.service.advance("pipeline-run:test","policy:test");assert.equal(lost.replayed,true);
+  f.setStates(["accepted","eligible","terminal_failure"]);
+  f.setCurrentOrdinal(1);
+  const next=await f.service.advance("pipeline-run:test","policy:test");
+  assert.equal(first.stageOrdinal,0);assert.equal(next.stageOrdinal,1);assert.equal(next.replayed,false);assert.equal(f.effects,2);
+});
+test("live installation switch is checked at the delivery boundary",async()=>{const f=fixture({disableDuringDispatch:true});
+  await assert.rejects(f.service.advance("pipeline-run:test","policy:test"),
+    (error:unknown)=>error instanceof PipelineAdvanceErrorV1&&error.safeReason==="unattended_disabled");assert.equal(f.effects,0);});
+
+test("0099 owner transition authenticates and persists both unattended consents with exact replay",async t=>{
+  const f=await taskFixture();t.after(()=>void f.db.close());
+  const linear=new LinearPipelineServiceV1(f.client,{tenantId:"tenant:web",workspaceId:"workspace:web"},key,
+    {assertCurrent:()=>true,isAcceptedResultCurrent:()=>false},()=>webNow);
+  const saved=await linear.createTemplate(f.identity,f.project.projectId,templateDefinition);
+  const run=await linear.instantiate(f.identity,f.project.projectId,{templateId:saved.templateId,title:"Authorized run"},
+    "pipeline-unattended-run-0001");
+  await f.db.query(`INSERT INTO control_project_delegation_policies(tenant_id,id,project_id,coordinator_identity_id,
+    coordinator_version,state,version,policy_digest,owner_identity_id,owner_identity_digest,allowed_actions,eligible_routes,
+    risk_ceiling,effect_ceiling,max_total_tasks,max_total_cost_microusd,max_concurrent_tasks,valid_from,valid_until,payload,
+    created_at,updated_at) VALUES('tenant:web','policy:advance',$1,'identity:web',1,'active',1,$2,'identity:web',$2,
+    '["tasks.assign"]','["route:one"]','low','none',3,1000,2,$3,$4,'{}',$3,$3)`,
+  [f.project.projectId,digest("c"),new Date(webNow-1000).toISOString(),new Date(webNow+60000).toISOString()]);
+  const service=new PipelineAdvanceServiceV1(f.client,{tenantId:"tenant:web",workspaceId:"workspace:web"},key,{},()=>webNow);
+  const command={runId:run.runId,templateId:saved.templateId,policyId:"policy:advance",enabled:true,
+    expectedRunVersion:1,expectedTemplateVersion:1};
+  const first=await service.setUnattended(f.identity,f.project.projectId,command,"pipeline-unattended-enable-0001");
+  const replay=await service.setUnattended(f.identity,f.project.projectId,command,"pipeline-unattended-enable-0001");
+  assert.equal(first.replayed,false);assert.equal(replay.replayed,true);assert.equal(first.occurredAt,replay.occurredAt);
+  assert.deepEqual((await f.db.query<{may_advance_unattended:boolean;unattended:boolean;state:string;started_at:string|null}>(
+    `SELECT t.may_advance_unattended,r.unattended,r.state,r.started_at FROM pipeline_templates t JOIN pipeline_runs r
+    ON r.tenant_id=t.tenant_id AND r.template_id=t.id WHERE r.id=$1`,[run.runId])).rows[0],
+  {may_advance_unattended:true,unattended:true,state:"proposed",started_at:null});
+  assert.equal((await f.db.query<{count:number}>(`SELECT count(*)::int count FROM pipeline_unattended_transitions`)).rows[0]!.count,1);
+  await assert.rejects(service.setUnattended(f.identity,f.project.projectId,{...command,enabled:false},
+    "pipeline-unattended-enable-0001"),/conflict/u);
+  await f.db.exec("ALTER TABLE pipeline_unattended_transitions DISABLE TRIGGER pipeline_unattended_transitions_immutable");
+  await f.db.query("UPDATE pipeline_unattended_transitions SET auth_tag=$1",["hmac-sha256:"+"0".repeat(64)]);
+  await f.db.exec("ALTER TABLE pipeline_unattended_transitions ENABLE TRIGGER pipeline_unattended_transitions_immutable");
+  await assert.rejects(service.setUnattended(f.identity,f.project.projectId,command,"pipeline-unattended-enable-0001"),
+    (error:unknown)=>error instanceof PipelineAdvanceErrorV1&&error.safeReason==="pipeline_integrity_failed");
+  const down=await readFile("db/down/0099_pipeline_unattended_advance.sql","utf8");
+  await assert.rejects(f.db.exec(down),/down migration refused/u);await f.db.exec("ROLLBACK");
+});
+
+test("0099 owns append-only records, least-privilege grants, and a guarded down path",async()=>{
+  const [up,down,grants,web,coordinator]=await Promise.all([readFile("db/migrations/0099_pipeline_unattended_advance.sql","utf8"),
+    readFile("db/down/0099_pipeline_unattended_advance.sql","utf8"),readFile("db/roles/production_table_grants.sql","utf8"),
+    readFile("db/roles/private_web_roles.sql","utf8"),readFile("db/roles/task_coordinator_roles.sql","utf8")]);
+  for(const table of ["pipeline_unattended_transitions","pipeline_advance_receipts"]){
+    assert.match(up,new RegExp(`CREATE TABLE ${table}`));assert.match(up,new RegExp(`REVOKE ALL ON[\\s\\S]*${table}`));
+    assert.match(grants,new RegExp(table));assert.match(down,new RegExp(`EXISTS \\(SELECT 1 FROM ${table}\\)`));}
+  assert.match(web,/GRANT INSERT ON pipeline_unattended_transitions TO control_room_private_web/u);
+  assert.match(web,/GRANT UPDATE \(may_advance_unattended, version, updated_at, record_digest, auth_tag\)[\s\S]*ON pipeline_templates/u);
+  assert.match(web,/GRANT UPDATE \(unattended, updated_at, version, template_version, template_digest,[\s\S]*ON pipeline_runs/u);
+  assert.match(coordinator,/GRANT INSERT ON pipeline_advance_receipts TO control_room_task_coordinator/u);
+  assert.match(up,/BEFORE UPDATE OR DELETE/u);assert.match(up,/BEFORE TRUNCATE/u);
+  assert.match(down,/REVOKE UPDATE \(may_advance_unattended, version, updated_at, record_digest, auth_tag\)[\s\S]*pipeline_templates FROM control_room_private_web/u);
+  assert.match(down,/REVOKE UPDATE \(unattended, updated_at, version, template_version, template_digest,[\s\S]*pipeline_runs FROM control_room_private_web/u);
+  assert.match(down,/may_advance_unattended/u);assert.match(down,/unattended/u);
+});
+
+test("production adapter reserves through ordinary assignment before the existing native delivery queue",async()=>{
+  const calls:string[]=[],tx={query:async<T>()=>result([] as T[])};let current=0;
+  const assignment:any={assignScheduledInSession:async(_tx:DatabaseSession,_input:unknown,authority:{assertCurrent:()=>void|Promise<void>;
+    commitDeadline:(value:number)=>void})=>{calls.push("assign");await authority.assertCurrent();authority.commitDeadline(at+30000);
+    return{receipt:{attemptId:"attempt:one",leaseId:"lease:one",leaseEpoch:1},replayed:false};}};
+  const supporting:any={resolveStageInSession:async()=>({state:"eligible",executionJobId:"job:execution:0",expectedInputDigest:digest("a")}),
+    assertAcceptedPredecessorInSession:()=>{},assertSelectionCurrentInSession:()=>{},assertSelectionCurrent:()=>{},
+    authorizeDelegationInSession:async()=>({})};
+  const queue={enqueueAssignedInSession:async(_tx:DatabaseSession,input:any,authority:any)=>{calls.push("queue");
+    assert.equal(input.attemptId,"attempt:one");await authority.assertCurrent();return{queueId:"queue:one",replayed:false};}};
+  const capability=new ProductionPipelineAdvanceCapabilityV1(supporting,assignment,queue);
+  const selection:any={tenantId:"tenant:test",projectId:"project:test",runId:"pipeline-run:test",stageOrdinal:0,
+    sourceJobId:"job:source:0",executionJobId:"job:execution:0",workerId:"worker:one",workerKind:"codex",nodeId:"node:one",
+    selectionKey:"selection:one",model:"model-one",effort:"high",provider:null,profile:null};
+  const saved=await capability.assignAndQueueInSession(tx,{...selection,expectedInputDigest:digest("a"),policyId:"policy:test",
+    idempotencyKey:"pipeline-advance:test",commitDeadline:at+60000},{actorId:"service:pipeline-advance:v1",assertCurrent:()=>{current+=1;}});
+  assert.deepEqual(calls,["assign","queue"]);assert.equal(saved.queueId,"queue:one");assert.ok(current>=3);
+});
+
+test("history traverses batch, task, run, attempt, artifact and explicit review actions in audit-chain order",async()=>{
+  const partition="month:2026-09",genesis=digest("0"),specs=[
+    ["audit:batch","agent:proposer","work_batches.propose","work_batch","batch:one"],
+    ["audit:approval","identity:owner","work_batches.approved","work_batch","batch:one"],
+    ["audit:assign","service:assignment","tasks.assign","job","job:execution:0"],
+    ["audit:result","worker:one","task.result.submitted_for_review","artifact","artifact:one"],
+    ["audit:review","agent:checker","tasks.reviews.record","job","job:execution:0"],
+    ["audit:unknown","service:other","unrelated.action","job","job:execution:0"],
+  ] as const;let previous=genesis;
+  const stored=specs.map((spec,index)=>{const [id,actorId,action,targetType,targetId]=spec,occurredAt=iso(index),safeMetadata={};
+    const material={id,tenantId:"tenant:test",workspaceId:"workspace:test",projectId:"project:test",actorId,
+      actorType:actorId.startsWith("identity")?"human":actorId.startsWith("agent")?"agent":actorId.startsWith("worker")?"worker":"service",
+      action,targetType,targetId,correlationId:null,idempotencyKey:null,safeMetadata,occurredAt};const event_digest=sha256Digest(material),
+      event_hash=sha256Digest({chainVersion:1,partition,sequence:index+1,previousHash:previous,eventDigest:event_digest});
+    const row={...material,chain_sequence:index+1,event_digest,prev_hash:previous,event_hash};previous=event_hash;return row;});
+  const query:DatabaseSession["query"]=async<T>(sql:string)=>{if(sql.startsWith("SELECT id FROM pipeline_runs"))return result([{id:"pipeline-run:test"}] as T[]);
+    if(sql.includes("WITH RECURSIVE source_jobs AS"))return result(stored.map(row=>({id:row.id,actor_id:row.actorId,actor_type:row.actorType,
+      action:row.action,target_type:row.targetType,target_id:row.targetId,safe_metadata:row.safeMetadata,occurred_at:row.occurredAt,
+      chain_partition:partition,chain_sequence:row.chain_sequence,event_hash:row.event_hash})) as T[]);
+    if(sql.includes("tenant_id as \"tenantId\""))return result(stored as T[]);
+    if(sql.includes("SELECT head_hash,event_count FROM control_audit_chain_heads"))return result([{head_hash:previous,event_count:stored.length}] as T[]);
+    throw new Error(`unexpected SQL: ${sql}`);};
+  const db:DatabaseClient={query,transaction:async work=>work({query}),transactionWithPreCommitCheck:async(work,check)=>{const value=await work({query});await check();return value;}};
+  const history=await new PipelineAdvanceServiceV1(db,{tenantId:"tenant:test",workspaceId:"workspace:test"},key,{},()=>at)
+    .history("project:test","pipeline-run:test",20);
+  assert.equal(history.chainVerified,true);assert.deepEqual(history.events.map(event=>event.kind),
+    ["proposed","approved","ran","resulted","checked"]);assert.deepEqual(history.events.map(event=>event.chainSequence),[1,2,3,4,5]);
+});
