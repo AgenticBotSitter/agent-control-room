@@ -285,21 +285,28 @@
      line is the honesty this app exists to keep. */
   .private-local-worker-evidence > p { margin-block: .3rem; }
 
-  /* Attention first, without a DOM reorder. `main` becomes a flex column at
-     phone width so the framing copy can be placed after the panels with
-     `order`. Every child of `main` is a direct sibling, so the reordering
-     applies to real top-level blocks rather than to a nested grid's items.
+  /* Attention first, with no paint reordering anywhere.
+     An earlier version made `main` a flex column here and gave the intro,
+     the dashboard, the worker-evidence panel and this copy explicit `order`
+     values, so the panels could be painted above the copy without touching
+     the DOM. That was the wrong tool. CSS `order` changes paint order only:
+     keyboard focus and screen-reader reading order still follow the DOM, so
+     the focusable "Check saved dashboard again" button was the first control
+     in `main` for a keyboard while painting last for a sighted owner. In
+     hosted mode it was worse — the installation panels, the "New task" link
+     and operator capacity carry no `order`, so they painted at the default 0,
+     ahead of the dashboard's `order: 1`, and the attention-first result did
+     not hold at all.
 
-     The reading order in the DOM is unchanged — heading, copy, panels — so
-     the tab and screen-reader sequence is exactly what it was before; only
-     the painted order at phone width differs. The eyebrow and <h1> stay above
-     the panels on purpose: the owner should know which workspace they are in
-     before the counts. Only the explanatory copy moves. */
-  .private-home-main { display: flex; flex-direction: column; }
-  .private-home-intro { order: 0; }
-  .private-dashboard-grid { order: 1; }
-  .private-local-worker-evidence { order: 2; }
-  .private-home-lead { order: 3; }
+     The rule is now: Home's children are in their reading order in the
+     markup, and that is the only order. The copy is last in the DOM, so this
+     block only has to keep it compact — and note the dashboard's "Needs
+     attention" panel is already the first panel inside the grid, which is
+     what puts attention above the fold. tests/owner-ui.test.tsx asserts no
+     `order` can be reintroduced across these siblings. */
+  .private-home-main { gap: 1rem; }
+  .private-home-intro { margin-bottom: 0; }
+  .private-home-lead { border-top: 1px solid var(--border); padding-top: 1rem; }
 
   /* The status chips must be the first thing on the page. At 800px and below
      `.private-columns` becomes one column and `.private-create` is pinned to

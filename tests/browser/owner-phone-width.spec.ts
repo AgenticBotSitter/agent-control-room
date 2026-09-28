@@ -23,12 +23,15 @@
 // new undersized *control* fails the lane while a prose link is asserted to keep
 // its own documented floor.
 import { expect, test, type Page } from "@playwright/test";
+import { assertDisposableBrowserOrigin } from "../../private-app/app/browser-test-origin";
 
 const ownerCode = process.env.CONTROL_ROOM_E2E_OWNER_CODE;
 if (!ownerCode) throw new Error("CONTROL_ROOM_E2E_OWNER_CODE is required");
-const origin = process.env.CONTROL_ROOM_E2E_ORIGIN;
-if (!origin || new URL(origin).hostname !== "127.0.0.1" || new URL(origin).port === "3210")
-  throw new Error("phone_width_browser_refused_non_disposable_origin");
+// The live-app refusal lives in `browser-test-origin.ts`, not inline here, so
+// that `tests/owner-phone-width-origin-refusal.test.ts` can import and assert
+// the same guard this call uses. An inline condition in this file was the only
+// refusal the suite had, and removing it left discovery green.
+assertDisposableBrowserOrigin(process.env.CONTROL_ROOM_E2E_ORIGIN);
 
 /** 375x812 is the narrowest audited device. 390x844 is covered by the audit run
  * recorded in the PR body; 375 is the one that fails first, so it gates CI. */
