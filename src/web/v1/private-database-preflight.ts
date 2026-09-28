@@ -75,6 +75,7 @@ const updates: Record<string, readonly string[]> = {
     "decision_auth_tag", "version", "updated_at"],
   work_batch_agent_queue_heads: ["next_position", "updated_at"],
   control_jobs: ["stage_kind", "stage_ordinal", "pipeline_run_id"],
+  pipeline_templates: ["may_advance_unattended", "version", "updated_at", "record_digest", "auth_tag"],
   pipeline_runs: ["unattended", "state", "started_at", "updated_at", "version", "template_version", "template_digest",
     "record_digest", "auth_tag"],
   tenants: ["coordinator_lock"],

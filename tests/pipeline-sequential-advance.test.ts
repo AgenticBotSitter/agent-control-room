@@ -350,6 +350,8 @@ test("0099 owns append-only records, least-privilege grants, and a guarded down 
   assert.match(coordinator,/GRANT UPDATE \(state, completed_at, current_stage_ordinal, updated_at, version, record_digest, auth_tag\)[\s\S]*ON pipeline_runs/u);
   assert.match(preflight,/privateWebReadTables[\s\S]*pipeline_unattended_transitions/u);
   assert.match(preflight,/inserts\.add\("pipeline_unattended_transitions"\)/u);
+  assert.match(preflight,/pipeline_templates: \["may_advance_unattended", "version", "updated_at", "record_digest", "auth_tag"\]/u);
+  assert.match(preflight,/pipeline_runs: \["unattended", "state", "started_at", "updated_at", "version", "template_version", "template_digest"/u);
   assert.match(preflight,/coordinatorReads\.push\([\s\S]*pipeline_advance_receipts/u);
   assert.match(preflight,/coordinatorInserts\.add\("pipeline_advance_receipts"\)/u);
   assert.match(up,/BEFORE UPDATE OR DELETE/u);assert.match(up,/BEFORE TRUNCATE/u);
