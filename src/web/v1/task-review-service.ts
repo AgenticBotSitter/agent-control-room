@@ -79,7 +79,8 @@ export class WebTaskReviewService {
     return hmacSha256Tag(this.integrityKey, { purpose: "web-task-review-command/v1", ...row,
       occurred_at: new Date(row.occurred_at).toISOString() });
   }
-  private async receipt(tx: DatabaseSession, actor: WebActor, row: Row) {
+  private async receipt(tx: DatabaseSession, actor: WebActor, row: Row,
+    records?: ReadonlyMap<string, unknown>) {
     const command = commandSchema.parse(row.command), receipt = command.receipt;
     assertNoSecretMaterial(command);
     const { auth_tag, ...material } = row;
@@ -94,18 +95,22 @@ export class WebTaskReviewService {
       || receipt.targetDigest !== command.draft.targetDigest || receipt.contentHash !== command.draft.contentHash
       || receipt.decision !== command.draft.decision || receipt.feedbackDigest !== sha256Digest(command.draft.feedback))
       throw new Error("review_receipt_unavailable");
-    const review = await this.gate(tx).getRecord(this.scope.tenantId, receipt.reviewId, "review") as CompletionReviewV1 | undefined;
+    const record = (kind: string, id: string) => records?.get(JSON.stringify([kind, id]));
+    const review = (records ? record("review", receipt.reviewId)
+      : await this.gate(tx).getRecord(this.scope.tenantId, receipt.reviewId, "review")) as CompletionReviewV1 | undefined;
     if (!review || review.reviewer.actorId !== actor.id || review.reviewer.actorType !== "human"
       || review.targetId !== receipt.targetId || review.targetDigest !== receipt.targetDigest || review.projectId !== receipt.projectId
       || review.decision !== receipt.decision || review.reviewedAt !== receipt.recordedAt || review.authority !== "completion_gate"
       || review.findingIds.join() !== (receipt.findingId ?? "")) throw new Error("review_receipt_unavailable");
     if (receipt.findingId) {
-      const finding = await this.gate(tx).getRecord(this.scope.tenantId, receipt.findingId, "finding") as CompletionFindingV1 | undefined;
+      const finding = (records ? record("finding", receipt.findingId)
+        : await this.gate(tx).getRecord(this.scope.tenantId, receipt.findingId, "finding")) as CompletionFindingV1 | undefined;
       if (!finding || finding.reviewId !== review.id || finding.statementDigest !== receipt.feedbackDigest) throw new Error("review_receipt_unavailable");
     }
     if (command.draft.acceptanceAttestation) {
-      const verification = await this.gate(tx).getRecord(this.scope.tenantId,
-        this.verificationId(actor.id, receipt.targetId, command.draft.acceptanceAttestation.scenarioId), "verification") as CompletionVerificationV1 | undefined;
+      const verificationId = this.verificationId(actor.id, receipt.targetId, command.draft.acceptanceAttestation.scenarioId);
+      const verification = (records ? record("verification", verificationId)
+        : await this.gate(tx).getRecord(this.scope.tenantId, verificationId, "verification")) as CompletionVerificationV1 | undefined;
       if (!verification || verification.targetId !== receipt.targetId || verification.targetDigest !== receipt.targetDigest
         || verification.verifier.actorId !== actor.id || verification.verifier.actorType !== "human"
         || verification.scenarioId !== command.draft.acceptanceAttestation.scenarioId || verification.outcome !== "passed")
@@ -114,7 +119,7 @@ export class WebTaskReviewService {
     return command;
   }
   private async context(tx: DatabaseSession, actor: WebActor, projectId: string, jobId: string, artifactId: string,
-    targetId: string, gate = this.gate(tx)) {
+    targetId: string, gate = this.gate(tx), readOnly = false) {
     actor.require("tasks.read", projectId); actor.require("tasks.results.read", projectId);
     const project = await this.projects.getViewInSession(tx, actor, projectId);
     const row = (await tx.query<{ id: string; project_id: string; workflow_id: string; state: string; version: number; payload: unknown }>(
@@ -126,14 +131,17 @@ export class WebTaskReviewService {
       || job.state !== row.state || job.version !== Number(row.version) || job.authority.projectId !== projectId
       || job.authority.digest !== computeAuthorityDigest(job.authority))
       throw new Error("review_task_unavailable");
-    const snapshot = await gate.snapshot(this.scope.tenantId, targetId).catch((error: unknown) => {
+    const notFound = (error: unknown): never => {
       if (error instanceof CompletionGateErrorV1 && error.safeCode === "record_not_found")
         throw new WebAccessError("not_found");
       throw error;
-    });
+    };
+    const inspected = readOnly ? await gate.inspectTargetContext(this.scope.tenantId, targetId).catch(notFound) : undefined;
+    const snapshot = inspected?.snapshot ?? await gate.snapshot(this.scope.tenantId, targetId).catch(notFound);
     if (snapshot.target.projectId !== projectId || snapshot.target.kind !== "document")
       throw new WebAccessError("not_found");
-    const profile = await gate.getRecord(this.scope.tenantId, snapshot.target.acceptanceProfileId, "profile") as CompletionAcceptanceProfileV1;
+    const profile = inspected?.profile ?? await gate.getRecord(this.scope.tenantId,
+      snapshot.target.acceptanceProfileId, "profile") as CompletionAcceptanceProfileV1;
     const lineage = await readTaskReviewPlanV1(tx, this.integrityKey, this.scope.tenantId, projectId, jobId);
     const result = await this.results.read(tx, this.scope.tenantId, projectId, jobId, artifactId);
     if (!result || result.receipt.contentHash !== snapshot.target.subjectDigest
@@ -141,10 +149,15 @@ export class WebTaskReviewService {
       throw new WebAccessError("conflict");
     verifyTaskReviewTargetV1(lineage, snapshot.target, result.receipt);
     const risk = risks[Math.max(risks.indexOf(profile.minimumRisk), risks.indexOf(job.authority.maxRisk))];
-    const ownRecordedReview = (await tx.query(`SELECT id FROM control_completion_gate_records WHERE tenant_id=$1 AND project_id=$2
+    const ownRecordedReview = inspected ? [...inspected.records.entries()].some(([key, value]) => {
+      if (!key.startsWith('["review",')) return false;
+      const review = value as CompletionReviewV1;
+      return review.projectId === projectId && review.targetId === targetId && review.reviewer.actorId === actor.id
+        && review.reviewer.actorType === "human" && review.authority === "completion_gate";
+    }) : (await tx.query(`SELECT id FROM control_completion_gate_records WHERE tenant_id=$1 AND project_id=$2
       AND kind='review' AND parent_id=$3 AND payload->'reviewer'->>'actorId'=$4 AND payload->>'authority'='completion_gate'`,
       [this.scope.tenantId, projectId, targetId, actor.id])).rows.length > 0;
-    return { project, snapshot, profile, risk, result, ownRecordedReview };
+    return { project, snapshot, profile, risk, result, ownRecordedReview, records: inspected?.records };
   }
   private availability(actor: WebActor, context: Awaited<ReturnType<WebTaskReviewService["context"]>>, already: boolean) {
     if (!actor.can("tasks.reviews.record", context.project.projectId, true, context.risk)) return "access_denied" as const;
@@ -160,10 +173,10 @@ export class WebTaskReviewService {
   async options(identity: VerifiedWebIdentity, projectId: string, jobId: string, artifactId: string, targetId: string) {
     this.ids(projectId, jobId, artifactId, targetId);
     return new WebSessionAuthority(this.db, this.scope, this.clock, "task").authenticated(identity, async (tx, actor) => {
-      const context = await this.context(tx, actor, projectId, jobId, artifactId, targetId);
+      const context = await this.context(tx, actor, projectId, jobId, artifactId, targetId, this.gate(tx), true);
       const row = (await tx.query<Row>(`SELECT * FROM control_web_task_review_commands WHERE tenant_id=$1 AND identity_id=$2
         AND project_id=$3 AND job_id=$4 AND target_id=$5`, [this.scope.tenantId, actor.id, projectId, jobId, targetId])).rows[0];
-      const prior = row ? await this.receipt(tx, actor, row) : undefined;
+      const prior = row ? await this.receipt(tx, actor, row, context.records) : undefined;
       const availability = this.availability(actor, context, !!prior);
       const attestation = this.acceptanceAttestation(context);
       return taskReviewOptionsSchema.parse({ projectId, jobId, artifactId, targetId, targetDigest: context.snapshot.targetDigest,
@@ -175,7 +188,7 @@ export class WebTaskReviewService {
         acceptanceAttestation: attestation ? { scenarioId: attestation.scenarioId, label: attestation.label,
           instructions: attestation.instructions, instructionsDigest: manualVerificationScenarioInstructionsDigestV1(attestation) } : null,
         grantsExecutionAuthority: false });
-    });
+    }, { readOnly: true });
   }
   async record(identity: VerifiedWebIdentity, projectId: string, jobId: string, value: unknown, key: string) {
     this.ids(projectId, jobId); const parsed = taskReviewDraftSchema.safeParse(value);

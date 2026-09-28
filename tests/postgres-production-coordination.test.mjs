@@ -20,7 +20,7 @@ import { existsSync } from "node:fs";
 import { join, resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { tmpdir } from "node:os";
-import { Client } from "pg";
+import { Client, Pool } from "pg";
 import { applyMigrations } from "../deploy/postgres/apply-migrations.mjs";
 import { privateWebInsertColumns } from "../src/web/v1/private-database-preflight.ts";
 import { sha256Digest } from "../src/security/digest.ts";
@@ -30,6 +30,11 @@ import {
 } from "../src/web/v1/project-coordination-http.ts";
 import { CanonicalStore } from "../src/persistence/canonical-store.ts";
 import { ProjectCoordinatorServiceV1 } from "../src/project-coordination/v1/services.ts";
+import { WebSessionAuthority } from "../src/web/v1/session-authority.ts";
+import { WebTaskService } from "../src/web/v1/task-service.ts";
+import { WebProjectService } from "../src/web/v1/project-service.ts";
+import { taskDraft } from "./helpers/web-task.ts";
+import { bindPrivatePgPool } from "../src/web/v1/private-pg-database.ts";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const CANDIDATE_BINS = [process.env.PG_BIN, "/opt/homebrew/opt/postgresql@17/bin", "/usr/lib/postgresql/17/bin"]
@@ -187,6 +192,40 @@ const clientFor = (conn) => ({
     }
   },
 });
+const poolDatabase = (pool, delayMs = 0) => {
+  const pause = async (client) => { if (delayMs) await client.query("SELECT pg_sleep($1)", [delayMs / 1000]); };
+  const inTransaction = async (callback, check = async () => {}) => {
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      const session = { query: async (statement, params = []) => { await pause(client); return client.query(statement, params); } };
+      const value = await callback(session); await check(); await client.query("COMMIT"); return value;
+    } catch (cause) { await client.query("ROLLBACK").catch(() => {}); throw cause; }
+    finally { client.release(); }
+  };
+  return {
+    query: async (statement, params = []) => { const client = await pool.connect(); try { await pause(client); return client.query(statement, params); } finally { client.release(); } },
+    transaction: callback => inTransaction(callback),
+    transactionWithPreCommitCheck: (callback, check) => inTransaction(callback, check),
+  };
+};
+const delayedProductionDatabase = (pool, delayMs) => {
+  const transport = {
+    async connect() {
+      const client = await pool.connect();
+      return {
+        query: async (statement, params = []) => {
+          await client.query("SELECT pg_sleep($1)", [delayMs / 1000]);
+          return client.query(statement, params);
+        },
+        release: destroy => client.release(destroy),
+      };
+    },
+    end: () => pool.end(),
+    on: (...args) => { pool.on(...args); return transport; },
+  };
+  return bindPrivatePgPool(transport);
+};
 const insertAttention = (id, sourceRecordId) => query(target("cr_prod_coord200"),
   `INSERT INTO attention_items(id,tenant_id,workspace_id,project_id,work_item_id,adapter_id,source_record_id,
    source_version,attention_type,title,summary,due_at,created_at_source,observed_at,payload,updated_at)
@@ -235,6 +274,110 @@ test("preflight insert-column map matches the granted idempotency columns", need
      ORDER BY 1`)).rows;
   assert.deepEqual(rows.filter((r) => r.can_insert).map((r) => r.column_name),
     ["idempotency_key", "operation_scope", "request_digest", "status", "tenant_id"]);
+});
+
+test("same-owner reads overlap across the pool while writes retain exclusive ordering", needsPg, async () => {
+  const connections = await Promise.all(Array.from({ length: 4 }, () => open(target("cr_prod_coord200"))));
+  try {
+    const scope = { tenantId: "tenant:test", workspaceId: "workspace:test" };
+    const delayedClient = (conn) => {
+      const base = clientFor(conn);
+      const delayed = (session) => ({ query: async (statement, params = []) => {
+        await session.query("SELECT pg_sleep(0.05)");
+        return session.query(statement, params);
+      } });
+      return {
+        query: async (statement, params = []) => { await conn.query("SELECT pg_sleep(0.05)"); return conn.query(statement, params); },
+        transaction: (callback) => base.transaction((session) => callback(delayed(session))),
+        transactionWithPreCommitCheck: (callback, check) =>
+          base.transactionWithPreCommitCheck((session) => callback(delayed(session)), check),
+      };
+    };
+    const started = performance.now();
+    const timings = await Promise.all(connections.slice(0, 3).map(async conn => {
+      const readStarted = performance.now();
+      await new WebSessionAuthority(delayedClient(conn), scope, Date.now).authenticated(pageIdentity, async (_tx, actor) => {
+        actor.require("projects.read", "project:alpha");
+      }, { readOnly: true });
+      return performance.now() - readStarted;
+    }));
+    const wall = performance.now() - started, sum = timings.reduce((total, value) => total + value, 0);
+    assert.ok(wall < 600, `three delayed reads should finish near one read, not queue: ${JSON.stringify({ wall, timings })}`);
+    assert.ok(wall < sum * 0.6, `concurrent wall time should be near max rather than sum: ${JSON.stringify({ wall, timings })}`);
+
+    let firstReadEntered = false, secondReadEntered = false, writerEntered = false, release;
+    const held = new Promise(resolve => { release = resolve; });
+    const firstRead = new WebSessionAuthority(clientFor(connections[0]), scope, Date.now).authenticated(pageIdentity,
+      async (_tx, actor) => { actor.require("projects.read", "project:alpha"); firstReadEntered = true; await held; },
+      { readOnly: true });
+    while (!firstReadEntered) await new Promise(resolve => setTimeout(resolve, 5));
+    const secondRead = new WebSessionAuthority(clientFor(connections[1]), scope, Date.now).authenticated(pageIdentity,
+      async (_tx, actor) => { actor.require("projects.read", "project:alpha"); secondReadEntered = true; },
+      { readOnly: true });
+    const writer = new WebSessionAuthority(clientFor(connections[3]), scope, Date.now).authenticated(pageIdentity,
+      async (_tx, actor) => { actor.require("projects.read", "project:alpha"); writerEntered = true; });
+    const deadline = Date.now() + 5_000;
+    while (!secondReadEntered && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 5));
+    assert.equal(secondReadEntered, true, "a second read must enter while the first read holds shared authority locks");
+    await new Promise(resolve => setTimeout(resolve, 100));
+    assert.equal(writerEntered, false, "an exclusive write path must wait for the in-flight read");
+    release();
+    await Promise.all([firstRead, secondRead, writer]);
+    assert.equal(writerEntered, true);
+  } finally {
+    await Promise.all(connections.map(conn => conn.end()));
+  }
+});
+
+test("50ms-query burst keeps detail, projects, Home and needs-me below 1.5s with no unavailable responses", needsPg, async () => {
+  const scope = { tenantId: "tenant:test", workspaceId: "workspace:test" };
+  const adapterId = `adapter:manual:${sha256Digest(scope).slice(7, 39)}`;
+  await query(target("cr_prod_coord200"), `INSERT INTO adapter_registry
+    (id,tenant_id,source_system,contract_version,authority_mode,status,redaction_policy_version,cursor_retention_days)
+    VALUES($1,'tenant:test','control-room-manual','1.0.0','control_room_native','disabled','v1',30)`, [adapterId]);
+  await query(target("cr_prod_coord200"), `INSERT INTO projects
+    (id,tenant_id,workspace_id,adapter_id,source_record_id,source_version,title,description,normalized_state,
+     domain_state,health,authority_mode,observed_at,payload,updated_at)
+    VALUES('project:latency','tenant:test','workspace:test',$1,'project:latency','1','Latency','Read test',
+     'planned','manual_project_active','healthy','control_room_native',now(),'{}',now())`, [adapterId]);
+  await query(target("cr_prod_coord200"), `INSERT INTO control_manual_project_heads
+    (tenant_id,project_id,lifecycle,version,created_at,updated_at)
+    VALUES('tenant:test','project:latency','active',1,now(),now())`);
+  const poolOptions = { ...webTarget(),
+    options: "-c search_path=pg_catalog,\\ public -c timezone=UTC -c transaction_timeout=10000",
+    statement_timeout: 5_000, lock_timeout: 2_000, idle_in_transaction_session_timeout: 5_000 };
+  const setupPool = new Pool({ ...poolOptions, max: 1 });
+  let proposed;
+  try {
+    const setupTasks = new WebTaskService(poolDatabase(setupPool), scope, Date.now);
+    proposed = await setupTasks.propose(pageIdentity, "project:latency", taskDraft, "latency-task-0001");
+  } finally { await setupPool.end(); }
+  // The measured pool is bound before its first checkout so every connection
+  // receives the production lifecycle and qualification observers.
+  const pool = new Pool({ ...poolOptions, max: 8 });
+  let production;
+  try {
+    production = delayedProductionDatabase(pool, 50);
+    const delayed = production.client;
+    const tasks = new WebTaskService(delayed, scope, Date.now), projects = new WebProjectService(delayed, scope, Date.now);
+    const reads = [
+      () => tasks.detail(pageIdentity, "project:latency", proposed.receipt.jobId),
+      () => projects.listPage(pageIdentity),
+      () => tasks.home(pageIdentity),
+      () => tasks.attention(pageIdentity),
+    ];
+    const started = performance.now();
+    const results = await Promise.all(Array.from({ length: 3 }, () => reads).flat().map(async read => {
+      const requestStarted = performance.now();
+      try { await read(); return { status: 200, elapsedMs: performance.now() - requestStarted }; }
+      catch (error) { return { status: 503, elapsedMs: performance.now() - requestStarted, error }; }
+    }));
+    const wall = performance.now() - started;
+    assert.deepEqual(results.map(result => result.status), Array(12).fill(200),
+      `all burst reads must succeed: ${results.filter(result => result.status !== 200).map(result => String(result.error))}`);
+    assert.ok(results.every(result => result.elapsedMs < 1_500), `each read must stay below 1.5s: ${JSON.stringify({ wall, results })}`);
+    assert.ok(wall < 1_500, `the twelve-request burst must overlap through the eight-connection pool: ${wall}`);
+  } finally { if (production) await production.close(); else await pool.end(); }
 });
 
 test("page composition holds its authorization locks: a concurrent revocation blocks, then the snapshot hides a concurrent insert", needsPg, async () => {
