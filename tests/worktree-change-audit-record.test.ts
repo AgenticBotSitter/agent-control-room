@@ -13,7 +13,8 @@ const resultReceipt = () => ({ schema: "control-room.durable-result-receipt/v1",
   canonicalPublicationAllowed: false, completionVerified: false, releasesCapacity: false, grantsExecutionAuthority: false });
 const plan = () => createWorktreeChangeAuditPlanV1({ deliveryDigest: digest("delivery"), worktreeLeaseDigest: digest("lease"),
   baseRevision: "a".repeat(40), allowedPaths: ["src/**"], maximumChangedFiles: 3, maximumChangedBytes: 100 });
-const evidence = () => createWorktreeChangeAuditEvidenceV1(plan(), { baseRevision: "a".repeat(40), changes: [
+const evidence = () => createWorktreeChangeAuditEvidenceV1(plan(), { baseRevision: "a".repeat(40),
+  headRevision: "b".repeat(40), changes: [
   { path: "src/one.ts", kind: "added", bytes: 12, contentDigest: digest("one") },
   { path: "src/two.ts", kind: "modified", bytes: 8, contentDigest: digest("two") },
 ] });
@@ -55,7 +56,8 @@ test("a worktree audit record requires the complete result identity shape", () =
 });
 
 test("a zero-change audit remains distinct from an omitted audit", () => {
-  const empty = createWorktreeChangeAuditEvidenceV1(plan(), { baseRevision: "a".repeat(40), changes: [] });
+  const empty = createWorktreeChangeAuditEvidenceV1(plan(), { baseRevision: "a".repeat(40),
+    headRevision: "b".repeat(40), changes: [] });
   const value = createWorktreeChangeAuditRecordV1({ ...recordInput(), plan: plan(), evidence: empty });
   assert.equal(summarizeWorktreeChangeAuditRecordV1(value).changedFiles, 0);
   assert.throws(() => createWorktreeChangeAuditRecordV1({ ...recordInput(), evidence: undefined }));

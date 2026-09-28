@@ -4,6 +4,7 @@ import { controllerWorkerDeliverySchemaV1 } from "./controller-worker-delivery";
 import { createManagedWorktreeChangeAuditAuthorityV1 } from "./worktree-change-audit-authority";
 import { createWorktreeChangeAuditPlanV1, type WorktreeChangeAuditPlanV1 } from "./worktree-change-audit";
 import { sha256Digest } from "../../security/canonical-digest";
+import type { ObservableGitWorkspacePort } from "../codex-v1/git-workspace-port";
 
 export const CODING_WORKSPACE_LIFECYCLE_HOLDER_V1 = "control-room.coding-workspace-lifecycle-holder/v1" as const;
 
@@ -46,6 +47,7 @@ export class CodingWorkspaceLifecycleHolderV1 {
   private readonly records = new Map<string, RecordV1>();
   private serial: Promise<void> = Promise.resolve();
   private creationAttempts = 0;
+  private readonly publicationPort?: ObservableGitWorkspacePort;
 
   constructor(input: Readonly<{
     workspacePort: CodexWorkspacePortV1;
@@ -63,6 +65,10 @@ export class CodingWorkspaceLifecycleHolderV1 {
       throw new Error("coding_workspace_capacity_invalid");
     }
     this.maximumConcurrentWorkspaces = input.maximumConcurrentWorkspaces;
+    if (typeof (input.workspacePort as Partial<ObservableGitWorkspacePort>).inspectRootIdentities === "function"
+      && typeof (input.workspacePort as Partial<ObservableGitWorkspacePort>).observeCheckout === "function") {
+      this.publicationPort = input.workspacePort as ObservableGitWorkspacePort;
+    }
 
     // Reuse the shared validator before any workspace effect and retain its
     // canonical, immutable policy values for every later delivery.
@@ -121,7 +127,7 @@ export class CodingWorkspaceLifecycleHolderV1 {
       this.records.set(runId, record);
       const attemptsBefore = this.creationAttempts;
       try {
-        const lease = await this.manager.prepare({ runId, ...request });
+        const lease = await this.manager.prepare({ deliveryDigest: delivery.deliveryDigest, runId, ...request });
         const auditPlan = this.auditAuthority.derive({ delivery, lease });
         record.lease = lease;
         record.auditPlan = auditPlan;
@@ -164,6 +170,32 @@ export class CodingWorkspaceLifecycleHolderV1 {
   observation(runId: string): CodingWorkspaceLifecycleObservationV1 | undefined {
     const record = this.records.get(runId);
     return record && record.disposition !== "acquiring" ? observe(record) : undefined;
+  }
+
+  /**
+   * Runs one trusted publication composition while this holder's delivery and
+   * active lease remain exclusively pinned. The physical lease and manager are
+   * never returned to a worker or browser.
+   */
+  withActivePublicationContext<T>(deliveryValue: unknown, operation: (context: Readonly<{
+    workspaceManager: CodexWorkspaceManagerV1;
+    workspacePort: ObservableGitWorkspacePort;
+    lease: CodexWorkspaceLeaseV1;
+    auditPlan: WorktreeChangeAuditPlanV1;
+    auditAuthority: ReturnType<typeof createManagedWorktreeChangeAuditAuthorityV1>;
+  }>) => Promise<T>): Promise<T> {
+    const delivery = controllerWorkerDeliverySchemaV1.parse(deliveryValue);
+    if (typeof operation !== "function") throw new Error("coding_workspace_publication_unavailable");
+    return this.exclusive(async () => {
+      const record = this.records.get(delivery.identity.runId);
+      if (!record || record.deliveryDigest !== delivery.deliveryDigest || record.disposition !== "workspace_held"
+        || !record.lease || !record.auditPlan || !this.publicationPort) {
+        throw new Error("coding_workspace_publication_unavailable");
+      }
+      const lease = this.manager.requireActiveLease(record.lease);
+      return operation(Object.freeze({ workspaceManager: this.manager, workspacePort: this.publicationPort,
+        lease, auditPlan: record.auditPlan, auditAuthority: this.auditAuthority }));
+    });
   }
 
   private heldCount(): number {

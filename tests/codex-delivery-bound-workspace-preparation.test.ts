@@ -37,15 +37,43 @@ function binding(packet = delivery()): CodexLocalStartBindingV1 {
   }, dispatchFrameDigest } as CodexLocalStartBindingV1;
 }
 
-function fixture(options: { failCreate?: boolean; revokeDuringCreate?: boolean } = {}) {
-  let creates = 0, removes = 0, inspections = 0, current = true;
+function fixture(options: { failCreate?: boolean; revokeDuringCreate?: boolean; publication?: boolean } = {}) {
+  let creates = 0, removes = 0, inspections = 0, opens = 0, current = true;
+  const publications = new Map<string, unknown>();
   const journal = {
     reserveWorkspaceIntent: () => 'recorded' as const,
     recordWorkspaceRoots() { return 'recorded' as const; }, recordWorkspaceCreation() { return 'recorded' as const; },
     reserveWorkspaceRemoval: () => 'recorded' as const, recordWorkspaceRemoved() { return 'recorded' as const; },
+    loadPullRequestPublication(id: string) { return structuredClone(publications.get(id)); },
+    retainedPullRequestPublication(digest: string) {
+      return [...publications.values()].find(value => (value as { deliveryDigest?: string }).deliveryDigest === digest); },
+    reservePullRequestPublication(id: string, value: unknown) {
+      if (publications.has(id)) return 'exists' as const; publications.set(id, structuredClone(value)); return 'reserved' as const; },
+    replacePullRequestPublication(id: string, expected: unknown, value: unknown) {
+      if (sha256Digest(publications.get(id)) !== sha256Digest(expected)) return false;
+      publications.set(id, structuredClone(value)); return true; },
   };
+  const packet = delivery();
+  const material = { deliveryDigest: packet.deliveryDigest, stageKind: 'build' as const,
+    retainedResultDigest: sha256Digest('retained-build-result'),
+    modelSelection: { workerId: packet.worker.workerId, model: 'model:current', effort: 'high' },
+    repositoryUrl: 'https://example.invalid/controller/repository', title: 'Server title', body: 'Server body' };
+  const authorityValue = { ...material, authorityDigest: sha256Digest(material) };
   const preparation = createCodexDeliveryBoundWorkspacePreparationV1({ workspaceIntent: intent, journal,
     policy: { allowedPaths: ['src/**'], maximumChangedFiles: 5, maximumChangedBytes: 4096 },
+    ...(options.publication ? { publication: { integrityKey: new Uint8Array(32).fill(19), journal,
+      authority: { current: () => authorityValue, assertCurrent: (value: unknown) => assert.deepEqual(value, authorityValue) },
+      runGit: async (_cwd: string, args: readonly string[]) => {
+        if (args.includes('status')) return Buffer.from('');
+        if (args.includes('diff')) return Buffer.from('M\0src/change.ts\0');
+        if (args.includes('-s')) return Buffer.from('8\n');
+        if (args.includes('blob')) return Buffer.from('content\n');
+        if (args.includes('--verify')) return Buffer.from(`${'c'.repeat(40)}\n`);
+        return Buffer.from(`${'b'.repeat(40)}\n`);
+      },
+      openPullRequest: async () => { opens++; return { status: 'opened' as const,
+        url: 'https://example.invalid/controller/repository/pull/31', observedCommit: 'b'.repeat(40) }; },
+    } } : {}),
     workspacePort: {
       async inspectRootIdentities() { return {
         repository: { realPath: intent.repositoryRoot, device: '1', inode: '2' },
@@ -53,7 +81,7 @@ function fixture(options: { failCreate?: boolean; revokeDuringCreate?: boolean }
         commonGit: { realPath: `${intent.repositoryRoot}/.git`, device: '1', inode: '4' } }; },
       async observeCheckout() { return { state: 'absent' as const }; },
       async inspectExisting(path) { inspections++; return { realPath: path, device: '1',
-        inode: path === intent.repositoryRoot ? '2' : '3' }; },
+        inode: path === intent.repositoryRoot ? '2' : path === intent.checkoutPath ? '5' : '3' }; },
       async createDetachedWorktree() {
         creates++;
         if (options.revokeDuringCreate) current = false;
@@ -65,7 +93,7 @@ function fixture(options: { failCreate?: boolean; revokeDuringCreate?: boolean }
     },
   });
   const assertCurrent = () => { if (!current) throw new Error('revoked'); };
-  return { preparation, assertCurrent, counts: () => ({ creates, removes, inspections }) };
+  return { preparation, assertCurrent, counts: () => ({ creates, removes, inspections, opens }) };
 }
 
 test('one exact shared delivery prepares and retains one workspace while its digest stays distinct from dispatch', async () => {
@@ -73,7 +101,7 @@ test('one exact shared delivery prepares and retains one workspace while its dig
   f.preparation.bindDelivery(packet);
   await f.preparation.prepare(startBinding, f.assertCurrent);
   await f.preparation.prepare(startBinding, f.assertCurrent);
-  assert.deepEqual(f.counts(), { creates: 1, removes: 0, inspections: 2 });
+  assert.deepEqual(f.counts(), { creates: 1, removes: 0, inspections: 2, opens: 0 });
   assert.throws(() => f.preparation.bindDelivery(packet), /unavailable/,
     'the shared delivery binding is one-use even when the packet is exact');
   assert.equal('cleanup' in f.preparation, false); assert.equal('lease' in f.preparation, false);
@@ -83,27 +111,38 @@ test('one exact shared delivery prepares and retains one workspace while its dig
 test('absent, changed, or mismatched shared delivery refuses before workspace effects', async () => {
   const absent = fixture();
   await assert.rejects(absent.preparation.prepare(binding(), absent.assertCurrent), /unavailable/);
-  assert.deepEqual(absent.counts(), { creates: 0, removes: 0, inspections: 0 });
+  assert.deepEqual(absent.counts(), { creates: 0, removes: 0, inspections: 0, opens: 0 });
 
   const wrongIdentity = fixture();
   assert.throws(() => wrongIdentity.preparation.bindDelivery(delivery({ jobId: 'job:other' })), /unavailable/);
-  assert.deepEqual(wrongIdentity.counts(), { creates: 0, removes: 0, inspections: 0 });
+  assert.deepEqual(wrongIdentity.counts(), { creates: 0, removes: 0, inspections: 0, opens: 0 });
 
   const changed = fixture(), packet = delivery(); changed.preparation.bindDelivery(packet);
   await assert.rejects(changed.preparation.prepare(binding(delivery({ prompt: 'Changed task.' })), changed.assertCurrent),
     /unavailable/);
-  assert.deepEqual(changed.counts(), { creates: 0, removes: 0, inspections: 0 });
+  assert.deepEqual(changed.counts(), { creates: 0, removes: 0, inspections: 0, opens: 0 });
 });
 
 test('creation uncertainty is retained and a repeated prepare never creates or cleans again', async () => {
   const f = fixture({ failCreate: true }), packet = delivery(); f.preparation.bindDelivery(packet);
   await assert.rejects(f.preparation.prepare(binding(packet), f.assertCurrent), /unavailable/);
   await assert.rejects(f.preparation.prepare(binding(packet), f.assertCurrent), /unavailable/);
-  assert.deepEqual(f.counts(), { creates: 1, removes: 0, inspections: 2 });
+  assert.deepEqual(f.counts(), { creates: 1, removes: 0, inspections: 2, opens: 0 });
 });
 
 test('authority is rechecked after acquisition before the workspace can be accepted for start', async () => {
   const f = fixture({ revokeDuringCreate: true }), packet = delivery(); f.preparation.bindDelivery(packet);
   await assert.rejects(f.preparation.prepare(binding(packet), f.assertCurrent), /revoked/);
-  assert.deepEqual(f.counts(), { creates: 1, removes: 0, inspections: 2 });
+  assert.deepEqual(f.counts(), { creates: 1, removes: 0, inspections: 2, opens: 0 });
+});
+
+test('the production delivery-bound holder publishes only through its active lease and retains the result', async () => {
+  const f = fixture({ publication: true }), packet = delivery();
+  f.preparation.bindDelivery(packet);
+  await f.preparation.prepare(binding(packet), f.assertCurrent);
+  const first = await f.preparation.publishBuildPullRequest();
+  assert.equal(first.status, 'published');
+  const replay = await f.preparation.publishBuildPullRequest();
+  assert.deepEqual(replay, first);
+  assert.equal(f.counts().opens, 1);
 });
