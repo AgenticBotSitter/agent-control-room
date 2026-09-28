@@ -49,6 +49,8 @@ import { createInstallationPlanViewV1 } from "../../installer/v1/installation-pl
 import { WorkBatchOwnerServiceV1, type WorkBatchQueueAdmissionAuthorityV1,
   type WorkBatchQueueCatalogV1 } from "../../work-intake/v1";
 import { createWorkBatchOwnerHttpHandlerV1 } from "./work-batch-owner-http";
+import { LinearPipelineServiceV1 } from "../../pipelines/v1";
+import { createLinearPipelineHttpHandlerV1 } from "./linear-pipeline-http";
 
 export interface PrivateWebProcessOptions {
   origin: string; issuer: string; audience: string; tenantId: string; workspaceId: string;
@@ -291,6 +293,9 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
   const workBatches = options.workBatches ? new WorkBatchOwnerServiceV1(options.database.client, tasks,
     { tenantId: options.tenantId, workspaceId: options.workspaceId }, options.workBatches.integrityKey, clock,
     options.workBatches.queueCatalog, options.workBatches.queueAdmissionAuthority) : undefined;
+  const pipelines = options.workBatches ? new LinearPipelineServiceV1(options.database.client,
+    { tenantId: options.tenantId, workspaceId: options.workspaceId }, options.workBatches.integrityKey,
+    options.workBatches.queueAdmissionAuthority, clock) : undefined;
   // This is a task-planning bridge only. It is deliberately composed from the
   // same private web database and ordinary task service, not from a provider
   // runtime or a second Idea Lab worker system.
@@ -725,6 +730,9 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
           if (workBatches && /^\/api\/v1\/projects\/[^/]+\/pipelines(?:\/|$)/.test(url.pathname))
             return createWorkBatchOwnerHttpHandlerV1({ origin: site.origin, trust,
               gatewayAssertionProfile, service: workBatches, clock })(request);
+          if (pipelines && /^\/api\/v1\/projects\/[^/]+\/pipeline-(?:templates|runs)(?:\/|$)/.test(url.pathname))
+            return createLinearPipelineHttpHandlerV1({ origin: site.origin, trust,
+              gatewayAssertionProfile, service: pipelines, clock })(request);
           return await createProjectHttpHandler({ origin: site.origin, trust, service, gatewayAssertionProfile, clock })(request);
         }
         if (request.method !== "GET" && request.method !== "HEAD") throw new WebAccessError("invalid_request");

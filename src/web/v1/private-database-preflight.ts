@@ -15,7 +15,7 @@ export async function verifyPrivateIdeaAdapter(db: DatabaseClient, scope: { tena
   if (rows.length !== 1 || rows[0].valid !== true) throw new Error("private_idea_adapter_unavailable");
 }
 
-// Generated from public migrations 0001-0095, including generic external-content
+// Generated from public migrations 0001-0096, including generic external-content
 // migrations 0025/0026. Catalog query below; not a mutable database marker.
 export const privateWebSchemaDigest = "d815ce6d1fc01c9cfda03904a48072d922be1c6125613c173ae878702d67e312";
 export const privateWebReadTables = ["control_identities", "control_role_grants", "workspaces", "control_web_sessions",
@@ -35,7 +35,9 @@ export const privateWebReadTables = ["control_identities", "control_role_grants"
   "control_task_model_selections", "control_task_declared_scopes", "control_assignment_lease_scopes",
   "control_durable_result_write_reservations", "work_batches", "work_batch_revisions", "work_batch_items",
   "work_batch_queue_admissions", "work_batch_effective_queue_admissions", "work_batch_agent_queue_heads",
-  "control_native_task_queue", "control_job_dependencies", "control_action_inbox"] as const;
+  "control_native_task_queue", "control_job_dependencies",
+  "pipeline_templates", "pipeline_runs", "pipeline_stage_runs", "pipeline_ordered_stage_runs",
+  "control_action_inbox"] as const;
 const inserts = new Set(["control_web_sessions", "adapter_registry", "projects", "control_manual_project_heads",
   "control_web_project_commands", "audit_events", "control_audit_chain_heads", "control_requests", "control_workflows",
   "control_jobs", "control_web_task_commands", "control_idea_canonical_task_sessions", "control_idea_canonical_task_links",
@@ -44,6 +46,7 @@ const inserts = new Set(["control_web_sessions", "adapter_registry", "projects",
   "control_project_delegation_policies", "control_task_model_selections", "control_task_declared_scopes"]);
 inserts.add("work_batch_revisions"); inserts.add("work_batch_items");
 inserts.add("work_batch_queue_admissions"); inserts.add("work_batch_agent_queue_heads");
+inserts.add("pipeline_templates"); inserts.add("pipeline_runs"); inserts.add("pipeline_stage_runs");
 
 /** Tables whose INSERT grant is column-scoped rather than table-wide. Every
  * listed column must carry INSERT and every unlisted column must not — a
@@ -68,6 +71,7 @@ const updates: Record<string, readonly string[]> = {
   work_batches: ["state", "approval_identity_id", "approved_at", "decision_reason_code", "decision_digest",
     "decision_auth_tag", "version", "updated_at"],
   work_batch_agent_queue_heads: ["next_position", "updated_at"],
+  control_jobs: ["stage_kind", "stage_ordinal", "pipeline_run_id"],
   tenants: ["coordinator_lock"],
 };
 const fail = () => { throw new Error("private_database_preflight_failed"); };
@@ -124,10 +128,12 @@ const coordinatorInserts = new Set(["control_web_sessions", "control_requests", 
   "control_attempt_resource_admissions", "control_attempt_resource_scopes", "control_job_dependencies",
   "control_installation_transition_revisions", "control_node_fleet_signals", "control_node_fleet_current",
   "control_task_model_selections", "control_task_declared_scopes", "control_assignment_lease_scopes"]);
+coordinatorReads.push("pipeline_templates", "pipeline_runs", "pipeline_stage_runs", "pipeline_ordered_stage_runs");
 const coordinatorDeletes = new Set(["control_assignment_lease_scopes"]);
 const coordinatorUpdates: Record<string, readonly string[]> = {
-  ...Object.fromEntries(["control_requests", "control_workflows", "control_jobs", "control_attempts", "control_leases"]
+  ...Object.fromEntries(["control_requests", "control_workflows", "control_attempts", "control_leases"]
     .map(table => [table, ["state", "version", "payload", "updated_at"]])),
+  control_jobs: ["state", "version", "payload", "updated_at", "stage_kind", "stage_ordinal", "pipeline_run_id"],
   ...Object.fromEntries(["tenants", "control_nodes", "control_node_keys", "control_manual_project_heads", "projects", "control_node_fleet_signals"].map(table => [table, ["coordinator_lock"]])),
   control_node_fleet_current: ["signal_sequence", "fingerprint", "trust", "observed_at", "expires_at", "payload"],
   ...Object.fromEntries(["control_identities", "control_role_grants", "workspaces", "control_completion_gate_integrity"].map(table => [table, ["web_lock"]])),

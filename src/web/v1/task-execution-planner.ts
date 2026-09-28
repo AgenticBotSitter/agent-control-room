@@ -505,6 +505,17 @@ export class TaskExecutionPlanner {
     await tx.query(`INSERT INTO control_task_declared_scopes(tenant_id,project_id,job_id,scope_kind,path,path_fold)
       SELECT tenant_id,project_id,$3,scope_kind,path,path_fold FROM control_task_declared_scopes
       WHERE tenant_id=$1 AND job_id=$2`, [this.scope.tenantId, sourceJobId, targetJobId]);
+    const pipeline = (await tx.query<{ pipeline_run_id: string | null }>(`SELECT pipeline_run_id FROM control_jobs
+      WHERE tenant_id=$1 AND project_id=$2 AND id=$3`, [this.scope.tenantId, projectId, sourceJobId])).rows[0];
+    if (pipeline?.pipeline_run_id) {
+      const copied = await tx.query(`INSERT INTO control_task_model_selections
+        (tenant_id,project_id,job_id,worker_kind,selection_key,model,effort,provider,profile,inherited_from_job_id,created_at)
+        SELECT tenant_id,project_id,$3,worker_kind,selection_key,model,effort,provider,profile,$2,$4
+        FROM control_task_model_selections WHERE tenant_id=$1 AND project_id=$5 AND job_id=$2
+        RETURNING job_id`, [this.scope.tenantId, sourceJobId, targetJobId, createdAt, projectId]);
+      if (copied.rows.length !== 1) fail();
+      return;
+    }
     const kind = this.modelKind(template);
     if (!kind || !this.modelCatalog?.some(item => item.kind === kind)) return;
     const source = (await tx.query<{ selection_key: string | null; effort: string | null }>(
@@ -709,8 +720,9 @@ export class TaskExecutionPlanner {
     const a = job.authority;
     if (job.tenantId !== this.scope.tenantId || job.projectId !== projectId || job.id !== jobId || job.jobType !== "task.proposal"
       || job.state !== "proposed" || job.version !== 0 || workflow.projectId !== projectId || request.projectId !== projectId
-      || workflow.tenantId !== job.tenantId || request.tenantId !== job.tenantId || workflow.jobIds.length !== 1
-      || workflow.jobIds[0] !== jobId || workflow.id !== job.workflowId || request.id !== workflow.requestId
+      || workflow.tenantId !== job.tenantId || request.tenantId !== job.tenantId
+      || !workflow.jobIds.includes(jobId) || new Set(workflow.jobIds).size !== workflow.jobIds.length
+      || workflow.id !== job.workflowId || request.id !== workflow.requestId
       || workflow.state !== "proposed" || request.state !== "draft" || workflow.version !== 0 || request.version !== 0
       || job.inputDigest !== sha256Digest(draft) || a.digest !== computeAuthorityDigest(a)
       || a.allowedExecutor !== "executor:unassigned" || a.networkPolicy !== "none" || a.effectPolicy !== "none"
@@ -790,6 +802,15 @@ export class TaskExecutionPlanner {
       // trusted canonical writer inside our one owner-authorized transaction, without any transition.
       const canonical = new CanonicalStore(joined(tx));
       for (const record of [plan.request, plan.workflow, plan.job]) await canonical.create(record);
+      const pipeline = (await tx.query<{ stage_kind: string | null; stage_ordinal: number | null; pipeline_run_id: string | null }>(
+        `SELECT stage_kind,stage_ordinal,pipeline_run_id FROM control_jobs WHERE tenant_id=$1 AND id=$2`,
+      [this.scope.tenantId, sourceJobId])).rows[0];
+      if (pipeline?.pipeline_run_id !== null && pipeline?.pipeline_run_id !== undefined) {
+        if (pipeline.stage_kind === null || pipeline.stage_ordinal === null) fail();
+        await tx.query(`UPDATE control_jobs SET stage_kind=$1,stage_ordinal=$2,pipeline_run_id=$3
+          WHERE tenant_id=$4 AND id=$5 AND stage_kind IS NULL AND stage_ordinal IS NULL AND pipeline_run_id IS NULL`,
+        [pipeline.stage_kind, Number(pipeline.stage_ordinal), pipeline.pipeline_run_id, this.scope.tenantId, plan.job.id]);
+      } else if (pipeline && (pipeline.stage_kind !== null || pipeline.stage_ordinal !== null)) fail();
       await this.materializeModelSelection(tx, sourceJobId, plan.job.id, projectId, template, actor.now);
       await tx.query(`INSERT INTO control_task_execution_plans(tenant_id,project_id,source_job_id,job_id,plan,auth_tag)
         VALUES($1,$2,$3,$4,$5::jsonb,$6)`, [plan.tenantId, projectId, sourceJobId, plan.job.id, JSON.stringify(plan), this.tag(plan)]);

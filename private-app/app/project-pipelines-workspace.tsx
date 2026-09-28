@@ -7,6 +7,7 @@ import { readBrowserJson } from "../../src/web/v1/browser-json";
 import { workBatchProposalSchemaV1, type WorkBatchProposalV1 } from "../../src/work-intake/v1/schemas";
 import { workBatchOwnerCommandSchemaV1, workBatchOwnerPageSchemaV1, workBatchOwnerReceiptSchemaV1,
   workBatchOwnerViewSchemaV1, type WorkBatchOwnerViewV1 } from "../../src/work-intake/v1/owner-schemas";
+import { pipelineRunPageSchemaV1, pipelineRunViewSchemaV1, type PipelineRunViewV1 } from "../../src/pipelines/v1";
 import { PrivateHeader } from "./private-header";
 import { ProjectNavigation } from "./project-navigation";
 import { ConfiguredTimestamp } from "./configured-timestamp";
@@ -21,6 +22,45 @@ type ReadState<T> = { state: "loading" } | { state: "ready"; value: T }
   | { state: "unavailable"; code: PipelineFailureCode };
 type Choice = "undecided" | "approve" | "reject";
 export type PipelineDecisionDraft = Readonly<Record<string, Readonly<{ decision: Choice; reasonCode: string }>>>;
+
+function PipelineRuns({ projectId, runId }: { projectId: string; runId?: string }) {
+  const [value, setValue] = useState<PipelineRunViewV1 | z.infer<typeof pipelineRunPageSchemaV1>>();
+  const [failed, setFailed] = useState(false);
+  useEffect(() => {
+    const abort = new AbortController(); setFailed(false);
+    const suffix = runId ? `/${encodeURIComponent(runId)}` : "";
+    void fetch(`/api/v1/projects/${encodeURIComponent(projectId)}/pipeline-runs${suffix}`, {
+      credentials: "same-origin", cache: "no-store", redirect: "error", signal: abort.signal,
+      headers: { accept: "application/json", "x-requested-with": "XMLHttpRequest" },
+    }).then(async response => {
+      if (!response.ok) throw new Error();
+      const raw = await readBrowserJson(response);
+      setValue(runId ? pipelineRunViewSchemaV1.parse(raw) : pipelineRunPageSchemaV1.parse(raw));
+    }).catch(() => { if (!abort.signal.aborted) setFailed(true); });
+    return () => abort.abort();
+  }, [projectId, runId]);
+  if (failed) return <section className="private-panel"><h2>Pipeline runs</h2>
+    <p role="alert">Saved pipeline runs could not be checked. No run state or empty list is inferred.</p></section>;
+  if (!value) return <section className="private-panel"><h2>Pipeline runs</h2><p role="status">Loading saved pipeline runs…</p></section>;
+  if (!runId) {
+    const page = pipelineRunPageSchemaV1.parse(value);
+    return <section className="private-panel"><h2>Pipeline runs</h2>{page.runs.length ? <ul className="private-pipeline-list">
+      {page.runs.map(run => <li key={run.runId}><a href={`/projects/${encodeURIComponent(projectId)}/pipelines/${encodeURIComponent(run.runId)}`}>
+        <strong>{run.title}</strong><span>{run.state}</span><span><ConfiguredTimestamp value={run.updatedAt} prefix="Updated" /></span>
+      </a></li>)}</ul> : <p>No linear pipeline runs have been created for this project.</p>}
+      <p className="private-note">Eligibility is read-only. Opening this page never assigns, dispatches, or starts a stage.</p></section>;
+  }
+  const run = pipelineRunViewSchemaV1.parse(value);
+  return <section className="private-panel"><h2>{run.title}</h2><p>Run state: {run.state}</p>
+    <ol className="private-pipeline-items">{run.stages.map(stage => <li key={stage.ordinal}>
+      <header><h3>{stage.ordinal + 1}. {stage.role}</h3><span className="private-state">{stage.state.replaceAll("_", " ")}</span></header>
+      <dl className="private-task-facts"><div><dt>Stored kind</dt><dd>{stage.stageKind}</dd></div>
+        <div><dt>Agent</dt><dd>{stage.workerId}</dd></div><div><dt>Model</dt><dd>{stage.model} · {stage.effort}</dd></div>
+        <div><dt>Round</dt><dd>{stage.round ?? "unknown"}</dd></div><div><dt>Usage</dt><dd>{stage.usage}</dd></div>
+        <div><dt>Previous result</dt><dd>{stage.predecessorResultDigest ?? "not accepted yet"}</dd></div></dl>
+      <a href={`/projects/${encodeURIComponent(projectId)}/tasks/${encodeURIComponent(stage.jobId)}`}>Open ordinary task</a>
+    </li>)}</ol><p className="private-note">An eligible stage is not invoked automatically. Start remains an ordinary owner action.</p></section>;
+}
 
 const errorCode = (status: number): BrowserFailureCode => ({ 400: "invalid_request", 401: "authentication_required",
   403: "access_denied", 404: "not_found", 409: "conflict" } as Record<number, BrowserFailureCode>)[status] ?? "unavailable";
@@ -262,7 +302,7 @@ export function PipelineBatchDetail({ projectId, data, decisions = {}, pending =
   </>;
 }
 
-export function PrivateProjectPipelines({ projectId, batchId }: { projectId: string; batchId?: string }) {
+function WorkBatchPipelines({ projectId, batchId }: { projectId: string; batchId?: string }) {
   const [client] = useState(() => createWorkBatchOwnerBrowserClient());
   const [data, setData] = useState<ReadState<OwnerPage | WorkBatchOwnerViewV1>>({ state: "loading" });
   const [generation, setGeneration] = useState(0), [pending, setPending] = useState(false);
@@ -311,7 +351,17 @@ export function PrivateProjectPipelines({ projectId, batchId }: { projectId: str
       {batchId ? "← All pipeline batches" : "← Project overview"}</a>
     <div className="private-heading"><p className="private-eyebrow">Owner-reviewed proposals</p><h1>{heading}</h1>
       <p>Review agent-proposed batches before they become ordinary tasks. Batch decisions never start work.</p></div>
-    <ProjectNavigation projectId={projectId} current="pipelines" />{content}
+    <ProjectNavigation projectId={projectId} current="pipelines" />{!batchId && <PipelineRuns projectId={projectId} />}{content}
     <button type="button" disabled={pending || client.hasPending()} onClick={() => setGeneration(value => value + 1)}>Check saved pipelines again</button>
+  </main></div>;
+}
+
+export function PrivateProjectPipelines({ projectId, batchId }: { projectId: string; batchId?: string }) {
+  if (!batchId?.startsWith("pipeline-run:")) return <WorkBatchPipelines projectId={projectId} batchId={batchId} />;
+  return <div className="private-shell"><PrivateHeader /><main id="private-main" tabIndex={-1}>
+    <a className="private-back" href={`/projects/${encodeURIComponent(projectId)}/pipelines`}>← All pipelines</a>
+    <div className="private-heading"><p className="private-eyebrow">Linear pipeline</p><h1>Pipeline run</h1>
+      <p>Stages remain ordinary tasks. Eligibility alone never starts work.</p></div>
+    <ProjectNavigation projectId={projectId} current="pipelines" /><PipelineRuns projectId={projectId} runId={batchId} />
   </main></div>;
 }

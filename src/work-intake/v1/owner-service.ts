@@ -40,12 +40,24 @@ export type WorkBatchQueueAdmissionSelectionV1 = Readonly<{ workerId: string;
 export type WorkBatchQueueAcceptedResultSelectionV1 = Readonly<{
   sourceJobId: string; workerId: string; nodeId: string;
 }>;
+export type WorkBatchQueueAcceptedResultProofV1 = Readonly<{
+  contentHash: string; revision: number;
+}>;
 /** Protected host-generation authority. Exact-worker admission is unavailable
  * without this current readiness/model-policy recheck. */
 export type WorkBatchQueueAdmissionAuthorityV1 = Readonly<{
   assertCurrent(selection: WorkBatchQueueAdmissionSelectionV1): boolean | Promise<boolean>;
   isAcceptedResultCurrent(tx: DatabaseSession,
     selection: WorkBatchQueueAcceptedResultSelectionV1): boolean | Promise<boolean>;
+  /** Optional authenticated Completion Gate round for read-only pipeline presentation. */
+  acceptedResultRevision?(tx: DatabaseSession,
+    selection: WorkBatchQueueAcceptedResultSelectionV1): number | null | Promise<number | null>;
+  /** Exact authenticated proof used for pipeline handoff presentation.  This
+   * must describe the same retained result accepted by Completion Gate, not a
+   * newer artifact for the job. */
+  acceptedResultProof?(tx: DatabaseSession,
+    selection: WorkBatchQueueAcceptedResultSelectionV1): WorkBatchQueueAcceptedResultProofV1 | null
+      | Promise<WorkBatchQueueAcceptedResultProofV1 | null>;
 }>;
 
 const json = (value: unknown) => JSON.stringify(value);
