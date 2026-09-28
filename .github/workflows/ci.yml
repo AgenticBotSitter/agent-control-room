@@ -88,6 +88,16 @@ jobs:
           echo "deb [signed-by=/etc/apt/keyrings/pgdg.asc] http://apt.postgresql.org/pub/repos/apt $(lsb_release --short --codename)-pgdg main" | sudo tee /etc/apt/sources.list.d/pgdg.list
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends postgresql-17 postgresql-client-17
+      - name: Prepare the reviewed pre-0086 database-upgrade fixture
+        if: ${{ steps.selection.outputs.needs-pg == 'true' }}
+        run: |
+          set -euo pipefail
+          fixture_root=/private/tmp/acr-db-0085
+          rm -rf -- "${fixture_root}"
+          mkdir -m 700 "${fixture_root}"
+          git archive --format=tar 88941c0414407be5b226c9b1d78fb17c53ec9810 | tar -x -C "${fixture_root}"
+          test -f "${fixture_root}/deploy/postgres/migration-ledger.json"
+          ! grep -q '0086_mac_local_owner_review_profile' "${fixture_root}/deploy/postgres/migration-ledger.json"
       - name: Start disposable PostgreSQL for selected database tests
         if: ${{ steps.selection.outputs.needs-pg == 'true' }}
         run: |
@@ -119,6 +129,7 @@ jobs:
           set -euo pipefail
           "$PG_BIN/pg_ctl" -D "${AFFECTED_TESTS_POSTGRES_ROOT}/data" -m fast -w -t 30 stop || true
           rm -rf -- "${AFFECTED_TESTS_POSTGRES_ROOT}"
+          rm -rf -- /private/tmp/acr-db-0085
 
   route:
     name: Route changed paths

@@ -275,6 +275,14 @@ from becoming a green merge-gate result. The job adds no credentials, deployment
 private runner, or workflow permission; it retains `pull_request`, read-only contents,
 full-history checkout without persisted credentials, frozen install and pinned actions.
 
+The PG17 upgrade proof also needs a historically shaped pre-0086 repository input, not just
+a running server. The job materialises that reviewed, immutable commit with `git archive` in
+the runner's `/private/tmp/acr-db-0085`, verifies that its ledger is pre-0086, and removes it
+in the existing always-cleanup. Full-history checkout makes the exact object available; the
+step does not fetch, execute, or grant access to any external source. Its bounded temporary
+tree is part of the same 45-minute job and adds no cache, artifact, credential, or persistent
+host state.
+
 The migration safety tests invoke `squawk` directly. The fast runner is therefore wrapped
 in the same pinned `npm exec --yes --package=squawk-cli@2.61.0` environment as the existing
 `migration-lint` job. This is an explicit, public package download on the disposable hosted
