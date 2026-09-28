@@ -107,7 +107,7 @@ export async function startMacLocalTaskHost(input, runtime = {}) {
     },
     startQueueWorker: queueModule.createInstalledNativeQueueFactories({
       openWorkerDatabase: postgresModule.createPrivatePostgresDatabase,
-    }).startNativeWorker,
+    }).startRecoveringMacLocalNativeWorker,
     assets, render: rendererModule.default,
   });
   return host.start();

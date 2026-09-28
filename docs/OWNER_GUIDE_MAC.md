@@ -73,10 +73,12 @@ If macOS shows a background-item notification, open **System Settings → Genera
 Check it without changing anything:
 
 ```sh
-pnpm mac:service-status -- --protected-root <protected-root>
+pnpm mac:status -- --protected-root <protected-root>
 ```
 
-A healthy installed result says `running definition=current enabled=true` and includes a PID. Repeating the install command is safe: an already healthy matching service is restarted in place, while a stopped or changed definition is re-enabled/refreshed through the same fixed label.
+A healthy result says `mac:status running`, includes a PID, and identifies whether the optional service is installed. `mac:status` checks the exact supervisor and task-host command lines and confirms that the loopback port responds. A dead host is reported plainly with its last recorded reason. The protected `runtime/task-host.log` captures both output streams and stop reasons; it is limited to the current 5 MiB file plus three rotated generations. The lower-level `mac:service-status` command remains available when only the launch-agent definition is being inspected.
+
+Repeating the install command is safe: an already healthy matching service is restarted in place, while a stopped or changed definition is re-enabled/refreshed through the same fixed label. The launch agent restarts an unsuccessful host after a 15-second throttle; a deliberate `mac:down` remains stopped.
 
 `pnpm mac:down -- --protected-root <protected-root>` stops and disables the service, so it will not return at the next login. A later ordinary `mac:up` re-enables an installed service. To remove only the login service while keeping all protected data and configuration:
 
@@ -183,6 +185,7 @@ migrate, or otherwise decide an existing result.
 | Site says the database is unavailable | The direct private route to the database is not working. This is expected while the Mac is off the private network, or if the Tailscale client tag is not yet effective. | 1. Open Tailscale and confirm the Mac is connected. 2. Confirm the approved client tag is showing (see the private installation checklist item 1). 3. Re-run `pnpm mac:check-database -- <protected-root>`. 4. If roles are still refused, stop and report it — do not start a tunnel, and do not change the tag or the policy. |
 | `mac:up FAILED database check failed` | The database was not reachable, so the stack deliberately did not start. | Fix the route as above, then start again. |
 | `mac:up FAILED repin exit 2: protected configuration is unsafe` | The protected configuration is missing, unreadable, or unsafe. | Do not start. Report it to the agent. |
+| `mac:status dead` or `dead/restarting` | The exact host process is not serving. The message includes the last recorded exit code, signal, or supervisor failure when available. | If the login service is installed, wait 15 seconds and run `mac:status` once more. Otherwise run `mac:up`. If it remains dead, report the final `host stopped because ...` line from `runtime/task-host.log`. |
 | A worker shows `unavailable` | That worker's executable could not be verified. | The other workers keep working. `pnpm mac:down` then `pnpm mac:up` re-checks it. |
 | `mac:down` reports `still_running` | The host did not exit within the grace period and was force-killed. | Check `ps -axo pid,pgid,command \| grep -E "codex\|claude\|hermes"`. If something remains, report it. |
 | `release build missing: run pnpm build first` | The compiled output the host needs is absent. | `pnpm build`, then start again. |
