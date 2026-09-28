@@ -70,6 +70,20 @@ function processGroupExists(child: ChildProcess): boolean {
   if (!child.pid || child.pid < 1) return false;
   try { process.kill(-child.pid, 0); return true; } catch { return false; }
 }
+/** Signals the owned group, and reports whether the group was still there to receive it.
+ *
+ * A process group disappears between the decision to stop a task and the signal reaching it — the
+ * child can exit on its own, or in response to whatever tripped the stop. `kill` then fails with
+ * ESRCH, which is the outcome the caller wanted rather than an uncertainty about cleanup: there
+ * is nothing left to clean up. EPERM is the genuine uncertainty, because the group exists and
+ * this account may not signal it. */
+function processGroupStop(child: ChildProcess, signal: NodeJS.Signals): boolean {
+  if (!child.pid || child.pid < 1) return false;
+  try { process.kill(-child.pid, signal); return true; }
+  catch (error) {
+    return (error as NodeJS.ErrnoException).code === "ESRCH" ? false : !processGroupExists(child);
+  }
+}
 
 function parseLine(line: string): { kind: "message"; text: string } | { kind: "complete"; usage?: { inputTokens?: number; outputTokens?: number } } | undefined {
   let value: unknown;
@@ -161,11 +175,18 @@ export function createOwnerTrustedLocalCodexExecV1(dependencies: Readonly<{ spaw
           return finish(stoppedResult());
         }
         stop = reason;
-        if (!processGroupSignal(child, "SIGTERM")) {
-          finish(failed("cleanup_uncertain", "process_group_unavailable")); return;
+        // An already-exited group is a completed stop, not an uncertain one.
+        if (!processGroupStop(child, "SIGTERM")) {
+          if (!processGroupExists(child)) { if (killer) clearTimeout(killer); finish(stoppedResult()); }
+          else finish(failed("cleanup_uncertain", "process_group_unavailable"));
+          return;
         }
         killer = setTimeout(() => {
-          if (!processGroupSignal(child, "SIGKILL")) return finish(failed("cleanup_uncertain", "process_group_unavailable"));
+          if (!processGroupStop(child, "SIGKILL")) {
+            if (!processGroupExists(child)) { finish(stoppedResult()); return; }
+            finish(failed("cleanup_uncertain", "process_group_unavailable"));
+            return;
+          }
           // KILL is an instruction, not proof that detached descendants are
           // gone. Confirm the whole process group before reporting a normal
           // cancellation, timeout, or malformed-output failure.
@@ -218,6 +239,9 @@ export function createOwnerTrustedLocalCodexExecV1(dependencies: Readonly<{ spaw
         // Never call a task completed until that owned group is absent.
         if (processGroupExists(child)) {
           stop = "failed";
+          // The group was just observed alive, so a failed signal here is a genuine uncertainty
+          // rather than a race with an exit: nothing has closed the window between the check and
+          // the signal the way there is in `terminate`.
           if (!processGroupSignal(child, "SIGKILL")) return finish(failed("cleanup_uncertain", "process_group_unavailable"));
           killer = setTimeout(() => processGroupExists(child)
             ? finish(failed("cleanup_uncertain", "process_group_still_running"))

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
+import { once } from "node:events";
 import { chmod, mkdtemp, readdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -87,6 +88,36 @@ test("enforces the 1 MiB default output-byte limit when none is supplied", async
   assert.deepEqual(refused, { status: "failed", reason: "process_or_output_refused" });
   const accepted = await adapter().execute({ ...input(await taskDirectory(), "default-overflow"), outputBytes: 2_097_152 });
   assert.equal(accepted.status, "completed", "the default-overflow fixture must be valid below a larger cap");
+});
+
+test("a process group that has already exited is a stop, not cleanup uncertainty", async () => {
+  // A process group can disappear between the decision to stop a task and the signal reaching it:
+  // the child exits on its own, or exits in response to whatever tripped the stop, and `kill` then
+  // fails with ESRCH. That is the outcome the caller asked for, not an unfinishable task. Reporting
+  // `cleanup_uncertain` there made a bounded, fully-exited task look stuck, and because the window
+  // is timing-dependent it passed on most runs and failed under load.
+  //
+  // The window is made deterministic by giving the adapter a spawn that returns a real, already
+  // reaped child with live stdio: its process group is provably gone, so every signal is ESRCH, and
+  // the outcome depends on how the adapter reads that failure rather than on whether the scheduler
+  // happened to let a child exit first. The task then hits its deadline, which is the stop path.
+  const reaped = spawn(process.execPath, [fake, "nonzero"], { stdio: ["pipe", "pipe", "pipe"] });
+  reaped.stdin.end();
+  await once(reaped, "close");
+  const result = await createOwnerTrustedLocalClaudeExecV1({
+    spawn: () => reaped as unknown as ReturnType<typeof spawn>,
+  }).execute({ ...input(await taskDirectory(), "overflow"), deadlineMs: 200 });
+  assert.deepEqual(result, { status: "timed_out", reason: "deadline_exceeded" },
+    "a stop against an already-exited group is a normal stop, not an unfinishable cleanup");
+});
+
+test("a process group that is still present and ignores TERM is stopped by the kill escalation", async () => {
+  // The other side, so the fix cannot pass by treating every signalling failure as success. This
+  // fixture keeps a TERM-ignoring descendant in the group, so the group is still present when the
+  // adapter signals it and must be escalated to KILL rather than declared unfinishable.
+  const result = await adapter().execute({ ...input(await taskDirectory(), "hang"), deadlineMs: 100 });
+  assert.deepEqual(result, { status: "timed_out", reason: "deadline_exceeded" },
+    "a group that ignores TERM must still be killed and reported as a timeout");
 });
 
 test("cancel and deadline stop the complete detached process group", async () => {
