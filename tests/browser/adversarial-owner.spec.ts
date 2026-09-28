@@ -65,7 +65,12 @@ function observeBrowserErrors(page: Page, errors: string[], observeHttpFailures 
 
 async function prepareAcceptance(page: Page) {
   const attestation = page.getByLabel("I read it and it’s correct");
-  if (await attestation.count()) await attestation.check();
+  // Review options arrive after the protected result opens. A one-shot count
+  // can race that request and skip the required live gesture, leaving Accept
+  // correctly disabled. This journey uses the attested profile throughout, so
+  // wait for its control and perform the gesture explicitly.
+  await expect(attestation).toBeVisible();
+  await attestation.check();
   await expect(page.getByRole("button", { name: "Accept", exact: true })).toBeEnabled();
 }
 
