@@ -451,7 +451,7 @@ test("work-intake login cannot read or forge another subsystem's shared-ledger r
   await assert.rejects(query(intake,"SELECT * FROM control_idempotency"),/permission denied/u);
 });
 
-test("agent-review down migration removes every surviving effective privilege", needsPg, async () => {
+test("agent-review down migration removes every surviving direct privilege", needsPg, async () => {
   await freshDatabase("cr_agent_review_down");
   const db=target("cr_agent_review_down");
   await applyMigrations({target:db,bootstrapTarget:bootstrapTarget("cr_agent_review_down"),
@@ -459,22 +459,28 @@ test("agent-review down migration removes every surviving effective privilege", 
   await query(db,await readFile(join(ROOT,"db/roles/agent_reviewer_roles.sql"),"utf8"));
   const before=(await query(db,`SELECT
     has_schema_privilege('control_room_agent_reviewer','public','USAGE') AS schema_usage,
+    EXISTS (SELECT 1 FROM pg_namespace n, LATERAL aclexplode(COALESCE(n.nspacl,acldefault('n',n.nspowner))) acl
+      JOIN pg_roles role ON role.oid=acl.grantee WHERE n.nspname='public'
+        AND role.rolname='control_room_agent_reviewer' AND acl.privilege_type='USAGE') AS direct_schema_usage,
     has_table_privilege('control_room_agent_reviewer','control_completion_gate_records','SELECT') AS gate_select,
     has_table_privilege('control_room_agent_reviewer','control_completion_gate_records','INSERT') AS gate_insert,
     has_column_privilege('control_room_agent_reviewer','control_completion_gate_records','web_lock','UPDATE') AS gate_update,
     has_column_privilege('control_room_agent_reviewer','control_completion_gate_integrity','revision','UPDATE') AS integrity_update,
     has_table_privilege('control_room_agent_reviewer','control_harness_runs','SELECT') AS run_select`)).rows[0];
-  assert.deepEqual(before,{schema_usage:true,gate_select:true,gate_insert:true,gate_update:true,
+  assert.deepEqual(before,{schema_usage:true,direct_schema_usage:true,gate_select:true,gate_insert:true,gate_update:true,
     integrity_update:true,run_select:true});
   await query(db,await readFile(join(ROOT,"db/down/0097_agent_review_plans.sql"),"utf8"));
   const afterDown=(await query(db,`SELECT
     has_schema_privilege('control_room_agent_reviewer','public','USAGE') AS schema_usage,
+    EXISTS (SELECT 1 FROM pg_namespace n, LATERAL aclexplode(COALESCE(n.nspacl,acldefault('n',n.nspowner))) acl
+      JOIN pg_roles role ON role.oid=acl.grantee WHERE n.nspname='public'
+        AND role.rolname='control_room_agent_reviewer' AND acl.privilege_type='USAGE') AS direct_schema_usage,
     has_table_privilege('control_room_agent_reviewer','control_completion_gate_records','SELECT') AS gate_select,
     has_table_privilege('control_room_agent_reviewer','control_completion_gate_records','INSERT') AS gate_insert,
     has_column_privilege('control_room_agent_reviewer','control_completion_gate_records','web_lock','UPDATE') AS gate_update,
     has_column_privilege('control_room_agent_reviewer','control_completion_gate_integrity','revision','UPDATE') AS integrity_update,
     has_table_privilege('control_room_agent_reviewer','control_harness_runs','SELECT') AS run_select`)).rows[0];
-  assert.deepEqual(afterDown,{schema_usage:false,gate_select:false,gate_insert:false,gate_update:false,
+  assert.deepEqual(afterDown,{schema_usage:true,direct_schema_usage:false,gate_select:false,gate_insert:false,gate_update:false,
     integrity_update:false,run_select:false});
 });
 
@@ -790,7 +796,7 @@ test("documented clean-cluster provision/migrate/backup/restore/verify journey",
   assert.equal(targetDbOwner, dbOwner, "restored database owner matches the source database owner");
   assert.equal(targetDbOwner, "control_room_schema_owner");
 
-  // The Mac-local wrapper adds the five exact restricted roles, hashes the
+  // The Mac-local wrapper adds the six exact restricted roles, hashes the
   // dump+metadata manifest, and proves the result in its own fresh cluster.
   // Queue construction and its guarded cleanup both contain transactions, so
   // provisioning must keep every statement on this one PostgreSQL session.
@@ -799,7 +805,7 @@ test("documented clean-cluster provision/migrate/backup/restore/verify journey",
   try {
     await provisionMacLocalNarrowRolesV1(narrowRoleClient, Object.fromEntries([
       "control_room_web", "control_room_coordinator", "control_room_results",
-      "control_room_publisher", "control_room_queue_worker",
+      "control_room_publisher", "control_room_agent_reviewer_login", "control_room_queue_worker",
     ].map((name, index) => [name, `${index}`.repeat(40)])));
   } finally {
     await narrowRoleClient.end();
