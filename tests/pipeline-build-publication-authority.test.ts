@@ -56,6 +56,9 @@ test("authenticated pipeline snapshot is the only source for build policy, resul
 
 test("snapshot field or authentication tampering is refused before policy or publication is exposed", () => {
   const saved = snapshot();
+  assert.throws(() => createPipelineBuildPublicationAuthoritySnapshotV1(key,
+    { ...saved, allowedPaths: [...saved.allowedPaths], repositoryUrl: "ssh://example.invalid/controller/repository" }),
+  /repositoryUrl must use https/);
   assert.throws(() => verifyPipelineBuildPublicationAuthoritySnapshotV1(key,
     { ...saved, maximumChangedFiles: saved.maximumChangedFiles + 1 }), /unavailable/);
   assert.throws(() => createPipelineBuildPublicationAuthorityV1({ integrityKey: key,

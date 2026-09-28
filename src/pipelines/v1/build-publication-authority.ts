@@ -16,7 +16,8 @@ const materialSchema = z.object({
   allowedPaths: z.array(z.string().min(1).max(1024)).min(1).max(100),
   maximumChangedFiles: z.number().int().min(1).max(500),
   maximumChangedBytes: z.number().int().min(1).max(16 * 1024 * 1024),
-  retainedResultDigest: digest, repositoryUrl: z.string().url().max(2048),
+  retainedResultDigest: digest, repositoryUrl: z.string().url().max(2048)
+    .refine(value => value.startsWith("https://"), "repositoryUrl must use https"),
   title: z.string().min(1).max(240), body: z.string().max(64 * 1024),
 }).strict();
 const snapshotSchema = materialSchema.extend({ snapshotDigest: digest,
