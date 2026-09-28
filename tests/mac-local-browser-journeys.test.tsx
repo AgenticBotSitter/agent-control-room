@@ -471,8 +471,12 @@ describe("no preview or fake panel is reachable through the rendered mac-local p
     const refused = ["/local-preview", "/local-preview?project=project%3Aexample", "/demo", "/contributor-demo",
       "/app/local-preview/workspace", "/local-pilot"];
     for (const path of refused) {
-      assert.deepEqual(await readJson(await f.request(path, { headers: f.auth }), 404, `preview path ${path}`),
-        { error: "not_found" }, `${path} must not render`);
+      const response = await f.request(path, { headers: f.auth });
+      assert.equal(response.status, 404, `${path} must not render`);
+      assert.match(response.headers.get("content-type") ?? "", /^text\/html/);
+      const html = await response.text();
+      assert.match(html, /Page unavailable/);
+      assert.doesNotMatch(html, /\{"error"/);
     }
     // The preview/demo transports are not mounted either: those two API paths
     // belong to the separate contributor-demo server, not to mac-local.

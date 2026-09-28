@@ -142,8 +142,9 @@ export function ProjectIdeaOrigin({ project }: { project: ProjectView }) {
     ? <p><a href={`/ideas/${encodeURIComponent(project.sourceIdeaSessionId)}`}>View original Idea Lab discussion and decision</a></p> : null;
 }
 
-export function PrivateProjectWorkspace({ projectId, section = "overview", after, lifecycleFilter }: {
+export function PrivateProjectWorkspace({ projectId, section = "overview", after, lifecycleFilter, invalidLifecycleFilter = false }: {
   projectId?: string; section?: ProjectSection; after?: string; lifecycleFilter?: WebProject["lifecycle"];
+  invalidLifecycleFilter?: boolean;
 }) {
   const runtime = useLocalRuntime();
   const sessionObservations = useProductModule("sessionObservations");
@@ -254,6 +255,7 @@ export function PrivateProjectWorkspace({ projectId, section = "overview", after
           : <button type="button" disabled={pending} onClick={() => setRefresh(value => value + 1)}>Check saved state again</button>}</div>}
       {!projectId ? <>
         <div className="private-heading"><h1>Projects</h1><p>Open a project here or use “Open in new tab” to monitor several projects side by side. Closing a tab does not stop work, complete or archive its project.</p></div>
+        {invalidLifecycleFilter && <p className="private-notice" role="alert">The project status filter was invalid and has been reset to All. <a href="/projects">Use the canonical All projects URL</a>.</p>}
         <nav className="private-filter-tabs" aria-label="Filter projects by status">
           <a href="/projects" aria-current={lifecycleFilter === undefined ? "page" : undefined}>All</a>
           {(["active", "paused", "completed", "archived"] as const).map(value => <a key={value}

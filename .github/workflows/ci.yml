@@ -416,7 +416,7 @@ jobs:
   owner-browser-journey:
     name: Owner browser journey
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 45
     env:
       PG_BIN: /usr/lib/postgresql/17/bin
       LC_ALL: C.UTF-8
@@ -448,24 +448,40 @@ jobs:
           echo "deb [signed-by=/etc/apt/keyrings/pgdg.asc] http://apt.postgresql.org/pub/repos/apt $(lsb_release --short --codename)-pgdg main" | sudo tee /etc/apt/sources.list.d/pgdg.list
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends postgresql-17
-      - name: Build and run the owner journey
+      - name: Build and run the owner browser suites
         run: |
           set -euo pipefail
-          rehearsal_root="$(mktemp -d "${RUNNER_TEMP}/owner-browser.XXXXXX")"
-          cleanup() {
-            pnpm mac:rehearsal down "${rehearsal_root}" --port 15501 --web-port 3219 --fake-executables || true
-            rm -rf -- "${rehearsal_root}"
+          rehearsal_root=""
+          rehearsal_port=""
+          rehearsal_web_port=""
+          cleanup_current() {
+            if [[ -n "${rehearsal_root}" ]]; then
+              pnpm mac:rehearsal down "${rehearsal_root}" --port "${rehearsal_port}" \
+                --web-port "${rehearsal_web_port}" --fake-executables || true
+              rm -rf -- "${rehearsal_root}"
+              rehearsal_root=""
+            fi
           }
-          trap cleanup EXIT INT TERM
+          run_browser_suite() {
+            local mode="$1"
+            rehearsal_port="$2"
+            rehearsal_web_port="$3"
+            rehearsal_root="$(mktemp -d "${RUNNER_TEMP}/owner-browser.XXXXXX")"
+            pnpm mac:rehearsal up "${rehearsal_root}" --port "${rehearsal_port}" \
+              --web-port "${rehearsal_web_port}" --fake-executables
+            pnpm mac:prepare-task-runtime -- \
+              --protected-root "${rehearsal_root}/protected" \
+              --hermes-profile cr \
+              --hermes-provider opencode-go \
+              --hermes-model space-bunny-free \
+              --hermes-destination https://opencode.ai:443
+            node --import tsx scripts/mac-local/rehearsal/journey.ts "${rehearsal_root}" "${mode}"
+            cleanup_current
+          }
+          trap cleanup_current EXIT INT TERM
           pnpm build
-          pnpm mac:rehearsal up "${rehearsal_root}" --port 15501 --web-port 3219 --fake-executables
-          pnpm mac:prepare-task-runtime -- \
-            --protected-root "${rehearsal_root}/protected" \
-            --hermes-profile cr \
-            --hermes-provider opencode-go \
-            --hermes-model space-bunny-free \
-            --hermes-destination https://opencode.ai:443
-          node --import tsx scripts/mac-local/rehearsal/journey.ts "${rehearsal_root}" --browser-e2e
+          run_browser_suite --browser-owner-e2e 15501 3219
+          run_browser_suite --browser-adversarial-e2e 15502 3220
       - name: Upload browser failure evidence
         if: ${{ failure() }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

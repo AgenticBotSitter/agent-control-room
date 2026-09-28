@@ -128,6 +128,15 @@ test("the real Mac-local wrapper signs in locally and reaches the existing proje
   const projectShell = await app.handle(request(`/projects/${encodeURIComponent(projectId)}`, { headers: { cookie: cookie! } }),
     () => new Response("real project shell"));
   assert.equal(projectShell.status, 200); assert.equal(await projectShell.text(), "real project shell");
+  const missingPage = await app.handle(request("/projects/project:missing", { headers: { cookie: cookie! } }),
+    () => { throw new Error("a missing project must not render the product shell"); });
+  assert.equal(missingPage.status, 404);
+  assert.match(missingPage.headers.get("content-type") ?? "", /^text\/html/);
+  const missingHtml = await missingPage.text();
+  assert.match(missingHtml, /<main>/);
+  assert.match(missingHtml, /Page unavailable/);
+  assert.match(missingHtml, /This page or saved item is not available/);
+  assert.doesNotMatch(missingHtml, /\{"error"/);
   const workersShell = await app.handle(request("/workers", { headers: { cookie: cookie! } }), () => new Response("real workers shell"));
   assert.equal(workersShell.status, 200); assert.equal(await workersShell.text(), "real workers shell");
   const needsShell = await app.handle(request("/needs-me", { headers: { cookie: cookie! } }), () => new Response("real needs shell"));

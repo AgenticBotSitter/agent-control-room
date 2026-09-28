@@ -2,7 +2,7 @@
 
 import { PrivateConnections } from "../connections/workspace";
 import { PrivateHeader } from "../private-header";
-import { useLocalRuntime } from "../local-runtime";
+import { localWorkerStateLabel, useLocalRuntime } from "../local-runtime";
 
 function LocalWorkers() {
   const runtime = useLocalRuntime();
@@ -16,7 +16,7 @@ function LocalWorkers() {
         <ul className="private-local-agent-list">{runtime.status.workers.map(worker => <li key={worker.kind}
           className="private-local-agent-card"><h2>{worker.kind === "claude-code" ? "Claude Code"
             : worker.kind === "hermes" || worker.kind === "hermes-021" ? "Hermes Agent" : "Codex"}</h2>
-          <p>Status: {worker.state}. Result proof: {worker.proof.replaceAll("_", " ")}.</p></li>)}</ul></>}
+          <p>{localWorkerStateLabel(worker)}.</p></li>)}</ul></>}
     <p><a href="/projects">Open projects</a></p>
   </main></div>;
 }

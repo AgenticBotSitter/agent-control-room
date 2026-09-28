@@ -5,7 +5,8 @@
 // worker runs a fake PINNED EXECUTABLE through the production process adapters -> pending review,
 // exactly once per agent, with a replay returning the same receipt and queuing nothing new.
 // The owner then reviews each result through the same HTTP API the website uses.
-// Usage: node --import tsx scripts/mac-local/rehearsal/journey.ts ABSOLUTE_REHEARSAL_DIR [--browser-proof|--browser-e2e|--model-allowlists]
+// Usage: node --import tsx scripts/mac-local/rehearsal/journey.ts ABSOLUTE_REHEARSAL_DIR
+//   [--browser-proof|--browser-e2e|--browser-owner-e2e|--browser-adversarial-e2e|--model-allowlists]
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
@@ -18,9 +19,10 @@ import { applyMacLocalFirstOwnerV1 } from "../first-owner-vps.mjs";
 import { serviceInstalled } from "../service.mjs";
 
 const [arg, mode] = process.argv.slice(2);
-if (!arg || ![3, 4].includes(process.argv.length) || mode !== undefined && !["--browser-proof", "--browser-e2e", "--model-allowlists"].includes(mode)
+if (!arg || ![3, 4].includes(process.argv.length) || mode !== undefined && !["--browser-proof", "--browser-e2e",
+  "--browser-owner-e2e", "--browser-adversarial-e2e", "--model-allowlists"].includes(mode)
   || !isAbsolute(arg) || resolve(arg) !== arg) {
-  process.stderr.write("usage: node --import tsx scripts/mac-local/rehearsal/journey.ts ABSOLUTE_REHEARSAL_DIR [--browser-proof|--browser-e2e|--model-allowlists]\n");
+  process.stderr.write("usage: node --import tsx scripts/mac-local/rehearsal/journey.ts ABSOLUTE_REHEARSAL_DIR [--browser-proof|--browser-e2e|--browser-owner-e2e|--browser-adversarial-e2e|--model-allowlists]\n");
   process.exit(2);
 }
 const root = resolve(arg), protectedRoot = join(root, "protected");
@@ -55,13 +57,14 @@ case " $* " in *" --model model-rehearsal "*) ;; *) exit 41 ;; esac
 case " $* " in *" --provider provider-rehearsal "*) ;; *) exit 41 ;; esac` : ""}
 case " $* " in *" --max-turns 4 "*) ;; *) exit 44 ;; esac
 cat >/dev/null
+session_id="fake-hermes-session-$(printf '%012d' "$$")"
 printf '%s\\n' 'rehearsal output' > "$PWD/hermes-result.txt"
-printf '%s\\n' '{"type":"system","subtype":"init","session_id":"fake-hermes-session-0001","model":"fake-model","timestamp":1}'
+printf '%s\\n' '{"type":"system","subtype":"init","session_id":"'"$session_id"'","model":"fake-model","timestamp":1}'
 printf '%s\\n' '{"type":"text","text":"I will write the requested result.","timestamp":2}'
 printf '%s\\n' '{"type":"tool_use","name":"write_file","tool_call_id":"tool-1","input":{"path":"hermes-result.txt"},"timestamp":3}'
 printf '%s\\n' '{"type":"tool_result","name":"write_file","tool_call_id":"tool-1","output":"Wrote hermes-result.txt","duration_ms":1,"is_error":false,"timestamp":4}'
-printf '%s\\n' '{"type":"result","session_id":"fake-hermes-session-0001","exit_code":0,"text":"Fake Hermes pinned executable result.","tokens":{"input":3,"output":5,"total":8,"cache_read":0,"cache_write":0},"duration_ms":5,"timestamp":5}'
-printf '%s\\n' 'session_id: fake-hermes-session-0001' >&2
+printf '%s\\n' '{"type":"result","session_id":"'"$session_id"'","exit_code":0,"text":"Fake Hermes pinned executable result '"$session_id"'.","tokens":{"input":3,"output":5,"total":8,"cache_read":0,"cache_write":0},"duration_ms":5,"timestamp":5}'
+printf 'session_id: %s\\n' "$session_id" >&2
 exit 0
 `;
 }
@@ -75,11 +78,12 @@ for a in "$@"; do [ "$a" = "--version" ] && printf '%s\\n' '${version}' && exit 
 ${selected ? `case " $* " in *" --model sonnet-rehearsal "*) ;; *) exit 42 ;; esac
 case " $* " in *" --effort high "*) ;; *) exit 42 ;; esac` : ""}
 cat >/dev/null
-printf '%s\\n' '{"type":"system","subtype":"init","session_id":"00000000-0000-4000-8000-00000000fa01","model":"fake-model"}'
-printf '%s\\n' '{"type":"rate_limit_event","session_id":"00000000-0000-4000-8000-00000000fa01","rate_limit_info":{"status":"allowed"}}'
-printf '%s\\n' '{"type":"system","subtype":"thinking_tokens","session_id":"00000000-0000-4000-8000-00000000fa01","thinking_tokens":2}'
-printf '%s\\n' '{"type":"assistant","session_id":"00000000-0000-4000-8000-00000000fa01","message":{"role":"assistant","content":[{"type":"text","text":"Fake Claude Code pinned executable result."}]}}'
-printf '%s\\n' '{"type":"result","subtype":"success","is_error":false,"session_id":"00000000-0000-4000-8000-00000000fa01","result":"Fake Claude Code pinned executable result.","terminal_reason":"completed","total_cost_usd":0,"usage":{}}'
+session_id="00000000-0000-4000-8000-$(printf '%012d' "$$")"
+printf '%s\\n' '{"type":"system","subtype":"init","session_id":"'"$session_id"'","model":"fake-model"}'
+printf '%s\\n' '{"type":"rate_limit_event","session_id":"'"$session_id"'","rate_limit_info":{"status":"allowed"}}'
+printf '%s\\n' '{"type":"system","subtype":"thinking_tokens","session_id":"'"$session_id"'","thinking_tokens":2}'
+printf '%s\\n' '{"type":"assistant","session_id":"'"$session_id"'","message":{"role":"assistant","content":[{"type":"text","text":"Fake Claude Code pinned executable result '"$session_id"'."}]}}'
+printf '%s\\n' '{"type":"result","subtype":"success","is_error":false,"session_id":"'"$session_id"'","result":"Fake Claude Code pinned executable result '"$session_id"'.","terminal_reason":"completed","total_cost_usd":0,"usage":{}}'
 exit 0
 `;
 }
@@ -94,10 +98,11 @@ for a in "$@"; do [ "$a" = "--version" ] && printf '%s\\n' '${version}' && exit 
 ${selected ? `case " $* " in *" -m gpt-rehearsal "*) ;; *) exit 43 ;; esac
 case " $* " in *" model_reasoning_effort=high "*) ;; *) exit 43 ;; esac` : ""}
 cat >/dev/null
-printf '%s\\n' '{"type":"thread.started","thread_id":"00000000-0000-4000-8000-00000000fc01"}'
+thread_id="00000000-0000-4000-8000-$(printf '%012d' "$$")"
+printf '%s\\n' '{"type":"thread.started","thread_id":"'"$thread_id"'"}'
 printf '%s\\n' '{"type":"turn.started"}'
 printf '%s\\n' '{"type":"item.completed","item":{"type":"reasoning"}}'
-printf '%s\\n' '{"type":"item.completed","item":{"type":"agent_message","text":"Fake Codex pinned executable result."}}'
+printf '%s\\n' '{"type":"item.completed","item":{"type":"agent_message","text":"Fake Codex pinned executable result '"$thread_id"'."}}'
 printf '%s\\n' '{"type":"turn.completed","usage":{"input_tokens":3,"output_tokens":5}}'
 exit 0
 `;
@@ -222,9 +227,11 @@ async function main() {
     assert.ok(cookie.startsWith("control_room_local_owner="));
     return cookie;
   };
-  if (mode === "--browser-e2e") {
-    const browser = spawnSync("pnpm", ["exec", "playwright", "test", "tests/browser/mac-local-owner-journey.spec.ts"], {
-      cwd: process.cwd(), encoding: "utf8", timeout: 12 * 60_000, stdio: "inherit",
+  if (["--browser-e2e", "--browser-owner-e2e", "--browser-adversarial-e2e"].includes(mode ?? "")) {
+    const browserScript = mode === "--browser-owner-e2e" ? "test:mac-local-owner-journey-browser"
+      : mode === "--browser-adversarial-e2e" ? "test:adversarial-owner-browser" : "test:mac-local-owner-browser";
+    const browser = spawnSync("pnpm", ["run", browserScript], {
+      cwd: process.cwd(), encoding: "utf8", timeout: 25 * 60_000, stdio: "inherit",
       env: { ...process.env, CONTROL_ROOM_E2E_ORIGIN: origin, CONTROL_ROOM_E2E_OWNER_CODE: ownerCode,
         CONTROL_ROOM_E2E_ROOT: root },
     });

@@ -5,7 +5,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import Home from "../private-app/app/page";
 import { createHomeReadTransport, HomeDashboard, HomeInstallationStatus, PrivateHome,
-  type HomeDashboardState } from "../private-app/app/home-workspace";
+  MacLocalWorkerEvidence, type HomeDashboardState } from "../private-app/app/home-workspace";
 import { LocalRuntimeContextV1 } from "../private-app/app/local-runtime";
 import SettingsPage from "../private-app/app/settings/page";
 import { OrdinaryProjectStatusActions, PrivateProjectWorkspace, ProjectAgentInstallationStatus } from "../private-app/app/workspace";
@@ -97,6 +97,16 @@ test("home shows the three saved local route setup states without presenting the
   assert.match(html, /saved setup and proof states, not a live process monitor/);
   assert.match(html, /This panel has no current route-bound task observation/);
   assert.doesNotMatch(html, /worker:local|sha256:|token|password|provider|model|<button|<form|<input/);
+});
+
+test("settled Mac-local Home explains startup state and result proof without hosted setup errors", () => {
+  const html = renderToStaticMarkup(createElement(MacLocalWorkerEvidence, { status: {
+    taskWorkersStarted: true, projectSections: [], workers: [{ kind: "codex", state: "ready", proof: "not_proven" }],
+  } }));
+  assert.match(html, /current local host reports 1 configured route separately from saved result proof/);
+  assert.match(html, /pinned executable was verified/);
+  assert.match(html, /Neither signal says a worker is currently running/);
+  assert.doesNotMatch(html, /Installation setup status is unavailable|Local worker routes are unavailable|readiness not proven/);
 });
 
 test("task proposal and worker inventory disclose unavailable operational facts", () => {
@@ -342,6 +352,14 @@ test("project status filters are direct links and remain selected across catalog
     { lifecycle: "archived", after: "project:one", nextCursor: "project:two", count: 50 }));
   assert.match(pages, /href="\/projects\?lifecycle=archived">First page/);
   assert.match(pages, /href="\/projects\?lifecycle=archived&amp;after=project%3Atwo">Next page/);
+});
+
+test("an invalid project status filter is visibly reset to All without echoing attacker input", () => {
+  const html = renderToStaticMarkup(createElement(PrivateProjectWorkspace, { invalidLifecycleFilter: true }));
+  assert.match(html, /project status filter was invalid and has been reset to All/);
+  assert.match(html, /href="\/projects" aria-current="page">All/);
+  assert.match(html, /Use the canonical All projects URL/);
+  assert.doesNotMatch(html, /garbage|<script/);
 });
 
 test("ordinary project lifecycle controls expose complete and archive, and archived projects expose only reopen", () => {
