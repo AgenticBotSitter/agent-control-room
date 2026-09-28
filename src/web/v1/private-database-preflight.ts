@@ -15,7 +15,7 @@ export async function verifyPrivateIdeaAdapter(db: DatabaseClient, scope: { tena
   if (rows.length !== 1 || rows[0].valid !== true) throw new Error("private_idea_adapter_unavailable");
 }
 
-// Generated from public migrations 0001-0094, including generic external-content
+// Generated from public migrations 0001-0095, including generic external-content
 // migrations 0025/0026. Catalog query below; not a mutable database marker.
 export const privateWebSchemaDigest = "aa6024e7a183654d4657a73afff048d3cd7518bf6764dd8c387831980cabba2f";
 export const privateWebReadTables = ["control_identities", "control_role_grants", "workspaces", "control_web_sessions",
@@ -34,6 +34,7 @@ export const privateWebReadTables = ["control_identities", "control_role_grants"
   "control_work_resources", "control_attempt_resource_admissions", "control_attempt_resource_scopes",
   "control_task_model_selections", "control_task_declared_scopes", "control_assignment_lease_scopes",
   "control_durable_result_write_reservations", "work_batches", "work_batch_revisions", "work_batch_items",
+  "work_batch_queue_admissions", "work_batch_effective_queue_admissions", "work_batch_agent_queue_heads",
   "control_action_inbox"] as const;
 const inserts = new Set(["control_web_sessions", "adapter_registry", "projects", "control_manual_project_heads",
   "control_web_project_commands", "audit_events", "control_audit_chain_heads", "control_requests", "control_workflows",
@@ -42,6 +43,7 @@ const inserts = new Set(["control_web_sessions", "adapter_registry", "projects",
   "control_policy_decisions", "control_project_lifecycle_events", "control_project_coordinator_heads",
   "control_project_delegation_policies", "control_task_model_selections", "control_task_declared_scopes"]);
 inserts.add("work_batch_revisions"); inserts.add("work_batch_items");
+inserts.add("work_batch_queue_admissions"); inserts.add("work_batch_agent_queue_heads");
 
 /** Tables whose INSERT grant is column-scoped rather than table-wide. Every
  * listed column must carry INSERT and every unlisted column must not — a
@@ -65,6 +67,7 @@ const updates: Record<string, readonly string[]> = {
   control_action_inbox: ["state", "payload"],
   work_batches: ["state", "approval_identity_id", "approved_at", "decision_reason_code", "decision_digest",
     "decision_auth_tag", "version", "updated_at"],
+  work_batch_agent_queue_heads: ["next_position", "updated_at"],
   tenants: ["coordinator_lock"],
 };
 const fail = () => { throw new Error("private_database_preflight_failed"); };
@@ -109,7 +112,8 @@ const coordinatorReads = ["tenants", "workspaces", "control_identities", "contro
   "control_project_delegation_policies", "control_project_coordination_operation_receipts",
   "control_project_coordination_operation_jobs", "control_work_resources",
   "control_attempt_resource_admissions", "control_attempt_resource_scopes", "control_task_model_selections",
-  "control_task_declared_scopes", "control_assignment_lease_scopes"];
+  "control_task_declared_scopes", "control_assignment_lease_scopes", "work_batches", "work_batch_items",
+  "work_batch_effective_queue_admissions"];
 const coordinatorInserts = new Set(["control_web_sessions", "control_requests", "control_workflows", "control_jobs",
   "control_attempts", "control_leases", "control_task_execution_plans", "control_transition_events", "control_outbox",
   "audit_events", "control_audit_chain_heads", "control_native_approval_packets", "control_native_task_queue", "control_native_delivery_preparations", "control_native_delivery_envelopes", "control_native_transmission_intents", "control_native_delivery_receipts",

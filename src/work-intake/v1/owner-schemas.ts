@@ -35,16 +35,23 @@ export const workBatchOwnerPageSchemaV1 = z.object({ batches: z.array(workBatchO
 
 export const workBatchOwnerItemSchemaV1 = z.object({ localId: id, ordinal: z.number().int().min(0).max(31),
   role: z.enum(["builder", "checker", "validator"]), requiredCapability: id,
-  dependsOnLocalIds: z.array(id).max(31), requestedWorkerKind: id.nullable(), requestedModelKey: id.nullable(),
+  dependsOnLocalIds: z.array(id).max(31), requestedWorkerId: id.nullable(),
+  requestedWorkerKind: id.nullable(), requestedModelKey: id.nullable(),
   acceptanceCriteria: z.string().min(1).max(4_000), acceptanceTests: z.string().min(1).max(4_000),
   decisionState: z.enum(["approved", "rejected"]), decisionReasonCode: reason.nullable(), jobId: id.nullable() }).strict();
+export const workBatchQueueItemSchemaV1 = z.object({ localId: id, jobId: id, workerId: id, workerKind: id,
+  nodeId: id, position: z.number().int().min(1), queueDepthLimit: z.number().int().min(1).max(20),
+  selectionKey: id, model: id, effort: id, provider: id.nullable(), profile: id.nullable(),
+  state: z.enum(["awaiting_preparation", "waiting_dependency", "waiting_turn", "ready_for_assignment",
+    "assigned", "queued", "running", "completed", "failed", "uncertain"]) }).strict();
 export const workBatchOwnerViewSchemaV1 = z.object({ batchId: id, projectId: id,
   state: z.enum(["proposed", "approved", "partially_approved", "rejected"]), revision: z.number().int().min(1),
   proposedByIdentityId: id, proposedAt: z.string().datetime(), approvalIdentityId: id.nullable(),
   decidedAt: z.string().datetime().nullable(), proposal: workBatchProposalSchemaV1,
   revisions: z.array(z.object({ revision: z.number().int().min(1), editedByIdentityId: id,
     editedAt: z.string().datetime(), reasonCode: reason, proposal: workBatchProposalSchemaV1 }).strict()).max(100),
-  items: z.array(workBatchOwnerItemSchemaV1).max(32), startsWork: z.literal(false),
+  items: z.array(workBatchOwnerItemSchemaV1).max(32), queue: z.array(workBatchQueueItemSchemaV1).max(32),
+  queueDepthLimit: z.number().int().min(1).max(20), startsWork: z.literal(false),
   grantsExecutionAuthority: z.literal(false),
 }).strict();
 export type WorkBatchOwnerViewV1 = z.infer<typeof workBatchOwnerViewSchemaV1>;

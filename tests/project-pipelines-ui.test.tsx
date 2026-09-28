@@ -12,7 +12,8 @@ const projectId = "project:alpha", batchId = "batch:alpha";
 const proposal = {
   schema: "control-room.work-batch-proposal/v1" as const, projectId,
   tasks: [{ localId: "build", title: "Build the change", instructions: "Change only the declared files.",
-    requiredCapability: "capability:build", role: "builder" as const, requestedWorkerKind: "worker:one",
+    requiredCapability: "capability:build", role: "builder" as const, requestedWorkerId: "worker:exact",
+    requestedWorkerKind: "codex",
     requestedModelKey: "model:one", acceptanceCriteria: "The requested behavior is present.",
     acceptanceTests: "Run the focused tests." },
   { localId: "check", title: "Check the result", instructions: "Review the retained result.",
@@ -28,13 +29,17 @@ const view = (state: WorkBatchOwnerViewV1["state"] = "proposed"): WorkBatchOwner
     reasonCode: "initial_proposal", proposal }, { revision: 2, editedByIdentityId: "identity:owner",
     editedAt: "2026-09-27T10:30:00.000Z", reasonCode: "scope_correction", proposal }],
   items: state === "proposed" ? [] : [{ localId: "build", ordinal: 0, role: "builder", requiredCapability: "capability:build",
-    dependsOnLocalIds: [], requestedWorkerKind: "worker:one", requestedModelKey: "model:one",
+    dependsOnLocalIds: [], requestedWorkerId: "worker:exact", requestedWorkerKind: "codex", requestedModelKey: "model:one",
     acceptanceCriteria: "The requested behavior is present.", acceptanceTests: "Run the focused tests.",
     decisionState: "approved", decisionReasonCode: null, jobId: "job:approved" },
   { localId: "check", ordinal: 1, role: "checker", requiredCapability: "capability:review",
-    dependsOnLocalIds: ["build"], requestedWorkerKind: null, requestedModelKey: null,
+    dependsOnLocalIds: ["build"], requestedWorkerId: null, requestedWorkerKind: null, requestedModelKey: null,
     acceptanceCriteria: "No blocking findings remain.", acceptanceTests: "Inspect the exact diff.",
     decisionState: "rejected", decisionReasonCode: "owner_rejected", jobId: null }],
+  queue: state === "proposed" ? [] : [{ localId: "build", jobId: "job:approved", workerId: "worker:exact",
+    workerKind: "codex", nodeId: "mac-1.codex", position: 3, queueDepthLimit: 10,
+    selectionKey: "model:one", model: "model:one", effort: "high", provider: null, profile: null,
+    state: "waiting_turn" }], queueDepthLimit: 10,
   startsWork: false, grantsExecutionAuthority: false,
 });
 
@@ -93,6 +98,8 @@ test("pipeline detail shows every revision, phone-friendly decisions, and links 
   assert.match(proposed, /Revise this proposal/);
   assert.match(proposed, /does not assign, approve execution, dispatch, or start work/);
   assert.match(proposed, /private-pipeline-items/);
+  assert.match(proposed, /worker:exact/);
+  assert.doesNotMatch(proposed, />codex<\/dd>/);
 
   const decided = renderToStaticMarkup(createElement(PipelineBatchDetail, { projectId,
     data: { state: "ready", value: view("partially_approved") } }));
@@ -100,6 +107,19 @@ test("pipeline detail shows every revision, phone-friendly decisions, and links 
   assert.match(decided, /projects\/project%3Aalpha\/tasks\/job%3Aapproved/);
   assert.doesNotMatch(decided, /tasks\/null/);
   assert.match(decided, /owner rejected/);
+  assert.match(decided, /Per-agent queue/);
+  assert.match(decided, /Recorded queue depth limit: 10 items per agent/);
+  assert.match(decided, /Position 3 for worker:exact on mac-1.codex/);
+  assert.match(decided, /State: waiting turn/);
+  assert.match(decided, /Not admitted because this item was rejected/);
+
+  const approvedWithoutWorker: WorkBatchOwnerViewV1 = { ...view("approved"),
+    items: view("approved").items.map(item => item.localId === "check" ? {
+      ...item, decisionState: "approved" as const, decisionReasonCode: null, jobId: "job:awaiting-worker",
+    } : item) };
+  const awaiting = renderToStaticMarkup(createElement(PipelineBatchDetail, { projectId,
+    data: { state: "ready", value: approvedWithoutWorker } }));
+  assert.match(awaiting, /Awaiting an exact worker choice; this item is not admitted to an agent queue/);
 });
 
 test("pipeline browser client binds reads and an exact no-start owner decision", async () => {
@@ -145,4 +165,19 @@ test("pipeline browser client retains an exact uncertain command and key", async
   assert.equal((await client.retry(projectId, batchId)).replayed, true);
   assert.equal(requests[0]?.body, requests[1]?.body);
   assert.equal(requests[0]?.key, requests[1]?.key);
+});
+
+test("pipeline browser reports the exact per-agent queue depth refusal", async () => {
+  const transport = (async () => Response.json({ error: "queue_depth_exceeded" }, { status: 409 })) as typeof fetch;
+  const client = createWorkBatchOwnerBrowserClient(transport, () => "pipeline:depth-key-0001");
+  const command = { operation: "decide" as const, batchId, expectedRevision: 2,
+    items: [{ localId: "build", decision: "approve" as const },
+      { localId: "check", decision: "reject" as const, reasonCode: "owner_rejected" }] };
+  await assert.rejects(client.command(projectId, batchId, command),
+    (error: unknown) => (error as { code?: string }).code === "queue_depth_exceeded");
+  assert.equal(client.hasPending(), false);
+  const html = renderToStaticMarkup(createElement(PipelineBatchDetail, { projectId,
+    data: { state: "ready", value: view() }, saveError: "queue_depth_exceeded" }));
+  assert.match(html, /maximum unfinished work/);
+  assert.match(html, /another agent/);
 });

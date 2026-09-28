@@ -84,6 +84,30 @@ test("protected Mac startup creates the shared task lifecycle only after worker 
   assert.deepEqual(trace, ["load", "database-roles", "version", "web-database", "task-application", "web-close", "task-close"]);
 });
 
+test("protected host captures one batch key, catalog and exact-selection authority for the task application", async () => {
+  const key = new Uint8Array(32).fill(19);
+  let closed = false;
+  const host = createMacLocalProtectedHostV1({
+    async loadConfiguration() { return configuration; }, async readVersion() { return "codex test"; },
+    async loadDatabaseRoles() { return databaseRoles; },
+    openDatabase() { return { client: {} as never, async close() { closed = true; } }; },
+    workBatchIntegrityKey: key,
+    async createTaskApplication({ workBatches }) {
+      assert.ok(workBatches);
+      assert.notEqual(workBatches.integrityKey, key, "host owns a copy of the installation key");
+      assert.deepEqual([...workBatches.integrityKey], [...key]);
+      assert.equal(workBatches.queueCatalog[0]?.workerId, "worker:codex");
+      assert.equal(workBatches.selectionAuthority.assertCurrent({ workerId: "worker:codex", workerKind: "codex",
+        nodeId: "mac-1.codex", selectionKey: "gpt-6-sol", model: "gpt-6-sol", effort: "high",
+        provider: null, profile: null }), false, "workers without protected model policy are not admissible");
+      throw new Error("capture_complete");
+    },
+    assets: { count: 0, digest: "test", respond() { return undefined; } }, render() { return new Response("local"); },
+  });
+  await assert.rejects(host.start(), /mac_local_startup_failed/);
+  assert.equal(closed, true);
+});
+
 test("a protected Mac host refuses mismatched web role configuration before opening a database", async () => {
   let opened = false;
   const host = createMacLocalProtectedHostV1({

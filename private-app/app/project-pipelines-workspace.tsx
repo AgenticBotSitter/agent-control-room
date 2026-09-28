@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { z } from "zod";
-import { BrowserRequestError, type BrowserFailureCode } from "../../src/web/v1/browser-client";
+import type { BrowserFailureCode } from "../../src/web/v1/browser-client";
 import { readBrowserJson } from "../../src/web/v1/browser-json";
 import { workBatchProposalSchemaV1, type WorkBatchProposalV1 } from "../../src/work-intake/v1/schemas";
 import { workBatchOwnerCommandSchemaV1, workBatchOwnerPageSchemaV1, workBatchOwnerReceiptSchemaV1,
@@ -13,19 +13,31 @@ import { ConfiguredTimestamp } from "./configured-timestamp";
 
 type OwnerPage = z.infer<typeof workBatchOwnerPageSchemaV1>;
 type OwnerReceipt = z.infer<typeof workBatchOwnerReceiptSchemaV1>;
+type PipelineFailureCode = BrowserFailureCode | "queue_depth_exceeded";
+class PipelineRequestError extends Error {
+  constructor(readonly code: PipelineFailureCode) { super(code); }
+}
 type ReadState<T> = { state: "loading" } | { state: "ready"; value: T }
-  | { state: "unavailable"; code: BrowserFailureCode };
+  | { state: "unavailable"; code: PipelineFailureCode };
 type Choice = "undecided" | "approve" | "reject";
 export type PipelineDecisionDraft = Readonly<Record<string, Readonly<{ decision: Choice; reasonCode: string }>>>;
 
 const errorCode = (status: number): BrowserFailureCode => ({ 400: "invalid_request", 401: "authentication_required",
   403: "access_denied", 404: "not_found", 409: "conflict" } as Record<number, BrowserFailureCode>)[status] ?? "unavailable";
+const commandErrorCode = async (response: Response): Promise<PipelineFailureCode> => {
+  if (response.status === 409) try {
+    const parsed = z.object({ error: z.literal("queue_depth_exceeded") }).strict().safeParse(await readBrowserJson(response));
+    if (parsed.success) return "queue_depth_exceeded";
+  } catch { /* fall back to the status-bound code */ }
+  return errorCode(response.status);
+};
 
-export const pipelineErrorMessage: Record<BrowserFailureCode, string> = {
+export const pipelineErrorMessage: Record<PipelineFailureCode, string> = {
   authentication_required: "Your session has ended. Sign in again, then check this saved pipeline batch.",
   access_denied: "Your current access does not include this project’s pipeline batches.",
   invalid_request: "The proposed decision or revision is invalid. Check every item and reason code.",
   conflict: "This batch changed in another tab. Check its saved revision before deciding again.",
+  queue_depth_exceeded: "The selected agent already has the recorded maximum unfinished work. Wait for an accepted result or revise the proposal to use another agent.",
   not_found: "This pipeline batch is no longer available in this project.",
   unavailable: "The saved database or protected pipeline service could not be checked. No empty state or decision is inferred.",
   uncertain: "The decision could not be confirmed. Keep this page open and check this exact save again; do not submit a different decision.",
@@ -41,33 +53,33 @@ export function createWorkBatchOwnerBrowserClient(transport: typeof fetch = fetc
         signal: AbortSignal.timeout(10_000), headers: { accept: "application/json", "x-requested-with": "XMLHttpRequest",
           ...(body === undefined ? {} : { "content-type": "application/json" }), ...(key ? { "idempotency-key": key } : {}) },
         ...(body === undefined ? {} : { body }) });
-    } catch { throw new BrowserRequestError(method === "GET" ? "unavailable" : "uncertain"); }
+    } catch { throw new PipelineRequestError(method === "GET" ? "unavailable" : "uncertain"); }
   }
   async function read(response: Response) {
-    if (!response.ok) throw new BrowserRequestError(errorCode(response.status));
-    try { return await readBrowserJson(response); } catch { throw new BrowserRequestError("unavailable"); }
+    if (!response.ok) throw new PipelineRequestError(errorCode(response.status));
+    try { return await readBrowserJson(response); } catch { throw new PipelineRequestError("unavailable"); }
   }
   async function command(projectId: string, batchId: string, value?: unknown): Promise<OwnerReceipt> {
     const path = `/api/v1/projects/${encodeURIComponent(projectId)}/pipelines/${encodeURIComponent(batchId)}`;
     if (value !== undefined) {
       const parsed = workBatchOwnerCommandSchemaV1.safeParse(value);
-      if (!parsed.success || parsed.data.batchId !== batchId) throw new BrowserRequestError("invalid_request");
+      if (!parsed.success || parsed.data.batchId !== batchId) throw new PipelineRequestError("invalid_request");
       const body = JSON.stringify(parsed.data);
-      if (pending && (pending.path !== path || pending.body !== body)) throw new BrowserRequestError("uncertain");
+      if (pending && (pending.path !== path || pending.body !== body)) throw new PipelineRequestError("uncertain");
       pending ??= { path, body, key: makeKey(), uncertain: false };
     }
-    if (!pending) throw new BrowserRequestError("invalid_request");
+    if (!pending) throw new PipelineRequestError("invalid_request");
     try {
       const response = await call(pending.path, "POST", pending.body, pending.key);
-      if (!response.ok) throw new BrowserRequestError([400, 401, 403, 404, 409].includes(response.status)
-        ? errorCode(response.status) : "uncertain");
+      if (!response.ok) throw new PipelineRequestError([400, 401, 403, 404, 409].includes(response.status)
+        ? await commandErrorCode(response) : "uncertain");
       const value = workBatchOwnerReceiptSchemaV1.parse(await read(response));
       if (value.projectId !== projectId || value.batchId !== batchId || value.startsWork || value.grantsExecutionAuthority)
         throw new Error();
       pending = undefined;
       return value;
     } catch (error) {
-      const failure = error instanceof BrowserRequestError ? error : new BrowserRequestError("uncertain");
+      const failure = error instanceof PipelineRequestError ? error : new PipelineRequestError("uncertain");
       if (pending && failure.code === "uncertain") pending.uncertain = true;
       else if (pending && !pending.uncertain) pending = undefined;
       throw failure;
@@ -82,7 +94,7 @@ export function createWorkBatchOwnerBrowserClient(transport: typeof fetch = fetc
         if (value.batches.some(batch => batch.projectId !== projectId) || value.startsWork || value.grantsExecutionAuthority)
           throw new Error();
         return value;
-      } catch (error) { throw error instanceof BrowserRequestError ? error : new BrowserRequestError("unavailable"); }
+      } catch (error) { throw error instanceof PipelineRequestError ? error : new PipelineRequestError("unavailable"); }
     },
     async view(projectId: string, batchId: string): Promise<WorkBatchOwnerViewV1> {
       try {
@@ -91,7 +103,7 @@ export function createWorkBatchOwnerBrowserClient(transport: typeof fetch = fetc
         if (value.projectId !== projectId || value.batchId !== batchId || value.startsWork || value.grantsExecutionAuthority)
           throw new Error();
         return value;
-      } catch (error) { throw error instanceof BrowserRequestError ? error : new BrowserRequestError("unavailable"); }
+      } catch (error) { throw error instanceof PipelineRequestError ? error : new PipelineRequestError("unavailable"); }
     },
     command,
     retry(projectId: string, batchId: string) { return command(projectId, batchId); },
@@ -162,7 +174,7 @@ function ProposalContents({ proposal }: { proposal: WorkBatchProposalV1 }) {
     <header><h4>{task.title}</h4><span className="private-state">{task.role}</span></header>
     <p className="private-prewrap">{task.instructions}</p>
     <dl className="private-task-facts"><div><dt>Capability</dt><dd>{task.requiredCapability}</dd></div>
-      <div><dt>Agent</dt><dd>{task.requestedWorkerKind ?? "Not requested"}</dd></div>
+      <div><dt>Agent</dt><dd>{task.requestedWorkerId ?? task.requestedWorkerKind ?? "Not requested"}</dd></div>
       <div><dt>Model</dt><dd>{task.requestedModelKey ?? "Not requested"}</dd></div>
       <div><dt>Depends on</dt><dd>{incoming.get(task.localId)?.join(", ") || "Nothing in this batch"}</dd></div></dl>
     <h5>Acceptance criteria</h5><p className="private-prewrap">{task.acceptanceCriteria}</p>
@@ -174,7 +186,7 @@ export function PipelineBatchDetail({ projectId, data, decisions = {}, pending =
   onDecision = () => {}, onAll = () => {}, onSave = () => {}, onRetry = () => {},
   revisionText = "", revisionReason = "owner_revision", onRevisionText = () => {}, onRevisionReason = () => {}, onRevise = () => {} }:
   { projectId: string; data: ReadState<WorkBatchOwnerViewV1>; decisions?: PipelineDecisionDraft; pending?: boolean;
-    saveError?: BrowserFailureCode; onDecision?: (localId: string, decision: Choice, reasonCode: string) => void;
+    saveError?: PipelineFailureCode; onDecision?: (localId: string, decision: Choice, reasonCode: string) => void;
     onAll?: (choice: Exclude<Choice, "undecided">) => void; onSave?: () => void; onRetry?: () => void;
     revisionText?: string; revisionReason?: string; onRevisionText?: (value: string) => void;
     onRevisionReason?: (value: string) => void; onRevise?: () => void }) {
@@ -190,6 +202,7 @@ export function PipelineBatchDetail({ projectId, data, decisions = {}, pending =
   const dependenciesValid = value.proposal.edges.every(edge => decisions[edge.toLocalId]?.decision !== "approve"
     || decisions[edge.fromLocalId]?.decision === "approve");
   const savedByLocal = new Map(value.items.map(item => [item.localId, item]));
+  const queueByLocal = new Map(value.queue.map(item => [item.localId, item]));
   return <>
     <section className="private-panel"><div className="private-pipeline-heading"><div><h2>Batch review</h2>
       <p>Revision {value.revision} · {value.state.replaceAll("_", " ")}</p></div>
@@ -200,7 +213,21 @@ export function PipelineBatchDetail({ projectId, data, decisions = {}, pending =
           <strong>{task.title}: {item?.decisionState ?? "decision unavailable"}</strong>
           {item?.decisionReasonCode && <span>Reason: {item.decisionReasonCode.replaceAll("_", " ")}</span>}
           {item?.jobId && <a href={`/projects/${encodeURIComponent(projectId)}/tasks/${encodeURIComponent(item.jobId)}`}>Open ordinary proposed task</a>}
-        </li>; })}</ul></section> : <section aria-label="Owner batch decision"><h3>Decide every item</h3>
+        </li>; })}</ul>
+        <section aria-label="Per-agent queue"><h3>Per-agent queue</h3>
+          <p>Recorded queue depth limit: {value.queueDepthLimit} item{value.queueDepthLimit === 1 ? "" : "s"} per agent.</p>
+          <ul className="private-dashboard-list">{value.proposal.tasks.map(task => {
+            const item = savedByLocal.get(task.localId), queued = queueByLocal.get(task.localId);
+            return <li key={task.localId}><strong>{task.title}</strong>
+              {queued ? <><span>Position {queued.position} for {queued.workerId} on {queued.nodeId}</span>
+                <span>Model {queued.selectionKey} · {queued.model} · effort {queued.effort}</span>
+                <span>State: {queued.state.replaceAll("_", " ")}</span></>
+                : item?.decisionState === "approved" ? <span>Awaiting an exact worker choice; this item is not admitted to an agent queue.</span>
+                  : <span>Not admitted because this item was rejected.</span>}
+            </li>;
+          })}</ul>
+        </section>
+      </section> : <section aria-label="Owner batch decision"><h3>Decide every item</h3>
         <div className="private-actions"><button type="button" disabled={pending} onClick={() => onAll("approve")}>Approve all items</button>
           <button type="button" disabled={pending} onClick={() => onAll("reject")}>Reject all items</button></div>
         <div className="private-pipeline-decisions">{value.proposal.tasks.map(task => { const draft = decisions[task.localId]
@@ -239,7 +266,7 @@ export function PrivateProjectPipelines({ projectId, batchId }: { projectId: str
   const [client] = useState(() => createWorkBatchOwnerBrowserClient());
   const [data, setData] = useState<ReadState<OwnerPage | WorkBatchOwnerViewV1>>({ state: "loading" });
   const [generation, setGeneration] = useState(0), [pending, setPending] = useState(false);
-  const [saveError, setSaveError] = useState<BrowserFailureCode>(), [decisions, setDecisions] = useState<PipelineDecisionDraft>({});
+  const [saveError, setSaveError] = useState<PipelineFailureCode>(), [decisions, setDecisions] = useState<PipelineDecisionDraft>({});
   const [revisionText, setRevisionText] = useState(""), [revisionReason, setRevisionReason] = useState("owner_revision");
   useEffect(() => {
     const abort = new AbortController(); setData({ state: "loading" }); setSaveError(undefined);
@@ -247,7 +274,7 @@ export function PrivateProjectPipelines({ projectId, batchId }: { projectId: str
       if (abort.signal.aborted) return; setData({ state: "ready", value });
       if (batchId) setRevisionText(JSON.stringify((value as WorkBatchOwnerViewV1).proposal, null, 2));
     }, error => { if (!abort.signal.aborted) setData({ state: "unavailable",
-      code: error instanceof BrowserRequestError ? error.code : "unavailable" }); });
+      code: error instanceof PipelineRequestError ? error.code : "unavailable" }); });
     return () => abort.abort();
   }, [client, projectId, batchId, generation]);
   const detail = data.state === "ready" && batchId ? data.value as WorkBatchOwnerViewV1 : undefined;
@@ -257,16 +284,16 @@ export function PrivateProjectPipelines({ projectId, batchId }: { projectId: str
     try {
       let command: unknown;
       if (revise) {
-        let proposal: unknown; try { proposal = JSON.parse(revisionText); } catch { throw new BrowserRequestError("invalid_request"); }
+        let proposal: unknown; try { proposal = JSON.parse(revisionText); } catch { throw new PipelineRequestError("invalid_request"); }
         const parsed = workBatchProposalSchemaV1.safeParse(proposal);
-        if (!parsed.success || parsed.data.projectId !== projectId) throw new BrowserRequestError("invalid_request");
+        if (!parsed.success || parsed.data.projectId !== projectId) throw new PipelineRequestError("invalid_request");
         command = { operation: "revise", batchId, expectedRevision: detail.revision, reasonCode: revisionReason, proposal: parsed.data };
       } else if (!retry) command = { operation: "decide", batchId, expectedRevision: detail.revision,
         items: detail.proposal.tasks.map(task => ({ localId: task.localId, decision: decisions[task.localId]?.decision,
           ...(decisions[task.localId]?.decision === "reject" ? { reasonCode: decisions[task.localId]?.reasonCode } : {}) })) };
       await (retry ? client.retry(projectId, batchId) : client.command(projectId, batchId, command));
       setDecisions({}); setGeneration(value => value + 1);
-    } catch (error) { setSaveError(error instanceof BrowserRequestError ? error.code : "uncertain"); }
+    } catch (error) { setSaveError(error instanceof PipelineRequestError ? error.code : "uncertain"); }
     finally { setPending(false); }
   };
   const content = batchId

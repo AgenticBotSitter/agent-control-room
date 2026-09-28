@@ -46,7 +46,8 @@ import { IdeaLabErrorV1 } from "../../idea-lab/v1/errors";
 import { parseOperatorSurfaceSnapshotV1, type OperatorSurfaceSnapshotV1 } from "../../operator-surfaces/v1";
 import { verifyInstallationPlanV1, type InstallationPlanV1 } from "../../installer/v1/installation-plan";
 import { createInstallationPlanViewV1 } from "../../installer/v1/installation-plan-view";
-import { WorkBatchOwnerServiceV1 } from "../../work-intake/v1";
+import { WorkBatchOwnerServiceV1, type WorkBatchQueueAdmissionAuthorityV1,
+  type WorkBatchQueueCatalogV1 } from "../../work-intake/v1";
 import { createWorkBatchOwnerHttpHandlerV1 } from "./work-batch-owner-http";
 
 export interface PrivateWebProcessOptions {
@@ -102,7 +103,8 @@ export interface PrivateWebProcessOptions {
   tasks?: Omit<WebTaskKeys, "ideaIntegrityKey"> & { harnessIntegrityKey: Uint8Array };
   /** Optional proposal-intake integrity key. It enables owner batch review;
    * omission keeps the Pipelines routes absent. */
-  workBatches?: { integrityKey: Uint8Array };
+  workBatches?: { integrityKey: Uint8Array; queueCatalog?: WorkBatchQueueCatalogV1;
+    queueAdmissionAuthority?: WorkBatchQueueAdmissionAuthorityV1 };
   /** Trusted control-plane operation only. No planner key, privileged pool or native adapter is
    * given to the web SQL service. Its resource lifecycle is owned by the supplying composition. */
   planning?: TaskPlanningOperation;
@@ -287,7 +289,8 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
   const tasks = new WebTaskService(options.database.client, { tenantId: options.tenantId, workspaceId: options.workspaceId }, clock,
     { ...options.tasks, ideaIntegrityKey: options.ideaProjects?.integrityKey });
   const workBatches = options.workBatches ? new WorkBatchOwnerServiceV1(options.database.client, tasks,
-    { tenantId: options.tenantId, workspaceId: options.workspaceId }, options.workBatches.integrityKey, clock) : undefined;
+    { tenantId: options.tenantId, workspaceId: options.workspaceId }, options.workBatches.integrityKey, clock,
+    options.workBatches.queueCatalog, options.workBatches.queueAdmissionAuthority) : undefined;
   // This is a task-planning bridge only. It is deliberately composed from the
   // same private web database and ordinary task service, not from a provider
   // runtime or a second Idea Lab worker system.
