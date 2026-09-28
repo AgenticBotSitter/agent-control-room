@@ -26,12 +26,21 @@ export class ConcurrentReadRaceError extends Error {
 
 const DEADLINE_PADDING_MS = 50;
 
-/** One-shot promise that settles after `ms`, with an unref'd timer. */
+/**
+ * One-shot promise that settles after `ms`.
+ *
+ * The timer is deliberately NOT unref'd. An unref'd timer lets Node exit while
+ * the race is still unsettled, so a deadlocked pool would end the process with
+ * an "unsettled top-level await" (exit 13) instead of the
+ * `pool_exhaustion_deadlock` failure the caller is waiting for. The defect these
+ * helpers detect is precisely "nothing else is keeping the loop alive", so the
+ * deadline has to be what keeps it alive. The timer is always cleared in a
+ * `finally`, so a successful run still exits immediately.
+ */
 function deadline(boundMs: number): { promise: Promise<"timeout">; cancel: () => void } {
   let timer: NodeJS.Timeout | undefined;
   const promise = new Promise<"timeout">(resolve => {
     timer = setTimeout(() => resolve("timeout"), boundMs);
-    timer.unref?.();
   });
   return { promise, cancel: () => clearTimeout(timer) };
 }
@@ -148,9 +157,9 @@ export interface ConcurrentWritersResult {
   readonly elapsedMs: number;
 }
 
+/** Sleep. Not unref'd: it is the only thing keeping a writer loop alive. */
 const wait = (ms: number) => new Promise<void>(resolve => {
-  const timer = setTimeout(resolve, ms);
-  timer.unref?.();
+  setTimeout(resolve, ms);
 });
 
 /**

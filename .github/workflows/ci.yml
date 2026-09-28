@@ -526,6 +526,28 @@ jobs:
       - name: Note which lane this entry covers
         run: |
           echo "Merge-gate entry for lane: ${{ matrix.lane }}" >> "$GITHUB_STEP_SUMMARY"
+      # The catch-up components lane needs PostgreSQL 17 for the attack-test kit,
+      # exactly like the early components job. Without this the kit's real-cluster
+      # tests would skip here and a pull request that routed away from the
+      # components lane would still get a green merge gate with none of that
+      # coverage. Mirrors the PGDG keyring steps in the early job.
+      - name: Install PostgreSQL 17 from PGDG for the components catch-up
+        if: ${{ !cancelled() && matrix.lane == 'components' }}
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ca-certificates curl gnupg
+          sudo install -d -m 0755 /etc/apt/keyrings
+          curl --silent --show-error --location --output /tmp/pgdg.asc https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          test -s /tmp/pgdg.asc
+          head -1 /tmp/pgdg.asc | grep -q "BEGIN PGP PUBLIC KEY BLOCK"
+          sudo cp /tmp/pgdg.asc /etc/apt/keyrings/pgdg.asc
+          echo "deb [signed-by=/etc/apt/keyrings/pgdg.asc] http://apt.postgresql.org/pub/repos/apt $(lsb_release --short --codename)-pgdg main" | sudo tee /etc/apt/sources.list.d/pgdg.list
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends postgresql-17
+          echo "PG_BIN=/usr/lib/postgresql/17/bin" >> "$GITHUB_ENV"
       - name: Demo tests (merge gate)
         if: ${{ !cancelled() && matrix.lane == 'demo' && needs.route.result == 'success' && needs.route.outputs.demo == 'false' }}
         run: |

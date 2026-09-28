@@ -2,9 +2,10 @@
 //
 // Every cluster this module starts is socket-only, bound to a port the caller
 // names, initialised into a fresh temp directory, and destroyed afterwards —
-// including when the body throws, the caller times out, or the process is
-// signalled. It never reads a connection string from the environment, never
-// touches the live application, and never reuses a cluster it did not start.
+// including when the body throws, when the body exceeds its bound, and on
+// SIGINT/SIGTERM, each of which is proven by a test in tests/attack-kit.test.ts.
+// It never reads a connection string from the environment, never touches the
+// live application, and never reuses a cluster it did not start.
 //
 // Skipping is explicit rather than silent. `requiresRealPostgres()` is the
 // question a CI lane with PostgreSQL installed must be able to answer "yes" to;
@@ -23,7 +24,6 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { Client } from "pg";
 import { applyMigrations } from "../../../deploy/postgres/apply-migrations.mjs";
-import { connectTarget } from "../../../deploy/postgres/evidence.mjs";
 
 const exec = promisify(execFile);
 
@@ -147,8 +147,6 @@ export interface WithRealPostgresOptions {
   withoutQueue?: boolean;
   /** Extra role files to apply after the standard set. */
   extraRoleFiles?: readonly string[];
-  /** Wall-clock bound for the whole setup. */
-  setupBoundMs?: number;
   /** Override the PostgreSQL bin directory (must contain initdb + postgres). */
   pgBin?: string;
 }
@@ -361,6 +359,29 @@ async function startCluster(options: WithRealPostgresOptions & { pgBin: string }
     await rm(run, { recursive: true, force: true });
   };
 
+  // A signal must not leave a postmaster behind. This machine has 32 SysV
+  // shared-memory segments in total, so one orphaned cluster blocks every other
+  // job; `scripts/dev/cleanup-test-postgres.mjs` can reclaim an unattached one,
+  // but only after the damage. The handler is installed before initdb, removed
+  // once `stop` has run, and re-raises the signal's conventional exit code so
+  // the surrounding runner still sees a signalled failure.
+  const onSignal = (signal: NodeJS.Signals) => {
+    void stop().finally(() => {
+      process.exit(signal === "SIGINT" ? 130 : 143);
+    });
+  };
+  const signals: NodeJS.Signals[] = ["SIGINT", "SIGTERM"];
+  for (const signal of signals) process.once(signal, onSignal);
+  const releaseSignals = () => {
+    for (const signal of signals) process.removeListener(signal, onSignal);
+  };
+  // The teardown every path shares: release the handlers first, so a signal
+  // arriving during an ordinary stop does not re-enter `stop`, then stop.
+  const teardown = async () => {
+    releaseSignals();
+    await stop();
+  };
+
   try {
     await mkdir(socketDirectory, { mode: 0o700 });
     if (asPostgres) await exec("chown", ["-R", `${POSTGRES_UID}:${POSTGRES_GID}`, run], { timeout: 30_000 });
@@ -478,10 +499,10 @@ async function startCluster(options: WithRealPostgresOptions & { pgBin: string }
           return false;
         }
       },
-      stop,
+      stop: teardown,
     };
   } catch (error) {
-    await stop();
+    await teardown();
     throw error;
   }
 }
@@ -530,6 +551,12 @@ export async function withRealPostgres<T>(
   const startedAt = Date.now();
   const postgres = await startCluster({ ...rest, port, pgBin });
   let timer: NodeJS.Timeout | undefined;
+  // The teardown evidence is OBSERVED, not assumed. A hard-coded
+  // `cleanedUp: true` would be unfalsifiable, and the whole point of this
+  // helper is that a caller can trust or refute the cleanup. The result is
+  // built after the `finally` has run, from the filesystem and the postmaster.
+  let outcome: Omit<WithRealPostgresResult<T>, "cleanedUp" | "leftovers"> | undefined;
+  let failure: { error: unknown; stack?: string } | undefined;
   try {
     let value!: T;
     if (boundMs === undefined) {
@@ -537,8 +564,9 @@ export async function withRealPostgres<T>(
     } else {
       const work = body(postgres).then(v => ({ value: v }) as const);
       const expiry = new Promise<"timeout">(resolve => {
+        // Not unref'd: a body that overruns must hit the bound so the cluster
+        // is torn down, not let the process exit with a live postmaster.
         timer = setTimeout(() => resolve("timeout"), boundMs);
-        timer.unref?.();
       });
       work.catch(() => {});
       const settled = await Promise.race([work, expiry]);
@@ -547,15 +575,32 @@ export async function withRealPostgres<T>(
       }
       value = settled.value;
     }
-    return {
+    outcome = {
       value, port, dataDirectory: postgres.dataDirectory,
       appliedMigrations: postgres.appliedMigrations,
-      elapsedMs: Date.now() - startedAt, cleanedUp: true, leftovers: [],
+      elapsedMs: Date.now() - startedAt,
     };
+  } catch (error) {
+    // The body's own failure is re-raised after teardown; the teardown
+    // observation below is reported by the thrown error's own message if the
+    // cluster leaked, so a leak is never silently paired with a body error.
+    failure = { error };
   } finally {
     if (timer) clearTimeout(timer);
     await postgres.stop();
   }
+
+  const leftovers: string[] = [];
+  if (await postgres.isRunning()) leftovers.push("postmaster_still_running");
+  if (existsSync(postgres.dataDirectory)) leftovers.push(`data_directory:${postgres.dataDirectory}`);
+  if (existsSync(postgres.runDirectory)) leftovers.push(`run_directory:${postgres.runDirectory}`);
+  if (leftovers.length > 0) {
+    throw new Error(`attack_kit_cluster_leaked:${port}:${leftovers.join(",")}`
+      + (failure === undefined ? "" : `:body_also_failed:${(failure.error as Error)?.message ?? "unknown"}`),
+    { cause: failure?.error });
+  }
+  if (failure) throw failure.error;
+  return { ...outcome!, cleanedUp: true, leftovers };
 }
 
 /**

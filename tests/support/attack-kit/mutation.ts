@@ -164,8 +164,9 @@ export async function assertGuardBites(options: AssertGuardBitesOptions): Promis
   try {
     await writeFile(file, original.replace(options.find, options.replace));
     const bound = new Promise<never>((_, reject) => {
+      // Not unref'd: a mutation experiment that hangs must hit the bound and
+      // restore the file, not let the process exit with the mutation still live.
       timer = setTimeout(() => reject(new Error(`mutation_test_command_timed_out_after_${boundMs}ms`)), boundMs);
-      timer.unref?.();
     });
     try {
       const done = run(command.file, command.args, { cwd: root, maxBuffer: 1 << 26, env: process.env });
