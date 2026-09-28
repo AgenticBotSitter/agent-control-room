@@ -129,7 +129,7 @@ export const createTaskApplication: MacLocalTaskProviderV1["createTaskApplicatio
     const keys = runtime.keys;
     await verifyAgentReviewerDatabase(reviewerPool.client, databaseRoles.agentReviewer,
       { tenantId, workspaceId, ownerIdentityId: macLocalOwnerIdentityIdV1(tenantId),
-        issuer: configuration.localOwnerSession.provider }, Date.now());
+        issuer: configuration.localOwnerSession.provider }, Date.now(), { nativeQueue: true });
     // First-owner provisioning is an explicit one-time operator action. The
     // ordinary host must never initialize the review authority on startup.
     const existing = await readPool.client.query("SELECT revision FROM control_completion_gate_integrity WHERE tenant_id=$1", [tenantId]);

@@ -324,8 +324,9 @@ export async function verifyLocalResultPublisherDatabase(db: DatabaseClient, con
 /** Agent checker commit role: one authenticated plan join plus Completion Gate
  * append/integrity writes, with no task, queue, lease or owner authority. */
 export async function verifyAgentReviewerDatabase(db: DatabaseClient, config: PrivatePostgresConfiguration,
-  scope: { tenantId: string; workspaceId: string; ownerIdentityId: string; issuer: string }, now: number) {
-  return verifyDatabase(db, config, scope, now, "agentReviewer");
+  scope: { tenantId: string; workspaceId: string; ownerIdentityId: string; issuer: string }, now: number,
+  queue?: NativeQueueDatabaseOption) {
+  return verifyDatabase(db, config, scope, now, "agentReviewer", queue);
 }
 
 export async function verifyNativeSessionDatabase(db: DatabaseClient, config: PrivatePostgresConfiguration,

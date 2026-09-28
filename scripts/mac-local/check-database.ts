@@ -51,7 +51,7 @@ const production: MacLocalDatabaseCheckRuntimeV1 = Object.freeze({
     coordinator: (db, config, scope) => verifyTaskCoordinatorDatabase(db.client, config, scope, Date.now(), { nativeQueue: true }),
     results: (db, config, scope) => verifyNativeResultDatabase(db.client, config, scope, Date.now(), { nativeQueue: true }),
     publisher: (db, config, scope) => verifyLocalResultPublisherDatabase(db.client, config, scope, Date.now(), { nativeQueue: true }),
-    agentReviewer: (db, config, scope) => verifyAgentReviewerDatabase(db.client, config, scope, Date.now()),
+    agentReviewer: (db, config, scope) => verifyAgentReviewerDatabase(db.client, config, scope, Date.now(), { nativeQueue: true }),
     queueWorker: (db, config) => verifyNativeQueueWorkerDatabase(db.client, config),
   },
   deniedWrite: deniedWriteV1,

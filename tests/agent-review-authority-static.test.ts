@@ -36,6 +36,10 @@ test("agent reviewer role has only completion-review commit privileges", async (
   assert.match(preflight, /agentReviewerReads = \["control_agent_review_plans", "control_completion_gate_records"/u);
   assert.match(preflight, /agentReviewerInserts = new Set\(\["control_completion_gate_records"\]\)/u);
   assert.match(preflight, /agentReviewer: "control_room_agent_reviewer"/u);
+  const databaseCheck = await readFile("scripts/mac-local/check-database.ts", "utf8");
+  assert.match(databaseCheck, /verifyAgentReviewerDatabase\(db\.client, config, scope, Date\.now\(\), \{ nativeQueue: true \}\)/u);
+  const provider = await readFile("src/web/v1/mac-local-default-task-provider.ts", "utf8");
+  assert.match(provider, /verifyAgentReviewerDatabase\(reviewerPool\.client,[\s\S]*\{ nativeQueue: true \}\)/u);
 });
 
 test("0097 down migration refuses to erase review authority history", async () => {

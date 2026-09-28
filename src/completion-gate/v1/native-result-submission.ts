@@ -99,7 +99,8 @@ export class NativeResultSubmissionService {
           attemptId: run.attemptId, nodeId: run.nodeId, inputDigest: job.inputDigest,
           authorityDigest: job.authority.digest, bindingDigest: run.nativeTask!.bindingDigest,
           producer, workerId: producer.workerId, agentProfileId: producer.agentProfileId,
-          harness: producer.harness, adapterId: producer.adapterId, modelFamily: producer.modelFamily,
+          harness: producer.harness, adapterId: producer.adapterId,
+          ...(producer.modelFamily ? { modelFamily: producer.modelFamily } : {}),
           targetId: `target:native:${sha256Digest({ tenantId: run.tenantId, jobId: run.jobId }).slice(7)}` };
         const gate = new CompletionGateStoreV1(joined(tx), this.key, this.checkpoints);
         const prior = (await tx.query<Row>("SELECT * FROM control_native_review_plans WHERE tenant_id=$1 AND job_id=$2",
@@ -151,7 +152,8 @@ export class NativeResultSubmissionService {
           jobId: run.jobId, attemptId: run.attemptId, nodeId: run.nodeId, inputDigest: job.inputDigest,
           authorityDigest: job.authority.digest, bindingDigest: run.nativeTask!.bindingDigest,
           producer, workerId: producer.workerId, agentProfileId: producer.agentProfileId,
-          harness: producer.harness, adapterId: producer.adapterId, modelFamily: producer.modelFamily,
+          harness: producer.harness, adapterId: producer.adapterId,
+          ...(producer.modelFamily ? { modelFamily: producer.modelFamily } : {}),
           targetId: `target:native:${sha256Digest({ tenantId: run.tenantId, jobId: run.jobId }).slice(7)}` };
         const gate = new CompletionGateStoreV1(joined(tx), this.key, this.checkpoints);
         await this.profile(gate, request, run.projectId);
