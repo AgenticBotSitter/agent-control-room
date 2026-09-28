@@ -19,16 +19,47 @@ function evidenceSection(body) {
 }
 
 function bulletBlocks(section) {
-  const starts = [...section.matchAll(/^[-*]\s+/gmu)].map((match) => match.index);
-  return starts.map((start, index) => section.slice(start, starts[index + 1] ?? section.length).trim());
+  const blocks = [];
+  let block = null;
+  let fence = null;
+  for (const line of section.split(/\r?\n/u)) {
+    const marker = /^\s*(`{3,}|~{3,})[^\r\n]*$/u.exec(line);
+    if (fence) {
+      if (block !== null) block += `\n${line}`;
+      const close = new RegExp(`^\\s*${fence.character}{${fence.length},}\\s*$`, "u");
+      if (close.test(line)) fence = null;
+      continue;
+    }
+    if (/^[-*]\s+/u.test(line)) {
+      if (block !== null) blocks.push(block.trim());
+      block = line;
+      continue;
+    }
+    if (block !== null) block += `\n${line}`;
+    if (marker) fence = { character: marker[1][0], length: marker[1].length };
+  }
+  if (block !== null) blocks.push(block.trim());
+  return blocks;
 }
 
-function references(block) {
+function references(block, onUnclosedFence = () => {}) {
   const found = [];
+  let fence = null;
   for (const line of block.split(/\r?\n/u)) {
+    const marker = /^\s*(`{3,}|~{3,})[^\r\n]*$/u.exec(line);
+    if (fence) {
+      const close = new RegExp(`^\\s*${fence.character}{${fence.length},}\\s*$`, "u");
+      if (close.test(line)) fence = null;
+      continue;
+    }
+    if (marker) {
+      fence = { character: marker[1][0], length: marker[1].length };
+      continue;
+    }
     const match = /(?:^|\s)(test|ci|cmd):\s*(.+?)\s*$/iu.exec(line);
     if (match) found.push({ type: match[1].toLowerCase(), value: match[2] });
   }
+  if (fence) onUnclosedFence();
   return found;
 }
 
@@ -63,8 +94,19 @@ function hasNamedTest(source, name) {
 }
 
 function hasFencedOutput(block) {
-  const match = /(?:^|\n)\s*```[^\n]*\n([\s\S]*?)\n\s*```/u.exec(block);
-  return Boolean(match?.[1].trim());
+  let fence = null;
+  let output = "";
+  for (const line of block.split(/\r?\n/u)) {
+    const marker = /^\s*(`{3,}|~{3,})[^\r\n]*$/u.exec(line);
+    if (fence) {
+      const close = new RegExp(`^\\s*${fence.character}{${fence.length},}\\s*$`, "u");
+      if (close.test(line)) return Boolean(output.trim());
+      output += `${line}\n`;
+      continue;
+    }
+    if (marker) fence = { character: marker[1][0], length: marker[1].length };
+  }
+  return Boolean(fence && output.trim());
 }
 
 function absoluteWarnings(body) {
@@ -97,8 +139,9 @@ export function checkPrClaims({
     const bullets = bulletBlocks(section);
     if (bullets.length === 0) errors.push("evidence_bullets_missing");
     const jobs = workflowJobs(workflowSource);
+    let unclosedFenceWarnings = 0;
     for (const block of bullets) {
-      const refs = references(block);
+      const refs = references(block, () => { unclosedFenceWarnings++; });
       if (refs.length === 0) errors.push("evidence_reference_missing");
       for (const ref of refs) {
         if (ref.type === "test") {
@@ -115,6 +158,14 @@ export function checkPrClaims({
           errors.push("command_output_missing");
         }
       }
+    }
+    if (unclosedFenceWarnings > 0) {
+      return {
+        ok: errors.length === 0,
+        errors,
+        warnings: absoluteWarnings(body),
+        fenceWarnings: unclosedFenceWarnings,
+      };
     }
   }
   return { ok: errors.length === 0, errors, warnings: absoluteWarnings(body) };
@@ -137,6 +188,7 @@ export function main(env = process.env) {
     if (!event.pull_request) { console.log("PR claims check skipped: not a pull request"); return; }
     const result = checkPrClaims({ body: event.pull_request.body ?? "", changedPaths: changedPaths(event, process.cwd()) });
     if (result.warnings > 0) console.warn(`PR claims check warning: ${result.warnings} absolute claim(s) lack an evidence line`);
+    if (result.fenceWarnings > 0) console.warn(`PR claims check warning: ${result.fenceWarnings} unclosed evidence fence(s)`);
     if (!result.ok) {
       const codes = [...new Set(result.errors)].map((code) => redactPrivateNames(code, env));
       console.error(`PR claims check failed: ${codes.join(", ")}`);

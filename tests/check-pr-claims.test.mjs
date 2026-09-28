@@ -159,6 +159,79 @@ test("existing test, CI job, and fenced command output references pass", () => {
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test("references in fenced command output are ignored and a following reference is checked", () => {
+  const root = fixture();
+  try {
+    const body = `## Evidence
+
+- The command completed.
+  cmd: pnpm run test:unit
+  \`\`\`text
+  > package@1.0.0 test:unit
+  ci: foo
+  test: x::y
+- test: x::y
+  \`\`\`
+- The regression remains covered.
+  test: tests/example.test.mjs::keeps the claim honest`;
+    assert.deepEqual(inspect(root, body), { ok: true, errors: [], warnings: 0 });
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("tilde and indented fences do not create evidence references", () => {
+  const root = fixture();
+  try {
+    const body = `## Evidence
+
+- The command completed.
+  cmd: pnpm run test:unit
+  ~~~console
+  ci: missing job
+  ~~~
+- A nested command completed.
+  cmd: pnpm run test:unit
+    \`\`\`text
+    test: x::y
+    \`\`\``;
+    assert.deepEqual(inspect(root, body), { ok: true, errors: [], warnings: 0 });
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("an unclosed fence ignores the rest of its bullet and warns", () => {
+  const root = fixture();
+  try {
+    const body = `## Evidence
+
+- The command completed.
+  cmd: pnpm run test:unit
+  \`\`\`text
+- test: x::y
+- This line is also fenced because the fence is unclosed.
+  test: tests/example.test.mjs::keeps the claim honest`;
+    assert.deepEqual(inspect(root, body), { ok: true, errors: [], warnings: 0, fenceWarnings: 1 });
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("fence tracking is required to ignore command output references", async () => {
+  const root = fixture();
+  try {
+    const body = `## Evidence
+
+- The command completed.
+  cmd: pnpm run test:unit
+  \`\`\`text
+- test: x::y
+  \`\`\``;
+    const source = readFileSync(join(repositoryRoot, "scripts/ci/check-pr-claims.mjs"), "utf8");
+    const mutated = source.replace("if (fence) {", "if (false) {");
+    const mutatedChecker = join(root, "mutated-check-pr-claims.mjs");
+    writeFileSync(mutatedChecker, mutated.replace("../check-private-names.mjs", join(repositoryRoot, "scripts/check-private-names.mjs")));
+    const module = await import(`${new URL(`file://${mutatedChecker}`).href}?mutation=${Date.now()}`);
+    const result = module.checkPrClaims({ root, body, changedPaths: ["src/server/example.ts"], workflowSource: workflow });
+    assert.ok(result.errors.includes("test_reference_unresolved"));
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test("a named Playwright spec is valid test evidence", () => {
   const root = fixture();
   try {
