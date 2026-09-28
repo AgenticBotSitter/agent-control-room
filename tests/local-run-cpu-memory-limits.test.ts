@@ -21,8 +21,11 @@ import { promisify } from "node:util";
 import { createOwnerTrustedLocalCodexExecV1 } from "../src/harness/codex-v1/owner-trusted-local-exec";
 import { createOwnerTrustedLocalClaudeExecV1 } from "../src/harness/claude-code-v1/owner-trusted-local-exec";
 import { createOwnerTrustedLocalHermesExecV1 } from "../src/harness/hermes-local-v1/owner-trusted-local-exec";
+import { createOwnerTrustedLocalCodexExecutionAdapterV1 }
+  from "../src/harness/v1/owner-trusted-local-cli-execution";
 import { captureTaskRunResourceStopV1, detectResourceBreachV1, parsePsGroupRowV1,
-  parsePsTimeToMillisecondsV1, startTaskRunResourceSupervisorV1, summarizeProcessGroupV1 }
+  parsePsTimeToMillisecondsV1, selectProcessGroupRowsV1, startTaskRunResourceSupervisorV1,
+  summarizeProcessGroupV1, taskRunResourceStopV1 }
   from "../src/harness/v1/owner-trusted-local-resource-supervisor";
 import { captureMacLocalTaskRunLimitsV1, captureMacLocalTaskRunResourcesV1,
   DEFAULT_MAC_LOCAL_TASK_RUN_LIMITS_V1, MAC_LOCAL_TASK_RUN_LIMITS_V1,
@@ -272,13 +275,26 @@ function t_cleanup(pid: number) {
 }
 
 test("the process table parser refuses anything it cannot read", () => {
+  // Measured from /bin/ps on this host: the first field is TOTAL MINUTES
+  // and is unbounded (rows of 144:06.26 and 295:12.09 were both observed),
+  // seconds are zero-padded, and the fraction is centiseconds. Reading
+  // "9:24.42" as 9h24m would over-report by 60x.
+  assert.equal(parsePsTimeToMillisecondsV1("0:00.00"), 0);
   assert.equal(parsePsTimeToMillisecondsV1("0:01.23"), 1_230);
-  assert.equal(parsePsTimeToMillisecondsV1("1:02:03.45"), 3_723_450);
+  assert.equal(parsePsTimeToMillisecondsV1("9:24.42"), 564_420);
+  assert.equal(parsePsTimeToMillisecondsV1("1:02:03.45"), undefined,
+    "macOS prints total minutes, never a separate hours field");
+  assert.equal(parsePsTimeToMillisecondsV1("144:06.26"), 8_646_260,
+    "a long-lived process exceeds 99 minutes and must still parse");
   assert.equal(parsePsTimeToMillisecondsV1("12:34"), undefined, "whole seconds are not this format");
+  assert.equal(parsePsTimeToMillisecondsV1("12:60.00"), undefined, "seconds must be 0-59");
   assert.equal(parsePsTimeToMillisecondsV1("not-a-time"), undefined);
   // `ps` pads columns, so leading whitespace is expected input, not an error.
   assert.deepEqual(parsePsGroupRowV1("  123  122  0:01.50  2048"),
     { pid: 123, pgid: 122, cpuTimeMs: 1_500, rssKilobytes: 2048 });
+  assert.deepEqual(parsePsGroupRowV1("  164  164 144:06.26  83616"),
+    { pid: 164, pgid: 164, cpuTimeMs: 8_646_260, rssKilobytes: 83616 },
+    "a real row from this host, copied verbatim");
   // A missing field, an extra field, a non-numeric rss and a non-numeric pid
   // are each a refusal: a line this parser cannot read must never contribute a
   // partial (too small) measurement.
@@ -339,4 +355,119 @@ test("the owner limit model carries the enforced pair and defaults to bounded va
     wallTimeMs: 120_000, outputBytes: 1_048_576 }), /mac_local_task_run_limits_invalid/u);
   assert.ok(TASK_RUN_RESOURCE_SAMPLE_INTERVAL_MS <= 1_000,
     "the sample cadence must be fine enough for the smallest CPU limit");
+});
+
+// ===========================================================================
+// Regression tests for the adversarial review of the enforcement path.
+//
+// Each fails against the pre-fix code. They are guards, not restatements of
+// the fix: an edit that re-refuses `limit_exceeded` at the adapter, or re-drops
+// an unreadable `ps` row, turns one of these red.
+// ===========================================================================
+
+test("a stopped run survives the shipped execution adapter and keeps its evidence", async () => {
+  // The pre-fix adapter refused the `limit_exceeded` status and returned
+  // invalid. That throw escaped into the delivery bridge's blanket catch, which
+  // answered `delivery_uncertain`: the runaway process was correctly killed,
+  // but the run was never recorded, so the stop left no evidence at all. The
+  // run was stopped and the reason was thrown away.
+  //
+  // This drives the real shipped adapter over a real executor and a real
+  // burner, so the whole chain is exercised rather than just the mapper.
+  const cwd = await taskDirectory();
+  const run = codex(CPU_BURNER);
+  const adapter = createOwnerTrustedLocalCodexExecutionAdapterV1(run, {
+    executablePath: "/usr/bin/true", workingDirectory: cwd, deadlineMs: 60_000,
+    outputBytes: 1_048_576, resources: { cpuTimeMs: 1_000, maxResidentBytes: MAX_TASK_RUN_RESIDENT_BYTES } });
+  const result = await adapter.execute({
+    delivery: { identity: { jobId: "job:adapter-stop" }, input: { prompt: "burn", instructions: "" } },
+    signal: new AbortController().signal });
+  assert.equal(result.kind, "failed", "a resource stop is a stopped run, not an adapter fault");
+  if (result.kind !== "failed") return;
+  assert.ok(result.reason.startsWith("limit_exceeded:"), `unexpected reason: ${result.reason}`);
+  // The measured value must survive the adapter boundary, not just the reason.
+  if (result.limit === undefined) throw new Error("the stop record must reach the run record through the adapter");
+  // `limit` is `unknown` at this boundary on purpose, so read it the way a
+  // real consumer does: validate it, then read the fields.
+  const stop = captureTaskRunResourceStopV1(result.limit);
+  assert.equal(stop.reason, "cpu_time_exceeded");
+  assert.equal(stop.limitCpuTimeMs, 1_000, "the configured limit must be recorded");
+  assert.ok(stop.measuredCpuTimeMs >= 1_000, "the measured CPU time must be recorded");
+});
+
+test("a malformed claimed stop is refused at the boundary, and a real one is not", () => {
+  // The adapter is the untrusted boundary: a claimed stop is validated there,
+  // so it can neither name a limit in the owner-visible record nor suppress
+  // the ordinary failure. The mapper is module-private, so the guard is
+  // asserted through the exported validator the adapter now calls for every
+  // claim it forwards.
+  const valid = { limit: "cpu_time", cause: "exceeded", measuredCpuTimeMs: 5_000,
+    measuredResidentBytes: 0, limitCpuTimeMs: 1_000, limitResidentBytes: 1, reason: "cpu_time_exceeded" };
+  assert.equal(captureTaskRunResourceStopV1(valid).reason, "cpu_time_exceeded",
+    "a real stop must still be accepted, or the guard below proves nothing");
+  for (const claimed of [
+    { ...valid, measuredCpuTimeMs: -1 },
+    { ...valid, limit: "not_a_limit" },
+    { ...valid, reason: "made_up_reason" },
+    { ...valid, extra: 1 },
+    { ...valid, measuredResidentBytes: Number.NaN },
+  ]) {
+    assert.throws(() => captureTaskRunResourceStopV1(claimed), /task_run_resource_supervisor_unavailable/u,
+      `a malformed stop must be refused: ${JSON.stringify(claimed)}`);
+  }
+});
+
+test("an unmeasurable stop names no limit, because no bound was crossed", async () => {
+  const cwd = await taskDirectory();
+  const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"],
+    { detached: true, stdio: "ignore", cwd });
+  t_cleanup(child.pid!);
+  const breaches: unknown[] = [];
+  const supervisor = startTaskRunResourceSupervisorV1(child,
+    { cpuTimeMs: 60_000, maxResidentBytes: MAX_TASK_RUN_RESIDENT_BYTES },
+    breach => { breaches.push(breach); },
+    { readProcessTable: async () => { throw new Error("ps unavailable"); }, intervalMs: 25 });
+  await new Promise(resolve => setTimeout(resolve, 400));
+  supervisor.close();
+  assert.equal(breaches.length, 1);
+  // Pre-fix this reported `limit: "cpu_time"`, which put a bound in the run
+  // record that had never actually been crossed. The cause already says the
+  // measurement failed; the limit must be honest too.
+  const breach = breaches[0] as Readonly<{ limit: string; cause: string }>;
+  assert.equal(breach.limit, "unknown");
+  // The supervisor hands the executor a breach; the reason is derived, and
+  // it must say the measurement failed rather than claiming a bound was hit.
+  const stop = taskRunResourceStopV1(breach as never);
+  assert.equal(stop.reason, "measurement_unavailable");
+  assert.equal(stop.limit, "unknown");
+  // And the derived stop is a well-formed stop record, so it survives the
+  // same validation every untrusted claim must pass.
+  assert.equal(captureTaskRunResourceStopV1(stop).reason, "measurement_unavailable");
+});
+
+test("an unreadable row in the process table stops the run rather than under-counting", () => {
+  // Pre-fix, the reader dropped every line the parser could not read, so a row
+  // it cannot understand reduced the group's total and a real breach could slip
+  // through unnoticed. An unreadable row must be kept so the summariser
+  // refuses the whole sample.
+  // A row for another group goes, and blank padding is not a row.
+  assert.deepEqual(selectProcessGroupRowsV1(
+    ["  123  122  9:24.42  2048", "  999  998  0:00.10  100", ""], 122),
+    ["  123  122  9:24.42  2048"]);
+  // A row whose pgid cannot be read is AMBIGUOUS: it might be ours, and
+  // dropping it would under-count the group, so it is kept and the sample
+  // is refused rather than read as under the limit.
+  assert.deepEqual(selectProcessGroupRowsV1(
+    ["  123  122  9:24.42  2048", "GARBAGE"], 122),
+    ["  123  122  9:24.42  2048", "GARBAGE"]);
+  // And end to end: an ambiguous row makes the sample a refusal.
+  assert.throws(() => summarizeProcessGroupV1(["  123  122  9:24.42  2048", "GARBAGE"]),
+    /task_run_resource_supervisor_unavailable/u,
+    "an ambiguous row must refuse the sample, not be silently dropped");
+  // Refusing every unreadable row is NOT the rule: a row that is provably
+  // another group's cannot hide our breach, and refusing on it would stop
+  // every real run on any host with one long-lived process.
+  assert.equal(summarizeProcessGroupV1(["  123  122  9:24.42  2048"]).processes, 1);
+  assert.equal(summarizeProcessGroupV1(["  123  122  0:01.50  2048"]).processes, 1,
+    "a fully readable group still measures normally");
 });

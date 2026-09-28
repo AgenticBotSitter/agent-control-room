@@ -4,6 +4,7 @@ import type { OwnerTrustedLocalCodexExecV1 } from "../codex-v1/owner-trusted-loc
 import type { OwnerTrustedLocalCliExecutionV1 } from "./owner-trusted-local-cli-delivery";
 import { MAX_TASK_RUN_OUTPUT_BYTES, MIN_TASK_RUN_OUTPUT_BYTES, captureMacLocalTaskRunResourcesV1,
   type MacLocalTaskRunResourcesV1 } from "./owner-trusted-local-run-limits";
+import { captureTaskRunResourceStopV1 } from "./owner-trusted-local-resource-supervisor";
 
 const MAX_PROMPT_BYTES = 49_152;
 const invalid = (): never => { throw new Error("owner_trusted_local_cli_execution_unavailable"); };
@@ -65,9 +66,18 @@ function safeResources(value: unknown): value is MacLocalTaskRunResourcesV1 {
 
 function mapped(result: Readonly<{ status: string; text?: string; reason?: string; limit?: unknown }>): OwnerTrustedLocalCliExecutionV1 {
   if (result.status === "completed" && typeof result.text === "string") return Object.freeze({ kind: "completed" as const, text: result.text });
-  if ((result.status === "failed" || result.status === "canceled" || result.status === "timed_out" || result.status === "cleanup_uncertain")
-    && typeof result.reason === "string" && result.reason.length >= 1 && result.reason.length <= 240)
-    return Object.freeze({ kind: "failed" as const, reason: `${result.status}:${result.reason}` });
+  // A run stopped by a per-run resource limit is a normal stopped run, not
+  // an adapter fault: refusing this status here would discard the stop
+  // entirely and leave the task with no run record at all.
+  if ((result.status === "failed" || result.status === "canceled" || result.status === "timed_out"
+    || result.status === "cleanup_uncertain" || result.status === "limit_exceeded")
+    && typeof result.reason === "string" && result.reason.length >= 1 && result.reason.length <= 240) {
+    // This is the untrusted boundary, so a claimed limit is validated here
+    // and a malformed one is dropped rather than forwarded to the record.
+    if (result.limit === undefined) return Object.freeze({ kind: "failed" as const, reason: `${result.status}:${result.reason}` });
+    const stop = captureTaskRunResourceStopV1(result.limit);
+    return Object.freeze({ kind: "failed" as const, reason: `${result.status}:${result.reason}`, limit: stop });
+  }
   return invalid();
 }
 

@@ -217,12 +217,15 @@ export function createOwnerTrustedLocalCodexExecV1(dependencies: Readonly<{ spaw
       // SIGXCPU outlives both the soft and hard limit), so the run is
       // stopped here and the breach recorded. It escalates through this
       // executor's own terminate, keeping one cleanup acknowledgement.
-      try { supervisor = startTaskRunResourceSupervisorV1(child,
-        captureMacLocalTaskRunResourcesV1(input.resources ?? DEFAULT_TASK_RUN_RESOURCES_V1),
+      const resources = captureMacLocalTaskRunResourcesV1(input.resources ?? DEFAULT_TASK_RUN_RESOURCES_V1);
+      try { supervisor = startTaskRunResourceSupervisorV1(child, resources,
         breach => { resourceStop = taskRunResourceStopV1(breach); terminate("failed"); }); }
-      catch { resourceStop = taskRunResourceStopV1({ limit: "cpu_time", cause: "measurement_unavailable",
-        measuredCpuTimeMs: 0, measuredResidentBytes: 0, limitCpuTimeMs: input.deadlineMs,
-        limitResidentBytes: 0 }); terminate("failed"); }
+      // The supervisor could not even be started, so the run is stopped with
+      // no limit named and the CONFIGURED pair recorded, never the wall-clock
+      // deadline, which is a different bound and would misreport the record.
+      catch { resourceStop = taskRunResourceStopV1({ limit: "unknown", cause: "measurement_unavailable",
+        measuredCpuTimeMs: 0, measuredResidentBytes: 0, limitCpuTimeMs: resources.cpuTimeMs,
+        limitResidentBytes: resources.maxResidentBytes }); terminate("failed"); }
       input.signal?.addEventListener("abort", cancel, { once: true });
       child.on("error", () => terminate("failed"));
       stdin.on("error", () => terminate("failed")); stdoutStream.on("error", () => terminate("failed")); stderrStream.on("error", () => terminate("failed"));

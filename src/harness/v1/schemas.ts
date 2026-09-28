@@ -58,7 +58,7 @@ const eventPayloadSchema = z.discriminatedUnion("category", [
   z.object({ category: z.literal("native_snapshot"), snapshot: nativeTaskSnapshotBodySchema }).strict(),
   z.object({ category: z.literal("lifecycle"), state: z.enum(harnessRunStates), reasonCode: id.optional() }).strict(),
   z.object({ category: z.literal("activity"), activity: z.enum(["tool", "file", "test", "checkpoint"]), phase: z.enum(["started", "progress", "completed", "failed"]), count: boundedCount.optional() }).strict(),
-  z.object({ category: z.literal("resource"), limit: z.enum(["cpu_time", "resident_memory"]),
+  z.object({ category: z.literal("resource"), limit: z.enum(["cpu_time", "resident_memory", "unknown"]),
     cause: z.enum(["exceeded", "measurement_unavailable"]), measuredCpuTimeMs: boundedCount,
     measuredResidentBytes: boundedCount, limitCpuTimeMs: boundedCount, limitResidentBytes: boundedCount }).strict(),
   z.object({ category: z.literal("attention"), attention: z.enum(["input", "approval"]), state: z.enum(["requested", "resolved"]) }).strict(),

@@ -67,7 +67,7 @@ export type HarnessEventPayloadV1 =
   /** A per-run resource limit that stopped this run, with the value
    * measured at the sample which crossed it. Additive: the run state is
    * unchanged, so this records evidence rather than granting anything. */
-  | { category: "resource"; limit: "cpu_time" | "resident_memory"; cause: "exceeded" | "measurement_unavailable";
+  | { category: "resource"; limit: "cpu_time" | "resident_memory" | "unknown"; cause: "exceeded" | "measurement_unavailable";
       measuredCpuTimeMs: number; measuredResidentBytes: number; limitCpuTimeMs: number; limitResidentBytes: number }
   | { category: "attention"; attention: "input" | "approval"; state: "requested" | "resolved" }
   | { category: "usage"; inputTokens: number; outputTokens: number; cachedInputTokens: number; reasoningTokens: number; estimatedCostUsd?: string }

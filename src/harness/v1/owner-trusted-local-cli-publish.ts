@@ -58,11 +58,18 @@ export function createOwnerTrustedLocalCliLifecycleV1(config: OwnerTrustedLocalC
   /** The owner-visible reason code for a run stopped by a resource bound.
    * Distinct per limit so a stopped run is diagnosable from the run
    * record alone, without reading the CLI transcript. */
-  const RESOURCE_REASON_CODES = Object.freeze({
+  const RESOURCE_REASON_CODES: Readonly<Record<string, string>> = Object.freeze({
     cpu_time: "local_cli_cpu_time_exceeded",
     resident_memory: "local_cli_memory_exceeded",
     measurement_unavailable: "local_cli_resource_measurement_unavailable",
-  } as const);
+    unknown: "local_cli_resource_measurement_unavailable",
+  });
+  /** One mapping, used for both the evidence event and the run's
+   * safeReasonCode, so the two can never disagree about why a run stopped. */
+  function resourceReasonCode(stop: Readonly<{ limit: string; reason: string }>): string {
+    const key = stop.reason === "measurement_unavailable" ? "measurement_unavailable" : stop.limit;
+    return RESOURCE_REASON_CODES[key] ?? RESOURCE_REASON_CODES.measurement_unavailable;
+  }
 
   async function record(input: Readonly<{ delivery: unknown; receipt: unknown; signal: AbortSignal; limit?: unknown }>, terminal: "succeeded" | "failed") {
     if (!input || !(input.signal instanceof AbortSignal) || input.signal.aborted) unavailable();
@@ -99,11 +106,17 @@ export function createOwnerTrustedLocalCliLifecycleV1(config: OwnerTrustedLocalC
     // Evidence first: a run is never terminal before the record explains
     // which bound stopped it and what was measured.
     if (stop && terminal === "failed") {
-      const reasonCode = RESOURCE_REASON_CODES[stop.reason === "measurement_unavailable"
-        ? "measurement_unavailable" : stop.limit];
-      await appendAt((sequence, occurredAt) => ({ schemaVersion: "control-room-harness-event/v1",
+      const key = sha256Digest({ runId: run.id, localCliResourceStop: stop });
+      // Replay safety: `occurredAt` is recomputed per attempt, so a retry
+      // would carry a different event digest and the store would refuse it
+      // as a replay conflict, stranding the run. Match the existing
+      // lifecycle loop below and skip an event already recorded for this
+      // exact stop.
+      const prior = (await runs.inspect(run.tenantId, run.id))?.events
+        .some(event => event.sourceEventKeyDigest === key);
+      if (!prior) await appendAt((sequence, occurredAt) => ({ schemaVersion: "control-room-harness-event/v1",
         tenantId: run.tenantId, runId: run.id, sequence, occurredAt, source: "adapter",
-        sourceEventKeyDigest: sha256Digest({ runId: run.id, localCliResourceStop: stop }),
+        sourceEventKeyDigest: key,
         payload: { category: "resource", limit: stop.limit, cause: stop.cause,
           measuredCpuTimeMs: stop.measuredCpuTimeMs, measuredResidentBytes: stop.measuredResidentBytes,
           limitCpuTimeMs: stop.limitCpuTimeMs, limitResidentBytes: stop.limitResidentBytes } }));
@@ -120,8 +133,7 @@ export function createOwnerTrustedLocalCliLifecycleV1(config: OwnerTrustedLocalC
         sequence: snapshot.events.length + 1, occurredAt, source: "adapter",
         sourceEventKeyDigest: sha256Digest({ runId: run.id, localCliOutcome: state }),
         payload: { category: "lifecycle", state,
-          ...(state === "failed" ? { reasonCode: stop ? RESOURCE_REASON_CODES[stop.reason === "measurement_unavailable"
-            ? "measurement_unavailable" : stop.limit] : "local_cli_execution_failed" } : {}) } });
+          ...(state === "failed" ? { reasonCode: stop ? resourceReasonCode(stop) : "local_cli_execution_failed" } : {}) } });
     }
     const current = await runs.get(run.tenantId, run.id);
     if (!current || current.state !== terminal) return unavailable();

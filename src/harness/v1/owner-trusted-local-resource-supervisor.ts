@@ -14,16 +14,15 @@ import { captureMacLocalTaskRunResourcesV1, MAX_TASK_RUN_CPU_TIME_MS,
  * limit, but a child that *catches* SIGXCPU keeps running past both, so
  * `setrlimit` is advisory on this platform (see reports/M13-decisions.md D1).
  * macOS also ignores RLIMIT_AS/RLIMIT_RSS entirely. The sampler is therefore
- * the authority: it reads the child's whole process group, and on the first
- * sample at or past a limit it escalates TERM -> KILL and confirms absence
- * before reporting.
+ * the authority: it reads the child's whole process group and, on the first
+ * sample at or past a limit, calls `stop`. Terminating the group (TERM, then
+ * KILL, then confirming absence) stays with the caller, which already owns
+ * that escalation for its own deadline and cancellation paths.
  *
  * Every observable failure is fail-closed: an unreadable process table stops
  * the run rather than leaving it unmonitored (D3).
  */
 
-const KILL_AFTER_MS = 5_000;
-const KILL_CONFIRM_MS = 50;
 const SAMPLE_TIMEOUT_MS = 2_000;
 const SYSTEM_PATH = "/usr/bin:/bin";
 const executeFile = promisify(execFile);
@@ -40,7 +39,11 @@ export type TaskRunResourceSampleV1 = Readonly<{
 
 /** A run stopped by one of the two resource limits, never by wall clock. */
 export type TaskRunResourceBreachV1 = Readonly<{
-  limit: TaskRunResourceLimitNameV1;
+  /** Which limit stopped the run. For `cause:
+   * "measurement_unavailable"` this is "unknown": no bound was crossed,
+   * the run simply could not be measured, and claiming a specific limit
+   * would put a bound in the run record that was never crossed. */
+  limit: TaskRunResourceLimitNameV1 | "unknown";
   /** The first sample at or past the limit. Resolution is one sample. */
   measuredCpuTimeMs: number;
   measuredResidentBytes: number;
@@ -60,11 +63,6 @@ export type TaskRunResourceSupervisorV1 = Readonly<{
 
 function unavailable(): never { throw new Error("task_run_resource_supervisor_unavailable"); }
 
-function groupSignal(child: ChildProcess, signal: NodeJS.Signals): boolean {
-  if (!child.pid || child.pid < 1) return false;
-  try { process.kill(-child.pid, signal); return true; } catch { return false; }
-}
-
 function groupExists(child: ChildProcess): boolean {
   if (!child.pid || child.pid < 1) return false;
   try { process.kill(-child.pid, 0); return true; } catch { return false; }
@@ -72,13 +70,20 @@ function groupExists(child: ChildProcess): boolean {
 
 /** `ps` reports CPU as [hh:]mm:ss.ss. Only the two rightmost fields matter
  * and both are fixed-width with two decimals, so this parses exactly. */
+/** `ps` prints CPU time as `MM:SS.CC` where MM is TOTAL MINUTES, unbounded:
+ * rows such as `9:24.42`, `144:06.26` and `295:12.09` were all read
+ * directly from /bin/ps on this host. It is minutes, not hours: `9:24.42`
+ * is 9m24s, and reading it as 9h24m would over-report by 60x. Seconds are
+ * zero-padded to two digits and the fraction is centiseconds. */
+const PS_TIME = /^(\d+):(\d{2})\.(\d{2})$/u;
+
 export function parsePsTimeToMillisecondsV1(value: string): number | undefined {
-  const text = value.trim();
-  if (!/^(?:\d+:)?\d{1,2}:\d{2}\.\d{2}$/u.test(text)) return undefined;
-  const parts = text.split(":").map(Number);
-  if (parts.some(part => !Number.isFinite(part))) return undefined;
-  const seconds = parts.reduce((total, part) => total * 60 + part, 0);
-  return Math.round(seconds * 1_000);
+  const match = PS_TIME.exec(value.trim());
+  if (match === null) return undefined;
+  const minutes = Number(match[1]), seconds = Number(match[2]), centis = Number(match[3]);
+  if (!Number.isSafeInteger(minutes) || seconds > 59) return undefined;
+  const ms = minutes * 60_000 + seconds * 1_000 + centis * 10;
+  return Number.isSafeInteger(ms) ? ms : undefined;
 }
 
 /** One line of `ps -e -o pid=,pgid=,time=,rss=`. */
@@ -106,13 +111,32 @@ const readProcessTable: ProcessTableReader = async processGroupId => {
       env: { PATH: SYSTEM_PATH, LANG: "en_US.UTF-8", NODE_ENV: "production" } }));
   } catch { return unavailable(); }
   if (typeof stdout !== "string") unavailable();
-  // A `-g` selector is a macOS/BSD extension; filter here instead so a line
-  // this parser cannot read is a refusal rather than a silent zero.
-  return stdout.split("\n").filter((line: string) => {
-    const row = parsePsGroupRowV1(line);
-    return row !== undefined && row.pgid === processGroupId;
-  });
+  return selectProcessGroupRowsV1(stdout.split("\n"), processGroupId);
 };
+
+/** Keeps this group's rows, and fails closed on a row whose group cannot be
+ * determined.
+ *
+ * A `-g` selector is a macOS/BSD extension, so the filter is done here.
+ *
+ * The fail-closed rule is deliberately narrow. A row that is unreadable but
+ * *provably not ours* is dropped: a `ps` table legitimately contains rows in
+ * shapes this parser does not model, and refusing every sample because the
+ * host has one long-lived process would disable enforcement outright. But a
+ * row whose pgid cannot be read at all is AMBIGUOUS - it might be ours, and
+ * dropping it would under-count the group and could hide a real breach - so it
+ * is kept and `summarizeProcessGroupV1` refuses the whole sample. */
+export function selectProcessGroupRowsV1(lines: readonly string[], processGroupId: number): readonly string[] {
+  return lines.filter((line: string) => {
+    if (line.trim().length === 0) return false;
+    const fields = line.trim().split(/\s+/u);
+    const pgid = fields.length >= 2 ? Number(fields[1]) : Number.NaN;
+    if (Number.isSafeInteger(pgid)) return pgid === processGroupId;
+    // The pgid is unreadable, so the row could belong to any group,
+    // including ours: keep it and let the sample be refused.
+    return true;
+  });
+}
 
 /** Sums the group. An unparsable line for this group is a refusal, never a
  * lower total: a malformed table must not read as "under the limit". */
@@ -163,7 +187,7 @@ export function startTaskRunResourceSupervisorV1(child: ChildProcess, resourcesV
   const refuse = () => {
     if (settled) return;
     settled = true; clearInterval(timer);
-    breach = Object.freeze({ limit: "cpu_time" as const, measuredCpuTimeMs: last?.cpuTimeMs ?? 0,
+    breach = Object.freeze({ limit: "unknown" as const, measuredCpuTimeMs: last?.cpuTimeMs ?? 0,
       measuredResidentBytes: last?.residentBytes ?? 0, limitCpuTimeMs: resources.cpuTimeMs,
       limitResidentBytes: resources.maxResidentBytes, cause: "measurement_unavailable" as const });
     stop(breach);
@@ -206,7 +230,9 @@ export const taskRunResourceBoundsV1 = Object.freeze({
  * measured numbers travel beside it so the run record can state which limit
  * was hit and by how much, without parsing a message. */
 export type TaskRunResourceStopV1 = Readonly<{
-  limit: TaskRunResourceLimitNameV1;
+  /** "unknown" only when `cause` is "measurement_unavailable": the run was
+   * stopped because it could not be measured, not because a bound was crossed. */
+  limit: TaskRunResourceLimitNameV1 | "unknown";
   reason: "cpu_time_exceeded" | "memory_exceeded" | "measurement_unavailable";
   measuredCpuTimeMs: number;
   measuredResidentBytes: number;
@@ -231,7 +257,7 @@ export function captureTaskRunResourceStopV1(value: unknown): TaskRunResourceSto
   if (!value || typeof value !== "object" || Array.isArray(value)) return unavailable();
   const record = value as Record<string, unknown>;
   if (Object.keys(record).length !== 7) return unavailable();
-  if (record.limit !== "cpu_time" && record.limit !== "resident_memory") return unavailable();
+  if (record.limit !== "cpu_time" && record.limit !== "resident_memory" && record.limit !== "unknown") return unavailable();
   if (record.reason !== "cpu_time_exceeded" && record.reason !== "memory_exceeded"
     && record.reason !== "measurement_unavailable") return unavailable();
   if (record.cause !== "exceeded" && record.cause !== "measurement_unavailable") return unavailable();

@@ -242,3 +242,43 @@ test("a malformed stop claim cannot name a limit in the run record", needsPg, as
   assert.equal((await f.db.query("SELECT 1 FROM control_harness_runs WHERE tenant_id=$1 AND id=$2",
     [binding.tenantId, "run:malformed-limit"])).rows.length, 0);
 });
+
+
+test("recording the same stop twice is idempotent and never strands the run", needsPg, async t => {
+  // `occurredAt` is recomputed per attempt, so without the prior-event check a
+  // retry would carry a different event digest and the store would reject it
+  // as a replay conflict -- leaving a stopped run permanently unrecordable.
+  // The digest is derived from the stop itself, so a second attempt finds the
+  // prior event and skips the append.
+  const { f, jobId, attemptId, key } = await scenario(t, "run:replay", 55);
+  const packet = deliveryPacket("run:replay", jobId, attemptId);
+  const receipt = await deliverControllerWorkerPacketV1(createOwnerTrustedLocalCliReceiptPortV1(),
+    packet, route, new AbortController().signal);
+  const stop = { limit: "cpu_time", reason: "cpu_time_exceeded", cause: "exceeded",
+    measuredCpuTimeMs: 1_200, measuredResidentBytes: 56_000_000,
+    limitCpuTimeMs: 1_000, limitResidentBytes: 1_073_741_824 };
+
+  // `recordFailure` returns nothing, so the run is read back through the
+  // store: that path re-verifies the run digest and every event auth tag.
+  const resourceEvents = async () => (await (new HarnessRunStoreV1(f.db, key))
+    .inspect(binding.tenantId, "run:replay"))?.events
+    .filter(event => event.payload.category === "resource") ?? [];
+
+  await lifecycle(f, key).recordFailure({
+    delivery: packet, receipt, signal: new AbortController().signal, limit: stop });
+  assert.equal((await resourceEvents()).length, 1, "the stop must be recorded once");
+
+  // Replay the identical claim against the same delivery. It must not throw
+  // a replay conflict, and must not append a second event.
+  await lifecycle(f, key).recordFailure({
+    delivery: packet, receipt, signal: new AbortController().signal, limit: stop });
+  assert.equal((await resourceEvents()).length, 1, "a replay must not append a second evidence event");
+
+  const stored = await (new HarnessRunStoreV1(f.db, key)).inspect(binding.tenantId, "run:replay");
+  if (!stored) throw new Error("the run record must exist after a replay");
+  // The terminal lifecycle event must not be duplicated either.
+  assert.equal(stored.events.filter(event => event.payload.category === "lifecycle"
+    && event.payload.state === "failed").length, 1);
+  assert.equal(stored.run.state, "failed", "the run must still be terminal, not stranded");
+  assert.equal(stored.run.safeReasonCode, "local_cli_cpu_time_exceeded");
+});
