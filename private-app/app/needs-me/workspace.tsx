@@ -4,7 +4,7 @@ import { PrivateHeader } from "../private-header";
 import { readQueueAttention } from "../../../src/web/v1/queue-attention-browser-client";
 import type { QueueAttention } from "../../../src/web/v1/queue-attention-wire";
 import { BrowserRequestError } from "../../../src/web/v1/browser-client";
-import { PrivateTaskAttention } from "./task-attention";
+import { PrivateActionInbox } from "./action-inbox";
 import { useLocalRuntime } from "../local-runtime";
 
 export function QueueAttentionPanel({ snapshot }: { snapshot: QueueAttention }) {
@@ -38,8 +38,8 @@ export function PrivateNeedsMe() {
     return () => { live = false; };
   }, [refresh, runtime.mode]);
   return <div className="private-shell"><PrivateHeader /><main id="private-main" tabIndex={-1}>
-    <h1>Needs attention</h1><p>Owner-only task attention and recovery observations.</p>
-    <PrivateTaskAttention />
+    <h1>Action Inbox</h1><p>Owner-only decisions, reviews, blocked work, failures and attention notifications.</p>
+    <PrivateActionInbox />
     {runtime.mode !== "local" ? <><button type="button" disabled={loading} onClick={() => {
       setLoading(true); setData(undefined); setError(undefined); setRefresh(value => value + 1);
     }}>Check recovery status</button>

@@ -12,7 +12,7 @@ const navigation: readonly NavigationItem[] = [
   { href: "/workers", label: "Workers" },
   { href: "/setup", label: "Setup" },
   { href: "/workboard", label: "Control Room" },
-  { href: "/needs-me", label: "Needs attention" },
+  { href: "/needs-me", label: "Action Inbox" },
   { href: "/settings", label: "Settings" },
   { href: "/ideas", label: "Idea Lab", optional: true },
 ];

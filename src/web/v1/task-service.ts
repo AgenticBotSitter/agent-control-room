@@ -705,12 +705,12 @@ export class WebTaskService {
         ideas: !ideas ? "not_authorized" : this.ideaProjectsConfigured ? "included" : "not_configured" };
   }
 
-  /** The empty shared shell is useful with either recovery or task-inbox access.
-   * Each panel's data endpoint retains its own independent permission checks. */
-  async authorizeAttentionPage(identity: VerifiedWebIdentity): Promise<void> {
-    await this.authenticatedRead(identity, async (_, actor) => {
-      if (actor.can("connections.read", undefined, true)) actor.require("connections.read", undefined, true);
-      else this.attentionSources(actor);
+  /** The workspace-wide Action Inbox is owner-only even when a narrower
+   * connection read would otherwise be available to an operator. */
+  async authorizeAttentionPage(identity: VerifiedWebIdentity): Promise<{ actorId: string; grantedAt: string }> {
+    return this.authenticatedRead(identity, async (_, actor) => {
+      actor.require("projects.read", undefined, true);
+      return { actorId: actor.id, grantedAt: actor.now };
     });
   }
 

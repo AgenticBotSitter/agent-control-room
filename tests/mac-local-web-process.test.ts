@@ -18,6 +18,7 @@ test("the real Mac-local wrapper signs in locally and reaches the existing proje
   });
   const origin = "http://127.0.0.1:3210", trustedOrigin = "https://control-room-mac.example.ts.net";
   const ownerCode = "mac-local-owner-code-long-enough";
+  let actionInboxReads = 0;
   const app = createMacLocalWebProcessV1({ origin, workspaceId: fixture.configuration.workspaceId,
     localOwnerSession: { schema: LOCAL_OWNER_SESSION_PROFILE_V1, origin, tenantId: fixture.configuration.tenantId,
       provider: fixture.trust.issuer, subject: conformanceSubject, ownerCodeDigest: sha256Digest({ ownerCode }), sessionSeconds: 900,
@@ -26,11 +27,15 @@ test("the real Mac-local wrapper signs in locally and reaches the existing proje
     taskReadKeys: { harnessIntegrityKey: new Uint8Array(32).fill(1),
       results: { integrityKey: new Uint8Array(32).fill(2), storageClass: "local", storage: { read: async () => undefined } } },
     workerReadiness: { read: () => [{ kind: "hermes-021" as const, state: "ready" as const, proof: "not_proven" as const }] },
-    taskWorkersStarted: true });
+    taskWorkersStarted: true,
+    actionInboxSource: { read: async () => { actionInboxReads += 1; return {
+      observedAt: new Date(conformanceNow).toISOString(), items: [], truncated: false }; } } });
   const request = (path: string, init: RequestInit = {}) => new Request(`${origin}${path}`, init);
   const signedOutApi = await app.handle(request("/api/v1/projects"), () => new Response("unused"));
   assert.equal(signedOutApi.status, 401);
   assert.deepEqual(await signedOutApi.json(), { error: "authentication_required" });
+  const signedOutInbox = await app.handle(request("/api/v1/needs-me/action-items"), () => new Response("unused"));
+  assert.equal(signedOutInbox.status, 401);
   const signedOutFile = await app.handle(request("/api/v1/projects/project:test/tasks/job:test/files/artifact:test?disposition=preview&token=untrusted"),
     () => new Response("unused"));
   assert.equal(signedOutFile.status, 401, "file preview requires an authenticated owner session before a ticket is considered");
@@ -46,6 +51,9 @@ test("the real Mac-local wrapper signs in locally and reaches the existing proje
     origin, "sec-fetch-site": "same-origin", "content-type": "application/json" }, body: JSON.stringify({ ownerCode }) }), () => new Response("unused"));
   assert.equal(signedIn.status, 201);
   const cookie = signedIn.headers.get("set-cookie"); assert.ok(cookie);
+  const inbox = await app.handle(request("/api/v1/needs-me/action-items", { headers: { cookie: cookie! } }), () => new Response("unused"));
+  assert.equal(inbox.status, 200, await inbox.clone().text());
+  assert.deepEqual(await inbox.json(), { observedAt: new Date(conformanceNow).toISOString(), items: [], truncated: false });
   const workers = await app.handle(request("/api/v1/local-workers", { headers: { cookie: cookie! } }), () => new Response("unused"));
   assert.equal(workers.status, 200); assert.deepEqual(await workers.json(), { taskWorkersStarted: true,
     projectSections: ["overview", "work", "reviews", "activity", "files"],
@@ -185,6 +193,12 @@ test("the real Mac-local wrapper signs in locally and reaches the existing proje
   assert.equal(foreign.status, 403);
   const fakePreview = await app.handle(request("/local-preview", { headers: { cookie: cookie! } }), () => new Response("must not render"));
   assert.equal(fakePreview.status, 404);
+  await fixture.client.query(`UPDATE control_role_grants SET revoked_at=$1
+    WHERE tenant_id=$2 AND role_key='owner'`, [new Date(conformanceNow).toISOString(), fixture.configuration.tenantId]);
+  const revokedInbox = await app.handle(request("/api/v1/needs-me/action-items", { headers: { cookie: cookie! } }),
+    () => new Response("unused"));
+  assert.equal(revokedInbox.status, 403);
+  assert.equal(actionInboxReads, 1, "revoked owner authority is rechecked before the canonical source is called");
   await app.close();
 });
 

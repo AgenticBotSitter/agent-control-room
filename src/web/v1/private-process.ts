@@ -374,6 +374,18 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
               return Response.json({ plan: installationPlanView }, { headers: privateResponseHeaders });
             });
           }
+          if (url.pathname === "/api/v1/needs-me/action-items") {
+            if (request.method !== "GET" || url.search) throw new WebAccessError("invalid_request");
+            if (!operatorSurface) throw new WebAccessError("not_found");
+            const scope = await productConfigurationAuthority.authenticated(identity, async (_, actor) => {
+              actor.require("projects.read", undefined, true);
+              return Object.freeze({ tenantId: options.tenantId, actorId: actor.id, grantedAt: actor.now, now: actor.now });
+            });
+            const snapshot = parseOperatorSurfaceSnapshotV1(await operatorSurface.read(scope));
+            if (snapshot.tenantId !== options.tenantId) throw new Error("operator_surface_scope_mismatch");
+            return Response.json({ observedAt: snapshot.generatedAt, items: snapshot.actionInbox,
+              truncated: snapshot.actionInbox.length === 100 }, { headers: privateResponseHeaders });
+          }
           if (url.pathname === "/api/v1/operator-surface") {
             if (request.method !== "GET" || url.search) throw new WebAccessError("invalid_request");
             if (!operatorSurface) throw new WebAccessError("not_found");

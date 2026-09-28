@@ -15,7 +15,7 @@ import { sha256Digest } from "../src/security/canonical-digest";
 import { advanceInstallationPlanV1, createInstallationPlanV1,
   installationSetupStagesV1 } from "../src/installer/v1/installation-plan";
 import { OPERATOR_SURFACES_CONTRACT_V1, type OperatorSurfaceSnapshotV1 } from "../src/operator-surfaces/v1";
-import { now, origin, request, token, trust } from "./helpers/web-foundation";
+import { fixture, now, origin, request, token, trust } from "./helpers/web-foundation";
 import { limitedWebFixture } from "./helpers/web-startup";
 
 const configuration = (displayName: string, ideaLab: boolean) => ({
@@ -89,6 +89,35 @@ test("operator capacity is an authenticated server-bound read, never an empty fa
   const unavailable = createPrivateWebProcess(options(configuration("No source", false), store.pool.client, async () => {}));
   t.after(() => unavailable.close());
   assert.equal((await unavailable.handle(request("/api/v1/operator-surface"), () => new Response("fallback", { status: 500 }))).status, 404);
+});
+
+test("the Action Inbox operator projection returns nothing to another signed-in identity", async t => {
+  const store = await fixture();
+  const calls: unknown[] = [];
+  await store.client.query(`INSERT INTO control_identities
+    (id,tenant_id,actor_type,display_name,auth_provider,auth_subject_digest,state,created_at,updated_at)
+    VALUES('identity:operator','tenant:web','human','Restricted operator',$1,$2,'active',$3,$3)`,
+  [trust.issuer, sha256Digest({ provider: trust.issuer, subject: "restricted-operator" }), new Date(now).toISOString()]);
+  await store.client.query(`INSERT INTO control_role_grants
+    (id,tenant_id,identity_id,role_key,allowed_actions,project_ids,risk_ceiling,allow_external_effects,require_strong_factor,created_at,updated_at)
+    VALUES('grant:operator','tenant:web','identity:operator','operator',$1::jsonb,$2::jsonb,'low',false,false,$3,$3)`,
+  [JSON.stringify(["projects.read", "tasks.read"]), JSON.stringify(["*"]), new Date(now).toISOString()]);
+  const app = createPrivateWebProcess({ ...options(configuration("Owner inbox", false), store.client, async () => store.db.close()),
+    operatorSurface: { read: async input => { calls.push(input); return operatorSnapshot(); } } });
+  t.after(() => app.close());
+  assert.equal((await app.handle(request("/api/v1/operator-surface"), () => new Response("fallback", { status: 500 }))).status, 200);
+  assert.equal((await app.handle(request("/api/v1/needs-me/action-items"), () => new Response("fallback", { status: 500 }))).status, 200);
+  assert.equal((await app.handle(request("/api/v1/needs-me/tasks"), () => new Response("fallback", { status: 500 }))).status, 200);
+  const denied = await app.handle(request("/api/v1/operator-surface", "GET", undefined, "operator-inbox-read-001",
+    token({ sub: "restricted-operator" })), () => new Response("fallback", { status: 500 }));
+  assert.equal(denied.status, 403);
+  const actionDenied = await app.handle(request("/api/v1/needs-me/action-items", "GET", undefined, "operator-action-inbox-read-001",
+    token({ sub: "restricted-operator" })), () => new Response("fallback", { status: 500 }));
+  assert.equal(actionDenied.status, 403);
+  const taskDenied = await app.handle(request("/api/v1/needs-me/tasks", "GET", undefined, "operator-task-inbox-read-001",
+    token({ sub: "restricted-operator" })), () => new Response("fallback", { status: 500 }));
+  assert.equal(taskDenied.status, 403);
+  assert.equal(calls.length, 2, "a non-owner identity receives no Action Inbox projection");
 });
 
 test("startup capture does not retain a mutable owner-settings product configuration", () => {
