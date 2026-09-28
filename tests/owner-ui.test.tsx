@@ -151,6 +151,25 @@ test("the loading spinner is suppressed when the owner asked for less motion", (
     "a reduced-motion rule must still exist");
 });
 
+test("a chip next to a sibling string leaves the element's matched text unchanged", () => {
+  // The owner journey asserts `page.getByText(/^paused ·/)` and `/^archived ·/`
+  // against the project heading, whose text is the lifecycle, a middle dot and
+  // the project origin. Wrapping the whole span in a chip would have moved the
+  // " · Ordinary project" suffix out of the match and broken the journey, so the
+  // chip wraps only the lifecycle word. This renders the exact shape to prove it.
+  //
+  // The chip's ::before dot is a pseudo-element, so it is not in textContent —
+  // that is what makes the substitution safe rather than merely lucky.
+  const html = renderToStaticMarkup(createElement("span", { className: "private-state" },
+    createElement(StateChip, { state: "paused" }), " · ", "Ordinary project"));
+  const text = html.replace(/<[^>]*>/g, "");
+  assert.equal(text, "paused · Ordinary project",
+    "the heading's text must stay byte-identical, because the journey matches on it");
+  assert.match(text, /^paused ·/);
+  // And the chip contributed no stray characters of its own.
+  assert.equal(html.includes("::before"), false, "the dot is a pseudo-element, not markup");
+});
+
 test("dark mode is reachable from the OS preference and stays overridable", () => {
   // The dark palette was already declared and contrast-checked but nothing ever
   // set data-theme, so it was dead CSS. These pin the two ways it now applies.

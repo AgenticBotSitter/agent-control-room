@@ -18,6 +18,7 @@ import { createTaskExecutionWorkspace } from "../../src/web/v1/task-execution-wo
 import { createIdeaBrowserClient } from "../../src/web/v1/idea-browser-client";
 import { canPrepareIdeaExperiment, prepareIdeaExperimentDraft } from "../../src/web/v1/idea-experiment-draft";
 import { useLocalRuntime } from "./local-runtime";
+import { StateChip } from "./owner-ui";
 import type { PreparedTaskStatus } from "../../src/web/v1/task-planning-wire";
 
 /** Polling the same task must retain its object identity. The planning,
@@ -162,7 +163,7 @@ export function PrivateTaskWorkspace({ projectId, jobId, after }: { projectId: s
         {uncertain && page && <button type="button" disabled={pending} onClick={() => { void save(true); }}>Check this exact save again</button>}</div></div>}
     {loading && <p role="status">Loading protected tasks…</p>}
     {project && <button type="button" disabled={loading || pending || preparing} onClick={refreshSaved}>Check latest saved status</button>}
-    {project && <><div className="private-heading"><span className="private-state">{project.lifecycle}</span><h1>{project.title}</h1></div>
+    {project && <><div className="private-heading"><StateChip state={project.lifecycle} /><h1>{project.title}</h1></div>
       <ProjectNavigation projectId={projectId} current="work" /></>}
     {page && <div className="private-columns"><TaskCatalogPanel page={page} after={after} />
       {page.canPropose ? <div>{canPrepareIdeaExperiment(page) && <section className="private-panel" aria-label="First experiment">
