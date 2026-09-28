@@ -799,8 +799,16 @@ test("a PG-present lane that skips its cluster tests fails rather than passing",
   const execute = async (skipped: boolean) => {
     const probe = join(await temporary("attack-kit-skipprobe-"), `probe-${skipped}.test.ts`);
     await writeFile(probe, probeSource(skipped));
+    // NODE_TEST_CONTEXT must not be inherited. A test file launched from inside
+    // a node:test run inherits it, and node then runs the child file INLINE as
+    // a plain script instead of as a test child: no runner, no exit code, and
+    // the probe's failures are reported but never propagate. The nested run
+    // then exits 0 whatever the probe did, which made this assertion pass for
+    // the wrong reason. Scrubbed explicitly.
+    const env = { ...process.env };
+    delete env.NODE_TEST_CONTEXT;
     return run(process.execPath, ["--import", "tsx", "--test", "--test-concurrency=1", probe],
-      { cwd: REPOSITORY_ROOT, maxBuffer: 1 << 24, timeout: 60_000 })
+      { cwd: REPOSITORY_ROOT, env, maxBuffer: 1 << 24, timeout: 60_000 })
       .then(() => "pass" as const, () => "fail" as const);
   };
   // Control first: with the test running, the counter matches and the child
