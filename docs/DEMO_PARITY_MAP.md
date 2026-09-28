@@ -43,23 +43,40 @@ exists in this repository*, not of inventing a new one.
 
 ### Evidence for the dead-CSS claim
 
-`styles/control-room.css` defines 298 class selectors. Grepping every
-`className` in `private-app/`, `app/` and `contributor-demo/`, exactly 29 of
-those 298 appear in rendered markup. The following named groups are defined in
-the stylesheet and are referenced by **no** `.tsx`, `.ts`, `.html` or `.mjs` file
-anywhere in the repository:
+`styles/control-room.css` defines 298 class selectors. Intersecting those with
+every class token in a `className`/`class` attribute in `private-app/`, `app/`
+and `contributor-demo/` (98 files, 510 attributes, counting the tokens inside
+template-literal interpolations and ternary branches, because those are rendered
+too), **28 of those 298 appear in rendered markup**; the other 270 are dead. The
+following named groups are defined in the stylesheet and are referenced by **no**
+`.tsx`, `.ts`, `.html` or `.mjs` file anywhere in the repository:
 
 | Group | Examples | Where defined |
 | --- | --- | --- |
-| App shell / sidebar navigation | `.app-shell`, `.sidebar`, `.side-nav`, `.brand`, `.brand-mark`, `.topbar`, `.main-content`, `.sidebar-foot`, `.mobile-nav`, `.scope-control` | `styles/control-room.css:99-208` |
-| Status and state chips | `.status-dot`, `.state-busy`, `.state-degraded`, `.state-offline`, `.health-healthy`, `.health-watch`, `.health-at_risk`, `.health-blocked`, `.count-pill`, `.count-pill.critical` | `styles/control-room.css:271-312`, `443-445` |
-| Card / panel / button vocabulary | `.panel`, `.primary-button`, `.text-button`, `.card-actions`, `.section-heading`, `.empty-state` | `styles/control-room.css:271-404` |
-| Health and risk vocabulary | `.health-healthy`, `.risk-critical`, `.risk-high`, `.risk-medium`, `.critical`, `.planned`, `.available`, `.unavailable` | throughout |
+| App shell / sidebar navigation | `.app-shell`, `.sidebar`, `.side-nav`, `.brand`, `.brand-mark`, `.topbar`, `.main-content`, `.sidebar-foot`, `.scope-control` | `styles/control-room.css:99-192` |
+| Status and state chips | `.status-dot`, `.state-busy`, `.state-degraded`, `.state-offline`, `.health-at_risk`, `.health-blocked`, `.count-pill`, `.count-pill.critical` | `styles/control-room.css:271-312`, `443-445` |
+| Card / panel / button vocabulary | `.panel`, `.primary-button`, `.text-button`, `.card-actions`, `.empty-state` | `styles/control-room.css:271-404` |
+| Health and risk vocabulary | `.risk-critical`, `.risk-high`, `.risk-medium`, `.critical`, `.planned`, `.available`, `.unavailable` | throughout |
 | Task / agent card grids | `.agent-card`, `.agent-grid`, `.project-card`, `.project-grid`, `.project-monogram`, `.project-stats` | throughout |
 
-The single exception is `tests/mac-local-accessibility.test.tsx`, which parses
-`.sidebar` and the dark token block out of the stylesheet to assert contrast
-maths. That is a test reading the file, not a page rendering the class.
+Three classes that a reader would reasonably assume are in the table above are
+in fact **already live** and must not be counted as dead: `.health-healthy`,
+`.health-watch` and `.section-heading`. All three are rendered by
+`ConnectionCenterPanel` (`app/components/connection-center.tsx:31,33,37`), which
+the owner reaches at `/workers` and `/connections` — so they are not dead CSS,
+they are an already-shipped health/card vocabulary inside a single panel. Item 4
+below should read that as "the health vocabulary is half-adopted in one panel",
+not "unused".
+
+`.mobile-nav` is genuinely dead, like the rest of the sidebar group, but it is
+not at `styles/control-room.css:99-208`: it is defined at
+`styles/control-room.css:468`, with its narrow-width rules at `866` and
+`879-880`. The sidebar range above stops at `192` for that reason.
+
+The single exception among the dead set is
+`tests/mac-local-accessibility.test.tsx`, which parses `.sidebar` and the dark
+token block out of the stylesheet to assert contrast maths. That is a test
+reading the file, not a page rendering the class.
 
 ## Dark mode: the palette exists, is contrast-checked, and is unreachable
 
@@ -100,10 +117,10 @@ Sizes: **S** ~ half a day, **M** ~ 1-2 days, **L** ~ a week or more.
 | 1 | **Sign-in page has no stylesheet at all** | demo-only | none | S | Very high — it is the first thing the owner sees |
 | 2 | **Dark theme unreachable** (`data-theme` never set) | demo-only | none | S | High — brief's stated goal; tokens already exist |
 | 3 | **Owner UI has no sidebar shell** — `.app-shell`/`.sidebar`/`.side-nav`/`.topbar` all unused | demo-only | none | M | High — the strongest visual difference in the repo |
-| 4 | **Status chips not used** — `.status-dot`, `.state-*`, `.health-*`, `.count-pill` all unused; states render as bare text like `proposed` | partly real | none | S | High — task state is the main thing the owner scans |
+| 4 | **Status chips not used** — `.status-dot`, `.state-*`, `.count-pill` unused; the `.health-*` pair is adopted in one panel only; states render as bare text like `proposed` | partly real | none | S | High — task state is the main thing the owner scans |
 | 5 | **Emptiness vs. unavailability look identical** | partly real | none | M | High — a correctness signal disguised as a style problem |
 | 6 | **390px phone width** is handled by two breakpoints but the shell is desktop-first | partly real | none | M | Medium-high |
-| 7 | `.panel` / `.section-heading` / `.primary-button` / `.card-actions` / `.empty-state` vocabulary unused | demo-only | none | S | Medium — quick win once the shell lands |
+| 7 | `.panel` / `.primary-button` / `.card-actions` / `.empty-state` vocabulary unused (`.section-heading` already in use in one panel) | demo-only | none | S | Medium — quick win once the shell lands |
 | 8 | Metrics/`.metric-grid` used by 1 component only | partly real | varies per metric | M | Medium |
 | 9 | Idea Lab, News, Connections, Voice screens have a design but sit outside the owner journey | partly real | varies | L | Medium — separate surface, separate work |
 | 10 | No light/dark preference control for the owner | demo-only | none (localStorage) | S | Low-medium — follows from #2 |
@@ -120,7 +137,7 @@ treatment.
 
 This is the **only** owner-facing page in the application with no design at all,
 and it is the first one the owner sees. The Playwright owner journey
-(`tests/browser/mac-local-owner-journey.spec.ts:116-120`) drives it:
+(`tests/browser/mac-local-owner-journey.spec.ts:188-189`) drives it:
 
 ```ts
 await page.getByLabel("Owner code").fill(ownerCode);
@@ -174,7 +191,16 @@ Task and project state currently render as a text pill, `.private-state`
 `task.state.replaceAll("_", " ")`; the project page renders
 `{project.lifecycle} · {origin}`. The stylesheet's richer vocabulary —
 `.status-dot`, `.state-busy`, `.state-degraded`, `.state-offline`,
-`.health-healthy`, `.health-watch`, `.health-at_risk`, `.count-pill` — is unused.
+`.health-at_risk`, `.count-pill` — is unused.
+
+The `.health-healthy` / `.health-watch` pair is the one exception, and it is
+already shipped inside `ConnectionCenterPanel`
+(`app/components/connection-center.tsx:31,37`) for connection signal freshness.
+It is a *signal* vocabulary applied to one panel, not a task-state chip
+vocabulary, so it does not yet serve the scan this item is about: no task or
+project state anywhere renders as a chip. Whoever picks this up should extend
+the existing `.health-*` treatment rather than invent a parallel one, and should
+read it as a precedent for the naming, not as item 4 already half-done.
 
 Backend needed: none. This is a mapping from the state strings the real app
 already receives to class names that already exist. The Playwright journey
@@ -213,10 +239,14 @@ Backend needed: none.
 
 ### 7. Component vocabulary — `status: demo-only` — size S — value: medium
 
-`.panel`, `.section-heading`, `.primary-button`, `.text-button`,
-`.card-actions`, `.empty-state` are all defined and all unused. Adopting them is
-mostly mechanical once #3 and #4 land, and it is how the shell gets consistent
-without new CSS.
+`.panel`, `.primary-button`, `.text-button`, `.card-actions`, `.empty-state` are
+all defined and all unused. Adopting them is mostly mechanical once #3 and #4
+land, and it is how the shell gets consistent without new CSS.
+
+`.section-heading` is the exception: it is already in use by
+`ConnectionCenterPanel` (`app/components/connection-center.tsx:33`), so it is a
+worked example of the intended flex-row treatment rather than a new adoption
+target. The remaining five are genuinely unrendered.
 
 Backend needed: none.
 
