@@ -63,7 +63,7 @@ printf '%s\\n' '{"type":"system","subtype":"init","session_id":"'"$session_id"'"
 printf '%s\\n' '{"type":"text","text":"I will write the requested result.","timestamp":2}'
 printf '%s\\n' '{"type":"tool_use","name":"write_file","tool_call_id":"tool-1","input":{"path":"hermes-result.txt"},"timestamp":3}'
 printf '%s\\n' '{"type":"tool_result","name":"write_file","tool_call_id":"tool-1","output":"Wrote hermes-result.txt","duration_ms":1,"is_error":false,"timestamp":4}'
-printf '%s\\n' '{"type":"result","session_id":"'"$session_id"'","exit_code":0,"text":"Fake Hermes pinned executable result.","tokens":{"input":3,"output":5,"total":8,"cache_read":0,"cache_write":0},"duration_ms":5,"timestamp":5}'
+printf '%s\\n' '{"type":"result","session_id":"'"$session_id"'","exit_code":0,"text":"Fake Hermes pinned executable result '"$session_id"'.","tokens":{"input":3,"output":5,"total":8,"cache_read":0,"cache_write":0},"duration_ms":5,"timestamp":5}'
 printf 'session_id: %s\\n' "$session_id" >&2
 exit 0
 `;
@@ -82,8 +82,8 @@ session_id="00000000-0000-4000-8000-$(printf '%012d' "$$")"
 printf '%s\\n' '{"type":"system","subtype":"init","session_id":"'"$session_id"'","model":"fake-model"}'
 printf '%s\\n' '{"type":"rate_limit_event","session_id":"'"$session_id"'","rate_limit_info":{"status":"allowed"}}'
 printf '%s\\n' '{"type":"system","subtype":"thinking_tokens","session_id":"'"$session_id"'","thinking_tokens":2}'
-printf '%s\\n' '{"type":"assistant","session_id":"'"$session_id"'","message":{"role":"assistant","content":[{"type":"text","text":"Fake Claude Code pinned executable result."}]}}'
-printf '%s\\n' '{"type":"result","subtype":"success","is_error":false,"session_id":"'"$session_id"'","result":"Fake Claude Code pinned executable result.","terminal_reason":"completed","total_cost_usd":0,"usage":{}}'
+printf '%s\\n' '{"type":"assistant","session_id":"'"$session_id"'","message":{"role":"assistant","content":[{"type":"text","text":"Fake Claude Code pinned executable result '"$session_id"'."}]}}'
+printf '%s\\n' '{"type":"result","subtype":"success","is_error":false,"session_id":"'"$session_id"'","result":"Fake Claude Code pinned executable result '"$session_id"'.","terminal_reason":"completed","total_cost_usd":0,"usage":{}}'
 exit 0
 `;
 }
@@ -102,7 +102,7 @@ thread_id="00000000-0000-4000-8000-$(printf '%012d' "$$")"
 printf '%s\\n' '{"type":"thread.started","thread_id":"'"$thread_id"'"}'
 printf '%s\\n' '{"type":"turn.started"}'
 printf '%s\\n' '{"type":"item.completed","item":{"type":"reasoning"}}'
-printf '%s\\n' '{"type":"item.completed","item":{"type":"agent_message","text":"Fake Codex pinned executable result."}}'
+printf '%s\\n' '{"type":"item.completed","item":{"type":"agent_message","text":"Fake Codex pinned executable result '"$thread_id"'."}}'
 printf '%s\\n' '{"type":"turn.completed","usage":{"input_tokens":3,"output_tokens":5}}'
 exit 0
 `;
