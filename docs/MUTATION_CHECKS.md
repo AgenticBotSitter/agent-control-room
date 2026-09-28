@@ -49,8 +49,9 @@ check and restores the file.
 
 The **Mutation checks** job derives the manifest name from the pull request head branch. It only
 installs dependencies and invokes the mutation verifier when that exact file exists. Manifests
-must be regular files directly inside the top-level `mutation-checks/` directory; symbolic links
-are refused. A path passed to the verifier outside that directory is ignored.
+must be regular files directly inside the top-level `mutation-checks/` directory; a symbolic-link
+manifest is refused and fails the job. A path passed to the verifier outside that directory is
+ignored.
 
 When no manifest exists, CI examines added and removed lines under `src/**`, `db/migrations/**`,
 and `db/roles/**`. It emits a warning, not a failure, for source refusal words or uppercase SQL

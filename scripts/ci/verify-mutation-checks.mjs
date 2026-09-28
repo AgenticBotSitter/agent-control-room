@@ -4,10 +4,8 @@ import {
   chmodSync,
   existsSync,
   lstatSync,
-  mkdirSync,
   readFileSync,
   realpathSync,
-  rmdirSync,
   writeFileSync,
 } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
@@ -21,7 +19,6 @@ const SOURCE_GUARD_PATTERN = /\b(?:authorize|refuse|forbid)\b|throw new \w*Refus
 const SQL_GUARD_PATTERN = /\b(?:GRANT|REVOKE|SECURITY\s+DEFINER|POLICY|TRIGGER)\b/u;
 let activeRestore;
 let activeChild;
-let activeRelease;
 let interrupted = false;
 
 function git(root, args, options = {}) {
@@ -64,7 +61,9 @@ function selectedManifest(root, argument) {
 function requireCleanCheckout(root) {
   const result = git(root, ["status", "--porcelain=v1", "--untracked-files=all"]);
   if (result.status !== 0) throw new Error("could not inspect the Git checkout");
-  if (result.stdout !== "") throw new Error("refusing to run on a dirty Git checkout");
+  if (result.stdout !== "") {
+    throw new Error("refusing to run on a dirty Git checkout; restore the changed files before retrying");
+  }
 }
 
 function requireCleanAfterTest(root) {
@@ -83,19 +82,6 @@ function mutationTimeoutMs() {
     throw new Error("MUTATION_CHECK_TIMEOUT_MS must be a positive integer number of milliseconds");
   }
   return Number(configured);
-}
-
-function acquireLock(root) {
-  const lockPath = join(root, ".git", "mutation-checks.lock");
-  try {
-    mkdirSync(lockPath);
-  } catch (error) {
-    if (error?.code === "EEXIST") {
-      throw new Error("another mutation-check verifier is already running in this checkout");
-    }
-    throw error;
-  }
-  return () => rmdirSync(lockPath);
 }
 
 function parseManifest(root, manifestPath) {
@@ -146,14 +132,22 @@ function restoreFile(root, entry, original, mode) {
   if (!restored.equals(original)) throw new Error(`could not restore ${entry.file}`);
 }
 
+function stopTestProcess(child, signal) {
+  try {
+    process.kill(-child.pid, signal);
+  } catch (error) {
+    if (error.code !== "ESRCH") throw error;
+  }
+}
+
 function runTest(command, root, timeoutMs) {
   return new Promise(resolveResult => {
     let timedOut = false;
-    const child = spawn(command, { cwd: root, env: process.env, shell: true, stdio: "inherit" });
+    const child = spawn(command, { cwd: root, detached: true, env: process.env, shell: true, stdio: "inherit" });
     activeChild = child;
     const timer = setTimeout(() => {
       timedOut = true;
-      child.kill("SIGKILL");
+      stopTestProcess(child, "SIGKILL");
     }, timeoutMs);
     child.once("error", error => {
       clearTimeout(timer);
@@ -246,9 +240,8 @@ function restoreOnSignal(signal) {
   if (interrupted) return;
   interrupted = true;
   try {
-    if (activeChild && !activeChild.killed) activeChild.kill(signal);
+    if (activeChild && !activeChild.killed) stopTestProcess(activeChild, signal);
     if (activeRestore) activeRestore();
-    if (activeRelease) activeRelease();
   } catch (error) {
     console.error(`Mutation checks failed while restoring after ${signal}: ${error.message}`);
   }
@@ -271,40 +264,32 @@ async function main() {
     warnAboutMissingManifest(root);
     return;
   }
-  const releaseLock = acquireLock(root);
-  activeRelease = releaseLock;
-  try {
-    requireCleanCheckout(root);
-    const entries = parseManifest(root, manifestPath);
-    const failures = [];
-    const timeoutMs = mutationTimeoutMs();
-    for (const [index, entry] of entries.entries()) {
-      try {
-        requireCleanCheckout(root);
-        await verifyBaseline(root, entry, index + 1, timeoutMs);
-      } catch (error) {
-        failures.push(error.message);
-        console.error(`FAIL: ${error.message}`);
-      }
+  requireCleanCheckout(root);
+  const entries = parseManifest(root, manifestPath);
+  const failures = [];
+  const timeoutMs = mutationTimeoutMs();
+  for (const [index, entry] of entries.entries()) {
+    try {
+      requireCleanCheckout(root);
+      await verifyBaseline(root, entry, index + 1, timeoutMs);
+    } catch (error) {
+      failures.push(error.message);
+      console.error(`FAIL: ${error.message}`);
     }
-    if (failures.length > 0) throw new Error(`${failures.length} mutation check(s) failed`);
-    for (const [index, entry] of entries.entries()) {
-      try {
-        requireCleanCheckout(root);
-        await verifyEntry(root, entry, index + 1, timeoutMs);
-        requireCleanAfterTest(root);
-      } catch (error) {
-        failures.push(error.message);
-        console.error(`FAIL: ${error.message}`);
-      }
-    }
-    requireCleanCheckout(root);
-    if (failures.length > 0) throw new Error(`${failures.length} mutation check(s) failed`);
-    console.log(`\nAll ${entries.length} mutation check(s) were caught and every file was restored.`);
-  } finally {
-    activeRelease = undefined;
-    releaseLock();
   }
+  if (failures.length > 0) throw new Error(`${failures.length} mutation check(s) failed`);
+  for (const [index, entry] of entries.entries()) {
+    try {
+      requireCleanCheckout(root);
+      await verifyEntry(root, entry, index + 1, timeoutMs);
+      requireCleanAfterTest(root);
+    } catch (error) {
+      failures.push(error.message);
+      console.error(`FAIL: ${error.message}`);
+    }
+  }
+  if (failures.length > 0) throw new Error(`${failures.length} mutation check(s) failed`);
+  console.log(`\nAll ${entries.length} mutation check(s) were caught and every file was restored.`);
 }
 
 try {

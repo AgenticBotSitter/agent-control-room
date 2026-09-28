@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { spawn, spawnSync } from "node:child_process";
@@ -146,6 +146,21 @@ test("a manifest path outside mutation-checks is ignored", () => {
   }
 });
 
+test("a manifest nested below mutation-checks is ignored", () => {
+  const root = fixture();
+  try {
+    const nested = join(root, "mutation-checks", "nested");
+    mkdirSync(nested);
+    const path = join(nested, "fixture.json");
+    writeFileSync(path, "not json\n");
+    const result = run(root, path);
+    assert.equal(result.status, 0, output(result));
+    assert.match(output(result), /Ignoring manifest outside mutation-checks\//u);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("the missing-manifest heuristic warns only for changed guard-like src lines", () => {
   const root = fixture();
   try {
@@ -174,6 +189,28 @@ test("a test that is already failing is rejected before any mutation is applied"
     assert.equal(result.status, 1);
     assert.match(output(result), /baseline failing with exit 1/u);
     assert.equal(readFileSync(join(root, "src", "guard.mjs"), "utf8"), before);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a failed baseline prevents later mutations from being applied", () => {
+  const root = fixture();
+  try {
+    const path = manifest(root, { test: 'node -e "process.exit(1)"' });
+    const checks = JSON.parse(readFileSync(path, "utf8"));
+    checks.push({
+      ...checks[0],
+      test: 'node -e "const fs=require(\'fs\');if(fs.readFileSync(\'src/guard.mjs\',\'utf8\').includes(\'allow\'))fs.writeFileSync(\'mutation-ran.txt\',\'unexpected\')"',
+      why: "later mutations do not run after a failed baseline",
+    });
+    writeFileSync(path, `${JSON.stringify(checks, null, 2)}\n`);
+    git(root, "add", ".");
+    git(root, "commit", "-qm", "two checks");
+    const result = run(root, path);
+    assert.equal(result.status, 1);
+    assert.match(output(result), /baseline failing with exit 1/u);
+    assert.equal(existsSync(join(root, "mutation-ran.txt")), false);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -251,7 +288,7 @@ test("SIGTERM during a mutated command restores the file", async () => {
   }
 });
 
-test("overlapping verifiers refuse the second run and preserve the target", async () => {
+test("concurrent verifiers refuse the second run on the first run's dirty tree", async () => {
   const root = fixture();
   try {
     const path = manifest(root, {
@@ -270,12 +307,63 @@ test("overlapping verifiers refuse the second run and preserve the target", asyn
     });
     const second = run(root, path);
     assert.equal(second.status, 1);
-    assert.match(output(second), /another mutation-check verifier is already running/u);
+    assert.match(output(second), /refusing to run on a dirty Git checkout; restore the changed files before retrying/u);
     const finished = new Promise(resolveDone => first.once("close", resolveDone));
     first.kill("SIGTERM");
     await finished;
     assert.equal(readFileSync(join(root, "src", "guard.mjs"), "utf8"), before);
     assert.equal(git(root, "status", "--porcelain=v1"), "");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("the verifier runs green in a linked worktree", () => {
+  const root = fixture();
+  const linked = mkdtempSync(join(tmpdir(), "mutation-linked-worktree-"));
+  rmSync(linked, { recursive: true, force: true });
+  try {
+    manifest(root);
+    git(root, "worktree", "add", "--detach", linked);
+    const result = run(linked, join(linked, "mutation-checks", "fixture.json"));
+    assert.equal(result.status, 0, output(result));
+    assert.match(output(result), /All 1 mutation check\(s\) were caught/u);
+  } finally {
+    if (existsSync(linked)) git(root, "worktree", "remove", "--force", linked);
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("SIGKILL leaves only a dirty target, which can be restored without a wedged verifier", async () => {
+  const root = fixture();
+  try {
+    const path = manifest(root, {
+      test: 'exec node -e "const fs=require(\'fs\');if(fs.readFileSync(\'src/guard.mjs\',\'utf8\').includes(\'allow\'))setInterval(()=>{},1000)"',
+    });
+    const child = spawn(process.execPath, [verifier, path], { cwd: root, detached: true, stdio: "ignore" });
+    child.unref();
+    await new Promise((resolveStarted, rejectStarted) => {
+      const startedAt = Date.now();
+      const ready = setInterval(() => {
+        if (readFileSync(join(root, "src", "guard.mjs"), "utf8").includes("allow")) {
+          clearInterval(ready);
+          resolveStarted();
+        } else if (Date.now() - startedAt > 5_000) {
+          clearInterval(ready);
+          rejectStarted(new Error("verifier did not apply the mutation"));
+        }
+      }, 10);
+    });
+    process.kill(-child.pid, "SIGKILL");
+    await new Promise(resolveDone => setTimeout(resolveDone, 50));
+    const blocked = run(root, path);
+    assert.equal(blocked.status, 1);
+    assert.match(output(blocked), /dirty Git checkout; restore the changed files before retrying/u);
+    assert.equal(existsSync(join(root, ".git", "mutation-checks.lock")), false);
+    git(root, "restore", "--", "src/guard.mjs");
+    const restoredManifest = manifest(root);
+    const result = run(root, restoredManifest);
+    assert.equal(result.status, 0, output(result));
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -446,4 +534,18 @@ test("the CI job gates verification on a branch manifest and joins the merge gat
   const gate = workflow.slice(workflow.indexOf("  merge-gate:"));
   assert.match(gate, /needs: \[[^\]]*mutation-checks/u);
   assert.match(gate, /check mutation-checks/u);
+});
+
+test("declared manifests name unique, tracked source snippets", () => {
+  for (const name of readdirSync("mutation-checks").filter(entry => entry.endsWith(".json"))) {
+    const manifestPath = join("mutation-checks", name);
+    const entries = JSON.parse(readFileSync(manifestPath, "utf8"));
+    for (const entry of entries) {
+      const source = readFileSync(entry.file, "utf8");
+      const matches = source.split(entry.find).length - 1;
+      assert.equal(matches, 1, `${manifestPath}: ${entry.file} find must occur exactly once`);
+      const tracked = spawnSync("git", ["ls-files", "--error-unmatch", "--", entry.file], { encoding: "utf8" });
+      assert.equal(tracked.status, 0, `${manifestPath}: ${entry.file} must be tracked`);
+    }
+  }
 });
