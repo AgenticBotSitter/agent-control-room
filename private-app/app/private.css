@@ -66,6 +66,10 @@
 .private-project-grid h3 { margin: .75rem 0 .3rem; font-size: 1.1rem; }
 .private-project-grid p { color: var(--muted); white-space: pre-wrap; }
 .private-state { text-transform: capitalize; font-size: .875rem; background: var(--surface-3); border-radius: 2rem; padding: .2rem .65rem; display: inline-block; }
+/* Prose about a route, not a state chip. It used to borrow .private-state, which
+   made the task's own state label ambiguous to the owner journey's selector; the
+   muted note treatment below is what it effectively looked like anyway. */
+.private-route-observation { color: var(--muted); font-size: .9375rem; }
 .private-open { font-weight: 650; color: var(--green); }
 .private-create, .private-panel { padding: 1.5rem; }
 .private-create { display: grid; gap: .7rem; }

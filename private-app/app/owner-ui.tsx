@@ -64,7 +64,13 @@ export function stateLabelV1(state: string): string {
 
 export function StateChip({ state, tone, label }: { state: string; tone?: ChipTone; label?: string }) {
   const resolved = tone ?? chipToneForStateV1(state);
-  return <span className={resolved === "neutral" ? "private-chip" : `private-chip is-${resolved}`}>
+  // The chip also carries .private-state. That class used to be the task's own
+  // state label in the task-detail panel, and the owner journey selects
+  // `.private-task-detail .private-state` to read the task state — so the chip
+  // keeps the hook rather than the journey's selector being rewritten to follow
+  // this refactor. Anything that is prose about a state is given its own class
+  // instead (see the route-observation panel).
+  return <span className={`private-state ${resolved === "neutral" ? "private-chip" : `private-chip is-${resolved}`}`}>
     {label ?? stateLabelV1(state)}</span>;
 }
 

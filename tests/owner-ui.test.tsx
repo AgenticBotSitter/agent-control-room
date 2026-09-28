@@ -151,6 +151,22 @@ test("the loading spinner is suppressed when the owner asked for less motion", (
     "a reduced-motion rule must still exist");
 });
 
+test("the task state chip keeps the hook the owner journey selects on", () => {
+  // The journey reads `.private-task-detail .private-state` and expects the task's
+  // own state label there ("Completed · Accepted"). When the task heading became a
+  // chip, the route-observation panel also matched that selector — and its prose
+  // ("Control Room has a saved ... route observation, but it is not current task
+  // activity.") is what the journey then read, so it timed out.
+  //
+  // Two halves to this: the chip carries .private-state, and prose about a state
+  // carries its own class. Neither half is enough on its own, which is why the
+  // journey broke before either was fixed.
+  const html = renderToStaticMarkup(createElement(StateChip, { state: "succeeded", label: "Completed · Accepted" }));
+  assert.match(html, /class="private-state private-chip is-good"/,
+    "the chip must still match .private-state for the journey's selector");
+  assert.match(html, /Completed · Accepted/);
+});
+
 test("a chip next to a sibling string leaves the element's matched text unchanged", () => {
   // The owner journey asserts `page.getByText(/^paused ·/)` and `/^archived ·/`
   // against the project heading, whose text is the lifecycle, a middle dot and

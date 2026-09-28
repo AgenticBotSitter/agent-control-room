@@ -201,7 +201,11 @@ function LocalRouteObservationPanel({ detail }: { detail: TaskDetail }) {
           ? `The saved ${name} route observation needs attention. Control Room will not guess whether it is still working.`
           : `Control Room has a saved ${name} route observation, but it is not current task activity.`;
   return <section className="private-panel" aria-label="Local task route"><h2>Local task route</h2>
-    <p className={observation.state === "needs_attention" ? "private-notice" : "private-state"}>{text}</p>
+    {/* This is prose about the route, not a task state, so it gets its own class.
+        It previously shared .private-state with the task's own state label, which
+        made `.private-task-detail .private-state` ambiguous — the owner journey
+        reads that selector expecting the task state. */}
+    <p className={observation.state === "needs_attention" ? "private-notice" : "private-route-observation"}>{text}</p>
     <p className="private-note">This is saved evidence for this task only. It does not show a worker identity, prove availability for another task, or start, retry, or contact an agent.</p>
   </section>;
 }
