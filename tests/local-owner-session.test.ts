@@ -6,7 +6,7 @@ import { JSDOM } from "jsdom";
 import { sha256Digest } from "../src/security";
 import { captureLocalOwnerSessionProfileV1, LocalOwnerSessionServiceV1, LOCAL_OWNER_SESSION_PROFILE_V1,
   readLocalOwnerCodeV1, renderLocalOwnerSignInPageV1 } from "../src/web/v1/local-owner-session";
-import { WebAccessError } from "../src/web/v1/access-verifier";
+import { authenticatedWebSessionBindingV1, WebAccessError } from "../src/web/v1/access-verifier";
 import type { LocalOwnerSessionStoreV1 } from "../src/web/v1/local-owner-session-store";
 import type { PersistedLocalOwnerSessionV1 } from "../src/web/v1/local-owner-session";
 
@@ -28,6 +28,35 @@ test("local owner session accepts only the correct code from the configured loop
   const identity = service.verify(request("/api/v1/projects", { cookie }), 1_001);
   assert.deepEqual(identity, { provider: "local-owner", subject: "owner:local", tokenDigest: identity.tokenDigest,
     issuedAt: "1970-01-01T00:00:01.000Z", expiresAt: "1970-01-01T00:15:01.000Z", verificationExpiresAt: "1970-01-01T00:15:01.000Z" });
+});
+
+test("browser gesture bindings change for every actor and session identity field", () => {
+  const identity = { provider: "provider:one", subject: "subject:one", tokenDigest: sha256Digest("token:one"),
+    issuedAt: "2026-09-28T00:00:00.000Z", expiresAt: "2026-09-28T01:00:00.000Z",
+    verificationExpiresAt: "2026-09-28T01:00:00.000Z" };
+  const original = authenticatedWebSessionBindingV1(identity);
+  assert.match(original.actorId, /^sha256:[a-f0-9]{64}$/u);
+  assert.match(original.sessionEpoch, /^sha256:[a-f0-9]{64}$/u);
+  for (const [field, value, part] of [
+    ["provider", "provider:two", "actorId"], ["subject", "subject:two", "actorId"],
+    ["tokenDigest", sha256Digest("token:two"), "sessionEpoch"],
+    ["issuedAt", "2026-09-28T00:00:01.000Z", "sessionEpoch"],
+  ] as const) {
+    const changed = authenticatedWebSessionBindingV1({ ...identity, [field]: value });
+    assert.notEqual(changed[part], original[part], `${field} must change ${part}`);
+  }
+});
+
+test("owner screenshot manifest captures sign-in before authentication at every viewport and checks routes", () => {
+  const source = readFileSync(fileURLToPath(new URL("../scripts/owner-page-screenshots.mjs", import.meta.url)), "utf8");
+  const capture = source.indexOf("await capture(signInRoute, viewport)");
+  const fill = source.indexOf('getByLabel("Owner code").fill');
+  const submit = source.indexOf('getByRole("button", { name: "Sign in" }).click');
+  assert.ok(capture >= 0 && capture < fill && fill < submit,
+    "the /session captures for both viewports must happen before entering or submitting the owner code");
+  assert.match(source, /screenshot_route_mismatch/);
+  assert.match(source, /current\.pathname !== route\.path/);
+  assert.match(source, /`\$\{route\.slug\}-\$\{viewport\.name\}-\$\{colorScheme\}\.png`/);
 });
 
 test("an optional exact HTTPS origin gets a Secure cookie and keeps exact-origin write checks", async () => {

@@ -1,4 +1,5 @@
-import { BrowserRequestError, type BrowserFailureCode } from "./browser-client";
+import { BrowserRequestError, observeBrowserAuthentication, type BrowserAuthenticationObserver,
+  type BrowserFailureCode } from "./browser-client";
 import { catalogProjectIdSchema } from "./project-wire";
 import { taskReviewDraftSchema, taskReviewCommandSchema, taskReviewOptionsSchema,
   type TaskReviewDraft, type TaskReviewReceipt } from "./task-review-wire";
@@ -11,16 +12,18 @@ export const reviewErrorMessage: Record<BrowserFailureCode, string> = {
   uncertain: "This review may have saved. Check this exact save before making another decision.",
 };
 type Binding = Pick<TaskReviewDraft, "artifactId" | "targetId" | "targetDigest" | "contentHash">;
-export function createTaskReviewBrowserClient(transport: typeof fetch = fetch, makeKey: () => string = () => crypto.randomUUID()) {
+export function createTaskReviewBrowserClient(transport: typeof fetch = fetch, makeKey: () => string = () => crypto.randomUUID(),
+  observeAuthentication?: BrowserAuthenticationObserver) {
   let pending: { projectId: string; jobId: string; draft: TaskReviewDraft; body: string; key: string; uncertain: boolean } | undefined, busy = false;
   const path = (projectId: string, jobId: string, bound: Binding) => `/api/v1/projects/${encodeURIComponent(projectId)}/tasks/${encodeURIComponent(jobId)}/results/${encodeURIComponent(bound.artifactId)}/reviews/${encodeURIComponent(bound.targetId)}`;
   const ids = (...values: string[]) => { if (values.some(value => !catalogProjectIdSchema.safeParse(value).success)) throw new BrowserRequestError("invalid_request"); };
   const failure = (status: number): BrowserFailureCode => ({ 400: "invalid_request", 401: "authentication_required", 403: "access_denied",
     404: "not_found", 409: "conflict" } as Record<number, BrowserFailureCode>)[status] ?? "unavailable";
   async function call(url: string, command?: { body: string; key: string }) {
-    try { return await transport(url, { method: command ? "POST" : "GET", credentials: "same-origin", cache: "no-store", redirect: "error",
+    try { const response = await transport(url, { method: command ? "POST" : "GET", credentials: "same-origin", cache: "no-store", redirect: "error",
       signal: AbortSignal.timeout(10_000), headers: { accept: "application/json", "x-requested-with": "XMLHttpRequest",
-        ...(command ? { "content-type": "application/json", "idempotency-key": command.key } : {}) }, ...(command ? { body: command.body } : {}) }); }
+        ...(command ? { "content-type": "application/json", "idempotency-key": command.key } : {}) }, ...(command ? { body: command.body } : {}) });
+      observeBrowserAuthentication(response, observeAuthentication); return response; }
     catch { throw new BrowserRequestError(command ? "uncertain" : "unavailable"); }
   }
   async function json(response: Response) {

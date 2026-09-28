@@ -74,10 +74,10 @@ export function TaskExecutionStage({ detail, mode, workspace, onRecorded }: {
 
 export function PrivateTaskWorkspace({ projectId, jobId, after }: { projectId: string; jobId?: string; after?: string }) {
   const runtime = useLocalRuntime();
-  const [client] = useState(() => createTaskBrowserClient());
-  const [ideas] = useState(() => createIdeaBrowserClient());
   // Neither failed task-detail reads nor failed result reads may discard an unfinished review.
   const [reviewWorkspace] = useState(() => createTaskReviewWorkspace());
+  const [client] = useState(() => createTaskBrowserClient(fetch, () => crypto.randomUUID(), reviewWorkspace.bindAuthenticatedSession));
+  const [ideas] = useState(() => createIdeaBrowserClient());
   const [verificationWorkspace] = useState(() => createTaskVerificationWorkspace());
   const [executionWorkspace] = useState(() => createTaskExecutionWorkspace());
   const [page, setPage] = useState<TaskPage>();
@@ -107,7 +107,11 @@ export function PrivateTaskWorkspace({ projectId, jobId, after }: { projectId: s
           setError(client.hasPending() ? new BrowserRequestError("uncertain") : undefined);
         }
       } catch (reason) {
-        if (live && current === generation.current) { setPage(undefined); setDetail(undefined); setError(failure(reason)); }
+        if (live && current === generation.current) {
+          const error = failure(reason);
+          if (error.code === "authentication_required") reviewWorkspace.invalidateAuthenticatedSession();
+          setPage(undefined); setDetail(undefined); setError(error);
+        }
       } finally { readBusy = false; if (live && current === generation.current) setLoading(false); }
     };
     void load();
@@ -115,7 +119,7 @@ export function PrivateTaskWorkspace({ projectId, jobId, after }: { projectId: s
     const timer = setInterval(() => { if (!document.hidden) void load(); }, 30_000);
     const focus = () => { void load(); }; window.addEventListener("focus", focus);
     return () => { live = false; alive.current = false; clearInterval(timer); window.removeEventListener("focus", focus); };
-  }, [client, projectId, jobId, after, refresh]);
+  }, [client, projectId, jobId, after, refresh, reviewWorkspace]);
 
   async function save(retry = false) {
     if (busy.current || preparingRef.current || !page || (!retry && !page.canPropose)) return;
@@ -128,6 +132,7 @@ export function PrivateTaskWorkspace({ projectId, jobId, after }: { projectId: s
     } catch (reason) {
       if (alive.current) {
         const err = failure(reason); setError(err);
+        if (err.code === "authentication_required") reviewWorkspace.invalidateAuthenticatedSession();
         if (["authentication_required", "access_denied", "not_found"].includes(err.code)) { setPage(undefined); setDetail(undefined); setDraft({ title: "", instructions: "" }); }
       }
     } finally { busy.current = false; if (alive.current) setPending(false); }

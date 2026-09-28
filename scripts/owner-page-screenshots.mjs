@@ -51,27 +51,48 @@ const context = await browser.newContext({
 });
 const page = await context.newPage();
 
-// Sign in through the public sign-in form, exactly as the owner does.
-await page.goto(`${origin}/session`);
-await page.getByLabel("Owner code").fill(ownerCode);
-await page.getByRole("button", { name: "Sign in" }).click();
-await page.waitForURL("**/projects");
-
 const viewports = [
   { name: "desktop", width: 1280, height: 900 },
   { name: "phone390", width: 390, height: 844 },
 ];
 
-// The pages the owner actually uses. Each is listed by its route; the sign-in
-// page is captured above as part of signing in.
+async function capture(route, viewport) {
+  const current = new URL(page.url());
+  if (current.origin !== origin || current.pathname !== route.path)
+    throw new Error(`screenshot_route_mismatch:${route.slug}:${current.pathname}`);
+  const file = join(outputDir, `${route.slug}-${viewport.name}-${colorScheme}.png`);
+  await page.screenshot({ path: file, fullPage: true });
+  const painted = await page.evaluate(() => ({
+    prefersDark: matchMedia("(prefers-color-scheme: dark)").matches,
+    background: getComputedStyle(document.body).backgroundColor,
+    text: getComputedStyle(document.body).color,
+    overflowsHorizontally: document.documentElement.scrollWidth > document.documentElement.clientWidth,
+  }));
+  await writeFile(`${file}.json`, `${JSON.stringify({ route: route.path, ...painted }, null, 2)}\n`);
+  process.stdout.write(`${route.slug} ${viewport.name} ${colorScheme}: bg=${painted.background} overflow=${painted.overflowsHorizontally}\n`);
+}
+
+// Capture the unauthenticated surface before entering or submitting the owner
+// code. Both widths are evidence for /session, not for its redirect target.
+const signInRoute = { slug: "sign-in", path: "/session" };
+await page.goto(`${origin}${signInRoute.path}`);
+for (const viewport of viewports) {
+  await page.setViewportSize({ width: viewport.width, height: viewport.height });
+  await capture(signInRoute, viewport);
+}
+
+// Sign in through the public sign-in form, exactly as the owner does.
+await page.getByLabel("Owner code").fill(ownerCode);
+await page.getByRole("button", { name: "Sign in" }).click();
+await page.waitForURL("**/projects");
+
+// The protected pages the owner actually uses. Each is listed by its route.
 const routes = [
   { slug: "home", path: "/" },
   { slug: "projects", path: "/projects" },
   { slug: "workers", path: "/workers" },
   { slug: "needs-attention", path: "/needs-me" },
 ];
-
-await page.screenshot({ path: join(outputDir, `sign-in-${colorScheme}.png`), fullPage: true });
 
 for (const viewport of viewports) {
   await page.setViewportSize({ width: viewport.width, height: viewport.height });
@@ -89,16 +110,7 @@ for (const viewport of viewports) {
     await page.waitForFunction(() => !document.querySelector(".private-state-loading"), null,
       { timeout: 20_000 }).catch(() => { process.stdout.write(`${route.slug} ${viewport.name}: still loading after 20s\n`); });
     await page.waitForTimeout(500);
-    const file = join(outputDir, `${route.slug}-${viewport.name}-${colorScheme}.png`);
-    await page.screenshot({ path: file, fullPage: true });
-    const painted = await page.evaluate(() => ({
-      prefersDark: matchMedia("(prefers-color-scheme: dark)").matches,
-      background: getComputedStyle(document.body).backgroundColor,
-      text: getComputedStyle(document.body).color,
-      overflowsHorizontally: document.documentElement.scrollWidth > document.documentElement.clientWidth,
-    }));
-    await writeFile(`${file}.json`, `${JSON.stringify(painted, null, 2)}\n`);
-    process.stdout.write(`${route.slug} ${viewport.name} ${colorScheme}: bg=${painted.background} overflow=${painted.overflowsHorizontally}\n`);
+    await capture(route, viewport);
   }
 }
 
