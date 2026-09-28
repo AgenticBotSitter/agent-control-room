@@ -382,7 +382,7 @@ test("0098 and 0096 down migrations refuse retained policy/history and remove ow
   const populatedTemplate = await populated.service.createTemplate(populated.identity, populated.project.projectId, template);
   await populated.service.instantiate(populated.identity, populated.project.projectId,
     { templateId: populatedTemplate.templateId, title: "Retained down guard" }, "linear-down-guard-0001");
-  const unattendedDown = await readFile("db/down/0099_pipeline_unattended_advance.sql", "utf8");
+  const unattendedDown = await readFile("db/down/0100_pipeline_unattended_advance.sql", "utf8");
   const down = await readFile("db/down/0096_linear_pipeline_runs.sql", "utf8");
   const agentReviewDown = await readFile("db/down/0097_agent_review_plans.sql", "utf8");
   const publicationDown = await readFile("db/down/0098_pipeline_build_publications.sql", "utf8");

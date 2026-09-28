@@ -36,6 +36,11 @@ const recordSchema = recordMaterialSchema.extend({ authenticationTag: tag }).str
 
 export type AuthenticatedModelSelectionV1 = Readonly<z.infer<typeof authenticatedModelSchema>>;
 export type AuthenticatedPublicationDeliveryV1 = Readonly<z.infer<typeof authenticatedDeliverySchema>>;
+/**
+ * `commitDigest` is trusted only on plans minted by
+ * createPullRequestPublicationPlanV1, which binds it to the clean workspace
+ * HEAD and the authenticated audit evidence before signing the plan.
+ */
 export type PullRequestPublicationPlanV1 = Readonly<z.infer<typeof planSchema>>;
 export type PullRequestPublicationEvidenceV1 = Readonly<z.infer<typeof evidenceSchema>>;
 export type PullRequestPublicationResultV1 = Readonly<{ status: "published"; evidence: PullRequestPublicationEvidenceV1 }

@@ -433,11 +433,12 @@ test("work-intake login cannot read or forge another subsystem's shared-ledger r
     VALUES('attention:ordinary','tenant:intake-guard','project:intake-guard','ordinary','question','open',
       'delivered','2026-09-27T12:04:30.000Z','{"state":"open"}'::jsonb)`);
   await query(db,await readFile(join(ROOT,"db/roles/private_web_roles.sql"),"utf8"));
-  await query(db,`SET SESSION AUTHORIZATION control_room_private_web;
+  await assert.rejects(query(db,`SET SESSION AUTHORIZATION control_room_private_web;
     UPDATE control_action_inbox SET state='resolved',payload='{"state":"resolved"}'::jsonb
-    WHERE tenant_id='tenant:intake-guard' AND id='attention:ordinary'`);
+    WHERE tenant_id='tenant:intake-guard' AND id='attention:ordinary'`),
+  /private web action inbox update rejected/u);
   assert.equal((await query(db,`SELECT state FROM control_action_inbox
-    WHERE tenant_id='tenant:intake-guard' AND id='attention:ordinary'`)).rows[0].state,"resolved");
+    WHERE tenant_id='tenant:intake-guard' AND id='attention:ordinary'`)).rows[0].state,"open");
   await query(db,"DELETE FROM control_action_inbox WHERE tenant_id='tenant:intake-guard' AND id='attention:ordinary'");
 
   const head=(await query(intake,`SELECT head_hash,event_count::int FROM control_audit_chain_heads
