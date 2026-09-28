@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test, { after } from "node:test";
-import { sha256Digest } from "../src/security";
+import { InMemoryRollbackCheckpointStoreV1, sha256Digest } from "../src/security";
 import { LOCAL_OWNER_SESSION_PROFILE_V1 } from "../src/web/v1/local-owner-session";
 import { createMacLocalWebProcessV1 } from "../src/web/v1/mac-local-web-process";
 import { createContributorDemoNodeHandler, createMacLocalNodeHandler } from "../src/web/v1/private-node-handler";
@@ -186,6 +186,30 @@ test("the real Mac-local wrapper signs in locally and reaches the existing proje
   const fakePreview = await app.handle(request("/local-preview", { headers: { cookie: cookie! } }), () => new Response("must not render"));
   assert.equal(fakePreview.status, 404);
   await app.close();
+});
+
+test("the Mac-local needs-me route composes saved-plan verification into the task service", async t => {
+  const fixture = await privateOwnerBootstrapFixture({ fresh: "mac-local-plan-attention" }); t.after(fixture.close);
+  await createPrivateOwnerBootstrapCommand({ openDatabase: fixture.openDatabase(), clock: () => conformanceNow })({
+    configuration: fixture.configuration, database: fixture.database, trust: fixture.trust, assertion: fixture.assertion,
+  });
+  const origin = "http://127.0.0.1:3210", ownerCode = "mac-local-owner-code-long-enough";
+  const app = createMacLocalWebProcessV1({ origin, workspaceId: fixture.configuration.workspaceId,
+    localOwnerSession: { schema: LOCAL_OWNER_SESSION_PROFILE_V1, origin, tenantId: fixture.configuration.tenantId,
+      provider: fixture.trust.issuer, subject: conformanceSubject, ownerCodeDigest: sha256Digest({ ownerCode }), sessionSeconds: 900 },
+    database: { client: fixture.client, close: async () => {} }, clock: () => conformanceNow,
+    taskReadKeys: { taskPlanIntegrityKey: new Uint8Array(32).fill(3), reviews: {
+      integrityKey: new Uint8Array(32).fill(4), checkpoints: new InMemoryRollbackCheckpointStoreV1({ testOnly: true }) } } });
+  t.after(() => app.close());
+  const request = (path: string, init: RequestInit = {}) => new Request(`${origin}${path}`, init);
+  const signedIn = await app.handle(request("/api/v1/local-owner-session", { method: "POST", headers: {
+    origin, "sec-fetch-site": "same-origin", "content-type": "application/json" }, body: JSON.stringify({ ownerCode }) }),
+  () => new Response("unused"));
+  const cookie = signedIn.headers.get("set-cookie"); assert.ok(cookie);
+  const attention = await app.handle(request("/api/v1/needs-me/tasks", { headers: { cookie: cookie! } }),
+    () => new Response("unused"));
+  assert.equal(attention.status, 200, await attention.clone().text());
+  assert.equal((await attention.json() as { planningSource: string }).planningSource, "configured");
 });
 
 test("the Mac-local wrapper does not accept a forwarded or foreign request", async t => {

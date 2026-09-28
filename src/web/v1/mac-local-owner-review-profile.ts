@@ -5,6 +5,7 @@ import { reviewerSeparationForPolicyV1, type ReviewerIndependencePolicyV1 } from
 import type { ManualVerificationScenario, ManualVerificationScenarioSource } from "./task-verification-service";
 
 export const MAC_LOCAL_OWNER_REVIEW_PROFILE_PREFIX_V1 = "profile:mac-local-owner-review:v2:" as const;
+export const MAC_LOCAL_LEGACY_OWNER_REVIEW_PROFILE_PREFIX_V1 = "profile:mac-local-owner-review:" as const;
 export const MAC_LOCAL_OWNER_REVIEW_PROFILE_DIGEST_HEX_LENGTH_V1 = 32 as const;
 export const MAC_LOCAL_TEXT_SCENARIO_V1 = "scenario:mac-local-text" as const;
 export const MAC_LOCAL_HUMAN_VERIFICATION_SCENARIO_V1 = "scenario:mac-local-human-verification" as const;
@@ -16,6 +17,15 @@ export function macLocalOwnerReviewProfileIdV1(projectId: string): string {
   const start = "sha256:".length;
   return direct.length <= 180 ? direct : `${MAC_LOCAL_OWNER_REVIEW_PROFILE_PREFIX_V1}`
     + sha256Digest(projectId).slice(start, start + MAC_LOCAL_OWNER_REVIEW_PROFILE_DIGEST_HEX_LENGTH_V1);
+}
+
+export function createMacLocalLegacyOwnerReviewProfileV1(profile: ReturnType<typeof createMacLocalOwnerReviewProfileV1>) {
+  const direct = `${MAC_LOCAL_LEGACY_OWNER_REVIEW_PROFILE_PREFIX_V1}${profile.projectId}`;
+  const id = direct.length <= 180 ? direct
+    : `${MAC_LOCAL_LEGACY_OWNER_REVIEW_PROFILE_PREFIX_V1}${sha256Digest(profile.projectId).slice(7, 39)}`;
+  return completionAcceptanceProfileSchemaV1.parse({ ...profile, id,
+    requiredVerificationScenarioIds: [MAC_LOCAL_TEXT_SCENARIO_V1],
+    reviewerSeparation: { actor: true, worker: false, agentProfile: false, harness: false, modelFamily: false } });
 }
 
 export function createMacLocalOwnerReviewProfileV1(input: Readonly<{
@@ -48,7 +58,21 @@ export function createMacLocalHumanVerificationScenarioV1(
 ): ManualVerificationScenario {
   return Object.freeze({ scenarioId: MAC_LOCAL_HUMAN_VERIFICATION_SCENARIO_V1,
     label: "Owner human verification", instructions: "Read the protected text result and record whether it satisfies the task instructions based on your own observation.",
-    acceptanceProfileId: profile.id, acceptanceProfileDigest: sha256Digest(profile) });
+    acceptanceProfileId: profile.id, acceptanceProfileDigest: sha256Digest(profile),
+    recordingMode: "read_correct_attestation" as const });
+}
+
+/** Compatibility only for immutable v1 targets created before the distinct
+ * human scenario existed. Its exact legacy profile digest prevents this
+ * pass-only owner attestation from replacing the v2 automatic text check. */
+export function createMacLocalLegacyReadCorrectScenarioV1(
+  profile: ReturnType<typeof createMacLocalOwnerReviewProfileV1>,
+): ManualVerificationScenario {
+  const legacy = createMacLocalLegacyOwnerReviewProfileV1(profile);
+  return Object.freeze({ scenarioId: MAC_LOCAL_TEXT_SCENARIO_V1, label: "Finish accepted review",
+    instructions: "Read the protected text result and confirm that it satisfies the task instructions.",
+    acceptanceProfileId: legacy.id, acceptanceProfileDigest: sha256Digest(legacy),
+    recordingMode: "read_correct_attestation" as const });
 }
 
 /** Controlled live-project registry. The verification service revalidates its
@@ -56,14 +80,18 @@ export function createMacLocalHumanVerificationScenarioV1(
 export function createMacLocalHumanVerificationRegistryV1(
   profiles: readonly ReturnType<typeof createMacLocalOwnerReviewProfileV1>[],
 ): ManualVerificationScenarioSource & Readonly<{ register(profile: ReturnType<typeof createMacLocalOwnerReviewProfileV1>): void }> {
-  let values = Object.freeze(profiles.map(createMacLocalHumanVerificationScenarioV1));
+  const descriptors = (profile: ReturnType<typeof createMacLocalOwnerReviewProfileV1>) =>
+    [createMacLocalHumanVerificationScenarioV1(profile), createMacLocalLegacyReadCorrectScenarioV1(profile)] as const;
+  let values = Object.freeze(profiles.flatMap(descriptors));
   return Object.freeze({ list: () => values, register(profile: ReturnType<typeof createMacLocalOwnerReviewProfileV1>) {
-    const descriptor = createMacLocalHumanVerificationScenarioV1(profile);
-    const existing = values.find(value => value.acceptanceProfileId === descriptor.acceptanceProfileId);
-    if (existing) {
-      if (JSON.stringify(existing) !== JSON.stringify(descriptor)) throw new Error("mac_local_human_verification_conflict");
-      return;
+    for (const descriptor of descriptors(profile)) {
+      const existing = values.find(value => value.acceptanceProfileId === descriptor.acceptanceProfileId
+        && value.acceptanceProfileDigest === descriptor.acceptanceProfileDigest && value.scenarioId === descriptor.scenarioId);
+      if (existing) {
+        if (JSON.stringify(existing) !== JSON.stringify(descriptor)) throw new Error("mac_local_human_verification_conflict");
+        continue;
+      }
+      values = Object.freeze([...values, descriptor]);
     }
-    values = Object.freeze([...values, descriptor]);
   } });
 }

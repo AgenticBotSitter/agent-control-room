@@ -25,9 +25,10 @@ test("compiled private result routes read signed native artifacts and checkpoint
   const page = await metadata.json(); assert.equal(page.items.length, 1); assert.equal(page.reviews[0].status, "pending");
   assert.deepEqual(page.reviews[0].matchingArtifactIds, [receipt.artifactId]);
   const home = await handler(req("/api/v1/home/tasks")); assert.equal(home.status, 200);
-  const activity = await home.json(); assert.equal(activity.active.some(task => task.jobId === "job:test" && task.state === "leased"), true);
+  const activity = await home.json(); assert.equal(activity.active.some(task => task.jobId === "job:test"), false);
   assert.equal(activity.resultSource, "configured");
   assert.equal(activity.recentResults.length, 1); assert.equal(activity.recentResults[0].task.jobId, "job:test");
+  assert.equal(activity.recentResults[0].task.state, "succeeded");
   assert.equal(activity.recentResults[0].artifact.artifactId, receipt.artifactId); assert.equal(activity.startsWork, false);
   const projectFilesRoute = "/api/v1/projects/project:test/files";
   const projectFiles = await handler(req(projectFilesRoute)); assert.equal(projectFiles.status, 200);

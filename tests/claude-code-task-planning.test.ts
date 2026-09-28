@@ -64,6 +64,12 @@ test("a local Claude task can be saved and prepared as a signed local delivery w
   const planned = await planner.plan(f.identity, binding.projectId, source.receipt.jobId, sha256Digest(taskDraft));
   const replay = await planner.plan(f.identity, binding.projectId, source.receipt.jobId, sha256Digest(taskDraft));
   assert.equal(replay.replayed, true, "the same proposal produces one durable plan");
+  const savedMany = await planner.readSavedMany(f.identity, [
+    { projectId: binding.projectId, sourceJobId: source.receipt.jobId },
+    { projectId: binding.projectId, sourceJobId: "job:missing-plan" },
+  ]);
+  assert.deepEqual(savedMany.get(JSON.stringify([binding.projectId, source.receipt.jobId])), planned.receipt);
+  assert.equal(savedMany.get(JSON.stringify([binding.projectId, "job:missing-plan"])), null);
   const saved = await planner.read(planned.receipt.jobId);
   assert.ok(saved && saved.schema === "control-room.task-execution-plan/v9");
   if (!saved || saved.schema !== "control-room.task-execution-plan/v9") throw new Error("missing Claude plan");

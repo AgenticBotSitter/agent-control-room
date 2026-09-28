@@ -57,3 +57,16 @@ test("owner acceptance presents the configured read-and-correct attestation besi
   assert.match(markup, />Accept</);
   assert.match(markup, /Request changes/);
 });
+
+test("an accepted legacy result presents one clear pass-only follow-up verification", () => {
+  const legacy: TaskVerificationOptions = { ...binding, source: "configured", grantsExecutionAuthority: false, scenarios: [{
+    scenarioId: MAC_LOCAL_TEXT_SCENARIO_V1, label: "Finish accepted review",
+    instructions: "Read the protected text result and confirm that it satisfies the task instructions.", instructionsDigest,
+    recordingMode: "read_correct_attestation", availability: "available", ownVerification: null,
+  }] };
+  const markup = renderToStaticMarkup(<OwnerVerificationPanel options={legacy} scenarioId="" note=""
+    pending={false} held={false} onScenario={() => {}} onResult={() => {}} onNote={() => {}} onRecord={() => {}} />);
+  assert.match(markup, /Finish accepted review/);
+  assert.match(markup, /I read it and it’s correct/);
+  assert.doesNotMatch(markup, /Choose a result|Required observation note|Configured human check/);
+});

@@ -5,13 +5,17 @@ import test from "node:test";
 import { CompletionGateErrorV1, type CompletionReviewV1, type CompletionVerificationV1 } from "../src/completion-gate/v1";
 import { sha256Digest } from "../src/security";
 import { createMacLocalHumanVerificationRegistryV1, createMacLocalHumanVerificationScenarioV1,
+  createMacLocalLegacyOwnerReviewProfileV1, createMacLocalLegacyReadCorrectScenarioV1,
   createMacLocalOwnerReviewProfileV1, createMacLocalTextScenarioV1, MAC_LOCAL_HUMAN_VERIFICATION_SCENARIO_V1,
   MAC_LOCAL_OWNER_REVIEW_PROFILE_DIGEST_HEX_LENGTH_V1, MAC_LOCAL_OWNER_REVIEW_PROFILE_PREFIX_V1,
   MAC_LOCAL_TEXT_SCENARIO_V1, macLocalOwnerReviewProfileIdV1 } from "../src/web/v1/mac-local-owner-review-profile";
 import { ownerReviewFixture } from "./helpers/web-owner-review";
-import { binding } from "./hermes-native-fixture";
+import { binding, instant } from "./hermes-native-fixture";
 import { at } from "./native-task-fixture";
 import type { DatabaseClient, DatabaseSession } from "../src/persistence/database";
+import { manualVerificationScenarioInstructionsDigestV1,
+  WebTaskVerificationService } from "../src/web/v1/task-verification-service";
+import { READ_CORRECT_ATTESTATION_NOTE_V1 } from "../src/web/v1/task-verification-wire";
 
 const input = { tenantId: "tenant:mac", projectId: "project:a", ownerIdentityId: "identity:tenant:mac:owner",
   projectCreatedAt: "2026-09-25T12:00:00.000Z" };
@@ -32,13 +36,60 @@ test("one stable owner-review profile per project, with a non-authorizing text c
   assert.deepEqual(a.requiredVerificationScenarioIds, [MAC_LOCAL_HUMAN_VERIFICATION_SCENARIO_V1, MAC_LOCAL_TEXT_SCENARIO_V1]);
   const human = createMacLocalHumanVerificationScenarioV1(a);
   assert.equal(human.acceptanceProfileDigest, sha256Digest(a));
+  assert.equal(human.recordingMode, "read_correct_attestation");
+  const { recordingMode: _, ...originalHumanDescriptor } = human;
+  assert.equal(manualVerificationScenarioInstructionsDigestV1(human), sha256Digest(originalHumanDescriptor),
+    "presentation mode does not invalidate the descriptor digest recorded before the standalone control existed");
   assert.notEqual(human.scenarioId, createMacLocalTextScenarioV1(a).scenarioId,
     "an automated structure pass can never stand in for owner observation");
   const registry = createMacLocalHumanVerificationRegistryV1([a]);
   registry.register(b); registry.register(b);
-  assert.deepEqual(registry.list().map(value => value.acceptanceProfileId), [a.id, b.id]);
+  assert.deepEqual(registry.list().map(value => value.acceptanceProfileId), [a.id,
+    createMacLocalLegacyOwnerReviewProfileV1(a).id, b.id, createMacLocalLegacyOwnerReviewProfileV1(b).id]);
+  const legacy = createMacLocalLegacyReadCorrectScenarioV1(a);
+  assert.equal(legacy.scenarioId, MAC_LOCAL_TEXT_SCENARIO_V1);
+  assert.equal(legacy.recordingMode, "read_correct_attestation");
+  assert.equal(legacy.acceptanceProfileDigest, sha256Digest(createMacLocalLegacyOwnerReviewProfileV1(a)));
+  const fullRegistry = createMacLocalHumanVerificationRegistryV1(Array.from({ length: 50 }, (_, index) =>
+    createMacLocalOwnerReviewProfileV1({ ...input, projectId: `project:${index}` })));
+  assert.equal(fullRegistry.list().length, 100, "all 50 supported projects retain current and legacy descriptors");
   const long = "project:" + "x".repeat(172);
   assert.match(macLocalOwnerReviewProfileIdV1(long), /^profile:mac-local-owner-review:v2:[a-f0-9]{32}$/);
+});
+
+test("an owner who accepted a legacy-profile target can record its missing pass-only verification", async t => {
+  const current = createMacLocalOwnerReviewProfileV1({ tenantId: binding.tenantId, projectId: binding.projectId,
+    ownerIdentityId: "identity:test", projectCreatedAt: at() });
+  const legacy = createMacLocalLegacyOwnerReviewProfileV1(current);
+  const f = await ownerReviewFixture({ profile: legacy }); t.after(f.close);
+  const verifications = new WebTaskVerificationService(f.db, f.scope, {
+    integrityKey: f.reviewKey, checkpoints: f.checkpoints, harnessIntegrityKey: f.harnessKey,
+    results: f.config, manualVerificationScenarios: createMacLocalHumanVerificationRegistryV1([current]),
+  }, () => instant + 7000);
+  const beforeAcceptance = await verifications.options(f.identity, binding.projectId, binding.jobId, f.artifact.artifactId, f.target.id);
+  assert.equal(beforeAcceptance.scenarios[0]?.availability, "target_closed",
+    "the compatibility attestation is available only to the owner who already accepted this target");
+  await f.reviews.record(f.identity, binding.projectId, binding.jobId, f.draft, "legacy-owner-accept-001");
+  const options = await verifications.options(f.identity, binding.projectId, binding.jobId, f.artifact.artifactId, f.target.id);
+  assert.equal(options.scenarios.length, 1);
+  assert.equal(options.scenarios[0]?.recordingMode, "read_correct_attestation");
+  assert.equal(options.scenarios[0]?.availability, "available");
+  const scenario = options.scenarios[0]!;
+  await assert.rejects(verifications.record(f.identity, binding.projectId, binding.jobId, {
+    artifactId: f.artifact.artifactId, targetId: f.target.id, targetDigest: sha256Digest(f.target),
+    contentHash: f.artifact.contentHash, scenarioId: scenario.scenarioId,
+    instructionsDigest: scenario.instructionsDigest, outcome: "failed", note: READ_CORRECT_ATTESTATION_NOTE_V1,
+  }), (error: unknown) => (error as { code?: string }).code === "invalid_request");
+  const saved = await verifications.record(f.identity, binding.projectId, binding.jobId, {
+    artifactId: f.artifact.artifactId, targetId: f.target.id, targetDigest: sha256Digest(f.target),
+    contentHash: f.artifact.contentHash, scenarioId: scenario.scenarioId,
+    instructionsDigest: scenario.instructionsDigest, outcome: "passed", note: READ_CORRECT_ATTESTATION_NOTE_V1,
+  });
+  assert.equal(saved.receipt.grantsExecutionAuthority, false);
+  assert.equal((await f.reviewStore.snapshot(binding.tenantId, f.target.id)).status, "ready");
+  const audit = await f.db.query<{ action: string; actor_type: string }>(
+    "SELECT action,actor_type FROM audit_events WHERE tenant_id=$1 AND target_id=$2", [binding.tenantId, saved.receipt.verificationId]);
+  assert.deepEqual(audit.rows, [{ action: "tasks.verifications.record", actor_type: "human" }]);
 });
 
 test("migration 0092 derives the same short and long profile ids as TypeScript", async () => {
@@ -110,6 +161,13 @@ test("Mac-local acceptance explicitly attests the owner read the result and atom
     targetId: f.target.id, scenarioId: MAC_LOCAL_HUMAN_VERIFICATION_SCENARIO_V1 }).slice(7)}`;
   const verification = await f.reviewStore.getRecord(binding.tenantId, verificationId, "verification");
   assert.equal((verification as { outcome?: string })?.outcome, "passed");
+  const verificationOptions = await new WebTaskVerificationService(f.db, f.scope, {
+    integrityKey: f.reviewKey, checkpoints: f.checkpoints, harnessIntegrityKey: f.harnessKey,
+    results: f.config, manualVerificationScenarios: registry,
+  }, () => instant + 7000).options(f.identity, binding.projectId, binding.jobId, f.artifact.artifactId, f.target.id);
+  assert.equal(verificationOptions.scenarios[0]?.availability, "already_recorded");
+  assert.equal(verificationOptions.scenarios[0]?.ownVerification?.verificationId, verificationId,
+    "verification evidence recorded before adding presentation mode remains readable");
   const counts = await f.db.query<{ kind: string; count: string }>(`SELECT kind,count(*)::text AS count
     FROM control_completion_gate_records WHERE tenant_id=$1 AND parent_id=$2 AND kind IN ('review','verification')
     GROUP BY kind ORDER BY kind`, [binding.tenantId, f.target.id]);

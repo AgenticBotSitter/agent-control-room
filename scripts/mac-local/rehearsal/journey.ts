@@ -540,7 +540,8 @@ async function main() {
       const unchangedTask = await requireOk(await fetch(taskUrl, { headers: { cookie } }), 200, `${agent.kind} changes-requested task`) as
         { task: { state: string } };
       taskState = unchangedTask.task.state;
-      assert.notEqual(taskState, "succeeded", `${agent.kind}: changes-requested result must not complete`);
+      assert.equal(taskState, "succeeded",
+        `${agent.kind}: the received successful attempt must display complete independently of its changes-requested review`);
       assert.equal(after.reviews[0]?.status, "changes_requested");
     }
     outcomes[agent.kind] = { jobId: jobId.slice(0, 24), packetDigest: packetDigest.slice(0, 19),

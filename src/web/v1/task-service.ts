@@ -10,7 +10,8 @@ import { assertNoSecretMaterial, computeAuthorityDigest, sha256Digest } from "..
 import { HarnessRunStoreV1 } from "../../harness/v1/store";
 import type { NativeResultReadConfiguration } from "../../artifacts/v1/native-results";
 import { CompletionGateStoreV1 } from "../../completion-gate/v1/store";
-import { readTaskReviewPlanV1, taskReviewRootSubjectIdV1, type TaskResultReceiptV1, verifyTaskReviewTargetV1 } from "../../completion-gate/v1/task-review-plan";
+import { readTaskReviewPlanV1, taskReviewPlanKeyV1, taskReviewRootSubjectIdV1,
+  type TaskResultReceiptV1, verifyTaskReviewTargetV1 } from "../../completion-gate/v1/task-review-plan";
 import { PlanSelectedTaskResultReaderV1 } from "./task-result-reader";
 import type { AwaitableRollbackCheckpointStoreV1 } from "../../security/rollback-checkpoint";
 import type { WebTaskReviewConfiguration } from "./task-review-service";
@@ -31,14 +32,16 @@ import { HERMES_LOCAL_ADAPTER_V1 } from "../../harness/hermes-local-v1/task-plan
 import { CLAUDE_CODE_LOCAL_ADAPTER_V1 } from "../../harness/claude-code-v1";
 import { CODEX_APP_SERVER_ADAPTER } from "../../harness/codex-v1/delivery-contract";
 import { CODEX_OWNER_TRUSTED_LOCAL_ADAPTER_V1 } from "../../harness/codex-v1/owner-trusted-local-task-planning-contract";
-import { taskPlanningOptionsSchema } from "./task-planning-wire";
+import { taskPlanningOptionsSchema, taskPlanningReceiptSchema } from "./task-planning-wire";
 import { taskHomeActivitySchema } from "./task-home-wire";
 import { taskProjectOverviewSchema } from "./task-project-overview-wire";
 import { taskProjectFilesSchema } from "./task-project-files-wire";
 import type { TaskWorktreeChangeSummary } from "./task-result-wire";
 import { taskModelOptionsV1, validateRequestedTaskModelV1, type TaskModelCatalogV1 } from "./task-model-selection";
-import { readTaskRevisionLinksV1 } from "./task-execution-planner";
+import { readSavedTaskPlansInSessionV1, readTaskRevisionLinksV1, savedTaskPlanProfileIdsV1,
+  type SavedTaskPlanRowV1 } from "./task-execution-planner";
 import { issueTaskFileAccessV1, verifyTaskFileAccessV1 } from "./task-file-access";
+import { projectTaskDisplayStateV1 } from "./task-display-state";
 
 /** Joins existing stores to the caller-owned session transaction. No nested BEGIN/COMMIT and no
  * new authority: this closure stays inside authenticated(). The outer freshness check owns commit. */
@@ -202,10 +205,8 @@ export class WebTaskService {
       const rows = (await tx.query<TaskRow>(`SELECT ${selection} WHERE j.tenant_id=$1 AND j.project_id=$2
         AND ($3::text IS NULL OR j.id COLLATE "C">$3 COLLATE "C") ORDER BY j.id COLLATE "C" LIMIT 51`,
       [this.scope.tenantId, projectId, after ?? null])).rows;
-      const tasks = [];
-      for (const row of rows.slice(0, 50)) {
-        tasks.push(await this.withQualityStatus(tx, actor, validated(row, this.scope.tenantId, projectId).summary));
-      }
+      const summaries = rows.slice(0, 50).map(row => validated(row, this.scope.tenantId, projectId).summary);
+      const tasks = await this.withDisplayedStates(tx, actor, summaries);
       return taskPageSchema.parse({ project, tasks, nextCursor: rows.length > 50 ? tasks.at(-1)!.jobId : null,
         canPropose: project.lifecycle === "active" && actor.can("tasks.propose", projectId), dispatch: "not_connected", observedAt: actor.now,
         ...(this.modelCatalog ? { modelOptions: taskModelOptionsV1(this.modelCatalog) } : {}) });
@@ -385,7 +386,10 @@ export class WebTaskService {
       const revisionLinks = this.taskPlanIntegrityKey
         ? await readTaskRevisionLinksV1(tx, this.taskPlanIntegrityKey, this.scope.tenantId, projectId, jobId)
         : { previousJobId: null, nextJobId: null, revisionNumber: 0 };
-      return taskDetailSchema.parse({ project, task: await this.withQualityStatus(tx, actor, summary),
+      const latestAttempt = attempts[0], latestRun = latestAttempt?.runs[0];
+      return taskDetailSchema.parse({ project, task: await this.withDisplayedState(tx, actor, summary,
+        latestAttempt && latestRun ? { attemptId: latestAttempt.attemptId, attemptState: latestAttempt.state,
+          runId: latestRun.runId, runState: latestRun.state } : undefined),
         instructions: request.objective, inputDigest: job.inputDigest,
         modelSelection: modelRow ? { workerKind: modelRow.worker_kind, selectionKey: modelRow.selection_key,
           model: modelRow.model, effort: modelRow.effort, provider: modelRow.provider, profile: modelRow.profile,
@@ -517,20 +521,143 @@ export class WebTaskService {
   /** "Accepted" is derived only from authenticated completion-gate evidence.
    * Execution success alone remains "Completed". Omitted result or review rows
    * fail closed so a partial projection can never overstate acceptance. */
-  private async withQualityStatus(tx: DatabaseSession, actor: WebActor, summary: TaskSummary): Promise<TaskSummary> {
-    if (summary.state !== "succeeded" || !this.resultStore || !this.reviewConfig
+  private async withDisplayedState(tx: DatabaseSession, actor: WebActor, summary: TaskSummary,
+    knownLatestAttemptOutcome?: { attemptId: string; attemptState: string; runId: string; runState: string }): Promise<TaskSummary> {
+    if (!["leased", "running", "waiting_approval", "succeeded"].includes(summary.state) || !this.resultStore
       || !actor.can("tasks.results.read", summary.projectId)) return summary;
     try {
       const page = await this.resultPage(tx, actor, summary.projectId, summary.jobId);
-      const accepted = page.items.length > 0 && !page.additionalResultsOmitted && !page.additionalTargetsOmitted
-        && page.items.every(item => page.reviews.some(review => review.status === "ready"
-          && review.matchingArtifactIds.includes(item.artifactId) && review.contentHash === item.contentHash));
-      return accepted ? taskSummarySchema.parse({ ...summary, qualityStatus: "accepted" }) : summary;
+      let latestAttemptOutcome = knownLatestAttemptOutcome;
+      if (!latestAttemptOutcome && summary.state !== "succeeded" && this.harnessKey) {
+        const attemptRow = (await tx.query<{ id: string; state: string; attempt_number: number; payload: unknown }>(
+          `SELECT id,state,attempt_number,payload FROM control_attempts WHERE tenant_id=$1 AND job_id=$2
+           ORDER BY attempt_number DESC LIMIT 1`, [this.scope.tenantId, summary.jobId])).rows[0];
+        if (attemptRow) {
+          const attempt = attemptRecordSchema.parse(attemptRow.payload);
+          if (attempt.tenantId !== this.scope.tenantId || attempt.jobId !== summary.jobId || attempt.id !== attemptRow.id
+            || attempt.state !== attemptRow.state || attempt.attemptNumber !== Number(attemptRow.attempt_number))
+            throw new Error("task_attempt_unavailable");
+          const runRow = (await tx.query<{ id: string }>(`SELECT id FROM control_harness_runs WHERE tenant_id=$1
+            AND project_id=$2 AND job_id=$3 AND attempt_id=$4 ORDER BY created_at DESC,id DESC LIMIT 1`,
+          [this.scope.tenantId, summary.projectId, summary.jobId, attempt.id])).rows[0];
+          if (runRow) {
+            const inspected = await new HarnessRunStoreV1(joined(tx), this.harnessKey).inspect(this.scope.tenantId, runRow.id);
+            if (!inspected || inspected.run.projectId !== summary.projectId || inspected.run.jobId !== summary.jobId
+              || inspected.run.attemptId !== attempt.id || inspected.run.nodeId !== attempt.nodeId)
+              throw new Error("task_run_unavailable");
+            latestAttemptOutcome = { attemptId: attempt.id, attemptState: attempt.state,
+              runId: inspected.run.id, runState: inspected.run.state };
+          }
+        }
+      }
+      return projectTaskDisplayStateV1(summary, { latestAttemptOutcome, results: page.items, reviews: page.reviews,
+        additionalResultsOmitted: page.additionalResultsOmitted, additionalTargetsOmitted: page.additionalTargetsOmitted });
     } catch {
-      // Acceptance is optional enrichment on these task projections. Failure to
-      // authenticate it removes the claim without hiding the underlying task.
+      // Display completion and acceptance are optional enrichment. Failure to
+      // authenticate either retains the canonical task state.
       return summary;
     }
+  }
+
+  /** Lightweight result/review projection for bounded task summaries. Unlike
+   * resultPage it deliberately does not mint file links, inspect worktrees, or
+   * load harness model metadata. */
+  private async batchResultEvidence(tx: DatabaseSession, actor: WebActor,
+    tasks: readonly { projectId: string; jobId: string }[], savedProfiles?: { ids: readonly string[]; records?: ReadonlyMap<string, unknown> }) {
+    type Projection = { resultSource: "configured" | "not_configured"; reviewSource: "configured" | "not_configured";
+      items: ReturnType<typeof resultMetadata>[]; reviews: ReturnType<typeof taskReviewEvidenceSchema.parse>[];
+      additionalResultsOmitted: boolean; additionalTargetsOmitted: boolean; canReadContent: boolean;
+      latestAttemptOutcome?: { attemptId: string; attemptState: string; runId: string; runState: string } };
+    const unique = [...new Map(tasks.map(task => [taskReviewPlanKeyV1(task.projectId, task.jobId), task])).values()];
+    const output = new Map<string, Projection>();
+    if (!unique.length && !savedProfiles?.ids.length) return output;
+    if (!this.resultStore) {
+      for (const task of unique) output.set(taskReviewPlanKeyV1(task.projectId, task.jobId), { resultSource: "not_configured",
+        reviewSource: this.reviewConfig ? "configured" : "not_configured", items: [], reviews: [],
+        additionalResultsOmitted: false, additionalTargetsOmitted: false, canReadContent: false });
+      if (savedProfiles && this.reviewConfig) savedProfiles.records = await new CompletionGateStoreV1(joined(tx),
+        this.reviewConfig.integrityKey, this.reviewConfig.checkpoints).getRecords(this.scope.tenantId, savedProfiles.ids, "profile");
+      return output;
+    }
+    const batch = await this.resultStore.listMany(tx, this.scope.tenantId, unique);
+    const subjects = unique.map(task => ({ projectId: task.projectId,
+      subjectId: taskReviewRootSubjectIdV1(batch.plans.get(taskReviewPlanKeyV1(task.projectId, task.jobId)), task.jobId) }));
+    let inspected = new Map();
+    if (this.reviewConfig) {
+      const gate = new CompletionGateStoreV1(joined(tx), this.reviewConfig.integrityKey, this.reviewConfig.checkpoints);
+      if (savedProfiles) {
+        const combined = await gate.inspectSubjectsAndRecords(this.scope.tenantId, subjects, savedProfiles.ids, "profile");
+        inspected = combined.subjects; savedProfiles.records = combined.records;
+      } else inspected = await gate.inspectSubjects(this.scope.tenantId, subjects);
+    }
+    for (const task of unique) {
+      const key = taskReviewPlanKeyV1(task.projectId, task.jobId), page = batch.pages.get(key);
+      if (!page) throw new Error("task_result_model_unavailable");
+      const lineage = batch.plans.get(key), subjectId = taskReviewRootSubjectIdV1(lineage, task.jobId);
+      const review = (this.reviewConfig
+        ? inspected.get(JSON.stringify([task.projectId, subjectId])) ?? { targets: [], additionalTargetsOmitted: false }
+        : { targets: [], additionalTargetsOmitted: false }) as Awaited<ReturnType<CompletionGateStoreV1["inspectSubject"]>>;
+      const reviews = review.targets.map(({ snapshot, reviews, verifications, findings, additionalEvidenceOmitted }) => taskReviewEvidenceSchema.parse({
+        targetId: snapshot.target.id, kind: snapshot.target.kind, targetDigest: snapshot.targetDigest,
+        contentHash: snapshot.target.subjectDigest, revision: snapshot.revisionNumber,
+        supersedesTargetId: snapshot.target.supersedesTargetId ?? null, status: snapshot.status,
+        matchingArtifactIds: snapshot.target.kind === "document" ? page.receipts.filter(receipt => {
+          if (receipt.contentHash !== snapshot.target.subjectDigest) return false;
+          try { verifyTaskReviewTargetV1(lineage, snapshot.target, receipt); return true; } catch { return false; }
+        }).map(receipt => receipt.artifactId) : [], additionalEvidenceOmitted,
+        reviews: reviews.map(value => ({ id: value.id, decision: value.decision, authority: value.authority, reviewedAt: value.reviewedAt })),
+        verifications: verifications.map(value => ({ id: value.id, scenarioId: value.scenarioId, outcome: value.outcome, verifiedAt: value.verifiedAt })),
+        findings: findings.map(value => ({ id: value.id, code: value.code, severity: value.severity,
+          statementDigest: value.statementDigest, raisedAt: value.raisedAt })),
+        missingVerificationScenarioIds: snapshot.missingVerificationScenarioIds, openFindingCount: snapshot.openFindingIds.length,
+        grantsApproval: false, grantsExecutionAuthority: false }));
+      output.set(key, { resultSource: "configured", reviewSource: this.reviewConfig ? "configured" : "not_configured",
+        items: page.receipts.map(resultMetadata), reviews, additionalResultsOmitted: page.additionalResultsOmitted,
+        additionalTargetsOmitted: review.additionalTargetsOmitted, canReadContent: actor.can("tasks.results.read", task.projectId),
+        ...(batch.latestAttemptOutcomes.get(key) ? { latestAttemptOutcome: batch.latestAttemptOutcomes.get(key)! } : {}) });
+    }
+    return output;
+  }
+
+  private async withDisplayedStates(tx: DatabaseSession, actor: WebActor, summaries: readonly TaskSummary[]): Promise<TaskSummary[]> {
+    const eligible = summaries.filter(summary => ["leased", "running", "waiting_approval", "succeeded"].includes(summary.state)
+      && this.resultStore
+      && actor.can("tasks.results.read", summary.projectId));
+    if (!eligible.length) return [...summaries];
+    let evidence: Awaited<ReturnType<WebTaskService["batchResultEvidence"]>>;
+    try { evidence = await this.batchResultEvidence(tx, actor, eligible); }
+    catch { return [...summaries]; }
+    return this.applyDisplayEvidence(summaries, evidence);
+  }
+
+  private applyDisplayEvidence(summaries: readonly TaskSummary[],
+    evidence: Awaited<ReturnType<WebTaskService["batchResultEvidence"]>>): TaskSummary[] {
+    return summaries.map(summary => {
+      const page = evidence.get(taskReviewPlanKeyV1(summary.projectId, summary.jobId));
+      if (!page) return summary;
+      return projectTaskDisplayStateV1(summary, { latestAttemptOutcome: page.latestAttemptOutcome,
+        results: page.items, reviews: page.reviews, additionalResultsOmitted: page.additionalResultsOmitted,
+        additionalTargetsOmitted: page.additionalTargetsOmitted });
+    });
+  }
+
+  private resultAttentionFromEvidence(result: Awaited<ReturnType<WebTaskService["batchResultEvidence"]>> extends Map<string, infer P> ? P : never) {
+    const reasons: TaskAttentionPage["items"][number]["reasons"] = [], resultArtifactIds: string[] = [];
+    if (result.resultSource === "not_configured" || result.reviewSource === "not_configured")
+      return { reasons: ["result_checks_unavailable"] as TaskAttentionPage["items"][number]["reasons"], resultArtifactIds };
+    for (const review of result.reviews.filter(value => value.matchingArtifactIds.length > 0)) {
+      switch (review.status) {
+        case "pending": reasons.push("review"); break;
+        case "changes_requested": case "verification_blocked": case "revision_limit_reached": reasons.push(review.status); break;
+      }
+      if (["pending", "changes_requested", "verification_blocked", "revision_limit_reached"].includes(review.status))
+        resultArtifactIds.push(...review.matchingArtifactIds);
+    }
+    if (result.additionalResultsOmitted || result.additionalTargetsOmitted
+      || result.reviews.some(value => value.additionalEvidenceOmitted)
+      || result.items.some(item => !result.reviews.some(review => review.matchingArtifactIds.includes(item.artifactId))))
+      reasons.push("result_checks_unavailable");
+    return { reasons: [...new Set(reasons)], resultArtifactIds: result.canReadContent ? [...new Set(resultArtifactIds)].sort() : [] };
   }
 
   /** One result/review inspection powers both the workspace-wide attention list and
@@ -586,8 +713,24 @@ export class WebTaskService {
     if (after !== undefined) this.id(after);
     return this.authority.authenticated(identity, async (tx, actor) => {
       const sources = this.attentionSources(actor);
-      const rows = (await tx.query<TaskRow & { has_artifacts: boolean }>(`SELECT EXISTS(
-        SELECT 1 FROM control_native_artifact_receipts a WHERE a.tenant_id=j.tenant_id AND a.project_id=j.project_id AND a.job_id=j.id) AS has_artifacts, ${selection}
+      type AttentionRow = TaskRow & { has_artifacts: boolean; source_job_created_at: string | Date;
+        source_job_updated_at: string | Date; plan_tenant_id: string | null; plan_project_id: string | null;
+        plan_source_job_id: string | null; plan_job_id: string | null; plan_payload: unknown; plan_auth_tag: string | null;
+        prepared_job_payload: unknown; prepared_job_state: string | null; prepared_job_version: number | null;
+        prepared_job_workflow_id: string | null; prepared_job_created_at: string | Date | null;
+        prepared_job_updated_at: string | Date | null; prepared_workflow_payload: unknown; prepared_request_payload: unknown };
+      const rows = (await tx.query<AttentionRow>(`SELECT EXISTS(
+        SELECT 1 FROM control_native_artifact_receipts a WHERE a.tenant_id=j.tenant_id AND a.project_id=j.project_id AND a.job_id=j.id) AS has_artifacts,
+        j.created_at AS source_job_created_at,j.updated_at AS source_job_updated_at,
+        ep.tenant_id AS plan_tenant_id,ep.project_id AS plan_project_id,ep.source_job_id AS plan_source_job_id,
+        ep.job_id AS plan_job_id,ep.plan AS plan_payload,ep.auth_tag AS plan_auth_tag,
+        pj.payload AS prepared_job_payload,pj.state AS prepared_job_state,pj.version AS prepared_job_version,
+        pj.workflow_id AS prepared_job_workflow_id,pj.created_at AS prepared_job_created_at,pj.updated_at AS prepared_job_updated_at,
+        pw.payload AS prepared_workflow_payload,pr.payload AS prepared_request_payload, ${selection}
+        LEFT JOIN control_task_execution_plans ep ON ep.tenant_id=j.tenant_id AND ep.project_id=j.project_id AND ep.source_job_id=j.id
+        LEFT JOIN control_jobs pj ON pj.tenant_id=ep.tenant_id AND pj.project_id=ep.project_id AND pj.id=ep.job_id
+        LEFT JOIN control_workflows pw ON pw.tenant_id=pj.tenant_id AND pw.id=pj.workflow_id
+        LEFT JOIN control_requests pr ON pr.tenant_id=pw.tenant_id AND pr.id=pw.request_id
         JOIN projects p ON p.tenant_id=j.tenant_id AND p.id=j.project_id
         WHERE j.tenant_id=$1 AND p.workspace_id=$2 AND ($3::text IS NULL OR j.id COLLATE "C">$3 COLLATE "C")
           AND ((p.adapter_id=$4 AND $6::boolean AND EXISTS(SELECT 1 FROM control_manual_project_heads h
@@ -597,19 +740,59 @@ export class WebTaskService {
             SELECT 1 FROM control_native_artifact_receipts a WHERE a.tenant_id=j.tenant_id AND a.project_id=j.project_id AND a.job_id=j.id))
         ORDER BY j.id COLLATE "C" LIMIT 26`, [this.scope.tenantId, this.scope.workspaceId, after ?? null,
         `adapter:manual:${sha256Digest(this.scope).slice(7, 39)}`, CONTROL_ROOM_IDEA_ADAPTER_V1, sources.ordinary === "included", sources.ideas === "included"])).rows;
+      await this.projects.getViewsInSession(tx, actor, rows.slice(0, 25).map(row => row.project_id));
+      for (const row of rows.slice(0, 25)) actor.require("tasks.read", row.project_id, true);
+      const pageRows = rows.slice(0, 25).map(row => ({ row, ...validated(row, this.scope.tenantId, row.project_id) }));
+      const planningConfigured = !!this.taskPlanIntegrityKey && !!this.reviewConfig;
+      const planCandidates = pageRows.filter(({ summary, job }) => summary.state === "proposed" && job.jobType === "task.proposal")
+        .map(({ row }) => ({ projectId: row.project_id, sourceJobId: row.id }));
+      const planCandidateKeys = new Set(planCandidates.map(candidate => JSON.stringify([candidate.projectId, candidate.sourceJobId])));
+      const preloadedPlans: SavedTaskPlanRowV1[] = pageRows.filter(({ row }) => row.plan_tenant_id !== null
+        && planCandidateKeys.has(JSON.stringify([row.project_id, row.id]))).map(({ row }) => ({
+        tenant_id: row.plan_tenant_id!, project_id: row.plan_project_id!, source_job_id: row.plan_source_job_id!,
+        job_id: row.plan_job_id!, plan: row.plan_payload, auth_tag: row.plan_auth_tag!, source_job_payload: row.job,
+        source_job_state: row.state, source_job_version: row.version, source_job_workflow_id: row.workflow_id,
+        source_job_created_at: row.source_job_created_at, source_job_updated_at: row.source_job_updated_at,
+        source_workflow_payload: row.workflow, source_request_payload: row.request,
+        prepared_job_payload: row.prepared_job_payload, prepared_job_state: row.prepared_job_state!,
+        prepared_job_version: row.prepared_job_version!, prepared_job_workflow_id: row.prepared_job_workflow_id!,
+        prepared_job_created_at: row.prepared_job_created_at!, prepared_job_updated_at: row.prepared_job_updated_at!,
+        prepared_workflow_payload: row.prepared_workflow_payload, prepared_request_payload: row.prepared_request_payload,
+      }));
+      const savedProfileIds = planningConfigured ? savedTaskPlanProfileIdsV1({ tenantId: this.scope.tenantId,
+        planIntegrityKey: this.taskPlanIntegrityKey! }, preloadedPlans) : [];
+      const savedProfiles = planningConfigured && savedProfileIds.length
+        ? { ids: savedProfileIds, records: undefined as ReadonlyMap<string, unknown> | undefined }
+        : undefined;
+      const evidence = await this.batchResultEvidence(tx, actor, pageRows.filter(({ row }) => row.has_artifacts)
+        .map(({ row }) => ({ projectId: row.project_id, jobId: row.id })), savedProfiles);
+      const savedPlans = planningConfigured ? await readSavedTaskPlansInSessionV1(tx, {
+        tenantId: this.scope.tenantId, planIntegrityKey: this.taskPlanIntegrityKey!,
+        reviewIntegrityKey: this.reviewConfig!.integrityKey, checkpoints: this.reviewConfig!.checkpoints,
+        preloadedRows: preloadedPlans, authenticatedProfiles: savedProfiles?.records,
+      }, planCandidates) : new Map<string, null>();
+      const plannedSources = new Set<string>();
+      for (const candidate of planCandidates) {
+        const key = JSON.stringify([candidate.projectId, candidate.sourceJobId]), value = savedPlans.get(key);
+        if (!value) continue;
+        const receipt = taskPlanningReceiptSchema.parse(value);
+        if (receipt.projectId !== candidate.projectId || receipt.sourceJobId !== candidate.sourceJobId
+          || receipt.jobId === candidate.sourceJobId) throw new Error("planning_receipt_scope_mismatch");
+        plannedSources.add(key);
+      }
       const items: TaskAttentionPage["items"] = [];
-      for (const row of rows.slice(0, 25)) {
-        await this.projects.getViewInSession(tx, actor, row.project_id);
-        actor.require("tasks.read", row.project_id, true);
-        const { summary, job } = validated(row, this.scope.tenantId, row.project_id);
+      for (const { row, summary, job } of pageRows) {
         const reasons: TaskAttentionPage["items"][number]["reasons"] = [];
-        if (summary.state === "proposed") reasons.push(job.jobType === "task.proposal" ? "proposal" : "assignment");
+        if (summary.state === "proposed" && !(job.jobType === "task.proposal"
+          && plannedSources.has(JSON.stringify([row.project_id, row.id]))))
+          reasons.push(job.jobType === "task.proposal" ? "proposal" : "assignment");
         if (summary.state === "waiting_approval") reasons.push("approval");
         if (summary.state === "failed" || summary.state === "orphaned") reasons.push(summary.state);
         if (job.jobType === "harness.hermes.native.task" && ["leased", "running", "waiting_approval", "orphaned", "failed"].includes(summary.state))
           reasons.push("delivery_check");
         if (row.has_artifacts) {
-          reasons.push(...(await this.resultAttention(tx, actor, row)).reasons);
+          const result = evidence.get(taskReviewPlanKeyV1(row.project_id, row.id));
+          reasons.push(...(result ? this.resultAttentionFromEvidence(result).reasons : ["result_checks_unavailable"] as const));
         }
         if (reasons.length) {
           const uniqueReasons = [...new Set(reasons)];
@@ -618,7 +801,8 @@ export class WebTaskService {
         }
       }
       return taskAttentionPageSchema.parse({ items, sources, examined: Math.min(rows.length, 25),
-        nextCursor: rows.length > 25 ? rows[24].id : null, observedAt: actor.now, startsWork: false });
+        nextCursor: rows.length > 25 ? rows[24].id : null, observedAt: actor.now, startsWork: false,
+        planningSource: planningConfigured ? "configured" : "not_configured" });
     });
   }
 
@@ -638,6 +822,8 @@ export class WebTaskService {
       const rows = (await tx.query<TaskRow & { has_artifacts: boolean }>(`SELECT ${hasArtifact} AS has_artifacts, ${selection}
         WHERE j.tenant_id=$1 AND j.project_id=$2 AND ($3::text IS NULL OR j.id COLLATE "C">$3 COLLATE "C") AND ${candidate}
         ORDER BY j.id COLLATE "C" LIMIT 21`, [this.scope.tenantId, projectId, after ?? null])).rows;
+      const evidence = await this.batchResultEvidence(tx, actor,
+        rows.slice(0, 20).filter(row => row.has_artifacts).map(row => ({ projectId, jobId: row.id })));
       const items: TaskProjectAttentionPage["items"] = [];
       for (const row of rows.slice(0, 20)) {
         const { summary, job } = validated(row, this.scope.tenantId, projectId);
@@ -649,7 +835,10 @@ export class WebTaskService {
           if (job.jobType === "harness.hermes.native.task" && ["leased", "running", "waiting_approval", "orphaned", "failed"].includes(summary.state))
             reasons.push("delivery_check");
         }
-        const result = await this.resultAttention(tx, actor, row);
+        const projection = row.has_artifacts ? evidence.get(taskReviewPlanKeyV1(projectId, row.id)) : undefined;
+        const result = !row.has_artifacts ? { reasons: [] as TaskAttentionPage["items"][number]["reasons"], resultArtifactIds: [] }
+          : projection ? this.resultAttentionFromEvidence(projection)
+          : { reasons: ["result_checks_unavailable"] as TaskAttentionPage["items"][number]["reasons"], resultArtifactIds: [] };
         reasons.push(...result.reasons);
         const uniqueReasons = [...new Set(reasons)];
         if (!uniqueReasons.length || mode === "reviews" && !uniqueReasons.some(reason =>
@@ -677,49 +866,58 @@ export class WebTaskService {
         WHERE h.tenant_id=p.tenant_id AND h.project_id=p.id)) OR (p.adapter_id=$3 AND $5::boolean))`;
       const sourceParameters = [`adapter:manual:${sha256Digest(this.scope).slice(7, 39)}`,
         CONTROL_ROOM_IDEA_ADAPTER_V1, sources.ordinary === "included", sources.ideas === "included"] as const;
-      const activeRows = (await tx.query<TaskRow>(`SELECT ${selection}
-        JOIN projects p ON p.tenant_id=j.tenant_id AND p.id=j.project_id
-        WHERE j.tenant_id=$1 AND p.workspace_id=$6 AND ${visibleProject}
-          AND j.state IN ('leased','running','waiting_approval')
-        ORDER BY j.updated_at DESC,j.id COLLATE "C" LIMIT 11`,
-      [this.scope.tenantId, ...sourceParameters, this.scope.workspaceId])).rows;
-      const active = [];
-      for (const row of activeRows.slice(0, 10)) {
-        await this.projects.getViewInSession(tx, actor, row.project_id);
+      const canReadResults = !!this.resultStore && actor.can("tasks.results.read", undefined, true);
+      if (canReadResults) actor.require("tasks.results.read", undefined, true);
+      const homeRows = (await tx.query<TaskRow & { home_kind: "active" | "result"; artifact_id: string | null }>(`
+        WITH active_rows AS (
+          SELECT 'active'::text AS home_kind,NULL::text AS artifact_id,${selection}
+          JOIN projects p ON p.tenant_id=j.tenant_id AND p.id=j.project_id
+          WHERE j.tenant_id=$1 AND p.workspace_id=$6 AND ${visibleProject}
+            AND j.state IN ('leased','running','waiting_approval')
+          ORDER BY j.updated_at DESC,j.id COLLATE "C" LIMIT 251
+        ), result_rows AS (
+          SELECT 'result'::text AS home_kind,a.artifact_id,${selection}
+          JOIN control_native_artifact_receipts a ON a.tenant_id=j.tenant_id AND a.project_id=j.project_id AND a.job_id=j.id
+          JOIN control_artifact_manifests m ON m.tenant_id=a.tenant_id AND m.id=a.artifact_id
+          JOIN projects p ON p.tenant_id=a.tenant_id AND p.id=a.project_id
+          WHERE a.tenant_id=$1 AND p.workspace_id=$6 AND $7::boolean AND ${visibleProject}
+          ORDER BY m.created_at DESC,a.artifact_id COLLATE "C" LIMIT 11
+        ) SELECT * FROM active_rows UNION ALL SELECT * FROM result_rows`,
+      [this.scope.tenantId, ...sourceParameters, this.scope.workspaceId, canReadResults])).rows;
+      const activeRows = homeRows.filter(row => row.home_kind === "active");
+      await this.projects.getViewsInSession(tx, actor, homeRows.map(row => row.project_id));
+      const activeSummaries = [];
+      for (const row of activeRows.slice(0, 250)) {
         actor.require("tasks.read", row.project_id);
-        active.push(validated(row, this.scope.tenantId, row.project_id).summary);
+        activeSummaries.push(validated(row, this.scope.tenantId, row.project_id).summary);
       }
-
       const recentResults: { task: ReturnType<typeof validated>["summary"];
         artifact: ReturnType<typeof resultMetadata> }[] = [];
       let additionalResultsOmitted = false;
-      const canReadResults = !!this.resultStore && actor.can("tasks.results.read", undefined, true);
+      let projectedActive = [...activeSummaries];
       if (this.resultStore && canReadResults) {
-        actor.require("tasks.results.read", undefined, true);
-        const candidates = (await tx.query<{ project_id: string; job_id: string; artifact_id: string }>(`
-          SELECT a.project_id,a.job_id,a.artifact_id FROM control_native_artifact_receipts a
-          JOIN control_artifact_manifests m ON m.tenant_id=a.tenant_id AND m.id=a.artifact_id
-          JOIN projects p ON p.tenant_id=a.tenant_id AND p.id=a.project_id
-          WHERE a.tenant_id=$1 AND p.workspace_id=$6 AND ${visibleProject}
-          ORDER BY m.created_at DESC,a.artifact_id COLLATE "C" LIMIT 11`,
-        [this.scope.tenantId, ...sourceParameters, this.scope.workspaceId])).rows;
-        for (const candidate of candidates.slice(0, 10)) {
-          await this.projects.getViewInSession(tx, actor, candidate.project_id);
+        const candidates = homeRows.filter((row): row is typeof row & { artifact_id: string } =>
+          row.home_kind === "result" && row.artifact_id !== null);
+        const selected = candidates.slice(0, 10), summaries = selected.map(candidate => {
           actor.require("tasks.read", candidate.project_id); actor.require("tasks.results.read", candidate.project_id);
-          const row = (await tx.query<TaskRow>(`SELECT ${selection} WHERE j.tenant_id=$1 AND j.project_id=$2 AND j.id=$3`,
-            [this.scope.tenantId, candidate.project_id, candidate.job_id])).rows[0];
-          if (!row) throw new Error("task_home_result_unavailable");
-          const receipt = await this.resultStore.readReceipt(tx, this.scope.tenantId, candidate.project_id,
-            candidate.job_id, candidate.artifact_id);
+          return validated(candidate, this.scope.tenantId, candidate.project_id).summary;
+        });
+        const displaySummaries = [...activeSummaries, ...summaries];
+        const evidence = await this.batchResultEvidence(tx, actor, displaySummaries);
+        projectedActive = this.applyDisplayEvidence(activeSummaries, evidence);
+        const enriched = this.applyDisplayEvidence(summaries, evidence);
+        for (let index = 0; index < selected.length; index += 1) {
+          const candidate = selected[index]!, page = evidence.get(taskReviewPlanKeyV1(candidate.project_id, candidate.id));
+          const receipt = page?.items.find(item => item.artifactId === candidate.artifact_id);
           if (!receipt) throw new Error("task_home_result_unavailable");
-          recentResults.push({ task: await this.withQualityStatus(tx, actor,
-            validated(row, this.scope.tenantId, candidate.project_id).summary),
-            artifact: resultMetadata(receipt) });
+          recentResults.push({ task: enriched[index]!, artifact: receipt });
         }
         additionalResultsOmitted = candidates.length > 10;
       }
+      const remainingActive = projectedActive.filter(task => ["leased", "running", "waiting_approval"].includes(task.state));
+      const active = remainingActive.slice(0, 10);
       return taskHomeActivitySchema.parse({ active, recentResults,
-        additionalActiveOmitted: activeRows.length > 10, additionalResultsOmitted,
+        additionalActiveOmitted: remainingActive.length > 10 || activeRows.length > 250, additionalResultsOmitted,
         resultSource: !this.resultStore ? "not_configured" : canReadResults ? "configured" : "not_authorized",
         observedAt: actor.now, startsWork: false });
     });
@@ -732,21 +930,34 @@ export class WebTaskService {
     return this.authority.authenticated(identity, async (tx, actor) => {
       actor.require("tasks.read", projectId);
       await this.projects.getViewInSession(tx, actor, projectId);
-      const read = async (states: readonly string[] | undefined, limit: number) => {
+      const read = async (states: readonly string[] | undefined, maximum: number) => {
         const parameters: unknown[] = [this.scope.tenantId, projectId];
         const stateClause = states ? ` AND j.state=ANY($3::text[])` : "";
         if (states) parameters.push(states);
-        const rows = (await tx.query<TaskRow>(`SELECT ${selection} WHERE j.tenant_id=$1 AND j.project_id=$2${stateClause}
-          ORDER BY j.updated_at DESC,j.id COLLATE "C" LIMIT ${limit + 1}`, parameters)).rows;
-        return { tasks: rows.slice(0, limit).map(row => validated(row, this.scope.tenantId, projectId).summary),
-          omitted: rows.length > limit };
+        const limitParameter = parameters.push(maximum + 1);
+        return (await tx.query<TaskRow>(`SELECT ${selection} WHERE j.tenant_id=$1 AND j.project_id=$2${stateClause}
+          ORDER BY j.updated_at DESC,j.id COLLATE "C" LIMIT $${limitParameter}`, parameters)).rows;
       };
-      const current = await read(["proposed", "ready", "leased", "running", "waiting_approval", "orphaned"], 10);
-      const reviews = await read(["waiting_approval"], 5);
-      const recent = await read(undefined, 10);
-      return taskProjectOverviewSchema.parse({ projectId, current: current.tasks, awaitingReview: reviews.tasks,
-        recent: recent.tasks, additionalCurrentOmitted: current.omitted, additionalReviewsOmitted: reviews.omitted,
-        additionalRecentOmitted: recent.omitted, observedAt: actor.now, startsWork: false });
+      const currentStates = ["proposed", "ready", "leased", "running", "waiting_approval", "orphaned"];
+      const currentRows = await read(currentStates, 250), reviewRows = await read(["waiting_approval"], 250),
+        recentRows = await read(undefined, 10);
+      const summaries = (rows: readonly TaskRow[]) => rows.map(row => validated(row, this.scope.tenantId, projectId).summary);
+      const currentSummaries = summaries(currentRows.slice(0, 250)), reviewSummaries = summaries(reviewRows.slice(0, 250)),
+        recentSummaries = summaries(recentRows.slice(0, 10));
+      const displayCandidates = [...currentSummaries, ...reviewSummaries, ...recentSummaries]
+        .filter(summary => ["leased", "running", "waiting_approval", "succeeded"].includes(summary.state)
+          && this.resultStore && actor.can("tasks.results.read", summary.projectId));
+      const displayEvidence = displayCandidates.length ? await this.batchResultEvidence(tx, actor, displayCandidates) : new Map();
+      const projectedCurrent = this.applyDisplayEvidence(currentSummaries, displayEvidence)
+        .filter(task => currentStates.includes(task.state));
+      const projectedReviews = this.applyDisplayEvidence(reviewSummaries, displayEvidence)
+        .filter(task => task.state === "waiting_approval");
+      const projectedRecent = this.applyDisplayEvidence(recentSummaries, displayEvidence);
+      return taskProjectOverviewSchema.parse({ projectId, current: projectedCurrent.slice(0, 10),
+        awaitingReview: projectedReviews.slice(0, 5), recent: projectedRecent,
+        additionalCurrentOmitted: projectedCurrent.length > 10 || currentRows.length > 250,
+        additionalReviewsOmitted: projectedReviews.length > 5 || reviewRows.length > 250,
+        additionalRecentOmitted: recentRows.length > 10, observedAt: actor.now, startsWork: false });
     });
   }
 

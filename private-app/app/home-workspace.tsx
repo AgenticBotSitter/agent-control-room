@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createProjectBrowserClient } from "../../src/web/v1/browser-client";
 import { readPrivateConnections, type PrivateConnectionSnapshot } from "../../src/web/v1/connection-browser-client";
 import { readTaskAttention } from "../../src/web/v1/queue-attention-browser-client";
@@ -46,6 +46,21 @@ const loadingState: HomeDashboardState = Object.freeze({ projects: { state: "loa
 const taskHref = (projectId: string, jobId: string) =>
   `/projects/${encodeURIComponent(projectId)}/tasks/${encodeURIComponent(jobId)}`;
 
+/** Home reads are safe to repeat, but only the admission-pressure refusal is
+ * transient here. Authentication, authorization, routing and malformed-data
+ * failures retain their normal fail-closed handling. */
+export function createHomeReadTransport(parentSignal: AbortSignal, transport: typeof fetch = fetch): typeof fetch {
+  return (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const signal = init?.signal ? AbortSignal.any([parentSignal, init.signal]) : parentSignal;
+    const options = { ...init, signal };
+    const response = await transport(input, options);
+    if (response.status !== 503 || (init?.method ?? "GET") !== "GET") return response;
+    await response.body?.cancel().catch(() => {});
+    signal.throwIfAborted();
+    return transport(input, options);
+  }) as typeof fetch;
+}
+
 function Unavailable({ children }: { children: React.ReactNode }) {
   return <p className="private-note" role="status">{children} No zero count or all-clear is inferred.</p>;
 }
@@ -59,7 +74,7 @@ export function HomeDashboard({ data }: { data: HomeDashboardState }) {
             <a href={taskHref(task.projectId, task.jobId)}>{task.title}</a><span>{task.state.replaceAll("_", " ")}</span></li>)}</ul>
             : <p>No running or approval-waiting work is recorded.</p>}
       {data.activity.state === "ready" && data.activity.value.additionalActiveOmitted
-        ? <p className="private-note">More running work exists. Open Projects to inspect it.</p> : null}
+        ? <p className="private-note">More running work may exist. Open Projects to inspect it.</p> : null}
       <a className="private-action-link" href="/projects">Open projects</a>
     </section>
 
@@ -140,45 +155,70 @@ export function PrivateHome() {
   const displayName = useProductDisplayName();
   const ideaLab = useProductModule("ideaLab");
   const installationTopology = useInstallationTopology();
-  const [projects] = useState(() => createProjectBrowserClient());
   const [data, setData] = useState<HomeDashboardState>(loadingState);
-  const [generation, setGeneration] = useState(0);
+  const [runtimeDetectionTimedOut, setRuntimeDetectionTimedOut] = useState(false);
+  const refresh = useRef<() => void>(() => {});
   useEffect(() => {
-    let live = true;
+    if (runtime.mode !== "checking") { setRuntimeDetectionTimedOut(false); return; }
+    const timeout = setTimeout(() => setRuntimeDetectionTimedOut(true), 5_000);
+    return () => clearTimeout(timeout);
+  }, [runtime.mode]);
+  useEffect(() => {
+    refresh.current = () => {};
+    setData(loadingState);
+    if (runtime.mode === "checking" && !runtimeDetectionTimedOut) return;
+    let live = true, inFlight = false;
+    let poll: ReturnType<typeof setTimeout> | undefined;
+    let request: AbortController | undefined;
     setData(runtime.mode === "local" ? { ...loadingState,
       connections: runtime.status ? { state: "ready", value: { source: "local", value: runtime.status } } : { state: "unavailable" } }
       : loadingState);
-    const settle = <T,>(promise: Promise<T>, key: keyof HomeDashboardState) => promise.then(value => {
-      if (live) setData(current => ({ ...current, [key]: { state: "ready", value } }));
-    }, () => { if (live) setData(current => ({ ...current, [key]: { state: "unavailable" } })); });
-    const reads = [settle(projects.list(), "projects"), settle(readTaskHomeActivity(), "activity"),
-      settle(readTaskAttention(), "attention")];
-    if (runtime.mode === "hosted") reads.push(settle(readPrivateConnections(), "connections"));
-    void Promise.all(reads);
-    return () => { live = false; };
-  }, [generation, projects, runtime.mode, runtime.status]);
-  useEffect(() => {
     // This dashboard only reads already-saved records.  Keep an open local
     // Control Room view useful without inventing browser-side scheduling or
     // treating an old page load as a current worker status.  Hidden tabs do
-    // not poll; they refresh once when the owner returns to the tab.
-    const refreshWhenVisible = () => {
-      if (!document.hidden) setGeneration(value => value + 1);
+    // not poll; they refresh once when the owner returns to the tab. Schedule
+    // the next poll only after this one settles, and coalesce every other
+    // trigger while it is in flight.
+    const schedulePoll = () => { if (live) poll = setTimeout(refreshWhenVisible, 30_000); };
+    const load = async () => {
+      if (!live || inFlight) return;
+      inFlight = true;
+      clearTimeout(poll);
+      request = new AbortController();
+      const transport = createHomeReadTransport(request.signal);
+      const settle = <T,>(promise: Promise<T>, key: keyof HomeDashboardState) => promise.then(value => {
+        if (live) setData(current => ({ ...current, [key]: { state: "ready", value } }));
+      }, () => { if (live) setData(current => ({ ...current, [key]: { state: "unavailable" } })); });
+      const reads = [settle(createProjectBrowserClient(transport).list(), "projects"),
+        settle(readTaskHomeActivity(transport), "activity"), settle(readTaskAttention(undefined, transport), "attention")];
+      if (runtime.mode === "hosted") reads.push(settle(readPrivateConnections(transport), "connections"));
+      try { await Promise.all(reads); }
+      finally { request = undefined; inFlight = false; schedulePoll(); }
     };
-    const interval = setInterval(refreshWhenVisible, 30_000);
+    const refreshWhenVisible = () => {
+      if (!document.hidden) void load();
+    };
+    refresh.current = refreshWhenVisible;
+    // Deferring the first read lets React's development StrictMode clean up
+    // its probe effect before any network request begins.
+    const initial = setTimeout(refreshWhenVisible, 0);
     window.addEventListener("focus", refreshWhenVisible);
     document.addEventListener("visibilitychange", refreshWhenVisible);
     return () => {
-      clearInterval(interval);
+      live = false;
+      refresh.current = () => {};
+      clearTimeout(initial);
+      clearTimeout(poll);
+      request?.abort();
       window.removeEventListener("focus", refreshWhenVisible);
       document.removeEventListener("visibilitychange", refreshWhenVisible);
     };
-  }, []);
+  }, [runtime.mode, runtime.status, runtimeDetectionTimedOut]);
   return <div className="private-shell"><PrivateHeader /><main id="private-main" tabIndex={-1}>
     <section className="private-home-intro" aria-labelledby="home-title"><p className="private-eyebrow">Private workspace</p>
       <h1 id="home-title">{displayName}</h1><p>Current saved work, results and attention from the protected Control Room services. This page refreshes while it is open and again when you return to it. Each section reports unavailable data instead of replacing it with a zero.</p>
       <p className="private-note">Unavailable means the saved database or protected read could not be checked. Checking again only rereads saved records; it does not start, assign, approve or retry work.</p>
-      <button type="button" onClick={() => setGeneration(value => value + 1)}>Check saved dashboard again</button></section>
+      <button type="button" onClick={() => refresh.current()}>Check saved dashboard again</button></section>
     {runtime.mode === "local" ? <MacLocalWorkerEvidence status={runtime.status} />
       : <HomeInstallationStatus topology={installationTopology} showSetupGuidance={runtime.mode === "hosted"} />}
     <HomeDashboard data={data} />
