@@ -479,10 +479,7 @@ async function main() {
     assert.equal(after.reviews.length, 1, `${agent.kind}: target must remain singular after review`);
     // An owner acceptance is a saved quality vote, not automatic completion:
     // this profile also requires the separate structural verification scenario.
-    if (decision === "accepted")
-      assert.ok(after.reviews[0]?.status === "pending" || after.reviews[0]?.status === "ready",
-        `${agent.kind}: accepted result must be pending or already swept ready`);
-    else assert.equal(after.reviews[0]?.status, "changes_requested");
+    assert.equal(after.reviews[0]?.status, decision === "accepted" ? "pending" : "changes_requested");
     assert.equal(after.reviews[0]?.reviews.length, 1, `${agent.kind}: owner decision must be recorded exactly once`);
     assert.equal(after.reviews[0]?.reviews[0]?.decision, decision);
     const afterOptions = await requireOk(await fetch(new URL(reviewPath, origin), { headers: { cookie } }), 200,
