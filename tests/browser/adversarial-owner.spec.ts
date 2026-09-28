@@ -124,7 +124,7 @@ async function assignAndOpenResult(page: Page, doubleClick = false) {
   expect(assignments, "one owner gesture must record at most one assignment").toHaveLength(1);
   expect(submissions, "one owner gesture must queue at most one submission").toHaveLength(1);
   await refreshUntil(page, "Read result");
-  await page.getByRole("button", { name: "Read result" }).first().click();
+  await page.getByRole("button", { name: "Read result" }).last().click();
   await expect(page.getByRole("heading", { name: "Received result" })).toBeVisible();
 }
 
@@ -417,6 +417,7 @@ test.describe("disposable owner website adversarial attacks", () => {
     await page.getByRole("link", { name: "Open revised task" }).click();
     await expect(page.getByRole("button", { name: "Assign and run" })).toBeEnabled();
     await assignAndOpenResult(page, true);
+    await expect(page.getByText(/Matches Revision 1/)).toBeVisible();
     await prepareAcceptance(page);
     await page.getByRole("button", { name: "Accept", exact: true }).click();
     await expect(page.getByText(/Saved: quality acceptance/)).toBeVisible();
