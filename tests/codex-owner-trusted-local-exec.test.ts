@@ -111,8 +111,17 @@ test("refuses malformed output and nonzero exits", async () => {
 });
 
 test("enforces a configured combined output-byte limit", async () => {
-  const result = await adapter().execute({ ...input(await taskDirectory(), "overflow"), outputBytes: 16_384 });
-  assert.deepEqual(result, { status: "failed", reason: "process_or_output_refused" });
+  const refused = await adapter().execute({ ...input(await taskDirectory(), "overflow"), outputBytes: 16_384 });
+  assert.deepEqual(refused, { status: "failed", reason: "process_or_output_refused" });
+  const accepted = await adapter().execute({ ...input(await taskDirectory(), "overflow"), outputBytes: 32_768 });
+  assert.equal(accepted.status, "completed", "the overflow fixture must be valid Codex JSONL below a larger cap");
+});
+
+test("enforces the 1 MiB default output-byte limit when none is supplied", async () => {
+  const refused = await adapter().execute(input(await taskDirectory(), "default-overflow"));
+  assert.deepEqual(refused, { status: "failed", reason: "process_or_output_refused" });
+  const accepted = await adapter().execute({ ...input(await taskDirectory(), "default-overflow"), outputBytes: 2_097_152 });
+  assert.equal(accepted.status, "completed", "the default-overflow fixture must be valid below a larger cap");
 });
 
 test("deadline kills the detached process group even when its child ignores TERM", async () => {

@@ -161,7 +161,11 @@ pnpm mac:up -- --protected-root <protected-root>
 
 The new values take effect on the next `mac:up`. The output limit covers only
 bytes written to the worker's stdout and stderr; it does not limit files in the
-task workspace. The current macOS direct-process boundary cannot enforce a
+task workspace. If the protected settings file is missing its safety properties
+or contains invalid data, startup fails closed with
+`mac_local_task_run_limits_unavailable`; inspect the protected file and use the
+reviewed configuration command rather than editing it by hand. The current
+macOS direct-process boundary cannot enforce a
 hard per-run CPU or memory ceiling. Adding those controls requires a separately
 reviewed native process launcher.
 

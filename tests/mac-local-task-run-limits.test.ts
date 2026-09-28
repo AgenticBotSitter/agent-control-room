@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { chmod, mkdir, mkdtemp, readFile, readdir, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { chmod, link, mkdir, mkdtemp, readFile, readdir, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -69,7 +69,7 @@ test("an invalid existing file fails closed and is never repaired or overwritten
   assert.equal(await readFile(file, "utf8"), invalid);
 });
 
-test("loader and writer refuse public files, symlinks, public directories, and non-canonical roots", async t => {
+test("loader and writer refuse public files, links, public directories, and non-canonical roots", async t => {
   const root = await protectedRoot(t), file = join(root, "config/task-run-limits.json");
   await writeFile(file, `${JSON.stringify(limits())}\n`, { mode: 0o600 });
   await chmod(file, 0o644);
@@ -81,6 +81,11 @@ test("loader and writer refuse public files, symlinks, public directories, and n
   await symlink(file, join(linked, "config/task-run-limits.json"));
   await assert.rejects(loadMacLocalTaskRunLimitsFromRootV1(linked), /mac_local_task_run_limits_unavailable/u);
   await assert.rejects(writeMacLocalTaskRunLimitsToRootV1(linked, limits()), /mac_local_task_run_limits_unavailable/u);
+
+  const hardLinked = await protectedRoot(t);
+  await link(file, join(hardLinked, "config/task-run-limits.json"));
+  await assert.rejects(loadMacLocalTaskRunLimitsFromRootV1(hardLinked), /mac_local_task_run_limits_unavailable/u);
+  await assert.rejects(writeMacLocalTaskRunLimitsToRootV1(hardLinked, limits()), /mac_local_task_run_limits_unavailable/u);
 
   await chmod(join(root, "config"), 0o755);
   await assert.rejects(loadMacLocalTaskRunLimitsFromRootV1(root), /mac_local_task_run_limits_unavailable/u);

@@ -82,6 +82,13 @@ test("enforces a configured combined output-byte limit", async () => {
   assert.deepEqual(result, { status: "failed", reason: "process_or_output_refused" });
 });
 
+test("enforces the 1 MiB default output-byte limit when none is supplied", async () => {
+  const refused = await adapter().execute(input(await taskDirectory(), "default-overflow"));
+  assert.deepEqual(refused, { status: "failed", reason: "process_or_output_refused" });
+  const accepted = await adapter().execute({ ...input(await taskDirectory(), "default-overflow"), outputBytes: 2_097_152 });
+  assert.equal(accepted.status, "completed", "the default-overflow fixture must be valid below a larger cap");
+});
+
 test("cancel and deadline stop the complete detached process group", async () => {
   const controller = new AbortController();
   const pending = adapter().execute(input(await taskDirectory(), "wait", 10_000, controller.signal));

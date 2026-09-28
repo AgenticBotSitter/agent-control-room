@@ -15,6 +15,14 @@ if (prompt === "hang") {
 } else if (prompt === "overflow") {
   process.stdout.write("x".repeat(9_000));
   process.stderr.write("x".repeat(9_000));
+} else if (prompt === "default-overflow") {
+  process.stdout.write(`${JSON.stringify({ type: "system", subtype: "init", session_id: session })}\n`);
+  for (let index = 0; index < 8; index++) {
+    process.stdout.write(`${JSON.stringify({ type: "assistant", session_id: session,
+      message: { role: "assistant", content: [{ type: "text", text: "x".repeat(140_000) }] } })}\n`);
+  }
+  process.stdout.write(`${JSON.stringify({ type: "result", subtype: "success", is_error: false,
+    session_id: session, result: "valid terminal result", usage: {} })}\n`);
 } else if (prompt === "leak") {
   // The direct process exits, but its TERM-ignoring child stays in this
   // detached group unless the adapter explicitly cleans it up.

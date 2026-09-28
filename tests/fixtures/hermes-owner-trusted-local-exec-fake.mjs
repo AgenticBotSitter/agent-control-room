@@ -14,6 +14,12 @@ if (prompt === "hang") {
 } else if (prompt === "overflow") {
   process.stdout.write("x".repeat(9_000));
   process.stderr.write("x".repeat(9_000));
+} else if (prompt === "default-overflow") {
+  process.stdout.write(`${JSON.stringify({ type: "system", subtype: "init", model: "fake-model",
+    session_id: "fake-hermes-session-0001", timestamp: 1 })}\n`);
+  process.stdout.write(`${JSON.stringify({ type: "result", session_id: "session:fake", exit_code: 0,
+    text: "x".repeat(1_048_576), tokens: { input: 2, output: 3, total: 5,
+      cache_read: 0, cache_write: 0 }, duration_ms: 1, timestamp: 2 })}\n`);
 } else if (prompt === "leak") {
   const child = spawn("sh", ["-c", "trap '' TERM; while :; do sleep 1; done"], { stdio: "ignore" });
   child.unref();

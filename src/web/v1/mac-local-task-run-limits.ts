@@ -15,6 +15,7 @@ function paths(protectedRoot: string) {
 async function privateEntry(path: string, kind: "directory" | "file") {
   const entry = await lstat(path);
   if (entry.isSymbolicLink() || (kind === "directory" ? !entry.isDirectory() : !entry.isFile())
+    || kind === "file" && entry.nlink !== 1
     || (entry.mode & 0o077) !== 0 || entry.uid !== process.getuid?.()) unavailable();
   return entry;
 }
