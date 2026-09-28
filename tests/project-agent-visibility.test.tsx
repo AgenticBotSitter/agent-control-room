@@ -175,6 +175,25 @@ test("project view presents eligibility, availability, connections, and work as 
   assert.doesNotMatch(html, /Assign without starting|Start work|Reserve worker|<button|<form/);
 });
 
+test("Mac-local agent view names unavailable installation sources without hiding real project work", () => {
+  const state: ProjectAgentVisibilityRead = {
+    eligibility: { state: "ready", value: { ...options, eligibilitySource: "not_configured", workers: [], tasksExamined: 0 } },
+    capacity: { state: "unavailable", code: "operator_surface_unavailable" },
+    connections: { state: "unavailable", code: "unavailable" },
+    currentWork: { state: "ready", value: { projectId: binding.projectId, current: [], awaitingReview: [], recent: [],
+      additionalCurrentOmitted: false, additionalReviewsOmitted: false, additionalRecentOmitted: false,
+      observedAt, startsWork: false } },
+    agentWork: { state: "ready", value: [] },
+  };
+  const html = renderToStaticMarkup(createElement(ProjectAgentVisibilityView, {
+    state: { state: "ready", value: state }, projectId: binding.projectId, local: true,
+  }));
+  assert.match(html, /Task assignment is not configured for this installation/);
+  assert.match(html, /No proposed, assigned, running, approval-waiting, or recovery work is recorded/);
+  assert.match(html, /not available on this computer yet/);
+  assert.doesNotMatch(html, /<button|<form|Assign|Start work/);
+});
+
 test("project task card downgrades uncertain local-route evidence without inventing worker status", () => {
   const detail = taskDetail("job:two");
   detail.localRouteObservation = { state: "needs_attention", adapter: "claude" };

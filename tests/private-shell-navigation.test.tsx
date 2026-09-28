@@ -514,6 +514,26 @@ test("project inbox and result reviews use exact protected results and keep exec
   await assert.rejects(readTaskProjectAttention("project:other", "reviews", "bad\u0000cursor", transport), /invalid_request/);
 });
 
+test("project inbox distinguishes real saved attention, an empty page, and an unavailable read", () => {
+  const task = { projectId: "project:alpha", requestId: "request:alpha", jobId: "job:proposal", title: "Prepare brief",
+    state: "proposed" as const, version: 1, createdAt: "2026-09-04T10:00:00.000Z", updatedAt: "2026-09-04T12:00:00.000Z" };
+  const base = { projectId: task.projectId, mode: "inbox" as const, nextCursor: null, examined: 1,
+    resultSource: "not_configured" as const, reviewSource: "not_configured" as const,
+    resultContent: "authorized" as const, observedAt: "2026-09-04T12:00:00.000Z", startsWork: false as const };
+  const real = renderToStaticMarkup(createElement(ProjectResultReviewPanel, { projectId: task.projectId, mode: "inbox",
+    data: { state: "ready", value: { ...base, items: [{ task, inputDigest: `sha256:${"a".repeat(64)}`,
+      reasons: ["proposal" as const], resultArtifactIds: [], category: "preparation" as const, urgency: "normal" as const,
+      ownerQuestion: "What should happen next?" }] } } }));
+  assert.match(real, /Prepare brief/); assert.match(real, /Needs preparation/); assert.match(real, /What should happen next/);
+  assert.doesNotMatch(real, /<button|<form/);
+  const empty = renderToStaticMarkup(createElement(ProjectResultReviewPanel, { projectId: task.projectId, mode: "inbox",
+    data: { state: "ready", value: { ...base, items: [] } } }));
+  assert.match(empty, /No saved attention was found/); assert.match(empty, /not an all-clear/);
+  const unavailable = renderToStaticMarkup(createElement(ProjectResultReviewPanel, { projectId: task.projectId, mode: "inbox",
+    data: { state: "unavailable", code: "unavailable" } }));
+  assert.match(unavailable, /could not be checked/); assert.match(unavailable, /No empty list or all-clear is inferred/);
+});
+
 test("project review attention does not turn unavailable evidence into an empty all-clear", () => {
   const html = renderToStaticMarkup(createElement(ProjectResultReviewPanel, { projectId: "project:alpha", mode: "reviews",
     data: { state: "ready", value: { projectId: "project:alpha", mode: "reviews", items: [], nextCursor: null, examined: 1,
