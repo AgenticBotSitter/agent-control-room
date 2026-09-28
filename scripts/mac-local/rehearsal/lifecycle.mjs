@@ -1,8 +1,9 @@
-import { spawn } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { chmod, lstat, mkdir, readFile, readdir, realpath, rename, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
+import { promisify } from "node:util";
 
 export const REHEARSAL_SCHEMA = "control-room.mac-local-rehearsal/v1";
 export const REHEARSAL_MARKER = ".control-room-rehearsal.json";
@@ -19,6 +20,13 @@ const productionFiles = Object.freeze({
   chmod, lstat, mkdir, readFile, readdir, realpath, rename, rm, writeFile,
   uid: () => typeof process.getuid === "function" ? process.getuid() : undefined,
 });
+const exec = promisify(execFile);
+const productionProcessCommand = async pid => {
+  try {
+    return (await exec("/bin/ps", ["-ww", "-o", "command=", "-p", String(pid)],
+      { encoding: "utf8", timeout: 10_000 })).stdout.trim() || undefined;
+  } catch { return undefined; }
+};
 
 const privateRegularFile = (entry, uid) => entry.isFile() && !entry.isSymbolicLink()
   && (entry.mode & 0o077) === 0 && (uid === undefined || entry.uid === uid);
@@ -32,6 +40,11 @@ export function forbiddenOwnerRoots(extra = []) {
   return [defaultOwnerProtectedRoot(), process.env.CONTROL_ROOM_OWNER_PROTECTED_ROOT,
     process.env.CONTROL_ROOM_PROTECTED_ROOT, ...extra]
     .filter(value => typeof value === "string" && isAbsolute(value)).map(value => resolve(value));
+}
+async function canonicalForbiddenOwnerRoots(extra, runtime) {
+  return Promise.all(forbiddenOwnerRoots(extra).map(async root => {
+    try { return await runtime.realpath(root); } catch { return root; }
+  }));
 }
 
 export function captureRehearsalOwnership(value) {
@@ -77,40 +90,40 @@ export async function createRehearsalOwnership({ root, databasePort, webPort, re
   const canonicalRepositoryRoot = resolve(repositoryRoot);
   if (databasePort === RESERVED_DATABASE_PORT || webPort === RESERVED_WEB_PORT)
     throw new Error("rehearsal_reserved_port_refused");
-  if (forbiddenOwnerRoots(forbiddenProtectedRoots).some(protectedRoot => overlaps(root, protectedRoot)))
-    throw new Error("rehearsal_protected_root_refused");
   const uid = runtime.uid?.() ?? (typeof process.getuid === "function" ? process.getuid() : undefined);
   await runtime.mkdir(root, { recursive: true, mode: 0o700 });
   await runtime.chmod(root, 0o700);
   const rootEntry = await runtime.lstat(root);
   if (!privateDirectory(rootEntry, uid)) throw new Error("rehearsal_root_unsafe");
   const canonicalRoot = await runtime.realpath(root);
-  if (canonicalRoot !== root) throw new Error("rehearsal_root_unsafe");
-  if ((await runtime.readdir(root)).length !== 0) throw new Error("rehearsal_root_not_empty");
+  if ((await canonicalForbiddenOwnerRoots(forbiddenProtectedRoots, runtime))
+    .some(protectedRoot => overlaps(canonicalRoot, protectedRoot))) throw new Error("rehearsal_protected_root_refused");
+  if ((await runtime.readdir(canonicalRoot)).length !== 0) throw new Error("rehearsal_root_not_empty");
   await runtime.mkdir(registryDirectory, { recursive: true, mode: 0o700 });
   await runtime.chmod(registryDirectory, 0o700);
   const registryEntry = await runtime.lstat(registryDirectory);
   if (!privateDirectory(registryEntry, uid)) throw new Error("rehearsal_registry_unsafe");
+  const canonicalRegistryDirectory = await runtime.realpath(registryDirectory);
   const ownership = captureRehearsalOwnership({
     schema: REHEARSAL_SCHEMA,
     runId: randomBytes(16).toString("hex"),
-    root,
+    root: canonicalRoot,
     uid: uid ?? 0,
     device: Number(rootEntry.dev),
     inode: Number(rootEntry.ino),
     repositoryRoot: canonicalRepositoryRoot,
-    databaseDirectory: join(root, "pg"),
-    protectedRoot: join(root, "protected"),
+    databaseDirectory: join(canonicalRoot, "pg"),
+    protectedRoot: join(canonicalRoot, "protected"),
     databasePort,
     webPort,
     createdAt: new Date().toISOString(),
     processes,
   });
-  const markerPath = join(root, REHEARSAL_MARKER);
+  const markerPath = join(canonicalRoot, REHEARSAL_MARKER);
   await runtime.writeFile(markerPath, `${JSON.stringify(ownership, null, 2)}\n`, { mode: 0o600, flag: "wx" });
   await runtime.chmod(markerPath, 0o600);
   try {
-    await runtime.writeFile(join(registryDirectory, `${ownership.runId}.json`), `${JSON.stringify(ownership, null, 2)}\n`,
+    await runtime.writeFile(join(canonicalRegistryDirectory, `${ownership.runId}.json`), `${JSON.stringify(ownership, null, 2)}\n`,
       { mode: 0o600, flag: "wx" });
   } catch (error) {
     await runtime.rm(markerPath, { force: true });
@@ -124,22 +137,22 @@ export async function validateRehearsalOwnership({ root, registryDirectory = def
   if (!isAbsolute(root) || resolve(root) !== root) throw new Error("rehearsal_root_must_be_absolute");
   const uid = runtime.uid?.() ?? (typeof process.getuid === "function" ? process.getuid() : undefined);
   const rootEntry = await runtime.lstat(root);
-  if (!privateDirectory(rootEntry, uid) || await runtime.realpath(root) !== root)
-    throw new Error("rehearsal_root_unsafe");
-  const marker = captureRehearsalOwnership(await readPrivateJson(join(root, REHEARSAL_MARKER), runtime, uid));
-  if (marker.root !== root || marker.uid !== (uid ?? marker.uid) || marker.device !== Number(rootEntry.dev)
+  if (!privateDirectory(rootEntry, uid)) throw new Error("rehearsal_root_unsafe");
+  const canonicalRoot = await runtime.realpath(root);
+  const marker = captureRehearsalOwnership(await readPrivateJson(join(canonicalRoot, REHEARSAL_MARKER), runtime, uid));
+  if (marker.root !== canonicalRoot || marker.uid !== (uid ?? marker.uid) || marker.device !== Number(rootEntry.dev)
     || marker.inode !== Number(rootEntry.ino) || expectedRunId && marker.runId !== expectedRunId)
     throw new Error("rehearsal_ownership_mismatch");
-  if (forbiddenOwnerRoots(forbiddenProtectedRoots).some(protectedRoot =>
-    overlaps(root, protectedRoot) || overlaps(marker.protectedRoot, protectedRoot)))
+  if ((await canonicalForbiddenOwnerRoots(forbiddenProtectedRoots, runtime)).some(protectedRoot =>
+    overlaps(canonicalRoot, protectedRoot) || overlaps(marker.protectedRoot, protectedRoot)))
     throw new Error("rehearsal_protected_root_refused");
   const registryEntry = await runtime.lstat(registryDirectory);
-  if (!privateDirectory(registryEntry, uid) || await runtime.realpath(registryDirectory) !== registryDirectory)
-    throw new Error("rehearsal_registry_unsafe");
-  const registryPath = join(registryDirectory, `${marker.runId}.json`);
+  if (!privateDirectory(registryEntry, uid)) throw new Error("rehearsal_registry_unsafe");
+  const canonicalRegistryDirectory = await runtime.realpath(registryDirectory);
+  const registryPath = join(canonicalRegistryDirectory, `${marker.runId}.json`);
   const registered = captureRehearsalOwnership(await readPrivateJson(registryPath, runtime, uid));
   if (JSON.stringify(registered) !== JSON.stringify(marker)) throw new Error("rehearsal_registry_mismatch");
-  return Object.freeze({ ownership: marker, markerPath: join(root, REHEARSAL_MARKER), registryPath });
+  return Object.freeze({ ownership: marker, markerPath: join(canonicalRoot, REHEARSAL_MARKER), registryPath });
 }
 
 export async function updateRehearsalProcesses({ root, registryDirectory = defaultRegistryDirectory(), processes,
@@ -165,10 +178,12 @@ const appendBounded = (current, chunk, limit) => {
  * @param {string[]} [args]
  * @param {{ cwd?: string, env?: NodeJS.ProcessEnv, signal?: AbortSignal, timeoutMs?: number,
  *   terminateGraceMs?: number, outputLimit?: number, spawnImpl?: typeof spawn,
+ *   processCommand?: (pid: number) => Promise<string | undefined>,
  *   onSpawn?: (record: { pid: number, command: readonly string[], group: boolean }) => void | Promise<void> }} [options]
  */
 export function runBoundedChild(command, args = [], { cwd, env = process.env, signal, timeoutMs = 180_000,
-  terminateGraceMs = 5_000, outputLimit = 1_048_576, spawnImpl = spawn, onSpawn } = {}) {
+  terminateGraceMs = 5_000, outputLimit = 1_048_576, spawnImpl = spawn,
+  processCommand = productionProcessCommand, onSpawn } = {}) {
   if (typeof command !== "string" || !command || !Array.isArray(args) || args.some(arg => typeof arg !== "string"))
     throw new Error("rehearsal_child_command_invalid");
   return new Promise(resolvePromise => {
@@ -195,8 +210,12 @@ export function runBoundedChild(command, args = [], { cwd, env = process.env, si
       registrationError = new Error("rehearsal_child_pid_missing");
       registrationSettled = true;
     }
-    else if (onSpawn) Promise.resolve(onSpawn(Object.freeze({ pid: child.pid,
-      command: Object.freeze([command, ...args]), group: true }))).then(() => {
+    else if (onSpawn) Promise.resolve().then(async () => {
+      const actualCommand = await processCommand(child.pid);
+      if (!actualCommand) throw new Error("rehearsal_child_identity_unavailable");
+      await onSpawn(Object.freeze({ pid: child.pid,
+        command: Object.freeze([actualCommand]), group: true }));
+    }).then(() => {
         registrationSettled = true;
         if (pendingResult) finish(pendingResult);
       }, error => {

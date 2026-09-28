@@ -27,7 +27,7 @@ if (!arg || process.argv.length !== 3 || !isAbsolute(arg) || resolve(arg) !== ar
   process.stderr.write("usage: node --import tsx scripts/mac-local/rehearsal/section13.ts ABSOLUTE_REHEARSAL_DIR\n");
   process.exit(2);
 }
-const root = resolve(arg), protectedRoot = join(root, "protected");
+let root = resolve(arg), protectedRoot = join(root, "protected");
 const shutdown = new AbortController();
 type RehearsalProcess = { kind: "journey" | "host" | "child"; pid: number; command: readonly string[]; group: boolean };
 let ownershipReady = false, ownedProcesses: RehearsalProcess[] = [];
@@ -313,7 +313,9 @@ await stopHost();
 process.stdout.write("Focused first-owner and section 13 checks plus three-worker readiness: PASS (no tasks submitted)\n");
 }
 
-await validateRehearsalOwnership({ root });
+const initialOwnership = (await validateRehearsalOwnership({ root })).ownership;
+root = initialOwnership.root;
+protectedRoot = initialOwnership.protectedRoot;
 ownershipReady = true;
 let cleanupPromise: Promise<void> | undefined;
 const cleanup = () => cleanupPromise ??= (async () => {

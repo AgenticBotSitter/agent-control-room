@@ -147,6 +147,15 @@ new one-time owner setup is still unproven. It prints no configuration.
 `mac:up` starts the task host even when there are no active projects. Create a project on the website and open its task-planning page; the running host derives its fixed local templates and registers its owner-review profile without a restart. The host supports up to 50 active projects and refuses the fifty-first with `mac_local_project_limit_50` rather than silently omitting templates. If the selected Hermes profile later sets `OPENCODE_GO_BASE_URL`, Hermes tasks fail closed because the saved network allowlist still names `https://opencode.ai:443`. The preparation command creates the protected task-runtime file once; rerunning it does not update an existing file. Stop Hermes task use and ask for a reviewed recovery procedure. Do not edit the protected file by hand or assume rerunning preparation changes its destination.
 Any line ending `database_check_refused` means that role is not reachable.
 
+### Disposable rehearsal cleanup
+
+`pnpm mac:rehearsal down <absolute-rehearsal-root>` stops only processes and the PostgreSQL
+data directory bound to that rehearsal's private ownership record, then removes the entire
+disposable rehearsal root. Copy any logs or evidence you need before running `down`; rehearsal
+data is not kept afterward. Repeating `down` after removal reports that the root is already
+cleaned. A pre-ownership rehearsal root is retained with an explicit refusal so it can be handled
+with the legacy manual stop procedure instead of being deleted without proof.
+
 ### Owner-review profile v2 upgrade
 
 Database migration 0092 is additive: it does not rewrite existing review profiles or targets.
