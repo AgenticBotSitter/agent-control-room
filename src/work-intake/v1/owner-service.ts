@@ -169,6 +169,16 @@ export class WorkBatchOwnerServiceV1 {
     return proposal;
   }
 
+  async #currentProposal(tx: DatabaseSession, row: BatchRow): Promise<WorkBatchProposalV1> {
+    const original = this.#verifyBatch(row);
+    const revision = (await tx.query<RevisionRow>(`SELECT revision,edited_by_identity_id,edited_at,reason_code,proposal,
+      revision_digest,auth_tag FROM work_batch_revisions WHERE tenant_id=$1 AND batch_id=$2
+      ORDER BY revision DESC LIMIT 1`, [this.scope.tenantId, row.id])).rows[0];
+    if (!revision) return original;
+    if (Number(revision.revision) !== Number(row.version)) throw new Error("work_batch_integrity_failed");
+    return this.#verifyRevision(revision, row.id);
+  }
+
   #verifyItem(row: ItemRow) {
     const material = { id: row.id, tenantId: row.tenant_id, batchId: row.batch_id,
       batchRevision: Number(row.batch_revision), projectId: row.project_id, localId: row.local_id,
@@ -511,9 +521,10 @@ export class WorkBatchOwnerServiceV1 {
           job_attempt_count,item_digest,auth_tag,created_at FROM work_batch_items
           WHERE tenant_id=$1 AND batch_id=$2 ORDER BY ordinal`, [this.scope.tenantId, row.id])).rows;
         this.#verifyDecision(row, items);
+        const proposal = await this.#currentProposal(tx, row);
         summaries.push({ batchId: row.id, projectId,
         state: row.state, revision: Number(row.version), proposedByIdentityId: row.proposed_by_identity_id,
-        proposedAt: iso(row.proposed_at), taskCount: this.#verifyBatch(row).tasks.length,
+        proposedAt: iso(row.proposed_at), taskCount: proposal.tasks.length,
         approvalIdentityId: row.approval_identity_id, decidedAt: row.approved_at ? iso(row.approved_at) : null });
       }
       return workBatchOwnerPageSchemaV1.parse({ batches: summaries,
@@ -531,12 +542,15 @@ export class WorkBatchOwnerServiceV1 {
         WHERE b.tenant_id=$1 AND b.state='proposed' AND a.id='attention:work-batch:' || b.id
           AND a.state='open' ORDER BY b.proposed_at,b.id LIMIT 100`, [this.scope.tenantId])).rows
         .filter(row => actor.can("tasks.read", row.project_id) && actor.can("work_batches.decide", row.project_id, true));
-      return workBatchOwnerPageSchemaV1.parse({ batches: rows.map(row => {
+      const batches = [];
+      for (const row of rows) {
         this.#verifyDecision(row, []);
-        return { batchId: row.id, projectId: row.project_id, state: row.state, revision: Number(row.version),
+        const proposal = await this.#currentProposal(tx, row);
+        batches.push({ batchId: row.id, projectId: row.project_id, state: row.state, revision: Number(row.version),
           proposedByIdentityId: row.proposed_by_identity_id, proposedAt: iso(row.proposed_at),
-          taskCount: this.#verifyBatch(row).tasks.length, approvalIdentityId: null, decidedAt: null };
-      }), startsWork: false, grantsExecutionAuthority: false });
+          taskCount: proposal.tasks.length, approvalIdentityId: null, decidedAt: null });
+      }
+      return workBatchOwnerPageSchemaV1.parse({ batches, startsWork: false, grantsExecutionAuthority: false });
     });
   }
 }
