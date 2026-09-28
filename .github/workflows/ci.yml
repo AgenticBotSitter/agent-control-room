@@ -131,7 +131,7 @@ jobs:
           branch="${HEAD_REF:-${REF_NAME}}"
           manifest="mutation-checks/${branch//\//-}.json"
           echo "path=${manifest}" >> "$GITHUB_OUTPUT"
-          if [ -f "${manifest}" ]; then echo "exists=true" >> "$GITHUB_OUTPUT"; else echo "exists=false" >> "$GITHUB_OUTPUT"; fi
+          if [ -e "${manifest}" ] || [ -L "${manifest}" ]; then echo "exists=true" >> "$GITHUB_OUTPUT"; else echo "exists=false" >> "$GITHUB_OUTPUT"; fi
       - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
         if: steps.manifest.outputs.exists == 'true'
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4

@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import test from "node:test";
 
 const verifier = resolve("scripts/ci/verify-mutation-checks.mjs");
@@ -32,7 +32,7 @@ function manifest(root, overrides = {}) {
     file: "src/guard.mjs",
     find: 'decision = "refuse"',
     replace: 'decision = "allow"',
-    test: 'node -e "process.exit(1)"',
+    test: 'node -e "const text=require(\'fs\').readFileSync(\'src/guard.mjs\',\'utf8\');process.exit(text.includes(\'allow\')?1:0)"',
     why: "the refusal must be enforced",
     ...overrides,
   }];
@@ -85,9 +85,9 @@ test("find must match exactly once, rejecting both zero and multiple matches", (
 test("a crashed test is caught, reported distinctly, and restores a clean checkout", () => {
   const root = fixture();
   try {
-    const path = manifest(root, { test: 'node -e "process.kill(process.pid, \'SIGTERM\')"' });
+    const path = manifest(root, { test: 'node -e "const fs=require(\'fs\');if(fs.readFileSync(\'src/guard.mjs\',\'utf8\').includes(\'allow\'))process.kill(process.pid,\'SIGTERM\')"' });
     const checks = JSON.parse(readFileSync(path, "utf8"));
-    checks.push({ ...checks[0], test: 'node -e "process.exit(1)"', why: "the next mutation sees a clean file" });
+    checks.push({ ...checks[0], why: "the next mutation sees a clean file" });
     writeFileSync(path, `${JSON.stringify(checks, null, 2)}\n`);
     git(root, "add", ".");
     git(root, "commit", "-qm", "second mutation");
@@ -159,10 +159,248 @@ test("the missing-manifest heuristic warns only for changed guard-like src lines
       env: { ...process.env, BASE_REF: "refs/heads/base" },
     });
     assert.equal(result.status, 0, output(result));
-    assert.match(output(result), /::warning::This PR changes guard-like code under src\/\*\*/u);
+    assert.match(output(result), /::warning::This PR changes guard-like code under src\/\*\*, db\/migrations\/\*\*, or db\/roles\/\*\*/u);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+test("a test that is already failing is rejected before any mutation is applied", () => {
+  const root = fixture();
+  try {
+    const path = manifest(root, { test: 'node -e "process.exit(1)"' });
+    const before = readFileSync(join(root, "src", "guard.mjs"), "utf8");
+    const result = run(root, path);
+    assert.equal(result.status, 1);
+    assert.match(output(result), /baseline failing with exit 1/u);
+    assert.equal(readFileSync(join(root, "src", "guard.mjs"), "utf8"), before);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a command-not-found exit is a configuration error, never a caught mutation", () => {
+  const root = fixture();
+  try {
+    const path = manifest(root, { test: "mutation-check-command-does-not-exist" });
+    const result = run(root, path);
+    assert.equal(result.status, 1);
+    assert.match(output(result), /configuration error \(exit 127\)/u);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a replacement containing dollar patterns is applied literally", () => {
+  const root = fixture();
+  try {
+    const path = manifest(root, {
+      find: 'decision = "refuse"',
+      replace: 'decision = "$&"',
+      test: 'node -e "const text=require(\'fs\').readFileSync(\'src/guard.mjs\',\'utf8\');process.exit(text.includes(String.fromCharCode(36,38))?1:0)"',
+    });
+    const result = run(root, path);
+    assert.equal(result.status, 0, output(result));
+    assert.match(output(result), /mutation was caught/u);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a timed-out mutated command restores the file", () => {
+  const root = fixture();
+  try {
+    const path = manifest(root, {
+      test: 'exec node -e "const fs=require(\'fs\');if(fs.readFileSync(\'src/guard.mjs\',\'utf8\').includes(\'allow\'))setInterval(()=>{},1000)"',
+    });
+    const before = readFileSync(join(root, "src", "guard.mjs"), "utf8");
+    const result = run(root, path, { MUTATION_CHECK_TIMEOUT_MS: "50" });
+    assert.equal(result.status, 1);
+    assert.match(output(result), /timed out after 50ms/u);
+    assert.equal(readFileSync(join(root, "src", "guard.mjs"), "utf8"), before);
+    assert.equal(git(root, "status", "--porcelain=v1"), "");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("SIGTERM during a mutated command restores the file", async () => {
+  const root = fixture();
+  try {
+    const path = manifest(root, {
+      test: 'exec node -e "const fs=require(\'fs\');if(fs.readFileSync(\'src/guard.mjs\',\'utf8\').includes(\'allow\'))setInterval(()=>{},1000)"',
+    });
+    const before = readFileSync(join(root, "src", "guard.mjs"), "utf8");
+    const child = spawn(process.execPath, [verifier, path], { cwd: root, stdio: ["ignore", "pipe", "pipe"] });
+    let transcript = "";
+    child.stdout.on("data", data => { transcript += data; });
+    child.stderr.on("data", data => { transcript += data; });
+    await new Promise(resolveDone => {
+      const ready = setInterval(() => {
+        if (transcript.includes("[1] src/guard.mjs")) {
+          clearInterval(ready);
+          child.kill("SIGTERM");
+        }
+      }, 10);
+      child.once("close", resolveDone);
+    });
+    assert.equal(readFileSync(join(root, "src", "guard.mjs"), "utf8"), before);
+    assert.equal(git(root, "status", "--porcelain=v1"), "");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a symlinked manifest is refused", () => {
+  const root = fixture();
+  try {
+    const actual = join(root, "actual.json");
+    writeFileSync(actual, "[]\n");
+    const path = join(root, "mutation-checks", "fixture.json");
+    symlinkSync(actual, path);
+    const result = run(root, path);
+    assert.equal(result.status, 1);
+    assert.match(output(result), /refusing symbolic-link manifest/u);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("an empty replacement deletes a guard line and is caught", () => {
+  const root = fixture();
+  try {
+    const path = manifest(root, {
+      find: 'export const decision = "refuse";\n',
+      replace: "",
+      test: 'node -e "const text=require(\'fs\').readFileSync(\'src/guard.mjs\',\'utf8\');process.exit(text.includes(\'refuse\')?0:1)"',
+    });
+    const result = run(root, path);
+    assert.equal(result.status, 0, output(result));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("the missing-manifest heuristic warns for GRANT changes under db", () => {
+  const root = fixture();
+  try {
+    mkdirSync(join(root, "db"));
+    mkdirSync(join(root, "db", "migrations"));
+    writeFileSync(join(root, "db", "migrations", "001.sql"), "SELECT 1;\n");
+    git(root, "add", ".");
+    git(root, "commit", "-qm", "migration");
+    git(root, "branch", "base");
+    writeFileSync(join(root, "db", "migrations", "001.sql"), "GRANT SELECT ON x TO y;\n");
+    git(root, "add", ".");
+    git(root, "commit", "-qm", "grant change");
+    const result = run(root, "--warn-only", { BASE_REF: "refs/heads/base" });
+    assert.equal(result.status, 0, output(result));
+    assert.match(output(result), /::warning::This PR changes guard-like code/u);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+function malformedEntry(root, overrides) {
+  return manifest(root, overrides);
+}
+
+test("a manifest file path cannot traverse out of the checkout", () => {
+  const root = fixture();
+  try {
+    const path = malformedEntry(root, { file: "../outside.mjs" });
+    const result = run(root, path);
+    assert.equal(result.status, 1);
+    assert.match(output(result), /file must stay inside the checkout/u);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("a manifest file path cannot be absolute", () => {
+  const root = fixture();
+  try {
+    const path = malformedEntry(root, { file: resolve(root, "src", "guard.mjs") });
+    const result = run(root, path);
+    assert.equal(result.status, 1);
+    assert.match(output(result), /file must stay inside the checkout/u);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("a manifest target cannot itself be a symbolic link", () => {
+  const root = fixture();
+  try {
+    const target = join(root, "src", "target.mjs");
+    writeFileSync(target, 'export const decision = "refuse";\n');
+    const link = join(root, "src", "linked.mjs");
+    symlinkSync(target, link);
+    git(root, "add", "src/target.mjs", "src/linked.mjs");
+    git(root, "commit", "-qm", "linked target");
+    const path = malformedEntry(root, { file: "src/linked.mjs" });
+    const result = run(root, path);
+    assert.equal(result.status, 1);
+    assert.match(output(result), /file must not be a symbolic link/u);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("a manifest target cannot resolve through a symbolic-link parent", () => {
+  const root = fixture();
+  try {
+    const outside = mkdtempSync(join(tmpdir(), "mutation-outside-"));
+    writeFileSync(join(outside, "guard.mjs"), 'export const decision = "refuse";\n');
+    symlinkSync(outside, join(root, "linked-parent"));
+    git(root, "add", "linked-parent");
+    git(root, "commit", "-qm", "linked parent");
+    const path = malformedEntry(root, { file: "linked-parent/guard.mjs" });
+    const result = run(root, path);
+    assert.equal(result.status, 1);
+    assert.match(output(result), /file must not resolve outside the checkout/u);
+    rmSync(outside, { recursive: true, force: true });
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("a manifest target must be tracked even when Git ignores it", () => {
+  const root = fixture();
+  try {
+    writeFileSync(join(root, ".gitignore"), "ignored.mjs\n");
+    git(root, "add", ".gitignore");
+    git(root, "commit", "-qm", "ignore fixture target");
+    const path = malformedEntry(root, { file: "ignored.mjs" });
+    writeFileSync(join(root, "ignored.mjs"), 'export const decision = "refuse";\n');
+    const result = run(root, path);
+    assert.equal(result.status, 1);
+    assert.match(output(result), /file must be tracked by Git/u);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("a manifest entry refuses extra schema fields", () => {
+  const root = fixture();
+  try {
+    const path = malformedEntry(root, { unexpected: "value" });
+    const result = run(root, path);
+    assert.equal(result.status, 1);
+    assert.match(output(result), /expected only file, find, replace, test, why/u);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("a manifest entry refuses a no-op replacement", () => {
+  const root = fixture();
+  try {
+    const path = malformedEntry(root, { replace: 'decision = "refuse"' });
+    const result = run(root, path);
+    assert.equal(result.status, 1);
+    assert.match(output(result), /find and replace must differ/u);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("a test-created stray file is reported distinctly after restoration", () => {
+  const root = fixture();
+  try {
+    const path = manifest(root, {
+      test: 'node -e "const fs=require(\'fs\');const text=fs.readFileSync(\'src/guard.mjs\',\'utf8\');if(text.includes(\'allow\')){fs.writeFileSync(\'stray.txt\',\'x\');process.exit(1)}"',
+    });
+    const result = run(root, path);
+    assert.equal(result.status, 1);
+    assert.match(output(result), /test command left the checkout dirty \(stray files or edits\): stray.txt/u);
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
 test("the CI job gates verification on a branch manifest and joins the merge gate", () => {
