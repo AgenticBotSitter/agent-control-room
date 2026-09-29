@@ -499,6 +499,117 @@ test("every installation ceiling refuses at its own boundary on the production c
   }
 });
 
+test("every ceiling refuses at exactly its limit and not one run earlier", needsPg, async t => {
+  // A ceiling of ZERO cannot tell `>` from `>=`: both refuse the very first
+  // run, so the boundary cases above prove nothing about the comparison. This
+  // probes each one where the two disagree, by spending exactly N units and
+  // then asking for one more. A ceiling of N must admit N runs and refuse
+  // run N+1. An off-by-one either way fails here.
+  const admin = superuser();
+  await admin.connect();
+  const web = productionPool("control_room_web");
+  const coordinator = productionPool("control_room_coordinator");
+  t.after(async () => { await web.close(); await coordinator.close(); await admin.end(); });
+  const key = new Uint8Array(32).fill(66);
+
+  // The one counted unit: a real advance receipt in this tenant.
+  const receiptsIn = (tenantId) => admin.query("SELECT count(*)::int count FROM pipeline_advance_receipts"
+    + " WHERE tenant_id=$1", [tenantId]).then(r => r.rows[0].count);
+  const harnessRunsIn = (tenantId) => admin.query("SELECT count(*)::int count FROM control_harness_runs"
+    + " WHERE tenant_id=$1 AND state IN('discovered','starting','running','waiting_input',"
+    + "'waiting_approval','cancelling')", [tenantId]).then(r => r.rows[0].count);
+
+  // Each case is its own installation, and `spend` is how many units it has
+  // genuinely spent before the ceiling is set to exactly `spend`. Spending a
+  // unit means a DIFFERENT run really advancing: replaying the same run's
+  // receipt is not a new unit, so a second run is seeded for every unit past
+  // the first. The ceiling is then set to what was really spent, and the next
+  // run must be refused while the ones before it were admitted. That is what
+  // kills a `>` -> `>=` off-by-one, which a ceiling of zero cannot see.
+  const spendThenProbe = async (suffix, spend, limits, reason) => {
+    const first = await seedInstallation(admin, suffix, key, new Date(webNow).toISOString());
+    const open = { runsPerHour: 100, runsPerAgentPerDay: 100, machineMaxAgentProcesses: 12,
+      machineMaxDbClusters: 6, dollarCapMicroUsd: null, observedDbClusters: 1 };
+    // Consent every run, then advance each one once: that is `spend` units.
+    const runs = [first];
+    let previous = first;
+    for (let round = 1; round < spend; round += 1) {
+      previous = await seedSecondRun(admin, previous, key, `${suffix}-${round}`);
+      runs.push(previous);
+    }
+    for (const run of runs) {
+      await ownerSetsUp(web, run, key, open);
+      if (run.pipeline.runId !== first.pipeline.runId) await ownerConsents(web, run, key);
+      const { service } = advanceService(coordinator, run, key);
+      assert.equal((await service.advance(run.pipeline.runId, run.policyId)).startsWork, true,
+        `${suffix}: every run up to the ceiling must be admitted`);
+    }
+    assert.equal(await receiptsIn(first.tenantId), spend, `${suffix}: exactly ${spend} units were claimed`);
+    // The ceiling is now exactly what has been spent, and one more run is asked for.
+    await ownerSetsUp(web, first, key, limits);
+    const probeRun = await seedSecondRun(admin, first, key, `${suffix}-probe`);
+    await ownerConsents(web, probeRun, key);
+    const { service, queuedCount } = advanceService(coordinator, probeRun, key);
+    await assert.rejects(service.advance(probeRun.pipeline.runId, probeRun.policyId),
+      error => error.safeReason === reason, `${suffix}: must refuse with ${reason}`);
+    assert.equal(queuedCount(), 0, `${suffix}: a refused run queues nothing`);
+    assert.equal(await receiptsIn(first.tenantId), spend, `${suffix}: a refused run claims no receipt`);
+  };
+
+  // runs per hour: one run is spent, so a ceiling of exactly 1 admits that run
+  // and must refuse the second. With `>=` the first run would be refused too.
+  await spendThenProbe("edge-hour", 1, { runsPerHour: 1, runsPerAgentPerDay: 100,
+    machineMaxAgentProcesses: 12, machineMaxDbClusters: 6, dollarCapMicroUsd: null, observedDbClusters: 1 },
+  "installation_runs_per_hour_exhausted");
+
+  // runs per agent per day: the same shape, on the per-worker counter.
+  await spendThenProbe("edge-agentday", 1, { runsPerHour: 100, runsPerAgentPerDay: 1,
+    machineMaxAgentProcesses: 12, machineMaxDbClusters: 6, dollarCapMicroUsd: null, observedDbClusters: 1 },
+  "installation_agent_runs_per_day_exhausted");
+
+  // The seed leaves one live harness run per stage, so the agent-process count
+  // is already 3. A ceiling of exactly 3 is spent and the next process is over.
+  const harnessOwn = await seedInstallation(admin, "edge-proc", key, new Date(webNow).toISOString());
+  assert.equal(await harnessRunsIn(harnessOwn.tenantId), 3, "the seed leaves three live harness runs");
+  await ownerSetsUp(web, harnessOwn, key, { runsPerHour: 6, runsPerAgentPerDay: 12, machineMaxAgentProcesses: 3,
+    machineMaxDbClusters: 6, dollarCapMicroUsd: null, observedDbClusters: 1 });
+  const procService = advanceService(coordinator, harnessOwn, key);
+  await assert.rejects(procService.service.advance(harnessOwn.pipeline.runId, harnessOwn.policyId),
+    error => error.safeReason === "installation_agent_process_ceiling_reached",
+    "a ceiling exactly equal to the live process count must refuse the next one");
+  assert.equal(procService.queuedCount(), 0);
+
+  // One cluster is reported and a ceiling of exactly 1 admits that one, so the
+  // SECOND cluster is over the line. One run is spent first, exactly as above.
+  await spendThenProbe("edge-cluster", 1, { runsPerHour: 100, runsPerAgentPerDay: 100,
+    machineMaxAgentProcesses: 12, machineMaxDbClusters: 1, dollarCapMicroUsd: null, observedDbClusters: 1 },
+  "installation_db_cluster_ceiling_reached");
+
+  // A dollar cap of exactly the cost about to be spent still fits, and one
+  // microusd less refuses. `cap - spent` is the real comparison, so a mutation
+  // that drops the subtraction is caught here.
+  const capOwn = await seedInstallation(admin, "edge-cost", key, new Date(webNow).toISOString());
+  const capService = advanceService(coordinator, capOwn, key,
+    { cost: { kind: "known", admittedCostMicroUsd: 100, evidenceDigest: sha256Digest("cost") } });
+  await ownerSetsUp(web, capOwn, key, { runsPerHour: 6, runsPerAgentPerDay: 12, machineMaxAgentProcesses: 12,
+    machineMaxDbClusters: 6, dollarCapMicroUsd: 100, observedDbClusters: 1 });
+  assert.equal((await capService.service.advance(capOwn.pipeline.runId, capOwn.policyId)).startsWork, true,
+    "a cap of exactly the next cost still fits");
+  assert.equal(await receiptsIn(capOwn.tenantId), 1);
+
+  // A second installation where the cap is one unit short of the next cost.
+  const shortOwn = await seedInstallation(admin, "edge-costshort", key, new Date(webNow).toISOString());
+  const shortService = advanceService(coordinator, shortOwn, key,
+    { cost: { kind: "known", admittedCostMicroUsd: 100, evidenceDigest: sha256Digest("cost") } });
+  await ownerSetsUp(web, shortOwn, key, { runsPerHour: 6, runsPerAgentPerDay: 12, machineMaxAgentProcesses: 12,
+    machineMaxDbClusters: 6, dollarCapMicroUsd: 99, observedDbClusters: 1 });
+  await assert.rejects(shortService.service.advance(shortOwn.pipeline.runId, shortOwn.policyId),
+    error => error.safeReason === "installation_cost_ceiling_exhausted",
+    "one microusd short of the next cost must refuse");
+  assert.equal(shortService.queuedCount(), 0);
+  assert.equal(await receiptsIn(shortOwn.tenantId), 0);
+});
+
 test("the loop ceiling stops the run and creates one real Needs Attention item", needsPg, async t => {
   const admin = superuser();
   await admin.connect();
@@ -707,4 +818,41 @@ test("two concurrent advances cannot both take the last unit of a ceiling", need
   assert.equal(third.status, "fulfilled", "the first claim on the second run must not be refused");
   // The queue saw exactly the two permitted effects, never four.
   assert.equal(firstService.queuedCount() + secondService.queuedCount(), 2);
+});
+
+test("a run ceiling of one admits exactly one run and refuses the second", needsPg, async t => {
+  const admin = superuser();
+  await admin.connect();
+  const web = productionPool("control_room_web");
+  const coordinator = productionPool("control_room_coordinator");
+  t.after(async () => { await web.close(); await coordinator.close(); await admin.end(); });
+  const key = new Uint8Array(32).fill(66);
+  // A ceiling of ONE is the boundary that distinguishes `>` from `>=`: with no
+  // run yet spent, exactly one must be admitted and the next must refuse. A
+  // ceiling of zero (tested above) cannot tell the two apart, so this one must.
+  const own = await seedInstallation(admin, "unitcap", key, new Date(webNow).toISOString());
+  const second = await seedSecondRun(admin, own, key);
+  const firstService = advanceService(coordinator, own, key);
+  const secondService = advanceService(coordinator, second, key);
+  await ownerSetsUp(web, own, key, { runsPerHour: 1, runsPerAgentPerDay: 1, machineMaxAgentProcesses: 12,
+    machineMaxDbClusters: 6, dollarCapMicroUsd: null, observedDbClusters: 1 });
+  await ownerConsents(web, second, key);
+
+  // The first run fits exactly at the ceiling of one.
+  assert.equal((await firstService.service.advance(own.pipeline.runId, own.policyId)).startsWork, true,
+    "a ceiling of one must admit one run");
+  assert.equal(firstService.queuedCount(), 1);
+  // The second is one past it, by either counting ceiling, and must refuse.
+  const denied = await secondService.service.advance(second.pipeline.runId, own.policyId)
+    .then(value => ({ ok: true, value }), error => ({ ok: false, reason: error?.safeReason }));
+  assert.equal(denied.ok, false, "the second run is past a ceiling of one and must refuse");
+  assert.ok(["installation_runs_per_hour_exhausted", "installation_agent_runs_per_day_exhausted"]
+    .includes(denied.reason), `refused by a run-count ceiling, got ${denied.reason}`);
+  assert.equal(secondService.queuedCount(), 0, "a refused run queues nothing");
+  assert.equal((await admin.query("SELECT count(*)::int count FROM pipeline_advance_receipts WHERE tenant_id=$1",
+    [own.tenantId])).rows[0].count, 1, "the refused run wrote no receipt");
+  // A lost response for the admitted run replays it and claims nothing further.
+  assert.equal((await firstService.service.advance(own.pipeline.runId, own.policyId)).replayed, true);
+  assert.equal((await admin.query("SELECT count(*)::int count FROM pipeline_advance_receipts WHERE tenant_id=$1",
+    [own.tenantId])).rows[0].count, 1, "a replay is not a second run");
 });
