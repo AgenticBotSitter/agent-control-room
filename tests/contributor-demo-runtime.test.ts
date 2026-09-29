@@ -12,6 +12,307 @@ import { createLocalPilotControlRoomClientV1 } from "../src/local-pilot/v1/contr
 import { createContributorDemoNodeHandler, createPrivateNodeHandler } from "../src/web/v1/private-node-handler";
 import { applyReadValidator } from "../src/web/v1/private-read-validator";
 import { nodeExchange } from "./helpers/web-node";
+import {
+  buildProtectedProjectCatalogHighWaterV1,
+  buildProtectedProjectCatalogV1,
+  buildProjectWorkspaceVerifiedOwnerSessionV1,
+  InMemoryProjectWorkspaceCatalogHighWaterStoreV1,
+  ProjectWorkspaceOwnerReadScopeAuthorityV1,
+  ProjectWorkspaceProtectedCatalogAuthorityV1,
+} from "../src/project-workspace/v1/catalog-session";
+import { ProjectWorkspaceContractErrorV1 } from "../src/project-workspace/v1/errors";
+import type { SecurityStore } from "../src/security";
+
+const scopeFixtureTenantId = "tenant:scope-fixture";
+const scopeFixtureWorkspaceId = "workspace:scope-fixture";
+const scopeFixtureProjectId = "project:scope-fixture";
+const scopeFixtureCatalogId = "catalog:scope-fixture";
+const scopeFixtureSourceIdentityDigest = `sha256:${"ab".repeat(32)}`;
+const scopeFixtureNow = "2026-09-29T16:00:00.000Z";
+
+function scopeFixtureKeys() {
+  return { catalogKey: new Uint8Array(32).fill(7), highWaterKey: new Uint8Array(32).fill(11) };
+}
+
+function buildScopeFixtureCatalog(recordedAt: string, catalogState: "active" | "revoked", entryStates: ("active" | "revoked")[]) {
+  const suffixes = ["", "-b", "-c", "-d"];
+  return buildProtectedProjectCatalogV1({
+    contractVersion: "control-room-project-workspace-catalog/v1",
+    catalogId: scopeFixtureCatalogId,
+    tenantId: scopeFixtureTenantId,
+    revision: 1,
+    previousCatalogDigest: null,
+    state: catalogState,
+    sourceKind: "protected_server_catalog",
+    sourceIdentityDigest: scopeFixtureSourceIdentityDigest,
+    recordedAt,
+    entries: entryStates.map((state, index) => ({
+      tenantId: scopeFixtureTenantId,
+      workspaceId: scopeFixtureWorkspaceId,
+      projectId: `${scopeFixtureProjectId}${suffixes[index] ?? `-x${index}`}`,
+      projectType: "contributor-demo",
+      state,
+      recordedAt,
+    })),
+    grantsApproval: false,
+    grantsNetworkAuthority: false,
+    grantsCommandAuthority: false,
+    grantsLeaseAuthority: false,
+    grantsExecutionAuthority: false,
+  }, scopeFixtureKeys().catalogKey);
+}
+
+function buildScopeFixtureCheckpoint(catalog: ReturnType<typeof buildScopeFixtureCatalog>, recordedAt: string) {
+  return buildProtectedProjectCatalogHighWaterV1({
+    catalog,
+    checkpointId: "checkpoint:scope-fixture-1",
+    recordedAt,
+  }, scopeFixtureKeys().catalogKey, scopeFixtureKeys().highWaterKey);
+}
+
+function buildScopeFixtureSession(tenantId: string, authenticatedAt: string, expiresAt: string) {
+  return buildProjectWorkspaceVerifiedOwnerSessionV1({
+    contractVersion: "control-room-project-workspace-owner-session/v1",
+    tenantId,
+    provider: "owner-session",
+    subject: "owner:ci-runner",
+    sessionIdDigest: `sha256:${"cd".repeat(32)}`,
+    authenticatedAt,
+    expiresAt,
+    readOnly: true,
+    grantsApproval: false,
+    grantsNetworkAuthority: false,
+    grantsCommandAuthority: false,
+    grantsLeaseAuthority: false,
+    grantsExecutionAuthority: false,
+  });
+}
+
+function buildScopeFixtureAuthorities(options: {
+  catalog: ReturnType<typeof buildScopeFixtureCatalog>;
+  checkpoint: ReturnType<typeof buildScopeFixtureCheckpoint>;
+  session: ReturnType<typeof buildScopeFixtureSession>;
+  tamperCheckpoint?: (value: ReturnType<typeof buildScopeFixtureCheckpoint>) => void;
+  readCheckpointDirectly?: boolean;
+}) {
+  const keys = scopeFixtureKeys();
+  const highWater = options.tamperCheckpoint || options.readCheckpointDirectly
+    ? {
+      read: async () => {
+        const copy = structuredClone(options.checkpoint);
+        options.tamperCheckpoint?.(copy);
+        return copy;
+      },
+    }
+    : (() => {
+      const store = new InMemoryProjectWorkspaceCatalogHighWaterStoreV1(keys.highWaterKey, { testOnly: true });
+      store.apply(options.checkpoint);
+      return store;
+    })();
+  const catalogAuthority = new ProjectWorkspaceProtectedCatalogAuthorityV1(
+    { read: async () => options.catalog },
+    highWater,
+    { catalogId: scopeFixtureCatalogId, tenantId: scopeFixtureTenantId, sourceIdentityDigest: scopeFixtureSourceIdentityDigest },
+    keys.catalogKey,
+    keys.highWaterKey,
+  );
+  const security = { authorizeRead: async () => ({ identityId: "owner:ci-runner", expiresAt: "2026-09-29T16:10:00.000Z" }) };
+  return new ProjectWorkspaceOwnerReadScopeAuthorityV1(
+    { verify: async () => options.session },
+    catalogAuthority,
+    security as unknown as SecurityStore,
+  );
+}
+
+function validScopeFixtureNow(): ReturnType<typeof buildScopeFixtureAuthorities> {
+  const catalog = buildScopeFixtureCatalog("2026-09-29T15:58:00.000Z", "active", ["active"]);
+  return buildScopeFixtureAuthorities({
+    catalog,
+    checkpoint: buildScopeFixtureCheckpoint(catalog, "2026-09-29T15:59:00.000Z"),
+    session: buildScopeFixtureSession(scopeFixtureTenantId, "2026-09-29T15:59:30.000Z", "2026-09-29T16:09:30.000Z"),
+  });
+}
+
+async function rejectsWithProjectWorkspaceCode(promise: Promise<unknown>, code: string) {
+  await assert.rejects(promise, (error: unknown) =>
+    error instanceof ProjectWorkspaceContractErrorV1 && error.safeCode === code);
+}
+
+test("project-workspace scope authority: happy path authorizes a valid owner session against a checkpointed catalog", async () => {
+  const scope = await validScopeFixtureNow().authorize({ credential: "credential:unused", projectId: scopeFixtureProjectId, now: scopeFixtureNow });
+  assert.deepEqual(
+    { tenantId: scope.tenantId, workspaceId: scope.workspaceId, projectId: scope.projectId },
+    { tenantId: scopeFixtureTenantId, workspaceId: scopeFixtureWorkspaceId, projectId: scopeFixtureProjectId },
+  );
+  const catalog = buildScopeFixtureCatalog("2026-09-29T15:58:00.000Z", "active", ["active"]);
+  const checkpoint = buildScopeFixtureCheckpoint(catalog, "2026-09-29T15:59:00.000Z");
+  assert.equal(scope.catalogId, scopeFixtureCatalogId);
+  assert.equal(scope.catalogRevision, 1);
+  assert.equal(scope.catalogDigest, catalog.catalogDigest);
+  assert.equal(scope.catalogCheckpointDigest, checkpoint.checkpointDigest);
+  const session = buildScopeFixtureSession(scopeFixtureTenantId, "2026-09-29T15:59:30.000Z", "2026-09-29T16:09:30.000Z");
+  assert.equal(scope.sessionDigest, session.sessionDigest);
+  assert.equal(scope.actorId, "owner:ci-runner");
+  assert.equal(scope.grantedAt, scopeFixtureNow);
+});
+
+test("project-workspace scope authority: expired owner session is rejected with authentication_required", async () => {
+  const catalog = buildScopeFixtureCatalog("2026-09-29T15:58:00.000Z", "active", ["active"]);
+  const authority = buildScopeFixtureAuthorities({
+    catalog,
+    checkpoint: buildScopeFixtureCheckpoint(catalog, "2026-09-29T15:59:00.000Z"),
+    session: buildScopeFixtureSession(scopeFixtureTenantId, "2026-09-29T15:40:00.000Z", "2026-09-29T15:50:00.000Z"),
+  });
+  await rejectsWithProjectWorkspaceCode(
+    authority.authorize({ credential: "credential:unused", projectId: scopeFixtureProjectId, now: scopeFixtureNow }),
+    "authentication_required",
+  );
+});
+
+test("project-workspace scope authority: stale catalog behind the checkpoint is rejected with catalog_rollback", async () => {
+  const keys = scopeFixtureKeys();
+  const first = buildProtectedProjectCatalogV1({
+    contractVersion: "control-room-project-workspace-catalog/v1",
+    catalogId: scopeFixtureCatalogId,
+    tenantId: scopeFixtureTenantId,
+    revision: 1,
+    previousCatalogDigest: null,
+    state: "active",
+    sourceKind: "protected_server_catalog",
+    sourceIdentityDigest: scopeFixtureSourceIdentityDigest,
+    recordedAt: "2026-09-29T15:55:00.000Z",
+    entries: [{
+      tenantId: scopeFixtureTenantId,
+      workspaceId: scopeFixtureWorkspaceId,
+      projectId: scopeFixtureProjectId,
+      projectType: "contributor-demo",
+      state: "active",
+      recordedAt: "2026-09-29T15:55:00.000Z",
+    }],
+    grantsApproval: false,
+    grantsNetworkAuthority: false,
+    grantsCommandAuthority: false,
+    grantsLeaseAuthority: false,
+    grantsExecutionAuthority: false,
+  }, keys.catalogKey);
+  const firstCheckpoint = buildProtectedProjectCatalogHighWaterV1({
+    catalog: first,
+    checkpointId: "checkpoint:scope-fixture-1",
+    recordedAt: "2026-09-29T15:55:00.000Z",
+  }, keys.catalogKey, keys.highWaterKey);
+  const second = buildProtectedProjectCatalogV1({
+    contractVersion: "control-room-project-workspace-catalog/v1",
+    catalogId: scopeFixtureCatalogId,
+    tenantId: scopeFixtureTenantId,
+    revision: 2,
+    previousCatalogDigest: first.catalogDigest,
+    state: "active",
+    sourceKind: "protected_server_catalog",
+    sourceIdentityDigest: scopeFixtureSourceIdentityDigest,
+    recordedAt: "2026-09-29T15:57:00.000Z",
+    entries: [{
+      tenantId: scopeFixtureTenantId,
+      workspaceId: scopeFixtureWorkspaceId,
+      projectId: scopeFixtureProjectId,
+      projectType: "contributor-demo",
+      state: "active",
+      recordedAt: "2026-09-29T15:55:00.000Z",
+    }],
+    grantsApproval: false,
+    grantsNetworkAuthority: false,
+    grantsCommandAuthority: false,
+    grantsLeaseAuthority: false,
+    grantsExecutionAuthority: false,
+  }, keys.catalogKey);
+  const secondCheckpoint = buildProtectedProjectCatalogHighWaterV1({
+    catalog: second,
+    prior: firstCheckpoint,
+    checkpointId: "checkpoint:scope-fixture-2",
+    recordedAt: "2026-09-29T15:57:00.000Z",
+  }, keys.catalogKey, keys.highWaterKey);
+  assert.ok(Date.parse(first.recordedAt) < Date.parse(secondCheckpoint.recordedAt),
+    "the stale catalog really is recorded before the checkpoint");
+  const authority = buildScopeFixtureAuthorities({
+    catalog: first,
+    checkpoint: secondCheckpoint,
+    session: buildScopeFixtureSession(scopeFixtureTenantId, "2026-09-29T15:59:30.000Z", "2026-09-29T16:09:30.000Z"),
+    readCheckpointDirectly: true,
+  });
+  await rejectsWithProjectWorkspaceCode(
+    authority.authorize({ credential: "credential:unused", projectId: scopeFixtureProjectId, now: scopeFixtureNow }),
+    "catalog_rollback",
+  );
+});
+
+test("project-workspace scope authority: tampered catalog digest is rejected with integrity_failed", async () => {
+  const catalog = buildScopeFixtureCatalog("2026-09-29T15:58:00.000Z", "active", ["active"]);
+  const tampered = structuredClone(catalog);
+  tampered.entries[0]!.projectId = "project:scope-tampered";
+  assert.notEqual(tampered.entries[0]!.projectId, catalog.entries[0]!.projectId);
+  const authority = buildScopeFixtureAuthorities({
+    catalog: tampered,
+    checkpoint: buildScopeFixtureCheckpoint(catalog, "2026-09-29T15:59:00.000Z"),
+    session: buildScopeFixtureSession(scopeFixtureTenantId, "2026-09-29T15:59:30.000Z", "2026-09-29T16:09:30.000Z"),
+  });
+  await rejectsWithProjectWorkspaceCode(
+    authority.authorize({ credential: "credential:unused", projectId: scopeFixtureProjectId, now: scopeFixtureNow }),
+    "integrity_failed",
+  );
+});
+
+test("project-workspace scope authority: tampered checkpoint digest is rejected with integrity_failed", async () => {
+  const catalog = buildScopeFixtureCatalog("2026-09-29T15:58:00.000Z", "active", ["active"]);
+  const authority = buildScopeFixtureAuthorities({
+    catalog,
+    checkpoint: buildScopeFixtureCheckpoint(catalog, "2026-09-29T15:59:00.000Z"),
+    session: buildScopeFixtureSession(scopeFixtureTenantId, "2026-09-29T15:59:30.000Z", "2026-09-29T16:09:30.000Z"),
+    tamperCheckpoint: (copy) => { copy.projects[0]!.projectId = "project:scope-tampered"; },
+  });
+  await rejectsWithProjectWorkspaceCode(
+    authority.authorize({ credential: "credential:unused", projectId: scopeFixtureProjectId, now: scopeFixtureNow }),
+    "integrity_failed",
+  );
+});
+
+test("project-workspace scope authority: session tenant mismatch is rejected with scope_mismatch", async () => {
+  const catalog = buildScopeFixtureCatalog("2026-09-29T15:58:00.000Z", "active", ["active"]);
+  const authority = buildScopeFixtureAuthorities({
+    catalog,
+    checkpoint: buildScopeFixtureCheckpoint(catalog, "2026-09-29T15:59:00.000Z"),
+    session: buildScopeFixtureSession("tenant:other-fixture", "2026-09-29T15:59:30.000Z", "2026-09-29T16:09:30.000Z"),
+  });
+  await rejectsWithProjectWorkspaceCode(
+    authority.authorize({ credential: "credential:unused", projectId: scopeFixtureProjectId, now: scopeFixtureNow }),
+    "scope_mismatch",
+  );
+});
+
+test("project-workspace scope authority: revoked catalog and revoked entry are rejected with catalog_revoked", async () => {
+  const revokedCatalog = buildScopeFixtureCatalog("2026-09-29T15:58:00.000Z", "revoked", ["revoked"]);
+  const revokedCatalogAuthority = buildScopeFixtureAuthorities({
+    catalog: revokedCatalog,
+    checkpoint: buildScopeFixtureCheckpoint(revokedCatalog, "2026-09-29T15:59:00.000Z"),
+    session: buildScopeFixtureSession(scopeFixtureTenantId, "2026-09-29T15:59:30.000Z", "2026-09-29T16:09:30.000Z"),
+  });
+  await rejectsWithProjectWorkspaceCode(
+    revokedCatalogAuthority.authorize({ credential: "credential:unused", projectId: scopeFixtureProjectId, now: scopeFixtureNow }),
+    "catalog_revoked",
+  );
+  await rejectsWithProjectWorkspaceCode(
+    revokedCatalogAuthority.authorize({ credential: "credential:unused", projectId: "project:scope-absent", now: scopeFixtureNow }),
+    "catalog_revoked",
+  );
+  const revokedEntryCatalog = buildScopeFixtureCatalog("2026-09-29T15:58:00.000Z", "active", ["active", "revoked"]);
+  const revokedEntryAuthority = buildScopeFixtureAuthorities({
+    catalog: revokedEntryCatalog,
+    checkpoint: buildScopeFixtureCheckpoint(revokedEntryCatalog, "2026-09-29T15:59:00.000Z"),
+    session: buildScopeFixtureSession(scopeFixtureTenantId, "2026-09-29T15:59:30.000Z", "2026-09-29T16:09:30.000Z"),
+  });
+  await rejectsWithProjectWorkspaceCode(
+    revokedEntryAuthority.authorize({ credential: "credential:unused", projectId: `${scopeFixtureProjectId}-b`, now: scopeFixtureNow }),
+    "catalog_revoked",
+  );
+});
 
 test("disposable demo uses real local authentication and project/task services, then removes its data", async t => {
   const demo = await createContributorDemoRuntime(process.cwd());
