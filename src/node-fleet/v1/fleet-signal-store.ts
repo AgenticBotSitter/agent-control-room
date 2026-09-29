@@ -75,7 +75,11 @@ export class FleetSignalStore {
       `SELECT signal_sequence FROM control_node_fleet_signals WHERE tenant_id=$1 AND node_id=$2 AND signal_kind=$3 ORDER BY signal_sequence DESC LIMIT 1 FOR UPDATE`,
       [signal.tenantId, signal.nodeId, signal.kind],
     );
-    if (signal.sequence !== (last.rows[0]?.signal_sequence ?? 0) + 1) throw new FleetSignalStoreError("sequence_conflict");
+    // PostgreSQL BIGINT is returned as a string by pg. Normalize before
+    // incrementing; otherwise sequence 2 is compared with the string "11".
+    const priorSequence = Number(last.rows[0]?.signal_sequence ?? 0);
+    if (!Number.isSafeInteger(priorSequence) || priorSequence < 0 || signal.sequence !== priorSequence + 1)
+      throw new FleetSignalStoreError("sequence_conflict");
     await tx.query(
       `INSERT INTO control_node_fleet_signals (tenant_id,node_id,signal_kind,signal_sequence,payload_digest,fingerprint,trust,observed_at,expires_at,payload,recorded_at)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11)`,

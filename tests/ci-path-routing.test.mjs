@@ -259,6 +259,25 @@ test("the merge gate cannot be skipped by anything the pull request controls", (
     !/needs\.route\.outputs/u.test(header),
     "routing must never gate the merge-check job itself, only which lanes run early",
   );
+  assert.match(header, /full-mac-local-rehearsal/u, "the full rehearsal must be required by the merge gate");
+});
+
+test("the full Mac-local rehearsal is isolated, fake, PG17, and runs every supported mode", () => {
+  const start = workflow.indexOf("  full-mac-local-rehearsal:");
+  const end = workflow.indexOf("\n  full-gate:", start);
+  assert.ok(start > 0 && end > start, "the full rehearsal job must exist before the catch-up gate");
+  const job = workflow.slice(start, end);
+  assert.match(job, /name: Full Mac-local rehearsal/u);
+  assert.match(job, /runs-on: ubuntu-latest/u);
+  assert.match(job, /PG_BIN: \/usr\/lib\/postgresql\/17\/bin/u);
+  assert.match(job, /postgresql-17/u);
+  assert.match(job, /mktemp -d/u);
+  assert.match(job, /--fake-executables/u);
+  assert.match(job, /mac:prepare-task-runtime/u);
+  assert.match(job, /journey\.ts "\$\{rehearsal_root\}"/u);
+  assert.match(job, /run_rehearsal "--model-allowlists"/u);
+  assert.match(job, /trap cleanup EXIT INT TERM/u);
+  assert.ok(!/secrets\./u.test(job), "the fake rehearsal must not receive secrets");
 });
 
 test("every lane the fast path can skip has a merge-gate counterpart", () => {
@@ -272,6 +291,16 @@ test("every lane the fast path can skip has a merge-gate counterpart", () => {
   }
   // And the gate must not run a lane twice when the fast path already ran it.
   assert.ok(!/needs\.route\.outputs\.\w+ == 'true'/u.test(gateJob));
+});
+
+test("a skipped catch-up lane does not register a cache save for a store it never created", () => {
+  const start = workflow.indexOf("  full-gate:");
+  const end = workflow.indexOf("\n  merge-gate:", start);
+  assert.ok(start > 0 && end > start, "the catch-up matrix must exist");
+  const catchUp = workflow.slice(start, end);
+  assert.doesNotMatch(catchUp, /cache:\s*pnpm/u);
+  assert.match(catchUp, /pnpm install --frozen-lockfile --ignore-scripts/u,
+    "a catch-up lane that does run must still install the frozen graph");
 });
 
 test("routing decisions reach the lanes through the route job's outputs", () => {
@@ -290,6 +319,7 @@ test("every action stays on the reviewed allowlist and stays pinned to a commit 
     ["actions/checkout", "11d5960a326750d5838078e36cf38b85af677262"],
     ["pnpm/action-setup", "b906affcce14559ad1aafd4ab0e942779e9f58b1"],
     ["actions/setup-node", "49933ea5288caeca8642d1e84afbd3f7d6820020"],
+    ["actions/upload-artifact", "ea165f8d65b6e75b540449e92b4886f43607fa02"],
   ]);
   const uses = [...workflow.matchAll(/^\s*-?\s*uses:\s*(\S+)(.*)$/gm)].map((match) => ({
     reference: match[1],
@@ -316,12 +346,13 @@ test("the workflow keeps its read-only, fork-safe shape", () => {
   assert.match(workflow, /^permissions:\n {2}contents: read$/mu, "contents must stay read-only");
   assert.match(workflow, /persist-credentials: false/u);
   assert.match(workflow, /pnpm install --frozen-lockfile --ignore-scripts/u);
-  // Anchored to the expression form, not the word: the header comment says the run
-  // has no access to secrets, and a substring search matches that prose.
-  assert.ok(
-    !/\$\{\{\s*secrets\./u.test(workflow),
-    "the workflow must not read secrets",
-  );
+  const secretExpressions = [...workflow.matchAll(/\$\{\{\s*secrets\.([A-Z0-9_]+)\s*\}\}/gu)]
+    .map(match => match[1]);
+  assert.deepEqual(secretExpressions, ["CONTROL_ROOM_PRIVATE_NAMES"],
+    "only the optional private-name denylist may be read");
+  assert.match(workflow,
+    /CONTROL_ROOM_PRIVATE_NAMES:\s*\$\{\{\s*secrets\.CONTROL_ROOM_PRIVATE_NAMES\s*\}\}/u,
+    "the denylist must be passed only through the guard's named environment variable");
   assert.ok(!/runs-on:.*self-hosted/u.test(workflow), "no contributor-hosted runners");
   assert.match(workflow, /cancel-in-progress: true/u, "superseded runs must still cancel");
 });

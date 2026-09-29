@@ -18,6 +18,7 @@ test("planProductBrowserJourneys: schema advertises the journey set and never cl
   assert.deepEqual(titles, [
     "Create project A and open its overview",
     "Save a task under project A and follow its protected detail",
+    "Read local setup and worker availability without inventing live proof",
     "Create project B and confirm navigation stays inside it",
     "Reconnect a browser context and prove project A still has its task",
     "Walk the Files, Reviews, Activity, Settings pages at 360px and 1280px",

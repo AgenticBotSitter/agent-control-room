@@ -83,7 +83,11 @@ export function OperatorCapacityWorkspace({ view, unavailableCode, onRetry }: {
       {view.workers.map(worker => <li key={worker.workerId}><strong>{worker.workerId}</strong>
         <span>{worker.platform} · {worker.state} · {worker.capacity.evidence === "measured"
           ? `capacity ${worker.capacity.value.availableSlots} of ${worker.capacity.value.totalSlots} slots`
-          : `capacity unavailable — ${unavailableCopy[worker.capacity.reasonCode]}`} · {worker.attribution === "self_reported" ? "self-reported" : "no capacity reported by this row"}</span></li>)}
+          : `capacity unavailable — ${unavailableCopy[worker.capacity.reasonCode]}`} · capability {worker.capability.evidence === "measured"
+            ? worker.capability.value
+            : worker.capability.evidence === "inferred"
+              ? `${worker.capability.value} (inferred)`
+              : `unavailable — ${unavailableCopy[worker.capability.reasonCode]}`} · {worker.attribution === "self_reported" ? "self-reported" : "no capacity reported by this row"}</span></li>)}
     </ul>
 
     <h3>Active work and queue pressure</h3>
@@ -140,32 +144,44 @@ export function PrivateOperatorCapacityWorkspace({ client }: {
   const [view, setView] = useState<OperatorCapacityViewV1>();
   const [code, setCode] = useState<ReadFailureCode>();
   const [pending, setPending] = useState(true);
+  const [refreshRequest, setRefreshRequest] = useState(0);
   // Every read takes a generation, including a retry, so a slower earlier read can
   // never overwrite a newer result and a rejected read always clears the panel.
   const generation = useRef(0);
-  const run = (): void => {
+  useEffect(() => {
+    let active = true;
     const current = ++generation.current;
     setPending(true);
     setCode(undefined);
     void Promise.resolve()
       .then(() => read())
       .then(result => {
-        if (current !== generation.current) return;
+        if (!active || current !== generation.current) return;
         setPending(false);
         if (result.state === "available") { setView(result.view); setCode(undefined); }
         else { setView(undefined); setCode(result.code); }
       })
       .catch(() => {
-        if (current !== generation.current) return;
+        if (!active || current !== generation.current) return;
         setPending(false);
         setView(undefined);
         setCode("request_failed");
       });
-  };
-  useEffect(() => { run(); /* eslint-disable-line react-hooks/exhaustive-deps -- reads once per client */ }, [read]);
+    return () => { active = false; };
+  }, [read, refreshRequest]);
+  useEffect(() => {
+    // The worker panel is a read-only observation. Refresh only while this
+    // tab is visible so an open browser gets fresher capacity and outcome
+    // evidence without creating background work or browser-side authority.
+    const refreshVisible = () => { if (!document.hidden) setRefreshRequest(value => value + 1); };
+    const interval = setInterval(refreshVisible, 30_000);
+    window.addEventListener("focus", refreshVisible);
+    document.addEventListener("visibilitychange", refreshVisible);
+    return () => { clearInterval(interval); window.removeEventListener("focus", refreshVisible); document.removeEventListener("visibilitychange", refreshVisible); };
+  }, []);
   if (pending) return <section className="private-panel" aria-labelledby="operator-capacity-title" aria-live="polite">
     <h2 id="operator-capacity-title">Operator capacity</h2>
     <p>Reading the recorded capacity and outcome evidence.</p>
   </section>;
-  return <OperatorCapacityWorkspace view={view} unavailableCode={code} onRetry={run} />;
+  return <OperatorCapacityWorkspace view={view} unavailableCode={code} onRetry={() => setRefreshRequest(value => value + 1)} />;
 }

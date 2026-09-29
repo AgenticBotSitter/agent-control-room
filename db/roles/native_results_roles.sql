@@ -23,11 +23,13 @@ GRANT SELECT ON workspaces, control_identities, control_role_grants, projects,
   control_harness_runs, control_harness_run_events, control_codex_result_publications, control_native_review_plans,
   control_artifact_manifests, control_native_artifact_receipts,
   control_completion_gate_records, control_completion_gate_integrity, audit_events,
-  control_audit_chain_heads TO control_room_native_results;
+  control_audit_chain_heads, control_idea_sessions, control_idea_canonical_task_links,
+  control_idea_contributions, control_idea_decisions TO control_room_native_results;
 GRANT INSERT ON control_native_review_plans, control_completion_gate_records,
-  audit_events, control_audit_chain_heads TO control_room_native_results;
+  audit_events, control_audit_chain_heads, control_idea_contributions TO control_room_native_results;
 GRANT UPDATE (result_lock) ON control_jobs TO control_room_native_results;
 GRANT UPDATE (coordinator_lock) ON control_harness_runs, projects TO control_room_native_results;
+GRANT UPDATE (results_lock) ON control_native_review_plans, control_native_artifact_receipts TO control_room_native_results;
 GRANT UPDATE (web_lock) ON control_completion_gate_records TO control_room_native_results;
 GRANT UPDATE (web_lock, revision, record_count, state_digest, state_auth_tag)
   ON control_completion_gate_integrity TO control_room_native_results;

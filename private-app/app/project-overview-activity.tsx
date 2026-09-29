@@ -24,7 +24,7 @@ export function ProjectOverviewActivityView({ state, projectId }: { state: Overv
   if (state.state === "unavailable") return <section className="private-panel"><h2>Project activity</h2>
     <p role="alert">{state.code === "access_denied" ? "Your current access does not include this project’s tasks."
       : state.code === "authentication_required" ? "Your session has ended. Sign in again to see this project’s work."
-        : "This project’s task activity is unavailable. No empty project or all-clear is inferred."}</p></section>;
+        : "The saved database or protected task-activity read could not be checked. No empty project or all-clear is inferred, and checking again does not start work."}</p></section>;
   const { value } = state;
   return <div className="private-dashboard-grid private-project-overview-grid">
     <section className="private-panel"><h2>Current work</h2>
@@ -59,5 +59,5 @@ export function ProjectOverviewActivity({ projectId }: { projectId: string }) {
     return () => abort.abort();
   }, [projectId, generation]);
   return <><ProjectOverviewActivityView state={state} projectId={projectId} />
-    <button type="button" onClick={() => setGeneration(value => value + 1)}>Refresh project activity</button></>;
+    <button type="button" onClick={() => setGeneration(value => value + 1)}>Check saved project activity again</button></>;
 }

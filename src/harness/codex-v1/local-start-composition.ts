@@ -1,19 +1,19 @@
 import type { SqliteBridgeJournal } from '../../node-bridge/journal';
 import { sha256Digest } from '../../security/canonical-digest';
 import { createCodexStartAdmissionV1 } from './admission-contract';
-import { journaledWorkspacePort } from './journaled-workspace-port';
 import { createCodexLocalStartRuntimeV1, type CodexLocalStartAuthorityV1,
   type CodexLocalStartBindingV1 } from './local-start-runtime';
+import { createCodexDeliveryBoundWorkspacePreparationV1,
+  type CodexDeliveryBoundWorkspacePolicyV1 } from './delivery-bound-workspace-preparation';
 import type { CodexOwnedStartV1 } from './owned-start';
 import type { SqliteCodexStartJournalV1 } from './start-journal';
 import type { ObservableGitWorkspacePort } from './git-workspace-port';
-import { CodexWorkspaceManagerV1 } from './workspace';
 import { parseWorkspaceIntent } from '../../node-bridge/workspace-intent';
 
 type BridgeStartJournal = Pick<SqliteBridgeJournal,
   'acceptedCodexActivation' | 'reserveWorkspaceIntent' | 'recordWorkspaceRoots' | 'recordWorkspaceCreation'
   | 'reserveWorkspaceRemoval' | 'recordWorkspaceRemoved'>;
-type StartJournal = Pick<SqliteCodexStartJournalV1, 'reserveStart' | 'recordThread' | 'recordTurn'>;
+type StartJournal = Pick<SqliteCodexStartJournalV1, 'reserveStart' | 'recordThread' | 'recordTurn' | 'recordCleanup'>;
 
 const unavailable = (): never => { throw new Error('codex_local_start_composition_unavailable'); };
 
@@ -49,6 +49,7 @@ export function createCodexLocalStartCompositionV1(input: {
   bridgeJournal: BridgeStartJournal;
   startJournal: StartJournal;
   workspacePort: ObservableGitWorkspacePort;
+  workspacePolicy: CodexDeliveryBoundWorkspacePolicyV1;
   authority: CodexLocalStartAuthorityV1;
   ownedStart: CodexOwnedStartV1;
   clock: () => number;
@@ -66,14 +67,8 @@ export function createCodexLocalStartCompositionV1(input: {
     reserveStart: input.startJournal.reserveStart.bind(input.startJournal),
     recordThread: input.startJournal.recordThread.bind(input.startJournal),
     recordTurn: input.startJournal.recordTurn.bind(input.startJournal),
+    recordCleanup: input.startJournal.recordCleanup.bind(input.startJournal),
   };
-  const workspacePort: ObservableGitWorkspacePort = Object.freeze({
-    inspectRootIdentities: input.workspacePort.inspectRootIdentities.bind(input.workspacePort),
-    observeCheckout: input.workspacePort.observeCheckout.bind(input.workspacePort),
-    inspectExisting: input.workspacePort.inspectExisting.bind(input.workspacePort),
-    createDetachedWorktree: input.workspacePort.createDetachedWorktree.bind(input.workspacePort),
-    removeWorktree: input.workspacePort.removeWorktree.bind(input.workspacePort),
-  });
   const ownedStart: CodexOwnedStartV1 = Object.freeze({
     startThread: input.ownedStart.startThread.bind(input.ownedStart),
     startTurn: input.ownedStart.startTurn.bind(input.ownedStart),
@@ -84,7 +79,9 @@ export function createCodexLocalStartCompositionV1(input: {
     assertCurrent: input.authority.assertCurrent.bind(input.authority),
   });
 
-  return createCodexLocalStartRuntimeV1({
+  const workspace = createCodexDeliveryBoundWorkspacePreparationV1({ workspaceIntent: intent,
+    workspacePort: input.workspacePort, journal: bridge, policy: input.workspacePolicy });
+  const runtime = createCodexLocalStartRuntimeV1({
     queueId: input.queueId,
     connectionAttemptId: input.connectionAttemptId,
     initializedConnectionDigest: input.initializedConnectionDigest,
@@ -93,17 +90,8 @@ export function createCodexLocalStartCompositionV1(input: {
     activationEvidence: bridge,
     authority,
     reservation: { reserveExactStart: starts.reserveStart },
-    receipts: { recordThread: starts.recordThread, recordTurn: starts.recordTurn },
-    workspace: { async prepare(binding, assertCurrent) {
-      assertWorkspaceBinding(binding, intent);
-      const port = journaledWorkspacePort({ port: workspacePort, journal: bridge, intent, assertCurrent });
-      const manager = new CodexWorkspaceManagerV1(port);
-      const lease = await manager.prepare({ runId: intent.runId, repositoryRoot: intent.repositoryRoot,
-        workspaceRoot: intent.workspaceRoot, revision: intent.revision });
-      assertCurrent();
-      if (lease.checkoutPath !== binding.activation.workspacePath || lease.runId !== binding.activation.runId
-        || lease.revision !== intent.revision) unavailable();
-    } },
+    receipts: { recordThread: starts.recordThread, recordTurn: starts.recordTurn, recordCleanup: starts.recordCleanup },
+    workspace,
     ownedStart,
     admissionFactory: { create: binding => {
       assertWorkspaceBinding(binding, intent);
@@ -130,4 +118,5 @@ export function createCodexLocalStartCompositionV1(input: {
     } },
     clock: input.clock.bind(input),
   });
+  return Object.freeze({ bindDelivery: workspace.bindDelivery, start: runtime.start, close: runtime.close });
 }

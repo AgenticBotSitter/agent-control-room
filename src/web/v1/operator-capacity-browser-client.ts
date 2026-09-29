@@ -341,8 +341,9 @@ type FetchLike = (input: RequestInfo | URL, init?: RequestInit) => Promise<Respo
 export async function readOperatorCapacityViewV1(input: {
   fetcher?: FetchLike;
   modelOutcomeEvidence?: readonly ReportedModelOutcomeRecordV1[];
+  signal?: AbortSignal;
 } = {}): Promise<OperatorCapacityReadV1> {
-  const read = await fetchOperatorSurfaceSnapshotV1(input.fetcher ?? fetch);
+  const read = await fetchOperatorSurfaceSnapshotV1(input.fetcher ?? fetch, input.signal);
   if (read.state === "available") {
     try {
       return { state: "available", view: projectOperatorCapacityViewV1({

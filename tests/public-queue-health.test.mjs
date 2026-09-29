@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  DEFAULT_MAX_PAGES, DEFAULT_ADVISORY_LOGINS, READY_FLOOR, STATUSES,
-  declaredSubmissionIssue, parseClaimMarker, readQueueHealth, renderQueueHealth, renderQueueHealthJson,
+  ADVISORY_LOGINS_ENV, DEFAULT_MAX_PAGES, DEFAULT_ADVISORY_LOGINS, READY_FLOOR, STATUSES,
+  advisoryLoginsFromEnv, argumentsFor, declaredSubmissionIssue, parseAdvisoryLogins, parseClaimMarker,
+  readQueueHealth, renderQueueHealth, renderQueueHealthJson,
 } from "../scripts/public-queue-health.mjs";
 import { parseClaimPacket, packetHash } from "../scripts/automatic-claim-controller.mjs";
 
@@ -186,7 +187,7 @@ test("a status that needs an action label but has none is reported with its resp
   assert.ok(anomaly.codes.includes("action_label_missing"));
   assert.equal(anomaly.responsibilityArea, "Reviewer: review the exact submitted commit.");
   assert.equal(report.oldestReview.issue, 125);
-  assert.doesNotMatch(anomaly.responsibilityArea, /codex|claude|marvin|hermes|gpt|@/i);
+  assert.doesNotMatch(anomaly.responsibilityArea, /codex|claude|hermes-worker|hermes|gpt|@/i);
 });
 
 test("stale reviews and corrections report the oldest item and its age", async () => {
@@ -403,7 +404,7 @@ test("the human-readable report states who acts next for the oldest review and c
   assert.equal(report.oldestCorrection.responsibilityArea, "Original worker: correct the same pull request.");
   // Areas name a role, never a preferred person, login or bot brand.
   const areas = [report.oldestReview.responsibilityArea, report.oldestCorrection.responsibilityArea];
-  for (const area of areas) assert.doesNotMatch(area, /codex|claude|marvin|ziggy|johnny5|hermes|gpt|@/i);
+  for (const area of areas) assert.doesNotMatch(area, /codex|claude|hermes-worker|pc-worker|vps-operator|hermes|gpt|@/i);
 });
 
 test("pagination stays bounded and the report declares its own uncertainty", async () => {
@@ -439,7 +440,7 @@ test("authority comes from the controller, never from repository membership", as
   // NONE), so membership can neither identify a poster nor authorize one.
   const controller = fakeFetch({
     issues: [issue(199, ["status:working"])],
-    comments: { 199: [comment(claimMarker(199, "marvin-project-templates-01"), "NONE", "github-actions[bot]", "Bot")] },
+    comments: { 199: [comment(claimMarker(199, "hermes-worker-project-templates-01"), "NONE", "github-actions[bot]", "Bot")] },
   });
   const controllerReport = await readQueueHealth({ fetchImpl: controller.fetchImpl });
   assert.equal(controllerReport.claimedAssignments, 1);
@@ -449,10 +450,10 @@ test("authority comes from the controller, never from repository membership", as
   // authoritative and the gap in authority is reported rather than hidden.
   const advisory = fakeFetch({
     issues: [issue(170, ["status:changes-required", "action:worker"])],
-    comments: { 170: [comment(actionMarker("worker:test-01", "changes-required", 170), "CONTRIBUTOR", "MarvinAi5")] },
+    comments: { 170: [comment(actionMarker("worker:test-01", "changes-required", 170), "CONTRIBUTOR", "owner-account")] },
     pulls: [pull(303, 170)],
   });
-  const advisoryReport = await readQueueHealth({ fetchImpl: advisory.fetchImpl });
+  const advisoryReport = await readQueueHealth({ fetchImpl: advisory.fetchImpl, advisoryLogins: ["owner-account"] });
   assert.equal(advisoryReport.oldestCorrection.workerId, "worker:test-01");
   assert.equal(advisoryReport.oldestCorrection.recordTrust, "advisory");
   assert.deepEqual(advisoryReport.anomalies.find(item => item.issue === 170).codes,
@@ -473,7 +474,7 @@ test("authority comes from the controller, never from repository membership", as
       ["worker_action_marker_missing"], `${association} must not grant trust`);
   }
 
-  assert.ok(DEFAULT_ADVISORY_LOGINS.includes("MarvinAi5"));
+  assert.deepEqual(DEFAULT_ADVISORY_LOGINS, []);
   assert.ok(!DEFAULT_ADVISORY_LOGINS.includes("github-actions[bot]"),
     "the controller is authoritative through its bot identity, not a login allowlist");
 });
@@ -549,8 +550,8 @@ test("rendered output never publishes a credential value", async () => {
 });
 
 test("claim markers are parsed only in the exact bounded controller form", () => {
-  assert.deepEqual(parseClaimMarker(`CLAIM ACCEPTED\n<!-- agent-control-room-claim:v2 issue=199 request=1 actor=maintainer worker=marvin-project-templates-01 -->`),
-    { issue: 199, request: 1, actor: "maintainer", workerId: "marvin-project-templates-01" });
+  assert.deepEqual(parseClaimMarker(`CLAIM ACCEPTED\n<!-- agent-control-room-claim:v2 issue=199 request=1 actor=maintainer worker=hermes-worker-project-templates-01 -->`),
+    { issue: 199, request: 1, actor: "maintainer", workerId: "hermes-worker-project-templates-01" });
   for (const value of ["CLAIM ACCEPTED", "<!-- agent-control-room-claim:v2 issue=199 -->",
     "<!-- agent-control-room-claim:v2 issue=199 request=1 actor=a worker=b -->"])
     assert.equal(parseClaimMarker(value), undefined);
@@ -618,4 +619,119 @@ test("failed history, locks and evaluator observations block with errors", async
   assert.ok(headersSeen.every(value => value === "Bearer sentinel-qh-token"));
   assert.ok(!JSON.stringify(tokenReport).includes("sentinel-qh-token"));
   assert.deepEqual(tokenReport.blockedOffers.filter(offer => offer.issue === 331), []);
+});
+
+// Every login in this block is synthetic. None is a real account, and none may be
+// replaced by a real one: the point of the tests is to prove the configuration path,
+// not to grant any identity advisory recognition.
+const SYNTHETIC = Object.freeze({
+  primary: "synthetic-advisory-primary",
+  secondary: "synthetic-advisory-secondary",
+  unconfigured: "synthetic-advisory-unconfigured",
+});
+
+test("advisory logins are supplied by environment variable, comma-separated", () => {
+  assert.equal(ADVISORY_LOGINS_ENV, "CONTROL_ROOM_ADVISORY_LOGINS");
+  assert.deepEqual(
+    advisoryLoginsFromEnv({ [ADVISORY_LOGINS_ENV]: `${SYNTHETIC.primary},${SYNTHETIC.secondary}` }),
+    [SYNTHETIC.primary, SYNTHETIC.secondary]);
+  // Whitespace around a value is a separator artefact, not part of the login.
+  assert.deepEqual(
+    advisoryLoginsFromEnv({ [ADVISORY_LOGINS_ENV]: ` ${SYNTHETIC.primary} , ${SYNTHETIC.secondary} ` }),
+    [SYNTHETIC.primary, SYNTHETIC.secondary]);
+  // An unset variable configures nothing, exactly like the empty default.
+  assert.deepEqual(advisoryLoginsFromEnv({}), []);
+  assert.deepEqual(advisoryLoginsFromEnv({ [ADVISORY_LOGINS_ENV]: "" }), []);
+  // Trailing and doubled separators must not become empty identities.
+  assert.deepEqual(advisoryLoginsFromEnv({ [ADVISORY_LOGINS_ENV]: `,${SYNTHETIC.primary},,` }), [SYNTHETIC.primary]);
+});
+
+test("a malformed configured login is rejected rather than silently dropped", () => {
+  // Skipping a bad value would let a typo read as a deliberate omission.
+  for (const invalid of ["has space", "-leading-hyphen", "trailing-hyphen-", "double--hyphen", "a".repeat(40), "under_score", "dot.separated"])
+    assert.throws(() => parseAdvisoryLogins([invalid]), /queue_health_advisory_login_invalid/);
+  assert.throws(() => advisoryLoginsFromEnv({ [ADVISORY_LOGINS_ENV]: `${SYNTHETIC.primary},has space` }),
+    /queue_health_advisory_login_invalid/);
+  assert.throws(() => argumentsFor(["--advisory-login", "has space"], {}), /queue_health_advisory_login_invalid/);
+  // The longest legal login and the edge shapes the pattern must still accept.
+  assert.deepEqual(parseAdvisoryLogins(["a".repeat(39)]), ["a".repeat(39)]);
+  assert.deepEqual(parseAdvisoryLogins(["a-b-c", "9lives", "a1"]), ["a-b-c", "9lives", "a1"]);
+});
+
+test("configured logins normalise to one identity per account", () => {
+  // GitHub logins are case-insensitive, so a differently-cased spelling must not
+  // become a second, separately-matched identity.
+  assert.deepEqual(parseAdvisoryLogins([SYNTHETIC.primary.toUpperCase()]), [SYNTHETIC.primary.toUpperCase()]);
+  // A later spelling of the same account wins, so the reported identity is the last one
+  // the installation wrote.
+  assert.deepEqual(parseAdvisoryLogins([SYNTHETIC.primary, SYNTHETIC.primary.toUpperCase()]),
+    [SYNTHETIC.primary.toUpperCase()]);
+  assert.deepEqual(parseAdvisoryLogins([SYNTHETIC.primary.toUpperCase(), SYNTHETIC.primary]), [SYNTHETIC.primary]);
+  // Distinct accounts are all kept, in the order supplied.
+  assert.deepEqual(parseAdvisoryLogins([SYNTHETIC.secondary, SYNTHETIC.primary]),
+    [SYNTHETIC.secondary, SYNTHETIC.primary]);
+  // An explicit non-array argument is still bounded rather than throwing on iteration.
+  assert.deepEqual(parseAdvisoryLogins(undefined), []);
+});
+
+test("--advisory-login is repeatable and additive to the environment", () => {
+  const env = { [ADVISORY_LOGINS_ENV]: SYNTHETIC.primary };
+  assert.deepEqual(argumentsFor([], env).advisoryLogins, [SYNTHETIC.primary]);
+  assert.deepEqual(argumentsFor(["--advisory-login", SYNTHETIC.secondary], env).advisoryLogins,
+    [SYNTHETIC.primary, SYNTHETIC.secondary]);
+  assert.deepEqual(
+    argumentsFor(["--advisory-login", SYNTHETIC.secondary, "--advisory-login", SYNTHETIC.unconfigured], env).advisoryLogins,
+    [SYNTHETIC.primary, SYNTHETIC.secondary, SYNTHETIC.unconfigured]);
+  // A repeated identity is still one identity, whichever route supplied it.
+  assert.deepEqual(argumentsFor(["--advisory-login", SYNTHETIC.primary], env).advisoryLogins, [SYNTHETIC.primary]);
+  // The existing options are untouched, including the pnpm separator and --json.
+  const options = argumentsFor(["--", "--json", "--max-pages", "3", "--advisory-login", SYNTHETIC.primary], env);
+  assert.equal(options.json, true);
+  assert.equal(options.maxPages, 3);
+  assert.equal(options.repository, "AgenticBotSitter/agent-control-room");
+  // An unknown option is still rejected rather than ignored.
+  assert.throws(() => argumentsFor(["--advisory-logins", SYNTHETIC.primary], env), /queue_health_argument_invalid/);
+});
+
+test("a configured advisory identity is read as advisory, never as authoritative", async () => {
+  const configured = fakeFetch({
+    issues: [issue(340, ["status:changes-required", "action:worker"])],
+    comments: { 340: [comment(actionMarker("worker:test-01", "changes-required", 340), "NONE", SYNTHETIC.primary)] },
+    pulls: [pull(341, 340)],
+  });
+  const report = await readQueueHealth({ fetchImpl: configured.fetchImpl, advisoryLogins: [SYNTHETIC.primary] });
+  assert.equal(report.oldestCorrection.recordTrust, "advisory");
+  assert.deepEqual(report.anomalies.find(item => item.issue === 340).codes,
+    ["worker_action_marker_not_authoritative"]);
+  assert.match(renderQueueHealth(report), /record: advisory/);
+
+  // Spelling the identity differently must still recognise the same account.
+  const recased = fakeFetch({
+    issues: [issue(340, ["status:changes-required", "action:worker"])],
+    comments: { 340: [comment(actionMarker("worker:test-01", "changes-required", 340), "NONE", SYNTHETIC.primary.toUpperCase())] },
+    pulls: [pull(341, 340)],
+  });
+  const recasedReport = await readQueueHealth({ fetchImpl: recased.fetchImpl, advisoryLogins: [SYNTHETIC.primary] });
+  assert.equal(recasedReport.oldestCorrection.recordTrust, "advisory");
+
+  // An unconfigured identity in the same shape is still not trusted: configuring one
+  // login must not confer recognition on any other. Association grants nothing.
+  const other = fakeFetch({
+    issues: [issue(340, ["status:changes-required", "action:worker"])],
+    comments: { 340: [comment(actionMarker("worker:test-01", "changes-required", 340), "OWNER", SYNTHETIC.unconfigured)] },
+    pulls: [pull(341, 340)],
+  });
+  const otherReport = await readQueueHealth({ fetchImpl: other.fetchImpl, advisoryLogins: [SYNTHETIC.primary] });
+  assert.deepEqual(otherReport.anomalies.find(item => item.issue === 340).codes, ["worker_action_marker_missing"]);
+  assert.notEqual(otherReport.oldestCorrection?.recordTrust, "advisory");
+});
+
+test("the read entry point rejects a malformed advisory login", async () => {
+  const api = fakeFetch({ issues: [] });
+  // Validated at the boundary, so a direct library caller gets the same refusal the
+  // command line does instead of a login that silently never matches.
+  await assert.rejects(() => readQueueHealth({ fetchImpl: api.fetchImpl, advisoryLogins: ["has space"] }),
+    /queue_health_advisory_login_invalid/);
+  await assert.rejects(() => readQueueHealth({ fetchImpl: api.fetchImpl, advisoryLogins: ["-leading"] }),
+    /queue_health_advisory_login_invalid/);
 });

@@ -6,10 +6,11 @@ import type { TaskReviewDraft } from "../../src/web/v1/task-review-wire";
 import { instant } from "../hermes-native-fixture";
 import { at } from "../native-task-fixture";
 
-export async function ownerReviewFixture(overrides?: Parameters<Awaited<ReturnType<typeof webNativeResultFixture>>["reviewTarget"]>[1]) {
-  const f = await webNativeResultFixture();
+export async function ownerReviewFixture(overrides?: Parameters<Awaited<ReturnType<typeof webNativeResultFixture>>["reviewTarget"]>[1],
+  resultText = "A useful private result.", options: { exactRepositorySimulation?: true } = {}) {
+  const f = await webNativeResultFixture(options);
   try {
-    const input = f.complete("A useful private result.");
+    const input = f.complete(resultText);
     const { receipt: artifact } = await f.resultService.ingest(input.raw, input.bytes, f.options(at(2000)));
     const { target, profile } = await f.reviewTarget(artifact.contentHash, overrides);
     const config: ConstructorParameters<typeof WebTaskReviewService>[2] = {

@@ -122,6 +122,7 @@ const durableReservationIdentitySchemaV1 = z.object({
   // not forced to impersonate either. The connector profile digest is the
   // binding identity; the harness tag is a label, not a gate.
   harness: z.string().min(1).max(64),
+  workerId: localId.optional(), agentProfileId: localId.optional(), adapterId: localId.optional(), modelFamily: localId.optional(),
   workflowId: localId,
   // The connector profile digest is the binding identity. The reservation
   // identity schema marks it optional so a future connector that supplies
@@ -233,7 +234,13 @@ export interface DurableResultBindingV1 {
    * a built-in. The connector profile digest is the binding identity.
    */
   harness: string;
+  /** Server-derived producer provenance for configured agent-review separation.
+   * Generic connectors may omit it; an agent review then fails closed on any
+   * required missing axis, while a human owner remains exempt from agent axes. */
+  workerId?: string; agentProfileId?: string; adapterId?: string; modelFamily?: string;
   connectorProfileDigest: string;
+  /** Current canonical authority recorded when this run was admitted. */
+  authorityDigest?: string;
   snapshotDigest?: string; snapshotVersion?: number;
   publicationContractDigest?: string; terminalEvidenceDigest?: string;
   threadId?: string; turnId?: string; itemId?: string;
@@ -248,18 +255,32 @@ export interface DurableResultPublicationConfigurationV1 {
   storageClass: "local" | "r2";
   storageIoMs?: number;
   /**
-   * Reservation persistence. The PostgreSQL adapter for the dedicated
-   * neutral sibling table is lead-owned and pending; until it lands,
-   * callers inject the in-memory port (tests, local runs). The publisher
-   * never touches a reservation table directly.
+   * Reservation persistence. The production adapter targets the dedicated
+   * neutral sibling table; tests may inject an in-memory port, which is not
+   * durable across restart. The publisher never touches a reservation table
+   * directly.
    */
   reservations: NeutralReservationPort;
+  /**
+   * Optional, installation-owned bridge into the existing owner-review gate.
+   * The publisher first commits the durable receipt and review plan. This
+   * bridge then re-reads both records and registers the derived pending target.
+   * A failure leaves the result durable but unresolved; a caller must recover
+   * the review submission, never rerun the worker merely to recreate it.
+   */
+  reviewSubmission?: DurableResultReviewSubmissionPortV1;
+}
+
+/** Deliberately small capability injected only by trusted server composition. */
+export interface DurableResultReviewSubmissionPortV1 {
+  submit: (tenantId: string, runId: string) => Promise<{ target: CompletionReviewTargetV1 }>;
 }
 
 type NeutralReservationRow = NeutralReservationRowV1;
-type NeutralReceiptRow = { tenant_id: string; project_id: string; job_id: string; attempt_id: string; run_id: string;
+export type DurableStoredResultRowV1 = { tenant_id: string; project_id: string; job_id: string; attempt_id: string; run_id: string;
   artifact_id: string; receipt: unknown; auth_tag: string; manifest: unknown; content_hash: string; state: string;
   version: number; workflow_id: string; created_at: string | Date; updated_at: string | Date };
+type NeutralReceiptRow = DurableStoredResultRowV1;
 type NeutralReviewRow = { tenant_id: string; project_id: string; job_id: string; run_id: string;
   plan: unknown; auth_tag: string };
 
@@ -268,6 +289,11 @@ const neutralSelection = `r.tenant_id,r.project_id,r.job_id,r.attempt_id,r.run_i
   FROM control_native_artifact_receipts r JOIN control_artifact_manifests m
   ON m.tenant_id=r.tenant_id AND m.id=r.artifact_id AND m.project_id=r.project_id
     AND m.job_id=r.job_id AND m.attempt_id=r.attempt_id`;
+
+export function verifyDurableStoredResultRowV1(row: DurableStoredResultRowV1, key: Uint8Array,
+  storageClass: "local" | "r2") {
+  return verifyNeutralReceiptRow(row, key, storageClass).receipt;
+}
 
 function checkKeys(integrityKey: unknown, reviewKey: unknown): { integrityKey: Uint8Array; reviewKey: Uint8Array } {
   if (!(integrityKey instanceof Uint8Array) || integrityKey.length !== 32
@@ -293,13 +319,17 @@ async function verifyRecordedIdentity(tx: DatabaseSession, binding: DurableResul
     "WHERE tenant_id=$1 AND id=$2", [binding.tenantId, binding.runId])).rows[0];
   if (!runRow) throw new Error("durable_result_identity_mismatch");
   if (runRow.project_id !== binding.projectId || runRow.job_id !== binding.jobId
-    || runRow.attempt_id !== binding.attemptId || runRow.node_id !== binding.nodeId)
+    || runRow.attempt_id !== binding.attemptId || runRow.node_id !== binding.nodeId
+    || binding.adapterId !== undefined && runRow.adapter_id !== binding.adapterId)
     throw new Error("durable_result_identity_mismatch");
 
   const jobRow = (await tx.query<{ workflow_id: string; authority_digest: string }>(
     "SELECT workflow_id,authority_digest FROM control_jobs WHERE tenant_id=$1 AND id=$2",
     [binding.tenantId, binding.jobId])).rows[0];
-  if (!jobRow || jobRow.workflow_id !== binding.workflowId) throw new Error("durable_result_identity_mismatch");
+  if (!jobRow || jobRow.workflow_id !== binding.workflowId
+    || binding.authorityDigest !== undefined && jobRow.authority_digest !== binding.authorityDigest) {
+    throw new Error("durable_result_identity_mismatch");
+  }
 
   const attemptRow = (await tx.query<{ job_id: string; node_id: string }>(
     "SELECT job_id,node_id FROM control_attempts WHERE tenant_id=$1 AND id=$2",
@@ -326,18 +356,8 @@ async function verifyRecordedIdentity(tx: DatabaseSession, binding: DurableResul
   const payload = payloadRow?.payload as { connectorProfileDigest?: string; authorityDigest?: string } | undefined;
   if (!payload || payload.connectorProfileDigest !== binding.connectorProfileDigest)
     throw new Error("durable_result_identity_mismatch");
-  // Terminal evidence anchor: native binds the snapshot digest; codex
-  // binds the publication contract + terminal evidence digest. If the
-  // binding carries any of these, at least one must match the recorded
-  // payload's authority digest (the recorded digest is the digest the
-  // connector profile / harness attested at admission time).
-  const evidenceAnchors: string[] = [];
-  if (binding.snapshotDigest !== undefined) evidenceAnchors.push(binding.snapshotDigest);
-  if (binding.publicationContractDigest !== undefined) evidenceAnchors.push(binding.publicationContractDigest);
-  if (binding.terminalEvidenceDigest !== undefined) evidenceAnchors.push(binding.terminalEvidenceDigest);
   const recordedAuthority = payload?.authorityDigest;
-  if (evidenceAnchors.length > 0 && (recordedAuthority === undefined
-    || !evidenceAnchors.includes(recordedAuthority)))
+  if (binding.authorityDigest !== undefined && recordedAuthority !== binding.authorityDigest)
     throw new Error("durable_result_identity_mismatch");
 }
 
@@ -406,10 +426,13 @@ async function updateNeutralReservation(port: NeutralReservationPort, tx: Databa
 function neutralIdentityParts(binding: DurableResultBindingV1) {
   const parsed = z.object({ tenantId: localId, projectId: localId, jobId: localId, attemptId: localId,
     runId: localId, nodeId: localId, workflowId: localId, harness: z.string().min(1).max(64),
+    workerId: localId.optional(), agentProfileId: localId.optional(), adapterId: localId.optional(), modelFamily: localId.optional(),
     connectorProfileDigest: digestSchema, acceptanceProfileId: localId, acceptanceProfileDigest: digestSchema })
     .strict().parse({ tenantId: binding.tenantId, projectId: binding.projectId, jobId: binding.jobId,
       attemptId: binding.attemptId, runId: binding.runId, nodeId: binding.nodeId, workflowId: binding.workflowId,
       harness: binding.harness, connectorProfileDigest: binding.connectorProfileDigest,
+      workerId: binding.workerId, agentProfileId: binding.agentProfileId,
+      adapterId: binding.adapterId, modelFamily: binding.modelFamily,
       acceptanceProfileId: binding.acceptanceProfileId, acceptanceProfileDigest: binding.acceptanceProfileDigest });
   const evidence = z.object({ snapshotDigest: digestSchema.optional(), snapshotVersion: z.number().int().positive().optional(),
     publicationContractDigest: digestSchema.optional(), terminalEvidenceDigest: digestSchema.optional(),
@@ -437,6 +460,9 @@ function buildNeutralIdentity(binding: DurableResultBindingV1, artifactId: strin
     acceptanceProfileId: binding.acceptanceProfileId,
     acceptanceProfileDigest: binding.acceptanceProfileDigest,
     contentHash, sizeBytes };
+  for (const key of ["workerId", "agentProfileId", "adapterId", "modelFamily"] as const) {
+    if (parsed[key] !== undefined) identity[key] = parsed[key];
+  }
   for (const [k, v] of Object.entries(evidence)) {
     if (v !== undefined && k !== "snapshotVersion") identity[k] = v;
   }
@@ -465,7 +491,7 @@ function issueNeutralReceipt(binding: DurableResultBindingV1, artifactId: string
 }
 
 function planNeutralReview(binding: DurableResultBindingV1, receipt: DurableResultReceiptV1, receivedAt: string) {
-  const { evidence } = neutralIdentityParts(binding);
+  const { parsed, evidence } = neutralIdentityParts(binding);
   // Strip undefined evidence fields so the plan carries only the evidence
   // the connector actually supplied. The review plan records the connector
   // anchor digests, not the snapshot version — that lives in the receipt.
@@ -476,6 +502,9 @@ function planNeutralReview(binding: DurableResultBindingV1, receipt: DurableResu
     acceptanceProfileDigest: binding.acceptanceProfileDigest, plannedAt: receivedAt,
     targetId: `target:durable:${sha256Digest({ tenantId: binding.tenantId, jobId: binding.jobId }).slice(7)}`,
     qualityAccepted: false, completionVerified: false, releasesCapacity: false, grantsExecutionAuthority: false };
+  for (const key of ["workerId", "agentProfileId", "adapterId", "modelFamily"] as const) {
+    if (parsed[key] !== undefined) planFields[key] = parsed[key];
+  }
   // The review plan records connector anchors, not the snapshot version
   // or thread/turn/item identifiers — those live in the receipt.
   for (const [k, v] of Object.entries(evidence)) {
@@ -502,6 +531,13 @@ async function ensureNeutralReviewPlan(tx: DatabaseSession, reviewKey: Uint8Arra
     VALUES($1,$2,$3,$4,$5::jsonb,$6)`, [binding.tenantId, binding.projectId, binding.jobId, binding.runId,
     JSON.stringify(expected), durableResultReviewPlanTagV1(reviewKey, expected)]);
   return expected;
+}
+
+async function registerPendingOwnerReviewV1(config: DurableResultPublicationConfigurationV1,
+  binding: DurableResultBindingV1, expected: CompletionReviewTargetV1): Promise<void> {
+  if (!config.reviewSubmission) return;
+  const submitted = await config.reviewSubmission.submit(binding.tenantId, binding.runId);
+  if (!submitted || sha256Digest(submitted.target) !== sha256Digest(expected)) unavailable();
 }
 
 /**
@@ -587,7 +623,12 @@ export async function publishDurableResultV1(config: DurableResultPublicationCon
     return { kind: "replay" as const, receipt, target: durableReviewTargetV1(plan, receipt) };
   }, assertAuthority);
 
-  if (acquired.kind === "replay") { assertAuthority(); return { receipt: acquired.receipt, target: acquired.target, replayed: true }; }
+  if (acquired.kind === "replay") {
+    assertAuthority();
+    await registerPendingOwnerReviewV1(config, binding, acquired.target);
+    assertAuthority();
+    return { receipt: acquired.receipt, target: acquired.target, replayed: true };
+  }
   if (ioState.storageUncertain) {
     await markUncertain("storage_port_previously_uncertain");
     throw new Error("durable_result_storage_uncertain");
@@ -647,6 +688,8 @@ export async function publishDurableResultV1(config: DurableResultPublicationCon
     return { receipt, target: durableReviewTargetV1(plan, receipt) };
   }, assertAuthority);
   assertAuthority();
+  await registerPendingOwnerReviewV1(config, binding, captured.target);
+  assertAuthority();
   return { receipt: captured.receipt, target: captured.target, replayed: false };
 }
 
@@ -675,15 +718,32 @@ export function reconcileDurableResultReservationCrashV1(value: unknown) {
   } catch { return unavailable(); }
 }
 
-/** Exact verified read of one neutral result. It acquires no bytes beyond the stored record. */
-export async function readDurableResultV1(tx: DatabaseSession, key: Uint8Array, storageClass: "local" | "r2",
-  readBytes: (artifactId: string, signal?: AbortSignal) => Promise<Uint8Array | undefined>,
-  tenantId: string, projectId: string, jobId: string, artifactId: string) {
-  const row = (await tx.query<NeutralReceiptRow>(`SELECT ${neutralSelection}
+/** Exact verified durable receipt metadata. It does not acquire artifact bytes. */
+export async function readDurableResultReceiptV1(tx: DatabaseSession, key: Uint8Array, storageClass: "local" | "r2",
+  tenantId: string, projectId: string, jobId: string, artifactId: string): Promise<DurableResultReceiptV1 | undefined> {
+  const row = (await tx.query<DurableStoredResultRowV1>(`SELECT ${neutralSelection}
     WHERE r.tenant_id=$1 AND r.project_id=$2 AND r.job_id=$3 AND r.artifact_id=$4`,
   [tenantId, projectId, jobId, artifactId])).rows[0];
   if (!row) return undefined;
-  const { receipt } = verifyNeutralReceiptRow(row, key, storageClass);
+  return verifyNeutralReceiptRow(row, key, storageClass).receipt;
+}
+
+/** Bounded verified durable receipt metadata for one task. It does not acquire artifact bytes. */
+export async function listDurableResultReceiptsV1(tx: DatabaseSession, key: Uint8Array, storageClass: "local" | "r2",
+  tenantId: string, projectId: string, jobId: string): Promise<{ receipts: DurableResultReceiptV1[]; additionalResultsOmitted: boolean }> {
+  const rows = (await tx.query<DurableStoredResultRowV1>(`SELECT ${neutralSelection}
+    WHERE r.tenant_id=$1 AND r.project_id=$2 AND r.job_id=$3
+    ORDER BY r.artifact_id COLLATE "C" LIMIT 51`, [tenantId, projectId, jobId])).rows;
+  return { receipts: rows.slice(0, 50).map(row => verifyNeutralReceiptRow(row, key, storageClass).receipt),
+    additionalResultsOmitted: rows.length > 50 };
+}
+
+/** Exact verified read of one neutral result. It acquires bytes only after authenticating its receipt. */
+export async function readDurableResultV1(tx: DatabaseSession, key: Uint8Array, storageClass: "local" | "r2",
+  readBytes: (artifactId: string, signal?: AbortSignal) => Promise<Uint8Array | undefined>,
+  tenantId: string, projectId: string, jobId: string, artifactId: string) {
+  const receipt = await readDurableResultReceiptV1(tx, key, storageClass, tenantId, projectId, jobId, artifactId);
+  if (!receipt) return undefined;
   const bytes = await readBytes(artifactId);
   if (!bytes) throw new Error("durable_result_content_unavailable");
   return { receipt, text: checkedResultBytes(bytes, receipt).text };

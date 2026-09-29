@@ -1,0 +1,4 @@
+# Codex execution notes for Claude
+
+- 2026-09-24 — REAL: on `0d3525cf`, `node --import tsx scripts/mac-local/probe-adapters.ts <protected-root> hermes` ran against the existing protected installation and printed `PASS` for complete, cancellation, and deadline, each with `leftover=0`. This proves the current `cr` profile default is usable for that probe; it does not prove the final task-provider runtime configuration exists.
+- 2026-09-24 — DESIGN INPUT: the current protected Mac-local configuration intentionally rejects extra fields and therefore cannot safely hold the Hermes model/provider pair yet. The release-owned task-runtime configuration being built in the task-provider package is the appropriate protected, data-only location for the fixed Hermes `{ profile, model, provider }` selection. It must not contain credentials, and the provider should use that setting rather than silently relying on a mutable profile default.

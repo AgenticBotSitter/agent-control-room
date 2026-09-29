@@ -5,6 +5,7 @@ import { WebSessionAuthority } from "./session-authority";
 import { WebAccessError, type VerifiedWebIdentity } from "./access-verifier";
 import { catalogProjectIdSchema } from "./project-wire";
 import { IdeaLabBotRunStoreV1 } from "../../idea-lab/v1/coordinator-store";
+import { IdeaLabCanonicalTaskLinkStoreV1 } from "../../idea-lab/v1/canonical-task-link-store";
 
 const joined = (tx: DatabaseSession): DatabaseClient => ({ query: tx.query.bind(tx), transaction: async work => work(tx),
   transactionWithPreCommitCheck: async (work, check) => { const result = await work(tx); await check(); return result; } });
@@ -15,7 +16,8 @@ export class WebIdeaService {
   private readonly key?: Uint8Array;
   constructor(db: DatabaseClient, private readonly scope: { tenantId: string; workspaceId: string },
     integrityKey?: Uint8Array, clock: () => number = Date.now, private readonly creationConfigured = false, private readonly stopConfigured = false,
-    private readonly decisionConfigured = false, private readonly startConfigured = false, private readonly synthesisConfigured = false) {
+    private readonly decisionConfigured = false, private readonly startConfigured = false, private readonly synthesisConfigured = false,
+    private readonly resultProjectionConfigured = false) {
     this.authority = new WebSessionAuthority(db, scope, clock, "idea_lab_session");
     if (integrityKey !== undefined) {
       if (!(integrityKey instanceof Uint8Array) || integrityKey.length !== 32) throw new Error("idea_key_invalid");
@@ -50,6 +52,19 @@ export class WebIdeaService {
       const contributions = await store.listContributions(this.scope.tenantId, sessionId);
       const synthesis = await store.getSynthesis(this.scope.tenantId, sessionId);
       const decision = await store.getDecision(this.scope.tenantId, sessionId);
+      const canonicalLinks = await new IdeaLabCanonicalTaskLinkStoreV1(joined(tx), this.key).list(this.scope.tenantId, sessionId);
+      const canonicalTasks = canonicalLinks.length ? (() => {
+        const projectId = canonicalLinks[0].projectId;
+        if (canonicalLinks.some(link => link.workspaceId !== this.scope.workspaceId || link.sessionDigest !== session.sessionDigest
+          || link.projectId !== projectId || !session.participants.some(participant => participant.participantId === link.participantId)
+          || link.round > session.maxRounds)) throw new Error("idea_snapshot_changed");
+        const preparedRounds = [...new Set(canonicalLinks.map(link => link.round))].sort((a, b) => a - b);
+        return { projectId, taskCount: canonicalLinks.length, preparedRounds, tasks: canonicalLinks.map(link => ({
+          taskKey: link.taskKey, participantId: link.participantId, round: link.round,
+          contributionRecorded: contributions.some(contribution => contribution.participantId === link.participantId && contribution.round === link.round
+            && contribution.sourceMode === "canonical_task_result"),
+        })) };
+      })() : null;
       // READ COMMITTED may observe new records between queries. Validate this exact
       // returned tuple, not only each getter's independently reread dependencies.
       if (synthesis) parseIdeaLabSynthesisV1(synthesis, session, contributions);
@@ -64,10 +79,28 @@ export class WebIdeaService {
         || run.state === "completed" && run.messagesUsed !== session.maxMessages)) throw new Error("idea_snapshot_changed");
       const canDecide = this.decisionConfigured && !!synthesis && !decision && (!run || run.state === "completed")
         && actor.can("idea_lab.owner_decide", undefined, true);
-      return { session, contributions, synthesis: synthesis ?? null, decision: decision ?? null, canDecide,
-        canSynthesize: this.synthesisConfigured && !!run && run.state === "completed" && !synthesis && !decision
-          && contributions.length === session.maxMessages && actor.can("idea_lab.synthesize", undefined, true),
-        canStart: this.startConfigured && !run && !synthesis && !decision && !contributions.length
+      const presentationContributions = contributions.map(contribution => ({ contributionId: contribution.contributionId,
+        sessionId: contribution.sessionId, sessionDigest: contribution.sessionDigest, participantId: contribution.participantId,
+        round: contribution.round, safeOpinion: contribution.safeOpinion, suggestedExperiment: contribution.suggestedExperiment,
+        confidencePercent: contribution.confidencePercent, sourceMode: contribution.sourceMode,
+        evidenceState: contribution.sourceMode === "canonical_task_result" ? "reviewed_control_room_task" as const : "none" as const,
+        providerContacted: contribution.providerContacted, liveBotContactAuthorized: contribution.liveBotContactAuthorized }));
+      const canProjectResults = this.resultProjectionConfigured && !!canonicalTasks && !run && !synthesis && !decision
+        && actor.can("idea_lab.panel_start", undefined, true);
+      const nextCanonicalRound = canonicalTasks && !run && !synthesis && !decision ? (() => {
+        const latest = canonicalTasks.preparedRounds.at(-1)!;
+        return canonicalTasks.tasks.filter(task => task.round === latest).every(task => task.contributionRecorded)
+          && latest < session.maxRounds ? latest + 1 : null;
+      })() : null;
+      const canPrepareNextRound = this.startConfigured && nextCanonicalRound !== null
+        && actor.can("idea_lab.panel_start", undefined, true);
+      return { session, contributions: presentationContributions, synthesis: synthesis ?? null, decision: decision ?? null, canDecide,
+        canSynthesize: this.synthesisConfigured && !synthesis && !decision && (run
+          ? run.state === "completed" && contributions.length === session.maxMessages
+          : !!canonicalTasks && canonicalTasks.taskCount === session.maxMessages && contributions.length === session.maxMessages
+            && contributions.every(contribution => contribution.sourceMode === "canonical_task_result"))
+          && actor.can("idea_lab.synthesize", undefined, true),
+        canStart: this.startConfigured && !canonicalTasks && !run && !synthesis && !decision && !contributions.length
           && actor.can("idea_lab.panel_start", undefined, true),
         canPromote: canDecide && actor.can("projects.create", undefined, true),
         canStop: this.stopConfigured && !!run && ["prepared", "running"].includes(run.state) && !run.cancellationRequestedAt
@@ -77,7 +110,8 @@ export class WebIdeaService {
           providerContacted: run.providerContacted, updatedAt: run.updatedAt, retryPermitted: run.retryPermitted,
           cancellationRequestedAt: run.cancellationRequestedAt ?? null,
           attempts: run.attempts.map(a => ({ participantId: a.participantId, round: a.round, state: a.state })) } : null,
-        execution: this.startConfigured ? "authorization_required" as const : "not_configured" as const, observedAt: actor.now };
+        execution: this.startConfigured ? "authorization_required" as const : "not_configured" as const,
+        canonicalTasks, canProjectResults, nextCanonicalRound, canPrepareNextRound, observedAt: actor.now };
     });
   }
 }

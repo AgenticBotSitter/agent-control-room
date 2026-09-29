@@ -1,6 +1,9 @@
 import { assertSynchronousFence } from '../../security/synchronous-fence';
+import { sha256Digest } from '../../security/canonical-digest';
+import { parseCodexTaskActivationV1 } from './activation-contract';
 import type { WorkspaceIntent } from '../../node-bridge/workspace-intent';
 import type { ObservableGitWorkspacePort } from './git-workspace-port';
+import type { CodexDeliveryBoundWorkspacePolicyV1 } from './delivery-bound-workspace-preparation';
 import { createCodexLocalReadCompositionV1, type CodexLocalReadAuthorityV1,
   type CodexLocalReadIdentityV1 } from './local-read-composition';
 import { createCodexLocalStartCompositionV1 } from './local-start-composition';
@@ -15,7 +18,7 @@ import type { SqliteBridgeJournal } from '../../node-bridge/journal';
 type BridgeJournal = Pick<SqliteBridgeJournal,
   'acceptedCodexActivation' | 'reserveWorkspaceIntent' | 'recordWorkspaceRoots' | 'recordWorkspaceCreation'
   | 'reserveWorkspaceRemoval' | 'recordWorkspaceRemoved'>;
-type StartJournal = Pick<SqliteCodexStartJournalV1, 'reserveStart' | 'recordThread' | 'recordTurn' | 'load'>;
+type StartJournal = Pick<SqliteCodexStartJournalV1, 'reserveStart' | 'recordThread' | 'recordTurn' | 'recordCleanup' | 'load'>;
 
 interface CommonHostInputV1 {
   runId: string;
@@ -33,6 +36,7 @@ export interface CodexLocalInitialHostInputV1 extends CommonHostInputV1 {
   bridgeJournal: BridgeJournal;
   authority: CodexLocalStartAuthorityV1;
   workspacePort: ObservableGitWorkspacePort;
+  workspacePolicy: CodexDeliveryBoundWorkspacePolicyV1;
   acquireProcess: AcquireCodexAppServerProcessV1;
   startTimeoutMs: number;
   processCleanupTimeoutMs: number;
@@ -98,9 +102,20 @@ export function createCodexLocalHostV1(inputValue: CodexLocalHostInputV1) {
       threadStartRequestId: input.threadStartRequestId, turnStartRequestId: input.turnStartRequestId,
       workspaceIntent: input.workspaceIntent, bridgeJournal: input.bridgeJournal,
       startJournal: input.startJournal, workspacePort: input.workspacePort,
+      workspacePolicy: input.workspacePolicy,
       authority, ownedStart, clock: input.clock.bind(input),
     });
     return Object.freeze({ harness: 'codex-local-v1' as const, mode: 'initial' as const,
+      /** Effect-free identity read from the same protected evidence used by start. */
+      deliveryBinding() {
+        const saved = input.bridgeJournal.acceptedCodexActivation(input.queueId);
+        if (!saved) return unavailable();
+        const activation = parseCodexTaskActivationV1(saved.frame.body);
+        if (activation.queueId !== input.queueId || activation.runId !== input.runId) return unavailable();
+        return Object.freeze({ queueId: input.queueId, runId: input.runId,
+          activationDigest: activation.activationDigest, activationFrameDigest: sha256Digest(saved.frame) });
+      },
+      bindDelivery: composition.bindDelivery,
       async run(signal: AbortSignal) {
         if (attempted || !(signal instanceof AbortSignal) || signal.aborted) return unavailable();
         attempted = true;

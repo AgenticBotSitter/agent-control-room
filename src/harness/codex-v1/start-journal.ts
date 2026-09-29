@@ -30,6 +30,12 @@ const turnTable = `CREATE TABLE codex_turn_start_receipts (
   receipt_json TEXT NOT NULL,
   FOREIGN KEY(run_id) REFERENCES codex_thread_start_receipts(run_id) ON DELETE RESTRICT
 )`;
+const cleanupTable = `CREATE TABLE codex_start_cleanup_receipts (
+  run_id TEXT PRIMARY KEY NOT NULL,
+  thread_receipt_digest TEXT NOT NULL UNIQUE,
+  turn_receipt_digest TEXT NOT NULL UNIQUE,
+  FOREIGN KEY(run_id) REFERENCES codex_turn_start_receipts(run_id) ON DELETE RESTRICT
+)`;
 const reservationTableV2 = `CREATE TABLE codex_start_reservations (
   run_id TEXT PRIMARY KEY NOT NULL,
   queue_id TEXT NOT NULL UNIQUE,
@@ -100,6 +106,11 @@ const expectedColumns = {
     { name: 'receipt_digest', type: 'TEXT', notnull: 1, pk: 0 },
     { name: 'receipt_json', type: 'TEXT', notnull: 1, pk: 0 },
   ],
+  codex_start_cleanup_receipts: [
+    { name: 'run_id', type: 'TEXT', notnull: 1, pk: 1 },
+    { name: 'thread_receipt_digest', type: 'TEXT', notnull: 1, pk: 0 },
+    { name: 'turn_receipt_digest', type: 'TEXT', notnull: 1, pk: 0 },
+  ],
 } as const;
 
 function privatePath(path: string): void {
@@ -128,6 +139,7 @@ type ThreadRow = { run_id: string; job_id: string; attempt_id: string; admission
   receipt_digest: string; receipt_json: string };
 type TurnRow = { run_id: string; thread_receipt_digest: string; thread_id: string; turn_id: string;
   receipt_digest: string; receipt_json: string };
+type CleanupRow = { run_id: string; thread_receipt_digest: string; turn_receipt_digest: string };
 type ReservationRowV2 = { run_id: string; queue_id: string; activation_id: string; activation_message_id: string;
   activation_digest: string; activation_frame_digest: string; dispatch_frame_digest: string;
   receipt_frame_digest: string; admission_id: string; connection_attempt_id: string;
@@ -187,7 +199,7 @@ export class SqliteCodexStartJournalV1 {
       const objects = this.db.prepare("SELECT name FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'").all();
       if (version === 0 && objects.length === 0) {
         schemaTransaction(this.db, () => {
-          this.db.exec(`${reservationTable}; ${threadTable}; ${turnTable}; PRAGMA user_version=3;`);
+          this.db.exec(`${reservationTable}; ${threadTable}; ${turnTable}; ${cleanupTable}; PRAGMA user_version=4;`);
         });
       } else if (version === 1) {
         assertPrivateSqliteSchemaV1(this.db,
@@ -196,7 +208,7 @@ export class SqliteCodexStartJournalV1 {
             codex_turn_start_receipts: expectedColumns.codex_turn_start_receipts,
           }, { codex_thread_start_receipts: threadTable, codex_turn_start_receipts: turnTable });
         schemaTransaction(this.db, () => {
-          this.db.exec(`${reservationTable}; PRAGMA user_version=3;`);
+          this.db.exec(`${reservationTable}; ${cleanupTable}; PRAGMA user_version=4;`);
         });
       } else if (version === 2) {
         const reservationColumnsV2 = expectedColumns.codex_start_reservations
@@ -229,13 +241,27 @@ export class SqliteCodexStartJournalV1 {
               row.connection_attempt_id, row.reserved_at, row.deadline, row.admission_json,
               row.admission_digest);
           }
-          this.db.exec('DROP TABLE codex_start_reservations_v2; PRAGMA user_version=3;');
+          this.db.exec(`DROP TABLE codex_start_reservations_v2; ${cleanupTable}; PRAGMA user_version=4;`);
         });
-      } else if (version !== 3) throw new Error('codex_start_journal_schema_invalid');
+      } else if (version === 3) {
+        assertPrivateSqliteSchemaV1(this.db,
+          ['table:codex_start_reservations', 'table:codex_thread_start_receipts', 'table:codex_turn_start_receipts'],
+          {
+            codex_start_reservations: expectedColumns.codex_start_reservations,
+            codex_thread_start_receipts: expectedColumns.codex_thread_start_receipts,
+            codex_turn_start_receipts: expectedColumns.codex_turn_start_receipts,
+          }, { codex_start_reservations: reservationTable,
+            codex_thread_start_receipts: threadTable, codex_turn_start_receipts: turnTable });
+        schemaTransaction(this.db, () => {
+          this.db.exec(`${cleanupTable}; PRAGMA user_version=4;`);
+        });
+      } else if (version !== 4) throw new Error('codex_start_journal_schema_invalid');
       assertPrivateSqliteSchemaV1(this.db,
-        ['table:codex_start_reservations', 'table:codex_thread_start_receipts', 'table:codex_turn_start_receipts'],
+        ['table:codex_start_reservations', 'table:codex_thread_start_receipts', 'table:codex_turn_start_receipts',
+          'table:codex_start_cleanup_receipts'],
         expectedColumns, { codex_start_reservations: reservationTable,
-          codex_thread_start_receipts: threadTable, codex_turn_start_receipts: turnTable });
+          codex_thread_start_receipts: threadTable, codex_turn_start_receipts: turnTable,
+          codex_start_cleanup_receipts: cleanupTable });
     } catch {
       this.usable = false; this.db.close(); throw new Error('codex_start_journal_unavailable');
     }
@@ -347,11 +373,45 @@ export class SqliteCodexStartJournalV1 {
     });
   }
 
+  /** Records only the successful retirement of the one-shot start session.
+   * The exact stored receipts are re-read inside the transaction, so cleanup
+   * cannot be attached to a substituted thread or turn. */
+  recordCleanup(threadValue: unknown, turnValue: unknown, assertCurrent: () => void): 'recorded' | 'duplicate' {
+    const thread = verifyCodexThreadStartReceiptV1(threadValue);
+    const turn = codexTurnStartReceiptSchemaV1.parse(turnValue);
+    const identity = codexReadIdentityFromStartV1(thread, turn);
+    return this.transaction(() => {
+      requireCurrent(assertCurrent);
+      const storedThread = this.threadRow(identity.runId);
+      const storedTurn = this.db.prepare('SELECT * FROM codex_turn_start_receipts WHERE run_id=?')
+        .get(identity.runId) as TurnRow | undefined;
+      if (!storedThread || !storedTurn || storedThread.receipt_digest !== thread.receiptDigest
+        || storedThread.receipt_json !== JSON.stringify(thread)
+        || storedTurn.thread_receipt_digest !== thread.receiptDigest
+        || storedTurn.receipt_digest !== turn.receiptDigest
+        || storedTurn.receipt_json !== JSON.stringify(turn)) {
+        throw new Error('codex_start_journal_cleanup_binding_missing');
+      }
+      const existing = this.db.prepare('SELECT * FROM codex_start_cleanup_receipts WHERE run_id=?')
+        .get(identity.runId) as CleanupRow | undefined;
+      if (existing) {
+        if (existing.thread_receipt_digest !== thread.receiptDigest || existing.turn_receipt_digest !== turn.receiptDigest) {
+          throw new Error('codex_start_journal_binding_conflict');
+        }
+        requireCurrent(assertCurrent); return 'duplicate';
+      }
+      this.db.prepare(`INSERT INTO codex_start_cleanup_receipts
+        (run_id,thread_receipt_digest,turn_receipt_digest) VALUES(?,?,?)`)
+        .run(identity.runId, thread.receiptDigest, turn.receiptDigest);
+      requireCurrent(assertCurrent); return 'recorded';
+    });
+  }
+
   load(runIdValue: string) {
     this.assertUsable(); const runId = localId.parse(runIdValue), reservationRow = this.reservationRow(runId);
     if (!reservationRow) return Object.freeze({ status: 'not_reserved' as const, runId,
       readIdentity: null, grantsExecutionAuthority: false as const, permitsResume: false as const,
-      permitsRetry: false as const, permitsThreadRead: false as const });
+      permitsRetry: false as const, permitsThreadRead: false as const, cleanupVerified: false as const });
     let admission: CodexStartAdmissionV1;
     try { admission = verifyCodexStartAdmissionV1(JSON.parse(reservationRow.admission_json)); }
     catch { return this.integrityFailure(); }
@@ -360,7 +420,7 @@ export class SqliteCodexStartJournalV1 {
     if (!row) return Object.freeze({ status: 'start_reserved' as const, ...admission.scope,
       admissionId: admission.admissionId, reservedAt: reservationRow.reserved_at,
       readIdentity: null, grantsExecutionAuthority: false as const, permitsResume: false as const,
-      permitsRetry: false as const, permitsThreadRead: false as const });
+      permitsRetry: false as const, permitsThreadRead: false as const, cleanupVerified: false as const });
     let thread: CodexThreadStartReceiptV1;
     try { thread = verifyCodexThreadStartReceiptV1(JSON.parse(row.receipt_json)); }
     catch { return this.integrityFailure(); }
@@ -374,7 +434,7 @@ export class SqliteCodexStartJournalV1 {
     if (!turnRow) return Object.freeze({ status: 'thread_recorded_turn_unknown' as const, ...scope,
       threadId: thread.threadId, threadReceiptDigest: thread.receiptDigest, turnId: null,
       readIdentity: null, grantsExecutionAuthority: false as const, permitsResume: false as const,
-      permitsRetry: false as const, permitsThreadRead: false as const });
+      permitsRetry: false as const, permitsThreadRead: false as const, cleanupVerified: false as const });
     let turn: CodexTurnStartReceiptV1, identity: ReturnType<typeof codexReadIdentityFromStartV1>;
     try {
       turn = codexTurnStartReceiptSchemaV1.parse(JSON.parse(turnRow.receipt_json));
@@ -383,8 +443,13 @@ export class SqliteCodexStartJournalV1 {
     if (turnRow.run_id !== identity.runId || turnRow.thread_receipt_digest !== thread.receiptDigest
       || turnRow.thread_id !== identity.threadId || turnRow.turn_id !== identity.turnId
       || turnRow.receipt_digest !== turn.receiptDigest) return this.integrityFailure();
+    const cleanup = this.db.prepare('SELECT * FROM codex_start_cleanup_receipts WHERE run_id=?')
+      .get(runId) as CleanupRow | undefined;
+    if (cleanup && (cleanup.thread_receipt_digest !== thread.receiptDigest || cleanup.turn_receipt_digest !== turn.receiptDigest)) {
+      return this.integrityFailure();
+    }
     return Object.freeze({ status: 'recorded' as const, ...identity, threadReceiptDigest: thread.receiptDigest,
-      turnReceiptDigest: turn.receiptDigest, readIdentity: identity });
+      turnReceiptDigest: turn.receiptDigest, readIdentity: identity, cleanupVerified: cleanup !== undefined });
   }
 
   private integrityFailure(): never {

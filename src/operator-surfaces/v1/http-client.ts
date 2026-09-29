@@ -23,9 +23,16 @@ function unavailableForStatus(status: number): Extract<OperatorSurfaceDataStateV
  * Browser reader for the server-bound operator projection. It never sends a
  * tenant identifier or treats an HTTP error body as trusted display data.
  */
-export async function fetchOperatorSurfaceSnapshotV1(fetcher: FetchLike = fetch): Promise<OperatorSurfaceDataStateV1> {
+export async function fetchOperatorSurfaceSnapshotV1(fetcher: FetchLike = fetch,
+  signal?: AbortSignal): Promise<OperatorSurfaceDataStateV1> {
   try {
-    const response = await fetcher("/api/v1/operator-surface", { credentials: "same-origin", cache: "no-store" });
+    signal?.throwIfAborted();
+    const boundedSignal = signal
+      ? AbortSignal.any([signal, AbortSignal.timeout(10_000)])
+      : AbortSignal.timeout(10_000);
+    const response = await fetcher("/api/v1/operator-surface", {
+      method: "GET", credentials: "same-origin", cache: "no-store", signal: boundedSignal,
+    });
     if (!response.ok) return unavailableForStatus(response.status);
     const body: unknown = await response.json();
     if (!body || typeof body !== "object" || !("snapshot" in body)) return { state: "unavailable", code: "invalid_response" };

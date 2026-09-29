@@ -90,13 +90,18 @@ export class IdeaLabProjectRegistryStoreV1 {
     });
   }
 
-  async getSession(tenantId: string, sessionId: string): Promise<IdeaLabSessionV1|undefined> {
-    const result = await this.#query<{ payload: unknown; session_auth_tag: string }>(
+  private async sessionIn(source: Pick<DatabaseSession, "query">, tenantId: string, sessionId: string): Promise<IdeaLabSessionV1|undefined> {
+    const result = await source.query<{ payload: unknown; session_auth_tag: string }>(
       `SELECT payload,session_auth_tag FROM control_idea_sessions WHERE tenant_id=$1 AND session_id=$2`, [tenantId,sessionId]);
     if (!result.rows[0]) return undefined;
     const session = parseIdeaLabSessionV1(result.rows[0].payload);
     if (session.tenantId !== tenantId || session.sessionId !== sessionId) throw new IdeaLabErrorV1("integrity_failed");
-    this.#verifyTag("session",session.tenantId,session.sessionId,session.sessionDigest,result.rows[0].session_auth_tag); return session;
+    this.#verifyTag("session",session.tenantId,session.sessionId,session.sessionDigest,result.rows[0].session_auth_tag);
+    return session;
+  }
+
+  async getSession(tenantId: string, sessionId: string): Promise<IdeaLabSessionV1|undefined> {
+    return this.sessionIn({ query: this.#query }, tenantId, sessionId);
   }
 
   /** Complete, cursor-based catalog for the private workspace; immutable session IDs order pages. */
@@ -126,31 +131,40 @@ export class IdeaLabProjectRegistryStoreV1 {
       session.sessionId,session.sessionDigest,row.session_auth_tag);return session;});
   }
 
-  async recordContribution(value: unknown): Promise<{ contribution: IdeaLabContributionV1; replayed: boolean }> {
+  /**
+   * Records one contribution while the caller already holds the surrounding
+   * database transaction.  This is intentionally used by trusted result
+   * projectors so review acceptance and contribution persistence cannot be
+   * separated by a concurrent correction or revocation.
+   */
+  async recordContributionInSession(tx: DatabaseSession, value: unknown): Promise<{ contribution: IdeaLabContributionV1; replayed: boolean }> {
     const raw = parseExactIdeaLabV1(ideaContributionSchemaV1, value);
-    const session = await this.getSession(raw.tenantId, raw.sessionId); if (!session) throw new IdeaLabErrorV1("not_found");
+    const session = await this.sessionIn(tx, raw.tenantId, raw.sessionId); if (!session) throw new IdeaLabErrorV1("not_found");
     const contribution = parseIdeaLabContributionV1(value,session);
     const tag = this.#tag("contribution",contribution.tenantId,contribution.contributionId,contribution.contributionDigest);
-    return this.#transaction(async (tx) => {
-      const existing = await tx.query<{ payload: unknown; contribution_auth_tag: string }>(
-        `SELECT payload,contribution_auth_tag FROM control_idea_contributions WHERE tenant_id=$1 AND contribution_id=$2`,
-        [contribution.tenantId,contribution.contributionId]);
-      if (existing.rows[0]) {
-        const stored = parseIdeaLabContributionV1(existing.rows[0].payload,session);
-        this.#verifyTag("contribution",stored.tenantId,stored.contributionId,stored.contributionDigest,existing.rows[0].contribution_auth_tag);
-        if (stored.contributionDigest !== contribution.contributionDigest) throw new IdeaLabErrorV1("duplicate_record");
-        return { contribution: stored, replayed: true };
-      }
-      const decided = await tx.query(`SELECT 1 FROM control_idea_decisions WHERE tenant_id=$1 AND session_id=$2`,
-        [contribution.tenantId,contribution.sessionId]);
-      if (decided.rows.length) throw new IdeaLabErrorV1("state_conflict");
-      await tx.query(`INSERT INTO control_idea_contributions(contribution_id,tenant_id,workspace_id,session_id,session_digest,
-        participant_id,round,contribution_digest,contribution_auth_tag,payload,contributed_at)
-        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11)`, [contribution.contributionId,contribution.tenantId,
-        contribution.workspaceId,contribution.sessionId,contribution.sessionDigest,contribution.participantId,contribution.round,
-        contribution.contributionDigest,tag,JSON.stringify(contribution),contribution.contributedAt]);
-      return { contribution, replayed:false };
-    });
+    const existing = await tx.query<{ payload: unknown; contribution_auth_tag: string }>(
+      `SELECT payload,contribution_auth_tag FROM control_idea_contributions WHERE tenant_id=$1 AND contribution_id=$2`,
+      [contribution.tenantId,contribution.contributionId]);
+    if (existing.rows[0]) {
+      const stored = parseIdeaLabContributionV1(existing.rows[0].payload,session);
+      this.#verifyTag("contribution",stored.tenantId,stored.contributionId,stored.contributionDigest,existing.rows[0].contribution_auth_tag);
+      if (stored.contributionDigest !== contribution.contributionDigest) throw new IdeaLabErrorV1("duplicate_record");
+      return { contribution: stored, replayed: true };
+    }
+    const decided = await tx.query(`SELECT 1 FROM control_idea_decisions WHERE tenant_id=$1 AND session_id=$2`,
+      [contribution.tenantId,contribution.sessionId]);
+    if (decided.rows.length) throw new IdeaLabErrorV1("state_conflict");
+    await tx.query(`INSERT INTO control_idea_contributions(contribution_id,tenant_id,workspace_id,session_id,session_digest,
+      participant_id,round,contribution_digest,contribution_auth_tag,payload,contributed_at)
+      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11)`, [contribution.contributionId,
+      contribution.tenantId, contribution.workspaceId, contribution.sessionId, contribution.sessionDigest,
+      contribution.participantId, contribution.round, contribution.contributionDigest, tag,
+      JSON.stringify(contribution), contribution.contributedAt]);
+    return { contribution, replayed:false };
+  }
+
+  async recordContribution(value: unknown): Promise<{ contribution: IdeaLabContributionV1; replayed: boolean }> {
+    return this.#transaction((tx) => this.recordContributionInSession(tx, value));
   }
 
   async listContributions(tenantId: string, sessionId: string): Promise<IdeaLabContributionV1[]> {
@@ -288,10 +302,14 @@ export class IdeaLabProjectRegistryStoreV1 {
   async #projectWith(query:Query,tenantId:string,projectId:string):Promise<ProjectRegistryProjectionV1|undefined>{
     const projects=await query<ProjectRow>(`SELECT id,tenant_id,workspace_id,title,description,priority,normalized_state,domain_state,
       observed_at,updated_at,payload FROM projects WHERE tenant_id=$1 AND id=$2 AND adapter_id=$3`,[tenantId,projectId,CONTROL_ROOM_IDEA_ADAPTER_V1]);
-    if(!projects.rows[0])return undefined; const row=projects.rows[0], payload=parseExactIdeaLabV1(projectPayloadSchema,row.payload);
+    if(!projects.rows[0])return undefined; const row=projects.rows[0];
     const events=await query<LifecycleRow>(`SELECT payload,event_auth_tag FROM control_project_lifecycle_events WHERE tenant_id=$1 AND project_id=$2 ORDER BY version DESC LIMIT 1`,[tenantId,projectId]);
-    if(!events.rows[0])throw new IdeaLabErrorV1("integrity_failed"); const event=parseProjectLifecycleEventV1(events.rows[0].payload);
-    this.#verifyTag("project_lifecycle",tenantId,event.eventId,event.eventDigest,events.rows[0].event_auth_tag);
+    if(!events.rows[0])throw new IdeaLabErrorV1("integrity_failed");
+    return this.#projectFromRows(tenantId,row,events.rows[0]);
+  }
+  #projectFromRows(tenantId:string,row:ProjectRow,lifecycle:LifecycleRow):ProjectRegistryProjectionV1{
+    const payload=parseExactIdeaLabV1(projectPayloadSchema,row.payload),event=parseProjectLifecycleEventV1(lifecycle.payload);
+    this.#verifyTag("project_lifecycle",tenantId,event.eventId,event.eventDigest,lifecycle.event_auth_tag);
     const expectedState=event.toState, expectedNormalized=expectedState==="active"?"running":expectedState==="paused"?"waiting":"complete";
     const expectedDomain=`idea_project_${expectedState}`;
     if(row.normalized_state!==expectedNormalized||row.domain_state!==expectedDomain||payload.lifecycleVersion!==event.version
@@ -312,6 +330,27 @@ export class IdeaLabProjectRegistryStoreV1 {
     if(!project||project.tenantId!==tenantId||project.workspaceId!==workspaceId||project.projectId!==projectId)
       throw new IdeaLabErrorV1("integrity_failed");
     return project;
+  }
+  /** Fixed-query project projection for an already authorized catalog page. */
+  async getProjectsInSession(session:DatabaseSession,tenantIdValue:string,workspaceIdValue:string,projectIds:readonly string[]){
+    const tenantId=ideaIdSchemaV1.parse(tenantIdValue),workspaceId=ideaIdSchemaV1.parse(workspaceIdValue);
+    const ids=[...new Set(projectIds.map(value=>ideaIdSchemaV1.parse(value)))];
+    if(!ids.length)return new Map<string,ProjectRegistryProjectionV1>();
+    const projects=await session.query<ProjectRow>(`SELECT id,tenant_id,workspace_id,title,description,priority,normalized_state,domain_state,
+      observed_at,updated_at,payload FROM projects WHERE tenant_id=$1 AND workspace_id=$2 AND id=ANY($3::text[])
+      AND adapter_id=$4 ORDER BY id COLLATE "C" FOR SHARE`,[tenantId,workspaceId,ids,CONTROL_ROOM_IDEA_ADAPTER_V1]);
+    const events=await session.query<LifecycleRow&{project_id:string}>(`SELECT DISTINCT ON (project_id) project_id,payload,event_auth_tag
+      FROM control_project_lifecycle_events WHERE tenant_id=$1 AND project_id=ANY($2::text[])
+      ORDER BY project_id,version DESC`,[tenantId,ids]);
+    const eventByProject=new Map(events.rows.map(row=>[row.project_id,row]));
+    const output=new Map<string,ProjectRegistryProjectionV1>();
+    for(const row of projects.rows){const event=eventByProject.get(row.id);if(!event)throw new IdeaLabErrorV1("integrity_failed");
+      const project=this.#projectFromRows(tenantId,row,event);
+      if(project.tenantId!==tenantId||project.workspaceId!==workspaceId||project.projectId!==row.id)
+        throw new IdeaLabErrorV1("integrity_failed");
+      output.set(row.id,project);}
+    if(output.size!==ids.length)throw new IdeaLabErrorV1("integrity_failed");
+    return output;
   }
   async getLatestProjectLifecycleEvent(tenantId:string,projectId:string):Promise<ProjectLifecycleEventV1|undefined>{
     const result=await this.#query<LifecycleRow>(`SELECT payload,event_auth_tag FROM control_project_lifecycle_events

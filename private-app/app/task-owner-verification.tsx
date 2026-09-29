@@ -2,7 +2,8 @@
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { BrowserRequestError } from "../../src/web/v1/browser-client";
 import { verificationErrorMessage } from "../../src/web/v1/task-verification-browser-client";
-import type { TaskVerificationDraft, TaskVerificationOptions } from "../../src/web/v1/task-verification-wire";
+import { READ_CORRECT_ATTESTATION_NOTE_V1,
+  type TaskVerificationDraft, type TaskVerificationOptions } from "../../src/web/v1/task-verification-wire";
 import { createTaskVerificationWorkspace, type TaskVerificationSession, type TaskVerificationWorkspace,
   type VerificationWorkspaceBinding } from "../../src/web/v1/task-verification-workspace";
 import { ConfiguredTimestamp } from "./configured-timestamp";
@@ -26,11 +27,16 @@ export function OwnerVerificationPanel({ options, scenarioId, result, note, pend
   onNote: (value: string) => void; onRecord: (scenario: Scenario) => void;
 }) {
   const selected = options.scenarios.find(scenario => scenario.scenarioId === scenarioId);
+  const readCorrect = options.scenarios.find(scenario => scenario.recordingMode === "read_correct_attestation");
   return <section className="private-owner-verification" aria-label="Human verification"><h4>Human verification</h4>
-    <p>Use this only to record what you personally observed while following one configured check. It does not report an automated check or complete this job.</p>
+    <p>Use this only to record what you personally observed while following one configured check. It does not report an automated check or complete this job. It does not grant execution authority.</p>
     {options.source === "not_configured" ? <p className="private-notice">Human verification is not configured for this result.</p>
       : !options.scenarios.length ? <p>No human verification checks are currently available for this result.</p> : <>
-        <label>Configured human check<select aria-label="Configured human check" value={scenarioId} disabled={pending || held}
+        {readCorrect?.availability === "available" ? <div><h5>{readCorrect.label}</h5>
+          <p>{readCorrect.instructions}</p>
+          <button type="button" disabled={pending || held} onClick={() => {
+            onScenario(readCorrect.scenarioId); onResult("passed"); onNote(READ_CORRECT_ATTESTATION_NOTE_V1); onRecord(readCorrect);
+          }}>{READ_CORRECT_ATTESTATION_NOTE_V1}</button></div> : <><label>Configured human check<select aria-label="Configured human check" value={scenarioId} disabled={pending || held}
           onChange={event => onScenario(event.target.value)}><option value="">Choose a check</option>
           {options.scenarios.map(scenario => <option key={scenario.scenarioId} value={scenario.scenarioId}>{scenario.label}</option>)}</select></label>
         {selected && <div><h5>{selected.label}</h5><h6>Actual configured instructions</h6>
@@ -44,7 +50,7 @@ export function OwnerVerificationPanel({ options, scenarioId, result, note, pend
               disabled={pending || held} onChange={event => onNote(event.target.value)} /></label>
             <p className="private-note">Describe only what you observed. Only the note’s fingerprint is saved, not its text; keep any detailed evidence separately. Do not include passwords, credentials or secrets. Maximum 4,096 UTF-8 bytes.</p>
             <button type="button" disabled={pending || held || !result || !note.trim()} onClick={() => onRecord(selected)}>Record human verification</button></>}
-        </div>}
+        </div>}</>}
       </>}
     <p className="private-note">Human verification does not grant approval or execution authority, replace required independent checks, or prove that an agent run completed.</p>
   </section>;

@@ -5,7 +5,7 @@ import { prepared } from "./owner-bootstrap-ceremony-helper";
 test("control timeout, abort across delivery boundaries, and cleanup uncertainty invalidate the code", async t => {
   // Four databases are isolated in this process; no additional fixture is created here.
   for (const kind of ["timeout", "abort-write", "abort-cleanup", "cleanup-timeout"] as const) {
-    const x = await prepared(); t.after(() => x.raw.close());
+    const x = await prepared(undefined, undefined, { controlDeadlineMs: 20 }); t.after(() => x.raw.close());
     const controller = new AbortController(); let releaseWrite: (() => void) | undefined;
     const writeStarted = new Promise<void>(resolve => { releaseWrite = resolve; });
     const attempt = kind === "timeout" || kind === "abort-write" ? x.attempt({ writeCode: (_code, signal) => new Promise((_, reject) => {

@@ -44,6 +44,34 @@ to join or refresh an existing agent without losing its assignment.
 workflow, using existing proven components. One configurable public product serves
 everyone; no separate private core.
 
+**New: choose one computer or several without changing products.**
+[Installation choices and safe transitions](docs/INSTALLATION_TRANSITIONS.md)
+explains how workers, the controller, and the one authority database can move
+without creating synchronization or a second writer. It also lists the source
+work still needed before these transitions can be operated.
+
+## How installation will work
+
+The supported installation is being built now; it is **not downloadable yet**.
+When the first release is ready, a user will download one versioned package from
+GitHub Releases and open one launcher. The launcher will verify the release,
+check the computer, and open a guided local setup page. The owner will choose
+**This computer** or **Several computers**, prepare one PostgreSQL authority,
+protected data, recovery and the background service, then connect workers and
+review every remaining item before explicitly enabling anything.
+
+Users will not be expected to clone the repository or assemble the product one
+terminal command at a time. The two installation choices use the same projects,
+tasks, scheduler, database, results, reviews and permissions, so adding another
+computer later does not require reinstalling a different product or synchronizing
+two databases. See the [supported installation experience](docs/SUPPORTED_INSTALLATION_EXPERIENCE.md)
+and [installation build packages](docs/INSTALLATION_BUILD_PACKAGES.md) for the
+current implementation status and acceptance journey.
+
+**Reuse before rebuild.** [The reuse research program](docs/REUSE_RESEARCH_PROGRAM.md)
+explains how every substantial component is source-inspected, license-checked,
+and given an adopt/adapt/custom decision before new infrastructure is written.
+
 | What you want to know | Direct link / answer |
 | --- | --- |
 | What can I take on now? | [Ready assignments](https://github.com/AgenticBotSitter/agent-control-room/issues?q=is%3Aissue+is%3Aopen+label%3Astatus%3Aready) is the authoritative list. |
@@ -58,6 +86,7 @@ everyone; no separate private core.
 | What is intentionally inactive? | [Paused](https://github.com/AgenticBotSitter/agent-control-room/issues?q=is%3Aissue+is%3Aopen+label%3Astatus%3Apaused) |
 | What has been accepted? | [Completed outcomes](https://github.com/AgenticBotSitter/agent-control-room/issues?q=is%3Aissue+is%3Aclosed+label%3Astatus%3Adone) · [Merged contributions](https://github.com/AgenticBotSitter/agent-control-room/pulls?q=is%3Apr+is%3Amerged) — partial PRs do not imply a whole feature is finished |
 | What is the full plan and what are we borrowing? | [All outcomes, reuse decisions and next steps](PUBLIC_BUILD_PLAN.md) · [Attribution](THIRD_PARTY.md) |
+| How will a normal user install it? | [Supported installation experience](docs/SUPPORTED_INSTALLATION_EXPERIENCE.md) — one verified release, one launcher, and one guided setup for either one computer or several. It is still under construction. |
 | What must finish before the first installable release? | [Required Hermes-plus-Codex release jobs](WORK_QUEUE.md#required-for-the-first-hermes-plus-codex-release) — with parallel additions listed separately on the same board |
 | Exactly what remains, including unanswered questions? | [Complete remaining-work inventory](PUBLIC_BUILD_PLAN.md#complete-remaining-work-and-open-questions) — substantial workstreams, dependencies, decisions and release gates |
 | What should the webpage look like and do? | [Public webpage specification](WEBPAGE_SPEC.md) — layout, every core screen, optional modules, error states and acceptance |
@@ -65,14 +94,25 @@ everyone; no separate private core.
 | What are the testable product requirements? | [Product requirements](docs/PRODUCT_REQUIREMENTS.md) — numbered requirements and first-release acceptance |
 | Where do I ask or propose a different useful contribution? | [Coordination issue #12](https://github.com/AgenticBotSitter/agent-control-room/issues/12) — describe your expertise and a substantial non-overlapping outcome |
 
-**Already available:** disposable project/task/revision demo, one-build/two-configuration
-customization proof, explicit project pages, safe Project News, owner-attention
-prioritization, substantial source/browser tests, public CI, Linux rehearsal tooling
-and retained upstream notices. **Still to finish:** real Hermes/Codex integration and
-recovery, live worker/capacity data, durable protected files, release/install/rollback,
-portable notices, platform acceptance and a verified multi-worker release. Optional
-Idea Lab/news execution and extra extensions follow the core loop. No live harness
-compatibility is claimed by the demo.
+## Current product status
+
+**Source-backed today:** the repository contains the Mac-local owner website and the
+shared project → task → local worker → result → review → revision path for Hermes,
+Claude Code and Codex. It includes owner sign-in, dynamic projects, protected text-file
+preview/download, linked revisions, separate human verification, verified database
+backup/restore tooling, optional owner-installed login auto-start, and explicit
+database checking at startup plus a safe unavailable page. Automated journeys exercise
+the owner pages and local worker routes against disposable PostgreSQL and fake worker
+executables.
+
+**Not yet owner-accepted:** there is no supported downloadable release or production
+installation. The source journeys do not prove that an installed worker, recovery path,
+sleep/wake cycle, private network route, background service or restore procedure works
+on your machine. The [Mac owner guide](docs/OWNER_GUIDE_MAC.md) remains a draft and
+contains known limitations; use it as build evidence, not as an installation promise.
+Multi-computer operation, native per-run CPU/memory limits, a complete universal Action
+Inbox, and final platform acceptance remain unfinished. The
+[support matrix](docs/SUPPORT_MATRIX.md) is the detailed capability boundary.
 
 ### Contribute in five steps
 
@@ -176,28 +216,28 @@ agents. You remain in control of permissions, budgets and consequential actions.
 
 ## Honest status
 
-This is a pre-alpha project, not a production-ready fleet manager. The source includes
-project/task interfaces, queue integration, connector components,
-result/review flows and extensive automated tests using disposable or simulated resources.
-Those results do not establish live compatibility on your machine.
+This is a pre-alpha source build, not a production-ready fleet manager. There are two
+different evidence levels in this repository:
 
-This source preview includes an explicit `pnpm demo` command for a local,
-disposable project/task/sample/revision experience. It passes strict type checking,
-30 demo tests and two compiled-demo tests on macOS. One owner-approved local browser
-trial also completed login, project/task creation, sample revision, refresh recovery,
-separate project tabs and archiving, followed by verified shutdown/data cleanup.
-That is synthetic demo evidence, not live-agent or multi-machine acceptance.
-No live agent-runtime/platform combination is claimed supported by this preview.
+- `pnpm demo` is a disposable contributor preview. It has no live harness or production
+  database authority.
+- the Mac-local source path exercises the real owner pages, PostgreSQL-backed lifecycle
+  and bounded local-worker adapters in automated rehearsals. Those rehearsals use
+  disposable data and fake executables where a real installed worker would act.
+
+Neither level is a supported installation. No agent should install a login service,
+change private routing, provision a real database, or claim platform acceptance from
+these tests. Owner-attended installation and interruption checks remain separate release
+gates.
 
 ## Contributor starting points
 
-**Current implementation baseline:** current public `main`. It includes the
-lead-integrated application navigation and protected route corrections, configurable
-project proof, explicit project pages, safe Project News, browser lifecycle coverage,
-owner-attention prioritization, resource-bound wire contracts, the bounded Claude Code
-connector foundation and replay-safe schedule planning/assignment. None of those source
-components claims that a live Claude process, native agent or scheduled agent start is
-enabled. The
+**Current implementation baseline:** current public `main`. It includes the shared
+owner workspace, PostgreSQL-backed project/task/result/review lifecycle, bounded local
+Hermes/Claude Code/Codex adapters, protected text-file access, linked revisions, human
+verification, backup/restore verification and browser-level Mac-local journeys. These
+are source and disposable-rehearsal results. They do not claim that an owner has enabled
+or accepted an installed agent process, background service or scheduled start. The
 [September 9 contributor handoff](CONTRIBUTOR_HANDOFF.md) remains historical evidence;
 new contributions use the base recorded in their issue. This is not production
 acceptance and does not supersede active contributors' branches.
@@ -222,9 +262,10 @@ production acceptance.
 - [Security, portable configuration and recovery contract](docs/SECURITY_CONFIGURATION_CONTRACT.md)
 - [Honest platform and connector support matrix](docs/SUPPORT_MATRIX.md)
 
-Hermes and Codex are the first integration priorities. Claude Code, OpenClaw and other
-harnesses are proposed contributor tracks, not current compatibility claims. Start with
-the minimum usable project-to-task-to-result-to-revision experience before expansion.
+Hermes, Claude Code and Codex have source-backed local adapters, but are not yet
+owner-accepted installed integrations. OpenClaw and other harnesses remain proposed
+contributor tracks. Start with the minimum usable project-to-task-to-result-to-revision
+experience before expansion.
 
 Run ordinary checks locally and use the public CI checks on pull requests and main.
 Standard GitHub-hosted runners are free for this public repository. External

@@ -12,6 +12,21 @@ import type { AuthenticatedFrameResult } from "../../node-protocol/v1/authentica
 import type { CodexResultReturnChannelV1, CodexResultReturnIntakeV1 } from "../../node-control/server-node-session";
 
 const positiveSafeInteger = z.number().int().positive().max(Number.MAX_SAFE_INTEGER);
+const exactIntakes = new WeakSet<object>();
+const qualifications = new WeakMap<object, ReturnType<typeof captureCodexResultIntakeSettingsV1>>();
+export function captureOwnedCodexResultIntakeV1(value: CodexResultIntakeV1) {
+  if (!exactIntakes.has(value) || Object.getPrototypeOf(value) !== CodexResultIntakeV1.prototype
+    || Object.hasOwn(value, "expectation") || Object.hasOwn(value, "publish")) return unavailable();
+  const qualification = qualifications.get(value)!;
+  return Object.freeze({ expectation: CodexResultIntakeV1.prototype.expectation.bind(value),
+    publish: CodexResultIntakeV1.prototype.publish.bind(value),
+    assertQualified(tenantId: string, nodeId: string, profileDigest: string, now: number) {
+      const body = qualification.qualificationReceipt.body;
+      if (!Number.isSafeInteger(now) || body.tenantId !== tenantId || body.nodeId !== nodeId
+        || body.connectorProfileDigest !== profileDigest || now < Date.parse(body.qualifiedAt)
+        || now >= Date.parse(body.qualifiedAt) + qualification.qualificationMaximumAgeMs) unavailable();
+    } });
+}
 
 export type CodexResultIntakeSettingsV1 = Readonly<{
   qualificationReceipt: unknown;
@@ -50,16 +65,20 @@ function unavailable(): never {
  * publisher. It adds no protocol, result model, storage, review or completion path.
  */
 export class CodexResultIntakeV1 implements CodexResultReturnIntakeV1 {
-  private readonly settings: ReturnType<typeof captureCodexResultIntakeSettingsV1>;
+  readonly #settings: ReturnType<typeof captureCodexResultIntakeSettingsV1>;
+  readonly #capture: CodexCanonicalResultPublisherV1["capture"];
 
   constructor(
-    private readonly publisher: CodexCanonicalResultPublisherV1,
+    publisher: CodexCanonicalResultPublisherV1,
     settings: CodexResultIntakeSettingsV1,
   ) {
     if (!publisher || typeof publisher.capture !== "function") {
       throw new Error("codex_result_intake_configuration_invalid");
     }
-    this.settings = captureCodexResultIntakeSettingsV1(settings);
+    this.#settings = captureCodexResultIntakeSettingsV1(settings);
+    this.#capture = publisher.capture.bind(publisher);
+    if (new.target === CodexResultIntakeV1) exactIntakes.add(this);
+    qualifications.set(this, captureCodexResultIntakeSettingsV1(settings));
   }
 
   expectation(authenticated: AuthenticatedFrameResult, channel: CodexResultReturnChannelV1): CodexResultReturnExpectationV1 {
@@ -67,7 +86,7 @@ export class CodexResultIntakeV1 implements CodexResultReturnIntakeV1 {
       const frame = authenticated.frame;
       if (frame.type !== "harness.codex.result.return") return unavailable();
       const body = codexResultReturnBodySchemaV1.parse(frame.body);
-      const receipt = this.settings.qualificationReceipt;
+      const receipt = this.#settings.qualificationReceipt;
       if (receipt.body.tenantId !== channel.tenantId || receipt.body.nodeId !== channel.nodeId
         || receipt.body.qualificationId !== body.physicalQualification.qualificationId
         || receipt.body.bodyDigest !== body.physicalQualification.receiptBodyDigest
@@ -83,8 +102,8 @@ export class CodexResultIntakeV1 implements CodexResultReturnIntakeV1 {
         nodeKeyId: channel.nodeKeyId,
         serverActorId: channel.serverId,
         serverKeyId: channel.serverKeyId,
-        qualificationMaximumAgeMs: this.settings.qualificationMaximumAgeMs,
-        qualificationPublicKeySpki: this.settings.qualificationPublicKeySpki,
+        qualificationMaximumAgeMs: this.#settings.qualificationMaximumAgeMs,
+        qualificationPublicKeySpki: this.#settings.qualificationPublicKeySpki,
         qualificationReceipt: structuredClone(receipt),
       });
     } catch {
@@ -102,10 +121,10 @@ export class CodexResultIntakeV1 implements CodexResultReturnIntakeV1 {
       return unavailable();
     }
     const bytes = new TextEncoder().encode(body.publication.result.text);
-    const captured = await this.publisher.capture({
+    const captured = await this.#capture({
       publication: body.publication,
       terminalEvidence: body.terminalEvidence,
-      qualificationReceipt: this.settings.qualificationReceipt,
+      qualificationReceipt: this.#settings.qualificationReceipt,
       bytes,
       assertCurrent,
     });

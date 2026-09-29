@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { catalogProjectIdSchema as id } from "./project-wire";
+import { taskCommandSchema } from "./task-wire";
 import { ideaOwnerIntentSchemaV1 } from "../../idea-lab/v1/schemas";
 const digest = z.string().regex(/^sha256:[a-f0-9]{64}$/), text = z.string().min(1).max(2000);
 export const ideaParticipantSelectionSchema = z.array(z.object({ participantId: id, participantDigest: digest }).strict())
@@ -36,9 +37,29 @@ export const ideaStartReceiptSchema = z.object({ sessionId: id, sessionDigest: d
   replayed: z.boolean(), providerContacted: z.boolean(), retryPermitted: z.literal(false),
 }).strict();
 export type IdeaStartReceipt = z.infer<typeof ideaStartReceiptSchema>;
-export const ideaSynthesisDraftSchema = z.object({ sessionDigest: digest, runId: id }).strict();
-export const ideaSynthesisReceiptSchema = z.object({ sessionId: id, sessionDigest: digest, runId: id, synthesisDigest: digest,
-  replayed: z.boolean(), startsWork: z.literal(false) }).strict();
+/**
+ * Preparing an Idea Lab round only creates ordinary proposed tasks. It never
+ * contacts a provider, assigns a worker, or starts work from the browser.
+ */
+export const ideaRoundProposalDraftSchema = z.object({ sessionDigest: digest, projectId: id, round: z.number().int().min(1).max(3) }).strict();
+export const ideaRoundProposalReceiptSchema = z.object({ sessionId: id, sessionDigest: digest, projectId: id,
+  round: z.number().int().min(1).max(3), receipts: z.array(taskCommandSchema).min(3).max(6), startsWork: z.literal(false),
+}).strict().refine(value => value.receipts.every(item => item.receipt.projectId === value.projectId));
+export type IdeaRoundProposalReceipt = z.infer<typeof ideaRoundProposalReceiptSchema>;
+/** A saved contribution receipt, not evidence that a task was started or accepted by this endpoint. */
+export const ideaResultProjectionReceiptSchema = z.object({ sessionId: id, taskKey: id,
+  contribution: z.object({ contributionId: id, contributionDigest: digest }).strict(), replayed: z.boolean(),
+  startsWork: z.literal(false),
+}).strict();
+export type IdeaResultProjectionReceipt = z.infer<typeof ideaResultProjectionReceiptSchema>;
+export const ideaSynthesisDraftSchema = z.union([
+  z.object({ sessionDigest: digest, runId: id }).strict(),
+  z.object({ sessionDigest: digest, mode: z.literal("canonical_reviewed_tasks") }).strict(),
+]);
+export const ideaSynthesisReceiptSchema = z.object({ sessionId: id, sessionDigest: digest, runId: id.nullable(),
+  mode: z.enum(["legacy_panel", "canonical_reviewed_tasks"]), synthesisDigest: digest,
+  replayed: z.boolean(), startsWork: z.literal(false) }).strict().refine(value =>
+  (value.mode === "legacy_panel") === (value.runId !== null));
 export type IdeaSynthesisReceipt = z.infer<typeof ideaSynthesisReceiptSchema>;
 export const ideaDecisionDraftSchema = z.object({ sessionDigest: digest, synthesisDigest: digest,
   intent: ideaOwnerIntentSchemaV1 }).strict().refine(v => (v.intent.decision === "create_project") === !!v.intent.project);
@@ -60,7 +81,9 @@ export const ideaDetailSchema = z.object({ session: summary.extend({ participant
 contributions: z.array(z.object({ contributionId: id, sessionId: id, sessionDigest: digest, participantId: id,
   round: z.number().int().min(1).max(3), safeOpinion: text, suggestedExperiment: z.string().min(1).max(500),
   confidencePercent: z.number().int().min(0).max(100),
-  sourceMode: z.enum(["injected_only", "provider_filtered"]), providerContacted: z.boolean(), liveBotContactAuthorized: z.boolean(),
+  sourceMode: z.enum(["injected_only", "provider_filtered", "canonical_task_result"]),
+  evidenceState: z.enum(["none", "reviewed_control_room_task"]),
+  providerContacted: z.boolean(), liveBotContactAuthorized: z.boolean(),
 })).max(18),
 synthesis: z.object({ sessionId: id, sessionDigest: digest, synthesisDigest: digest, executiveSummary: text,
   nextExperiment: z.string().min(1).max(500), overallScore: z.number().min(0).max(100),
@@ -77,12 +100,19 @@ run: z.object({ runId: id, sessionId: id, sessionDigest: digest,
 decision: z.object({ sessionId: id, sessionDigest: digest, synthesisDigest: digest,
   decision: z.enum(["create_project", "save", "reject"]), project: z.object({ projectId: id }).optional(),
 }).nullable(), canSynthesize: z.boolean(), canStart: z.boolean(), canStop: z.boolean(), canDecide: z.boolean(), canPromote: z.boolean(), execution: z.enum(["not_configured", "authorization_required"]), observedAt: z.string().datetime(),
+canonicalTasks: z.object({ projectId: id, taskCount: z.number().int().min(3).max(18), preparedRounds: z.array(z.number().int().min(1).max(3)).min(1).max(3),
+  tasks: z.array(z.object({ taskKey: id, participantId: id, round: z.number().int().min(1).max(3),
+    contributionRecorded: z.boolean() }).strict()).min(3).max(18),
+}).strict().nullable(), canProjectResults: z.boolean(), nextCanonicalRound: z.number().int().min(2).max(3).nullable(), canPrepareNextRound: z.boolean(),
 }).strict().refine(value => {
-  const { session, contributions, synthesis, decision, run } = value;
+  const { session, contributions, synthesis, decision, run, canonicalTasks } = value;
   return new Set(contributions.map(c => `${c.round}:${c.participantId}`)).size === contributions.length
-    && (!value.canStart || value.execution === "authorization_required" && !run && !synthesis && !decision && !contributions.length)
-    && (!value.canSynthesize || !!run && run.state === "completed" && !synthesis && !decision
-      && contributions.length === session.maxRounds * session.participants.length)
+    && (!value.canStart || value.execution === "authorization_required" && !run && !synthesis && !decision && !contributions.length && !canonicalTasks)
+    && (!value.canSynthesize || !synthesis && !decision && (run
+      ? run.state === "completed" && contributions.length === session.maxRounds * session.participants.length
+      : !!canonicalTasks && canonicalTasks.taskCount === session.maxRounds * session.participants.length
+        && contributions.length === session.maxRounds * session.participants.length
+        && contributions.every(contribution => contribution.sourceMode === "canonical_task_result")))
     && (!value.canPromote || value.canDecide)
     && (!value.canDecide || !!synthesis && !decision && (!run || run.state === "completed"))
     && (!run || run.sessionId === session.sessionId && run.sessionDigest === session.sessionDigest
@@ -93,8 +123,20 @@ decision: z.object({ sessionId: id, sessionDigest: digest, synthesisDigest: dige
       && run.attempts.every(a => a.round <= session.maxRounds && session.participants.some(p => p.participantId === a.participantId)))
     && contributions.every(c => c.sessionId === session.sessionId && c.sessionDigest === session.sessionDigest
       && c.round <= session.maxRounds && session.participants.some(p => p.participantId === c.participantId))
-    && contributions.every(c => c.sourceMode === "provider_filtered" ? c.providerContacted && c.liveBotContactAuthorized
-      : !c.providerContacted && !c.liveBotContactAuthorized)
+    && contributions.every(c => c.sourceMode === "provider_filtered" ? c.providerContacted && c.liveBotContactAuthorized && c.evidenceState === "none"
+      : c.sourceMode === "canonical_task_result" ? !c.providerContacted && !c.liveBotContactAuthorized && c.evidenceState === "reviewed_control_room_task"
+      : !c.providerContacted && !c.liveBotContactAuthorized && c.evidenceState === "none")
+    && (!canonicalTasks || !run
+      && canonicalTasks.taskCount >= session.participants.length && canonicalTasks.taskCount <= session.maxRounds * session.participants.length
+      && canonicalTasks.preparedRounds.every(round => round <= session.maxRounds)
+      && canonicalTasks.tasks.length === canonicalTasks.taskCount
+      && new Set(canonicalTasks.tasks.map(task => task.taskKey)).size === canonicalTasks.tasks.length
+      && canonicalTasks.tasks.every(task => task.round <= session.maxRounds && session.participants.some(participant => participant.participantId === task.participantId)))
+    && (!value.canProjectResults || !!canonicalTasks && !run && !synthesis && !decision)
+    && (value.nextCanonicalRound === null || !!canonicalTasks && !run && !synthesis && !decision
+      && value.nextCanonicalRound <= session.maxRounds && canonicalTasks.preparedRounds.includes(value.nextCanonicalRound - 1)
+      && canonicalTasks.tasks.filter(task => task.round === value.nextCanonicalRound! - 1).every(task => task.contributionRecorded))
+    && (!value.canPrepareNextRound || value.nextCanonicalRound !== null && value.execution === "authorization_required")
     && (!synthesis || synthesis.sessionId === session.sessionId && synthesis.sessionDigest === session.sessionDigest)
     && (!decision || !!synthesis && decision.sessionId === session.sessionId && decision.sessionDigest === session.sessionDigest
       && decision.synthesisDigest === synthesis.synthesisDigest && (decision.decision === "create_project") === !!decision.project);

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { readFile } from "node:fs/promises";
+import { readFile, readdir } from "node:fs/promises";
 import handler from "../dist-vps/server/index.js";
 import { installPrivateWebProcess } from "../dist-vps/server/runtime.js";
 import { taskAssignmentFixture } from "./helpers/task-assignment.ts";
@@ -10,10 +10,28 @@ import { at } from "./native-task-fixture.ts";
 import { request, origin } from "./helpers/web-foundation.ts";
 
 test("compiled assignment keeps scheduled planning and allocation server-only", async () => {
-  const compiled = await readFile(new URL("../dist-vps/server/taskApplication.js", import.meta.url), "utf8");
-  assert.match(compiled, /service:schedule-assignment:v1/);
-  assert.match(compiled, /scheduled\.tasks\.plan/);
-  assert.doesNotMatch(compiled, /api\/v1\/scheduled-assignment/);
+  const compiledScripts = async (root) => Promise.all((await readdir(root, { recursive: true }))
+    .filter(path => path.endsWith(".js"))
+    .map(path => readFile(new URL(path, root), "utf8")));
+  // Vite may move server-only code into a shared server chunk. Check the whole
+  // compiled server boundary, while refusing the same authority in client JS.
+  const server = (await compiledScripts(new URL("../dist-vps/server/", import.meta.url))).join("\n");
+  const client = (await compiledScripts(new URL("../dist-vps/client/", import.meta.url))).join("\n");
+  assert.ok(server.includes("service:schedule-assignment:v1"));
+  assert.ok(server.includes("scheduled.tasks.plan"));
+  assert.equal(server.includes("api/v1/scheduled-assignment"), false);
+  assert.equal(client.includes("service:schedule-assignment:v1"), false);
+  assert.equal(client.includes("scheduled.tasks.plan"), false);
+});
+
+test("browser bundles never include server-only host-value security code", async () => {
+  // host-value.ts reads node:util intrinsics at import time; in a browser
+  // chunk it throws and blanks the page (the Mac-local Work page did this).
+  const root = new URL("../dist-vps/client/", import.meta.url);
+  for (const path of (await readdir(root, { recursive: true })).filter(item => item.endsWith(".js"))) {
+    const text = await readFile(new URL(path, root), "utf8");
+    assert.equal(text.includes("host intrinsics unavailable"), false, `server-only host-value code in ${path}`);
+  }
 });
 
 test("compiled private assignment API records, reads and expires a real lease under shared logout", async t => {
@@ -25,7 +43,8 @@ test("compiled private assignment API records, reads and expires a real lease un
   t.after(() => app.close());
   const base = `/api/v1/projects/${f.prepared.receipt.projectId}/tasks/${f.prepared.receipt.jobId}`, path = `${base}/assignment`;
   const req = (url = path, method = "GET", body) => request(url, method, body, undefined, f.jwt);
-  assert.deepEqual(Object.keys(coordinator.webOperation()).sort(), ["assign", "expire", "options", "tenantId", "workspaceId"]);
+  assert.deepEqual(Object.keys(coordinator.webOperation()).sort(),
+    ["assign", "expire", "options", "projectOptions", "tenantId", "workspaceId"]);
   assert.equal("assignLocked" in coordinator, false);
   const options = await (await handler(req())).json(); assert.equal(options.candidates.length, 1); assert.equal(options.receipt, null);
   const draft = { action: "assign", expectedInputDigest: options.inputDigest, nodeId: options.candidates[0].nodeId };
@@ -40,6 +59,16 @@ test("compiled private assignment API records, reads and expires a real lease un
   now = instant + 70_000;
   const expired = await handler(req(path, "POST", { action: "expire", expectedInputDigest: options.inputDigest }));
   assert.equal(expired.status, 201, await expired.clone().text()); assert.equal((await expired.json()).receipt.leaseState, "expired");
+  const retryOptions = await (await handler(req())).json();
+  assert.equal(retryOptions.candidates.length, 1, "a terminal reservation must expose a route again");
+  const reassigned = await handler(req(path, "POST", { ...draft, nodeId: retryOptions.candidates[0].nodeId }));
+  assert.equal(reassigned.status, 201, await reassigned.clone().text());
+  const reassignedReceipt = (await reassigned.json()).receipt;
+  assert.notEqual(reassignedReceipt.leaseId, receipt.leaseId);
+  assert.equal(reassignedReceipt.leaseEpoch, 2);
+  const reassignedDetail = await (await handler(req(base))).json();
+  assert.equal(reassignedDetail.attempts[0].attemptNumber, 2);
+  assert.equal(reassignedDetail.task.state, "leased");
   assert.equal((await handler(req("/api/v1/session/logout", "POST"))).status, 204);
   assert.equal((await handler(req())).status, 401);
 });

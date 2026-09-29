@@ -69,6 +69,7 @@ export type ClaudeCodeResultSubtypeCodeV1 =
 /** Same discipline for `terminal_reason`: mapped to a fixed value, never retained. */
 export type ClaudeCodeTerminalReasonCodeV1 =
   | "none"
+  | "completed"
   | "max_turns"
   | "max_tokens"
   | "timeout"
@@ -86,6 +87,7 @@ const KNOWN_RESULT_SUBTYPES: ReadonlySet<string> = new Set([
 
 /** Exactly the `terminal_reason` values this decoder recognises. */
 const KNOWN_TERMINAL_REASONS: ReadonlySet<string> = new Set([
+  "completed",
   "max_turns",
   "max_tokens",
   "timeout",
@@ -130,10 +132,19 @@ export interface ClaudeCodeDecodeErrorFrameV1 {
   readonly reasonCode: ClaudeCodeDecodeReasonCodeV1;
 }
 
+/** A known status line with no task content (current CLIs emit rate_limit_event per run). */
+export interface ClaudeCodeInformationalFrameV1 {
+  readonly schema: typeof CLAUDE_CODE_STREAM_FRAME_SCHEMA_V1;
+  readonly kind: "informational";
+  readonly frameType: "rate_limit_event" | "thinking_tokens";
+  readonly frameDigest: string;
+}
+
 export type ClaudeCodeStreamFrameV1 =
   | ClaudeCodeInitFrameV1
   | ClaudeCodeAssistantTurnFrameV1
   | ClaudeCodeResultFrameV1
+  | ClaudeCodeInformationalFrameV1
   | ClaudeCodeDecodeErrorFrameV1;
 
 export interface ClaudeCodeStreamDecoderStateV1 {
@@ -167,7 +178,13 @@ function textDigest(value: string): string {
  * type, out-of-order frame or duplicate terminal frame is a decode failure, and
  * the first failure permanently poisons the decoder rather than resynchronising.
  */
-export function createClaudeCodeStreamDecoderV1(): ClaudeCodeStreamDecoderV1 {
+export function createClaudeCodeStreamDecoderV1(input: Readonly<{ expectedSessionId?: unknown }> = {}): ClaudeCodeStreamDecoderV1 {
+  const expectedSessionId = input.expectedSessionId === undefined ? undefined : (() => {
+    if (typeof input.expectedSessionId !== "string" || !sessionIdPattern.test(input.expectedSessionId)) {
+      throw new Error("claude_code_stream_decoder_expected_session_invalid");
+    }
+    return input.expectedSessionId;
+  })();
   let sessionId: string | undefined;
   let framesAccepted = 0;
   let assistantTurns = 0;
@@ -206,8 +223,11 @@ export function createClaudeCodeStreamDecoderV1(): ClaudeCodeStreamDecoderV1 {
 
     const type = parsed.type;
     if (typeof type !== "string" || type.length === 0) return fail("frame_type_missing");
-    if (type !== "system" && type !== "assistant" && type !== "result") return fail("unknown_frame_type");
-    if (type === "system" && parsed.subtype !== "init") return fail("unsupported_system_subtype");
+    if (type !== "system" && type !== "assistant" && type !== "result" && type !== "rate_limit_event") return fail("unknown_frame_type");
+    // Known status lines with no task content: per-run rate-limit notices and thinking progress.
+    const informational = type === "rate_limit_event" || type === "system" && parsed.subtype === "thinking_tokens"
+      ? (type === "rate_limit_event" ? "rate_limit_event" as const : "thinking_tokens" as const) : undefined;
+    if (type === "system" && parsed.subtype !== "init" && !informational) return fail("unsupported_system_subtype");
 
     const frameSessionId = parsed.session_id;
     if (typeof frameSessionId !== "string" || !sessionIdPattern.test(frameSessionId)) {
@@ -215,8 +235,9 @@ export function createClaudeCodeStreamDecoderV1(): ClaudeCodeStreamDecoderV1 {
     }
 
     if (terminalObserved) return fail(type === "result" ? "duplicate_terminal_frame" : "frame_after_terminal");
-    if (type === "system") {
+    if (type === "system" && !informational) {
       if (initObserved) return fail("duplicate_init_frame");
+      if (expectedSessionId !== undefined && frameSessionId !== expectedSessionId) return fail("session_id_mismatch");
     } else if (!initObserved) {
       return fail("init_frame_not_first");
     } else if (frameSessionId !== sessionId) {
@@ -228,6 +249,12 @@ export function createClaudeCodeStreamDecoderV1(): ClaudeCodeStreamDecoderV1 {
       frameDigest = sha256Digest(parsed);
     } catch {
       return fail("malformed_json");
+    }
+
+    if (informational) {
+      framesAccepted += 1;
+      return Object.freeze({ schema: CLAUDE_CODE_STREAM_FRAME_SCHEMA_V1, kind: "informational" as const,
+        frameType: informational, frameDigest });
     }
 
     if (type === "system") {
@@ -300,7 +327,8 @@ export function createClaudeCodeStreamDecoderV1(): ClaudeCodeStreamDecoderV1 {
       kind: "result" as const,
       sessionId: frameSessionId,
       // Deliberately independent of subtype: a "success" subtype can carry is_error true.
-      outcome: (isError || terminalReasonPresent ? "failed" : "succeeded") as "succeeded" | "failed",
+      // Current CLIs report terminal_reason "completed" on a normal finish; any other reason fails.
+      outcome: (isError || terminalReasonPresent && terminalReasonCode !== "completed" ? "failed" : "succeeded") as "succeeded" | "failed",
       isError,
       subtypeCode: mapSubtypeCode(subtype),
       terminalReasonCode,
@@ -329,8 +357,9 @@ export function createClaudeCodeStreamDecoderV1(): ClaudeCodeStreamDecoderV1 {
 }
 
 /** Convenience one-shot decode of an already-framed line sequence. Stops at the first failure. */
-export function decodeClaudeCodeStreamJsonLinesV1(lines: readonly string[]): readonly ClaudeCodeStreamFrameV1[] {
-  const decoder = createClaudeCodeStreamDecoderV1();
+export function decodeClaudeCodeStreamJsonLinesV1(lines: readonly string[],
+  options: Readonly<{ expectedSessionId?: unknown }> = {}): readonly ClaudeCodeStreamFrameV1[] {
+  const decoder = createClaudeCodeStreamDecoderV1(options);
   const frames: ClaudeCodeStreamFrameV1[] = [];
   for (const line of lines) {
     const frame = decoder.accept(line);

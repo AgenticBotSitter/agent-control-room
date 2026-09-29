@@ -3,8 +3,16 @@ import { databaseOperationSignal, withDatabaseOperationSignal } from "../../pers
 
 export const privateDatabaseLimits = Object.freeze({ connections: 8, checkoutMs: 5000,
   statementMs: 5000, transactionMs: 10000, closeMs: 5000 });
+export type PrivateDatabaseRollbackSqlState = "40P01" | "40001";
 export class PrivateDatabaseError extends Error {
-  constructor(readonly code: "database_unavailable" | "database_outcome_uncertain" | "database_close_uncertain") { super(code); }
+  constructor(readonly code: "database_unavailable" | "database_outcome_uncertain" | "database_close_uncertain",
+    /** PostgreSQL's sanitized five-character SQLSTATE. It proves that the
+     * server rejected the statement; unlike a transport failure, that outcome
+     * is known and must not quarantine every connection in the pool. */
+    readonly sqlState?: string) { super(code); }
+  get rollbackSqlState(): PrivateDatabaseRollbackSqlState | undefined {
+    return this.sqlState === "40P01" || this.sqlState === "40001" ? this.sqlState : undefined;
+  }
 }
 export interface PrivateDatabaseLease extends DatabaseSession { release(): void }
 /** Trusted, explicitly supplied transport. No ambient driver or fallback is selected here. */
@@ -24,11 +32,44 @@ export function boundPrivateDatabase(driver: PrivateDatabaseDriver,
       throw new Error("invalid_database_limits");
   }
   let stopped = false, active = 0;
+  type Admission = { resolve(): void; reject(error: PrivateDatabaseError): void; timer: ReturnType<typeof setTimeout> };
+  const waiting: Admission[] = [];
   let closing: Promise<void> | undefined;
   const invalidations = new Set<() => void>();
+  const releaseAdmission = () => {
+    active--;
+    const next = waiting.shift();
+    if (!next) return;
+    clearTimeout(next.timer); active++; next.resolve();
+  };
+  const admit = async (signal: AbortSignal | undefined, timeoutMs: number) => {
+    if (stopped) throw new PrivateDatabaseError("database_unavailable");
+    if (signal?.aborted) throw new PrivateDatabaseError("database_unavailable");
+    if (active < limits.connections) { active++; return; }
+    // Keep overload memory bounded while allowing one pool-width burst to wait
+    // for an already-running read. The wait itself is bounded by checkoutMs.
+    if (waiting.length >= limits.connections) throw new PrivateDatabaseError("database_unavailable");
+    await new Promise<void>((resolve, reject) => {
+      let settled = false;
+      const cleanup = () => { clearTimeout(admission.timer); signal?.removeEventListener("abort", aborted); };
+      const finish = (work: () => void) => { if (settled) return; settled = true; cleanup(); work(); };
+      const remove = () => { const index = waiting.indexOf(admission); if (index >= 0) waiting.splice(index, 1); };
+      const aborted = () => { remove(); finish(() => reject(new PrivateDatabaseError("database_unavailable"))); };
+      const admission: Admission = { resolve: () => finish(resolve), reject: error => finish(() => reject(error)), timer: setTimeout(() => {
+        const index = waiting.indexOf(admission);
+        if (index >= 0) waiting.splice(index, 1);
+        admission.reject(new PrivateDatabaseError("database_unavailable"));
+      }, timeoutMs) };
+      waiting.push(admission);
+      signal?.addEventListener("abort", aborted, { once: true });
+    });
+  };
   function stop(): Promise<void> {
     if (closing) return closing;
     stopped = true;
+    for (const admission of waiting.splice(0)) {
+      clearTimeout(admission.timer); admission.reject(new PrivateDatabaseError("database_unavailable"));
+    }
     for (const invalidate of invalidations) invalidate();
     closing = (async () => {
       let timer: ReturnType<typeof setTimeout> | undefined;
@@ -44,11 +85,21 @@ export function boundPrivateDatabase(driver: PrivateDatabaseDriver,
     return closing;
   }
   async function run<T>(transaction: boolean, callback: (session: DatabaseSession) => Promise<T>, check: () => void | Promise<void>): Promise<T> {
-    if (stopped || active >= limits.connections) throw new PrivateDatabaseError("database_unavailable");
-    active++;
-    const operation = new AbortController(), parent = databaseOperationSignal();
+    const totalMs = transaction ? limits.transactionMs : limits.statementMs;
+    const parent = databaseOperationSignal();
+    await admit(parent, Math.min(limits.checkoutMs, totalMs));
+    // `await` yields even when a slot was immediately available. Close may
+    // have started in that turn; refuse before acquisition and return the slot.
+    if (stopped || parent?.aborted) { releaseAdmission(); throw new PrivateDatabaseError("database_unavailable"); }
+    // Admission has its own bounded wait. Start the operation budget only once
+    // this caller owns a slot, so queue contention cannot consume the budget
+    // and turn an otherwise bounded request into a pool-wide timeout.
+    const operationStarted = performance.now();
+    const remainingMs = () => Math.max(1, totalMs - (performance.now() - operationStarted));
+    const operation = new AbortController();
     const signal = parent ? AbortSignal.any([parent, operation.signal]) : operation.signal;
     let valid = true, busy = false, queryFailed = false;
+    let statementSqlState: string | undefined;
     let invalidate!: () => void;
     const invalidated = new Promise<never>((_, reject) => { invalidate = () => {
       valid = false; operation.abort(); reject(new PrivateDatabaseError("database_outcome_uncertain"));
@@ -61,7 +112,7 @@ export function boundPrivateDatabase(driver: PrivateDatabaseDriver,
         timer = setTimeout(() => { void stop().catch(() => {}); reject(new PrivateDatabaseError("database_outcome_uncertain")); }, ms);
       })]); } finally { clearTimeout(timer); }
     };
-    const checkoutTimer = setTimeout(() => { void stop().catch(() => {}); }, limits.checkoutMs);
+    const checkoutTimer = setTimeout(() => { void stop().catch(() => {}); }, Math.min(limits.checkoutMs, remainingMs()));
     const work = withDatabaseOperationSignal(signal, async () => {
       // Late checkout can never enter user code; its lease is still released.
       const lease = await driver.acquire();
@@ -74,7 +125,11 @@ export function boundPrivateDatabase(driver: PrivateDatabaseDriver,
         try {
           const result = await deadline(Promise.resolve().then(() => { assertActive(); return lease.query<U>(statement, params); }), limits.statementMs);
           assertActive(); return result;
-        } catch (error) { queryFailed = true; throw error; }
+        } catch (error) {
+          queryFailed = true;
+          if (error instanceof PrivateDatabaseError && error.sqlState) statementSqlState = error.sqlState;
+          throw error;
+        }
         finally { busy = false; }
       };
       try {
@@ -82,9 +137,13 @@ export function boundPrivateDatabase(driver: PrivateDatabaseDriver,
         if (transaction) { await query("BEGIN"); began = true; }
         const result = await callback(Object.freeze({ query }));
         assertActive();
-        if (busy || queryFailed) throw new PrivateDatabaseError("database_outcome_uncertain");
+        if (busy || queryFailed) throw statementSqlState
+          ? new PrivateDatabaseError("database_unavailable", statementSqlState)
+          : new PrivateDatabaseError("database_outcome_uncertain");
         await check(); assertActive();
-        if (busy || queryFailed) throw new PrivateDatabaseError("database_outcome_uncertain");
+        if (busy || queryFailed) throw statementSqlState
+          ? new PrivateDatabaseError("database_unavailable", statementSqlState)
+          : new PrivateDatabaseError("database_outcome_uncertain");
         if (transaction) { commitAttempted = true; await query("COMMIT"); began = false; }
         return result;
       } catch (error) {
@@ -97,18 +156,23 @@ export function boundPrivateDatabase(driver: PrivateDatabaseDriver,
           try { await query("ROLLBACK"); }
           catch { await stop(); throw new PrivateDatabaseError("database_outcome_uncertain"); }
         }
+        // PostgreSQL has already aborted the transaction for these statement-time failures.
+        // The successful ROLLBACK above proves this lease is reusable; keep the pool serving
+        // other requests while returning one sanitized, retryable refusal to this caller.
+        if (error instanceof PrivateDatabaseError && error.rollbackSqlState)
+          throw new PrivateDatabaseError("database_unavailable");
         throw error;
       } finally { valid = false; lease.release(); }
     });
     try {
       // Acquire has its own ceiling even when the encompassing transaction has time left.
       // It is measured separately by the wrapper below, before any statement can be issued.
-      return await deadline(work, transaction ? limits.transactionMs : limits.statementMs);
+      return await deadline(work, remainingMs());
     } catch (error) {
       // Invalidating active operations is immediate; reporting completion also awaits bounded termination.
       if (stopped) await stop();
       throw error;
-    } finally { clearTimeout(checkoutTimer); valid = false; operation.abort(); invalidations.delete(invalidate); active--; }
+    } finally { clearTimeout(checkoutTimer); valid = false; operation.abort(); invalidations.delete(invalidate); releaseAdmission(); }
   }
   const client = Object.freeze<DatabaseClient>({
     query: <T>(statement: string, params?: unknown[]) => run(false, session => session.query<T>(statement, params), () => {}),

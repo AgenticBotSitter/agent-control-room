@@ -260,6 +260,16 @@ try {
   const projectPath = new URL(page.url()).pathname;
 
   await stableMatrix(page, "360px", projectPath);
+  // Voice is intentionally present but inert on Settings. Visiting the page
+  // must not make a microphone-capable action appear until the owner opts in.
+  await page.goto(`${origin}/settings`, { waitUntil: "domcontentloaded" });
+  await page.getByRole("heading", { name: "Voice controls" }).waitFor();
+  check("Settings exposes optional voice as disabled by default",
+    (await page.getByRole("checkbox", { name: /enable voice controls/i }).isChecked()) === false);
+  check("Settings does not expose microphone actions before voice opt-in",
+    (await page.getByRole("button", { name: /start dictation|read aloud/i }).count()) === 0);
+  check("Settings names voice dictation as an unsent local draft",
+    (await page.getByText(/everything on this page works fully with keyboard and typed text/i).count()) === 1);
   const unknown = await page.goto(`${origin}${projectPath}/unknown-section`, { waitUntil: "domcontentloaded" });
   check("Unknown project section is not rendered as the overview", unknown?.status() === 404, `status=${unknown?.status() ?? "none"}`);
 
@@ -628,7 +638,7 @@ try {
     "  check(TAG + 'expanded result controls meet 24px', expanded.small.length === 0, expanded.small.join(' | '));",
     "  check(TAG + 'expanded result does not scroll sideways', !expanded.overflow);",
     "  check(TAG + 'expanded review offers the request-changes decision', (await page.getByRole('button', { name: 'Request changes' }).count()) >= 1);",
-    "  const accept = page.getByRole('button', { name: 'Accept quality' });",
+    "  const accept = page.getByRole('button', { name: 'Accept', exact: true });",
     "  await accept.waitFor({ timeout: 15000 });",
     "  check(TAG + 'owner review loads for the recorded result', (await accept.count()) === 1);",
     "  await page.getByLabel('Changes you want').focus();",

@@ -32,7 +32,7 @@ adapters in `src/voice/v1/types.ts`:
 Tests inject fakes. No real microphone attempt, permission prompt, provider
 call, credential or deployment effect exists anywhere in this module.
 
-## Browser adapters (not yet mounted)
+## Browser adapters (mounted only in Settings)
 
 `private-app/app/voice-browser-adapters.ts` provides the real Web Speech API
 implementations of both boundaries via `voiceBrowserAdaptersV1()`:
@@ -56,9 +56,16 @@ implementations of both boundaries via `voiceBrowserAdaptersV1()`:
   `SpeechSynthesisUtterance` only on explicit caller use of `speak()`, refuses
   blank text, and `cancel()` is idempotent and safe before anything was spoken.
 
-The adapters are **not mounted in any page yet** — `VoiceControlsSurface`
-still receives its adapters by injection, and no page composition, permission
-attempt or policy change happens here.
+`VoiceControlsWorkspace` mounts the adapters only in the private **Settings**
+page. It remains disabled by default, so merely visiting Settings does not
+request microphone access, create speech-recognition activity, or contact a
+voice service. The owner must first enable the optional controls and then
+explicitly press **Start dictation** or **Read aloud**.
+
+A confirmed transcript goes only to an editable, unsent, browser-local draft.
+That draft cannot create a project, dispatch a task, contact a worker, or
+change settings outside the page. This keeps optional voice useful without
+turning speech into an authority path.
 
 ## Keyboard and text-only
 
@@ -72,5 +79,6 @@ Typing always works; voice never replaces it.
 - `src/voice/v1/policy.ts` — default-off settings, read-aloud gate, dedupe, cleanup
 - `src/voice/v1/presentation.ts` — owner-visible wording for every state
 - `private-app/app/voice-controls.tsx` — `VoiceControlsSurface`
-- `private-app/app/voice-browser-adapters.ts` — real browser adapters (not yet mounted)
+- `private-app/app/voice-browser-adapters.ts` — real browser adapters, composed only by the default-off Settings workspace
+- `private-app/app/voice-controls-workspace.tsx` — disabled-by-default Settings composition and unsent local draft
 - `tests/voice-accessibility.test.tsx` — lane `test:voice`

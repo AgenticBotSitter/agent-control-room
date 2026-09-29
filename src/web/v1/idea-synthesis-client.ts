@@ -20,7 +20,9 @@ export function createIdeaSynthesisClient(transport: typeof fetch = fetch) {
         throw new BrowserRequestError(code ?? "uncertain");
       }
       const receipt = ideaSynthesisReceiptSchema.parse(await readBrowserJson(response));
-      if (receipt.sessionId !== sessionId || receipt.sessionDigest !== input.data.sessionDigest || receipt.runId !== input.data.runId) throw new Error();
+      if (receipt.sessionId !== sessionId || receipt.sessionDigest !== input.data.sessionDigest
+        || ("runId" in input.data ? receipt.mode !== "legacy_panel" || receipt.runId !== input.data.runId
+          : receipt.mode !== "canonical_reviewed_tasks" || receipt.runId !== null)) throw new Error();
       return receipt;
     } catch (error) { throw error instanceof BrowserRequestError ? error : new BrowserRequestError("uncertain"); }
     finally { busy = false; }

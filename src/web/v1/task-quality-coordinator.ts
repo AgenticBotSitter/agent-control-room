@@ -11,8 +11,16 @@ import { documentStructureRulesSchema } from "../../completion-gate/v1/document-
 import { assertNoSecretMaterial, sha256Digest } from "../../security";
 import { catalogProjectIdSchema } from "./project-wire";
 import { TaskCoordinatorInterruption } from "./task-coordinator-interruption";
+import type { TaskResultInspectionSourceV1 } from "../../completion-gate/v1/task-result-inspection";
 
-export type TaskQualityConfiguration = NativeQualityConfiguration & { scenarios: readonly AutomaticDocumentScenario[] };
+export const MAC_LOCAL_MAX_QUALITY_SCENARIOS_V1 = 50;
+export type TaskQualityScenarioRegistryV1 = Readonly<{
+  snapshot(): readonly AutomaticDocumentScenario[];
+  register(scenarios: readonly AutomaticDocumentScenario[]): void;
+}>;
+const taskQualityScenarioRegistries = new WeakSet<object>();
+export type TaskQualityConfiguration = NativeQualityConfiguration & { scenarios: readonly AutomaticDocumentScenario[];
+  scenarioRegistry?: TaskQualityScenarioRegistryV1 };
 export const taskQualityRequestSchema = nativeQualityRequestSchema.extend({ projectId: catalogProjectIdSchema, jobId: catalogProjectIdSchema }).strict();
 export type TaskQualityRequest = z.infer<typeof taskQualityRequestSchema>;
 export const taskQualitySweepRequestSchema = z.object({ projectId: catalogProjectIdSchema,
@@ -28,6 +36,20 @@ const scenariosSchema = z.array(z.object({ scenarioId: catalogProjectIdSchema, a
   acceptanceProfileDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/), rules: documentStructureRulesSchema }).strict()).max(50);
 const deny = (): never => { throw new Error("task_quality_unavailable"); };
 
+export function createTaskQualityScenarioRegistryV1(initial: readonly AutomaticDocumentScenario[]): TaskQualityScenarioRegistryV1 {
+  let values: readonly AutomaticDocumentScenario[] = Object.freeze([]);
+  const registry: TaskQualityScenarioRegistryV1 = Object.freeze({ snapshot: () => values, register(input) {
+    const parsed = scenariosSchema.parse(input); assertNoSecretMaterial(parsed);
+    const next = new Map(values.map(value => [JSON.stringify([value.acceptanceProfileId,
+      value.acceptanceProfileDigest, value.scenarioId]), value]));
+    for (const value of parsed) next.set(JSON.stringify([value.acceptanceProfileId,
+      value.acceptanceProfileDigest, value.scenarioId]), value);
+    if (next.size > MAC_LOCAL_MAX_QUALITY_SCENARIOS_V1) throw new Error("task_quality_scenario_limit_50");
+    values = Object.freeze([...next.values()]);
+  } });
+  taskQualityScenarioRegistries.add(registry); registry.register(initial); return registry;
+}
+
 export function validateTaskQualityKeys(quality: TaskQualityConfiguration, reviewKey: Uint8Array, web: PrivateWebProcessOptions["tasks"]) {
   const equal = (a: Uint8Array, b: Uint8Array | undefined) => b instanceof Uint8Array && a.length === 32 && b.length === 32 && timingSafeEqual(a, b);
   if (!equal(quality.integrityKey, reviewKey) || !equal(quality.integrityKey, web?.reviews?.integrityKey)
@@ -39,7 +61,9 @@ export function captureTaskQualityConfiguration(config: TaskQualityConfiguration
   const key = (value: Uint8Array) => { if (!(value instanceof Uint8Array) || value.length !== 32) return deny(); return Uint8Array.from(value); };
   const scenarios = scenariosSchema.parse(config.scenarios); assertNoSecretMaterial(scenarios);
   if (new Set(scenarios.map(value => JSON.stringify([value.acceptanceProfileId, value.acceptanceProfileDigest, value.scenarioId]))).size !== scenarios.length) return deny();
+  if (config.scenarioRegistry !== undefined && (!taskQualityScenarioRegistries.has(config.scenarioRegistry as object))) return deny();
   const captured = { integrityKey: key(config.integrityKey), harnessIntegrityKey: key(config.harnessIntegrityKey), scenarios,
+    ...(config.scenarioRegistry ? { scenarioRegistry: config.scenarioRegistry } : {}),
     results: { ...config.results, integrityKey: key(config.results.integrityKey), storage: Object.freeze({ read: config.results.storage.read.bind(config.results.storage) }) },
     checkpoints: Object.freeze({ read: config.checkpoints.read.bind(config.checkpoints), advance: config.checkpoints.advance.bind(config.checkpoints),
       initialize: () => { throw new Error("task_quality_provisioning_unavailable"); } }) };
@@ -52,13 +76,24 @@ export function captureTaskQualityConfiguration(config: TaskQualityConfiguration
 export class TaskQualityCoordinator {
   private readonly config: TaskQualityConfiguration;
   private readonly scope: { tenantId: string; workspaceId: string };
+  private readonly inspectionSource?: TaskResultInspectionSourceV1;
   private highWater = Number.NEGATIVE_INFINITY;
   constructor(private readonly db: DatabaseClient, scope: { tenantId: string; workspaceId: string },
-    config: TaskQualityConfiguration, private readonly clock: () => number = Date.now) {
+    config: TaskQualityConfiguration, private readonly clock: () => number = Date.now,
+    inspectionSource?: TaskResultInspectionSourceV1) {
     this.scope = Object.freeze({ tenantId: catalogProjectIdSchema.parse(scope.tenantId), workspaceId: catalogProjectIdSchema.parse(scope.workspaceId) });
     this.config = captureTaskQualityConfiguration(config);
+    if (inspectionSource !== undefined && typeof inspectionSource.inspectSubmitted !== "function") return deny();
+    this.inspectionSource = inspectionSource && Object.freeze({ inspectSubmitted: inspectionSource.inspectSubmitted.bind(inspectionSource) });
+  }
+  private inspectSubmitted(tx: DatabaseSession, tenantId: string, runId: string) {
+    return this.inspectionSource
+      ? this.inspectionSource.inspectSubmitted(tx, tenantId, runId)
+      : new NativeResultSubmissionService(this.db, this.config).inspectSubmitted(tx, tenantId, runId);
   }
   private async scopeIn(tx: DatabaseSession, request: Pick<TaskQualityRequest, "projectId" | "jobId" | "runId">) {
+    const tenant = await tx.query("SELECT id FROM tenants WHERE id=$1 FOR KEY SHARE", [this.scope.tenantId]);
+    if (tenant.rows.length !== 1) return deny();
     const rows = await tx.query(`SELECT p.id FROM control_harness_runs r
       JOIN control_jobs j ON j.tenant_id=r.tenant_id AND j.id=r.job_id AND j.project_id=r.project_id
       JOIN projects p ON p.tenant_id=j.tenant_id AND p.id=j.project_id
@@ -107,7 +142,7 @@ export class TaskQualityCoordinator {
       return candidates;
     }, current);
     current();
-    const submission = new NativeResultSubmissionService(this.db, this.config), items: TaskQualitySweepItem[] = [];
+    const items: TaskQualitySweepItem[] = [];
     for (const row of rows.slice(0, 5)) {
       current();
       try {
@@ -115,7 +150,7 @@ export class TaskQualityCoordinator {
           current();
           await this.scopeIn(tx, { projectId: request.projectId, jobId: row.job_id, runId: row.run_id });
           current();
-          const context = await submission.inspectSubmitted(tx, this.scope.tenantId, row.run_id);
+          const context = await this.inspectSubmitted(tx, this.scope.tenantId, row.run_id);
           current();
           if (context.run.projectId !== request.projectId || context.job.id !== row.job_id) return deny();
           return taskQualityRequestSchema.parse({ tenantId: this.scope.tenantId, projectId: request.projectId,
@@ -145,9 +180,8 @@ export class TaskQualityCoordinator {
       }, async () => { current(); await precommit(); current(); }); } };
     const native = nativeQualityRequestSchema.parse({ tenantId: request.tenantId, runId: request.runId,
       targetDigest: request.targetDigest, contentHash: request.contentHash });
-    const submission = new NativeResultSubmissionService(db, this.config);
     const inspect = () => db.transaction(async tx => {
-      const context = await submission.inspectSubmitted(tx, request.tenantId, request.runId);
+      const context = await this.inspectSubmitted(tx, request.tenantId, request.runId);
       if (context.run.projectId !== request.projectId || context.run.jobId !== request.jobId
         || context.snapshot.targetDigest !== request.targetDigest || context.result.receipt.contentHash !== request.contentHash) return deny();
       return context;
@@ -155,10 +189,10 @@ export class TaskQualityCoordinator {
     let context = await inspect();
     let verification: "not_configured" | "not_run" | "recorded" | "replayed" = "not_run";
     if (["pending", "ready"].includes(context.snapshot.status)) {
-      const scenarios = this.config.scenarios.filter(value => value.acceptanceProfileId === context.profile.id
+      const scenarios = (this.config.scenarioRegistry?.snapshot() ?? this.config.scenarios).filter(value => value.acceptanceProfileId === context.profile.id
         && value.acceptanceProfileDigest === sha256Digest(context.profile) && context.profile.requiredVerificationScenarioIds.includes(value.scenarioId));
       if (scenarios.length) {
-        const verified = await new NativeResultVerificationService(db, this.config, scenarios, time).verify(native, current);
+        const verified = await new NativeResultVerificationService(db, this.config, scenarios, time, this.inspectionSource).verify(native, current);
         verification = verified.replayed ? "replayed" : "recorded"; context = await inspect();
       } else verification = "not_configured";
     }
@@ -166,11 +200,11 @@ export class TaskQualityCoordinator {
     // Verified native completion frees occupancy independently of the quality disposition.
     // Ready results retain the existing atomic quality-completion path and its exact replay.
     const capacity = context.snapshot.status === "ready" ? undefined
-      : await new NativeTaskCompletionService(db, this.config, time).releaseCapacity(native, current);
+      : await new NativeTaskCompletionService(db, this.config, time, this.inspectionSource).releaseCapacity(native, current);
     current();
     switch (context.snapshot.status) {
       case "ready": {
-        const completion = await new NativeTaskCompletionService(db, this.config, time).complete(native, current);
+        const completion = await new NativeTaskCompletionService(db, this.config, time, this.inspectionSource).complete(native, current);
         current(); return { ...base, disposition: "completed" as const, completion };
       }
       case "pending": current(); return { ...base, capacity, disposition: "waiting_review" as const };

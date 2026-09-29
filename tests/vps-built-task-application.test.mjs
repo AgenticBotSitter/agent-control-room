@@ -18,6 +18,12 @@ test("compiled task composition is inert and owns both supplied resources throug
   const path = `/api/v1/projects/${f.prepared.receipt.projectId}/tasks/${f.prepared.receipt.jobId}/assignment`;
   const handle = (method = "GET", body) => app.handle(request(path, method, body, undefined, f.jwt), () => new Response("shell"));
   assert.equal((await handle()).status, 200);
+  const operator = await app.handle(request("/api/v1/operator-surface", "GET", undefined, undefined, f.jwt), () => new Response("shell"));
+  assert.equal(operator.status, 200, await operator.clone().text());
+  const snapshot = (await operator.json()).snapshot;
+  assert.equal(snapshot.tenantId, f.scope.tenantId);
+  assert.equal(Array.isArray(snapshot.fleet), true);
+  assert.equal(Array.isArray(snapshot.activeWork), true);
   const saved = await handle("POST", { action: "assign", nodeId: f.route.nodeId, expectedInputDigest: f.prepared.receipt.inputDigest });
   assert.equal(saved.status, 201, await saved.clone().text()); assert.equal((await saved.json()).receipt.startsWork, false);
   assert.equal(app.isReady(), true); await app.close(); assert.equal(app.isReady(), false);

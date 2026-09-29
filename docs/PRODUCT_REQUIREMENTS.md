@@ -27,7 +27,7 @@ tested version and limitations.
 
 | ID | Priority | Requirement | Acceptance evidence |
 | --- | --- | --- | --- |
-| ACR-001 | MVP | Provide one self-hosted web application for projects, workers, tasks, results, reviews, files, schedules, approvals and evidence. | One installed release exposes the required protected screens and services from one application lifecycle. |
+| ACR-001 | MVP | Provide one self-hosted web application for projects, workers, agent work intake, pipelines, tasks, results, reviews, files, schedules, approvals and evidence. | One installed release exposes the required protected screens and services from one application lifecycle, including proposal-only agent intake and owner-controlled pipeline execution through the shared task path. |
 | ACR-002 | Always | Ship one public core. Private installations differ through configuration, data and optional extensions—not source forks. | The same built artifact runs two isolated configurations without rebuilding or leaking data between them. |
 | ACR-003 | MVP | Use a modular-monolith architecture for the first release. | One application and documented internal modules replace duplicate project, queue, auth or review services. |
 | ACR-004 | Always | Keep Control Room—not an individual bot—as the authority for assignments, permissions, state and decisions. | Attempts to substitute agent output, room messages or connector state for canonical authority are refused. |
@@ -41,7 +41,7 @@ tested version and limitations.
 | --- | --- | --- | --- |
 | PROJ-001 | MVP | Let the owner create an ordinary project without writing code or first using Idea Lab. | Browser journey creates and reopens a project through the real protected application. |
 | PROJ-002 | MVP | Give every project a stable page and deep URL suitable for a separate browser tab. | Two project tabs retain correct scope through navigation, reload and back/forward. |
-| PROJ-003 | MVP | Show Overview, Inbox, Work, Agents, Files, Reviews, Activity and Settings; show Automations only when supported. | Each enabled section has a real route and backing service; unavailable sections are hidden or explicitly unavailable. |
+| PROJ-003 | MVP | Show Overview, Inbox, Work, Agents, Files, Reviews, Activity and Settings; show Pipelines and Automations only when supported. | Each enabled section has a real route and backing service; unavailable sections are hidden or explicitly unavailable. The Pipelines section exposes authoritative batch, queue, run and stage history rather than synthetic activity. |
 | PROJ-004 | MVP | Prevent data from one project appearing in another after navigation or delayed replies. | Two-project tests cover late reads, writes, results, files, drafts and route changes. |
 | PROJ-005 | MVP | Support explicit project completion, archive, reopen and close while preserving history. | A completed project is archived, reopened and verified with its tasks, results, reviews and history intact. |
 | PROJ-006 | MVP | Closing a browser tab must not cancel work, complete a project or archive it. | Browser close/reconnect produces no task command and work continues according to server state. |
@@ -68,6 +68,9 @@ tested version and limitations.
 | WORK-013 | Always | Preserve owner authority over consequential actions even when a project lead is active. | Negative tests refuse self-granted effect approval, expanded budget and foreign-project control. |
 | WORK-014 | MVP | Show a recommended worker, harness/model class, effort level and known cost/usage tradeoff before assignment while preserving the owner's final policy choice. | Selection explains its capability and limit basis; unknown price or usage remains unknown and a recommendation grants no authority. |
 | WORK-015 | Always | Version reusable worker/reviewer skills and bind any required procedure to the work packet without treating the skill as permission. | Workers can retrieve the exact procedure/version and stale or substituted skills fail compatibility checks. |
+| WORK-016 | MVP | Let a registered agent propose a bounded batch of dependent work through a machine API and CLI without assigning, approving, dispatching or running it. | Proposal validation, replay, wrong-project, expiry, revocation and forbidden-action tests leave zero task and queue rows until a separate owner decision. |
+| WORK-017 | MVP | Let the owner approve, edit or reject an agent-proposed batch in the protected website, including a phone-sized layout, before approved items enter ordinary per-agent task queues. | Browser and service journeys retain every proposal revision and decision, materialize approved items through the ordinary task path, enforce a default per-agent depth of 10 and a hard maximum of 20, and dispatch dependencies in committed order without duplicate work. |
+| WORK-018 | MVP | Run a bounded linear `build` → `check` → `validate` pipeline with each stage represented by an ordinary task and with full batch, task, run, review and result history. | A disposable end-to-end journey proves retained stage lineage, independent checking, isolated Git worktree changes and pull-request evidence while the product exposes no merge operation. |
 
 ## 4. Results, reviews, files and recovery
 
@@ -88,8 +91,8 @@ tested version and limitations.
 
 | ID | Priority | Requirement | Acceptance evidence |
 | --- | --- | --- | --- |
-| CONN-001 | MVP | Qualify Hermes Agent and Codex as the first two different harness integrations. | One versioned release completes the common task/result/review/revision journey with both at documented versions. |
-| CONN-002 | Next | Add Claude Code through the same shared adapter contract and conformance suite. | Claude-specific behavior is isolated in its adapter; common services require no Claude-only fork. |
+| CONN-001 | MVP | Qualify Hermes Agent and Codex as the first two different harness integrations. | One versioned release completes the common task/result/review/revision journey with both at documented versions. The selected single-computer product path must not fork these shared services. |
+| CONN-002 | MVP for This computer | Add Claude Code through the same shared adapter contract and conformance suite. | Claude-specific behavior is isolated in its adapter; common services require no Claude-only fork. A complete single-computer installation includes Hermes, Claude and Codex at their honestly qualified capabilities. |
 | CONN-003 | Later | Allow OpenClaw and other harness adapters through a public extension contract. | A reference adapter passes conformance without gaining undeclared permissions. |
 | CONN-004 | MVP | Register workers by stable node, harness, version, platform, capabilities and credential identity. | Duplicate, foreign, stale and version-drift registrations fail or downgrade honestly. |
 | CONN-005 | MVP | Let macOS, Windows and Linux machines run their own connectors and credentials. | Published support matrix matches platform-specific install and conformance evidence. |
@@ -98,8 +101,9 @@ tested version and limitations.
 | CONN-008 | Always | Direct SSH or agent-to-agent messaging cannot become the task authority. | Any such transport is bounded behind a connector and canonical server admission remains required. |
 | CONN-009 | Next | Expose compatible Control Room actions through MCP using the same services and permissions. | Website and MCP calls produce the same canonical records and authorization outcomes. |
 | CONN-010 | Always | Publish exact support by harness version, OS and capability; architecture alone is not compatibility. | Support matrix links each positive claim to matching live or installed evidence. |
-| CONN-011 | MVP | Allow browser and contributor use from macOS even when local Codex execution remains unsupported. | UI/setup works on macOS and the local Codex start path refuses safely until separately qualified. |
+| CONN-011 | MVP | Allow browser and contributor use from macOS even when local Codex execution remains unsupported. | UI/setup works on macOS and the local Codex start path refuses safely until separately qualified. The local product may promote macOS Codex only after its separately documented custody qualification; no setup screen may bypass this gate. |
 | CONN-012 | Always | Do not modify an installed harness to satisfy Control Room. | Adapter qualification uses supported upstream interfaces or records the feature unsupported. |
+| CONN-013 | MVP | Issue each registered proposing agent a distinct least-privilege machine credential whose only permitted operation is work-batch proposal in its allowed projects. | Effective-grant tests prove the credential cannot assign, approve, dispatch, retry, cancel, change settings or read foreign-project history; expiry and revocation take effect before request-body parsing. |
 
 ## 6. Idea Lab and news/research
 
@@ -208,17 +212,39 @@ the following as an integrated journey:
 | MVP-011 | Complete the core desktop, phone-width and keyboard journey with no project data leak, fake activity or unsafe output rendering. |
 | MVP-012 | Publish the exact support matrix, license/notice inventory, known limitations, rollback instructions and retained acceptance evidence. |
 
+### This-computer completion journey
+
+The local installation choice is not a substitute for the release journey above.
+It is the same product running one controller and its workers on one computer.
+Before it is described as fully functional, it must pass these additional
+requirements with the exact selected installed versions:
+
+| ID | Required journey |
+| --- | --- |
+| LOCAL-001 | Start one configured local application using the same PostgreSQL database, pg-boss scheduler, project/task/result/review services and protected artifact path as the several-computer product. |
+| LOCAL-002 | Show Hermes Agent, Claude Code and Codex separately in the protected browser, including their actual available and unavailable capabilities. A source-tested adapter is not shown as a running worker. |
+| LOCAL-003 | Complete one bounded project task with each qualified harness through the same assignment, authority, delivery, result, review and linked-correction journey. |
+| LOCAL-004 | For every enabled harness, prove denied work, cancellation or interruption, and restart recovery do not silently create another agent execution. Unsupported upstream capability remains visibly unavailable. |
+| LOCAL-005 | Close/reopen the browser and restart the local controller while preserving saved projects, task state, staged terminal result evidence and the owner review record. |
+| LOCAL-006 | Restore database and protected artifact bytes into disposable destinations before calling local backup/recovery verified. |
+| LOCAL-007 | If the chosen local host is macOS, retain the existing Codex custody refusal until its two separate physical qualifications pass. A feature flag, configuration setting or browser button cannot bypass it. |
+
 ## 12. Traceability and change control
 
 - `OWNER_PRODUCT_VISION.md` records the intended experience and product principles.
 - This document defines required behavior and proof.
 - `PUBLIC_BUILD_PLAN.md` and `WORK_QUEUE.md` sequence implementation and ownership.
 - `COMPONENT_DECISIONS.md` records what is reused and any remaining qualification.
+- `REUSE_DECISION_GATE.md` requires a recorded comparison before substantial
+  custom infrastructure is added.
 - `WEBPAGE_SPEC.md` gives detailed presentation behavior.
 - `docs/SHARED_CONNECTOR_CONTRACT.md` and
   `docs/SECURITY_CONFIGURATION_CONTRACT.md` define shared technical and authority
   boundaries.
 - `docs/SUPPORT_MATRIX.md` records what is actually supported now.
+- `docs/MULTI_AGENT_PIPELINES_DESIGN.md` defines the incremental pipeline and
+  agent-work-intake contracts when that reviewed design is present on the
+  implementation branch.
 
 A change to architecture, permissions, data authority or the MVP journey must update
 the affected requirement and its acceptance evidence. A pull request, passing unit

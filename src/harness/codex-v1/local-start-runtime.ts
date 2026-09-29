@@ -30,6 +30,9 @@ export interface CodexOneShotStartReservationV1 {
 export interface CodexStartReceiptJournalV1 {
   recordThread(value: unknown, assertCurrent: () => void): 'recorded' | 'duplicate' | Promise<'recorded' | 'duplicate'>;
   recordTurn(threadValue: unknown, turnValue: unknown, assertCurrent: () => void): 'recorded' | 'duplicate' | Promise<'recorded' | 'duplicate'>;
+  /** Called only after the owned one-shot start session has retired cleanly. */
+  recordCleanup(threadValue: unknown, turnValue: unknown,
+    assertCurrent: () => void): 'recorded' | 'duplicate' | Promise<'recorded' | 'duplicate'>;
 }
 
 /** The workspace boundary owns physical paths. It receives binding evidence,
@@ -137,6 +140,16 @@ export function createCodexLocalStartRuntimeV1(input: {
     async start() {
       if (state !== 'ready') unavailable();
       state = 'starting';
+      let completed: Readonly<{
+        activation: CodexTaskActivationBodyV1;
+        admission: CodexStartAdmissionV1;
+        thread: CodexThreadStartReceiptV1;
+        turn: CodexTurnStartReceiptV1;
+        grantsExecutionAuthority: false;
+        permitsRetry: false;
+        permitsResume: false;
+        permitsThreadRead: false;
+      }> | undefined;
       try {
         const saved = input.activationEvidence.acceptedCodexActivation(queueId);
         if (saved === undefined) return unavailable();
@@ -207,11 +220,23 @@ export function createCodexLocalStartRuntimeV1(input: {
           await input.receipts.recordTurn(thread, turn, () => assertCurrent(activation, binding.deadline));
           assertCurrent(activation, binding.deadline);
           state = 'complete';
-          return Object.freeze({ activation, admission, thread, turn, grantsExecutionAuthority: false as const,
+          completed = Object.freeze({ activation, admission, thread, turn, grantsExecutionAuthority: false as const,
             permitsRetry: false as const, permitsResume: false as const, permitsThreadRead: false as const });
+          return completed;
         } finally { dispatcher.close(); }
       } catch { state = 'closed'; await close().catch(() => {}); return unavailable(); }
-      finally { if (state === 'complete') await close(); }
+      finally {
+        if (state === 'complete') {
+          await close();
+          // A durable cleanup fact is intentionally written only after close
+          // succeeds. Recovery can therefore distinguish a recorded turn from
+          // a process that may still have been live when Control Room stopped.
+          const settled = completed;
+          if (settled === undefined) throw new Error('codex_local_start_unavailable');
+          await input.receipts.recordCleanup(settled.thread, settled.turn,
+            () => assertCurrent(settled.activation, settled.admission.deadline));
+        }
+      }
     },
   });
 }
