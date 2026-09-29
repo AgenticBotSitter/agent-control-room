@@ -36,8 +36,14 @@ const REPOSITORY_ROOT = new URL("..", import.meta.url).pathname;
 // somewhere another job owns. The base is configurable so a lane can be given
 // its own block without editing this file; the whole block still has to be
 // contiguous and inside the caller's authorization.
+//
+// The block is four ports, and the tests below share them. Each test stops its
+// cluster before the next begins, so two tests may name the same port; what they
+// may not do is reach outside the block. A fifth port here would start a cluster
+// the authorizing brief never granted, which is exactly what the allowlist
+// exists to prevent, so the last test reuses an in-block port instead.
 const PORT_BASE = Number(process.env.CONTROL_ROOM_PG_TEST_PORT_BASE ?? 58370);
-const ALLOWED_PORTS = Object.freeze(Array.from({ length: 10 }, (_, index) => PORT_BASE + index));
+const ALLOWED_PORTS = Object.freeze([PORT_BASE, PORT_BASE + 1, PORT_BASE + 2, PORT_BASE + 3]);
 const LIVE_PORT = PORT_BASE;
 const UPGRADE_PORT = PORT_BASE + 1;
 const needsPg = requiresRealPostgres() ? undefined : { skip: realPostgresSkipMessage() };
@@ -291,6 +297,198 @@ test("the stream head row lock is taken by each production login, not by a super
   t.diagnostic("head UPDATE and the projects read both succeed as every production login");
 });
 
+/**
+ * A staged copy of the repository at "main": every migration EXCEPT this head's
+ * activity migration, with a ledger built for exactly that set.
+ *
+ * The point of staging rather than reading `origin/main` is stated in
+ * `baseVersionOf` above: the CI lane that runs this file checks out one commit
+ * with no `fetch-depth: 0`, so `origin/main` does not resolve there. The number
+ * assertion is kept because it is what makes the staged set a real previous
+ * release rather than an arbitrary subset.
+ *
+ * The caller owns the returned directory and must remove it.
+ */
+async function stageMainState(): Promise<{ root: string; mainMigrations: string[]; ledgerPath: string; activity: string }> {
+  const migrations = (await readdir(join(REPOSITORY_ROOT, "db/migrations"))).filter(name => name.endsWith(".sql")).sort();
+  const activity = migrations.filter(name => name.endsWith("_task_project_activity_events.sql"));
+  assert.equal(activity.length, 1, "exactly one activity migration");
+  const mainMigrations = migrations.filter(name => name !== activity[0]);
+  // The number must sort after everything main shipped, or the ledger an
+  // upgraded installation builds is corrupt.
+  const number = (name: string) => Number((/^(\d{4})_/u.exec(name) ?? [])[1]);
+  for (const shipped of mainMigrations)
+    assert.ok(number(activity[0]!) > number(shipped), `${activity[0]} must sort after main's ${shipped}`);
+  const root = await mkdtemp(join(tmpdir(), "cr409-main-"));
+  for (const dir of ["deploy/postgres", "db/migrations", "db/roles", "db/setup"])
+    await mkdir(join(root, dir), { recursive: true });
+  for (const file of mainMigrations)
+    await cp(join(REPOSITORY_ROOT, "db/migrations", file), join(root, "db/migrations", file));
+  for (const file of ["production_roles.sql", "production_provision.sql", "production_table_grants.sql"])
+    await cp(join(REPOSITORY_ROOT, "db/roles", file), join(root, "db/roles", file));
+  await cp(join(REPOSITORY_ROOT, "db/setup/production_migration_ledger.sql"),
+    join(root, "db/setup/production_migration_ledger.sql"));
+  const entries = await collectLedgerEntries(root);
+  const ledgerPath = join(root, "deploy/postgres/migration-ledger.json");
+  await writeFile(ledgerPath, JSON.stringify({ version: 1, digest: ledgerDigest(entries), entries }));
+  return { root, mainMigrations, ledgerPath, activity: activity[0]! };
+}
+
+/**
+ * The grantees the down migration's equality is asserted over, before it is
+ * narrowed to the ones that exist.
+ *
+ * The list includes the four roles the down file names, the queue worker (the
+ * negative case, which must hold nothing) and the schema owner (whose implicit
+ * owner privileges `acldefault` contributes to every table). PUBLIC's default is
+ * included by the query itself, since a change there would change every role at
+ * once.
+ *
+ * The scope is then narrowed to the roles the CLUSTER actually has. Two
+ * databases on one cluster cannot be compared over roles only one of them
+ * created: the attack kit's standard role files do not include the native
+ * evidence profile, so the role exists only on the baseline database (which
+ * replays that file to create it), and a comparison over the full list would
+ * report that one-role difference as a down-file defect. The native evidence
+ * role's grants are covered where its role is created -- the upgrade test's
+ * cluster, which asserts the grant survives an in-place upgrade.
+ */
+const DOWN_COMPARISON_ROLES = Object.freeze([
+  "control_room_private_web", "control_room_task_coordinator",
+  "control_room_native_evidence", "control_room_local_result_publisher",
+  "control_room_queue_worker", "control_room_schema_owner"]);
+
+/**
+ * The privileges an installation that predates this migration holds on the three
+ * objects this migration touches, read from a REAL main-state database on the
+ * caller's own cluster.
+ *
+ * Roles are cluster-global, so the baseline cannot be produced by un-granting in
+ * place: a `REVOKE` here would also change the database under test. It is a
+ * second database built by the production applier from a staged main-state
+ * ledger, with the four Mac-local role files replayed in their BASE versions.
+ * That is genuinely the previous release's ACL set, and the equality the caller
+ * asserts is between two independent databases rather than between one database
+ * before and after.
+ *
+ * The caller must end the returned client, and must not assert against it before
+ * calling `verifyBaselineIsMainState`, which is what keeps a vacuous baseline
+ * from passing.
+ */
+async function mainStateBaseline(postgres: RealPostgres, migratorPassword: string, database: string):
+Promise<{ client: Client; grants: string[] }> {
+  const stage = await stageMainState();
+  const admin = new Client(postgres.admin());
+  await admin.connect();
+  // Every path must close the cluster-admin connection, including the success
+  // path. The kit stops the postmaster when the body's promise settles, and a
+  // connection still open at that point is terminated by the server mid-query
+  // -- which surfaces as `57P01 terminating connection due to administrator
+  // command` and masks whatever assertion actually failed. The baseline client
+  // is a SEPARATE connection, returned to the caller to close.
+  const closeAdmin = async () => { await admin.end().catch(() => {}); };
+  try {
+    await admin.query(`DROP DATABASE IF EXISTS ${database}`);
+    await admin.query(`CREATE DATABASE ${database}`);
+    await admin.query(`ALTER ROLE control_room_migrator PASSWORD '${migratorPassword}'`);
+    const conninfo = (user: string, password?: string) =>
+      `host=${postgres.host} port=${postgres.port} dbname=${database} user=${user}`
+      + (password ? ` password=${password}` : "");
+    const applied = await applyMigrations({
+      target: conninfo("fixture_admin"), rootDir: stage.root, ledgerPath: stage.ledgerPath,
+      bootstrapTarget: conninfo("fixture_admin"),
+      migrateTarget: conninfo("control_room_migrator", migratorPassword),
+      env: { ...process.env, CONTROL_ROOM_MIGRATOR_PASSWORD: migratorPassword,
+        CONTROL_ROOM_APP_PASSWORD: "a".repeat(24), CONTROL_ROOM_SCHEDULER_PASSWORD: "s".repeat(24),
+        CONTROL_ROOM_WORK_INTAKE_PASSWORD: "w".repeat(24) },
+    });
+    assert.equal(applied.applied?.length, stage.mainMigrations.length,
+      "every main-era migration must apply to the baseline database, and nothing else");
+    // One client on the baseline database, used for the replay and for every
+    // read that follows. Grants are per-database in PostgreSQL, so a read on
+    // any other database -- including the one under test, which has this head's
+    // migration applied -- would return that database's grants and make the
+    // comparison meaningless.
+    const baseline = await clientFor(postgres, database, admin);
+    // The four role files in their BASE versions. The evidence file creates its
+    // role, so it is replayed whole; the other three already exist as cluster
+    // roles, so only their GRANT statements are replayed -- split with the
+    // kit's own statement splitter so a multi-line GRANT survives intact.
+    // Replaying the SHIPPED files would apply this head's grants, and the
+    // baseline would be a copy of the state under test.
+    for (const file of ["native_evidence_roles.sql", "private_web_roles.sql",
+      "task_coordinator_roles.sql", "local_result_publisher_roles.sql"]) {
+      const base = baseVersionOf(file, await readFile(join(REPOSITORY_ROOT, "db/roles", file), "utf8"));
+      if (file === "native_evidence_roles.sql") { await baseline.query(base); continue; }
+      const grants = splitSqlStatements(base)
+        .filter(statement => /^GRANT\s/u.test(statement) && !/^GRANT (?:EXECUTE|USAGE)\s/u.test(statement));
+      assert.ok(grants.length > 0, `${file} base version must still contribute its grants`);
+      for (const statement of grants) await baseline.query(statement);
+    }
+    const result = { client: baseline, grants: await privilegeSet(baseline, DOWN_COMPARISON_ROLES) };
+    await closeAdmin();
+    return result;
+  } catch (error) {
+    await closeAdmin();
+    throw error;
+  } finally { await rm(stage.root, { recursive: true, force: true }); }
+}
+
+/**
+ * The roles of `DOWN_COMPARISON_ROLES` that this cluster actually has, narrowed
+ * to the ones the database under test will also have so the two privilege sets
+ * are comparable.
+ */
+async function comparableRoles(client: Client): Promise<string[]> {
+  const rows = (await client.query<{ rolname: string }>(
+    "SELECT rolname FROM pg_roles WHERE rolname = ANY($1::text[])", [DOWN_COMPARISON_ROLES])).rows;
+  const present = rows.map(row => row.rolname);
+  // A comparison over zero or one role would prove nothing, and the roles the
+  // down file names are the point of the test.
+  assert.ok(present.filter(role => role !== "control_room_schema_owner").length >= 3,
+    `the cluster must carry at least three of the roles the down file names, found ${present.join(",")}`);
+  return present;
+}
+
+/**
+ * A client on `database`, reused when it is the one `admin` already holds.
+ *
+ * The cluster admin cannot be repointed at another database, so a fresh client
+ * is opened for the target and the original kept for its CREATE/DROP rights.
+ */
+async function clientFor(postgres: RealPostgres, database: string, admin: Client): Promise<Client> {
+  if ((admin as unknown as { database?: { database?: string } }).database?.database === database) return admin;
+  const client = new Client({ ...postgres.admin(), database });
+  await client.connect();
+  return client;
+}
+
+/**
+ * A baseline that had already applied this migration's grants would make the
+ * caller's equality vacuous, so the pre-upgrade state is CHECKED, not assumed.
+ */
+async function verifyBaselineIsMainState(client: Client): Promise<void> {
+  const holds = async (role: string, object: string, privilege: string) => (await client.query<{ allowed: boolean }>(
+    "SELECT has_table_privilege($1,$2,$3) AS allowed", [role, object, privilege])).rows[0]?.allowed;
+  // The private web role's read is the grant a previous release owns and the
+  // startup preflight requires. If it were ever absent from the baseline the
+  // equality below would pass while the real regression stayed, so its presence
+  // is part of the baseline's own contract, and it is asserted first: it is the
+  // one the down file must never touch.
+  assert.equal(await holds("control_room_private_web", "control_project_events", "SELECT"), true,
+    "the main-state baseline must let the private web role read the activity stream");
+  assert.equal(await holds("control_room_private_web", "control_project_event_stream_heads", "SELECT"), true,
+    "the main-state baseline must let the private web role read the stream heads");
+  for (const role of ["control_room_private_web", "control_room_task_coordinator",
+    "control_room_local_result_publisher"])
+    assert.equal(await holds(role, "control_project_events", "INSERT"), false,
+      `the main-state baseline must not let ${role} append to the activity stream`);
+  assert.equal(await holds("control_room_task_coordinator", "control_project_events", "SELECT"), false,
+    "the main-state baseline must not grant the coordinator an activity read");
+  assert.equal(await holds("control_room_local_result_publisher", "projects", "SELECT"), false,
+    "the main-state baseline must not let the publisher read `projects`");
+}
+
 test("upgrade from a main-state database grants the publisher what the publication path needs", needsPg, async t => {
   // A database at "main": every migration EXCEPT this head's, applied with the
   // production applier. On this state nothing has granted the activity stream,
@@ -456,63 +654,133 @@ test("upgrade from a main-state database grants the publisher what the publicati
 });
 
 /**
- * The down migration reverses exactly what the up migration granted, and only
- * that.
+ * The down migration returns an installation to the state the PREVIOUS release
+ * expects, so it may revoke only what the up migration added.
  *
  * The repository convention is that every `db/down/*.sql` is executed by a test
  * (see tests/work-intake.test.ts and tests/self-hosting-database-hardening.test.mjs),
  * and this one is the only down file with no caller. It is also the only one that
  * revokes a grant its migration introduced WITHOUT dropping a table, because
  * this migration creates no schema object -- so the asymmetry is deliberate and
- * is exactly what needs pinning. A down file that over-revoked (dropping a grant
- * some earlier migration owns) or under-revoked (leaving this head's grant
- * behind) would both pass silently otherwise.
+ * is exactly what needs pinning.
+ *
+ * The expectation is a full EQUALITY with a main-state baseline, not a handful of
+ * flags, because the failure being pinned is a set-level one. `control_room_private_web`
+ * already held SELECT on both activity tables before this migration
+ * (db/roles/private_web_roles.sql, and main's private-web startup preflight
+ * refuses to start the web process without that read), so a down file that
+ * revokes it leaves a rolled-back install in a state the previous release cannot
+ * run. A per-flag check cannot express that: it can only say the flag it looked
+ * at is false, which is exactly the assertion that enshrined the defect.
+ *
+ * The baseline is built for real, not asserted from the down file's own text: a
+ * second database on the SAME cluster, carrying the same tables, with the four
+ * role files replayed in their BASE versions (this head's activity grants
+ * removed). Roles are cluster-global, so applying the base files to a second
+ * database's own copy of the tables leaves the head database untouched and
+ * gives a genuine "state an install that predates this migration is in".
  */
-test("the down migration reverses exactly this head's grants and nothing else", needsPg, async t => {
-  await withRealPostgres(async postgres => {
+test("the down migration returns every role to the main-state baseline, and only that", needsPg, async t => {
+  const MIGRATOR_PASSWORD = "m409down".padEnd(24, "x");
+  const result = await withRealPostgres(async postgres => {
     await seedFixture(postgres);
-    const connection = new Client(postgres.admin());
-    await connection.connect();
+    const admin = new Client(postgres.admin());
+    await admin.connect();
     try {
-      const before = await snapshot(connection);
-      // The four named roles hold the grants wherever they exist. The evidence
-      // role is not in every cluster's role set, so a role this cluster never
-      // created is skipped rather than asserted: it is covered on the upgrade
-      // test's cluster, which does create it. The queue worker holds no grant
-      // and is deliberately NOT in this list -- it is the negative case, and
-      // including it would invert the assertion.
+      // The native evidence role is a CLUSTER role and the attack kit's standard
+      // role-file set does not create it, so it is absent from a fresh kit
+      // cluster. It is created here, on this database, from its OWN shipped role
+      // file, for two reasons:
+      //
+      //  - The down migration names it, and a down file that revoked one of its
+      //    grants wrongly would otherwise go unasserted on this cluster.
+      //  - The baseline database creates the same role from the same file, so
+      //    both sides of the equality then have the same four roles and the
+      //    comparison is over the whole set rather than over a subset chosen
+      //    after the fact.
+      //
+      // Applied AFTER the migration has already run (the kit migrated this
+      // database on start-up), so this is the same order an operator's install
+      // would be in, and the file is the shipped one -- this head's grants
+      // included, which is what "before the down" has to mean.
+      await admin.query(await readFile(join(REPOSITORY_ROOT, "db/roles/native_evidence_roles.sql"), "utf8"));
+      const before = await snapshot(admin);
+      // The four named roles hold this migration's grants wherever they exist.
+      // The queue worker holds no grant and is deliberately NOT in this list --
+      // it is the negative case, and including it would invert the assertion.
       const named = ["control_room_private_web", "control_room_task_coordinator",
         "control_room_native_evidence", "control_room_local_result_publisher"];
       const present = named.filter(role => before.privileges[role] !== null);
       assert.ok(present.length >= 3,
         `the cluster must carry at least three of the four named roles, found ${present.join(",")}`);
       for (const role of present) {
-        assert.equal((before.privileges[role] as { events: boolean }).events, true,
+        const held = before.privileges[role] as { eventsInsert: boolean; headUpdate: boolean };
+        assert.equal(held.eventsInsert, true,
           `${role} must hold the grant the down migration is about to remove`);
+        assert.equal(held.headUpdate, true,
+          `${role} must hold the stream-head write the down migration is about to remove`);
       }
-      const down = (await readdir(join(REPOSITORY_ROOT, "db/down")))
-        .filter(name => name.endsWith("_task_project_activity_events.sql"));
-      assert.equal(down.length, 1, "exactly one down migration for the activity grants");
-      await connection.query(await readFile(join(REPOSITORY_ROOT, "db/down", down[0]), "utf8"));
-      const after = await snapshot(connection);
-      // The grants this migration added are gone...
-      for (const role of present) {
-        assert.equal((after.privileges[role] as { events: boolean }).events, false,
-          `${role} must lose the activity INSERT`);
-        assert.equal((after.privileges[role] as { head: boolean }).head, false,
-          `${role} must lose the activity stream-head read`);
-      }
-      // ...and the ledger is untouched, because a down migration is not a ledger
-      // operation and this migration created no object.
-      assert.deepEqual(after.ledger, before.ledger,
-        "a down migration must not remove the ledger row for the migration it reverses");
-      // The tables themselves survive: they belong to an earlier migration.
-      const tables = await connection.query<{ present: string | null }>(
-        "SELECT to_regclass('public.control_project_events') AS present");
-      assert.ok(tables.rows[0]?.present, "the activity tables belong to an earlier migration and must survive");
-    } finally { await connection.end(); }
-  }, { port: LIVE_PORT + 4, allowedPorts: ALLOWED_PORTS, boundMs: 300_000 });
-  t.diagnostic("down migration removed exactly the four roles' activity grants; tables and ledger untouched");
+      // The baseline is a real second database, not this one with grants undone:
+      // the four roles are cluster-global, so a REVOKE anywhere on this cluster
+      // changes the database under test too. `mainStateBaseline` builds a
+      // main-state database on this same cluster and returns its privilege set.
+      const baselineDatabase = "control_room_at_main_baseline";
+      const baseline = await mainStateBaseline(postgres, MIGRATOR_PASSWORD, baselineDatabase);
+      // Only roles this cluster HAS are compared, and over the same list on both
+      // sides. The attack kit does not create the native evidence role, so that
+      // role exists only on the baseline database; including it would report the
+      // one-role difference as a down-file defect.
+      const comparable = await comparableRoles(baseline.client);
+      const baselineGrants = await privilegeSet(baseline.client, comparable);
+      try {
+        // Checked before anything is asserted against it, so a baseline that
+        // had already applied this migration cannot make the equality vacuous.
+        await verifyBaselineIsMainState(baseline.client);
+        const down = (await readdir(join(REPOSITORY_ROOT, "db/down")))
+          .filter(name => name.endsWith("_task_project_activity_events.sql"));
+        assert.equal(down.length, 1, "exactly one down migration for the activity grants");
+        await admin.query(await readFile(join(REPOSITORY_ROOT, "db/down", down[0]), "utf8"));
+        const after = await snapshot(admin, comparable);
+        // THE assertion: after the rollback this database's privileges on every
+        // object the migration touches are the main-state privileges, exactly.
+        // An over-revoking down file leaves a grant an earlier release owns
+        // missing (the private web read); an under-revoking one leaves this
+        // migration's behind. Both fail here, naming the role and object.
+        assert.deepEqual(after.acl, baselineGrants,
+          "the down migration must return every role's privileges on the activity tables to the main-state baseline");
+        // Spelled out as well, because the private web read is the specific
+        // regression a rolled-back install hits at startup, and a reader of the
+        // failure needs it in words rather than as a diff of ACL strings.
+        for (const role of present) {
+          const held = after.privileges[role] as { eventsInsert: boolean; eventsSelect: boolean;
+            headSelect: boolean; headUpdate: boolean; projectsSelect: boolean };
+          assert.equal(held.eventsInsert, false, `${role} must lose the activity INSERT`);
+          assert.equal(held.headUpdate, false, `${role} must lose the stream-head write`);
+        }
+        const web = after.privileges["control_room_private_web"] as { eventsSelect: boolean; headSelect: boolean };
+        assert.equal(web.eventsSelect, true,
+          "BLOCKER: the private web role must KEEP its activity read, which an earlier release granted and its startup preflight requires");
+        assert.equal(web.headSelect, true,
+          "BLOCKER: the private web role must KEEP its stream-head read, which an earlier release granted and its startup preflight requires");
+        assert.equal((after.privileges["control_room_task_coordinator"] as { eventsSelect: boolean }).eventsSelect, false,
+          "the coordinator held no activity read before this migration, so the down file must remove it");
+        assert.equal((after.privileges["control_room_local_result_publisher"] as { projectsSelect: boolean }).projectsSelect, false,
+          "the publisher must lose the project read this migration added");
+        // ...and the ledger is untouched, because a down migration is not a ledger
+        // operation and this migration created no object.
+        assert.deepEqual(after.ledger, before.ledger,
+          "a down migration must not remove the ledger row for the migration it reverses");
+        // The tables themselves survive: they belong to migration 0033.
+        const tables = await admin.query<{ present: string | null }>(
+          "SELECT to_regclass('public.control_project_events') AS present");
+        assert.ok(tables.rows[0]?.present, "the activity tables belong to an earlier migration and must survive");
+        return { roles: present.length, grants: baseline.grants.length };
+      } finally { await baseline.client.end(); }
+    } finally { await admin.end(); }
+  }, { port: LIVE_PORT + 3, allowedPorts: ALLOWED_PORTS, boundMs: 900_000 });
+  assert.equal(result.cleanedUp, true, `the cluster must be gone: ${result.leftovers.join(",")}`);
+  t.diagnostic(`down migration returned ${result.value.roles} roles to the main-state baseline of `
+    + `${result.value.grants} privileges across the three objects this migration touches`);
 });
 
 /** The publication query, refused for a role the migration deliberately does not grant. */
@@ -595,8 +863,73 @@ test("the activity migration is idempotent on a second apply", needsPg, async t 
   } finally { await rm(stage, { recursive: true, force: true }); }
 });
 
-/** Ledger rows and every activity role's effective privileges, for a before/after compare. */
-async function snapshot(connection: Client): Promise<{ ledger: unknown[]; privileges: Record<string, unknown> }> {
+/** The three objects this migration's up file and down file both touch. */
+const TOUCHED_OBJECTS = Object.freeze([
+  "control_project_events", "control_project_event_stream_heads", "projects"]);
+
+/**
+ * EVERY privilege every role holds on the three objects this migration touches,
+ * as a sorted list of `role:object[:column]:privilege` strings.
+ *
+ * `has_table_privilege` answers one question at a time, and the down file's
+ * correctness is a question about a whole set: it must leave the private web
+ * role's `SELECT` (which an earlier release already granted) while removing the
+ * grants this migration added. A per-flag comparison cannot express "equal to
+ * the main-state baseline", and the flag the previous test asserted on -- the
+ * stream-head read -- was the very one this migration never owned for one of
+ * its four roles.
+ *
+ * The catalog is read rather than derived from the migration text, so a grant
+ * the up file issues through a path this file does not recognise still counts.
+ * Both scopes are covered: table-level privileges from `relacl`, and the
+ * column-level `UPDATE (last_sequence, ...)` from `attacl`, which is the grant
+ * this migration's stream-head write needs. `acldefault` fills in the owner's
+ * implicit ACL row, so a table with a NULL `relacl` compares as itself rather
+ * than as an empty set.
+ *
+ * `roles` narrows the result to the grantees being compared. It is required by
+ * the caller rather than defaulted, because a whole-cluster comparison is only
+ * meaningful between two databases that received the SAME role files: a
+ * database built from four role files legitimately differs from one built from
+ * twelve, and that difference says nothing about the down file.
+ */
+async function privilegeSet(connection: Client, roles: readonly string[]): Promise<string[]> {
+  const table = (await connection.query<{ privilege: string }>(
+    `SELECT (CASE WHEN p.grantee = 0 THEN 'PUBLIC' ELSE r.rolname END) || ':' || c.relname
+            || ':' || p.privilege_type AS privilege
+     FROM pg_class c
+     JOIN pg_namespace n ON n.oid = c.relnamespace
+     CROSS JOIN LATERAL aclexplode(COALESCE(c.relacl, acldefault('r', c.relowner))) p
+     LEFT JOIN pg_roles r ON r.oid = p.grantee
+     WHERE n.nspname = 'public' AND c.relname = ANY($1::text[])
+       AND (p.grantee = 0 OR r.rolname = ANY($2::text[]))`,
+  [TOUCHED_OBJECTS, roles])).rows;
+  const column = (await connection.query<{ privilege: string }>(
+    `SELECT (CASE WHEN p.grantee = 0 THEN 'PUBLIC' ELSE r.rolname END) || ':' || c.relname || '.' || a.attname
+            || ':' || p.privilege_type AS privilege
+     FROM pg_attribute a
+     JOIN pg_class c ON c.oid = a.attrelid
+     JOIN pg_namespace n ON n.oid = c.relnamespace
+     CROSS JOIN LATERAL aclexplode(a.attacl) p
+     LEFT JOIN pg_roles r ON r.oid = p.grantee
+     WHERE n.nspname = 'public' AND c.relname = ANY($1::text[])
+       AND a.attnum > 0 AND NOT a.attisdropped
+       AND (p.grantee = 0 OR r.rolname = ANY($2::text[]))`,
+  [TOUCHED_OBJECTS, roles])).rows;
+  return [...table, ...column].map(row => row.privilege).sort();
+}
+
+/**
+ * Ledger rows, per-role flags, and the full privilege set, for a before/after
+ * compare.
+ *
+ * `privilegeRoles` scopes the `acl` field, defaulting to every role the snapshot
+ * itself reports on. The down test passes the roles both of its databases have,
+ * so a role only one of them created cannot appear as a difference.
+ */
+async function snapshot(connection: Client, privilegeRoles?: readonly string[]): Promise<{
+  ledger: unknown[]; privileges: Record<string, unknown>; acl: string[];
+}> {
   const ledger = (await connection.query<{ filename: string; ledger_order: number }>(
     "SELECT filename, ledger_order FROM control_room_schema_migrations ORDER BY ledger_order")).rows;
   const privileges: Record<string, unknown> = {};
@@ -609,12 +942,33 @@ async function snapshot(connection: Client): Promise<{ ledger: unknown[]; privil
     // decide this file's expectations.
     const exists = (await connection.query<{ present: boolean }>(
       "SELECT EXISTS(SELECT 1 FROM pg_roles WHERE rolname=$1) AS present", [role])).rows[0]?.present === true;
-    privileges[role] = exists ? (await connection.query<{ events: boolean; head: boolean; projects: boolean }>(
-      `SELECT has_table_privilege($1,'control_project_events','INSERT') AS events,
-              has_table_privilege($1,'control_project_event_stream_heads','SELECT') AS head,
-              has_table_privilege($1,'projects','SELECT') AS projects`, [role])).rows[0] : null;
+    privileges[role] = exists ? (await connection.query<{ eventsInsert: boolean; headSelect: boolean;
+      eventsSelect: boolean; headUpdate: boolean; projectsSelect: boolean }>(
+      // The four table-level privileges come from `has_table_privilege`. The
+      // stream-head write is a COLUMN-level grant, which that function cannot
+      // ask about -- it rejects a column list as an unrecognised privilege type
+      // -- so its presence is read from the column ACL directly. It counts the
+      // four columns rather than testing for one, because a down file that
+      // revoked three of the four would still leave this flag true and the
+      // store's `SET last_event_digest = …` would fail. None of these four roles
+      // is a member of another, so the grantee is the role itself; PUBLIC is
+      // included so a default cannot make the check pass.
+      `SELECT has_table_privilege($1,'control_project_events','INSERT') AS "eventsInsert",
+              has_table_privilege($1,'control_project_event_stream_heads','SELECT') AS "headSelect",
+              has_table_privilege($1,'control_project_events','SELECT') AS "eventsSelect",
+              has_table_privilege($1,'projects','SELECT') AS "projectsSelect",
+              (SELECT count(DISTINCT a.attname) = 4
+               FROM pg_attribute a
+               JOIN pg_class c ON c.oid = a.attrelid
+               JOIN pg_namespace n ON n.oid = c.relnamespace
+               CROSS JOIN LATERAL aclexplode(a.attacl) p
+               WHERE n.nspname = 'public' AND c.relname = 'control_project_event_stream_heads'
+                 AND a.attnum > 0 AND NOT a.attisdropped AND p.privilege_type = 'UPDATE'
+                 AND a.attname = ANY(ARRAY['last_sequence','last_event_digest','head_auth_tag','updated_at'])
+                 AND (p.grantee = 0 OR p.grantee = (SELECT oid FROM pg_roles WHERE rolname = $1)))
+                AS "headUpdate"`, [role])).rows[0] : null;
   }
-  return { ledger, privileges };
+  return { ledger, privileges, acl: await privilegeSet(connection, privilegeRoles ?? DOWN_COMPARISON_ROLES) };
 }
 
 /** A project row the fixture needs, inserted as the schema owner. */
