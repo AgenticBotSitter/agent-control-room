@@ -22,6 +22,7 @@ import {
   concurrentWriters,
   disposableRunDirectories,
   DirtyTreeError,
+  enforcedElapsedMs,
   exhaustPool,
   expectNoLeak,
   GuardDidNotBiteError,
@@ -246,15 +247,199 @@ describe("attack kit: concurrency", () => {
   });
 
   test("concurrently reports a bound overrun as a timeout", async () => {
+    // The contract, stated as an assertion: a timeout failure reports an
+    // elapsed time at least as large as the bound it enforced. This failed
+    // intermittently in CI on main because the helper measured the bound with
+    // `Date.now()`, whose integer-millisecond quantisation can read one
+    // millisecond under a timer that libuv dispatched a fraction of a
+    // millisecond early — 2 failures in 1000 runs. `elapsedAtLeastBound` says
+    // whether the figure is a real measurement or the bound itself, so the
+    // assertion can be strict about the guarantee without pretending the
+    // underlying dispatch was precise.
     await assert.rejects(
       concurrently(1, () => new Promise<never>(() => {}), { boundMs: 200 }),
       (error: unknown) => {
         assert.ok(error instanceof ConcurrencyTimeoutError);
         assert.equal(error.code, "concurrency_no_completion");
         assert.ok(error.elapsedMs >= 200, "the elapsed time is reported with the failure");
+        assert.equal(error.boundMs, 200, "and the bound it enforced is reported with it");
+        assert.equal(typeof error.elapsedAtLeastBound, "boolean");
         return true;
       },
     );
+  });
+
+  // The reported flake was a measurement artefact, not a slow timer: the
+  // deadline fired at the bound and the helper's own arithmetic rounded the
+  // window down past it. So the rule is checked directly, and the reported
+  // figure is checked where the flake was. Asserting the clamp through a
+  // timing race alone would leave the test itself flaky — it would be waiting
+  // for the machine to be unlucky, which is the same defect one level up.
+  test("a reported elapsed time is never smaller than the bound it enforced", () => {
+    // The exact arithmetic that flaked: a timer dispatched a fraction of a
+    // millisecond early, measured on a clock quantised to whole milliseconds,
+    // reporting 199 for a 200 ms bound.
+    assert.equal(enforcedElapsedMs(199.4, 200), 200, "the measured flake: 199.4 reads as 200");
+    assert.equal(enforcedElapsedMs(199, 200), 200);
+    assert.equal(enforcedElapsedMs(0, 200), 200, "and never below, however wrong the reading");
+    assert.equal(enforcedElapsedMs(-3, 200), 200, "including a clock that stepped backwards");
+    // Rounding, so a fractional 199.6 is not truncated to 199.
+    assert.equal(enforcedElapsedMs(199.6, 200), 200);
+    // A real overrun reports the real figure: the clamp is a floor, never a
+    // replacement for the measurement.
+    assert.equal(enforcedElapsedMs(2_047.6, 200), 2_048);
+    assert.equal(enforcedElapsedMs(200, 200), 200);
+    assert.equal(enforcedElapsedMs(201, 200), 201);
+    // A non-finite reading must not survive the clamp. `Math.max` returns NaN
+    // for NaN, so without the finite guard a NaN would be reported as an
+    // elapsed time — which satisfies no assertion and means nothing to a
+    // reader. The guarantee is unconditional or it is not a guarantee.
+    assert.equal(enforcedElapsedMs(Number.NaN, 200), 200, "NaN is not a time");
+    assert.equal(enforcedElapsedMs(Number.POSITIVE_INFINITY, 200), 200,
+      "and an unbounded reading is reported as the bound, not as Infinity");
+    assert.equal(enforcedElapsedMs(Number.NEGATIVE_INFINITY, 200), 200);
+  });
+
+  test("a bound overrun reports at least the bound, over many runs", async () => {
+    // A smoke check, NOT the flake detector — `enforcedElapsedMs` is proved
+    // deterministically above, and this only confirms the clamp is actually
+    // reached through the real path. 20 runs at ~15-23 ms costs ~0.4 s. It is
+    // deliberately not sized to catch the flake: at the measured 0.2-0.9%
+    // early-dispatch rate, catching a 1 ms quantisation error by sampling would
+    // need thousands of runs, which is this bug's whole problem.
+    const failures: string[] = [];
+    for (let run = 0; run < 20; run += 1) {
+      const boundMs = 15 + (run % 9);
+      try {
+        await concurrently(1, () => new Promise<never>(() => {}), { boundMs });
+        failures.push(`run ${run}: no timeout at all`);
+      } catch (error) {
+        assert.ok(error instanceof ConcurrencyTimeoutError, `run ${run}: ${(error as Error).name}`);
+        if (error.elapsedMs < boundMs) {
+          failures.push(`run ${run}: bound=${boundMs} reported elapsedMs=${error.elapsedMs}`);
+        }
+        assert.equal(error.boundMs, boundMs, `run ${run}: the bound it reports is the one enforced`);
+      }
+    }
+    assert.deepEqual(failures, [],
+      `a timeout must never report less than the bound it enforced: ${failures.join("; ")}`);
+  });
+
+  // The deadline and the work's own result are now told apart by TYPE: the
+  // deadline resolves with a number, `Promise.all` always resolves with an
+  // array. That is a deliberate choice over the previous string sentinel
+  // `"timeout"`, which was unambiguous only because `Promise.all` yields an
+  // array — so the old code was not, in fact, broken, and this is hardening
+  // rather than a fix. What it now guarantees is that the discrimination
+  // depends on the *shape* of each settle value and cannot be defeated by a
+  // result's contents, which is what these two cases pin: numbers and `NaN` are
+  // ordinary results for a helper whose result type is generic.
+  test("a numeric result is a result, not a timeout", async () => {
+    assert.deepEqual(await concurrently(3, async index => index, { boundMs: 5_000 }), [0, 1, 2]);
+    const nan = await concurrently(1, async () => Number.NaN, { boundMs: 5_000 });
+    assert.equal(nan.length, 1);
+    assert.ok(Number.isNaN(nan[0]));
+  });
+
+  // The two tests below reach the cases only an injected clock can hit, which is
+  // why they exist and why the loops above are smoke level. The defect being
+  // defended against — libuv dispatching the deadline a fraction of a
+  // millisecond early — happens in well under 1% of real runs, so no quantity of
+  // real-timer sampling makes it deterministic: dropping the clamp at either call
+  // site survived every real-timer test in this file. An injected clock
+  // reproduces it EVERY time.
+  test("a deadline that fires early still reports at least the bound", async () => {
+    // The exact CI failure, manufactured: a 200 ms bound whose timer fires at
+    // 199.4 ms. Without the clamp at this call site it reports 199, which is
+    // what failed in CI. The clock is consulted a recorded number of times, so
+    // this test also fails if a future edit stops honouring the seam — otherwise
+    // it would silently pass on the real clock's usual late dispatch and stop
+    // testing anything.
+    const EARLY_FIRE_MS = 199.4;
+    const BOUND_MS = 200;
+    let fired = false;
+    let reads = 0;
+    await assert.rejects(
+      concurrently(1, () => new Promise<never>(() => {}), {
+        boundMs: BOUND_MS,
+        now: () => {
+          reads += 1;
+          const value = fired ? EARLY_FIRE_MS : 0;
+          fired = true;
+          return value;
+        },
+      }),
+      (error: unknown) => {
+        assert.ok(error instanceof ConcurrencyTimeoutError);
+        assert.equal(error.code, "concurrency_no_completion");
+        assert.ok(reads >= 2,
+          `the deadline's clock must be consulted for both the start and the fire, got ${reads} read(s)`);
+        assert.ok(error.elapsedMs >= BOUND_MS,
+          `a deadline dispatched ${(BOUND_MS - EARLY_FIRE_MS).toFixed(1)} ms early must still report the bound, got ${error.elapsedMs}`);
+        assert.equal(error.elapsedAtLeastBound, false,
+          "and the flag records that the figure is the bound, not a measurement");
+        return true;
+      },
+    );
+  });
+
+  test("a pool deadlock whose timer fires early still reports at least the bound", async () => {
+    // The same guarantee through the wrapper, whose re-throw is a separate call
+    // site with its own chance to drop or shrink the figure.
+    const deadlocking = {
+      options: { max: 1 },
+      async connect() { return new Promise<never>(() => {}); },
+      async query() { return { rows: [] }; },
+    };
+    let fired = false;
+    let reads = 0;
+    await assert.rejects(
+      exhaustPool(deadlocking, 1, async () => deadlocking.connect(), {
+        boundMs: 150,
+        now: () => {
+          reads += 1;
+          const value = fired ? 149.2 : 0;
+          fired = true;
+          return value;
+        },
+      }),
+      (error: unknown) => {
+        assert.ok(error instanceof ConcurrencyTimeoutError);
+        assert.equal(error.code, "pool_exhaustion_deadlock");
+        assert.ok(reads >= 2,
+          `the seam must reach the wrapper's own deadline, got ${reads} read(s)`);
+        assert.ok(error.elapsedMs >= 150,
+          `a deadlock reported elapsed ${error.elapsedMs} for a 150 ms bound`);
+        return true;
+      },
+    );
+  });
+
+  // The same contract on the real clock, so the wrapper's guarantee is also
+  // covered without the seam: this is the shape a pool-deadlock test in the
+  // wild asserts on.
+  test("a pool deadlock reports at least the bound, over many runs", async () => {
+    const failures: string[] = [];
+    for (let run = 0; run < 8; run += 1) {
+      const boundMs = 15 + (run % 5);
+      const deadlocking = {
+        options: { max: 1 },
+        async connect() { return new Promise<never>(() => {}); },
+        async query() { return { rows: [] }; },
+      };
+      try {
+        await exhaustPool(deadlocking, 1, async () => deadlocking.connect(), { boundMs });
+        failures.push(`run ${run}: no timeout at all`);
+      } catch (error) {
+        assert.ok(error instanceof ConcurrencyTimeoutError, `run ${run}: ${(error as Error).name}`);
+        assert.equal(error.code, "pool_exhaustion_deadlock");
+        if (error.elapsedMs < boundMs) {
+          failures.push(`run ${run}: bound=${boundMs} reported elapsedMs=${error.elapsedMs}`);
+        }
+      }
+    }
+    assert.deepEqual(failures, [],
+      `a deadlock must never report less than the bound it enforced: ${failures.join("; ")}`);
   });
 
   test("concurrentWriters detects a deliberately non-snapshot read", async () => {

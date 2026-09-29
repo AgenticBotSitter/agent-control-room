@@ -71,6 +71,16 @@ test("database startup, role checks and credential configuration stay out of bro
       /private_startup_prerequisites_failed|control_room_private_web|database_outcome_uncertain|transaction_timeout|rs256_gateway_assertion|gateway_policy_external/);
 });
 
+test("compiled pipeline browser workspace contains only browser-safe wire validation", () => {
+  const chunkDirectory = "dist-vps/client/_next/static/chunks";
+  const chunks = readdirSync(chunkDirectory).filter(name => name.startsWith("project-pipelines-workspace-")
+    && name.endsWith(".js"));
+  assert.equal(chunks.length, 1);
+  const source = readFileSync(join(chunkDirectory, chunks[0]), "utf8");
+  assert.doesNotMatch(source, /isProxy|createHmac|host intrinsics unavailable|HMAC runtime unavailable/);
+  assert.match(source, /control-room\.work-batch-proposal\/v1/);
+});
+
 test("compiled startup captures only implemented server assertion profiles before resources open", () => {
   const input = gatewayProfile();
   const captured = validatePrivateStartupConfiguration({ ...startupConfig, gatewayAssertionProfile: input });

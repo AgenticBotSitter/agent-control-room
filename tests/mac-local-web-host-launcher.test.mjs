@@ -48,7 +48,10 @@ test("web host validates and prepares optional intake before listeners and clean
         port:3211,integrityKey:"y".repeat(43),database:{},credentials:[{workerId:"worker:test",workerKind:"codex"}]}; },
       async loadMacLocalProtectedConfigurationFromRootV1() { return {enablement:{workers:[{workerId:"worker:test",kind:"codex"}]}}; },
     };
-    if (name === "macLocalHost.js") return { createMacLocalProtectedHostV1() { calls.push("prepare-web"); return {
+    if (name === "macLocalHost.js") return { createMacLocalProtectedHostV1(input) {
+      assert.equal(input.workBatchIntegrityKey instanceof Uint8Array, true);
+      assert.equal(input.workBatchIntegrityKey.length, 32);
+      calls.push("prepare-web"); return {
       async start() { calls.push("start-web"); return { async close() { calls.push("close-web"); } }; },
     }; } };
     if (name === "workIntakePrivateService.js") return { async prepareWorkIntakePrivateServiceV1() {

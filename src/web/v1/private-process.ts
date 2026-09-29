@@ -47,6 +47,8 @@ import { IdeaLabErrorV1 } from "../../idea-lab/v1/errors";
 import { parseOperatorSurfaceSnapshotV1, type ActionInboxItemV1, type OperatorSurfaceSnapshotV1 } from "../../operator-surfaces/v1";
 import { verifyInstallationPlanV1, type InstallationPlanV1 } from "../../installer/v1/installation-plan";
 import { createInstallationPlanViewV1 } from "../../installer/v1/installation-plan-view";
+import { WorkBatchOwnerServiceV1 } from "../../work-intake/v1";
+import { createWorkBatchOwnerHttpHandlerV1 } from "./work-batch-owner-http";
 import { encodeProjectEventCursorV1, projectEventSseResponseV1, type ProjectEventReadSourceV1 } from "../../project-events/v1";
 import { ProjectActivityServiceV1 } from "./project-activity-service";
 import { SessionWatchServiceV1 } from "./session-watch-service";
@@ -109,6 +111,9 @@ export interface PrivateWebProcessOptions {
   }) => Promise<{ observedAt: string; items: ActionInboxItemV1[]; truncated: boolean }> };
   /** Existing harness evidence verification key. No key means progress is unavailable, not no runs. */
   tasks?: Omit<WebTaskKeys, "ideaIntegrityKey"> & { harnessIntegrityKey: Uint8Array };
+  /** Optional proposal-intake integrity key. It enables owner batch review;
+   * omission keeps the Pipelines routes absent. */
+  workBatches?: { integrityKey: Uint8Array };
   /** Trusted control-plane operation only. No planner key, privileged pool or native adapter is
    * given to the web SQL service. Its resource lifecycle is owned by the supplying composition. */
   planning?: TaskPlanningOperation;
@@ -300,6 +305,8 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
     { tenantId: options.tenantId, workspaceId: options.workspaceId }, clock, options.connections);
   const tasks = new WebTaskService(options.database.client, { tenantId: options.tenantId, workspaceId: options.workspaceId }, clock,
     { ...options.tasks, ideaIntegrityKey: options.ideaProjects?.integrityKey });
+  const workBatches = options.workBatches ? new WorkBatchOwnerServiceV1(options.database.client, tasks,
+    { tenantId: options.tenantId, workspaceId: options.workspaceId }, options.workBatches.integrityKey, clock) : undefined;
   const sessionWatch = new SessionWatchServiceV1(options.database.client,
     { tenantId: options.tenantId, workspaceId: options.workspaceId }, options.tasks?.harnessIntegrityKey, clock);
   // This is a task-planning bridge only. It is deliberately composed from the
@@ -690,6 +697,10 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
             return Response.json(await tasks.attention(identity, url.searchParams.get("after") ?? undefined),
               { headers: privateResponseHeaders });
           }
+          if (url.pathname === "/api/v1/needs-me/pipelines") {
+            if (request.method !== "GET" || url.search || !workBatches) throw new WebAccessError("not_found");
+            return Response.json(await workBatches.attention(identity), { headers: privateResponseHeaders });
+          }
           if (url.pathname === "/api/v1/needs-me") {
             if (request.method !== "GET" || url.search) throw new WebAccessError("invalid_request");
             return Response.json(await connections.readQueueAttention(identity, queueAttention), { headers: privateResponseHeaders });
@@ -794,6 +805,9 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
               inflight: coordinationInflight,
             })(request);
           }
+          if (workBatches && /^\/api\/v1\/projects\/[^/]+\/pipelines(?:\/|$)/.test(url.pathname))
+            return createWorkBatchOwnerHttpHandlerV1({ origin: site.origin, trust,
+              gatewayAssertionProfile, service: workBatches, clock })(request);
           return await createProjectHttpHandler({ origin: site.origin, trust, service, gatewayAssertionProfile, clock })(request);
         }
         if (request.method !== "GET" && request.method !== "HEAD") throw new WebAccessError("invalid_request");
@@ -801,6 +815,7 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
         const newsPage = /^\/projects\/([^/]+)\/news$/.exec(url.pathname);
         const filesPage = /^\/projects\/([^/]+)\/files$/.exec(url.pathname);
         const taskSummaryPage = /^\/projects\/([^/]+)\/(reviews|activity)$/.exec(url.pathname);
+        const pipelinesPage = /^\/projects\/([^/]+)\/pipelines(?:\/([^/]+))?$/.exec(url.pathname);
         const projectUtilityPage = /^\/projects\/([^/]+)\/(inbox|agents|automations)$/.exec(url.pathname);
         const ideaPage = /^\/ideas(?:\/([^/]+))?$/.exec(url.pathname);
         const detail = /^\/projects\/([^/]+)(?:\/(overview|settings))?$/.exec(url.pathname);
@@ -817,6 +832,15 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
           let id: string;
           try { id = decodeURIComponent(filesPage[1]); } catch { throw new WebAccessError("invalid_request"); }
           await tasks.authorize(identity, id);
+        } else if (pipelinesPage) {
+          if (url.search || !workBatches) throw new WebAccessError("not_found");
+          let id: string;
+          try { id = decodeURIComponent(pipelinesPage[1]); } catch { throw new WebAccessError("invalid_request"); }
+          if (pipelinesPage[2]) {
+            let batchId: string;
+            try { batchId = decodeURIComponent(pipelinesPage[2]); } catch { throw new WebAccessError("invalid_request"); }
+            await workBatches.view(identity, id, batchId);
+          } else await workBatches.list(identity, id);
         } else if (taskSummaryPage) {
           if (url.search) throw new WebAccessError("invalid_request");
           let id: string;
