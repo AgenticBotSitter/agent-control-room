@@ -1,11 +1,18 @@
 -- S7: owner-consented unattended advance and durable transition receipts.
 -- No trigger, scheduler, provider invocation, merge or external effect is added.
 
+SET LOCAL lock_timeout = '1s';
+SET LOCAL statement_timeout = '5s';
+
 ALTER TABLE pipeline_templates DROP CONSTRAINT pipeline_templates_may_advance_unattended_check;
 ALTER TABLE pipeline_runs DROP CONSTRAINT pipeline_runs_unattended_check;
 -- Scheduler fairness metadata is deliberately outside the authenticated run
 -- material: moving a scan cursor must not rewrite owner-approved run state.
 ALTER TABLE pipeline_runs ADD COLUMN unattended_last_swept_at timestamptz;
+-- The applier runs each migration in one transaction, where CONCURRENTLY is
+-- impossible; pipeline_runs is S4's young table and the lock_timeout above
+-- bounds the wait.
+-- squawk-ignore require-concurrent-index-creation
 CREATE INDEX pipeline_runs_unattended_sweep_cursor
   ON pipeline_runs(tenant_id, unattended_last_swept_at ASC NULLS FIRST, id)
   WHERE state='active' AND unattended;
@@ -21,9 +28,9 @@ CREATE TABLE pipeline_unattended_transitions (
   project_id text NOT NULL,
   pipeline_run_id text NOT NULL,
   pipeline_template_id text NOT NULL,
-  template_version integer NOT NULL CHECK (template_version>=1),
+  template_version bigint NOT NULL CHECK (template_version>=1),
   template_digest text NOT NULL CHECK (template_digest ~ '^sha256:[a-f0-9]{64}$'),
-  run_version integer NOT NULL CHECK (run_version>=1),
+  run_version bigint NOT NULL CHECK (run_version>=1),
   run_digest text NOT NULL CHECK (run_digest ~ '^sha256:[a-f0-9]{64}$'),
   policy_id text NOT NULL,
   policy_version bigint NOT NULL CHECK (policy_version>=1),
@@ -52,22 +59,22 @@ CREATE TABLE pipeline_advance_receipts (
   tenant_id text NOT NULL,
   project_id text NOT NULL,
   pipeline_run_id text NOT NULL,
-  stage_ordinal integer NOT NULL CHECK (stage_ordinal>=0),
+  stage_ordinal bigint NOT NULL CHECK (stage_ordinal>=0),
   source_job_id text NOT NULL,
   execution_job_id text NOT NULL,
   attempt_id text NOT NULL,
   queue_id text NOT NULL,
   selection_digest text NOT NULL CHECK (selection_digest ~ '^sha256:[a-f0-9]{64}$'),
-  template_version integer NOT NULL CHECK (template_version>=1),
+  template_version bigint NOT NULL CHECK (template_version>=1),
   template_digest text NOT NULL CHECK (template_digest ~ '^sha256:[a-f0-9]{64}$'),
-  run_version integer NOT NULL CHECK (run_version>=1),
+  run_version bigint NOT NULL CHECK (run_version>=1),
   run_digest text NOT NULL CHECK (run_digest ~ '^sha256:[a-f0-9]{64}$'),
   policy_id text NOT NULL,
   policy_version bigint NOT NULL CHECK (policy_version>=1),
   policy_digest text NOT NULL CHECK (policy_digest ~ '^sha256:[a-f0-9]{64}$'),
   delegation_receipt_id text NOT NULL,
   delegation_receipt_digest text NOT NULL CHECK (delegation_receipt_digest ~ '^sha256:[a-f0-9]{64}$'),
-  delegation_task_units integer NOT NULL CHECK (delegation_task_units=1),
+  delegation_task_units bigint NOT NULL CHECK (delegation_task_units=1),
   delegation_cost_microusd bigint NOT NULL CHECK (delegation_cost_microusd>=0),
   delegation_cost_evidence_digest text NOT NULL CHECK (delegation_cost_evidence_digest ~ '^sha256:[a-f0-9]{64}$'),
   request_digest text NOT NULL CHECK (request_digest ~ '^sha256:[a-f0-9]{64}$'),
