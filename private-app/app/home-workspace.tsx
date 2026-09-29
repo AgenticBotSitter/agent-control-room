@@ -25,7 +25,7 @@ function isLocalWorkerRead(value: WorkerRead): value is { source: "local"; value
 }
 
 export function MacLocalWorkerEvidence({ status }: { status?: LocalStatus }) {
-  return <section className="private-panel" aria-labelledby="local-worker-evidence-title">
+  return <section className="private-panel private-local-worker-evidence" aria-labelledby="local-worker-evidence-title">
     <h2 id="local-worker-evidence-title">Local worker evidence</h2>
     <p>{status ? `The current local host reports ${status.workers.length} configured route${status.workers.length === 1 ? "" : "s"} separately from saved result proof.`
       : "The current local host route inventory is unavailable."} A passed startup check means the pinned executable was verified when this host started. Result proof means this host generation has saved a result from that route.</p>
@@ -231,16 +231,57 @@ export function PrivateHome() {
       document.removeEventListener("visibilitychange", refreshWhenVisible);
     };
   }, [runtime.mode, runtime.status, runtimeDetectionTimedOut]);
-  return <div className="private-shell"><PrivateHeader /><main id="private-main" tabIndex={-1}>
+  return <div className="private-shell"><PrivateHeader /><main id="private-main" tabIndex={-1} className="private-home-main">
     <section className="private-home-intro" aria-labelledby="home-title"><p className="private-eyebrow">Private workspace</p>
-      <h1 id="home-title">{displayName}</h1><p>Current saved work, results and attention from the protected Control Room services. This page refreshes while it is open and again when you return to it. Each section reports unavailable data instead of replacing it with a zero.</p>
-      <p className="private-note">Unavailable means the saved database or protected read could not be checked. Checking again only rereads saved records; it does not start, assign, approve or retry work.</p>
-      <button type="button" onClick={() => refresh.current()}>Check saved dashboard again</button></section>
+      <h1 id="home-title">{displayName}</h1></section>
+    {/* ONE order, and it is the order it paints in — no `order` on this page,
+        at any width, in either runtime.
+
+        An earlier version made `main` a phone-width flex column and gave the
+        intro, the dashboard, the worker-evidence panel and this copy explicit
+        `order` values, so the panels could paint above the copy without moving
+        anything in the DOM. That was the wrong tool. CSS `order` changes paint
+        order only: keyboard focus and screen-reader reading order still follow
+        the DOM, so the focusable "Check saved dashboard again" button was the
+        first control in `main` for a keyboard while painting last for a sighted
+        owner. In hosted mode it was worse — the installation panels, the "New
+        task" link and operator capacity carry no `order`, so they painted at
+        the default 0, ahead of the dashboard's `order: 1`, and the
+        attention-first result did not hold at all.
+
+        The DOM order below is the old *painted* order, made real:
+
+          intro -> dashboard -> evidence/install -> capacity -> idea lab -> copy
+
+        So the dashboard leads the panels in both runtimes, the copy and its
+        button come last, and a keyboard, a screen reader and a sighted owner
+        all walk the page in the same sequence. "Needs attention" is the second
+        panel inside the dashboard and the dashboard now follows only the
+        workspace heading, so attention clears the fold on a 375x812 phone in
+        hosted mode as well as Mac-local — which the old painted order could
+        not promise, because the install panels are two full panels of text.
+
+        Four guards keep this from coming back, and each covers a different
+        spelling of it. tests/owner-home-reading-order.test.tsx scans the
+        shipped stylesheet for `order`, `*-reverse` and explicit grid placement
+        on these blocks, and every owner component for a positive tabindex; it
+        also renders both runtime modes against the real stylesheet and
+        requires paint order to be monotonic.
+        tests/browser/owner-phone-width.spec.ts then walks `main` in real
+        Chromium in both runtime modes and requires the keyboard to reach
+        controls in painted order. jsdom cannot measure painted order, so that
+        second one is the only check that would have caught the original defect
+        on a real page. */}
+    <HomeDashboard data={data} />
     {runtime.mode === "local" ? <MacLocalWorkerEvidence status={runtime.status} />
       : <HomeInstallationStatus topology={installationTopology} showSetupGuidance={runtime.mode === "hosted"} />}
-    <HomeDashboard data={data} />
     {runtime.mode === "hosted" && <PrivateOperatorCapacityWorkspace />}
     {runtime.mode === "hosted" && ideaLab && <aside className="private-note private-home-note" aria-label="Optional module"><strong>Idea Lab is optional.</strong>{" "}
       <a href="/ideas">Open Idea Lab</a> to compare ideas before promoting an approved one to a project.</aside>}
+    <div className="private-home-lead">
+      <p>Current saved work, results and attention from the protected Control Room services. This page refreshes while it is open and again when you return to it. Each section reports unavailable data instead of replacing it with a zero.</p>
+      <p className="private-note">Unavailable means the saved database or protected read could not be checked. Checking again only rereads saved records; it does not start, assign, approve or retry work.</p>
+      <button type="button" onClick={() => refresh.current()}>Check saved dashboard again</button>
+    </div>
   </main></div>;
 }
