@@ -576,6 +576,8 @@ test("MCP server: exposes the six worker tools, audits calls, uses the gateway, 
     "SELECT safe_metadata FROM audit_events WHERE action='fleet.mcp.called' ORDER BY chain_sequence");
   assert.deepEqual(audit.map(row => row.safe_metadata.toolName), ["list_eligible_work", "claim", "claim", "submit_result",
     "submit_result", "claim", "submit_result", "unsupported"]);
+  await assert.rejects(worker.client.mcpCall(`mcp-call:${"c".repeat(32)}`, "approve"), /invalid/u,
+    "a caller cannot place an unbounded or authority-bearing label in the audit chain");
   input.end(); await serving;
 });
 
