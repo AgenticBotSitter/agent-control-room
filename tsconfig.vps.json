@@ -31,6 +31,8 @@
     "src/web/v1/private-task-host.ts",
     "src/web/v1/private-agent-task-operator-configuration.ts",
     "src/web/v1/mac-local-protected-loader.ts",
+    "src/work-intake/v1/private-service.ts",
+    "src/work-intake/v1/installed-configuration.ts",
     "src/web/v1/mac-local-host.ts",
     "src/web/v1/private-postgres.ts",
     "src/web/v1/mac-local-task-provider.ts",

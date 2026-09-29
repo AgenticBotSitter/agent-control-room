@@ -32,12 +32,28 @@ import { privatePostgresOptions, validatePrivatePostgresConfiguration } from "..
 import { macGrantCatalogSqlV1, macRolePlan } from "./database-upgrade-grants.mjs";
 import { planMacDatabaseUpgradeSnapshotV1 } from "./database-upgrade-remote.mjs";
 import { checkedPostgresScramVerifierV1, postgresScramVerifierV1 } from "./database-upgrade-scram.mjs";
+import { captureWorkIntakeClientConfigurationV1, captureWorkIntakeServerConfigurationV1,
+  renewWorkIntakeServerCredentialsV1, workIntakeClientFileNameV1, workIntakeIdentityIdV1,
+  WORK_INTAKE_CLIENT_CONFIGURATION_V1, WORK_INTAKE_SERVER_CONFIGURATION_V1 } from
+  "../../src/work-intake/v1/installed-configuration";
+
+export function renewRetainedWorkIntakeCredentialsV1(existing, prospective, now) {
+  const expected=new Map(prospective.map(entry=>[entry.workerId,entry]));
+  if(existing.credentials.length!==prospective.length||existing.credentials.some(entry=>
+    expected.get(entry.workerId)?.credentialDigest!==entry.credentialDigest
+      || expected.get(entry.workerId)?.workerKind!==entry.workerKind
+      || expected.get(entry.workerId)?.principal.tenantId!==entry.principal.tenantId
+      || expected.get(entry.workerId)?.principal.identityId!==entry.principal.identityId
+      || expected.get(entry.workerId)?.principal.actorType!==entry.principal.actorType))
+    throw new Error("work_intake_roster_drift_refused");
+  return renewWorkIntakeServerCredentialsV1(existing,now,30).credentials;
+}
 
 const exec = promisify(execFile);
 const roleNames = Object.freeze({ web: "control_room_web", coordinator: "control_room_coordinator",
   results: "control_room_results", publisher: "control_room_publisher", queueWorker: "control_room_queue_worker" });
 const bootstrapRoles = Object.freeze({ migrator: "control_room_migrator", application: "control_room_app",
-  scheduler: "control_room_scheduler" });
+  scheduler: "control_room_scheduler", workIntake: "control_room_work_intake_agent" });
 const passwordPattern = /^[A-Za-z0-9_-]{32,}$/u;
 const privateMode = 0o700;
 const privateFileMode = 0o600;
@@ -50,7 +66,7 @@ const repoRoot = fileURLToPath(new URL("../../", import.meta.url));
 const remoteProvisionTimeoutMs = 5 * 60_000;
 
 function usage() {
-  return "Usage: pnpm mac:provision-database --protected-root ABSOLUTE_PATH --ssh-target USER@HOST --database-host HOST [--database-port 5432] [--endpoint-policy-file ABSOLUTE_PATH] [--remote-worktree ABSOLUTE_PATH] [--vps-only] [--dry-run]\n"
+  return "Usage: pnpm mac:provision-database --protected-root ABSOLUTE_PATH --ssh-target USER@HOST --database-host HOST --work-intake-cli-worker codex|claude-code|hermes [--work-intake-project PROJECT_ID ...] [--database-port 5432] [--endpoint-policy-file ABSOLUTE_PATH] [--remote-worktree ABSOLUTE_PATH] [--vps-only] [--dry-run]\n"
     + "   or: pnpm mac:provision-database --repoint-only --protected-root ABSOLUTE_PATH\n"
     + "   or: pnpm mac:provision-database --upgrade --dry-run --snapshot-file ABSOLUTE_PATH\n"
     + "   or: pnpm mac:provision-database --upgrade --prepare --protected-root ABSOLUTE_PATH\n"
@@ -289,14 +305,16 @@ const migrateTarget = 'host=127.0.0.1 port=5432 dbname=control_room user=control
 process.stderr.write('provision_stage:bootstrap-passwords\n');
 const bootstrap = connectTarget(bootstrapTarget); await bootstrap.connect();
 try {
-  for (const [name, password] of Object.entries({ control_room_migrator: value.migrator, control_room_app: value.application, control_room_scheduler: value.scheduler }))
+  for (const [name, password] of Object.entries({ control_room_migrator: value.migrator,
+    control_room_app: value.application, control_room_scheduler: value.scheduler }))
     await bootstrap.query('ALTER ROLE ' + name + ' PASSWORD ' + bootstrap.escapeLiteral(password));
 } finally { await bootstrap.end(); }
 process.stderr.write('provision_stage:migrations\n');
 await applyMigrations({ bootstrapTarget, migrateTarget, env: {
   CONTROL_ROOM_MIGRATOR_PASSWORD: value.migrator,
   CONTROL_ROOM_APP_PASSWORD: value.application,
-  CONTROL_ROOM_SCHEDULER_PASSWORD: value.scheduler
+  CONTROL_ROOM_SCHEDULER_PASSWORD: value.scheduler,
+  CONTROL_ROOM_WORK_INTAKE_PASSWORD: value.workIntake
 }});
 const client = connectTarget(bootstrapTarget); await client.connect();
 try {
@@ -312,9 +330,9 @@ try {
   const sourceBase64 = Buffer.from(source, "utf8").toString("base64");
   const remoteBody = String.raw`set -eu
 printf 'provision_stage:fetch\\n' >&2
-git -C ${JSON.stringify(remoteWorktree)} fetch --quiet origin claude/mac-local-integration
+git -C ${JSON.stringify(remoteWorktree)} fetch --quiet origin main
 printf 'provision_stage:worktree\\n' >&2
-git -C ${JSON.stringify(remoteWorktree)} worktree add --quiet --detach "$stage" origin/claude/mac-local-integration
+git -C ${JSON.stringify(remoteWorktree)} worktree add --quiet --detach "$stage" origin/main
 cd "$stage"
 printf 'provision_stage:dependencies\\n' >&2
 CI=true pnpm install --frozen-lockfile --offline --ignore-scripts >/dev/null
@@ -547,14 +565,25 @@ export async function finishMacLocalDatabaseUpgradeV1(options) {
  * validates the record exactly as the loader will read it back, and stores the
  * plain enablement material. The enablement digest is derived on every load,
  * never stored. */
-export function captureProvisionedMacLocalConfigurationV1({ database, ownerCode, workers }) {
+export function captureProvisionedMacLocalConfigurationV1({ database, ownerCode, workers, workIntakeProjectIds = [] }) {
   const enablementMaterial = Object.freeze({ schema: OWNER_TRUSTED_LOCAL_ENABLEMENT_V1, mode: "mac-local", nodeId: "mac-1", workers });
   const macLocal = { schema: MAC_LOCAL_PROTECTED_CONFIGURATION_V1, port: 3210, workspaceId: "workspace:mac-local",
     localOwnerSession: { schema: LOCAL_OWNER_SESSION_PROFILE_V1, origin: "http://127.0.0.1:3210", tenantId: "tenant:mac-local",
       provider: "local-owner", subject: "owner:local", ownerCodeDigest: sha256Digest({ ownerCode }), sessionSeconds: 28_800 },
-    database, enablement: enablementMaterial };
+    database, enablement: enablementMaterial, workIntakeProjectIds };
   captureMacLocalProtectedConfigurationV1(JSON.parse(JSON.stringify(macLocal)));
   return macLocal;
+}
+
+export function prepareProvisionedWorkIntakeConfigurationV1({ database, integrityKey, credentials }) {
+  return captureWorkIntakeServerConfigurationV1({ schema: WORK_INTAKE_SERVER_CONFIGURATION_V1, port: 3211,
+    database, integrityKey, queueDepthLimit: 10, credentials });
+}
+
+export function selectProvisionedWorkIntakeClientV1(clients, workerKind) {
+  const matches=clients.filter(({worker})=>worker.kind===workerKind);
+  if(matches.length!==1)throw new Error("provision_work_intake_cli_worker_refused");
+  return captureWorkIntakeClientConfigurationV1(matches[0].client);
 }
 
 export async function provisionMacLocalDatabaseV1(options) {
@@ -580,9 +609,19 @@ export async function provisionMacLocalDatabaseV1(options) {
   if (options.vpsOnly) {
     if (!options.dryRun) await runRemoteProvision({ sshTarget: options.sshTarget, remoteWorktree: options.remoteWorktree,
       passwords: { migrator: allPasswords.migrator, application: allPasswords.application, scheduler: allPasswords.scheduler,
+        workIntake: allPasswords.workIntake,
         local: Object.fromEntries(Object.entries(roleNames).map(([key, name]) => [name, allPasswords[key]])) } });
     return Object.freeze({ provisioned: !options.dryRun, protectedRoot, workers: [] });
   }
+  if (!/^(?:codex|claude-code|hermes)$/u.test(String(options.workIntakeCliWorkerKind)))
+    throw new Error("provision_work_intake_cli_worker_refused");
+  const workIntakeProjectIds = options.workIntakeProjectIds ?? [];
+  if (!Array.isArray(workIntakeProjectIds) || workIntakeProjectIds.length > 32
+    || workIntakeProjectIds.some(projectId => typeof projectId !== "string"
+      || !/^(?:\*|[A-Za-z0-9][A-Za-z0-9._:-]{0,179})$/u.test(projectId))
+    || new Set(workIntakeProjectIds).size !== workIntakeProjectIds.length
+    || (workIntakeProjectIds.includes("*") && workIntakeProjectIds.length !== 1))
+    throw new Error("provision_work_intake_project_scope_refused");
   const workers = await Promise.all(["codex", "claude", "hermes"].map(async kind => {
     const executable = await findExecutable(kind);
     return Object.freeze({ workerId: `worker:${kind}:mac-1`, kind: kind === "claude" ? "claude-code" : kind,
@@ -590,6 +629,7 @@ export async function provisionMacLocalDatabaseV1(options) {
   }));
   if (!options.dryRun) await runRemoteProvision({ sshTarget: options.sshTarget, remoteWorktree: options.remoteWorktree,
     passwords: { migrator: allPasswords.migrator, application: allPasswords.application, scheduler: allPasswords.scheduler,
+      workIntake: allPasswords.workIntake,
       local: Object.fromEntries(Object.entries(roleNames).map(([key, name]) => [name, allPasswords[key]])) } });
   const database = Object.freeze({ host: databaseHost, port: databasePort, database: "control_room", username: roleNames.web,
     password: allPasswords.web, majorVersion: 17, ...(endpoint ? { privateEndpoint: endpoint } : {}) });
@@ -597,10 +637,43 @@ export async function provisionMacLocalDatabaseV1(options) {
   const roles = captureMacLocalDatabaseRolesV1({ schema: MAC_LOCAL_DATABASE_ROLES_V1, web: role(roleNames.web), coordinator: role(roleNames.coordinator),
     results: role(roleNames.results), publisher: role(roleNames.publisher), queueWorker: role(roleNames.queueWorker) });
   const ownerCode = await privateText(join(configRoot, "owner-sign-in.txt"), newPassword);
-  const macLocal = captureProvisionedMacLocalConfigurationV1({ database, ownerCode, workers });
+  const macLocal = captureProvisionedMacLocalConfigurationV1({ database, ownerCode, workers, workIntakeProjectIds });
+  const clientRoot = join(configRoot, "work-intake-clients");
+  if (!options.dryRun) await privateDirectory(clientRoot);
+  const clients = [];
+  for (const worker of workers) {
+    const path = join(clientRoot, workIntakeClientFileNameV1(worker.workerId));
+    let client;
+    if (!options.dryRun) try { client = captureWorkIntakeClientConfigurationV1(await readProtectedJson(path)); }
+    catch (error) { if (error?.code !== "ENOENT") throw error; }
+    client ??= captureWorkIntakeClientConfigurationV1({ schema: WORK_INTAKE_CLIENT_CONFIGURATION_V1,
+      origin: "http://127.0.0.1:3211", bearerSecret: newPassword() });
+    clients.push({ worker, client });
+  }
+  const provisionedAt=new Date(), expiresAt=new Date(provisionedAt.getTime()+30*86400000).toISOString();
+  let credentials = clients.map(({ worker, client }) => ({ workerId:worker.workerId,workerKind:worker.kind,
+    credentialDigest: sha256Digest(client.bearerSecret),
+    principal: { tenantId: "tenant:mac-local",
+      identityId: workIntakeIdentityIdV1("tenant:mac-local",worker.workerId), actorType: "agent",
+      authenticatedAt: provisionedAt.toISOString(), expiresAt } }));
+  let existingWorkIntake;
+  if (!options.dryRun) try { existingWorkIntake = captureWorkIntakeServerConfigurationV1(
+    await readProtectedJson(join(configRoot, "work-intake-server.json"))); }
+  catch (error) { if (error?.code !== "ENOENT") throw error; }
+  if(existingWorkIntake){
+    credentials=[...renewRetainedWorkIntakeCredentialsV1(existingWorkIntake,credentials,provisionedAt.toISOString())];
+  }
+  const workIntake = prepareProvisionedWorkIntakeConfigurationV1({
+    database: { ...database, username: bootstrapRoles.workIntake, password: allPasswords.workIntake },
+    integrityKey: existingWorkIntake?.integrityKey ?? randomBytes(32).toString("base64url"), credentials });
   if (!options.dryRun) {
+    const selectedClient=selectProvisionedWorkIntakeClientV1(clients,options.workIntakeCliWorkerKind);
     await writePrivate(join(configRoot, "database-roles.json"), `${JSON.stringify(roles)}\n`);
     await writePrivate(join(configRoot, "mac-local.json"), `${JSON.stringify(macLocal)}\n`);
+    await writePrivate(join(configRoot, "work-intake-server.json"), `${JSON.stringify(workIntake)}\n`);
+    await writePrivate(join(configRoot, "work-intake-client.json"), `${JSON.stringify(selectedClient)}\n`);
+    for (const { worker, client } of clients)
+      await writePrivate(join(clientRoot, workIntakeClientFileNameV1(worker.workerId)), `${JSON.stringify(client)}\n`);
   }
   return Object.freeze({ provisioned: !options.dryRun, protectedRoot, workers: workers.map(worker => worker.kind) });
 }
@@ -641,9 +714,16 @@ if (process.argv[1] === new URL(import.meta.url).pathname) {
       const result = await provisionMacLocalDatabaseV1({ repointOnly: true, protectedRoot, route });
       process.stdout.write(`${JSON.stringify({ repointed: result.repointed })}\n`);
     } else {
+      if(!vpsOnly&&args.filter(value=>value==="--work-intake-cli-worker").length!==1)
+        throw new Error("provision_work_intake_cli_worker_refused");
+      const projectIds=[];
+      for(let index=0;index<args.length;index+=1)if(args[index]==="--work-intake-project")
+        projectIds.push(argument(args.slice(index),"--work-intake-project"));
       const result = await provisionMacLocalDatabaseV1({ protectedRoot: argument(args, "--protected-root"), sshTarget: argument(args, "--ssh-target"),
         databaseHost: argument(args, "--database-host"), databasePort: Number(argument(args, "--database-port", "5432")),
-        endpointPolicyFile: argument(args, "--endpoint-policy-file", undefined), remoteWorktree: argument(args, "--remote-worktree", "/root/agent-control-room"), dryRun, vpsOnly });
+        endpointPolicyFile: argument(args, "--endpoint-policy-file", undefined), remoteWorktree: argument(args, "--remote-worktree", "/root/agent-control-room"),
+        workIntakeCliWorkerKind: vpsOnly ? undefined : argument(args,"--work-intake-cli-worker"),
+        workIntakeProjectIds:projectIds, dryRun, vpsOnly });
       process.stdout.write(`${JSON.stringify({ provisioned: result.provisioned, workers: result.workers })}\n`);
     }
   } catch (error) {
