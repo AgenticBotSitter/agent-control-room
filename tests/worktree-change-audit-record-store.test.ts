@@ -12,6 +12,7 @@ import { createWorktreeChangeAuditEvidenceV1 } from "../src/harness/v1/worktree-
 import { buildTaskResultManifestV1 } from "../src/artifacts/v1/durable-result-publication";
 import { durableResultArtifactIdV1, durableResultReceiptTagV1 } from "../src/artifacts/v1/durable-result-receipt";
 import { sha256Digest } from "../src/security";
+import type { DatabaseSession } from "../src/persistence/database";
 import { at, nativeTaskFixture, registration } from "./native-task-fixture";
 import { binding, input } from "./hermes-native-fixture";
 
@@ -132,6 +133,19 @@ test("detail reader returns the bounded patch only for exact result lineage", as
   assert.doesNotMatch(JSON.stringify(detail), /fixture\/repo|allowedPaths|resultReceiptDigest|authTag/);
   assert.equal(await x.f.db.transaction(tx => readResultBoundWorktreeChangeAuditDetailV1(tx, key,
     { ...x.scope, attemptId: "attempt:wrong" })), undefined);
+});
+
+test("detail reader rejects an authenticated row returned outside the requested lineage", async t => {
+  const x = await fixture(); t.after(x.f.close);
+  await x.f.db.transaction(tx => persistResultBoundWorktreeChangeAuditRecordV1(tx, key,
+    { scope: x.scope, evidence: x.evidence, recordedAt: at(6000) }));
+  const stored = (await x.f.db.query(`SELECT tenant_id,project_id,job_id,attempt_id,run_id,artifact_id,record,auth_tag
+    FROM control_worktree_change_audit_records`)).rows[0]!;
+  const mismatchedSession: DatabaseSession = {
+    async query<T>() { return { rows: [stored as T] }; },
+  };
+  await assert.rejects(readResultBoundWorktreeChangeAuditDetailV1(mismatchedSession, key,
+    { ...x.scope, attemptId: "attempt:wrong" }), /worktree_change_audit_record_unavailable/);
 });
 
 test("record writer refuses a missing or non-durable legacy receipt and early timestamps", async t => {
