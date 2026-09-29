@@ -5,7 +5,7 @@ import test from "node:test";
 import { parseCodexJsonLineV1 } from "../src/harness/codex-v1/owner-trusted-local-exec";
 import { createClaudeCodeStreamDecoderV1 } from "../src/harness/claude-code-v1/stream-json-decode";
 import { parseHermesTerminalUsageV1 } from "../src/harness/hermes-local-v1/owner-trusted-local-exec";
-import { costForUsageV1, rollupUsageV1, usagePriceTableSchemaV1, type UsagePriceTableV1 } from "../src/usage/v1/usage-cost";
+import { costForUsageV1, rollupUsageGroupsV1, usagePriceTableSchemaV1, type UsagePriceTableV1 } from "../src/usage/v1/usage-cost";
 
 const fixture = (name: string) => readFile(join(import.meta.dirname, "fixtures", "usage", name), "utf8");
 const table: UsagePriceTableV1 = { schema: "control-room.usage-price-table/v1", tableId: "owner-prices-2026-09",
@@ -129,7 +129,127 @@ test("rollups are exact and preserve priced, subscription and unknown run counts
     cost: { kind: "included_in_subscription" as const, priceEntryId: "claude-subscription", tableId: table.tableId } };
   const unknown = { usage: { inputTokens: null, outputTokens: null, totalTokens: null, wallTimeMs: 250 },
     cost: { kind: "unknown" as const, reason: "usage_not_reported" as const } };
-  assert.deepEqual(rollupUsageV1([priced, included, unknown]), { runs: 3, inputTokens: null, outputTokens: null,
+  // The per-run oracle this suite has always asserted against, written out here
+  // rather than imported: the production rollup no longer takes per-run values
+  // (it takes the SQL aggregate's groups), so the ORIGINAL definition is kept
+  // as the independent statement of what "the totals are exact" means.
+  const perRun = (values: readonly { usage: { inputTokens: number | null; outputTokens: number | null;
+    totalTokens: number | null; wallTimeMs: number | null }; cost: { kind: string; nanoUsd?: string;
+    reason?: string } }[]) => {
+    const exact = (field: "inputTokens" | "outputTokens" | "totalTokens" | "wallTimeMs") =>
+      values.every(value => value.usage[field] !== null) ? values.reduce((sum, value) => sum + value.usage[field]!, 0) : null;
+    return { runs: values.length, inputTokens: exact("inputTokens"), outputTokens: exact("outputTokens"),
+      totalTokens: exact("totalTokens"), wallTimeMs: exact("wallTimeMs"),
+      knownCostNanoUsd: values.reduce((sum, value) => sum + (value.cost.kind === "known" ? BigInt(value.cost.nanoUsd!) : BigInt(0)), BigInt(0)).toString(),
+      knownCostRuns: values.filter(value => value.cost.kind === "known").length,
+      subscriptionRuns: values.filter(value => value.cost.kind === "included_in_subscription").length,
+      unknownCostRuns: values.filter(value => value.cost.kind === "unknown").length,
+      unknownCostReasons: [...new Set(values.flatMap(value => value.cost.kind === "unknown" ? [value.cost.reason!] : []))].sort() };
+  };
+  assert.deepEqual(perRun([priced, included, unknown]), { runs: 3, inputTokens: null, outputTokens: null,
     totalTokens: null, wallTimeMs: 1750, knownCostNanoUsd: "325000", knownCostRuns: 1,
     subscriptionRuns: 1, unknownCostRuns: 1, unknownCostReasons: ["usage_not_reported"] });
+
+  // The same three runs, expressed the way PostgreSQL aggregates them: one group
+  // per distinct pricing shape. The priced Codex run is alone in its group, so
+  // its token sums are its own tokens.
+  const groups = [
+    { harness: "codex" as const, model: "gpt-fixture", runs: 1, inputTokens: "100", billableInputTokens: "100",
+      outputTokens: "20", totalTokens: "120", wallTimeMs: "1000", cachedInputTokens: "0", negativeBillableRuns: 0 },
+    { harness: "claude" as const, model: "sonnet-fixture", runs: 1, inputTokens: "80", billableInputTokens: "80",
+      outputTokens: "20", totalTokens: "100", wallTimeMs: "500", cachedInputTokens: "0", negativeBillableRuns: 0 },
+    // A priced model whose runs reported no tokens: the reason is
+    // `usage_not_reported`, and it only survives here because the model's price
+    // entry exists. A group with no model at all refuses earlier, at
+    // `model_not_recorded`, which `no group of runs loses its price reason`
+    // below pins separately.
+    { harness: "codex" as const, model: "gpt-fixture", runs: 1, inputTokens: null, billableInputTokens: null,
+      outputTokens: null, totalTokens: null, wallTimeMs: "250", cachedInputTokens: "0", negativeBillableRuns: 0 },
+  ];
+  assert.deepEqual(rollupUsageGroupsV1(groups, table), perRun([priced, included, unknown]),
+    "the SQL aggregate rollup must equal the sum of the individual runs it replaces");
+
+  // The refusal ORDER is the per-run path's, so a group that cannot name a price
+  // says so rather than reporting a token problem it never had.
+  assert.deepEqual(rollupUsageGroupsV1([{ harness: "codex", model: null, runs: 1, inputTokens: null,
+    billableInputTokens: null, outputTokens: null, totalTokens: null, wallTimeMs: "250",
+    cachedInputTokens: "0", negativeBillableRuns: 0 }], table).unknownCostReasons, ["model_not_recorded"]);
+  assert.deepEqual(rollupUsageGroupsV1([{ harness: "codex", model: "gpt-fixture", runs: 1, inputTokens: null,
+    billableInputTokens: null, outputTokens: null, totalTokens: null, wallTimeMs: "250",
+    cachedInputTokens: "0", negativeBillableRuns: 0 }], undefined).unknownCostReasons, ["price_table_not_recorded"]);
+});
+
+test("a group of runs sharing one pricing shape is priced from its sums, not an average", () => {
+  // Three identical-branched Codex runs on a cache-priced model. The group is
+  // exact only because the cost is linear in the sums: 3 × (1000 in, 500 out)
+  // with 900 cached per run is 3 × (100 in × 1000 + 500 out × 2000 + 900 cached × 100).
+  const cost = costForUsageV1({ harness: "codex", model: "gpt-cache-priced",
+    usage: { inputTokens: 1000, outputTokens: 500, totalTokens: 1500, cachedInputTokens: 900, wallTimeMs: 10 },
+    priceTable: table });
+  assert.deepEqual(cost, { kind: "known", nanoUsd: (100 * 1000 + 500 * 2000 + 900 * 100).toString(),
+    priceEntryId: "codex-cache-priced", tableId: table.tableId });
+  const single = rollupUsageGroupsV1([{ harness: "codex", model: "gpt-cache-priced", runs: 1,
+    inputTokens: "1000", billableInputTokens: "100", outputTokens: "500", totalTokens: "1500", wallTimeMs: "10",
+    cachedInputTokens: "900", negativeBillableRuns: 0 }], table);
+  const tripled = rollupUsageGroupsV1([{ harness: "codex", model: "gpt-cache-priced", runs: 3,
+    inputTokens: "3000", billableInputTokens: "300", outputTokens: "1500", totalTokens: "4500", wallTimeMs: "30",
+    cachedInputTokens: "2700", negativeBillableRuns: 0 }], table);
+  assert.equal(tripled.knownCostNanoUsd, (BigInt(cost.nanoUsd) * BigInt(3)).toString(),
+    "three runs in one group must cost three times one, from the summed tokens");
+  assert.equal(tripled.knownCostRuns, 3);
+  assert.equal(tripled.runs, 3);
+  assert.equal(single.knownCostNanoUsd, cost.nanoUsd);
+});
+
+test("a group holding one Codex run with more cached tokens than input refuses, as the per-run path does", () => {
+  // Codex reports cached tokens as a SUBSET of input, so cached > input is a
+  // contradiction and the per-run path returns partial_token_usage. The group's
+  // SUM is still positive, so without the negative-run count carried alongside
+  // the aggregate would report a confident `known` figure for a contradiction.
+  const group = { harness: "codex" as const, model: "gpt-cache-priced", runs: 2,
+    inputTokens: "3100", billableInputTokens: "1500", outputTokens: "1000", totalTokens: "2500", wallTimeMs: "20",
+    cachedInputTokens: "1600", negativeBillableRuns: 1 };
+  // The token TOTALS are still displayed — the per-run rollup showed them for a
+  // refused run too — so what must change is the cost: unknown, zero, and named.
+  const refused = rollupUsageGroupsV1([group], table);
+  assert.deepEqual(refused, { runs: 2, inputTokens: 3100, outputTokens: 1000, totalTokens: 2500,
+    wallTimeMs: 20, knownCostNanoUsd: "0", knownCostRuns: 0, subscriptionRuns: 0, unknownCostRuns: 2,
+    unknownCostReasons: ["partial_token_usage"] });
+  // With the count absent (the un-flagged mutation) it prices instead, which is
+  // the exact regression this count exists to prevent.
+  assert.equal(rollupUsageGroupsV1([{ ...group, negativeBillableRuns: 0 }], table).knownCostRuns, 2);
+});
+
+test("cache tokens without a recorded cache price stay unknown in a group", () => {
+  const rollup = rollupUsageGroupsV1([{ harness: "codex", model: "gpt-cache-unpriced", runs: 2,
+    inputTokens: "2000", billableInputTokens: "200", outputTokens: "200", totalTokens: "400", wallTimeMs: "20",
+    cachedInputTokens: "1800", negativeBillableRuns: 0 }], table);
+  assert.deepEqual(rollup.unknownCostReasons, ["cache_pricing_not_recorded"]);
+  assert.equal(rollup.unknownCostRuns, 2);
+  assert.equal(rollup.knownCostRuns, 0);
+});
+
+test("no groups rolls up to zeros, exactly as no runs did", () => {
+  assert.deepEqual(rollupUsageGroupsV1([], table), { runs: 0, inputTokens: 0, outputTokens: 0,
+    totalTokens: 0, wallTimeMs: 0, knownCostNanoUsd: "0", knownCostRuns: 0, subscriptionRuns: 0,
+    unknownCostRuns: 0, unknownCostReasons: [] });
+});
+
+test("a field reported by some runs in scope is not presented as a total", () => {
+  // One group measured, one that reported nothing: the whole rollup is
+  // `null` for that field rather than the sum of the runs that happened to
+  // answer — the same `every()` rule the per-run rollup used.
+  const rollup = rollupUsageGroupsV1([
+    { harness: "codex", model: "gpt-fixture", runs: 3, inputTokens: "300", billableInputTokens: "300",
+      outputTokens: "60", totalTokens: "360", wallTimeMs: "30", cachedInputTokens: "0", negativeBillableRuns: 0 },
+    { harness: "codex", model: "gpt-fixture", runs: 1, inputTokens: null, billableInputTokens: null,
+      outputTokens: null, totalTokens: null, wallTimeMs: "10", cachedInputTokens: "0", negativeBillableRuns: 0 },
+  ], table);
+  assert.equal(rollup.runs, 4);
+  assert.equal(rollup.inputTokens, null);
+  assert.equal(rollup.outputTokens, null);
+  assert.equal(rollup.totalTokens, null);
+  assert.equal(rollup.wallTimeMs, 40, "the one field every run answered is still exact");
+  assert.equal(rollup.knownCostRuns, 3);
+  assert.deepEqual(rollup.unknownCostReasons, ["usage_not_reported"]);
 });

@@ -254,7 +254,12 @@ test("task detail and result-open reads stay within fixed remote-query budgets",
     return Object.fromEntries(entries) as Record<keyof typeof reads, { queries: number; elapsedMs: number }>;
   };
   const baseline = await collect(0), delayed = await collect(injectedLatencyMs);
-  const allowedRoundTrips = { detail: 12, results: 12, content: 7, review: 12, verification: 11 } as const;
+  // `detail` is 13, not 12: it now makes TWO bounded usage reads instead of one —
+  // `inspectAttempts` for the rows the page shows (the reader #412 replaced) and
+  // `inspectUsageRollup` for the totals over every run in the job. Both are fixed
+  // regardless of history; the row VOLUME each returns is what #412 raised and is
+  // asserted on a real cluster in tests/bounded-usage-read-postgres.test.ts.
+  const allowedRoundTrips = { detail: 13, results: 12, content: 7, review: 12, verification: 11 } as const;
   for (const name of Object.keys(allowedRoundTrips) as (keyof typeof allowedRoundTrips)[]) {
     assert.equal(delayed[name]!.queries, baseline[name]!.queries, `${name} query count changed under latency`);
     assertInjectedLatencyBudget(name, delayed[name]!, allowedRoundTrips[name]);
@@ -300,10 +305,12 @@ test("verification options stay fixed-query as reviews and configured scenarios 
 
 test("attempt, run and artifact aggregate readers stay one-query as cardinality grows", async () => {
   let queries = 0;
-  const db: DatabaseClient = { query: async () => { queries++; return { rows: [] }; },
-    transaction: async work => work({ query: async () => { queries++; return { rows: [] }; } }),
+  const statements: string[] = [];
+  const record = async (sql: string) => { queries++; statements.push(sql); return { rows: [] as never[] }; };
+  const db: DatabaseClient = { query: record,
+    transaction: async work => work({ query: record }),
     transactionWithPreCommitCheck: async (work, check) => {
-      const value = await work({ query: async () => { queries++; return { rows: [] }; } }); await check(); return value;
+      const value = await work({ query: record }); await check(); return value;
     } };
   const runs = new HarnessRunStoreV1(db, new Uint8Array(32).fill(17));
   const count = async (read: () => Promise<unknown>) => { queries = 0; await read(); return queries; };
@@ -311,6 +318,21 @@ test("attempt, run and artifact aggregate readers stay one-query as cardinality 
   const manyAttempts = await count(() => runs.inspectAttempts(binding.tenantId, binding.projectId, binding.jobId,
     Array.from({ length: 20 }, (_, index) => `attempt:budget:${index}`)));
   assert.equal(oneAttempt, 1); assert.equal(manyAttempts, oneAttempt);
+  // The usage aggregate is the other read on the task-detail and project-overview
+  // paths, and it replaced a reader that returned one row per RUN. Query COUNT
+  // alone is not what #412 raised — it was row volume — so this asserts the
+  // aggregate is a SINGLE grouped query by construction, and the real-cluster
+  // test asserts the row volume against 5,000 runs. Here the shape is checked:
+  // grouping is present, and it groups by the pricing shape, not by run.
+  statements.length = 0;
+  await runs.inspectUsageRollup(binding.tenantId, binding.projectId, binding.jobId);
+  const shape = statements.join("\n");
+  assert.match(shape, /GROUP BY attempt_id,harness,model,/,
+    "the usage aggregate must group in SQL by pricing shape, never return one row per run");
+  assert.doesNotMatch(shape, /harnessRunProjectionV1|event_rows/,
+    "the usage aggregate must not materialise event payloads it never verifies");
+  assert.equal(await count(() => runs.inspectUsageRollup(binding.tenantId, binding.projectId)), 1,
+    "the project-wide usage aggregate must stay one query whatever the scope");
   const oneRun = await count(() => runs.inspectMany(binding.tenantId, [binding.runId]));
   const manyRuns = await count(() => runs.inspectMany(binding.tenantId, Array.from({ length: 50 }, (_, index) => `run:budget:${index}`)));
   assert.equal(oneRun, 1); assert.equal(manyRuns, oneRun);
