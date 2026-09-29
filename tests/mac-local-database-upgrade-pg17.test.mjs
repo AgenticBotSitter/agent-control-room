@@ -312,7 +312,9 @@ test("post-incident ledger 90 with old memberships needs only the role and grant
   const before = await inspectMacDatabaseUpgradeV1({ client });
   assert.deepEqual(before.pendingMigrations, []);
   assert.equal(before.installQueueSchema, true);
-  assert.equal(before.createRoles.length, 5);
+  assert.deepEqual(before.createRoles.map(item => item.role), ["control_room_agent_reviewer",
+    "control_room_agent_reviewer_login", "control_room_local_result_publisher", "control_room_native_queue_worker",
+    "control_room_native_results", "control_room_publisher", "control_room_task_coordinator"]);
   assert.equal(before.membership.revoke.length, 4);
   const oldVerifiers = (await client.query(`SELECT rolname,rolpassword FROM pg_authid
     WHERE rolname=ANY($1::text[]) ORDER BY rolname`, [
@@ -324,7 +326,8 @@ test("post-incident ledger 90 with old memberships needs only the role and grant
   const result = await runMacDatabaseUpgradeCommandV1({
     args: ["--apply", "--expected-main", mainCommit,
       "--expected-plan-digest", macDatabaseUpgradePlanDigestV1(before)],
-    readVerifier: async () => `${postgresScramVerifierV1("z".repeat(40))}\n`,
+    readVerifier: async () => `${JSON.stringify({ control_room_publisher: postgresScramVerifierV1("z".repeat(40)),
+      control_room_agent_reviewer_login: postgresScramVerifierV1("y".repeat(40)) })}\n`,
     git: params => params[0] === "status" ? "" : mainCommit,
     openClient: () => connectTarget(connection(live.port)),
     applyPending: () => { pendingCalled = true; throw new Error("unexpected_migration"); },
@@ -339,7 +342,7 @@ test("post-incident ledger 90 with old memberships needs only the role and grant
     WHERE rolname=ANY($1::text[]) ORDER BY rolname`, [oldVerifiers.map(row => row.rolname)])).rows,
   oldVerifiers);
   for (const [login, password] of [...oldRoles.map(([name]) => [name, "p".repeat(40) + name]),
-    ["control_room_publisher", "z".repeat(40)]]) {
+    ["control_room_publisher", "z".repeat(40)], ["control_room_agent_reviewer_login", "y".repeat(40)]]) {
     const restricted = connectTarget(`host=127.0.0.1 port=${live.port} dbname=control_room user=${login} password=${password}`);
     await restricted.connect();
     try {
