@@ -1,0 +1,114 @@
+[
+  {
+    "file": "db/migrations/0140_fleet_worker_connector.sql",
+    "find": "IF NEW.state='consumed' AND (pg_catalog.statement_timestamp()>=OLD.expires_at",
+    "replace": "IF NEW.state='consumed' AND (false",
+    "test": "node --import tsx --test --test-name-pattern \"expired or cancelled\" tests/fleet-connector.test.ts",
+    "why": "the database clock refuses an expired enrollment code"
+  },
+  {
+    "file": "src/fleet/v1/gateway-store.ts",
+    "find": "if (!row || row.state !== \"issued\" || row.expired) return fleetFail(\"unauthenticated\");",
+    "replace": "if (!row) return fleetFail(\"unauthenticated\");",
+    "test": "node --import tsx --test --test-name-pattern \"one-command join|expired or cancelled\" tests/fleet-connector.test.ts",
+    "why": "an enrollment code is single use and expires"
+  },
+  {
+    "file": "src/fleet/v1/gateway-store.ts",
+    "find": "if (!row || row.worker_id !== declared) return fleetFail(\"unauthenticated\");",
+    "replace": "if (!row) return fleetFail(\"unauthenticated\");",
+    "test": "node --import tsx --test --test-name-pattern \"stolen credential\" tests/fleet-connector.test.ts",
+    "why": "a credential cannot act as another worker"
+  },
+  {
+    "file": "src/fleet/v1/gateway-store.ts",
+    "find": "WHERE c.tenant_id=$1 AND c.secret_digest=$2 AND c.state='active' AND w.state='active'",
+    "replace": "WHERE c.tenant_id=$1 AND c.secret_digest=$2 AND c.state='active'",
+    "test": "node --import tsx --test --test-name-pattern \"revoking the worker row alone\" tests/fleet-connector.test.ts",
+    "why": "a revoked worker is refused even if its credential row is still active"
+  },
+  {
+    "file": "db/migrations/0140_fleet_worker_connector.sql",
+    "find": "AND fc.worker_id=p_worker AND w.state='active'",
+    "replace": "AND fc.worker_id=p_worker",
+    "test": "node --import tsx --test --test-name-pattern \"revoking the worker row alone\" tests/fleet-connector.test.ts",
+    "why": "the database refuses reports from a revoked worker"
+  },
+  {
+    "file": "src/fleet/v1/gateway-store.ts",
+    "find": "!principal.projectIds.includes(offer.project_id) || ",
+    "replace": "",
+    "test": "node --import tsx --test --test-name-pattern \"stolen credential\" tests/fleet-connector.test.ts",
+    "why": "a worker cannot claim in another project"
+  },
+  {
+    "file": "src/fleet/v1/gateway-store.ts",
+    "find": "|| !principal.capabilities.includes(offer.capability)",
+    "replace": "",
+    "test": "node --import tsx --test --test-name-pattern \"capability it was not given\" tests/fleet-connector.test.ts",
+    "why": "a worker cannot claim work needing a capability it lacks"
+  },
+  {
+    "file": "db/migrations/0140_fleet_worker_connector.sql",
+    "find": ">=worker.max_concurrent THEN",
+    "replace": ">=worker.max_concurrent+100 THEN",
+    "test": "node --import tsx --test --test-name-pattern \"capacity\" tests/fleet-connector.test.ts",
+    "why": "a worker cannot exceed the capacity the owner set"
+  },
+  {
+    "file": "db/migrations/0140_fleet_worker_connector.sql",
+    "find": "RAISE EXCEPTION 'fleet claim committed without its canonical lease';",
+    "replace": "RETURN NULL;",
+    "test": "node --import tsx --test --test-name-pattern \"without a live lease\" tests/fleet-connector.test.ts",
+    "why": "no fleet claim can exist without its canonical lease"
+  },
+  {
+    "file": "src/fleet/v1/gateway-store.ts",
+    "find": "Buffer.byteLength(summary, \"utf8\") > FLEET_RESULT_LIMITS_V1.summaryBytes",
+    "replace": "Buffer.byteLength(summary, \"utf8\") > 100_000_000",
+    "test": "node --import tsx --test --test-name-pattern \"oversized\" tests/fleet-connector.test.ts",
+    "why": "an oversized result summary is refused with a clear limit error"
+  },
+  {
+    "file": "src/fleet/v1/gateway-store.ts",
+    "find": "if (total > FLEET_RESULT_LIMITS_V1.totalFileBytes) return fleetFail(\"too_large\");",
+    "replace": "",
+    "test": "node --import tsx --test --test-name-pattern \"oversized\" tests/fleet-connector.test.ts",
+    "why": "result files over the 1 MiB total are refused"
+  },
+  {
+    "file": "db/migrations/0140_fleet_worker_connector.sql",
+    "find": "OR worker.project_ids<>NEW.project_ids",
+    "replace": "",
+    "test": "node --import tsx --test --test-name-pattern \"codes cannot be widened\" tests/fleet-connector.test.ts",
+    "why": "a re-key code cannot widen a worker's project scope"
+  },
+  {
+    "file": "db/migrations/0140_fleet_worker_connector.sql",
+    "find": "owner_identity.id=NEW.reviewed_by_identity_id AND",
+    "replace": "",
+    "test": "node --import tsx --test --test-name-pattern \"end to end\" tests/fleet-connector.test.ts",
+    "why": "only the owner can review a fleet result"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "if (target !== base && !target.startsWith(base + sep)) throw",
+    "replace": "if (false) throw",
+    "test": "node --import tsx --test --test-name-pattern \"MCP server\" tests/fleet-connector.test.ts",
+    "why": "MCP result files cannot escape the workspace"
+  },
+  {
+    "file": "db/migrations/0140_fleet_worker_connector.sql",
+    "find": "OR (NEW.state='succeeded' AND decision='accepted')",
+    "replace": "OR (NEW.state='succeeded')",
+    "test": "node scripts/generate-migration-ledger.mjs >/dev/null && node --import tsx --test tests/fleet-connector-postgres.test.ts; status=$?; git checkout -- deploy/postgres/migration-ledger.json; exit $status",
+    "why": "the gateway login cannot mark an unreviewed job done"
+  },
+  {
+    "file": "db/migrations/0140_fleet_worker_connector.sql",
+    "find": "      RAISE EXCEPTION 'fleet gateway grant write rejected';",
+    "replace": "      NULL;",
+    "test": "node scripts/generate-migration-ledger.mjs >/dev/null && node --import tsx --test tests/fleet-connector-postgres.test.ts; status=$?; git checkout -- deploy/postgres/migration-ledger.json; exit $status",
+    "why": "the gateway login can never grant a worker owner authority"
+  }
+]

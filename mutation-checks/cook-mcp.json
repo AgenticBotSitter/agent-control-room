@@ -1,0 +1,79 @@
+[
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "          await client.mcpCall(callId, tool ? name : \"unsupported\");",
+    "replace": "          await Promise.resolve();",
+    "test": "node --import tsx --test --test-name-pattern \"audits every call first\" tests/fleet-mcp-server.test.ts",
+    "why": "every MCP tool attempt is audited before validation or execution"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "&& Buffer.byteLength(args.answer, \"utf8\") <= MAX_RESULT_BYTES",
+    "replace": "&& Buffer.byteLength(args.answer, \"utf8\") <= 100_000_000",
+    "test": "node --import tsx --test --test-name-pattern \"malformed and oversized inputs\" tests/fleet-mcp-server.test.ts",
+    "why": "an oversized MCP answer is refused before files or result storage"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "Array.isArray(args.files) && args.files.length <= 8",
+    "replace": "Array.isArray(args.files) && args.files.length <= 80",
+    "test": "node --import tsx --test --test-name-pattern \"malformed and oversized inputs\" tests/fleet-mcp-server.test.ts",
+    "why": "an MCP result cannot name more than eight files"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "if (target !== base && !target.startsWith(base + sep)) throw",
+    "replace": "if (false) throw",
+    "test": "node --import tsx --test --test-name-pattern \"cannot traverse\" tests/fleet-mcp-server.test.ts",
+    "why": "an MCP result file cannot escape the configured workspace"
+  },
+  {
+    "file": "src/fleet/v1/gateway-http.ts",
+    "find": " || path === \"/fleet/v1/mcp/calls\"\n      || claimRoute.test(path)",
+    "replace": "\n      || claimRoute.test(path)",
+    "test": "node --import tsx --test --test-name-pattern \"MCP server: exposes\" tests/fleet-connector.test.ts",
+    "why": "the authenticated gateway audit route remains reachable"
+  },
+  {
+    "file": "src/fleet/v1/gateway-store.ts",
+    "find": "  async recordMcpCall(principal: FleetWorkerPrincipalV1, input: Readonly<{ callId: unknown; toolName: unknown }>) {\n    if (typeof input.callId !== \"string\" || !mcpCallPattern.test(input.callId)\n      || typeof input.toolName !== \"string\" || !mcpToolNames.includes(input.toolName as never)) return fleetFail(\"invalid\");",
+    "replace": "  async recordMcpCall(principal: FleetWorkerPrincipalV1, input: Readonly<{ callId: unknown; toolName: unknown }>) {\n    if (typeof input.callId !== \"string\" || !mcpCallPattern.test(input.callId)\n      || typeof input.toolName !== \"string\") return fleetFail(\"invalid\");",
+    "test": "node --import tsx --test --test-name-pattern \"MCP server: exposes\" tests/fleet-connector.test.ts",
+    "why": "MCP audit metadata contains only a bounded allowlisted tool label"
+  },
+  {
+    "file": "src/fleet/v1/gateway-http.ts",
+    "find": "        await options.store.recordRefusedMcpAuthentication({",
+    "replace": "        await Promise.resolve({",
+    "test": "node --import tsx --test --test-name-pattern \"revoked worker is refused\" tests/fleet-connector.test.ts",
+    "why": "a recognized revoked or expired machine credential leaves a bounded refusal audit before body parsing"
+  },
+  {
+    "file": "src/fleet/v1/gateway-store.ts",
+    "find": "!principal.projectIds.includes(offer.project_id) || ",
+    "replace": "",
+    "test": "node --import tsx --test --test-name-pattern \"stolen credential\" tests/fleet-connector.test.ts",
+    "why": "an MCP worker cannot claim work in another project"
+  },
+  {
+    "file": "src/fleet/v1/gateway-http.ts",
+    "find": "|| !principal.projectIds.includes(projectId)) return fleetFail(\"not_found\");",
+    "replace": ") return fleetFail(\"not_found\");",
+    "test": "node --import tsx --test --test-name-pattern \"stolen credential\" tests/fleet-connector.test.ts",
+    "why": "an MCP worker cannot propose work in another project"
+  },
+  {
+    "file": "src/fleet/v1/gateway-http.ts",
+    "find": "if (active >= maxConcurrent || !tick(state, now, perIp[kind]) || !tick(global[kind], now, globalLimit[kind]))",
+    "replace": "if (!tick(global[kind], now, globalLimit[kind]) || !tick(state, now, perIp[kind]) || active >= maxConcurrent)",
+    "test": "node --import tsx --test --test-name-pattern \"one noisy\" tests/fleet-connector.test.ts",
+    "why": "source-local refusals cannot consume the shared enrollment or authentication budget"
+  },
+  {
+    "file": "db/migrations/0141_fleet_owner_authority.sql",
+    "find": "  IF NOT FOUND OR enrollment.state<>'issued' OR enrollment.expires_at<=pg_catalog.statement_timestamp()\n    OR enrollment.expires_at<=p_redeemed_at THEN RETURN; END IF;",
+    "replace": "  IF NOT FOUND OR enrollment.state<>'issued' THEN RETURN; END IF;",
+    "test": "node --import tsx --test --test-name-pattern \"cannot be replayed after the code expires\" tests/fleet-connector.test.ts",
+    "why": "a matching enrollment replay is still refused after the code expires"
+  }
+]
