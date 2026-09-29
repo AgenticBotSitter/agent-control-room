@@ -528,8 +528,9 @@ async function existingUpgradeConfiguration(protectedRoot) {
 
 /** Builds one bearer client per roster worker, reusing a client already on
  * disk so an interrupted finish converges instead of rotating secrets on
- * every retry. Read-only: the caller writes the returned clients once every
- * other check for this run has passed. */
+ * every retry. `created` is true only for a secret minted by this call, which
+ * is what tells a repair apart from a reuse. Read-only: the caller writes the
+ * returned clients once every other check for this run has passed. */
 async function workIntakeRosterClientsV1(clientRoot, workers) {
   const clients = [];
   for (const worker of workers) {
@@ -537,9 +538,10 @@ async function workIntakeRosterClientsV1(clientRoot, workers) {
     let client;
     try { client = captureWorkIntakeClientConfigurationV1(await readProtectedJson(path)); }
     catch (error) { if (error?.code !== "ENOENT") throw error; }
+    const created = client === undefined;
     client ??= captureWorkIntakeClientConfigurationV1({ schema: WORK_INTAKE_CLIENT_CONFIGURATION_V1,
       origin: "http://127.0.0.1:3211", bearerSecret: newPassword() });
-    clients.push({ worker, client });
+    clients.push({ worker, client, created });
   }
   return clients;
 }
@@ -564,6 +566,38 @@ function missingNewLoginRolesV1({ oldRoles, workIntake }) {
   if (!oldRoles.agentReviewer) missing.push(roleNames.agentReviewer);
   if (workIntake === undefined) missing.push(bootstrapRoles.workIntake);
   return missing;
+}
+
+/** Recreates the per-worker bearer client files an interrupted finish left
+ * behind, and re-points the intake record's credentials at them. Runs on every
+ * finish whose logins already exist, so the retry after a kill is the same
+ * command the owner already knows; when there is nothing to recreate it
+ * returns `nothingToFinish` without writing.
+ *
+ * It acts only on a record already bound to this Mac's enabled roster, the
+ * same condition `verifyIntakeRoster` checks before the host will start. A
+ * record that fails that check is the owner's own state -- an older record with
+ * no roster, or one naming a worker this Mac has not enabled -- and a finish
+ * leaves it exactly as it found it rather than rewriting credentials nobody
+ * asked it to change. A client file that survives is never re-minted, so its
+ * secret, and the digest the server already holds for it, both stand. */
+async function repairWorkIntakeClientsV1({ configRoot, workIntake, workers, mainCommit }) {
+  const done = { finished: true, mainCommit, nothingToFinish: true };
+  if (workIntake === undefined) return done;
+  const roster = new Map(workers.map(worker => [worker.workerId, worker.kind]));
+  if (workIntake.credentials.length !== roster.size
+    || workIntake.credentials.some(entry => roster.get(entry.workerId) !== entry.workerKind)) return done;
+  const clientRoot = join(configRoot, "work-intake-clients");
+  await privateDirectory(clientRoot);
+  const clients = await workIntakeRosterClientsV1(clientRoot, workers);
+  const missing = clients.filter(({ created }) => created);
+  if (!missing.length) return done;
+  for (const { worker, client } of missing)
+    await writePrivate(join(clientRoot, workIntakeClientFileNameV1(worker.workerId)), `${JSON.stringify(client)}\n`);
+  const repaired = captureWorkIntakeServerConfigurationV1({ ...workIntake,
+    credentials: workIntakeRosterCredentialsV1(clients, new Date()) });
+  await writePrivate(join(configRoot, "work-intake-server.json"), `${JSON.stringify(repaired)}\n`);
+  return { finished: true, mainCommit, repairedIntakeClients: missing.map(({ worker }) => worker.workerId).sort() };
 }
 
 export async function planMacDatabaseUpgradeFromFileV1(snapshotFile, expectedMainCommit) {
@@ -629,12 +663,20 @@ async function verifyRoleLogin(configuration, expectedUsername) {
  * local record is written, so a record is never created for a login that
  * cannot actually be reached yet. Roles already finished (by a previous,
  * interrupted run) are left alone: only the roles still missing are read out
- * of the prepared record, so a partial retry converges instead of refusing. */
+ * of the prepared record, so a partial retry converges instead of refusing.
+ *
+ * The work-intake client files are written BEFORE `work-intake-server.json`,
+ * never after. The server record holds only the secrets' digests, so it is
+ * the file whose presence says the intake login is "finished"; if it landed
+ * first and the process died, every worker would be unable to sign in. With
+ * that order, a kill in between leaves a record that names digests nothing on
+ * disk matches, which `repairWorkIntakeClientsV1` below mints and repairs on
+ * the next run of this same command. */
 export async function finishMacLocalDatabaseUpgradeV1(options) {
   const { configRoot, passwordRoot, roleFile, oldRoles, workIntake, workers } = await existingUpgradeConfiguration(options.protectedRoot);
   const mainCommit = options.mainCommit ?? await currentMainCommit();
   const missing = missingNewLoginRolesV1({ oldRoles, workIntake });
-  if (!missing.length) return { finished: true, mainCommit, nothingToFinish: true };
+  if (!missing.length) return await repairWorkIntakeClientsV1({ configRoot, workIntake, workers, mainCommit });
   const preparedFile = join(configRoot, "database-upgrade-prepare.json");
   let prepared;
   try { prepared = await readProtectedJson(preparedFile); }
@@ -687,9 +729,13 @@ export async function finishMacLocalDatabaseUpgradeV1(options) {
     await writePrivate(roleFile, `${JSON.stringify(nextRoles)}\n`);
   }
   if (nextWorkIntake !== workIntake) {
-    await writePrivate(join(configRoot, "work-intake-server.json"), `${JSON.stringify(nextWorkIntake)}\n`);
+    // Client files first: `work-intake-server.json` is the file whose presence
+    // makes the intake login look finished, so it must never be the first of
+    // the two to land. A kill in between then leaves a re-run that mints the
+    // missing clients again, which is a no-op for a file that already exists.
     for (const { worker, client } of nextIntakeClients)
       await writePrivate(join(clientRoot, workIntakeClientFileNameV1(worker.workerId)), `${JSON.stringify(client)}\n`);
+    await writePrivate(join(configRoot, "work-intake-server.json"), `${JSON.stringify(nextWorkIntake)}\n`);
   }
   return { finished: true, mainCommit };
 }
