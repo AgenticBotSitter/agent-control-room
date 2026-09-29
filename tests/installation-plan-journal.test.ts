@@ -96,50 +96,97 @@ test("a concurrent writer's in-flight publication never refuses another exact wr
   await chmod(root, 0o700);
   const installationId = "local-installation-inflight", ownerUid = process.getuid!();
   const witnessName = `${installationId}.installation-plan.revision-0000000000.publish.json`;
-  // Hold the winner after its witness is durable and on disk but before it links
-  // the target. That is a normal mid-publication state, not a corrupt journal, and
-  // the late writer must not be told the journal is unusable.
-  let atWitness!: () => void;
-  const witnessCreated = new Promise<void>(resolve => { atWitness = resolve; });
+  // The winner is held in linkNoReplace, which is the last step before its target
+  // exists: its witness is already created, written, file-synced and
+  // directory-synced, so the journal on disk is exactly "witness present, target
+  // absent" - the live mid-publication state a concurrent writer really leaves
+  // behind. Holding any earlier (create or write) would let the late writer read an
+  // empty directory and would prove nothing.
+  let atLink!: () => void;
+  const winnerIsLinking = new Promise<void>(resolve => { atLink = resolve; });
   let releaseWinner!: () => void;
   const winnerMayFinish = new Promise<void>(resolve => { releaseWinner = resolve; });
   const winner = new InstallationPlanFilesystemJournalV1({ rootDirectory: root, installationId, ownerUid },
     async request => {
       const base = await openInstallationPlanFilesystemStorageSessionV1(request);
-      let witnessSynced = false;
       return Object.freeze({ ...base,
-        // Held right after the witness's own directory sync makes it visible, and
-        // before the target is hard-linked. That is the live mid-publication state.
-        async syncDirectory() {
-          await base.syncDirectory();
-          if (witnessSynced) return;
-          // The temp file is synced first, so only trigger once the witness itself
-          // is the newest entry on disk.
-          if ((await readdir(root)).includes(witnessName)) { witnessSynced = true; atWitness(); await winnerMayFinish; }
+        async linkNoReplace(sourceName, sourceIdentity, targetName) {
+          atLink(); await winnerMayFinish;
+          return base.linkNoReplace(sourceName, sourceIdentity, targetName);
         },
       });
     });
-  // The late writer is deliberately uninstrumented, so it observes only the real
-  // filesystem state a concurrent writer leaves behind.
-  const late = new InstallationPlanFilesystemJournalV1({ rootDirectory: root, installationId, ownerUid });
+  // The late writer is instrumented for observation only: listEntryNames returns
+  // the real names and behaves identically, it just tells the test when its own
+  // first directory listing has returned and what it saw. A refusal is reported
+  // through the same latch, because a late writer that cannot even open a session
+  // or list the directory never reaches the listing and would otherwise hang.
+  type FirstListing = { kind: "names"; names: readonly string[] } | { kind: "refusal"; error: Error };
+  let observedFirstListing!: (listing: FirstListing) => void;
+  const firstListing = new Promise<FirstListing>(resolve => { observedFirstListing = resolve; });
+  const reportRefusal = (error: unknown) => observedFirstListing({ kind: "refusal", error: error as Error });
+  const late = new InstallationPlanFilesystemJournalV1({ rootDirectory: root, installationId, ownerUid },
+    async request => {
+      try {
+        const base = await openInstallationPlanFilesystemStorageSessionV1(request);
+        return Object.freeze({ ...base,
+          async listEntryNames() {
+            try {
+              const names = await base.listEntryNames();
+              observedFirstListing({ kind: "names", names });
+              return names;
+            }
+            catch (error) { reportRefusal(error); throw error; }
+          },
+        });
+      } catch (error) { reportRefusal(error); throw error; }
+    });
+  const plan = create();
+  // Held in outer scope so the finally block can settle both writers, but only
+  // started at the points below: the late writer must not begin before the winner
+  // is actually parked in linkNoReplace.
+  let winnerResult!: ReturnType<typeof winner.append>;
+  let lateResult!: Promise<{ result: Awaited<ReturnType<typeof late.append>> } | { error: Error }>;
   try {
-    const plan = create();
-    const winnerResult = winner.append(plan);
-    await atWitness;
-    const lateResult = late.append(plan);
+    winnerResult = winner.append(plan);
+    await winnerIsLinking;
+    lateResult = late.append(plan).then(result => ({ result }), (error: Error) => ({ error }));
+    // The whole point of the test: the late writer has to reach its own first
+    // listing while the winner is still held, so it observes the in-flight witness
+    // with no target. Releasing the winner first (as an earlier version of this
+    // test did) means the late writer never sees that state and the fix is untested.
+    // The runner has no per-test timeout, so this is bounded: a late writer that
+    // never lists anything fails here instead of hanging the whole suite.
+    const listingGuard = new AbortController();
+    const listing = await Promise.race([firstListing,
+      delay(10_000, undefined, { signal: listingGuard.signal })
+        .then(() => ({ kind: "no-listing" } as const), () => ({ kind: "no-listing" } as const))]);
+    listingGuard.abort();
+    if (listing.kind !== "names") throw listing.kind === "refusal"
+      ? listing.error : new Error("the late writer never reached its first directory listing");
+    assert.ok(listing.names.includes(witnessName), "the late writer's first listing saw the live witness");
+    assert.equal(listing.names.includes(name(installationId, 0)), false,
+      "the late writer's first listing saw no target, so the publication was still in flight");
     releaseWinner();
-    const [first, second] = await Promise.all([winnerResult, lateResult]);
-    // Which of the two wins the link race is not this test's concern; what
-    // matters is that both settle on one publication with matching content, and
-    // that neither is refused with installation_plan_journal_unavailable.
-    assert.equal([first.replayed, second.replayed].filter(replayed => !replayed).length, 1);
-    assert.equal([first.replayed, second.replayed].filter(Boolean).length, 1);
+    const [first, second] = [await winnerResult, await lateResult];
+    const refusal = "error" in second ? second.error.message : "none";
+    assert.ok(!("error" in second), `the late exact writer was refused instead of replayed: ${refusal}`);
+    assert.equal(first.replayed, false, "the writer that linked the target is the publisher");
+    assert.equal(second.result.replayed, true, "the late exact writer replays the winner's publication");
     assert.equal(first.planDigest, plan.planDigest);
-    assert.equal(second.planDigest, plan.planDigest);
-    assert.deepEqual((await readdir(root)).sort(), [name(installationId, 0)]);
+    assert.equal(second.result.planDigest, plan.planDigest);
+    assert.deepEqual((await readdir(root)).sort(), [name(installationId, 0)],
+      "the witness and both temps are retired, leaving only the published target");
     assert.equal((await lstat(join(root, name(installationId, 0)))).nlink, 1);
     assert.equal((await late.readHistory()).length, 1);
-  } finally { releaseWinner(); await rm(root, { recursive: true, force: true }); }
+  } finally {
+    // Both writers must be settled before the directory is removed, or a writer
+    // still inside its publication can recreate entries underneath the rm and
+    // leave the temp directory behind, replacing the real failure with ENOTEMPTY.
+    releaseWinner();
+    await Promise.all([winnerResult, lateResult].map(result => result.then(() => undefined, () => undefined)));
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 test("a read-only read still refuses a witness with no target and never repairs it", async () => {
