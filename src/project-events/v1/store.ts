@@ -75,11 +75,18 @@ export class ProjectEventStoreV1 {
   }
 
   async append(inputValue:unknown):Promise<{event:ProjectEventV1;replayed:boolean}>{
+    try{return await this.#transaction(tx=>this.appendInSession(tx,inputValue));}
+    catch(error){if(error instanceof ProjectEventErrorV1)throw error;throw new ProjectEventErrorV1("source_unavailable");}
+  }
+
+  /** Append using a caller-owned transaction so the source mutation and its
+   * presentation event either commit together or both roll back. */
+  async appendInSession(tx:DatabaseSession,inputValue:unknown):Promise<{event:ProjectEventV1;replayed:boolean}>{
     const input=parseProjectEventInputV1(inputValue),clockValue=this.#clock(),recorded=Date.parse(clockValue),occurred=Date.parse(input.occurredAt);
     if(!Number.isFinite(recorded)||occurred>recorded+30_000)throw new ProjectEventErrorV1("invalid_input");
     const recordedAt=new Date(recorded).toISOString();
     const sourcePayloadDigest=sha256Digest(input),scope={tenantId:input.tenantId,workspaceId:input.workspaceId,projectId:input.projectId};
-    try{return await this.#transaction(async tx=>{
+    try{return await (async()=>{
       const project=await tx.query<{workspace_id:string}>(`SELECT workspace_id FROM projects WHERE tenant_id=$1 AND id=$2`,[input.tenantId,input.projectId]);
       if(!project.rows[0]||project.rows[0].workspace_id!==input.workspaceId)throw new ProjectEventErrorV1("project_not_found");
       const origin:Omit<HeadRow,"head_auth_tag">={tenant_id:input.tenantId,workspace_id:input.workspaceId,project_id:input.projectId,
@@ -108,7 +115,7 @@ export class ProjectEventStoreV1 {
       await tx.query(`UPDATE control_project_event_stream_heads SET last_sequence=$1,last_event_digest=$2,head_auth_tag=$3,updated_at=$4
         WHERE tenant_id=$5 AND project_id=$6`,[sequence,event.eventDigest,this.#headTag(next),recordedAt,input.tenantId,input.projectId]);
       return{event,replayed:false};
-    });}catch(error){if(error instanceof ProjectEventErrorV1)throw error;throw new ProjectEventErrorV1("source_unavailable");}
+    })();}catch(error){if(error instanceof ProjectEventErrorV1)throw error;throw new ProjectEventErrorV1("source_unavailable");}
   }
 
   async read(requestValue:ProjectEventReadRequestV1,session?:DatabaseSession):Promise<ProjectEventPageV1>{

@@ -17,10 +17,28 @@ const ROOT = new URL("..", import.meta.url).pathname;
 // The number of files the ledger covers, derived so adding a migration never needs this test edited.
 const MIGRATION_FILES = (await collectLedgerEntries(ROOT)).length;
 
+/**
+ * The committed ledger's own entry count.
+ *
+ * The three assertions below used to hard-code it, and every migration this
+ * branch has ever added re-broke them: a hard-coded count is a tripwire for the
+ * next author, not a check. It is read from the committed ledger instead, so
+ * the assertions still compare the SAME number against three different code
+ * paths (the verifier, the planner, and the CLI) -- which is what they are
+ * actually for -- without needing an edit whenever a migration lands.
+ */
+const committedLedger = JSON.parse(
+  await readFile(join(ROOT, "deploy/postgres/migration-ledger.json"), "utf8"));
+const LEDGER_FILES = committedLedger.entries.length;
+assert.ok(Number.isInteger(LEDGER_FILES) && LEDGER_FILES > 0, "committed ledger must have entries");
+assert.equal(LEDGER_FILES, (await collectLedgerEntries(ROOT)).length,
+  "the committed ledger must cover exactly the working tree's files");
+
 test("committed ledger matches the working tree", async () => {
   const result = await verifyMigrationLedger({ rootDir: ROOT });
   assert.equal(result.files, MIGRATION_FILES);
   assert.match(result.digest, /^[a-f0-9]{64}$/);
+  assert.equal(result.digest, committedLedger.digest);
 });
 
 test("private web cannot update another subsystem's shared action-inbox row", async () => {

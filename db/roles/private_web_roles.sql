@@ -27,7 +27,7 @@ GRANT SELECT ON control_identities, control_role_grants, workspaces, control_web
   control_task_execution_plans,
   control_artifact_manifests, control_native_artifact_receipts, control_completion_gate_records,
   control_completion_gate_integrity, control_web_task_review_commands, control_native_review_plans,
-  control_news_story_versions, control_news_source_observations, control_news_source_settings, control_news_story_archives, control_news_article_details, control_idea_sessions, control_idea_contributions,
+  control_news_story_versions, control_news_source_observations, control_news_source_settings, control_news_story_archives, control_news_article_details, control_news_task_proposal_links, control_idea_sessions, control_idea_contributions,
   control_idea_syntheses, control_idea_decisions, control_idea_bot_run_events, control_idea_canonical_task_sessions,
   control_idea_canonical_task_links, control_idea_promotion_task_links, control_policy_decisions,
   control_project_coordinator_heads, control_project_coordination_proposals,
@@ -73,9 +73,13 @@ GRANT INSERT ON control_web_sessions, adapter_registry, projects, control_manual
   control_requests, control_workflows, control_jobs, control_web_task_commands,
   control_idea_canonical_task_sessions, control_idea_canonical_task_links, control_idea_promotion_task_links,
   control_completion_gate_records, control_web_task_review_commands, control_news_source_settings, control_news_story_archives,
+  control_news_task_proposal_links,
   control_policy_decisions, control_project_lifecycle_events,
   control_project_coordinator_heads, control_project_delegation_policies TO control_room_private_web;
 GRANT INSERT ON control_task_model_selections, control_task_declared_scopes TO control_room_private_web;
+GRANT INSERT ON control_project_event_stream_heads, control_project_events TO control_room_private_web;
+GRANT UPDATE (last_sequence,last_event_digest,head_auth_tag,updated_at)
+  ON control_project_event_stream_heads TO control_room_private_web;
 GRANT INSERT ON work_batch_revisions, work_batch_items TO control_room_private_web;
 GRANT INSERT ON work_batch_queue_admissions, work_batch_agent_queue_heads TO control_room_private_web;
 GRANT INSERT ON pipeline_templates, pipeline_runs, pipeline_stage_runs TO control_room_private_web;

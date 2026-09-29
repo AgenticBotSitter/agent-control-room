@@ -102,7 +102,8 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
     throw new Error("mac_local_web_process_config_invalid");
   const sessions = new LocalOwnerSessionServiceV1(profile, options.localOwnerSessionStore, options.initialLocalOwnerSessions);
   const projects = new WebProjectService(options.database.client,
-    { tenantId: profile.tenantId, workspaceId: options.workspaceId }, clock);
+    { tenantId: profile.tenantId, workspaceId: options.workspaceId }, clock, undefined, undefined,
+    undefined, options.taskReadKeys?.harnessIntegrityKey);
   const tasks = new WebTaskService(options.database.client,
     { tenantId: profile.tenantId, workspaceId: options.workspaceId }, clock, options.taskReadKeys);
   const projectActivity = new ProjectActivityServiceV1(options.database.client,
