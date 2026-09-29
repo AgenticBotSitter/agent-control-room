@@ -29,10 +29,54 @@ const statusModule = join(repoRoot, "scripts/mac-local/status.mjs");
  * handler is written once here and every fixture uses it. */
 const ACK_SERVER_SOURCE = `const server = createServer(socket => { socket.on("error", () => {}); socket.end("ok"); });\n`;
 
+const ownedPids = new Map();
+
+/** Records a pid this test started, so the fixture removes the protected root only once that pid
+ * is gone. The registration must happen where the process is spawned, not in a later `t.after`:
+ * node runs this fixture's teardown hook (registered inside rootFixture, before the test body) first,
+ * so a pid added afterwards is never reaped. */
+function ownPid(root, pid) {
+  if (!Number.isSafeInteger(pid) || pid <= 1) return pid;
+  const pids = ownedPids.get(root) ?? new Set();
+  pids.add(pid);
+  ownedPids.set(root, pids);
+  return pid;
+}
+
+/** The pids this root's state file still records, and each confirmed to be *this* root's supervisor
+ * or task host right now. A recorded pid whose command line is not ours is a pid the OS recycled,
+ * so it is refused here exactly as mac:down refuses it — never signalled by a teardown.
+ *
+ * This is a backstop for a pid nobody registered. It only matches a supervisor started the way
+ * launchd and mac:up start it, with the relative script path from hostCommand/taskHostCommand:
+ * `alive` is an exact `ps -ww -o command=` equality, so a process spawned with an absolute script
+ * path never matches (measured, this file's own entry-point spawns). Every process these tests
+ * start is therefore registered at spawn time; this covers only what a real stack leaves behind. */
+async function recordedHostPids(root) {
+  let recorded;
+  try { recorded = JSON.parse(await readFile(runtimePaths(root).hostState, "utf8")); }
+  catch { return []; }
+  return [recorded.pid, recorded.childPid]
+    .filter(pid => Number.isSafeInteger(pid) && pid > 1
+      && (alive(pid, hostCommand(root)) || alive(pid, taskHostCommand(root))));
+}
+
+/** Removes a protected root only after nothing this test started can still be writing into it.
+ * The root is the supervisor's working area: a supervisor that is still streaming a child into
+ * runtime/task-host.log when the tree is removed races the removal, and the teardown fails with
+ * ENOTEMPTY on the runtime directory. The reap and the removal are therefore in that order, and
+ * the reap waits for the pid to actually be gone. */
+async function removeRoot(root) {
+  const pids = new Set([...(ownedPids.get(root) ?? []), ...await recordedHostPids(root)]);
+  ownedPids.delete(root);
+  for (const pid of pids) await killProcessGroup(pid);
+  await rm(root, { recursive: true, force: true });
+}
+
 async function rootFixture(t) {
   const root = await mkdtemp(join(tmpdir(), "acr-host-supervisor-"));
   await mkdir(join(root, "runtime"), { mode: 0o700 });
-  t.after(() => rm(root, { recursive: true, force: true }));
+  t.after(() => removeRoot(root));
   return root;
 }
 
@@ -121,9 +165,20 @@ const portOpen = port => new Promise(resolve => {
 function startRealSupervisor(root, args) {
   const source = `import { superviseTaskHost } from ${JSON.stringify(supervisorModule)};\n`
     + `process.exitCode = await superviseTaskHost(${JSON.stringify(root)}, { args: ${JSON.stringify(args)} });\n`;
-  return spawn(process.execPath, ["--input-type=module", "-e", source], {
+  const supervisor = spawn(process.execPath, ["--input-type=module", "-e", source], {
     cwd: repoRoot, stdio: ["ignore", "pipe", "pipe"], env: process.env,
   });
+  return ownPid(root, supervisor.pid), supervisor;
+}
+
+/** Spawns the real supervisor entry point, registering its pid for the fixture teardown. The
+ * registration is here, at the spawn, because a later `t.after` would run after the fixture has
+ * already removed the root — see ownPid. */
+function startSupervisorEntryPoint(root) {
+  const supervisor = spawn(process.execPath, [join(repoRoot, "scripts/mac-local/task-host-supervisor.mjs"),
+    "--protected-root", root],
+  { cwd: repoRoot, stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, HOME: join(root, "home") } });
+  return ownPid(root, supervisor.pid), supervisor;
 }
 
 async function runningState(root) {
@@ -650,25 +705,106 @@ test("the task host serves even when its recorded stop reason is unreadable", as
   // separate process, and the supervisor re-reads the same file for the same log line. If only the
   // wrapper is narrowed, a loose state file moves the failure rather than removing it: mac:up
   // reports it and continues, the supervisor then dies on its own read, and the owner is left with
-  // "supervisor error" after 90 seconds. Both halves have to be narrowed, so this drives the real
-  // supervisor and requires the host to actually reach serving.
-  const root = await rootFixture(t), paths = runtimePaths(root);
+  // "supervisor error" after 90 seconds. Both halves have to be narrowed.
+  //
+  // So this drives the REAL supervisor entry point, and it requires the REAL task host it spawns to
+  // serve. Serving is asserted against the port, not against a state file: the supervisor rewrites
+  // task-host-state.json back to "stopped" the moment the host it spawned exits, so the window in
+  // which it reads "running" is only as wide as that host's lifetime, and an earlier version of this
+  // test polled it on a timer and failed whenever the poll missed (this file's CI job, and 5 of 30
+  // local runs of this test on the unmodified tree). A bound port that answers is the owner's actual
+  // evidence, and it does not go away.
+  //
+  // The host is the real start-task-host.mjs, so it does the real protected-root load. That load
+  // needs a database this fixture does not have, so NODE_OPTIONS preloads a fixture that binds the
+  // port the supervisor's host is meant to serve on, ahead of the real module. The supervisor
+  // itself is untouched: it still spawns, tracks, and reports on the real host process.
+  const root = await rootFixture(t), paths = runtimePaths(root), port = await unusedPort();
   await writeFile(paths.hostState, `${JSON.stringify({ state: "stopped", reason: "exit code 0",
     at: "2026-09-27T00:00:00.000Z" })}\n`, { mode: 0o600 });
   await chmod(paths.hostState, 0o644);
+  // The supervisor runs this same NODE_OPTIONS preload, and the host is its child, so the preload
+  // has to bind only in the host. The supervisor stamps CONTROL_ROOM_TASK_HOST_SUPERVISED=1 on the
+  // child it spawns and not on itself, which is exactly the distinction needed here.
+  const servingFixture = `if (process.env.CONTROL_ROOM_TASK_HOST_SUPERVISED === "1") {\n`
+    + `  const { createServer } = await import("node:net");\n`
+    + `  const server = createServer(socket => { socket.on("error", () => {}); socket.end("ok"); });\n`
+    + `  server.listen(${port}, "127.0.0.1", () => console.log("fixture host serving on ${port}"));\n`
+    + `  server.on("error", error => console.log("fixture host could not bind: " + error.message));\n`
+    + `  setInterval(() => {}, 1000);\n`
+    + `}\n`;
   const child = spawn(process.execPath, [join(repoRoot, "scripts/mac-local/task-host-supervisor.mjs"),
-    "--protected-root", root],
-    { cwd: repoRoot, stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, HOME: join(root, "home") } });
-  t.after(async () => { if (pidAlive(child.pid)) child.kill("SIGKILL"); });
-  const started = await waitFor(() => {
-    if (child.exitCode !== null) return false;
-    return readFileSync(paths.hostState, "utf8").includes("\"state\":\"running\"");
-  }, "supervisor never reached running with an unreadable state file", 30_000)
-    .then(() => true, () => false);
+    "--protected-root", root], { cwd: repoRoot, stdio: ["ignore", "pipe", "pipe"],
+    env: { ...process.env, HOME: join(root, "home"),
+      NODE_OPTIONS: `--import=${`data:text/javascript,${encodeURIComponent(servingFixture)}`}` } });
+  ownPid(root, child.pid);
+
+  // The claim, observed while the stack is up: the host is serving, on a port it bound itself.
+  await waitFor(() => portOpen(port), "the task host must serve with an unreadable recorded stop reason");
+  assert.ok(pidAlive(child.pid), "the supervisor must still be running while the host serves");
+
+  // Then a deliberate stop, so the teardown is a clean recorded stop rather than a kill.
+  child.kill("SIGTERM");
+  const [code, exitSignal] = await closeWithin(child, 30_000);
   const log = readFileSync(paths.hostLog, "utf8");
-  assert.ok(started, `the host must serve, not die, on an unreadable state file. log:\n${log}`);
+  // The regression this test exists to catch, stated first because it is the most direct statement
+  // of the claim. Widening the supervisor's read back to readHostState makes it die with
+  // "supervisor error" here instead, and the host never serves at all.
+  assert.doesNotMatch(log, /supervisor error/u,
+    `an unreadable stop reason is not a supervisor error, so the supervisor must not have died on its own read. log:\n${log}`);
   assert.match(log, /could not be read/u, "the condition must be recorded so the owner can see it");
-  assert.doesNotMatch(log, /supervisor error/u, "an unreadable stop reason is not a supervisor error");
+  assert.match(log, /host stopped because requested SIGTERM/u,
+    `the host must have run on its own and then taken the deliberate stop, so the recorded reason must be the requested stop. log:\n${log}`);
+  assert.equal(exitSignal, null);
+  assert.equal(code, 0, "a deliberate stop is the only reason a supervisor exits successfully");
+  await waitFor(async () => !await portOpen(port), "the host must release its port when it stops");
+  assert.deepEqual(await readHostState(paths.hostState).then(state => ({ state: state.state, reason: state.reason })),
+    { state: "stopped", reason: "requested SIGTERM" });
+  await assert.rejects(readFile(paths.hostPid, "utf8"), error => error.code === "ENOENT");
+});
+
+test("the fixture removes a protected root only after the supervisor it started is gone", async t => {
+  // The flake this pins: the protected root is the supervisor's working area, and it streams the
+  // host it spawned into runtime/task-host.log. Removing the tree while that is still happening
+  // fails the teardown with ENOTEMPTY on the runtime directory. The fixture therefore has to reap
+  // what it started, by recorded pid, before it removes anything — and this asserts that directly
+  // on removeRoot, because a test's own `t.after` hook runs after the fixture's and cannot do it.
+  const root = await rootFixture(t);
+  const supervisor = startRealSupervisor(root, ["-e", "setInterval(() => {}, 1000)"]);
+  const state = await runningState(root);
+  // Both are pids this test spawned, so the fixture is told about both: a supervisor spawned with a
+  // fixture command line is deliberately not this root's exact task host, and removeRoot must not
+  // infer a pid it was not given.
+  ownPid(root, supervisor.pid);
+  ownPid(root, state.childPid);
+  assert.ok(pidAlive(supervisor.pid), "the supervisor must be running when the root is removed");
+
+  await removeRoot(root);
+
+  assert.equal(pidAlive(supervisor.pid), false,
+    "removeRoot returned while the supervisor it started was still writing into the root it removed");
+  assert.equal(pidAlive(state.childPid), false, "the host it started must be gone with its root");
+  await assert.rejects(stat(root), error => error.code === "ENOENT", "the root must actually be gone");
+});
+
+test("the fixture's teardown never signals a pid that is not this root's host", async t => {
+  // A teardown that trusted the recorded pids without checking what they are would SIGKILL a
+  // process group the OS had recycled onto an unrelated program — the same authority boundary
+  // mac:down enforces, reached from a test cleanup path where nothing else would catch it. The
+  // impostor is detached, so killing its group is a real, observable act rather than a no-op.
+  const root = await rootFixture(t), paths = runtimePaths(root);
+  const impostor = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"],
+    { cwd: repoRoot, stdio: "ignore", detached: true });
+  t.after(async () => { if (pidAlive(impostor.pid)) process.kill(-impostor.pid, "SIGKILL"); });
+  await waitFor(() => pidAlive(impostor.pid), "impostor fixture did not start");
+  await writeFile(paths.hostState, `${JSON.stringify({ state: "running", pid: impostor.pid,
+    childPid: impostor.pid, at: new Date().toISOString() })}\n`, { mode: 0o600 });
+
+  await removeRoot(root);
+
+  assert.ok(pidAlive(impostor.pid),
+    "a recorded pid that is not this root's supervisor or host is recycled, and cleanup must not signal it");
+  await assert.rejects(stat(root), error => error.code === "ENOENT", "the root must actually be gone");
 });
 
 test("the exact-command selector refuses a recycled or unrelated pid", async t => {

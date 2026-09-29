@@ -406,9 +406,14 @@ test.describe("disposable owner website adversarial attacks", () => {
     await activateTwice(requestChanges);
     const savedChanges = page.getByText(/Saved: changes requested/);
     const checkExactSave = page.getByRole("button", { name: "Check this exact review save" });
+    // Each poll probe must return at once. `isEnabled()` auto-waits for its
+    // element, and the retry button is removed as soon as a fast save resolves,
+    // so it would block the whole poll waiting for a button that never returns.
+    // Counting enabled matches never waits.
+    const enabledCheckExactSave = page.getByRole("button", { name: "Check this exact review save", disabled: false });
     await expect.poll(async () => {
       if (await savedChanges.isVisible()) return "saved";
-      if (await checkExactSave.isEnabled().catch(() => false)) return "retry";
+      if (await enabledCheckExactSave.count()) return "retry";
       return "pending";
     }, { timeout: 20_000 }).not.toBe("pending");
     expect(reviewPosts.length - reviewsBeforeRevision).toBe(1);

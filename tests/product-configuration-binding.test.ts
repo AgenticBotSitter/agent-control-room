@@ -15,7 +15,7 @@ import { sha256Digest } from "../src/security/canonical-digest";
 import { advanceInstallationPlanV1, createInstallationPlanV1,
   installationSetupStagesV1 } from "../src/installer/v1/installation-plan";
 import { OPERATOR_SURFACES_CONTRACT_V1, type OperatorSurfaceSnapshotV1 } from "../src/operator-surfaces/v1";
-import { now, origin, request, token, trust } from "./helpers/web-foundation";
+import { fixture, now, origin, request, token, trust } from "./helpers/web-foundation";
 import { limitedWebFixture } from "./helpers/web-startup";
 
 const configuration = (displayName: string, ideaLab: boolean) => ({
@@ -89,6 +89,69 @@ test("operator capacity is an authenticated server-bound read, never an empty fa
   const unavailable = createPrivateWebProcess(options(configuration("No source", false), store.pool.client, async () => {}));
   t.after(() => unavailable.close());
   assert.equal((await unavailable.handle(request("/api/v1/operator-surface"), () => new Response("fallback", { status: 500 }))).status, 404);
+});
+
+test("the Action Inbox keeps its owner source private while preserving recovery and idea-only page access", async t => {
+  const store = await fixture();
+  const surfaceCalls: unknown[] = [], inboxCalls: unknown[] = [];
+  await store.client.query(`INSERT INTO control_identities
+    (id,tenant_id,actor_type,display_name,auth_provider,auth_subject_digest,state,created_at,updated_at)
+    VALUES('identity:operator','tenant:web','human','Restricted operator',$1,$2,'active',$3,$3)`,
+  [trust.issuer, sha256Digest({ provider: trust.issuer, subject: "restricted-operator" }), new Date(now).toISOString()]);
+  await store.client.query(`INSERT INTO control_role_grants
+    (id,tenant_id,identity_id,role_key,allowed_actions,project_ids,risk_ceiling,allow_external_effects,require_strong_factor,created_at,updated_at)
+    VALUES('grant:operator','tenant:web','identity:operator','owner',$1::jsonb,$2::jsonb,'low',false,false,$3,$3)`,
+  [JSON.stringify(["connections.read"]), JSON.stringify(["*"]), new Date(now).toISOString()]);
+  await store.client.query(`INSERT INTO control_identities
+    (id,tenant_id,actor_type,display_name,auth_provider,auth_subject_digest,state,created_at,updated_at)
+    VALUES('identity:idea-reader','tenant:web','human','Idea reader',$1,$2,'active',$3,$3)`,
+  [trust.issuer, sha256Digest({ provider: trust.issuer, subject: "idea-reader" }), new Date(now).toISOString()]);
+  await store.client.query(`INSERT INTO control_role_grants
+    (id,tenant_id,identity_id,role_key,allowed_actions,project_ids,risk_ceiling,allow_external_effects,require_strong_factor,created_at,updated_at)
+    VALUES('grant:idea-reader','tenant:web','identity:idea-reader','owner',$1::jsonb,$2::jsonb,'low',false,false,$3,$3)`,
+  [JSON.stringify(["tasks.read", "idea_lab.project_read"]), JSON.stringify(["*"]), new Date(now).toISOString()]);
+  await store.client.query(`INSERT INTO control_identities
+    (id,tenant_id,actor_type,display_name,auth_provider,auth_subject_digest,state,created_at,updated_at)
+    VALUES('identity:role-operator','tenant:web','human','Project operator',$1,$2,'active',$3,$3)`,
+  [trust.issuer, sha256Digest({ provider: trust.issuer, subject: "role-operator" }), new Date(now).toISOString()]);
+  await store.client.query(`INSERT INTO control_role_grants
+    (id,tenant_id,identity_id,role_key,allowed_actions,project_ids,risk_ceiling,allow_external_effects,require_strong_factor,created_at,updated_at)
+    VALUES('grant:role-operator','tenant:web','identity:role-operator','operator',$1::jsonb,$2::jsonb,'low',false,false,$3,$3)`,
+  [JSON.stringify(["projects.read", "tasks.read"]), JSON.stringify(["*"]), new Date(now).toISOString()]);
+  const app = createPrivateWebProcess({ ...options(configuration("Owner inbox", false), store.client, async () => store.db.close()),
+    operatorSurface: { read: async input => { surfaceCalls.push(input); return operatorSnapshot(); } },
+    actionInboxSource: { read: async input => { inboxCalls.push(input); return {
+      observedAt: new Date(now).toISOString(), items: [], truncated: false }; } } });
+  t.after(() => app.close());
+  assert.equal((await app.handle(request("/api/v1/operator-surface"), () => new Response("fallback", { status: 500 }))).status, 200);
+  assert.equal((await app.handle(request("/api/v1/needs-me/action-items"), () => new Response("fallback", { status: 500 }))).status, 200);
+  assert.equal((await app.handle(request("/api/v1/needs-me/tasks"), () => new Response("fallback", { status: 500 }))).status, 200);
+  const denied = await app.handle(request("/api/v1/operator-surface", "GET", undefined, "operator-inbox-read-001",
+    token({ sub: "restricted-operator" })), () => new Response("fallback", { status: 500 }));
+  assert.equal(denied.status, 403);
+  const actionDenied = await app.handle(request("/api/v1/needs-me/action-items", "GET", undefined, "operator-action-inbox-read-001",
+    token({ sub: "restricted-operator" })), () => new Response("fallback", { status: 500 }));
+  assert.equal(actionDenied.status, 403);
+  const roleDenied = await app.handle(request("/api/v1/needs-me/action-items", "GET", undefined, "role-action-inbox-read-001",
+    token({ sub: "role-operator" })), () => new Response("fallback", { status: 500 }));
+  assert.equal(roleDenied.status, 403, "wildcard read actions do not replace the owner-role requirement");
+  const taskDenied = await app.handle(request("/api/v1/needs-me/tasks", "GET", undefined, "operator-task-inbox-read-001",
+    token({ sub: "restricted-operator" })), () => new Response("fallback", { status: 500 }));
+  assert.equal(taskDenied.status, 403);
+  const recoveryPage = await app.handle(request("/needs-me", "GET", undefined, "operator-needs-page-001",
+    token({ sub: "restricted-operator" })), () => new Response("recovery shell"));
+  assert.equal(recoveryPage.status, 200); assert.equal(await recoveryPage.text(), "recovery shell");
+  const ideaPage = await app.handle(request("/needs-me", "GET", undefined, "idea-needs-page-001",
+    token({ sub: "idea-reader" })), () => new Response("idea shell"));
+  assert.equal(ideaPage.status, 200); assert.equal(await ideaPage.text(), "idea shell");
+  const ideaTasks = await app.handle(request("/api/v1/needs-me/tasks", "GET", undefined, "idea-needs-tasks-001",
+    token({ sub: "idea-reader" })), () => new Response("fallback", { status: 500 }));
+  assert.equal(ideaTasks.status, 200);
+  assert.equal(surfaceCalls.length, 1, "a non-owner identity receives no operator projection");
+  assert.equal(inboxCalls.length, 1, "a non-owner identity receives no Action Inbox projection");
+  assert.deepEqual(inboxCalls[0], { tenantId: "tenant:web", actorId: "identity:web", grantedAt: new Date(now).toISOString(),
+    now: new Date(now).toISOString(), state: "open" },
+  "the hosted source must request open records before its database cap");
 });
 
 test("startup capture does not retain a mutable owner-settings product configuration", () => {
