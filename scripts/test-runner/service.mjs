@@ -543,7 +543,7 @@ async function realDirectory(path) {
 async function buildSeatbeltProfile(config, { worktree, tempDirectory, ports }) {
   const worktreeReal = sandboxLiteral(await realpath(worktree));
   const tempReal = sandboxLiteral(await realpath(tempDirectory));
-  const denyReadPrefixes = [];
+  const denyReadPrefixes = new Set();
   for (const candidate of [
     dirname(config.tokenFile),
     dirname(config.auditLog),
@@ -552,20 +552,22 @@ async function buildSeatbeltProfile(config, { worktree, tempDirectory, ports }) 
     join(homedir(), "Library", "Keychains"),
     ...(config.protectedReadPrefixes ?? []),
   ]) {
-    denyReadPrefixes.push(sandboxLiteral(await realDirectory(candidate)));
+    const real = await realDirectory(candidate);
+    // A `deny` on an ancestor of the worktree or this run's temp directory
+    // cannot be safely undone by a narrower nested `allow`: Seatbelt still
+    // denies plain traversal of the ancestor itself (needed to resolve any
+    // path underneath it), which breaks reading the worktree/temp entirely
+    // rather than just the protected prefix. Skip a candidate that overlaps
+    // either one; a misconfigured protected prefix must not break the run.
+    if (inside(real, worktreeReal) || inside(real, tempReal)) continue;
+    denyReadPrefixes.add(sandboxLiteral(real));
   }
   const lines = [
     "(version 1)",
     "(allow default)",
     "(deny file-write*)",
     `(allow file-write* (subpath "${worktreeReal}") (subpath "${tempReal}") (literal "/dev/null") (literal "/dev/tty") (regex #"^/dev/fd/"))`,
-    ...[...new Set(denyReadPrefixes)].map(prefix => `(deny file-read* (subpath "${prefix}"))`),
-    // A protected prefix (for example the config directory) could happen to be
-    // an ANCESTOR of the worktree or this run's temp directory. Seatbelt takes
-    // the last matching rule, so without this the deny above would also
-    // silently deny reading the worktree itself. This restores reads there
-    // unconditionally, after every deny, regardless of that overlap.
-    `(allow file-read* (subpath "${worktreeReal}") (subpath "${tempReal}"))`,
+    ...[...denyReadPrefixes].map(prefix => `(deny file-read* (subpath "${prefix}"))`),
     "(deny network-outbound (remote ip))",
     "(deny network-bind)",
     `(allow network-bind (local unix-socket (subpath "${tempReal}")))`,

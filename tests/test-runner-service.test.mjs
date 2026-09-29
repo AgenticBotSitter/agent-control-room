@@ -26,6 +26,7 @@ async function fixture(t, overrides = {}) {
   const root = await mkdtemp(join(tmpdir(), "acr-test-runner-test-"));
   const privateDirectory = join(root, "private");
   await mkdir(privateDirectory, { mode: 0o700 });
+  const resolvedOverrides = typeof overrides === "function" ? overrides(await realpath(root)) : overrides;
   const config = {
     schema: "control-room.test-runner/v1",
     port: 0,
@@ -41,7 +42,7 @@ async function fixture(t, overrides = {}) {
     concurrency: 2,
     timeoutMs: 2_000,
     maxOutputBytes: 4_096,
-    ...overrides,
+    ...resolvedOverrides,
   };
   const service = await createTestRunnerService(config);
   const address = await service.listen();
@@ -362,6 +363,29 @@ test("sandbox guard blocks a connection to a port outside this run's assigned bl
     `,
   });
   const result = await f.call({ worktree, file: "tests/network.test.mjs" });
+  assert.equal(result.status, 200);
+  assert.equal(result.body.exitCode, 0, result.body.logExcerpt);
+});
+
+test("sandbox guard still allows reading inside the worktree when a protected prefix is one of its ancestors", async t => {
+  // Seatbelt takes the LAST matching rule. A protected prefix that happens to
+  // be an ancestor of the worktree (here, the fixture's own root, which is
+  // also every worktree's parent) must not silently deny reads under the
+  // worktree too — the profile must restore worktree/temp reads after every
+  // deny, regardless of such overlap.
+  const f = await fixture(t, root => ({ protectedReadPrefixes: [root] }));
+  const worktree = await f.makeWorktree("ancestor-overlap", {
+    "tests/read-self.test.mjs": `
+      import assert from "node:assert/strict";
+      import { readFileSync } from "node:fs";
+      import test from "node:test";
+      test("read a file inside the worktree", () => {
+        const text = readFileSync(new URL("../package.json", import.meta.url), "utf8");
+        assert.ok(text.length > 0);
+      });
+    `,
+  });
+  const result = await f.call({ worktree, file: "tests/read-self.test.mjs" });
   assert.equal(result.status, 200);
   assert.equal(result.body.exitCode, 0, result.body.logExcerpt);
 });
