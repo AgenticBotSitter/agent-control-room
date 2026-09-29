@@ -488,6 +488,11 @@ jobs:
             rehearsal_port="${database_port}"
             rehearsal_root="$(mktemp -d "${RUNNER_TEMP}/mac-local-rehearsal.XXXXXX")"
             pnpm mac:rehearsal up "${rehearsal_root}" --port "${database_port}" --web-port "${web_port}" --fake-executables
+            CONTROL_ROOM_MAC_REHEARSAL_ROOT="${rehearsal_root}" node --import tsx --test --test-reporter=tap tests/mac-local-pg17-rehearsal.test.mjs | tee "${rehearsal_root}/pg17-negative-probes.tap"
+            if grep -Eq '^# skipped [1-9][0-9]*$' "${rehearsal_root}/pg17-negative-probes.tap"; then
+              echo "PG17 negative privilege probes reported a TAP skip" >&2
+              exit 1
+            fi
             pnpm mac:prepare-task-runtime -- \
               --protected-root "${rehearsal_root}/protected" \
               --hermes-profile cr \
