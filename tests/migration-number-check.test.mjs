@@ -17,7 +17,8 @@ const checker = join(repositoryRoot, "scripts/ci/check-migration-numbers.mjs");
 const workflow = readFileSync(join(repositoryRoot, ".github/workflows/ci.yml"), "utf8");
 
 // A copy of the real db/migrations/ directory, so a refusal is observed on the real
-// 92-file tree plus one colliding file rather than on a two-file toy.
+// tree plus one colliding file rather than on a two-file toy. The tree grows as
+// migrations land, so this names no count.
 function copyOfRealMigrations() {
   const root = mkdtempSync(join(tmpdir(), "control-room-migration-numbers-"));
   mkdirSync(join(root, "db"), { recursive: true });
