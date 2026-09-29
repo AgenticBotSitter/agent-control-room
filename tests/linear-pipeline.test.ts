@@ -7,6 +7,8 @@ import { createLinearPipelineHttpHandlerV1 } from "../src/web/v1/linear-pipeline
 import { TaskAssignmentCoordinator, type WorkBatchAssignmentAdmissionAuthority } from "../src/web/v1/task-assignment-coordinator";
 import { taskFixture } from "./helpers/web-task";
 import { taskAssignmentFixture } from "./helpers/task-assignment";
+import { taskStartupFixture } from "./helpers/task-startup";
+import { TaskExecutionPlanner } from "../src/web/v1/task-execution-planner";
 import { now, origin, request, trust } from "./helpers/web-foundation";
 import { binding, instant } from "./hermes-native-fixture";
 import { nativeQualityCompletionFixture, qualityText } from "./helpers/native-quality-completion";
@@ -33,7 +35,7 @@ async function fixture() {
   return { ...f, projects: f.service, service };
 }
 
-async function completedPredecessorFixture() {
+async function completedPredecessorFixture(options: { productionCoordinatorLogin?: boolean } = {}) {
   let runJobIds: readonly string[] = [];
   const pipelineKey = new Uint8Array(32).fill(55);
   const quality = await nativeQualityCompletionFixture(qualityText, async base => {
@@ -55,12 +57,19 @@ async function completedPredecessorFixture() {
   });
   await quality.ready(); await quality.complete();
   const base = quality.f.assignmentFixture;
+  // Production composes the planner and the assignment coordinator on the
+  // coordinator login (task-coordinator-lifecycle.ts). With the option set,
+  // both run as a LOGIN role that inherits exactly the real
+  // db/roles/task_coordinator_roles.sql grants instead of the superuser.
+  const db = options.productionCoordinatorLogin ? (await taskStartupFixture(base)).coordinator.client : base.db;
+  const planner = options.productionCoordinatorLogin
+    ? new TaskExecutionPlanner(db, base.scope, base.plannerConfig, () => instant + 7000) : base.planner;
   const expected = sha256Digest({ title: "Authenticated predecessor", instructions: template.description });
-  const prepared = await base.planner.plan(base.identity, binding.projectId, runJobIds[1]!, expected);
+  const prepared = await planner.plan(base.identity, binding.projectId, runJobIds[1]!, expected);
   let acceptedChecks = 0;
   const authority: WorkBatchAssignmentAdmissionAuthority = { integrityKey: pipelineKey,
     assertCurrent: async () => {}, assertAcceptedResultCurrent: async () => { acceptedChecks += 1; } };
-  const coordinator = new TaskAssignmentCoordinator(base.db, base.scope, base.planner, [base.route], () => instant + 8000,
+  const coordinator = new TaskAssignmentCoordinator(db, base.scope, planner, [base.route], () => instant + 8000,
     [], undefined, undefined, undefined, undefined, authority);
   const assign = () => coordinator.assign(base.identity, binding.projectId, prepared.receipt.jobId,
     binding.nodeId, prepared.receipt.inputDigest);
@@ -202,6 +211,20 @@ test("planner propagates pipeline lineage and assignment revalidates stage zero 
 
 test("pipeline assignment admits an exact stage after an authenticated accepted predecessor", async t => {
   const f = await completedPredecessorFixture(); t.after(f.quality.close);
+  await f.assign();
+  assert.equal(f.acceptedChecks(), 1);
+});
+
+test("pipeline planning and exact-stage admission run on the production coordinator login", async t => {
+  // Every other assignment test here runs on the superuser connection, where
+  // a row lock or write the coordinator role cannot perform still succeeds.
+  const f = await completedPredecessorFixture({ productionCoordinatorLogin: true }); t.after(f.quality.close);
+  const lineage = (await f.base.db.query<{ stage_kind: string; stage_ordinal: number }>(
+    "SELECT stage_kind,stage_ordinal FROM control_jobs WHERE id=$1", [f.prepared.receipt.jobId])).rows[0];
+  assert.deepEqual(lineage, { stage_kind: "check", stage_ordinal: 1 });
+  const inherited = (await f.base.db.query<{ inherited_from_job_id: string; model: string }>(
+    "SELECT inherited_from_job_id,model FROM control_task_model_selections WHERE job_id=$1", [f.prepared.receipt.jobId])).rows[0];
+  assert.deepEqual(inherited, { inherited_from_job_id: f.runJobIds[1], model: "claude-test" });
   await f.assign();
   assert.equal(f.acceptedChecks(), 1);
 });

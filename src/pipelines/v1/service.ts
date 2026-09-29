@@ -150,9 +150,12 @@ export class LinearPipelineServiceV1 {
     try { assertNoSecretMaterial(parsed.data); } catch { throw new WebAccessError("invalid_request"); }
     return this.#authority.authenticated(identity, async (tx, actor) => {
       actor.require("tasks.propose", projectId, true); await this.#project(tx, projectId, true);
+      // No row lock: pipeline_templates is append-only for every product
+      // login, and a lock needs UPDATE privilege the web role does not hold.
+      // The digest/HMAC check below authenticates the row actually read.
       const template = (await tx.query<TemplateRow>(`SELECT id,project_id,name,description,stages,max_stages,max_total_loops,
         may_advance_unattended,max_duration_seconds,record_digest,auth_tag,version,created_at,updated_at
-        FROM pipeline_templates WHERE tenant_id=$1 AND project_id=$2 AND id=$3 FOR SHARE`,
+        FROM pipeline_templates WHERE tenant_id=$1 AND project_id=$2 AND id=$3`,
       [this.scope.tenantId, projectId, parsed.data.templateId])).rows[0];
       if (!template) throw new WebAccessError("not_found");
       const definition = this.#verifyTemplate(template);

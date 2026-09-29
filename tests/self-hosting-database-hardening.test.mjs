@@ -219,3 +219,20 @@ test("the TypeScript batch admission gate takes no row lock on control_task_mode
   // a row lock here refuses every batch-admitted assignment in production.
   assert.doesNotMatch(guard, /\bFOR (?:UPDATE|NO KEY UPDATE|SHARE|KEY SHARE)\b/u);
 });
+
+test("the pipeline admission gate and pipeline service take no row lock on append-only rows", async () => {
+  // Row locks need UPDATE privilege. The coordinator and web logins hold none
+  // on the pipeline tables, execution plans, model selections or dependency
+  // edges, so a lock there refuses every call in production
+  // (tests/linear-pipeline-postgres.test.ts runs these paths as the real logins).
+  const coordinator = await readFile("src/web/v1/task-assignment-coordinator.ts", "utf8");
+  const gate = coordinator.match(/private async assertPipelineAdmission\([\s\S]*?\n {2}private async assertWorkBatchQueueAdmission\(/u)?.[0] ?? "";
+  assert.notEqual(gate, "");
+  assert.match(gate, /FROM pipeline_stage_runs/u);
+  assert.doesNotMatch(gate, /\bFOR (?:UPDATE|NO KEY UPDATE|SHARE|KEY SHARE)\b/u);
+  const service = await readFile("src/pipelines/v1/service.ts", "utf8");
+  assert.match(service, /FROM pipeline_templates/u);
+  for (const statement of service.match(/`[^`]*`/gu) ?? [])
+    if (/\bFROM (?:pipeline_\w+|control_task_model_selections|control_job_dependencies|control_task_execution_plans)\b/u.test(statement))
+      assert.doesNotMatch(statement, /\bFOR (?:UPDATE|NO KEY UPDATE|SHARE|KEY SHARE)\b/u, statement);
+});

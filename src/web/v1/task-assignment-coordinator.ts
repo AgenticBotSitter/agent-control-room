@@ -216,7 +216,12 @@ export class TaskAssignmentCoordinator {
   /** A pipeline row narrows the ordinary assignment path; it is never an
    * assignment authority of its own.  The saved exact selection and every
    * predecessor's canonical accepted result are rechecked under the same
-   * transaction that creates the ordinary attempt/lease. */
+   * transaction that creates the ordinary attempt/lease.
+   *
+   * No row locks: every row read here (stage runs, execution plans, model
+   * selections, dependency edges) is append-only for the coordinator login,
+   * which holds no UPDATE privilege a lock would need. Each value is instead
+   * authenticated (stage HMAC) or compared field for field below. */
   private async assertPipelineAdmission(tx: DatabaseSession, job: JobRecord,
     route: TaskAssignmentRoute, attemptWorkerId?: string | null): Promise<boolean> {
     const link = (await tx.query<{ pipeline_run_id: string | null; stage_kind: string | null; stage_ordinal: number | null }>(
@@ -231,18 +236,18 @@ export class TaskAssignmentCoordinator {
       finished_at: string | Date | null; record_digest: string; auth_tag: string; version: number }>(`SELECT project_id,
         current_job_id,stage_kind,stage_ordinal,role,worker_id,worker_kind,node_id,selection_key,model,effort,provider,
         profile,state,max_loops,handoff_from_result_digest,signoff_review_id,started_at,finished_at,record_digest,auth_tag,version
-      FROM pipeline_stage_runs WHERE tenant_id=$1 AND pipeline_run_id=$2 AND stage_ordinal=$3 FOR SHARE`,
+      FROM pipeline_stage_runs WHERE tenant_id=$1 AND pipeline_run_id=$2 AND stage_ordinal=$3`,
     [this.scope.tenantId, link.pipeline_run_id, Number(link.stage_ordinal)])).rows[0];
     if (!stage || stage.project_id !== job.projectId || stage.stage_kind !== link.stage_kind
       || stage.worker_id !== route.executorId || stage.node_id !== route.nodeId
       || attemptWorkerId !== undefined && attemptWorkerId !== stage.worker_id) conflict();
     const plan = (await tx.query<{ source_job_id: string }>(`SELECT source_job_id FROM control_task_execution_plans
-      WHERE tenant_id=$1 AND project_id=$2 AND job_id=$3 FOR SHARE`,
+      WHERE tenant_id=$1 AND project_id=$2 AND job_id=$3`,
     [this.scope.tenantId, job.projectId, job.id])).rows[0];
     if (!plan || plan.source_job_id !== stage.current_job_id) conflict();
     const selection = (await tx.query<{ worker_kind: string | null; selection_key: string | null; model: string | null;
       effort: string | null; provider: string | null; profile: string | null }>(`SELECT worker_kind,selection_key,model,
-        effort,provider,profile FROM control_task_model_selections WHERE tenant_id=$1 AND job_id=$2 FOR SHARE`,
+        effort,provider,profile FROM control_task_model_selections WHERE tenant_id=$1 AND job_id=$2`,
     [this.scope.tenantId, job.id])).rows[0];
     if (!selection || selection.worker_kind !== stage.worker_kind || selection.selection_key !== stage.selection_key
       || selection.model !== stage.model || selection.effort !== stage.effort
@@ -267,14 +272,14 @@ export class TaskAssignmentCoordinator {
         provider: stage.provider, profile: stage.profile });
     } catch { conflict(); }
     const dependencies = (await tx.query<{ depends_on_job_id: string }>(`SELECT depends_on_job_id
-      FROM control_job_dependencies WHERE tenant_id=$1 AND job_id=$2 ORDER BY depends_on_job_id FOR SHARE`,
+      FROM control_job_dependencies WHERE tenant_id=$1 AND job_id=$2 ORDER BY depends_on_job_id`,
     [this.scope.tenantId, stage.current_job_id])).rows;
     if (Number(stage.stage_ordinal) === 0) {
       if (dependencies.length !== 0) conflict();
       return true;
     }
     const predecessor = (await tx.query<{ current_job_id: string; worker_id: string; node_id: string }>(`SELECT current_job_id,
-        worker_id,node_id FROM pipeline_stage_runs WHERE tenant_id=$1 AND pipeline_run_id=$2 AND stage_ordinal=$3 FOR SHARE`,
+        worker_id,node_id FROM pipeline_stage_runs WHERE tenant_id=$1 AND pipeline_run_id=$2 AND stage_ordinal=$3`,
     [this.scope.tenantId, link.pipeline_run_id, Number(stage.stage_ordinal) - 1])).rows[0];
     if (!predecessor || dependencies.length !== 1 || dependencies[0]?.depends_on_job_id !== predecessor.current_job_id) conflict();
     const proof = (await tx.query<WorkBatchAcceptedResultProof>(`SELECT completed.project_id AS "projectId",

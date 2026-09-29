@@ -15,10 +15,10 @@ export async function verifyPrivateIdeaAdapter(db: DatabaseClient, scope: { tena
   if (rows.length !== 1 || rows[0].valid !== true) throw new Error("private_idea_adapter_unavailable");
 }
 
-// Generated from public migrations 0001-0104 (filename order: ...0093,0100,0101,0102,0104),
+// Generated from public migrations 0001-0105 (filename order: ...0093,0100,0101,0102,0104,0105),
 // including generic external-content migrations 0025/0026. Catalog query below;
 // not a mutable database marker.
-export const privateWebSchemaDigest = "c9f0e0f6ceb05f212aa3c7f9a3fd09ce5c556b035a97448692ef746038742438";
+export const privateWebSchemaDigest = "8005a626f1a1b131d28093f55998da8b706631e5c70ed24ca8b6136ad48a7133";
 export const privateWebReadTables = ["control_identities", "control_role_grants", "workspaces", "control_web_sessions",
   "tenants", "control_idempotency",
   "control_schedules", "control_schedule_occurrences",
@@ -49,6 +49,7 @@ const inserts = new Set(["control_web_sessions", "adapter_registry", "projects",
 inserts.add("work_batch_revisions"); inserts.add("work_batch_items");
 inserts.add("work_batch_queue_admissions"); inserts.add("work_batch_agent_queue_heads");
 inserts.add("pipeline_templates"); inserts.add("pipeline_runs"); inserts.add("pipeline_stage_runs");
+inserts.add("control_job_dependencies");
 
 /** Tables whose INSERT grant is column-scoped rather than table-wide. Every
  * listed column must carry INSERT and every unlisted column must not — a
