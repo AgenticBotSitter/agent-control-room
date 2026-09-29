@@ -193,7 +193,7 @@ test("the production web and coordinator logins run every S4 pipeline read and w
           FROM control_task_model_selections WHERE tenant_id=$1 AND job_id=$3`, [A.tenant, execution, source]);
         await seed.query(`INSERT INTO control_task_execution_plans(tenant_id,project_id,source_job_id,job_id,plan,auth_tag)
           VALUES($1,$2,$3,$4,'{}'::jsonb,$5)`, [A.tenant, A.project, source, execution, `hmac-sha256:${"0".repeat(64)}`]);
-        assert.equal(ordinal, (await seed.query("SELECT stage_ordinal FROM control_jobs WHERE id=$1", [execution])).rows[0].stage_ordinal);
+        assert.equal(ordinal, Number((await seed.query("SELECT stage_ordinal FROM control_jobs WHERE id=$1", [execution])).rows[0].stage_ordinal));
       }
     } finally { await seed.end(); }
 
