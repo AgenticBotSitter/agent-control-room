@@ -41,7 +41,9 @@ export type IdeaStartReceipt = z.infer<typeof ideaStartReceiptSchema>;
  * Preparing an Idea Lab round only creates ordinary proposed tasks. It never
  * contacts a provider, assigns a worker, or starts work from the browser.
  */
-export const ideaRoundProposalDraftSchema = z.object({ sessionDigest: digest, projectId: id, round: z.number().int().min(1).max(3) }).strict();
+export const ideaRoundProposalDraftSchema = z.object({ sessionDigest: digest, projectId: id,
+  round: z.number().int().min(1).max(3), followUp: z.string().trim().min(1).max(300).optional(),
+}).strict().refine(value => (value.round === 1) === (value.followUp === undefined));
 export const ideaRoundProposalReceiptSchema = z.object({ sessionId: id, sessionDigest: digest, projectId: id,
   round: z.number().int().min(1).max(3), receipts: z.array(taskCommandSchema).min(3).max(6), startsWork: z.literal(false),
 }).strict().refine(value => value.receipts.every(item => item.receipt.projectId === value.projectId));

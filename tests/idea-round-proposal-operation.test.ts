@@ -80,11 +80,16 @@ test("a later Idea Lab round requires every reviewed prior task and rechecks it 
   assert.equal(readyForNextRound.nextCanonicalRound, 2);
   assert.equal(readyForNextRound.canPrepareNextRound, true);
   const second = await operation.propose(f.identity, session.sessionId,
-    { sessionDigest: session.sessionDigest, projectId: f.project.projectId, round: 2 });
+    { sessionDigest: session.sessionDigest, projectId: f.project.projectId, round: 2,
+      followUp: "Which disagreement changes the smallest useful experiment?" });
   assert.equal(second.receipts.length, session.participants.length);
   assert.equal(second.receipts.every(item => !item.receipt.startsWork), true);
   assert.deepEqual(rechecked.sort(), links.map(link => link.taskKey).sort());
   const replay = await operation.propose(f.identity, session.sessionId,
-    { sessionDigest: session.sessionDigest, projectId: f.project.projectId, round: 2 });
+    { sessionDigest: session.sessionDigest, projectId: f.project.projectId, round: 2,
+      followUp: "Which disagreement changes the smallest useful experiment?" });
   assert.equal(replay.receipts.every(item => item.replayed), true);
+  await assert.rejects(operation.propose(f.identity, session.sessionId,
+    { sessionDigest: session.sessionDigest, projectId: f.project.projectId, round: 2,
+      followUp: "A changed follow-up must not rewrite the saved participant tasks." }), WebAccessError);
 });
