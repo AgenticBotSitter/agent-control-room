@@ -18,7 +18,7 @@ export async function verifyPrivateIdeaAdapter(db: DatabaseClient, scope: { tena
 // Generated from public migrations through 0190 (filename order, including assigned gaps and 0160),
 // including generic external-content migrations 0025/0026, by the controlled
 // PGlite digest script. Catalog query below; not a mutable database marker.
-export const privateWebSchemaDigest = "5973c13797a648067ca405288bf73465178091f19c4f6e5d9cb50daa82137683";
+export const privateWebSchemaDigest = "4ff4fcc8b75a3f03f0a27b2b028d427e7550647ac13bc73132d1aa4edbac3144";
 export const privateWebReadTables = ["control_identities", "control_role_grants", "workspaces", "control_web_sessions",
   "tenants", "control_idempotency",
   "control_schedules", "control_schedule_occurrences",
