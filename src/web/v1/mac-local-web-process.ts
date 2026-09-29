@@ -154,6 +154,10 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
       if (url.search) throw new WebAccessError("invalid_request");
       return render();
     }
+    if (url.pathname === "/morning") {
+      if (url.search) throw new WebAccessError("invalid_request");
+      return render();
+    }
     if (url.pathname === "/needs-me") {
       if (url.search) throw new WebAccessError("invalid_request");
       await tasks.authorizeAttentionPage(identity);
