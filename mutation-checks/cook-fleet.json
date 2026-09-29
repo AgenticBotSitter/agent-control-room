@@ -99,8 +99,8 @@
   },
   {
     "file": "db/migrations/0140_fleet_worker_connector.sql",
-    "find": ", false)) THEN",
-    "replace": ", true)) THEN",
+    "find": "OR (NEW.state='succeeded' AND decision='accepted')",
+    "replace": "OR (NEW.state='succeeded')",
     "test": "node scripts/generate-migration-ledger.mjs >/dev/null && node --import tsx --test tests/fleet-connector-postgres.test.ts; status=$?; git checkout -- deploy/postgres/migration-ledger.json; exit $status",
     "why": "the gateway login cannot mark an unreviewed job done"
   },

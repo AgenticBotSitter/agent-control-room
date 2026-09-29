@@ -403,10 +403,24 @@ test("a blocker is recorded, and release hands the task back without marking it 
 
 test("capacity: a worker cannot hold more live claims than the owner allowed", async t => {
   const f = await fixture(); t.after(() => f.close());
-  const worker = await joinWorker(f, "Single");
-  const one = await offer(f, PROJECT_A, "cap-1"), two = await offer(f, PROJECT_A, "cap-2");
+  // Two projects, so the whole-project file-area lease of one task does not
+  // collide with the other: only the capacity limit can refuse.
+  const worker = await joinWorker(f, "Single", [PROJECT_A, PROJECT_B]);
+  const one = await offer(f, PROJECT_A, "cap-1"), two = await offer(f, PROJECT_B, "cap-2");
   await worker.client.claim(one.offerId, "claim-key-cap0001");
   await assert.rejects(worker.client.claim(two.offerId, "claim-key-cap0002"), /conflict/u);
+  const wider = await joinWorker(f, "Double", [PROJECT_A, PROJECT_B], ["writing"], 2);
+  const three = await offer(f, PROJECT_B, "cap-3");
+  await wider.client.claim(three.offerId, "claim-key-cap0003");
+});
+
+test("two tasks in one project with no declared file areas cannot be held at once", async t => {
+  const f = await fixture(); t.after(() => f.close());
+  const worker = await joinWorker(f, "Pair", [PROJECT_A], ["writing"], 2);
+  const one = await offer(f, PROJECT_A, "scope-1"), two = await offer(f, PROJECT_A, "scope-2");
+  await worker.client.claim(one.offerId, "claim-key-scope01");
+  await assert.rejects(worker.client.claim(two.offerId, "claim-key-scope02"), /conflict/u);
+  assert.deepEqual(await f.query("SELECT claim_id FROM fleet_claims WHERE idempotency_key='claim-key-scope02'"), []);
 });
 
 test("MCP server: lists only bounded tools, claims through the gateway, and keeps files inside the workspace", async t => {
