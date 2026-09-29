@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "digest": "22032fda97ef7674fbf76d46273feca98843a6c6f1870b7147612d3bc5aa8575",
+  "digest": "d0c9ce364336da2e70d85c431fa3c15cf96f321dcff36158e7e9ad4f3d3cfb4d",
   "entries": [
     {
       "file": "db/migrations/0001_control_room_core.sql",
@@ -557,7 +557,7 @@
     {
       "file": "db/migrations/0093_work_batch_intake.sql",
       "order": 93,
-      "sha256": "9c27703decdc3f08411f6143aa252aab0057bddaa7668da96e811e4608eba055",
+      "sha256": "ad6114c10bd3d6620cf9a7de22baf3b99dce9f5e53d792df224ee99e391d0bdb",
       "kind": "migrate"
     },
     {

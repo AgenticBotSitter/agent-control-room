@@ -71,6 +71,29 @@ test("work-intake shared-ledger policies remain restrictive and session-scoped",
           'work_batches.propose.refused','work_batches.action.refused')));`));
 });
 
+test("work-intake proposal tables stay confined to registered intake identities", async () => {
+  const migration = await readFile("db/migrations/0093_work_batch_intake.sql", "utf8");
+  const policy = name => migration.match(new RegExp(`CREATE POLICY\\s+${name}\\b[\\s\\S]*?;`, "u"))?.[0] ?? "";
+  const normalize = source => source.replace(/\s+/gu, " ").trim();
+  const bound = (table, identity) => `EXISTS (
+    SELECT 1 FROM public.control_identities i
+    WHERE i.tenant_id=${table}.tenant_id AND i.id=${table}.${identity}
+      AND i.actor_type='agent' AND i.auth_provider='work-intake')`;
+  for (const [table, identity] of [["work_batches", "proposed_by_identity_id"],
+    ["work_batch_revisions", "edited_by_identity_id"]]) {
+    assert.match(migration, new RegExp(`ALTER TABLE ${table} ENABLE ROW LEVEL SECURITY;`, "u"));
+    assert.equal(normalize(policy(`${table}_existing_access`)), normalize(`
+      CREATE POLICY ${table}_existing_access ON ${table}
+        AS PERMISSIVE FOR ALL USING (true) WITH CHECK (true);`));
+    assert.equal(normalize(policy(`${table}_work_intake_scope`)), normalize(`
+      CREATE POLICY ${table}_work_intake_scope ON ${table}
+        AS RESTRICTIVE FOR ALL
+        USING (NOT public.is_work_intake_session() OR ${bound(table, identity)})
+        WITH CHECK (NOT public.is_work_intake_session() OR ${bound(table, identity)});`));
+  }
+  assert.doesNotMatch(migration, /FORCE ROW LEVEL SECURITY/u);
+});
+
 test("the real-Postgres harness supplies the required work-intake bootstrap credential", async () => {
   const harness = await readFile("tests/support/attack-kit/real-postgres.ts", "utf8");
   assert.match(harness,

@@ -41,6 +41,23 @@ authorization query must resolve the caller before applying project scope; it
 does not grant proposal, task, assignment, or execution authority outside the
 validated project.
 
+Proposal content does not cross that line. `work_batches` and
+`work_batch_revisions` have row-level security with the same RESTRICTIVE,
+`is_work_intake_session()`-keyed pattern as the shared ledgers. An intake
+session sees, and may insert, only rows whose proposing (or editing) identity
+is an agent the owner registered for work intake (`auth_provider =
+'work-intake'`) in that row's own tenant. Rows of any other tenant's proposers,
+or of an unregistered agent in the same tenant, are invisible and refused on
+insert, and so is a registered identity named under another tenant. The intake group still has no
+UPDATE or DELETE on either table. Every other role keeps its existing grants
+unchanged: the backup group still reads all rows, and the application, reader,
+owner-web and coordinator groups still have no access.
+
+The database cannot tell one registered agent from another, because they all
+share one login. Separating registered agents from each other, including agents
+registered in different tenants on one cluster, stays with the service's
+bearer-to-identity binding and its tenant- and identity-scoped queries.
+
 The migration is forward-only in normal operation. If an operator prepares a
 database recovery that removes this source-only slice, the reviewed recovery
 SQL must lock both new tables and refuse while any batch exists. The executable,

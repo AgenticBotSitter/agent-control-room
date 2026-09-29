@@ -123,6 +123,38 @@ CREATE TRIGGER work_batch_revisions_append_only BEFORE UPDATE OR DELETE ON publi
 CREATE TRIGGER work_batch_revisions_truncate_guard BEFORE TRUNCATE ON public.work_batch_revisions
   FOR EACH STATEMENT EXECUTE FUNCTION public.reject_append_only_mutation();
 
+-- The intake login is shared by every registered proposal agent. Confine its
+-- proposal rows to identities the owner registered for work intake, matched in
+-- the row's own tenant, so that login cannot read or add another tenant's or
+-- another identity's proposals. Every other role keeps its existing grants.
+ALTER TABLE work_batches ENABLE ROW LEVEL SECURITY;
+CREATE POLICY work_batches_existing_access ON work_batches
+  AS PERMISSIVE FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY work_batches_work_intake_scope ON work_batches
+  AS RESTRICTIVE FOR ALL
+  USING (NOT public.is_work_intake_session() OR EXISTS (
+    SELECT 1 FROM public.control_identities i
+    WHERE i.tenant_id=work_batches.tenant_id AND i.id=work_batches.proposed_by_identity_id
+      AND i.actor_type='agent' AND i.auth_provider='work-intake'))
+  WITH CHECK (NOT public.is_work_intake_session() OR EXISTS (
+    SELECT 1 FROM public.control_identities i
+    WHERE i.tenant_id=work_batches.tenant_id AND i.id=work_batches.proposed_by_identity_id
+      AND i.actor_type='agent' AND i.auth_provider='work-intake'));
+
+ALTER TABLE work_batch_revisions ENABLE ROW LEVEL SECURITY;
+CREATE POLICY work_batch_revisions_existing_access ON work_batch_revisions
+  AS PERMISSIVE FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY work_batch_revisions_work_intake_scope ON work_batch_revisions
+  AS RESTRICTIVE FOR ALL
+  USING (NOT public.is_work_intake_session() OR EXISTS (
+    SELECT 1 FROM public.control_identities i
+    WHERE i.tenant_id=work_batch_revisions.tenant_id AND i.id=work_batch_revisions.edited_by_identity_id
+      AND i.actor_type='agent' AND i.auth_provider='work-intake'))
+  WITH CHECK (NOT public.is_work_intake_session() OR EXISTS (
+    SELECT 1 FROM public.control_identities i
+    WHERE i.tenant_id=work_batch_revisions.tenant_id AND i.id=work_batch_revisions.edited_by_identity_id
+      AND i.actor_type='agent' AND i.auth_provider='work-intake'));
+
 -- The production intake login uses shared idempotency and audit ledgers. Keep
 -- its raw table privileges inside the proposal-only namespace even if the
 -- process holding that login is compromised. Membership is derived from

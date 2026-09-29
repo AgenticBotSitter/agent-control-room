@@ -464,6 +464,173 @@ test("work-intake login cannot read or forge another subsystem's shared-ledger r
   await assert.rejects(query(intake,"SELECT * FROM control_idempotency"),/permission denied/u);
 });
 
+// Two tenants, each with valid proposer grants. Only identity:work-intake:own in
+// tenant:batch-own is registered for the work-intake service; the other tenant's
+// proposer and a directly registered agent in the own tenant are not.
+const seededBatchAt = "2026-09-27T12:00:00.000Z";
+const seededBatchProposal = JSON.stringify({ title: "Seeded proposal" });
+const seededBatchDigest = `sha256:${"b".repeat(64)}`;
+const seededBatchTag = `hmac-sha256:${"c".repeat(64)}`;
+const seededBatches = [
+  // [tenant, proposer, auth provider, batch, has revision]
+  ["tenant:batch-own", "identity:work-intake:own", "work-intake", "batch:own", true],
+  ["tenant:batch-own", "identity:batch-own-direct", "agent-key", "batch:own-direct", true],
+  ["tenant:batch-other", "identity:batch-other", "agent-key", "batch:other", true],
+  ["tenant:batch-other", "identity:batch-other", "agent-key", "batch:other-open", false],
+];
+const seededProject = tenantId => `project:${tenantId.slice("tenant:".length)}`;
+const insertSeededBatch = `INSERT INTO work_batches(id,tenant_id,project_id,proposed_by_identity_id,
+  proposed_by_actor_type,proposed_at,state,proposal,queue_depth_limit,batch_digest,auth_tag,version,created_at,updated_at)
+  VALUES($1,$2,$3,$4,'agent',$5,'proposed',$6::jsonb,5,$7,$8,1,$5,$5)`;
+const insertSeededRevision = `INSERT INTO work_batch_revisions(id,tenant_id,batch_id,revision,edited_by_identity_id,
+  edited_at,reason_code,proposal,revision_digest,auth_tag) VALUES($1,$2,$3,1,$4,$5,'submitted',$6::jsonb,$7,$8)`;
+
+async function seedWorkBatchTenants(db) {
+  for (const tenantId of ["tenant:batch-own", "tenant:batch-other"]) {
+    const suffix = tenantId.slice("tenant:".length);
+    await query(db, "INSERT INTO tenants(id,display_name) VALUES($1,$1)", [tenantId]);
+    await query(db, "INSERT INTO workspaces(id,tenant_id,display_name) VALUES($1,$2,'workspace')",
+      [`workspace:${suffix}`, tenantId]);
+    await query(db, `INSERT INTO adapter_registry(id,tenant_id,source_system,contract_version,authority_mode,status,
+      redaction_policy_version,cursor_retention_days) VALUES($1,$2,'manual','1','control_room_native','fixture','v1',1)`,
+    [`adapter:${suffix}`, tenantId]);
+    await query(db, `INSERT INTO projects(id,tenant_id,workspace_id,adapter_id,source_record_id,source_version,title,
+      normalized_state,domain_state,health,authority_mode,observed_at,payload) VALUES($1,$2,$3,$4,$1,'1','Project',
+      'ready','ready','healthy','control_room_native',$5,'{}')`,
+    [seededProject(tenantId), tenantId, `workspace:${suffix}`, `adapter:${suffix}`, seededBatchAt]);
+  }
+  const identities = new Map(seededBatches.map(([tenantId, identityId, provider]) =>
+    [`${tenantId}|${identityId}`, { tenantId, identityId, provider }]));
+  let index = 0;
+  for (const { tenantId, identityId, provider } of identities.values()) {
+    index += 1;
+    await query(db, `INSERT INTO control_identities(id,tenant_id,actor_type,display_name,auth_provider,
+      auth_subject_digest,state,created_at,updated_at) VALUES($1,$2,'agent','Proposing agent',$3,$4,'active',$5,$5)`,
+    [identityId, tenantId, provider, `sha256:${String(index).repeat(64)}`, seededBatchAt]);
+    await query(db, `INSERT INTO control_role_grants(id,tenant_id,identity_id,role_key,allowed_actions,project_ids,
+      risk_ceiling,allow_external_effects,require_strong_factor,created_at,updated_at) VALUES($1,$2,$3,
+      'work_batch_proposer','["work_batches.propose"]',$4::jsonb,'low',false,false,$5,$5)`,
+    [`grant:seeded-${index}`, tenantId, identityId, JSON.stringify([seededProject(tenantId)]), seededBatchAt]);
+  }
+  for (const [tenantId, identityId, , batchId, hasRevision] of seededBatches) {
+    await query(db, insertSeededBatch, [batchId, tenantId, seededProject(tenantId), identityId, seededBatchAt,
+      seededBatchProposal, seededBatchDigest, seededBatchTag]);
+    if (hasRevision) await query(db, insertSeededRevision, [`${batchId}:revision:1`, tenantId, batchId, identityId,
+      seededBatchAt, seededBatchProposal, seededBatchDigest, seededBatchTag]);
+  }
+}
+
+test("work-intake login reads and writes only its registered identity's work batches", needsPg, async () => {
+  await freshDatabase("cr_prod_intake_batches");
+  const db=target("cr_prod_intake_batches");
+  await applyMigrations({ target:db, bootstrapTarget:bootstrapTarget("cr_prod_intake_batches"),
+    migrateTarget:migrateTarget("cr_prod_intake_batches"), rootDir:ROOT, env:{...process.env,...passwords} });
+  await seedWorkBatchTenants(db);
+  const intake={...target("cr_prod_intake_batches","control_room_work_intake_agent"),
+    password:passwords.CONTROL_ROOM_WORK_INTAKE_PASSWORD};
+
+  assert.deepEqual((await query(intake,"SELECT tenant_id,id FROM work_batches ORDER BY tenant_id,id")).rows,
+    [{tenant_id:"tenant:batch-own",id:"batch:own"}]);
+  assert.deepEqual((await query(intake,
+    "SELECT tenant_id,batch_id FROM work_batch_revisions ORDER BY tenant_id,batch_id")).rows,
+  [{tenant_id:"tenant:batch-own",batch_id:"batch:own"}]);
+  assert.deepEqual((await query(intake,"SELECT proposal FROM work_batches WHERE tenant_id='tenant:batch-other'")).rows,[]);
+  assert.deepEqual((await query(intake,
+    "SELECT proposal FROM work_batch_revisions WHERE tenant_id='tenant:batch-other'")).rows,[]);
+
+  // Each forged proposer holds a valid proposer grant, so only the policy refuses it.
+  for (const [tenantId, identityId] of [["tenant:batch-other","identity:batch-other"],
+    ["tenant:batch-own","identity:batch-own-direct"]])
+    await assert.rejects(query(intake,insertSeededBatch,[`batch:forged-${identityId.slice(9)}`,tenantId,
+      seededProject(tenantId),identityId,seededBatchAt,seededBatchProposal,seededBatchDigest,seededBatchTag]),
+    /row-level security/u, `${tenantId} ${identityId}`);
+  // The registered identity named under the other tenant has no grant there either.
+  await assert.rejects(query(intake,insertSeededBatch,["batch:forged-own-elsewhere","tenant:batch-other",
+    seededProject("tenant:batch-other"),"identity:work-intake:own",seededBatchAt,seededBatchProposal,
+    seededBatchDigest,seededBatchTag]),/row-level security|proposal-only work batch insert rejected/u);
+  await assert.rejects(query(intake,insertSeededRevision,["batch:other-open:revision:1","tenant:batch-other",
+    "batch:other-open","identity:batch-other",seededBatchAt,seededBatchProposal,seededBatchDigest,seededBatchTag]),
+  /row-level security|initial work batch revision insert rejected/u);
+  await assert.rejects(query(intake,
+    "UPDATE work_batches SET proposal='{}'::jsonb WHERE tenant_id='tenant:batch-other'"),/permission denied/u);
+  await assert.rejects(query(intake,
+    "UPDATE work_batch_revisions SET proposal='{}'::jsonb WHERE tenant_id='tenant:batch-other'"),/permission denied/u);
+  assert.deepEqual((await query(db,`SELECT (SELECT count(*)::int FROM work_batches) AS batches,
+    (SELECT count(*)::int FROM work_batch_revisions) AS revisions`)).rows[0],{batches:4,revisions:3});
+
+  // The registered identity still proposes and reads back through the real store.
+  const store=new WorkBatchStoreV1(postgresDatabase(intake),new Uint8Array(32).fill(9));
+  const principal={tenantId:"tenant:batch-own",identityId:"identity:work-intake:own",actorType:"agent",
+    authenticatedAt:"2026-09-27T11:00:00.000Z",expiresAt:"2027-09-27T12:00:00.000Z"};
+  const proposal={schema:"control-room.work-batch-proposal/v1",projectId:"project:batch-own",
+    tasks:[{localId:"build",title:"Build",instructions:"Implement the bounded change.",
+      requiredCapability:"code.change",role:"builder",requestedWorkerKind:"worker:code",
+      requestedModelKey:"model:allowed",acceptanceCriteria:"The focused checks pass.",
+      acceptanceTests:"Run the focused test lane."}],edges:[]};
+  const receipt=await store.create({principal,proposal,proposalDigest:sha256Digest(proposal),
+    idempotencyKey:"intake-batches-key-0001",now:"2026-09-27T12:10:00.000Z",queueDepthLimit:5});
+  assert.equal(receipt.replayed,false);
+  const status=await store.status(principal,"project:batch-own",receipt.batchId,"2026-09-27T12:11:00.000Z");
+  assert.equal(status.batchId,receipt.batchId);
+  assert.deepEqual((await query(intake,"SELECT id FROM work_batches ORDER BY id")).rows.map(row=>row.id).sort(),
+    ["batch:own",receipt.batchId].sort());
+});
+
+test("non-intake roles keep exactly their work-batch access", needsPg, async () => {
+  await freshDatabase("cr_prod_batch_roles");
+  const db=target("cr_prod_batch_roles");
+  await applyMigrations({ target:db, bootstrapTarget:bootstrapTarget("cr_prod_batch_roles"),
+    migrateTarget:migrateTarget("cr_prod_batch_roles"), rootDir:ROOT, env:{...process.env,...passwords} });
+  await seedWorkBatchTenants(db);
+  const allBatches=seededBatches.map(([tenantId,,,batchId])=>`${tenantId}|${batchId}`).sort();
+  const allRevisions=seededBatches.filter(row=>row[4]).map(([tenantId,,,batchId])=>`${tenantId}|${batchId}`).sort();
+  const client=new Client(db);
+  await client.connect();
+  try {
+    // Role files are cluster-global; install the owner-web and coordinator groups
+    // only inside this transaction so no other test observes them.
+    await client.query("BEGIN");
+    for (const file of ["private_web_roles.sql","task_coordinator_roles.sql"])
+      await client.query((await readFile(join(ROOT,"db/roles",file),"utf8")).replace(/^(?:BEGIN|COMMIT);$/gmu,""));
+    const observe=async role=>{
+      const seen={};
+      for (const [table,column] of [["work_batches","id"],["work_batch_revisions","batch_id"]]) {
+        await client.query("SAVEPOINT probe");
+        try {
+          await client.query(`SET LOCAL ROLE ${role}`);
+          seen[table]=(await client.query(`SELECT tenant_id || '|' || ${column} AS row FROM ${table}`)).rows
+            .map(row=>row.row).sort();
+        } catch (error) { seen[table]=error.code==="42501" ? "permission denied" : error.message; }
+        finally { await client.query("ROLLBACK TO SAVEPOINT probe"); }
+      }
+      return seen;
+    };
+    const denied={work_batches:"permission denied",work_batch_revisions:"permission denied"};
+    const expected={
+      control_room_schema_owner:{work_batches:allBatches,work_batch_revisions:allRevisions},
+      control_room_backup:{work_batches:allBatches,work_batch_revisions:allRevisions},
+      control_room_reader:denied, control_room_application:denied, control_room_schedule_admissions:denied,
+      control_room_github_broker:denied, control_room_private_web:denied, control_room_task_coordinator:denied,
+    };
+    const observed={};
+    for (const role of Object.keys(expected)) observed[role]=await observe(role);
+    assert.deepEqual(observed,expected);
+    const privileges=(await client.query(`SELECT r.role,t.table_name,
+      has_table_privilege(r.role,t.table_name,'INSERT') AS insert,
+      has_table_privilege(r.role,t.table_name,'UPDATE') AS update,
+      has_table_privilege(r.role,t.table_name,'DELETE') AS delete
+      FROM unnest($1::text[]) r(role) CROSS JOIN unnest(ARRAY['work_batches','work_batch_revisions']) t(table_name)
+      WHERE has_table_privilege(r.role,t.table_name,'INSERT') OR has_table_privilege(r.role,t.table_name,'UPDATE')
+        OR has_table_privilege(r.role,t.table_name,'DELETE') ORDER BY 1,2`,[Object.keys(expected)])).rows;
+    assert.deepEqual(privileges,[
+      {role:"control_room_schema_owner",table_name:"work_batch_revisions",insert:true,update:true,delete:true},
+      {role:"control_room_schema_owner",table_name:"work_batches",insert:true,update:true,delete:true}]);
+  } finally {
+    await client.query("ROLLBACK").catch(() => {});
+    await client.end();
+  }
+});
+
 test("backup and disposable restore preserve rows, owners, grants and identity", needsPg, async () => {
   await freshDatabase("cr_prod_source");
   await applyMigrations({ target: target("cr_prod_source"), bootstrapTarget: bootstrapTarget("cr_prod_source"), migrateTarget: migrateTarget("cr_prod_source"), rootDir: ROOT, env: { ...process.env, ...passwords } });
