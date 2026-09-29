@@ -745,6 +745,78 @@ test("service authority: authorize() and read() enforce owner-only and per-proje
   t.diagnostic("authority matrix: owner-scoped grant honoured, wildcard operator refused, sibling project refused, revoked session refused");
 });
 
+test("revocation between the setup and page transactions is refused", async t => {
+  if (needsPg) { t.skip(needsPg.skip); return; }
+  // Wraps the real web.client so the SECOND transactionWithPreCommitCheck call
+  // (the page transaction; the first is repeatableReadSnapshot's setup
+  // transaction) runs `hook` just before it starts. This is the exact gap
+  // session-authority.ts:52-54 claims is closed by the page transaction's own
+  // re-read and lock of identity/session/grants.
+  const between = (hook: () => Promise<void>): DatabaseClient => {
+    let calls = 0;
+    return Object.freeze({
+      query: (statement: string, params?: unknown[]) => web.client.query(statement, params),
+      transaction: callback => web.client.transaction(callback),
+      transactionWithPreCommitCheck: async (callback, check) => {
+        calls += 1;
+        if (calls === 2) await hook();
+        return web.client.transactionWithPreCommitCheck(callback, check);
+      },
+    } as DatabaseClient);
+  };
+  const scope = { tenantId: TENANT_ID, workspaceId: WORKSPACE_ID };
+  const poolOwnerIdentityId = identityId("poolowner");
+  const poolOwnerGrantId = grantId("poolowner");
+
+  // A session revoked in the gap is refused as authentication_required. The
+  // fresh token is inserted by the setup transaction itself (first use), so
+  // this never touches any session another case relies on.
+  {
+    const fresh = { ...poolIdentity, tokenDigest: sessionDigest("between-revoke-session") };
+    const service = new ProjectActivityServiceV1(between(() => admin.query(
+      "UPDATE control_web_sessions SET revoked_at=now() WHERE tenant_id=$1 AND token_digest=$2",
+      [TENANT_ID, fresh.tokenDigest]).then(() => {})), scope, webStore);
+    await refuses(service.read(fresh, POOL_PROJECT, {}, 10), "authentication_required");
+  }
+
+  // An identity suspended in the gap is refused as access_denied. Restored in
+  // finally so no later test sees a suspended poolowner.
+  {
+    const fresh = { ...poolIdentity, tokenDigest: sessionDigest("between-revoke-identity") };
+    try {
+      const service = new ProjectActivityServiceV1(between(() => admin.query(
+        "UPDATE control_identities SET state='suspended', updated_at=now() WHERE tenant_id=$1 AND id=$2",
+        [TENANT_ID, poolOwnerIdentityId]).then(() => {})), scope, webStore);
+      await refuses(service.read(fresh, POOL_PROJECT, {}, 10), "access_denied");
+    } finally {
+      await admin.query("UPDATE control_identities SET state='active', updated_at=now() WHERE tenant_id=$1 AND id=$2",
+        [TENANT_ID, poolOwnerIdentityId]);
+    }
+  }
+
+  // A grant revoked in the gap is refused as access_denied. Restored in
+  // finally so no later test sees poolowner without its wildcard grant.
+  {
+    const fresh = { ...poolIdentity, tokenDigest: sessionDigest("between-revoke-grant") };
+    try {
+      const service = new ProjectActivityServiceV1(between(() => admin.query(
+        "UPDATE control_role_grants SET revoked_at=now() WHERE tenant_id=$1 AND id=$2",
+        [TENANT_ID, poolOwnerGrantId]).then(() => {})), scope, webStore);
+      await refuses(service.read(fresh, POOL_PROJECT, {}, 10), "access_denied");
+    } finally {
+      await admin.query("UPDATE control_role_grants SET revoked_at=NULL WHERE tenant_id=$1 AND id=$2",
+        [TENANT_ID, poolOwnerGrantId]);
+    }
+  }
+
+  // Poolowner is fully usable again for any later test.
+  const stillValid = await poolService.read(poolIdentity, POOL_PROJECT, {}, 10);
+  assert.equal(stillValid.events.length, POOL_EVENTS);
+  assert.equal(web.isAvailable(), true);
+  t.diagnostic("revocation between setup and page transactions: session -> authentication_required, "
+    + "identity suspended -> access_denied, grant revoked -> access_denied");
+});
+
 // MUST RUN LAST. It is the only case that drops a schema-wide append-only
 // trigger, so it is deliberately declared after every other proof. The trigger
 // is restored in withAppendOnlySuspended()'s finally and re-verified below, so
