@@ -16,8 +16,8 @@
   {
     "file": "scripts/mac-local/database-upgrade-vps-rehearse.mjs",
     "find": "      if (!newest || createdAt > newest.createdAt) newest = { path: candidate, createdAt };",
-    "replace": "      if (!newest) newest = { path: candidate, createdAt };",
+    "replace": "      if (!newest || createdAt < newest.createdAt) newest = { path: candidate, createdAt };",
     "test": "PG_BIN=${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin} node --import tsx --test tests/mac-local-database-upgrade-vps-pg17.test.mjs",
-    "why": "the rehearsal must pick the backup with the latest recorded time, not merely the first intact one readdir happens to return, or it can silently rehearse a stale backup"
+    "why": "the rehearsal must pick the backup with the latest recorded time, not the earliest, or it can silently rehearse a stale backup"
   }
 ]
