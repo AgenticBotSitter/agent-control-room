@@ -1,1 +1,32 @@
-[]
+[
+  {
+    "test": "tests/installation-plan-journal.test.ts::a concurrent writer's in-flight publication never refuses another exact writer",
+    "issue": "#448",
+    "added": "2026-09-29",
+    "owner": "installer journal owner"
+  },
+  {
+    "test": "tests/installation-plan-journal.test.ts::a recovery reader waits out a live publication instead of refusing it",
+    "issue": "#448",
+    "added": "2026-09-29",
+    "owner": "installer journal owner"
+  },
+  {
+    "test": "tests/installation-plan-journal.test.ts::two readers retiring one settled witness both succeed and retire it once",
+    "issue": "#448",
+    "added": "2026-09-29",
+    "owner": "installer journal owner"
+  },
+  {
+    "test": "tests/installation-plan-journal.test.ts::a live writer's empty in-flight witness does not refuse a reader",
+    "issue": "#448",
+    "added": "2026-09-29",
+    "owner": "installer journal owner"
+  },
+  {
+    "test": "tests/installation-plan-journal.test.ts::a stale two-linked observation of a journal another reader settled is accepted once",
+    "issue": "#448",
+    "added": "2026-09-29",
+    "owner": "installer journal owner"
+  }
+]
