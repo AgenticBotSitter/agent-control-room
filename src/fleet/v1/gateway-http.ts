@@ -3,7 +3,8 @@ import { isIP } from "node:net";
 import type { WorkBatchServiceV1 } from "../../work-intake/v1/service";
 import { FleetErrorV1, fleetFail } from "./errors";
 import type { FleetGatewayStoreV1, FleetWorkerPrincipalV1 } from "./gateway-store";
-import { FLEET_PROJECT_ID_PATTERN_V1 } from "./identifiers";
+import { FLEET_DIGEST_PATTERN_V1, FLEET_PROJECT_ID_PATTERN_V1, FLEET_WORKER_ID_PATTERN_V1,
+  plainSha256V1 } from "./identifiers";
 
 /**
  * The connector-facing API. Every route except enrollment and the connector
@@ -20,24 +21,65 @@ const base64Pattern = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]
 
 type AdmissionKindV1 = "enroll" | "authenticate";
 type AdmissionStateV1 = { startedAt: number; count: number; touchedAt: number };
-export type FleetGatewayAdmissionV1 = Readonly<{ enter(request: IncomingMessage, kind: AdmissionKindV1): () => void }>;
+export type FleetGatewayTrustedClientHeaderV1 = "cf-connecting-ip" | "x-forwarded-for-rightmost" | "none";
+export type FleetGatewayAdmissionLeaseV1 = Readonly<{
+  /** Releases a request that stopped before authentication completed. */
+  release(): void;
+  /** Settles an authentication attempt into exactly one isolated budget. */
+  completeAuthentication(authenticatedWorkerId: string | null): void;
+}>;
+export type FleetGatewayAdmissionV1 = Readonly<{
+  /** Records only a server-verified digest, never a bearer secret. */
+  registerCredential(authenticatedWorkerId: string, credentialDigest: string): void;
+  enter(request: IncomingMessage, kind: AdmissionKindV1): FleetGatewayAdmissionLeaseV1;
+}>;
 export type FleetGatewayAdmissionOptionsV1 = Readonly<{ clock?: () => number; windowMs?: number;
   enrollPerIp?: number; enrollGlobal?: number; authenticatePerIp?: number; authenticateGlobal?: number;
-  maxConcurrent?: number; maxTrackedIps?: number }>;
+  authenticatedPerWorker?: number; authenticatedGlobal?: number;
+  maxConcurrent?: number; maxTrackedIps?: number; maxTrackedWorkers?: number;
+  trustedProxyAddresses?: readonly string[]; trustedClientHeader?: FleetGatewayTrustedClientHeaderV1 }>;
 
 function normalizedAddress(value: string | undefined) {
   if (!value) return "unknown";
-  const address = value.startsWith("::ffff:") ? value.slice(7) : value;
+  const trimmed = value.trim().toLowerCase();
+  const address = trimmed.startsWith("::ffff:") && isIP(trimmed.slice(7)) === 4 ? trimmed.slice(7) : trimmed;
   return isIP(address) ? address : "unknown";
 }
 
-/** Trust forwarded client addresses only from the loopback proxy the gateway
- * binds behind. Cloudflare overwrites CF-Connecting-IP; Tailscale Serve writes
- * X-Forwarded-For. A direct remote peer can never choose either identity. */
-export function fleetGatewayClientAddressV1(request: IncomingMessage) {
+function ipv6Network64(address: string) {
+  const embedded = /(?:^|:)(\d{1,3}(?:\.\d{1,3}){3})$/u.exec(address)?.[1];
+  if (embedded) {
+    const octets = embedded.split(".").map(Number);
+    address = `${address.slice(0, -embedded.length)}${((octets[0]! << 8) | octets[1]!).toString(16)}:${
+      ((octets[2]! << 8) | octets[3]!).toString(16)}`;
+  }
+  const halves = address.split("::");
+  const left = halves[0] ? halves[0].split(":") : [];
+  const right = halves[1] ? halves[1].split(":") : [];
+  const words = halves.length === 1 ? left : [...left, ...Array(8 - left.length - right.length).fill("0"), ...right];
+  return `${words.slice(0, 4).map(word => Number.parseInt(word, 16).toString(16)).join(":")}::/64`;
+}
+
+/** Coarsens unauthenticated source identities so address rotation within one
+ * ordinary client network cannot manufacture fresh budgets. */
+export function fleetGatewayClientNetworkV1(address: string) {
+  const normalized = normalizedAddress(address);
+  if (isIP(normalized) === 4) return `${normalized.split(".").slice(0, 3).join(".")}.0/24`;
+  if (isIP(normalized) === 6) return ipv6Network64(normalized);
+  return "unknown";
+}
+
+/** Forwarded identity is an operator-selected contract with an exact immediate
+ * proxy address. With the default `none`, even loopback-supplied headers are
+ * ignored. Only one header syntax is ever accepted. */
+export function fleetGatewayClientAddressV1(request: IncomingMessage,
+  options: Pick<FleetGatewayAdmissionOptionsV1, "trustedProxyAddresses" | "trustedClientHeader"> = {}) {
   const peer = normalizedAddress(request.socket.remoteAddress);
-  if (peer !== "127.0.0.1" && peer !== "::1") return peer;
-  const forwarded = header(request, "cf-connecting-ip") ?? header(request, "x-forwarded-for")?.split(",", 1)[0]?.trim();
+  const selected = options.trustedClientHeader ?? "none";
+  const trusted = new Set((options.trustedProxyAddresses ?? []).map(normalizedAddress));
+  if (selected === "none" || !trusted.has(peer)) return peer;
+  const forwarded = selected === "cf-connecting-ip" ? header(request, "cf-connecting-ip")
+    : header(request, "x-forwarded-for")?.split(",").at(-1)?.trim();
   const candidate = normalizedAddress(forwarded);
   return candidate === "unknown" ? peer : candidate;
 }
@@ -46,12 +88,24 @@ export function createFleetGatewayAdmissionV1(options: FleetGatewayAdmissionOpti
   const clock = options.clock ?? Date.now, windowMs = options.windowMs ?? 60_000;
   const perIp = { enroll: options.enrollPerIp ?? 8, authenticate: options.authenticatePerIp ?? 120 };
   const globalLimit = { enroll: options.enrollGlobal ?? 80, authenticate: options.authenticateGlobal ?? 1_000 };
+  const authenticatedPerWorker = options.authenticatedPerWorker ?? 120;
+  const authenticatedGlobal = options.authenticatedGlobal ?? 1_000;
   const maxConcurrent = options.maxConcurrent ?? 16, maxTrackedIps = options.maxTrackedIps ?? 4_096;
+  const maxTrackedWorkers = options.maxTrackedWorkers ?? 4_096;
   if (![windowMs, perIp.enroll, perIp.authenticate, globalLimit.enroll, globalLimit.authenticate,
-    maxConcurrent, maxTrackedIps].every(value => Number.isSafeInteger(value) && value > 0)) throw new Error("fleet_admission_invalid");
-  const ips = new Map<string, AdmissionStateV1>();
-  const global: Record<AdmissionKindV1, AdmissionStateV1> = {
-    enroll: { startedAt: 0, count: 0, touchedAt: 0 }, authenticate: { startedAt: 0, count: 0, touchedAt: 0 },
+    authenticatedPerWorker, authenticatedGlobal, maxConcurrent, maxTrackedIps, maxTrackedWorkers]
+    .every(value => Number.isSafeInteger(value) && value > 0)) throw new Error("fleet_admission_invalid");
+  const selectedHeader = options.trustedClientHeader ?? "none";
+  const trustedProxies = options.trustedProxyAddresses ?? [];
+  if (!(["cf-connecting-ip", "x-forwarded-for-rightmost", "none"] as const).includes(selectedHeader)
+    || trustedProxies.some(address => normalizedAddress(address) === "unknown")
+    || selectedHeader !== "none" && trustedProxies.length === 0) throw new Error("fleet_admission_invalid");
+  const sources = new Map<string, AdmissionStateV1>(), workers = new Map<string, AdmissionStateV1>();
+  const credentials = new Map<string, string>();
+  const global = {
+    enroll: { startedAt: 0, count: 0, touchedAt: 0 },
+    authenticate: { startedAt: 0, count: 0, touchedAt: 0 },
+    authenticated: { startedAt: 0, count: 0, touchedAt: 0 },
   };
   let active = 0;
   const tick = (state: AdmissionStateV1, now: number, limit: number) => {
@@ -61,25 +115,88 @@ export function createFleetGatewayAdmissionV1(options: FleetGatewayAdmissionOpti
     state.count += 1;
     return true;
   };
+  const stateFor = (map: Map<string, AdmissionStateV1>, key: string, now: number, maximum: number) => {
+    let state = map.get(key);
+    if (state) return state;
+    for (const [candidate, value] of map) if (now - value.touchedAt >= windowMs) map.delete(candidate);
+    if (map.size >= maximum) return fleetFail("rate_limited");
+    state = { startedAt: now, count: 0, touchedAt: now };
+    map.set(key, state);
+    return state;
+  };
   return Object.freeze({
+    registerCredential(authenticatedWorkerId: string, credentialDigest: string) {
+      if (!FLEET_WORKER_ID_PATTERN_V1.test(authenticatedWorkerId) || !FLEET_DIGEST_PATTERN_V1.test(credentialDigest))
+        throw new Error("fleet_admission_invalid");
+      credentials.set(authenticatedWorkerId, credentialDigest);
+    },
     enter(request: IncomingMessage, kind: AdmissionKindV1) {
       const now = clock();
       if (!Number.isSafeInteger(now)) return fleetFail("unavailable");
-      const address = fleetGatewayClientAddressV1(request), key = `${kind}:${address}`;
-      let state = ips.get(key);
-      if (!state) {
-        for (const [candidate, value] of ips) if (now - value.touchedAt >= windowMs) ips.delete(candidate);
-        if (ips.size >= maxTrackedIps) return fleetFail("rate_limited");
-        state = { startedAt: now, count: 0, touchedAt: now }; ips.set(key, state);
+      const address = fleetGatewayClientAddressV1(request, options);
+      const network = fleetGatewayClientNetworkV1(address);
+      if (active >= maxConcurrent) return fleetFail("rate_limited");
+      const authorization = header(request, "authorization");
+      const bearer = authorization?.startsWith("Bearer ") ? authorization.slice(7) : undefined;
+      const declaredWorkerId = header(request, "x-control-room-worker");
+      const presentedDigest = bearer === undefined ? undefined : plainSha256V1(bearer);
+      const knownCredential = kind === "authenticate" && declaredWorkerId !== undefined && presentedDigest !== undefined
+        && credentials.get(declaredWorkerId) === presentedDigest;
+      let provisionalSource: AdmissionStateV1 | undefined;
+      let provisionalSourceWindow: number | undefined, provisionalGlobalWindow: number | undefined;
+      if (kind === "enroll") {
+        const state = stateFor(sources, `enroll:${network}`, now, maxTrackedIps);
+        // Refusals from one source must not spend the shared budget.
+        if (!tick(state, now, perIp.enroll) || !tick(global.enroll, now, globalLimit.enroll))
+          return fleetFail("rate_limited");
+      } else if (!knownCredential) {
+        provisionalSource = stateFor(sources, `authenticate:${network}`, now, maxTrackedIps);
+        if (!tick(provisionalSource, now, perIp.authenticate)) return fleetFail("rate_limited");
+        if (!tick(global.authenticate, now, globalLimit.authenticate)) {
+          provisionalSource.count -= 1;
+          return fleetFail("rate_limited");
+        }
+        provisionalSourceWindow = provisionalSource.startedAt;
+        provisionalGlobalWindow = global.authenticate.startedAt;
       }
-      // Refusals from one source must not spend the shared budget. Keep the
-      // cheap concurrency and per-address checks ahead of the global charge;
-      // a successful global tick is therefore always an admitted request.
-      if (active >= maxConcurrent || !tick(state, now, perIp[kind]) || !tick(global[kind], now, globalLimit[kind]))
-        return fleetFail("rate_limited");
       active += 1;
-      let released = false;
-      return () => { if (!released) { released = true; active -= 1; } };
+      let settled = false;
+      const refundProvisionalFailure = () => {
+        if (!provisionalSource) return;
+        if (provisionalSource.startedAt === provisionalSourceWindow && provisionalSource.count > 0)
+          provisionalSource.count -= 1;
+        if (global.authenticate.startedAt === provisionalGlobalWindow && global.authenticate.count > 0)
+          global.authenticate.count -= 1;
+        provisionalSource = undefined;
+      };
+      const settle = () => {
+        if (settled) return false;
+        settled = true;
+        active -= 1;
+        return true;
+      };
+      return Object.freeze({
+        release() { if (settle()) refundProvisionalFailure(); },
+        completeAuthentication(authenticatedWorkerId: string | null) {
+          if (!settle()) return;
+          if (kind !== "authenticate") return fleetFail("unavailable");
+          if (authenticatedWorkerId !== null) {
+            refundProvisionalFailure();
+            if (presentedDigest !== undefined) credentials.set(authenticatedWorkerId, presentedDigest);
+            const state = stateFor(workers, authenticatedWorkerId, now, maxTrackedWorkers);
+            if (!tick(state, now, authenticatedPerWorker) || !tick(global.authenticated, now, authenticatedGlobal))
+              return fleetFail("rate_limited");
+            return;
+          }
+          if (knownCredential && declaredWorkerId !== undefined) credentials.delete(declaredWorkerId);
+          if (provisionalSource) return;
+          const state = stateFor(sources, `authenticate:${network}`, now, maxTrackedIps);
+          // Failed credentials alone spend this lane. They can neither charge
+          // nor occupy the independently tracked authenticated-worker reserve.
+          if (!tick(state, now, perIp.authenticate)
+            || !tick(global.authenticate, now, globalLimit.authenticate)) return fleetFail("rate_limited");
+        },
+      });
     },
   });
 }
@@ -142,12 +259,18 @@ export function createFleetGatewayHandlerV1(options: FleetGatewayHttpOptionsV1) 
   const proposalRoute = /^\/fleet\/v1\/projects\/([^/]+)\/proposals$/u;
 
   async function authenticated(request: IncomingMessage): Promise<FleetWorkerPrincipalV1> {
-    const release = admission.enter(request, "authenticate");
+    const lease = admission.enter(request, "authenticate");
     try {
       const authorization = header(request, "authorization");
       const bearer = authorization?.startsWith("Bearer ") ? authorization.slice(7) : undefined;
-      return await options.store.authenticate({ bearer, declaredWorkerId: header(request, "x-control-room-worker") });
-    } finally { release(); }
+      const principal = await options.store.authenticate({ bearer, declaredWorkerId: header(request, "x-control-room-worker") });
+      lease.completeAuthentication(principal.workerId);
+      return principal;
+    } catch (error) {
+      if (error instanceof FleetErrorV1 && error.code === "unauthenticated") lease.completeAuthentication(null);
+      else lease.release();
+      throw error;
+    }
   }
 
   async function route(request: IncomingMessage, response: ServerResponse) {
@@ -163,13 +286,14 @@ export function createFleetGatewayHandlerV1(options: FleetGatewayHttpOptionsV1) 
       return;
     }
     if (method === "POST" && path === "/fleet/v1/enroll") {
-      const release = admission.enter(request, "enroll");
+      const lease = admission.enter(request, "enroll");
       try {
         const body = object(await readBody(request, FLEET_BODY_LIMITS_V1.enroll),
           ["code", "credentialDigest", "platform", "architecture", "connectorVersion", "clientNonce"]);
         const result = await options.store.enroll(body as never);
+        admission.registerCredential(result.workerId, body.credentialDigest as string);
         return send(response, result.replayed ? 200 : 201, { ok: true, result });
-      } finally { release(); }
+      } finally { lease.release(); }
     }
     // Every other route: authenticate first, then read the body.
     const known = path === "/fleet/v1/me" || path === "/fleet/v1/heartbeat" || path === "/fleet/v1/rotate"
@@ -203,7 +327,9 @@ export function createFleetGatewayHandlerV1(options: FleetGatewayHttpOptionsV1) 
     }
     if (path === "/fleet/v1/rotate") {
       const body = object(await readBody(request, FLEET_BODY_LIMITS_V1.small), ["newCredentialDigest"]);
-      return send(response, 200, { ok: true, result: await options.store.rotate(principal, body as never) });
+      const result = await options.store.rotate(principal, body as never);
+      admission.registerCredential(principal.workerId, body.newCredentialDigest as string);
+      return send(response, 200, { ok: true, result });
     }
     if (path === "/fleet/v1/claims") {
       const body = object(await readBody(request, FLEET_BODY_LIMITS_V1.small), ["offerId", "idempotencyKey"]);
