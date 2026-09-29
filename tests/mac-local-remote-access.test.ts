@@ -296,6 +296,70 @@ test("remote origins pass only their gate, and proxy headers are checked but nev
   remote.close();
 });
 
+const navigation = (site = "cross-site", dest = "document", mode = "navigate") =>
+  ["Sec-Fetch-Site", site, "Sec-Fetch-Mode", mode, "Sec-Fetch-Dest", dest];
+const continuePage = (next: string) => new RegExp(`<meta http-equiv="refresh" content="0;url='${next.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&")}'">`
+  + `[\\s\\S]*<a href="${next.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&")}">Continue to Control Room</a>`);
+
+test("after a Cloudflare login the cross-site page navigation continues on the same origin; nothing else crosses sites", async () => {
+  const clock = { now: nowMs };
+  const remote = createMacLocalRemoteOriginGatesV1(captureMacLocalRemoteAccessV1({ schema: MAC_LOCAL_REMOTE_ACCESS_V1,
+    cloudflare: { origin: cloudflareOrigin, teamDomain, audience, ownerEmail: owner } }, loopback),
+  { clock: () => clock.now, loadKeys: async () => [keyA.published] });
+  const seen: Request[] = [], served: string[] = [];
+  const handler = createMacLocalNodeHandler({ origin: loopback, application: { isReady: () => true, close: async () => {} },
+    handler: async request => { seen.push(request); return new Response("ok"); }, assets: assets(served), remoteOrigins: remote.gates });
+  const cfHost = new URL(cloudflareOrigin).host;
+  const jwt = () => ["Cf-Access-Jwt-Assertion", token(keyA, {}, {}, clock.now)];
+
+  // Cloudflare's redirect back from the team domain: valid token, cross-site top-level page navigation.
+  for (const path of ["/", "/projects", "/session", "/sign-out"]) {
+    const landed = await exchange(handler, cfHost, { path, headers: [...jwt(), ...navigation(), "Sec-Fetch-User", "?1"] });
+    assert.equal(landed.status, 200, path);
+    assert.match(landed.body, continuePage(path), path);
+    assert.equal(landed.headers.get("content-type"), "text/html; charset=utf-8");
+    assert.equal(landed.headers.get("cache-control"), "no-store");
+    assert.match(landed.headers.get("content-security-policy") ?? "", /default-src 'none'.*frame-ancestors 'none'/u);
+    assert.equal(landed.headers.has("set-cookie"), false);
+  }
+  const quoted = await exchange(handler, cfHost, { path: "/projects/it's&more?x=1&y=2", headers: [...jwt(), ...navigation()] });
+  assert.match(quoted.body, continuePage("/projects/it%27s&amp;more?x=1&amp;y=2"), "the path cannot break out of the refresh URL");
+  const head = await exchange(handler, cfHost, { method: "HEAD", headers: [...jwt(), ...navigation()] });
+  assert.equal(head.status, 200); assert.equal(head.body, "");
+  assert.equal(seen.length, 0, "the application never runs for the continue page");
+  assert.deepEqual(served, []);
+
+  // The follow-up navigation starts on this origin and reaches the application normally.
+  const followed = await exchange(handler, cfHost, { path: "/projects", headers: [...jwt(), ...navigation("same-origin")] });
+  assert.equal(followed.status, 200); assert.equal(followed.body, "ok");
+  assert.equal(seen.length, 1);
+
+  // Still refused cross-site: no or bad token, writes, subresources, frames, API calls and static files.
+  const stillRefused: [string, { path?: string; method?: string; headers: string[]; body?: string }][] = [
+    ["no Access token", { headers: navigation() }],
+    ["another person's token", { headers: [...navigation(), "Cf-Access-Jwt-Assertion", token(keyA, { email: "x@example.invalid" })] }],
+    ["cross-site form post", { method: "POST", body: "a=1", headers: [...jwt(), ...navigation(),
+      "Content-Type", "application/x-www-form-urlencoded", "Content-Length", "3"] }],
+    ["cross-site delete", { method: "DELETE", path: "/api/v1/local-owner-session", headers: [...jwt(), ...navigation()] }],
+    ["subresource", { headers: [...jwt(), ...navigation("cross-site", "script", "no-cors")] }],
+    ["document fetched without navigating", { headers: [...jwt(), ...navigation("cross-site", "document", "no-cors")] }],
+    ["frame", { headers: [...jwt(), ...navigation("cross-site", "iframe")] }],
+    ["API fetch", { path: "/api/v1/projects", headers: [...jwt(), ...navigation("cross-site", "empty", "cors")] }],
+    ["API navigation", { path: "/api/v1/projects", headers: [...jwt(), ...navigation()] }],
+    ["static file navigation", { path: "/_next/static/app.js", headers: [...jwt(), ...navigation()] }],
+    ["no fetch mode or destination", { headers: [...jwt(), "Sec-Fetch-Site", "cross-site"] }],
+  ];
+  for (const [name, options] of stillRefused) {
+    const refusedResponse = await exchange(handler, cfHost, options);
+    assert.equal(refusedResponse.status, 403, name);
+    assert.doesNotMatch(refusedResponse.body, /Continue to Control Room/u, name);
+  }
+  // The loopback origin has no gate, so it keeps refusing every cross-site request.
+  assert.equal((await exchange(handler, "127.0.0.1:3210", { headers: navigation() })).status, 403, "loopback");
+  assert.equal(seen.length, 1); assert.deepEqual(served, []);
+  remote.close();
+});
+
 test("each remote path keeps the owner session, CSRF, sign-out, expiry and revocation", async t => {
   const fixture = await privateOwnerBootstrapFixture({ fresh: "mac-local-remote" }); t.after(fixture.close);
   await createPrivateOwnerBootstrapCommand({ openDatabase: fixture.openDatabase(), clock: () => conformanceNow })({
@@ -324,6 +388,10 @@ test("each remote path keeps the owner session, CSRF, sign-out, expiry and revoc
       exchange(handler, host, { ...options, headers: [...(options.headers ?? []), ...path.extra()] });
     const signedOut = await go({ path: "/projects" });
     assert.equal(signedOut.status, 303, path.name); assert.equal(signedOut.headers.get("location"), `${path.origin}/session`);
+    // Arriving from another site (the Cloudflare login page) continues to the sign-in page on this origin.
+    assert.match((await go({ path: "/session", headers: navigation() })).body, continuePage("/session"), path.name);
+    const signInPage = await go({ path: "/session", headers: navigation("same-origin") });
+    assert.equal(signInPage.status, 200, path.name); assert.match(signInPage.body, /Enter the local owner code/u);
     const body = JSON.stringify({ ownerCode });
     const crossSite = await go({ path: "/api/v1/local-owner-session", method: "POST", body,
       headers: ["Origin", loopback, "Content-Type", "application/json", "Content-Length", String(body.length)] });
@@ -335,6 +403,12 @@ test("each remote path keeps the owner session, CSRF, sign-out, expiry and revoc
     assert.match(setCookie, /HttpOnly; SameSite=Strict; Path=\/; Max-Age=900; Secure$/);
     const cookie = setCookie.split(";", 1)[0]!;
     assert.equal((await go({ path: "/api/v1/projects", headers: ["Cookie", cookie] })).status, 200, path.name);
+    // A later Access re-login: the cross-site navigation carries no Strict cookie and gets the
+    // continue page; the same-origin follow-up carries the cookie and opens the page.
+    const relogin = await go({ path: "/projects", headers: navigation() });
+    assert.equal(relogin.status, 200, path.name); assert.match(relogin.body, continuePage("/projects"));
+    const opened = await go({ path: "/projects", headers: ["Cookie", cookie, ...navigation("same-origin")] });
+    assert.equal(opened.status, 200, path.name); assert.equal(opened.body, "page", path.name);
     const write = JSON.stringify({ title: `${path.name} project`, summary: "Remote write proof" });
     assert.equal((await go({ path: "/api/v1/projects", method: "POST", body: write, headers: ["Cookie", cookie,
       "Origin", path.origin, "Content-Type", "application/json", "Idempotency-Key", `remote-write-${path.name.toLowerCase()}-0001`,

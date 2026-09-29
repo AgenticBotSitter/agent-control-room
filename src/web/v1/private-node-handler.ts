@@ -129,6 +129,34 @@ function requestHead(input: IncomingMessage, origins: readonly string[], mode: N
   return { url, method, headers, expectedLength, bodyLimit, origin, all };
 }
 
+/** After a Cloudflare Access login the browser returns from the team domain,
+ * so the first page load on the app is a cross-site top-level navigation and
+ * the owner-session cookie (SameSite=Strict) is not sent. On a remote origin
+ * whose gate has already admitted the request, a plain page navigation (never
+ * a write, a subresource, an API call or a static file) gets this static page,
+ * which continues to the same path. That second navigation starts from this
+ * origin and passes every existing check. The application never runs here. */
+function isGatedDocumentNavigation(head: ReturnType<typeof requestHead>, gated: boolean): boolean {
+  return gated && (head.method === "GET" || head.method === "HEAD")
+    && head.all.get("sec-fetch-mode") === "navigate" && head.all.get("sec-fetch-dest") === "document"
+    && !/^\/(?:api|_next)\//u.test(head.url.pathname);
+}
+
+function continueToSameOriginPage(url: URL): Response {
+  // The target was validated as an exact same-origin path: no whitespace, `#`
+  // or control characters, and `"`, `<`, `>` are already percent-encoded.
+  const next = `${url.pathname}${url.search}`.replaceAll("'", "%27");
+  const html = next.replaceAll("&", "&amp;");
+  return new Response(`<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="refresh" content="0;url='${html}'">
+<title>Control Room</title></head>
+<body><main><p><a href="${html}">Continue to Control Room</a></p></main></body></html>`, { status: 200,
+    headers: { "content-type": "text/html; charset=utf-8",
+      "content-security-policy": "default-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+      "x-frame-options": "DENY" } });
+}
+
 function consumeBody(input: IncomingMessage, signal: AbortSignal, expectedLength: number | undefined, bodyMs: number, bodyLimit: number) {
   return new Promise<Buffer>((resolve, reject) => {
     const chunks: Buffer[] = []; let size = 0;
@@ -339,6 +367,10 @@ function createNodeHandler(options: NodeHandlerOptions, mode: NodeHandlerMode) {
         if (signal.aborted) return;
         if (head.method !== "POST" && body.length) throw new RequestFailure(400);
         const fetchSite = head.headers.get("sec-fetch-site");
+        if (fetchSite === "cross-site" && isGatedDocumentNavigation(head, gate !== undefined)) {
+          await deliver(output, continueToSameOriginPage(head.url), head.method, signal, mode);
+          return;
+        }
         if (fetchSite === "cross-site" || mode.injectSetupMarker
           && fetchSite !== null && fetchSite !== "same-origin" && fetchSite !== "none") throw new RequestFailure(403);
         const bootstrap = options.ownerBootstrapCeremony;
