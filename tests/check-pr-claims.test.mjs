@@ -27,8 +27,8 @@ function fixture() {
   return root;
 }
 
-function inspect(root, body, changedPaths = ["src/server/example.ts"], workflowSource = workflow) {
-  return checkPrClaims({ root, body, changedPaths, workflowSource });
+function inspect(root, body, changedPaths = ["src/server/example.ts"], workflowSource = workflow, addedPaths = changedPaths) {
+  return checkPrClaims({ root, body, changedPaths, addedPaths, workflowSource });
 }
 
 test("a missing Evidence section on a src change fails", () => {
@@ -55,6 +55,15 @@ test("a pull request adding a repo-root report fails hygiene", () => {
     const result = inspect(root, "## Summary\n\nRemoved a stray report.", ["reports/x.md"]);
     assert.equal(result.ok, false);
     assert.ok(result.errors.includes("stray_report_path"));
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("a pull request deleting an existing repo-root report passes hygiene", () => {
+  const root = fixture();
+  try {
+    assert.deepEqual(inspect(root, "## Summary\n\nRemoved a stray report.", ["reports/x.md"], workflow, []), {
+      ok: true, errors: [], warnings: 0,
+    });
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 

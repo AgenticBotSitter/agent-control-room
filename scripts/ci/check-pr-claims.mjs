@@ -121,6 +121,7 @@ function absoluteWarnings(body) {
 export function checkPrClaims({
   body,
   changedPaths,
+  addedPaths = [],
   root = process.cwd(),
   workflowSource = readFileSync(join(root, ".github/workflows/ci.yml"), "utf8"),
 } = {}) {
@@ -132,7 +133,7 @@ export function checkPrClaims({
     return { ok: false, errors: ["changed_paths_unavailable"], warnings: absoluteWarnings(body) };
   }
 
-  if (changedPaths.some((path) => strayReportPath.test(path))) {
+  if (addedPaths.some((path) => strayReportPath.test(path))) {
     errors.push("stray_report_path");
   }
 
@@ -176,22 +177,29 @@ export function checkPrClaims({
   return { ok: errors.length === 0, errors, warnings: absoluteWarnings(body) };
 }
 
-function changedPaths(event, root) {
+function diffPaths(event, root, filter) {
   const base = event?.pull_request?.base?.sha;
   const head = event?.pull_request?.head?.sha;
   if (!base || !head) return null;
   try {
-    return execFileSync("git", ["diff", "--name-only", "-z", "--diff-filter=ACDMRTUXB", `${base}...${head}`], {
+    return execFileSync("git", ["diff", "--name-only", "-z", `--diff-filter=${filter}`, `${base}...${head}`], {
       cwd: root, encoding: "utf8", maxBuffer: 1_048_576,
     }).split("\0").filter(Boolean);
   } catch { return null; }
 }
 
+function changedPaths(event, root) { return diffPaths(event, root, "ACDMRTUXB"); }
+function addedPaths(event, root) { return diffPaths(event, root, "A"); }
+
 export function main(env = process.env) {
   try {
     const event = JSON.parse(readFileSync(env.GITHUB_EVENT_PATH, "utf8"));
     if (!event.pull_request) { console.log("PR claims check skipped: not a pull request"); return; }
-    const result = checkPrClaims({ body: event.pull_request.body ?? "", changedPaths: changedPaths(event, process.cwd()) });
+    const result = checkPrClaims({
+      body: event.pull_request.body ?? "",
+      changedPaths: changedPaths(event, process.cwd()),
+      addedPaths: addedPaths(event, process.cwd()),
+    });
     if (result.warnings > 0) console.warn(`PR claims check warning: ${result.warnings} absolute claim(s) lack an evidence line`);
     if (result.fenceWarnings > 0) console.warn(`PR claims check warning: ${result.fenceWarnings} unclosed evidence fence(s)`);
     if (!result.ok) {
