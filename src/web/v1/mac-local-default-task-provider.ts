@@ -52,6 +52,8 @@ import { sanitizedDatabaseFailureV1 } from "./sanitized-database-failure";
 import { loadUsagePriceTableFromRootV1 } from "../../usage/v1/usage-price-table-loader";
 import { verifyAgentReviewerDatabase } from "./private-database-preflight";
 import { macLocalOwnerIdentityIdV1 } from "./mac-local-owner-bootstrap";
+import { createSupervisorMachineProbeV1, startSupervisorLoopV1, SupervisorServiceV1,
+  type SupervisorLoopHandleV1 } from "../../supervisor/v1";
 
 type SelectedWorker = Readonly<{ kind: "hermes" | "claude-code" | "codex";
   worker: OwnerTrustedLocalEnablementV1["workers"][number]; route: TaskAssignmentRoute; adapterId: string }>;
@@ -123,6 +125,7 @@ export const createTaskApplication: MacLocalTaskProviderV1["createTaskApplicatio
   let refreshInFlight: Promise<void> | undefined;
   let qualityTimer: ReturnType<typeof setInterval> | undefined;
   let qualityInFlight: Promise<void> | undefined;
+  let supervisorLoop: SupervisorLoopHandleV1 | undefined;
   try {
     // The node keys are readable by the coordinator login only (section 12.D);
     // the web login correctly has no access to them.
@@ -194,7 +197,7 @@ export const createTaskApplication: MacLocalTaskProviderV1["createTaskApplicatio
             recordedVersion: selected.worker.recordedVersion }).slice("sha256:".length) },
         receiptPort: createOwnerTrustedLocalCliReceiptPortV1(),
         assertCurrent: createOwnerTrustedLocalCliAssertCurrentV1(readPool.client, prepared[index]!, workerReadiness),
-        publish: lifecycle.publish, recordFailure: lifecycle.recordFailure };
+        publish: lifecycle.publish, recordFailure: lifecycle.recordFailure, recordWait: lifecycle.recordWait };
     };
     // Derived once at startup, so an unusable pinned version line refuses here, not per task.
     const hermesHarnessVersion = ownerTrustedLocalHarnessVersionV1(workers[0]!.worker.recordedVersion);
@@ -251,6 +254,10 @@ export const createTaskApplication: MacLocalTaskProviderV1["createTaskApplicatio
           selectionAuthority: input.workBatches.selectionAuthority } } : {}) },
       hermes, claude: voidClaude, codex: voidCodex,
     });
+    if (input.supervisor) supervisorLoop = await startSupervisorLoopV1({ service: new SupervisorServiceV1({
+      db: readPool.client, tenantId, supervisorId: input.supervisor.supervisorId,
+      machine: createSupervisorMachineProbeV1(), operations: input.supervisor.operations,
+    }) });
     const agentReviews = input.workBatches ? (() => {
       const planService = new AgentReviewServiceV1(readPool.client, tenantId, keys.review, checkpointStore,
         built.routes, () => new Date().toISOString(), input.workBatches!.integrityKey);
@@ -300,6 +307,7 @@ export const createTaskApplication: MacLocalTaskProviderV1["createTaskApplicatio
       if (qualityTimer) clearInterval(qualityTimer);
       await refreshInFlight?.catch(() => {});
       await qualityInFlight?.catch(() => {});
+      await supervisorLoop?.close();
       const results = await Promise.allSettled([owned.close(), readPool.close(), publisherPool.close(),
         resultsPool.close(), reviewerPool.close(), checkpointStore.close()]);
       if (results.some(result => result.status === "rejected")) throw new Error("mac_local_task_provider_cleanup_uncertain");
@@ -309,6 +317,7 @@ export const createTaskApplication: MacLocalTaskProviderV1["createTaskApplicatio
     if (qualityTimer) clearInterval(qualityTimer);
     await refreshInFlight?.catch(() => {});
     await qualityInFlight?.catch(() => {});
+    await supervisorLoop?.close();
     const cleanup: Promise<unknown>[] = [readPool.close(), publisherPool.close(), resultsPool.close(), reviewerPool.close()];
     if (application) cleanup.push(application.close());
     else if (submission) cleanup.push(submission.close());
