@@ -68,6 +68,40 @@ CREATE TRIGGER work_batch_items_append_only BEFORE UPDATE OR DELETE ON public.wo
 CREATE TRIGGER work_batch_items_truncate_guard BEFORE TRUNCATE ON public.work_batch_items
   FOR EACH STATEMENT EXECUTE FUNCTION public.reject_append_only_mutation();
 
+-- Items carry the batch's proposal content. Confine the shared intake login to
+-- items of batches it can already see (bound tenant, registered proposer), as
+-- 0093 confines the batches themselves. Every other role keeps its grants.
+ALTER TABLE work_batch_items ENABLE ROW LEVEL SECURITY;
+CREATE POLICY work_batch_items_existing_access ON work_batch_items
+  AS PERMISSIVE FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY work_batch_items_work_intake_scope ON work_batch_items
+  AS RESTRICTIVE FOR ALL
+  USING (NOT public.is_work_intake_session() OR (
+    work_batch_items.tenant_id=(SELECT b.tenant_id FROM public.work_intake_tenant_binding b)
+    AND EXISTS (
+    SELECT 1 FROM public.work_batches w
+    WHERE w.tenant_id=work_batch_items.tenant_id AND w.id=work_batch_items.batch_id)))
+  WITH CHECK (NOT public.is_work_intake_session() OR (
+    work_batch_items.tenant_id=(SELECT b.tenant_id FROM public.work_intake_tenant_binding b)
+    AND EXISTS (
+    SELECT 1 FROM public.work_batches w
+    WHERE w.tenant_id=work_batch_items.tenant_id AND w.id=work_batch_items.batch_id)));
+
+-- Owner revisions are edited by a human owner, so 0093's read scope hid them
+-- from the intake login and its status/list failed closed after any revision.
+-- Also admit revisions of a batch the intake login can already see. WITH CHECK
+-- is unchanged: the intake login still writes only agent-edited revisions.
+ALTER POLICY work_batch_revisions_work_intake_scope ON work_batch_revisions
+  USING (NOT public.is_work_intake_session() OR (
+    work_batch_revisions.tenant_id=(SELECT b.tenant_id FROM public.work_intake_tenant_binding b)
+    AND (EXISTS (
+    SELECT 1 FROM public.control_identities i
+    WHERE i.tenant_id=work_batch_revisions.tenant_id AND i.id=work_batch_revisions.edited_by_identity_id
+      AND i.actor_type='agent' AND i.auth_provider='work-intake')
+    OR EXISTS (
+    SELECT 1 FROM public.work_batches w
+    WHERE w.tenant_id=work_batch_revisions.tenant_id AND w.id=work_batch_revisions.batch_id))));
+
 CREATE OR REPLACE FUNCTION guard_initial_work_batch_revision_insert() RETURNS trigger
 LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $$
 DECLARE batch public.work_batches%ROWTYPE;

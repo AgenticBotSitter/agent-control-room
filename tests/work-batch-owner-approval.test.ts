@@ -289,7 +289,7 @@ test("an S1-authenticated batch remains readable after the S2 migration and firs
       proposed_by_identity_id,proposed_at,proposal,queue_depth_limit,batch_digest,auth_tag,
       auth_material_version,created_at FROM work_batches WHERE id=$1`, [batch.batchId])).rows[0]!;
   const createdAt = new Date(before.created_at).toISOString();
-  assert.equal(before.auth_material_version, 1, "0094 backfills the S1 auth-material version");
+  assert.equal(before.auth_material_version, 1, "0102 backfills the S1 auth-material version");
   assert.equal(before.auth_tag, hmacSha256Tag(key, { purpose: "work-batch/v1", record: {
     id: before.id, tenantId: "tenant:web", projectId: before.project_id,
     proposedByIdentityId: before.proposed_by_identity_id, proposedAt: new Date(before.proposed_at).toISOString(),

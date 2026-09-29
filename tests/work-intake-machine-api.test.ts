@@ -143,7 +143,7 @@ test("role creation and least-privilege grants travel through reviewed productio
     ...["production_roles.sql", "production_provision.sql", "production_table_grants.sql", "private_web_roles.sql"]
       .map(file => readFile(`db/roles/${file}`, "utf8")),
     readFile("db/migrations/0093_work_batch_intake.sql", "utf8"),
-    readFile("db/migrations/0094_work_batch_owner_approval.sql", "utf8")]);
+    readFile("db/migrations/0102_work_batch_owner_approval.sql", "utf8")]);
   assert.match(roles, /CREATE ROLE control_room_work_intake NOLOGIN/u);
   assert.match(provision, /CREATE ROLE control_room_work_intake NOLOGIN/u);
   assert.match(provision, /CREATE ROLE control_room_work_intake_agent LOGIN/u);

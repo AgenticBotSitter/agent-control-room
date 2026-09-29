@@ -174,7 +174,7 @@ test("the executable down migration refuses records and removes every owned obje
   const populated = await fixture(); t.after(() => void populated.close());
   await populated.service.submit({ principal: principal(), projectId: "project:test", rawProposal: JSON.stringify(proposal()),
     idempotencyKey: "down-refusal-record-0001", now: NOW });
-  const ownerDown = await readFile("db/down/0094_work_batch_owner_approval.sql", "utf8");
+  const ownerDown = await readFile("db/down/0102_work_batch_owner_approval.sql", "utf8");
   const down = await readFile("db/down/0093_work_batch_intake.sql", "utf8");
   await assert.rejects(populated.raw.exec(ownerDown), /down migration refused/u);
   await populated.raw.exec("ROLLBACK");

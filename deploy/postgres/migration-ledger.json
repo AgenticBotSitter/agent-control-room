@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "digest": "f49fe1687b73d710173ca938f6e474e3ce5ea1cfe34b1e9744150fc28f849de4",
+  "digest": "23c017c215fe99509f3aff91e7f7d0af475a96f1f4422301fad643820f742af2",
   "entries": [
     {
       "file": "db/migrations/0001_control_room_core.sql",
@@ -561,15 +561,15 @@
       "kind": "migrate"
     },
     {
-      "file": "db/migrations/0094_work_batch_owner_approval.sql",
+      "file": "db/migrations/0100_ownership_lease_collision_guard.sql",
       "order": 94,
-      "sha256": "ace4b1ef1ba0643a112fb4ae22b45b1a296e07cf3dd9f119c11704572d48ea2d",
+      "sha256": "a91e629f09bec5f2e2d31bda5ff81a82693b4126c5ae9e5a9ccfa96435cfa9a1",
       "kind": "migrate"
     },
     {
-      "file": "db/migrations/0100_ownership_lease_collision_guard.sql",
+      "file": "db/migrations/0102_work_batch_owner_approval.sql",
       "order": 95,
-      "sha256": "a91e629f09bec5f2e2d31bda5ff81a82693b4126c5ae9e5a9ccfa96435cfa9a1",
+      "sha256": "cf6adc2beb2fea062062c906be5270614ed25d063e8b7b2652b2607a819773c3",
       "kind": "migrate"
     },
     {
