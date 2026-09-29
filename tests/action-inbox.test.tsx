@@ -131,6 +131,22 @@ test("Action Inbox claims empty only after every source succeeds", () => {
   } satisfies ActionInboxState }));
   assert.match(loading, /role="status"/);
   assert.match(loading, /Loading approvals/);
+  // The one state the assertions above cannot reach: the task source has not
+  // finished reading while the canonical source HAS, and is entitled to an
+  // empty answer. `operatorComplete` is true here, so only the task-side
+  // condition stands between this render and a claimed empty inbox. A predicate
+  // that accepted any non-unavailable task state (`!== "unavailable"`) would
+  // read a still-loading source as a read one and claim all-clear over work it
+  // has not looked at.
+  const tasksStillReading = renderToStaticMarkup(createElement(ActionInboxPanel, { data: {
+    tasks: { state: "loading" }, operator: { state: "available",
+      source: { observedAt: now, items: emptySnapshot.actionInbox, truncated: false } },
+  } satisfies ActionInboxState }));
+  assert.doesNotMatch(tasksStillReading, /No actions are waiting in the sources you can access/,
+    "a task source that has not finished reading must never back an empty-inbox claim");
+  assert.doesNotMatch(tasksStillReading, /role="alert"/,
+    "nothing has failed here, so an unfinished read must not be announced as a failure");
+  assert.match(tasksStillReading, /Loading approvals/);
 });
 
 test("later task pages participate in the one attention-first ordering", () => {

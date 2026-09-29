@@ -18,7 +18,7 @@ import { OperatorSurfaceStoreV1 } from "../../operator-surfaces/v1";
  */
 export type MacLocalTaskApplicationV1 = Readonly<{
   operations: MacLocalCanonicalTaskOperationsV1;
-  taskReadKeys?: Pick<NonNullable<MacLocalTaskApplicationInputV1["web"]["tasks"]>, "harnessIntegrityKey" | "results" | "reviews" | "ownerReviews" | "modelCatalog" | "manualVerificationScenarios">
+  taskReadKeys?: Pick<NonNullable<MacLocalTaskApplicationInputV1["web"]["tasks"]>, "harnessIntegrityKey" | "results" | "reviews" | "ownerReviews" | "modelCatalog" | "manualVerificationScenarios" | "usagePriceTable">
     & Pick<WebTaskKeys, "taskPlanIntegrityKey">;
   isReady(): boolean;
   close(): Promise<void>;
@@ -98,7 +98,8 @@ export async function createMacLocalTaskApplicationV1(input: MacLocalTaskApplica
       ...(tasks ? { taskReadKeys: { harnessIntegrityKey: tasks.harnessIntegrityKey,
         taskPlanIntegrityKey: Uint8Array.from(coordinator.planning.integrityKey),
         results: tasks.results, reviews: tasks.reviews, ownerReviews: tasks.ownerReviews,
-        modelCatalog: tasks.modelCatalog, manualVerificationScenarios: tasks.manualVerificationScenarios } } : {}),
+        modelCatalog: tasks.modelCatalog, manualVerificationScenarios: tasks.manualVerificationScenarios,
+        usagePriceTable: tasks.usagePriceTable } } : {}),
       isReady: lifecycle.isReady.bind(lifecycle),
       close: lifecycle.close.bind(lifecycle),
       ...(lifecycle.queueDelivery ? { queueDelivery: lifecycle.queueDelivery } : {}),

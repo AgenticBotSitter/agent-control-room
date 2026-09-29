@@ -472,8 +472,21 @@ test("the real Needs-attention read failure keeps role=alert, and the loading st
       "it must not also be a polite status region");
     // The saved-task inbox on the same page has its own alert, and the two must
     // both be interrupted: a page that quietly swallowed one of them would pass
-    // an assertion on the other.
-    assert.match(failedDocument.body.textContent ?? "", /The saved task database or protected read could not be checked\./);
+    // an assertion on the other. The Action Inbox panel reads two independent
+    // sources, so BOTH of their failure sentences are asserted here, each from
+    // its own role=alert element, rather than one of them being left unchecked.
+    const savedTaskAlerts = [...failedDocument.querySelectorAll('[role="alert"]')]
+      .map(node => node.textContent ?? "")
+      .filter(text => /could not be checked\./.test(text))
+      .sort();
+    assert.equal(savedTaskAlerts.length, 2,
+      `both Action Inbox sources announce their own failed read, not just one: ${JSON.stringify(savedTaskAlerts)}`);
+    assert.match(savedTaskAlerts.find(text => text.startsWith("Saved task attention")) ?? "",
+      /^Saved task attention could not be checked\. No empty inbox or all-clear is inferred\./);
+    assert.match(savedTaskAlerts.find(text => text.startsWith("Saved attention notifications")) ?? "",
+      /^Saved attention notifications could not be checked\. No empty inbox or all-clear is inferred\./);
+    assert.doesNotMatch(failedDocument.body.textContent ?? "", /No actions are waiting in the sources you can access\./,
+      "two failed reads must never be rendered as an empty inbox");
     await act(async () => { failedRoot.unmount(); });
     failed.window.close();
   } finally {
