@@ -15,7 +15,7 @@ import { applyMacGrantDiffV1, desiredMacGrantsV1, diffMacGrantsV1, macGrantCatal
 import { MAC_LOCAL_DATABASE_ROLES_V1, captureMacLocalDatabaseRolesV1 } from
   "../src/web/v1/mac-local-database-roles.ts";
 import { applyMigrations } from "../deploy/postgres/apply-migrations.mjs";
-import { planMacDatabaseUpgradeSnapshotV1, sanitizedMacDatabaseUpgradeFailureV1 } from
+import { parseMacDatabaseLoginCodesV1, planMacDatabaseUpgradeSnapshotV1, sanitizedMacDatabaseUpgradeFailureV1 } from
   "../scripts/mac-local/database-upgrade-remote.mjs";
 
 test("upgrade failure reports only the bounded stage, SQLSTATE and error class", () => {
@@ -144,10 +144,12 @@ test("a database already at main plans exactly the migrations this branch adds b
     ({ filename: entry.file, digest: `sha256:${entry.sha256}`, ledger_order: index + 1 }));
   assert.deepEqual(applied.at(-1), { filename: mainTip[0].file,
     digest: applied.at(-1).digest, ledger_order: onMain.length });
-  const roles = [...Object.keys(macRolePlan), ...Object.values(macRolePlan)].map(rolname => ({ rolname,
-    rolcanlogin: Object.hasOwn(macRolePlan, rolname), rolinherit: true, rolsuper: false, rolcreatedb: false,
+  const { databaseRoleManifestV1: manifest, databaseRoleNamesV1 } =
+    await import("../scripts/mac-local/database-role-manifest.mjs");
+  const roles = databaseRoleNamesV1.map(rolname => ({ rolname,
+    rolcanlogin: Object.hasOwn(manifest.logins, rolname), rolinherit: true, rolsuper: false, rolcreatedb: false,
     rolcreaterole: false, rolreplication: false, rolbypassrls: false }));
-  const memberships = Object.entries(macRolePlan).map(([member, parent]) =>
+  const memberships = Object.entries(manifest.logins).map(([member, { group: parent }]) =>
     ({ member, parent, admin_option: false, inherit_option: true, set_option: true }));
   const plan = await planMacDatabaseUpgradeSnapshotV1({ applied, roles, memberships, defaultAcl: 0, grants: [],
     queue: { schemaExists: true, verified: true } });
@@ -196,8 +198,10 @@ test("prepare and finish preserve old passwords and owner config; only verified 
   const prepared = await prepareMacLocalDatabaseUpgradeV1(options);
   assert.equal(prepared.mainCommit, mainCommit);
   const verifiers = JSON.parse(prepared.verifier);
-  checkedPostgresScramVerifierV1(verifiers.publisher);
-  checkedPostgresScramVerifierV1(verifiers.agentReviewer);
+  assert.deepEqual(Object.keys(verifiers).sort(), ["control_room_agent_reviewer_login", "control_room_publisher"]);
+  checkedPostgresScramVerifierV1(verifiers.control_room_publisher);
+  checkedPostgresScramVerifierV1(verifiers.control_room_agent_reviewer_login);
+  assert.deepEqual(parseMacDatabaseLoginCodesV1(prepared.verifier), verifiers, "the VPS upgrade reads the code as-is");
   assert.deepEqual(await readFile(roleFile), rolesBefore);
   let verified = 0;
   await assert.rejects(finishMacLocalDatabaseUpgradeV1({ ...options, verifyPublisher: async () => {
@@ -253,4 +257,133 @@ test("queue fingerprint ignores which UTC days have queue_stats partitions but n
     definition: "CREATE INDEX queue_stats_20260929_rogue ON control_room_queue.queue_stats_20260929 USING btree (name)" });
   assert.notDeepEqual(normalizeQueueCatalogV1(altered), before);
   assert.equal(normalizeQueueCatalogV1({ namespace: [{ nspname: "control_room_queue" }] }).namespace[0].nspname, "control_room_queue");
+});
+
+test("the role manifest names every role the schema files create or grant to, with no dangerous attribute", async () => {
+  const { databaseRoleManifestV1: manifest, databaseRoleAttributesV1 } =
+    await import("../scripts/mac-local/database-role-manifest.mjs");
+  const logins = Object.keys(manifest.logins), known = new Set([...manifest.groups, ...logins]);
+  assert.equal(known.size, manifest.groups.length + logins.length, "a name is either a group or a login");
+  for (const [login, { group }] of Object.entries(manifest.logins)) assert.ok(manifest.groups.includes(group), login);
+  const named = new Set();
+  for (const file of ["production_provision.sql", "production_roles.sql", "production_table_grants.sql",
+    "private_web_roles.sql", "task_coordinator_roles.sql", "native_queue_producer_roles.sql",
+    "native_results_roles.sql", "local_result_publisher_roles.sql", "native_queue_worker_roles.sql",
+    "agent_reviewer_roles.sql"]) {
+    const text = (await readFile(new URL(`../db/roles/${file}`, import.meta.url), "utf8")).replace(/--[^\n]*/gu, "");
+    for (const match of text.matchAll(/\b(?:CREATE ROLE|TO|FROM|IN ROLE)\s+(control_room_[a-z_]+)\b(?!\.)/gu))
+      named.add(match[1]);
+  }
+  for (const match of (await readFile(new URL("../deploy/postgres/apply-migrations.mjs", import.meta.url), "utf8"))
+    .matchAll(/CREATE ROLE (control_room_[a-z_]+)/gu)) named.add(match[1]);
+  assert.deepEqual([...named].filter(role => !known.has(role)).sort(), []);
+  for (const role of known) {
+    const attributes = databaseRoleAttributesV1(role);
+    assert.match(attributes, /^(?:NO)?LOGIN INHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS$/u);
+    assert.equal(attributes.startsWith("LOGIN"), Object.hasOwn(manifest.logins, role));
+  }
+  assert.throws(() => databaseRoleAttributesV1("control_room_unlisted"), /upgrade_role_catalog_refused/u);
+  assert.deepEqual(logins.filter(login => manifest.logins[login].newLogin).sort(),
+    ["control_room_agent_reviewer_login", "control_room_publisher", "control_room_work_intake_agent"]);
+  assert.deepEqual(manifest.logins.control_room_agent_reviewer_login,
+    { group: "control_room_agent_reviewer", newLogin: true, legacyGroup: null, mac: true });
+  assert.equal(databaseRoleAttributesV1("control_room_agent_reviewer"),
+    "NOLOGIN INHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS");
+});
+
+test("a missing login code is refused in plain words that name only manifest logins", async () => {
+  const { plainMacDatabaseUpgradeRefusalV1 } = await import("../scripts/mac-local/database-upgrade-remote.mjs");
+  const error = new Error("upgrade_new_login_needs_verifier:control_room_publisher,control_room_work_intake_agent");
+  assert.equal(sanitizedMacDatabaseUpgradeFailureV1(error, "plan"),
+    "upgrade_error:upgrade_new_login_needs_verifier stage=plan sqlstate=none class=Error system=none");
+  assert.equal(plainMacDatabaseUpgradeRefusalV1(error), "Refused: this upgrade adds the new database login "
+    + "control_room_publisher and control_room_work_intake_agent, and each needs its login code from the Mac. "
+    + "Nothing was changed. Run the upgrade again with the code on standard input.");
+  assert.equal(plainMacDatabaseUpgradeRefusalV1(new Error("upgrade_new_login_needs_verifier:postgres")), undefined);
+  assert.equal(plainMacDatabaseUpgradeRefusalV1(new Error("upgrade_plan_changed_refused")), undefined);
+});
+
+test("login codes are optional and only manifest logins may receive one", async () => {
+  const { parseMacDatabaseLoginCodesV1 } = await import("../scripts/mac-local/database-upgrade-remote.mjs");
+  const publisher = postgresScramVerifierV1("p".repeat(40)), intake = postgresScramVerifierV1("i".repeat(40));
+  assert.deepEqual(parseMacDatabaseLoginCodesV1(""), {});
+  assert.deepEqual(parseMacDatabaseLoginCodesV1(undefined), {});
+  assert.deepEqual(parseMacDatabaseLoginCodesV1(`${publisher}\n`), { control_room_publisher: publisher });
+  assert.deepEqual(parseMacDatabaseLoginCodesV1(JSON.stringify({ control_room_work_intake_agent: intake })),
+    { control_room_work_intake_agent: intake });
+  for (const refused of [{ control_room_app: publisher }, { postgres: publisher },
+    { control_room_publisher: "SCRAM-SHA-256$4096:bad$bad:bad" }, [publisher]])
+    assert.throws(() => parseMacDatabaseLoginCodesV1(JSON.stringify(refused)),
+      /upgrade_(?:verifier_input|scram_verifier)_refused/u);
+});
+
+test("prepare and finish can run again after the first upgrade without making a new code", async t => {
+  const root = await mkdtemp(join(tmpdir(), "mac-db-upgrade-again-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const config = join(root, "config"), passwords = join(config, "database-passwords");
+  await mkdir(passwords, { recursive: true, mode: 0o700 });
+  const names = { web: "control_room_web", coordinator: "control_room_coordinator", results: "control_room_results",
+    queueWorker: "control_room_queue_worker", publisher: "control_room_publisher",
+    agentReviewer: "control_room_agent_reviewer_login" };
+  const base = { host: "127.0.0.1", port: 15432, database: "control_room", majorVersion: 17 };
+  const roles = { schema: MAC_LOCAL_DATABASE_ROLES_V1 };
+  for (const [key, username] of Object.entries(names)) {
+    roles[key] = { ...base, username, password: `${key}`.padEnd(41, "k") };
+    await writeFile(join(passwords, `${username}.txt`), `${roles[key].password}\n`, { mode: 0o600 });
+  }
+  await writeFile(join(config, "mac-local.json"), JSON.stringify(captureProvisionedMacLocalConfigurationV1({
+    database: roles.web, ownerCode: "owner-code", workers: [
+      { workerId: "worker:codex:mac-1", kind: "codex", executablePath: "/opt/codex", recordedVersion: "codex 1.2.3" },
+    ] })), { mode: 0o600 });
+  const roleFile = join(config, "database-roles.json");
+  await writeFile(roleFile, JSON.stringify(roles), { mode: 0o600 });
+  const before = await readFile(roleFile), options = { protectedRoot: root, mainCommit: "d".repeat(40) };
+  const prepared = await prepareMacLocalDatabaseUpgradeV1(options);
+  assert.deepEqual(prepared, { mainCommit: options.mainCommit, nothingToPrepare: true });
+  assert.deepEqual(await finishMacLocalDatabaseUpgradeV1({ ...options,
+    verifyPublisher: async () => { throw new Error("nothing new to verify"); } }),
+  { finished: true, mainCommit: options.mainCommit, nothingToFinish: true });
+  await writeFile(join(config, "database-upgrade-prepare.json"), JSON.stringify({
+    schema: "control-room.mac-database-upgrade-prepare/v1", mainCommit: "e".repeat(40),
+    salt: Buffer.alloc(16, 1).toString("base64"), verifierDigest: "f".repeat(64) }), { mode: 0o600 });
+  assert.deepEqual(await finishMacLocalDatabaseUpgradeV1({ ...options,
+    verifyPublisher: async () => { throw new Error("nothing new to verify"); } }),
+  { finished: true, mainCommit: options.mainCommit, nothingToFinish: true }, "the first upgrade's record is not redone");
+  assert.deepEqual(await readFile(roleFile), before);
+});
+
+test("an installation that already has the publisher gets a code for the reviewer login only", async t => {
+  const root = await mkdtemp(join(tmpdir(), "mac-db-upgrade-reviewer-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const config = join(root, "config"), passwords = join(config, "database-passwords");
+  await mkdir(passwords, { recursive: true, mode: 0o700 });
+  const names = { web: "control_room_web", coordinator: "control_room_coordinator", results: "control_room_results",
+    queueWorker: "control_room_queue_worker", publisher: "control_room_publisher" };
+  const base = { host: "127.0.0.1", port: 15432, database: "control_room", majorVersion: 17 };
+  const roles = { schema: MAC_LOCAL_DATABASE_ROLES_V1 };
+  for (const [key, username] of Object.entries(names)) {
+    roles[key] = { ...base, username, password: `${key}`.padEnd(41, "k") };
+    await writeFile(join(passwords, `${username}.txt`), `${roles[key].password}\n`, { mode: 0o600 });
+  }
+  await writeFile(join(config, "mac-local.json"), JSON.stringify(captureProvisionedMacLocalConfigurationV1({
+    database: roles.web, ownerCode: "owner-code", workers: [
+      { workerId: "worker:codex:mac-1", kind: "codex", executablePath: "/opt/codex", recordedVersion: "codex 1.2.3" },
+    ] })), { mode: 0o600 });
+  const roleFile = join(config, "database-roles.json");
+  await writeFile(roleFile, JSON.stringify(roles), { mode: 0o600 });
+  const options = { protectedRoot: root, mainCommit: "d".repeat(40) };
+  const prepared = await prepareMacLocalDatabaseUpgradeV1(options);
+  const codes = parseMacDatabaseLoginCodesV1(prepared.verifier);
+  assert.deepEqual(Object.keys(codes), ["control_room_agent_reviewer_login"]);
+  const publisherVerified = [];
+  await finishMacLocalDatabaseUpgradeV1({ ...options,
+    verifyPublisher: async publisher => { publisherVerified.push(publisher.username); },
+    verifyAgentReviewer: async reviewer => { assert.equal(reviewer.username, "control_room_agent_reviewer_login"); } });
+  assert.deepEqual(publisherVerified, [], "the existing publisher login is not re-verified or changed");
+  const changed = captureMacLocalDatabaseRolesV1(JSON.parse(await readFile(roleFile, "utf8")));
+  assert.deepEqual(changed.publisher, roles.publisher);
+  assert.equal(changed.agentReviewer.password,
+    (await readFile(join(passwords, "control_room_agent_reviewer_login.txt"), "utf8")).trim());
+  assert.deepEqual(await prepareMacLocalDatabaseUpgradeV1({ ...options, mainCommit: "e".repeat(40) }),
+    { mainCommit: "e".repeat(40), nothingToPrepare: true });
 });

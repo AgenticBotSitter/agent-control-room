@@ -172,7 +172,27 @@ InstallationPlanJournalStorageSessionFactoryV1 = async request => {
       const name = safeName(nameValue), current = await statEntry(name);
       if (!current) { if (allowMissing) return; return unavailable(); }
       if (!sameIdentity(current.identity, expectedIdentity) || current.kind !== "file" || !current.canonical) {
-        if (allowMissing && !await statEntry(name)) return;
+        // The entry is present but is not the one the caller created. A caller
+        // may only ask for this removal when it is already entitled to treat a
+        // foreign entry as a benign outcome -- `allowMissing`, used exclusively
+        // to retire THIS writer's own already-superseded artifact (a temp it
+        // replaced, or a witness whose publication it no longer needs). In
+        // that case the correct action is to leave the foreign entry strictly
+        // alone: removing it would destroy evidence belonging to another
+        // writer, which is exactly what refusing a foreign unlink prevents.
+        //
+        // The identity may also have changed since the caller last looked,
+        // because a concurrent writer can create and retire entries under the
+        // same name. Re-reading it here -- after the caller's decision, at the
+        // point where the identity actually matters -- distinguishes "the
+        // entry we were asked about has since gone" (benign, the caller's
+        // artifact is already retired) from "a different entry is there now"
+        // (also benign for an entitled caller, and likewise left alone).
+        //
+        // Either way the caller's own artifact is already gone or already
+        // superseded, so the retirement is complete and the foreign entry is
+        // left for `recoverPublishedRevision` to converge on a later read.
+        if (allowMissing) return;
         return unavailable();
       }
       await verifyRoot();

@@ -1,22 +1,17 @@
 /** Exact direct ACL comparison for the six Mac-local database logins.
  * This is an offline installer component, never imported by the task host. */
 import { readFile } from "node:fs/promises";
+import { databaseRoleManifestV1 } from "./database-role-manifest.mjs";
 
-export const macRolePlan = Object.freeze({
-  control_room_web: "control_room_private_web",
-  control_room_coordinator: "control_room_task_coordinator",
-  control_room_results: "control_room_native_results",
-  control_room_publisher: "control_room_local_result_publisher",
-  control_room_agent_reviewer_login: "control_room_agent_reviewer",
-  control_room_queue_worker: "control_room_native_queue_worker",
-});
+export const macRolePlan = Object.freeze(Object.fromEntries(Object.entries(databaseRoleManifestV1.logins)
+  .filter(([, entry]) => entry.mac).map(([login, entry]) => [login, entry.group])));
 
 const roleFiles = Object.freeze([
   "private_web_roles.sql", "task_coordinator_roles.sql", "native_queue_producer_roles.sql",
   "native_results_roles.sql", "local_result_publisher_roles.sql", "native_queue_worker_roles.sql",
   "agent_reviewer_roles.sql",
 ]);
-const groups = new Set([...Object.values(macRolePlan), "control_room_agent_reviewer"]);
+const groups = new Set(Object.values(macRolePlan));
 const identifier = /^[a-z][a-z0-9_]*$/u;
 const privilege = new Set(["SELECT", "INSERT", "UPDATE", "DELETE", "TRUNCATE", "REFERENCES", "TRIGGER", "USAGE", "EXECUTE"]);
 const workIntakeIdentityFunction = "public.is_work_intake_session()";
@@ -135,7 +130,7 @@ CROSS JOIN LATERAL aclexplode(p.proacl) a
 JOIN pg_roles r ON r.oid=a.grantee WHERE r.rolname = ANY($1::text[])`;
 
 export async function readMacGrantCatalogV1(client) {
-  const principals = [...Object.keys(macRolePlan), ...Object.values(macRolePlan), "control_room_agent_reviewer"];
+  const principals = [...Object.keys(macRolePlan), ...Object.values(macRolePlan)];
   const rows = (await client.query(macGrantCatalogSqlV1, [principals])).rows;
   return macGrantRowsToSetV1(rows);
 }
