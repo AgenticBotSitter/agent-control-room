@@ -33,7 +33,7 @@ type StageRow = { stage_ordinal: number | string; stage_kind: "build" | "check" 
   worker_kind: "codex" | "claude-code" | "hermes"; node_id: string; selection_key: string; model: string;
   effort: "default" | "low" | "medium" | "high" | "xhigh" | "max"; provider: string | null; profile: string | null;
   current_attempt_id: string | null; current_lease_id: string | null; state: string; max_loops: number;
-  allowed_paths: unknown | null; maximum_changed_files: number | null; maximum_changed_bytes: number | null;
+  allowed_paths: unknown | null; maximum_changed_files: number | string | null; maximum_changed_bytes: number | string | null;
   handoff_from_result_digest: string | null; signoff_review_id: string | null; started_at: string | Date | null;
   finished_at: string | Date | null; record_digest: string; auth_tag: string; version: number };
 type BuildPublicationRow = { project_id: string; pipeline_run_id: string; stage_ordinal: number; job_id: string;
@@ -49,6 +49,11 @@ function joined(tx: DatabaseSession): DatabaseClient {
     } });
 }
 const iso = (value: string | Date) => new Date(value).toISOString();
+// The bound columns are bigint, which the driver returns as text.
+const storedWritePolicy = (row: Pick<StageRow, "allowed_paths" | "maximum_changed_files" | "maximum_changed_bytes">) =>
+  ({ allowedPaths: row.allowed_paths,
+    maximumChangedFiles: row.maximum_changed_files === null ? null : Number(row.maximum_changed_files),
+    maximumChangedBytes: row.maximum_changed_bytes === null ? null : Number(row.maximum_changed_bytes) });
 const same = (left: string, right: string) => { const a = Buffer.from(left), b = Buffer.from(right);
   return a.length === b.length && timingSafeEqual(a, b); };
 
@@ -76,6 +81,12 @@ export class LinearPipelineServiceV1 {
     this.#authority = new WebSessionAuthority(db, scope, clock, "pipeline");
   }
 
+  // These reads take no row lock: FOR SHARE needs UPDATE on every locked
+  // table, and the coordinator login that runs them holds none on the stage,
+  // run, execution-plan or model-selection rows. The stage row is HMAC-verified
+  // and its write bound is immutable in the database, the accepted-result proof
+  // is re-read in the same transaction, and the publication insert's own
+  // foreign key locks the stage key it records.
   async createBuildPublicationAuthority(deliveryValue: unknown) {
     if (!this.selection?.acceptedResultProof || !this.repositories) throw new Error("pipeline_build_publication_unavailable");
     const delivery = controllerWorkerDeliverySchemaV1.parse(deliveryValue), identity = delivery.identity;
@@ -99,12 +110,11 @@ export class LinearPipelineServiceV1 {
           AND selected.model=stage.model AND selected.effort=stage.effort
           AND selected.provider IS NOT DISTINCT FROM stage.provider AND selected.profile IS NOT DISTINCT FROM stage.profile
         WHERE stage.tenant_id=$1 AND stage.project_id=$2 AND execution.job_id=$3 AND harness.id=$4
-          AND harness.attempt_id=$5 AND harness.node_id=$6 AND stage.stage_kind='build' AND stage.role='builder' FOR SHARE`,
+          AND harness.attempt_id=$5 AND harness.node_id=$6 AND stage.stage_kind='build' AND stage.role='builder'`,
       [this.scope.tenantId, identity.projectId, identity.jobId, identity.runId, identity.attemptId, identity.nodeId])).rows[0];
       if (!row || row.worker_id !== delivery.worker.workerId || row.node_id !== identity.nodeId) throw new Error("pipeline_build_publication_unavailable");
       this.#verifyStage(row);
-      const policy = pipelineBuildWritePolicySchemaV1.safeParse({ allowedPaths: row.allowed_paths,
-        maximumChangedFiles: row.maximum_changed_files, maximumChangedBytes: row.maximum_changed_bytes });
+      const policy = pipelineBuildWritePolicySchemaV1.safeParse(storedWritePolicy(row));
       if (!policy.success) throw new Error("pipeline_build_publication_unavailable");
       const proof = await this.selection!.acceptedResultProof!(tx, { sourceJobId: row.current_job_id,
         workerId: row.worker_id, nodeId: row.node_id });
@@ -166,13 +176,12 @@ export class LinearPipelineServiceV1 {
           AND selected.model=stage.model AND selected.effort=stage.effort
           AND selected.provider IS NOT DISTINCT FROM stage.provider AND selected.profile IS NOT DISTINCT FROM stage.profile
         WHERE stage.tenant_id=$1 AND stage.project_id=$2 AND stage.pipeline_run_id=$3
-          AND stage.stage_ordinal=$7 AND stage.stage_kind='build' AND stage.role='builder' FOR SHARE`,
+          AND stage.stage_ordinal=$7 AND stage.stage_kind='build' AND stage.role='builder'`,
       [this.scope.tenantId, snapshot.projectId, snapshot.pipelineRunId, snapshot.executionJobId,
         snapshot.attemptId, snapshot.runId, snapshot.stageOrdinal])).rows[0];
       if (!row) throw new Error("pipeline_build_publication_unavailable");
       this.#verifyStage(row);
-      const policy = pipelineBuildWritePolicySchemaV1.safeParse({ allowedPaths: row.allowed_paths,
-        maximumChangedFiles: row.maximum_changed_files, maximumChangedBytes: row.maximum_changed_bytes });
+      const policy = pipelineBuildWritePolicySchemaV1.safeParse(storedWritePolicy(row));
       const proof = await this.selection!.acceptedResultProof!(tx, { sourceJobId: row.current_job_id,
         workerId: row.worker_id, nodeId: row.node_id });
       const repository = await this.repositories!.resolve(tx, { ...this.scope, projectId: row.project_id });
@@ -212,8 +221,7 @@ export class LinearPipelineServiceV1 {
             AND selected.project_id=stage.project_id AND selected.job_id=$5
             AND selected.worker_kind=stage.worker_kind AND selected.selection_key=stage.selection_key
             AND selected.model=stage.model AND selected.effort=stage.effort
-            AND selected.provider IS NOT DISTINCT FROM stage.provider AND selected.profile IS NOT DISTINCT FROM stage.profile)
-          FOR SHARE OF stage`,
+            AND selected.provider IS NOT DISTINCT FROM stage.provider AND selected.profile IS NOT DISTINCT FROM stage.profile)`,
       [this.scope.tenantId, snapshot.projectId, snapshot.pipelineRunId, snapshot.stageOrdinal,
         snapshot.executionJobId])).rows[0];
       if (!stage) throw new Error("pipeline_build_publication_unavailable");
@@ -237,7 +245,7 @@ export class LinearPipelineServiceV1 {
       const authTag = hmacSha256Tag(this.#publicationAuthorityKey, { purpose: "pipeline-build-publication-record/v1", record });
       const inserted = await tx.query(`INSERT INTO control_pipeline_build_publications(tenant_id,project_id,pipeline_run_id,
         stage_ordinal,job_id,attempt_id,harness_run_id,artifact_id,result_revision,delivery_digest,retained_result_digest,
-        plan_digest,evidence_digest,evidence,auth_tag,recorded_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13::jsonb,$14,$15)
+        plan_digest,evidence_digest,evidence,auth_tag,recorded_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14::jsonb,$15,$16)
         ON CONFLICT (tenant_id,pipeline_run_id,stage_ordinal) DO NOTHING RETURNING evidence_digest`,
       [record.tenantId, record.projectId, record.pipelineRunId, record.stageOrdinal, record.jobId, record.attemptId,
         record.harnessRunId, record.artifactId, record.resultRevision, record.deliveryDigest, record.retainedResultDigest,
@@ -303,8 +311,7 @@ export class LinearPipelineServiceV1 {
   }
   #stageMaterial(row: StageRow) {
     const policy = row.stage_kind === "build" && row.allowed_paths !== null
-      ? pipelineBuildWritePolicySchemaV1.parse({ allowedPaths: row.allowed_paths,
-        maximumChangedFiles: row.maximum_changed_files, maximumChangedBytes: row.maximum_changed_bytes }) : null;
+      ? pipelineBuildWritePolicySchemaV1.parse(storedWritePolicy(row)) : null;
     return { id: `${row.pipeline_run_id}:stage:${Number(row.stage_ordinal)}`, tenantId: this.scope.tenantId,
       projectId: row.project_id, pipelineRunId: row.pipeline_run_id, stageOrdinal: Number(row.stage_ordinal),
       stageKind: row.stage_kind, role: row.role, workerId: row.worker_id, workerKind: row.worker_kind,

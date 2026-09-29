@@ -15,10 +15,11 @@ export async function verifyPrivateIdeaAdapter(db: DatabaseClient, scope: { tena
   if (rows.length !== 1 || rows[0].valid !== true) throw new Error("private_idea_adapter_unavailable");
 }
 
-// Generated from public migrations 0001-0106 (filename order: ...0093,0100,0101,0102,0104,0105,0106),
-// including generic external-content migrations 0025/0026. Catalog query below;
+// Generated from public migrations 0001-0108 (filename order: ...0093,0100,0101,0102,0104,0105,0106,0108),
+// including generic external-content migrations 0025/0026, read from a live
+// PostgreSQL 17 cluster installed the production way. Catalog query below;
 // not a mutable database marker.
-export const privateWebSchemaDigest = "98eeb7124b3e25a606120f69418a91d9fb3f89a72c0008a946bcaeca3f3dd7c9";
+export const privateWebSchemaDigest = "f7f8dafce4b93f1b97bfeab0a56dbdf0cec5723b13b86ce72c7d4987c1212316";
 export const privateWebReadTables = ["control_identities", "control_role_grants", "workspaces", "control_web_sessions",
   "tenants", "control_idempotency",
   "control_schedules", "control_schedule_occurrences",

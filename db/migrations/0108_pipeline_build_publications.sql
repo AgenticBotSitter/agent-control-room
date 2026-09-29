@@ -1,9 +1,12 @@
 -- S6: immutable build-stage write bounds and canonical pull-request evidence.
 -- These records grant no merge, retry, completion, approval, or execution authority.
 
+SET LOCAL lock_timeout = '1s';
+SET LOCAL statement_timeout = '5s';
+
 ALTER TABLE pipeline_stage_runs ADD COLUMN allowed_paths jsonb;
-ALTER TABLE pipeline_stage_runs ADD COLUMN maximum_changed_files integer;
-ALTER TABLE pipeline_stage_runs ADD COLUMN maximum_changed_bytes integer;
+ALTER TABLE pipeline_stage_runs ADD COLUMN maximum_changed_files bigint;
+ALTER TABLE pipeline_stage_runs ADD COLUMN maximum_changed_bytes bigint;
 ALTER TABLE pipeline_stage_runs ADD CONSTRAINT ck_pipeline_stage_build_policy CHECK (
   (stage_kind='build' AND jsonb_typeof(allowed_paths)='array'
     AND jsonb_array_length(allowed_paths) BETWEEN 1 AND 100
@@ -12,18 +15,22 @@ ALTER TABLE pipeline_stage_runs ADD CONSTRAINT ck_pipeline_stage_build_policy CH
   OR (stage_kind='build' AND allowed_paths IS NULL
     AND maximum_changed_files IS NULL AND maximum_changed_bytes IS NULL)
   OR (stage_kind<>'build' AND allowed_paths IS NULL
-    AND maximum_changed_files IS NULL AND maximum_changed_bytes IS NULL));
+    AND maximum_changed_files IS NULL AND maximum_changed_bytes IS NULL)) NOT VALID;
+-- NOT VALID, as 0105 does: the three columns are added above and are NULL on
+-- every existing row, which satisfies the constraint, and PostgreSQL enforces
+-- it on every row inserted or updated from here on. Validating here would hold
+-- ACCESS EXCLUSIVE on pipeline_stage_runs for a full-table scan.
 
 CREATE TABLE control_pipeline_build_publications (
   tenant_id text NOT NULL,
   project_id text NOT NULL,
   pipeline_run_id text NOT NULL,
-  stage_ordinal integer NOT NULL CHECK(stage_ordinal>=0),
+  stage_ordinal bigint NOT NULL CHECK(stage_ordinal>=0),
   job_id text NOT NULL,
   attempt_id text NOT NULL,
   harness_run_id text NOT NULL,
   artifact_id text NOT NULL,
-  result_revision integer NOT NULL CHECK(result_revision>0),
+  result_revision bigint NOT NULL CHECK(result_revision>0),
   delivery_digest text NOT NULL CHECK(delivery_digest ~ '^sha256:[a-f0-9]{64}$'),
   retained_result_digest text NOT NULL CHECK(retained_result_digest ~ '^sha256:[a-f0-9]{64}$'),
   plan_digest text NOT NULL CHECK(plan_digest ~ '^sha256:[a-f0-9]{64}$'),
@@ -54,6 +61,19 @@ CREATE TRIGGER control_pipeline_build_publications_immutable BEFORE UPDATE OR DE
   ON public.control_pipeline_build_publications FOR EACH ROW EXECUTE FUNCTION public.reject_append_only_mutation();
 CREATE TRIGGER control_pipeline_build_publications_no_truncate BEFORE TRUNCATE
   ON public.control_pipeline_build_publications FOR EACH STATEMENT EXECUTE FUNCTION public.reject_append_only_mutation();
+
+-- No shared login is granted this table. If one ever is, the work-intake
+-- session must still see and write only its bound tenant, as 0104 confines the
+-- queue tables. Every other role keeps its grants.
+ALTER TABLE control_pipeline_build_publications ENABLE ROW LEVEL SECURITY;
+CREATE POLICY control_pipeline_build_publications_existing_access ON control_pipeline_build_publications
+  AS PERMISSIVE FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY control_pipeline_build_publications_work_intake_scope ON control_pipeline_build_publications
+  AS RESTRICTIVE FOR ALL
+  USING (NOT public.is_work_intake_session() OR
+    control_pipeline_build_publications.tenant_id=(SELECT b.tenant_id FROM public.work_intake_tenant_binding b))
+  WITH CHECK (NOT public.is_work_intake_session() OR
+    control_pipeline_build_publications.tenant_id=(SELECT b.tenant_id FROM public.work_intake_tenant_binding b));
 
 CREATE OR REPLACE FUNCTION guard_pipeline_stage_run_write() RETURNS trigger
 LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $$

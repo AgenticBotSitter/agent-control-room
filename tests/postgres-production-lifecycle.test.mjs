@@ -29,6 +29,9 @@ import { WorkBatchStoreV1 } from "../src/work-intake/v1/store.ts";
 import { WorkBatchOwnerServiceV1 } from "../src/work-intake/v1/owner-service.ts";
 import { workBatchProposalDigestV1 } from "../src/work-intake/v1/digest.ts";
 import { sha256Digest } from "../src/security/canonical-digest.ts";
+import { hmacSha256Tag } from "../src/security/digest.ts";
+import { createControllerWorkerDeliveryV1 } from "../src/harness/v1/controller-worker-delivery.ts";
+import { derivePipelineBuildPublicationEvidenceKeyV1 } from "../src/pipelines/v1/build-publication-authority.ts";
 import { InMemoryRollbackCheckpointStoreV1 } from "../src/security/rollback-checkpoint.ts";
 import { SecurityStore } from "../src/security/security-store.ts";
 import { LinearPipelineServiceV1 } from "../src/pipelines/v1/index.ts";
@@ -242,11 +245,16 @@ const PIPELINE_GRANTS = "REVOKE ALL ON pipeline_templates, pipeline_runs, pipeli
   + "  control_room_github_broker, control_room_work_intake;\n";
 const AGENT_REVIEW_GRANTS = "REVOKE ALL ON control_agent_review_plans FROM control_room_application, control_room_reader,\n"
   + "  control_room_schedule_admissions, control_room_github_broker, control_room_work_intake;\n";
+const PUBLICATION_GRANTS = "REVOKE ALL ON control_pipeline_build_publications\n"
+  + "  FROM control_room_application, control_room_reader, control_room_schedule_admissions,\n"
+  + "  control_room_github_broker, control_room_work_intake;\n";
 const QUEUE_GRANTS = ", work_batch_queue_admissions,\n  work_batch_effective_queue_admissions, work_batch_agent_queue_heads";
 const SHARED_LOGINS = ["control_room_work_intake", "control_room_work_intake_agent", "control_room_reader",
   "control_room_application", "control_room_schedule_admissions", "control_room_github_broker"];
 
-async function upgradeFromAppliedPrefix({ database, pending, withoutGrants, newObjects }) {
+// Stages an older release's root: every migration except the pending suffix,
+// and this head's grants file without the pending objects' grants.
+async function stageAppliedPrefix({ pending, withoutGrants }) {
   const stage = await mkdtemp(join(tmpdir(), "cr-pg63prefix-"));
   try {
     for (const dir of ["deploy/postgres", "db/migrations", "db/roles", "db/setup"])
@@ -279,7 +287,16 @@ async function upgradeFromAppliedPrefix({ database, pending, withoutGrants, newO
     const entries = await collectLedgerEntries(stage);
     const ledgerPath = join(stage, "deploy/postgres/migration-ledger.json");
     await writeFile(ledgerPath, JSON.stringify({ version: 1, digest: ledgerDigest(entries), entries }));
+    return { stage, ledgerPath, applied, suffix };
+  } catch (error) {
+    await rm(stage, { recursive: true, force: true });
+    throw error;
+  }
+}
 
+async function upgradeFromAppliedPrefix({ database, pending, withoutGrants, newObjects }) {
+  const { stage, ledgerPath, applied, suffix } = await stageAppliedPrefix({ pending, withoutGrants });
+  try {
     await freshDatabase(database);
     const db = target(database);
     const before = await applyMigrations({ target: db, bootstrapTarget: bootstrapTarget(database),
@@ -321,27 +338,38 @@ async function upgradeFromAppliedPrefix({ database, pending, withoutGrants, newO
 }
 
 // A database already at S2 (S1 0093, 0100, 0101 and S2 0102 applied) takes
-// S3's queue migration, S4's pipeline migration and S5's agent-review
-// migration, in that order.
-test("upgrade from S2's applied ledger appends only the agent-queue, pipeline and agent-review migrations", needsPg, () =>
+// S3's queue migration, S4's pipeline migration, S5's agent-review migration
+// and S6's build-publication migration, in that order.
+test("upgrade from S2's applied ledger appends only the agent-queue, pipeline, agent-review and build-publication migrations", needsPg, () =>
   upgradeFromAppliedPrefix({ database: "cr_prod_upgrade_s2",
-    pending: ["_work_batch_agent_queue.sql", "_linear_pipeline_runs.sql", "_agent_review_plans.sql"],
-    withoutGrants: [QUEUE_GRANTS, PIPELINE_GRANTS, AGENT_REVIEW_GRANTS],
+    pending: ["_work_batch_agent_queue.sql", "_linear_pipeline_runs.sql", "_agent_review_plans.sql",
+      "_pipeline_build_publications.sql"],
+    withoutGrants: [QUEUE_GRANTS, PIPELINE_GRANTS, AGENT_REVIEW_GRANTS, PUBLICATION_GRANTS],
     newObjects: ["work_batch_queue_admissions", "work_batch_agent_queue_heads", "work_batch_effective_queue_admissions",
-      "pipeline_templates", "pipeline_runs", "pipeline_stage_runs", "pipeline_ordered_stage_runs", "control_agent_review_plans"] }));
+      "pipeline_templates", "pipeline_runs", "pipeline_stage_runs", "pipeline_ordered_stage_runs", "control_agent_review_plans",
+      "control_pipeline_build_publications"] }));
 
-// A database at main (S3's 0104 applied) takes S4's 0105, then S5's 0106.
-test("upgrade from main's applied ledger appends only the pipeline and agent-review migrations", needsPg, () =>
+// A database at main (S3's 0104 applied) takes S4's 0105, S5's 0106, then S6's 0108.
+test("upgrade from main's applied ledger appends only the pipeline, agent-review and build-publication migrations", needsPg, () =>
   upgradeFromAppliedPrefix({ database: "cr_prod_upgrade_main",
-    pending: ["_linear_pipeline_runs.sql", "_agent_review_plans.sql"], withoutGrants: [PIPELINE_GRANTS, AGENT_REVIEW_GRANTS],
+    pending: ["_linear_pipeline_runs.sql", "_agent_review_plans.sql", "_pipeline_build_publications.sql"],
+    withoutGrants: [PIPELINE_GRANTS, AGENT_REVIEW_GRANTS, PUBLICATION_GRANTS],
     newObjects: ["pipeline_templates", "pipeline_runs", "pipeline_stage_runs", "pipeline_ordered_stage_runs",
-      "control_agent_review_plans"] }));
+      "control_agent_review_plans", "control_pipeline_build_publications"] }));
 
-// A database at main plus S4 (0105 applied) takes only S5's 0106.
-test("upgrade from main plus S4's applied ledger appends only the agent-review migration", needsPg, () =>
+// A database at main plus S4 (0105 applied) takes S5's 0106, then S6's 0108.
+test("upgrade from main plus S4's applied ledger appends only the agent-review and build-publication migrations", needsPg, () =>
   upgradeFromAppliedPrefix({ database: "cr_prod_upgrade_s4",
-    pending: ["_agent_review_plans.sql"], withoutGrants: [AGENT_REVIEW_GRANTS],
-    newObjects: ["control_agent_review_plans"] }));
+    pending: ["_agent_review_plans.sql", "_pipeline_build_publications.sql"],
+    withoutGrants: [AGENT_REVIEW_GRANTS, PUBLICATION_GRANTS],
+    newObjects: ["control_agent_review_plans", "control_pipeline_build_publications"] }));
+
+// A database at main plus S4 and S5 (0106 applied) takes only S6's 0108: no
+// duplicate ledger_order, and a second run is a clean no-op.
+test("upgrade from main plus S4 and S5's applied ledger appends only the build-publication migration", needsPg, () =>
+  upgradeFromAppliedPrefix({ database: "cr_prod_upgrade_s5",
+    pending: ["_pipeline_build_publications.sql"], withoutGrants: [PUBLICATION_GRANTS],
+    newObjects: ["control_pipeline_build_publications"] }));
 
 test("tampered history fails closed: altered, deleted-row and forged-digest states", needsPg, async () => {
   await freshDatabase("cr_prod_tamper");
@@ -742,6 +770,137 @@ test("S5 agent-review reads and writes run on the Mac-local production logins", 
     }
   }));
 
+// The build stage's retained execution: the attempt, harness run, verified
+// artifact and canonical Codex result that the Completion Gate accepted.
+async function seedBuildExecution(client,own,suffix,at){
+  const tenantId=own.tenantId, projectId=own.project.projectId, jobId=own.pipeline.jobIds[0];
+  const nodeId=`node:build:${suffix}`, workerId=`worker:build:${suffix}`, attemptId=`attempt:build-${suffix}`;
+  const runId=`run:build-${suffix}`, artifactId=`artifact:build-${suffix}`, contentHash=own.targetRecord.subjectDigest;
+  await client.query(`INSERT INTO control_nodes(id,tenant_id,state,version,identity_key_id,payload,created_at,updated_at)
+    VALUES($1,$2,'active',1,'key:build',$3::jsonb,$4,$4)`,
+  [nodeId,tenantId,JSON.stringify({id:nodeId,tenantId,state:"active",version:1,identityKeyId:"key:build"}),at]);
+  await client.query(`INSERT INTO control_attempts(id,tenant_id,job_id,attempt_number,state,version,worker_id,node_id,lease_epoch,payload,created_at,updated_at)
+    VALUES($1,$2,$3,1,'succeeded',1,$4,$5,1,$6::jsonb,$7,$7)`,
+  [attemptId,tenantId,jobId,workerId,nodeId,JSON.stringify({id:attemptId,tenantId,state:"succeeded",version:1,jobId,
+    attemptNumber:1,workerId,nodeId,leaseEpoch:1}),at]);
+  await client.query(`INSERT INTO control_harness_runs(id,tenant_id,project_id,job_id,attempt_id,node_id,adapter_id,harness,
+    native_session_key_digest,parent_run_id,revision_of_run_id,state,last_sequence,run_digest,run_auth_tag,payload,created_at,updated_at,last_observed_at)
+    VALUES($1,$2,$3,$4,$5,$6,'connector:codex-owner-trusted-local-v1','codex',$7,NULL,NULL,'succeeded',1,$8,$9,'{}'::jsonb,$10,$10,$10)`,
+  [runId,tenantId,projectId,jobId,attemptId,nodeId,`sha256:${"4".repeat(64)}`,`sha256:${"5".repeat(64)}`,
+    `hmac-sha256:${"6".repeat(64)}`,at]);
+  await client.query(`INSERT INTO control_artifact_manifests(id,tenant_id,project_id,workflow_id,job_id,attempt_id,content_hash,
+    state,version,payload,created_at,updated_at) VALUES($1,$2,$3,NULL,$4,$5,$6,'verified',1,$7::jsonb,$8,$8)`,
+  [artifactId,tenantId,projectId,jobId,attemptId,contentHash,JSON.stringify({id:artifactId,tenantId,state:"verified",
+    version:1,projectId,jobId,attemptId,contentHash}),at]);
+  await client.query(`INSERT INTO control_native_artifact_receipts(tenant_id,project_id,job_id,attempt_id,run_id,artifact_id,
+    receipt,auth_tag) VALUES($1,$2,$3,$4,$5,$6,'{}'::jsonb,$7)`,
+  [tenantId,projectId,jobId,attemptId,runId,artifactId,`hmac-sha256:${"7".repeat(64)}`]);
+  const publicationId=`publication:build-${suffix}`, recordDigest=sha256Digest(`canonical ${suffix}`);
+  await client.query(`INSERT INTO control_codex_result_publications(tenant_id,project_id,job_id,attempt_id,run_id,publication_id,
+    record_digest,record,auth_tag,recorded_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9,$10)`,
+  [tenantId,projectId,jobId,attemptId,runId,publicationId,recordDigest,JSON.stringify({
+    schema:"control-room.codex-canonical-result-record/v1",recordDigest,
+    publication:{publicationId,identity:{tenantId,projectId,jobId,attemptId,runId}}}),`hmac-sha256:${"8".repeat(64)}`,at]);
+  return {jobId,nodeId,workerId,attemptId,runId,artifactId,contentHash};
+}
+
+// A worker-custody plan and evidence pair for one retained build, signed with
+// the evidence key exactly as createPullRequestPublisherV1 signs it.
+function signedBuildPublication(key,{snapshot,deliveryDigest,modelSelection,commitDigest,url}){
+  const planMaterial={schema:"control-room.pull-request-publication-plan/v1",deliveryDigest,
+    worktreeLeaseDigest:sha256Digest("lease"),worktreeAuditPlanDigest:sha256Digest("audit plan"),
+    worktreeAuditEvidenceDigest:sha256Digest("audit evidence"),commitDigest,repositoryUrl:snapshot.repositoryUrl,
+    modelSelection,retainedResultDigest:snapshot.retainedResultDigest,
+    publicationContentDigest:sha256Digest({title:snapshot.title,body:snapshot.body}),
+    authoritySnapshotDigest:snapshot.snapshotDigest};
+  const signedPlan={...planMaterial,planDigest:sha256Digest(planMaterial)};
+  const plan={...signedPlan,authenticationTag:hmacSha256Tag(key,{purpose:"pull-request-publication-plan/v1",value:signedPlan})};
+  const evidenceMaterial={schema:"control-room.pull-request-publication-evidence/v1",planDigest:plan.planDigest,
+    deliveryDigest,worktreeAuditEvidenceDigest:plan.worktreeAuditEvidenceDigest,
+    retainedResultDigest:plan.retainedResultDigest,url,commitDigest,modelSelection,usage:"unknown"};
+  const evidenceDigest=sha256Digest(evidenceMaterial);
+  const evidence={...evidenceMaterial,evidenceDigest,authenticationTag:hmacSha256Tag(key,
+    {purpose:"pull-request-publication-evidence/v1",value:{...evidenceMaterial,evidenceDigest}})};
+  return {plan,evidence};
+}
+
+// Every S6 statement runs on the Mac-local login that executes it in
+// production: private-task-application.ts builds the publication controller
+// on the coordinator pool, and private-process.ts builds the run view on the
+// web pool. The retained record then stays out of the shared intake login.
+test("S6 build publication runs on the Mac-local production logins and stays tenant-bound", needsPg, () =>
+  withMacLocalLogins("cr_build_publication_logins",async({client,login})=>{
+    const coordinator=login("control_room_coordinator"), web=login("control_room_web");
+    const at=new Date(webNow).toISOString(), key=new Uint8Array(32).fill(56);
+    const checkpoints=new InMemoryRollbackCheckpointStoreV1({testOnly:true});
+    const own=await seedAgentReviewTenant(client,"publish",key,checkpoints,at);
+    const build=await seedBuildExecution(client,own,"publish",at);
+    const scope={tenantId:own.tenantId,workspaceId:own.workspaceId};
+    const repositoryUrl="https://example.invalid/controller/repository";
+    const proof={executionJobId:build.jobId,attemptId:build.attemptId,harnessRunId:build.runId,
+      artifactId:build.artifactId,contentHash:build.contentHash,revision:1};
+    const selection={assertCurrent:()=>true,isAcceptedResultCurrent:()=>true,acceptedResultProof:async()=>proof};
+    const controller=new LinearPipelineServiceV1(coordinator.db,scope,key,selection,()=>webNow,
+      {resolve:async()=>({repositoryUrl})});
+    const delivery=createControllerWorkerDeliveryV1({identity:{tenantId:own.tenantId,projectId:own.project.projectId,
+      jobId:build.jobId,attemptId:build.attemptId,runId:build.runId,nodeId:build.nodeId},
+    worker:{workerId:build.workerId,adapterId:"adapter:test",adapterRevision:"1234567"},
+    input:{prompt:"Build.",instructions:"Commit bounded work."},authorityDigest:sha256Digest("authority"),
+    connectorProfileDigest:sha256Digest("profile"),acceptanceProfileId:own.profile.id,
+    acceptanceProfileDigest:sha256Digest(own.profile),issuedAt:at,expiresAt:new Date(webNow+3_600_000).toISOString()});
+    const snapshot=await controller.createBuildPublicationAuthority(delivery);
+    assert.deepEqual([snapshot.allowedPaths,snapshot.maximumChangedFiles,snapshot.maximumChangedBytes],
+      [["src/**"],10,100_000]);
+    await controller.assertBuildPublicationAuthorityCurrent(snapshot);
+    const {plan,evidence}=signedBuildPublication(derivePipelineBuildPublicationEvidenceKeyV1(key),{snapshot,
+      deliveryDigest:delivery.deliveryDigest,modelSelection:{workerId:build.workerId,model:"build-test",effort:"medium"},
+      commitDigest:"b".repeat(40),url:`${repositoryUrl}/pull/7`});
+    assert.deepEqual(await controller.retainBuildPublication({snapshot,plan,evidence}),
+      {evidenceDigest:evidence.evidenceDigest,replayed:false});
+    assert.deepEqual(await controller.retainBuildPublication({snapshot,plan,evidence}),
+      {evidenceDigest:evidence.evidenceDigest,replayed:true});
+    const retained={url:evidence.url,commitDigest:evidence.commitDigest,modelSelection:evidence.modelSelection,
+      usage:"unknown",evidenceDigest:evidence.evidenceDigest};
+    assert.deepEqual(await controller.readRetainedBuildPublication(delivery.deliveryDigest),retained);
+    const identity=createAccessVerifier(webTrust)(webRequest(),webNow);
+    const view=await new LinearPipelineServiceV1(web.db,scope,key,selection,()=>webNow)
+      .view(identity,own.project.projectId,own.pipeline.runId);
+    assert.deepEqual(view.stages[0].pullRequestEvidence,retained);
+    assert.deepEqual(view.stages[0].writePolicy,{allowedPaths:["src/**"],maximumChangedFiles:10,maximumChangedBytes:100_000});
+
+    // The retained record is append-only and the stage bound is write-once,
+    // whatever login or grant attempts the change.
+    await assert.rejects(coordinator.direct.query("UPDATE control_pipeline_build_publications SET recorded_at=now()"),
+      /permission denied/u);
+    await assert.rejects(web.direct.query(`INSERT INTO control_pipeline_build_publications
+      SELECT * FROM control_pipeline_build_publications`),/permission denied/u);
+    for (const agent of [coordinator,web])
+      await assert.rejects(agent.direct.query("UPDATE pipeline_stage_runs SET maximum_changed_files=500"),/permission denied/u);
+    await assert.rejects(client.query("UPDATE pipeline_stage_runs SET maximum_changed_files=500 WHERE tenant_id=$1",
+      [own.tenantId]),/pipeline stage immutable selection rejected/u);
+    await assert.rejects(client.query("DELETE FROM control_pipeline_build_publications"),/append-only/u);
+
+    // The shared intake login holds no grant. Were one ever added, the tenant
+    // binding would still hide every other tenant's publication.
+    const intake={...target("cr_build_publication_logins","control_room_work_intake_agent"),
+      password:passwords.CONTROL_ROOM_WORK_INTAKE_PASSWORD};
+    await assert.rejects(query(intake,"SELECT tenant_id FROM control_pipeline_build_publications"),/permission denied/u);
+    await client.query("INSERT INTO tenants(id,display_name) VALUES('tenant:publish-other','Other tenant')");
+    await client.query("INSERT INTO work_intake_tenant_binding(singleton,tenant_id) VALUES(true,'tenant:publish-other')");
+    await client.query("GRANT SELECT ON control_pipeline_build_publications TO control_room_work_intake");
+    try {
+      assert.deepEqual((await query(intake,"SELECT tenant_id FROM control_pipeline_build_publications")).rows,[]);
+      await client.query("DELETE FROM work_intake_tenant_binding");
+      assert.deepEqual((await query(intake,"SELECT tenant_id FROM control_pipeline_build_publications")).rows,[]);
+      await client.query("INSERT INTO work_intake_tenant_binding(singleton,tenant_id) VALUES(true,$1)",[own.tenantId]);
+      assert.deepEqual((await query(intake,"SELECT tenant_id FROM control_pipeline_build_publications")).rows,
+        [{tenant_id:own.tenantId}]);
+    } finally {
+      await client.query("REVOKE SELECT ON control_pipeline_build_publications FROM control_room_work_intake");
+      await client.query("DELETE FROM work_intake_tenant_binding");
+    }
+  }));
+
 // The commit boundary stores the payloads it is given, and the Completion Gate
 // store re-parses every stored row, so one malformed review would leave the
 // tenant's gate unreadable for good. Each probe calls the boundary as the
@@ -862,6 +1021,45 @@ test("agent-review down migration removes every surviving direct privilege", nee
     has_table_privilege('control_room_agent_reviewer','control_harness_runs','SELECT') AS run_select`)).rows[0];
   assert.deepEqual(afterDown,{schema_usage:true,direct_schema_usage:false,gate_select:false,gate_insert:false,gate_update:false,
     integrity_update:false,commit_execute:false,read_execute:false,run_select:false});
+});
+
+// Everything 0108 could touch, including privileges on every public object,
+// so a down file that revokes more than its up migration granted is caught.
+async function catalogState(db){
+  const client=postgresDatabase(db);
+  const acl=(await client.query(`SELECT jsonb_build_object(
+    'relations',(SELECT jsonb_agg(jsonb_build_array(c.relname,c.relkind,c.relacl::text,c.relrowsecurity,
+      pg_get_userbyid(c.relowner)) ORDER BY c.relname) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+      WHERE n.nspname='public' AND c.relkind IN ('r','v','p','S') AND c.relname<>'control_room_schema_migrations'),
+    'columns',(SELECT jsonb_agg(jsonb_build_array(c.relname,a.attname,a.attacl::text) ORDER BY c.relname,a.attnum)
+      FROM pg_attribute a JOIN pg_class c ON c.oid=a.attrelid JOIN pg_namespace n ON n.oid=c.relnamespace
+      WHERE n.nspname='public' AND c.relkind IN ('r','v','p') AND a.attnum>0 AND NOT a.attisdropped AND a.attacl IS NOT NULL),
+    'functions',(SELECT jsonb_agg(jsonb_build_array(p.oid::regprocedure::text,p.proacl::text,p.proconfig,
+      pg_get_userbyid(p.proowner),p.prosecdef) ORDER BY p.oid::regprocedure::text) FROM pg_proc p
+      JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='public'),
+    'policies',(SELECT jsonb_agg(jsonb_build_array(tablename,policyname,permissive,roles::text,cmd,qual,with_check)
+      ORDER BY tablename,policyname) FROM pg_policies WHERE schemaname='public')) AS state`)).rows[0].state;
+  return {schema:await readSchemaDigest(client),acl};
+}
+
+// 0108's down file returns a head database to exactly the main + S4 + S5
+// state: the same objects and function bodies, and the same privileges.
+test("0108 down returns a head database to exactly the main plus S4 and S5 state", needsPg, async () => {
+  const { stage, ledgerPath } = await stageAppliedPrefix({ pending: ["_pipeline_build_publications.sql"],
+    withoutGrants: [PUBLICATION_GRANTS] });
+  try {
+    await freshDatabase("cr_prod_s6_baseline");
+    await applyMigrations({ target: target("cr_prod_s6_baseline"), bootstrapTarget: bootstrapTarget("cr_prod_s6_baseline"),
+      migrateTarget: migrateTarget("cr_prod_s6_baseline"), rootDir: stage, ledgerPath, env: { ...process.env, ...passwords } });
+    await freshDatabase("cr_prod_s6_down");
+    await applyMigrations({ target: target("cr_prod_s6_down"), bootstrapTarget: bootstrapTarget("cr_prod_s6_down"),
+      migrateTarget: migrateTarget("cr_prod_s6_down"), rootDir: ROOT, env: { ...process.env, ...passwords } });
+    assert.notDeepEqual(await catalogState(target("cr_prod_s6_down")), await catalogState(target("cr_prod_s6_baseline")));
+    await query(target("cr_prod_s6_down"), await readFile(join(ROOT, "db/down/0108_pipeline_build_publications.sql"), "utf8"));
+    assert.deepEqual(await catalogState(target("cr_prod_s6_down")), await catalogState(target("cr_prod_s6_baseline")));
+  } finally {
+    await rm(stage, { recursive: true, force: true });
+  }
 });
 
 // One installation tenant with a server-created agent review plan: the build
