@@ -22,7 +22,7 @@ export function parseMacLocalFirstOwnerReceiptV1(value, nodeIds, expectedRows = 
     || typeof value.tenantId !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,179}$/u.test(value.tenantId)
     || !Number.isSafeInteger(value.created) || value.created < 0
     || !Number.isSafeInteger(value.kept) || value.kept < 0
-    || !Number.isSafeInteger(expectedRows) || ![14, 20].includes(expectedRows)
+    || !Number.isSafeInteger(expectedRows) || ![14, 21].includes(expectedRows)
     || value.created + value.kept !== expectedRows
     || !value.fingerprints || typeof value.fingerprints !== "object" || Array.isArray(value.fingerprints)
     || Object.getPrototypeOf(value.fingerprints) !== Object.prototype
@@ -50,7 +50,7 @@ export async function pinMacLocalNodeKeysV1(protectedRoot, receiptPath, runtime 
   if (!isAbsolute(protectedRoot) || resolve(protectedRoot) !== protectedRoot) return refuse();
   const configuration = await loadConfiguration(protectedRoot);
   const nodeIds = ["hermes", "claude", "codex"].map(kind => `${configuration.enablement.nodeId}.${kind}`);
-  const expectedRows = 14 + (configuration.workIntakeProjectIds.length > 0 ? 6 : 0);
+  const expectedRows = 14 + (configuration.workIntakeProjectIds.length > 0 ? 7 : 0);
   const receipt = runtime.receipt ?? await readMacLocalFirstOwnerReceiptV1(receiptPath, nodeIds, expectedRows);
   const expected = parseMacLocalFirstOwnerReceiptV1(receipt, nodeIds, expectedRows);
   const roles = await loadRoles(protectedRoot);

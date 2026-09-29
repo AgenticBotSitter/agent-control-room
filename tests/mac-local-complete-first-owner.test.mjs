@@ -22,10 +22,12 @@ async function fixture(overrides = {}) {
   const root = await mkdtemp(join(tmpdir(), "acr-first-owner-finish-"));
   await mkdir(join(root, "config"), { mode: 0o700 });
   const genesis = CompletionGateStoreV1.genesisIntegrityForKeyV1("tenant:one", reviewKey);
-  const manifest = createMacLocalFirstOwnerManifestV1(config, "2026-09-25T00:00:00.000Z", genesis);
+  const configuration = { ...config, workIntakeProjectIds: overrides.workIntakeProjectIds ?? [] };
+  const manifest = createMacLocalFirstOwnerManifestV1(configuration, "2026-09-25T00:00:00.000Z", genesis);
   await writeFile(join(root, "config", "first-owner-manifest.json"), JSON.stringify(overrides.manifest ?? manifest), { mode: 0o600 });
   const receipt = { schema: "control-room.mac-local-first-owner-receipt/v1", tenantId: "tenant:one",
-    manifestDigest: overrides.digest ?? sha256Digest(manifest), created: 14, kept: 0,
+    manifestDigest: overrides.digest ?? sha256Digest(manifest),
+    created: 14 + (configuration.workIntakeProjectIds.length > 0 ? 7 : 0), kept: 0,
     fingerprints: Object.fromEntries(manifest.nodes.map(node => [node.nodeId, sha256Digest(node.nodeId)])) };
   let pinned = 0, dbOpened = 0, checkpointOpened = 0;
   const db = { client: { transaction: async work => work({ query: async query => {
@@ -36,7 +38,7 @@ async function fixture(overrides = {}) {
   } }) }, close: async () => {} };
   let checkpoint;
   const checkpoints = { read: async () => checkpoint, initialize: async value => { checkpoint = value; }, advance: async () => {}, close: async () => {} };
-  const runtime = { loadConfiguration: async () => config, readReceipt: async () => receipt,
+  const runtime = { loadConfiguration: async () => configuration, readReceipt: async () => receipt,
     loadTaskRuntime: async () => ({ keys: { review: reviewKey } }), pinNodeKeys: async () => { pinned++; },
     loadRoles: async () => ({ coordinator: {} }), openDatabase: () => { dbOpened++; return db; },
     openCheckpoints: async () => { checkpointOpened++; return checkpoints; } };
@@ -68,4 +70,12 @@ test("committed genesis completes once and repeat keeps the same checkpoint", as
   assert.equal(first, "created");
   assert.equal(second, "already_present");
   assert.deepEqual(counts(), { pinned: 2, dbOpened: 2, checkpointOpened: 2 });
+});
+
+test("intake tenant binding is included in the completion receipt row count", async () => {
+  const { root, runtime, receipt } = await fixture({ workIntakeProjectIds: ["*"] });
+  let expectedRows;
+  runtime.readReceipt = async (_path, _nodeIds, expected) => { expectedRows = expected; return receipt; };
+  assert.equal(await completeMacLocalFirstOwnerV1(root, join(root, "receipt.json"), runtime), "created");
+  assert.equal(expectedRows, 21);
 });
