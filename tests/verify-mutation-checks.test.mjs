@@ -65,9 +65,15 @@ async function interruptDuringMutation(root, path, signal, verifierPath = verifi
   let sent = false;
   const status = await new Promise((resolveDone, rejectDone) => {
     const timeout = setTimeout(() => {
-      child.kill("SIGKILL");
+      // Send the intended signal, not SIGKILL: the verifier's own handler is what
+      // reaps its detached mutated-test grandchild. SIGKILL can't be caught, so it
+      // would skip that cleanup and leak a still-running grandchild that holds the
+      // inherited stdio pipe open, hanging this process's own "close" event (and,
+      // nested inside a real mutation-check run, the whole CI job) far past this
+      // test's own failure.
+      child.kill(signal);
       rejectDone(new Error(`verifier never reached ${marker}: ${transcript}`));
-    }, 5_000);
+    }, 20_000);
     const observe = data => {
       transcript += data;
       if (!sent && transcript.includes(marker)) {
