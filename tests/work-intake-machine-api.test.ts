@@ -167,7 +167,8 @@ test("role creation and least-privilege grants travel through reviewed productio
   assert.match(ownerMigration, /ADD COLUMN auth_material_version integer NOT NULL DEFAULT 1/u);
   assert.match(ownerMigration, /IF public\.is_work_intake_session\(\)/u);
   assert.doesNotMatch(ownerMigration, /rolname='control_room_work_intake'/u);
-  assert.doesNotMatch(ownerMigration, /OLD\.id NOT LIKE 'attention:work-batch:%'/u);
+  assert.match(ownerMigration, /pg_catalog\.pg_has_role\(session_user,[\s\S]*?pg_catalog\.pg_roles\s+WHERE\s+rolname='control_room_private_web'\),'member'\)/u);
+  assert.match(ownerMigration, /OLD\.id NOT LIKE 'attention:work-batch:%'/u);
   assert.doesNotMatch(ownerMigration, /SELECT \* INTO batch FROM work_batches b[\s\S]*FOR UPDATE/u);
   assert.doesNotMatch(ownerMigration, /work_intake_canonical_jsonb/u);
 });

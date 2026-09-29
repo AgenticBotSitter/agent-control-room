@@ -22,6 +22,7 @@ import { createMacLocalDatabaseBackupV1 } from "../scripts/ops/backup-database.m
 import { verifyMacLocalDatabaseBackupV1 } from "../scripts/ops/verify-database-backup.mjs";
 import { AuditStore } from "../src/audit/audit-store.ts";
 import { WorkBatchStoreV1 } from "../src/work-intake/v1/store.ts";
+import { workBatchProposalDigestV1 } from "../src/work-intake/v1/digest.ts";
 import { sha256Digest } from "../src/security/canonical-digest.ts";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -402,6 +403,26 @@ test("work-intake login cannot read or forge another subsystem's shared-ledger r
   assert.deepEqual(lockPrivileges,{identity_lock:true,grant_lock:true,project_lock:true,identity_state:false,project_state:false});
   const principal={tenantId:"tenant:intake-guard",identityId:"identity:intake-guard",actorType:"agent",
     authenticatedAt:"2026-09-27T11:00:00.000Z",expiresAt:"2027-09-27T12:00:00.000Z"};
+  const positiveClient=new Client(intake); await positiveClient.connect();
+  try {
+    await positiveClient.query("BEGIN");
+    const session={query:(sql,params=[])=>positiveClient.query(sql,params)};
+    const transactionalDb={query:session.query,transaction:callback=>callback(session),
+      transactionWithPreCommitCheck:async(callback,check)=>{const value=await callback(session);await check();return value;}};
+    const positiveStore=new WorkBatchStoreV1(transactionalDb,new Uint8Array(32).fill(8));
+    const positiveProposal={schema:"control-room.work-batch-proposal/v1",projectId:"project:intake-guard",tasks:[{
+      localId:"build",title:"Build",instructions:"Build the bounded change.",requiredCapability:"code.change",
+      role:"builder",acceptanceCriteria:"The change is bounded.",acceptanceTests:"Run focused tests."}],edges:[]};
+    const receipt=await positiveStore.create({principal,proposal:positiveProposal,
+      proposalDigest:workBatchProposalDigestV1(positiveProposal),idempotencyKey:"positive-notification-0001",
+      now:"2026-09-27T12:00:15.000Z",queueDepthLimit:10});
+    const notification=(await positiveClient.query(`SELECT state,payload->>'state' AS payload_state
+      FROM control_action_inbox WHERE tenant_id=$1 AND id=$2`,
+    [principal.tenantId,`attention:work-batch:${receipt.batchId}`])).rows[0];
+    assert.deepEqual(notification,{state:"open",payload_state:"open"});
+  } finally {
+    await positiveClient.query("ROLLBACK").catch(()=>{}); await positiveClient.end();
+  }
   const auditCountBeforeNonAgent=(await query(intake,"SELECT count(*)::int AS count FROM audit_events")).rows[0].count;
   assert.deepEqual(await store.authorize({...principal,actorType:"human"},"project:intake-guard",
     "2026-09-27T12:00:30.000Z"),{allowed:false,safeReasonCode:"credential_inactive"});
@@ -426,11 +447,11 @@ test("work-intake login cannot read or forge another subsystem's shared-ledger r
     VALUES('attention:ordinary','tenant:intake-guard','project:intake-guard','ordinary','question','open',
       'delivered','2026-09-27T12:04:30.000Z','{"state":"open"}'::jsonb)`);
   await query(db,await readFile(join(ROOT,"db/roles/private_web_roles.sql"),"utf8"));
-  await query(db,`SET SESSION AUTHORIZATION control_room_private_web;
+  await assert.rejects(query(db,`SET SESSION AUTHORIZATION control_room_private_web;
     UPDATE control_action_inbox SET state='resolved',payload='{"state":"resolved"}'::jsonb
-    WHERE tenant_id='tenant:intake-guard' AND id='attention:ordinary'`);
+    WHERE tenant_id='tenant:intake-guard' AND id='attention:ordinary'`),/work batch notification update rejected/u);
   assert.equal((await query(db,`SELECT state FROM control_action_inbox
-    WHERE tenant_id='tenant:intake-guard' AND id='attention:ordinary'`)).rows[0].state,"resolved");
+    WHERE tenant_id='tenant:intake-guard' AND id='attention:ordinary'`)).rows[0].state,"open");
   await query(db,"DELETE FROM control_action_inbox WHERE tenant_id='tenant:intake-guard' AND id='attention:ordinary'");
 
   const head=(await query(intake,`SELECT head_hash,event_count::int FROM control_audit_chain_heads
@@ -473,6 +494,9 @@ test("work-intake login cannot read or forge another subsystem's shared-ledger r
   // The owner-approval slice depends on the intake tables. Exercise the
   // reviewed recovery order before removing the proposal-only base slice.
   await query(db,ownerDown);
+  const restoredSearchPath=(await query(db,`SELECT proconfig FROM pg_proc
+    WHERE oid='public.guard_initial_work_batch_revision_insert()'::regprocedure`)).rows[0]?.proconfig;
+  assert.deepEqual(restoredSearchPath,["search_path=pg_catalog, public, pg_temp"]);
   await query(db,down);
   const remaining=(await query(db,`SELECT
     has_table_privilege('control_room_work_intake','control_idempotency','SELECT') AS table_select,

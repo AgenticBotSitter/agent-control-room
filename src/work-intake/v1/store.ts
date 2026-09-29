@@ -6,6 +6,7 @@ import { failWorkIntakeV1 } from "./errors";
 import { workBatchProposalSchemaV1, workBatchReceiptSchemaV1, type WorkBatchProposalV1,
   type WorkBatchReceiptV1 } from "./schemas";
 import { workBatchOwnerNotificationV1 } from "./owner-notification";
+import { workBatchProposalDigestV1 } from "./digest";
 
 type Authorization = { allowed: true; workspaceId: string } | { allowed: false; safeReasonCode: "credential_inactive" | "no_matching_grant" };
 type BatchRow = { id: string; tenant_id: string; project_id: string; proposed_by_identity_id: string;
@@ -241,7 +242,8 @@ export class WorkBatchStoreV1 {
     [principal.tenantId, projectId, batchId, principal.identityId])).rows[0];
     if (!row) failWorkIntakeV1("batch_not_found");
     const proposal = await this.#verifyStoredState(row);
-    return { batchId: row.id, projectId, state: row.state as "proposed" | "approved" | "partially_approved" | "rejected", proposalDigest: row.batch_digest,
+    return { batchId: row.id, projectId, state: row.state as "proposed" | "approved" | "partially_approved" | "rejected",
+      proposalDigest: workBatchProposalDigestV1(proposal),
       taskCount: proposal.tasks.length, startsWork: false as const, grantsExecutionAuthority: false as const };
   }
 

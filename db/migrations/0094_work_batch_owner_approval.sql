@@ -88,7 +88,8 @@ BEGIN
         AND i.actor_type='human' AND i.state='active' AND g.role_key='owner'
         AND (g.project_ids @> pg_catalog.to_jsonb(ARRAY[batch.project_id]::text[]) OR g.project_ids @> '["*"]'::jsonb)
         AND (g.allowed_actions @> '["work_batches.decide"]'::jsonb OR g.allowed_actions @> '["*"]'::jsonb)
-        AND g.revoked_at IS NULL AND (g.expires_at IS NULL OR g.expires_at>pg_catalog.statement_timestamp())
+        AND (g.revoked_at IS NULL OR g.revoked_at>pg_catalog.statement_timestamp())
+        AND (g.expires_at IS NULL OR g.expires_at>pg_catalog.statement_timestamp())
     ) THEN
     RAISE EXCEPTION 'work batch revision insert rejected';
   END IF;
@@ -132,7 +133,8 @@ BEGIN
         AND g.role_key='owner'
         AND (g.project_ids @> pg_catalog.to_jsonb(ARRAY[NEW.project_id]::text[]) OR g.project_ids @> '["*"]'::jsonb)
         AND (g.allowed_actions @> '["work_batches.decide"]'::jsonb OR g.allowed_actions @> '["*"]'::jsonb)
-        AND g.revoked_at IS NULL AND (g.expires_at IS NULL OR g.expires_at>pg_catalog.statement_timestamp())
+        AND (g.revoked_at IS NULL OR g.revoked_at>pg_catalog.statement_timestamp())
+        AND (g.expires_at IS NULL OR g.expires_at>pg_catalog.statement_timestamp())
     ) THEN
     RAISE EXCEPTION 'work batch decision update rejected';
   END IF;
@@ -183,6 +185,11 @@ CREATE TRIGGER control_action_inbox_work_batch_guard BEFORE INSERT ON public.con
 CREATE FUNCTION guard_work_batch_notification_update() RETURNS trigger
 LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $$
 BEGIN
+  IF pg_catalog.pg_has_role(session_user,
+      (SELECT oid FROM pg_catalog.pg_roles WHERE rolname='control_room_private_web'),'member')
+    AND OLD.id NOT LIKE 'attention:work-batch:%' THEN
+    RAISE EXCEPTION 'work batch notification update rejected';
+  END IF;
   IF OLD.id LIKE 'attention:work-batch:%' AND (
     NEW.id<>OLD.id OR NEW.tenant_id<>OLD.tenant_id OR NEW.project_id IS DISTINCT FROM OLD.project_id
     OR NEW.work_item_id IS DISTINCT FROM OLD.work_item_id OR NEW.kind<>OLD.kind

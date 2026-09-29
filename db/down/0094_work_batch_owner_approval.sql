@@ -33,10 +33,10 @@ DROP FUNCTION guard_work_batch_item_insert();
 DROP TABLE work_batch_items;
 ALTER TABLE work_batches DROP COLUMN decision_auth_tag, DROP COLUMN decision_digest, DROP COLUMN auth_material_version;
 CREATE OR REPLACE FUNCTION guard_initial_work_batch_revision_insert() RETURNS trigger
-LANGUAGE plpgsql AS $$
+LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $$
 BEGIN
   IF NEW.revision<>1 OR NEW.reason_code<>'submitted' OR NOT EXISTS (
-    SELECT 1 FROM work_batches b WHERE b.tenant_id=NEW.tenant_id AND b.id=NEW.batch_id
+    SELECT 1 FROM public.work_batches b WHERE b.tenant_id=NEW.tenant_id AND b.id=NEW.batch_id
       AND b.proposed_by_identity_id=NEW.edited_by_identity_id AND b.proposal=NEW.proposal
       AND b.batch_digest=NEW.revision_digest
   ) THEN

@@ -78,3 +78,20 @@ test("the real-Postgres harness supplies the required work-intake bootstrap cred
   assert.match(harness,
     /CONTROL_ROOM_WORK_INTAKE_PASSWORD:\s*ROLE_PASSWORDS\.control_room_work_intake_agent/u);
 });
+
+test("the 0094 rollback preserves the S1 trigger search_path hardening", async () => {
+  const down = await readFile("db/down/0094_work_batch_owner_approval.sql", "utf8");
+  const restored = down.match(/CREATE OR REPLACE FUNCTION\s+guard_initial_work_batch_revision_insert\s*\([^)]*\)\s+RETURNS[\s\S]*?\$\$[\s\S]*?\$\$\s*;/iu)?.[0] ?? "";
+  assert.match(restored, hardenedSearchPath);
+  assert.match(restored, /FROM\s+public\.work_batches\s+b/iu);
+});
+
+test("0094 pins every owner trigger authority fence and the browser inbox boundary", async () => {
+  const migration = await readFile("db/migrations/0094_work_batch_owner_approval.sql", "utf8");
+  const count = pattern => migration.match(pattern)?.length ?? 0;
+  assert.equal(count(/i\.actor_type='human'\s+AND\s+i\.state='active'/gu), 2);
+  assert.equal(count(/g\.role_key='owner'/gu), 2);
+  assert.equal(count(/\(g\.revoked_at\s+IS\s+NULL\s+OR\s+g\.revoked_at>pg_catalog\.statement_timestamp\(\)\)\s+AND\s+\(g\.expires_at\s+IS\s+NULL\s+OR\s+g\.expires_at>pg_catalog\.statement_timestamp\(\)\)/gu), 2);
+  assert.equal(count(/g\.allowed_actions\s+@>\s+'\["work_batches\.decide"\]'::jsonb\s+OR\s+g\.allowed_actions\s+@>\s+'\["\*"\]'::jsonb/gu), 2);
+  assert.match(migration, /pg_catalog\.pg_has_role\(session_user,[\s\S]*?pg_catalog\.pg_roles\s+WHERE\s+rolname='control_room_private_web'\),'member'\)[\s\S]*?OLD\.id\s+NOT\s+LIKE\s+'attention:work-batch:%'/u);
+});
