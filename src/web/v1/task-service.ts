@@ -772,6 +772,15 @@ export class WebTaskService {
     });
   }
 
+  /** Canonical cross-project action records remain owner-only even though the
+   * shared page shell can also host narrower recovery and idea-task panels. */
+  async authorizeActionInbox(identity: VerifiedWebIdentity): Promise<{ actorId: string; grantedAt: string }> {
+    return this.authenticatedRead(identity, async (_, actor) => {
+      actor.require("projects.read", undefined, true);
+      return { actorId: actor.id, grantedAt: actor.now };
+    });
+  }
+
   async attention(identity: VerifiedWebIdentity, after?: string) {
     if (after !== undefined) this.id(after);
     return this.authenticatedRead(identity, async (tx, actor) => {
