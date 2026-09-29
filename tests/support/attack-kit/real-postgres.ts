@@ -905,6 +905,11 @@ async function startCluster(options: WithRealPostgresOptions & { pgBin: string }
     // removed with the run directory, so it cannot outlive the cluster.
     await registerCluster(run, { port, dataDirectory, pgBin });
     postmasterPid = recordedPid(await readPostmasterPid().catch(() => ""));
+    // Remembered for the suite's shared-memory guard, which attributes a leaked
+    // segment by matching `ipcs`' cpid against this set. A postmaster whose pid
+    // was never captured cannot be attributed this way, and a `dead_creator`
+    // segment with no matching pid here is another job's, not ours.
+    if (postmasterPid !== undefined) postmastersStartedHere.add(postmasterPid);
 
     const adminOptions = (name = "postgres"): ConnectionOptions => ({
       host: socketDirectory, port, database: name, user: "fixture_admin", password: FIXTURE_ADMIN_PASSWORD,
@@ -1304,6 +1309,27 @@ const readCommands = async (pids: readonly string[]): Promise<Map<number, string
   return commands;
 };
 
+/**
+ * The pids of the postmasters THIS PROCESS started, for exact leak attribution.
+ *
+ * A SysV segment's `cpid` is the pid of the postmaster that created it, which
+ * is why this is enough to attribute an orphan with no readable command line.
+ * Guessing by user and counting is not: this machine runs four test slots
+ * concurrently, so a dead-creator segment appearing during a run is usually
+ * another worktree's SIGKILLed postmaster, and a raw count or a
+ * user-wide dead-creator rule fails the run for someone else's leak.
+ *
+ * Process-scoped because the guard and the clusters are the same process: the
+ * guard samples `ipcs` at module load, and the clusters it must account for are
+ * started in between.
+ */
+const postmastersStartedHere = new Set<number>();
+
+/** The pids of the postmasters this process started and has not yet reaped. */
+export function postmasterPids(): readonly number[] {
+  return [...postmastersStartedHere];
+}
+
 /** Segment ids now present that were not in `before`. */
 export function newSharedMemorySegments(
   before: readonly SharedMemorySegment[],
@@ -1324,11 +1350,14 @@ export interface SharedMemoryLeak {
  *
  * Two failures, and only two:
  *
- *  - `dead_creator` — a segment that appeared and whose creator is gone. This is
- *    the leak: PostgreSQL was SIGKILLed instead of stopped, so its exit path
- *    never unlinked the segment. Nothing can free it except `ipcrm`, which this
- *    kit must never run. It is a leak whatever its attribution, because the
- *    command line that would identify the cluster is gone with the process.
+ *  - `dead_creator` — a segment that appeared, whose creator is gone, AND whose
+ *    creator is a postmaster THIS PROCESS started. The cpid attribution is what
+ *    makes the rule safe on a shared host: four test slots share this login, and
+ *    a sibling worktree whose postmaster is SIGKILLed leaves a dead-creator
+ *    segment that has nothing to do with this suite. Observed directly during
+ *    development — a run failed on two orphans created by another worktree's
+ *    suite while this one had logged no SIGKILL at all. A segment whose creator
+ *    this process never started is not attributable, and is not reported.
  *  - `our_cluster_survived` — a segment attributed to this suite whose creator
  *    is still running after the run. A leaked postmaster holding a segment.
  *
@@ -1345,14 +1374,18 @@ export function sharedMemoryLeaks(
   before: readonly SharedMemorySegment[],
   after: readonly SharedMemorySegment[] | null,
   isAlive: (pid: number) => boolean,
+  ourPids: readonly number[] = postmasterPids(),
 ): SharedMemoryLeak[] {
   if (after === null) return [];
+  const mine = new Set(ourPids);
   const leaks: SharedMemoryLeak[] = [];
   for (const segment of newSharedMemorySegments(before, after)) {
-    // A NEW segment whose creator is gone. The command line that would identify
-    // the cluster is gone with the process, so this is a leak whatever its
-    // attribution.
-    if (!isAlive(segment.creatorPid)) leaks.push({ segment, reason: "dead_creator" });
+    // A NEW segment whose creator is gone AND is one this process started. The
+    // command line that would identify the cluster is gone with the process, so
+    // the recorded creator pid is the only attribution left, and it is exact.
+    if (mine.has(segment.creatorPid) && !isAlive(segment.creatorPid)) {
+      leaks.push({ segment, reason: "dead_creator" });
+    }
   }
   // A cluster of THIS SUITE's still holding a segment after the run, alive or
   // not: either way this suite started something it did not stop. This is the

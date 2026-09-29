@@ -18,6 +18,7 @@ export {
   newSharedMemorySegments,
   parseSharedMemory,
   portIsOccupied,
+  postmasterPids,
   readClusterRegistry,
   realPostgresSkipMessage,
   requiresRealPostgres,

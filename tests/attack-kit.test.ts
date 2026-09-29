@@ -37,6 +37,7 @@ import {
   requiresRealPostgres,
   newSharedMemorySegments,
   parseSharedMemory,
+  postmasterPids,
   roleCan,
   roleCannot,
   searchPathEndsInPgTemp,
@@ -1551,12 +1552,28 @@ describe("attack kit: the teardown ladder (shared-memory safety)", () => {
     const before = [segment({ id: "1", creatorPid: 10 })];
     // The measured shape: a segment that appeared, whose creator is gone, and
     // which nothing in the suite can free because the process that would have
-    // unlinked it no longer exists.
+    // unlinked it no longer exists. 4242 is in `ourPids`, so this process
+    // started that postmaster.
     const after = [...before, segment({ id: "2", creatorPid: 4242, lastPid: 0, ours: false })];
     assert.deepEqual(
-      sharedMemoryLeaks(before, after, dead).map(leak => `${leak.segment.id}:${leak.reason}`),
+      sharedMemoryLeaks(before, after, dead, [4242]).map(leak => `${leak.segment.id}:${leak.reason}`),
       ["2:dead_creator"],
-      "a dead creator is the leak, and its command line is gone so attribution cannot rescue it");
+      "a dead creator this suite started is the leak, and its command line is gone so attribution cannot rescue it");
+  });
+
+  test("a new dead segment from a postmaster this process never started is not reported", () => {
+    // Observed directly during development, twice. A sibling worktree's suite
+    // SIGKILLed two of its own postmasters while this suite was running; the
+    // two orphans showed up as `dead_creator` and failed this suite, which had
+    // logged no SIGKILL at all and started neither postmaster. A user-wide rule
+    // cannot tell those apart from its own leak, because both are "this user's
+    // segment, creator dead". The creator pid is what tells them apart.
+    const before = [segment({ id: "1", creatorPid: 10 })];
+    const after = [...before, segment({ id: "2", creatorPid: 59788, lastPid: 0, ours: false })];
+    assert.deepEqual(
+      sharedMemoryLeaks(before, after, dead, [4242]).map(leak => `${leak.segment.id}:${leak.reason}`),
+      [],
+      "another worktree's orphan is not this suite's to fail over");
   });
 
   test("a new segment belonging to another live job is not this suite's leak", () => {
@@ -1565,7 +1582,7 @@ describe("attack kit: the teardown ladder (shared-memory safety)", () => {
     // that would report another job's cluster as this suite's leak.
     const before = [segment({ id: "1", creatorPid: 10 })];
     const after = [...before, segment({ id: "2", creatorPid: 999, lastPid: 999, ours: false })];
-    assert.deepEqual(sharedMemoryLeaks(before, after, running), [],
+    assert.deepEqual(sharedMemoryLeaks(before, after, running, [999]), [],
       "another job's live cluster is not this suite's to fail over");
   });
 
@@ -1576,7 +1593,7 @@ describe("attack kit: the teardown ladder (shared-memory safety)", () => {
     const before = [segment({ id: "1", creatorPid: 10, ours: false })];
     const after = [...before, segment({ id: "7", creatorPid: 10, ours: true })];
     assert.deepEqual(
-      sharedMemoryLeaks(before, after, running).map(leak => `${leak.segment.id}:${leak.reason}`),
+      sharedMemoryLeaks(before, after, running, [10]).map(leak => `${leak.segment.id}:${leak.reason}`),
       ["7:our_cluster_survived"],
       "a postmaster that outlived the run is holding a segment the suite must release");
   });
@@ -1584,7 +1601,7 @@ describe("attack kit: the teardown ladder (shared-memory safety)", () => {
   test("an unchanged snapshot is not a leak, and an unreadable one is not a clean result", () => {
     // Nothing of ours, nothing new: the state a correct teardown leaves.
     const same = [segment({ id: "1", creatorPid: 10, ours: false })];
-    assert.deepEqual(sharedMemoryLeaks(same, same, running), []);
+    assert.deepEqual(sharedMemoryLeaks(same, same, running, [10]), []);
     // null means `ipcs` could not be read. The suite guard refuses on it
     // separately; here the point is that the classifier does not invent a
     // verdict from data it does not have.
@@ -2412,7 +2429,9 @@ test("the whole suite left no new SysV shared-memory segment", async () => {
   const leaks = sharedMemoryLeaks(sharedMemoryBefore, after, alive);
   assert.deepEqual(leaks.map(leak => `id=${leak.segment.id} creator=${leak.segment.creatorPid} ${leak.reason}`), [],
     "the suite created SysV shared-memory segments it did not release: a postmaster "
-    + "was SIGKILLed instead of stopped, and its segment is now unreclaimable");
+    + "was SIGKILLed instead of stopped, and its segment is now unreclaimable. Every "
+    + `segment below names a creator this process started (postmasterPids=${postmasterPids().join(",")}), `
+    + "so this is the suite's own leak and not a concurrent worktree's.");
   const mine = (after as SharedMemorySegment[]).filter(segment => segment.ours);
   assert.equal(mine.length, sharedMemoryBefore.filter(segment => segment.ours).length,
     `this suite's segment count changed: `
