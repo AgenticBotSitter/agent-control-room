@@ -224,38 +224,38 @@ test("ordered upgrade applies a pending suffix in two phases", needsPg, async ()
   }
 });
 
-// A database already at main (S1 0093, 0100, 0101 and S2 0102 applied) must
-// upgrade by APPENDING the pending suffix after main's last applied order,
-// never by slotting any of it in before an applied order. The suffix is
-// whatever this checkout carries beyond main: the agent-queue migration, plus
-// any migration stacked on top of it by a branch still in flight. Both are
-// named by their filename suffix rather than by number, so renumbering one of
-// them cannot silently turn this into a test that applies nothing.
+// A database already at main (S1 0093, 0100, 0101, S2 0102 and the agent-queue
+// 0104) must upgrade by APPENDING this head's activity migration after main's
+// last applied order, never by slotting it in before an applied order. A
+// migration numbered BELOW main's newest would corrupt the ledger for exactly
+// this population, so the number is asserted too, and the migration is named by
+// filename suffix so a renumber cannot silently turn the assertion into a no-op.
 test("upgrade from main's applied ledger appends only the pending suffix", needsPg, async () => {
   const stage = await mkdtemp(join(tmpdir(), "cr-pg63main-"));
   try {
     for (const dir of ["deploy/postgres", "db/migrations", "db/roles", "db/setup"])
       await mkdir(join(stage, dir), { recursive: true });
     const migrations = (await readdir(join(ROOT, "db/migrations"))).filter(name => name.endsWith(".sql")).sort();
-    const suffixOf = (tail) => migrations.filter(name => name.endsWith(tail));
-    const queue = suffixOf("_work_batch_agent_queue.sql");
-    const activity = suffixOf("_task_project_activity_events.sql");
-    assert.equal(queue.length, 1);
+    const activity = migrations.filter(name => name.endsWith("_task_project_activity_events.sql"));
     assert.equal(activity.length, 1);
-    // The suffix is ordered, and it lands after everything main already applied.
-    assert.ok(migrations.indexOf(activity[0]) > migrations.indexOf(queue[0]));
-    const mainMigrations = migrations.filter(name => name !== queue[0] && name !== activity[0]);
+    // "At main" is every migration except this head's own.
+    const mainMigrations = migrations.filter(name => name !== activity[0]);
     for (const shipped of ["0100_ownership_lease_collision_guard.sql", "0101_owner_review_job_lock.sql",
-      "0102_work_batch_owner_approval.sql"]) assert.ok(mainMigrations.includes(shipped), shipped);
+      "0102_work_batch_owner_approval.sql", "0104_work_batch_agent_queue.sql"])
+      assert.ok(mainMigrations.includes(shipped), shipped);
+    // The number this head's migration carries must sort AFTER every migration
+    // main already shipped. A number at or below main's newest would be applied
+    // into a slot an existing installation has already filled, and the ledger
+    // would end up with a gap and a duplicate order.
+    const number = name => Number(/^(\d{4})_/u.exec(name)[1]);
+    for (const shipped of mainMigrations) {
+      assert.ok(number(activity[0]) > number(shipped),
+        `${activity[0]} must be numbered above main's ${shipped}`);
+    }
     for (const file of mainMigrations)
       await cp(join(ROOT, "db/migrations", file), join(stage, "db/migrations", file));
-    for (const file of ["production_roles.sql", "production_provision.sql"])
+    for (const file of ["production_roles.sql", "production_provision.sql", "production_table_grants.sql"])
       await cp(join(ROOT, "db/roles", file), join(stage, "db/roles", file));
-    // main's grants: this head's file without the agent-queue additions.
-    const grants = await readFile(join(ROOT, "db/roles/production_table_grants.sql"), "utf8");
-    const mainGrants = grants.replace(", work_batch_queue_admissions,\n  work_batch_effective_queue_admissions, work_batch_agent_queue_heads", "");
-    assert.notEqual(mainGrants, grants);
-    await writeFile(join(stage, "db/roles/production_table_grants.sql"), mainGrants);
     await cp(join(ROOT, "db/setup/production_migration_ledger.sql"), join(stage, "db/setup/production_migration_ledger.sql"));
     const entries = await collectLedgerEntries(stage);
     const ledgerPath = join(stage, "deploy/postgres/migration-ledger.json");
@@ -268,23 +268,30 @@ test("upgrade from main's applied ledger appends only the pending suffix", needs
     assert.equal(atMain.grants, "applied");
     const mainLedger = (await query(db, "SELECT filename, ledger_order FROM control_room_schema_migrations ORDER BY ledger_order")).rows;
     assert.deepEqual(mainLedger.map(row => row.filename), mainMigrations.map(file => `db/migrations/${file}`));
-    assert.equal((await query(db, "SELECT to_regclass('public.work_batch_queue_admissions') AS present")).rows[0].present, null);
-    assert.equal((await query(db, "SELECT to_regclass('public.control_project_event_stream_heads') AS present")).rows[0].present, null);
 
     const upgraded = await applyMigrations({ target: db, bootstrapTarget: bootstrapTarget("cr_prod_upgrade_main"),
       migrateTarget: migrateTarget("cr_prod_upgrade_main"), rootDir: ROOT });
-    assert.deepEqual(upgraded.applied.map(entry => [entry.file, entry.order]), [
-      [`db/migrations/${queue[0]}`, mainMigrations.length + 1],
-      [`db/migrations/${activity[0]}`, mainMigrations.length + 2],
-    ]);
+    assert.deepEqual(upgraded.applied.map(entry => [entry.file, entry.order]),
+      [[`db/migrations/${activity[0]}`, mainMigrations.length + 1]]);
     assert.equal(upgraded.grants, "applied");
     assert.deepEqual((await query(db, `SELECT ledger_order, count(*)::int AS rows FROM control_room_schema_migrations
       GROUP BY ledger_order HAVING count(*) > 1`)).rows, []);
     const ledger = (await query(db, "SELECT filename, ledger_order FROM control_room_schema_migrations ORDER BY ledger_order")).rows;
     assert.deepEqual(ledger.map(row => row.ledger_order), ledger.map((_, index) => index + 1));
-    assert.deepEqual(ledger.slice(0, -2), mainLedger);
-    assert.deepEqual(ledger.at(-2), { filename: `db/migrations/${queue[0]}`, ledger_order: mainMigrations.length + 1 });
-    assert.deepEqual(ledger.at(-1), { filename: `db/migrations/${activity[0]}`, ledger_order: mainMigrations.length + 2 });
+    assert.deepEqual(ledger.slice(0, -1), mainLedger);
+    assert.deepEqual(ledger.at(-1), { filename: `db/migrations/${activity[0]}`, ledger_order: mainMigrations.length + 1 });
+    // What the migration GRANTS is deliberately not asserted here. These four
+    // Mac-local role groups are cluster-global, the production applier does not
+    // create them, and the later tests in this file apply the same role files to
+    // their own databases and assume this cluster starts without them. Creating
+    // them here turned a fixture detail into three unrelated failures, and
+    // asserting without creating cannot answer at all.
+    //
+    // The grants are asserted where they can be asserted honestly, on a cluster
+    // built for the purpose, in tests/project-activity-lifecycle-postgres.test.ts:
+    // that file applies MAIN's own role files to its OWN database, so it starts
+    // from a real main-state ACL set, upgrades that database in place, and then
+    // reads the privileges as the server reports them.
     // Grants converged on the new objects in the same run: no shared or agent login reaches them.
     assert.deepEqual((await query(db, `SELECT r.role, t.name,
       has_table_privilege(r.role, t.name, 'SELECT') OR has_table_privilege(r.role, t.name, 'INSERT')

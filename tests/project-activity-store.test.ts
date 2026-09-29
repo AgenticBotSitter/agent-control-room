@@ -179,6 +179,44 @@ test("B-093 anchors an empty stream so a bounded first replay cannot skip a burs
   } finally { await raw.close(); }
 });
 
+test("B-093 refuses a lifecycle event whose workspace is not the project's own", async () => {
+  const { raw, db, store } = await setup();
+  try {
+    const writer = new TaskProjectEventWriterV1(store);
+    // OWN_PROJECT really lives in scope.workspaceId. The event names
+    // siblingWorkspaceId, which is a real workspace OF THE SAME TENANT, so the
+    // project-exists half of the guard passes and only the workspace half can
+    // refuse. Dropping that half makes this append succeed.
+    await assert.rejects(db.transaction(tx => writer.appendInSession(tx, {
+      ...scope, workspaceId: siblingWorkspaceId, projectId: scope.projectId,
+      subjectId: "job:cross-workspace", action: "task_created",
+      sourceId: "source:cross-workspace", sourceVersion: "cross-workspace-v1", occurredAt: now,
+    })), (error: unknown) => {
+      assert.equal((error as { safeCode?: unknown })?.safeCode, "project_not_found",
+        "an event naming a workspace the project does not belong to must be refused");
+      return true;
+    });
+    // The refusal is the guard's, and it happens before the write path: the
+    // event table and the head table are both still empty for this project.
+    assert.equal((await raw.query<{ count: string }>(
+      "SELECT count(*)::text AS count FROM control_project_events WHERE project_id=$1",
+      [scope.projectId])).rows[0]?.count, "0");
+    assert.equal((await raw.query<{ count: string }>(
+      "SELECT count(*)::text AS count FROM control_project_event_stream_heads WHERE project_id=$1",
+      [scope.projectId])).rows[0]?.count, "0",
+    "a refused cross-workspace append must not even anchor a stream head");
+    // The same writer still files the event under the workspace the project
+    // really belongs to, so the guard is a scope check and not a blanket
+    // refusal, and the same project accepts an event one moment later.
+    const accepted = await db.transaction(tx => writer.appendInSession(tx, {
+      ...scope, projectId: scope.projectId, subjectId: "job:own-workspace", action: "task_created",
+      sourceId: "source:own-workspace", sourceVersion: "own-workspace-v1", occurredAt: now,
+    }));
+    assert.equal(accepted.event.workspaceId, scope.workspaceId);
+    assert.equal(accepted.replayed, false);
+  } finally { await raw.close(); }
+});
+
 test("task and project lifecycle actions append exactly once, roll back atomically, and resume in order", async () => {
   const { raw, db, store } = await setup();
   try {
