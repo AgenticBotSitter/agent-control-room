@@ -49,6 +49,24 @@ test("a docs-only pull request passes without an Evidence section", () => {
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test("a pull request adding a repo-root report fails hygiene", () => {
+  const root = fixture();
+  try {
+    const result = inspect(root, "## Summary\n\nRemoved a stray report.", ["reports/x.md"]);
+    assert.equal(result.ok, false);
+    assert.ok(result.errors.includes("stray_report_path"));
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("a documentation guide about reports passes hygiene", () => {
+  const root = fixture();
+  try {
+    assert.deepEqual(inspect(root, "## Summary\n\nAdded the reports guide.", ["docs/reports-guide.md"]), {
+      ok: true, errors: [], warnings: 0,
+    });
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test("a nonexistent test reference fails", () => {
   const root = fixture();
   try {

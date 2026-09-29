@@ -6,6 +6,7 @@ import { redactPrivateNames } from "../check-private-names.mjs";
 
 export const MAX_BODY_BYTES = 65_536;
 const sourcePath = /^(?:src|db)\//u;
+const strayReportPath = /^reports\//u;
 const testPath = /^tests\/[a-zA-Z0-9_./-]+\.(?:test|spec)\.(?:ts|tsx|mjs|js)$/u;
 const absoluteClaim = /\b(?:all|zero|never|guaranteed)\b/iu;
 const evidenceMarker = /(?:^|\s)(?:test|ci|cmd):\s*\S/iu;
@@ -129,6 +130,10 @@ export function checkPrClaims({
   }
   if (!Array.isArray(changedPaths)) {
     return { ok: false, errors: ["changed_paths_unavailable"], warnings: absoluteWarnings(body) };
+  }
+
+  if (changedPaths.some((path) => strayReportPath.test(path))) {
+    errors.push("stray_report_path");
   }
 
   const section = evidenceSection(body);

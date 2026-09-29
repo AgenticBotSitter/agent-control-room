@@ -20,6 +20,9 @@ node_modules/
 *.ndjson
 .DS_Store
 
+# Job reports live outside the repo.
+/reports/
+
 # Do not add automation without an explicit budget/security review.
 # The CI workflow is reviewed in docs/ci-budget-security-review.md. Anything
 # further needs its own review; this line no longer blocks the directory, so the
