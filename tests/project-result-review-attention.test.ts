@@ -35,15 +35,18 @@ test("project result-review discovery finds a pending returned result without co
   await assert.rejects(f.tasks.projectAttention(f.identity, "project:other", "reviews"), /not_found|access_denied/);
 });
 
-test("owner review locks the tenant before completion-gate or child rows", async t => {
+test("owner review locks the tenant and reviewed job before completion-gate or child rows", async t => {
   const f = await ownerReviewFixture(); t.after(f.close);
   const statements: string[] = [];
   const reviews = f.createReviews(traceTransactions(f.db, statements));
   await reviews.record(f.identity, "project:test", "job:test", f.draft, "owner-review-lock-order");
   const tenant = statements.findIndex(sql => sql === "SELECT id FROM tenants WHERE id=$1 FOR KEY SHARE");
+  const job = statements.findIndex(sql => /^SELECT id FROM control_jobs .* FOR KEY SHARE$/u.test(sql));
   const gate = statements.findIndex(sql => /control_completion_gate_integrity.*FOR UPDATE/u.test(sql));
   const child = statements.findIndex(sql => sql.startsWith("INSERT INTO control_web_task_review_commands"));
-  assert.ok(tenant >= 0 && gate > tenant && child > gate, JSON.stringify({ tenant, gate, child, statements }));
+  // The child INSERT key-shares the job through its foreign key; the parent must be
+  // held before the gate (see tests/completion-gate-lock-order-postgres.test.ts).
+  assert.ok(tenant >= 0 && job > tenant && gate > job && child > gate, JSON.stringify({ tenant, job, gate, child, statements }));
 });
 
 test("project result-review discovery reports unavailable evidence rather than treating it as no review work", async t => {

@@ -60,8 +60,8 @@ export function interceptNativeQualityDatabase(db: DatabaseClient, after: (sql: 
 
 /** Separate existing signed-native-result fixture, because the full lifecycle fixture intentionally
  * pins one scenario. This supplies a new synthetic three-scenario profile before any progress. */
-export async function nativeQualityBatchFixture() {
-  const f = await webNativeResultFixture();
+export async function nativeQualityBatchFixture(options: Parameters<typeof webNativeResultFixture>[0] = {}) {
+  const f = await webNativeResultFixture(options);
   try {
     const profile: CompletionAcceptanceProfileV1 = { schemaVersion: "control-room-completion-gate/v1", id: "profile:structure-batch",
       tenantId: binding.tenantId, projectId: binding.projectId, name: "Synthetic structure checks", targetKind: "document",
@@ -84,6 +84,6 @@ export async function nativeQualityBatchFixture() {
         requiredHeadings: index < 2 ? [["Evidence", "Result"][index]] : [], forbiddenTerms: [] } }));
     const request = { tenantId: binding.tenantId, runId: registration.id, targetDigest: sha256Digest(target), contentHash: artifact.contentHash };
     const verifier = new NativeResultVerificationService(f.db, config, scenarios, () => instant + 6000);
-    return { ...f, target, profile, request, verifier };
+    return { ...f, target, profile, request, verifier, artifact, scenarios, qualityConfig: config };
   } catch (error) { await f.close(); throw error; }
 }
