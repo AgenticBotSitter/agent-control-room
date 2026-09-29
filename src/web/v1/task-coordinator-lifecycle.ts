@@ -399,6 +399,7 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
       ...(input.codex ? { codexStage: assignment.stageApprovedCodexQueueDelivery.bind(assignment),
         codexTransmit: assignment.transmitApprovedCodexQueueDelivery.bind(assignment) } : {}) } : undefined,
     stage: assignment.stageQueuedNativeDelivery.bind(assignment), transmit: assignment.transmitQueuedNativeDelivery.bind(assignment),
+    renew: assignment.renewByHolder.bind(assignment),
     receipt: (session, raw, signal) => receipt!(db, session, raw, signal), progress: receiver!.receive.bind(receiver),
     ...(input.codex ? { codexReceipt: assignment.receiveCodexDeliveryReceipt.bind(assignment) } : {}),
     ...(codexResultIntake ? { codexResult: codexResultIntake } : {}),
@@ -439,6 +440,7 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
   }) : undefined;
   const assignments: TaskAssignmentOperation = Object.freeze({ ...scope,
     assign: (...args) => run(() => assignment.assign(...args)), expire: (...args) => run(() => assignment.expire(...args)),
+    revoke: (...args) => run(() => assignment.revoke(...args)),
     options: (...args) => run(() => assignment.options(...args)),
     projectOptions: (...args) => run(() => assignment.projectOptions(...args)) });
   const approvals: TaskApprovalOperation | undefined = input.approvals ? Object.freeze({ ...scope,

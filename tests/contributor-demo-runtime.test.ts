@@ -10,6 +10,7 @@ import { createTaskBrowserClient } from "../src/web/v1/task-browser-client";
 import { createLocalPilotBrowserTransportV1 } from "../src/local-pilot/v1/browser-transport";
 import { createLocalPilotControlRoomClientV1 } from "../src/local-pilot/v1/control-room-browser-client";
 import { createContributorDemoNodeHandler, createPrivateNodeHandler } from "../src/web/v1/private-node-handler";
+import { applyReadValidator } from "../src/web/v1/private-read-validator";
 import { nodeExchange } from "./helpers/web-node";
 
 test("disposable demo uses real local authentication and project/task services, then removes its data", async t => {
@@ -147,6 +148,21 @@ test("demo Node bridge preserves local login cookies without changing the produc
   await production.handle(x.input, x.output);
   assert.equal(x.headers.has("set-cookie"), false);
   await production.close();
+});
+
+test("private Node bridge delivers an oversized JSON body refused by read validation", async t => {
+  const body = JSON.stringify({ big: "x".repeat(1_048_577) });
+  const headers = { "cache-control": "no-store", "content-type": "application/json" };
+  const bridge = createPrivateNodeHandler({ origin: "https://private.example.invalid",
+    application: { isReady: () => true, close: async () => {} },
+    assets: { count: 0, digest: "synthetic-empty", respond: () => undefined },
+    handler: async request => (await applyReadValidator(request, new Response(body, { headers }),
+      "node-bridge-oversized-response", headers)).response });
+  t.after(() => bridge.close());
+  const exchange = nodeExchange({ path: "/api/v1/projects" });
+  await bridge.handle(exchange.input, exchange.output);
+  assert.equal(exchange.output.statusCode, 200);
+  assert.equal(exchange.body(), body, "the bridge streams every byte of the untouched response");
 });
 
 test("simulation browser client rejects mismatched or authority-bearing receipts without retry", async () => {

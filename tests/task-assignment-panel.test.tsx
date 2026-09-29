@@ -57,6 +57,21 @@ test("local assignment offers one clear assign-and-run action and keeps a valid 
   assert.equal(retainAssignmentNodeSelectionV1(options, "node:gone"), "node:local");
 });
 
+test("an owner can revoke a current ownership lease", () => {
+  const receipt = { projectId: "project:local", jobId: "job:local", inputDigest: `sha256:${"a".repeat(64)}`,
+    nodeId: "node:local", attemptId: "attempt:local", leaseId: "lease:local", leaseEpoch: 1,
+    acquiredAt: "2026-09-28T12:00:00.000Z", expiresAt: "2026-09-28T12:05:00.000Z",
+    leaseState: "active" as const, leaseCurrent: true, startsWork: false as const, grantsExecutionAuthority: false as const };
+  const html = renderToStaticMarkup(createElement(TaskAssignmentPanel, {
+    options: { projectId: receipt.projectId, jobId: receipt.jobId, inputDigest: receipt.inputDigest,
+      receipt, startsWork: false, candidateEvidence: "configured_routes_only",
+      recommendation: { state: "not_available", availability: "unknown", startsWork: false, grantsExecutionAuthority: false },
+      candidates: [] }, receipt, nodeId: "node:local", setNodeId() {}, pending: false, uncertain: false,
+    onChange() {}, onRetry() {},
+  }));
+  assert.match(html, /Revoke ownership lease/);
+});
+
 test("an unchanged prepared-worker refresh preserves the owner's selection", () => {
   const options = { projectId: "project:local", sourceJobId: "job:local", inputDigest: `sha256:${"a".repeat(64)}`,
     availability: "available" as const, startsWork: false as const, savedPlan: null, templates: [

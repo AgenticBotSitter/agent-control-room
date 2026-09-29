@@ -76,4 +76,5 @@ GRANT UPDATE (state, payload) ON control_action_inbox TO control_room_private_we
 GRANT UPDATE (state, approval_identity_id, approved_at, decision_reason_code, decision_digest,
   decision_auth_tag, version, updated_at)
   ON work_batches TO control_room_private_web;
+GRANT SELECT ON work_intake_tenant_binding TO control_room_private_web;
 COMMIT;
