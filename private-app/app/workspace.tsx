@@ -291,7 +291,7 @@ export function PrivateProjectWorkspace({ projectId, section = "overview", after
             <p className="private-note">Saved revision {project.version} · <ConfiguredTimestamp value={project.updatedAt} prefix="Updated" /></p>
           </section>}
           <ProjectModuleAvailability presentation={project.presentation} />
-          {section === "agents" && <><ProjectAgentWorkspace projectId={projectId} />
+          {section === "agents" && <><ProjectAgentWorkspace projectId={projectId} local={runtime.mode === "local"} />
             <ProjectAgentInstallationStatus topology={installationTopology} />
           {sessionObservations && <SessionObservations projectId={projectId} />}</>}
           {section === "automations" && <ProjectScheduleStatusPanel projectId={projectId} />}
