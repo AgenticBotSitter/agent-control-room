@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { spawnSync } from "node:child_process";
 import test from "node:test";
 import {
   affectedTestCommands,
@@ -352,19 +353,25 @@ test("the per-file node --test bound is at least as large as the largest per-tes
 });
 
 test("a real slow-ish node:test run is not killed by crowding from a neighboring file, unlike the old bundled command", () => {
-  // Rooted under the project (not the system tmpdir) so the child `--import tsx`
-  // process, spawned with this directory as its cwd, can still resolve tsx via
-  // node's upward node_modules search.
-  const root = mkdtempSync(join(process.cwd(), ".affected-tests-slow-fixture-"));
+  const root = mkdtempSync(join(tmpdir(), "control-room-affected-tests-slow-"));
   mkdirSync(join(root, "tests"), { recursive: true });
   writeFileSync(join(root, "tests/slow-a.test.mjs"), "import test from 'node:test';\nimport { setTimeout } from 'node:timers/promises';\n" +
     "test('a', async () => { await setTimeout(1200); });");
   writeFileSync(join(root, "tests/slow-b.test.mjs"), "import test from 'node:test';\nimport { setTimeout } from 'node:timers/promises';\n" +
     "test('b', async () => { await setTimeout(1200); });");
+  // The fixtures are plain .mjs, so they need no `--import tsx`. Run the real
+  // process.execPath with that flag stripped so this test proves per-file
+  // isolation without depending on tsx being installed (Quick checks runs
+  // this file before `pnpm install`).
+  function executeCapturingOutput(command, arguments_, commandRoot, environment) {
+    const strippedArguments = arguments_.filter(argument => argument !== "--import" && argument !== "tsx");
+    const child = spawnSync(command, strippedArguments, { cwd: commandRoot, encoding: "utf8", env: environment });
+    return { status: child.status ?? 1, output: `${child.stdout ?? ""}${child.stderr ?? ""}` };
+  }
   try {
     const tests = ["tests/slow-a.test.mjs", "tests/slow-b.test.mjs"];
     // Real execution, not a mocked runner: this is the same node --test the CI job invokes.
-    assert.equal(runAffectedTests(tests, tests, root), 0);
+    assert.equal(runAffectedTests(tests, tests, root, undefined, undefined, executeCapturingOutput), 0);
   } finally { rmSync(root, { recursive: true }); }
 });
 
