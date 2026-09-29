@@ -21,11 +21,19 @@ const passwords = {
   CONTROL_ROOM_MIGRATOR_PASSWORD: "m".repeat(24),
   CONTROL_ROOM_APP_PASSWORD: "a".repeat(24),
   CONTROL_ROOM_SCHEDULER_PASSWORD: "s".repeat(24),
+  CONTROL_ROOM_WORK_INTAKE_PASSWORD: "w".repeat(24),
 };
 
 export interface DisposableMacLocalDatabaseOptions {
   /** Temp run directory holding the cluster's `socket` directory. */
   run: string;
+  /**
+   * The cluster's socket directory. Defaults to `<run>/socket`, which is where
+   * a cluster that keeps its socket beside its data dir puts it. Lanes whose
+   * socket lives elsewhere — because the worktree path is too deep for the
+   * platform's `sun_path` budget — pass it explicitly.
+   */
+  socket?: string;
   port: number;
   /** Unique database name; must match /^[a-z][a-z0-9_]{0,62}$/ (validated downstream too). */
   name: string;
@@ -50,8 +58,9 @@ export async function openDisposableMacLocalDatabase(options: DisposableMacLocal
   Promise<DisposableMacLocalDatabase> {
   if (!/^[a-z][a-z0-9_]{0,62}$/.test(options.name))
     throw new Error("disposable_database_name_invalid");
+  const socket = options.socket ?? `${options.run}/socket`;
   // Local-socket admin connection: trust auth, never over TCP.
-  const admin = new Client({ host: `${options.run}/socket`, port: options.port, database: "postgres",
+  const admin = new Client({ host: socket, port: options.port, database: "postgres",
     user: options.fixtureUser });
   await admin.connect();
   try {
@@ -60,7 +69,6 @@ export async function openDisposableMacLocalDatabase(options: DisposableMacLocal
   } finally {
     await admin.end();
   }
-  const socket = `${options.run}/socket`;
   // `target` and `ledgerPath` are plan-mode flags the JSDoc marks required;
   // passing them matches the repo's own tests/postgres-production-lifecycle
   // call shape. Supplying bootstrap+migrate targets is what actually runs.
@@ -79,7 +87,7 @@ export async function openDisposableMacLocalDatabase(options: DisposableMacLocal
     throw new Error("disposable_database_migrations_not_applied");
   return { name: options.name, applied: applied.length,
     drop: async () => {
-      const dropper = new Client({ host: `${options.run}/socket`, port: options.port, database: "postgres",
+      const dropper = new Client({ host: socket, port: options.port, database: "postgres",
         user: options.fixtureUser });
       await dropper.connect();
       try { await dropper.query(`DROP DATABASE IF EXISTS ${options.name} WITH (FORCE)`); }

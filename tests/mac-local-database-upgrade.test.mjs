@@ -9,7 +9,7 @@ import { captureProvisionedMacLocalConfigurationV1,
 import { captureMacUpgradeSnapshotV1 } from "../scripts/mac-local/database-upgrade-snapshot.mjs";
 import { checkedPostgresScramVerifierV1, postgresScramVerifierV1 } from
   "../scripts/mac-local/database-upgrade-scram.mjs";
-import { desiredMacGrantsV1, diffMacGrantsV1, readDesiredMacGrantsV1 } from
+import { applyMacGrantDiffV1, desiredMacGrantsV1, diffMacGrantsV1, readDesiredMacGrantsV1 } from
   "../scripts/mac-local/database-upgrade-grants.mjs";
 import { MAC_LOCAL_DATABASE_ROLES_V1, captureMacLocalDatabaseRolesV1 } from
   "../src/web/v1/mac-local-database-roles.ts";
@@ -51,6 +51,9 @@ test("grant plan covers the source role files and detects additions and extras e
   assert.ok(desired.size > 300);
   assert.ok([...desired].some(value => value.includes("control_room_local_result_publisher|table|public.control_harness_runs||INSERT|plain")));
   assert.ok([...desired].some(value => value.includes("control_room_task_coordinator|table|public.control_node_fleet_signals||INSERT|plain")));
+  for (const role of ["control_room_private_web", "control_room_task_coordinator",
+    "control_room_native_results", "control_room_local_result_publisher"])
+    assert.ok(desired.has(`${role}|function|public.is_work_intake_session()||EXECUTE|plain`));
   for (const item of [
     "control_room_private_web|table|public.control_leases||SELECT|plain",
     "control_room_private_web|table|public.control_task_execution_plans||SELECT|plain",
@@ -82,6 +85,21 @@ test("grant plan covers the source role files and detects additions and extras e
   ].map(async file => [file, await readFile(new URL(`../db/roles/${file}`, import.meta.url), "utf8")])));
   sources["private_web_roles.sql"] += "\nGRANT SELECT ON control_leases TO control_room_private_web;\n";
   assert.throws(() => desiredMacGrantsV1(sources), /upgrade_grant_source_duplicate/u);
+});
+
+test("grant convergence admits only the pinned intake identity function boundary", async () => {
+  const calls = [];
+  const client = { query: async sql => { calls.push(sql); } };
+  await applyMacGrantDiffV1(client, { extra: [],
+    missing: ["control_room_private_web|function|public.is_work_intake_session()||EXECUTE|plain"] });
+  assert.deepEqual(calls,
+    ["GRANT EXECUTE ON FUNCTION public.is_work_intake_session() TO control_room_private_web"]);
+  await assert.rejects(applyMacGrantDiffV1(client, { extra: [],
+    missing: ["control_room_queue_worker|function|public.is_work_intake_session()||EXECUTE|plain"] }),
+  /upgrade_unexpected_function_grant/u);
+  await assert.rejects(applyMacGrantDiffV1(client, { extra: [],
+    missing: ["control_room_private_web|function|public.other_function()||EXECUTE|plain"] }),
+  /upgrade_unexpected_function_grant/u);
 });
 
 test("offline plan rejects a mismatched main commit and malformed snapshot", async t => {

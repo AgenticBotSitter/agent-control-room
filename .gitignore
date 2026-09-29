@@ -7,6 +7,16 @@ node_modules/
 /coverage/
 *.tsbuildinfo
 
+# Disposable PostgreSQL data directories created by test lanes. Must stay
+# inside the worktree: `with-test-slot` only stops postmasters whose -D data
+# directory is under its $PWD, so a cluster in the system temp dir is invisible
+# to it. (scripts/dev/cleanup-test-postgres.mjs does NOT see these either — it
+# only treats a directory as disposable when it is under os.tmpdir() or carries
+# a mac-local-rehearsal marker, neither of which a test lane writes. The
+# in-process teardown in tests/helpers/disposable-postgres-cluster.ts is what
+# actually stops them.)
+/.test-tmp/
+
 # Local credentials and environment overrides. Examples must contain placeholders.
 .env
 .env.*

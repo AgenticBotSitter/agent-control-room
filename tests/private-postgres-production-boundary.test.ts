@@ -68,7 +68,8 @@ async function fixture(t: TestContext) {
     host: "127.0.0.1", port: 5432, database: "control_room", maintenanceDatabase: "postgres",
     operator: { username: "postgres", password: "operator-password-000000000000" },
     migratorPassword: "migrator-password-00000000000", applicationPassword: "application-password-000000000",
-    schedulerPassword: "scheduler-password-00000000000", requiredTables: ["tenants"] };
+    schedulerPassword: "scheduler-password-00000000000",
+    workIntakePassword: "work-intake-password-00000000000", requiredTables: ["tenants"] };
   const configurationPath = join(root, "postgres-private.json"), configurationBytes = Buffer.from(JSON.stringify(configuration));
   await writeFile(configurationPath, configurationBytes, { mode: 0o600 });
   const reviewedFiles = { schema: "control-room.private-postgres-reviewed-files/v1" as const,

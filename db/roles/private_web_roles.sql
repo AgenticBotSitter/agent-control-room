@@ -71,4 +71,6 @@ GRANT UPDATE (revoked_at) ON control_web_sessions TO control_room_private_web;
 GRANT UPDATE (domain_state, source_version, normalized_state, updated_at, payload, observed_at) ON projects TO control_room_private_web;
 GRANT UPDATE (lifecycle, version, updated_at) ON control_manual_project_heads TO control_room_private_web;
 GRANT UPDATE (head_hash, event_count, updated_at) ON control_audit_chain_heads TO control_room_private_web;
+GRANT EXECUTE ON FUNCTION is_work_intake_session() TO control_room_private_web;
+GRANT SELECT ON work_intake_tenant_binding TO control_room_private_web;
 COMMIT;

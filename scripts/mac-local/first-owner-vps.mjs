@@ -12,10 +12,11 @@ import { Client } from "pg";
 import { sha256Digest } from "../../src/security/canonical-digest";
 import { publicKeyFingerprint } from "../../src/node-protocol/v1";
 import { DOMAIN_CONTRACT_VERSION, nodeRecordSchema } from "../../src/domain/v1";
+import { workIntakeAuthSubjectDigestV1, workIntakeIdentityIdV1 } from "../../src/work-intake/v1/installed-configuration";
 import { captureMacLocalFirstOwnerManifestV1 } from "./first-owner-manifest.mjs";
 
 export const MAC_LOCAL_FIRST_OWNER_RECEIPT_V1 = "control-room.mac-local-first-owner-receipt/v1";
-export const FIRST_OWNER_ROW_TOTAL_V1 = 14;
+export const FIRST_OWNER_BASE_ROW_TOTAL_V1 = 14;
 
 /** Every persisted column of every one-time table is classified. A new
  * migration column makes the rehearsal fail until this classification changes.
@@ -37,6 +38,7 @@ export const FIRST_OWNER_COLUMN_POLICY_V1 = Object.freeze({
     operational: ["state", "valid_until", "revoked_at", "coordinator_lock"] },
   control_completion_gate_integrity: { identity: ["tenant_id", "record_count", "state_digest", "state_auth_tag", "revision"],
     operational: ["web_lock"] },
+  work_intake_tenant_binding: { identity: ["singleton", "tenant_id"], operational: [] },
 });
 
 const refused = code => { throw new Error(code); };
@@ -83,7 +85,9 @@ async function createOrKeep(client, table, idColumn, id, expected, insertSql, pa
   return "created";
 }
 
-/** Applies exactly fourteen rows in one transaction. No retry, repair, grant,
+/** Applies the fixed first-owner rows and, when intake scopes are configured,
+ * the three proposal-only identities and grants plus the intake login's tenant
+ * binding in one transaction. An existing binding to another tenant refuses. No retry, repair, grant,
  * migration, or role mutation is performed here. */
 export async function applyMacLocalFirstOwnerV1(client, suppliedManifest) {
   const m = captureMacLocalFirstOwnerManifestV1(suppliedManifest);
@@ -116,6 +120,33 @@ export async function applyMacLocalFirstOwnerV1(client, suppliedManifest) {
         allow_external_effects,require_strong_factor,created_at,updated_at)
        VALUES($1,$2,$3,'owner','["*"]'::jsonb,'["*"]'::jsonb,'critical',true,false,$4,$4)`,
       [m.grant.id,tenantId,m.identity.id,at]));
+    if (m.workIntakeProjectIds.length > 0) {
+      const projectIds = JSON.stringify(m.workIntakeProjectIds);
+      const workerKinds = ["hermes", "claude-code", "codex"];
+      for (const [index, node] of m.nodes.entries()) {
+        const workerKind = workerKinds[index];
+        const identityId = workIntakeIdentityIdV1(tenantId, node.workerId);
+        const grantId = `grant:work-intake:${identityId.slice("identity:work-intake:".length)}`;
+        const subjectDigest = workIntakeAuthSubjectDigestV1(node.workerId, workerKind);
+        count(await createOrKeep(client,"control_identities","id",identityId,
+          {id:identityId,tenant_id:tenantId,actor_type:"agent",display_name:`Registered proposal agent ${workerKind}`,
+            auth_provider:"work-intake",auth_subject_digest:subjectDigest,state:"active",created_at:at},
+          `INSERT INTO control_identities(id,tenant_id,actor_type,display_name,auth_provider,auth_subject_digest,state,created_at,updated_at)
+           VALUES($1,$2,'agent',$3,'work-intake',$4,'active',$5,$5)`,
+          [identityId,tenantId,`Registered proposal agent ${workerKind}`,subjectDigest,at]));
+        count(await createOrKeep(client,"control_role_grants","id",grantId,
+          {id:grantId,tenant_id:tenantId,identity_id:identityId,role_key:"work_batch_proposer",
+            allowed_actions:["work_batches.propose"],project_ids:m.workIntakeProjectIds,risk_ceiling:"low",
+            allow_external_effects:false,require_strong_factor:false,expires_at:null,revoked_at:null,created_at:at},
+          `INSERT INTO control_role_grants(id,tenant_id,identity_id,role_key,allowed_actions,project_ids,risk_ceiling,
+            allow_external_effects,require_strong_factor,created_at,updated_at)
+           VALUES($1,$2,$3,'work_batch_proposer','["work_batches.propose"]'::jsonb,$4::jsonb,'low',false,false,$5,$5)`,
+          [grantId,tenantId,identityId,projectIds,at]));
+      }
+      count(await createOrKeep(client,"work_intake_tenant_binding","singleton",true,
+        {singleton:true,tenant_id:tenantId},
+        "INSERT INTO work_intake_tenant_binding(singleton,tenant_id) VALUES(true,$1)",[tenantId]));
+    }
     for (const adapter of m.adapters) count(await createOrKeep(client,"adapter_registry","id",adapter.id,
       {id:adapter.id,tenant_id:tenantId,source_system:"control-room-mac-local",contract_version:"1.0.0",
         authority_mode:"control_room_native",project_types:[],supported_read_operations:[],supported_commands:[],
@@ -170,7 +201,8 @@ export async function applyMacLocalFirstOwnerV1(client, suppliedManifest) {
         [tenantId,genesis.revision,genesis.recordCount,genesis.stateDigest,genesis.stateAuthTag]);
       created++;
     }
-    if(created+kept!==FIRST_OWNER_ROW_TOTAL_V1) refused("first_owner_row_count_invalid");
+    const expectedRows = FIRST_OWNER_BASE_ROW_TOTAL_V1 + (m.workIntakeProjectIds.length > 0 ? 7 : 0);
+    if(created+kept!==expectedRows) refused("first_owner_row_count_invalid");
     await client.query("COMMIT");
   }catch(error){await client.query("ROLLBACK").catch(()=>{});throw error;}
   return Object.freeze({schema:MAC_LOCAL_FIRST_OWNER_RECEIPT_V1,manifestDigest:sha256Digest(m),tenantId,

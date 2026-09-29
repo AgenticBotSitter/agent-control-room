@@ -15,9 +15,10 @@ export async function verifyPrivateIdeaAdapter(db: DatabaseClient, scope: { tena
   if (rows.length !== 1 || rows[0].valid !== true) throw new Error("private_idea_adapter_unavailable");
 }
 
-// Generated from public migrations 0001-0101, including generic external-content
-// migrations 0025/0026. Catalog query below; not a mutable database marker.
-export const privateWebSchemaDigest = "554bfa561801892277ddb2cfc6beb140042af24d96341b5fd7ff0fb05df2c673";
+// Generated from public migrations 0001-0101 (filename order: ...0092,0093,0100,0101),
+// including generic external-content migrations 0025/0026. Catalog query below;
+// not a mutable database marker.
+export const privateWebSchemaDigest = "PLACEHOLDER_RECOMPUTE_FROM_LIVE_PG";
 export const privateWebReadTables = ["control_identities", "control_role_grants", "workspaces", "control_web_sessions",
   "tenants", "control_idempotency",
   "control_schedules", "control_schedule_occurrences",
@@ -25,7 +26,7 @@ export const privateWebReadTables = ["control_identities", "control_role_grants"
   "control_idea_sessions", "control_idea_contributions", "control_idea_syntheses", "control_idea_decisions", "control_idea_bot_run_events",
   "control_idea_canonical_task_sessions", "control_idea_canonical_task_links",
   "adapter_registry", "projects", "control_manual_project_heads", "control_web_project_commands", "audit_events",
-  "control_audit_chain_heads", "control_project_lifecycle_events", "control_policy_decisions", "control_connection_registry_heads",
+  "control_audit_chain_heads", "work_intake_tenant_binding", "control_project_lifecycle_events", "control_policy_decisions", "control_connection_registry_heads",
   "control_connection_enrollments", "control_connection_authenticated_telemetry_receipts", "control_requests", "control_workflows",
   "control_jobs", "control_attempts", "control_leases", "control_task_execution_plans", "control_harness_runs", "control_harness_run_events", "control_web_task_commands",
   "control_artifact_manifests", "control_native_artifact_receipts", "control_completion_gate_records", "control_completion_gate_integrity", "control_web_task_review_commands", "control_native_review_plans",
@@ -67,7 +68,7 @@ const fail = () => { throw new Error("private_database_preflight_failed"); };
 const ideaCreationReads = ["workspaces", "control_identities", "control_role_grants", "control_web_sessions",
   "control_idea_sessions", "control_idea_bot_run_events", "control_idea_contributions", "control_idea_syntheses",
   "control_idea_decisions", "control_idea_owner_authorizations", "control_policy_decisions", "projects",
-  "control_project_lifecycle_events", "audit_events", "control_audit_chain_heads"];
+  "control_project_lifecycle_events", "audit_events", "control_audit_chain_heads", "work_intake_tenant_binding"];
 const ideaCreationInserts = new Set(["control_web_sessions", "control_idea_sessions", "control_idea_bot_run_events", "audit_events", "control_audit_chain_heads",
   "control_policy_decisions", "control_idea_owner_authorizations", "control_idea_decisions", "projects", "control_project_lifecycle_events", "control_idea_syntheses"]);
 const ideaCreationUpdates: Record<string, readonly string[]> = { workspaces: ["web_lock"], control_identities: ["web_lock"],
@@ -82,7 +83,7 @@ const newsIngestionUpdates: Record<string, readonly string[]> = { workspaces: ["
 const newsCoordinatorReads = ["tenants", "workspaces", "projects", "control_manual_project_heads", "control_identities", "control_role_grants",
   "control_web_sessions", "control_requests", "control_workflows", "control_jobs", "control_attempts", "control_leases", "control_nodes",
   "control_job_dependencies", "control_transition_events", "control_outbox", "control_approvals", "control_effect_intents",
-  "control_approval_consumptions", "control_policy_decisions", "control_news_feed_plans", "control_news_source_settings", "audit_events", "control_audit_chain_heads"];
+  "control_approval_consumptions", "control_policy_decisions", "control_news_feed_plans", "control_news_source_settings", "audit_events", "control_audit_chain_heads", "work_intake_tenant_binding"];
 const newsCoordinatorInserts = new Set(["control_web_sessions", "control_requests", "control_workflows", "control_jobs", "control_attempts",
   "control_leases", "control_transition_events", "control_outbox", "control_approvals", "control_effect_intents", "control_approval_consumptions",
   "control_policy_decisions", "control_news_feed_plans", "audit_events", "control_audit_chain_heads"]);
@@ -97,7 +98,7 @@ const coordinatorReads = ["tenants", "workspaces", "control_identities", "contro
   "control_attempts", "control_leases", "control_task_execution_plans", "control_nodes", "control_node_keys",
   "control_node_fleet_current", "control_node_fleet_signals", "control_job_dependencies", "control_transition_events", "control_outbox",
   "control_installation_transition_revisions",
-  "audit_events", "control_audit_chain_heads", "control_completion_gate_integrity", "control_completion_gate_records", "control_native_approval_packets", "control_native_task_queue", "control_native_delivery_preparations", "control_native_delivery_envelopes", "control_native_transmission_intents", "control_native_delivery_receipts",
+  "audit_events", "control_audit_chain_heads", "work_intake_tenant_binding", "control_completion_gate_integrity", "control_completion_gate_records", "control_native_approval_packets", "control_native_task_queue", "control_native_delivery_preparations", "control_native_delivery_envelopes", "control_native_transmission_intents", "control_native_delivery_receipts",
   "control_codex_delivery_envelopes", "control_codex_transmission_intents", "control_codex_delivery_receipts", "control_codex_activation_transmission_intents", "control_worker_delivery_receipts",
   "control_codex_result_publications",
   "control_harness_runs", "control_harness_run_events", "control_native_review_plans", "control_artifact_manifests", "control_native_artifact_receipts",
@@ -140,7 +141,7 @@ const resultReads = ["workspaces", "control_identities", "control_role_grants", 
   "control_jobs", "control_workflows", "control_requests", "control_task_execution_plans",
   "control_harness_runs", "control_harness_run_events", "control_codex_result_publications", "control_native_review_plans",
   "control_artifact_manifests", "control_native_artifact_receipts", "control_completion_gate_records",
-  "control_completion_gate_integrity", "audit_events", "control_audit_chain_heads", "control_idea_sessions",
+  "control_completion_gate_integrity", "audit_events", "control_audit_chain_heads", "work_intake_tenant_binding", "control_idea_sessions",
   "control_idea_canonical_task_links", "control_idea_contributions", "control_idea_decisions"];
 const resultInserts = new Set(["control_native_review_plans", "control_completion_gate_records", "audit_events", "control_audit_chain_heads",
   "control_idea_contributions"]);
@@ -158,7 +159,7 @@ const evidenceReads = ["workspaces", "control_identities", "control_role_grants"
   "control_task_execution_plans", "control_codex_activation_transmission_intents", "control_codex_result_publications",
   "control_artifact_manifests", "control_native_artifact_receipts", "control_native_result_write_reservations",
   "control_durable_result_write_reservations",
-  "audit_events", "control_audit_chain_heads"];
+  "audit_events", "control_audit_chain_heads", "work_intake_tenant_binding"];
 const evidenceInserts = new Set(["control_harness_runs", "control_harness_run_events", "control_codex_result_publications", "control_artifact_manifests",
   "control_native_artifact_receipts", "control_native_result_write_reservations",
   "control_worktree_change_audit_plans", "control_worktree_change_audit_records",
@@ -186,7 +187,7 @@ const publisherReads = ["workspaces", "control_identities", "control_role_grants
   "control_task_model_selections",
   "control_harness_runs", "control_harness_run_events", "control_artifact_manifests", "control_native_artifact_receipts",
   "control_durable_result_write_reservations", "control_native_review_plans",
-  "audit_events", "control_audit_chain_heads"];
+  "audit_events", "control_audit_chain_heads", "work_intake_tenant_binding"];
 const publisherInserts = new Set(["control_harness_runs", "control_harness_run_events", "control_artifact_manifests", "control_native_artifact_receipts",
   "control_durable_result_write_reservations", "control_native_review_plans",
   "audit_events", "control_audit_chain_heads"]);
@@ -368,7 +369,20 @@ async function verifyDatabase(db: DatabaseClient, config: PrivatePostgresConfigu
           AND (pg_has_role(c.relowner,'MEMBER') OR c.relkind='S' AND
             (has_sequence_privilege(c.oid,'SELECT') OR has_sequence_privilege(c.oid,'UPDATE') OR has_sequence_privilege(c.oid,'USAGE'))))
         OR EXISTS(SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='public'
-          AND (has_function_privilege(p.oid,'EXECUTE') OR pg_has_role(p.proowner,'MEMBER') OR p.prosecdef))
+          AND (pg_has_role(p.proowner,'MEMBER') OR (has_function_privilege(p.oid,'EXECUTE') OR p.prosecdef) AND NOT (
+            p.oid='is_work_intake_session()'::regprocedure
+            AND p.prosecdef AND p.provolatile='s' AND p.prokind='f' AND p.prorettype='boolean'::regtype
+            AND p.pronargs=0 AND NOT p.proleakproof AND p.proparallel='u'
+            AND p.prolang=(SELECT oid FROM pg_language WHERE lanname='sql')
+            AND p.proconfig=ARRAY['search_path=pg_catalog, public, pg_temp']::text[]
+            AND NOT has_function_privilege('public',p.oid,'EXECUTE')
+            AND NOT EXISTS(SELECT 1 FROM aclexplode(COALESCE(p.proacl,acldefault('f',p.proowner))) a
+              WHERE a.privilege_type='EXECUTE' AND a.grantee<>p.proowner AND (a.is_grantable OR a.grantee=0
+                OR pg_get_userbyid(a.grantee) NOT IN ('control_room_application','control_room_reader','control_room_backup',
+                  'control_room_work_intake','control_room_private_web','control_room_task_coordinator',
+                  'control_room_native_results','control_room_native_evidence','control_room_local_result_publisher',
+                  'control_room_idea_creation','control_room_news_coordinator')))
+          )))
         OR EXISTS(SELECT 1 FROM pg_default_acl d CROSS JOIN LATERAL aclexplode(d.defaclacl) a
           WHERE a.grantee=0 OR a.grantee IN (SELECT oid FROM pg_roles WHERE pg_has_role(oid,'MEMBER')))
         OR NOT has_schema_privilege('public','USAGE') AS unsafe`, [withQueue])).rows[0];
