@@ -248,24 +248,12 @@ interruptions.
 
 ### Optional private HTTPS address for a phone or PC
 
-This is off by default. It does not change the Control Room listener: the app still binds only to
-`127.0.0.1`. Tailscale Serve terminates HTTPS and proxies back to that loopback listener. Use Serve,
-not Funnel; Funnel would make the address public.
-
-1. Stop Control Room: `pnpm mac:down -- --protected-root <protected-root>`.
-2. In `<protected-root>/config/mac-local.json`, add this field inside `localOwnerSession`:
-   `"trustedOrigin": "https://<mac-name>.<tailnet-name>.ts.net"`. It must be the exact HTTPS origin,
-   with no path, wildcard, trailing slash, credentials, or query string.
-3. Start the private proxy on the Mac: `tailscale serve --bg 3210`.
-4. Confirm the printed Serve URL exactly matches `trustedOrigin`, then start Control Room with the
-   normal `pnpm mac:up -- --protected-root <protected-root>` command.
-5. Open that exact HTTPS URL on a tailnet-authorized phone or PC. Sign-in uses a `Secure`,
-   `HttpOnly`, `SameSite=Strict` cookie; writes still require the exact origin and CSRF checks.
-
-To turn it off, stop Control Room, run `tailscale serve --https=443 off`, remove `trustedOrigin`
-from the protected file, and start Control Room again. An unconfigured or different origin remains
-refused. Tailscale documents the current Serve syntax in its official
-[Serve command reference](https://tailscale.com/docs/reference/tailscale-cli/serve).
+This is off by default. The app still binds only to `127.0.0.1`. Two optional doors lead to it:
+Tailscale Serve for your phone and Cloudflare Tunnel + Access for your other computers. Both are
+configured in the protected `remoteAccess` block and explained step by step in
+[REMOTE_ACCESS_GUIDE.md](REMOTE_ACCESS_GUIDE.md). Use Serve, never Funnel. An older
+`localOwnerSession.trustedOrigin` line still works as the Tailscale address, but only if it is
+a `ts.net` address; any other address stops Control Room from starting.
 
 ## 9. Known limitations (read before you rely on this)
 

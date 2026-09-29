@@ -3,6 +3,8 @@ import { createMacLocalNodeService } from "./private-serving";
 import type { PrivateClientAssets } from "./private-assets";
 import { createMacLocalWebProcessV1, type MacLocalWebProcessOptionsV1 } from "./mac-local-web-process";
 import { installPrivateApplication, privateNotConfigured, type PrivateApplication } from "./private-process";
+import { createMacLocalRemoteOriginGatesV1, type MacLocalRemoteAccessV1 } from "./mac-local-remote-access";
+import type { AccessKeyLoader } from "./access-key-cache";
 
 type ListenerOptions = Readonly<{ port: number; createServer?: (options: Readonly<ServerOptions>) => Server;
   listenerTiming?: { bindMs?: number; closeMs?: number } }>;
@@ -30,15 +32,28 @@ function useRunningApplication(app: PrivateApplication) {
 export function createMacLocalControlRoomServiceV1(options: MacLocalWebProcessOptionsV1 & ListenerOptions & {
   assets: PrivateClientAssets;
   render(request: Request): Promise<Response> | Response;
+  /** Captured protected configuration; absent keeps the site loopback-only. */
+  remoteAccess?: MacLocalRemoteAccessV1;
+  /** Test seam for the Cloudflare key set; production fetches the team keys. */
+  remoteAccessRuntime?: Readonly<{ transport?: typeof fetch; loadKeys?: AccessKeyLoader; clock?: () => number }>;
 }) {
-  const app = createMacLocalWebProcessV1(options);
+  const remote = options.remoteAccess;
+  const remoteOrigins = [remote?.tailscale?.origin, remote?.cloudflare?.origin].filter(Boolean);
+  const sessionOrigins = [options.localOwnerSession.trustedOrigin, ...(options.localOwnerSession.remoteOrigins ?? [])].filter(Boolean);
+  // The website, the owner session and the transport must name the same remote origins.
+  if (!remote && options.localOwnerSession.remoteOrigins !== undefined || remote && (remoteOrigins.length !== sessionOrigins.length || remoteOrigins.some(value => !sessionOrigins.includes(value))
+    || options.localOwnerSession.trustedOrigin !== undefined)) throw new Error("mac_local_remote_access_invalid");
+  const app = createMacLocalWebProcessV1({ ...options,
+    ...(remote?.cloudflare ? { cloudflareAccessOrigin: remote.cloudflare.origin } : {}) });
   // Same shape as the VPS host: the renderer's middleware sends every request to
   // the installed application, which authorizes before any page renders.
+  const gates = remote ? createMacLocalRemoteOriginGatesV1(remote, options.remoteAccessRuntime) : undefined;
   const service = createMacLocalNodeService({ origin: options.origin,
     ...(options.localOwnerSession.trustedOrigin ? { secondaryOrigin: options.localOwnerSession.trustedOrigin } : {}),
+    ...(gates ? { remoteOrigins: gates.gates } : {}),
     port: options.port, assets: options.assets,
     handler: request => options.render(request),
-    application: { isReady: app.isReady, close: app.close }, ...(options.createServer ? { createServer: options.createServer } : {}),
+    application: { isReady: app.isReady, close: async () => { gates?.close(); await app.close(); } }, ...(options.createServer ? { createServer: options.createServer } : {}),
     ...(options.listenerTiming ? { listenerTiming: options.listenerTiming } : {}) });
   const release = () => { if (running === app) running = undefined; };
   const start = async () => {

@@ -92,6 +92,9 @@ export function createAccessKeyCache(options: {
       })();
       return loading;
     },
+    /** Drops the cached key set so the next get() loads again. It does not
+     * bypass the post-failure backoff; callers rate-limit their own use. */
+    expire() { cached = undefined; },
     close() { closed = true; cached = undefined; controller?.abort(); },
   };
 }
