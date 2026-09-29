@@ -185,7 +185,9 @@ test("the executable down migration refuses records and removes every owned obje
   const empty = new PGlite(); t.after(() => void empty.close());
   for (const file of (await readdir("db/migrations")).filter(file => file.endsWith(".sql")).sort())
     await empty.exec(await readFile(`db/migrations/${file}`, "utf8"));
-  // The build-publication tenant policy reads the intake binding: newest first.
+  // The unattended-advance and build-publication tenant policies read the
+  // intake binding: newest first.
+  await empty.exec(await readFile("db/down/0109_pipeline_unattended_advance.sql", "utf8"));
   await empty.exec(await readFile("db/down/0108_pipeline_build_publications.sql", "utf8"));
   await empty.exec(queueDown); await empty.exec(ownerDown); await empty.exec(down);
   const objects = await empty.query<{ batches: string | null; revisions: string | null; first_guard: string | null; second_guard: string | null }>(
