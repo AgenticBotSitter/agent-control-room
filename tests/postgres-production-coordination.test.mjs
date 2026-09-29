@@ -22,6 +22,10 @@ import { fileURLToPath } from "node:url";
 import { tmpdir } from "node:os";
 import { Client, Pool } from "pg";
 import { applyMigrations } from "../deploy/postgres/apply-migrations.mjs";
+// The shared disposable-cluster teardown. `.mjs` because
+// `scripts/ops/verify-database-backup.mjs` imports it with bare `node`, and a
+// `.ts` module could not be imported by one of its own callers.
+import { createClusterTeardown } from "../scripts/dev/postgres-cluster-lifecycle.mjs";
 import { privateWebInsertColumns } from "../src/web/v1/private-database-preflight.ts";
 import { sha256Digest } from "../src/security/digest.ts";
 import {
@@ -47,6 +51,8 @@ const PORT = 65437;
 const exec = promisify(execFile);
 
 let run = "", socket = "", data = "";
+/** The shared teardown, created before `initdb` and released by `after()`. */
+let teardown = null;
 const target = (database, user = "fixture_admin") =>
   ({ host: socket, port: PORT, database, user, password: "fixture_only" });
 const adminDb = () => target("postgres");
@@ -91,6 +97,15 @@ before(async () => {
   socket = join(run, "socket");
   data = join(run, "data");
   await mkdir(socket, { mode: 0o700, recursive: true });
+  // Registered BEFORE initdb, and that ordering is the fix. This lane had no
+  // SIGINT/SIGTERM handler at all, so a runner that stopped it at its bound, or
+  // a Ctrl-C, skipped `after()` and left a postmaster holding a 56-byte SysV
+  // shared-memory segment with a dead creator. `pg_ctl start` runs the postmaster
+  // with `setsid`, so it is its own session leader with PPID 1 and a group
+  // signal from the runner cannot reach it either. This machine has 32 of those
+  // segments in total.
+  teardown = createClusterTeardown({ dataDirectory: data, runDirectory: run,
+    socketDirectory: socket, port: PORT, pgBin: BIN });
   if (process.getuid?.() === ROOT_UID) {
     await exec("chown", ["-R", `${POSTGRES_UID}:${POSTGRES_GID}`, run]);
   }
@@ -143,11 +158,11 @@ before(async () => {
 
 after(async () => {
   if (!PG_AVAILABLE || !run) return;
-  try {
-    await native("pg_ctl", ["-D", data, "-m", "fast", "-w", "-t", "30", "stop"]);
-  } finally {
-    await rm(run, { recursive: true, force: true });
-  }
+  // The shared ladder decides the order and refuses to report success when the
+  // postmaster survives. The old `finally { rm }` deleted the data directory
+  // even when the stop had failed, which is how a leaked segment became
+  // unreapable: nothing was left to stop the postmaster with.
+  await teardown?.stop();
 });
 
 const webTarget = () => ({ host: socket, port: PORT, database: "cr_prod_coord200",

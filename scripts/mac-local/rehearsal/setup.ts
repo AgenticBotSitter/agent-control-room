@@ -16,6 +16,10 @@ import { captureMacLocalDatabaseRolesV1, MAC_LOCAL_DATABASE_ROLES_V1 } from "../
 import { LOCAL_OWNER_SESSION_PROFILE_V1 } from "../../../src/web/v1/local-owner-session";
 import { OWNER_TRUSTED_LOCAL_ENABLEMENT_V1 } from "../../../src/harness/v1/owner-trusted-local-enablements";
 import { readPinnedMacExecutableVersion } from "../start-web-host.mjs";
+// The shared disposable-cluster teardown. `.mjs` because
+// `scripts/ops/verify-database-backup.mjs` imports it with bare `node`, and a
+// `.ts` module could not be imported by one of its own callers.
+import { createClusterTeardown } from "../../dev/postgres-cluster-lifecycle.mjs";
 
 const [action, dir] = process.argv.slice(2);
 const portIndex = process.argv.indexOf("--port");
@@ -38,15 +42,35 @@ const pgExecutable = (name: string) => pgBin ? join(pgBin, name) : name;
 const pg = join(dir, "pg");
 const bounded = { env, stdio: "ignore" as const, timeout: 120_000, killSignal: "SIGKILL" as const };
 const pgctl = (...args: string[]) => execFileSync(pgExecutable("pg_ctl"), ["-D", pg, ...args], bounded);
+
+// The shared teardown, created BEFORE initdb. That ordering is the fix.
+//
+// This script's own signal handlers ran `pg_ctl stop -m fast` with the error
+// SWALLOWED, and its `exit` hook had the same shape. Two consequences on a
+// machine with 32 SysV shared-memory segments in total, one per postmaster:
+// a `pg_ctl` that failed left a live postmaster holding its 56-byte segment
+// with a dead creator, and a start that forked and then failed left one too,
+// because `clusterStarted` was only set AFTER `pg_ctl start` returned. The
+// shared teardown registers first, asks for the stop in the order that
+// RELEASES the segment, and refuses to report success when the postmaster
+// survives.
+//
+// `keepCluster` is honoured here rather than inside the teardown: this
+// rehearsal intentionally leaves a running cluster for the owner's browser
+// session, and the teardown is released rather than stopped in that case.
+const teardown = createClusterTeardown({ dataDirectory: pg, runDirectory: dir, port, pgBin,
+  removeDirectories: false });
 let clusterStarted = false;
 let keepCluster = false;
-let stopping = false;
 
 function stopStartedCluster() {
-  if (!clusterStarted || stopping) return;
-  stopping = true;
-  try { pgctl("stop", "-m", "fast"); } catch { /* Preserve the original setup or signal failure. */ }
+  if (!clusterStarted) return;
   clusterStarted = false;
+  // Not awaited: this is the synchronous teardown path (`process.on("exit")` and
+  // a signal handler), and the teardown's own hook has already run the bounded
+  // cooperative stop by the time this is reached. The rejection is the original
+  // setup or signal failure, which must reach the caller.
+  void teardown.stop().catch(() => { /* Preserve the original setup or signal failure. */ });
 }
 
 for (const signal of ["SIGINT", "SIGTERM"] as const) process.once(signal, () => {
@@ -79,8 +103,15 @@ try {
   }
   pgctl("-l", join(dir, "pg.log"), "-w", "-o", `-p ${port} -k '' -c listen_addresses=127.0.0.1`, "start");
   clusterStarted = true;
+  // Retained while the cluster is up, so a teardown reached from a signal or the
+  // exit hook has a pid even when the rest of setup is about to throw.
+  await teardown.capturePostmasterPid();
   if (!fresh) {
     keepCluster = true;
+    // The cluster is deliberately handed to the owner's session, so the hooks
+    // are disarmed. They were armed at startup anyway, which is what protects
+    // the window before this point: a failure there still stops the cluster.
+    teardown.release();
     console.log(`rehearsal database running on 127.0.0.1:${port}; protected root ${join(dir, "protected")}`);
     process.exit(0);
   }
@@ -197,6 +228,10 @@ writeFileSync(join(root, "usage-prices.json"), `${JSON.stringify(usagePriceTable
 console.log(`rehearsal database ready on 127.0.0.1:${port}; protected root ${root}`);
 console.log(`next: pnpm mac:bootstrap-owner ${root} && pnpm mac:check-database ${root}`);
   keepCluster = true;
+  // Deliberate hand-off, as above: the hooks are disarmed so a later Ctrl-C in
+  // the owner's shell does not stop a database the rehearsal was asked to leave
+  // running. `pnpm mac:rehearsal down` is what stops it.
+  teardown.release();
 } finally {
   if (!keepCluster) stopStartedCluster();
 }

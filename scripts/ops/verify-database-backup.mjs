@@ -2,13 +2,16 @@
 // cluster. The cluster is stopped and removed on every success or failure path.
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { lstat, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Client } from "pg";
 import { restoreDatabase } from "../../deploy/postgres/restore-database.mjs";
 import { DISPOSABLE_POSTGRES_MARKER } from "../dev/cleanup-test-postgres.mjs";
+// The shared disposable-cluster teardown, imported with bare `node` — which is
+// why it is `.mjs` and not `.ts`.
+import { createClusterTeardown } from "../dev/postgres-cluster-lifecycle.mjs";
 import { diffMacGrantsV1, readDesiredMacGrantsV1, readMacGrantCatalogV1 } from "../mac-local/database-upgrade-grants.mjs";
 import { MAC_BACKUP_REQUIRED_TABLES_V1, VERIFIED_BACKUP_MANIFEST_V1 } from "./backup-database.mjs";
 
@@ -121,23 +124,28 @@ export async function verifyMacLocalDatabaseBackupV1({ backup, port, pgBin = "/o
   const bound = await readBoundBackup(backup);
   const root = await mkdtemp(databaseBackupVerificationRootPrefixV1());
   const data = join(root, "pg"), socket = join(root, "socket"), log = join(root, "postgres.log");
-  let started = false;
-  const stop = () => {
-    if (!started) return;
-    try { native(pgBin, "pg_ctl", ["-D", data, "-m", "fast", "-w", "-t", "30", "stop"]); } catch {}
-    started = false;
-  };
-  const onSignal = () => { stop(); process.exitCode = 1; };
-  process.once("SIGINT", onSignal); process.once("SIGTERM", onSignal);
+  // The shared teardown owns the signal handlers, the exit hook, the ordered
+  // stop, and the directory removal.
+  //
+  // The previous version was the worst path in the repository for this class of
+  // leak: its own `SIGINT`/`SIGTERM` handlers set `exitCode` WITHOUT stopping
+  // the postmaster, its `stop()` swallowed every `pg_ctl` failure, and its
+  // `finally` removed the data directory unconditionally — so a postmaster that
+  // refused to stop survived with its 56-byte SysV shared-memory segment held
+  // and nothing left to stop it with. This machine has 32 of those in total.
+  const teardown = createClusterTeardown({ dataDirectory: data, runDirectory: root,
+    socketDirectory: socket, port, pgBin });
   try {
-    await mkdir(socket, { mode: 0o700 });
+    await mkdir(socket, { mode: 0o700, recursive: true });
     native(pgBin, "initdb", ["-D", data, "-U", "postgres", "--auth-local=trust", "--auth-host=reject", "--no-locale", "--encoding=UTF8"]);
     await writeFile(join(data, DISPOSABLE_POSTGRES_MARKER), `${JSON.stringify({
       schema: "control-room.disposable-postgres/v1", createdBy: "mac-local-rehearsal",
     })}\n`, { mode: 0o600, flag: "wx" });
     native(pgBin, "pg_ctl", ["-D", data, "-l", log, "-w", "-t", "30", "-o",
       `-k ${socket} -p ${port} -h '' -c unix_socket_permissions=0700 -c shared_buffers=32MB -c max_connections=20`, "start"]);
-    started = true;
+    // Registered as soon as there is a running postmaster, and BEFORE anything
+    // that can throw, so a failure after this point still has a teardown.
+    await teardown.capturePostmasterPid();
     const admin = new Client({ host: socket, port, database: "postgres", user: "postgres" });
     await admin.connect();
     try {
@@ -161,9 +169,9 @@ export async function verifyMacLocalDatabaseBackupV1({ backup, port, pgBin = "/o
     return Object.freeze({ verified: true, identityDigest: restored.identityDigest,
       ledgerHead: Object.freeze({ ...bound.manifest.ledger.head }) });
   } finally {
-    process.removeListener("SIGINT", onSignal); process.removeListener("SIGTERM", onSignal);
-    stop();
-    await rm(root, { recursive: true, force: true });
+    // The teardown refuses to report success when the postmaster survives, and
+    // keeps the data directory in that case so an operator can stop it by hand.
+    await teardown.stop();
   }
 }
 

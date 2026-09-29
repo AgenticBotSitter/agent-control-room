@@ -48,9 +48,9 @@
 
 import assert from "node:assert/strict";
 import test, { after, before, describe, type TestContext } from "node:test";
-import { execFile, execFileSync } from "node:child_process";
+import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { mkdtemp, mkdir, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -66,6 +66,10 @@ import type { MacLocalWebProcessOptionsV1 } from "../src/web/v1/mac-local-web-pr
 import { conformanceNow, conformanceSubject, syntheticAssertion, syntheticSigningKey, syntheticAccessTrust }
   from "./helpers/private-owner-bootstrap-conformance";
 import { openDisposableMacLocalDatabase } from "./helpers/mac-local-disposable-database";
+// The shared disposable-cluster teardown. `.mjs` because
+// `scripts/ops/verify-database-backup.mjs` imports it with bare `node`, and a
+// `.ts` module could not be imported by one of its own callers.
+import { createClusterTeardown } from "../scripts/dev/postgres-cluster-lifecycle.mjs";
 
 const exec = promisify(execFile);
 
@@ -119,6 +123,14 @@ async function startCluster(): Promise<Cluster> {
   await mkdir(socket, { mode: 0o700 });
   const base = { env: { ...process.env, PATH: "/usr/bin:/bin:/opt/homebrew/bin", LC_ALL: "C", TMPDIR: run,
       NODE_ENV: "test" as const }, ...execOptions };
+  // Registered BEFORE initdb, and that ordering is the fix. `pg_ctl start` runs
+  // the postmaster with `setsid`, so it is its own session leader with PPID 1: a
+  // group signal from a bounded runner cannot reach it, and this lane used to
+  // have no SIGINT/SIGTERM handler at all. A lane stopped at its bound, or a
+  // Ctrl-C, skipped `after()` and left a postmaster holding a 56-byte SysV
+  // shared-memory segment. This machine has 32 of those in total.
+  teardown = createClusterTeardown({ dataDirectory: data, runDirectory: run,
+    socketDirectory: socket, port: PORT, pgBin: PG_BIN! });
   // initdb into a temp dir only. `-U fixture_admin` is a synthetic role; the
   // password set below is a throwaway constant, never a real credential.
   await exec(join(PG_BIN!, "initdb"), ["-D", data, "-U", "fixture_admin", "-E", "UTF8", "--auth-local=trust"], base);
@@ -138,63 +150,46 @@ async function startCluster(): Promise<Cluster> {
   await exec(join(PG_BIN!, "pg_ctl"), ["-D", data, "-o",
     `-p ${PORT} -k ${socket} -h 127.0.0.1 -c listen_addresses=127.0.0.1 -c fsync=off -c full_page_writes=off`,
     "-l", join(run, "server.log"), "-w", "-t", "60", "start"], base);
+  // Retained while the cluster is up, so the teardown has a pid even if the
+  // lane throws before its own bookkeeping records one.
+  await teardown?.capturePostmasterPid();
   // Set the synthetic role password over the local socket (trust auth).
-  await exec(join(PG_BIN!, "psql"), ["-h", socket, "-p", String(PORT), "-U", "fixture_admin",
-    "-d", "postgres", "-Atc", `ALTER ROLE fixture_admin PASSWORD '${fixturePassword}';`], execOptions);
-  return { run, data, socket, pgCtl: join(PG_BIN!, "pg_ctl"), fixturePassword };
+  try {
+    await exec(join(PG_BIN!, "psql"), ["-h", socket, "-p", String(PORT), "-U", "fixture_admin",
+      "-d", "postgres", "-Atc", `ALTER ROLE fixture_admin PASSWORD '${fixturePassword}';`], execOptions);
+    return { run, data, socket, pgCtl: join(PG_BIN!, "pg_ctl"), fixturePassword };
+  } catch (error) {
+    // A start that got as far as a live postmaster and then failed must not
+    // hand back a run directory with a cluster still in it. The teardown refuses
+    // to delete the evidence if the postmaster will not stop, and names the pid.
+    await teardown?.stop();
+    throw error;
+  }
 }
 
-/** Stop the cluster and prove it is gone before the data directory is removed.
+/**
+ * Stop the cluster and prove it is gone before the data directory is removed.
  *
  * A swallowed stop failure used to be followed by `rm` anyway, which could
  * delete the socket and data directory out from under a still-running
  * postmaster, leave an unreaped process and a bound port behind, and make the
  * next run fail with an unrelated-looking EADDRINUSE. Teardown now fails
- * loudly instead: it falls back to the recorded postmaster pid, verifies the
- * process is gone, and only then removes the directory. */
+ * loudly instead, and the shared ladder decides the order.
+ *
+ * The `-m immediate` that used to lead is now the ladder's SECOND step, and the
+ * `SIGKILL` that used to end it is now its last. Both moves matter: a postmaster
+ * creates one 56-byte SysV shared-memory segment and releases it on any
+ * shutdown that runs its exit path, and SIGKILL cannot run one. This machine
+ * has 32 such segments in total, so a SIGKILL here cost the machine a segment
+ * on every run whose `pg_ctl` did not succeed. `-m fast` releases it, and
+ * `-m immediate` still does, so the common case now ends after one command.
+ */
 async function stopCluster(target: Cluster) {
-  const stopped = await exec(target.pgCtl, ["-D", target.data, "-m", "immediate", "-w", "-t", "60", "stop"],
-    { timeout: 120_000, maxBuffer: 1 << 26, encoding: "utf8" }).then(() => true,
-      (error: Error) => { stopFailure = error; return false; });
-  if (!stopped) {
-    // pg_ctl writes postmaster.pid into the data directory; use it as the fallback.
-    const pidFile = join(target.data, "postmaster.pid");
-    let pid: number | undefined;
-    try { pid = Number((await readFile(pidFile, "utf8")).split("\n")[0]?.trim()); } catch { pid = undefined; }
-    if (typeof pid === "number" && Number.isSafeInteger(pid) && pid > 1) {
-      try { process.kill(pid, "SIGKILL"); } catch { /* already gone */ }
-    }
-    // Give the kernel a moment to release the listening socket.
-    for (let attempt = 0; attempt < 20; attempt += 1) {
-      if (!(await isPostmasterAlive(pid))) break;
-      await new Promise(resolve => setTimeout(resolve, 250));
-    }
-    if (await isPostmasterAlive(pid))
-      throw new Error(`disposable_cluster_stop_failed: ${stopFailure?.message ?? "postmaster still alive"}`);
-  }
-  if (await isPostmasterAlive(await readPostmasterPid(target)))
-    throw new Error("disposable_cluster_survived_teardown");
-  await rm(target.run, { recursive: true, force: true });
+  await teardown?.stop();
 }
 
-let stopFailure: Error | undefined;
-
-async function readPostmasterPid(target: Cluster): Promise<number | undefined> {
-  try { const raw = (await readFile(join(target.data, "postmaster.pid"), "utf8")).split("\n")[0]?.trim();
-    return Number.isSafeInteger(Number(raw)) && Number(raw) > 1 ? Number(raw) : undefined; }
-  catch { return undefined; }
-}
-
-/** A pid is only "alive" if it exists AND is the postgres postmaster, so a
- * recycled pid belonging to something else can never be reported as ours. */
-function isPostmasterAlive(pid: number | undefined): boolean {
-  if (typeof pid !== "number" || !Number.isSafeInteger(pid) || pid <= 1) return false;
-  try { process.kill(pid, 0); } catch { return false; }
-  try {
-    const command = execFileSync("/bin/ps", ["-o", "command=", "-p", String(pid)], { encoding: "utf8" });
-    return /\bpostgres\b/u.test(command);
-  } catch { return false; }
-}
+/** The shared teardown, created before `initdb` and released by `stopCluster`. */
+let teardown: ReturnType<typeof createClusterTeardown> | undefined;
 
 before(async () => { if (PG_AVAILABLE) cluster = await startCluster(); });
 after(async () => { if (cluster) await stopCluster(cluster); });

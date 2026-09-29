@@ -12,6 +12,10 @@ import { fileURLToPath } from "node:url";
 import { tmpdir } from "node:os";
 import { Client } from "pg";
 import { applyMigrations, readSchemaDigest } from "../deploy/postgres/apply-migrations.mjs";
+// The shared disposable-cluster teardown. `.mjs` because
+// `scripts/ops/verify-database-backup.mjs` imports it with bare `node`, and a
+// `.ts` module could not be imported by one of its own callers.
+import { createClusterTeardown } from "../scripts/dev/postgres-cluster-lifecycle.mjs";
 import { backupDatabase } from "../deploy/postgres/backup-database.mjs";
 import { restoreDatabase } from "../deploy/postgres/restore-database.mjs";
 import { collectDatabaseEvidence, digestOf } from "../deploy/postgres/evidence.mjs";
@@ -33,6 +37,8 @@ const PORT = 15630;
 const exec = promisify(execFile);
 
 let run = "", socket = "", data = "";
+/** The shared teardown, created before `initdb` and released by `after()`. */
+let teardown = null;
 const target = (database, user = "fixture_admin") =>
   ({ host: socket, port: PORT, database, user, password: "fixture_only" });
 const adminDb = () => target("postgres");
@@ -83,6 +89,15 @@ before(async () => {
   socket = join(run, "socket");
   data = join(run, "data");
   await mkdir(socket, { mode: 0o700 });
+  // Registered BEFORE initdb, and that ordering is the fix. This lane had no
+  // SIGINT/SIGTERM handler at all, so a runner that stopped it at its bound, or
+  // a Ctrl-C, skipped `after()` and left a postmaster holding a 56-byte SysV
+  // shared-memory segment with a dead creator. `pg_ctl start` runs the postmaster
+  // with `setsid`, so it is its own session leader with PPID 1 and a group
+  // signal from the runner cannot reach it either. This machine has 32 of those
+  // segments in total.
+  teardown = createClusterTeardown({ dataDirectory: data, runDirectory: run,
+    socketDirectory: socket, port: PORT, pgBin: BIN });
   // On a root dev box, chown the run directory to the postgres pseudo-user
   // so initdb/pg_ctl/postgres (which run with that UID) can write the data
   // directory. Non-root CI runners skip the chown — the test driver already
@@ -98,11 +113,11 @@ before(async () => {
 
 after(async () => {
   if (!PG_AVAILABLE || !run) return;
-  try {
-    await native("pg_ctl", ["-D", data, "-m", "fast", "-w", "-t", "30", "stop"]);
-  } finally {
-    await rm(run, { recursive: true, force: true });
-  }
+  // The shared ladder decides the order and refuses to report success when the
+  // postmaster survives. The old `finally { rm }` deleted the data directory
+  // even when the stop had failed, which is how a leaked segment became
+  // unreapable: nothing was left to stop the postmaster with.
+  await teardown?.stop();
 });
 
 async function freshDatabase(name) {
@@ -439,15 +454,15 @@ test("documented clean-cluster provision/migrate/backup/restore/verify journey",
       `-k ${socket} -p ${port} -h '' -c unix_socket_permissions=0700 -c shared_buffers=32MB -c max_connections=20`, "start"]);
   };
   t.after(async () => {
-    for (const data of [cleanData, targetData]) {
-      try {
-        await native("pg_ctl", ["-D", data, "-m", "fast", "-w", "-t", "30", "stop"]);
-      } catch {}
+    // Both clusters go through the shared ladder, whose order is what RELEASES
+    // a postmaster's SysV segment. The old `catch {}` on each `pg_ctl` reported
+    // success for a cluster that was still running, and then removed its data
+    // directory — leaving a live postmaster holding a segment and nothing left
+    // to stop it with.
+    for (const [directory, socketPath, port] of [[cleanData, cleanSocket, CLEAN_PORT], [targetData, targetSocket, TARGET_PORT]]) {
+      await createClusterTeardown({ dataDirectory: directory, runDirectory: directory,
+        socketDirectory: socketPath, port, pgBin: BIN }).stop();
     }
-    await rm(cleanSocket, { recursive: true, force: true });
-    await rm(cleanData, { recursive: true, force: true });
-    await rm(targetSocket, { recursive: true, force: true });
-    await rm(targetData, { recursive: true, force: true });
     await rm(cleanBackup, { recursive: true, force: true });
   });
   await startCluster(cleanSocket, cleanData, CLEAN_PORT, "clean-server.log");
