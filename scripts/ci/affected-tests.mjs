@@ -15,6 +15,7 @@ const squawkTestMarker = /\bsquawk\b/iu;
 // Exemptions run separately and their allowed skips are logged below.
 export const skippedTestExemptions = new Map([
   ["tests/automatic-claim-controller.test.mjs", "requires ACR_MAIN_CHECKOUT pointing at a current main checkout"],
+  ["tests/codex-owner-trusted-local-exec.test.ts", "requires CONTROL_ROOM_REAL_CODEX_SANDBOX_EXECUTABLE; CI has no qualified real Codex sandbox binary"],
   // These suites require a non-root macOS host and its native toolchain.
   ["tests/claude-code-macos-process-host-ports.test.ts", "requires a non-root macOS host and native toolchain"],
   ["tests/claude-code-native-process.test.mjs", "requires a non-root macOS host and native toolchain"],

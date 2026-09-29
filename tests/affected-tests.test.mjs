@@ -196,12 +196,18 @@ test("an exempt test that did not skip does not claim a waived skip", () => {
 });
 
 test("every skipped-test exemption names an existing file and non-empty reason", () => {
-  assert.equal(skippedTestExemptions.size, 15, "the documented exemption list must stay deliberately bounded");
+  assert.equal(skippedTestExemptions.size, 16, "the documented exemption list must stay deliberately bounded");
   for (const [file, reason] of skippedTestExemptions) {
     assert.ok(existsSync(join(process.cwd(), file)), `exemption file must exist: ${file}`);
     assert.equal(typeof reason, "string", `exemption reason must be text: ${file}`);
     assert.ok(reason.trim().length > 0, `exemption reason must not be empty: ${file}`);
   }
+});
+
+test("the real-Codex-sandbox suite is exempted, since CI has no qualified sandbox binary to run it", () => {
+  assert.ok(skippedTestExemptions.has("tests/codex-owner-trusted-local-exec.test.ts"),
+    "without this exemption, selecting this file (including via an ALL/no-skip run) fails merge-gated CI " +
+    "on its CONTROL_ROOM_REAL_CODEX_SANDBOX_EXECUTABLE-gated test even though nothing regressed");
 });
 
 test("a zero skip count remains green", () => {
