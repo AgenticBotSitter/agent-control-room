@@ -59,6 +59,33 @@ function output(result) {
   return `${result.stdout}\n${result.stderr}`;
 }
 
+async function interruptDuringMutation(root, path, signal, verifierPath = verifier, marker = "RUNNING MUTATED TEST [1] src/guard.mjs") {
+  const child = spawn(process.execPath, [verifierPath, path], { cwd: root, stdio: ["ignore", "pipe", "pipe"] });
+  let transcript = "";
+  let sent = false;
+  const status = await new Promise((resolveDone, rejectDone) => {
+    const timeout = setTimeout(() => {
+      child.kill("SIGKILL");
+      rejectDone(new Error(`verifier never reached ${marker}: ${transcript}`));
+    }, 5_000);
+    const observe = data => {
+      transcript += data;
+      if (!sent && transcript.includes(marker)) {
+        sent = true;
+        assert.match(readFileSync(join(root, "src", "guard.mjs"), "utf8"), /allow/u);
+        child.kill(signal);
+      }
+    };
+    child.stdout.on("data", observe);
+    child.stderr.on("data", observe);
+    child.once("close", (code, closeSignal) => {
+      clearTimeout(timeout);
+      resolveDone({ code, signal: closeSignal });
+    });
+  });
+  return { ...status, sent, transcript };
+}
+
 test("a surviving mutation fails and names the check", () => {
   const root = fixture();
   try {
@@ -252,8 +279,73 @@ test("a syntax-breaking TypeScript replacement is refused", { skip: !typescriptA
     const result = run(root, path);
     assert.equal(result.status, 1);
     assert.match(output(result), /mutation does not parse/u);
+    assert.match(output(result), /Expression expected/u);
   } finally {
     rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a valid TypeScript mutation is applied and its test is run", { skip: !typescriptAvailable }, () => {
+  const root = fixture();
+  try {
+    writeFileSync(join(root, "src", "guard.ts"), 'export const decision: string = "refuse";\n');
+    git(root, "add", "src/guard.ts");
+    git(root, "commit", "-qm", "TypeScript fixture");
+    const path = manifest(root, {
+      file: "src/guard.ts",
+      find: 'decision: string = "refuse"',
+      replace: 'decision: string = "allow"',
+      test: 'node -e "const text=require(\'fs\').readFileSync(\'src/guard.ts\',\'utf8\');process.exit(text.includes(\'allow\')?1:0)"',
+    });
+    const result = run(root, path);
+    assert.equal(result.status, 0, output(result));
+    assert.match(output(result), /APPLIED MUTATION \[1\] src\/guard\.ts/u);
+    assert.doesNotMatch(output(result), /mutation does not parse/u);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a valid TSX mutation is applied and its test is run", { skip: !typescriptAvailable }, () => {
+  const root = fixture();
+  try {
+    writeFileSync(join(root, "src", "guard.tsx"), 'export const decision: string = "refuse";\n');
+    git(root, "add", "src/guard.tsx");
+    git(root, "commit", "-qm", "TSX fixture");
+    const path = manifest(root, {
+      file: "src/guard.tsx",
+      find: 'decision: string = "refuse"',
+      replace: 'decision: string = "allow"',
+      test: 'node -e "const text=require(\'fs\').readFileSync(\'src/guard.tsx\',\'utf8\');process.exit(text.includes(\'allow\')?1:0)"',
+    });
+    const result = run(root, path);
+    assert.equal(result.status, 0, output(result));
+    assert.match(output(result), /APPLIED MUTATION \[1\] src\/guard\.tsx/u);
+    assert.doesNotMatch(output(result), /mutation does not parse/u);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("broken .mts, .cts, and .json mutations are refused before their test command", { skip: !typescriptAvailable }, () => {
+  for (const [file, source, find, replace] of [
+    ["src/guard.mts", 'export const decision: string = "refuse";\n', 'decision: string = "refuse"', 'decision: string = "allow";\n('],
+    ["src/guard.cts", 'export const decision: string = "refuse";\n', 'decision: string = "refuse"', 'decision: string = "allow";\n('],
+    ["src/guard.json", '{"decision":"refuse"}\n', '"refuse"', '"allow",'],
+  ]) {
+    const root = fixture();
+    try {
+      writeFileSync(join(root, file), source);
+      git(root, "add", file);
+      git(root, "commit", "-qm", `fixture ${file}`);
+      const path = manifest(root, { file, find, replace, test: 'node -e "process.exit(0)"' });
+      const result = run(root, path);
+      assert.equal(result.status, 1, `${file}: ${output(result)}`);
+      assert.match(output(result), /mutation does not parse/u);
+      assert.doesNotMatch(output(result), /mutation survived/u);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   }
 });
 
@@ -266,6 +358,24 @@ test("a test command that fails on a whitespace-only edit is rejected", () => {
     assert.match(output(result), /fails on a whitespace-only edit/u);
   } finally {
     rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("diff and source-grep test-command bypasses are rejected by text-only controls", () => {
+  for (const [command, expectedProbe] of [
+    ['git diff --ignore-blank-lines --quiet && node -e "process.exit(0)"', /whitespace-only/u],
+    ['grep -qF \'decision = "refuse"\' src/guard.mjs && node -e "process.exit(0)"', /semantically neutral text-only/u],
+    ['test "$(git diff | grep -c \'^[+-]\')" = 0 && node -e "process.exit(0)"', /whitespace-only/u],
+  ]) {
+    const root = fixture();
+    try {
+      const path = manifest(root, { test: command });
+      const result = run(root, path);
+      assert.equal(result.status, 1, output(result));
+      assert.match(output(result), expectedProbe);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   }
 });
 
@@ -374,19 +484,9 @@ test("SIGTERM during a mutated command restores the file", async () => {
       test: 'exec node -e "const fs=require(\'fs\');if(fs.readFileSync(\'src/guard.mjs\',\'utf8\').includes(\'allow\'))setInterval(()=>{},1000)"',
     });
     const before = readFileSync(join(root, "src", "guard.mjs"), "utf8");
-    const child = spawn(process.execPath, [verifier, path], { cwd: root, stdio: ["ignore", "pipe", "pipe"] });
-    let transcript = "";
-    child.stdout.on("data", data => { transcript += data; });
-    child.stderr.on("data", data => { transcript += data; });
-    await new Promise(resolveDone => {
-      const ready = setInterval(() => {
-        if (transcript.includes("[1] src/guard.mjs")) {
-          clearInterval(ready);
-          child.kill("SIGTERM");
-        }
-      }, 10);
-      child.once("close", resolveDone);
-    });
+    const result = await interruptDuringMutation(root, path, "SIGTERM");
+    assert.equal(result.sent, true, result.transcript);
+    assert.equal(result.code, 1, result.transcript);
     assert.equal(readFileSync(join(root, "src", "guard.mjs"), "utf8"), before);
     assert.equal(git(root, "status", "--porcelain=v1"), "");
   } finally {
@@ -401,21 +501,33 @@ test("SIGINT during a mutated command restores the file", async () => {
       test: 'exec node -e "const fs=require(\'fs\');if(fs.readFileSync(\'src/guard.mjs\',\'utf8\').includes(\'allow\'))setInterval(()=>{},1000)"',
     });
     const before = readFileSync(join(root, "src", "guard.mjs"), "utf8");
-    const child = spawn(process.execPath, [verifier, path], { cwd: root, stdio: ["ignore", "pipe", "pipe"] });
-    let transcript = "";
-    child.stdout.on("data", data => { transcript += data; });
-    child.stderr.on("data", data => { transcript += data; });
-    await new Promise(resolveDone => {
-      const ready = setInterval(() => {
-        if (transcript.includes("[1] src/guard.mjs")) {
-          clearInterval(ready);
-          child.kill("SIGINT");
-        }
-      }, 10);
-      child.once("close", resolveDone);
-    });
+    const result = await interruptDuringMutation(root, path, "SIGINT");
+    assert.equal(result.sent, true, result.transcript);
+    assert.equal(result.code, 1, result.transcript);
     assert.equal(readFileSync(join(root, "src", "guard.mjs"), "utf8"), before);
     assert.equal(git(root, "status", "--porcelain=v1"), "");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("deleting the SIGINT handler fails the mutated-run restoration test", async () => {
+  const root = fixture();
+  try {
+    const path = manifest(root, {
+      test: 'exec node -e "const fs=require(\'fs\');if(fs.readFileSync(\'src/guard.mjs\',\'utf8\').includes(\'allow\'))setInterval(()=>{},1000)"',
+    });
+    const checks = JSON.parse(readFileSync(path, "utf8"));
+    checks[0].test = 'node -e "process.exit(0)"';
+    writeFileSync(path, `${JSON.stringify(checks, null, 2)}\n`);
+    const mutant = join(root, "verify-mutation-checks-no-sigint.mjs");
+    writeFileSync(mutant, readFileSync(verifier, "utf8").replace('process.on("SIGINT", () => restoreOnSignal("SIGINT"));\n', ""));
+    git(root, "add", path, mutant);
+    git(root, "commit", "-qm", "SIGINT-handler mutant");
+    const result = await interruptDuringMutation(root, path, "SIGINT", mutant, "APPLIED MUTATION [1] src/guard.mjs");
+    assert.equal(result.sent, true, result.transcript);
+    assert.notEqual(readFileSync(join(root, "src", "guard.mjs"), "utf8"), 'export const decision = "refuse";\n');
+    git(root, "restore", "--", "src/guard.mjs");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -670,6 +782,15 @@ test("the CI job gates verification on a branch manifest and joins the merge gat
   const gate = workflow.slice(workflow.indexOf("  merge-gate:"));
   assert.match(gate, /needs: \[[^\]]*mutation-checks/u);
   assert.match(gate, /check mutation-checks/u);
+});
+
+test("the self-manifest runs behavioral tests without the source-drift meta-test", () => {
+  const entries = JSON.parse(readFileSync("mutation-checks/codex-ci-mutation-check.json", "utf8"));
+  assert.ok(entries.length > 0);
+  for (const entry of entries) {
+    assert.match(entry.test, /--test-skip-pattern='declared manifests name unique, tracked source snippets'/u);
+    assert.match(entry.test, /tests\/verify-mutation-checks\.test\.mjs/u);
+  }
 });
 
 test("declared manifests name unique, tracked source snippets", () => {

@@ -6,13 +6,20 @@ replaced by `-`. For example, `feature/owner-refusal` uses
 `mutation-checks/feature-owner-refusal.json`.
 
 Each entry first runs its test command on the unmodified checkout and requires it to pass. It then
-runs that command after a whitespace-only edit and requires it to pass again, so a command that
-only detects any source edit is not evidence. The verifier then makes one literal replacement and
-requires the same command to fail. The verifier rejects a replacement unless `find` occurs exactly
-once and the mutant parses: it uses `node --check` for `.js`, `.mjs`, and `.cjs`, and TypeScript's
-syntax diagnostics for `.ts` and `.tsx`. Other file extensions are not syntax-checked. It restores
-the file after every command, including timeout, SIGINT, and SIGTERM, and fails if the checkout is
-dirty before or after the run.
+runs that command after an added newline and, for JavaScript or TypeScript source whose `find`
+contains whitespace, after replacing one whitespace character in `find` with a block comment.
+Both edits preserve source behavior but change its bytes; the command must pass both probes. The
+verifier then makes one literal replacement and requires the same command to fail. These probes
+reject commands that fail on those edits, but they cannot prove that every arbitrary shell command
+is behavioural. Reviewers must still reject commands that diff, grep, hash, or snapshot the target
+instead of exercising its behavior. The verifier rejects a replacement unless `find` occurs
+exactly once and the mutant parses: it uses `node --check` for `.js`, `.mjs`, `.cjs`, and `.jsx`,
+TypeScript's syntax diagnostics for `.ts`, `.tsx`, `.mts`, and `.cts`, and `JSON.parse` for
+`.json`. Other file extensions are not syntax-checked. It intentionally does not import mutated
+modules: importing arbitrary repository modules can run effects or require unavailable runtime
+configuration, so a parsed module that throws at load time can still be reported as caught. It
+restores the file after every command, including timeout, SIGINT, and SIGTERM, and fails if the
+checkout is dirty before or after the run.
 
 ```json
 [
@@ -31,11 +38,11 @@ The fields are all required strings:
 - `file`: a tracked regular file inside the checkout (symlinks are refused).
 - `find`: the exact source text to weaken; it must occur once.
 - `replace`: the weakened text, which may be empty to delete `find`, and must differ from `find`.
-- `test`: a shell command that runs the relevant tests and must pass on the baseline and the
-  whitespace-only edit, then return a non-infrastructure nonzero result or terminate on a signal
-  after mutation. A diff, snapshot, or hash command that merely detects changed bytes is not test
-  evidence and is rejected by the whitespace check. Exits 126 and 127 are configuration errors,
-  never evidence that a mutation was caught.
+- `test`: a shell command that runs the relevant tests and must pass on the baseline and both
+  applicable text-only probes, then return a non-infrastructure nonzero result or terminate on a
+  signal after mutation. Diff, grep, snapshot, and hash commands against the target are not test
+  evidence; the probes catch common variants but do not mechanically detect every bypass. Exits
+  126 and 127 are configuration errors, never evidence that a mutation was caught.
 - `why`: a short human-readable name for the guard and its consequence.
 
 Run the same check locally from a clean checkout:

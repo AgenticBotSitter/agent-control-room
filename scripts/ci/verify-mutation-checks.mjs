@@ -140,12 +140,13 @@ function stopTestProcess(child, signal) {
   }
 }
 
-function runTest(command, root, timeoutMs) {
+function runTest(command, root, timeoutMs, onSpawn) {
   return new Promise(resolveResult => {
     let timedOut = false;
     let settled = false;
     const child = spawn(command, { cwd: root, detached: true, env: process.env, shell: true, stdio: "inherit" });
     activeChild = child;
+    onSpawn?.();
     const finish = (result, killGroup) => {
       if (settled) return;
       settled = true;
@@ -206,22 +207,98 @@ async function verifyWhitespaceInsensitive(root, entry, number, timeoutMs) {
   console.log("PASS: whitespace-only edit passed.");
 }
 
+function codeWhitespaceOffset(text) {
+  let quote;
+  for (let index = 0; index < text.length; index += 1) {
+    const character = text[index];
+    if (quote) {
+      if (character === "\\") index += 1;
+      else if (character === quote) quote = undefined;
+      continue;
+    }
+    if (character === "'" || character === '"' || character === "`") {
+      quote = character;
+      continue;
+    }
+    if (character === "/" && text[index + 1] === "/") {
+      index = text.indexOf("\n", index + 2);
+      if (index < 0) return null;
+      continue;
+    }
+    if (character === "/" && text[index + 1] === "*") {
+      index = text.indexOf("*/", index + 2);
+      if (index < 0) return null;
+      index += 1;
+      continue;
+    }
+    if (/\s/u.test(character)) return index;
+  }
+  return null;
+}
+
+function commentProbe(original, entry) {
+  if (!/\.(?:[cm]?jsx?|[cm]?tsx?)$/u.test(entry.file)) return null;
+  const targetOffset = original.indexOf(entry.find);
+  const whitespaceOffset = codeWhitespaceOffset(entry.find);
+  if (targetOffset < 0 || whitespaceOffset === null) return null;
+  const offset = targetOffset + whitespaceOffset;
+  return Buffer.concat([
+    original.subarray(0, offset),
+    Buffer.from(" /* mutation-check text probe */ "),
+    original.subarray(offset + 1),
+  ]);
+}
+
+async function verifyTextuallyDifferent(root, entry, number, timeoutMs) {
+  const original = readFileSync(entry.filePath);
+  const mode = lstatSync(entry.filePath).mode;
+  const probe = commentProbe(original, entry);
+  if (!probe) return;
+  console.log(`Text probe [${number}] ${entry.label}`);
+  try {
+    activeRestore = () => restoreFile(root, entry, original, mode);
+    writeFileSync(entry.filePath, probe);
+    const result = await runTest(entry.test, root, timeoutMs);
+    const configurationError = describeConfigurationError(entry, result);
+    if (configurationError) throw new Error(configurationError);
+    if (result.timedOut || result.signal || result.status !== 0) {
+      throw new Error(`${entry.label}: test command fails on a semantically neutral text-only edit; it must exercise guard behavior`);
+    }
+  } finally {
+    activeRestore = undefined;
+    restoreFile(root, entry, original, mode);
+  }
+  console.log("PASS: semantically neutral text-only edit passed.");
+}
+
 async function requireParsableMutation(entry) {
-  if (/\.(?:[cm]?js)$/u.test(entry.file)) {
+  if (/\.json$/u.test(entry.file)) {
+    try {
+      JSON.parse(readFileSync(entry.filePath, "utf8"));
+    } catch (error) {
+      throw new Error(`${entry.label}: mutation does not parse: ${error.message}`);
+    }
+    return;
+  }
+  if (/\.(?:jsx|[cm]?js)$/u.test(entry.file)) {
     const result = spawnSync(process.execPath, ["--check", entry.filePath], { encoding: "utf8" });
     if (result.status !== 0) throw new Error(`${entry.label}: mutation does not parse: ${result.stderr.trim()}`);
     return;
   }
-  if (/\.tsx?$/u.test(entry.file)) {
+  if (/\.[cm]?tsx?$/u.test(entry.file)) {
     let typescript;
     try {
       ({ default: typescript } = await import("typescript"));
     } catch (error) {
       throw new Error(`${entry.label}: TypeScript parser is unavailable: ${error.message}`);
     }
+    const compilerOptions = {
+      module: typescript.ModuleKind.ESNext,
+      target: typescript.ScriptTarget.ESNext,
+      ...(entry.file.endsWith(".tsx") ? { jsx: typescript.JsxEmit.Preserve } : {}),
+    };
     const result = typescript.transpileModule(readFileSync(entry.filePath, "utf8"), {
-      compilerOptions: { module: typescript.ModuleKind.ESNext, target: typescript.ScriptTarget.ESNext,
-        jsx: entry.file.endsWith(".tsx") ? typescript.JsxEmit.Preserve : undefined },
+      compilerOptions,
       fileName: entry.filePath,
       reportDiagnostics: true,
     });
@@ -244,8 +321,11 @@ async function verifyEntry(root, entry, number, timeoutMs) {
   try {
     activeRestore = () => restoreFile(root, entry, original, mode);
     writeFileSync(entry.filePath, text.replace(entry.find, () => entry.replace));
+    console.log(`APPLIED MUTATION [${number}] ${entry.file}`);
     await requireParsableMutation(entry);
-    result = await runTest(entry.test, root, timeoutMs);
+    result = await runTest(entry.test, root, timeoutMs, () => {
+      console.log(`RUNNING MUTATED TEST [${number}] ${entry.file}`);
+    });
   } finally {
     activeRestore = undefined;
     restoreFile(root, entry, original, mode);
@@ -326,6 +406,7 @@ async function main() {
       requireCleanCheckout(root);
       await verifyBaseline(root, entry, index + 1, timeoutMs);
       await verifyWhitespaceInsensitive(root, entry, index + 1, timeoutMs);
+      await verifyTextuallyDifferent(root, entry, index + 1, timeoutMs);
     } catch (error) {
       failures.push(error.message);
       console.error(`FAIL: ${error.message}`);
