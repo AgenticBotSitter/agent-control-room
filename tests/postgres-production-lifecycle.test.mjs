@@ -416,7 +416,8 @@ test("work-intake login cannot read or forge another subsystem's shared-ledger r
     const receipt=await positiveStore.create({principal,proposal:positiveProposal,
       proposalDigest:workBatchProposalDigestV1(positiveProposal),idempotencyKey:"positive-notification-0001",
       now:"2026-09-27T12:00:15.000Z",queueDepthLimit:10});
-    const notification=(await positiveClient.query(`SELECT state,payload->>'state' AS payload_state
+    await positiveClient.query("COMMIT");
+    const notification=(await query(db,`SELECT state,payload->>'state' AS payload_state
       FROM control_action_inbox WHERE tenant_id=$1 AND id=$2`,
     [principal.tenantId,`attention:work-batch:${receipt.batchId}`])).rows[0];
     assert.deepEqual(notification,{state:"open",payload_state:"open"});
