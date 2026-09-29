@@ -47,6 +47,7 @@ import { ProjectActivityServiceV1 } from "../src/web/v1/project-activity-service
 import { WebAccessError, type VerifiedWebIdentity } from "../src/web/v1/access-verifier";
 import { mergeProjectActivityEventsV1 } from "../src/web/v1/project-activity-browser-client";
 import { sha256Digest } from "../src/security";
+import { concurrently } from "./support/attack-kit";
 
 // This file provisions its OWN disposable PostgreSQL 17 cluster in a temp
 // directory, applies the real migrations and the real private-web grants, and
@@ -81,6 +82,10 @@ const TOKEN = randomBytes(5).toString("hex");
 const TENANT_ID = `tenant:pa-${TOKEN}`;
 const WORKSPACE_ID = `ws:pa-${TOKEN}`;
 const ADAPTER_ID = `adapter:pa-${TOKEN}`;
+const SIBLING_WORKSPACE_ID = `ws:pa-sibling-${TOKEN}`;
+const FOREIGN_TENANT_ID = `tenant:pa-foreign-${TOKEN}`;
+const FOREIGN_WORKSPACE_ID = `ws:pa-foreign-${TOKEN}`;
+const FOREIGN_ADAPTER_ID = `adapter:pa-foreign-${TOKEN}`;
 const projectId = (label: string) => `project:pa-${label}-${TOKEN}`;
 const identityId = (label: string) => `identity:pa-${label}-${TOKEN}`;
 const grantId = (label: string) => `grant:pa-${label}-${TOKEN}`;
@@ -109,6 +114,8 @@ const OTHER_PROJECT = projectId("guardB");
 const AUTH_OWNED_PROJECT = projectId("authA");
 const AUTH_FOREIGN_PROJECT = projectId("authB");
 const STALE_PROJECT = projectId("stale");
+const WRONG_WORKSPACE_PROJECT = projectId("wrong-workspace");
+const FOREIGN_TENANT_PROJECT = projectId("foreign-tenant");
 
 const POOL_EVENTS = 6;
 const COMPOSE_EVENTS = 8;
@@ -304,10 +311,19 @@ before(async () => {
   await writer.client.query("INSERT INTO tenants(id,display_name) VALUES($1,'Activity regression tenant')", [TENANT_ID]);
   await writer.client.query("INSERT INTO workspaces(id,tenant_id,display_name) VALUES($1,$2,'Activity workspace')",
     [WORKSPACE_ID, TENANT_ID]);
+  await writer.client.query("INSERT INTO workspaces(id,tenant_id,display_name) VALUES($1,$2,'Sibling activity workspace')",
+    [SIBLING_WORKSPACE_ID, TENANT_ID]);
+  await writer.client.query("INSERT INTO tenants(id,display_name) VALUES($1,'Foreign activity tenant')", [FOREIGN_TENANT_ID]);
+  await writer.client.query("INSERT INTO workspaces(id,tenant_id,display_name) VALUES($1,$2,'Foreign activity workspace')",
+    [FOREIGN_WORKSPACE_ID, FOREIGN_TENANT_ID]);
   await writer.client.query(`INSERT INTO adapter_registry(id,tenant_id,source_system,contract_version,authority_mode,status,
     project_types,supported_read_operations,supported_commands,redaction_policy_version,cursor_retention_days)
     VALUES($1,$2,'activity_pg_fixture','fixture-v1','control_room_native','fixture','[]','[]','[]','redaction-v1',30)`,
   [ADAPTER_ID, TENANT_ID]);
+  await writer.client.query(`INSERT INTO adapter_registry(id,tenant_id,source_system,contract_version,authority_mode,status,
+    project_types,supported_read_operations,supported_commands,redaction_policy_version,cursor_retention_days)
+    VALUES($1,$2,'activity_pg_foreign_fixture','fixture-v1','control_room_native','fixture','[]','[]','[]','redaction-v1',30)`,
+  [FOREIGN_ADAPTER_ID, FOREIGN_TENANT_ID]);
   for (const project of [POOL_PROJECT, COMPOSE_PROJECT, RACE_PROJECT, GUARD_PROJECT, OTHER_PROJECT,
     AUTH_OWNED_PROJECT, AUTH_FOREIGN_PROJECT, STALE_PROJECT]) {
     await writer.client.query(`INSERT INTO projects(id,tenant_id,workspace_id,adapter_id,source_record_id,source_version,
@@ -315,6 +331,14 @@ before(async () => {
       VALUES($1,$2,$3,$4,$1,'fixture-v1',$1,'running','active','healthy','control_room_native',$5,'{}')`,
     [project, TENANT_ID, WORKSPACE_ID, ADAPTER_ID, EVENT_NOW]);
   }
+  await writer.client.query(`INSERT INTO projects(id,tenant_id,workspace_id,adapter_id,source_record_id,source_version,
+    title,normalized_state,domain_state,health,authority_mode,observed_at,payload)
+    VALUES($1,$2,$3,$4,$1,'fixture-v1',$1,'running','active','healthy','control_room_native',$5,'{}')`,
+  [WRONG_WORKSPACE_PROJECT, TENANT_ID, SIBLING_WORKSPACE_ID, ADAPTER_ID, EVENT_NOW]);
+  await writer.client.query(`INSERT INTO projects(id,tenant_id,workspace_id,adapter_id,source_record_id,source_version,
+    title,normalized_state,domain_state,health,authority_mode,observed_at,payload)
+    VALUES($1,$2,$3,$4,$1,'fixture-v1',$1,'running','active','healthy','control_room_native',$5,'{}')`,
+  [FOREIGN_TENANT_PROJECT, FOREIGN_TENANT_ID, FOREIGN_WORKSPACE_ID, FOREIGN_ADAPTER_ID, EVENT_NOW]);
 
   const poolOwner = await seedIdentity("poolowner", "owner", ["*"]);
   await seedSession(poolOwner, "poolowner");
@@ -429,6 +453,41 @@ test("pool: more concurrent activity reads than the pool has connections all suc
   assert.equal(web.isAvailable(), true);
   const stillAlive = await web.client.query<{ ok: number }>("SELECT 1 AS ok");
   assert.equal(stillAlive.rows[0]?.ok, 1);
+});
+
+test("first use: 40 rounds of 6 concurrent reads on one fresh token all succeed", async t => {
+  if (needsPg) { t.skip(needsPg.skip); return; }
+  const rounds = 40;
+  const width = 6;
+  let completed = 0;
+  for (let round = 0; round < rounds; round += 1) {
+    const freshIdentity = { ...poolIdentity, tokenDigest: sessionDigest(`first-use-${round}`) };
+    const pages = await concurrently(width,
+      () => poolService.read(freshIdentity, POOL_PROJECT, {}, 100), { boundMs: 10_000 });
+    assert.equal(pages.length, width);
+    assert.ok(pages.every(page => page.mode === "snapshot" && page.events.length === POOL_EVENTS));
+    completed += pages.length;
+  }
+  assert.equal(completed, rounds * width, "every concurrent first-use request must complete successfully");
+  const persisted = await writer.client.query<{ count: number }>(`SELECT count(*)::int AS count FROM control_web_sessions
+    WHERE tenant_id=$1 AND token_digest = ANY($2::text[])`,
+  [TENANT_ID, Array.from({ length: rounds }, (_, round) => sessionDigest(`first-use-${round}`))]);
+  assert.equal(persisted.rows[0]?.count, rounds, "one immutable session row must exist per fresh token");
+  assert.equal(web.isAvailable(), true, "first-use contention must not quarantine the bounded database");
+  t.diagnostic(`${rounds} rounds x ${width} concurrent first-use reads: ${completed} succeeded`);
+});
+
+test("store scope: projects in another tenant or workspace are project_not_found", async t => {
+  if (needsPg) { t.skip(needsPg.skip); return; }
+  for (const [label, project] of [["another tenant", FOREIGN_TENANT_PROJECT],
+    ["another workspace", WRONG_WORKSPACE_PROJECT]] as const) {
+    await assert.rejects(webStore.read(request(project, 100)), (error: unknown) => {
+      assert.equal((error as { safeCode?: unknown })?.safeCode, "project_not_found",
+        `${label} must be refused by the store existence check`);
+      return true;
+    });
+  }
+  t.diagnostic("store refused both foreign-tenant and foreign-workspace projects as project_not_found");
 });
 
 test("reads compose on the caller's transaction and take one connection", async t => {
