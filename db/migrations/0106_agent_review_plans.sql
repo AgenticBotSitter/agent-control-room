@@ -51,6 +51,16 @@ CREATE TRIGGER control_agent_review_plans_no_truncate BEFORE TRUNCATE ON public.
 CREATE FUNCTION guard_agent_review_plan_insert() RETURNS trigger
 LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $$
 BEGIN
+  -- The review and finding carry these ids and the principal verbatim, and the
+  -- Completion Gate store re-parses them as its ids: 3-180 characters of
+  -- [a-zA-Z0-9._:-], starting with a letter or digit.
+  IF EXISTS (SELECT 1 FROM pg_catalog.jsonb_each_text(NEW.reviewer) field
+      WHERE field.key<>'actorType' AND (pg_catalog.char_length(field.value) NOT BETWEEN 3 AND 180
+        OR field.value !~ '^[a-zA-Z0-9][a-zA-Z0-9._:-]*$'))
+    OR EXISTS (SELECT 1 FROM (VALUES (NEW.review_id),(NEW.finding_id)) ids(value)
+      WHERE pg_catalog.char_length(ids.value) NOT BETWEEN 3 AND 180 OR ids.value !~ '^[a-zA-Z0-9][a-zA-Z0-9._:-]*$') THEN
+    RAISE EXCEPTION 'agent review plan identifier rejected';
+  END IF;
   IF NOT EXISTS (SELECT 1 FROM public.pipeline_stage_runs reviewer
     JOIN public.pipeline_stage_runs producer ON producer.tenant_id=reviewer.tenant_id
       AND producer.pipeline_run_id=reviewer.pipeline_run_id
@@ -177,7 +187,7 @@ DECLARE plan public.control_agent_review_plans%ROWTYPE; target public.control_co
   v_record_id text; v_record_kind text; v_record_key text; v_subject_id text; v_parent_id text; v_record_digest text;
   v_record_auth_tag text; v_occurred_at timestamptz; material jsonb; state_material jsonb; inserted_count integer := 0;
   minimum_risk integer; assessed_risk integer; effective_risk integer; expected_current_tag text;
-  computed_count bigint; computed_digest text; v_required text[]; v_fields text;
+  computed_count bigint; computed_digest text; v_required text[]; v_fields text; v_timestamp text;
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_roles r WHERE r.rolname='control_room_agent_reviewer'
       AND pg_catalog.pg_has_role(session_user,r.oid,'MEMBER'))
@@ -223,6 +233,18 @@ BEGIN
     END IF;
     IF v_record_kind='finding' AND material->>'statementDigest' !~ '^sha256:[a-f0-9]{64}$' THEN
       RAISE EXCEPTION 'agent review finding wrong type: statementDigest';
+    END IF;
+    -- Exactly the store's timestamp: zod's datetime takes four year digits,
+    -- which a timestamptz round trip alone does not enforce (year 10000 prints
+    -- back unchanged). The round trip then refuses what PostgreSQL would
+    -- normalise, such as 24:00 or a leap second.
+    v_fields=CASE WHEN v_record_kind='payload' THEN 'reviewedAt' ELSE 'raisedAt' END;
+    v_timestamp=material->>v_fields;
+    IF v_timestamp !~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[.][0-9]{3}Z$' THEN
+      RAISE EXCEPTION 'agent review % wrong type: %',v_record_kind,v_fields;
+    END IF;
+    IF v_timestamp<>pg_catalog.to_char(v_timestamp::timestamptz AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') THEN
+      RAISE EXCEPTION 'agent review % timestamp out of range: %',v_record_kind,v_fields;
     END IF;
   END LOOP;
   -- The reviewer login serves the one installation tenant the owner bootstrap

@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "digest": "3d17fddfe1b7664a80c2c81fcd0e34e3375de7b5916a446bffe947c2fcbe6833",
+  "digest": "7ccc463640494e35be1c454f15341ec86c1a12250b4c8ac40814763d77bb138d",
   "entries": [
     {
       "file": "db/migrations/0001_control_room_core.sql",
@@ -593,7 +593,7 @@
     {
       "file": "db/migrations/0106_agent_review_plans.sql",
       "order": 99,
-      "sha256": "8c099a5e9dc13f161a2cec4ed813ac242ea7f7f876b02a27b66508fe2cedc245",
+      "sha256": "c1c78a6317efcc5e1eb347b411557f0c10b5bdd00906d57c73faada0fa82b04b",
       "kind": "migrate"
     },
     {

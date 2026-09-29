@@ -771,7 +771,8 @@ function malformedReviewProbe(database,probe){
       assert.deepEqual(await state(),before,`${label} moved the integrity row`);
       assert.equal(await records(),recordsBefore,`${label} wrote a record`);
     };
-    await probe({review,negative,finding,reviewer:plan.reviewer,refused});
+    await probe({review,negative,finding,reviewer:plan.reviewer,refused,client,coordinator,plan,
+      verify:()=>own.gate.verifyProvisionedTenantV1(own.tenantId)});
     // The tenant's gate is untouched and still takes a valid review.
     await own.gate.verifyProvisionedTenantV1(own.tenantId);
     const committed=await new AgentReviewServiceV1(reviewer.db,own.tenantId,reviewKey,checkpoints,own.routes,()=>at)
@@ -824,6 +825,52 @@ test("production reviewer login cannot commit a review or finding with a wrong-t
     await refused("finding with a numeric severity",negative,{...finding,severity:4},/agent review finding wrong type: severity$/u);
     await refused("finding with a malformed statementDigest",negative,{...finding,statementDigest:"sha256:short"},
       /agent review finding wrong type: statementDigest$/u);
+  }));
+
+// The store re-parses both timestamps with zod's ISO datetime, which takes
+// exactly four year digits. PostgreSQL reads and prints a 5-digit year, so a
+// round trip alone would store a review the tenant could never read again.
+test("production reviewer login cannot commit a review or finding with a timestamp outside the store's format", needsPg, () =>
+  malformedReviewProbe("cr_agent_review_time",async({review,negative,finding,refused,verify})=>{
+    // Refused by the format itself; each would otherwise reach the round trip
+    // (or fail PostgreSQL's parse) with a different message.
+    for (const [label,value] of [["a 5-digit year","10000-01-01T00:00:00.000Z"],["no Z","2026-09-29T12:00:00.000"],
+      ["a +00:00 offset","2026-09-29T12:00:00.000+00:00"],["no milliseconds","2026-09-29T12:00:00Z"],
+      ["a leading letter","x2026-09-29T12:00:00.000Z"],["trailing text","2026-09-29T12:00:00.000Zx"]]) {
+      await refused(`review reviewedAt with ${label}`,{...review,reviewedAt:value},null,/agent review payload wrong type: reviewedAt$/u);
+      await verify();
+      await refused(`finding raisedAt with ${label}`,negative,{...finding,raisedAt:value},/agent review finding wrong type: raisedAt$/u);
+      await verify();
+    }
+    // The right shape, but PostgreSQL would normalise it to another instant.
+    for (const [label,value] of [["hour 24","2026-09-29T24:00:00.000Z"],["a leap second","2026-09-29T23:59:60.000Z"]]) {
+      await refused(`review reviewedAt with ${label}`,{...review,reviewedAt:value},null,
+        /agent review payload timestamp out of range: reviewedAt$/u);
+      await verify();
+      await refused(`finding raisedAt with ${label}`,negative,{...finding,raisedAt:value},
+        /agent review finding timestamp out of range: raisedAt$/u);
+      await verify();
+    }
+  }));
+
+// Every plan id and principal field lands in a stored review or finding, so the
+// plan itself must already hold ids the store's zod schema accepts.
+test("coordinator login cannot create an agent-review plan whose ids the store could not parse back", needsPg, () =>
+  malformedReviewProbe("cr_agent_review_plan_ids",async({client,coordinator,plan})=>{
+    const [row]=(await client.query("SELECT * FROM control_agent_review_plans WHERE id=$1",[plan.planId])).rows;
+    const insert=changes=>{
+      const value={...row,id:`agent-review-plan:copy-${Object.keys(changes).join("-")}`,review_id:"review:copy",
+        finding_id:"finding:copy",...changes};
+      const columns=Object.keys(value);
+      return coordinator.direct.query(`INSERT INTO control_agent_review_plans(${columns.join(",")}) VALUES(${
+        columns.map((column,index)=>`$${index+1}${column==="reviewer"?"::jsonb":""}`).join(",")})`,
+      columns.map(column=>column==="reviewer"?JSON.stringify(value[column]):value[column]));
+    };
+    // Control: an otherwise identical plan passes the binding and hits the one-plan-per-run key.
+    await assert.rejects(insert({}),error=>error.code==="23505");
+    for (const changes of [{review_id:"r:"},{finding_id:`finding:${"f".repeat(180)}`},{review_id:"review:has space"},
+      {reviewer:{...row.reviewer,agentProfileId:"agent-profile:has space"}},{reviewer:{...row.reviewer,harness:"_harness"}}])
+      await assert.rejects(insert(changes),/agent review plan identifier rejected$/u,JSON.stringify(changes));
   }));
 
 
