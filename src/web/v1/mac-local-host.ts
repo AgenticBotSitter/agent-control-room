@@ -15,7 +15,7 @@ import type { PersistedLocalOwnerSessionV1 } from "./local-owner-session";
 
 type OpenedDatabase = Readonly<{ client: DatabaseClient; close(): Promise<void> }>;
 type LocalService = Readonly<{ start(): Promise<void>; close(): Promise<void>; isReady(): boolean }>;
-type HostedTaskApplication = Pick<MacLocalTaskApplicationV1, "operations" | "taskReadKeys" | "isReady" | "close" | "queueDelivery" | "queueRecovery">;
+type HostedTaskApplication = Pick<MacLocalTaskApplicationV1, "operations" | "taskReadKeys" | "projectEvents" | "isReady" | "close" | "queueDelivery" | "queueRecovery">;
 type OwnedQueueWorker = Readonly<{ close(): Promise<void>; status(): { accepting: boolean } }>;
 
 /** One small composition for the Mac-local web host. It deliberately uses the
@@ -59,6 +59,7 @@ export function createMacLocalWebServiceFromConfigurationV1(input: Readonly<{
     database: input.database,
     ...(taskApplication ? { ...taskApplication.operations } : input.operations ? { ...input.operations } : {}),
     ...(taskApplication?.taskReadKeys ? { taskReadKeys: taskApplication.taskReadKeys } : {}),
+    ...(taskApplication?.projectEvents ? { projectEvents: taskApplication.projectEvents } : {}),
     ...(input.workerReadiness ? { workerReadiness: input.workerReadiness } : {}),
     taskWorkersStarted: Boolean(taskApplication),
     ...(input.workBatchIntegrityKey ? { workBatchIntegrityKey: input.workBatchIntegrityKey } : {}),

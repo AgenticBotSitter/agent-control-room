@@ -147,7 +147,8 @@ test("compiled private routes use the installed process, real disposable SQL, an
   for (const legacy of ["/api/v1/fixture-snapshot", "/api/v1/local-pilot/session", "/api/v1/connections/enroll"])
     assert.equal((await handler(request(legacy))).status, 404, legacy);
   const stream = await handler(request(`/api/v1/projects/${encodeURIComponent(project.projectId)}/events`));
-  assert.match(await stream.text(), /project-snapshot/);
+  assert.equal(stream.status, 503);
+  assert.deepEqual(await stream.json(), { error: "service_unavailable" });
   const session = await handler(request("/session")); assert.equal(session.status, 200);
   assert.match(await session.text(), /Access sessions for other protected applications/);
   assert.equal((await handler(request("/api/v1/session/logout", "POST"))).status, 204);

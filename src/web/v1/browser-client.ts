@@ -3,11 +3,9 @@ import { readBrowserJson } from "./browser-json";
 import { catalogProjectIdSchema, lifecycleSchema, projectCatalogPageSchema, projectCreateSchema, projectTransitionSchema,
   projectViewSchema, webProjectSchema, ideaLifecycleProjectSchema, ideaProjectTransitionSchema, ideaProjectActionTarget,
   type IdeaProjectAction, type ProjectCatalogPage, type ProjectView, type WebProject } from "./project-wire";
+import { BrowserRequestError, type BrowserFailureCode } from "./browser-request-error";
+export { BrowserRequestError, type BrowserFailureCode } from "./browser-request-error";
 
-export type BrowserFailureCode = "authentication_required" | "access_denied" | "invalid_request" | "conflict" | "not_found" | "unavailable" | "uncertain";
-export class BrowserRequestError extends Error {
-  constructor(readonly code: BrowserFailureCode) { super(code); }
-}
 export type BrowserAuthenticationBinding = Readonly<{ actorId: string; sessionEpoch: string }>;
 export type BrowserAuthenticationObserver = (binding: BrowserAuthenticationBinding | undefined) => void;
 const digest = /^sha256:[a-f0-9]{64}$/;
