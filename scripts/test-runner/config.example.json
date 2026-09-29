@@ -1,0 +1,23 @@
+{
+  "schema": "control-room.test-runner/v1",
+  "port": 47832,
+  "tokenFile": "/path/to/private/test-runner/token",
+  "auditLog": "/path/to/private/test-runner/audit.jsonl",
+  "allowedWorktreePrefixes": [
+    "/path/to/work/acr-cook-"
+  ],
+  "allowedScripts": [
+    "test:database",
+    "test:attack-kit"
+  ],
+  "pnpmBin": "/absolute/path/to/pnpm",
+  "pgBin": "/absolute/path/to/postgresql/bin",
+  "portPool": {
+    "start": 18000,
+    "end": 18199,
+    "blockSize": 20
+  },
+  "concurrency": 2,
+  "timeoutMs": 1200000,
+  "maxOutputBytes": 1048576
+}

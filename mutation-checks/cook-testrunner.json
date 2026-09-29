@@ -1,0 +1,65 @@
+[
+  {
+    "file": "scripts/test-runner/service.mjs",
+    "find": "if (!authorized(request.headers.authorization, token)) {",
+    "replace": "if (false) {",
+    "test": "node --test --test-name-pattern='auth guard' tests/test-runner-service.test.mjs",
+    "why": "every HTTP request must carry the private bearer token"
+  },
+  {
+    "file": "scripts/test-runner/service.mjs",
+    "find": "(details.mode & 0o777) !== 0o600",
+    "replace": "false",
+    "test": "node --test --test-name-pattern='private token guard' tests/test-runner-service.test.mjs",
+    "why": "the bearer token must never be group-readable or world-readable"
+  },
+  {
+    "file": "scripts/test-runner/service.mjs",
+    "find": "if (!config.allowedWorktreePrefixes.some(prefix => worktree.startsWith(prefix))) {",
+    "replace": "if (false) {",
+    "test": "node --test --test-name-pattern='worktree path guard' tests/test-runner-service.test.mjs",
+    "why": "a symlink must not escape the configured real-path prefix"
+  },
+  {
+    "file": "scripts/test-runner/service.mjs",
+    "find": "!config.allowedScripts.includes(body.script)",
+    "replace": "false",
+    "test": "node --test --test-name-pattern='command allowlist guard' tests/test-runner-service.test.mjs",
+    "why": "only explicitly configured package script names may run"
+  },
+  {
+    "file": "scripts/test-runner/service.mjs",
+    "find": "const environment = {\n    PATH:",
+    "replace": "const environment = { ...process.env,\n    PATH:",
+    "test": "node --test --test-name-pattern='fixed environment guard' tests/test-runner-service.test.mjs",
+    "why": "caller environment variables must not cross the execution boundary"
+  },
+  {
+    "file": "scripts/test-runner/service.mjs",
+    "find": "    this.#free.delete(base);",
+    "replace": "",
+    "test": "node --test --test-name-pattern='port lease guard' tests/test-runner-service.test.mjs",
+    "why": "simultaneous runs must never receive overlapping port blocks"
+  },
+  {
+    "file": "scripts/test-runner/service.mjs",
+    "find": "process.kill(-pid, signal);",
+    "replace": "process.kill(pid, signal);",
+    "test": "node --test --test-name-pattern='timeout guard' tests/test-runner-service.test.mjs",
+    "why": "a timeout must terminate the complete process group rather than only its leader"
+  },
+  {
+    "file": "scripts/test-runner/service.mjs",
+    "find": "if (reservations >= config.concurrency) {",
+    "replace": "if (false) {",
+    "test": "node --test --test-name-pattern='concurrency guard' tests/test-runner-service.test.mjs",
+    "why": "the configured concurrent-run limit must be enforced before execution"
+  },
+  {
+    "file": "scripts/test-runner/service.mjs",
+    "find": "if (this.totalBytes <= this.maximumBytes) {",
+    "replace": "if (true) {",
+    "test": "node --test --test-name-pattern='output cap guard' tests/test-runner-service.test.mjs",
+    "why": "untrusted command output must remain bounded"
+  }
+]
