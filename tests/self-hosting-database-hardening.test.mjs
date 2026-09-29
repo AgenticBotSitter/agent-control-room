@@ -184,3 +184,38 @@ test("0102 bounds migration locks and uses bigint counters", async () => {
   assert.match(migration, /job_attempt_count bigint NOT NULL DEFAULT 0/u);
   assert.doesNotMatch(migration, /\b(?:auth_material_version|ordinal|job_attempt_count) integer\b/u);
 });
+
+test("0104 confines both agent-queue tables to the bound intake tenant", async () => {
+  const migration = await readFile("db/migrations/0104_work_batch_agent_queue.sql", "utf8");
+  const down = await readFile("db/down/0104_work_batch_agent_queue.sql", "utf8");
+  const statement = (source, head) => source.match(new RegExp(`${head}\\b[\\s\\S]*?;`, "u"))?.[0] ?? "";
+  const normalize = source => source.replace(/\s+/gu, " ").replace(/\( /gu, "(").trim();
+  for (const table of ["work_batch_agent_queue_heads", "work_batch_queue_admissions"]) {
+    const scope = `(NOT public.is_work_intake_session() OR ${boundTenant(table)})`;
+    assert.match(migration, new RegExp(`ALTER TABLE ${table} ENABLE ROW LEVEL SECURITY;`, "u"));
+    assert.equal(normalize(statement(migration, `CREATE POLICY ${table}_existing_access`)), normalize(`
+      CREATE POLICY ${table}_existing_access ON ${table}
+        AS PERMISSIVE FOR ALL USING (true) WITH CHECK (true);`));
+    assert.equal(normalize(statement(migration, `CREATE POLICY ${table}_work_intake_scope`)), normalize(`
+      CREATE POLICY ${table}_work_intake_scope ON ${table}
+        AS RESTRICTIVE FOR ALL USING ${scope} WITH CHECK ${scope};`));
+    assert.match(down, new RegExp(`DROP POLICY ${table}_work_intake_scope ON ${table};\\s+DROP POLICY ${table}_existing_access ON ${table};`, "u"));
+  }
+  assert.doesNotMatch(migration, /FORCE ROW LEVEL SECURITY/u);
+  assert.match(migration, /SET LOCAL lock_timeout = '1s';\s+SET LOCAL statement_timeout = '5s';(?:\s+--[^\n]*)*\s+ALTER TABLE work_batch_items/u);
+  // Row locks need UPDATE privilege, which the append-only owner web role lacks.
+  const guard = migration.match(/CREATE FUNCTION guard_work_batch_queue_admission_insert\(\)[\s\S]*?END \$\$;/u)?.[0] ?? "";
+  assert.notEqual(guard, "");
+  assert.doesNotMatch(guard, /\bFOR (?:UPDATE|NO KEY UPDATE|SHARE|KEY SHARE)\b/u);
+});
+
+test("the TypeScript batch admission gate takes no row lock on control_task_model_selections", async () => {
+  const source = await readFile("src/web/v1/task-assignment-coordinator.ts", "utf8");
+  const guard = source.match(/private async assertWorkBatchQueueAdmission\([\s\S]*?\n {2}webOperation\(\)/u)?.[0] ?? "";
+  assert.notEqual(guard, "");
+  assert.match(guard, /FROM control_task_model_selections/u);
+  // Same reasoning as the migration guard above: neither control_room_private_web
+  // nor control_room_task_coordinator holds UPDATE on this append-only table, so
+  // a row lock here refuses every batch-admitted assignment in production.
+  assert.doesNotMatch(guard, /\bFOR (?:UPDATE|NO KEY UPDATE|SHARE|KEY SHARE)\b/u);
+});

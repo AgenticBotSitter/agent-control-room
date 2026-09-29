@@ -9,7 +9,8 @@ const sourcePath = /^(?:src|db)\//u;
 const strayReportPath = /^reports\//u;
 const testPath = /^tests\/[a-zA-Z0-9_./-]+\.(?:test|spec)\.(?:ts|tsx|mjs|js)$/u;
 const absoluteClaim = /\b(?:all|zero|never|guaranteed)\b/iu;
-const evidenceMarker = /(?:^|\s)(?:test|ci|cmd):\s*\S/iu;
+const evidenceMarker = /(?:^|\n)[ \t]*(?:[-*][ \t]+)?(?:test|ci|cmd):[ \t]*\S/iu;
+const evidenceItem = /^[ \t]*(?:[-*][ \t]+)?(test|ci|cmd):[ \t]*(.+?)[ \t]*$/iu;
 
 function evidenceSection(body) {
   const lines = body.split(/\r?\n/u);
@@ -43,6 +44,14 @@ function bulletBlocks(section) {
   return blocks;
 }
 
+// Evidence is only a reference when the item is the whole line. Prose that
+// merely contains the token - a DB-VERIFIED line naming `pnpm test:database`,
+// a sentence ending in "the new test:" - is not a reference.
+function referenceAtLineStart(line) {
+  const match = evidenceItem.exec(line);
+  return match ? { type: match[1].toLowerCase(), value: match[2] } : null;
+}
+
 function references(block, onUnclosedFence = () => {}) {
   const found = [];
   let fence = null;
@@ -57,8 +66,8 @@ function references(block, onUnclosedFence = () => {}) {
       fence = { character: marker[1][0], length: marker[1].length };
       continue;
     }
-    const match = /(?:^|\s)(test|ci|cmd):\s*(.+?)\s*$/iu.exec(line);
-    if (match) found.push({ type: match[1].toLowerCase(), value: match[2] });
+    const ref = referenceAtLineStart(line);
+    if (ref) found.push(ref);
   }
   if (fence) onUnclosedFence();
   return found;

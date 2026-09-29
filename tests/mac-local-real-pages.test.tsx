@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { execFile, execFileSync } from "node:child_process";
+import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -29,6 +29,10 @@ import type { AccessTrust } from "../src/web/v1/access-verifier";
 import { conformanceNow, conformanceSubject, syntheticAccessTrust, syntheticAssertion, syntheticSigningKey }
   from "./helpers/private-owner-bootstrap-conformance";
 import { openDisposableMacLocalDatabase } from "./helpers/mac-local-disposable-database";
+// The shared disposable-cluster teardown. `.mjs` because
+// `scripts/ops/verify-database-backup.mjs` imports it with bare `node`, and a
+// `.ts` module could not be imported by one of its own callers.
+import { createClusterTeardown } from "../scripts/dev/postgres-cluster-lifecycle.mjs";
 
 const exec = promisify(execFile);
 const PORT = 15_650;
@@ -50,7 +54,8 @@ const needsPg = PG_BIN ? false : "needs PostgreSQL 17 binaries";
 const execOptions = { timeout: 120_000, maxBuffer: 1 << 26, encoding: "utf8" as const };
 type Cluster = Readonly<{ run: string; data: string; socket: string; pgCtl: string; password: string }>;
 let cluster: Cluster | undefined;
-let stopFailure: Error | undefined;
+/** The shared teardown, created before `initdb` and released by `stopCluster`. */
+let teardown: ReturnType<typeof createClusterTeardown> | undefined;
 
 async function startCluster(): Promise<Cluster> {
   const run = await mkdtemp(join(tmpdir(), "cr-mac-local-real-pages-"));
@@ -58,6 +63,14 @@ async function startCluster(): Promise<Cluster> {
   await mkdir(socket, { mode: 0o700 });
   const base = { env: { ...process.env, PATH: "/usr/bin:/bin:/opt/homebrew/bin", LC_ALL: "C", TMPDIR: run,
     NODE_ENV: "test" as const }, ...execOptions };
+  // Registered BEFORE initdb, and that ordering is the fix. `pg_ctl start` runs
+  // the postmaster with `setsid`, so it is its own session leader with PPID 1: a
+  // group signal from a bounded runner cannot reach it, and this lane used to
+  // have no SIGINT/SIGTERM handler at all. A lane stopped at its bound, or a
+  // Ctrl-C, skipped `after()` and left a postmaster holding a 56-byte SysV
+  // shared-memory segment. This machine has 32 of those in total.
+  teardown = createClusterTeardown({ dataDirectory: data, runDirectory: run,
+    socketDirectory: socket, port: PORT, pgBin: PG_BIN! });
   try {
     await exec(join(PG_BIN!, "initdb"), ["-D", data, "-U", "fixture_admin", "-E", "UTF8", "--auth-local=trust"], base);
     const hba = join(data, "pg_hba.conf"), stock = await readFile(hba, "utf8");
@@ -68,41 +81,37 @@ async function startCluster(): Promise<Cluster> {
     await exec(join(PG_BIN!, "pg_ctl"), ["-D", data, "-o",
       `-p ${PORT} -k ${socket} -h 127.0.0.1 -c listen_addresses=127.0.0.1 -c fsync=off -c full_page_writes=off`,
       "-l", join(run, "server.log"), "-w", "-t", "60", "start"], base);
+    // Retained while the cluster is up, so the teardown has a pid even if the
+    // lane throws before its own bookkeeping records one.
+    await teardown?.capturePostmasterPid();
     const password = "disposable-real-pages-password";
     await exec(join(PG_BIN!, "psql"), ["-h", socket, "-p", String(PORT), "-U", "fixture_admin", "-d", "postgres",
       "-Atc", `ALTER ROLE fixture_admin PASSWORD '${password}';`], execOptions);
     return { run, data, socket, pgCtl: join(PG_BIN!, "pg_ctl"), password };
   } catch (error) {
-    await rm(run, { recursive: true, force: true });
+    // A start that got as far as a live postmaster and then failed must not hand
+    // back a run directory with a cluster still in it. The teardown refuses to
+    // delete the evidence if the postmaster will not stop, and names the pid.
+    // The old `rm` here deleted the data directory out from under a running
+    // postmaster, which is how a leaked segment became unreapable.
+    await teardown?.stop();
     throw error;
   }
 }
 
-function postmasterPid(target: Cluster): number | undefined {
-  try {
-    const value = Number(execFileSync("/usr/bin/head", ["-n", "1", join(target.data, "postmaster.pid")], { encoding: "utf8" }).trim());
-    return Number.isSafeInteger(value) && value > 1 ? value : undefined;
-  } catch { return undefined; }
-}
-
-function postmasterAlive(pid: number | undefined): boolean {
-  if (!pid) return false;
-  try { process.kill(pid, 0); } catch { return false; }
-  try { return /\bpostgres\b/u.test(execFileSync("/bin/ps", ["-o", "command=", "-p", String(pid)], { encoding: "utf8" })); }
-  catch { return false; }
-}
-
+/**
+ * Stop the cluster and prove it is gone before the data directory is removed.
+ *
+ * The `-m immediate` that used to lead is now the ladder's SECOND step, and the
+ * `SIGKILL` that used to end it is now its last. Both moves matter: a postmaster
+ * creates one 56-byte SysV shared-memory segment and releases it on any
+ * shutdown that runs its exit path, and SIGKILL cannot run one. This machine has
+ * 32 such segments in total, so a SIGKILL here cost the machine a segment on
+ * every run whose `pg_ctl` did not succeed. `-m fast` releases it, and
+ * `-m immediate` still does, so the common case now ends after one command.
+ */
 async function stopCluster(target: Cluster) {
-  const pid = postmasterPid(target);
-  const stopped = await exec(target.pgCtl, ["-D", target.data, "-m", "immediate", "-w", "-t", "60", "stop"], execOptions)
-    .then(() => true, (error: Error) => { stopFailure = error; return false; });
-  if (!stopped && pid) {
-    try { process.kill(pid, "SIGKILL"); } catch { /* already stopped */ }
-    for (let attempt = 0; attempt < 20 && postmasterAlive(pid); attempt += 1)
-      await new Promise(resolve => setTimeout(resolve, 250));
-  }
-  if (postmasterAlive(pid)) throw new Error(`disposable_cluster_stop_failed:${stopFailure?.message ?? "still alive"}`);
-  await rm(target.run, { recursive: true, force: true });
+  await teardown?.stop();
 }
 
 before(async () => { if (PG_BIN) cluster = await startCluster(); });

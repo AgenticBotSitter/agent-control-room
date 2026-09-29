@@ -26,6 +26,7 @@ GRANT SELECT ON tenants, workspaces, control_identities, control_role_grants, co
   control_project_delegation_policies, control_project_coordination_operation_receipts,
   control_project_coordination_operation_jobs, control_work_resources,
   control_attempt_resource_admissions, control_attempt_resource_scopes,
+  work_batches, work_batch_items, work_batch_effective_queue_admissions,
   control_installation_transition_revisions
   TO control_room_task_coordinator;
 GRANT SELECT ON control_task_model_selections, control_task_declared_scopes,

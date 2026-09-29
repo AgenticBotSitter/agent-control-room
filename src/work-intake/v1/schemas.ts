@@ -15,6 +15,7 @@ const workBatchProposalTaskSchemaV1 = z.object({
   requiredCapability: id,
   recommendedRouteId: id.optional(),
   role: z.enum(["builder", "checker", "validator"]),
+  requestedWorkerId: id.optional(),
   requestedWorkerKind: id.optional(),
   requestedModelKey: id.optional(),
   acceptanceCriteria: z.string().min(1).max(4_000),

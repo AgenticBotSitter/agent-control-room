@@ -44,10 +44,11 @@ import { readProjectScheduleStatus } from "../../schedules/read-service";
 import { ProjectCoordinationHttpService, type ProjectCoordinationCanonicalStoreAdapter } from "./project-coordination-http";
 import { createCoordinationHttpHandler } from "./coordination-http";
 import { IdeaLabErrorV1 } from "../../idea-lab/v1/errors";
-import { parseOperatorSurfaceSnapshotV1, type OperatorSurfaceSnapshotV1 } from "../../operator-surfaces/v1";
+import { parseOperatorSurfaceSnapshotV1, type ActionInboxItemV1, type OperatorSurfaceSnapshotV1 } from "../../operator-surfaces/v1";
 import { verifyInstallationPlanV1, type InstallationPlanV1 } from "../../installer/v1/installation-plan";
 import { createInstallationPlanViewV1 } from "../../installer/v1/installation-plan-view";
-import { WorkBatchOwnerServiceV1 } from "../../work-intake/v1";
+import { WorkBatchOwnerServiceV1, type WorkBatchQueueAdmissionAuthorityV1,
+  type WorkBatchQueueCatalogV1 } from "../../work-intake/v1";
 import { createWorkBatchOwnerHttpHandlerV1 } from "./work-batch-owner-http";
 import { encodeProjectEventCursorV1, projectEventSseResponseV1, type ProjectEventReadSourceV1 } from "../../project-events/v1";
 import { ProjectActivityServiceV1 } from "./project-activity-service";
@@ -103,11 +104,18 @@ export interface PrivateWebProcessOptions {
   operatorSurface?: { read: (input: {
     tenantId: string; actorId: string; grantedAt: string; now: string;
   }) => Promise<OperatorSurfaceSnapshotV1> };
+  /** Owner-only canonical attention reader supplied by trusted composition.
+   * It is intentionally separate from the full operator snapshot so the
+   * coordinator role needs access only to the inbox table for this route. */
+  actionInboxSource?: { read: (input: {
+    tenantId: string; actorId: string; grantedAt: string; now: string; state: "open";
+  }) => Promise<{ observedAt: string; items: ActionInboxItemV1[]; truncated: boolean }> };
   /** Existing harness evidence verification key. No key means progress is unavailable, not no runs. */
   tasks?: Omit<WebTaskKeys, "ideaIntegrityKey"> & { harnessIntegrityKey: Uint8Array };
   /** Optional proposal-intake integrity key. It enables owner batch review;
    * omission keeps the Pipelines routes absent. */
-  workBatches?: { integrityKey: Uint8Array };
+  workBatches?: { integrityKey: Uint8Array; queueCatalog?: WorkBatchQueueCatalogV1;
+    queueAdmissionAuthority?: WorkBatchQueueAdmissionAuthorityV1 };
   /** Trusted control-plane operation only. No planner key, privileged pool or native adapter is
    * given to the web SQL service. Its resource lifecycle is owned by the supplying composition. */
   planning?: TaskPlanningOperation;
@@ -241,6 +249,10 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
   const operatorSurface = options.operatorSurface ? Object.freeze({
     read: options.operatorSurface.read.bind(options.operatorSurface),
   }) : undefined;
+  if (options.actionInboxSource && typeof options.actionInboxSource.read !== "function") throw new Error("invalid_private_app_config");
+  const actionInboxSource = options.actionInboxSource ? Object.freeze({
+    read: options.actionInboxSource.read.bind(options.actionInboxSource),
+  }) : undefined;
   if (options.planning && (options.planning.tenantId !== options.tenantId || options.planning.workspaceId !== options.workspaceId
     || typeof options.planning.plan !== "function" || options.planning.readSaved !== undefined && typeof options.planning.readSaved !== "function"
     || options.planning.readSavedMany !== undefined && typeof options.planning.readSavedMany !== "function"
@@ -296,7 +308,8 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
   const tasks = new WebTaskService(options.database.client, { tenantId: options.tenantId, workspaceId: options.workspaceId }, clock,
     { ...options.tasks, ideaIntegrityKey: options.ideaProjects?.integrityKey });
   const workBatches = options.workBatches ? new WorkBatchOwnerServiceV1(options.database.client, tasks,
-    { tenantId: options.tenantId, workspaceId: options.workspaceId }, options.workBatches.integrityKey, clock) : undefined;
+    { tenantId: options.tenantId, workspaceId: options.workspaceId }, options.workBatches.integrityKey, clock,
+    options.workBatches.queueCatalog, options.workBatches.queueAdmissionAuthority) : undefined;
   const sessionWatch = new SessionWatchServiceV1(options.database.client,
     { tenantId: options.tenantId, workspaceId: options.workspaceId }, options.tasks?.harnessIntegrityKey, clock);
   // This is a task-planning bridge only. It is deliberately composed from the
@@ -429,6 +442,16 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
               actor.require("projects.read", undefined, true);
               return Response.json({ plan: installationPlanView }, { headers: privateResponseHeaders });
             });
+          }
+          if (url.pathname === "/api/v1/needs-me/action-items") {
+            if (request.method !== "GET" || url.search) throw new WebAccessError("invalid_request");
+            if (!actionInboxSource) throw new WebAccessError("not_found");
+            const scope = await productConfigurationAuthority.authenticated(identity, async (_, actor) => {
+              actor.require("projects.read", undefined, true);
+              return Object.freeze({ tenantId: options.tenantId, actorId: actor.id, grantedAt: actor.now, now: actor.now });
+            });
+            const source = await actionInboxSource.read({ ...scope, state: "open" });
+            return Response.json(source, { headers: privateResponseHeaders });
           }
           if (url.pathname === "/api/v1/operator-surface") {
             if (request.method !== "GET" || url.search) throw new WebAccessError("invalid_request");

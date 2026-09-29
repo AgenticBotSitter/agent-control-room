@@ -1,0 +1,81 @@
+# Mutation checks
+
+Mutation checks prove that a test actually catches a guard being weakened. A pull request that
+adds or changes a guard commits `mutation-checks/<branch-name>.json`, with `/` in the branch name
+replaced by `-`. For example, `feature/owner-refusal` uses
+`mutation-checks/feature-owner-refusal.json`.
+
+Each entry first runs its test command on the unmodified checkout and requires it to pass. It then
+runs that command after an added newline and, for JavaScript or TypeScript source whose `find`
+contains whitespace, after replacing one whitespace character in `find` with a block comment.
+Both edits preserve source behavior but change its bytes; the command must pass both probes. The
+verifier then makes one literal replacement and requires the same command to fail. These probes
+reject commands that fail on those edits, but they cannot prove that every arbitrary shell command
+is behavioural. Reviewers must still reject commands that diff, grep, hash, or snapshot the target
+instead of exercising its behavior. The verifier rejects a replacement unless `find` occurs
+exactly once and the mutant parses: it uses `node --check` for `.js`, `.mjs`, `.cjs`, and `.jsx`,
+TypeScript's syntax diagnostics for `.ts`, `.tsx`, `.mts`, and `.cts`, and `JSON.parse` for
+`.json`. Other file extensions are not syntax-checked. It intentionally does not import mutated
+modules: importing arbitrary repository modules can run effects or require unavailable runtime
+configuration, so a parsed module that throws at load time can still be reported as caught. It
+restores the file after every command, including timeout, SIGINT, and SIGTERM, and fails if the
+checkout is dirty before or after the run.
+
+```json
+[
+  {
+    "file": "src/server/authorize-task.ts",
+    "find": "if (!ownerCanRun) throw new TaskRefusal(\"not authorized\");",
+    "replace": "if (false) throw new TaskRefusal(\"not authorized\");",
+    "test": "node --import tsx --test tests/authorize-task.test.ts",
+    "why": "a non-owner must not start the task"
+  }
+]
+```
+
+The fields are all required strings:
+
+- `file`: a tracked regular file inside the checkout (symlinks are refused).
+- `find`: the exact source text to weaken; it must occur once.
+- `replace`: the weakened text, which may be empty to delete `find`, and must differ from `find`.
+- `test`: a shell command that runs the relevant tests and must pass on the baseline and both
+  applicable text-only probes, then return a non-infrastructure nonzero result or terminate on a
+  signal after mutation. Diff, grep, snapshot, and hash commands against the target are not test
+  evidence; the probes catch common variants but do not mechanically detect every bypass. Exits
+  126 and 127 are configuration errors, never evidence that a mutation was caught.
+- `why`: a short human-readable name for the guard and its consequence.
+
+Run the same check locally from a clean checkout:
+
+```sh
+node scripts/ci/verify-mutation-checks.mjs mutation-checks/feature-owner-refusal.json
+```
+
+An exit code of zero from a mutated `test` means the mutation survived and fails the job. A
+nonzero exit is reported as an expected test failure unless it is 126 or 127. Termination by a
+signal is also caught, but is reported separately as a crash so reviewers can distinguish it from
+an assertion failure. Each baseline and mutated command has a 10-minute timeout by default; set
+`MUTATION_CHECK_TIMEOUT_MS` to a positive millisecond value to override it. A timeout fails the
+check and restores the file. The verifier starts each command in a private process group and kills
+that group after either timeout or normal command exit, so ordinary background children cannot
+write to the checkout later. A child that deliberately starts a new session can escape that group;
+do not run untrusted commands in a mutation manifest. Never run two local verifier processes in
+the same checkout at once.
+
+## CI behavior and security boundary
+
+The **Mutation checks** job derives the manifest name from the pull request head branch. It only
+installs dependencies and invokes the mutation verifier when that exact file exists. Manifests
+must be regular files directly inside the top-level `mutation-checks/` directory; a symbolic-link
+manifest is refused and fails the job. A path passed to the verifier outside that directory is
+ignored.
+
+When no manifest exists, CI examines added and removed lines under `src/**`, `db/migrations/**`,
+and `db/roles/**`. It emits a warning, not a failure, for source refusal words or uppercase SQL
+`GRANT`, `REVOKE`, `SECURITY DEFINER`, `POLICY`, and `TRIGGER` markers. This is deliberately a
+reminder rather than a parser; it can miss guards with different wording and can warn on comments.
+
+Manifest test commands are repository code and run with the same network access and environment
+as the rest of the pull-request CI job. The job uses the read-only pull-request permission, does
+not persist checkout credentials, and does not pass any secrets or add network privileges. A
+manifest must never rely on credentials, external services, or undeclared machine state.
