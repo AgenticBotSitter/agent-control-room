@@ -452,6 +452,30 @@ test("rehearsal refuses when its throwaway port is busy before it reads a backup
   } finally { await new Promise(resolveClose => holder.close(resolveClose)); }
 });
 
+test("rehearsal picks the truly newest backup by its recorded time, not by directory-name order", { skip }, async () => {
+  // Backup directories are named pre-<commit>-<timestamp>: the commit prefix
+  // sorts first, so a name picked to sort last is given the EARLIER createdAt
+  // and a name picked to sort first is given the LATER one. Only reading each
+  // manifest's own recorded time, not the directory name, gets this right.
+  const laterButNamedFirst = join(state.vps, "backups", "pre-aaaaaaa-19990101T000000Z");
+  const earlierButNamedLast = join(state.vps, "backups", "pre-zzzzzzz-19980101T000000Z");
+  try {
+    await createMacLocalDatabaseBackupV1({ source: operator(), out: earlierButNamedLast, pgBin: PG_BIN,
+      now: () => "1998-01-01T00:00:00.000Z" });
+    await createMacLocalDatabaseBackupV1({ source: operator(), out: laterButNamedFirst, pgBin: PG_BIN,
+      now: () => "1999-01-01T00:00:00.000Z" });
+    const { code, output } = await upgrade(["--rehearse", head().slice(0, 7)], {
+      env: { CR_UPGRADE_TEST_PG_TARGET: "host=127.0.0.1 port=1 dbname=control_room user=postgres" },
+    });
+    assert.equal(code, 0, output);
+    assert.match(output, /latest verified backup \(pre-aaaaaaa-19990101T000000Z\)/u,
+      "the backup with the later recorded time wins even though its name sorts first");
+  } finally {
+    await rm(laterButNamedFirst, { recursive: true, force: true });
+    await rm(earlierButNamedLast, { recursive: true, force: true });
+  }
+});
+
 test("rehearsal restores and upgrades only a throwaway cluster, leaving the live data and port alone", { skip }, async () => {
   const out = join(state.vps, "backups", "pre-rehearsal-fixture");
   await createMacLocalDatabaseBackupV1({ source: operator(), out, pgBin: PG_BIN });

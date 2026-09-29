@@ -20,15 +20,25 @@ async function newestBoundBackup(backupRoot) {
     throw new Error("upgrade_rehearse_backup_root_refused");
   let entries;
   try { entries = await readdir(backupRoot); } catch { throw new Error("upgrade_rehearse_no_verified_backup"); }
-  for (const name of entries.sort().reverse()) {
+  // Backup directories are named `pre-<commit>-<timestamp>`: the commit prefix
+  // comes first, so sorting by NAME is sorting by commit hash, not by time. On
+  // a real VPS backups for different releases pile up with nothing pruning
+  // them, and a hex hash that happens to sort late would silently win over a
+  // backup made minutes ago — exactly the case this rehearsal exists to catch
+  // honestly. The manifest's own recorded `createdAt` is compared instead.
+  let newest;
+  for (const name of entries) {
     const candidate = join(backupRoot, name);
     try {
       if (!(await lstat(candidate)).isDirectory()) continue;
-      await readBoundMacLocalDatabaseBackupV1(candidate);
-      return candidate;
+      const bound = await readBoundMacLocalDatabaseBackupV1(candidate);
+      const createdAt = bound.manifest.createdAt;
+      if (typeof createdAt !== "string" || Number.isNaN(Date.parse(createdAt))) continue;
+      if (!newest || createdAt > newest.createdAt) newest = { path: candidate, createdAt };
     } catch { /* An old or damaged backup is not a rehearsal candidate. */ }
   }
-  throw new Error("upgrade_rehearse_no_verified_backup");
+  if (!newest) throw new Error("upgrade_rehearse_no_verified_backup");
+  return newest.path;
 }
 
 const temporaryLoginCode = plan => JSON.stringify(Object.fromEntries(plan.createRoles
@@ -53,7 +63,7 @@ async function requireFreeThrowawayPort(port) {
  *   diskFactor?: number, write?: (text: string) => void }} options
  */
 export async function runMacDatabaseUpgradeVpsRehearseV1({ commit, backupRoot, pgBin, port,
-  diskFactor = 2, write = text => process.stdout.write(text) }) {
+  diskFactor = 2, write = text => process.stdout.write(text), onStage = () => {} }) {
   if (!isCommit(commit) || typeof pgBin !== "string" || !isAbsolute(pgBin) || !Number.isInteger(port)
     || port < 1024 || port > 65535 || !(diskFactor >= 1)) throw new Error("upgrade_rehearse_input_refused");
   await requireFreeThrowawayPort(port);
@@ -67,7 +77,7 @@ export async function runMacDatabaseUpgradeVpsRehearseV1({ commit, backupRoot, p
       await mkdir(rehearsalBackupRoot, { mode: 0o700 });
       const targetText = `host=${target.host} port=${target.port} dbname=${target.database} user=${target.user}`;
       const common = [commit, targetText, rehearsalBackupRoot, pgBin, String(diskFactor)];
-      const plan = await runMacDatabaseUpgradeVpsStepV1({ args: ["plan", ...common], write });
+      const plan = await runMacDatabaseUpgradeVpsStepV1({ args: ["plan", ...common], write, onStage });
       if (plan.nothingToDo) {
         result = { nothingToDo: true, head: undefined };
         return;
@@ -78,7 +88,7 @@ export async function runMacDatabaseUpgradeVpsRehearseV1({ commit, backupRoot, p
       // its cleanup-owned directory; neither is retained or printed.
       const code = temporaryLoginCode(plan.plan);
       const applied = await runMacDatabaseUpgradeVpsStepV1({ args: ["apply", ...common, plan.digest],
-        readCode: async () => code, write });
+        readCode: async () => code, write, onStage });
       result = { nothingToDo: false, head: applied.head };
     } });
   write(result?.nothingToDo ? `REHEARSAL DONE ${short} — no database changes were needed.\n`
@@ -91,7 +101,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   try {
     const [commit, backupRoot, pgBin, port, factor] = process.argv.slice(2);
     await runMacDatabaseUpgradeVpsRehearseV1({ commit, backupRoot, pgBin, port: Number(port), diskFactor: Number(factor),
-      write: text => process.stdout.write(text) });
+      write: text => process.stdout.write(text), onStage: next => { stage = next; } });
   } catch (error) {
     const message = error instanceof Error ? error.message : "";
     const code = /^upgrade_(?:rehearse|disk_space_low|backup_failed|plan_changed_refused|convergence_refused)[a-z0-9_]*$/u.test(message)

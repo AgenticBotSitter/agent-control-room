@@ -11,7 +11,7 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { readFile } from "node:fs/promises";
-import { join, resolve, dirname } from "node:path";
+import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Client } from "pg";
 import { computeDatabaseRestoreIdentity, verifyRestoredIdentity } from "./restore-identity.mjs";
@@ -22,6 +22,19 @@ const flag = (args, name, fallback) => {
   const index = args.indexOf(name);
   return index === -1 ? fallback : (args[index + 1] ?? fallback);
 };
+// The exact NOLOGIN group roles db/roles/production_roles.sql creates, in the
+// same order, kept here as a fixed constant rather than read from that file:
+// see the comment below on why this restore only ever creates roles the
+// backup itself recorded, never whatever the CURRENT commit's file defines.
+const PRODUCTION_GROUP_ROLES = Object.freeze(["control_room_migrator", "control_room_application",
+  "control_room_reader", "control_room_backup", "control_room_schedule_admissions", "control_room_github_broker",
+  "control_room_work_intake"]);
+// The subset of those roles production_roles.sql also revokes database
+// TEMPORARY from. Applied only to roles this restore actually (re)created, so
+// a backup that predates one of them never sees a REVOKE against a role that
+// does not exist.
+const TEMPORARY_REVOKED_ROLES = Object.freeze(["control_room_application", "control_room_reader",
+  "control_room_backup", "control_room_schedule_admissions", "control_room_github_broker", "control_room_work_intake"]);
 
 /**
  * @param {{ backup?: string, target?: string, confirmTarget?: string, pgBin?: string, requiredTables?: string[] }} options
@@ -51,14 +64,30 @@ export async function restoreDatabase({ backup, target, confirmTarget, pgBin, re
   const cli = targetCli(target);
   // Grantee roles must exist before the dump's GRANT statements replay: the
   // source's table grants reference groups (reader, backup, …) that the
-  // login-provisioning script does not create. This file is CREATE-only and
-  // idempotent; login roles still come from the operator's target
-  // provisioning, and the membership reconcile below fails closed if one is
-  // missing.
+  // login-provisioning script does not create. This used to run the CURRENT
+  // commit's db/roles/production_roles.sql unconditionally, which creates
+  // every group role production defines TODAY — including one a backup taken
+  // before that role existed never recorded. The invented role then showed up
+  // in the post-restore role snapshot with nothing on the backup side to
+  // match, failing the restore identity check for a perfectly good backup.
+  // Creating only the group roles this backup's own role snapshot recorded
+  // reproduces the source exactly; login roles are untouched here, exactly as
+  // before — they still come from the operator's target provisioning.
+  const recordedRoleNames = new Set((Array.isArray(metadata.evidence?.roles) ? metadata.evidence.roles : [])
+    .map(role => role?.rolname));
   const roleClient = connectTarget(target);
   await roleClient.connect();
   try {
-    await roleClient.query(await readFile(join(resolve(dirname(fileURLToPath(import.meta.url)), "../.."), "db/roles/production_roles.sql"), "utf8"));
+    for (const name of PRODUCTION_GROUP_ROLES) {
+      if (!recordedRoleNames.has(name)) continue;
+      await roleClient.query(`DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '${name}') THEN
+        CREATE ROLE ${name} NOLOGIN; END IF; END; $$;`);
+    }
+    await roleClient.query("DO $$ BEGIN EXECUTE format('REVOKE TEMPORARY ON DATABASE %I FROM PUBLIC', current_database()); END; $$;");
+    for (const name of TEMPORARY_REVOKED_ROLES) {
+      if (!recordedRoleNames.has(name)) continue;
+      await roleClient.query(`DO $$ BEGIN EXECUTE format('REVOKE TEMPORARY ON DATABASE %I FROM %I', current_database(), '${name}'); END; $$;`);
+    }
   } finally {
     await roleClient.end();
   }
