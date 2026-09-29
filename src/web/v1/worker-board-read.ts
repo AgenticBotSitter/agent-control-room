@@ -33,10 +33,10 @@ export class DatabaseWorkerBoardReadSourceV1 {
       current_job.project_id AS current_project_id,current_job.id AS current_job_id,current_job.payload AS current_payload,
       COALESCE(current_lease.acquired_at,current_attempt.started_at,current_attempt.updated_at) AS current_since,
       terminal_job.project_id AS result_project_id,terminal_job.id AS result_job_id,terminal_job.payload AS result_payload,
-      terminal_attempt.state AS result_state,terminal_attempt.finished_at AS result_finished_at,terminal.result_rank
+      terminal.state AS result_state,terminal.finished_at AS result_finished_at,terminal.result_rank
       FROM bounded_nodes n
       LEFT JOIN LATERAL (
-        SELECT a.id,a.job_id,a.started_at,a.updated_at FROM control_attempts a
+        SELECT a.id,a.job_id,a.created_at AS started_at,a.updated_at FROM control_attempts a
         WHERE a.tenant_id=n.tenant_id AND a.node_id=n.id AND a.state IN ('leased','running','waiting')
         ORDER BY CASE a.state WHEN 'running' THEN 0 WHEN 'leased' THEN 1 ELSE 2 END,a.updated_at DESC,a.id LIMIT 1
       ) current_attempt ON true
@@ -44,10 +44,10 @@ export class DatabaseWorkerBoardReadSourceV1 {
       LEFT JOIN control_leases current_lease ON current_lease.tenant_id=n.tenant_id AND current_lease.attempt_id=current_attempt.id
         AND current_lease.state='active' AND current_lease.expires_at>$2::timestamptz
       LEFT JOIN LATERAL (
-        SELECT a.id,a.job_id,a.state,a.finished_at,row_number() OVER (ORDER BY a.finished_at DESC,a.id DESC) AS result_rank
+        SELECT a.id,a.job_id,a.state,a.updated_at AS finished_at,row_number() OVER (ORDER BY a.updated_at DESC,a.id DESC) AS result_rank
         FROM control_attempts a WHERE a.tenant_id=n.tenant_id AND a.node_id=n.id
-          AND a.state IN ('succeeded','failed','cancelled','orphaned') AND a.finished_at IS NOT NULL
-        ORDER BY a.finished_at DESC,a.id DESC LIMIT 3
+          AND a.state IN ('succeeded','failed','cancelled','orphaned') AND a.updated_at IS NOT NULL
+        ORDER BY a.updated_at DESC,a.id DESC LIMIT 3
       ) terminal ON true
       LEFT JOIN control_attempts terminal_attempt ON terminal_attempt.tenant_id=n.tenant_id AND terminal_attempt.id=terminal.id
       LEFT JOIN control_jobs terminal_job ON terminal_job.tenant_id=n.tenant_id AND terminal_job.id=terminal.job_id
