@@ -144,7 +144,9 @@ test("two missing logins bundle into one code, and the VPS upgrade creates both 
   const intake = captureWorkIntakeServerConfigurationV1(JSON.parse(await readFile(intakeFile, "utf8")));
   assert.equal(intake.database.username, "control_room_work_intake_agent");
   assert.equal(intake.database.password, intakePassword);
-  assert.deepEqual(intake.credentials, []);
+  assert.deepEqual(intake.credentials.map(entry => ({ workerId: entry.workerId, workerKind: entry.workerKind })),
+    [{ workerId: "worker:codex:mac-1", workerKind: "codex" }]);
+  assert.equal((await stat(join(config, "work-intake-clients"))).mode & 0o777, 0o700);
 
   for (const file of ["control_room_publisher.txt", "control_room_work_intake_agent.txt"])
     assert.equal((await stat(join(passwords, file))).mode & 0o777, 0o600);

@@ -6,7 +6,10 @@ import { join } from "node:path";
 import { captureProvisionedMacLocalConfigurationV1,
   prepareMacLocalDatabaseUpgradeV1, finishMacLocalDatabaseUpgradeV1,
   prepareProvisionedWorkIntakeConfigurationV1,
-  planMacDatabaseUpgradeFromFileV1 } from "../scripts/mac-local/provision-database.mjs";
+  planMacDatabaseUpgradeFromFileV1, provisionMacLocalDatabaseV1,
+  macLocalRouteFromTailscaleStatusV1 } from "../scripts/mac-local/provision-database.mjs";
+import { startMacLocalWebHost } from "../scripts/mac-local/start-web-host.mjs";
+import * as macLocalProtectedLoader from "../src/web/v1/mac-local-protected-loader.ts";
 import { captureMacUpgradeSnapshotV1 } from "../scripts/mac-local/database-upgrade-snapshot.mjs";
 import { checkedPostgresScramVerifierV1, postgresScramVerifierV1 } from
   "../scripts/mac-local/database-upgrade-scram.mjs";
@@ -14,7 +17,7 @@ import { applyMacGrantDiffV1, desiredMacGrantsV1, diffMacGrantsV1, macRolePlan, 
   "../scripts/mac-local/database-upgrade-grants.mjs";
 import { MAC_LOCAL_DATABASE_ROLES_V1, captureMacLocalDatabaseRolesV1 } from
   "../src/web/v1/mac-local-database-roles.ts";
-import { captureWorkIntakeServerConfigurationV1 } from "../src/work-intake/v1/installed-configuration.ts";
+import { captureWorkIntakeServerConfigurationV1, workIntakeClientFileNameV1 } from "../src/work-intake/v1/installed-configuration.ts";
 import { applyMigrations } from "../deploy/postgres/apply-migrations.mjs";
 import { planMacDatabaseUpgradeSnapshotV1, sanitizedMacDatabaseUpgradeFailureV1 } from
   "../scripts/mac-local/database-upgrade-remote.mjs";
@@ -219,8 +222,21 @@ test("prepare bundles one code for both missing logins, and finish adds only the
   const intake = captureWorkIntakeServerConfigurationV1(JSON.parse(await readFile(intakeFile, "utf8")));
   assert.equal(intake.database.username, "control_room_work_intake_agent");
   assert.equal(intake.database.password, (await readFile(join(passwords, "control_room_work_intake_agent.txt"), "utf8")).trim());
-  assert.deepEqual(intake.credentials, []);
+  // The host refuses to start unless the intake record's credentials match the
+  // Mac's enabled-worker roster exactly: one mapping per worker, no more, no less.
+  assert.deepEqual(intake.credentials.map(entry => ({ workerId: entry.workerId, workerKind: entry.workerKind })).sort(
+    (a, b) => a.workerId.localeCompare(b.workerId)), [
+    { workerId: "worker:claude:mac-1", workerKind: "claude-code" },
+    { workerId: "worker:codex:mac-1", workerKind: "codex" },
+    { workerId: "worker:hermes:mac-1", workerKind: "hermes" },
+  ]);
+  assert.equal(new Set(intake.credentials.map(entry => entry.credentialDigest)).size, 3);
   assert.equal((await stat(intakeFile)).mode & 0o777, 0o600);
+  const clientRoot = join(root, "config", "work-intake-clients");
+  for (const workerId of ["worker:codex:mac-1", "worker:claude:mac-1", "worker:hermes:mac-1"]) {
+    const clientPath = join(clientRoot, workIntakeClientFileNameV1(workerId));
+    assert.equal((await stat(clientPath)).mode & 0o777, 0o600);
+  }
 
   // Both logins now exist: a repeat prepare/finish is a clean no-op, not a refusal.
   assert.deepEqual(await prepareMacLocalDatabaseUpgradeV1(options), { mainCommit, nothingToPrepare: true });
@@ -401,4 +417,124 @@ test("prepare and finish can run again once every login already exists, without 
   { finished: true, mainCommit: options.mainCommit, nothingToFinish: true }, "the first upgrade's record is not redone");
   assert.deepEqual(await readFile(roleFile), before);
   assert.deepEqual(await readFile(intakeFile), intakeBefore);
+});
+
+test("a finished upgrade leaves the Mac host startable: the real roster check accepts the intake record", async t => {
+  const root = await mkdtemp(join(tmpdir(), "mac-db-upgrade-host-start-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await baseUpgradeFixture(root);
+  const options = { protectedRoot: root, mainCommit: "a".repeat(40) };
+  await prepareMacLocalDatabaseUpgradeV1(options);
+  await finishMacLocalDatabaseUpgradeV1({ ...options, verifyLogin: async () => {} });
+
+  // The real config loader and the real roster check run unmodified; only the
+  // effectful release modules (host composition, postgres, serving, renderer,
+  // intake service) are stubbed so no listener or database actually opens.
+  const load = async path => {
+    const name = path.split("/").at(-1);
+    if (name === "macLocalProtectedLoader.js") return macLocalProtectedLoader;
+    if (name === "macLocalHost.js") return { createMacLocalProtectedHostV1() {
+      return { async start() { return { async close() {} }; } };
+    } };
+    if (name === "workIntakePrivateService.js") return { async prepareWorkIntakePrivateServiceV1() {
+      return { async start() {}, async close() {} };
+    } };
+    if (name === "privatePostgres.js") return { createPrivatePostgresDatabase() {} };
+    if (name === "serving.js") return { async loadPrivateClientAssets() { return {}; } };
+    if (name === "index.js") return { default() {} };
+    throw new Error(`unexpected ${name}`);
+  };
+  const active = await startMacLocalWebHost({ protectedRoot: root }, { load });
+  await active.close();
+});
+
+test("repoint updates the intake record's endpoint too, so a later upgrade converges instead of refusing", async t => {
+  const root = await mkdtemp(join(tmpdir(), "mac-db-upgrade-repoint-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const config = join(root, "config"), passwords = join(config, "database-passwords");
+  await mkdir(passwords, { recursive: true, mode: 0o700 });
+  const names = { web: "control_room_web", coordinator: "control_room_coordinator", results: "control_room_results",
+    publisher: "control_room_publisher", queueWorker: "control_room_queue_worker" };
+  const values = Object.fromEntries(Object.values(names).map((name, index) => [name, `${"r".repeat(40)}${index}`]));
+  for (const [name, value] of Object.entries(values))
+    await writeFile(join(passwords, `${name}.txt`), `${value}\n`, { mode: 0o600 });
+  const web = { host: "127.0.0.1", port: 15432, database: "control_room", username: names.web,
+    password: values[names.web], majorVersion: 17 };
+  const role = key => ({ ...web, username: names[key], password: values[names[key]] });
+  const roles = { schema: MAC_LOCAL_DATABASE_ROLES_V1, web, coordinator: role("coordinator"),
+    results: role("results"), publisher: role("publisher"), queueWorker: role("queueWorker") };
+  const mac = captureProvisionedMacLocalConfigurationV1({ database: web, ownerCode: "owner-code",
+    workers: [{ workerId: "worker:codex:mac-1", kind: "codex", executablePath: "/opt/codex", recordedVersion: "codex 1.2.3" }] });
+  const macFile = join(config, "mac-local.json"), roleFile = join(config, "database-roles.json");
+  await writeFile(macFile, JSON.stringify(mac), { mode: 0o600 });
+  await writeFile(roleFile, JSON.stringify(roles), { mode: 0o600 });
+
+  const options = { protectedRoot: root, mainCommit: "b".repeat(40) };
+  const prepared = await prepareMacLocalDatabaseUpgradeV1(options);
+  assert.deepEqual(Object.keys(JSON.parse(prepared.code)), ["control_room_work_intake_agent"]);
+  await finishMacLocalDatabaseUpgradeV1({ ...options, verifyLogin: async () => {} });
+  assert.deepEqual(await prepareMacLocalDatabaseUpgradeV1(options), { mainCommit: options.mainCommit, nothingToPrepare: true });
+
+  const intakeFile = join(config, "work-intake-server.json");
+  const intakeBeforeRepoint = captureWorkIntakeServerConfigurationV1(JSON.parse(await readFile(intakeFile, "utf8")));
+  assert.equal(intakeBeforeRepoint.database.host, "127.0.0.1");
+
+  const status = { Self: { Tags: ["tag:general", "tag:control-room-client"] }, Peer: { server: {
+    Online: true, Tags: ["tag:control-room-vps"], TailscaleIPs: ["100.100.9.9"], DNSName: "repointed.example.invalid." } } };
+  const route = macLocalRouteFromTailscaleStatusV1(status,
+    "## VPS evidence (synthetic)\n\nTLS, SCRAM and loopback checks passed.\n\n## Live acceptance\n");
+  assert.deepEqual(await provisionMacLocalDatabaseV1({ repointOnly: true, protectedRoot: root, route }), { repointed: true });
+
+  const intakeAfterRepoint = captureWorkIntakeServerConfigurationV1(JSON.parse(await readFile(intakeFile, "utf8")));
+  assert.equal(intakeAfterRepoint.database.host, "100.100.9.9");
+  assert.equal(intakeAfterRepoint.database.password, intakeBeforeRepoint.database.password);
+  assert.deepEqual(intakeAfterRepoint.credentials, intakeBeforeRepoint.credentials);
+
+  // Before the fix, repoint left work-intake-server.json pointed at the old
+  // endpoint and every later upgrade refused with upgrade_role_config_refused.
+  assert.deepEqual(await prepareMacLocalDatabaseUpgradeV1(options), { mainCommit: options.mainCommit, nothingToPrepare: true });
+  assert.deepEqual(await finishMacLocalDatabaseUpgradeV1({ ...options,
+    verifyLogin: async () => { throw new Error("nothing new to verify"); } }),
+  { finished: true, mainCommit: options.mainCommit, nothingToFinish: true });
+});
+
+test("an existing intake record with the wrong password or a stale endpoint refuses both prepare and finish", async t => {
+  const root = await mkdtemp(join(tmpdir(), "mac-db-upgrade-intake-guard-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const config = join(root, "config"), passwords = join(config, "database-passwords");
+  await mkdir(passwords, { recursive: true, mode: 0o700 });
+  const names = { web: "control_room_web", coordinator: "control_room_coordinator", results: "control_room_results",
+    publisher: "control_room_publisher", queueWorker: "control_room_queue_worker" };
+  const base = { host: "127.0.0.1", port: 15432, database: "control_room", majorVersion: 17 };
+  const values = Object.fromEntries(Object.values(names).map((name, index) => [name, `${"g".repeat(40)}${index}`]));
+  for (const [name, value] of Object.entries(values))
+    await writeFile(join(passwords, `${name}.txt`), `${value}\n`, { mode: 0o600 });
+  const roles = { schema: MAC_LOCAL_DATABASE_ROLES_V1, ...Object.fromEntries(Object.entries(names).map(
+    ([key, name]) => [key, { ...base, username: name, password: values[name] }])) };
+  const mac = captureProvisionedMacLocalConfigurationV1({ database: roles.web, ownerCode: "owner-code",
+    workers: [{ workerId: "worker:codex:mac-1", kind: "codex", executablePath: "/opt/codex", recordedVersion: "codex 1.2.3" }] });
+  await writeFile(join(config, "mac-local.json"), JSON.stringify(mac), { mode: 0o600 });
+  await writeFile(join(config, "database-roles.json"), JSON.stringify(roles), { mode: 0o600 });
+  const intakeUsername = "control_room_work_intake_agent", intakePassword = "i".repeat(41);
+  await writeFile(join(passwords, `${intakeUsername}.txt`), `${intakePassword}\n`, { mode: 0o600 });
+  const intakeFile = join(config, "work-intake-server.json");
+  const validIntake = prepareProvisionedWorkIntakeConfigurationV1({
+    database: { ...base, username: intakeUsername, password: intakePassword },
+    integrityKey: "k".repeat(43), credentials: [] });
+  const options = { protectedRoot: root, mainCommit: "c".repeat(40) };
+  const refusal = /upgrade_role_config_refused/u;
+
+  await writeFile(intakeFile, JSON.stringify({ ...validIntake,
+    database: { ...validIntake.database, password: "w".repeat(40) } }), { mode: 0o600 });
+  await assert.rejects(prepareMacLocalDatabaseUpgradeV1(options), refusal);
+  await assert.rejects(finishMacLocalDatabaseUpgradeV1(options), refusal);
+
+  await writeFile(intakeFile, JSON.stringify({ ...validIntake,
+    database: { ...validIntake.database, port: 15433 } }), { mode: 0o600 });
+  await assert.rejects(prepareMacLocalDatabaseUpgradeV1(options), refusal);
+  await assert.rejects(finishMacLocalDatabaseUpgradeV1(options), refusal);
+
+  await writeFile(intakeFile, JSON.stringify(validIntake), { mode: 0o600 });
+  assert.deepEqual(await prepareMacLocalDatabaseUpgradeV1(options),
+    { mainCommit: options.mainCommit, nothingToPrepare: true });
 });
