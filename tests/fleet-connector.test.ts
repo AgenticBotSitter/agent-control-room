@@ -129,6 +129,33 @@ test("a lost enrollment response is recovered with the same pending secret and n
     /unauthenticated/u, "the consumed code is not replayable with another secret or nonce");
 });
 
+test("a lost enrollment response cannot be replayed after the code expires", async t => {
+  const f = await fixture(); t.after(() => f.close());
+  const code = await f.owner.createEnrollmentCode(ownerIdentity(), { displayName: "Expired replay", workerKind: "mcp-agent",
+    projectIds: [PROJECT_A], capabilities: ["writing"] });
+  const configPath = join(f.dir, "expired-replay.json");
+  const loseResponse: typeof fetch = async (...args) => {
+    const response = await fetch(...args);
+    await response.arrayBuffer();
+    throw new Error("simulated lost enrollment response");
+  };
+  await assert.rejects(connector.join({ server: f.origin, code: code.code, configPath, fetcher: loseResponse }),
+    /simulated lost enrollment response/u);
+  const pending = await connector.loadConfig(configPath);
+  assert.equal(pending.workerId, null);
+  await f.raw.exec("ALTER TABLE fleet_enrollment_codes DISABLE TRIGGER fleet_enrollment_codes_guard");
+  try {
+    await f.raw.query(`UPDATE fleet_enrollment_codes SET created_at=now()-interval '20 minutes',
+      expires_at=now()-interval '10 minutes' WHERE id=$1`, [code.codeId]);
+  } finally {
+    await f.raw.exec("ALTER TABLE fleet_enrollment_codes ENABLE TRIGGER fleet_enrollment_codes_guard");
+  }
+  await assert.rejects(connector.join({ server: f.origin, code: code.code, configPath }), /unauthenticated/u,
+    "the original nonce and credential do not bypass code expiry");
+  assert.equal((await f.query("SELECT 1 FROM fleet_enrollment_redemptions")).length, 1);
+  assert.equal((await f.query("SELECT 1 FROM fleet_worker_credentials")).length, 1);
+});
+
 test("enrollment rejects oversized and rate-limited traffic before another body or database read", async t => {
   let now = 10_000;
   const admission = createFleetGatewayAdmissionV1({ clock: () => now, windowMs: 1_000,
@@ -167,6 +194,50 @@ test("enrollment has a global limit across trustworthy loopback proxy client add
   const limited = await fetch(`${f.origin}/fleet/v1/enroll`, { method: "POST", headers: {
     "content-type": "application/json", "cf-connecting-ip": "192.0.2.12" }, body: "{}" });
   assert.equal(limited.status, 429);
+});
+
+test("one noisy enrollment source cannot lock out another source or an enrolled machine", async t => {
+  const admission = createFleetGatewayAdmissionV1({ enrollPerIp: 2, enrollGlobal: 20,
+    authenticatePerIp: 2, authenticateGlobal: 20, maxConcurrent: 2 });
+  const f = await fixture({ admission }); t.after(() => f.close());
+  const worker = await joinWorker(f, "Fair enrollment");
+  const noisyStatuses: number[] = [];
+  for (let index = 0; index < 24; index += 1) {
+    const response = await fetch(`${f.origin}/fleet/v1/enroll`, { method: "POST", headers: {
+      "content-type": "application/json", "cf-connecting-ip": "192.0.2.30" }, body: "{}" });
+    noisyStatuses.push(response.status);
+  }
+  assert.deepEqual(noisyStatuses.slice(0, 2), [400, 400]);
+  assert.ok(noisyStatuses.slice(2).every(status => status === 429),
+    "one source is capped at a small share of the shared enrollment budget");
+  const other = await fetch(`${f.origin}/fleet/v1/enroll`, { method: "POST", headers: {
+    "content-type": "application/json", "cf-connecting-ip": "192.0.2.31" }, body: "{}" });
+  assert.equal(other.status, 400, "source-local refusals do not spend the remaining enrollment global budget");
+  assert.equal((await worker.client.me()).workerId, worker.joined.workerId,
+    "enrollment traffic cannot spend the authenticated-route budget");
+});
+
+test("one noisy authentication source cannot lock out an enrolled machine", async t => {
+  const admission = createFleetGatewayAdmissionV1({ enrollPerIp: 2, enrollGlobal: 20,
+    authenticatePerIp: 2, authenticateGlobal: 20, maxConcurrent: 2 });
+  const f = await fixture({ admission }); t.after(() => f.close());
+  const worker = await joinWorker(f, "Fair authentication");
+  const noisyStatuses: number[] = [];
+  for (let index = 0; index < 24; index += 1) {
+    const response = await fetch(`${f.origin}/fleet/v1/me`, { headers: {
+      authorization: "Bearer invalid", "x-control-room-worker": "fleet-worker:00000000000000000000000000000000",
+      "cf-connecting-ip": "192.0.2.40" } });
+    noisyStatuses.push(response.status);
+  }
+  assert.deepEqual(noisyStatuses.slice(0, 2), [401, 401]);
+  assert.ok(noisyStatuses.slice(2).every(status => status === 429),
+    "one source is capped at a small share of the shared authentication budget");
+  const healthy = await rawCall(f, "GET", "/fleet/v1/me", {
+    authorization: `Bearer ${worker.config.secret}`, "x-control-room-worker": worker.joined.workerId,
+    "cf-connecting-ip": "192.0.2.41",
+  });
+  assert.equal(healthy.status, 200, "source-local refusals do not spend the remaining authentication global budget");
+  assert.equal((healthy.body.result as { workerId: string }).workerId, worker.joined.workerId);
 });
 
 test("gateway admission caps concurrent unauthenticated work and recovers on release", () => {

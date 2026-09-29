@@ -96,6 +96,29 @@ test("fleet connector end to end and least privilege, as the production logins",
       await assert.rejects(connector.join({ server: origin, code: code.code, configPath: join(dir, "x.json") }), /unauthenticated/u,
         "a code is single use for the production gateway login too");
 
+      // A committed redemption is recoverable only while the owner-issued
+      // code remains live. Simulate a response lost after commit, then age the
+      // immutable code as the schema owner and retry through the fleet login.
+      const expiring = await owner.createEnrollmentCode(ownerIdentity(), { displayName: "PG expired replay",
+        workerKind: "mcp-agent", projectIds: [PROJECT_A], capabilities: ["writing"] });
+      const expiringPath = join(dir, "expired-replay.json");
+      const loseResponse: typeof fetch = async (...args) => {
+        const response = await fetch(...args);
+        await response.arrayBuffer();
+        throw new Error("simulated lost enrollment response");
+      };
+      await assert.rejects(connector.join({ server: origin, code: expiring.code, configPath: expiringPath,
+        fetcher: loseResponse }), /simulated lost enrollment response/u);
+      await admin.client.query("ALTER TABLE fleet_enrollment_codes DISABLE TRIGGER fleet_enrollment_codes_guard");
+      try {
+        await admin.client.query(`UPDATE fleet_enrollment_codes SET created_at=now()-interval '20 minutes',
+          expires_at=now()-interval '10 minutes' WHERE id=$1`, [expiring.codeId]);
+      } finally {
+        await admin.client.query("ALTER TABLE fleet_enrollment_codes ENABLE TRIGGER fleet_enrollment_codes_guard");
+      }
+      await assert.rejects(connector.join({ server: origin, code: expiring.code, configPath: expiringPath }),
+        /unauthenticated/u, "the production fleet login refuses a matching replay after code expiry");
+
       // --- Offer, claim, progress, result, revision, resubmit, accept.
       const offered = await owner.offerTask(ownerIdentity(), { projectId: PROJECT_A, jobId: task.jobId, capability: "writing" });
       await owner.offerTask(ownerIdentity(), { projectId: PROJECT_B, jobId: betaTask.jobId, capability: "writing" });

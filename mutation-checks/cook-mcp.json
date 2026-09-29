@@ -61,5 +61,19 @@
     "replace": ") return fleetFail(\"not_found\");",
     "test": "node --import tsx --test --test-name-pattern \"stolen credential\" tests/fleet-connector.test.ts",
     "why": "an MCP worker cannot propose work in another project"
+  },
+  {
+    "file": "src/fleet/v1/gateway-http.ts",
+    "find": "if (active >= maxConcurrent || !tick(state, now, perIp[kind]) || !tick(global[kind], now, globalLimit[kind]))",
+    "replace": "if (!tick(global[kind], now, globalLimit[kind]) || !tick(state, now, perIp[kind]) || active >= maxConcurrent)",
+    "test": "node --import tsx --test --test-name-pattern \"one noisy\" tests/fleet-connector.test.ts",
+    "why": "source-local refusals cannot consume the shared enrollment or authentication budget"
+  },
+  {
+    "file": "db/migrations/0141_fleet_owner_authority.sql",
+    "find": "  IF NOT FOUND OR enrollment.state<>'issued' OR enrollment.expires_at<=pg_catalog.statement_timestamp()\n    OR enrollment.expires_at<=p_redeemed_at THEN RETURN; END IF;",
+    "replace": "  IF NOT FOUND OR enrollment.state<>'issued' THEN RETURN; END IF;",
+    "test": "node --import tsx --test --test-name-pattern \"cannot be replayed after the code expires\" tests/fleet-connector.test.ts",
+    "why": "a matching enrollment replay is still refused after the code expires"
   }
 ]

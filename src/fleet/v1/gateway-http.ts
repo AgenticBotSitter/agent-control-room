@@ -72,7 +72,10 @@ export function createFleetGatewayAdmissionV1(options: FleetGatewayAdmissionOpti
         if (ips.size >= maxTrackedIps) return fleetFail("rate_limited");
         state = { startedAt: now, count: 0, touchedAt: now }; ips.set(key, state);
       }
-      if (!tick(global[kind], now, globalLimit[kind]) || !tick(state, now, perIp[kind]) || active >= maxConcurrent)
+      // Refusals from one source must not spend the shared budget. Keep the
+      // cheap concurrency and per-address checks ahead of the global charge;
+      // a successful global tick is therefore always an admitted request.
+      if (active >= maxConcurrent || !tick(state, now, perIp[kind]) || !tick(global[kind], now, globalLimit[kind]))
         return fleetFail("rate_limited");
       active += 1;
       let released = false;
