@@ -29,7 +29,10 @@ GRANT SELECT ON tenants, workspaces, control_identities, control_role_grants, co
   work_batches, work_batch_items, work_batch_effective_queue_admissions,
   pipeline_templates, pipeline_runs, pipeline_stage_runs, pipeline_ordered_stage_runs, control_agent_review_plans,
   control_pipeline_build_publications, pipeline_unattended_transitions, pipeline_advance_receipts,
-  control_installation_transition_revisions
+  control_installation_transition_revisions,
+  control_supervisor_task_heads, control_supervisor_reconciliation_events, control_supervisor_agent_health,
+  control_supervisor_loop_heads, control_supervisor_health_observations, control_provider_waits,
+  control_service_incident_heads, control_service_incidents
   TO control_room_task_coordinator;
 GRANT SELECT ON control_task_model_selections, control_task_declared_scopes,
   control_assignment_lease_scopes TO control_room_task_coordinator;
@@ -44,6 +47,9 @@ GRANT INSERT ON control_web_sessions, control_requests, control_workflows, contr
   control_worker_delivery_receipts TO control_room_task_coordinator;
 GRANT INSERT ON control_task_model_selections, control_task_declared_scopes,
   control_assignment_lease_scopes TO control_room_task_coordinator;
+GRANT SELECT, INSERT ON control_project_event_stream_heads, control_project_events TO control_room_task_coordinator;
+GRANT UPDATE (last_sequence,last_event_digest,head_auth_tag,updated_at)
+  ON control_project_event_stream_heads TO control_room_task_coordinator;
 -- Assignment owns this derived lease evidence and may remove only its rows
 -- once the canonical lease is terminal or elapsed.
 GRANT DELETE ON control_assignment_lease_scopes TO control_room_task_coordinator;
@@ -54,6 +60,21 @@ GRANT INSERT ON control_project_coordination_proposals,
   control_project_coordination_operation_receipts, control_project_coordination_operation_jobs,
   control_action_inbox TO control_room_task_coordinator;
 GRANT INSERT ON pipeline_advance_receipts TO control_room_task_coordinator;
+GRANT INSERT ON control_supervisor_task_heads, control_supervisor_reconciliation_events,
+  control_supervisor_agent_health, control_supervisor_loop_heads, control_supervisor_health_observations,
+  control_provider_waits TO control_room_task_coordinator;
+GRANT UPDATE (lapse_count,last_attempt_id,state,updated_at)
+  ON control_supervisor_task_heads TO control_room_task_coordinator;
+GRANT UPDATE (node_id,state,safe_reason_code,last_heartbeat_at,observed_at)
+  ON control_supervisor_agent_health TO control_room_task_coordinator;
+GRANT UPDATE (version,last_started_at,last_completed_at,state)
+  ON control_supervisor_loop_heads TO control_room_task_coordinator;
+GRANT UPDATE (state,released_at) ON control_provider_waits TO control_room_task_coordinator;
+GRANT INSERT (tenant_id,correlation_key), UPDATE (next_generation)
+  ON control_service_incident_heads TO control_room_task_coordinator;
+GRANT INSERT (id,tenant_id,correlation_key,generation,service_id,severity,safe_reason_code,safe_remedy_code,state,opened_at,last_observed_at),
+  UPDATE (severity,safe_reason_code,safe_remedy_code,state,last_observed_at,resolved_at)
+  ON control_service_incidents TO control_room_task_coordinator;
 GRANT UPDATE (state, completed_at, current_stage_ordinal, updated_at, version, record_digest, auth_tag, unattended_last_swept_at)
   ON pipeline_runs TO control_room_task_coordinator;
 GRANT INSERT ON control_work_resources, control_attempt_resource_admissions,

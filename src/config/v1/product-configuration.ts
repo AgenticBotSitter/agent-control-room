@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { REGISTERED_MODULE_IDS_V1 } from "../../modules/v1/registry";
 
 /**
  * Portable, non-secret product presentation/configuration.  This deliberately
@@ -8,7 +9,8 @@ import { z } from "zod";
  */
 export const PRODUCT_CONFIGURATION_SCHEMA_V1 = "control-room.product-configuration/v1" as const;
 
-export const PRODUCT_CONFIGURATION_MODULES_V1 = ["ideaLab", "news", "sessionObservations"] as const;
+/** Backward-compatible name; canonical ids and ordering now come from the module registry. */
+export const PRODUCT_CONFIGURATION_MODULES_V1 = REGISTERED_MODULE_IDS_V1;
 type ProductConfigurationModuleV1 = typeof PRODUCT_CONFIGURATION_MODULES_V1[number];
 
 const templateId = z.string().min(3).max(96).regex(/^[a-z][a-z0-9-]*$/);

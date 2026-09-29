@@ -29,8 +29,8 @@ import { AuditStore } from "../src/audit/audit-store.ts";
 import { WorkBatchStoreV1 } from "../src/work-intake/v1/store.ts";
 import { WorkBatchOwnerServiceV1 } from "../src/work-intake/v1/owner-service.ts";
 import { workBatchProposalDigestV1 } from "../src/work-intake/v1/digest.ts";
-import { sha256Digest } from "../src/security/canonical-digest.ts";
-import { hmacSha256Tag } from "../src/security/digest.ts";
+import { sha256Digest, canonicalJson } from "../src/security/canonical-digest.ts";
+import { hmacSha256Tag, computeAuthorityDigest } from "../src/security/digest.ts";
 import { createControllerWorkerDeliveryV1 } from "../src/harness/v1/controller-worker-delivery.ts";
 import { derivePipelineBuildPublicationEvidenceKeyV1 } from "../src/pipelines/v1/build-publication-authority.ts";
 import { InMemoryRollbackCheckpointStoreV1 } from "../src/security/rollback-checkpoint.ts";
@@ -38,6 +38,10 @@ import { SecurityStore } from "../src/security/security-store.ts";
 import { LinearPipelineServiceV1, PipelineAdvanceServiceV1, ProductionPipelineAdvanceAuthorityV1,
   ProductionPipelineAdvanceCapabilityV1 } from "../src/pipelines/v1/index.ts";
 import { AgentReviewServiceV1, CompletionGateStoreV1 } from "../src/completion-gate/v1/index.ts";
+import { nativeReviewPlanTag, nativeReviewTarget } from "../src/completion-gate/v1/native-review-plan.ts";
+import { buildTaskResultManifestV1 } from "../src/artifacts/v1/durable-result-publication.ts";
+import { resultBytesHash } from "../src/artifacts/v1/native-results.ts";
+import { createTaskCoordinatorLifecycle } from "../src/web/v1/task-coordinator-lifecycle.ts";
 import { WebProjectService } from "../src/web/v1/project-service.ts";
 import { WebTaskService } from "../src/web/v1/task-service.ts";
 import { captureTaskModelCatalogV1 } from "../src/web/v1/task-model-selection.ts";
@@ -360,47 +364,65 @@ async function upgradeFromAppliedPrefix({ database, pending, withoutGrants, newO
   }
 }
 
+// The pending suffix is always the newest migration files, so every rung below
+// names 0107 and 0135 as well as its own stage: a rung that did not would be
+// asserting a pending set the applier never sees. 0107 grants on roles and
+// creates no object, and 0135's object reaches the shared roles through
+// production_table_grants.sql's blanket `ON ALL TABLES` grants rather than a
+// per-table REVOKE, so neither appears in `newObjects`; the 0107 grant
+// convergence itself is asserted against a purpose-built cluster in
+// tests/project-activity-lifecycle-postgres.test.ts, which applies the real
+// role files to its own database and reads the privileges as the server reports
+// them.
+//
 // A database already at S2 (S1 0093, 0100, 0101 and S2 0102 applied) takes
 // S3's queue migration, S4's pipeline migration, S5's agent-review migration,
-// S6's build-publication migration and S7's unattended-advance migration, in
-// that order.
-test("upgrade from S2's applied ledger appends only the agent-queue, pipeline, agent-review, build-publication and unattended-advance migrations", needsPg, () =>
+// 0107's activity grants, S6's build-publication migration, S7's
+// unattended-advance migration and 0135's project settings, in that order.
+test("upgrade from S2's applied ledger appends only the agent-queue, pipeline, agent-review, activity, build-publication, unattended-advance and project-settings migrations", needsPg, () =>
   upgradeFromAppliedPrefix({ database: "cr_prod_upgrade_s2",
     pending: ["_work_batch_agent_queue.sql", "_linear_pipeline_runs.sql", "_agent_review_plans.sql",
-      "_pipeline_build_publications.sql", "_pipeline_unattended_advance.sql"],
+      "_task_project_activity_events.sql", "_pipeline_build_publications.sql",
+      "_pipeline_unattended_advance.sql", "_control_project_settings.sql"],
     withoutGrants: [QUEUE_GRANTS, UNATTENDED_GRANTS, PIPELINE_GRANTS, AGENT_REVIEW_GRANTS, PUBLICATION_GRANTS],
     newObjects: ["work_batch_queue_admissions", "work_batch_agent_queue_heads", "work_batch_effective_queue_admissions",
       "pipeline_templates", "pipeline_runs", "pipeline_stage_runs", "pipeline_ordered_stage_runs", "control_agent_review_plans",
       "control_pipeline_build_publications", ...UNATTENDED_OBJECTS] }));
 
-// A database at main (S3's 0104 applied) takes S4's 0105, S5's 0106, S6's 0108, then S7's 0109.
-test("upgrade from main's applied ledger appends only the pipeline, agent-review, build-publication and unattended-advance migrations", needsPg, () =>
+// A database at main (S3's 0104 applied) takes S4's 0105, S5's 0106, 0107,
+// S6's 0108, S7's 0109 and 0135.
+test("upgrade from main's applied ledger appends only the pipeline, agent-review, activity, build-publication, unattended-advance and project-settings migrations", needsPg, () =>
   upgradeFromAppliedPrefix({ database: "cr_prod_upgrade_main",
-    pending: ["_linear_pipeline_runs.sql", "_agent_review_plans.sql", "_pipeline_build_publications.sql",
-      "_pipeline_unattended_advance.sql"],
+    pending: ["_linear_pipeline_runs.sql", "_agent_review_plans.sql", "_task_project_activity_events.sql",
+      "_pipeline_build_publications.sql", "_pipeline_unattended_advance.sql", "_control_project_settings.sql"],
     withoutGrants: [UNATTENDED_GRANTS, PIPELINE_GRANTS, AGENT_REVIEW_GRANTS, PUBLICATION_GRANTS],
     newObjects: ["pipeline_templates", "pipeline_runs", "pipeline_stage_runs", "pipeline_ordered_stage_runs",
       "control_agent_review_plans", "control_pipeline_build_publications", ...UNATTENDED_OBJECTS] }));
 
-// A database at main plus S4 (0105 applied) takes S5's 0106, S6's 0108, then S7's 0109.
-test("upgrade from main plus S4's applied ledger appends only the agent-review, build-publication and unattended-advance migrations", needsPg, () =>
+// A database at main plus S4 (0105 applied) takes S5's 0106, 0107, S6's 0108,
+// S7's 0109 and 0135.
+test("upgrade from main plus S4's applied ledger appends only the agent-review, activity, build-publication, unattended-advance and project-settings migrations", needsPg, () =>
   upgradeFromAppliedPrefix({ database: "cr_prod_upgrade_s4",
-    pending: ["_agent_review_plans.sql", "_pipeline_build_publications.sql", "_pipeline_unattended_advance.sql"],
+    pending: ["_agent_review_plans.sql", "_task_project_activity_events.sql", "_pipeline_build_publications.sql",
+      "_pipeline_unattended_advance.sql", "_control_project_settings.sql"],
     withoutGrants: [UNATTENDED_GRANTS, AGENT_REVIEW_GRANTS, PUBLICATION_GRANTS],
     newObjects: ["control_agent_review_plans", "control_pipeline_build_publications", ...UNATTENDED_OBJECTS] }));
 
-// A database at main plus S4 and S5 (0106 applied) takes S6's 0108, then S7's 0109.
-test("upgrade from main plus S4 and S5's applied ledger appends only the build-publication and unattended-advance migrations", needsPg, () =>
+// A database at main plus S4 and S5 (0106 applied) is the first that takes
+// 0107's activity grants, then S6's 0108, S7's 0109 and 0135.
+test("upgrade from main plus S4 and S5's applied ledger appends only the activity, build-publication, unattended-advance and project-settings migrations", needsPg, () =>
   upgradeFromAppliedPrefix({ database: "cr_prod_upgrade_s5",
-    pending: ["_pipeline_build_publications.sql", "_pipeline_unattended_advance.sql"],
+    pending: ["_task_project_activity_events.sql", "_pipeline_build_publications.sql",
+      "_pipeline_unattended_advance.sql", "_control_project_settings.sql"],
     withoutGrants: [UNATTENDED_GRANTS, PUBLICATION_GRANTS],
     newObjects: ["control_pipeline_build_publications", ...UNATTENDED_OBJECTS] }));
 
-// A database at main plus S4, S5 and S6 (0108 applied) takes only S7's 0109:
-// no duplicate ledger_order, and a second run is a clean no-op.
-test("upgrade from main plus S4, S5 and S6's applied ledger appends only the unattended-advance migration", needsPg, () =>
+// A database at main plus S4, S5 and 0107 (0108 applied) takes S7's 0109 and
+// 0135: no duplicate ledger_order, and a second run is a clean no-op.
+test("upgrade from main plus S4, S5 and 0107's applied ledger appends only the unattended-advance and project-settings migrations", needsPg, () =>
   upgradeFromAppliedPrefix({ database: "cr_prod_upgrade_s6",
-    pending: ["_pipeline_unattended_advance.sql"], withoutGrants: [UNATTENDED_GRANTS],
+    pending: ["_pipeline_unattended_advance.sql", "_control_project_settings.sql"],
+    withoutGrants: [UNATTENDED_GRANTS],
     newObjects: UNATTENDED_OBJECTS }));
 
 test("tampered history fails closed: altered, deleted-row and forged-digest states", needsPg, async () => {
@@ -1488,10 +1510,21 @@ test("agent-review down migration removes every surviving direct privilege", nee
 async function catalogState(db){
   const client=postgresDatabase(db);
   const acl=(await client.query(`SELECT jsonb_build_object(
-    'relations',(SELECT jsonb_agg(jsonb_build_array(c.relname,c.relkind,c.relacl::text,c.relrowsecurity,
-      pg_get_userbyid(c.relowner)) ORDER BY c.relname) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+    -- An acl rendered as text lists its grantees in role-OID order, so two
+    -- databases holding the IDENTICAL privilege set print it in a different
+    -- order whenever the roles were created in a different sequence -- which is
+    -- exactly what a baseline and a head database are. The grantee list is
+    -- therefore sorted, so the comparison is over the privilege set rather than
+    -- over an artefact of creation order, while still failing the moment a grant
+    -- is added or dropped.
+    'relations',(SELECT jsonb_agg(jsonb_build_array(c.relname,c.relkind,
+      (SELECT string_agg('{x}'::text, ', ' ORDER BY '{x}'::text) FROM unnest(COALESCE(c.relacl, ARRAY[]::aclitem[])) AS x),
+      c.relrowsecurity, pg_get_userbyid(c.relowner)) ORDER BY c.relname)
+      FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
       WHERE n.nspname='public' AND c.relkind IN ('r','v','p','S') AND c.relname<>'control_room_schema_migrations'),
-    'columns',(SELECT jsonb_agg(jsonb_build_array(c.relname,a.attname,a.attacl::text) ORDER BY c.relname,a.attnum)
+    'columns',(SELECT jsonb_agg(jsonb_build_array(c.relname,a.attname,
+      (SELECT string_agg('{x}'::text, ', ' ORDER BY '{x}'::text) FROM unnest(COALESCE(a.attacl, ARRAY[]::aclitem[])) AS x))
+      ORDER BY c.relname,a.attnum)
       FROM pg_attribute a JOIN pg_class c ON c.oid=a.attrelid JOIN pg_namespace n ON n.oid=c.relnamespace
       WHERE n.nspname='public' AND c.relkind IN ('r','v','p') AND a.attnum>0 AND NOT a.attisdropped AND a.attacl IS NOT NULL),
     'functions',(SELECT jsonb_agg(jsonb_build_array(p.oid::regprocedure::text,p.proacl::text,p.proconfig,
@@ -1505,8 +1538,12 @@ async function catalogState(db){
 // 0109's then 0108's down files return a head database to exactly the main + S4 + S5
 // state: the same objects and function bodies, and the same privileges.
 test("0109 then 0108 down return a head database to exactly the main plus S4 and S5 state", needsPg, async () => {
+  // The baseline is a state that predates 0108, so it predates 0135 too: the
+  // pending suffix is always the newest files, and 0135 is now the newest. A
+  // down file for 0109/0108 has to be compared against a database that never had
+  // 0135's objects, or the comparison is against a state no release was in.
   const { stage, ledgerPath } = await stageAppliedPrefix({
-    pending: ["_pipeline_build_publications.sql", "_pipeline_unattended_advance.sql"],
+    pending: ["_pipeline_build_publications.sql", "_pipeline_unattended_advance.sql", "_control_project_settings.sql"],
     withoutGrants: [UNATTENDED_GRANTS, PUBLICATION_GRANTS] });
   try {
     await freshDatabase("cr_prod_s6_baseline");
@@ -1516,6 +1553,9 @@ test("0109 then 0108 down return a head database to exactly the main plus S4 and
     await applyMigrations({ target: target("cr_prod_s6_down"), bootstrapTarget: bootstrapTarget("cr_prod_s6_down"),
       migrateTarget: migrateTarget("cr_prod_s6_down"), rootDir: ROOT, env: { ...process.env, ...passwords } });
     assert.notDeepEqual(await catalogState(target("cr_prod_s6_down")), await catalogState(target("cr_prod_s6_baseline")));
+    // 0135 first, in reverse order: the baseline predates it, so the head has to
+    // be rolled back past it before the two states are comparable at all.
+    await query(target("cr_prod_s6_down"), await readFile(join(ROOT, "db/down/0135_control_project_settings.sql"), "utf8"));
     await query(target("cr_prod_s6_down"), await readFile(join(ROOT, "db/down/0109_pipeline_unattended_advance.sql"), "utf8"));
     await query(target("cr_prod_s6_down"), await readFile(join(ROOT, "db/down/0108_pipeline_build_publications.sql"), "utf8"));
     assert.deepEqual(await catalogState(target("cr_prod_s6_down")), await catalogState(target("cr_prod_s6_baseline")));
@@ -1550,7 +1590,7 @@ const MAC_ROLE_GROUPS = ["control_room_private_web", "control_room_task_coordina
 // The narrow-role installer's database steps, from the real role files with
 // `edits` applied, as the cluster superuser the fixed queue expects. Roles are
 // cluster-wide, so a second database skips the files' plain CREATE ROLE.
-async function installMacRoleFiles(database, edits = {}) {
+async function installMacRoleFiles(database, edits = {}, absentObjects = []) {
   const client = new Client(target(database, "postgres")); await client.connect();
   try {
     await client.query(await readFile(join(ROOT, "db/roles/production_roles.sql"), "utf8"));
@@ -1558,6 +1598,15 @@ async function installMacRoleFiles(database, edits = {}) {
     await client.query(await readFile(join(ROOT, "db/roles/private_web_database.sql"), "utf8"));
     for (const file of MAC_ROLE_FILES) {
       let sql = await readFile(join(ROOT, "db/roles", file), "utf8");
+      // Grants on objects this database does not have are removed from their
+      // statement rather than the whole file: an S6-era baseline predates 0135,
+      // so replaying the shipped role files onto it raises 42P01 on
+      // `control_project_settings`, and dropping the statements that mention it
+      // would drop the grants that DO apply along with it.
+      for (const object of absentObjects)
+        sql = sql
+          .split(/(?=^GRANT )/gmu).map(statement => (
+            new RegExp(`\\b${object}\\b`, "u").test(statement) ? "" : statement)).join("");
       const pairs = edits[file] ?? [];
       for (let index = 0; index < pairs.length; index += 2) {
         assert.ok(sql.includes(pairs[index]), `${file}: ${pairs[index]}`);
@@ -1574,7 +1623,7 @@ async function installMacRoleFiles(database, edits = {}) {
 // the same objects, and the same privileges for every role, including the web
 // and coordinator column grants that exist only in the Mac-local role files.
 test("0109 down returns a Mac-local head database to exactly the main plus S4, S5 and S6 state", needsPg, async () => {
-  const { stage, ledgerPath } = await stageAppliedPrefix({ pending: ["_pipeline_unattended_advance.sql"],
+  const { stage, ledgerPath } = await stageAppliedPrefix({ pending: ["_pipeline_unattended_advance.sql", "_control_project_settings.sql"],
     withoutGrants: [UNATTENDED_GRANTS] });
   const admin = adminDb();
   const createdPostgres = !(await query(admin, "SELECT 1 FROM pg_roles WHERE rolname='postgres'")).rows.length;
@@ -1584,13 +1633,18 @@ test("0109 down returns a Mac-local head database to exactly the main plus S4, S
     await freshDatabase("cr_prod_s7_baseline");
     await applyMigrations({ target: target("cr_prod_s7_baseline"), bootstrapTarget: bootstrapTarget("cr_prod_s7_baseline"),
       migrateTarget: migrateTarget("cr_prod_s7_baseline"), rootDir: stage, ledgerPath, env: { ...process.env, ...passwords } });
-    await installMacRoleFiles("cr_prod_s7_baseline", S7_ROLE_EDITS);
+    // The baseline predates 0135, so its role files are installed without the
+    // grants on 0135's table; the head database gets the shipped files whole.
+    await installMacRoleFiles("cr_prod_s7_baseline", S7_ROLE_EDITS, ["control_project_settings"]);
     await freshDatabase("cr_prod_s7_down");
     await applyMigrations({ target: target("cr_prod_s7_down"), bootstrapTarget: bootstrapTarget("cr_prod_s7_down"),
       migrateTarget: migrateTarget("cr_prod_s7_down"), rootDir: ROOT, env: { ...process.env, ...passwords } });
     await installMacRoleFiles("cr_prod_s7_down");
     const head = await catalogState(target("cr_prod_s7_down"));
     assert.notDeepEqual(head, await catalogState(target("cr_prod_s7_baseline")));
+    // 0135 first, in reverse order: the baseline predates it, so the head has to
+    // be rolled back past it before the two states are comparable at all.
+    await query(target("cr_prod_s7_down"), await readFile(join(ROOT, "db/down/0135_control_project_settings.sql"), "utf8"));
     await query(target("cr_prod_s7_down"), await readFile(join(ROOT, "db/down/0109_pipeline_unattended_advance.sql"), "utf8"));
     assert.deepEqual(await catalogState(target("cr_prod_s7_down")), await catalogState(target("cr_prod_s7_baseline")));
   } finally {

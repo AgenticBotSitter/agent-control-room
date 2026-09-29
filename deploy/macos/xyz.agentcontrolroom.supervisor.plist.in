@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>xyz.agentcontrolroom.supervisor</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>__NODE_EXECUTABLE__</string>
+    <string>__REPOSITORY_ROOT__/scripts/mac-local/task-host-supervisor.mjs</string>
+    <string>--protected-root</string>
+    <string>__PROTECTED_ROOT__</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>__REPOSITORY_ROOT__</string>
+  <key>UserName</key>
+  <string>__SERVICE_USER__</string>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <dict>
+    <key>SuccessfulExit</key>
+    <false/>
+  </dict>
+  <key>ThrottleInterval</key>
+  <integer>15</integer>
+  <key>ExitTimeOut</key>
+  <integer>45</integer>
+  <key>ProcessType</key>
+  <string>Background</string>
+  <key>Umask</key>
+  <integer>63</integer>
+  <key>StandardOutPath</key>
+  <string>__PROTECTED_ROOT__/runtime/task-host.log</string>
+  <key>StandardErrorPath</key>
+  <string>__PROTECTED_ROOT__/runtime/task-host.log</string>
+</dict>
+</plist>

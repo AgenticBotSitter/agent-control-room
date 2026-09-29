@@ -4,7 +4,7 @@ import type { PrivateClientAssets } from "./private-assets";
 import type { MacLocalProtectedConfigurationV1 } from "./mac-local-protected-configuration";
 import { createMacLocalControlRoomServiceV1 } from "./mac-local-serving";
 import { createMacLocalStartupV1 } from "./mac-local-startup";
-import type { MacLocalCanonicalTaskOperationsV1 } from "./mac-local-web-process";
+import type { MacLocalCanonicalTaskOperationsV1, MacLocalWebProcessOptionsV1 } from "./mac-local-web-process";
 import type { MacLocalWorkerReadinessV1 } from "./mac-local-worker-readiness";
 import type { MacLocalTaskApplicationV1 } from "./mac-local-task-application";
 import type { MacLocalDatabaseRolesV1 } from "./mac-local-database-roles";
@@ -61,6 +61,9 @@ export function createMacLocalWebServiceFromConfigurationV1(input: Readonly<{
   workBatchQueueCatalog?: WorkBatchQueueCatalogV1;
   workBatchQueueAdmissionAuthority?: WorkBatchQueueAdmissionAuthorityV1;
   ownerWebPush?: OwnerWebPushConfigV1;
+  /** Remote-worker owner section, present only when the host also runs the
+   * fleet gateway on its own database login. */
+  fleet?: MacLocalWebProcessOptionsV1["fleet"];
 }>): LocalService {
   const configuration = input?.configuration;
   if (!configuration || !input.database?.client || typeof input.database.close !== "function"
@@ -90,6 +93,7 @@ export function createMacLocalWebServiceFromConfigurationV1(input: Readonly<{
       ?? createMacLocalWorkBatchQueueCatalogV1(configuration) } : {}),
     ...(input.workBatchQueueAdmissionAuthority ? { workBatchQueueAdmissionAuthority: input.workBatchQueueAdmissionAuthority } : {}),
     ...(input.ownerWebPush ? { ownerWebPush: input.ownerWebPush } : {}),
+    ...(input.fleet ? { fleet: input.fleet } : {}),
     assets: input.assets,
     render: input.render,
     ...(input.createServer ? { createServer: input.createServer } : {}),

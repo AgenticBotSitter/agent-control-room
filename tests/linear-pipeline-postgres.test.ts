@@ -31,8 +31,11 @@ import type { DatabaseClient, DatabaseSession } from "../src/persistence/databas
 import type { JobRecord } from "../src/domain/v1";
 import { sha256Digest } from "../src/security";
 
-// Reserved disposable-cluster lane for this file: 58340-58349.
-const PORT = 58340;
+// Reserved disposable-cluster lane for this file: 58340-58349 by default.
+// An operator running locally on an assigned port block can move it with
+// CONTROL_ROOM_PG_TEST_PORT_BASE, the same override postgres-production-lifecycle
+// already takes, and the harness's own allowlist follows the value.
+const PORT = Number(process.env.CONTROL_ROOM_PG_TEST_PORT_BASE ?? 58340);
 const PG = requiresRealPostgres();
 let required = 0, ran = 0;
 const needsPg = () => {
@@ -60,6 +63,23 @@ const template = { name: "Build, check, validate", description: "Complete one bo
       selectionKey: "codex.standard", model: "gpt-test", effort: "medium", maxLoops: 3,
       // S6 makes a build stage's write bounds mandatory.
       allowedPaths: ["src/**"], maximumChangedFiles: 10, maximumChangedBytes: 100_000 },
+    { ordinal: 1, stageKind: "check", role: "checker", description: "Check the bounded change.",
+      requiredCapability: "code.review", workerId: "worker:claude:one", workerKind: "claude-code", nodeId: "node:claude:one",
+      selectionKey: "claude.standard", model: "claude-test", effort: "high", maxLoops: 3 },
+    { ordinal: 2, stageKind: "signoff", role: "validator", description: "Validate the accepted result.",
+      requiredCapability: "code.validate", workerId: "worker:hermes:one", workerKind: "hermes", nodeId: "node:hermes:one",
+      selectionKey: "hermes.standard", model: "hermes-test", effort: "medium", provider: "provider:test",
+      profile: "profile:test", maxLoops: 0 },
+  ], maxTotalLoops: 6, maxDurationSeconds: 3600 } as const;
+// The same template with the build stage's write bounds removed: the fixture
+// above carries them because S6 made them mandatory, and this one exists so the
+// refusal that rule produces is pinned rather than assumed. If the rule ever
+// weakens, this template starts being accepted and the test below fails.
+const templateWithoutWriteBounds = { name: "Build, check, validate", description: "Complete one bounded change and review it.",
+  stages: [
+    { ordinal: 0, stageKind: "build", role: "builder", description: "Build the bounded change.",
+      requiredCapability: "code.change", workerId: "worker:codex:one", workerKind: "codex", nodeId: "node:codex:one",
+      selectionKey: "codex.standard", model: "gpt-test", effort: "medium", maxLoops: 3 },
     { ordinal: 1, stageKind: "check", role: "checker", description: "Check the bounded change.",
       requiredCapability: "code.review", workerId: "worker:claude:one", workerKind: "claude-code", nodeId: "node:claude:one",
       selectionKey: "claude.standard", model: "claude-test", effort: "high", maxLoops: 3 },
@@ -160,6 +180,28 @@ test("the production web and coordinator logins run every S4 pipeline read and w
       // the same shared web login: the realistic multi-tenant shape.
       runA = await run(A, "pipeline-pg-run-a-0001");
       runB = await run(B, "pipeline-pg-run-b-0001");
+
+      // A build stage with no write bounds is refused, on the production login
+      // and with the real authorization state, before any SQL runs. The
+      // fixture above is only valid because this refuses, so the refusal is
+      // asserted directly: it is the exact `invalid_request` a template
+      // without bounds produces, and an unauthorized caller must get the same
+      // answer rather than a database error, because the bound is rejected by
+      // input validation and not by a permission.
+      await assert.rejects(service(A).createTemplate(identityOf(A), A.project, templateWithoutWriteBounds),
+        (error: unknown) => {
+          assert.equal((error as { code?: string }).code, "invalid_request", permissionFailure(error, web.refused));
+          return true;
+        });
+      assert.deepEqual(web.refused, [], "input validation refuses before the web login runs any statement");
+      // The same refusal for a caller with no authority over the project: the
+      // bound is not a policy oracle, and the request is rejected for its
+      // shape without touching the database either way.
+      await assert.rejects(service(B).createTemplate(identityOf(A), A.project, template),
+        (error: unknown) => {
+          assert.equal((error as { code?: string }).code, "access_denied", permissionFailure(error, web.refused));
+          return true;
+        });
 
       const pipelinesA = service(A);
       const listed = await pipelinesA.list(identityOf(A), A.project)

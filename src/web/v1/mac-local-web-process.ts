@@ -29,6 +29,8 @@ import { catalogProjectIdSchema } from "./project-wire";
 import { sessionWatchIdSchema } from "./session-watch-wire";
 import { taskProjectAgentOptionsSchema } from "./task-project-agents-wire";
 import { createWebPushChannelV1, deliverOwnerPushV1, parseWebPushSubscriptionV1, PostgresOwnerPushStoreV1, type OwnerWebPushConfigV1 } from "../../web-push/v1";
+import { FleetOwnerServiceV1 } from "../../fleet/v1";
+import { createFleetOwnerHttpHandlerV1 } from "./fleet-owner-http";
 
 export interface MacLocalWebProcessOptionsV1 {
   origin: string;
@@ -75,6 +77,10 @@ export interface MacLocalWebProcessOptionsV1 {
   }> }>;
   /** Optional private VAPID credentials. Omission leaves push unavailable. */
   ownerWebPush?: OwnerWebPushConfigV1;
+  /** Remote workers (T2-F). Owner decisions use a distinct restricted
+   * database login; neither the ordinary web login nor the gateway can write
+   * those tables. The hook only asks the gateway to reconcile afterward. */
+  fleet?: Readonly<{ ownerAuthority: DatabaseClient; gatewayOrigin?: string; afterDecision?: () => Promise<unknown> }>;
   clock?: () => number;
 }
 
@@ -102,7 +108,8 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
     throw new Error("mac_local_web_process_config_invalid");
   const sessions = new LocalOwnerSessionServiceV1(profile, options.localOwnerSessionStore, options.initialLocalOwnerSessions);
   const projects = new WebProjectService(options.database.client,
-    { tenantId: profile.tenantId, workspaceId: options.workspaceId }, clock);
+    { tenantId: profile.tenantId, workspaceId: options.workspaceId }, clock, undefined, undefined,
+    undefined, options.taskReadKeys?.harnessIntegrityKey);
   const tasks = new WebTaskService(options.database.client,
     { tenantId: profile.tenantId, workspaceId: options.workspaceId }, clock, options.taskReadKeys);
   const projectActivity = new ProjectActivityServiceV1(options.database.client,
@@ -131,6 +138,10 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
     localOwnerSession: sessions, service: pipelines, clock }) : undefined;
   const ownerPush = options.ownerWebPush ? { store: new PostgresOwnerPushStoreV1(options.database.client),
     channel: createWebPushChannelV1(options.ownerWebPush) } : undefined;
+  const fleetHttp = options.fleet ? createFleetOwnerHttpHandlerV1({ origin: options.origin, localOwnerSession: sessions, clock,
+    service: new FleetOwnerServiceV1(options.fleet.ownerAuthority, { tenantId: profile.tenantId, workspaceId: options.workspaceId,
+      clock, ...(options.fleet.afterDecision ? { afterDecision: options.fleet.afterDecision } : {}) }),
+    ...(options.fleet.gatewayOrigin ? { gatewayOrigin: options.fleet.gatewayOrigin } : {}) }) : undefined;
   let closed: Promise<void> | undefined;
 
   function pageRedirect(path: "/session" | "/projects", requestOrigin = options.origin): Response {
@@ -400,6 +411,7 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
         || /^\/api\/v1\/projects\/[^/]+(?:\/(?:lifecycle|idea-lifecycle))?$/.test(url.pathname)) return projectHttp(request);
       if (/^\/api\/v1\/projects\/[^/]+\/tasks(?:\/|$)/.test(url.pathname)) return taskHttp(request);
       if (workBatchHttp && /^\/api\/v1\/projects\/[^/]+\/pipelines(?:\/|$)/.test(url.pathname)) return workBatchHttp(request);
+      if (fleetHttp && /^\/api\/v1\/fleet(?:\/|$)/.test(url.pathname)) return fleetHttp(request);
       if (pipelineHttp && /^\/api\/v1\/projects\/[^/]+\/pipeline-(?:templates|runs)(?:\/|$)/.test(url.pathname))
         return pipelineHttp(request);
       if (request.method !== "GET") throw new WebAccessError("invalid_request");
