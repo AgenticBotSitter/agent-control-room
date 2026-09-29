@@ -131,8 +131,10 @@ export interface UsageRollupGroupV1 {
   readonly harness: "codex" | "claude" | "hermes" | "other";
   /** `null` when no run in the group recorded a model selection. */
   readonly model: string | null;
-  /** The attempt the group's runs belong to, so a page can show a per-attempt
-   * rollup from the same bounded read rather than a second scan. */
+  /** The attempt the group's runs belong to, when the caller asked for
+   * per-attempt groups. A project-wide rollup omits it: attempts are retry
+   * history and grow without limit, so grouping by them there would make the
+   * row count track project age rather than the number of priceable shapes. */
   readonly attemptId?: string;
   readonly runs: number;
   /** `Σ` of the reported input count, displayed verbatim. Distinct from

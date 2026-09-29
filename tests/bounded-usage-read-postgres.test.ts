@@ -33,9 +33,9 @@ import { rollupUsageGroupsV1 } from "../src/usage/v1/usage-cost";
 import type { DatabaseClient, DatabaseSession } from "../src/persistence/database";
 import type { VerifiedWebIdentity } from "../src/web/v1/access-verifier";
 
-// Reserved disposable-cluster lane for this job: 56230-56239.
-const PORT = Number(process.env.BOUNDED_USAGE_PG_PORT ?? 56230);
-const PORTS = [56230, 56231, 56232, 56233, 56234, 56235, 56236, 56237, 56238, 56239];
+// Reserved disposable-cluster lane for this job: 58374-58379.
+const PORT = Number(process.env.BOUNDED_USAGE_PG_PORT ?? 58374);
+const PORTS = [58374, 58375, 58376, 58377, 58378, 58379];
 const PG = requiresRealPostgres();
 let required = 0, ran = 0;
 const needsPg = () => {
@@ -595,6 +595,421 @@ test("the usage aggregate never merges two runs that price differently", async t
       } finally { await web.close(); }
     } finally { await admin.end(); }
   }, { port: PORT + 1, allowedPorts: PORTS, boundMs: 240_000 });
+});
+
+/**
+ * The three shapes the first version of this aggregate got wrong, each pinned
+ * against the per-run path it replaced. All three produced a DIFFERENT NUMBER
+ * rather than a slower read, which is why they are separate tests with their own
+ * fixtures: a run with no usage event, a native snapshot whose `totalTokens` is
+ * absent, and a native snapshot whose later observation reports no usage.
+ *
+ * Every fixture here is compared against `usageEvidence`'s own rules, spelled out
+ * in the comments, so the expectation is stated independently of the SQL.
+ */
+test("the usage aggregate reports the same evidence precedence the per-run path does", async t => {
+  const skip = needsPg();
+  if (skip) { t.skip(skip.skip); return; }
+  ran += 1;
+  await withRealPostgres(async postgres => {
+    const admin = new Client(postgres.admin({ database: postgres.database }));
+    await admin.connect();
+    try {
+      await seedScope(admin);
+      // Whole-second timestamps: `EXTRACT(EPOCH ...)` on a millisecond instant
+      // lands 1-2ms either side of the second, which would make a duration
+      // assertion depend on the wall clock's sub-second component.
+      const startedAtMs = Math.floor(Date.now() / 1000) * 1000;
+      const start = new Date(startedAtMs - 100_000).toISOString();
+      const finish = new Date(startedAtMs - 30_000).toISOString(); // 70s of observed duration
+      const digest = `sha256:${"b".repeat(64)}`, tag = `hmac-sha256:${"c".repeat(64)}`;
+
+      // 1. No usage event at all, but the run started and finished. The per-run
+      //    path reports wall time ALONE for this run, so a project containing it
+      //    has a real wall-time total and reasons `usage_not_reported`. An
+      //    aggregate that only looked inside a usage-event lateral dropped the
+      //    duration and turned the whole total null.
+      // 2. A native snapshot whose usage omits `totalTokens`. The per-run path
+      //    reads the snapshot's total verbatim and does NOT derive input+output
+      //    for a snapshot, so this run's total is null, not 48.
+      // 3. An early snapshot WITH usage, then a later one whose `usage` is null.
+      //    The later snapshot is the current observation, so the run reports
+      //    nothing at all; resurrecting the superseded snapshot's numbers is
+      //    reading evidence the owner has already seen superseded.
+      // The superseded run gets its OWN job and attempt. Its whole point is that
+      // it reports nothing: a later native snapshot says the run has no usage.
+      // Read inside a scope with the other two, that reads as `null` either way,
+      // because their runs are silent too — so the check has to see the run alone,
+      // where a resurrected 900/900/1800 would be unmissable.
+      const soloJob = `${ids.job}-solo`, soloAttempt = `${ids.attempt}-solo`;
+      await admin.query(`INSERT INTO control_requests (id,tenant_id,project_id,state,version,idempotency_key,payload,created_at,updated_at)
+        SELECT $1::text,$2::text,$3::text,'accepted',0,$1::text,
+          jsonb_build_object('id',$1::text,'kind','request','tenantId',$2::text,'projectId',$3::text,
+            'contractVersion','control-room-domain/v1','title','Solo','objective','Solo scope.',
+            'state','accepted','version',0,'priority',50,
+            'requestedBy',jsonb_build_object('actorId',$4::text,'actorType','human'),'idempotencyKey',$1::text,
+            'createdAt',$5::text,'updatedAt',$5::text),$5::timestamptz,$5::timestamptz`,
+        [soloJob, ids.tenant, ids.project, ids.identity, start]);
+      await admin.query(`INSERT INTO control_workflows (id,tenant_id,request_id,project_id,definition_digest,state,version,payload,created_at,updated_at)
+        SELECT $1::text,$2::text,$3::text,$4::text,$5::text,'active',1,
+          jsonb_build_object('id',$1::text,'kind','workflow','tenantId',$2::text,'requestId',$3::text,
+            'projectId',$4::text,'contractVersion','control-room-domain/v1','definitionVersion','1.0.0',
+            'definitionDigest',$5::text,'authorityMode','control_room_native','state','active','version',1,
+            'jobIds',jsonb_build_array($3::text),'createdAt',$6::text,'updatedAt',$6::text),
+          $6::timestamptz,$6::timestamptz`,
+        [`${soloJob}-workflow`, ids.tenant, soloJob, ids.project, AUTHORITY_DIGEST, start]);
+      // The solo job needs its own row: `control_attempts.job_id` is a foreign
+      // key, and the mirrored payload must carry the same `priority`,
+      // `requiredCapability` and `authority.digest` the original job row does.
+      await admin.query(`INSERT INTO control_jobs
+        (id,tenant_id,workflow_id,project_id,state,version,priority,required_capability,authority_digest,payload,
+         created_at,updated_at)
+        SELECT $1::text,$2::text,$3::text,$4::text,'leased',1,50,'fixture',$5::text,
+          payload || jsonb_build_object('id',$1::text,'tenantId',$2::text,'state','leased','version',1,
+            'workflowId',$3::text,'projectId',$4::text,'createdAt',$6::text,'updatedAt',$6::text),
+          $6::timestamptz,$6::timestamptz
+        FROM control_jobs WHERE tenant_id=$2::text AND id=$7::text`,
+        [soloJob, ids.tenant, `${soloJob}-workflow`, ids.project, AUTHORITY_DIGEST, start, ids.job]);
+      await admin.query(`INSERT INTO control_attempts (id,tenant_id,job_id,attempt_number,state,version,node_id,lease_epoch,payload,created_at,updated_at)
+        VALUES($1::text,$2::text,$3::text,1,'running',1,$4::text,1,
+          jsonb_build_object('id',$1::text,'kind','attempt','tenantId',$2::text,'contractVersion','control-room-domain/v1',
+            'jobId',$3::text,'state','running','version',1,'nodeId',$4::text,'createdAt',$5::text,'offeredAt',$5::text,
+            'startedAt',$5::text,'updatedAt',$5::text,'leaseEpoch',1,'attemptNumber',1),$5::timestamptz,$5::timestamptz)`,
+        [soloAttempt, ids.tenant, soloJob, ids.node, start]);
+      const runs = [
+        { suffix: "noevent", kind: "none", job: ids.job, attempt: ids.attempt },
+        { suffix: "snapshot-partial", kind: "snapshot", job: ids.job, attempt: ids.attempt },
+        { suffix: "snapshot-superseded", kind: "superseded", job: soloJob, attempt: soloAttempt },
+      ];
+      await admin.query(`INSERT INTO control_harness_runs
+        (id,tenant_id,project_id,job_id,attempt_id,node_id,adapter_id,harness,native_session_key_digest,
+         state,last_sequence,run_digest,run_auth_tag,payload,created_at,updated_at,last_observed_at)
+        SELECT 'run:bounded-usage-precedence:'||s.suffix,$1::text,$2::text,s.job,s.attempt,$3::text,$4::text,'codex',
+          'sha256:'||md5(s.suffix)||md5(('prec'||s.suffix)::text),'succeeded',1,$5::text,$6::text,
+          jsonb_build_object('schemaVersion','control-room-harness/v1','id','run:bounded-usage-precedence:'||s.suffix,
+            'tenantId',$1::text,'projectId',$2::text,'jobId',s.job,'attemptId',s.attempt,'nodeId',$3::text,
+            'adapterId',$4::text,'adapterVersion','1.0.0','harness','codex','harnessVersion','codex-precedence-1',
+            'nativeSessionKeyDigest','sha256:'||md5(s.suffix)||md5(('prec'||s.suffix)::text),
+            'modelSelection',jsonb_build_object('model',$7::text,'effort','medium'),'state','succeeded',
+            'resumable',false,'cancelState','not_requested','createdAt',$8::text,'startedAt',$8::text,
+            'updatedAt',$9::text,'finishedAt',$9::text,'lastObservedAt',$9::text),
+          $8::timestamptz,$9::timestamptz,$9::timestamptz
+        FROM unnest($10::text[],$11::text[],$12::text[]) AS s(suffix,job,attempt)`,
+      [ids.tenant, ids.project, ids.node, ids.adapter, digest, tag, MODEL, start, finish,
+        runs.map(one => one.suffix), runs.map(one => one.job), runs.map(one => one.attempt)]);
+
+      // A snapshot body the real native contract accepts: the fields below are
+      // the ones `nativeTaskSnapshotBodySchema` requires plus its usage block.
+      const snapshot = (usage: unknown) => ({
+        binding: null, version: 1, state: "completed", nativeRunId: null, observedAt: finish,
+        upstreamUpdatedAt: null, availability: "current", streamAttempted: true, stopAttempted: false,
+        resultText: null, usage, lastActivity: "none", safeReason: "none",
+      });
+      const events: { run: string; sequence: number; payload: unknown }[] = [
+        // 2: one snapshot, usage without a total.
+        { run: "run:bounded-usage-precedence:snapshot-partial", sequence: 1,
+          payload: { category: "native_snapshot", snapshot: snapshot({ inputTokens: 40, outputTokens: 8,
+            totalTokens: null, provenance: "upstream_reported", cachedInputTokens: null, reasoningTokens: null,
+            calls: null, costUsd: null, hardCostLimitEnforced: false }) } },
+        // 3: an early snapshot with usage, then a later one with usage null.
+        { run: "run:bounded-usage-precedence:snapshot-superseded", sequence: 1,
+          payload: { category: "native_snapshot", snapshot: snapshot({ inputTokens: 900, outputTokens: 900,
+            totalTokens: 1800, provenance: "upstream_reported", cachedInputTokens: null, reasoningTokens: null,
+            calls: null, costUsd: null, hardCostLimitEnforced: false }) } },
+        { run: "run:bounded-usage-precedence:snapshot-superseded", sequence: 2, payload: { category: "native_snapshot", snapshot: snapshot(null) } },
+        // The later snapshot's `usage` is JSON null, which is what the live schema
+        // writes (`usage: usageSchema.nullable()`). A mutation that filters the
+        // snapshot lookup on `->'usage' IS NOT NULL` therefore does NOT bite here:
+        // a JSON null is still a present key, so the filter keeps this row and the
+        // answer is unchanged. That is a real observation about the guard, not a
+        // gap in the assertion — the assertion below pins the answer, and the
+        // filter is not what produces it.
+      ];
+      for (const event of events) {
+        // `UNIQUE (tenant_id,run_id,source_event_key_digest)` means the two
+        // snapshots of the same run need their own key digest, exactly as a real
+        // ingestion assigns one per snapshot version.
+        const key = sha256Digest({ purpose: "bounded-usage-precedence", run: event.run, sequence: event.sequence });
+        await admin.query(`INSERT INTO control_harness_run_events
+          (tenant_id,run_id,sequence,occurred_at,source,source_event_key_digest,event_digest,event_auth_tag,payload,recorded_at)
+          VALUES($1::text,$2::text,$3::int,$4::timestamptz,'harness_read',$5::text,$6::text,$7::text,
+            jsonb_build_object('schemaVersion','control-room-harness-event/v1','tenantId',$1::text,'runId',$2::text,
+              'sequence',$3::int,'occurredAt',$4::text,'source','harness_read','sourceEventKeyDigest',$5::text,
+              'payload',$8::jsonb),$4::timestamptz)`,
+        [ids.tenant, event.run, event.sequence, finish, key, digest, tag, JSON.stringify(event.payload)]);
+      }
+
+      const login = postgres.connection("web");
+      const web = bindPrivatePgPool(new Pool({ ...login, max: 4, application_name: "control-room-private-web",
+        options: "-c search_path=pg_catalog,\\ public -c timezone=UTC -c transaction_timeout=10000",
+        statement_timeout: 5000, lock_timeout: 2000, idle_in_transaction_session_timeout: 5000 }));
+      try {
+        const groups = await new HarnessRunStoreV1(web.client, INTEGRITY_KEY)
+          .inspectUsageRollup(ids.tenant, ids.project, ids.job);
+        // Wall time: all three runs started and finished, so each observes 70s
+        // and their groups sum to 3 x 70s. The run with NO usage event is the one
+        // this pins: its duration must still be counted, which is only possible
+        // because the duration is computed for every run rather than inside the
+        // usage-event lookup.
+        // Two runs share this job; the third lives in the solo scope below.
+        assert.equal(groups.reduce((sum, one) => sum + Number(one.wallTimeMs), 0), 70000 * 2,
+          `every run here observed a 70s duration, so the groups must total ${70000 * 2}, got ${JSON.stringify(groups)}`);
+        const rollup = rollupUsageGroupsV1(groups, priceTable);
+        assert.equal(rollup.wallTimeMs, 70000 * 2,
+          "wall time is reported for runs with no usage event, not only for those that have one");
+        // The superseded-snapshot run ALONE. In the scope above its resurrected
+        // tokens are invisible — the rollup's fields are already null because
+        // other runs reported nothing — so this reads that one run's own group,
+        // where a resurrected observation would be an unmistakable number.
+        const soloStore = new HarnessRunStoreV1(web.client, INTEGRITY_KEY);
+        const soloGroups = await soloStore.inspectUsageRollup(ids.tenant, ids.project, soloJob);
+        assert.equal(soloGroups.length, 1, `the solo scope has one run: ${JSON.stringify(soloGroups)}`);
+        assert.equal(soloGroups[0]!.runs, 1);
+        assert.equal(soloGroups[0]!.inputTokens, null,
+          "the LAST native snapshot reported no usage, so the run reports none; an earlier snapshot's 900 tokens are superseded evidence");
+        assert.equal(soloGroups[0]!.outputTokens, null);
+        assert.equal(soloGroups[0]!.totalTokens, null);
+        assert.equal(soloGroups[0]!.wallTimeMs, "70000", "it still reports its own observed duration");
+        assert.deepEqual(rollupUsageGroupsV1(soloGroups, priceTable).unknownCostReasons, ["usage_not_reported"]);
+
+        // Exactly one run reported a usable token count: the snapshot whose usage
+        // carried 40 in and 8 out. The other two — the run with no event at all,
+        // and the run whose LAST snapshot reported no usage — report nothing, so
+        // neither field is presented as a total over the scope. That is the
+        // `every()` rule surviving the aggregate: one silent run makes the whole
+        // field unknown rather than a partial sum presented as complete.
+        assert.equal(rollup.inputTokens, null,
+          "two of the three runs reported no input count, so no total may be presented");
+        assert.equal(rollup.outputTokens, null);
+        assert.equal(rollup.totalTokens, null,
+          "a native snapshot that omitted totalTokens reports null; input+output is never derived for a snapshot");
+        assert.equal(rollup.wallTimeMs, 70000 * 2, "wall time is reported for every run, including one with no usage event");
+        assert.deepEqual(rollup.unknownCostReasons, ["usage_not_reported"]);
+        assert.equal(rollup.knownCostRuns, 1, "only the run that reported tokens prices");
+        // 40 billable input x 1250 + 8 output x 10000, no cache tokens involved.
+        assert.equal(rollup.knownCostNanoUsd,
+          (BigInt(40) * BigInt(1250) + BigInt(8) * BigInt(10000)).toString());
+        assert.equal(rollup.runs, 2, "this scope holds the two runs that share the job");
+        // The measured group is the assertion: the snapshot's tokens survived the
+        // aggregate while its missing total did not become one.
+        const measured = groups.find(one => one.runs === 1)!;
+        assert.equal(measured.inputTokens, "40");
+        assert.equal(measured.outputTokens, "8");
+        assert.equal(measured.totalTokens, null,
+          "input+output must not be derived into a total for a native snapshot");
+      } finally { await web.close(); }
+    } finally { await admin.end(); }
+  }, { port: PORT + 2, allowedPorts: PORTS, boundMs: 240_000 });
+});
+
+/**
+ * The second bound: ATTEMPT history.
+ *
+ * The 5,000-run fixture above pins the read against RUN history with the
+ * attempt count held at one, so it cannot see a read that grows with RETRIES.
+ * This one holds the run count at one per attempt and varies the ATTEMPT count
+ * past the page's ten-attempt display bound, because that is the dimension a
+ * per-attempt rollup is exposed on.
+ *
+ * A self-review of this change measured, on a real cluster, that grouping the
+ * aggregate by `attempt_id` over the job's whole history returns exactly one row
+ * per attempt ever recorded (1/10/50/200/500 rows for 1/10/50/200/500 attempts).
+ * The aggregate therefore takes the exact attempt ids the page renders, so its
+ * row count is a function of that set and of the pricing shapes, not of how many
+ * attempts the job has retried through. Forty attempts with one run each is
+ * four times the page's display bound, which is where an unbounded-by-attempt
+ * read would be unmistakably larger than a bounded one.
+ */
+test("the per-attempt rollup read stays bounded when a job has more attempts than the page shows", async t => {
+  const skip = needsPg();
+  if (skip) { t.skip(skip.skip); return; }
+  ran += 1;
+  /** Four times the page's ten-attempt display bound. */
+  const ATTEMPTS = 40;
+  await withRealPostgres(async postgres => {
+    const admin = new Client(postgres.admin({ database: postgres.database }));
+    await admin.connect();
+    try {
+      await seedScope(admin);
+      const createdAt = new Date(Date.now() - 100_000).toISOString();
+      const finishedAt = new Date(Date.now() - 90_000).toISOString();
+      const digest = `sha256:${"b".repeat(64)}`, tag = `hmac-sha256:${"c".repeat(64)}`;
+      // The displayed ten are the HIGHEST attempt numbers: `detail()` reads
+      // `ORDER BY attempt_number DESC LIMIT 11` then takes ten, so the page
+      // renders the newest retries. The older attempts below them are the
+      // history a per-attempt aggregate must not pay for.
+      //
+      // `seedScope` already inserted attempt 1 (it is the one `HarnessRunStoreV1`
+      // accepts, being nonterminal), and that attempt has no runs — which is
+      // realistic: an attempt can fail before it launches anything. The
+      // remaining `ATTEMPTS` therefore start at 2, and EVERY one of them carries
+      // exactly one run, so the job's total run count equals `ATTEMPTS` and the
+      // headline total is `ATTEMPTS` runs across `ATTEMPTS + 1` attempts.
+      // `HarnessRunStoreV1.create` refuses a run whose attempt is not
+      // leased/running/waiting, so the ten store-signed attempts are inserted
+      // `running` and the older bulk ones `succeeded`. Both are states the page
+      // renders, and it is the newest ten the page displays either way.
+      const newestTenFrom = ATTEMPTS + 1 - 10;
+      // Two inserts rather than one conditional: a `running` attempt must not
+      // carry a `finishedAt` KEY at all, and a JSON null is a PRESENT key, so
+      // `attemptRecordSchema` rejects it. `task-service.ts` parses this payload
+      // for every attempt the page renders, so a null fails the whole detail
+      // read. Two statements state the two shapes honestly instead of building
+      // one object and deleting a key from it.
+      const attemptRows = (state: string, version: number, finished: boolean) => `INSERT INTO control_attempts
+        (id,tenant_id,job_id,attempt_number,state,version,node_id,lease_epoch,payload,created_at,updated_at)
+        SELECT 'attempt:bounded-usage-history:'||lpad(g::text,3,'0'),$1::text,$2::text,g,${state},${version},$3::text,1,
+          jsonb_build_object('id','attempt:bounded-usage-history:'||lpad(g::text,3,'0'),'kind','attempt',
+            'tenantId',$1::text,'contractVersion','control-room-domain/v1','jobId',$2::text,
+            'state',${state}::text,'version',${version},'nodeId',$3::text,'createdAt',$4::text,
+            'offeredAt',$4::text,'startedAt',$4::text,'updatedAt',$4::text
+            ${finished ? `,'finishedAt',$4::text` : ""},
+            'leaseEpoch',1,'attemptNumber',g),
+          $5::timestamptz,$5::timestamptz
+        FROM generate_series($6::int,$7::int) g`;
+      const attemptArgs = (from: number, to: number) =>
+        [ids.tenant, ids.job, ids.node, createdAt, createdAt, from, to];
+      // The older attempts are terminal; the newest ten are still `running`,
+      // which is the only state (with leased/waiting) `HarnessRunStoreV1.create`
+      // will attach a run to.
+      await admin.query(attemptRows("'succeeded'", 2, true), attemptArgs(2, newestTenFrom - 1));
+      await admin.query(attemptRows("'running'", 1, false), attemptArgs(newestTenFrom, ATTEMPTS + 1));
+      // One run and one usage event per attempt, every run the same pricing
+      // shape: so a bounded read returns at most one group per DISPLAYED
+      // attempt, and the count cannot be inflated by shape variety.
+      //
+      // The run series covers the OLDER attempts only — 2..(ATTEMPTS + 1 - 10) —
+      // and the ten NEWEST attempts are written through the real
+      // `HarnessRunStoreV1` below. That split is forced, not cosmetic: the page
+      // authenticates every run and event it DISPLAYS with
+      // `verifyStoredHarnessRunV1`, and it displays the ten newest attempts, so
+      // those ten must carry real HMACs or the read throws
+      // `harness event integrity failure`. The older attempts are never
+      // displayed, and the bounded aggregate deliberately hands the application
+      // no event payload for them at all, so a placeholder digest is sufficient
+      // for them — which is the same split, and the same reason, as the
+      // 5,000-run fixture above.
+      await admin.query(`INSERT INTO control_harness_runs
+        (id,tenant_id,project_id,job_id,attempt_id,node_id,adapter_id,harness,native_session_key_digest,
+         state,last_sequence,run_digest,run_auth_tag,payload,created_at,updated_at,last_observed_at)
+        SELECT 'run:bounded-usage-history:'||lpad(g::text,3,'0'),$1::text,$2::text,$3::text,
+          'attempt:bounded-usage-history:'||lpad(g::text,3,'0'),$4::text,$5::text,'codex',
+          'sha256:'||md5(g::text)||md5(('hist'||g::text)::text),'succeeded',1,$6::text,$7::text,
+          jsonb_build_object('schemaVersion','control-room-harness/v1','id','run:bounded-usage-history:'||lpad(g::text,3,'0'),
+            'tenantId',$1::text,'projectId',$2::text,'jobId',$3::text,
+            'attemptId','attempt:bounded-usage-history:'||lpad(g::text,3,'0'),'nodeId',$4::text,
+            'adapterId',$5::text,'adapterVersion','1.0.0','harness','codex','harnessVersion','codex-history-1',
+            'nativeSessionKeyDigest','sha256:'||md5(g::text)||md5(('hist'||g::text)::text),
+            'modelSelection',jsonb_build_object('model',$8::text,'effort','medium'),'state','succeeded',
+            'resumable',false,'cancelState','not_requested','createdAt',$9::text,'startedAt',$9::text,
+            'updatedAt',$10::text,'finishedAt',$10::text,'lastObservedAt',$10::text),
+          $9::timestamptz,$10::timestamptz,$10::timestamptz
+        FROM generate_series(2,$11::int) g`,
+      [ids.tenant, ids.project, ids.job, ids.node, ids.adapter, digest, tag, MODEL,
+        createdAt, finishedAt, newestTenFrom - 1]);
+      await admin.query(`INSERT INTO control_harness_run_events
+        (tenant_id,run_id,sequence,occurred_at,source,source_event_key_digest,event_digest,event_auth_tag,payload,recorded_at)
+        SELECT $1::text,'run:bounded-usage-history:'||lpad(g::text,3,'0'),1,$9::timestamptz,'adapter',
+          $3::text,$3::text,$4::text,
+          jsonb_build_object('schemaVersion','control-room-harness-event/v1','tenantId',$1::text,
+            'runId','run:bounded-usage-history:'||lpad(g::text,3,'0'),'sequence',1,'occurredAt',$2::text,'source','adapter',
+            'sourceEventKeyDigest',$3::text,
+            'payload',jsonb_build_object('category','usage','inputTokens',$5::int,'outputTokens',$6::int,
+              'totalTokens',$7::int,'cachedInputTokens',0,'reasoningTokens',null,'wallTimeMs',$8::int)),
+          $9::timestamptz
+        FROM generate_series(2,$10::int) g`,
+      // The ISO string ($2) is a SEPARATE parameter from the `timestamptz` ($9) it
+      // becomes. Reusing one parameter cannot work: PostgreSQL resolves a
+      // parameter's type once, so `$9::timestamptz` in the column and `$2::text`
+      // in the JSON must not share a parameter, or the text cast renders a
+      // PostgreSQL timestamp literal that `harnessRunEventSchemaV1` rejects as
+      // `occurredAt`.
+      [ids.tenant, finishedAt, digest, tag, perRun.inputTokens, perRun.outputTokens, perRun.totalTokens,
+        perRun.wallTimeMs, finishedAt, newestTenFrom - 1]);
+      // The ten the page actually displays, written through the real store as the
+      // production evidence role, so the runs the page authenticates are genuine.
+      const publisher = publisherClient(postgres);
+      try {
+        for (let attempt = newestTenFrom; attempt <= ATTEMPTS + 1; attempt += 1) {
+          const suffix = String(attempt).padStart(3, "0"), runId = `run:bounded-usage-signed:${suffix}`;
+          const created = new Date(Date.now() - 100_000 + attempt * 1_000).toISOString();
+          const finished = new Date(Date.now() - 90_000 + attempt * 1_000).toISOString();
+          await new HarnessRunStoreV1(publisher, INTEGRITY_KEY).create({
+            schemaVersion: "control-room-harness/v1", id: runId, tenantId: ids.tenant, projectId: ids.project,
+            jobId: ids.job, attemptId: `attempt:bounded-usage-history:${suffix}`, nodeId: ids.node,
+            adapterId: ids.adapter, adapterVersion: "1.0.0", harness: "codex", harnessVersion: "codex-history-1",
+            nativeSessionKeyDigest: sha256Digest({ purpose: "bounded-usage-history", runId }),
+            modelSelection: { model: MODEL, effort: "medium" }, state: "discovered", resumable: false,
+            cancelState: "not_requested", createdAt: created, updatedAt: created, lastObservedAt: created });
+          for (const [sequence, occurredAt, payload] of [
+            [1, created, { category: "lifecycle" as const, state: "starting" as const }],
+            [2, created, { category: "lifecycle" as const, state: "running" as const }],
+            [3, finished, { category: "usage" as const, inputTokens: perRun.inputTokens,
+              outputTokens: perRun.outputTokens, totalTokens: perRun.totalTokens, cachedInputTokens: 0,
+              reasoningTokens: null, wallTimeMs: perRun.wallTimeMs }],
+            [4, finished, { category: "lifecycle" as const, state: "succeeded" as const }],
+          ] as const) {
+            await new HarnessRunStoreV1(publisher, INTEGRITY_KEY).append({
+              schemaVersion: "control-room-harness-event/v1", tenantId: ids.tenant, runId, sequence,
+              occurredAt, source: "adapter", sourceEventKeyDigest: sha256Digest({ runId, sequence }), payload });
+          }
+        }
+      } finally { await publisher.close(); }
+
+      const login = postgres.connection("web");
+      const web = bindPrivatePgPool(new Pool({ ...login, max: 4, application_name: "control-room-private-web",
+        options: "-c search_path=pg_catalog,\\ public -c timezone=UTC -c transaction_timeout=10000",
+        statement_timeout: 5000, lock_timeout: 2000, idle_in_transaction_session_timeout: 5000 }));
+      try {
+        // The page's own ten: the newest ten attempt numbers, which is what
+        // `detail()` renders. Derived here from the same ordering the page uses
+        // rather than hard-coded, so the test cannot drift from the read path.
+        const displayed = (await admin.query<{ id: string }>(
+          "SELECT id FROM control_attempts WHERE tenant_id=$1 AND job_id=$2 ORDER BY attempt_number DESC LIMIT 11",
+        [ids.tenant, ids.job])).rows.map(row => row.id).slice(0, 10);
+        assert.equal(displayed.length, 10, "the page's own attempt bound is ten");
+
+        const store = new HarnessRunStoreV1(web.client, INTEGRITY_KEY);
+        const groups = await store.inspectUsageRollup(ids.tenant, ids.project, ids.job, displayed);
+        // One group per displayed attempt, and no more: the thirty attempts the
+        // page does not render contribute nothing, so the read is a function of
+        // the set passed in rather than of the job's retry history.
+        assert.equal(groups.length, displayed.length,
+          `the per-attempt read returned ${groups.length} group(s) for ${displayed.length} displayed attempts`
+          + ` and a job with ${ATTEMPTS} attempts: ${JSON.stringify(groups.map(one => one.attemptId))}`);
+        assert.equal(new Set(groups.map(one => one.attemptId)).size, groups.length, "one group per attempt, not one covering several");
+        for (const group of groups) assert.ok(displayed.includes(group.attemptId!),
+          `the read returned a group for an attempt the page does not display: ${group.attemptId}`);
+
+        // The headline total is a SEPARATE, job-wide read, and it must still
+        // cover every attempt — including the thirty the page omits. That is why
+        // this cannot be derived by splitting the per-attempt read.
+        const jobWide = await store.inspectUsageRollup(ids.tenant, ids.project, ids.job);
+        const jobRollup = rollupUsageGroupsV1(jobWide, priceTable);
+        assert.equal(jobRollup.runs, ATTEMPTS,
+          "the job-wide total must cover every attempt the job has recorded, not only the ten displayed");
+        assert.equal(jobRollup.inputTokens, ATTEMPTS * perRun.inputTokens);
+        assert.equal(jobRollup.knownCostNanoUsd,
+          (BigInt(ATTEMPTS) * (BigInt(perRun.inputTokens) * BigInt(1250)
+            + BigInt(perRun.outputTokens) * BigInt(10000))).toString());
+
+        // And the page as the whole service reads it: a job with 40 attempts
+        // must serve task detail within the same small row budget as a job with
+        // one, with a per-attempt rollup for each of the ten it renders.
+        const watched = traced(web.client);
+        const detail = await new WebTaskService(watched.client, SCOPE, () => Date.now(),
+          { harnessIntegrityKey: INTEGRITY_KEY, usagePriceTable: priceTable })
+          .detail(identity, ids.project, ids.job);
+        const rows = watched.rowsRead();
+        assert.ok(rows <= 200,
+          `task detail read ${rows} rows for a job with ${ATTEMPTS} attempts; the per-attempt read is unbounded again`);
+        assert.equal(detail.attempts.length, 10, "the page renders its own ten-attempt bound");
+        assert.equal(detail.usageRollup.runs, ATTEMPTS, "the headline total covers all 40 attempts");
+        assert.equal(detail.attempts[0]!.usageRollup.runs, 1, "each displayed attempt rolls up its own runs only");
+        t.diagnostic(`rows read by one task-detail read with ${ATTEMPTS} attempts: ${rows}`);
+      } finally { await web.close(); }
+    } finally { await admin.end(); }
+  }, { port: PORT + 3, allowedPorts: PORTS, boundMs: 240_000 });
 });
 
 test("the bounded-usage real-PostgreSQL proof ran when PostgreSQL is available", () => {

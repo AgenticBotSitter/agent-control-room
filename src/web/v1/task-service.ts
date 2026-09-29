@@ -410,13 +410,29 @@ export class WebTaskService {
       const inspectedRuns = store ? await store.inspectAttempts(this.scope.tenantId, projectId, jobId,
         boundedAttempts.map(attempt => attempt.id)) : new Map<string, readonly { run: HarnessRunV1;
           events: HarnessRunEventV1[] }[]>();
+      // TWO aggregates, because they answer different questions about different
+      // sets. The page's headline total covers EVERY run the job has ever
+      // recorded, including the attempts it does not display, so it reads the
+      // whole job and does not group by attempt. Each displayed attempt's own
+      // rollup covers only that attempt, so it reads only the ten attempt ids the
+      // page renders. Reading one set and splitting it in the application could
+      // not give both: the per-attempt read would have to include every attempt
+      // to make the headline total exact, and a group per attempt ever recorded
+      // is a read that grows with retries.
+      //
+      // Both are still aggregates, so both are bounded by shapes rather than by
+      // runs; the second is additionally bounded by the page's attempt display
+      // bound, which is what makes it independent of the job's retry history.
+      const attemptIds = boundedAttempts.map(attempt => attempt.id);
       const rollupGroups = store ? await store.inspectUsageRollup(this.scope.tenantId, projectId, jobId) : [];
       const price = this.usagePriceTable;
       const rollup = rollupUsageGroupsV1(rollupGroups, price);
+      const attemptGroups = store
+        ? await store.inspectUsageRollup(this.scope.tenantId, projectId, jobId, attemptIds) : [];
       const rollupByAttempt = new Map<string, UsageRollupV1>();
       for (const attempt of boundedAttempts)
         rollupByAttempt.set(attempt.id, rollupUsageGroupsV1(
-          rollupGroups.filter(group => group.attemptId === attempt.id), price));
+          attemptGroups.filter(group => group.attemptId === attempt.id), price));
       const attempts = [];
       for (const a of boundedAttempts) {
         const attempt = attemptRecordSchema.parse(a.payload);

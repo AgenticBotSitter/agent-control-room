@@ -276,9 +276,11 @@ export class HarnessRunStoreV1 {
    * applying its rates to the group's sums is exact rather than an average
    * multiplied back by a count. See `rollupUsageGroupsV1`.
    *
-   * The bound is therefore a function of the priceable shapes, not of history:
-   * `attempts x 4 harnesses x the project's models x 2^5 shape flags`. It does
-   * not grow as runs accumulate.
+   * The bound is therefore a function of the priceable shapes, not of history.
+   * Without a set of attempt ids it is `4 harnesses x the project's models x
+   * 2^5 shape flags`. With a set, as the task-detail read passes, it is
+   * `|ids| x` that product, where `ids` is the page's own attempt display bound.
+   * Neither grows as runs accumulate.
    *
    * Two details of the stored shape this has to respect, both measured on a real
    * cluster rather than assumed:
@@ -291,69 +293,115 @@ export class HarnessRunStoreV1 {
    * event payload and are not digest-verified here: verified rows stay on the
    * presentation path (`inspectAttempts`), which is unchanged.
    */
-  async inspectUsageRollup(tenantId: string, projectId: string, jobId?: string):
-    Promise<readonly UsageRollupGroupV1[]> {
+  async inspectUsageRollup(tenantId: string, projectId: string, jobId?: string,
+    attemptIds?: readonly string[]): Promise<readonly UsageRollupGroupV1[]> {
     const parameters: unknown[] = [tenantId, projectId];
     const job = jobId === undefined ? "" : ` AND r.job_id=$${parameters.push(jobId)} `;
-    const rows = (await this.db.query<{ attempt_id: string; harness: string; model: string | null;
+    // Per-attempt grouping is requested only by the job-scoped task-detail read,
+    // and it is bound by the ATTEMPT IDS the page passes, not by the job's whole
+    // attempt history. The page renders ten attempts (`LIMIT 11`, then
+    // `slice(0, 10)`), so it passes those ten: the aggregate then covers exactly
+    // what the page shows, and the group count is at most
+    // `10 x priceable shapes` however many attempts the job has accumulated.
+    //
+    // Passing the set rather than merely asking to group by attempt is the whole
+    // fix. Grouping by `attempt_id` over the JOB's history would return one
+    // group per attempt ever recorded, which grows with retries and is the
+    // unbounded read this replaces, one level down — measured on a real cluster
+    // at exactly one row per attempt from 1 to 500 attempts. The project-wide
+    // read passes no ids and so does not group by attempt at all: a project
+    // spans every job's retries, and its row count must track the number of
+    // priceable shapes, never project age.
+    //
+    // A supplied set also keeps the two read paths consistent by construction:
+    // the runs `inspectAttempts` displays and the per-attempt rollup totals are
+    // read over the same attempt ids, so a rollup can never describe an attempt
+    // the page does not show, nor omit one it does.
+    const attemptIds_ = attemptIds === undefined ? undefined : [...new Set(attemptIds)];
+    // An empty set means the page displays no attempts, so there is nothing to
+    // group. An `= ANY('{}')` would be the same answer, but this returns without
+    // a statement at all rather than issuing one that must return no rows.
+    if (attemptIds_?.length === 0) return [];
+    const attempt = attemptIds_ === undefined ? "" : "attempt_id,";
+    const scoped = attemptIds_ === undefined
+      ? ""
+      : ` AND r.attempt_id=ANY($${parameters.push(attemptIds_)}::text[])`;
+    const rows = (await this.db.query<{ attempt_id: string | undefined; harness: string; model: string | null;
       runs: string | number; input_tokens: string | null;
       billable_input_tokens: string | null; output_tokens: string | null; total_tokens: string | null;
       wall_time_ms: string | null; cached_input_tokens: string | null; negative_billable_runs: string | number }>(
-      `WITH scoped AS (
+      `WITH resolved AS (
          SELECT r.attempt_id,r.harness,r.payload->'modelSelection'->>'model' AS model,
-           u.input_tokens,u.output_tokens,u.total_tokens,u.wall_time_ms,u.cached_input_tokens
+           -- The run's OWN observed duration, for EVERY run. It is computed here
+           -- rather than inside the event lookups because the per-run evidence reader falls
+           -- back to it when an event reports no wall time AND reports it alone
+           -- for a run that has no usage event at all; a lateral would have
+           -- dropped it for exactly those runs, turning a real wall-time total
+           -- into null.
+           (CASE WHEN r.payload->>'startedAt' IS NOT NULL AND r.payload->>'finishedAt' IS NOT NULL
+             THEN (EXTRACT(EPOCH FROM ((r.payload->>'finishedAt')::timestamptz
+                   -(r.payload->>'startedAt')::timestamptz))*1000)::bigint END) AS duration_ms,
+           -- The per-run evidence reader's precedence, in full: the LAST usage event;
+           -- LAST native snapshot's usage; else wall time alone; else nothing.
+           --
+           -- Three details are load-bearing and each was a wrong-number bug before
+           -- it was pinned by a test:
+           --   1. Neither lookup filters on which of an event's fields are
+           --      non-null. That reader takes the LAST event it finds and
+           --      reports whatever that one says, nulls included, so a later
+           --      native snapshot whose usage is null is the ANSWER and not an
+           --      event to skip past in favour of an earlier one that had usage.
+           --   2. The input+output fallback for a MISSING totalTokens applies to
+           --      usage events only. A native snapshot reports the total it
+           --      reported, and the application never derives one for it.
+           --   3. A native snapshot's wall time is the run's duration, never a
+           --      figure taken from the event, which carries none.
+           CASE WHEN u.run_id IS NOT NULL THEN (u.payload->'payload'->>'inputTokens')::bigint
+             ELSE (n.payload->'payload'->'snapshot'->'usage'->>'inputTokens')::bigint END AS input_tokens,
+           CASE WHEN u.run_id IS NOT NULL THEN (u.payload->'payload'->>'outputTokens')::bigint
+             ELSE (n.payload->'payload'->'snapshot'->'usage'->>'outputTokens')::bigint END AS output_tokens,
+           CASE WHEN u.run_id IS NOT NULL
+             THEN COALESCE((u.payload->'payload'->>'totalTokens')::bigint,
+                 CASE WHEN (u.payload->'payload'->>'inputTokens')::bigint IS NOT NULL
+                     AND (u.payload->'payload'->>'outputTokens')::bigint IS NOT NULL
+                   THEN (u.payload->'payload'->>'inputTokens')::bigint
+                      +(u.payload->'payload'->>'outputTokens')::bigint END)
+             ELSE (n.payload->'payload'->'snapshot'->'usage'->>'totalTokens')::bigint END AS total_tokens,
+           CASE WHEN u.run_id IS NOT NULL
+             THEN COALESCE((u.payload->'payload'->>'wallTimeMs')::bigint,
+                 (CASE WHEN r.payload->>'startedAt' IS NOT NULL AND r.payload->>'finishedAt' IS NOT NULL
+                   THEN (EXTRACT(EPOCH FROM ((r.payload->>'finishedAt')::timestamptz
+                         -(r.payload->>'startedAt')::timestamptz))*1000)::bigint END))
+             ELSE (CASE WHEN r.payload->>'startedAt' IS NOT NULL AND r.payload->>'finishedAt' IS NOT NULL
+                   THEN (EXTRACT(EPOCH FROM ((r.payload->>'finishedAt')::timestamptz
+                         -(r.payload->>'startedAt')::timestamptz))*1000)::bigint END) END AS wall_time_ms,
+           CASE WHEN u.run_id IS NOT NULL
+             THEN COALESCE((u.payload->'payload'->>'cachedInputTokens')::bigint,0)
+             ELSE 0 END AS cached_input_tokens
          FROM control_harness_runs r
          LEFT JOIN LATERAL (
-           -- The same precedence the application applies: the LAST usage event,
-           -- else the LAST native snapshot carrying usage, else nothing. One
-           -- LATERAL row per run (LIMIT 1), never one row per event.
-           SELECT
-             CASE WHEN e.payload->'payload'->>'category'='usage'
-               THEN (e.payload->'payload'->>'inputTokens')::bigint
-               ELSE (e.payload->'payload'->'snapshot'->'usage'->>'inputTokens')::bigint END AS input_tokens,
-             CASE WHEN e.payload->'payload'->>'category'='usage'
-               THEN (e.payload->'payload'->>'outputTokens')::bigint
-               ELSE (e.payload->'payload'->'snapshot'->'usage'->>'outputTokens')::bigint END AS output_tokens,
-             CASE WHEN e.payload->'payload'->>'category'='usage'
-               THEN COALESCE((e.payload->'payload'->>'totalTokens')::bigint,
-                   CASE WHEN (e.payload->'payload'->>'inputTokens')::bigint IS NOT NULL
-                       AND (e.payload->'payload'->>'outputTokens')::bigint IS NOT NULL
-                     THEN (e.payload->'payload'->>'inputTokens')::bigint
-                        +(e.payload->'payload'->>'outputTokens')::bigint END)
-               ELSE (e.payload->'payload'->'snapshot'->'usage'->>'totalTokens')::bigint END AS total_tokens,
-             -- Wall time is the event's own when it reports one, else the run's
-             -- observed duration. One expression covers both shapes: a usage
-             -- event may omit wallTimeMs, and a native snapshot never carries
-             -- one, so both fall through to the duration the application
-             -- computes from startedAt/finishedAt.
-             COALESCE((e.payload->'payload'->>'wallTimeMs')::bigint,
-               CASE WHEN r.payload->>'startedAt' IS NOT NULL AND r.payload->>'finishedAt' IS NOT NULL
-                 THEN (EXTRACT(EPOCH FROM ((r.payload->>'finishedAt')::timestamptz
-                       -(r.payload->>'startedAt')::timestamptz))*1000)::bigint END) AS wall_time_ms,
-             CASE WHEN e.payload->'payload'->>'category'='usage'
-               THEN COALESCE((e.payload->'payload'->>'cachedInputTokens')::bigint,0)
-               ELSE 0 END AS cached_input_tokens
-           FROM control_harness_run_events e WHERE e.tenant_id=r.tenant_id AND e.run_id=r.id
-             AND (e.payload->'payload'->>'category'='usage'
-               OR (e.payload->'payload'->>'category'='native_snapshot'
-                 AND e.payload->'payload'->'snapshot'->'usage' IS NOT NULL))
-           ORDER BY (e.payload->'payload'->>'category'='usage') DESC,e.sequence DESC LIMIT 1
+           SELECT e.run_id,e.payload FROM control_harness_run_events e
+           WHERE e.tenant_id=r.tenant_id AND e.run_id=r.id
+             AND e.payload->'payload'->>'category'='usage'
+           ORDER BY e.sequence DESC LIMIT 1
          ) u ON true
-         WHERE r.tenant_id=$1 AND r.project_id=$2${job}
-       ), resolved AS (
-         -- A run with no usage event and no native usage still reports wall time
-         -- when it started and finished; every other field stays null, which is
-         -- exactly what the application's own evidence reader produced for it.
-         SELECT attempt_id,harness,model,
-           input_tokens,
-           output_tokens,
-           COALESCE(total_tokens,CASE WHEN input_tokens IS NOT NULL AND output_tokens IS NOT NULL
-             THEN input_tokens+output_tokens END) AS total_tokens,
-           wall_time_ms,
-           cached_input_tokens
-         FROM scoped
+         LEFT JOIN LATERAL (
+           -- The LAST native snapshot. Deliberately NOT filtered on whether its
+           -- usage is null: the last snapshot is the current observation, and a
+           -- null usage is the ANSWER rather than a reason to reach back to a
+           -- superseded one. Measured on PostgreSQL 17, a JSON-null usage still
+           -- satisfies IS NOT NULL, so adding such a filter would not
+           -- change today's answer either — the correctness here rests on the
+           -- ORDER BY, and the absence of the filter keeps it true for an
+           -- ABSENT key as well.
+           SELECT e.run_id,e.payload FROM control_harness_run_events e
+           WHERE e.tenant_id=r.tenant_id AND e.run_id=r.id
+             AND e.payload->'payload'->>'category'='native_snapshot'
+           ORDER BY e.sequence DESC LIMIT 1
+         ) n ON true
+         WHERE r.tenant_id=$1 AND r.project_id=$2${job}${scoped}
        )
-       SELECT attempt_id,harness,model,count(*)::text AS runs,
+       SELECT ${attempt}harness,model,count(*)::text AS runs,
          CASE WHEN count(*) FILTER (WHERE input_tokens IS NULL)=0 THEN sum(input_tokens)::text END AS input_tokens,
          CASE WHEN count(*) FILTER (WHERE input_tokens IS NULL)=0 THEN
            sum(input_tokens-(CASE WHEN harness='codex' THEN cached_input_tokens ELSE 0 END))::text END AS billable_input_tokens,
@@ -362,7 +410,7 @@ export class HarnessRunStoreV1 {
          CASE WHEN count(*) FILTER (WHERE wall_time_ms IS NULL)=0 THEN sum(wall_time_ms)::text END AS wall_time_ms,
          sum(cached_input_tokens)::text AS cached_input_tokens,
          count(*) FILTER (WHERE harness='codex' AND input_tokens-cached_input_tokens<0)::text AS negative_billable_runs
-       FROM resolved GROUP BY attempt_id,harness,model,input_tokens IS NULL,output_tokens IS NULL,
+       FROM resolved GROUP BY ${attempt}harness,model,input_tokens IS NULL,output_tokens IS NULL,
          total_tokens IS NULL,wall_time_ms IS NULL,cached_input_tokens>0,
          (harness<>'codex' OR input_tokens IS NULL OR input_tokens-cached_input_tokens>=0)`,
       parameters)).rows;

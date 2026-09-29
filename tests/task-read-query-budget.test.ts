@@ -254,12 +254,14 @@ test("task detail and result-open reads stay within fixed remote-query budgets",
     return Object.fromEntries(entries) as Record<keyof typeof reads, { queries: number; elapsedMs: number }>;
   };
   const baseline = await collect(0), delayed = await collect(injectedLatencyMs);
-  // `detail` is 13, not 12: it now makes TWO bounded usage reads instead of one —
-  // `inspectAttempts` for the rows the page shows (the reader #412 replaced) and
-  // `inspectUsageRollup` for the totals over every run in the job. Both are fixed
-  // regardless of history; the row VOLUME each returns is what #412 raised and is
-  // asserted on a real cluster in tests/bounded-usage-read-postgres.test.ts.
-  const allowedRoundTrips = { detail: 13, results: 12, content: 7, review: 12, verification: 11 } as const;
+  // `detail` is 14, not 12: it now makes THREE bounded usage reads instead of
+  // one — `inspectAttempts` for the rows the page shows (the reader #412
+  // replaced), and two aggregates: one over the whole job for the headline
+  // total, and one over just the ten displayed attempts for the per-attempt
+  // rollups. All three are fixed regardless of history; the row VOLUME they
+  // return is what #412 raised, and it is asserted on a real cluster in
+  // tests/bounded-usage-read-postgres.test.ts.
+  const allowedRoundTrips = { detail: 14, results: 12, content: 7, review: 12, verification: 11 } as const;
   for (const name of Object.keys(allowedRoundTrips) as (keyof typeof allowedRoundTrips)[]) {
     assert.equal(delayed[name]!.queries, baseline[name]!.queries, `${name} query count changed under latency`);
     assertInjectedLatencyBudget(name, delayed[name]!, allowedRoundTrips[name]);
@@ -327,8 +329,28 @@ test("attempt, run and artifact aggregate readers stay one-query as cardinality 
   statements.length = 0;
   await runs.inspectUsageRollup(binding.tenantId, binding.projectId, binding.jobId);
   const shape = statements.join("\n");
-  assert.match(shape, /GROUP BY attempt_id,harness,model,/,
+  assert.match(shape, /GROUP BY [^`]*harness,model,input_tokens IS NULL/,
     "the usage aggregate must group in SQL by pricing shape, never return one row per run");
+  // The per-attempt grouping is opt-in AND bounded by the ids the page passes,
+  // because attempts are retry history: a project-wide read must not scale its
+  // row count with them at all, and even the per-attempt read must not see more
+  // attempts than the page renders. Both halves are asserted on the statement.
+  assert.doesNotMatch(shape, /GROUP BY attempt_id/,
+    "a project-wide rollup must not group by attempt, or its row count tracks project age");
+  assert.doesNotMatch(shape, /attempt_id=ANY/,
+    "a project-wide rollup must not filter by attempt either; it covers the whole project");
+  statements.length = 0;
+  await runs.inspectUsageRollup(binding.tenantId, binding.projectId, binding.jobId, [binding.attemptId]);
+  const byAttempt = statements.join("\n");
+  assert.match(byAttempt, /GROUP BY attempt_id,harness,model,input_tokens IS NULL/,
+    "a per-attempt rollup must group by attempt so each attempt can be totalled on its own");
+  assert.match(byAttempt, /r\.attempt_id=ANY\(\$\d+::text\[\]\)/,
+    "a per-attempt rollup must be bounded by the attempt ids it was given, not by the job's whole retry history");
+  // An empty set is the page displaying no attempts: answered without a
+  // statement, so it cannot become a read that costs a round trip to return
+  // nothing.
+  assert.equal(await count(() => runs.inspectUsageRollup(binding.tenantId, binding.projectId, binding.jobId, [])), 0,
+    "a per-attempt rollup over an empty set must not issue a statement at all");
   assert.doesNotMatch(shape, /harnessRunProjectionV1|event_rows/,
     "the usage aggregate must not materialise event payloads it never verifies");
   assert.equal(await count(() => runs.inspectUsageRollup(binding.tenantId, binding.projectId)), 1,
