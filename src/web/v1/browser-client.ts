@@ -41,10 +41,13 @@ export const browserErrorMessage: Record<BrowserFailureCode, string> = {
 export function createProjectBrowserClient(transport: typeof fetch = fetch, makeKey: () => string = () => crypto.randomUUID()) {
   let pending: { path: string; body: string; key: string; uncertain: boolean; matches: (project: WebProject) => boolean } | undefined;
   let busy = false;
-  async function call(path: string, method = "GET", body?: string, key?: string): Promise<Response> {
+  async function call(path: string, method = "GET", body?: string, key?: string,
+    signal?: AbortSignal, transportOverride: typeof fetch = transport): Promise<Response> {
     try {
-      return await transport(path, { method, credentials: "same-origin", cache: "no-store", redirect: "error",
-        signal: AbortSignal.timeout(10_000), headers: { accept: "application/json", "x-requested-with": "XMLHttpRequest",
+      signal?.throwIfAborted();
+      return await transportOverride(path, { method, credentials: "same-origin", cache: "no-store", redirect: "error",
+        signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(10_000)]) : AbortSignal.timeout(10_000),
+        headers: { accept: "application/json", "x-requested-with": "XMLHttpRequest",
           ...(body === undefined ? {} : { "content-type": "application/json" }), ...(key ? { "idempotency-key": key } : {}) },
         ...(body === undefined ? {} : { body }) });
     } catch { throw new BrowserRequestError(method === "GET" ? "unavailable" : "uncertain"); }
@@ -90,14 +93,16 @@ export function createProjectBrowserClient(transport: typeof fetch = fetch, make
       const original = pending;
       return command(original.path, JSON.parse(original.body), original.matches);
     },
-    async list(after?: string, lifecycle?: WebProject["lifecycle"]): Promise<ProjectCatalogPage> {
+    async list(after?: string, lifecycle?: WebProject["lifecycle"], signal?: AbortSignal,
+      readTransport?: typeof fetch): Promise<ProjectCatalogPage> {
       try {
         if (after !== undefined && !catalogProjectIdSchema.safeParse(after).success) throw new BrowserRequestError("invalid_request");
         if (lifecycle !== undefined && !lifecycleSchema.safeParse(lifecycle).success) throw new BrowserRequestError("invalid_request");
         const query = new URLSearchParams();
         if (after) query.set("after", after);
         if (lifecycle) query.set("lifecycle", lifecycle);
-        const page = projectCatalogPageSchema.parse(await read(await call(`/api/v1/projects${query.size ? `?${query}` : ""}`)));
+        const page = projectCatalogPageSchema.parse(await read(await call(
+          `/api/v1/projects${query.size ? `?${query}` : ""}`, "GET", undefined, undefined, signal, readTransport)));
         const ids = page.projects.map(project => project.projectId);
         if (ids.some((id, index) => (index > 0 && id <= ids[index - 1]) || (after !== undefined && id <= after))
           || page.nextCursor !== null && (ids.length !== 50 || page.nextCursor !== ids.at(-1))
@@ -107,10 +112,11 @@ export function createProjectBrowserClient(transport: typeof fetch = fetch, make
       }
       catch (error) { throw error instanceof BrowserRequestError ? error : new BrowserRequestError("unavailable"); }
     },
-    async get(id: string): Promise<ProjectView> {
+    async get(id: string, signal?: AbortSignal, readTransport?: typeof fetch): Promise<ProjectView> {
       try {
         if (!catalogProjectIdSchema.safeParse(id).success) throw new BrowserRequestError("invalid_request");
-        const result = z.object({ project: projectViewSchema }).strict().parse(await read(await call(`/api/v1/projects/${encodeURIComponent(id)}`)));
+        const result = z.object({ project: projectViewSchema }).strict().parse(await read(await call(
+          `/api/v1/projects/${encodeURIComponent(id)}`, "GET", undefined, undefined, signal, readTransport)));
         if (result.project.projectId !== id) throw new Error();
         return result.project;
       } catch (error) { throw error instanceof BrowserRequestError ? error : new BrowserRequestError("unavailable"); }
