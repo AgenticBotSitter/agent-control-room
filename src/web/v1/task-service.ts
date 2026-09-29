@@ -42,8 +42,8 @@ import { readSavedTaskPlansInSessionV1, readTaskRevisionLinksV1, savedTaskPlanPr
   type SavedTaskPlanRowV1 } from "./task-execution-planner";
 import { issueTaskFileAccessV1, verifyTaskFileAccessV1 } from "./task-file-access";
 import { projectTaskDisplayStateV1 } from "./task-display-state";
-import { costForUsageV1, rollupUsageV1, usageMeasurementSchemaV1, usagePriceTableSchemaV1,
-  type UsagePriceTableV1 } from "../../usage/v1/usage-cost";
+import { costForUsageV1, rollupUsageGroupsV1, usageMeasurementSchemaV1, usagePriceTableSchemaV1,
+  type UsagePriceTableV1, type UsageRollupV1 } from "../../usage/v1/usage-cost";
 import type { HarnessRunEventV1, HarnessRunV1 } from "../../harness/v1/types";
 
 /** Joins existing stores to the caller-owned session transaction. No nested BEGIN/COMMIT and no
@@ -402,11 +402,37 @@ export class WebTaskService {
       [this.scope.tenantId, jobId])).rows;
       const store = this.harnessKey ? new HarnessRunStoreV1(joined(tx), this.harnessKey) : undefined;
       const boundedAttempts = attemptRows.slice(0, 10);
-      const allInspectedRuns = store ? await store.inspectUsageScope(this.scope.tenantId, projectId, jobId) : [];
-      const inspectedRuns = new Map<string, typeof allInspectedRuns>();
-      for (const value of allInspectedRuns) inspectedRuns.set(value.run.attemptId,
-        [...(inspectedRuns.get(value.run.attemptId) ?? []), value]);
-      const allEvidence = allInspectedRuns.map(value => ({ attemptId: value.run.attemptId, ...this.usageEvidence(value.run, value.events) }));
+      // Two bounded reads, not one unbounded one. The rows the page displays come
+      // from the per-attempt reader (11 per attempt = 10 shown + 1 to detect
+      // `additionalRunsOmitted`), and the TOTALS come from a SQL aggregate over
+      // every run in the job — so the cost is bounded by the page's display
+      // bound and by the number of priceable shapes, never by run history.
+      const inspectedRuns = store ? await store.inspectAttempts(this.scope.tenantId, projectId, jobId,
+        boundedAttempts.map(attempt => attempt.id)) : new Map<string, readonly { run: HarnessRunV1;
+          events: HarnessRunEventV1[] }[]>();
+      // TWO aggregates, because they answer different questions about different
+      // sets. The page's headline total covers EVERY run the job has ever
+      // recorded, including the attempts it does not display, so it reads the
+      // whole job and does not group by attempt. Each displayed attempt's own
+      // rollup covers only that attempt, so it reads only the ten attempt ids the
+      // page renders. Reading one set and splitting it in the application could
+      // not give both: the per-attempt read would have to include every attempt
+      // to make the headline total exact, and a group per attempt ever recorded
+      // is a read that grows with retries.
+      //
+      // Both are still aggregates, so both are bounded by shapes rather than by
+      // runs; the second is additionally bounded by the page's attempt display
+      // bound, which is what makes it independent of the job's retry history.
+      const attemptIds = boundedAttempts.map(attempt => attempt.id);
+      const rollupGroups = store ? await store.inspectUsageRollup(this.scope.tenantId, projectId, jobId) : [];
+      const price = this.usagePriceTable;
+      const rollup = rollupUsageGroupsV1(rollupGroups, price);
+      const attemptGroups = store
+        ? await store.inspectUsageRollup(this.scope.tenantId, projectId, jobId, attemptIds) : [];
+      const rollupByAttempt = new Map<string, UsageRollupV1>();
+      for (const attempt of boundedAttempts)
+        rollupByAttempt.set(attempt.id, rollupUsageGroupsV1(
+          attemptGroups.filter(group => group.attemptId === attempt.id), price));
       const attempts = [];
       for (const a of boundedAttempts) {
         const attempt = attemptRecordSchema.parse(a.payload);
@@ -434,7 +460,7 @@ export class WebTaskService {
         }
         attempts.push({ attemptId: attempt.id, attemptNumber: attempt.attemptNumber, state: attempt.state,
           runs, additionalRunsOmitted: inspected.length > 10,
-          usageRollup: rollupUsageV1(allEvidence.filter(value => value.attemptId === attempt.id)) });
+          usageRollup: rollupByAttempt.get(attempt.id)! });
       }
       const hermesDeliveryRecovery = await this.inspectHermesDeliveryRecovery(job, projectId, jobId, attempts);
       const revisionLinks = this.taskPlanIntegrityKey
@@ -449,7 +475,7 @@ export class WebTaskService {
           model: modelRow.model, effort: modelRow.effort, provider: modelRow.provider, profile: modelRow.profile,
           inheritedFromJobId: modelRow.inherited_from_job_id } : null,
         ownershipLeases: [...leaseGroups.values()],
-        observedAt: actor.now, attempts, usageRollup: rollupUsageV1(allEvidence), priceTable: this.priceTableEvidence(),
+        observedAt: actor.now, attempts, usageRollup: rollup, priceTable: this.priceTableEvidence(),
         earlierAttemptsOmitted: attemptRows.length > 10, preparedFor: null,
         localRouteObservation: { state: "not_prepared", adapter: null },
         hermesDeliveryRecovery,
@@ -1019,9 +1045,10 @@ export class WebTaskService {
       const projectedReviews = this.applyDisplayEvidence(reviewSummaries, displayEvidence)
         .filter(task => task.state === "waiting_approval");
       const projectedRecent = this.applyDisplayEvidence(recentSummaries, displayEvidence);
-      const usageRuns = this.harnessKey ? await new HarnessRunStoreV1(joined(tx), this.harnessKey)
-        .inspectUsageScope(this.scope.tenantId, projectId) : [];
-      const usageRollup = rollupUsageV1(usageRuns.map(value => this.usageEvidence(value.run, value.events)));
+      const usageRollup = this.harnessKey ? rollupUsageGroupsV1(
+        await new HarnessRunStoreV1(joined(tx), this.harnessKey)
+          .inspectUsageRollup(this.scope.tenantId, projectId), this.usagePriceTable)
+        : rollupUsageGroupsV1([], this.usagePriceTable);
       return taskProjectOverviewSchema.parse({ projectId, current: projectedCurrent.slice(0, 10),
         awaitingReview: projectedReviews.slice(0, 5), recent: projectedRecent,
         additionalCurrentOmitted: projectedCurrent.length > 10 || currentRows.length > 250,
