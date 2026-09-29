@@ -1,4 +1,4 @@
-/** Exact direct ACL comparison for the six Mac-local database logins.
+/** Exact direct ACL comparison for the Mac-local database logins.
  * This is an offline installer component, never imported by the task host. */
 import { readFile } from "node:fs/promises";
 import { databaseRoleManifestV1 } from "./database-role-manifest.mjs";
@@ -9,19 +9,25 @@ export const macRolePlan = Object.freeze(Object.fromEntries(Object.entries(datab
 const roleFiles = Object.freeze([
   "private_web_roles.sql", "task_coordinator_roles.sql", "native_queue_producer_roles.sql",
   "native_results_roles.sql", "local_result_publisher_roles.sql", "native_queue_worker_roles.sql",
-  "agent_reviewer_roles.sql",
+  "agent_reviewer_roles.sql", "fleet_gateway_roles.sql",
 ]);
 const groups = new Set(Object.values(macRolePlan));
 const identifier = /^[a-z][a-z0-9_]*$/u;
 const privilege = new Set(["SELECT", "INSERT", "UPDATE", "DELETE", "TRUNCATE", "REFERENCES", "TRIGGER", "USAGE", "EXECUTE"]);
 const workIntakeIdentityFunction = "public.is_work_intake_session()";
 const workIntakeIdentityRoles = new Set(["control_room_private_web", "control_room_task_coordinator",
-  "control_room_native_results", "control_room_local_result_publisher"]);
+  "control_room_native_results", "control_room_local_result_publisher", "control_room_fleet_gateway",
+  "control_room_fleet_owner_authority"]);
 // The reviewer's whole authority: the tenant-bound plan read and the commit.
 const agentReviewFunctions = new Set(["public.read_agent_review_plan(text)",
   "public.commit_agent_review(text, jsonb, jsonb, bytea)"]);
-const knownFunctionGrant = object => object === workIntakeIdentityFunction || agentReviewFunctions.has(object);
+const fleetEnrollmentFunction = "public.redeem_fleet_enrollment(text, text, text, text, timestamptz)";
+const fleetClaimFunction = "public.fleet_claim_is_live(text, text, text)";
+const knownFunctionGrant = object => object === workIntakeIdentityFunction || object === fleetEnrollmentFunction
+  || object === fleetClaimFunction
+  || agentReviewFunctions.has(object);
 const allowedFunctionGrant = (role, object) => object === workIntakeIdentityFunction && workIntakeIdentityRoles.has(role)
+  || (object === fleetEnrollmentFunction || object === fleetClaimFunction) && role === "control_room_fleet_gateway"
   || agentReviewFunctions.has(object) && role === "control_room_agent_reviewer";
 const name = value => {
   if (!identifier.test(value)) throw new Error("upgrade_grant_source_refused");

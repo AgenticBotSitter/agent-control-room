@@ -14,7 +14,8 @@ import { missingTaskRuntimeInstruction } from "../scripts/mac-local/up.mjs";
 
 const roleNames = { web: "control_room_web", coordinator: "control_room_coordinator",
   results: "control_room_results", publisher: "control_room_publisher",
-  agentReviewer: "control_room_agent_reviewer_login", queueWorker: "control_room_queue_worker" };
+  agentReviewer: "control_room_agent_reviewer_login", queueWorker: "control_room_queue_worker",
+  fleetGateway: "control_room_fleet", fleetOwner: "control_room_fleet_owner" };
 
 async function fixture(t) {
   const root = await mkdtemp(join(tmpdir(), "acr-repoint-test-"));
@@ -102,7 +103,8 @@ test("repoint CLI accepts the package-manager separator and refuses extra argume
 });
 
 test("mac:up and mac:down runtime state no longer includes a local database tunnel", () => {
-  assert.deepEqual(Object.keys(runtimePaths("/protected")).sort(), ["hostLog", "hostPid", "hostState", "provider", "runtime"]);
+  assert.deepEqual(Object.keys(runtimePaths("/protected")).sort(),
+    ["hostLog", "hostPid", "hostState", "provider", "runtime", "upgradePrevious"]);
 });
 
 test("mac:up reports the exact one-time Hermes settings command without embedding secrets", () => {

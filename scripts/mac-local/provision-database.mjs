@@ -53,7 +53,8 @@ export function renewRetainedWorkIntakeCredentialsV1(existing, prospective, now)
 const exec = promisify(execFile);
 const roleNames = Object.freeze({ web: "control_room_web", coordinator: "control_room_coordinator",
   results: "control_room_results", publisher: "control_room_publisher",
-  agentReviewer: "control_room_agent_reviewer_login", queueWorker: "control_room_queue_worker" });
+  agentReviewer: "control_room_agent_reviewer_login", queueWorker: "control_room_queue_worker",
+  fleetGateway: "control_room_fleet", fleetOwner: "control_room_fleet_owner" });
 const bootstrapRoles = Object.freeze({ migrator: "control_room_migrator", application: "control_room_app",
   scheduler: "control_room_scheduler", workIntake: "control_room_work_intake_agent" });
 const passwordPattern = /^[A-Za-z0-9_-]{32,}$/u;
@@ -66,6 +67,16 @@ const repoRoot = fileURLToPath(new URL("../../", import.meta.url));
 // has a slightly shorter independent deadline so a dropped SSH client cannot
 // leave a second password-changing provision running remotely.
 const remoteProvisionTimeoutMs = 5 * 60_000;
+let upgradeHandoffTail = Promise.resolve();
+
+async function serializeUpgradeHandoffV1(operation) {
+  const previous = upgradeHandoffTail;
+  let release;
+  upgradeHandoffTail = new Promise(resolveTail => { release = resolveTail; });
+  await previous;
+  try { return await operation(); }
+  finally { release(); }
+}
 
 function usage() {
   return "Usage: pnpm mac:provision-database --protected-root ABSOLUTE_PATH --ssh-target USER@HOST --database-host HOST --work-intake-cli-worker codex|claude-code|hermes [--work-intake-project PROJECT_ID ...] [--database-port 5432] [--endpoint-policy-file ABSOLUTE_PATH] [--remote-worktree ABSOLUTE_PATH] [--vps-only] [--dry-run]\n"
@@ -218,6 +229,8 @@ async function repointOnly({ protectedRoot: suppliedRoot, route }) {
     || roles.results.username !== roleNames.results || roles.publisher.username !== roleNames.publisher
     || roles.agentReviewer.username !== roleNames.agentReviewer
     || roles.queueWorker.username !== roleNames.queueWorker
+    || roles.fleetGateway && roles.fleetGateway.username !== roleNames.fleetGateway
+    || roles.fleetOwner && roles.fleetOwner.username !== roleNames.fleetOwner
     || [roles.web, roles.coordinator, roles.results, roles.publisher, roles.agentReviewer, roles.queueWorker]
       .some(role => role.database !== "control_room")
     || (intake !== undefined && (intake.database.database !== "control_room"
@@ -229,7 +242,9 @@ async function repointOnly({ protectedRoot: suppliedRoot, route }) {
   const nextMacDatabase = update(mac.database);
   const nextRoleConfigurations = { web: update(roles.web), coordinator: update(roles.coordinator),
     results: update(roles.results), publisher: update(roles.publisher), agentReviewer: update(roles.agentReviewer),
-    queueWorker: update(roles.queueWorker) };
+    queueWorker: update(roles.queueWorker),
+    ...(roles.fleetGateway && roles.fleetOwner
+      ? { fleetGateway: update(roles.fleetGateway), fleetOwner: update(roles.fleetOwner) } : {}) };
   const nextIntakeDatabase = intake === undefined ? undefined : update(intake.database);
   captureMacLocalProtectedConfigurationV1({ ...macOriginal, database: nextMacDatabase });
   captureMacLocalDatabaseRolesV1({ ...rolesOriginal, ...nextRoleConfigurations });
@@ -486,7 +501,8 @@ async function existingUpgradeConfiguration(protectedRoot) {
   const oldRoles = await readProtectedJson(roleFile);
   const existingNames = ["schema", "web", "coordinator", "results", "queueWorker"];
   if (oldRoles.schema !== MAC_LOCAL_DATABASE_ROLES_V1
-    || Object.keys(oldRoles).some(key => ![...existingNames, "publisher", "agentReviewer"].includes(key))
+    || Object.keys(oldRoles).some(key => ![...existingNames, "publisher", "agentReviewer", "fleetGateway", "fleetOwner"].includes(key))
+    || (Object.hasOwn(oldRoles, "fleetGateway") !== Object.hasOwn(oldRoles, "fleetOwner"))
     || existingNames.some(key => !Object.hasOwn(oldRoles, key))) throw new Error("upgrade_role_config_refused");
   const sameEndpoint = role => role.host === mac.database.host && role.port === mac.database.port
     && role.database === mac.database.database && role.majorVersion === mac.database.majorVersion
@@ -511,6 +527,13 @@ async function existingUpgradeConfiguration(protectedRoot) {
     const reviewer = validatePrivatePostgresConfiguration(oldRoles.agentReviewer);
     if (reviewer.username !== roleNames.agentReviewer || reviewer.database !== "control_room" || !sameEndpoint(reviewer)
       || reviewer.password !== await readPrivatePassword(join(passwordRoot, `${roleNames.agentReviewer}.txt`)))
+      throw new Error("upgrade_role_config_refused");
+  }
+  for (const [key, username] of [["fleetGateway", roleNames.fleetGateway], ["fleetOwner", roleNames.fleetOwner]]) {
+    if (!oldRoles[key]) continue;
+    const fleetRole = validatePrivatePostgresConfiguration(oldRoles[key]);
+    if (fleetRole.username !== username || fleetRole.database !== "control_room" || !sameEndpoint(fleetRole)
+      || fleetRole.password !== await readPrivatePassword(join(passwordRoot, `${username}.txt`)))
       throw new Error("upgrade_role_config_refused");
   }
   if (oldRoles.publisher && oldRoles.agentReviewer) captureMacLocalDatabaseRolesV1(oldRoles);
@@ -565,6 +588,8 @@ function missingNewLoginRolesV1({ oldRoles, workIntake }) {
   if (!oldRoles.publisher) missing.push(roleNames.publisher);
   if (!oldRoles.agentReviewer) missing.push(roleNames.agentReviewer);
   if (workIntake === undefined) missing.push(bootstrapRoles.workIntake);
+  if (!oldRoles.fleetGateway) missing.push(roleNames.fleetGateway);
+  if (!oldRoles.fleetOwner) missing.push(roleNames.fleetOwner);
   return missing;
 }
 
@@ -624,23 +649,36 @@ export async function planMacDatabaseUpgradeFromFileV1(snapshotFile, expectedMai
  * apply step's login-code reader accepts; only that code, never a password,
  * leaves the protected root. Nothing is missing on a later upgrade, so a
  * repeat run needs no code at all. */
-export async function prepareMacLocalDatabaseUpgradeV1(options) {
+async function prepareMacLocalDatabaseUpgradeInnerV1(options) {
   const { configRoot, passwordRoot, oldRoles, workIntake } = await existingUpgradeConfiguration(options.protectedRoot);
   const mainCommit = options.mainCommit ?? await currentMainCommit();
   if (!/^[a-f0-9]{40}$/u.test(mainCommit)) throw new Error("upgrade_main_commit_refused");
   const missing = missingNewLoginRolesV1({ oldRoles, workIntake });
   if (!missing.length) return { mainCommit, nothingToPrepare: true };
+  const preparedFile = join(configRoot, "database-upgrade-prepare.json");
+  let retained;
+  try { retained = await readProtectedJson(preparedFile); }
+  catch (error) { if (error?.code !== "ENOENT") throw error; }
   const logins = {}, codes = {};
   for (const role of missing) {
     const password = await privateText(join(passwordRoot, `${role}.txt`), newPassword);
-    const salt = randomBytes(16);
+    const retainedEntry = retained?.schema === "control-room.mac-database-upgrade-prepare/v2"
+      && retained.mainCommit === mainCommit && retained.logins && typeof retained.logins === "object"
+      ? retained.logins[role] : undefined;
+    const retainedSalt = typeof retainedEntry?.salt === "string" && /^[A-Za-z0-9+/=]{24}$/u.test(retainedEntry.salt)
+      ? Buffer.from(retainedEntry.salt, "base64") : undefined;
+    const salt = retainedSalt?.length === 16 ? retainedSalt : randomBytes(16);
     const verifier = postgresScramVerifierV1(password, salt);
     logins[role] = { salt: salt.toString("base64"), verifierDigest: createHash("sha256").update(verifier).digest("hex") };
     codes[role] = verifier;
   }
-  await writePrivate(join(configRoot, "database-upgrade-prepare.json"),
+  await writePrivate(preparedFile,
     `${JSON.stringify({ schema: "control-room.mac-database-upgrade-prepare/v2", mainCommit, logins })}\n`);
   return { mainCommit, code: JSON.stringify(codes) };
+}
+
+export function prepareMacLocalDatabaseUpgradeV1(options) {
+  return serializeUpgradeHandoffV1(() => prepareMacLocalDatabaseUpgradeInnerV1(options));
 }
 
 async function verifyRoleLogin(configuration, expectedUsername) {
@@ -672,7 +710,7 @@ async function verifyRoleLogin(configuration, expectedUsername) {
  * that order, a kill in between leaves a record that names digests nothing on
  * disk matches, which `repairWorkIntakeClientsV1` below mints and repairs on
  * the next run of this same command. */
-export async function finishMacLocalDatabaseUpgradeV1(options) {
+async function finishMacLocalDatabaseUpgradeInnerV1(options) {
   const { configRoot, passwordRoot, roleFile, oldRoles, workIntake, workers } = await existingUpgradeConfiguration(options.protectedRoot);
   const mainCommit = options.mainCommit ?? await currentMainCommit();
   const missing = missingNewLoginRolesV1({ oldRoles, workIntake });
@@ -713,6 +751,13 @@ export async function finishMacLocalDatabaseUpgradeV1(options) {
     await verify(agentReviewer, roleNames.agentReviewer);
     nextRoles = { ...nextRoles, agentReviewer };
   }
+  for (const [key, role] of [["fleetGateway", roleNames.fleetGateway], ["fleetOwner", roleNames.fleetOwner]]) {
+    if (!missing.includes(role)) continue;
+    const configuration = validatePrivatePostgresConfiguration({ ...oldRoles.web,
+      username: role, password: passwords[role] });
+    await verify(configuration, role);
+    nextRoles = { ...nextRoles, [key]: configuration };
+  }
   if (missing.includes(bootstrapRoles.workIntake)) {
     const database = validatePrivatePostgresConfiguration({ ...oldRoles.web,
       username: bootstrapRoles.workIntake, password: passwords[bootstrapRoles.workIntake] });
@@ -738,6 +783,10 @@ export async function finishMacLocalDatabaseUpgradeV1(options) {
     await writePrivate(join(configRoot, "work-intake-server.json"), `${JSON.stringify(nextWorkIntake)}\n`);
   }
   return { finished: true, mainCommit };
+}
+
+export function finishMacLocalDatabaseUpgradeV1(options) {
+  return serializeUpgradeHandoffV1(() => finishMacLocalDatabaseUpgradeInnerV1(options));
 }
 
 /** The protected `mac-local.json` record the provisioner writes. Pure: it
@@ -815,7 +864,7 @@ export async function provisionMacLocalDatabaseV1(options) {
   const role = username => Object.freeze({ ...database, username, password: allPasswords[Object.keys(roleNames).find(key => roleNames[key] === username)] });
   const roles = captureMacLocalDatabaseRolesV1({ schema: MAC_LOCAL_DATABASE_ROLES_V1, web: role(roleNames.web), coordinator: role(roleNames.coordinator),
     results: role(roleNames.results), publisher: role(roleNames.publisher), agentReviewer: role(roleNames.agentReviewer),
-    queueWorker: role(roleNames.queueWorker) });
+    queueWorker: role(roleNames.queueWorker), fleetGateway: role(roleNames.fleetGateway), fleetOwner: role(roleNames.fleetOwner) });
   const ownerCode = await privateText(join(configRoot, "owner-sign-in.txt"), newPassword);
   const macLocal = captureProvisionedMacLocalConfigurationV1({ database, ownerCode, workers, workIntakeProjectIds });
   const clientRoot = join(configRoot, "work-intake-clients");

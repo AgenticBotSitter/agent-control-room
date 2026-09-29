@@ -16,6 +16,8 @@ export type MacLocalDatabaseRolesV1 = Readonly<{
   publisher: PrivatePostgresConfiguration;
   agentReviewer: PrivatePostgresConfiguration;
   queueWorker: PrivatePostgresConfiguration;
+  fleetGateway?: PrivatePostgresConfiguration;
+  fleetOwner?: PrivatePostgresConfiguration;
 }>;
 
 const invalid = (): never => { throw new Error("mac_local_database_roles_invalid"); };
@@ -33,19 +35,29 @@ export function captureMacLocalDatabaseRolesV1(value: unknown): MacLocalDatabase
     if (!value || typeof value !== "object" || Array.isArray(value) || Object.getPrototypeOf(value) !== Object.prototype)
       return invalid();
     const input = value as Record<string, unknown>;
-    const names = ["schema", "web", "coordinator", "results", "publisher", "agentReviewer", "queueWorker"];
-    if (Object.keys(input).length !== names.length || names.some(name => !(name in input))
-      || Object.keys(input).some(name => !names.includes(name)) || input.schema !== MAC_LOCAL_DATABASE_ROLES_V1) return invalid();
+    const requiredNames = ["schema", "web", "coordinator", "results", "publisher", "agentReviewer", "queueWorker"];
+    const names = [...requiredNames, "fleetGateway", "fleetOwner"];
+    if (requiredNames.some(name => !(name in input)) || Object.keys(input).some(name => !names.includes(name))
+      || input.schema !== MAC_LOCAL_DATABASE_ROLES_V1
+      || (Object.hasOwn(input, "fleetGateway") !== Object.hasOwn(input, "fleetOwner"))
+      || (Object.hasOwn(input, "fleetGateway") && (input.fleetGateway === undefined || input.fleetOwner === undefined)))
+      return invalid();
     const web = validatePrivatePostgresConfiguration(input.web as PrivatePostgresConfiguration);
     const coordinator = validatePrivatePostgresConfiguration(input.coordinator as PrivatePostgresConfiguration);
     const results = validatePrivatePostgresConfiguration(input.results as PrivatePostgresConfiguration);
     const publisher = validatePrivatePostgresConfiguration(input.publisher as PrivatePostgresConfiguration);
     const agentReviewer = validatePrivatePostgresConfiguration(input.agentReviewer as PrivatePostgresConfiguration);
     const queueWorker = validatePrivatePostgresConfiguration(input.queueWorker as PrivatePostgresConfiguration);
-    const configurations = [web, coordinator, results, publisher, agentReviewer, queueWorker];
+    const fleetGateway = input.fleetGateway === undefined ? undefined
+      : validatePrivatePostgresConfiguration(input.fleetGateway as PrivatePostgresConfiguration);
+    const fleetOwner = input.fleetOwner === undefined ? undefined
+      : validatePrivatePostgresConfiguration(input.fleetOwner as PrivatePostgresConfiguration);
+    const configurations = [web, coordinator, results, publisher, agentReviewer, queueWorker,
+      ...(fleetGateway && fleetOwner ? [fleetGateway, fleetOwner] : [])];
     if (new Set(configurations.map(endpointDigest)).size !== 1
       || new Set(configurations.map(configuration => configuration.username)).size !== configurations.length)
       return invalid();
-    return Object.freeze({ schema: MAC_LOCAL_DATABASE_ROLES_V1, web, coordinator, results, publisher, agentReviewer, queueWorker });
+    return Object.freeze({ schema: MAC_LOCAL_DATABASE_ROLES_V1, web, coordinator, results, publisher, agentReviewer,
+      queueWorker, ...(fleetGateway && fleetOwner ? { fleetGateway, fleetOwner } : {}) });
   } catch { return invalid(); }
 }
