@@ -13,7 +13,7 @@ export function ProductConfigurationProvider({ children }: { children: ReactNode
   const runtime = useLocalRuntime();
   const [configuration, setConfiguration] = useState<ProductConfigurationState>();
   useEffect(() => {
-    if (runtime.mode !== "hosted") return;
+    if (runtime.mode === "checking") return;
     const controller = new AbortController();
     void (async () => {
       try {

@@ -10,7 +10,7 @@ const materialSchema = z.object({
   schema: z.literal("control-room.pipeline-build-publication-authority/v1"),
   deliveryDigest: digest,
   tenantId: id, projectId: id, sourceJobId: id, executionJobId: id, attemptId: id, runId: id,
-  artifactId: id, resultRevision: z.number().int().positive(),
+  artifactId: id, resultRevision: z.number().int().nonnegative(),
   pipelineRunId: id, stageOrdinal: z.number().int().nonnegative(), stageRecordDigest: digest,
   workerId: id, model: z.string().min(1).max(180), effort: z.string().min(1).max(80),
   allowedPaths: z.array(z.string().min(1).max(1024)).min(1).max(100),

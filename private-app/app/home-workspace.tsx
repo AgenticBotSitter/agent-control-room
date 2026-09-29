@@ -20,6 +20,7 @@ import { localWorkerStateLabel, useLocalRuntime, type LocalStatus } from "./loca
 import { useVisiblePolling } from "./use-visible-polling";
 import { OperationsControlPanel } from "./operations-control";
 import { StateChip, LoadingState, EmptyState, UnavailableState, PanelHeading, PrivateCount, workerChipToneV1 } from "./owner-ui";
+import { UpdateCandidatesHome } from "./update-candidates-home";
 
 export type WorkerRead = PrivateConnectionSnapshot | { source: "local"; value: LocalStatus };
 export function isLocalWorkerRead(value: WorkerRead): value is { source: "local"; value: LocalStatus } {
@@ -108,6 +109,8 @@ export function HomeDashboard({ data }: { data: HomeDashboardState }) {
         ? <details><summary>Details</summary><p className="private-note">This reflects a checked page of saved task attention. It is not a fleet-wide all-clear.</p></details> : null}
       <a className="private-action-link" href="/needs-me">Open Action Inbox</a>
     </section>
+
+    <UpdateCandidatesHome />
 
     <section className="private-panel" aria-labelledby="home-active"><PanelHeading id="home-active">Running work
       {data.activity.state === "ready" ? <PrivateCount value={data.activity.value.active.length} /> : null}</PanelHeading>

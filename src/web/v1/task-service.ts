@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { newsResearchTaskDraft } from "./news-research-draft";
 import { parseNewsWorkOrderProposalV1 } from "../../project-adapters/news/v1/proposal";
+import { PostgresNewsTaskProposalLinksV1 } from "../../project-adapters/news/v1/task-proposal-links";
 import type { DatabaseClient, DatabaseSession } from "../../persistence/database";
 import { CanonicalStore, type ProposedWorkBundle } from "../../persistence/canonical-store";
 import { DOMAIN_CONTRACT_VERSION, requestRecordSchema, workflowRecordSchema, jobRecordSchema,
@@ -42,9 +43,11 @@ import { readSavedTaskPlansInSessionV1, readTaskRevisionLinksV1, savedTaskPlanPr
   type SavedTaskPlanRowV1 } from "./task-execution-planner";
 import { issueTaskFileAccessV1, verifyTaskFileAccessV1 } from "./task-file-access";
 import { projectTaskDisplayStateV1 } from "./task-display-state";
+import { deriveProjectEventIntegrityKeyV1, ProjectEventStoreV1, TaskProjectEventWriterV1 } from "../../project-events/v1";
 import { costForUsageV1, rollupUsageGroupsV1, usageMeasurementSchemaV1, usagePriceTableSchemaV1,
   type UsagePriceTableV1, type UsageRollupV1 } from "../../usage/v1/usage-cost";
 import type { HarnessRunEventV1, HarnessRunV1 } from "../../harness/v1/types";
+import type { ProductConfigurationV1 } from "../../config/v1/product-configuration";
 
 /** Joins existing stores to the caller-owned session transaction. No nested BEGIN/COMMIT and no
  * new authority: this closure stays inside authenticated(). The outer freshness check owns commit. */
@@ -88,6 +91,10 @@ export interface WebTaskKeys {
   taskPlanIntegrityKey?: Uint8Array;
   harnessIntegrityKey?: Uint8Array;
   ideaIntegrityKey?: Uint8Array;
+  /** Retained-news provenance key. Without it the news-to-task endpoint is unavailable. */
+  newsIntegrityKey?: Uint8Array;
+  /** Trusted optional-module configuration, captured at process startup. */
+  productConfiguration?: Readonly<ProductConfigurationV1>;
   results?: NativeResultReadConfiguration;
   reviews?: { integrityKey: Uint8Array; checkpoints: AwaitableRollbackCheckpointStoreV1 };
   ownerReviews?: WebTaskReviewConfiguration;
@@ -124,10 +131,14 @@ export class WebTaskService {
   private readonly taskPlanIntegrityKey?: Uint8Array;
   private readonly usagePriceTable?: UsagePriceTableV1;
   private readonly fileAccessKey?: Uint8Array;
+  private readonly projectEvents?: TaskProjectEventWriterV1;
+  private readonly newsIntegrityKey?: Uint8Array;
+  private readonly productConfiguration?: Readonly<ProductConfigurationV1>;
   constructor(private readonly db: DatabaseClient, private readonly scope: { tenantId: string; workspaceId: string },
     private readonly clock: () => number = Date.now, keys?: WebTaskKeys) {
     this.authority = new WebSessionAuthority(db, scope, clock, "task");
     this.modelCatalog = keys?.modelCatalog;
+    this.productConfiguration = keys?.productConfiguration;
     this.usagePriceTable = keys?.usagePriceTable ? usagePriceTableSchemaV1.parse(keys.usagePriceTable) : undefined;
     if (keys?.taskPlanIntegrityKey !== undefined) {
       if (!(keys.taskPlanIntegrityKey instanceof Uint8Array) || keys.taskPlanIntegrityKey.length !== 32)
@@ -145,10 +156,16 @@ export class WebTaskService {
     if (keys?.ownerReviews && (!keys.results || !keys.reviews || !(keys.ownerReviews.integrityKey instanceof Uint8Array)
       || keys.ownerReviews.integrityKey.length !== 32 || keys.reviews.integrityKey.length !== 32
       || keys.ownerReviews.integrityKey.some((byte, index) => byte !== keys.reviews!.integrityKey[index]))) throw new Error("task_key_invalid");
-    this.projects = new WebProjectService(db, scope, clock, keys?.ideaIntegrityKey);
+    this.projects = new WebProjectService(db, scope, clock, keys?.ideaIntegrityKey, undefined, this.productConfiguration);
+    if (keys?.newsIntegrityKey !== undefined) {
+      if (!(keys.newsIntegrityKey instanceof Uint8Array) || keys.newsIntegrityKey.length !== 32) throw new Error("task_key_invalid");
+      this.newsIntegrityKey = Uint8Array.from(keys.newsIntegrityKey);
+    }
     if (keys?.harnessIntegrityKey !== undefined) {
       if (!(keys.harnessIntegrityKey instanceof Uint8Array) || keys.harnessIntegrityKey.length !== 32) throw new Error("task_key_invalid");
       this.harnessKey = new Uint8Array(keys.harnessIntegrityKey);
+      this.projectEvents = new TaskProjectEventWriterV1(new ProjectEventStoreV1(db,
+        deriveProjectEventIntegrityKeyV1(this.harnessKey), () => new Date(this.clock()).toISOString()));
     }
     if (keys?.results) {
       if (!this.harnessKey) throw new Error("task_key_invalid");
@@ -257,9 +274,23 @@ export class WebTaskService {
     catch { throw new WebAccessError("invalid_request"); }
     if (proposal.tenantId !== this.scope.tenantId || proposal.workspaceId !== this.scope.workspaceId
       || proposal.projectId !== projectId) throw new WebAccessError("invalid_request");
+    const newsIntegrityKey = this.newsIntegrityKey;
+    if (!newsIntegrityKey) throw new WebAccessError("not_found");
     let draft: ReturnType<typeof newsResearchTaskDraft>;
     try { draft = newsResearchTaskDraft(proposal); } catch { throw new WebAccessError("invalid_request"); }
-    return this.propose(identity, projectId, draft, key);
+    return this.authority.authenticated(identity, async (tx, actor) => {
+      const project = await this.projects.getViewInSession(tx, actor, projectId);
+      if (this.productConfiguration && !project.presentation?.availableModules.includes("news")) throw new WebAccessError("not_found");
+      const result = await this.proposeWithDependenciesInSession(tx, actor, projectId, draft, key, []);
+      try {
+        await new PostgresNewsTaskProposalLinksV1(joined(tx), { ...this.scope, projectId }, newsIntegrityKey)
+          .saveInSession(tx, result.receipt.jobId, proposal, actor.now);
+      } catch (error) {
+        if (error instanceof Error && error.message === "news_task_proposal_link_story_not_found") throw new WebAccessError("not_found");
+        throw error;
+      }
+      return result;
+    });
   }
 
   async propose(identity: VerifiedWebIdentity, projectId: string, value: unknown, key: string) {
@@ -361,6 +392,8 @@ export class WebTaskService {
         safeMetadata: { inputDigest: bundle.job.inputDigest, state: "proposed" } });
       await tx.query(`INSERT INTO control_web_task_commands(tenant_id,identity_id,idempotency_key,project_id,job_id,request_digest,result,occurred_at)
         VALUES($1,$2,$3,$4,$5,$6,$7::jsonb,$8)`, [this.scope.tenantId, actor.id, key, projectId, jobId, digest, JSON.stringify(receipt), actor.now]);
+      if (this.projectEvents) await this.projectEvents.appendInSession(tx, { ...this.scope, projectId, subjectId: jobId,
+        action: "task_created", sourceId: jobId, sourceVersion: "task-created-v1", occurredAt: actor.now });
       return { receipt, replayed: false };
   }
 

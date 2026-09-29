@@ -46,8 +46,16 @@ export type WorkBatchQueueAcceptedResultProofV1 = Readonly<{
   contentHash: string; revision: number;
 }>;
 /** Protected host-generation authority. Exact-worker admission is unavailable
- * without this current readiness/model-policy recheck. */
+ * without this current readiness/model-policy recheck.
+ *
+ * Transaction-bound: every accepted-result operation runs on the caller's own
+ * session. Completion Gate's acceptedContextInSession locks the tenant state
+ * there, and the lock is held until the caller commits, so a concurrent review,
+ * verification or revision cannot supersede the accepted target between the
+ * proof and the caller's write. Every mutation and currentness check must use
+ * this form, on a login that can read the coordinator's lifecycle tables. */
 export type WorkBatchQueueAdmissionAuthorityV1 = Readonly<{
+  binding?: "caller_transaction";
   assertCurrent(selection: WorkBatchQueueAdmissionSelectionV1): boolean | Promise<boolean>;
   isAcceptedResultCurrent(tx: DatabaseSession,
     selection: WorkBatchQueueAcceptedResultSelectionV1): boolean | Promise<boolean>;
@@ -61,6 +69,22 @@ export type WorkBatchQueueAdmissionAuthorityV1 = Readonly<{
     selection: WorkBatchQueueAcceptedResultSelectionV1): WorkBatchQueueAcceptedResultProofV1 | null
       | Promise<WorkBatchQueueAcceptedResultProofV1 | null>;
 }>;
+/** Presentation-only accepted-result view for the private-web login, which may
+ * not read the coordinator's lifecycle tables. The task coordinator resolves
+ * each answer in its own short transaction on its own pool and returns only the
+ * minimal proof. That transaction has committed, and its Completion Gate lock is
+ * released, before the caller sees the answer, so it is a snapshot: it may
+ * describe a page or count a queue, but it must never gate a durable write. It
+ * takes no session, and its binding cannot satisfy the transaction-bound type. */
+export type WorkBatchQueueAcceptedResultViewV1 = Readonly<{
+  binding: "coordinator_snapshot";
+  assertCurrent(selection: WorkBatchQueueAdmissionSelectionV1): boolean | Promise<boolean>;
+  isAcceptedResultCurrent(selection: WorkBatchQueueAcceptedResultSelectionV1): Promise<boolean>;
+  acceptedResultProof(selection: WorkBatchQueueAcceptedResultSelectionV1):
+    Promise<WorkBatchQueueAcceptedResultProofV1 | null>;
+}>;
+/** Either form, for a read-side consumer that only presents or counts. */
+export type WorkBatchQueueAcceptedResultPortV1 = WorkBatchQueueAdmissionAuthorityV1 | WorkBatchQueueAcceptedResultViewV1;
 
 const json = (value: unknown) => JSON.stringify(value);
 const iso = (value: string | Date) => new Date(value).toISOString();
@@ -71,11 +95,15 @@ export class WorkBatchOwnerServiceV1 {
   readonly #key: Uint8Array;
   readonly #authority: WebSessionAuthority;
   readonly #queueCatalog: WorkBatchQueueCatalogV1;
-  readonly #queueAdmissionAuthority?: WorkBatchQueueAdmissionAuthorityV1;
+  readonly #queueAdmissionAuthority?: WorkBatchQueueAcceptedResultPortV1;
+  // The web process holds the coordinator snapshot. Its accepted results feed
+  // the queue state it presents and the approval-time queue-depth count; the
+  // durable dependency gate is the coordinator's transaction-bound assignment
+  // check, not this count.
   constructor(private readonly db: DatabaseClient, private readonly tasks: WebTaskService,
     private readonly scope: { tenantId: string; workspaceId: string }, integrityKey: Uint8Array,
     private readonly clock: () => number = Date.now, queueCatalog: WorkBatchQueueCatalogV1 = [],
-    queueAdmissionAuthority?: WorkBatchQueueAdmissionAuthorityV1) {
+    queueAdmissionAuthority?: WorkBatchQueueAcceptedResultPortV1) {
     if (!(integrityKey instanceof Uint8Array) || integrityKey.length !== 32) throw new Error("work_batch_owner_configuration_invalid");
     this.#key = Uint8Array.from(integrityKey);
     this.#authority = new WebSessionAuthority(db, scope, clock, "work_batch");
@@ -83,10 +111,15 @@ export class WorkBatchOwnerServiceV1 {
     if (queueAdmissionAuthority && (typeof queueAdmissionAuthority.assertCurrent !== "function"
       || typeof queueAdmissionAuthority.isAcceptedResultCurrent !== "function"))
       throw new Error("work_batch_owner_configuration_invalid");
-    this.#queueAdmissionAuthority = queueAdmissionAuthority ? Object.freeze({
-      assertCurrent: queueAdmissionAuthority.assertCurrent.bind(queueAdmissionAuthority),
-      isAcceptedResultCurrent: queueAdmissionAuthority.isAcceptedResultCurrent.bind(queueAdmissionAuthority),
-    }) : undefined;
+    this.#queueAdmissionAuthority = !queueAdmissionAuthority ? undefined
+      : queueAdmissionAuthority.binding === "coordinator_snapshot" ? Object.freeze({ binding: "coordinator_snapshot" as const,
+        assertCurrent: queueAdmissionAuthority.assertCurrent.bind(queueAdmissionAuthority),
+        isAcceptedResultCurrent: queueAdmissionAuthority.isAcceptedResultCurrent.bind(queueAdmissionAuthority),
+        acceptedResultProof: queueAdmissionAuthority.acceptedResultProof.bind(queueAdmissionAuthority) })
+      : Object.freeze({
+        assertCurrent: queueAdmissionAuthority.assertCurrent.bind(queueAdmissionAuthority),
+        isAcceptedResultCurrent: queueAdmissionAuthority.isAcceptedResultCurrent.bind(queueAdmissionAuthority),
+      });
   }
 
   #verifyAdmission(row: AdmissionRow) {
@@ -105,9 +138,12 @@ export class WorkBatchOwnerServiceV1 {
   }
 
   async #acceptedResult(tx: DatabaseSession, selection: WorkBatchQueueAcceptedResultSelectionV1) {
-    if (!this.#queueAdmissionAuthority) return false;
-    try { return await this.#queueAdmissionAuthority.isAcceptedResultCurrent(tx, selection) === true; }
-    catch { return false; }
+    const authority = this.#queueAdmissionAuthority;
+    if (!authority) return false;
+    try {
+      return (authority.binding === "coordinator_snapshot" ? await authority.isAcceptedResultCurrent(selection)
+        : await authority.isAcceptedResultCurrent(tx, selection)) === true;
+    } catch { return false; }
   }
 
   async #queueState(tx: DatabaseSession, row: AdmissionRow) {

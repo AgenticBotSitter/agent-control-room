@@ -5,7 +5,11 @@ import type { WorkBatchQueueSelectionAuthorityV1, WorkBatchQueueSelectionV1 } fr
 import { PipelineAdvanceErrorV1, type PipelineAdvanceCapabilityV1, type PipelineAdvanceSelectionV1,
   type PipelineDelegationReceiptV1, type PipelineStageResolutionV1 } from "./advance-service";
 
+// Transaction-bound only: the advance commits its queue intent in the same
+// transaction whose Completion Gate lock the proof holds. The web's coordinator
+// snapshot (binding "coordinator_snapshot") does not satisfy this type.
 type AcceptedResults = Readonly<{
+  binding?:"caller_transaction";
   isAcceptedResultCurrent(tx:DatabaseSession,selection:{sourceJobId:string;workerId:string;nodeId:string}):Promise<boolean>;
   acceptedResultProof(tx:DatabaseSession,selection:{sourceJobId:string;workerId:string;nodeId:string}):Promise<Readonly<{
     executionJobId:string

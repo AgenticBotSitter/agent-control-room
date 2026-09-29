@@ -1,0 +1,16 @@
+import webpush from "web-push";
+import type { OwnerNotificationChannelV1, OwnerPushPayloadV1, OwnerPushSubscriptionRecordV1, OwnerWebPushConfigV1 } from "./types";
+import { ownerPushPayloadIsMinimalV1 } from "./policy";
+
+export function createWebPushChannelV1(config: OwnerWebPushConfigV1): OwnerNotificationChannelV1 {
+  if (!/^mailto:[^\s@]+@[^\s@]+$/.test(config.subject) || !/^[A-Za-z0-9_-]{80,100}$/.test(config.publicKey)
+    || !/^[A-Za-z0-9_-]{40,100}$/.test(config.privateKey)) throw new Error("web_push_config_invalid");
+  webpush.setVapidDetails(config.subject, config.publicKey, config.privateKey);
+  return Object.freeze({ kind: "web-push", async send(subscription: OwnerPushSubscriptionRecordV1, payload: OwnerPushPayloadV1) {
+    if (!ownerPushPayloadIsMinimalV1(payload)) throw new Error("web_push_payload_refused");
+    const response = await webpush.sendNotification({ endpoint: subscription.endpoint,
+      expirationTime: subscription.expiresAt ? Date.parse(subscription.expiresAt) : null,
+      keys: { p256dh: subscription.p256dh, auth: subscription.auth } }, JSON.stringify(payload), { TTL: 3600, urgency: "normal", topic: payload.tag });
+    return { statusCode: response.statusCode };
+  } });
+}

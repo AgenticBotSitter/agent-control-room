@@ -27,7 +27,7 @@ GRANT SELECT ON control_identities, control_role_grants, workspaces, control_web
   control_task_execution_plans,
   control_artifact_manifests, control_native_artifact_receipts, control_completion_gate_records,
   control_completion_gate_integrity, control_web_task_review_commands, control_native_review_plans,
-  control_news_story_versions, control_news_source_observations, control_news_source_settings, control_news_story_archives, control_news_article_details, control_idea_sessions, control_idea_contributions,
+  control_news_story_versions, control_news_source_observations, control_news_source_settings, control_news_story_archives, control_news_article_details, control_news_task_proposal_links, control_idea_sessions, control_idea_contributions,
   control_idea_syntheses, control_idea_decisions, control_idea_bot_run_events, control_idea_canonical_task_sessions,
   control_idea_canonical_task_links, control_policy_decisions,
   control_project_coordinator_heads, control_project_coordination_proposals,
@@ -40,11 +40,18 @@ GRANT SELECT ON pipeline_templates, pipeline_runs, pipeline_stage_runs,
   pipeline_ordered_stage_runs, pipeline_unattended_transitions,
   control_pipeline_build_publications, control_codex_result_publications
   TO control_room_private_web;
+GRANT SELECT ON control_improvement_requests, control_update_candidates,
+  control_update_candidate_decisions TO control_room_private_web;
 GRANT SELECT ON work_batch_queue_admissions, work_batch_effective_queue_admissions,
   work_batch_agent_queue_heads, control_native_task_queue, control_job_dependencies TO control_room_private_web;
 GRANT SELECT ON control_task_model_selections, control_task_declared_scopes,
   control_assignment_lease_scopes TO control_room_private_web;
 GRANT SELECT ON control_durable_result_write_reservations TO control_room_private_web;
+-- Owner Web Push: browser subscriptions and delivery reservations only. This
+-- does not grant task, approval, scheduler, or configuration authority.
+GRANT SELECT, INSERT, DELETE ON owner_web_push_subscriptions TO control_room_private_web;
+GRANT SELECT, INSERT ON owner_web_push_deliveries TO control_room_private_web;
+GRANT UPDATE (state, status_code, completed_at) ON owner_web_push_deliveries TO control_room_private_web;
 -- Per-project settings (eligible worker kinds, concurrency cap, defaults): the
 -- web role reads them both for the owner-facing Settings tab and to enforce
 -- eligibility/concurrency during assignment, and writes them only through the
@@ -68,12 +75,18 @@ GRANT INSERT ON control_web_sessions, adapter_registry, projects, control_manual
   control_requests, control_workflows, control_jobs, control_web_task_commands,
   control_idea_canonical_task_sessions, control_idea_canonical_task_links,
   control_completion_gate_records, control_web_task_review_commands, control_news_source_settings, control_news_story_archives,
+  control_news_task_proposal_links,
   control_policy_decisions, control_project_lifecycle_events,
   control_project_coordinator_heads, control_project_delegation_policies TO control_room_private_web;
 GRANT INSERT ON control_task_model_selections, control_task_declared_scopes TO control_room_private_web;
+GRANT INSERT ON control_project_event_stream_heads, control_project_events TO control_room_private_web;
+GRANT UPDATE (last_sequence,last_event_digest,head_auth_tag,updated_at)
+  ON control_project_event_stream_heads TO control_room_private_web;
 GRANT INSERT ON work_batch_revisions, work_batch_items TO control_room_private_web;
 GRANT INSERT ON work_batch_queue_admissions, work_batch_agent_queue_heads TO control_room_private_web;
 GRANT INSERT ON pipeline_templates, pipeline_runs, pipeline_stage_runs TO control_room_private_web;
+GRANT INSERT ON control_improvement_requests, control_update_candidate_decisions TO control_room_private_web;
+GRANT UPDATE (state, version, decided_at) ON control_update_candidates TO control_room_private_web;
 -- Owner-authored dependent proposals (pipeline stages, approved batch items)
 -- write the edge between two jobs this role itself inserts. Append-only: no
 -- UPDATE or DELETE, and SELECT stays the three coordination-page columns.

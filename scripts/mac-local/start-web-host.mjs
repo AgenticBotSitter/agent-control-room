@@ -59,15 +59,17 @@ export async function startMacLocalWebHost(input, runtime = {}) {
     load(new URL("index.js", releaseRoot).href), load(new URL("workIntakePrivateService.js", releaseRoot).href),
   ]);
   if (typeof hostModule.createMacLocalProtectedHostV1 !== "function" || typeof loaderModule.loadMacLocalProtectedConfigurationFromRootV1 !== "function"
+    || typeof loaderModule.loadOwnerWebPushConfigFromRootV1 !== "function"
     || typeof postgresModule.createPrivatePostgresDatabase !== "function" || typeof servingModule.loadPrivateClientAssets !== "function"
     || typeof rendererModule.default !== "function"
     || typeof loaderModule.loadWorkIntakeServerConfigurationFromRootV1 !== "function"
     || typeof intakeModule.prepareWorkIntakePrivateServiceV1 !== "function")
     throw new Error("mac_local_web_host_release_invalid");
   const assets = await servingModule.loadPrivateClientAssets(fileURLToPath(new URL("../../dist-vps/client", import.meta.url)));
-  const [configuration,installed] = await Promise.all([
+  const [configuration,installed,ownerWebPush] = await Promise.all([
     loaderModule.loadMacLocalProtectedConfigurationFromRootV1(input.protectedRoot),
-    loaderModule.loadWorkIntakeServerConfigurationFromRootV1(input.protectedRoot)]);
+    loaderModule.loadWorkIntakeServerConfigurationFromRootV1(input.protectedRoot),
+    loaderModule.loadOwnerWebPushConfigFromRootV1(input.protectedRoot)]);
   verifyIntakeRoster(configuration,installed);
   const host = hostModule.createMacLocalProtectedHostV1({
     loadConfiguration: async () => configuration,
@@ -75,6 +77,7 @@ export async function startMacLocalWebHost(input, runtime = {}) {
     verifyModelPolicy: runtime.verifyModelPolicy ?? verifyPinnedMacModelPolicy,
     openDatabase: postgresModule.createPrivatePostgresDatabase,
     ...(installed ? { workBatchIntegrityKey: Uint8Array.from(Buffer.from(installed.integrityKey, "base64url")) } : {}),
+    ...(ownerWebPush ? { ownerWebPush } : {}),
     assets, render: rendererModule.default,
   });
   return startHostWithOptionalIntake(host, installed, intakeModule);
@@ -124,6 +127,7 @@ export async function startMacLocalTaskHost(input, runtime = {}) {
     load(new URL("workIntakePrivateService.js", releaseRoot).href),
   ]);
   if (typeof hostModule.createMacLocalProtectedHostV1 !== "function" || typeof loaderModule.loadMacLocalProtectedConfigurationFromRootV1 !== "function"
+    || typeof loaderModule.loadOwnerWebPushConfigFromRootV1 !== "function"
     || typeof loaderModule.loadMacLocalDatabaseRolesFromRootV1 !== "function" || typeof providerModule.loadMacLocalTaskProviderFromRootV1 !== "function"
     || typeof providerModule.requireMacLocalThreeAgentReadinessV1 !== "function"
     || typeof postgresModule.createPrivatePostgresDatabase !== "function" || typeof queueModule.createInstalledNativeQueueFactories !== "function"
@@ -131,11 +135,12 @@ export async function startMacLocalTaskHost(input, runtime = {}) {
     || typeof rendererModule.default !== "function"
     || typeof loaderModule.loadWorkIntakeServerConfigurationFromRootV1 !== "function"
     || typeof intakeModule.prepareWorkIntakePrivateServiceV1 !== "function") throw new Error("mac_local_web_host_release_invalid");
-  const [assets, provider, installed, configuration] = await Promise.all([
+  const [assets, provider, installed, configuration, ownerWebPush] = await Promise.all([
     servingModule.loadPrivateClientAssets(fileURLToPath(new URL("../../dist-vps/client", import.meta.url))),
     providerModule.loadMacLocalTaskProviderFromRootV1(input.protectedRoot),
     loaderModule.loadWorkIntakeServerConfigurationFromRootV1(input.protectedRoot),
     loaderModule.loadMacLocalProtectedConfigurationFromRootV1(input.protectedRoot),
+    loaderModule.loadOwnerWebPushConfigFromRootV1(input.protectedRoot),
   ]);
   verifyIntakeRoster(configuration,installed);
   const host = hostModule.createMacLocalProtectedHostV1({
@@ -145,6 +150,7 @@ export async function startMacLocalTaskHost(input, runtime = {}) {
     verifyModelPolicy: runtime.verifyModelPolicy ?? verifyPinnedMacModelPolicy,
     openDatabase: postgresModule.createPrivatePostgresDatabase,
     ...(installed ? { workBatchIntegrityKey: Uint8Array.from(Buffer.from(installed.integrityKey, "base64url")) } : {}),
+    ...(ownerWebPush ? { ownerWebPush } : {}),
     createTaskApplication: async hostInput => {
       providerModule.requireMacLocalThreeAgentReadinessV1(provider, hostInput.workerReadiness);
       return provider.createTaskApplication({ ...hostInput, protectedRoot: input.protectedRoot });

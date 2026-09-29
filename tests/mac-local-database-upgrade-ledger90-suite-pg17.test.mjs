@@ -22,7 +22,7 @@ import assert from "node:assert/strict";
 import { after, before, test } from "node:test";
 import { execFileSync, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { appendFile, cp, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -33,6 +33,7 @@ import { inspectMacDatabaseUpgradeV1, macDatabaseUpgradePlanDigestV1 } from
 import { macDatabaseUpgradePlanIsEmptyV1 } from "../scripts/mac-local/database-upgrade-vps-step.mjs";
 import { postgresScramVerifierV1 } from "../scripts/mac-local/database-upgrade-scram.mjs";
 import { macRolePlan } from "../scripts/mac-local/database-upgrade-grants.mjs";
+import { databaseRoleManifestV1 } from "../scripts/mac-local/database-role-manifest.mjs";
 import { provisionMacLocalNarrowRolesV1 } from "../scripts/mac-local/narrow-role-provision.mjs";
 import { createClusterTeardown } from "../scripts/dev/postgres-cluster-lifecycle.mjs";
 import { PG_BIN, needsPg } from "./helpers/disposable-postgres-cluster.ts";
@@ -42,9 +43,42 @@ const skip = needsPg;
 const legacyMacLogins = ["control_room_web", "control_room_coordinator", "control_room_results",
   "control_room_queue_worker"];
 const legacyPassword = login => `p${login.replaceAll("_", "")}`.padEnd(40, "x");
-const publisherPassword = "q".repeat(40), intakePassword = "w".repeat(40);
-const bothLoginCodes = JSON.stringify({ control_room_publisher: postgresScramVerifierV1(publisherPassword),
-  control_room_work_intake_agent: postgresScramVerifierV1(intakePassword) });
+
+// Every count this suite asserts about a plan is DERIVED from the role manifest
+// and the migration ledger, never written out as a literal. The manifest is the
+// only list of roles the upgrade may create, so the number of new logins it
+// plans is exactly the number of its `newLogin` entries that the ledger-90
+// fixture does not already have — which changes whenever a slice adds a login
+// (S5's agent reviewer did), and a hard-coded count turns that into a red suite
+// that has nothing to do with what is being tested. Deriving it also makes the
+// assertion stronger: a manifest whose new logins were all already present
+// would plan none, and this suite would then require no code at all.
+const newLoginPassword = login => `${login.slice("control_room_".length)}pw`.padEnd(40, "x");
+const newLoginPasswords = Object.fromEntries(
+  Object.entries(databaseRoleManifestV1.logins).filter(([, entry]) => entry.newLogin)
+    .map(([login]) => [login, newLoginPassword(login)]));
+const newLoginCodes = Object.fromEntries(Object.entries(newLoginPasswords)
+  .map(([login, secret]) => [login, postgresScramVerifierV1(secret)]));
+// A ledger-90 database predates every new login, so the plan is expected to
+// create all of them. Naming the one it would not is the guard that keeps this
+// derivation honest if the fixture ever starts dropping a role.
+const expectedNewLogins = Object.keys(newLoginCodes).sort();
+const bothLoginCodes = JSON.stringify(newLoginCodes);
+// The plan must offer a code prompt: a manifest change that left the suite with
+// nothing to type would make every refusal below pass for the wrong reason.
+assert.ok(expectedNewLogins.length > 0, "the ledger-90 fixture must be missing at least one new login");
+
+// The pending suffix, derived the same way `ledger90Fixture` builds the applied
+// prefix: everything the ledger runs after 0090, plus the one fixture migration
+// a scenario appends.
+const ledgerEntries = (limit) => {
+  const ledger = JSON.parse(readFileSync(join(repoRoot, "deploy/postgres/migration-ledger.json"), "utf8"));
+  return ledger.entries.filter(entry => (entry.kind ?? "migrate") === "migrate"
+    && (limit === undefined || entry.file > limit));
+};
+const PENDING_AFTER_0090 = ledgerEntries("db/migrations/0091").map(entry => entry.file);
+/** The ledger rows a database holds once every real migration above has run. */
+const APPLIED_AFTER_UPGRADE = ledgerEntries().length;
 const pgExec = (file, args) => execFileSync(join(PG_BIN ?? "", file), args, { encoding: "utf8", timeout: 120_000,
   env: { ...process.env, LANG: "en_US.UTF-8", LC_ALL: "en_US.UTF-8" } });
 const git = (cwd, ...args) => execFileSync("git", ["-C", cwd, ...args], { encoding: "utf8", timeout: 30_000,
@@ -207,10 +241,15 @@ async function checkout(upstream, dest) {
 }
 
 /** Adds one migration file after the real ledger, commits it to `upstream`,
- * and returns an undo function. The statement runs with no side effect on
- * schema, so it is safe to splice after any real migration. */
+ * and returns the path it was written at. The statement runs with no side
+ * effect on schema, so it is safe to splice after any real migration. The
+ * file's number is derived from the ledger head so it always sorts after every
+ * real file: a hard-coded number collides with a real migration the moment the
+ * ledger grows past it, and the applier's own prefix check then refuses the
+ * whole run. */
 async function commitFixtureMigration(upstream, sql) {
-  const file = "db/migrations/0105_test_fixture.sql";
+  const head = ledgerEntries().at(-1).file.slice("db/migrations/".length).split("_")[0];
+  const file = `db/migrations/${String(Number(head) + 1).padStart(4, "0")}_test_fixture.sql`;
   await writeFile(join(upstream, file), sql);
   const ledgerPath = join(upstream, "deploy/postgres/migration-ledger.json");
   const ledger = JSON.parse(await readFile(ledgerPath, "utf8"));
@@ -220,7 +259,7 @@ async function commitFixtureMigration(upstream, sql) {
   await writeFile(ledgerPath, JSON.stringify(ledger));
   git(upstream, "add", "-A");
   git(upstream, "commit", "--quiet", "-m", "add a HEAD+1 test fixture migration");
-  return async () => { git(upstream, "revert", "--quiet", "--no-edit", "HEAD"); };
+  return file;
 }
 
 /** Runs `plan` (read-only, no git check, against repoRoot directly) then,
@@ -266,7 +305,8 @@ test("a wrong code, then the real login code: the upgraded ledger-90 database eq
     const target = socketTarget(shared.cluster);
     const before1 = await inspectMacDatabaseUpgradeV1({ client: shared.client });
     assert.equal(before1.installQueueSchema, true);
-    assert.equal(before1.pendingMigrations.length, 7);
+    assert.deepEqual(before1.pendingMigrations, PENDING_AFTER_0090,
+      "the pending suffix is every migration the ledger runs after 0090, in ledger order");
     assert.ok(before1.createRoles.some(item => item.role === "control_room_publisher"));
     const digest = macDatabaseUpgradePlanDigestV1(before1);
 
@@ -290,8 +330,7 @@ test("a wrong code, then the real login code: the upgraded ledger-90 database eq
     assert.equal(macDatabaseUpgradePlanIsEmptyV1(await inspectMacDatabaseUpgradeV1({ client: shared.client })), true);
     assert.deepEqual(await passwordsOf(), beforePasswords, "the migrator, app, scheduler and four Mac logins keep byte-identical verifiers");
 
-    for (const [login, password] of [["control_room_publisher", publisherPassword],
-      ["control_room_work_intake_agent", intakePassword]]) {
+    for (const [login, password] of Object.entries(newLoginPasswords)) {
       const session = connectTarget(tcp(shared.cluster, login, password));
       await session.connect();
       await session.end();
@@ -342,13 +381,13 @@ test("a second run is nothing to do, and a HEAD+1 fixture migration afterward ne
   assert.equal(applied, false);
 
   const dest = await mkdtemp(join(shared.cluster.root, "co-"));
-  await commitFixtureMigration(shared.upstream, "SELECT 1;\n");
+  const fixtureFile = await commitFixtureMigration(shared.upstream, "SELECT 1;\n");
   const staged = await checkout(shared.upstream, dest);
   const step = await import(pathToFileURL(staged.stepModule).href);
   const remote = await import(pathToFileURL(join(dest, "scripts/mac-local/database-upgrade-remote.mjs")).href);
   const fixturePlan = await step.runMacDatabaseUpgradeVpsStepV1({
     args: ["plan", staged.commit, target, shared.backupRoot, PG_BIN, "2"], write: () => {} });
-  assert.deepEqual(fixturePlan.plan.pendingMigrations, ["db/migrations/0105_test_fixture.sql"]);
+  assert.deepEqual(fixturePlan.plan.pendingMigrations, [fixtureFile]);
   assert.equal(fixturePlan.needsLoginCode, false, "a schema-only migration never asks for a login code");
   const fixtureApplied = await step.runMacDatabaseUpgradeVpsStepV1({
     args: ["apply", staged.commit, target, shared.backupRoot, PG_BIN, "2", fixturePlan.digest],
@@ -371,22 +410,23 @@ test("a real kill between migrations leaves the ledger at the last committed fil
     client = await ledger90Fixture(cluster);
     const target = socketTarget(cluster), root = await backupRoot(cluster);
     const before1 = await inspectMacDatabaseUpgradeV1({ client });
-    assert.equal(before1.pendingMigrations.length, 7);
+    assert.deepEqual(before1.pendingMigrations, PENDING_AFTER_0090);
 
     const upstream = await buildUpstream(cluster.root);
-    // A fixture migration appended after the 7 real ones, whose only statement
-    // blocks on a transaction-scoped advisory lock this test controls. The 7
-    // real files are untouched, so they commit normally; only the 8th (this
-    // one) ever waits.
+    // A fixture migration appended after every real one, whose only statement
+    // blocks on a transaction-scoped advisory lock this test controls. The real
+    // files are untouched, so they commit normally; only the appended one ever
+    // waits, which is the window this test kills in.
+    const realPending = PENDING_AFTER_0090.length;
     const lockKey = 918_273_645;
-    await commitFixtureMigration(upstream, `SELECT pg_advisory_xact_lock(${lockKey});\n`);
+    const fixtureFile = await commitFixtureMigration(upstream, `SELECT pg_advisory_xact_lock(${lockKey});\n`);
     const dest = await mkdtemp(join(cluster.root, "co-"));
     const staged = await checkout(upstream, dest);
     const step = await import(pathToFileURL(staged.stepModule).href);
     const plan = await step.runMacDatabaseUpgradeVpsStepV1({ args: ["plan", staged.commit, target, root, PG_BIN, "2"],
       write: () => {} });
-    assert.deepEqual(plan.plan.pendingMigrations.slice(-1), ["db/migrations/0105_test_fixture.sql"]);
-    assert.equal(plan.plan.pendingMigrations.length, 8);
+    assert.deepEqual(plan.plan.pendingMigrations.slice(-1), [fixtureFile]);
+    assert.equal(plan.plan.pendingMigrations.length, realPending + 1);
 
     const blocker = connectTarget(target);
     await blocker.connect();
@@ -398,24 +438,27 @@ test("a real kill between migrations leaves the ledger at the last committed fil
     child.stdin.end();
     const exited = new Promise(resolveExit => child.on("close", code => resolveExit(code)));
 
+    // Every real migration has committed exactly when the ledger holds the whole
+    // real run; the appended one is still blocked and has not written its row.
+    const committedReal = APPLIED_AFTER_UPGRADE;
     const deadline = Date.now() + 30_000;
     let committed = 0;
     while (Date.now() < deadline) {
       committed = (await blocker.query("SELECT count(*)::int AS n FROM control_room_schema_migrations")).rows[0].n;
-      if (committed >= 97) break;
+      if (committed >= committedReal) break;
       await sleep(20);
     }
-    assert.equal(committed, 97, "all 7 real migrations must commit before the 8th blocks on the advisory lock");
+    assert.equal(committed, committedReal, `all ${realPending} real migrations must commit before the appended one blocks`);
     child.kill("SIGKILL");
     await exited;
     await blocker.query(`SELECT pg_advisory_unlock(${lockKey})`);
     await blocker.end();
 
-    assert.equal((await client.query("SELECT count(*)::int AS n FROM control_room_schema_migrations")).rows[0].n, 97,
+    assert.equal((await client.query("SELECT count(*)::int AS n FROM control_room_schema_migrations")).rows[0].n, committedReal,
       "the fixture migration never committed: the connection dropped mid-transaction and PostgreSQL rolled it back");
     // From the real ledger's point of view — the one every other test and the
-    // actual upgrade tooling reads — all 7 real migrations are done and
-    // nothing about the killed 8th file is visible.
+    // actual upgrade tooling reads — every real migration is done and nothing
+    // about the killed appended file is visible.
     const resumed = await inspectMacDatabaseUpgradeV1({ client });
     assert.deepEqual(resumed.pendingMigrations, [], "ledger is at the last real file, with a clean, resumable state");
     assert.deepEqual(resumed.createRoles, [], "the roles transaction, which ran first, was unaffected by the kill");
@@ -427,7 +470,8 @@ test("a real kill between migrations leaves the ledger at the last committed fil
     assert.equal(resumedApply.plan.needsLoginCode, false, "a resumed run with the roles already made needs no code");
     assert.equal(resumedApply.applied.done, true, JSON.stringify(resumedApply.applied));
     assert.equal(macDatabaseUpgradePlanIsEmptyV1(await inspectMacDatabaseUpgradeV1({ client })), true);
-    assert.doesNotMatch(stderr, new RegExp(publisherPassword.slice(0, 10)), "no secret leaked to stderr on the killed run");
+    for (const secret of Object.values(newLoginPasswords).concat(Object.values(newLoginCodes), [bothLoginCodes]))
+      assert.doesNotMatch(stderr, new RegExp(secret.slice(0, 10)), "no secret leaked to stderr on the killed run");
   });
 
 // ---------------------------------------------------------------------------

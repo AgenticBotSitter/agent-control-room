@@ -389,9 +389,9 @@ test("the real Home panels announce loading politely and a failed read as its ow
   // renders them.
   const loading = documentFor(renderToStaticMarkup(createElement(HomeDashboard, { data: allLoading })));
   const loadingRegions = liveRegions(loading);
-  // Six panels since the "Stuck, blocked or offline" panel joined the
-  // dashboard: it reads the same `connections` state as "Worker status" but
-  // announces its own loading region, same as every other panel here.
+  // Six panels: "Stuck, blocked or offline" shares the `connections` state with
+  // "Worker status". "Update ready" stays hidden until a candidate waits (its
+  // own tests cover it), so its read never adds a loading region to Home.
   assert.equal(loadingRegions.length, 6,
     `every one of the six Home panels is loading and each announces: ${JSON.stringify(loadingRegions)}`);
   for (const region of loadingRegions) {

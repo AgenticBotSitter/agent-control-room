@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { REGISTERED_MODULE_IDS_V1 } from "../../modules/v1/registry";
 
 /**
  * Portable, non-secret product presentation/configuration.  This deliberately
@@ -8,12 +9,19 @@ import { z } from "zod";
  */
 export const PRODUCT_CONFIGURATION_SCHEMA_V1 = "control-room.product-configuration/v1" as const;
 
-export const PRODUCT_CONFIGURATION_MODULES_V1 = ["ideaLab", "news", "sessionObservations"] as const;
+/** Backward-compatible name; canonical ids and ordering now come from the module registry. */
+export const PRODUCT_CONFIGURATION_MODULES_V1 = REGISTERED_MODULE_IDS_V1;
 type ProductConfigurationModuleV1 = typeof PRODUCT_CONFIGURATION_MODULES_V1[number];
 
 const templateId = z.string().min(3).max(96).regex(/^[a-z][a-z0-9-]*$/);
 const displayName = z.string().trim().min(1).max(120);
 const moduleName = z.enum(PRODUCT_CONFIGURATION_MODULES_V1);
+
+export const CONTROL_ROOM_SELF_PROJECT_TEMPLATE_V1 = Object.freeze({
+  id: "control-room",
+  displayName: "Control Room",
+  enabledModules: [] as ProductConfigurationModuleV1[],
+});
 
 function isTimezone(value: string): boolean {
   try {
@@ -58,6 +66,10 @@ export const productConfigurationSchemaV1 = z.object({
   projectTemplates: z.array(templateSchema).min(1).max(100),
 }).strict().superRefine((configuration, context) => {
   const ids = new Set<string>();
+  if (configuration.projectTemplates.length === 100
+    && !configuration.projectTemplates.some(template => template.id === CONTROL_ROOM_SELF_PROJECT_TEMPLATE_V1.id)) {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ["projectTemplates"], message: "reserved_template_capacity_required" });
+  }
   for (const [index, template] of configuration.projectTemplates.entries()) {
     if (ids.has(template.id)) {
       context.addIssue({ code: z.ZodIssueCode.custom, path: ["projectTemplates", index, "id"], message: "duplicate_template_id" });
@@ -89,7 +101,8 @@ function canonicalize(configuration: ProductConfigurationV1): ProductConfigurati
     defaultTimezone: configuration.defaultTimezone,
     modules,
     limits: { ...configuration.limits },
-    projectTemplates: configuration.projectTemplates
+    projectTemplates: [...configuration.projectTemplates.filter(template => template.id !== CONTROL_ROOM_SELF_PROJECT_TEMPLATE_V1.id),
+      CONTROL_ROOM_SELF_PROJECT_TEMPLATE_V1]
       .map((template) => ({ ...template, enabledModules: PRODUCT_CONFIGURATION_MODULES_V1.filter((module) => template.enabledModules.includes(module)) }))
       .sort((left, right) => left.id.localeCompare(right.id)),
   };

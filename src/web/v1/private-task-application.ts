@@ -77,8 +77,10 @@ export async function createPrivateTaskApplication(web: Omit<PrivateWebProcessOp
   } };
   let app: ReturnType<typeof createPrivateWebProcess>;
   try { app = createPrivateWebProcess({ ...web, database, operatorSurface, workerBoard, actionInboxSource,
-    ...(web.workBatches && tasks.workBatchAuthority ? { workBatches: { ...web.workBatches,
-      queueAdmissionAuthority: tasks.workBatchAuthority } } : {}),
+    // The web login gets only the coordinator snapshot; the transaction-bound
+    // authority stays with the controller-side pipeline service above.
+    ...(web.workBatches && tasks.workBatchView ? { workBatches: { ...web.workBatches,
+      queueAdmissionAuthority: tasks.workBatchView } } : {}),
     ...(web.projectEvents ? {} : web.tasks?.harnessIntegrityKey ? { projectEvents: new ProjectEventStoreV1(web.database.client,
       deriveProjectEventIntegrityKeyV1(web.tasks.harnessIntegrityKey), () => new Date(web.clock?.() ?? Date.now()).toISOString()) } : {}),
     planning: tasks.planning, assignment: tasks.assignment, approvals: tasks.approvals, submission: tasks.submission,

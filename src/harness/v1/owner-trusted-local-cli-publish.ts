@@ -8,6 +8,7 @@ import { controllerWorkerDeliverySchemaV1, controllerWorkerDeliveryReceiptSchema
 import { publishDurableResultV1, type DurableResultBindingV1,
   type DurableResultPublicationConfigurationV1 } from "../../artifacts/v1/durable-result-publication";
 import { deriveAuthenticatedRunPrincipalV1 } from "../../completion-gate/v1/protected-agent-principal";
+import { ProviderWaitStoreV1, type ProviderWaitReasonV1 } from "../../supervisor/v1/provider-waits";
 
 function unavailable(): never { throw new Error("owner_trusted_local_cli_publish_unavailable"); }
 const id = z.string().min(3).max(180).regex(/^[a-zA-Z0-9][a-zA-Z0-9._:-]*$/);
@@ -152,9 +153,58 @@ export function createOwnerTrustedLocalCliLifecycleV1(config: OwnerTrustedLocalC
     await publishDurableResultV1(config.publication, { binding, bytes, receivedAt: run.finishedAt,
       assertAuthority: () => { if (input.signal.aborted) unavailable(); } });
   };
+  async function recordWait(input: Readonly<{ delivery: unknown; receipt: unknown; signal: AbortSignal;
+    reason: ProviderWaitReasonV1; retryAfter: string; startedAt: string; finishedAt: string;
+    usage: Readonly<{ inputTokens: number | null; outputTokens: number | null; totalTokens: number | null;
+      cachedInputTokens?: number }> | null }>): Promise<void> {
+    if (!input || !(input.signal instanceof AbortSignal) || input.signal.aborted) unavailable();
+    const delivery = controllerWorkerDeliverySchemaV1.parse(input.delivery);
+    const receipt = controllerWorkerDeliveryReceiptSchemaV1.parse(input.receipt);
+    if (receipt.deliveryId !== delivery.deliveryId || receipt.deliveryDigest !== delivery.deliveryDigest) unavailable();
+    const modelSelection = config.resolveModelSelection ? await config.resolveModelSelection(delivery.identity.jobId) : undefined;
+    const registration = config.registerRun(delivery, receipt.receivedAt, modelSelection);
+    if (registration.id !== delivery.identity.runId || registration.tenantId !== delivery.identity.tenantId
+      || registration.projectId !== delivery.identity.projectId || registration.jobId !== delivery.identity.jobId
+      || registration.attemptId !== delivery.identity.attemptId || registration.nodeId !== delivery.identity.nodeId) unavailable();
+    const startedAt=z.string().datetime().parse(input.startedAt),finishedAt=z.string().datetime().parse(input.finishedAt);
+    if(Date.parse(startedAt)<Date.parse(receipt.receivedAt)||Date.parse(finishedAt)<Date.parse(startedAt))unavailable();
+    const existing=await runs.get(registration.tenantId,registration.id);
+    if(existing){
+      const initial:HarnessRunV1={...existing,state:"discovered",cancelState:registration.cancelState,
+        updatedAt:existing.createdAt,lastObservedAt:existing.createdAt};
+      delete initial.startedAt;delete initial.finishedAt;delete initial.safeReasonCode;
+      if(sha256Digest(initial)!==sha256Digest(registration))unavailable();
+    }
+    await new ProviderWaitStoreV1(config.db).schedule({ tenantId:delivery.identity.tenantId,
+      projectId:delivery.identity.projectId,jobId:delivery.identity.jobId,attemptId:delivery.identity.attemptId,
+      nodeId:delivery.identity.nodeId,reason:input.reason,observedAt:finishedAt,retryAfter:input.retryAfter });
+    if(!existing)await runs.create(registration);
+    for(const state of ["starting","running","waiting_input"] as const){
+      const snapshot=await runs.inspect(registration.tenantId,registration.id);if(!snapshot)unavailable();
+      const prior=snapshot.events.find(event=>event.payload.category==="lifecycle"&&event.payload.state===state);
+      if(prior)continue;
+      const occurredAt=new Date(Math.max(Date.parse(startedAt),state==="waiting_input"?Date.parse(finishedAt):Date.parse(startedAt),
+        Date.parse(snapshot.run.lastObservedAt))).toISOString();
+      await runs.append({schemaVersion:"control-room-harness-event/v1",tenantId:registration.tenantId,
+        runId:registration.id,sequence:snapshot.events.length+1,occurredAt,source:"adapter",
+        sourceEventKeyDigest:sha256Digest({runId:registration.id,localCliOutcome:state,waitReason:input.reason}),
+        payload:{category:"lifecycle",state,...(state==="waiting_input"?{reasonCode:input.reason}:{})}});
+    }
+    const snapshot=await runs.inspect(registration.tenantId,registration.id);if(!snapshot)unavailable();
+    const usage={category:"usage" as const,inputTokens:input.usage?.inputTokens??null,
+      outputTokens:input.usage?.outputTokens??null,totalTokens:input.usage?.totalTokens??null,
+      cachedInputTokens:input.usage?.cachedInputTokens??null,reasoningTokens:null,
+      wallTimeMs:Date.parse(finishedAt)-Date.parse(startedAt)};
+    const prior=snapshot.events.find(event=>event.payload.category==="usage");
+    if(prior){if(sha256Digest(prior.payload)!==sha256Digest(usage))unavailable();}
+    else await runs.append({schemaVersion:"control-room-harness-event/v1",tenantId:registration.tenantId,
+      runId:registration.id,sequence:snapshot.events.length+1,
+      occurredAt:new Date(Math.max(Date.parse(finishedAt),Date.parse(snapshot.run.lastObservedAt))).toISOString(),
+      source:"adapter",sourceEventKeyDigest:sha256Digest({runId:registration.id,localCliOutcome:"usage"}),payload:usage});
+  }
   return Object.freeze({ publish, recordFailure: (input: Readonly<{ delivery: unknown; receipt: unknown; signal: AbortSignal;
     startedAt?: string; finishedAt?: string; usage?: Readonly<{ inputTokens: number | null; outputTokens: number | null; totalTokens: number | null;
-      cachedInputTokens?: number }> | null }>) => record(input, "failed").then(() => {}) });
+      cachedInputTokens?: number }> | null }>) => record(input, "failed").then(() => {}), recordWait });
 }
 
 export function createOwnerTrustedLocalCliPublishV1(config: OwnerTrustedLocalCliPublishConfigurationV1) {

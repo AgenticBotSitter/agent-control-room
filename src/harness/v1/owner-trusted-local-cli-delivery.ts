@@ -7,6 +7,7 @@ import { controllerWorkerDeliverySchemaV1, controllerWorkerRouteSchemaV1,
 import { persistControllerWorkerDeliveryReceiptV1, readControllerWorkerDeliveryReceiptV1 }
   from "./controller-worker-delivery-receipt-store";
 import { canonicalJson, sha256Digest } from "../../security/canonical-digest";
+import { classifyProviderWaitV1, type ProviderWaitReasonV1 } from "../../supervisor/v1/provider-waits";
 
 const text = z.string().min(1).refine(value => Buffer.byteLength(value, "utf8") <= 65_536);
 function unavailable(): never { throw new Error("owner_trusted_local_cli_delivery_unavailable"); }
@@ -53,6 +54,11 @@ export type OwnerTrustedLocalCliDeliveryV1 = Readonly<{
   /** Records an observed failed process without creating a result. */
   recordFailure(input: Readonly<{ delivery: ControllerWorkerDeliveryV1; receipt: ControllerWorkerDeliveryReceiptV1;
     startedAt: string; finishedAt: string; usage: OwnerTrustedLocalCliExecutionV1["usage"]; signal: AbortSignal }>): Promise<void>;
+  /** Records explicit provider-side backpressure as a durable wait, never as a
+   * failed attempt. Generic CLI failures cannot reach this callback. */
+  recordWait(input: Readonly<{ delivery: ControllerWorkerDeliveryV1; receipt: ControllerWorkerDeliveryReceiptV1;
+    reason: ProviderWaitReasonV1; retryAfter: string; startedAt: string; finishedAt: string;
+    usage: OwnerTrustedLocalCliExecutionV1["usage"]; signal: AbortSignal }>): Promise<void>;
 }>;
 
 function validBinding(binding: unknown): binding is OwnerTrustedLocalCliDeliveryBindingV1 {
@@ -68,7 +74,8 @@ function validate(config: OwnerTrustedLocalCliDeliveryV1, delivery: ControllerWo
   if (!config || !config.db || typeof config.db.transaction !== "function" || !(config.integrityKey instanceof Uint8Array)
     || config.integrityKey.length !== 32 || !validBinding(config.binding) || !config.receiptPort
     || typeof config.receiptPort.receive !== "function" || typeof config.assertCurrent !== "function"
-    || typeof config.execute !== "function" || typeof config.publish !== "function" || typeof config.recordFailure !== "function" || route.kind !== "local"
+    || typeof config.execute !== "function" || typeof config.publish !== "function" || typeof config.recordFailure !== "function"
+    || typeof config.recordWait !== "function" || route.kind !== "local"
     || route.workerId !== config.binding.workerId || delivery.worker.workerId !== config.binding.workerId
     || delivery.worker.adapterId !== config.binding.adapterId || delivery.worker.adapterRevision !== config.binding.adapterRevision) unavailable();
 }
@@ -135,6 +142,13 @@ export async function deliverOwnerTrustedLocalCliTaskV1(config: OwnerTrustedLoca
       startsWork: false as const, grantsExecutionAuthority: false as const });
     const execution = result(await config.execute(Object.freeze({ delivery, receipt, signal })));
     if (execution.kind === "failed") {
+      const wait = classifyProviderWaitV1(execution.reason, Date.parse(execution.finishedAt));
+      if (wait) {
+        await config.recordWait(Object.freeze({ delivery, receipt, reason: wait.reason, retryAfter: wait.retryAfter,
+          startedAt: execution.startedAt, finishedAt: execution.finishedAt, usage: execution.usage, signal }));
+        return Object.freeze({ delivery, receipt, state: "execution_waiting" as const,
+          reason: wait.reason, retryAfter: wait.retryAfter, startsWork: false as const, grantsExecutionAuthority: false as const });
+      }
       await config.recordFailure(Object.freeze({ delivery, receipt, startedAt: execution.startedAt,
         finishedAt: execution.finishedAt, usage: execution.usage, signal }));
       return Object.freeze({ delivery, receipt, state: "execution_failed" as const,

@@ -13,6 +13,7 @@ import { durableResultArtifactIdV1, durableResultReceiptSchemaV1, durableResultR
   type DurableResultReceiptV1 } from "./durable-result-receipt";
 import { durableResultReviewPlanSchemaV1, durableResultReviewPlanTagV1, durableReviewTargetV1 } from "../../completion-gate/v1/durable-result-review-plan";
 import type { CompletionReviewTargetV1 } from "../../completion-gate/v1/types";
+import { deriveProjectEventIntegrityKeyV1, ProjectEventStoreV1, TaskProjectEventWriterV1 } from "../../project-events/v1";
 
 const instant = z.string().datetime().refine(value => new Date(value).toISOString() === value);
 
@@ -274,6 +275,9 @@ export interface DurableResultPublicationConfigurationV1 {
    * the review submission, never rerun the worker merely to recreate it.
    */
   reviewSubmission?: DurableResultReviewSubmissionPortV1;
+  /** Root key shared with ordinary run history; enables an atomic, redacted
+   * project event when the pending review plan is first committed. */
+  projectEventRootKey?: Uint8Array;
 }
 
 /** Deliberately small capability injected only by trusted server composition. */
@@ -689,6 +693,16 @@ export async function publishDurableResultV1(config: DurableResultPublicationCon
       action: "task.result.received", targetType: "artifact", targetId: artifactId, occurredAt: receivedAt,
       idempotencyKey: sha256Digest(receipt),
       safeMetadata: { contentHash: receipt.contentHash, sizeBytes: receipt.sizeBytes, byteCheck: receipt.byteCheck } });
+    if (config.projectEventRootKey) {
+      const project = (await tx.query<{ workspace_id: string }>(
+        "SELECT workspace_id FROM projects WHERE tenant_id=$1 AND id=$2", [identity.tenantId, identity.projectId])).rows[0];
+      if (!project) unavailable();
+      const writer = new TaskProjectEventWriterV1(new ProjectEventStoreV1(config.db,
+        deriveProjectEventIntegrityKeyV1(config.projectEventRootKey), () => receivedAt));
+      await writer.appendInSession(tx, { tenantId: identity.tenantId, workspaceId: project.workspace_id,
+        projectId: identity.projectId, subjectId: identity.jobId, action: "task_review_ready",
+        sourceId: identity.runId, sourceVersion: "review-ready-v1", occurredAt: receivedAt });
+    }
     await updateNeutralReservation(config.reservations, tx, key, verifiedReservation, committed, receivedAt);
     return { receipt, target: durableReviewTargetV1(plan, receipt) };
   }, assertAuthority);

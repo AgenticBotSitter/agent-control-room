@@ -31,6 +31,36 @@ test("a worktree audit rejects changed revision, duplicate path, unsafe path, an
   for (const value of cases) assert.throws(() => createWorktreeChangeAuditEvidenceV1(plan(), value));
 });
 
+test("worktree audit evidence whose top-level head disagrees with the Git head is refused by both the creator and the verifier", () => {
+  // The owner is shown git.unifiedDiff and git.headRevision, while publication
+  // binds only the top-level headRevision. Evidence must never be able to show
+  // the owner one commit's diff while publishing another.
+  const first = "b".repeat(40), second = "c".repeat(40);
+  const change = { path: "src/worker.ts", kind: "modified" as const, bytes: 20, contentDigest: digest("worker") };
+  const gitAt = (headRevision: string) => ({ headRevision, commits: [{ revision: headRevision, subject: "Bounded change" }],
+    commitsTruncated: false,
+    unifiedDiff: { text: "--- a\n+++ b\n", originalBytes: 10, retainedBytes: 10, truncated: false,
+      contentDigest: digest(`diff ${headRevision}`), retainedDigest: digest(`diff ${headRevision}`) },
+    confinement: { kind: "workspace_write" as const, outsideWorktree: "refused" as const, evidenceDigest: digest("cage") } });
+  // The creator refuses the mixed pair outright.
+  assert.throws(() => createWorktreeChangeAuditEvidenceV1(plan(),
+    { baseRevision: "a".repeat(40), headRevision: first, changes: [change], git: gitAt(second) }),
+  /worktree_change_audit_evidence_out_of_scope/u);
+  // The verifier refuses a stored record whose two heads disagree, even when its
+  // own self-computed evidenceDigest is intact, so a forged record cannot replay.
+  const honest = createWorktreeChangeAuditEvidenceV1(plan(),
+    { baseRevision: "a".repeat(40), headRevision: second, changes: [change], git: gitAt(second) });
+  assert.equal(honest.headRevision, second);
+  assert.throws(() => verifyWorktreeChangeAuditEvidenceV1(plan(), { ...honest, headRevision: first }),
+    /worktree_change_audit_evidence_out_of_scope/u);
+  assert.throws(() => verifyWorktreeChangeAuditEvidenceV1(plan(), { ...honest, git: gitAt(first) }),
+    /worktree_change_audit_evidence_out_of_scope/u);
+  // One head with no captured Git diff, and the consistent pair, both still hold.
+  assert.equal(createWorktreeChangeAuditEvidenceV1(plan(),
+    { baseRevision: "a".repeat(40), headRevision: second, changes: [change] }).headRevision, second);
+  assert.equal(verifyWorktreeChangeAuditEvidenceV1(plan(), honest).evidenceDigest, honest.evidenceDigest);
+});
+
 test("a future local code task can bind its worktree evidence to the existing controller delivery without exposing paths", () => {
   const delivery = { schema: "control-room.controller-worker-delivery/v1" as const,
     identity: { tenantId: "tenant:test", projectId: "project:test", jobId: "job:test", attemptId: "attempt:test", runId: "run:test", nodeId: "node:test" },
