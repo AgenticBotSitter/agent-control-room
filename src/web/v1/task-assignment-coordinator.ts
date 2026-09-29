@@ -2366,9 +2366,22 @@ export class TaskAssignmentCoordinator {
       if (!stored || stored.lease.id !== leaseId || stored.lease.epoch !== leaseEpoch
         || stored.lease.nodeId !== holder.nodeId || stored.lease.state !== "active"
         || this.clock() >= Date.parse(stored.lease.expiresAt)) conflict();
+      // No row lock on the scope rows themselves, and none is needed. The
+      // `stored()` read above already holds the attempt and lease rows FOR
+      // UPDATE, and every writer that removes or adds a scope row for this
+      // lease must first take that same lease row lock: the stale-scope prune
+      // only deletes scopes whose lease is terminal or elapsed, and owner
+      // revocation releases the rows after making the lease terminal. A
+      // concurrent scope insert can only widen the permitted set, so a stale
+      // read here refuses rather than admits - the fail-closed direction.
+      //
+      // `FOR SHARE` would add nothing and would break the fence outright:
+      // PostgreSQL requires UPDATE on the locked table, and the coordinator
+      // login holds SELECT, INSERT and DELETE on control_assignment_lease_scopes
+      // but deliberately no UPDATE, so the lock was refused with 42501.
       const scopes = (await tx.query<{ scope_kind: "file" | "tree"; path_fold: string }>(
         `SELECT scope_kind,path_fold FROM control_assignment_lease_scopes
-         WHERE tenant_id=$1 AND lease_id=$2 ORDER BY scope_kind,path_fold FOR SHARE`,
+         WHERE tenant_id=$1 AND lease_id=$2 ORDER BY scope_kind,path_fold`,
       [this.scope.tenantId, leaseId])).rows;
       if (!scopes.length || paths.some(path => !scopes.some(scope => scopesOverlapV1(
         { scopeKind: "file", path }, { scopeKind: scope.scope_kind, path: scope.path_fold })))) conflict();
