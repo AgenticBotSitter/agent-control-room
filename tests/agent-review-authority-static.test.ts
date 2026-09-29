@@ -14,6 +14,11 @@ test("agent review guard binds the dedicated role to one server-created predeces
     assert.match(sql, new RegExp(`RAISE EXCEPTION 'agent review % ${refusal}: %'`, "u"));
   assert.match(sql, /IF coalesce\(target\.id IS NULL[\s\S]*run\.state='succeeded'\),true\) THEN\s+RAISE EXCEPTION 'agent review commit binding rejected'/u);
   assert.match(sql, /IF finding_payload IS NOT NULL AND coalesce\(/u);
+  // Both timestamps are held to the store's exact format, not only a round trip,
+  // and the plan's ids and principal are already ids the store can parse.
+  assert.match(sql, /v_timestamp !~ '\^\[0-9\]\{4\}-\[0-9\]\{2\}-\[0-9\]\{2\}T\[0-9\]\{2\}:\[0-9\]\{2\}:\[0-9\]\{2\}\[\.\]\[0-9\]\{3\}Z\$'/u);
+  assert.match(sql, /IF v_timestamp<>pg_catalog\.to_char\(v_timestamp::timestamptz AT TIME ZONE 'UTC'[^\n]*\n\s+RAISE EXCEPTION 'agent review % timestamp out of range: %'/u);
+  assert.match(sql, /jsonb_each_text\(NEW\.reviewer\)[\s\S]*VALUES \(NEW\.review_id\),\(NEW\.finding_id\)[\s\S]*RAISE EXCEPTION 'agent review plan identifier rejected'/u);
   assert.match(sql, /agent_review_hmac_sha256\(integrity_key/u);
   // Both reviewer boundaries serve only the installation tenant the owner bound.
   assert.match(sql, /INTO plan FROM public\.control_agent_review_plans p\s+JOIN public\.work_intake_tenant_binding b ON b\.singleton AND b\.tenant_id=p\.tenant_id/u);

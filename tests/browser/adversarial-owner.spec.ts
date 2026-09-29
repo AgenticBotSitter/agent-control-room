@@ -2,6 +2,7 @@ import { expect, test, type Locator, type Page, type Request } from "@playwright
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { Client } from "pg";
+import { openResultWithDeferredOwnerReview, ownerReviewControlsWhenReady, requestChangesControlWhenReady } from "./owner-review-readiness";
 
 const ownerCode = process.env.CONTROL_ROOM_E2E_OWNER_CODE;
 if (!ownerCode) throw new Error("CONTROL_ROOM_E2E_OWNER_CODE is required");
@@ -64,17 +65,8 @@ function observeBrowserErrors(page: Page, errors: string[], observeHttpFailures 
 }
 
 async function prepareAcceptance(page: Page) {
-  await expect(page.getByRole("region", { name: "Owner quality decision" })).toBeVisible();
-  const attestation = page.getByLabel("I read it and it’s correct");
-  // Review options arrive after the protected result opens. A one-shot count
-  // can race that request and skip the required live gesture, leaving Accept
-  // correctly disabled. Wait for the exact review state before using its
-  // optional attestation control.
-  const accept = page.getByRole("button", { name: "Accept", exact: true });
-  const available = page.getByRole("region", { name: "Owner quality decision" })
-    .getByRole("heading", { name: "Review this exact result" });
-  await expect(available).toBeVisible({ timeout: 10_000 });
-  if (await attestation.isVisible()) await attestation.check();
+  const { attestation, accept } = await ownerReviewControlsWhenReady(page);
+  await attestation.check();
   await expect(accept).toBeEnabled();
 }
 
@@ -133,8 +125,8 @@ async function assignAndOpenResult(page: Page, doubleClick = false) {
   expect(assignments, "one owner gesture must record at most one assignment").toHaveLength(1);
   expect(submissions, "one owner gesture must queue at most one submission").toHaveLength(1);
   await refreshUntil(page, "Read result");
-  await page.getByRole("button", { name: "Read result" }).last().click();
-  await expect(page.getByRole("heading", { name: "Received result" })).toBeVisible();
+  // Revision rounds add results; the newest one is the result under test.
+  await openResultWithDeferredOwnerReview(page, "last");
 }
 
 async function disposableAdmin() {
@@ -380,8 +372,7 @@ test.describe("disposable owner website adversarial attacks", () => {
     staleReview.on("request", captureReview);
     await staleReview.goto(completedTaskPath);
     await refreshUntil(staleReview, "Read result");
-    await staleReview.getByRole("button", { name: "Read result" }).first().click();
-    await expect(staleReview.getByRole("heading", { name: "Received result" })).toBeVisible();
+    await openResultWithDeferredOwnerReview(staleReview);
     await prepareAcceptance(page);
     await prepareAcceptance(staleReview);
     await Promise.all([
@@ -411,9 +402,9 @@ test.describe("disposable owner website adversarial attacks", () => {
 
     await prepareTask(page, project.projectId, "Revision lifecycle task");
     await assignAndOpenResult(page);
-    await page.getByLabel("Changes you want").fill("Return a corrected harmless line in a linked revision.");
+    const requestChanges = await requestChangesControlWhenReady(page, "Return a corrected harmless line in a linked revision.");
     const reviewsBeforeRevision = reviewPosts.length;
-    await activateTwice(page.getByRole("button", { name: "Request changes" }));
+    await activateTwice(requestChanges);
     const savedChanges = page.getByText(/Saved: changes requested/);
     const checkExactSave = page.getByRole("button", { name: "Check this exact review save" });
     // Each poll probe must return at once. `isEnabled()` auto-waits for its
@@ -437,7 +428,9 @@ test.describe("disposable owner website adversarial attacks", () => {
       if (request.method() === "POST" && request.url().endsWith("/revisions")) revisionPosts.push(request.url());
     };
     page.on("request", captureRevision);
-    await activateTwice(page.getByRole("button", { name: "Prepare revised task" }));
+    const prepareRevision = page.getByRole("button", { name: "Prepare revised task" });
+    await expect(prepareRevision).toBeEnabled();
+    await activateTwice(prepareRevision);
     await expect(page.getByRole("link", { name: "Open revised task" })).toBeVisible();
     page.off("request", captureRevision);
     expect(revisionPosts).toHaveLength(1);
