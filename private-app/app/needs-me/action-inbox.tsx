@@ -59,7 +59,7 @@ async function readAllTaskAttention(): Promise<TaskSourceState> {
 function sourceError(source: "tasks" | "operator", code: string): string {
   if (code === "authentication_required") return "Your session has ended. Sign in again to see the Action Inbox.";
   if (code === "access_denied") return source === "operator"
-    ? "Workspace action records need owner access."
+    ? "Workspace action records are not included with Idea Lab-only access."
     : "Owner access is required to read cross-project task attention.";
   return source === "tasks"
     ? "Saved task attention could not be checked. No empty inbox or all-clear is inferred."
