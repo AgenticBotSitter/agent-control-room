@@ -2,6 +2,9 @@
 -- not create attempts, leases, delivery intents, scheduler jobs or execution
 -- authority.
 
+SET LOCAL lock_timeout = '1s';
+SET LOCAL statement_timeout = '5s';
+
 CREATE TABLE pipeline_templates (
   id text NOT NULL,
   tenant_id text NOT NULL,
@@ -9,13 +12,13 @@ CREATE TABLE pipeline_templates (
   name text NOT NULL CHECK (length(name) BETWEEN 1 AND 180),
   description text NOT NULL CHECK (length(description) BETWEEN 1 AND 2000),
   stages jsonb NOT NULL,
-  max_stages integer NOT NULL CHECK (max_stages BETWEEN 1 AND 32),
-  max_total_loops integer NOT NULL CHECK (max_total_loops BETWEEN 0 AND 96),
+  max_stages bigint NOT NULL CHECK (max_stages BETWEEN 1 AND 32),
+  max_total_loops bigint NOT NULL CHECK (max_total_loops BETWEEN 0 AND 96),
   may_advance_unattended boolean NOT NULL DEFAULT false CHECK (may_advance_unattended=false),
-  max_duration_seconds integer NOT NULL CHECK (max_duration_seconds BETWEEN 60 AND 604800),
+  max_duration_seconds bigint NOT NULL CHECK (max_duration_seconds BETWEEN 60 AND 604800),
   record_digest text NOT NULL CHECK (record_digest ~ '^sha256:[a-f0-9]{64}$'),
   auth_tag text NOT NULL CHECK (auth_tag ~ '^hmac-sha256:[a-f0-9]{64}$'),
-  version integer NOT NULL DEFAULT 1 CHECK (version >= 1),
+  version bigint NOT NULL DEFAULT 1 CHECK (version >= 1),
   created_at timestamptz NOT NULL,
   updated_at timestamptz NOT NULL,
   PRIMARY KEY (tenant_id,id),
@@ -31,7 +34,7 @@ CREATE TABLE pipeline_runs (
   project_id text NOT NULL,
   request_id text NOT NULL,
   template_id text NOT NULL,
-  template_version integer NOT NULL CHECK (template_version >= 1),
+  template_version bigint NOT NULL CHECK (template_version >= 1),
   template_digest text NOT NULL CHECK (template_digest ~ '^sha256:[a-f0-9]{64}$'),
   workflow_id text NOT NULL,
   title text NOT NULL CHECK (length(title) BETWEEN 1 AND 180),
@@ -39,11 +42,11 @@ CREATE TABLE pipeline_runs (
   started_at timestamptz,
   updated_at timestamptz NOT NULL,
   completed_at timestamptz,
-  current_stage_ordinal integer CHECK (current_stage_ordinal IS NULL OR current_stage_ordinal>=0),
+  current_stage_ordinal bigint CHECK (current_stage_ordinal IS NULL OR current_stage_ordinal>=0),
   unattended boolean NOT NULL DEFAULT false CHECK (unattended=false),
   record_digest text NOT NULL CHECK (record_digest ~ '^sha256:[a-f0-9]{64}$'),
   auth_tag text NOT NULL CHECK (auth_tag ~ '^hmac-sha256:[a-f0-9]{64}$'),
-  version integer NOT NULL DEFAULT 1 CHECK (version >= 1),
+  version bigint NOT NULL DEFAULT 1 CHECK (version >= 1),
   PRIMARY KEY (tenant_id,id),
   UNIQUE (tenant_id,id,project_id),
   FOREIGN KEY (tenant_id,project_id) REFERENCES projects(tenant_id,id) ON DELETE RESTRICT,
@@ -57,7 +60,7 @@ CREATE TABLE pipeline_runs (
 
 ALTER TABLE control_jobs ADD COLUMN stage_kind text
   CHECK (stage_kind IS NULL OR stage_kind IN ('plan','build','check','signoff','effect'));
-ALTER TABLE control_jobs ADD COLUMN stage_ordinal integer
+ALTER TABLE control_jobs ADD COLUMN stage_ordinal bigint
   CHECK (stage_ordinal IS NULL OR stage_ordinal>=0);
 ALTER TABLE control_jobs ADD COLUMN pipeline_run_id text;
 ALTER TABLE control_jobs ADD CONSTRAINT ck_control_jobs_pipeline_columns_all_or_none CHECK (
@@ -66,15 +69,18 @@ ALTER TABLE control_jobs ADD CONSTRAINT ck_control_jobs_pipeline_columns_all_or_
 ALTER TABLE control_jobs ADD CONSTRAINT fk_control_jobs_pipeline_run
   FOREIGN KEY (tenant_id,pipeline_run_id,project_id)
     REFERENCES pipeline_runs(tenant_id,id,project_id) ON DELETE RESTRICT NOT VALID;
-ALTER TABLE control_jobs VALIDATE CONSTRAINT ck_control_jobs_pipeline_columns_all_or_none;
-ALTER TABLE control_jobs VALIDATE CONSTRAINT fk_control_jobs_pipeline_run;
+-- Both constraints stay NOT VALID: the three columns are added above and are
+-- NULL on every existing row, which satisfies both, and PostgreSQL enforces
+-- a NOT VALID constraint on every row inserted or updated from here on.
+-- Validating in this same transaction would hold ACCESS EXCLUSIVE on
+-- control_jobs for a full-table scan.
 
 CREATE TABLE pipeline_stage_runs (
   id text NOT NULL,
   tenant_id text NOT NULL,
   project_id text NOT NULL,
   pipeline_run_id text NOT NULL,
-  stage_ordinal integer NOT NULL CHECK (stage_ordinal>=0),
+  stage_ordinal bigint NOT NULL CHECK (stage_ordinal>=0),
   stage_kind text NOT NULL CHECK (stage_kind IN ('plan','build','check','signoff','effect')),
   role text NOT NULL CHECK (role IN ('planner','builder','checker','validator','effecter')),
   worker_id text NOT NULL,
@@ -89,14 +95,14 @@ CREATE TABLE pipeline_stage_runs (
   current_attempt_id text,
   current_lease_id text,
   state text NOT NULL CHECK (state IN ('proposed','active','paused','succeeded','failed','cancelled','uncertain')),
-  max_loops integer NOT NULL CHECK (max_loops BETWEEN 0 AND 20),
+  max_loops bigint NOT NULL CHECK (max_loops BETWEEN 0 AND 20),
   handoff_from_result_digest text CHECK (handoff_from_result_digest IS NULL OR handoff_from_result_digest ~ '^sha256:[a-f0-9]{64}$'),
   signoff_review_id text,
   started_at timestamptz,
   finished_at timestamptz,
   record_digest text NOT NULL CHECK (record_digest ~ '^sha256:[a-f0-9]{64}$'),
   auth_tag text NOT NULL CHECK (auth_tag ~ '^hmac-sha256:[a-f0-9]{64}$'),
-  version integer NOT NULL DEFAULT 1 CHECK (version>=1),
+  version bigint NOT NULL DEFAULT 1 CHECK (version>=1),
   PRIMARY KEY (tenant_id,id),
   UNIQUE (tenant_id,pipeline_run_id,stage_ordinal),
   FOREIGN KEY (tenant_id,pipeline_run_id,project_id)

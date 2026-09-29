@@ -19,7 +19,7 @@ type RunRow = { id: string; project_id: string; request_id: string; template_id:
   template_digest: string; workflow_id: string; title: string; state: "proposed" | "active" | "paused" | "succeeded" | "failed" | "cancelled";
   started_at: string | Date | null; updated_at: string | Date; completed_at: string | Date | null;
   current_stage_ordinal: number | null; unattended: boolean; record_digest: string; auth_tag: string; version: number };
-type StageRow = { stage_ordinal: number; stage_kind: "build" | "check" | "signoff"; role: "builder" | "checker" | "validator";
+type StageRow = { stage_ordinal: number | string; stage_kind: "build" | "check" | "signoff"; role: "builder" | "checker" | "validator";
   project_id: string; pipeline_run_id: string; current_job_id: string; worker_id: string;
   worker_kind: "codex" | "claude-code" | "hermes"; node_id: string; selection_key: string; model: string;
   effort: "default" | "low" | "medium" | "high" | "xhigh" | "max"; provider: string | null; profile: string | null;
@@ -300,6 +300,8 @@ export class LinearPipelineServiceV1 {
       const stages = [];
       for (const row of rows) {
         this.#verifyStage(row);
+        // bigint columns arrive as strings from the production driver.
+        const ordinal = Number(row.stage_ordinal);
         let own = { ok: false, digest: null as string | null, round: null as number | null };
         if (this.selection) try {
           const selection = { sourceJobId: row.current_job_id, workerId: row.worker_id, nodeId: row.node_id };
@@ -319,13 +321,13 @@ export class LinearPipelineServiceV1 {
         else if (attempt?.state === "running") state = "running";
         else if (attempt && ["offered", "leased", "waiting"].includes(attempt.state)) state = "assigned";
         else if (attempt && ["failed", "cancelled", "orphaned"].includes(attempt.state)) state = "failed";
-        else if (row.stage_ordinal > 0 && !accepted[row.stage_ordinal - 1]?.ok) state = "waiting_dependency";
+        else if (ordinal > 0 && !accepted[ordinal - 1]?.ok) state = "waiting_dependency";
         else if (!job || job.state !== "proposed") state = "uncertain";
         else state = "eligible";
-        stages.push({ ordinal: Number(row.stage_ordinal), stageKind: row.stage_kind, role: row.role,
+        stages.push({ ordinal, stageKind: row.stage_kind, role: row.role,
           jobId: row.current_job_id, workerId: row.worker_id, nodeId: row.node_id, model: row.model, effort: row.effort,
           state, round: own.round, usage: "unknown" as const,
-          predecessorResultDigest: row.stage_ordinal ? accepted[row.stage_ordinal - 1]?.digest ?? null : null,
+          predecessorResultDigest: ordinal ? accepted[ordinal - 1]?.digest ?? null : null,
           startsWork: false as const, grantsExecutionAuthority: false as const });
         accepted.push(own);
       }
