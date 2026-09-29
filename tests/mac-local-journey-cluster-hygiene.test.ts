@@ -52,6 +52,8 @@ interface Spawned {
   /** Recorded postmaster pid, once the scenario has reported its data dir. */
   postmaster: () => number | undefined;
   dataDir: () => string | undefined;
+  /** The socket directory the postmaster was pointed at. */
+  socketDir: () => string | undefined;
   /** The port the postmaster bound, as the scenario reported it. */
   port: () => number | undefined;
 }
@@ -77,6 +79,7 @@ function spawnScript(script: string, args: string[]): Spawned {
       } catch { return undefined; }
     },
     dataDir: () => read("SCENARIO_DATA_DIR"),
+    socketDir: () => read("SCENARIO_SOCKET_DIR"),
     port: () => { const value = Number(read("SCENARIO_PORT")); return Number.isSafeInteger(value) ? value : undefined; },
   };
 }
@@ -276,7 +279,37 @@ test("a run with no teardown hook at all is still cleaned up by the exit handler
     const dataDir = run.dataDir();
     assert.ok(dataDir, `the scenario must have started a cluster:\n${run.output()}`);
     assert.equal(existsSync(join(dataDir, "..")), false, "the exit handler must remove the data dir");
+    // The data dir is what identifies the cluster to every cleanup, so it must be
+    // the worktree-local one. The socket dir is deliberately elsewhere: see
+    // SOCKET_PREFIX in the helper.
     assert.ok(dataDir.startsWith(TEST_TMP), `the data dir must live in the worktree, not the temp dir: ${dataDir}`);
+  } finally {
+    await stopRun(run);
+  }
+});
+
+test("the socket directory stays inside the platform's Unix-socket path budget", async () => {
+  // Regression guard for a bug this file's own CI run found: the socket
+  // directory used to live under the worktree, and Linux caps a Unix-domain
+  // socket path at 107 bytes (sun_path). At the CI checkout path
+  // (/home/runner/work/agent-control-room/agent-control-room/...) the resulting
+  // path was 116 bytes, so every scenario failed with the postmaster's
+  // "could not create any Unix-domain sockets" — while passing on macOS, where
+  // the limit is not hit. The data dir must stay in the worktree (that is what
+  // `with-test-slot` identifies a cluster by); the socket dir must not.
+  const run = spawnScript(SCENARIO, ["hold"]);
+  try {
+    const dataDir = await waitForDataDir(run);
+    assert.ok(dataDir, `the scenario must reach a running cluster:\n${run.output()}`);
+    const socketDir = run.socketDir();
+    assert.ok(socketDir, `the scenario must report its socket dir:\n${run.output()}`);
+    // The real bound: the postmaster appends `/.s.PGSQL.<port>`, up to 16 bytes.
+    const budget = 107;
+    const worstCase = join(socketDir, ".s.PGSQL.65535");
+    assert.ok(worstCase.length <= budget,
+      `the socket path must fit sun_path on Linux, got ${worstCase.length} > ${budget}: ${worstCase}`);
+    // And the data dir is still the worktree-local one the cleanup depends on.
+    assert.ok(dataDir.startsWith(TEST_TMP), `the data dir must stay in the worktree: ${dataDir}`);
   } finally {
     await stopRun(run);
   }

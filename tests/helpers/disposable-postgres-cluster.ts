@@ -33,6 +33,7 @@ import { execFile, execFileSync, spawnSync } from "node:child_process";
 import { existsSync, readFileSync, rmSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
+import { tmpdir } from "node:os";
 import { join, resolve as resolvePath } from "node:path";
 import { promisify } from "node:util";
 
@@ -169,6 +170,8 @@ export function stopClusterSync(target: Cluster): void {
     for (let attempt = 0; attempt < 20 && isLivePostmaster(pid); attempt += 1) sleepSync(250);
     if (isLivePostmaster(pid)) return;
   }
+  // The socket dir lives outside the run dir, so it is removed explicitly.
+  rmSync(target.socket, { recursive: true, force: true });
   rmSync(target.run, { recursive: true, force: true });
 }
 
@@ -211,6 +214,8 @@ export async function stopCluster(target: Cluster): Promise<void> {
   }
   if (isPostmasterAlive(pid))
     throw new Error("disposable_cluster_survived_teardown");
+  // The socket dir lives outside the run dir, so it is removed explicitly.
+  await rm(target.socket, { recursive: true, force: true });
   await rm(target.run, { recursive: true, force: true });
 }
 
@@ -241,10 +246,28 @@ export function isPortConflict(error: unknown, logText = ""): boolean {
   return /address already in use|EADDRINUSE|could not bind|could not create any TCP\/IP sockets/iu.test(text);
 }
 
-async function startOnce(port: number, run: string): Promise<Cluster> {
+/** Linux caps a Unix-domain socket path at 107 bytes (108 incl. the NUL in
+ * `sun_path`). The postmaster only reports the consequence — "could not create
+ * any Unix-domain sockets" — after initdb has already run, so an over-long
+ * checkout path fails as a confusing server error rather than a clear one.
+ *
+ * The socket directory therefore lives in the system temp dir under a short
+ * prefix, NOT under the worktree. That is safe because the socket is ephemeral
+ * (a `.s.PGSQL.<port>` file removed with the run) and is not what any cleanup
+ * identifies a cluster by: both `with-test-slot` and
+ * scripts/dev/cleanup-test-postgres.mjs key off the `-D` data directory, which
+ * stays in the worktree. */
+const SOCKET_PREFIX = "crpg-";
+/** `.s.PGSQL.<port>` is up to 16 bytes; keep room for it inside sun_path. */
+const SOCKET_PATH_BUDGET = 100;
+
+async function startOnce(port: number, run: string, socket: string): Promise<Cluster> {
   const data = join(run, "data");
-  const socket = join(run, "socket");
-  await mkdir(socket, { mode: 0o700 });
+  const socketFile = join(socket, `.s.PGSQL.${port}`);
+  if (socketFile.length > SOCKET_PATH_BUDGET)
+    throw new Error(`disposable_cluster_socket_path_too_long: ${socketFile.length} bytes exceeds the ${
+      SOCKET_PATH_BUDGET}-byte budget for a Unix-domain socket; the temp dir is unusually deep`);
+  await mkdir(socket, { recursive: true, mode: 0o700 });
   const base = { env: { ...process.env, PATH: "/usr/bin:/bin:/opt/homebrew/bin", LC_ALL: "C", TMPDIR: run,
     NODE_ENV: "test" as const }, ...execOptions };
   // initdb into a worktree-local directory only. `-U fixture_admin` is a
@@ -326,11 +349,16 @@ export async function startCluster(prefix = "journey-cluster-"): Promise<Cluster
   for (let attempt = 0; attempt < PORT_ATTEMPTS; attempt += 1) {
     const port = requested ?? await findFreePort();
     const run = await mkdtemp(join(root, prefix));
+    // The socket dir is a sibling of the data dir, in the system temp dir, so
+    // its path stays inside the platform's sun_path budget on a deep checkout.
+    // It is removed on every exit path below, including the retry path.
+    const socket = await mkdtemp(join(tmpdir(), SOCKET_PREFIX));
     try {
-      return await startOnce(port, run);
+      return await startOnce(port, run, socket);
     } catch (error) {
       lastError = error;
       await rm(run, { recursive: true, force: true });
+      await rm(socket, { recursive: true, force: true });
       // An operator-named port is a decision, not a suggestion: retrying it
       // would just burn attempts on the same collision.
       if (requested !== undefined || !isPortConflict(error)) throw error;

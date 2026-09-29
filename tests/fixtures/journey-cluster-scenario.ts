@@ -29,6 +29,7 @@ if (!PG_AVAILABLE) {
   let cluster = await startCluster(`journey-scenario-${mode}-`);
   const removeTeardown = installProcessTeardown(() => cluster);
   console.log(`SCENARIO_DATA_DIR=${cluster.data}`);
+  console.log(`SCENARIO_SOCKET_DIR=${cluster.socket}`);
   console.log(`SCENARIO_PORT=${cluster.port}`);
 
   if (mode === "fail") {

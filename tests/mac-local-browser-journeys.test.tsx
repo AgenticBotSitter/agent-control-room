@@ -123,8 +123,8 @@ async function journeyFixture(t: TestContext, fresh: string, extra: Partial<MacL
   // `active.port` is the port the postmaster actually bound (requested, env
   // override or runtime-free), never a constant, so a parallel copy of this
   // file never collides with this one.
-  const database = await openDisposableMacLocalDatabase({ run: active.run, port: active.port, name: fresh,
-    fixtureUser: "fixture_admin", fixturePassword: active.fixturePassword });
+  const database = await openDisposableMacLocalDatabase({ run: active.run, socket: active.socket,
+    port: active.port, name: fresh, fixtureUser: "fixture_admin", fixturePassword: active.fixturePassword });
   const key = syntheticSigningKey();
   // The trust window, the assertion exp and the run clock all share conformanceNow.
   const trust: AccessTrust = syntheticAccessTrust(key, nowMs);
