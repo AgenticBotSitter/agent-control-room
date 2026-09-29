@@ -124,7 +124,7 @@ function countedRealPostgresRun(): void {
 // segment. The snapshot is taken at module load, BEFORE any cluster starts, and
 // compared at the very end of the file, so it covers every test in the run
 // rather than the one that happens to read it.
-const sharedMemoryBefore = await sharedMemorySegments();
+const sharedMemoryBefore = await sharedMemorySegments(PORTS);
 
 describe("attack kit: concurrency", () => {
   test("concurrently completes pool-size+1 operations inside the bound", async () => {
@@ -2253,14 +2253,19 @@ test("the whole suite left no new SysV shared-memory segment", async () => {
   // removed.
   //
   // What counts as a leak is a NEW segment whose creator is DEAD. A new segment
-  // with a LIVE creator belongs to a cluster another job is running right now
-  // — this Mac runs four test slots in parallel — and failing on it would be a
-  // false accusation. A dead creator can never be used again: only `ipcrm` frees
-  // it, and nothing here may run that. Comparing ids rather than counts also
-  // means a teardown that released one cluster's segment while leaking another's
-  // cannot hide behind a flat count, and a segment that another job cleaned up
-  // mid-run cannot be mistaken for a leak.
-  const after = await sharedMemorySegments();
+  // with a LIVE creator belongs to a cluster another job is running right now —
+  // this Mac runs four test slots in parallel, and during development a
+  // reviewer's cluster on port 58001 appeared in `ipcs` mid-run — and failing on
+  // it would be a false accusation. A dead creator can never be used again: only
+  // `ipcrm` frees it, and nothing here may run that.
+  //
+  // The count is asserted over segments ATTRIBUTED to this suite, by the
+  // creator's own command line (an `attack-kit-pg-` data directory on a port in
+  // this file's block). A strict per-user count is not enforceable on a shared
+  // login: another job's cluster appearing and being stopped during the run
+  // changes the per-user count without this suite having done anything, which
+  // was measured, not assumed.
+  const after = await sharedMemorySegments(PORTS);
   if (sharedMemoryBefore === null || after === null) {
     // `ipcs` is unreadable, so nothing can be compared. That is REFUSED, not
     // passed: a guard that could not run must not read as a guard that passed.
@@ -2274,13 +2279,21 @@ test("the whole suite left no new SysV shared-memory segment", async () => {
       return (error as { code?: string }).code === "EPERM";
     }
   };
+  // A dead creator is a leak whatever its attribution, because the command line
+  // that would identify it is gone with the process.
   const orphans = appeared.filter(segment => !alive(segment.creatorPid));
   assert.deepEqual(orphans.map(segment => `id=${segment.id} creator=${segment.creatorPid} last=${segment.lastPid}`), [],
     "the suite created SysV shared-memory segments it did not release: a postmaster "
     + "was SIGKILLed instead of stopped, and its segment is now unreclaimable");
-  assert.equal(after.length, sharedMemoryBefore.length,
-    `segment count for this user changed: before=${sharedMemoryBefore.length} after=${after.length}`
-    + `${appeared.length > 0 ? ` (new, with a live creator: ${appeared.map(s => s.id).join(",")})` : ""}`);
+  // And no segment this suite is responsible for may still be held by a
+  // postmaster that survived the run.
+  const stillOurs = after.filter(segment => segment.ours && alive(segment.creatorPid));
+  assert.deepEqual(stillOurs.map(segment => `id=${segment.id} creator=${segment.creatorPid}`), [],
+    "this suite's own cluster is still holding a SysV shared-memory segment after the run");
+  const mine = after.filter(segment => segment.ours);
+  assert.equal(mine.length, sharedMemoryBefore.filter(segment => segment.ours).length,
+    `this suite's segment count changed: before=${sharedMemoryBefore.filter(s => s.ours).length}`
+    + ` after=${mine.length}`);
 });
 
 test("the kit's own sources are all present and the working tree is as it was", async () => {

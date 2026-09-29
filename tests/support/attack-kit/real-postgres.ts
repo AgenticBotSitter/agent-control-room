@@ -1151,20 +1151,23 @@ export async function disposableRunDirectories(pattern = /^attack-kit-pg-/): Pro
 // ---------------------------------------------------------------------------
 
 /**
- * The ids of the SysV shared-memory segments owned by this user.
+ * The ids of the SysV shared-memory segments owned by this user, each attributed
+ * to this suite when its creator's command line says so.
  *
  * `ipcs -m -p` columns are T ID KEY MODE OWNER GROUP CPID LPID, so the owner is
- * field 5 (1-based) and the last-attaching pid is field 8. `nattch` is NOT in
- * `ipcs -m`'s default output — it is in `ipcs -m -a -p` — so this counts by OWNER
- * and records the creator/attaching pids separately, which is enough to tell a
- * leak (a dead creator) from another job's live cluster.
+ * field 5 (1-based), the creator field 7, and the last-attaching pid field 8.
+ * `nattch` is NOT in `ipcs -m`'s default output — it is in `ipcs -m -a -p` — so
+ * this cannot see it, and a leak is identified by a DEAD creator instead, which
+ * is the same signature the orphaned segments on this machine show.
  *
  * Returns null when `ipcs` is unavailable or its output cannot be read, so a
  * caller can REFUSE rather than report a clean result it did not measure. This
  * is the same rule the rest of the kit follows: a guard that cannot run must not
  * read as a guard that passed.
  */
-export async function sharedMemorySegments(): Promise<SharedMemorySegment[] | null> {
+export async function sharedMemorySegments(
+  ports?: readonly number[],
+): Promise<SharedMemorySegment[] | null> {
   const { stdout } = await exec("/usr/bin/ipcs", ["-m", "-p"], { timeout: 10_000 })
     .then(value => ({ stdout: String(value.stdout ?? "") }))
     .catch(() => ({ stdout: "" }));
@@ -1176,18 +1179,29 @@ export async function sharedMemorySegments(): Promise<SharedMemorySegment[] | nu
   const rows = stdout.split("\n")
     .map(line => line.trim().split(/\s+/u))
     .filter(fields => fields.length > 7 && fields[0] === "m" && /^\d+$/u.test(fields[1] ?? ""));
-  const segments = rows.map(fields => ({
-    id: fields[1]!,
-    owner: fields[4]!,
-    creatorPid: /^\d+$/u.test(fields[6] ?? "") ? Number(fields[6]) : 0,
-    lastPid: /^\d+$/u.test(fields[7] ?? "") ? Number(fields[7]) : 0,
-  }));
   // Only this user's segments: the count has to be comparable with the count
-  // taken before the suite, and another job's segments are not ours to account
-  // for. `USER` is the name `ipcs` prints; with no name available every segment
-  // is returned rather than silently none.
+  // taken before the suite, and another user's are not ours to account for.
+  // `USER` is the name `ipcs` prints; with no name available every segment is
+  // returned rather than silently none.
   const user = process.env.USER;
-  return user === undefined || user === "" ? segments : segments.filter(segment => segment.owner === user);
+  const mine = user === undefined || user === "" ? rows : rows.filter(fields => fields[4] === user);
+  const commands = await readCommands([...new Set(mine.map(fields =>
+    /^\d+$/u.test(fields[6] ?? "") ? fields[6]! : ""))].filter(Boolean));
+  const pattern = oursPattern(ports);
+  return mine.map(fields => {
+    const creatorPid = /^\d+$/u.test(fields[6] ?? "") ? Number(fields[6]) : 0;
+    return {
+      id: fields[1]!,
+      owner: fields[4]!,
+      creatorPid,
+      lastPid: /^\d+$/u.test(fields[7] ?? "") ? Number(fields[7]) : 0,
+      // A dead creator has no command line left, so it is never attributed by
+      // inspection. The leak guard treats a dead creator as a leak whatever its
+      // attribution, because only `ipcrm` frees such a segment and nothing here
+      // may run that.
+      ours: pattern !== null && pattern.test(commands.get(creatorPid) ?? ""),
+    };
+  });
 }
 
 export interface SharedMemorySegment {
@@ -1195,9 +1209,44 @@ export interface SharedMemorySegment {
   readonly owner: string;
   readonly creatorPid: number;
   readonly lastPid: number;
+  /**
+   * True when the creator's command line shows a cluster belonging to THIS
+   * suite: a data directory under a run root with this kit's `attack-kit-pg-`
+   * prefix, on a port inside the caller's port block.
+   *
+   * This exists because a strict per-user count is not enforceable on this Mac.
+   * Four test slots run concurrently under one login, so a reviewer or a sibling
+   * job starts and stops its own PostgreSQL during the run, and its segments
+   * appear in `ipcs` with this suite having had nothing to do with them. Failing
+   * on the raw count therefore reports another job's cluster as this suite's
+   * leak. Attribution is by the creator's own command line, so what is asserted
+   * is the count of segments this suite is responsible for.
+   */
+  readonly ours: boolean;
 }
 
-/** Segment ids now present that were not in `before`, in numeric order. */
+/** The pattern a creator's command line must match to be this suite's. */
+const oursPattern = (ports: readonly number[] | undefined): RegExp | null => {
+  if (ports === undefined || ports.length === 0) return null;
+  const alternation = ports.map(port => String(port)).join("|");
+  return new RegExp(`attack-kit-pg-[^/\\s]*/.*-p\\s(?:${alternation})(?:\\s|$)`
+    + `|-p\\s(?:${alternation})\\s.*attack-kit-pg-`);
+};
+
+const readCommands = async (pids: readonly string[]): Promise<Map<number, string>> => {
+  const commands = new Map<number, string>();
+  if (pids.length === 0) return commands;
+  const { stdout } = await exec("/bin/ps", ["-o", "pid=,command=", "-p", pids.join(",")], { timeout: 10_000 })
+    .then(value => ({ stdout: String(value.stdout ?? "") }))
+    .catch(() => ({ stdout: "" }));
+  for (const line of stdout.split("\n")) {
+    const match = /^\s*(\d+)\s+(.*)$/u.exec(line);
+    if (match) commands.set(Number(match[1]), match[2]!);
+  }
+  return commands;
+};
+
+/** Segment ids now present that were not in `before`. */
 export function newSharedMemorySegments(
   before: readonly SharedMemorySegment[],
   after: readonly SharedMemorySegment[] | null,
