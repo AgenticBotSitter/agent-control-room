@@ -519,8 +519,8 @@ async function verifyDatabase(db: DatabaseClient, config: PrivatePostgresConfigu
         FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace JOIN pg_attribute a ON a.attrelid=c.oid
         WHERE n.nspname='public' AND c.relkind IN ('r','p','v','m','f') AND a.attnum>0 AND NOT a.attisdropped`)).rows;
       const reads: ReadonlySet<string> = new Set(allowedReads);
-      // Column-scoped INSERT grants (currently the web role's idempotency
-      // ledger): listed columns must carry INSERT, unlisted must not.
+      // Column-scoped INSERT grants (the web role's idempotency ledger, the
+      // coordinator's incident rows): listed columns must carry INSERT, unlisted must not.
       const scopedInserts = kind === "web" ? privateWebInsertColumns : kind === "coordinator" ? coordinatorInsertColumns : {};
       const scopedReads = kind === "web" ? privateWebReadColumns : {};
       if (!columns.length || columns.some(c => c.extra

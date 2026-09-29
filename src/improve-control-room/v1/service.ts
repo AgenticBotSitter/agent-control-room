@@ -146,8 +146,8 @@ export class ImproveControlRoomDeskServiceV1 {
       { templateId: parsed.data.pipelineTemplateId, title }, `improve:${idempotencyKey}`);
     return this.#authority.authenticated(identity, async (tx, actor) => {
       actor.require("tasks.propose", projectId, true); await this.#requireSelfProject(tx, projectId);
-      // The web login holds no UPDATE on requests, so no row lock: the idempotency
-      // unique key serializes a concurrent retry and the loser replays the winner.
+      // The web login holds no UPDATE on requests, so no row lock here. Same-owner writes
+      // already serialize on the identity lock; the unique key and replay back that up.
       const replay = async () => {
         const existing = (await tx.query<RequestRow>(`SELECT id,project_id,description,pipeline_template_id,
           pipeline_template_version,pipeline_template_digest,selected_worker_ids,lead_worker_id,pipeline_run_id,
