@@ -34,35 +34,56 @@ proposal semantics but cannot distinguish one bearer identity from another.
 Per-agent database logins would be a separate authority design and are not part
 of this slice.
 
-The intake group can read the shared authorization metadata required to lock
-and validate its caller (`control_identities`, `control_role_grants`, and
-`projects`). That read scope crosses tenant rows by design because the
-authorization query must resolve the caller before applying project scope; it
-does not grant proposal, task, assignment, or execution authority outside the
-validated project.
+The database separates tenants for the intake login. Migration 0093 adds
+`work_intake_tenant_binding`, a one-row table owned by the schema owner. The
+owner bootstrap (`bootstrapMacLocalOwnerV1` on the Mac, `first-owner-vps.mjs` on
+the VPS) writes it when it registers the intake agents, and refuses to run if
+the row already names a different tenant. The intake group and the roles that
+read the shared ledgers may only SELECT it. Only the schema owner and the
+owner bootstrap can write it.
 
-Proposal content does not cross that line. `work_batches` and
-`work_batch_revisions` have row-level security with the same RESTRICTIVE,
-`is_work_intake_session()`-keyed pattern as the shared ledgers. An intake
-session sees, and may insert, only rows whose proposing (or editing) identity
-is an agent the owner registered for work intake (`auth_provider =
-'work-intake'`) in that row's own tenant. Rows of any other tenant's proposers,
-or of an unregistered agent in the same tenant, are invisible and refused on
-insert, and so is a registered identity named under another tenant. The intake group still has no
-UPDATE or DELETE on either table. Every other role keeps its existing grants
-unchanged: the backup group still reads all rows, and the application, reader,
-owner-web and coordinator groups still have no access.
+Every intake scope policy is RESTRICTIVE and keyed on `is_work_intake_session()`.
+For an intake session it additionally requires the row's `tenant_id` to equal
+the bound tenant. This covers `work_batches`, `work_batch_revisions`,
+`control_idempotency` and `audit_events`. As a result the intake login:
 
-The database cannot tell one registered agent from another, because they all
-share one login. Separating registered agents from each other, including agents
-registered in different tenants on one cluster, stays with the service's
-bearer-to-identity binding and its tenant- and identity-scoped queries.
+- sees and may insert only its bound tenant's proposals, revisions, intake
+  idempotency receipts and intake audit events;
+- within that tenant, sees and may insert proposals only from agents the owner
+  registered for work intake (`auth_provider = 'work-intake'`);
+- sees and writes nothing at all while no binding row exists (fail closed).
+
+The intake group still has no UPDATE or DELETE on either proposal table. Every
+other role keeps its existing row access: the backup group still reads all
+rows, and the application, reader, owner-web and coordinator groups still have
+no access to the proposal tables. Because PostgreSQL permission-checks a policy's
+subquery for every role that reads the table, each role that evaluates these
+policies also holds read-only SELECT on the one-row binding.
+
+What the database does not separate, and why:
+
+- **Identities within the bound tenant.** All registered agents share one
+  database login, so the database cannot tell registered agent X from
+  registered agent Y in the same tenant. That separation stays with the
+  service's bearer-to-identity binding and its tenant- and identity-scoped
+  queries. Per-agent database logins would be a separate authority design.
+- **Authorization metadata.** The intake group reads `control_identities`,
+  `control_role_grants` and `projects` across tenants. The authorization query
+  must resolve the caller before it applies project scope. This read grants no
+  proposal, task, assignment or execution authority outside the validated
+  project.
+- **Audit chain heads.** The intake group reads `control_audit_chain_heads`
+  without row security, because it must extend its own chain. That exposes each
+  partition's name, head hash and event count for every tenant and subsystem,
+  but no event content. Every intake head write must still match an intake
+  audit event the login can see, and the binding limits those to its own tenant.
 
 The migration is forward-only in normal operation. If an operator prepares a
 database recovery that removes this source-only slice, the reviewed recovery
 SQL must lock both new tables and refuse while any batch exists. The executable,
-tested form is `db/down/0093_work_batch_intake.sql`; it also removes the four
-triggers and two slice-owned functions when both tables are empty:
+tested form is `db/down/0093_work_batch_intake.sql`; it also removes the
+slice's triggers, policies, functions and the anchor and binding tables when
+both proposal tables are empty:
 
 ```sql
 BEGIN;
