@@ -18,19 +18,25 @@ test("the real Mac-local wrapper signs in locally and reaches the existing proje
   });
   const origin = "http://127.0.0.1:3210", trustedOrigin = "https://control-room-mac.example.ts.net";
   const ownerCode = "mac-local-owner-code-long-enough";
+  let actionInboxReads = 0;
   const app = createMacLocalWebProcessV1({ origin, workspaceId: fixture.configuration.workspaceId,
     localOwnerSession: { schema: LOCAL_OWNER_SESSION_PROFILE_V1, origin, tenantId: fixture.configuration.tenantId,
       provider: fixture.trust.issuer, subject: conformanceSubject, ownerCodeDigest: sha256Digest({ ownerCode }), sessionSeconds: 900,
       trustedOrigin },
     database: { client: fixture.client, close: async () => {} }, clock: () => conformanceNow,
+    workBatchIntegrityKey: new Uint8Array(32).fill(7),
     taskReadKeys: { harnessIntegrityKey: new Uint8Array(32).fill(1),
       results: { integrityKey: new Uint8Array(32).fill(2), storageClass: "local", storage: { read: async () => undefined } } },
     workerReadiness: { read: () => [{ kind: "hermes-021" as const, state: "ready" as const, proof: "not_proven" as const }] },
-    taskWorkersStarted: true });
+    taskWorkersStarted: true,
+    actionInboxSource: { read: async () => { actionInboxReads += 1; return {
+      observedAt: new Date(conformanceNow).toISOString(), items: [], truncated: false }; } } });
   const request = (path: string, init: RequestInit = {}) => new Request(`${origin}${path}`, init);
   const signedOutApi = await app.handle(request("/api/v1/projects"), () => new Response("unused"));
   assert.equal(signedOutApi.status, 401);
   assert.deepEqual(await signedOutApi.json(), { error: "authentication_required" });
+  const signedOutInbox = await app.handle(request("/api/v1/needs-me/action-items"), () => new Response("unused"));
+  assert.equal(signedOutInbox.status, 401);
   const signedOutFile = await app.handle(request("/api/v1/projects/project:test/tasks/job:test/files/artifact:test?disposition=preview&token=untrusted"),
     () => new Response("unused"));
   assert.equal(signedOutFile.status, 401, "file preview requires an authenticated owner session before a ticket is considered");
@@ -46,9 +52,12 @@ test("the real Mac-local wrapper signs in locally and reaches the existing proje
     origin, "sec-fetch-site": "same-origin", "content-type": "application/json" }, body: JSON.stringify({ ownerCode }) }), () => new Response("unused"));
   assert.equal(signedIn.status, 201);
   const cookie = signedIn.headers.get("set-cookie"); assert.ok(cookie);
+  const actionInboxResponse = await app.handle(request("/api/v1/needs-me/action-items", { headers: { cookie: cookie! } }), () => new Response("unused"));
+  assert.equal(actionInboxResponse.status, 200, await actionInboxResponse.clone().text());
+  assert.deepEqual(await actionInboxResponse.json(), { observedAt: new Date(conformanceNow).toISOString(), items: [], truncated: false });
   const workers = await app.handle(request("/api/v1/local-workers", { headers: { cookie: cookie! } }), () => new Response("unused"));
   assert.equal(workers.status, 200); assert.deepEqual(await workers.json(), { taskWorkersStarted: true,
-    projectSections: ["overview", "inbox", "work", "agents", "reviews", "activity", "files", "settings"],
+    projectSections: ["overview", "inbox", "work", "pipelines", "agents", "reviews", "activity", "files", "settings"],
     workers: [{ kind: "hermes-021", state: "ready", proof: "not_proven" }] });
   const projects = await app.handle(request("/api/v1/projects", { headers: { cookie: cookie! } }), () => new Response("unused"));
   assert.equal(projects.status, 200);
@@ -129,6 +138,14 @@ test("the real Mac-local wrapper signs in locally and reaches the existing proje
   const attention = await app.handle(request("/api/v1/needs-me/tasks", { headers: { cookie: cookie! } }), () => new Response("unused"));
   assert.equal(attention.status, 200);
   assert.equal((await attention.json() as { items: unknown[]; startsWork: boolean }).startsWork, false);
+  const pipelineAttention = await app.handle(request("/api/v1/needs-me/pipelines", { headers: { cookie: cookie! } }),
+    () => new Response("unused"));
+  assert.equal(pipelineAttention.status, 200);
+  assert.deepEqual(await pipelineAttention.json(), { batches: [], startsWork: false, grantsExecutionAuthority: false });
+  const pipelines = await app.handle(request(`/api/v1/projects/${encodeURIComponent(projectId)}/pipelines`,
+    { headers: { cookie: cookie! } }), () => new Response("unused"));
+  assert.equal(pipelines.status, 200);
+  assert.deepEqual(await pipelines.json(), { batches: [], startsWork: false, grantsExecutionAuthority: false });
   const overview = await app.handle(request(`/api/v1/projects/${encodeURIComponent(projectId)}/overview`,
     { headers: { cookie: cookie! } }), () => new Response("unused"));
   assert.equal(overview.status, 200);
@@ -195,7 +212,7 @@ test("the real Mac-local wrapper signs in locally and reaches the existing proje
   assert.equal(sessionWatchShell.status, 200); assert.equal(await sessionWatchShell.text(), "real session watch shell");
   const needsShell = await app.handle(request("/needs-me", { headers: { cookie: cookie! } }), () => new Response("real needs shell"));
   assert.equal(needsShell.status, 200); assert.equal(await needsShell.text(), "real needs shell");
-  for (const section of ["inbox", "agents", "reviews", "activity", "files", "settings"]) {
+  for (const section of ["inbox", "pipelines", "agents", "reviews", "activity", "files", "settings"]) {
     const sectionShell = await app.handle(request(`/projects/${encodeURIComponent(projectId)}/${section}`,
       { headers: { cookie: cookie! } }), () => new Response(`real ${section} shell`));
     assert.equal(sectionShell.status, 200); assert.equal(await sectionShell.text(), `real ${section} shell`);
@@ -245,6 +262,12 @@ test("the real Mac-local wrapper signs in locally and reaches the existing proje
   assert.equal(foreign.status, 403);
   const fakePreview = await app.handle(request("/local-preview", { headers: { cookie: cookie! } }), () => new Response("must not render"));
   assert.equal(fakePreview.status, 404);
+  await fixture.client.query(`UPDATE control_role_grants SET role_key='operator'
+    WHERE tenant_id=$1 AND role_key='owner'`, [fixture.configuration.tenantId]);
+  const nonOwnerInbox = await app.handle(request("/api/v1/needs-me/action-items", { headers: { cookie: cookie! } }),
+    () => new Response("unused"));
+  assert.equal(nonOwnerInbox.status, 403, "wildcard actions do not replace the owner-role requirement");
+  assert.equal(actionInboxReads, 1, "owner-role authority is rechecked before the canonical source is called");
   await app.close();
 });
 
@@ -312,7 +335,8 @@ test("the Mac-local wrapper forwards the existing assignment operation through l
       return { projectId, jobId, inputDigest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         candidates: [], recommendation: { state: "not_available", availability: "unknown", startsWork: false, grantsExecutionAuthority: false },
         receipt: null, startsWork: false, candidateEvidence: "configured_routes_only" };
-    }, async assign() { commandCalls += 1; throw new Error("not used"); }, async expire() { throw new Error("not used"); } },
+    }, async assign() { commandCalls += 1; throw new Error("not used"); }, async expire() { throw new Error("not used"); },
+      async revoke() { throw new Error("not used"); } },
   });
   const request = (path: string, init: RequestInit = {}) => new Request(`${origin}${path}`, init);
   const signedIn = await app.handle(request("/api/v1/local-owner-session", { method: "POST", headers: {
@@ -344,10 +368,11 @@ test("the Mac-local transport stays loopback-only and admits only one configured
     isReady: () => true, close: async () => {},
   }, handler: async () => new Response("unused"), assets: { count: 0, digest: "empty", respond: () => undefined } }),
   /mac_local_serving_config_invalid/);
-  const receivedMethods: string[] = [];
+  const receivedMethods: string[] = [], receivedEventIds: (string | null)[] = [];
   const handler = createMacLocalNodeHandler({ origin, secondaryOrigin: trustedOrigin,
     application: { isReady: () => true, close: async () => {} },
-    handler: async request => { receivedMethods.push(request.method); return new Response("ok", { headers: { "set-cookie": "control_room_local_owner=value; HttpOnly" } }); },
+    handler: async request => { receivedMethods.push(request.method); receivedEventIds.push(request.headers.get("last-event-id"));
+      return new Response("ok", { headers: { "set-cookie": "control_room_local_owner=value; HttpOnly" } }); },
     assets: { count: 0, digest: "empty", respond: () => undefined } });
   const exchange = nodeExchange({ path: "/session" }); exchange.input.rawHeaders[1] = "127.0.0.1:3210";
   const done = new Promise<void>((resolve, reject) => { exchange.output.once("finish", resolve); exchange.output.once("error", reject); });
@@ -360,12 +385,18 @@ test("the Mac-local transport stays loopback-only and admits only one configured
   void handler.handle(remote.input, remote.output); await remoteDone;
   assert.equal(remote.output.statusCode, 200);
 
+  const resumed = nodeExchange({ path: "/api/v1/projects/project:test/events", headers: ["Last-Event-ID", "cursor-from-browser"] });
+  resumed.input.rawHeaders[1] = "127.0.0.1:3210";
+  const resumedDone = new Promise<void>((resolve, reject) => { resumed.output.once("finish", resolve); resumed.output.once("error", reject); });
+  void handler.handle(resumed.input, resumed.output); await resumedDone;
+  assert.equal(resumed.output.statusCode, 200); assert.equal(receivedEventIds.at(-1), "cursor-from-browser");
+
   const signOut = nodeExchange({ path: "/api/v1/local-owner-session", method: "DELETE" });
   signOut.input.rawHeaders[1] = "127.0.0.1:3210";
   const signOutDone = new Promise<void>((resolve, reject) => { signOut.output.once("finish", resolve); signOut.output.once("error", reject); });
   void handler.handle(signOut.input, signOut.output); await signOutDone;
   assert.equal(signOut.output.statusCode, 200);
-  assert.deepEqual(receivedMethods, ["GET", "GET", "DELETE"]);
+  assert.deepEqual(receivedMethods, ["GET", "GET", "GET", "DELETE"]);
 
   const demoHandler = createContributorDemoNodeHandler({ origin: "http://127.0.0.1:3000",
     application: { isReady: () => true, close: async () => {} }, handler: async () => new Response("unexpected"),

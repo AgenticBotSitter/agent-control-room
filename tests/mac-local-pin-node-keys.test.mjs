@@ -7,7 +7,7 @@ const nodeIds = ["mac-1.hermes", "mac-1.claude", "mac-1.codex"];
 const fingerprints = Object.fromEntries(nodeIds.map((id, index) => [id, `sha256:${String(index + 1).repeat(64)}`]));
 const receipt = { schema: MAC_LOCAL_FIRST_OWNER_RECEIPT_V1, manifestDigest: "sha256:" + "a".repeat(64),
   tenantId: "tenant:mac-local", created: 14, kept: 0, fingerprints };
-const configuration = { enablement: { nodeId: "mac-1" } };
+const configuration = { enablement: { nodeId: "mac-1" }, workIntakeProjectIds: [] };
 
 function runtime(rows = nodeIds.map(node_id => ({ node_id, fingerprint: fingerprints[node_id] }))) {
   const events = [];
@@ -30,6 +30,9 @@ function runtime(rows = nodeIds.map(node_id => ({ node_id, fingerprint: fingerpr
 
 test("receipt parser accepts exactly the three public fingerprints and row counts", () => {
   assert.deepEqual(parseMacLocalFirstOwnerReceiptV1(receipt, nodeIds), receipt);
+  const intakeReceipt = { ...receipt, created: 21 };
+  assert.deepEqual(parseMacLocalFirstOwnerReceiptV1(intakeReceipt, nodeIds, 21), intakeReceipt);
+  assert.throws(() => parseMacLocalFirstOwnerReceiptV1(intakeReceipt, nodeIds), /receipt_refused/u);
   for (const invalid of [
     { ...receipt, fingerprints: { ...fingerprints, "mac-1.extra": "sha256:" + "a".repeat(64) } },
     { ...receipt, fingerprints: { ...fingerprints, "mac-1.codex": "wrong" } },

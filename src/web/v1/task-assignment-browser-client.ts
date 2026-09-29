@@ -57,7 +57,9 @@ export function createTaskAssignmentBrowserClient(transport: typeof fetch = fetc
       }
       const { receipt } = taskAssignmentCommandSchema.parse(await json(response));
       if (receipt.projectId !== pending.projectId || receipt.jobId !== pending.jobId || receipt.inputDigest !== draft.expectedInputDigest
-        || draft.action === "assign" && receipt.nodeId !== draft.nodeId || draft.action === "expire" && receipt.leaseState !== "expired") throw new Error();
+        || draft.action === "assign" && receipt.nodeId !== draft.nodeId
+        || draft.action === "expire" && receipt.leaseState !== "expired"
+        || draft.action === "revoke" && receipt.leaseState !== "revoked") throw new Error();
       pending = undefined; return receipt;
     } catch (error) {
       if (pending) pending.uncertain = true;

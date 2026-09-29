@@ -12,11 +12,28 @@ import type { NativeQueueWorkerStartupConfiguration } from "./native-queue-worke
 import { createPostgresLocalOwnerSessionStoreV1 } from "./local-owner-session-store";
 import type { LocalOwnerSessionStoreV1 } from "./local-owner-session-store";
 import type { PersistedLocalOwnerSessionV1 } from "./local-owner-session";
+import { captureWorkBatchQueueCatalogV1, createWorkBatchQueueSelectionAuthorityV1,
+  type WorkBatchQueueAdmissionAuthorityV1, type WorkBatchQueueCatalogV1,
+  type WorkBatchQueueSelectionAuthorityV1 } from "../../work-intake/v1";
 
 type OpenedDatabase = Readonly<{ client: DatabaseClient; close(): Promise<void> }>;
 type LocalService = Readonly<{ start(): Promise<void>; close(): Promise<void>; isReady(): boolean }>;
-type HostedTaskApplication = Pick<MacLocalTaskApplicationV1, "operations" | "taskReadKeys" | "isReady" | "close" | "queueDelivery" | "queueRecovery">;
+type HostedTaskApplication = Pick<MacLocalTaskApplicationV1, "operations" | "taskReadKeys" | "actionInboxSource" | "projectEvents" | "isReady" | "close" | "queueDelivery" | "queueRecovery" | "workBatchAuthority">;
 type OwnedQueueWorker = Readonly<{ close(): Promise<void>; status(): { accepting: boolean } }>;
+
+/** The protected enablement is the only Mac-local source of exact worker and
+ * model identities. Historical Hermes 0.21 evidence is deliberately not an
+ * active queue destination. */
+export function createMacLocalWorkBatchQueueCatalogV1(
+  configuration: MacLocalProtectedConfigurationV1): WorkBatchQueueCatalogV1 {
+  const suffix = { hermes: "hermes", "claude-code": "claude", codex: "codex" } as const;
+  return captureWorkBatchQueueCatalogV1(configuration.enablement.workers.flatMap(worker => {
+    if (worker.kind === "hermes-021") return [];
+    return [{ workerId: worker.workerId, workerKind: worker.kind,
+      nodeId: `${configuration.enablement.nodeId}.${suffix[worker.kind]}`,
+      ...(worker.modelPolicy ? { modelPolicy: worker.modelPolicy } : {}) }];
+  }));
+}
 
 /** One small composition for the Mac-local web host. It deliberately uses the
  * dedicated loopback web process, rather than adapting the hosted Cloudflare
@@ -39,6 +56,9 @@ export function createMacLocalWebServiceFromConfigurationV1(input: Readonly<{
   workerReadiness?: Pick<MacLocalWorkerReadinessV1, "read">;
   createServer?: (options: Readonly<ServerOptions>) => Server;
   listenerTiming?: { bindMs?: number; closeMs?: number };
+  workBatchIntegrityKey?: Uint8Array;
+  workBatchQueueCatalog?: WorkBatchQueueCatalogV1;
+  workBatchQueueAdmissionAuthority?: WorkBatchQueueAdmissionAuthorityV1;
 }>): LocalService {
   const configuration = input?.configuration;
   if (!configuration || !input.database?.client || typeof input.database.close !== "function"
@@ -58,8 +78,14 @@ export function createMacLocalWebServiceFromConfigurationV1(input: Readonly<{
     database: input.database,
     ...(taskApplication ? { ...taskApplication.operations } : input.operations ? { ...input.operations } : {}),
     ...(taskApplication?.taskReadKeys ? { taskReadKeys: taskApplication.taskReadKeys } : {}),
+    ...(taskApplication?.actionInboxSource ? { actionInboxSource: taskApplication.actionInboxSource } : {}),
+    ...(taskApplication?.projectEvents ? { projectEvents: taskApplication.projectEvents } : {}),
     ...(input.workerReadiness ? { workerReadiness: input.workerReadiness } : {}),
     taskWorkersStarted: Boolean(taskApplication),
+    ...(input.workBatchIntegrityKey ? { workBatchIntegrityKey: input.workBatchIntegrityKey } : {}),
+    ...(input.workBatchIntegrityKey ? { workBatchQueueCatalog: input.workBatchQueueCatalog
+      ?? createMacLocalWorkBatchQueueCatalogV1(configuration) } : {}),
+    ...(input.workBatchQueueAdmissionAuthority ? { workBatchQueueAdmissionAuthority: input.workBatchQueueAdmissionAuthority } : {}),
     assets: input.assets,
     render: input.render,
     ...(input.createServer ? { createServer: input.createServer } : {}),
@@ -98,6 +124,8 @@ export function createMacLocalProtectedHostV1(input: Readonly<{
     database: OpenedDatabase;
     workerReadiness: MacLocalWorkerReadinessV1;
     databaseRoles: MacLocalDatabaseRolesV1;
+    workBatches?: Readonly<{ integrityKey: Uint8Array; queueCatalog: WorkBatchQueueCatalogV1;
+      selectionAuthority: WorkBatchQueueSelectionAuthorityV1 }>;
   }>) => HostedTaskApplication | Promise<HostedTaskApplication>;
   /** Reads the fixed owner-only database-role file. It is required whenever a
    * shared task composition is configured, and is read before any pool opens. */
@@ -108,6 +136,7 @@ export function createMacLocalProtectedHostV1(input: Readonly<{
   startQueueWorker?: (configuration: NativeQueueWorkerStartupConfiguration) => Promise<OwnedQueueWorker>;
   createServer?: (options: Readonly<ServerOptions>) => Server;
   listenerTiming?: { bindMs?: number; closeMs?: number };
+  workBatchIntegrityKey?: Uint8Array;
 }>) {
   if (!input || typeof input.loadConfiguration !== "function" || typeof input.readVersion !== "function"
     || typeof input.openDatabase !== "function" || !input.assets || typeof input.assets.respond !== "function"
@@ -124,8 +153,18 @@ export function createMacLocalProtectedHostV1(input: Readonly<{
       let taskApplication: HostedTaskApplication | undefined;
       try {
         if (input.createTaskApplication && !databaseRoles) throw new Error("mac_local_host_configuration_invalid");
+        const workBatches = input.workBatchIntegrityKey ? (() => {
+          if (!(input.workBatchIntegrityKey instanceof Uint8Array) || input.workBatchIntegrityKey.length !== 32)
+            throw new Error("mac_local_host_configuration_invalid");
+          const queueCatalog = createMacLocalWorkBatchQueueCatalogV1(configuration);
+          return Object.freeze({ integrityKey: Uint8Array.from(input.workBatchIntegrityKey), queueCatalog,
+            selectionAuthority: createWorkBatchQueueSelectionAuthorityV1(queueCatalog, workerReadiness) });
+        })() : undefined;
         taskApplication = input.createTaskApplication
-          ? await input.createTaskApplication({ configuration, database, workerReadiness, databaseRoles: databaseRoles! }) : undefined;
+          ? await input.createTaskApplication({ configuration, database, workerReadiness, databaseRoles: databaseRoles!,
+            ...(workBatches ? { workBatches } : {}) }) : undefined;
+        if (workBatches && input.createTaskApplication && !taskApplication?.workBatchAuthority)
+          throw new Error("mac_local_host_configuration_invalid");
         // Some inert composition tests intentionally supply an opaque fake
         // client. A real opened DatabaseClient always exposes query and must
         // use the durable store.
@@ -134,6 +173,9 @@ export function createMacLocalProtectedHostV1(input: Readonly<{
         const initialLocalOwnerSessions = localOwnerSessionStore ? await localOwnerSessionStore.load(Date.now()) : [];
         const web = createMacLocalWebServiceFromConfigurationV1({
           configuration, database, assets: input.assets, render: input.render,
+          ...(workBatches ? { workBatchIntegrityKey: workBatches.integrityKey,
+            workBatchQueueCatalog: workBatches.queueCatalog,
+            workBatchQueueAdmissionAuthority: taskApplication?.workBatchAuthority } : {}),
           ...(localOwnerSessionStore ? { localOwnerSessionStore } : {}), initialLocalOwnerSessions,
           ...(taskApplication ? { taskApplication } : input.operations ? { operations: input.operations } : {}),
           workerReadiness,

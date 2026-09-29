@@ -64,6 +64,7 @@ function observeBrowserErrors(page: Page, errors: string[], observeHttpFailures 
 }
 
 async function prepareAcceptance(page: Page) {
+  await expect(page.getByRole("region", { name: "Owner quality decision" })).toBeVisible();
   const attestation = page.getByLabel("I read it and it’s correct");
   // Review options arrive after the protected result opens. A one-shot count
   // can race that request and skip the required live gesture, leaving Accept
@@ -415,9 +416,14 @@ test.describe("disposable owner website adversarial attacks", () => {
     await activateTwice(page.getByRole("button", { name: "Request changes" }));
     const savedChanges = page.getByText(/Saved: changes requested/);
     const checkExactSave = page.getByRole("button", { name: "Check this exact review save" });
+    // Each poll probe must return at once. `isEnabled()` auto-waits for its
+    // element, and the retry button is removed as soon as a fast save resolves,
+    // so it would block the whole poll waiting for a button that never returns.
+    // Counting enabled matches never waits.
+    const enabledCheckExactSave = page.getByRole("button", { name: "Check this exact review save", disabled: false });
     await expect.poll(async () => {
       if (await savedChanges.isVisible()) return "saved";
-      if (await checkExactSave.isEnabled().catch(() => false)) return "retry";
+      if (await enabledCheckExactSave.count()) return "retry";
       return "pending";
     }, { timeout: 20_000 }).not.toBe("pending");
     expect(reviewPosts.length - reviewsBeforeRevision).toBe(1);
@@ -445,9 +451,13 @@ test.describe("disposable owner website adversarial attacks", () => {
     for (const path of [projectPath, `${projectPath}/tasks`, `${projectPath}/reviews`,
       `${projectPath}/activity`, `${projectPath}/files`, "/", "/needs-me"]) {
       await page.goto(path); await expectHealthy(page);
-      if (path === `${projectPath}/tasks` || path === `${projectPath}/activity` || path === `${projectPath}/files`) {
+      if (path === `${projectPath}/tasks` || path === `${projectPath}/files`) {
         await expect(page.locator("main")).toContainText("Concurrent acceptance task");
         await expect(page.locator("main")).toContainText("Revision lifecycle task");
+      }
+      if (path === `${projectPath}/activity`) {
+        await expect(page.locator("main")).toContainText("No saved project events are recorded yet");
+        await expect(page.locator("main")).toContainText("Read-only history");
       }
     }
     expect(browserErrors).toEqual([]);

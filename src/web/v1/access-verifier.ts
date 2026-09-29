@@ -3,7 +3,8 @@ import jwt from "jsonwebtoken";
 import { z } from "zod";
 
 export class WebAccessError extends Error {
-  constructor(readonly code: "authentication_required" | "access_denied" | "invalid_request" | "conflict" | "not_found") {
+  constructor(readonly code: "authentication_required" | "access_denied" | "invalid_request" | "conflict"
+    | "queue_depth_exceeded" | "not_found") {
     super(code);
   }
 }

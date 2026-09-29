@@ -31,7 +31,8 @@ test("article reader shows retained text and discards an old project response", 
     assert.match(dom.window.document.body.textContent, /Saved article text/);
     assert.equal(dom.window.document.querySelector("textarea").value, "Saved **article** text");
     await act(async () => dom.window.dispatchEvent(new dom.window.Event("focus")));
-    assert.equal(dom.window.document.querySelector("textarea"), null);
+    assert.equal(dom.window.document.querySelector("textarea").value, "Saved **article** text",
+      "a background focus read retains the last accepted article");
     await act(async () => pending[2](new Response("", { status: 401 })));
     assert.match(dom.window.document.body.textContent, /check your access/);
     assert.equal(dom.window.document.querySelector("textarea"), null);
@@ -41,6 +42,42 @@ test("article reader shows retained text and discards an old project response", 
     await act(async () => pending[3](new Response("", { status: 404 })));
     assert.match(dom.window.document.body.textContent, /No saved article text yet/);
     assert.equal(dom.window.document.querySelector("textarea"), null);
+  } finally {
+    await act(async () => root.unmount()); dom.window.close();
+    for (const [key, descriptor] of Object.entries(saved)) {
+      if (descriptor) Object.defineProperty(globalThis, key, descriptor); else delete globalThis[key];
+    }
+  }
+});
+
+test("an article that fails once then succeeds replaces the error with the article", async () => {
+  // Regression: the reader kept `message` in its own state and rendered it
+  // ahead of the record, so a 404 was never cleared by the next successful
+  // poll. The article was fetched and never shown; on main it self-healed
+  // within a tick.
+  const dom = new JSDOM("<div id='root'></div>");
+  const saved = Object.fromEntries(["window", "document", "IS_REACT_ACT_ENVIRONMENT", "fetch"].map(key => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
+  Object.assign(globalThis, { window: dom.window, document: dom.window.document, IS_REACT_ACT_ENVIRONMENT: true });
+  const pending = [];
+  globalThis.fetch = async () => new Promise(resolve => pending.push(resolve));
+  const root = createRoot(dom.window.document.getElementById("root"));
+  const props = { projectId: "project:one", storyId: "story:one", storyDigest: `sha256:${"a".repeat(64)}`, canonicalUrl: "https://example.invalid/article" };
+  const record = text => ({ tenantId: "tenant:fixture", workspaceId: "workspace:fixture", ...props,
+    status: "extracted", sourceHash: `sha256:${"b".repeat(64)}`, detailDigest: `sha256:${"c".repeat(64)}`,
+    extractor: "@mozilla/readability@0.6.0+jsdom@26.1.0", text });
+  try {
+    await act(async () => root.render(React.createElement(NewsArticleReader, props)));
+    await act(async () => dom.window.document.querySelector("button").click());
+    // The first read fails: nothing is retained for this story yet.
+    await act(async () => pending[0](new Response("", { status: 404 })));
+    assert.match(dom.window.document.body.textContent, /No saved article text yet/);
+    // The article is collected by a later poll, and the reader must show it.
+    await act(async () => dom.window.dispatchEvent(new dom.window.Event("focus")));
+    await act(async () => pending[1](Response.json(record("LATE **article** text"))));
+    assert.doesNotMatch(dom.window.document.body.textContent, /No saved article text yet/,
+      "a successful read must clear the stale error");
+    assert.match(dom.window.document.body.textContent, /Untrusted source content/);
+    assert.equal(dom.window.document.querySelector("textarea").value, "LATE **article** text");
   } finally {
     await act(async () => root.unmount()); dom.window.close();
     for (const [key, descriptor] of Object.entries(saved)) {

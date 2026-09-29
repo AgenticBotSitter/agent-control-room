@@ -138,6 +138,12 @@ export class ManagedNativeInput {
         this.state = "codex_result_returned";
         return { kind: "codex_result" as const, result };
       }
+      if (frame.type === "job.lease.renew.request" && this.task
+        && ["sent", "reporting", "codex_receipted", "codex_result_returned"].includes(this.state)
+        && frame.body.projectId === this.task.projectId && frame.body.jobId === this.task.jobId
+        && frame.body.attemptId === this.task.attemptId) {
+        return { kind: "lease_renewal" as const, result: await this.handle.renew(copy, current) };
+      }
       if (frame.type === "harness.native.snapshot" && this.state === "reporting") {
         return { kind: "progress" as const, result: await this.handle.progress(copy, content, current) };
       }

@@ -165,7 +165,7 @@ try {
     })));
     assert.deepEqual(workspaceLinks.slice(0, 5), [
       { label: "Home", href: "/" }, { label: "Projects", href: "/projects" }, { label: "Workers", href: "/workers" },
-      { label: "Needs attention", href: "/needs-me" }, { label: "Settings", href: "/settings" },
+      { label: "Action Inbox", href: "/needs-me" }, { label: "Settings", href: "/settings" },
     ]);
     assert.equal(workspaceLinks.some(link => link.label === "Idea LabOptional" && link.href === "/ideas"), profile.modules.ideaLab);
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1), true);

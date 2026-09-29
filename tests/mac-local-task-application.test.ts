@@ -3,6 +3,7 @@ import test from "node:test";
 import { createMacLocalTaskApplicationV1 } from "../src/web/v1/mac-local-task-application";
 import { privateAgentTaskCompositionFixture } from "./helpers/private-agent-task-composition";
 import { sha256Digest } from "../src/security";
+import type { ActionInboxItemV1 } from "../src/operator-surfaces/v1";
 
 test("Mac-local task composition reuses the canonical operations without starting a queue or worker", async t => {
   const fixture = await privateAgentTaskCompositionFixture(); t.after(fixture.close);
@@ -50,6 +51,33 @@ test("Mac-local task composition reuses the canonical operations without startin
     "the result page must advertise owner review only when its mounted review operation is configured");
   assert.equal(app.taskReadKeys?.manualVerificationScenarios, manualVerificationScenarios,
     "the Mac-local result page receives the same human-only scenario source as the write operation");
+  assert.equal(typeof app.projectEvents?.read, "function",
+    "the Mac-local task host receives the canonical read-only project-event source");
+  const actionSource = await app.actionInboxSource?.read({ tenantId: configuration.web.tenantId,
+    actorId: "identity:test", grantedAt: "2026-09-28T10:00:00.000Z", now: "2026-09-28T11:00:00.000Z" });
+  assert.deepEqual(actionSource, { observedAt: "2026-09-28T11:00:00.000Z", items: [], truncated: false },
+    "canonical attention is read through the coordinator role, never the web connection");
+  await assert.rejects(app.actionInboxSource?.read({ tenantId: "tenant:other", actorId: "identity:test",
+    grantedAt: "2026-09-28T10:00:00.000Z", now: "2026-09-28T11:00:00.000Z" }) ?? Promise.resolve(),
+  /action_inbox_scope_mismatch/, "the source must enforce its server-bound tenant scope");
+  const inboxItem = (patch: Partial<ActionInboxItemV1>): ActionInboxItemV1 => ({ id: "attention:open",
+    tenantId: configuration.web.tenantId, kind: "approval", state: "open", requestedAction: "Review older approval",
+    reasonCode: "approval_waiting", blockedWorkItemIds: [], legalResponses: [{ id: "response:review", kind: "open_source",
+      label: "Review source", requiresConfirmation: false, available: true }], evidence: [],
+    createdAt: "2025-01-01T00:00:00.000Z", deliveryState: "not_requested", ...patch });
+  const insertInboxItem = async (item: ActionInboxItemV1) => f.startup.raw.query(
+    `INSERT INTO control_action_inbox
+      (id,tenant_id,project_id,work_item_id,kind,state,delivery_state,created_at,expires_at,payload)
+     VALUES ($1,$2,NULL,NULL,$3,$4,$5,$6,NULL,$7::jsonb)`,
+    [item.id,item.tenantId,item.kind,item.state,item.deliveryState,item.createdAt,JSON.stringify(item)]);
+  await insertInboxItem(inboxItem({}));
+  for (let index = 0; index < 501; index += 1) await insertInboxItem(inboxItem({ id: `attention:resolved-${index}`,
+    state: "resolved", requestedAction: `Resolved item ${index}`, createdAt: "2026-09-28T10:30:00.000Z" }));
+  const crowdedSource = await app.actionInboxSource?.read({ tenantId: configuration.web.tenantId,
+    actorId: "identity:test", grantedAt: "2026-09-28T10:00:00.000Z", now: "2026-09-28T11:00:00.000Z" });
+  assert.deepEqual(crowdedSource?.items.map(item => item.id), ["attention:open"],
+    "newer resolved history must not hide an older open action");
+  assert.equal(crowdedSource?.truncated, false, "resolved history must not raise an open-action truncation warning");
   assert.equal(app.queueDelivery, undefined, "constructing the local website must not start or imply a queue worker");
   assert.ok(!f.trace.includes("queue-start"));
 

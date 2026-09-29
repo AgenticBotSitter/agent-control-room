@@ -149,7 +149,7 @@ const focusDestination = page => page.evaluate(() => {
 });
 
 const STABLE_PAGES = [["/", "Home"], ["/projects", "Project catalog"], ["/workers", "Workers"],
-  ["/needs-me", "Needs attention"], ["/settings", "Settings"], ["/connections", "Connections"]];
+  ["/needs-me", "Action Inbox"], ["/settings", "Settings"], ["/connections", "Connections"]];
 const PROJECT_SECTIONS = [["inbox", "Project inbox"], ["tasks", "Project work"], ["agents", "Project agents"],
   ["automations", "Project automations"], ["files", "Project files"], ["reviews", "Project reviews"],
   ["activity", "Project activity"], ["settings", "Project settings"], ["news", "Project news"]];

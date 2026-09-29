@@ -94,7 +94,7 @@ export function HomeDashboard({ data }: { data: HomeDashboardState }) {
             : <EmptyState>No matching task attention items were found in this checked page. This is not a fleet-wide all-clear.</EmptyState>}
       {data.attention.state === "ready" && (data.attention.value.items.length > 5 || data.attention.value.nextCursor)
         ? <p className="private-note">More attention items may be available.</p> : null}
-      <a className="private-action-link" href="/needs-me">Open needs attention</a>
+      <a className="private-action-link" href="/needs-me">Open Action Inbox</a>
     </section>
 
     <section className="private-panel" aria-labelledby="home-results"><PanelHeading id="home-results">Recent results

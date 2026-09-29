@@ -2,6 +2,7 @@ import { z } from "zod";
 import { HARNESS_CONTRACT_VERSION_V1, HARNESS_EVENT_SCHEMA_VERSION_V1, harnessRunStates } from "./types";
 import { nativeTaskRegistrationSchema, nativeTaskSnapshotBodySchema, NATIVE_HERMES_ADAPTER_ID, NATIVE_HERMES_VERSION } from "./native-observation";
 import { remoteTaskRegistrationSchemaV1 } from "./remote-task-registration";
+import { MODEL_IDENTIFIER_PATTERN_V1 } from "../../domain/v1/model-identifier";
 
 const id = z.string().min(3).max(180).regex(/^[a-zA-Z0-9][a-zA-Z0-9._:-]*$/);
 const version = z.string().min(1).max(80).regex(/^[a-zA-Z0-9][a-zA-Z0-9._+-]*$/);
@@ -9,6 +10,7 @@ const digest = z.string().regex(/^sha256:[a-f0-9]{64}$/);
 const time = z.string().datetime({ offset: true });
 const boundedCount = z.number().int().min(0).max(Number.MAX_SAFE_INTEGER);
 const money = z.string().regex(/^(?:0|[1-9][0-9]*)(?:\.[0-9]{1,6})?$/);
+const modelIdentifier = z.string().regex(MODEL_IDENTIFIER_PATTERN_V1);
 
 export const harnessAdapterManifestSchemaV1 = z.object({
   schemaVersion: z.literal(HARNESS_CONTRACT_VERSION_V1), adapterId: id, adapterVersion: version,
@@ -31,8 +33,8 @@ export const harnessRunSchemaV1 = z.object({
   schemaVersion: z.literal(HARNESS_CONTRACT_VERSION_V1), id, tenantId: id, projectId: id, jobId: id, attemptId: id, nodeId: id,
   adapterId: id, adapterVersion: version, harness: z.enum(["hermes", "codex", "claude", "other"]), harnessVersion: version,
   nativeSessionKeyDigest: digest, connectorProfileDigest: digest.optional(), authorityDigest: digest.optional(),
-  modelSelection: z.object({ model: id, effort: z.enum(["default", "low", "medium", "high", "xhigh", "max"]),
-    provider: id.optional(), profile: id.optional() }).strict().optional(),
+  modelSelection: z.object({ model: modelIdentifier, effort: z.enum(["default", "low", "medium", "high", "xhigh", "max"]),
+    provider: modelIdentifier.optional(), profile: modelIdentifier.optional() }).strict().optional(),
   parentRunId: id.optional(), revisionOfRunId: id.optional(), state: z.enum(harnessRunStates), resumable: z.boolean(),
   cancelState: z.enum(["not_requested", "requested", "confirmed", "reported", "unsupported"]), nativeTask: nativeTaskRegistrationSchema.optional(),
   remoteTask: remoteTaskRegistrationSchemaV1.optional(),

@@ -19,6 +19,10 @@ import { macRolePlan, readMacGrantCatalogV1 } from "../scripts/mac-local/databas
 import { provisionMacLocalNarrowRolesV1 } from "../scripts/mac-local/narrow-role-provision.mjs";
 import { postgresScramVerifierV1 } from "../scripts/mac-local/database-upgrade-scram.mjs";
 import { fixedQueueShapeDigestForTestV1 } from "../scripts/mac-local/fixed-queue-schema.mjs";
+// The shared disposable-cluster teardown. `.mjs` because
+// `scripts/ops/verify-database-backup.mjs` imports it with bare `node`, and a
+// `.ts` module could not be imported by one of its own callers.
+import { createClusterTeardown } from "../scripts/dev/postgres-cluster-lifecycle.mjs";
 
 const oldRoot = "/private/tmp/acr-db-0085";
 const headRoot = resolve(fileURLToPath(new URL("../", import.meta.url)));
@@ -32,10 +36,37 @@ async function cluster(root, port) {
   const data = join(root, "pg"), log = join(root, "pg.log"), socket = join(root, "socket");
   await mkdir(root, { recursive: true, mode: 0o700 });
   await mkdir(socket, { mode: 0o700 });
-  exec("initdb", ["-D", data, "-U", "postgres", "--auth=trust", "-E", "UTF8"]);
-  await writeFile(join(data, "pg_hba.conf"), "local all postgres trust\nhost all postgres 127.0.0.1/32 trust\nhost all all 127.0.0.1/32 scram-sha-256\n");
-  exec("pg_ctl", ["-D", data, "-l", log, "-w", "-o", `-p ${port} -k '${socket}' -c listen_addresses=127.0.0.1`, "start"]);
-  return { port, log, data, socket };
+  // Registered BEFORE initdb, and that ordering is the fix. This lane had no
+  // SIGINT/SIGTERM handler at all, so a runner that stopped it at its bound, or
+  // a Ctrl-C, skipped every `t.after()` and left four postmasters holding
+  // 56-byte SysV shared-memory segments with dead creators. `pg_ctl start` runs
+  // the postmaster with `setsid`, so it is its own session leader with PPID 1
+  // and a group signal from the runner cannot reach it either. This machine has
+  // 32 of those segments in total, and this one lane starts four clusters.
+  const teardown = createClusterTeardown({ dataDirectory: data, runDirectory: root,
+    socketDirectory: socket, port, pgBin: undefined, removeDirectories: false });
+  // The teardown is armed, and the caller's `t.after` is not registered until
+  // this function RETURNS. A throw between here and there — and `initdb`,
+  // `pg_hba.conf` and `pg_ctl start` all throw — would leave a live postmaster
+  // with nothing that stops it, which is the exact window this whole change
+  // exists to close. So a failure here stops the cluster itself.
+  try {
+    exec("initdb", ["-D", data, "-U", "postgres", "--auth=trust", "-E", "UTF8"]);
+    await writeFile(join(data, "pg_hba.conf"), "local all postgres trust\nhost all postgres 127.0.0.1/32 trust\nhost all all 127.0.0.1/32 scram-sha-256\n");
+    exec("pg_ctl", ["-D", data, "-l", log, "-w", "-o", `-p ${port} -k '${socket}' -c listen_addresses=127.0.0.1`, "start"]);
+    // Retained while the cluster is up, so a teardown reached from a signal has a
+    // pid even when the rest of the rehearsal is about to throw. Without it the
+    // teardown has nothing to signal and the ladder never runs.
+    await teardown.capturePostmasterPid();
+  } catch (error) {
+    // Stop what was started, then report the original failure. `stop()` may
+    // itself refuse, and that refusal is attached rather than raised over the
+    // top of the start failure that caused it.
+    try { await teardown.stop(); }
+    catch (stopError) { throw new AggregateError([error, stopError], `disposable_cluster_start_failed_and_teardown_failed: ${error?.message ?? String(error)}`); }
+    throw error;
+  }
+  return { port, log, data, socket, teardown };
 }
 
 async function baseDatabase(root, port, suffix) {
@@ -43,11 +74,12 @@ async function baseDatabase(root, port, suffix) {
     "-v", "dbname=control_room", "-v", "ON_ERROR_STOP=1", "-f",
     join(root, "deploy/postgres/provision-database.sql")]);
   const secrets = { migrator: `m${suffix}`.repeat(36), application: `a${suffix}`.repeat(36),
-    scheduler: `s${suffix}`.repeat(36) };
+    scheduler: `s${suffix}`.repeat(36), workIntake: `w${suffix}`.repeat(36) };
   await applyMigrations({ rootDir: root, ledgerPath: join(root, "deploy/postgres/migration-ledger.json"),
     bootstrapTarget: connection(port), migrateTarget: migrator(port, secrets.migrator),
     env: { CONTROL_ROOM_MIGRATOR_PASSWORD: secrets.migrator,
-      CONTROL_ROOM_APP_PASSWORD: secrets.application, CONTROL_ROOM_SCHEDULER_PASSWORD: secrets.scheduler } });
+      CONTROL_ROOM_APP_PASSWORD: secrets.application, CONTROL_ROOM_SCHEDULER_PASSWORD: secrets.scheduler,
+      CONTROL_ROOM_WORK_INTAKE_PASSWORD: secrets.workIntake } });
   return secrets;
 }
 
@@ -91,8 +123,12 @@ test("live-shaped 0085 PostgreSQL 17 installation converges to fresh HEAD withou
   const clients = [];
   t.after(async () => {
     for (const client of clients) { try { await client.end(); } catch {} }
+    // The shared ladder refuses to report success when a postmaster survives.
+    // The old `catch {}` on each `pg_ctl` reported success for a cluster that
+    // was still running and then removed its data directory — leaving a live
+    // postmaster holding a segment and nothing left to stop it with.
     for (const item of [old, fresh]) {
-      try { exec("pg_ctl", ["-D", item.data, "-m", "fast", "stop"]); } catch {}
+      try { await item.teardown.stop(); } catch { /* the segment is the finding; report it below */ }
     }
     await rm(root, { recursive: true, force: true });
   });
@@ -233,7 +269,7 @@ test("post-incident ledger 90 with old memberships needs only the role and grant
   const client = connectTarget(connection(live.port));
   t.after(async () => {
     try { await client.end(); } catch {}
-    try { exec("pg_ctl", ["-D", live.data, "-m", "fast", "stop"]); } catch {}
+    try { await live.teardown.stop(); } catch { /* the segment is the finding; report it below */ }
     await rm(root, { recursive: true, force: true });
   });
   await baseDatabase(oldRoot, live.port, "n");
@@ -299,7 +335,7 @@ test("a post-install queue shape mismatch removes only this empty new schema and
   const client = connectTarget(connection(local.port));
   t.after(async () => {
     try { await client.end(); } catch {}
-    try { exec("pg_ctl", ["-D", local.data, "-m", "fast", "stop"]); } catch {}
+    try { await local.teardown.stop(); } catch { /* the segment is the finding; report it below */ }
     await rm(root, { recursive: true, force: true });
   });
   await baseDatabase(oldRoot, local.port, "r");

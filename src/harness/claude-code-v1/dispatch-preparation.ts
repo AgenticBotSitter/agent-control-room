@@ -3,6 +3,7 @@ import { attemptRecordSchema, jobRecordSchema, leaseRecordSchema } from "../../d
 import type { DatabaseClient, DatabaseSession } from "../../persistence/database";
 import { sha256Digest } from "../../security";
 import { controllerWorkerDeliverySchemaV1, createControllerWorkerDeliveryV1, type ControllerWorkerDeliveryV1 } from "../v1/controller-worker-delivery";
+import { readOwnershipLeaseWriteScopesV1 } from "../v1/ownership-lease-write-scopes";
 import { CLAUDE_CODE_CONNECTOR_PROFILE_DIGEST_V1 } from "./result-publication";
 import { CLAUDE_CODE_LOCAL_ADAPTER_V1, CLAUDE_CODE_LOCAL_CAPABILITY_V1, CLAUDE_CODE_LOCAL_JOB_TYPE_V1 } from "./task-planning-contract";
 import { claudeCodeLocalTaskExecutionPlanSchemaV10, claudeCodeLocalTaskExecutionPlanSchemaV9, type TaskExecutionPlanner } from "../../web/v1/task-execution-planner";
@@ -104,10 +105,11 @@ export class ClaudeCodeLocalDispatchPreparationV1 {
     const expiresAt = new Date(Math.min(Date.parse(lease.expiresAt), Date.parse(job.authority.expiresAt))).toISOString();
     const runId = `run:claude-code-local:${sha256Digest({ tenantId: reference.tenantId, jobId: reference.jobId,
       attemptId: reference.attemptId, leaseId: reference.leaseId, planDigest: sha256Digest(plan) }).slice(7)}`;
+    const writeScopes = await readOwnershipLeaseWriteScopesV1(tx, reference.tenantId, reference.leaseId);
     const delivery = createControllerWorkerDeliveryV1({ identity: { tenantId: reference.tenantId, projectId: reference.projectId,
       jobId: reference.jobId, attemptId: reference.attemptId, runId, nodeId: id.parse(attempt.nodeId) }, worker: {
       workerId: this.binding.workerId, adapterId: CLAUDE_CODE_LOCAL_ADAPTER_V1, adapterRevision: this.binding.adapterRevision },
-      input: plan.input, authorityDigest: job.authority.digest, connectorProfileDigest: plan.connectorProfileDigest,
+      input: plan.input, writeScopes, authorityDigest: job.authority.digest, connectorProfileDigest: plan.connectorProfileDigest,
       acceptanceProfileId: plan.acceptanceProfileId, acceptanceProfileDigest: plan.acceptanceProfileDigest,
       issuedAt: new Date(now).toISOString(), expiresAt });
     return Object.freeze({ schema: CLAUDE_CODE_LOCAL_DISPATCH_PREPARATION_V1, delivery, workflowId: job.workflowId,
