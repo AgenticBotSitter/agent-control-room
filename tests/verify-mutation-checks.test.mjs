@@ -493,9 +493,16 @@ test("a normal test-command exit kills its background child", async () => {
 
 test("SIGTERM during a mutated command restores the file", async () => {
   const root = fixture();
+  // Outside root: the fixture is a Git checkout the verifier itself insists stays
+  // clean, so a marker file left inside it would trip that guard. The verifier's own
+  // handler normally reaps this detached grandchild before it exits, but
+  // interruptDuringMutation()'s own escalation path (a bare SIGKILL of the verifier
+  // under a loaded runner) can't reach a detached child either -- same leak as
+  // "SIGKILL leaves only a dirty target" below, so reap it the same way.
+  const pidFile = join(tmpdir(), `mutation-checks-grandchild-${process.pid}-${Date.now()}.pid`);
   try {
     const path = manifest(root, {
-      test: 'exec node -e "const fs=require(\'fs\');if(fs.readFileSync(\'src/guard.mjs\',\'utf8\').includes(\'allow\'))setInterval(()=>{},1000)"',
+      test: `exec node -e "const fs=require('fs');fs.writeFileSync('${pidFile}',String(process.pid));if(fs.readFileSync('src/guard.mjs','utf8').includes('allow'))setInterval(()=>{},1000)"`,
     });
     const before = readFileSync(join(root, "src", "guard.mjs"), "utf8");
     const result = await interruptDuringMutation(root, path, "SIGTERM");
@@ -504,15 +511,26 @@ test("SIGTERM during a mutated command restores the file", async () => {
     assert.equal(readFileSync(join(root, "src", "guard.mjs"), "utf8"), before);
     assert.equal(git(root, "status", "--porcelain=v1"), "");
   } finally {
+    try {
+      const pid = Number(readFileSync(pidFile, "utf8"));
+      if (Number.isInteger(pid) && pid > 0) process.kill(pid, "SIGKILL");
+    } catch {
+      // No pid file (the verifier never reached the mutated test command) or the
+      // process is already gone -- nothing to reap.
+    }
+    rmSync(pidFile, { force: true });
     rmSync(root, { recursive: true, force: true });
   }
 });
 
 test("SIGINT during a mutated command restores the file", async () => {
   const root = fixture();
+  // See the SIGTERM test above: the same detached-grandchild leak is reachable here
+  // whenever interruptDuringMutation() has to fall back to a bare SIGKILL.
+  const pidFile = join(tmpdir(), `mutation-checks-grandchild-${process.pid}-${Date.now()}.pid`);
   try {
     const path = manifest(root, {
-      test: 'exec node -e "const fs=require(\'fs\');if(fs.readFileSync(\'src/guard.mjs\',\'utf8\').includes(\'allow\'))setInterval(()=>{},1000)"',
+      test: `exec node -e "const fs=require('fs');fs.writeFileSync('${pidFile}',String(process.pid));if(fs.readFileSync('src/guard.mjs','utf8').includes('allow'))setInterval(()=>{},1000)"`,
     });
     const before = readFileSync(join(root, "src", "guard.mjs"), "utf8");
     const result = await interruptDuringMutation(root, path, "SIGINT");
@@ -521,6 +539,14 @@ test("SIGINT during a mutated command restores the file", async () => {
     assert.equal(readFileSync(join(root, "src", "guard.mjs"), "utf8"), before);
     assert.equal(git(root, "status", "--porcelain=v1"), "");
   } finally {
+    try {
+      const pid = Number(readFileSync(pidFile, "utf8"));
+      if (Number.isInteger(pid) && pid > 0) process.kill(pid, "SIGKILL");
+    } catch {
+      // No pid file (the verifier never reached the mutated test command) or the
+      // process is already gone -- nothing to reap.
+    }
+    rmSync(pidFile, { force: true });
     rmSync(root, { recursive: true, force: true });
   }
 });
