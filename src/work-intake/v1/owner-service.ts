@@ -46,7 +46,14 @@ export type WorkBatchQueueAcceptedResultProofV1 = Readonly<{
   contentHash: string; revision: number;
 }>;
 /** Protected host-generation authority. Exact-worker admission is unavailable
- * without this current readiness/model-policy recheck. */
+ * without this current readiness/model-policy recheck.
+ *
+ * The three accepted-result operations are passed the caller's session only as
+ * a boundary marker, never as the place their reads run. They belong to the
+ * task coordinator, which owns lifecycle and transition data the private-web
+ * login may not read, so an implementation MUST resolve them on its own pool and
+ * return only the proof below. A caller's transaction that is aborted by an
+ * unreadable table cannot be repaired by catching the JavaScript error. */
 export type WorkBatchQueueAdmissionAuthorityV1 = Readonly<{
   assertCurrent(selection: WorkBatchQueueAdmissionSelectionV1): boolean | Promise<boolean>;
   isAcceptedResultCurrent(tx: DatabaseSession,

@@ -332,32 +332,45 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
         throw new Error("work_batch_result_unavailable");
       return proof;
     };
+    // The accepted-result proof is derived from the coordinator's own lifecycle
+    // and transition history. control_transition_events is not readable by the
+    // private-web login, and a permission error there aborts the caller's
+    // transaction even when the JavaScript error is caught, so a page that only
+    // wanted presentation failed closed. Every proof read therefore runs in its
+    // own short transaction on this pool. The caller's session is never used
+    // for these statements, and nothing outside the minimal proof below crosses
+    // the boundary. The authority still compares against its HMAC-bound
+    // snapshot, so observing a newer accepted result refuses rather than widens.
+    const proofOnOwnPool = async <T>(work: (tx: DatabaseSession) => Promise<T>): Promise<T | null> => {
+      try { return await db.transaction(work); } catch { return null; }
+    };
     const ownerAuthority = Object.freeze({
       assertCurrent: (selection: WorkBatchQueueSelectionV1) => assertSelection(selection) === true,
-      async isAcceptedResultCurrent(tx: DatabaseSession, selection: Readonly<{
+      async isAcceptedResultCurrent(_caller: DatabaseSession, selection: Readonly<{
         sourceJobId: string; workerId: string; nodeId: string }>) {
-        try { await assertAcceptedResultCurrent(tx, await proofForSource(tx, selection)); return true; }
-        catch { return false; }
+        return await proofOnOwnPool(async tx => {
+          await assertAcceptedResultCurrent(tx, await proofForSource(tx, selection)); return true;
+        }) === true;
       },
-      async acceptedResultRevision(tx: DatabaseSession, selection: Readonly<{
+      async acceptedResultRevision(_caller: DatabaseSession, selection: Readonly<{
         sourceJobId: string; workerId: string; nodeId: string }>) {
-        try {
+        return await proofOnOwnPool(async tx => {
           const proof = await proofForSource(tx, selection);
           await assertAcceptedResultCurrent(tx, proof);
           const accepted = await gate.acceptedContextInSession(tx, proof.tenantId, proof.projectId, proof.targetId);
           return accepted.target.revisionNumber;
-        } catch { return null; }
+        });
       },
-      async acceptedResultProof(tx: DatabaseSession, selection: Readonly<{
+      async acceptedResultProof(_caller: DatabaseSession, selection: Readonly<{
         sourceJobId: string; workerId: string; nodeId: string }>) {
-        try {
+        return await proofOnOwnPool(async tx => {
           const proof = await proofForSource(tx, selection);
           await assertAcceptedResultCurrent(tx, proof);
           const accepted = await gate.acceptedContextInSession(tx, proof.tenantId, proof.projectId, proof.targetId);
           return Object.freeze({ executionJobId: proof.executionJobId, attemptId: proof.attemptId,
             harnessRunId: proof.runId, artifactId: proof.artifactId,
             contentHash: proof.contentHash, revision: accepted.target.revisionNumber });
-        } catch { return null; }
+        });
       },
     });
     return Object.freeze({ integrityKey, ownerAuthority,
