@@ -44,7 +44,7 @@ test("compiled private assignment API records, reads and expires a real lease un
   const base = `/api/v1/projects/${f.prepared.receipt.projectId}/tasks/${f.prepared.receipt.jobId}`, path = `${base}/assignment`;
   const req = (url = path, method = "GET", body) => request(url, method, body, undefined, f.jwt);
   assert.deepEqual(Object.keys(coordinator.webOperation()).sort(),
-    ["assign", "expire", "options", "projectOptions", "revoke", "tenantId", "workspaceId"]);
+    ["assign", "cancel", "expire", "options", "projectOptions", "revoke", "tenantId", "workspaceId"]);
   assert.equal("assignLocked" in coordinator, false);
   const options = await (await handler(req())).json(); assert.equal(options.candidates.length, 1); assert.equal(options.receipt, null);
   const draft = { action: "assign", expectedInputDigest: options.inputDigest, nodeId: options.candidates[0].nodeId };

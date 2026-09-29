@@ -75,6 +75,7 @@ export function createMacLocalWebServiceFromConfigurationV1(input: Readonly<{
     origin: configuration.localOwnerSession.origin,
     port: configuration.port,
     localOwnerSession: configuration.localOwnerSession,
+    ...(configuration.remoteAccess ? { remoteAccess: configuration.remoteAccess } : {}),
     ...(input.localOwnerSessionStore ? { localOwnerSessionStore: input.localOwnerSessionStore } : {}),
     ...(input.initialLocalOwnerSessions ? { initialLocalOwnerSessions: input.initialLocalOwnerSessions } : {}),
     workspaceId: configuration.workspaceId,

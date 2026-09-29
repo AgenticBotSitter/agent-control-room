@@ -57,7 +57,9 @@ const template = { name: "Build, check, validate", description: "Complete one bo
   stages: [
     { ordinal: 0, stageKind: "build", role: "builder", description: "Build the bounded change.",
       requiredCapability: "code.change", workerId: "worker:codex:one", workerKind: "codex", nodeId: "node:codex:one",
-      selectionKey: "codex.standard", model: "gpt-test", effort: "medium", maxLoops: 3 },
+      selectionKey: "codex.standard", model: "gpt-test", effort: "medium", maxLoops: 3,
+      // S6 makes a build stage's write bounds mandatory.
+      allowedPaths: ["src/**"], maximumChangedFiles: 10, maximumChangedBytes: 100_000 },
     { ordinal: 1, stageKind: "check", role: "checker", description: "Check the bounded change.",
       requiredCapability: "code.review", workerId: "worker:claude:one", workerKind: "claude-code", nodeId: "node:claude:one",
       selectionKey: "claude.standard", model: "claude-test", effort: "high", maxLoops: 3 },
@@ -282,9 +284,13 @@ test("the production web and coordinator logins run every S4 pipeline read and w
           "UPDATE pipeline_templates SET name=name", "UPDATE pipeline_runs SET title=title",
           "UPDATE pipeline_stage_runs SET state=state", "DELETE FROM pipeline_templates", "DELETE FROM pipeline_runs",
           "DELETE FROM pipeline_stage_runs", "TRUNCATE pipeline_stage_runs",
-          "SELECT 1 FROM pipeline_templates FOR SHARE", "SELECT 1 FROM pipeline_stage_runs FOR KEY SHARE",
+          "SELECT 1 FROM pipeline_stage_runs FOR KEY SHARE",
         ]) await assert.rejects(direct.query(statement), /permission denied/, `${role}: ${statement}`);
+        // S7's owner consent updates the template's unattended ceiling, so the
+        // web login may lock a template row; the coordinator still may not.
+        if (role === "web") await direct.query("SELECT 1 FROM pipeline_templates FOR SHARE");
         if (role === "coordinator") for (const statement of [
+          "SELECT 1 FROM pipeline_templates FOR SHARE",
           // The gate's other reads: append-only for this login, so no row lock.
           "SELECT 1 FROM control_task_execution_plans FOR SHARE",
           "SELECT 1 FROM control_task_model_selections FOR SHARE",

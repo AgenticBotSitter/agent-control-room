@@ -15,11 +15,11 @@ export async function verifyPrivateIdeaAdapter(db: DatabaseClient, scope: { tena
   if (rows.length !== 1 || rows[0].valid !== true) throw new Error("private_idea_adapter_unavailable");
 }
 
-// Generated from public migrations 0001-0140 (filename order: ...0093,0100,0101,0102,0104,0105,0106,0108,0140),
+// Generated from public migrations 0001-0140 (filename order: ...0108,0109,0135,0140),
 // including generic external-content migrations 0025/0026, read from a live
 // PostgreSQL 17 cluster installed the production way. Catalog query below;
 // not a mutable database marker.
-export const privateWebSchemaDigest = "bcb661bf2078aebe386c229919f2f3d15a4fcb4fad112879a8efebbcc414d826";
+export const privateWebSchemaDigest = "4dbe5bf0936a033cdfaec9d9dfd7d256e7b25dea7a45b764f4a0d77739e504b3";
 export const privateWebReadTables = ["control_identities", "control_role_grants", "workspaces", "control_web_sessions",
   "tenants", "control_idempotency",
   "control_schedules", "control_schedule_occurrences",
@@ -40,11 +40,13 @@ export const privateWebReadTables = ["control_identities", "control_role_grants"
   "work_batch_queue_admissions", "work_batch_effective_queue_admissions", "work_batch_agent_queue_heads",
   "control_native_task_queue", "control_job_dependencies",
   "pipeline_templates", "pipeline_runs", "pipeline_stage_runs", "pipeline_ordered_stage_runs",
+  "pipeline_unattended_transitions",
   "control_pipeline_build_publications", "control_codex_result_publications",
   "control_action_inbox",
   // T2-F fleet: the owner's fleet decisions and read-only views of worker records.
   "fleet_enrollment_codes", "fleet_workers", "fleet_worker_credentials", "fleet_worker_presence", "fleet_work_offers",
-  "fleet_claims", "fleet_worker_events", "fleet_results", "fleet_result_files", "fleet_result_reviews"] as const;
+  "fleet_claims", "fleet_worker_events", "fleet_results", "fleet_result_files", "fleet_result_reviews",
+  "control_project_settings"] as const;
 const inserts = new Set(["control_web_sessions", "adapter_registry", "projects", "control_manual_project_heads",
   "control_web_project_commands", "audit_events", "control_audit_chain_heads", "control_requests", "control_workflows",
   "control_jobs", "control_web_task_commands", "control_idea_canonical_task_sessions", "control_idea_canonical_task_links",
@@ -56,6 +58,7 @@ inserts.add("work_batch_queue_admissions"); inserts.add("work_batch_agent_queue_
 inserts.add("pipeline_templates"); inserts.add("pipeline_runs"); inserts.add("pipeline_stage_runs");
 inserts.add("control_job_dependencies");
 inserts.add("fleet_enrollment_codes"); inserts.add("fleet_work_offers"); inserts.add("fleet_result_reviews");
+inserts.add("control_project_settings"); inserts.add("pipeline_unattended_transitions");
 
 /** Tables whose INSERT grant is column-scoped rather than table-wide. Every
  * listed column must carry INSERT and every unlisted column must not — a
@@ -89,9 +92,14 @@ const updates: Record<string, readonly string[]> = {
   work_batches: ["state", "approval_identity_id", "approved_at", "decision_reason_code", "decision_digest",
     "decision_auth_tag", "version", "updated_at"],
   work_batch_agent_queue_heads: ["next_position", "updated_at"],
+  pipeline_templates: ["may_advance_unattended", "version", "updated_at", "record_digest", "auth_tag"],
+  pipeline_runs: ["unattended", "state", "started_at", "updated_at", "version", "template_version", "template_digest",
+    "record_digest", "auth_tag"],
   tenants: ["coordinator_lock"],
   fleet_enrollment_codes: ["state"], fleet_workers: ["state", "revoked_at", "revoked_by_identity_id"],
   fleet_worker_credentials: ["state", "ended_at"], fleet_work_offers: ["state", "closed_at", "close_reason"],
+  control_project_settings: ["eligible_worker_kinds", "max_concurrent_tasks", "default_worker_kind",
+    "default_model", "default_effort", "version", "updated_by_identity_id", "updated_at"],
 };
 const fail = () => { throw new Error("private_database_preflight_failed"); };
 const ideaCreationReads = ["workspaces", "control_identities", "control_role_grants", "control_web_sessions",
@@ -148,9 +156,11 @@ const coordinatorInserts = new Set(["control_web_sessions", "control_requests", 
   "control_installation_transition_revisions", "control_node_fleet_signals", "control_node_fleet_current",
   "control_task_model_selections", "control_task_declared_scopes", "control_assignment_lease_scopes"]);
 coordinatorReads.push("pipeline_templates", "pipeline_runs", "pipeline_stage_runs", "pipeline_ordered_stage_runs",
+  "pipeline_unattended_transitions", "pipeline_advance_receipts",
   "control_agent_review_plans", "control_pipeline_build_publications");
 coordinatorInserts.add("control_agent_review_plans");
 coordinatorInserts.add("control_pipeline_build_publications");
+coordinatorInserts.add("pipeline_advance_receipts");
 const coordinatorDeletes = new Set(["control_assignment_lease_scopes"]);
 const coordinatorUpdates: Record<string, readonly string[]> = {
   ...Object.fromEntries(["control_requests", "control_workflows", "control_attempts", "control_leases"]
@@ -170,6 +180,8 @@ const coordinatorUpdates: Record<string, readonly string[]> = {
   control_work_resources: ["coordinator_lock"],
   control_attempt_resource_admissions: ["state", "version", "retired_at", "retirement_kind", "retirement_proof_digest"],
   control_attempt_resource_scopes: ["coordinator_lock"],
+  pipeline_runs: ["state", "completed_at", "current_stage_ordinal", "updated_at", "version", "record_digest", "auth_tag",
+    "unattended_last_swept_at"],
   control_completion_gate_integrity: ["web_lock", "revision", "record_count", "state_digest", "state_auth_tag"],
 };
 const resultReads = ["workspaces", "control_identities", "control_role_grants", "projects",

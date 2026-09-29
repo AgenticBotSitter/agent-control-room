@@ -50,7 +50,7 @@ import { createInstallationPlanViewV1 } from "../../installer/v1/installation-pl
 import { WorkBatchOwnerServiceV1, type WorkBatchQueueAdmissionAuthorityV1,
   type WorkBatchQueueCatalogV1 } from "../../work-intake/v1";
 import { createWorkBatchOwnerHttpHandlerV1 } from "./work-batch-owner-http";
-import { LinearPipelineServiceV1, type CanonicalPipelineRepositoryRegistryV1 } from "../../pipelines/v1";
+import { LinearPipelineServiceV1, PipelineAdvanceServiceV1, type CanonicalPipelineRepositoryRegistryV1 } from "../../pipelines/v1";
 import { createLinearPipelineHttpHandlerV1 } from "./linear-pipeline-http";
 import { encodeProjectEventCursorV1, projectEventSseResponseV1, type ProjectEventReadSourceV1 } from "../../project-events/v1";
 import { ProjectActivityServiceV1 } from "./project-activity-service";
@@ -278,13 +278,13 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
   const revisions = options.revisions ? Object.freeze({ tenantId: options.tenantId, workspaceId: options.workspaceId,
     plan: options.revisions.plan.bind(options.revisions) }) : undefined;
   if (options.assignment && (options.assignment.tenantId !== options.tenantId || options.assignment.workspaceId !== options.workspaceId
-    || [options.assignment.assign, options.assignment.expire, options.assignment.revoke,
+    || [options.assignment.assign, options.assignment.expire, options.assignment.revoke, options.assignment.cancel,
       options.assignment.options, options.assignment.projectOptions]
       .some(method => typeof method !== "function")))
     throw new Error("invalid_private_app_config");
   const assignment = options.assignment ? Object.freeze({ tenantId: options.tenantId, workspaceId: options.workspaceId,
     assign: options.assignment.assign.bind(options.assignment), expire: options.assignment.expire.bind(options.assignment),
-    revoke: options.assignment.revoke.bind(options.assignment),
+    revoke: options.assignment.revoke.bind(options.assignment), cancel: options.assignment.cancel.bind(options.assignment),
     options: options.assignment.options.bind(options.assignment), projectOptions: options.assignment.projectOptions.bind(options.assignment) }) : undefined;
   const drainMs = options.drainMs ?? 30_000;
   if (options.approvals && (options.approvals.tenantId !== options.tenantId || options.approvals.workspaceId !== options.workspaceId
@@ -316,6 +316,8 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
   const pipelines = options.workBatches ? new LinearPipelineServiceV1(options.database.client,
     { tenantId: options.tenantId, workspaceId: options.workspaceId }, options.workBatches.integrityKey,
     options.workBatches.queueAdmissionAuthority, clock, options.workBatches.pipelineRepositories) : undefined;
+  const pipelineAdvance = options.workBatches ? new PipelineAdvanceServiceV1(options.database.client,
+    { tenantId: options.tenantId, workspaceId: options.workspaceId }, options.workBatches.integrityKey,{},clock) : undefined;
   const sessionWatch = new SessionWatchServiceV1(options.database.client,
     { tenantId: options.tenantId, workspaceId: options.workspaceId }, options.tasks?.harnessIntegrityKey, clock);
   // This is a task-planning bridge only. It is deliberately composed from the
@@ -819,7 +821,7 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
               gatewayAssertionProfile, service: workBatches, clock })(request);
           if (pipelines && /^\/api\/v1\/projects\/[^/]+\/pipeline-(?:templates|runs)(?:\/|$)/.test(url.pathname))
             return createLinearPipelineHttpHandlerV1({ origin: site.origin, trust,
-              gatewayAssertionProfile, service: pipelines, clock })(request);
+              gatewayAssertionProfile, service: pipelines, advance:pipelineAdvance, clock })(request);
           return await createProjectHttpHandler({ origin: site.origin, trust, service, gatewayAssertionProfile, clock })(request);
         }
         if (request.method !== "GET" && request.method !== "HEAD") throw new WebAccessError("invalid_request");
@@ -851,7 +853,8 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
           if (pipelinesPage[2]) {
             let batchId: string;
             try { batchId = decodeURIComponent(pipelinesPage[2]); } catch { throw new WebAccessError("invalid_request"); }
-            await workBatches.view(identity, id, batchId);
+            if(pipelines&&batchId.startsWith("pipeline-run:"))await pipelines.view(identity,id,batchId);
+            else await workBatches.view(identity, id, batchId);
           } else await workBatches.list(identity, id);
         } else if (taskSummaryPage) {
           if (url.search) throw new WebAccessError("invalid_request");
