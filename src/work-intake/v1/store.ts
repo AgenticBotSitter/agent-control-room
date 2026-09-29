@@ -18,7 +18,8 @@ type RevisionRow = { revision: number; edited_by_identity_id: string; edited_at:
   reason_code: string; proposal: unknown; revision_digest: string; auth_tag: string };
 type ItemRow = { id: string; tenant_id: string; batch_id: string; batch_revision: number; project_id: string;
   local_id: string; ordinal: number; role: "builder" | "checker" | "validator"; required_capability: string;
-  depends_on_local_ids: string[]; requested_worker_kind: string | null; requested_model_key: string | null;
+  depends_on_local_ids: string[]; requested_worker_id: string | null; requested_worker_kind: string | null;
+  requested_model_key: string | null;
   acceptance_criteria: string; acceptance_tests: string; decision_state: "approved" | "rejected";
   decision_reason_code: string | null; job_id: string | null; job_attempt_count: number; item_digest: string;
   auth_tag: string; created_at: string | Date };
@@ -199,7 +200,7 @@ export class WorkBatchStoreV1 {
   async #verifyStoredState(row: BatchRow): Promise<WorkBatchProposalV1> {
     const proposal = await this.#currentProposal(row);
     const items = (await this.db.query<ItemRow>(`SELECT id,tenant_id,batch_id,batch_revision,project_id,local_id,
-      ordinal,role,required_capability,depends_on_local_ids,requested_worker_kind,requested_model_key,
+      ordinal,role,required_capability,depends_on_local_ids,requested_worker_id,requested_worker_kind,requested_model_key,
       acceptance_criteria,acceptance_tests,decision_state,decision_reason_code,job_id,job_attempt_count,
       item_digest,auth_tag,created_at FROM work_batch_items
       WHERE tenant_id=$1 AND batch_id=$2 ORDER BY ordinal`, [row.tenant_id, row.id])).rows;
@@ -212,7 +213,9 @@ export class WorkBatchStoreV1 {
       const material = { id: item.id, tenantId: item.tenant_id, batchId: item.batch_id,
         batchRevision: Number(item.batch_revision), projectId: item.project_id, localId: item.local_id,
         ordinal: Number(item.ordinal), role: item.role, requiredCapability: item.required_capability,
-        dependsOnLocalIds: item.depends_on_local_ids, requestedWorkerKind: item.requested_worker_kind,
+        dependsOnLocalIds: item.depends_on_local_ids,
+        ...(item.requested_worker_id ? { requestedWorkerId: item.requested_worker_id } : {}),
+        requestedWorkerKind: item.requested_worker_kind,
         requestedModelKey: item.requested_model_key, acceptanceCriteria: item.acceptance_criteria,
         acceptanceTests: item.acceptance_tests, decisionState: item.decision_state,
         decisionReasonCode: item.decision_reason_code, jobId: item.job_id,

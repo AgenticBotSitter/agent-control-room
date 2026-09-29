@@ -26,7 +26,7 @@ export function OwnerReviewPanel({ options, feedback, attested, pending, held, o
   onAttest: (value: boolean) => void;
   onRecord: (decision: TaskReviewDraft["decision"], attested?: boolean) => void;
 }) {
-  return <section className="private-owner-review" aria-label="Owner quality decision"><h4>{availability[options.availability]}</h4>
+  return <section className="private-owner-review" aria-label="Owner quality decision" data-state="ready"><h4>{availability[options.availability]}</h4>
     {options.ownReview && <div><p>Saved {options.ownReview.decision === "accepted" ? "quality acceptance" : "request for changes"}
       {" · "}<ConfiguredTimestamp value={options.ownReview.recordedAt} /></p>
       <p>Saved against file <code>{options.ownReview.artifactId}</code> with the matching fingerprint.</p>
@@ -102,7 +102,7 @@ function OwnerTaskReviewController({ projectId, jobId, artifactId, targetId, tar
   const attestation = options?.acceptanceAttestation;
   const attested = attestation ? session.attested(attestation) : false;
   return <>
-    {!options && !error && <p role="status">Loading owner review…</p>}
+    {!options && !error && <p role="status" data-state="loading">Loading owner review…</p>}
     {options && <OwnerReviewPanel options={options} feedback={feedback} attested={attested} pending={pending}
       held={client.hasPending() || !!receipt} onFeedback={session.setFeedback}
       onAttest={value => { if (attestation) session.setAttested(attestation, value); }}
