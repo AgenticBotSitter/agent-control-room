@@ -138,7 +138,10 @@
     "test:windows-line-endings": "node scripts/run-tests-with-quarantine.mjs --test tests/windows-line-endings.test.mjs",
     "test:windows-launcher-modes": "node scripts/run-tests-with-quarantine.mjs --test tests/windows-launcher-modes.test.mjs",
     "test:voice": "node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/voice-accessibility.test.tsx",
-    "test:polling-discipline": "node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/private-polling-discipline.test.ts tests/use-polled-read.test.tsx tests/private-read-validator.test.ts tests/private-read-validator-concurrent.test.ts tests/task-workspace-auth-polling.test.tsx"
+    "test:polling-discipline": "node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/private-polling-discipline.test.ts tests/use-polled-read.test.tsx tests/private-read-validator.test.ts tests/private-read-validator-concurrent.test.ts tests/task-workspace-auth-polling.test.tsx",
+    "fleet:gateway": "node --import tsx scripts/run-fleet-gateway.ts",
+    "fleet:connector": "node scripts/fleet/connector.mjs",
+    "test:fleet": "node scripts/run-tests-with-quarantine.mjs --import tsx --test --test-concurrency=1 tests/fleet-connector.test.ts tests/fleet-connector-postgres.test.ts"
   },
   "dependencies": {
     "@mozilla/readability": "0.6.0",

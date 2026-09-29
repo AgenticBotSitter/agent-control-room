@@ -379,10 +379,10 @@ BEGIN
           AND c.state='consumed' AND c.consumed_at=NEW.issued_at))
       OR (NEW.source_code_id IS NOT NULL AND EXISTS (SELECT 1 FROM public.fleet_worker_credentials other
         WHERE other.tenant_id=NEW.tenant_id AND other.source_code_id=NEW.source_code_id))
-      OR (NEW.rotated_from_credential_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM public.fleet_worker_credentials old
-        WHERE old.tenant_id=NEW.tenant_id AND old.credential_id=NEW.rotated_from_credential_id
-          AND old.worker_id=NEW.worker_id AND old.state='retired' AND old.ended_at=NEW.issued_at
-          AND old.expires_at>NEW.issued_at)) THEN
+      OR (NEW.rotated_from_credential_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM public.fleet_worker_credentials prior
+        WHERE prior.tenant_id=NEW.tenant_id AND prior.credential_id=NEW.rotated_from_credential_id
+          AND prior.worker_id=NEW.worker_id AND prior.state='retired' AND prior.ended_at=NEW.issued_at
+          AND prior.expires_at>NEW.issued_at)) THEN
       RAISE EXCEPTION 'fleet credential issue rejected';
     END IF;
     RETURN NEW;
