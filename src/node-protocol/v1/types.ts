@@ -185,6 +185,18 @@ export interface LeaseRenewedBody {
   authority: AuthorityEnvelope;
 }
 
+export interface LeaseRenewalRequestBody {
+  projectId: string;
+  jobId: string;
+  attemptId: string;
+  leaseId: string;
+  leaseEpoch: number;
+  expectedLeaseVersion: number;
+  renewalId: string;
+  renewedAt: string;
+  expiresAt: string;
+}
+
 export interface JobEventBody {
   jobId: string;
   attemptId: string;
@@ -299,6 +311,7 @@ export interface NodeMessageBodyMap {
   "job.offer": JobOfferBody;
   "job.offer.decision": OfferDecisionBody;
   "job.lease.grant": LeaseGrantBody;
+  "job.lease.renew.request": LeaseRenewalRequestBody;
   "job.lease.renewed": LeaseRenewedBody;
   "job.event": JobEventBody;
   "harness.native.snapshot": NativeTaskSnapshotBody;
