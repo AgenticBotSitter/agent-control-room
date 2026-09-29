@@ -23,10 +23,8 @@ test("committed ledger matches the working tree", async () => {
 
 test("private web cannot update another subsystem's shared action-inbox row", async () => {
   const migration = await readFile(join(ROOT,
-    "db/migrations/0099_restore_private_web_action_inbox_guard.sql"), "utf8");
-  assert.match(migration, /pg_has_role\(session_user,r\.oid,'member'\)/u);
-  assert.match(migration, /OLD\.id NOT LIKE 'attention:work-batch:%'/u);
-  assert.match(migration, /private web action inbox update rejected/u);
+    "db/migrations/0102_work_batch_owner_approval.sql"), "utf8");
+  assert.match(migration, /pg_catalog\.pg_has_role\(session_user,\s*\(SELECT oid FROM pg_catalog\.pg_roles WHERE rolname='control_room_private_web'\),'member'\)\s*AND OLD\.id NOT LIKE 'attention:work-batch:%' THEN\s*RAISE EXCEPTION 'work batch notification update rejected'/u);
 });
 
 test("durable result reservations use a separate constrained table and least-privilege grants", async () => {

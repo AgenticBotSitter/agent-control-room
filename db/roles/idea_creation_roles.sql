@@ -23,4 +23,5 @@ GRANT UPDATE (web_lock) ON workspaces, control_identities, control_role_grants T
 GRANT UPDATE (revoked_at) ON control_web_sessions TO control_room_idea_creation;
 GRANT UPDATE (head_hash, event_count, updated_at) ON control_audit_chain_heads TO control_room_idea_creation;
 GRANT EXECUTE ON FUNCTION is_work_intake_session() TO control_room_idea_creation;
+GRANT SELECT ON work_intake_tenant_binding TO control_room_idea_creation;
 COMMIT;

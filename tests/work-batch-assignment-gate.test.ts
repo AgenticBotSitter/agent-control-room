@@ -2,10 +2,13 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { hmacSha256Tag, sha256Digest } from "../src/security";
 import { taskAssignmentFixture } from "./helpers/task-assignment";
+import { taskStartupFixture } from "./helpers/task-startup";
 import { binding, instant } from "./hermes-native-fixture";
 import { TaskAssignmentCoordinator, type WorkBatchAssignmentAdmissionAuthority } from "../src/web/v1/task-assignment-coordinator";
 import { workBatchProposalDigestV1 } from "../src/work-intake/v1";
 import { nativeQualityCompletionFixture } from "./helpers/native-quality-completion";
+import { assertGuardBites, GuardDidNotBiteError } from "./support/attack-kit/index";
+import { REPOSITORY_ROOT } from "./support/attack-kit/real-postgres";
 
 const recordedAt = "2026-09-04T12:00:08.000Z";
 const integrityKey = new Uint8Array(32).fill(93);
@@ -21,7 +24,7 @@ const assign = (f: Awaited<ReturnType<typeof taskAssignmentFixture>>,
   value = coordinator(f)) => value.assign(f.identity, binding.projectId, f.prepared.receipt.jobId,
     binding.nodeId, f.prepared.receipt.inputDigest);
 
-async function seedAdmission(f: Awaited<ReturnType<typeof taskAssignmentFixture>>, input: {
+async function seedAdmission(f: Pick<Awaited<ReturnType<typeof taskAssignmentFixture>>, "db" | "scope" | "route">, input: {
   sourceJobId: string; executionJobId?: string; position: number; workerId?: string; model?: string;
 }) {
   const workerId = input.workerId ?? f.route.executorId, model = input.model ?? "model:test";
@@ -282,3 +285,76 @@ test("an authenticated accepted predecessor proof permits the next exact admissi
   } });
   await assert.rejects(assign(dependent, substituted), (error: unknown) => (error as { code?: string }).code === "conflict");
 });
+
+test("the batch admission gate runs on the production task-coordinator login, not only superuser", async t => {
+  // Every test above runs the gate on the fixture's default connection, which
+  // is unauthenticated PGlite superuser-equivalent access. Production only
+  // ever constructs TaskAssignmentCoordinator on the control_room_task_coordinator
+  // login (src/web/v1/task-coordinator-lifecycle.ts:377), whose actual grants
+  // come from db/roles/task_coordinator_roles.sql. taskStartupFixture applies
+  // that real role file and hands back a client that runs every query with
+  // `SET LOCAL SESSION AUTHORIZATION coordinator_test`, a role that inherits
+  // exactly the production grant set — so a lock the role cannot take fails
+  // here exactly as it fails in production, which the superuser-backed tests
+  // above cannot show.
+  const f = await taskStartupFixture(await taskAssignmentFixture()); t.after(f.close);
+  await seedAdmission(f, { sourceJobId: f.source.receipt.jobId, executionJobId: f.prepared.receipt.jobId, position: 1 });
+  const authority: WorkBatchAssignmentAdmissionAuthority = { integrityKey,
+    assertCurrent: async () => {}, assertAcceptedResultCurrent: async () => {} };
+  const productionGate = new TaskAssignmentCoordinator(f.coordinator.client, f.scope, f.planner, [f.route],
+    () => instant + 8_000, [], undefined, undefined, undefined, undefined, authority);
+  const assigned = await productionGate.assign(f.identity, binding.projectId, f.prepared.receipt.jobId,
+    binding.nodeId, f.prepared.receipt.inputDigest);
+  assert.equal(assigned.receipt.nodeId, f.route.nodeId);
+  const attempt = (await f.coordinator.client.query<{ worker_id: string }>(
+    "SELECT worker_id FROM control_attempts WHERE tenant_id=$1 AND job_id=$2",
+  [f.scope.tenantId, f.prepared.receipt.jobId])).rows[0];
+  assert.equal(attempt?.worker_id, f.route.executorId);
+});
+
+test("the model-selection equality that authenticates an admission is a real guard, not incidental coverage", { timeout: 600_000 },
+  async () => {
+    // Confirms, on the real working tree rather than by inspection, that
+    // deleting the six-field equality block this gate checks
+    // (task-assignment-coordinator.ts:319-322 at review time) makes this
+    // file's own suite fail. `assertGuardBites` refuses a dirty tree and
+    // restores the file in every exit path, including a crash or a timeout.
+    //
+    // The spawned command must exclude THIS test and the production-login
+    // test above: the child re-runs this whole file, and this test would
+    // otherwise recurse into `assertGuardBites` a second time against an
+    // already-mutated, git-dirty tree and fail on that alone, which would
+    // read as "the guard bit" regardless of whether the mutation itself
+    // broke anything.
+    const find = `if (!selection || selection.worker_kind !== admission.worker_kind
+      || selection.selection_key !== admission.selection_key || selection.model !== admission.model
+      || selection.effort !== admission.effort || selection.provider !== admission.provider
+      || selection.profile !== admission.profile) conflict();`;
+    const replace = "if (!selection) conflict();";
+    try {
+      await assertGuardBites({
+        root: REPOSITORY_ROOT, file: "src/web/v1/task-assignment-coordinator.ts", find, replace,
+        // Node's --test-name-pattern is repeatable and OR-combined (a negative
+        // lookahead was tried and, empirically, is not honoured by the runner's
+        // matcher), so the child is scoped to exactly the 8 original functional
+        // tests by an explicit allow-list of substrings, one per test.
+        testCmd: ["node", "--import", "tsx", "--test", "--test-concurrency=1",
+          "--test-name-pattern", "locks the exact worker and model",
+          "--test-name-pattern", "waits for source dependencies",
+          "--test-name-pattern", "waits behind every earlier admission",
+          "--test-name-pattern", "fails closed without authority",
+          "--test-name-pattern", "protected readiness and model policy are revalidated",
+          "--test-name-pattern", "every protected local pickup revalidates",
+          "--test-name-pattern", "refuses readiness and effective-revision drift",
+          "--test-name-pattern", "rejects callback substitution",
+          "tests/work-batch-assignment-gate.test.ts"],
+        boundMs: 240_000, baselineBoundMs: 240_000,
+        because: "an admitted worker/model must match the owner-authenticated selection field for field, "
+          + "not merely have a row present",
+      });
+    } catch (error) {
+      if (error instanceof GuardDidNotBiteError) assert.fail(
+        `the model-selection equality check is unpinned: removing it left the gate suite green.\n${error.message}`);
+      throw error;
+    }
+  });

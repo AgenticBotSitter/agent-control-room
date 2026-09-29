@@ -7,12 +7,15 @@ const at = "2026-09-22T12:00:00.000Z";
 function run(patch: Partial<TaskDetail["attempts"][number]["runs"][number]> = {}): TaskDetail["attempts"][number]["runs"][number] {
   return { runId: "run:test", harness: "claude", state: "running", lastObservedAt: at, stale: false,
     routeEvidence: "local_claude", firstObservedExecutionAt: at, finishedObservedAt: null, cancellation: "not_requested",
-    source: "native_snapshot", nativeState: "running", availability: "current", usage: null, resultClaim: null,
+    source: "native_snapshot", nativeState: "running", availability: "current", usage: null,
+    cost: { kind: "unknown", reason: "usage_not_reported" }, resultClaim: null,
     timeline: [], earlierObservationsOmitted: false, ...patch };
 }
 function detail(preparedFor: TaskDetail["preparedFor"], runs: ReturnType<typeof run>[]): Pick<TaskDetail, "preparedFor" | "attempts"> {
   return { preparedFor, attempts: runs.length ? [{ attemptId: "attempt:test", attemptNumber: 1, state: "running", runs,
-    additionalRunsOmitted: false }] : [] };
+    additionalRunsOmitted: false, usageRollup: { runs: runs.length, inputTokens: null, outputTokens: null, totalTokens: null,
+      wallTimeMs: null, knownCostNanoUsd: "0", knownCostRuns: 0, subscriptionRuns: 0,
+      unknownCostRuns: runs.length, unknownCostReasons: ["usage_not_reported"] } }] : [] };
 }
 
 test("local route observation uses the newest matching saved adapter record only", () => {

@@ -59,12 +59,20 @@ REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM control_room_work_intake;
 REVOKE ALL ON work_intake_role_anchor FROM control_room_application, control_room_reader,
   control_room_backup, control_room_schedule_admissions, control_room_github_broker;
 GRANT SELECT ON work_intake_role_anchor TO control_room_work_intake;
+-- The intake tenant binding is written only by the owner bootstrap. Every role
+-- that evaluates the intake policies must read it; none of them may change it.
+REVOKE ALL ON work_intake_tenant_binding FROM control_room_application, control_room_reader,
+  control_room_backup, control_room_schedule_admissions, control_room_github_broker;
+GRANT SELECT ON work_intake_tenant_binding TO control_room_application, control_room_reader,
+  control_room_backup, control_room_work_intake;
 REVOKE ALL ON work_batches, work_batch_revisions, work_batch_items, work_batch_queue_admissions,
   work_batch_effective_queue_admissions, work_batch_agent_queue_heads FROM control_room_application,
   control_room_reader, control_room_schedule_admissions, control_room_github_broker;
 REVOKE ALL ON pipeline_templates, pipeline_runs, pipeline_stage_runs, pipeline_ordered_stage_runs
   FROM control_room_application, control_room_reader, control_room_schedule_admissions,
   control_room_github_broker, control_room_work_intake;
+REVOKE ALL ON control_agent_review_plans FROM control_room_application, control_room_reader,
+  control_room_schedule_admissions, control_room_github_broker, control_room_work_intake;
 REVOKE ALL ON control_pipeline_build_publications
   FROM control_room_application, control_room_reader, control_room_schedule_admissions,
   control_room_github_broker, control_room_work_intake;
@@ -88,11 +96,6 @@ GRANT EXECUTE ON FUNCTION work_intake_canonical_jsonb(jsonb) TO control_room_wor
 GRANT EXECUTE ON FUNCTION is_work_intake_session() TO control_room_application,
   control_room_reader, control_room_backup, control_room_work_intake;
 GRANT INSERT ON control_action_inbox TO control_room_work_intake;
--- Shared-ledger policies call this predicate for the roles that can reach the
--- protected ledgers. Keep it off PUBLIC so unprovisioned roles cannot invoke a
--- SECURITY DEFINER function.
-GRANT EXECUTE ON FUNCTION is_work_intake_session() TO control_room_application,
-  control_room_reader, control_room_backup, control_room_work_intake;
 
 ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON TABLES FROM PUBLIC;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON SEQUENCES FROM PUBLIC;

@@ -45,19 +45,35 @@ const evidenceSchema = z.object({
   schema: z.literal(WORKTREE_CHANGE_AUDIT_EVIDENCE_V1),
   planDigest: digest,
   baseRevision: revision,
-  /** Exact committed tree that was inventoried. Publication must bind this same commit. */
-  headRevision: revision,
+  /** Exact committed tree that was inventoried. Publication must bind this same
+   * commit and refuses evidence without it; historical evidence may omit it. */
+  headRevision: revision.optional(),
   /** A content digest lets the later result path bind evidence without storing a patch in this record. */
   changes: z.array(z.object({ path: relativePath, kind: z.enum(["added", "modified", "deleted"]),
     bytes: z.number().int().min(0).max(16 * 1024 * 1024), contentDigest: digest }).strict()).max(500),
+  /** Present for executable coding attempts. Historical inventory-only evidence
+   * remains valid, but may never be presented as a captured Git diff. */
+  git: z.object({
+    headRevision: revision,
+    commits: z.array(z.object({ revision, subject: z.string().max(500) }).strict()).max(200),
+    commitsTruncated: z.boolean(),
+    unifiedDiff: z.object({ text: z.string().max(65_536), originalBytes: z.number().int().nonnegative(),
+      retainedBytes: z.number().int().nonnegative().max(65_536), truncated: z.boolean(),
+      contentDigest: digest, retainedDigest: digest }).strict(),
+    confinement: z.object({ kind: z.literal("workspace_write"), outsideWorktree: z.literal("refused"),
+      evidenceDigest: digest }).strict(),
+  }).strict().optional(),
   evidenceDigest: digest,
 }).strict();
 
 export type WorktreeChangeAuditPlanV1 = Readonly<Omit<z.infer<typeof planSchema>, "allowedPaths"> & {
   allowedPaths: readonly string[];
 }>;
-export type WorktreeChangeAuditEvidenceV1 = Readonly<Omit<z.infer<typeof evidenceSchema>, "changes"> & {
+export type WorktreeChangeAuditEvidenceV1 = Readonly<Omit<z.infer<typeof evidenceSchema>, "changes" | "git"> & {
   changes: readonly Readonly<z.infer<typeof evidenceSchema>["changes"][number]>[];
+  git?: Readonly<Omit<NonNullable<z.infer<typeof evidenceSchema>["git"]>, "commits"> & {
+    commits: readonly Readonly<NonNullable<z.infer<typeof evidenceSchema>["git"]>["commits"][number]>[];
+  }>;
 }>;
 
 function allowed(path: string, scopes: readonly string[]): boolean {
@@ -69,7 +85,10 @@ function freezePlan(value: z.infer<typeof planSchema>): WorktreeChangeAuditPlanV
 }
 
 function freezeEvidence(value: z.infer<typeof evidenceSchema>): WorktreeChangeAuditEvidenceV1 {
-  return Object.freeze({ ...value, changes: Object.freeze(value.changes.map(change => Object.freeze({ ...change }))) });
+  return Object.freeze({ ...value, changes: Object.freeze(value.changes.map(change => Object.freeze({ ...change }))),
+    ...(value.git ? { git: Object.freeze({ ...value.git,
+      commits: Object.freeze(value.git.commits.map(commit => Object.freeze({ ...commit }))),
+      unifiedDiff: Object.freeze({ ...value.git.unifiedDiff }), confinement: Object.freeze({ ...value.git.confinement }) }) } : {}) });
 }
 
 /** Creates a deterministic, side-effect-free audit plan from already-authorized inputs. */
@@ -129,6 +148,7 @@ export function createWorktreeChangeAuditEvidenceV1(planValue: unknown,
   const changes = z.array(z.object({ path: relativePath, kind: z.enum(["added", "modified", "deleted"]),
     bytes: z.number().int().min(0).max(16 * 1024 * 1024), contentDigest: digest }).strict()).max(500).parse(input.changes);
   if (input.baseRevision !== plan.baseRevision || input.headRevision === plan.baseRevision
+    || (input.headRevision !== undefined && input.git !== undefined && input.git.headRevision !== input.headRevision)
     || changes.length > plan.maximumChangedFiles
     || new Set(changes.map(change => change.path)).size !== changes.length
     || changes.some(change => !allowed(change.path, plan.allowedPaths))
@@ -137,14 +157,16 @@ export function createWorktreeChangeAuditEvidenceV1(planValue: unknown,
   }
   const ordered = [...changes].sort((left, right) => left.path.localeCompare(right.path));
   const material = { schema: WORKTREE_CHANGE_AUDIT_EVIDENCE_V1, planDigest: plan.planDigest,
-    baseRevision: plan.baseRevision, headRevision: input.headRevision, changes: ordered };
-  return freezeEvidence({ ...material, evidenceDigest: sha256Digest(material) });
+    baseRevision: plan.baseRevision, ...(input.headRevision ? { headRevision: input.headRevision } : {}),
+    changes: ordered, ...(input.git ? { git: input.git } : {}) };
+  return freezeEvidence(evidenceSchema.parse({ ...material, evidenceDigest: sha256Digest(material) }));
 }
 
 export function verifyWorktreeChangeAuditEvidenceV1(planValue: unknown, value: unknown): WorktreeChangeAuditEvidenceV1 {
   const plan = verifyWorktreeChangeAuditPlanV1(planValue), parsed = evidenceSchema.parse(value);
   const expected = createWorktreeChangeAuditEvidenceV1(plan, { baseRevision: parsed.baseRevision,
-    headRevision: parsed.headRevision, changes: parsed.changes });
+    ...(parsed.headRevision ? { headRevision: parsed.headRevision } : {}),
+    changes: parsed.changes, ...(parsed.git ? { git: parsed.git } : {}) });
   if (canonicalJson(expected) !== canonicalJson(parsed)) throw new Error("worktree_change_audit_evidence_invalid");
   return expected;
 }

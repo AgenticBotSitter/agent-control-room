@@ -4,6 +4,7 @@ const digest = z.string().regex(/^sha256:[a-f0-9]{64}$/);
 export const taskAssignmentDraftSchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("assign"), nodeId: id, expectedInputDigest: digest }).strict(),
   z.object({ action: z.literal("expire"), expectedInputDigest: digest }).strict(),
+  z.object({ action: z.literal("revoke"), expectedInputDigest: digest }).strict(),
 ]);
 export type TaskAssignmentDraft = z.infer<typeof taskAssignmentDraftSchema>;
 export const taskAssignmentReceiptSchema = z.object({ projectId: id, jobId: id, inputDigest: digest, nodeId: id,

@@ -105,10 +105,10 @@ await vps.connect();
 try {
   receipt = await applyMacLocalFirstOwnerV1(vps, manifest);
   assert.equal(receipt.manifestDigest, expectedDigest);
-  assert.equal(receipt.created + receipt.kept, 20);
+  assert.equal(receipt.created + receipt.kept, 21);
   const repeat = await applyMacLocalFirstOwnerV1(vps, manifest);
   assert.equal(repeat.created, 0, "second VPS run must keep all existing rows");
-  assert.equal(repeat.kept, 20);
+  assert.equal(repeat.kept, 21);
   assert.equal(repeat.manifestDigest, expectedDigest);
   const proposalRoster = (await vps.query<{ worker_kind: string; project_ids: unknown }>(`SELECT
       CASE i.display_name
@@ -126,6 +126,8 @@ try {
     ORDER BY worker_kind`, [manifest.tenant.id])).rows;
   assert.deepEqual(proposalRoster, ["claude-code", "codex", "hermes"].map(worker_kind =>
     ({ worker_kind, project_ids: ["*"] })), "offline setup must install the exact proposal-only roster");
+  assert.deepEqual((await vps.query("SELECT singleton,tenant_id FROM work_intake_tenant_binding")).rows,
+    [{ singleton: true, tenant_id: manifest.tenant.id }], "offline setup must bind the intake login to this tenant");
 
   const rosterIdentity = (await vps.query<{ id: string }>(`SELECT id FROM control_identities
     WHERE tenant_id=$1 AND display_name='Registered proposal agent codex'`, [manifest.tenant.id])).rows[0]?.id;

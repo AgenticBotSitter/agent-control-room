@@ -132,4 +132,36 @@ test("proposal grants use only the explicit protected project scope", async t =>
     "SELECT project_ids FROM control_role_grants WHERE tenant_id=$1 AND role_key='work_batch_proposer'",
     ["tenant:mac-intake-scope"]);
   assert.deepEqual(grants.rows.map(row=>row.project_ids), [["project:allowed"]]);
+  // This file shares one database; release the intake binding for later tenants.
+  assert.deepEqual((await fixture.client.query("DELETE FROM work_intake_tenant_binding RETURNING tenant_id")).rows,
+    [{ tenant_id: "tenant:mac-intake-scope" }]);
+});
+
+test("binds the shared intake login to the owner's tenant once and never re-binds it", async t => {
+  const fixture = await privateOwnerBootstrapFixture({ fresh: "mac-intake-bind" }); t.after(fixture.close);
+  const enablement = captureOwnerTrustedLocalEnablementV1({ schema: OWNER_TRUSTED_LOCAL_ENABLEMENT_V1,
+    mode: "mac-local", nodeId: "mac-1", workers: [
+      { workerId: "worker:codex", kind: "codex", executablePath: "/private/tmp/fixture-codex", recordedVersion: "fixture-version" },
+    ] });
+  const intake = (tenant: string) => ({ ...local(`tenant:${tenant}`, `workspace:${tenant}`),
+    workIntakeProjectIds: ["project:allowed"], enablement });
+  const binding = async () => (await fixture.client.query<{ singleton: boolean; tenant_id: string }>(
+    "SELECT singleton,tenant_id FROM work_intake_tenant_binding")).rows;
+  // A tenant without intake scopes never claims the binding.
+  await bootstrapMacLocalOwnerV1(fixture.client, { ...intake("mac-intake-none"), workIntakeProjectIds: [] }, clock);
+  assert.deepEqual(await binding(), []);
+  assert.equal(await bootstrapMacLocalOwnerV1(fixture.client, intake("mac-intake-bind"), clock), "created");
+  assert.equal(await bootstrapMacLocalOwnerV1(fixture.client, intake("mac-intake-bind"), clock), "already_present");
+  assert.deepEqual(await binding(), [{ singleton: true, tenant_id: "tenant:mac-intake-bind" }]);
+  // A second intake tenant is refused as a whole, not silently re-bound or half-created.
+  await assert.rejects(bootstrapMacLocalOwnerV1(fixture.client, intake("mac-intake-other"), clock),
+    /mac_local_owner_bootstrap_conflict/);
+  assert.deepEqual(await binding(), [{ singleton: true, tenant_id: "tenant:mac-intake-bind" }]);
+  assert.equal((await fixture.client.query("SELECT id FROM tenants WHERE id='tenant:mac-intake-other'")).rows.length, 0);
+  // An existing owner whose binding was moved elsewhere is refused on re-run too.
+  await fixture.client.query("UPDATE work_intake_tenant_binding SET tenant_id='tenant:mac-intake-none'");
+  try {
+    await assert.rejects(bootstrapMacLocalOwnerV1(fixture.client, intake("mac-intake-bind"), clock),
+      /mac_local_owner_bootstrap_conflict/);
+  } finally { await fixture.client.query("DELETE FROM work_intake_tenant_binding"); }
 });

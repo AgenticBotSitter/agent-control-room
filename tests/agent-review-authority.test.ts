@@ -27,9 +27,16 @@ function restricted(db: DatabaseClient, login: string): DatabaseClient {
   const client: DatabaseClient = {
     query: (sql, params) => client.transaction(tx => tx.query(sql, params)),
     transaction: work => client.transactionWithPreCommitCheck(work, () => {}),
-    transactionWithPreCommitCheck: (work, check) => db.transactionWithPreCommitCheck(async tx => {
-      await tx.query(`SET LOCAL SESSION AUTHORIZATION ${login}`); return work(tx);
-    }, check),
+    // PGlite keeps a SET LOCAL SESSION AUTHORIZATION past the transaction end
+    // and ignores RESET, so restore the fixture superuser explicitly: later
+    // fixture writes must not run as the restricted login.
+    transactionWithPreCommitCheck: async (work, check) => {
+      try {
+        return await db.transactionWithPreCommitCheck(async tx => {
+          await tx.query(`SET LOCAL SESSION AUTHORIZATION ${login}`); return work(tx);
+        }, check);
+      } finally { await db.query("SET SESSION AUTHORIZATION postgres"); }
+    },
   };
   return client;
 }
@@ -86,6 +93,7 @@ async function fixture(minimumRisk: CompletionAcceptanceProfileV1["minimumRisk"]
   const plan = await planner.createPlan({ projectId: f.project.projectId, pipelineRunId: pipeline.runId,
     producerJobId: pipeline.jobIds[0], reviewerJobId: pipeline.jobIds[1], reviewerRunId: "run:agent-review",
     targetId: target.id });
+  await f.db.query("INSERT INTO work_intake_tenant_binding(singleton,tenant_id) VALUES(true,'tenant:web')");
   await f.db.exec(await readFile("db/roles/agent_reviewer_roles.sql", "utf8"));
   await f.db.exec(`CREATE ROLE agent_reviewer_test LOGIN INHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
     GRANT control_room_agent_reviewer TO agent_reviewer_test;`);
@@ -97,10 +105,12 @@ test("only the exact server-created agent review plan can append a review", asyn
   const f = await fixture("critical"); t.after(() => void f.db.close());
   const bound = (await f.db.query<Record<string, unknown>>(
     "SELECT * FROM control_agent_review_plans WHERE id=$1", [f.plan.planId])).rows[0]!;
-  for (const [column, value] of [["reviewer_job_id", f.pipeline.jobIds[0]], ["reviewer_run_id", "run:wrong"],
-    ["project_id", "project:wrong"]] as const) {
-    const changed = { ...bound, id: `agent-review-plan:wrong-${column}`, review_id: `review:wrong-${column}`,
-      finding_id: `finding:wrong-${column}`, [column]: value };
+  // A plan cannot move the review off the check stage: not onto the producer's
+  // own build job, and not forward onto the signoff stage's job.
+  for (const [column, value] of [["reviewer_job_id", f.pipeline.jobIds[0]], ["reviewer_job_id", f.pipeline.jobIds[2]],
+    ["producer_job_id", f.pipeline.jobIds[1]], ["reviewer_run_id", "run:wrong"], ["project_id", "project:wrong"]] as const) {
+    const changed = { ...bound, id: `agent-review-plan:wrong-${column}-${value}`, review_id: `review:wrong-${column}-${value}`,
+      finding_id: `finding:wrong-${column}-${value}`, [column]: value };
     await assert.rejects(f.db.query(`INSERT INTO control_agent_review_plans(id,tenant_id,project_id,pipeline_run_id,
       producer_job_id,reviewer_job_id,reviewer_run_id,target_id,target_digest,acceptance_profile_id,
       acceptance_profile_digest,review_id,finding_id,reviewer,plan_digest,auth_tag,created_at)
@@ -120,7 +130,7 @@ test("only the exact server-created agent review plan can append a review", asyn
       acceptanceProfileDigest: sha256Digest(f.profile), reviewer: f.plan.reviewer, authority: "completion_gate",
       decision: "accepted", assessedRisk: "low", effectiveRisk: "low", evidenceDigests: [sha256Digest("check")],
       findingIds: [], reviewedAt: at, grantsApproval: false, grantsExecutionAuthority: false }), at]),
-  /permission denied|agent reviewer raw insert rejected/u);
+  /permission denied/u);
 
   const state = async () => (await f.db.query("SELECT revision,record_count,state_digest,state_auth_tag FROM control_completion_gate_integrity WHERE tenant_id='tenant:web'")).rows[0];
   const before = await state();
@@ -138,11 +148,18 @@ test("only the exact server-created agent review plan can append a review", asyn
     VALUES($1,'tenant:web',$2,'review',$3,$4,$4,$5,$6,$7::jsonb,$8)`, [value.id,f.project.projectId,
     sha256Digest({ kind: "review", targetId: f.target.id, authority: "completion_gate", reviewerActorId: f.plan.reviewer.actorId }),
     f.target.id,sha256Digest(value),tag,JSON.stringify(value),at]);
-  await assert.rejects(raw(payload, `hmac-sha256:${"5".repeat(64)}`), /permission denied|raw insert rejected/u);
+  await assert.rejects(raw(payload, `hmac-sha256:${"5".repeat(64)}`), /permission denied/u);
   assert.deepEqual(await state(), before, "below-floor raw insert is refused without state drift");
   const floored = { ...payload, effectiveRisk: "critical" as const };
-  await assert.rejects(raw(floored, `hmac-sha256:${"a".repeat(64)}`), /permission denied|raw insert rejected/u);
+  await assert.rejects(raw(floored, `hmac-sha256:${"a".repeat(64)}`), /permission denied/u);
   assert.deepEqual(await state(), before, "fabricated-tag raw insert is refused without state drift");
+  // The raw-insert trigger is an independent layer: a rogue INSERT grant on the
+  // reviewer group still leaves both inserts refused by the trigger itself.
+  await f.db.exec("GRANT INSERT ON control_completion_gate_records TO control_room_agent_reviewer");
+  await assert.rejects(raw(payload, `hmac-sha256:${"5".repeat(64)}`), /agent reviewer raw insert rejected/u);
+  await assert.rejects(raw(floored, `hmac-sha256:${"a".repeat(64)}`), /agent reviewer raw insert rejected/u);
+  await f.db.exec("REVOKE INSERT ON control_completion_gate_records FROM control_room_agent_reviewer");
+  assert.deepEqual(await state(), before, "rogue-grant raw inserts are refused without state drift");
   await assert.rejects(f.reviewer.query("SELECT * FROM commit_agent_review($1,$2::jsonb,NULL,$3::bytea)",
     [f.plan.planId,JSON.stringify(floored),new Uint8Array(32).fill(99)]), /integrity key rejected/u);
   assert.deepEqual(await state(), before, "wrong-key function call is refused without state drift");

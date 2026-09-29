@@ -40,6 +40,7 @@ ALTER TABLE control_idempotency DISABLE ROW LEVEL SECURITY;
 ALTER TABLE audit_events DISABLE ROW LEVEL SECURITY;
 DROP TABLE work_batch_revisions;
 DROP TABLE work_batches;
+DROP TABLE work_intake_tenant_binding;
 DROP FUNCTION guard_work_intake_audit_head_write();
 DROP FUNCTION enforce_work_intake_audit_head_nonempty();
 DROP FUNCTION enforce_work_intake_audit_event_head();

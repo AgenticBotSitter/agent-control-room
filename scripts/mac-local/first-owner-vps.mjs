@@ -38,6 +38,7 @@ export const FIRST_OWNER_COLUMN_POLICY_V1 = Object.freeze({
     operational: ["state", "valid_until", "revoked_at", "coordinator_lock"] },
   control_completion_gate_integrity: { identity: ["tenant_id", "record_count", "state_digest", "state_auth_tag", "revision"],
     operational: ["web_lock"] },
+  work_intake_tenant_binding: { identity: ["singleton", "tenant_id"], operational: [] },
 });
 
 const refused = code => { throw new Error(code); };
@@ -85,7 +86,8 @@ async function createOrKeep(client, table, idColumn, id, expected, insertSql, pa
 }
 
 /** Applies the fixed first-owner rows and, when intake scopes are configured,
- * the three proposal-only identities and grants in one transaction. No retry, repair, grant,
+ * the three proposal-only identities and grants plus the intake login's tenant
+ * binding in one transaction. An existing binding to another tenant refuses. No retry, repair, grant,
  * migration, or role mutation is performed here. */
 export async function applyMacLocalFirstOwnerV1(client, suppliedManifest) {
   const m = captureMacLocalFirstOwnerManifestV1(suppliedManifest);
@@ -141,6 +143,9 @@ export async function applyMacLocalFirstOwnerV1(client, suppliedManifest) {
            VALUES($1,$2,$3,'work_batch_proposer','["work_batches.propose"]'::jsonb,$4::jsonb,'low',false,false,$5,$5)`,
           [grantId,tenantId,identityId,projectIds,at]));
       }
+      count(await createOrKeep(client,"work_intake_tenant_binding","singleton",true,
+        {singleton:true,tenant_id:tenantId},
+        "INSERT INTO work_intake_tenant_binding(singleton,tenant_id) VALUES(true,$1)",[tenantId]));
     }
     for (const adapter of m.adapters) count(await createOrKeep(client,"adapter_registry","id",adapter.id,
       {id:adapter.id,tenant_id:tenantId,source_system:"control-room-mac-local",contract_version:"1.0.0",
@@ -196,7 +201,7 @@ export async function applyMacLocalFirstOwnerV1(client, suppliedManifest) {
         [tenantId,genesis.revision,genesis.recordCount,genesis.stateDigest,genesis.stateAuthTag]);
       created++;
     }
-    const expectedRows = FIRST_OWNER_BASE_ROW_TOTAL_V1 + (m.workIntakeProjectIds.length > 0 ? 6 : 0);
+    const expectedRows = FIRST_OWNER_BASE_ROW_TOTAL_V1 + (m.workIntakeProjectIds.length > 0 ? 7 : 0);
     if(created+kept!==expectedRows) refused("first_owner_row_count_invalid");
     await client.query("COMMIT");
   }catch(error){await client.query("ROLLBACK").catch(()=>{});throw error;}

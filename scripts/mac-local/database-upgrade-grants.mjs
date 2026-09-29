@@ -19,13 +19,15 @@ const roleFiles = Object.freeze([
 const groups = new Set([...Object.values(macRolePlan), "control_room_agent_reviewer"]);
 const identifier = /^[a-z][a-z0-9_]*$/u;
 const privilege = new Set(["SELECT", "INSERT", "UPDATE", "DELETE", "TRUNCATE", "REFERENCES", "TRIGGER", "USAGE", "EXECUTE"]);
-const agentReviewCommitFunction = "public.commit_agent_review(text, jsonb, jsonb, bytea)";
 const workIntakeIdentityFunction = "public.is_work_intake_session()";
-const functionRoles = new Map([
-  [agentReviewCommitFunction, new Set(["control_room_agent_reviewer"])],
-  [workIntakeIdentityFunction, new Set(["control_room_private_web", "control_room_task_coordinator",
-    "control_room_native_results", "control_room_local_result_publisher"])],
-]);
+const workIntakeIdentityRoles = new Set(["control_room_private_web", "control_room_task_coordinator",
+  "control_room_native_results", "control_room_local_result_publisher"]);
+// The reviewer's whole authority: the tenant-bound plan read and the commit.
+const agentReviewFunctions = new Set(["public.read_agent_review_plan(text)",
+  "public.commit_agent_review(text, jsonb, jsonb, bytea)"]);
+const knownFunctionGrant = object => object === workIntakeIdentityFunction || agentReviewFunctions.has(object);
+const allowedFunctionGrant = (role, object) => object === workIntakeIdentityFunction && workIntakeIdentityRoles.has(role)
+  || agentReviewFunctions.has(object) && role === "control_room_agent_reviewer";
 const name = value => {
   if (!identifier.test(value)) throw new Error("upgrade_grant_source_refused");
   return value;
@@ -77,7 +79,7 @@ export function desiredMacGrantsV1(sources) {
           if (!parsed || !privilege.has(parsed[1])
             || (objectKind === "SCHEMA" && (parsed[1] !== "USAGE" || parsed[2]))
             || (objectKind === "FUNCTION" && (parsed[1] !== "EXECUTE" || parsed[2]
-              || !functionRoles.get(qualified)?.has(role))))
+              || !allowedFunctionGrant(role, qualified))))
             throw new Error("upgrade_grant_source_refused");
           const columns = parsed[2] ? splitCommas(parsed[2]).map(name) : [""];
           if (parsed[2] && objectKind) throw new Error("upgrade_grant_source_refused");
@@ -154,7 +156,7 @@ function grantSql(item, verb) {
     throw new Error("upgrade_grant_catalog_refused");
   if (grantable !== "plain" && grantable !== "grantable") throw new Error("upgrade_grant_catalog_refused");
   if (kind === "function") {
-    if (!functionRoles.has(object) || verb === "GRANT" && !functionRoles.get(object).has(role)
+    if (!knownFunctionGrant(object) || verb === "GRANT" && !allowedFunctionGrant(role, object)
       || column || right !== "EXECUTE")
       throw new Error("upgrade_unexpected_function_grant");
     return `${verb} EXECUTE ON FUNCTION ${object} ${verb === "GRANT" ? "TO" : "FROM"} ${role}`;

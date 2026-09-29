@@ -3,6 +3,7 @@ import { attemptRecordSchema, jobRecordSchema, leaseRecordSchema } from "../../d
 import type { DatabaseClient, DatabaseSession } from "../../persistence/database";
 import { sha256Digest } from "../../security";
 import { controllerWorkerDeliverySchemaV1, createControllerWorkerDeliveryV1, type ControllerWorkerDeliveryV1 } from "../v1/controller-worker-delivery";
+import { readOwnershipLeaseWriteScopesV1 } from "../v1/ownership-lease-write-scopes";
 import { CODEX_OWNER_TRUSTED_LOCAL_ADAPTER_V1, CODEX_OWNER_TRUSTED_LOCAL_CAPABILITY_V1,
   CODEX_OWNER_TRUSTED_LOCAL_JOB_TYPE_V1 } from "./owner-trusted-local-task-planning-contract";
 import { codexOwnerTrustedLocalTaskExecutionPlanSchemaV13, codexOwnerTrustedLocalTaskExecutionPlanSchemaV14,
@@ -101,10 +102,11 @@ export class CodexOwnerTrustedLocalDispatchPreparationV1 {
     const expiresAt = new Date(Math.min(Date.parse(lease.expiresAt), Date.parse(job.authority.expiresAt))).toISOString();
     const runId = `run:codex-owner-trusted-local:${sha256Digest({ tenantId: reference.tenantId, jobId: reference.jobId,
       attemptId: reference.attemptId, leaseId: reference.leaseId, planDigest: sha256Digest(plan) }).slice(7)}`;
+    const writeScopes = await readOwnershipLeaseWriteScopesV1(tx, reference.tenantId, reference.leaseId);
     const delivery = createControllerWorkerDeliveryV1({ identity: { tenantId: reference.tenantId, projectId: reference.projectId,
       jobId: reference.jobId, attemptId: reference.attemptId, runId, nodeId: id.parse(attempt.nodeId) }, worker: {
       workerId: this.binding.workerId, adapterId: CODEX_OWNER_TRUSTED_LOCAL_ADAPTER_V1, adapterRevision: this.binding.adapterRevision },
-      input: plan.input, authorityDigest: job.authority.digest, connectorProfileDigest: plan.connectorProfileDigest,
+      input: plan.input, writeScopes, authorityDigest: job.authority.digest, connectorProfileDigest: plan.connectorProfileDigest,
       acceptanceProfileId: plan.acceptanceProfileId, acceptanceProfileDigest: plan.acceptanceProfileDigest,
       issuedAt: new Date(now).toISOString(), expiresAt });
     return Object.freeze({ schema: CODEX_OWNER_TRUSTED_LOCAL_DISPATCH_PREPARATION_V1, delivery, workflowId: job.workflowId,
