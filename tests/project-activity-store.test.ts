@@ -250,3 +250,43 @@ test("task and project lifecycle actions append exactly once, roll back atomical
       [scope.tenantId, scope.projectId])).rows[0]?.count, String(taskProjectEventActionsV1.length));
   } finally { await raw.close(); }
 });
+
+
+// The main-state staging in project-activity-lifecycle-postgres.test.ts drops the
+// GRANT statements a staged migration prefix cannot run. That filter is the only
+// thing standing between a real previous-release grant set and a baseline that
+// is quietly missing privileges, so it is asserted here without a database: a
+// filter that under-grants would make the down-migration equality pass for the
+// wrong reason, and one that over-grants would raise 42P01 on the server.
+test("B-093 keeps only the grants a staged migration prefix can actually run", async () => {
+  const { applicableStatements } = await import("./project-activity-lifecycle-postgres.test.ts");
+  const absent = new Set(["later_table", "later_column"]);
+  const statements = [
+    // Kept verbatim: nothing absent is named.
+    "GRANT SELECT ON projects, control_jobs TO control_room_private_web",
+    "REVOKE ALL ON ALL TABLES IN SCHEMA public FROM control_room_application",
+    "ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON TABLES FROM control_room_reader",
+    // Trimmed to the names that exist: the privileges that do exist must survive,
+    // or the baseline silently under-grants and the equality below it is a lie.
+    "GRANT SELECT ON projects, later_table, control_jobs TO control_room_private_web",
+    "GRANT UPDATE (state, later_column, version) ON pipeline_runs TO control_room_task_coordinator",
+    // Dropped entirely: an emptied list is a syntax error, not a no-op, and a
+    // statement still naming an absent object would raise 42P01/42703.
+    "GRANT SELECT ON later_table TO control_room_private_web",
+    "GRANT UPDATE (later_column) ON pipeline_runs TO control_room_task_coordinator",
+  ];
+  const kept = applicableStatements(statements, absent);
+  assert.deepEqual(kept, [
+    "GRANT SELECT ON projects, control_jobs TO control_room_private_web",
+    "REVOKE ALL ON ALL TABLES IN SCHEMA public FROM control_room_application",
+    "ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON TABLES FROM control_room_reader",
+    "GRANT SELECT ON projects, control_jobs TO control_room_private_web",
+    "GRANT UPDATE (state, version) ON pipeline_runs TO control_room_task_coordinator",
+  ]);
+  // An empty absent set is a pass-through: a fresh install has every table, so
+  // nothing there is ever filtered.
+  assert.deepEqual(applicableStatements(statements, new Set()), statements);
+  // Nothing kept may still name an absent object, or the server refuses it.
+  for (const statement of kept)
+    for (const name of absent) assert.doesNotMatch(statement, new RegExp(`\\b${name}\\b`, "u"));
+});

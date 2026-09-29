@@ -106,6 +106,157 @@ function baseVersionOf(fileName: string, source: string): string {
   return withoutActivity;
 }
 
+/**
+ * The GRANT statements of a base role file that this database can actually run.
+ *
+ * `absent` is the set of relations and columns the role files name that the
+ * staged prefix does not have. A statement naming one of them is dropped rather
+ * than attempted, because PostgreSQL refuses it (42P01 for a missing relation,
+ * 42703 for a missing column) and would abort the replay of every grant in the
+ * file behind it. The filter is decided from the catalog, not by catching an
+ * error, so a statement is either replayed or provably not applicable -- and
+ * the grants this test is about are still asserted absent afterwards, so a
+ * wrongly dropped statement fails the test instead of passing it quietly.
+ */
+function runnableGrants(base: string, absent: ReadonlySet<string>): string[] {
+  const grants = splitSqlStatements(base)
+    .filter(statement => /^GRANT\s/u.test(statement) && !/^GRANT (?:EXECUTE|USAGE)\s/u.test(statement));
+  const runnable = applicableStatements(grants, absent);
+  assert.ok(runnable.length > 0, "the base version must still contribute at least one applicable grant");
+  return runnable;
+}
+
+/**
+ * The subset of `statements` this database can execute, decided from the
+ * catalog rather than by catching an error.
+ *
+ * A statement naming a relation or column the prefix does not have is not simply
+ * DROPPED: a wrapped `GRANT ... ON a, b, c TO x` loses only the absent name, and
+ * keeps the privileges on the names that do exist. Dropping the whole statement
+ * would silently under-grant -- `GRANT SELECT ON projects, pipeline_runs TO x`
+ * has to keep `projects` -- and the equality this suite measures would then fail
+ * for a reason that has nothing to do with the migration under test.
+ *
+ * A statement is dropped only when nothing applicable is left of it (every
+ * relation gone, or an empty column list), and a statement that still names
+ * something absent after the rewrite is dropped too, so nothing reaches the
+ * server that would raise 42P01 or 42703.
+ */
+export function applicableStatements(statements: readonly string[], absent: ReadonlySet<string>): string[] {
+  if (absent.size === 0) return [...statements];
+  const names = [...absent];
+  const mentions = (text: string) => names.some(name => new RegExp(`\\b${name}\\b`, "u").test(text));
+  const kept: string[] = [];
+  for (const statement of statements) {
+    // The column list of a column-level GRANT, and the relation list after ON.
+    // Each is rewritten to the names that still exist; a list that empties out
+    // takes the whole statement with it, because `GRANT SELECT ON <nothing> TO x`
+    // is a syntax error rather than a no-op. Only ON names relations: the FROM of
+    // a REVOKE names ROLES, which are cluster-global and present on both sides,
+    // so rewriting that list would corrupt the statement.
+    let usable = true;
+    let text = statement.replace(/\(([^)]*)\)/gu, (whole, columns: string) => {
+      const parts = columns.split(",").map(part => part.trim()).filter(Boolean);
+      const remaining = parts.filter(part => !absent.has(part));
+      if (remaining.length === parts.length) return whole;
+      if (remaining.length === 0) { usable = false; return ""; }
+      return `(${remaining.join(", ")})`;
+    });
+    if (usable) text = text.replace(/\bON\s+([^;]*?)\s+TO\b/giu, (whole, list: string) => {
+      const parts = list.split(",").map(part => part.trim()).filter(Boolean);
+      const remaining = parts.filter(part => !mentions(part.replace(/\(.*$/u, "").trim()));
+      if (remaining.length === parts.length) return whole;
+      if (remaining.length === 0) { usable = false; return ""; }
+      return `ON ${remaining.join(", ")} TO`;
+    });
+    // Dropped: a list emptied out, or a statement that still names something the
+    // prefix does not have. Everything else is kept verbatim, including
+    // statements with no relation list at all (ALTER DEFAULT PRIVILEGES, and
+    // `ON ALL TABLES IN SCHEMA public`), which apply as they are.
+    if (!usable || mentions(text)) continue;
+    kept.push(text.trim());
+  }
+  return kept;
+}
+
+/**
+ * Run the staged `production_table_grants.sql` in full on a main-state database.
+ *
+ * The production applier executes that file as one batch and, on 42P01, records
+ * `deferred_partial_schema` and moves on -- so a main-state stage, whose prefix
+ * has no 0108/0109/0135 tables, ends up granted only up to the first statement
+ * naming one of them. A baseline built that way is missing the blanket
+ * `ON ALL TABLES` grants, and every equality measured against it fails for a
+ * reason that has nothing to do with the migration under test.
+ *
+ * So the same statements are replayed here with the absent relations and columns
+ * removed from their lists, as the schema owner, which is the role the applier
+ * itself uses. Each statement is filtered from this database's own catalog, so
+ * nothing is skipped on a guess.
+ */
+async function applyStagedGrants(client: Client, root: string): Promise<void> {
+  const file = await readFile(join(root, "db/roles/production_table_grants.sql"), "utf8");
+  const absent = await objectsAbsentFrom(client);
+  const statements = applicableStatements(splitSqlStatements(file), absent);
+  assert.ok(statements.length > 0, "the grants file must contribute at least one applicable statement");
+  await client.query("SET ROLE control_room_schema_owner");
+  try {
+    for (const statement of statements) await client.query(statement);
+  } finally { await client.query("RESET ROLE"); }
+}
+
+/**
+ * Every relation and column a role-file GRANT could name that the staged
+ * main-state prefix does NOT have, read from the staged database's own catalog
+ * rather than scraped out of migration text.
+ *
+ * A release that numbers a migration above 0107 (cook/v1's 0135) also has to add
+ * its grants to the same role files, and replaying the shipped file onto a
+ * pre-0107 database then fails with 42P01 for a table that migration has not
+ * created, or 42703 for a column it has not added (0109 adds
+ * `unattended_last_swept_at` to `pipeline_runs`). Both are the same problem and
+ * the catalog answers both, where a text scraper has to guess at every dialect
+ * spelling of CREATE TABLE, ALTER TABLE and a wrapped column list.
+ *
+ * The caller splits the role file's statements with the kit's own splitter and
+ * asks which of this set each statement names, so only the statements that
+ * genuinely cannot run against the prefix are dropped -- never the grants under
+ * test, which the assertions after the replay still require to be absent.
+ */
+async function objectsAbsentFrom(client: Client): Promise<Set<string>> {
+  const tables = (await client.query<{ name: string }>(
+    `SELECT c.relname AS name FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+     WHERE n.nspname = 'public' AND c.relkind IN ('r','p','v','m','S')`)).rows.map(row => row.name);
+  const columns = (await client.query<{ name: string }>(
+    `SELECT a.attname AS name FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid
+     JOIN pg_namespace n ON n.oid = c.relnamespace
+     WHERE n.nspname = 'public' AND a.attnum > 0 AND NOT a.attisdropped`)).rows.map(row => row.name);
+  const present = new Set([...tables, ...columns]);
+  // Everything the shipped role files could possibly name, so the caller can
+  // tell "names something the prefix lacks" from "names something it has".
+  // Only identifiers in GRANT position -- a relation after ON, or a column
+  // inside the (...) that follows GRANT UPDATE/INSERT. Matching every lowercase
+  // word in the file would sweep in SQL keywords (select, insert, default) and
+  // filter out statements that are perfectly applicable.
+  const named = new Set<string>();
+  const files = ["native_evidence_roles.sql", "private_web_roles.sql", "task_coordinator_roles.sql",
+    "local_result_publisher_roles.sql"];
+  for (const file of files) {
+    const text = (await readFile(join(REPOSITORY_ROOT, "db/roles", file), "utf8"))
+      .replace(/\s+/gu, " ");
+    for (const match of text.matchAll(/\bON\s+([a-z_][a-z0-9_.,\s]*?)(?=\s+TO\b)/giu)) {
+      const list = match[1]!;
+      // Strip a column list, if the statement is a column-level GRANT.
+      for (const name of list.split(",").map(part => part.replace(/\(.*$/u, "").trim()))
+        if (/^[a-z_][a-z0-9_]*$/iu.test(name)) named.add(name);
+    }
+    for (const match of text.matchAll(/GRANT\s+(?:UPDATE|INSERT|DELETE|REFERENCES|TRIGGER)\s*\(([^)]*)\)/giu))
+      for (const name of match[1]!.split(",").map(part => part.trim()))
+        if (/^[a-z_][a-z0-9_]*$/iu.test(name)) named.add(name);
+  }
+  return new Set([...named].filter(name => !present.has(name)));
+}
+
 const TOKEN = randomBytes(5).toString("hex");
 const TENANT_ID = `tenant:pa-lifecycle-${TOKEN}`;
 const WORKSPACE_ID = `workspace:pa-lifecycle-${TOKEN}`;
@@ -309,29 +460,56 @@ test("the stream head row lock is taken by each production login, not by a super
  *
  * The caller owns the returned directory and must remove it.
  */
-async function stageMainState(): Promise<{ root: string; mainMigrations: string[]; ledgerPath: string; activity: string }> {
+async function stageMainState(): Promise<{ root: string; mainMigrations: string[]; ledgerPath: string; activity: string; upgradeSuffix: string[] }> {
   const migrations = (await readdir(join(REPOSITORY_ROOT, "db/migrations"))).filter(name => name.endsWith(".sql")).sort();
   const activity = migrations.filter(name => name.endsWith("_task_project_activity_events.sql"));
   assert.equal(activity.length, 1, "exactly one activity migration");
-  const mainMigrations = migrations.filter(name => name !== activity[0]);
-  // The number must sort after everything main shipped, or the ledger an
-  // upgraded installation builds is corrupt.
-  const number = (name: string) => Number((/^(\d{4})_/u.exec(name) ?? [])[1]);
-  for (const shipped of mainMigrations)
-    assert.ok(number(activity[0]!) > number(shipped), `${activity[0]} must sort after main's ${shipped}`);
+  // 0107 must be a clean CUT in the shipped order, not a maximum: a later
+  // release may legitimately add a migration numbered above it (cook/v1 added
+  // 0135), and an installation that had already applied 0108/0109/0135 would
+  // then see 0107 as still pending and re-apply it mid-sequence. What the
+  // applier actually guarantees is that pending work is a SUFFIX of the shipped
+  // order, so "main" has to be the prefix that ends immediately before 0107, and
+  // the upgrade appends everything from 0107 onwards. `migrations.slice(0, cut)`
+  // is that prefix; taking "every file except 0107" would stage a set with a hole
+  // in the middle, which the applier rejects as migration_gap rather than
+  // exercising the upgrade path at all.
+  const cut = migrations.indexOf(activity[0]!);
+  assert.ok(cut >= 0, `${activity[0]} must be present in the shipped order`);
+  const mainMigrations = migrations.slice(0, cut);
+  assert.equal(mainMigrations.length, cut,
+    "the main-state stage is the shipped prefix that ends before this head's migration");
+  assert.ok(!mainMigrations.includes(activity[0]!),
+    "the main-state stage must not already contain this head's migration");
+  // The prefix must also contain the migrations main actually shipped, so the
+  // staged set is a real previous release rather than an arbitrary subset.
+  for (const shipped of ["0100_ownership_lease_collision_guard.sql", "0101_owner_review_job_lock.sql",
+    "0102_work_batch_owner_approval.sql", "0105_linear_pipeline_runs.sql"])
+    assert.ok(mainMigrations.includes(shipped), shipped);
   const root = await mkdtemp(join(tmpdir(), "cr409-main-"));
   for (const dir of ["deploy/postgres", "db/migrations", "db/roles", "db/setup"])
     await mkdir(join(root, dir), { recursive: true });
   for (const file of mainMigrations)
     await cp(join(REPOSITORY_ROOT, "db/migrations", file), join(root, "db/migrations", file));
-  for (const file of ["production_roles.sql", "production_provision.sql", "production_table_grants.sql"])
-    await cp(join(REPOSITORY_ROOT, "db/roles", file), join(root, "db/roles", file));
+  // Every grants/provision entry the ledger collects, not a hand-picked three:
+  // collectLedgerEntries reads all four unconditionally, so a stage missing
+  // agent_reviewer_roles.sql fails with a bare ENOENT that names the fixture
+  // rather than the omission. Derived from the collector so it cannot drift.
+  for (const entry of await collectLedgerEntries(REPOSITORY_ROOT))
+    if (entry.file.startsWith("db/roles/") || entry.file.startsWith("db/setup/"))
+      await cp(join(REPOSITORY_ROOT, entry.file), join(root, entry.file));
   await cp(join(REPOSITORY_ROOT, "db/setup/production_migration_ledger.sql"),
     join(root, "db/setup/production_migration_ledger.sql"));
   const entries = await collectLedgerEntries(root);
   const ledgerPath = join(root, "deploy/postgres/migration-ledger.json");
   await writeFile(ledgerPath, JSON.stringify({ version: 1, digest: ledgerDigest(entries), entries }));
-  return { root, mainMigrations, ledgerPath, activity: activity[0]! };
+  // Everything after 0107 in the shipped order: the migrations an installation
+  // sitting at this main state will APPEND, this head's included. The upgrade
+  // test asserts against this derived suffix rather than against 0107 alone, so
+  // a later migration numbered above 0107 (0135) does not turn a true upgrade
+  // assertion into a false failure -- and, more importantly, cannot be quietly
+  // skipped by a test that only ever looked at the newest file.
+  return { root, mainMigrations, ledgerPath, activity: activity[0]!, upgradeSuffix: migrations.slice(cut) };
 }
 
 /**
@@ -447,6 +625,17 @@ Promise<Client> {
     });
     assert.equal(applied.applied?.length, stage.mainMigrations.length,
       "every main-era migration must apply to the baseline database, and nothing else");
+    // The applier stops the grants file at the first statement naming a table
+    // this prefix does not have, and records `deferred_partial_schema`. The
+    // baseline has to be the previous release's REAL grant set, so the rest of
+    // the file is replayed here as the schema owner, with the absent relations
+    // removed from their lists.
+    if (typeof applied.grants === "string" && applied.grants.startsWith("deferred_partial_schema:")) {
+      // Closed here rather than left to the caller: a connection still open when
+      // the kit stops the postmaster surfaces as 57P01 and masks the real failure.
+      const grantsClient = await clientFor(postgres, database, admin);
+      try { await applyStagedGrants(grantsClient, stage.root); } finally { await grantsClient.end(); }
+    }
     // One client on the baseline database, used for the replay and for every
     // read that follows. Grants are per-database in PostgreSQL, so a read on
     // any other database -- including the one under test, which has this head's
@@ -463,10 +652,8 @@ Promise<Client> {
       "task_coordinator_roles.sql", "local_result_publisher_roles.sql"]) {
       const base = baseVersionOf(file, await readFile(join(REPOSITORY_ROOT, "db/roles", file), "utf8"));
       if (file === "native_evidence_roles.sql") { await baseline.query(base); continue; }
-      const grants = splitSqlStatements(base)
-        .filter(statement => /^GRANT\s/u.test(statement) && !/^GRANT (?:EXECUTE|USAGE)\s/u.test(statement));
-      assert.ok(grants.length > 0, `${file} base version must still contribute its grants`);
-      for (const statement of grants) await baseline.query(statement);
+      for (const statement of runnableGrants(base, await objectsAbsentFrom(baseline)))
+        await baseline.query(statement);
     }
     await closeAdmin();
     // Only the client is returned. The privilege set is read by the caller,
@@ -565,33 +752,14 @@ test("upgrade from a main-state database grants the publisher what the publicati
   // which is exactly the population BLOCKER 1 broke.
   const MIGRATOR_PASSWORD = "m409".padEnd(24, "x");
   const result = await withRealPostgres(async postgres => {
-    const migrations = (await readdir(join(REPOSITORY_ROOT, "db/migrations"))).filter(name => name.endsWith(".sql")).sort();
-    const activity = migrations.filter(name => name.endsWith("_task_project_activity_events.sql"));
-    assert.equal(activity.length, 1, "exactly one activity migration");
-    const mainMigrations = migrations.filter(name => name !== activity[0]);
-    // The number must sort after everything main shipped, or the ledger an
-    // upgraded installation builds is corrupt.
-    const number = (name: string) => Number((/^(\d{4})_/u.exec(name) ?? [])[1]);
-    for (const shipped of mainMigrations)
-      assert.ok(number(activity[0]!) > number(shipped), `${activity[0]} must sort after main's ${shipped}`);
-
-    // A second, empty database on the SAME cluster, so the upgrade below is a
-    // real in-place upgrade of a real main-state database rather than a fresh
-    // install (which would pass from the role files alone and hide the defect).
-    const mainState = await mkdtemp(join(tmpdir(), "cr409-main-"));
+    // The same staged main state the down-migration equality is measured
+    // against, so the two tests can never disagree about what "main" means.
+    const stage = await stageMainState();
+    const { root: mainState, ledgerPath: mainLedgerPath, mainMigrations, activity, upgradeSuffix } = stage;
     try {
-      for (const dir of ["deploy/postgres", "db/migrations", "db/roles", "db/setup"])
-        await mkdir(join(mainState, dir), { recursive: true });
-      for (const file of mainMigrations)
-        await cp(join(REPOSITORY_ROOT, "db/migrations", file), join(mainState, "db/migrations", file));
-      for (const file of ["production_roles.sql", "production_provision.sql", "production_table_grants.sql"])
-        await cp(join(REPOSITORY_ROOT, "db/roles", file), join(mainState, "db/roles", file));
-      await cp(join(REPOSITORY_ROOT, "db/setup/production_migration_ledger.sql"),
-        join(mainState, "db/setup/production_migration_ledger.sql"));
-      const entries = await collectLedgerEntries(mainState);
-      const mainLedgerPath = join(mainState, "deploy/postgres/migration-ledger.json");
-      await writeFile(mainLedgerPath, JSON.stringify({ version: 1, digest: ledgerDigest(entries), entries }));
-
+      // A second, empty database on the SAME cluster, so the upgrade below is a
+      // real in-place upgrade of a real main-state database rather than a fresh
+      // install (which would pass from the role files alone and hide the defect).
       const admin = new Client(postgres.admin());
       await admin.connect();
       try {
@@ -616,6 +784,10 @@ test("upgrade from a main-state database grants the publisher what the publicati
         const atMain = await phase(mainState, mainLedgerPath);
         assert.equal((atMain.applied?.length ?? 0), mainMigrations.length,
           "every main-era migration must apply, and nothing else");
+        if (typeof atMain.grants === "string" && atMain.grants.startsWith("deferred_partial_schema:")) {
+          const grantsClient = await clientFor(postgres, database, admin);
+          try { await applyStagedGrants(grantsClient, mainState); } finally { await grantsClient.end(); }
+        }
 
         const mainDb = new Client({ ...postgres.admin(), database });
         await mainDb.connect();
@@ -639,10 +811,8 @@ test("upgrade from a main-state database grants the publisher what the publicati
             "task_coordinator_roles.sql", "local_result_publisher_roles.sql"]) {
             const base = baseVersionOf(file, await readFile(join(REPOSITORY_ROOT, "db/roles", file), "utf8"));
             if (file === "native_evidence_roles.sql") { await mainDb.query(base); continue; }
-            const grants = splitSqlStatements(base)
-              .filter(statement => /^GRANT\s/u.test(statement) && !/^GRANT (?:EXECUTE|USAGE)\s/u.test(statement));
-            assert.ok(grants.length > 0, `${file} base version must still contribute its grants`);
-            for (const statement of grants) await mainDb.query(statement);
+            for (const statement of runnableGrants(base, await objectsAbsentFrom(mainDb)))
+              await mainDb.query(statement);
           }
           const atMainRows = (await mainDb.query<{ filename: string; ledger_order: number }>(
             "SELECT filename, ledger_order FROM control_room_schema_migrations ORDER BY ledger_order")).rows;
@@ -663,11 +833,18 @@ test("upgrade from a main-state database grants the publisher what the publicati
         } finally { await mainDb.end(); }
 
         // The upgrade: this head's full ledger, applied over the main-state
-        // database by the same two-phase applier.
+        // database by the same two-phase applier. It appends the whole pending
+        // suffix, of which this head's migration is the FIRST entry -- a
+        // deliberately harder case than "append only the newest file", because
+        // the applier must still place 0107 immediately after main's last applied
+        // order even with 0135 waiting behind it.
         const upgraded = await phase(REPOSITORY_ROOT);
+        assert.ok(upgradeSuffix.includes(activity), "the upgrade suffix must contain this head's migration");
+        assert.equal(upgradeSuffix[0], activity,
+          "this head's migration must be the first entry the upgrade appends");
         assert.deepEqual(upgraded.applied?.map(entry => [entry.file, entry.order]),
-          [[`db/migrations/${activity[0]}`, mainMigrations.length + 1]],
-          "the upgrade must append exactly this head's migration, after main's last applied order");
+          upgradeSuffix.map((file, index) => [`db/migrations/${file}`, mainMigrations.length + index + 1]),
+          "the upgrade must append exactly the pending suffix, in shipped order, after main's last applied order");
         assert.equal(upgraded.noOp, false,
           "the upgrade must be a real apply, not a no-op: the migration is pending on a main-state database");
 
@@ -680,9 +857,9 @@ test("upgrade from a main-state database grants the publisher what the publicati
           const ledger = (await upgradedDb.query<{ filename: string; ledger_order: number }>(
             "SELECT filename, ledger_order FROM control_room_schema_migrations ORDER BY ledger_order")).rows;
           assert.deepEqual(ledger.map(row => row.ledger_order),
-            Array.from({ length: mainMigrations.length + 1 }, (_, index) => index + 1),
+            Array.from({ length: mainMigrations.length + upgradeSuffix.length }, (_, index) => index + 1),
             "the upgraded ledger must be contiguous");
-          assert.deepEqual(ledger.slice(0, -1).map(row => row.filename),
+          assert.deepEqual(ledger.slice(0, mainMigrations.length).map(row => row.filename),
             mainMigrations.map(file => `db/migrations/${file}`));
           // BLOCKER 1, on the upgraded database, as the production role names.
           for (const role of ["control_room_private_web", "control_room_task_coordinator",
@@ -715,7 +892,7 @@ test("upgrade from a main-state database grants the publisher what the publicati
             "SELECT filename, ledger_order FROM control_room_schema_migrations ORDER BY ledger_order")).rows, ledger,
           "the second run must leave the ledger byte-identical");
         } finally { await upgradedDb.end(); }
-        return mainMigrations.length + 1;
+        return mainMigrations.length + upgradeSuffix.length;
       } finally { await admin.end(); }
     } finally { await rm(mainState, { recursive: true, force: true }); }
   }, { port: UPGRADE_PORT, allowedPorts: ALLOWED_PORTS, boundMs: 600_000 });
@@ -894,10 +1071,13 @@ test("the activity migration is idempotent on a second apply", needsPg, async t 
       await mkdir(join(stage, dir), { recursive: true });
     for (const file of (await readdir(join(REPOSITORY_ROOT, "db/migrations"))).filter(name => name.endsWith(".sql")).sort())
       await cp(join(REPOSITORY_ROOT, "db/migrations", file), join(stage, "db/migrations", file));
-    for (const file of ["production_roles.sql", "production_provision.sql", "production_table_grants.sql"])
-      await cp(join(REPOSITORY_ROOT, "db/roles", file), join(stage, "db/roles", file));
-    await cp(join(REPOSITORY_ROOT, "db/setup/production_migration_ledger.sql"),
-      join(stage, "db/setup/production_migration_ledger.sql"));
+    // Every grants/provision entry collectLedgerEntries reads, derived from the
+    // collector rather than listed: a hand-picked subset breaks the moment the
+    // ledger gains another role file, and it breaks as a bare ENOENT naming the
+    // fixture instead of the missing file.
+    for (const entry of await collectLedgerEntries(REPOSITORY_ROOT))
+      if (entry.file.startsWith("db/roles/") || entry.file.startsWith("db/setup/"))
+        await cp(join(REPOSITORY_ROOT, entry.file), join(stage, entry.file));
     const entries = await collectLedgerEntries(stage);
     const ledgerPath = join(stage, "deploy/postgres/migration-ledger.json");
     await writeFile(ledgerPath, JSON.stringify({ version: 1, digest: ledgerDigest(entries), entries }));
