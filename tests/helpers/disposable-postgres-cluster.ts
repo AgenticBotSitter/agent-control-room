@@ -16,7 +16,9 @@
 //      $PWD — can still see and stop a cluster the in-process teardown missed;
 //   3. teardown stops the postmaster, proves it is gone, and only then removes
 //      the directory — from an `after` hook, from `process.on("exit")`, and from
-//      SIGINT/SIGTERM;
+//      SIGINT/SIGTERM. A run is REGISTERED BEFORE it starts, so a signal that
+//      lands between the postmaster launch and the resolution of the start
+//      promise still finds the cluster it has to stop;
 //   4. a start that loses a port race is retried on a fresh port and data
 //      directory rather than being reported as an unrelated-looking failure.
 //
@@ -44,6 +46,71 @@ export const PG_PORT_ENV = "CONTROL_ROOM_TEST_PG_PORT";
 export const TEST_TMP_DIRECTORY = ".test-tmp";
 /** Attempts to win a port race before the start is declared failed. */
 const PORT_ATTEMPTS = 5;
+
+/** The throwaway password every disposable cluster's fixture role gets. It is a
+ * synthetic test constant, never a real credential. Named once so the
+ * pre-start registry entry and the started cluster cannot drift apart. */
+const FIXTURE_PASSWORD = "disposable-fixture-password";
+
+/**
+ * Every run this process has created and not yet finished, registered BEFORE
+ * its first `exec` and removed only once it is stopped and its directories are
+ * gone. Keyed by run directory, not by object identity: `startCluster` builds
+ * the entry it registers and `startOnce` builds the one it returns, and a
+ * caller's `stopCluster` is given the latter.
+ *
+ * The window this closes: `startCluster` only returns once the cluster is up, so
+ * a caller that assigns its `cluster` variable from the resolved promise has
+ * nothing to clean up until then. A SIGTERM landing after `pg_ctl` has launched
+ * the postmaster but before that promise settles therefore saw `undefined` from
+ * the getter, skipped the teardown entirely, and left a postmaster running with
+ * a socket directory in the temp dir. The registry is written on the way IN,
+ * which is the only moment at which the directories — and therefore the pid file
+ * the postmaster will write into the data dir — are known, and it is read by the
+ * exit/signal path, which is the only code that can still run once the caller
+ * has been signalled away.
+ */
+const inProgressRuns = new Map<string, Cluster>();
+
+function forgetRun(target: Cluster): void { inProgressRuns.delete(target.run); }
+
+/** Stop and remove a run that has not finished starting, then forget it.
+ *
+ * The postmaster pid comes from the pid file on disk rather than from the
+ * Cluster object, because an interrupted start may never have recorded a bound
+ * port: the pid file is the only record that a postmaster was launched, and
+ * `stopClusterSync` copes with its absence (a run whose postmaster never started
+ * has nothing to stop, only two directories to remove). */
+function stopInProgressRunSync(run: Cluster): void {
+  try { stopClusterSync(run); } catch { /* an exit path must never throw */ }
+  inProgressRuns.delete(run.run);
+}
+
+/** Stop every run that was started and not yet stopped, in one pass.
+ *
+ * The exit and signal handlers call this, so it is the path that has to cover a
+ * start still in flight as well as one the caller already holds. It is exported
+ * so a caller that wants belt-and-braces coverage can call it before relying on
+ * its own `after` hook having run. */
+export function stopUnfinishedRunsSync(): void {
+  for (const run of [...inProgressRuns.values()]) stopInProgressRunSync(run);
+}
+
+/** Called by `startCluster` the moment the postmaster is running, while the
+ * start is still in flight and the registry is the only record of it.
+ *
+ * This exists for the acceptance test, and for nothing else: a lane has no use
+ * for a callback in the middle of its own start, and adding a general-purpose
+ * hook to production-shaped code to make a test possible is exactly the sort of
+ * seam that later gets driven by something other than the test. It is placed
+ * after `pg_ctl -w start` returns, which is the first instant at which a
+ * postmaster exists and the last one before `startCluster` resolves.
+ *
+ * The handle is the in-flight run itself, not a view of the registry: a test
+ * that had to consult the registry to learn which directories to assert on
+ * could not observe anything in the state this hook exists to detect, so its
+ * precondition would be circular. */
+export type PostmasterLaunchHook = (inFlight: Cluster) => void | Promise<void>;
 
 /**
  * PG_BIN is how the repo's own live-cluster tests (package.json
@@ -156,11 +223,20 @@ function isLivePostmaster(pid: number): boolean {
  * this module exists to fix look half-fixed. Removing the directory is only safe
  * once the postmaster is confirmed gone, which is checked here explicitly. */
 export function stopClusterSync(target: Cluster): void {
-  if (!existsSync(target.data)) return;
+  // The pid file is the single authority on "is there a postmaster to stop?".
+  // Reading it needs the data dir, so a run interrupted before `initdb` wrote
+  // anything reads as `undefined` and there is nothing to stop — but the socket
+  // dir and the run dir still have to go, and the early return this replaced
+  // used to leave both behind on every signal in the pre-start window.
+  //
+  // That same guard keeps this fast: `pg_ctl -w stop` waits its full 60 s for a
+  // postmaster that will never answer, and a data dir initdb has not finished
+  // writing is exactly that. Calling pg_ctl at all in that state turned a
+  // signal into a one-minute hang before the directories were removed.
   const pid = readPostmasterPidSync(target.data);
-  spawnSync(target.pgCtl, ["-D", target.data, "-m", "immediate", "-w", "-t", "60", "stop"],
-    { timeout: 60_000, maxBuffer: 1 << 26, encoding: "utf8" });
   if (pid !== undefined) {
+    spawnSync(target.pgCtl, ["-D", target.data, "-m", "immediate", "-w", "-t", "60", "stop"],
+      { timeout: 60_000, maxBuffer: 1 << 26, encoding: "utf8" });
     if (isLivePostmaster(pid)) {
       // Refuse to delete a live cluster's data directory: that is the failure
       // mode that leaves a postmaster running against files that no longer
@@ -217,6 +293,9 @@ export async function stopCluster(target: Cluster): Promise<void> {
   // The socket dir lives outside the run dir, so it is removed explicitly.
   await rm(target.socket, { recursive: true, force: true });
   await rm(target.run, { recursive: true, force: true });
+  // Forgetting the run is what keeps a normal teardown from leaving a stale
+  // entry that the exit handler would try to stop a second time.
+  forgetRun(target);
 }
 
 let stopFailure: Error | undefined;
@@ -261,7 +340,8 @@ const SOCKET_PREFIX = "crpg-";
 /** `.s.PGSQL.<port>` is up to 16 bytes; keep room for it inside sun_path. */
 const SOCKET_PATH_BUDGET = 100;
 
-async function startOnce(port: number, run: string, socket: string): Promise<Cluster> {
+async function startOnce(port: number, run: string, socket: string,
+  afterPostmasterLaunch?: PostmasterLaunchHook): Promise<Cluster> {
   const data = join(run, "data");
   const socketFile = join(socket, `.s.PGSQL.${port}`);
   if (socketFile.length > SOCKET_PATH_BUDGET)
@@ -285,13 +365,18 @@ async function startOnce(port: number, run: string, socket: string): Promise<Clu
   if (patched === stock)
     throw new Error("disposable_cluster_pg_hba_unpatchable: pg_hba.conf must still contain a stock loopback TCP rule");
   await writeFile(hba, patched, "utf8");
-  const fixturePassword = "disposable-fixture-password";
+  const fixturePassword = FIXTURE_PASSWORD;
   const pgCtl = join(PG_BIN!, "pg_ctl");
   const cluster: Cluster = { run, data, socket, port, pgCtl, fixturePassword };
   try {
     await exec(pgCtl, ["-D", data, "-o",
       `-p ${port} -k ${socket} -h 127.0.0.1 -c listen_addresses=127.0.0.1 -c fsync=off -c full_page_writes=off`,
       "-l", join(run, "server.log"), "-w", "-t", "60", "start"], base);
+    // A postmaster now exists and `startCluster` has not resolved yet. This is
+    // the window a signal has to survive, so it is the window the acceptance
+    // test drives from. The hook is passed the in-flight run itself, which the
+    // registry already holds.
+    if (afterPostmasterLaunch) await afterPostmasterLaunch(cluster);
     // Record the port the postmaster actually bound, not the one we asked for:
     // it is the value the rest of the lane must connect to.
     const bound = await readBoundPort(data);
@@ -341,7 +426,15 @@ function withLog(error: unknown, log: string): unknown {
  * cluster at all), so this is inherent to the fix rather than a bug in it. Jobs
  * that need isolation should use separate worktrees.
  */
-export async function startCluster(prefix = "journey-cluster-"): Promise<Cluster> {
+export interface StartClusterOptions {
+  /** Runs inside the start, after the postmaster has been launched and before
+   * the returned promise resolves. Used only by the acceptance test that drives
+   * a signal through that window; a lane has no reason to pass it. */
+  afterPostmasterLaunch?: PostmasterLaunchHook;
+}
+
+export async function startCluster(prefix = "journey-cluster-",
+  options: StartClusterOptions = {}): Promise<Cluster> {
   const root = resolvePath(process.cwd(), TEST_TMP_DIRECTORY);
   await mkdir(root, { recursive: true, mode: 0o700 });
   const requested = requestedPort();
@@ -349,14 +442,43 @@ export async function startCluster(prefix = "journey-cluster-"): Promise<Cluster
   for (let attempt = 0; attempt < PORT_ATTEMPTS; attempt += 1) {
     const port = requested ?? await findFreePort();
     const run = await mkdtemp(join(root, prefix));
-    // The socket dir is a sibling of the data dir, in the system temp dir, so
+    // REGISTER THE MOMENT THE RUN DIRECTORY EXISTS — before the socket
+    // `mkdtemp` below, which is an `await` and therefore a point at which a
+    // SIGTERM can be delivered. A signal landing in that gap used to leave an
+    // empty run dir and an empty socket dir behind on every single run, because
+    // neither path had been recorded anywhere yet. Registering after the socket
+    // dir, as this did at first, is exactly the sub-window that leak lived in.
+    //
+    // The socket path is a sibling of the data dir, in the system temp dir, so
     // its path stays inside the platform's sun_path budget on a deep checkout.
-    // It is removed on every exit path below, including the retry path.
-    const socket = await mkdtemp(join(tmpdir(), SOCKET_PREFIX));
+    // It is created next, and the same registered entry — mutated in place
+    // rather than replaced, so a signal handler holding this exact object still
+    // sees the socket dir once it exists — picks it up.
+    const started: Cluster = { run, data: join(run, "data"), socket: "", port, pgCtl: join(PG_BIN!, "pg_ctl"),
+      fixturePassword: FIXTURE_PASSWORD };
+    inProgressRuns.set(run, started);
+    let socket: string;
     try {
-      return await startOnce(port, run, socket);
+      socket = await mkdtemp(join(tmpdir(), SOCKET_PREFIX));
+    } catch (error) {
+      // The run dir already exists and is registered, so the exit path can still
+      // clean it; forgetting it here would hand the next run a stale directory.
+      inProgressRuns.delete(run);
+      await rm(run, { recursive: true, force: true });
+      throw error;
+    }
+    started.socket = socket;
+    try {
+      const cluster = await startOnce(port, run, socket, options.afterPostmasterLaunch);
+      // Still registered: the caller's `after` hook and the process teardown
+      // must both be able to stop it until the caller has stopped it itself.
+      // `stopCluster` forgets the run by its run directory, so a caller that
+      // tears down normally does not leave a stale entry for the exit handler
+      // to stop a second time.
+      return cluster;
     } catch (error) {
       lastError = error;
+      inProgressRuns.delete(run);
       await rm(run, { recursive: true, force: true });
       await rm(socket, { recursive: true, force: true });
       // An operator-named port is a decision, not a suggestion: retrying it
@@ -373,16 +495,29 @@ export async function startCluster(prefix = "journey-cluster-"): Promise<Cluster
  * `exit`, and SIGINT/SIGTERM handlers that stop the cluster and then re-raise
  * with the conventional code so the parent still sees a signal death.
  *
+ * Every path drains the in-progress registry as well as the caller's getter.
+ * That is the whole point: the getter is `undefined` for the entire window
+ * between `pg_ctl` launching the postmaster and the caller's `await` resolving,
+ * and a signal arriving in that window used to skip cleanup and leave the
+ * postmaster running. The registry is populated before startup begins, so the
+ * registry — not the getter — is what makes an interrupted start recoverable.
+ *
  * Returns a function that removes the handlers again, for callers that stop
  * the cluster themselves (the `after` hook).
  */
 export function installProcessTeardown(getCluster: () => Cluster | undefined): () => void {
-  const onExit = () => { const current = getCluster(); if (current) stopClusterSync(current); };
+  const onExit = () => {
+    const current = getCluster();
+    if (current) stopClusterSync(current);
+    // Registered-before-start runs, and any the getter no longer covers.
+    stopUnfinishedRunsSync();
+  };
   const onSignal = (code: number) => () => {
     const current = getCluster();
     if (current) {
       try { stopClusterSync(current); } catch { /* fall through to the conventional exit code */ }
     }
+    try { stopUnfinishedRunsSync(); } catch { /* fall through to the conventional exit code */ }
     process.exit(code);
   };
   const onSigint = onSignal(130);

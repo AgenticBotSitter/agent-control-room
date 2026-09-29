@@ -30,13 +30,14 @@ import assert from "node:assert/strict";
 import { execFileSync, spawn, type ChildProcessByStdio } from "node:child_process";
 import type { Readable } from "node:stream";
 import { existsSync, readFileSync } from "node:fs";
-import { readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
 
-import { findFreePort, isPostmasterAlive, isPortConflict, needsPg, requestedPort, TEST_TMP_DIRECTORY }
-  from "./helpers/disposable-postgres-cluster";
+import { findFreePort, isPostmasterAlive, isPortConflict, needsPg, requestedPort, PG_BIN, PG_PORT_ENV,
+  stopClusterSync, TEST_TMP_DIRECTORY } from "./helpers/disposable-postgres-cluster";
 
 const SCENARIO = resolve(import.meta.dirname, "fixtures/journey-cluster-scenario.ts");
 const JOURNEY = resolve(import.meta.dirname, "mac-local-browser-journeys.test.tsx");
@@ -54,13 +55,38 @@ interface Spawned {
   dataDir: () => string | undefined;
   /** The socket directory the postmaster was pointed at. */
   socketDir: () => string | undefined;
+  /** The run directory that holds the data dir, reported by the stall mode. */
+  runDir: () => string | undefined;
   /** The port the postmaster bound, as the scenario reported it. */
   port: () => number | undefined;
 }
 
+/**
+ * The caller's port block, handed out one port per spawned child.
+ *
+ * CI never sets CONTROL_ROOM_TEST_PG_PORT, so every child asks the OS for a
+ * free port and this is inert there. It matters when an operator pins a block
+ * (a parallel job that must not collide with anything else on the machine):
+ * the tests that deliberately start two clusters at the same time would
+ * otherwise both be told to use the same pinned port and collide by
+ * construction, because the helper never retries an operator-named port — a
+ * named port is a decision, not a suggestion. Handing out the block in order
+ * keeps those two apart while still staying inside the block the operator gave.
+ */
+const pinnedPorts = (() => {
+  const start = Number(process.env[PG_PORT_ENV] ?? "");
+  if (!Number.isSafeInteger(start) || start < 1024) return undefined;
+  let next = start;
+  return () => (next <= 65535 ? next++ : undefined);
+})();
+
 function spawnScript(script: string, args: string[]): Spawned {
+  // Only override the environment when a block is pinned; with nothing pinned,
+  // the child inherits an unset variable and resolves its own port.
+  const port = pinnedPorts?.();
   const child = spawn(process.execPath, ["--import", "tsx", script, ...args], {
     stdio: ["ignore", "pipe", "pipe"], cwd: resolve(import.meta.dirname, ".."),
+    ...(port === undefined ? {} : { env: { ...process.env, [PG_PORT_ENV]: String(port) } }),
   });
   let buffer = "";
   child.stdout.on("data", chunk => { buffer += String(chunk); });
@@ -80,6 +106,7 @@ function spawnScript(script: string, args: string[]): Spawned {
     },
     dataDir: () => read("SCENARIO_DATA_DIR"),
     socketDir: () => read("SCENARIO_SOCKET_DIR"),
+    runDir: () => read("SCENARIO_RUN_DIR"),
     port: () => { const value = Number(read("SCENARIO_PORT")); return Number.isSafeInteger(value) ? value : undefined; },
   };
 }
@@ -128,6 +155,15 @@ async function postmasterStillRunning(dataDir: string): Promise<boolean> {
     return isPostmasterAlive(Number.isSafeInteger(pid) ? pid : undefined);
   }
   return postmasterReferencesDir(dataDir);
+}
+
+/** The port the running postmaster recorded for itself (postmaster.pid line 4).
+ * Undefined when there is no pid file to read it from. */
+function boundPortInPidFile(dataDir: string): number | undefined {
+  try {
+    const port = Number((readFileSync(join(dataDir, "postmaster.pid"), "utf8")).split("\n")[3]?.trim());
+    return Number.isSafeInteger(port) && port > 0 ? port : undefined;
+  } catch { return undefined; }
 }
 
 /** Any live postmaster whose command line still names this data directory. */
@@ -246,6 +282,103 @@ test("a SIGTERM mid-run leaves no postgres running and removes the data dir", { 
 });
 
 // ---------------------------------------------------------------------------
+// Scenario 2b: SIGTERM delivered DURING startup, after the postmaster launch.
+//
+// This is the window the review found: `startCluster` resolves only once the
+// cluster is up, so a caller that assigns its `cluster` variable from the
+// resolved promise has nothing for the signal handler to stop. Before the fix
+// the handler saw `undefined`, skipped cleanup, and the postmaster survived.
+// ---------------------------------------------------------------------------
+
+test("a SIGTERM between the postmaster launch and the start resolving leaves no postmaster and no directories",
+  { skip: needsPg, timeout: 300_000 }, async () => {
+    const run = spawnScript(SCENARIO, ["stall"]);
+    try {
+      // The stall mode reports its directories from inside the hook that runs
+      // after `pg_ctl start` and before `startCluster` resolves, so by the time
+      // these are visible the postmaster is up and the start has NOT returned.
+      assert.ok(await waitFor(() => {
+        const data = run.dataDir();
+        const socket = run.socketDir();
+        return data !== undefined && data !== "" && socket !== undefined && socket !== ""
+          && (run.runDir() ?? "") !== "";
+      }, 180_000), `the stalled start must report its directories:\n${run.output()}`);
+      const dataPath = run.dataDir() as string;
+      const socketDir = run.socketDir() as string;
+      const runDir = run.runDir() as string;
+      assert.notEqual(runDir, "", "the stalled start must report its run dir");
+
+      // Preconditions, stated rather than assumed. Both are the defect:
+      // a postmaster really is running, and the start really has not resolved.
+      assert.equal(existsSync(join(dataPath, "postmaster.pid")), true,
+        "precondition: the postmaster was launched before the signal");
+      const pid = run.postmaster();
+      assert.ok(pid !== undefined && pid > 1, `precondition: a postmaster pid must be readable: ${run.output()}`);
+      assert.equal(await postmasterStillRunning(dataPath), true, "precondition: the cluster is running");
+      // A resolved start would have finished the psql step that sets the fixture
+      // role's password, and would have logged SCENARIO_RESOLVED. Neither has
+      // happened, so the start is still in flight. The directory-based checks
+      // above already prove a postmaster is up; this proves the PROMISE has not
+      // settled, which is the distinction the whole scenario turns on.
+      assert.doesNotMatch(run.output(), /SCENARIO_RESOLVED/u,
+        "precondition: startCluster must not have resolved yet");
+      // The port is reported from inside the launch hook, so it is the requested
+      // one. It must be a real port: a scenario that reported nothing here would
+      // make every precondition below vacuous.
+      const reported = run.port() as number;
+      assert.ok(Number.isSafeInteger(reported) && reported > 0,
+        `precondition: the stalled start must report its requested port: ${run.output()}`);
+      assert.equal(boundPortInPidFile(dataPath), reported,
+        "precondition: the postmaster must be up and listening on the requested port");
+
+      // Signal only the child we spawned, by its recorded pid, in the window.
+      run.child.kill("SIGTERM");
+      const result = await run.exited;
+      assert.ok(result.code !== null || result.signal !== null, "the child must actually terminate");
+
+      // No postmaster for this data dir. A missing pid file is not enough on its
+      // own, so this also scans for any postmaster still naming the directory.
+      assert.equal(await waitFor(async () => !(await postmasterStillRunning(dataPath)), 30_000), true,
+        `a postmaster survived a SIGTERM during startup; leftover output:\n${run.output()}`);
+      // Both directories. The socket dir is the one the old code could not
+      // reach at all, because the signal path skipped cleanup entirely.
+      assert.equal(await waitFor(() => !existsSync(dataPath), 30_000), true,
+        `the data dir survived a SIGTERM during startup: ${dataPath}`);
+      assert.equal(await waitFor(() => !existsSync(runDir), 30_000), true,
+        `the run dir survived a SIGTERM during startup: ${runDir}`);
+      assert.equal(await waitFor(() => !existsSync(socketDir), 30_000), true,
+        `the socket dir survived a SIGTERM during startup: ${socketDir}`);
+    } finally {
+      await stopRun(run);
+    }
+  });
+
+// ---------------------------------------------------------------------------
+// Scenario 2c: SIGTERM in the pre-start window, before anything is running.
+// ---------------------------------------------------------------------------
+
+test("a SIGTERM right after the run directory is created removes the run directory",
+  { skip: needsPg, timeout: 180_000 }, async () => {
+    // The window between the run dir existing and the socket dir existing. No
+    // postmaster has been launched, so this cannot be about a surviving process:
+    // it is about the two directories, which survive unless the run is
+    // registered the moment it is created. A parent-side signal cannot hit the
+    // window precisely, so the fixture signals itself the instant it sees the
+    // directory — the earliest a signal can land after it exists.
+    const run = spawnScript(SCENARIO, ["early"]);
+    try {
+      const result = await run.exited;
+      assert.ok(result.code !== null || result.signal !== null, "the child must actually terminate");
+      const runDir = run.runDir();
+      assert.ok(runDir, `the early scenario must report its run dir:\n${run.output()}`);
+      assert.equal(await waitFor(() => !existsSync(runDir!), 30_000), true,
+        `the run dir survived a SIGTERM in the pre-start window: ${runDir}`);
+    } finally {
+      await stopRun(run);
+    }
+  });
+
+// ---------------------------------------------------------------------------
 // Scenario 3: a failing assertion inside the journey.
 // ---------------------------------------------------------------------------
 
@@ -318,6 +451,26 @@ test("the socket directory stays inside the platform's Unix-socket path budget",
 // ---------------------------------------------------------------------------
 // The port resolver, which all of the above depend on. No PostgreSQL needed.
 // ---------------------------------------------------------------------------
+
+test("stopping a run with no data directory still removes the run and socket directories", async () => {
+  // The exit path's own contract, checked directly rather than only through a
+  // signalled child. A run interrupted before `initdb` has no data dir, so
+  // `stopClusterSync` cannot stop anything — but it must still remove both
+  // directories, and the pid-file branch must not run `pg_ctl` against a
+  // directory that holds no cluster (which would block for its full timeout).
+  const runRoot = TEST_TMP;
+  await mkdir(runRoot, { recursive: true, mode: 0o700 });
+  const run = await mkdtemp(join(runRoot, "stop-unit-"));
+  const socket = await mkdtemp(join(tmpdir(), "crpg-unit-"));
+  const stoppedAt = Date.now();
+  stopClusterSync({ run, data: join(run, "data"), socket, port: 56180,
+    pgCtl: join(PG_BIN ?? "", "pg_ctl"), fixturePassword: "disposable-fixture-password" });
+  assert.equal(existsSync(run), false, "the run directory must be removed even with no data dir");
+  assert.equal(existsSync(socket), false, "the socket directory must be removed even with no data dir");
+  // The guard that keeps this fast: no pg_ctl wait against an absent cluster.
+  assert.ok(Date.now() - stoppedAt < 5_000,
+    `stopping an unstarted run must not block on pg_ctl (took ${Date.now() - stoppedAt}ms)`);
+});
 
 test("the port comes from the environment variable, and a bad one is refused loudly", () => {
   assert.equal(requestedPort({}), undefined, "an unset variable must mean 'find a port at runtime'");
