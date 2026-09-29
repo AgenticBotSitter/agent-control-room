@@ -27,10 +27,14 @@ See [GitHub billing](https://docs.github.com/en/billing/concepts/product-billing
   - `actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020`
   - `actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02`
     (failure-only browser evidence)
-- The quick job now accepts the optional `CONTROL_ROOM_PRIVATE_NAMES` repository
-  secret solely as a newline-separated denylist for the private-name guard. GitHub
-  withholds it from fork pull requests, where the guard deliberately skips. The value
-  contains names only, not credentials, addresses, tokens or private configuration.
+- The quick job supplies the `CONTROL_ROOM_PRIVATE_NAMES` repository secret solely as a
+  newline-separated denylist for the private-name guard. GitHub withholds it from fork
+  pull requests, where the guard deliberately skips and says so. The value contains
+  names only, not credentials, addresses, tokens or private configuration.
+  It was previously described here as optional, and was therefore left unset, which is
+  how the guard passed for months while scanning nothing. A run of this repository that
+  supplies no list now fails, so it is required rather than optional; a local run and a
+  fork run still skip. See the "fail-closed private-name guard" amendment below.
 
 The workflow uses `pull_request`, not `pull_request_target`, read-only contents
 permission, checkout without persisted credentials, frozen dependency installation
@@ -331,3 +335,44 @@ layer when a list is available in the environment. The job receives no secret,
 so its no-echo rule has no secret dependency and works the same way for fork
 pull requests. See `docs/PR_CLAIMS_EVIDENCE.md` for the contributor-facing
 format.
+
+## Amendment: fail-closed private-name guard, and duplicate migration numbers
+
+Two checks in the `quick` job were structurally incapable of failing.
+
+The private-name guard printed a skip and exited 0 whenever the list was empty.
+Because this document described the secret as *optional*, it was unset, so the
+empty case was the live case and the step reported success while scanning nothing.
+A guard that cannot fail is not a guard, so it now fails closed for a run of this
+repository and skips only for a local run and for a fork pull request — which
+cannot receive the secret and must not be failed on a step it cannot see or fix.
+The skip prints why it skipped, because a skip nobody can see is what this
+amendment is correcting.
+
+Budget and security impact, for the review this repository requires of any change
+to automation:
+
+- **No new job, no new runner, no new dependency.** The step already existed and
+  already ran; only its exit behaviour changed. Cost is unchanged.
+- **No new secret, and no wider access to the existing one.** The same
+  `CONTROL_ROOM_PRIVATE_NAMES` secret is passed through the same named variable.
+  The guard additionally reads `GITHUB_EVENT_PATH`, which the runner already
+  writes and which contains no credential. Nothing is logged from either input.
+- **A fork pull request is still never failed.** The fork signal is GitHub's own:
+  the event payload's `pull_request.head.repo.full_name` against
+  `repository.full_name`. An unreadable or absent payload is treated as this
+  repository rather than as a fork, because the proof has to come from the
+  payload; otherwise deleting `GITHUB_EVENT_PATH` would buy a clean skip. That
+  choice trades a loud failure in an abnormal case for a silent bypass in the case
+  that matters.
+- **The owner must set the secret before this lands green.** Until it is set, the
+  `Reject configured private names` step fails on purpose. Weakening the guard to
+  make that check green would reproduce the defect being repaired.
+
+`scripts/ci/check-migration-numbers.mjs` refuses two files in `db/migrations/`
+claiming the same 4-digit prefix, which is what let two pull requests both add
+`0100_*` and three add `0093_*`, each correct against `main` and wrong together.
+It reads the directory the applier reads, needs no PostgreSQL, and runs in the
+same dependency-free job. No migration, grant, role, SQL, transaction, connection
+pool or process supervision is changed by either check, so neither required a
+disposable cluster.
