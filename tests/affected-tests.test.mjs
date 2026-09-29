@@ -6,14 +6,19 @@ import test from "node:test";
 import {
   affectedTestCommands,
   affectedTests,
+  DEFER_MINIMUM_TEST_COUNT,
+  deferralMessage,
   isDocumentationOnly,
   noTestsAffectedMessage,
   requestedBaseRef,
   requiresPostgres,
   runAffectedTests,
+  runSelectedTests,
   selectionOutputs,
+  shouldDeferToFullSuite,
   skippedTestExemptions,
 } from "../scripts/ci/affected-tests.mjs";
+import { listTestFiles } from "../scripts/check-test-lane-coverage.mjs";
 
 function fixture(files) {
   const root = mkdtempSync(join(tmpdir(), "control-room-affected-tests-"));
@@ -256,7 +261,7 @@ test("a selected migration test uses the pinned Squawk runner from migration-lin
   try {
     const commands = affectedTestCommands(["tests/migration-change-check.test.mjs"], ["tests/migration-change-check.test.mjs"], root);
     assert.deepEqual(commands, [["npm", ["exec", "--yes", "--package=squawk-cli@2.61.0", "--", process.execPath,
-      "--import", "tsx", "--test", "--test-concurrency=1", "--test-reporter=tap", "tests/migration-change-check.test.mjs"]]]);
+      "--import", "tsx", "--test", "--test-concurrency=1", "--test-timeout=180000", "--test-reporter=tap", "tests/migration-change-check.test.mjs"]]]);
   } finally { rmSync(root, { recursive: true }); }
 });
 
@@ -308,4 +313,102 @@ test("output is sorted deterministically", () => {
     "tests/z.test.ts": "import '../src/shared';",
     "tests/a.test.ts": "import '../src/shared';",
   }, ["src/shared.ts"], ["tests/a.test.ts", "tests/z.test.ts"]);
+});
+
+test("every node --test invocation this planner builds bounds each test file, so a hang cannot silently run to the job limit", () => {
+  const root = fixture({ "tests/example.test.ts": "" });
+  try {
+    const commands = affectedTestCommands(["tests/example.test.ts"], ["tests/example.test.ts"], root);
+    assert.ok(commands.at(-1)[1].includes("--test-timeout=180000"),
+      "the generic test runner needs the same per-test bound test:attack-kit already relies on");
+  } finally { rmSync(root, { recursive: true }); }
+});
+
+test("the ALL selection always defers to the full-suite lanes", () => {
+  assert.equal(shouldDeferToFullSuite("ALL", 553), true);
+  assert.equal(shouldDeferToFullSuite("ALL", 0), true);
+});
+
+test("a documentation-only selection never defers, since it already skips execution on its own", () => {
+  assert.equal(shouldDeferToFullSuite("DOCS_ONLY", 553), false);
+});
+
+test("a normal small selection runs directly instead of deferring", () => {
+  assert.equal(shouldDeferToFullSuite(["tests/a.test.ts"], 553), false);
+});
+
+test("a huge selection defers once it crosses both the absolute floor and half the suite", () => {
+  const total = DEFER_MINIMUM_TEST_COUNT * 2;
+  const huge = Array.from({ length: DEFER_MINIMUM_TEST_COUNT }, (_, index) => `tests/t${index}.test.ts`);
+  assert.equal(shouldDeferToFullSuite(huge, total), true);
+});
+
+test("the absolute floor stops the ratio from firing on a small repository, such as a unit-test fixture", () => {
+  assert.equal(shouldDeferToFullSuite(["tests/a.test.ts", "tests/b.test.ts"], 2), false);
+});
+
+test("a large selection under half the suite still runs directly, not deferred", () => {
+  const large = Array.from({ length: DEFER_MINIMUM_TEST_COUNT + 10 }, (_, index) => `tests/t${index}.test.ts`);
+  assert.equal(shouldDeferToFullSuite(large, large.length * 4), false);
+});
+
+test("a package.json-only change is the everything path: it exits fast without executing anything", () => {
+  const root = fixture({ "tests/example.test.ts": "" });
+  const messages = [], originalLog = console.log;
+  console.log = message => messages.push(message);
+  const executed = [];
+  try {
+    const selected = affectedTests(root, ["package.json"]);
+    assert.equal(selected, "ALL");
+    const tests = listTestFiles(root);
+    const status = runSelectedTests(selected, tests, root, (...arguments_) => { executed.push(arguments_); return 0; },
+      () => true, (...arguments_) => { executed.push(arguments_); return { status: 0, output: "" }; });
+    assert.equal(status, 0);
+    assert.deepEqual(executed, [], "the everything path must not execute any build or test command");
+    assert.match(messages.join("\n"), /skipping direct execution/iu);
+  } finally {
+    console.log = originalLog;
+    rmSync(root, { recursive: true });
+  }
+});
+
+test("a single changed source file runs only its own affected tests, never the whole repository", () => {
+  const root = fixture({
+    "src/leaf.ts": "export const leaf = 1;",
+    "tests/transitive.test.ts": "import { leaf } from '../src/leaf';",
+    "tests/unrelated.test.ts": "import assert from 'node:assert';",
+  });
+  const captured = [];
+  try {
+    const selected = affectedTests(root, ["src/leaf.ts"]);
+    assert.deepEqual(selected, ["tests/transitive.test.ts"]);
+    const status = runSelectedTests(selected, selected, root, () => 0, () => true,
+      (command, arguments_) => { captured.push(arguments_); return { status: 0, output: "# skipped 0\n" }; });
+    assert.equal(status, 0);
+    assert.equal(captured.length, 1);
+    assert.deepEqual(captured[0].filter(argument => argument.endsWith(".test.ts")), ["tests/transitive.test.ts"]);
+  } finally { rmSync(root, { recursive: true }); }
+});
+
+test("a CI-workflow change selects ALL, same as any other fallback path, and the fast lane defers rather than re-running it", () => {
+  const root = fixture({ "tests/example.test.ts": "" });
+  try {
+    const selected = affectedTests(root, [".github/workflows/ci.yml"]);
+    assert.equal(selected, "ALL");
+    assert.equal(shouldDeferToFullSuite(selected, listTestFiles(root).length), true);
+  } finally { rmSync(root, { recursive: true }); }
+});
+
+test("the deferral message names the full-suite lanes so the log explains why nothing ran here", () => {
+  assert.match(deferralMessage("ALL", 0, 553), /test-demo.*test-server.*test-components.*full-gate/su);
+  assert.match(deferralMessage(["a", "b"], 2, 553), /2 of 553/u);
+});
+
+test("selectionOutputs turns off the PostgreSQL setup when the lane is deferring anyway", () => {
+  const root = fixture({ "tests/postgres.test.mjs": "const requiresRealPostgres = true;" });
+  try {
+    const outputs = selectionOutputs("ALL", listTestFiles(root), root);
+    assert.match(outputs, /needs-pg=false/u);
+    assert.match(outputs, /defer-to-full-suite=true/u);
+  } finally { rmSync(root, { recursive: true }); }
 });

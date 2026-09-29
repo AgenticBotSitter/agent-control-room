@@ -173,7 +173,13 @@ function postgresTests(result, tests, repositoryRoot) {
 }
 
 function nodeTestCommand(tests, repositoryRoot) {
-  const nodeArguments = ["--import", "tsx", "--test", "--test-concurrency=1", "--test-reporter=tap", ...tests];
+  // Without this, a test that hangs (a missing await, a wait on a resource this
+  // lane never provisions) runs until the job's 45-minute limit kills it, and
+  // everything after it in this single-file TAP stream goes silent with it.
+  // 180000 matches the existing test:attack-kit lane's bound for the same
+  // node:test runner; a test that legitimately needs longer already overrides
+  // it per-test (see tests/work-batch-assignment-gate.test.ts).
+  const nodeArguments = ["--import", "tsx", "--test", "--test-concurrency=1", "--test-timeout=180000", "--test-reporter=tap", ...tests];
   if (testSources(tests, repositoryRoot).some(source => squawkTestMarker.test(source)))
     return ["npm", ["exec", "--yes", "--package=squawk-cli@2.61.0", "--", process.execPath, ...nodeArguments]];
   return [process.execPath, nodeArguments];
@@ -211,12 +217,54 @@ export function noTestsAffectedMessage() {
   return "No test files affected: documentation-only change; no tests run.";
 }
 
+// A change that genuinely touches everything (package.json, a lockfile, a CI
+// workflow, ...) already gets full coverage from the path-routed lanes and
+// full-gate — see docs/ci-budget-security-review.md and
+// scripts/check-test-lane-coverage.mjs, which proves every test file is
+// reachable from one of those lanes regardless of what this planner selects.
+// Re-running the same hundreds of files here a second time, inside a 45-minute
+// job, is pure duplicate cost with a hard cutoff. The absolute floor keeps
+// this from firing on the small fixtures unit tests use, and the ratio keeps
+// it meaningful as the real suite grows.
+export const DEFER_MINIMUM_TEST_COUNT = 100;
+export const DEFER_TEST_RATIO = 0.5;
+
+export function shouldDeferToFullSuite(result, totalTestCount) {
+  if (result === "ALL") return true;
+  if (result === "DOCS_ONLY") return false;
+  return result.length >= DEFER_MINIMUM_TEST_COUNT && result.length >= totalTestCount * DEFER_TEST_RATIO;
+}
+
+export function deferralMessage(result, selectedCount, totalTestCount) {
+  const affected = result === "ALL" ? `all ${totalTestCount}` : `${selectedCount} of ${totalTestCount}`;
+  return `This change affects ${affected} test file(s). The fast lane is skipping direct execution here: ` +
+    "the full-suite lanes (test-demo, test-server, test-components, test-articles, full-gate) already run " +
+    "the complete suite, so re-running it in this 45-minute lane would only duplicate that coverage.";
+}
+
 export function selectionOutputs(result, tests, repositoryRoot = process.cwd()) {
+  const defer = shouldDeferToFullSuite(result, listTestFiles(repositoryRoot).length);
   return [
     `all=${result === "ALL"}`,
-    `needs-pg=${requiresPostgres(result, tests, repositoryRoot)}`,
+    `needs-pg=${!defer && requiresPostgres(result, tests, repositoryRoot)}`,
     `docs-only=${result === "DOCS_ONLY"}`,
+    `defer-to-full-suite=${defer}`,
   ].join("\n");
+}
+
+export function runSelectedTests(result, tests, repositoryRoot = process.cwd(), execute = executeCommand,
+  postgresAvailable = postgresBinariesAvailable, executeCapturingOutput = executeCommandCapturingOutput) {
+  if (result === "DOCS_ONLY") {
+    console.log(noTestsAffectedMessage());
+    return 0;
+  }
+  const totalTestCount = listTestFiles(repositoryRoot).length;
+  if (shouldDeferToFullSuite(result, totalTestCount)) {
+    console.log(deferralMessage(result, tests.length, totalTestCount));
+    return 0;
+  }
+  console.log(`Running ${tests.length} affected test file(s).`);
+  return runAffectedTests(result, tests, repositoryRoot, execute, postgresAvailable, executeCapturingOutput);
 }
 
 function hasSkippedTests(output) {
@@ -281,14 +329,7 @@ function main() {
     console.log(result === "ALL" ? result : result.join("\n"));
     return;
   }
-  if (result === "DOCS_ONLY") {
-    console.log(noTestsAffectedMessage());
-    return;
-  }
-  if (result === "ALL")
-    console.log("Preparing generated application and contributor-demo artifacts for the complete test set.");
-  console.log(`Running ${tests.length} affected test file(s).`);
-  process.exitCode = runAffectedTests(result, tests, root);
+  process.exitCode = runSelectedTests(result, tests, root);
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) main();
