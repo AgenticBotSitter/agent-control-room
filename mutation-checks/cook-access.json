@@ -141,13 +141,6 @@
  },
  {
   "file": "src/web/v1/mac-local-web-process.ts",
-  "find": "      if (!allowedOrigins.has(url.origin)) throw new WebAccessError(\"access_denied\");",
-  "replace": "",
-  "test": "node --import tsx --test tests/mac-local-remote-access.test.ts",
-  "why": "the website must refuse an unconfigured origin"
- },
- {
-  "file": "src/web/v1/mac-local-web-process.ts",
   "find": "        return renderLocalOwnerSignOutPageV1(url.origin === options.cloudflareAccessOrigin\n          ? \"/cdn-cgi/access/logout\" : \"/session\");",
   "replace": "        return renderLocalOwnerSignOutPageV1(\"/session\");",
   "test": "node --import tsx --test tests/mac-local-remote-access.test.ts",
@@ -180,5 +173,19 @@
   "replace": "    if (false) fail(",
   "test": "node --import tsx --test tests/mac-local-remote-access-setup.test.ts",
   "why": "private addresses in tracked files must fail the dry-run check"
+ },
+ {
+  "file": "src/web/v1/local-owner-session.ts",
+  "find": "    || expected.origin !== profile.origin || !allowed.has(url.origin)",
+  "replace": "    || expected.origin !== profile.origin",
+  "test": "node --import tsx --test tests/local-owner-session.test.ts",
+  "why": "the owner session must refuse an unconfigured origin"
+ },
+ {
+  "file": "src/web/v1/local-owner-session.ts",
+  "find": "    ...(profile.remoteOrigins ?? [])]);",
+  "replace": "]);",
+  "test": "node --import tsx --test tests/mac-local-remote-access.test.ts",
+  "why": "configured remote origins must reach the owner session"
  }
 ]
