@@ -263,7 +263,8 @@ test("home waits for runtime detection and coalesces strict, focus, visibility a
   const saved = Object.fromEntries(["window", "document", "IS_REACT_ACT_ENVIRONMENT", "fetch"]
     .map(key => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
   Object.assign(globalThis, { window: dom.window, document: dom.window.document, IS_REACT_ACT_ENVIRONMENT: true });
-  Object.defineProperty(dom.window.document, "hidden", { configurable: true, get: () => false });
+  let hidden = false;
+  Object.defineProperty(dom.window.document, "hidden", { configurable: true, get: () => hidden });
   const paths = ["/api/v1/projects", "/api/v1/home/tasks", "/api/v1/needs-me/tasks"];
   const requests: string[] = [];
   const pending: { path: string; resolve: (response: Response) => void }[] = [];
@@ -320,6 +321,15 @@ test("home waits for runtime detection and coalesces strict, focus, visibility a
     });
     await tick();
     assert.deepEqual(counts(), Object.fromEntries(paths.map(path => [path, 2])), "settled batch permits one refresh");
+    await settle();
+    hidden = true;
+    await React.act(async () => { dom.window.document.dispatchEvent(new dom.window.Event("visibilitychange")); });
+    await tick();
+    assert.deepEqual(counts(), Object.fromEntries(paths.map(path => [path, 2])), "hidden Home pauses polling");
+    hidden = false;
+    await React.act(async () => { dom.window.document.dispatchEvent(new dom.window.Event("visibilitychange")); });
+    await tick();
+    assert.deepEqual(counts(), Object.fromEntries(paths.map(path => [path, 3])), "visible Home resumes one saved-state refresh");
     await settle();
   } finally {
     await React.act(async () => { root.unmount(); });
