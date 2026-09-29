@@ -29,6 +29,7 @@ GRANT SELECT ON tenants, workspaces, control_identities, control_role_grants, co
   work_batches, work_batch_items, work_batch_effective_queue_admissions,
   pipeline_templates, pipeline_runs, pipeline_stage_runs, pipeline_ordered_stage_runs, control_agent_review_plans,
   control_pipeline_build_publications, pipeline_unattended_transitions, pipeline_advance_receipts,
+  control_improvement_requests, control_update_candidates,
   control_installation_transition_revisions
   TO control_room_task_coordinator;
 GRANT SELECT ON control_task_model_selections, control_task_declared_scopes,
@@ -50,6 +51,7 @@ GRANT DELETE ON control_assignment_lease_scopes TO control_room_task_coordinator
 GRANT INSERT ON control_installation_transition_revisions TO control_room_task_coordinator;
 GRANT INSERT ON control_agent_review_plans TO control_room_task_coordinator;
 GRANT INSERT ON control_pipeline_build_publications TO control_room_task_coordinator;
+GRANT INSERT ON control_update_candidates TO control_room_task_coordinator;
 GRANT INSERT ON control_project_coordination_proposals,
   control_project_coordination_operation_receipts, control_project_coordination_operation_jobs,
   control_action_inbox TO control_room_task_coordinator;

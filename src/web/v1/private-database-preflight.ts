@@ -15,11 +15,11 @@ export async function verifyPrivateIdeaAdapter(db: DatabaseClient, scope: { tena
   if (rows.length !== 1 || rows[0].valid !== true) throw new Error("private_idea_adapter_unavailable");
 }
 
-// Generated from public migrations 0001-0109 (filename order: ...0093,0100,0101,0102,0104,0105,0106,0108,0109),
+// Generated from public migrations through 0160 (filename order, including 0135 and 0160),
 // including generic external-content migrations 0025/0026, read from a live
 // PostgreSQL 17 cluster installed the production way. Catalog query below;
 // not a mutable database marker.
-export const privateWebSchemaDigest = "6d3f3a1a7d9de59d63790a1a3e6a10501f37099b551391f636aa963fc706d3d5";
+export const privateWebSchemaDigest = "8743982acfca9714dcc906812144e9b81548782df6c197f5c3aa5b654e6db5b3";
 export const privateWebReadTables = ["control_identities", "control_role_grants", "workspaces", "control_web_sessions",
   "tenants", "control_idempotency",
   "control_schedules", "control_schedule_occurrences",
@@ -42,7 +42,8 @@ export const privateWebReadTables = ["control_identities", "control_role_grants"
   "pipeline_templates", "pipeline_runs", "pipeline_stage_runs", "pipeline_ordered_stage_runs",
   "pipeline_unattended_transitions",
   "control_pipeline_build_publications", "control_codex_result_publications",
-  "control_action_inbox", "control_project_settings"] as const;
+  "control_action_inbox", "control_project_settings", "control_improvement_requests",
+  "control_update_candidates", "control_update_candidate_decisions"] as const;
 const inserts = new Set(["control_web_sessions", "adapter_registry", "projects", "control_manual_project_heads",
   "control_web_project_commands", "audit_events", "control_audit_chain_heads", "control_requests", "control_workflows",
   "control_jobs", "control_web_task_commands", "control_idea_canonical_task_sessions", "control_idea_canonical_task_links",
@@ -54,6 +55,7 @@ inserts.add("work_batch_queue_admissions"); inserts.add("work_batch_agent_queue_
 inserts.add("pipeline_templates"); inserts.add("pipeline_runs"); inserts.add("pipeline_stage_runs");
 inserts.add("control_job_dependencies");
 inserts.add("control_project_settings"); inserts.add("pipeline_unattended_transitions");
+inserts.add("control_improvement_requests"); inserts.add("control_update_candidate_decisions");
 
 /** Tables whose INSERT grant is column-scoped rather than table-wide. Every
  * listed column must carry INSERT and every unlisted column must not — a
@@ -93,6 +95,7 @@ const updates: Record<string, readonly string[]> = {
   tenants: ["coordinator_lock"],
   control_project_settings: ["eligible_worker_kinds", "max_concurrent_tasks", "default_worker_kind",
     "default_model", "default_effort", "version", "updated_by_identity_id", "updated_at"],
+  control_update_candidates: ["state", "version", "decided_at"],
 };
 const fail = () => { throw new Error("private_database_preflight_failed"); };
 const ideaCreationReads = ["workspaces", "control_identities", "control_role_grants", "control_web_sessions",
@@ -151,9 +154,11 @@ const coordinatorInserts = new Set(["control_web_sessions", "control_requests", 
 coordinatorReads.push("pipeline_templates", "pipeline_runs", "pipeline_stage_runs", "pipeline_ordered_stage_runs",
   "pipeline_unattended_transitions", "pipeline_advance_receipts",
   "control_agent_review_plans", "control_pipeline_build_publications");
+coordinatorReads.push("control_improvement_requests", "control_update_candidates");
 coordinatorInserts.add("control_agent_review_plans");
 coordinatorInserts.add("control_pipeline_build_publications");
 coordinatorInserts.add("pipeline_advance_receipts");
+coordinatorInserts.add("control_update_candidates");
 const coordinatorDeletes = new Set(["control_assignment_lease_scopes"]);
 const coordinatorUpdates: Record<string, readonly string[]> = {
   ...Object.fromEntries(["control_requests", "control_workflows", "control_attempts", "control_leases"]
