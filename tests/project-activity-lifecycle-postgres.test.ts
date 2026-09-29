@@ -18,9 +18,6 @@
 // would pass from the role files alone, cannot mask a broken upgrade path.
 import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
-import { existsSync } from "node:fs";
 import { cp, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -44,27 +41,63 @@ const ALLOWED_PORTS = Object.freeze(Array.from({ length: 10 }, (_, index) => POR
 const LIVE_PORT = PORT_BASE;
 const UPGRADE_PORT = PORT_BASE + 1;
 const needsPg = requiresRealPostgres() ? undefined : { skip: realPostgresSkipMessage() };
-const exec = promisify(execFile);
 
 /**
- * One role file exactly as `origin/main` shipped it, or null when main has no
- * such path.
+ * The BASE version of one role file: the shipped file with this head's activity
+ * grants removed, which is exactly the state an installation that predates this
+ * migration is in.
  *
- * Read through `git show` rather than a second checkout of main, so the test
- * never depends on another worktree and so "what main had" is answered by the
- * repository itself. A git failure is an ERROR rather than a null: a null here
- * would silently weaken the pre-upgrade state into something easier to pass.
+ * The pre-upgrade state is derived from the working tree rather than read from
+ * `origin/main`, and that is a deliberate choice rather than a shortcut:
+ *
+ *  - `origin/main` does not exist in the shallow checkout this test's CI lane
+ *    performs (no `fetch-depth: 0`), so a `git show origin/main:...` would
+ *    throw and the PR's central proof would not run in its own lane. Verified by
+ *    cloning this branch at `--depth 1`: neither `origin/main` nor `HEAD^`
+ *    resolves.
+ *  - Deriving it from the shipped file also states the property being tested more
+ *    directly. The migration is GRANT-only, so "what an upgraded installation
+ *    had" is precisely "the shipped grants minus this migration's grants".
+ *
+ * The removal is exact, and it is checked rather than trusted: the result must
+ * contain none of the privileges THIS migration adds (the INSERT and the head
+ * UPDATE), while a SELECT main already granted is legitimately still present.
+ * A removal that silently did nothing, or one that over-matched and stripped a
+ * privilege main owns, both fail the test rather than passing it.
  */
-async function gitShowAtMain(path: string): Promise<string | null> {
-  try {
-    const { stdout } = await exec("git", ["show", `origin/main:${path}`],
-      { cwd: REPOSITORY_ROOT, maxBuffer: 1 << 24, timeout: 30_000 });
-    return stdout;
-  } catch (error) {
-    const message = `${(error as { stderr?: string })?.stderr ?? error}`;
-    if (/fatal: path .* does not exist in /u.test(message)) return null;
-    throw new Error(`git_show_origin_main_failed:${path}:${message.split("\n")[0]}`);
-  }
+function baseVersionOf(fileName: string, source: string): string {
+  assert.match(source, /control_project_event_stream_heads/,
+    `${fileName} must carry this head's activity grants for a base version to be derived from it`);
+  // A wrapped GRANT puts its table list and its `ON`/`TO` clauses on
+  // continuation lines, so a single-line pattern would leave this head's
+  // `projects` behind on the publisher's read list -- which is the very grant
+  // under test -- and would not recognise a wrapped `GRANT UPDATE (...)`. Every
+  // SQL statement is therefore collapsed onto one line first, so one set of
+  // patterns covers both shapes. Comment lines and blank lines are dropped at
+  // the same time: they carry no grant, and leaving them would make the
+  // comparison to a reference file noisier than it needs to be.
+  const unwrapped = source
+    .split("\n")
+    .filter(line => !/^\s*--/u.test(line) && line.trim() !== "")
+    .join(" ")
+    .replace(/;\s+/gu, "; ")
+    .replace(/\s{2,}/gu, " ");
+  const withoutActivity = unwrapped
+    .replace(/GRANT (?:SELECT, )?INSERT ON (?:control_project_event_stream_heads, )?control_project_events TO [^;]+;/gu, "")
+    .replace(/GRANT UPDATE \([^)]*\) ON control_project_event_stream_heads TO [^;]+;/gu, "")
+    .replace(/GRANT (?:EXECUTE|USAGE)[^;]*;/gu, "")
+    .replace(/GRANT SELECT ON projects, /gu, "GRANT SELECT ON ")
+    .replace(/GRANT SELECT ON projects TO control_room_local_result_publisher;/gu, "");
+  // Only the privileges THIS migration adds must be gone. A SELECT on the
+  // stream that main already granted is legitimately still present, so removing
+  // every mention of the table would be over-matching, not exactness.
+  assert.doesNotMatch(withoutActivity, /GRANT [^;]*INSERT[^;]*control_project_events/u,
+    `${fileName}: the activity INSERT this migration adds must be removed for the base version`);
+  assert.doesNotMatch(withoutActivity, /GRANT UPDATE[^;]*control_project_event_stream_heads/u,
+    `${fileName}: the head UPDATE this migration adds must be removed for the base version`);
+  assert.doesNotMatch(withoutActivity, /GRANT SELECT ON projects TO control_room_local_result_publisher/u,
+    `${fileName}: the publisher's projects read this migration adds must be removed for the base version`);
+  return withoutActivity;
 }
 
 const TOKEN = randomBytes(5).toString("hex");
@@ -319,41 +352,28 @@ test("upgrade from a main-state database grants the publisher what the publicati
         const mainDb = new Client({ ...postgres.admin(), database });
         await mainDb.connect();
         try {
-          // The Mac-local role files, as MAIN shipped them. This is the state an
-          // upgraded installation is really in: the roles exist and the private
-          // web role can already READ the stream, but nothing has been granted
-          // the ability to APPEND to it, and the publisher's file has no
-          // `projects` read at all. Taking them from `origin/main` rather than
-          // from the working tree is what makes the pre-upgrade state real --
-          // the working tree's role files already carry this head's grants, and
-          // using them would hide the very defect this test exists to catch.
+          // The four Mac-local role files, each reduced to its BASE version (this
+          // head's activity grants removed). This is the state an upgraded
+          // installation is really in: the roles exist and the private web role
+          // can already READ the stream, but nothing has been granted the
+          // ability to APPEND to it, and the publisher has no `projects` read.
+          // Using the shipped file's base version rather than the shipped file
+          // itself is what makes the pre-upgrade state real -- the working tree
+          // already carries this head's grants, and using those would hide the
+          // very defect this test exists to catch.
           //
-        // The Mac-local evidence role is not in the attack kit's standard role
-        // set, so it is created here -- from MAIN's version of the file, for the
-        // same reason the three below are: the working tree's copy already
-        // carries this head's grants and would hide the defect. The whole file
-        // is replayed (CREATE ROLE included) because this role does not exist yet
-        // on the cluster.
-        const mainEvidence = await gitShowAtMain("db/roles/native_evidence_roles.sql");
-        assert.ok(mainEvidence !== null, "origin/main must carry db/roles/native_evidence_roles.sql");
-        await mainDb.query(mainEvidence);
-        // Roles are cluster-global and the kit already created these other three
-        // on this cluster, so only the GRANT statements are replayed for them.
-        // The file is split with the kit's own statement splitter rather than by
-        // line, so a multi-line GRANT survives intact; filtering by line would
-        // tear one in half and the half-statement would be a different test.
-        //
-        // No assertion is made on the role files' TEXT here. The pre-upgrade
-        // privileges are asserted against the live database immediately below,
-        // which is the thing that matters and cannot be fooled by a regex over
-        // a file. A text assertion would only be a second, weaker restatement.
-        for (const file of ["private_web_roles.sql", "task_coordinator_roles.sql",
-          "local_result_publisher_roles.sql"]) {
-            const mainVersion = await gitShowAtMain(`db/roles/${file}`);
-            assert.ok(mainVersion !== null, `origin/main must carry db/roles/${file}`);
-            const grants = splitSqlStatements(mainVersion)
+          // The whole evidence file is replayed (CREATE ROLE included) because
+          // that role is not in the attack kit's standard set and does not exist
+          // on this cluster yet. The other three already exist, so only their
+          // GRANT statements are replayed, split with the kit's own statement
+          // splitter rather than by line so a multi-line GRANT survives intact.
+          for (const file of ["native_evidence_roles.sql", "private_web_roles.sql",
+            "task_coordinator_roles.sql", "local_result_publisher_roles.sql"]) {
+            const base = baseVersionOf(file, await readFile(join(REPOSITORY_ROOT, "db/roles", file), "utf8"));
+            if (file === "native_evidence_roles.sql") { await mainDb.query(base); continue; }
+            const grants = splitSqlStatements(base)
               .filter(statement => /^GRANT\s/u.test(statement) && !/^GRANT (?:EXECUTE|USAGE)\s/u.test(statement));
-            assert.ok(grants.length > 0, `${file} at main must still contribute its grants`);
+            assert.ok(grants.length > 0, `${file} base version must still contribute its grants`);
             for (const statement of grants) await mainDb.query(statement);
           }
           const atMainRows = (await mainDb.query<{ filename: string; ledger_order: number }>(
@@ -435,6 +455,66 @@ test("upgrade from a main-state database grants the publisher what the publicati
   assert.equal(result.cleanedUp, true, `the cluster must be gone: ${result.leftovers.join(",")}`);
 });
 
+/**
+ * The down migration reverses exactly what the up migration granted, and only
+ * that.
+ *
+ * The repository convention is that every `db/down/*.sql` is executed by a test
+ * (see tests/work-intake.test.ts and tests/self-hosting-database-hardening.test.mjs),
+ * and this one is the only down file with no caller. It is also the only one that
+ * revokes a grant its migration introduced WITHOUT dropping a table, because
+ * this migration creates no schema object -- so the asymmetry is deliberate and
+ * is exactly what needs pinning. A down file that over-revoked (dropping a grant
+ * some earlier migration owns) or under-revoked (leaving this head's grant
+ * behind) would both pass silently otherwise.
+ */
+test("the down migration reverses exactly this head's grants and nothing else", needsPg, async t => {
+  await withRealPostgres(async postgres => {
+    await seedFixture(postgres);
+    const connection = new Client(postgres.admin());
+    await connection.connect();
+    try {
+      const before = await snapshot(connection);
+      // The four named roles hold the grants wherever they exist. The evidence
+      // role is not in every cluster's role set, so a role this cluster never
+      // created is skipped rather than asserted: it is covered on the upgrade
+      // test's cluster, which does create it. The queue worker holds no grant
+      // and is deliberately NOT in this list -- it is the negative case, and
+      // including it would invert the assertion.
+      const named = ["control_room_private_web", "control_room_task_coordinator",
+        "control_room_native_evidence", "control_room_local_result_publisher"];
+      const present = named.filter(role => before.privileges[role] !== null);
+      assert.ok(present.length >= 3,
+        `the cluster must carry at least three of the four named roles, found ${present.join(",")}`);
+      for (const role of present) {
+        assert.equal((before.privileges[role] as { events: boolean }).events, true,
+          `${role} must hold the grant the down migration is about to remove`);
+      }
+      const down = (await readdir(join(REPOSITORY_ROOT, "db/down")))
+        .filter(name => name.endsWith("_task_project_activity_events.sql"));
+      assert.equal(down.length, 1, "exactly one down migration for the activity grants");
+      await connection.query(await readFile(join(REPOSITORY_ROOT, "db/down", down[0]), "utf8"));
+      const after = await snapshot(connection);
+      // The grants this migration added are gone...
+      for (const role of present) {
+        assert.equal((after.privileges[role] as { events: boolean }).events, false,
+          `${role} must lose the activity INSERT`);
+        assert.equal((after.privileges[role] as { head: boolean }).head, false,
+          `${role} must lose the activity stream-head read`);
+      }
+      // ...and the ledger is untouched, because a down migration is not a ledger
+      // operation and this migration created no object.
+      assert.deepEqual(after.ledger, before.ledger,
+        "a down migration must not remove the ledger row for the migration it reverses");
+      // The tables themselves survive: they belong to an earlier migration.
+      const tables = await connection.query<{ present: string | null }>(
+        "SELECT to_regclass('public.control_project_events') AS present");
+      assert.ok(tables.rows[0]?.present, "the activity tables belong to an earlier migration and must survive");
+    } finally { await connection.end(); }
+  }, { port: LIVE_PORT + 4, allowedPorts: ALLOWED_PORTS, boundMs: 300_000 });
+  t.diagnostic("down migration removed exactly the four roles' activity grants; tables and ledger untouched");
+});
+
 /** The publication query, refused for a role the migration deliberately does not grant. */
 test("the projects grant is not wider than the publisher's own need", needsPg, async t => {
   await withRealPostgres(async postgres => {
@@ -451,7 +531,19 @@ test("the projects grant is not wider than the publisher's own need", needsPg, a
       assert.ok(isPrivilegeDenied(denied),
         `the queue worker must be refused the publisher's project read, got ${String(denied)}`);
     } finally { await queueWorker.end(); }
-    if (!existsSync(join(REPOSITORY_ROOT, "db/migrations"))) throw new Error("repository root not readable");
+    // The positive half of the same claim, in this test rather than only in the
+    // upgrade test: the publisher holds exactly this one new grant, and it holds
+    // it. Without it a migration that granted nothing would still pass the
+    // denial above.
+    const publisher = await postgres.query("publisher", "SELECT workspace_id FROM projects WHERE tenant_id=$1 AND id=$2",
+      [TENANT_ID, OWN_PROJECT]);
+    assert.equal(publisher.rows[0]?.workspace_id, WORKSPACE_ID,
+      "the publisher must hold the project read this migration grants");
+    for (const role of ["web", "coordinator", "publisher"]) {
+      assert.equal((await postgres.query(role, "SELECT workspace_id FROM projects WHERE tenant_id=$1 AND id=$2",
+        [TENANT_ID, OWN_PROJECT])).rows[0]?.workspace_id, WORKSPACE_ID,
+      `the ${role} login must hold the project read its role grants`);
+    }
   }, { port: LIVE_PORT + 2, allowedPorts: ALLOWED_PORTS, boundMs: 300_000 });
   t.diagnostic("the activity grant reaches the four named roles and nobody else");
 });
@@ -481,17 +573,49 @@ test("the activity migration is idempotent on a second apply", needsPg, async t 
         // succeed; a statement that were not idempotent would raise here.
         const activity = (await readdir(join(REPOSITORY_ROOT, "db/migrations")))
           .filter(name => name.endsWith("_task_project_activity_events.sql"));
+        const before = await snapshot(connection);
         await connection.query(await readFile(join(REPOSITORY_ROOT, "db/migrations", activity[0]!), "utf8"));
-        const applied = await connection.query<{ count: number }>(
-          "SELECT count(*)::int AS count FROM control_room_schema_migrations");
-        return applied.rows[0]?.count ?? 0;
+        // BOTH the ledger and the effective privileges are compared before and
+        // after. Comparing only the ledger would be the weaker claim the test's
+        // title makes, and would pass even if a re-apply silently dropped a
+        // grant -- which is the failure mode that matters here.
+        const after = await snapshot(connection);
+        assert.deepEqual(after.ledger, before.ledger,
+          "a second apply of the same migration must not add or reorder ledger rows");
+        assert.deepEqual(after.privileges, before.privileges,
+          "a second apply of the same migration must not change any role's effective privileges");
+        return { ledger: before.ledger.length, roles: Object.keys(before.privileges).length };
       } finally { await connection.end(); }
     }, { port: LIVE_PORT + 3, allowedPorts: ALLOWED_PORTS, boundMs: 300_000 });
-    t.diagnostic(`re-applied the migration statements on a live database (${once.value} ledger rows unchanged)`);
-    assert.ok(once.value > 0);
+    t.diagnostic(`re-applied the migration statements on a live database: `
+      + `${once.value.ledger} ledger rows and ${once.value.roles} roles' privileges unchanged`);
+    assert.ok(once.value.ledger > 0, "the database must really have a ledger to compare");
+    assert.ok(once.value.roles > 0, "the comparison must cover at least one role");
     assert.equal(once.cleanedUp, true, `the cluster must be gone: ${once.leftovers.join(",")}`);
   } finally { await rm(stage, { recursive: true, force: true }); }
 });
+
+/** Ledger rows and every activity role's effective privileges, for a before/after compare. */
+async function snapshot(connection: Client): Promise<{ ledger: unknown[]; privileges: Record<string, unknown> }> {
+  const ledger = (await connection.query<{ filename: string; ledger_order: number }>(
+    "SELECT filename, ledger_order FROM control_room_schema_migrations ORDER BY ledger_order")).rows;
+  const privileges: Record<string, unknown> = {};
+  for (const role of ["control_room_private_web", "control_room_task_coordinator",
+    "control_room_native_evidence", "control_room_local_result_publisher", "control_room_queue_worker"]) {
+    // `has_table_privilege` raises for a role that does not exist, and the
+    // evidence role is not part of every cluster's role set. A role that is
+    // absent is recorded as absent, so the before/after comparison still holds
+    // for it (absent must stay absent) and one cluster's role set does not
+    // decide this file's expectations.
+    const exists = (await connection.query<{ present: boolean }>(
+      "SELECT EXISTS(SELECT 1 FROM pg_roles WHERE rolname=$1) AS present", [role])).rows[0]?.present === true;
+    privileges[role] = exists ? (await connection.query<{ events: boolean; head: boolean; projects: boolean }>(
+      `SELECT has_table_privilege($1,'control_project_events','INSERT') AS events,
+              has_table_privilege($1,'control_project_event_stream_heads','SELECT') AS head,
+              has_table_privilege($1,'projects','SELECT') AS projects`, [role])).rows[0] : null;
+  }
+  return { ledger, privileges };
+}
 
 /** A project row the fixture needs, inserted as the schema owner. */
 async function adminInsertProject(postgres: RealPostgres, project: string, workspace: string) {
