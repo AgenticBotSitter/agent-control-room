@@ -418,5 +418,48 @@ Full suite: NOT run locally. The attack-kit lane, the gate, typecheck, build,
 hygiene and lane coverage are the lanes this change touches; a full `pnpm run
 test` was not run and is not claimed. CI is the authority and is awaited.
 
-STATUS: DB-VERIFIED. Awaiting a green CI run on PR #420.
+--------------------------------------------------------------------------------
+11. CI — FULLY GREEN
+--------------------------------------------------------------------------------
+Run: https://github.com/AgenticBotSitter/agent-control-room/actions/runs/36499102746
+PR:  https://github.com/AgenticBotSitter/agent-control-room/pull/420
+head: abbe9e4d55bd352045ba52d54dd51c1d22eb2021  (hermes/attack-kit)
+
+  mergeable = MERGEABLE    mergeStateStatus = CLEAN
+
+17 of 17 checks pass, none skipped, none cancelled:
+
+  Article build lane                              pass    35s
+  Component lanes                                 pass 21m27s
+  Contributor demo tests                          pass    48s
+  Full Mac-local rehearsal                        pass  1m43s
+  Full suite (merge gate)                         pass     3s
+  Merge gate catch-up (articles)                  pass    11s
+  Merge gate catch-up (components)                pass    24s
+  Merge gate catch-up (demo)                      pass     9s
+  Merge gate catch-up (server)                     pass     8s
+  New migration safety                            pass    24s
+  Owner browser journey                           pass  8m36s
+  PR evidence claims                              pass     7s
+  Quarantined tests (non-blocking)                pass    23s
+  Quick checks                                    pass  1m16s
+  Route changed paths                             pass     9s
+  Server build tests                              pass  3m2s
+  Unified local and multi-computer product tests  pass  5m34s
+
+The two steps this change added or moved, inside the Component lanes job,
+observed by step number and outcome:
+
+  11 completed/success  Fail on a privileged routine without a pg_temp-pinned
+                        search_path          <- the new catalog gate, on CI's
+                                                  own PostgreSQL 17
+  12 completed/success  Attack-test kit              <- 69 tests, real cluster
+
+So the gate that used to be a text scan with no database now runs in CI against
+a real PostgreSQL 17 cluster and passes, and the kit's real-cluster tests ran
+rather than skipped — tests/attack-kit.test.ts calls requiresRealPostgres() and
+fails when the binaries are present but the cluster tests did not run, so a
+lost PG install could not have passed silently here.
+
+STATUS: DB-VERIFIED. CI green. PR MERGEABLE.
 ================================================================================
