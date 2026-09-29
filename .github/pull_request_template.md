@@ -24,3 +24,22 @@ Upstream code, versions, licenses and attribution:
 Known limitations or nonblocking follow-up:
 
 Independent checker model, verdict and focused checks (automated workers):
+
+## Evidence
+
+<!--
+Use one bullet per claim and at least one evidence line per bullet.
+Test references must use the exact checked-in test name. CI references may use
+the job ID or displayed job name. A cmd reference must include its actual output
+in a fenced block. Delete the examples before submitting.
+-->
+
+- Focused behavior covered by a named test.
+  test: tests/example.test.mjs::exact test name
+- Existing CI job covering the broader change.
+  ci: Quick checks
+- Local verification command and output.
+  cmd: node --test tests/example.test.mjs
+  ```text
+  paste actual output here
+  ```

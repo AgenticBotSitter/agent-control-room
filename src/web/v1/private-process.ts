@@ -48,6 +48,8 @@ import { verifyInstallationPlanV1, type InstallationPlanV1 } from "../../install
 import { createInstallationPlanViewV1 } from "../../installer/v1/installation-plan-view";
 import { encodeProjectEventCursorV1, projectEventSseResponseV1, type ProjectEventReadSourceV1 } from "../../project-events/v1";
 import { ProjectActivityServiceV1 } from "./project-activity-service";
+import { SessionWatchServiceV1 } from "./session-watch-service";
+import { sessionWatchIdSchema } from "./session-watch-wire";
 
 export interface PrivateWebProcessOptions {
   origin: string; issuer: string; audience: string; tenantId: string; workspaceId: string;
@@ -285,6 +287,8 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
     { tenantId: options.tenantId, workspaceId: options.workspaceId }, clock, options.connections);
   const tasks = new WebTaskService(options.database.client, { tenantId: options.tenantId, workspaceId: options.workspaceId }, clock,
     { ...options.tasks, ideaIntegrityKey: options.ideaProjects?.integrityKey });
+  const sessionWatch = new SessionWatchServiceV1(options.database.client,
+    { tenantId: options.tenantId, workspaceId: options.workspaceId }, options.tasks?.harnessIntegrityKey, clock);
   // This is a task-planning bridge only. It is deliberately composed from the
   // same private web database and ordinary task service, not from a provider
   // runtime or a second Idea Lab worker system.
@@ -635,6 +639,12 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
             if (request.method !== "GET" || url.search) throw new WebAccessError("invalid_request");
             return Response.json(await tasks.home(identity), { headers: privateResponseHeaders });
           }
+          if (url.pathname === "/api/v1/session-watch") {
+            if (request.method !== "GET" || [...url.searchParams.keys()].some(key => key !== "after")
+              || url.searchParams.getAll("after").length > 1) throw new WebAccessError("invalid_request");
+            return Response.json(await sessionWatch.read(identity, url.searchParams.get("after") ?? undefined),
+              { headers: privateResponseHeaders });
+          }
           const projectSchedules = /^\/api\/v1\/projects\/([^/]+)\/schedules$/.exec(url.pathname);
           if (projectSchedules) {
             if (request.method !== "GET" || url.search) throw new WebAccessError("invalid_request");
@@ -797,6 +807,11 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
         } else if (url.pathname === "/needs-me") {
           if (url.search) throw new WebAccessError("invalid_request");
           await tasks.authorizeAttentionPage(identity);
+        } else if (url.pathname === "/session-watch") {
+          if ([...url.searchParams.keys()].some(key => key !== "after") || url.searchParams.getAll("after").length > 1
+            || url.searchParams.has("after") && !sessionWatchIdSchema.safeParse(url.searchParams.get("after")).success)
+            throw new WebAccessError("invalid_request");
+          await sessionWatch.authorize(identity);
         } else if (url.pathname === "/connections" || url.pathname === "/workers") {
           if (url.search) throw new WebAccessError("invalid_request");
           await connections.authorize(identity);
