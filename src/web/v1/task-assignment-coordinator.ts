@@ -1,3 +1,4 @@
+import { timingSafeEqual } from "node:crypto";
 import { z } from "zod";
 import { attemptRecordSchema, jobRecordSchema, leaseRecordSchema, nodeRecordSchema,
   requestRecordSchema, workflowRecordSchema, type AttemptRecord, type JobRecord, type LeaseRecord } from "../../domain/v1";
@@ -7,7 +8,7 @@ import { MAX_NATIVE_UNSENT_RECOVERIES, nativeTaskSubmissionReferenceSchema, type
 import { FleetSignalStore } from "../../node-fleet/v1/fleet-signal-store";
 import { evaluateFleetEligibility } from "../../node-fleet/v1/eligibility";
 import { appendAuditWith } from "../../audit/audit-store";
-import { assertNoSecretMaterial, sha256Digest } from "../../security";
+import { assertNoSecretMaterial, hmacSha256Tag, sha256Digest } from "../../security";
 import { localId, digestSchema } from "../../harness/v1/native-run-identifiers";
 import { WebAccessError, type VerifiedWebIdentity } from "./access-verifier";
 import { WebSessionAuthority, type WebActor } from "./session-authority";
@@ -51,6 +52,8 @@ import { assertCanonicalCodexAdmissionInSession, codexCurrentAdmissionSchemaV1,
   type CodexCurrentAdmissionBasisV1, type CodexCurrentAdmissionV1 } from "./codex-activation-transmission-intent";
 import { taskProjectAgentOptionsSchema } from "./task-project-agents-wire";
 import { scopesOverlapV1 } from "../../project-coordination/v1/resource-conflict";
+import { workBatchProposalDigestV1 } from "../../work-intake/v1/digest";
+import { workBatchProposalSchemaV1 } from "../../work-intake/v1/schemas";
 
 type CanonicalNativeApproval = ReturnType<typeof prepareNativeTaskApprovalWithLease> & {
   enrollment: NativeEnrollment; preparedAt: string; sourceInputDigest: string; inputDigest: string;
@@ -69,6 +72,17 @@ export type CodexPermitEnrollment = CodexOwnerPermitBindingV1 & {
   security: Pick<SqliteNodeSecurityStateRepository, "currentServerTrustRevision">;
 };
 export type CodexPermitConfiguration = Readonly<{ integrityKey: Uint8Array; enrollments: readonly CodexPermitEnrollment[] }>;
+export type WorkBatchAcceptedResultProof = Readonly<{ tenantId: string; projectId: string;
+  sourceJobId: string; executionJobId: string; attemptId: string; runId: string; artifactId: string;
+  contentHash: string; targetId: string; targetDigest: string; workerId: string; nodeId: string }>;
+export type WorkBatchAssignmentAdmissionAuthority = Readonly<{
+  integrityKey: Uint8Array;
+  assertCurrent: (tx: DatabaseSession, input: Readonly<{ tenantId: string; projectId: string;
+    batchId: string; itemId: string; sourceJobId: string; executionJobId: string; workerId: string;
+    workerKind: "codex" | "claude-code" | "hermes"; nodeId: string; selectionKey: string; model: string;
+    effort: string; provider: string | null; profile: string | null }>) => Promise<void>;
+  assertAcceptedResultCurrent: (tx: DatabaseSession, input: WorkBatchAcceptedResultProof) => Promise<void>;
+}>;
 /** Installation-owned journal access. This is never a browser operation or a
  * worker-provided decision: the private coordinator uses it only after the
  * canonical route has selected a node. */
@@ -148,13 +162,15 @@ export class TaskAssignmentCoordinator {
   private readonly enrollments: readonly NativeApprovalEnrollment[];
   private readonly projects: WebProjectService;
   private readonly codex?: Readonly<{ integrityKey: Uint8Array; enrollments: readonly CodexPermitEnrollment[] }>;
+  private readonly workBatchAdmission?: WorkBatchAssignmentAdmissionAuthority;
   constructor(private readonly db: DatabaseClient, private readonly scope: { tenantId: string; workspaceId: string },
     private readonly planner: TaskExecutionPlanner, routes: readonly TaskAssignmentRoute[],
     private readonly clock: () => number = Date.now, enrollments: readonly NativeApprovalEnrollment[] = [],
     private readonly approvalStore?: NativeApprovalPacketStore,
     private readonly nativeTaskSubmission?: NativeTaskSubmission,
     codex?: CodexPermitConfiguration,
-    private readonly transitionAdmission?: InstallationTransitionAdmissionFence) {
+    private readonly transitionAdmission?: InstallationTransitionAdmissionFence,
+    workBatchAdmission?: WorkBatchAssignmentAdmissionAuthority) {
     const plannerScope = planner.webOperation();
     if (plannerScope.tenantId !== scope.tenantId || plannerScope.workspaceId !== scope.workspaceId) unavailable();
     this.scope = Object.freeze({ ...scope });
@@ -180,6 +196,14 @@ export class TaskAssignmentCoordinator {
     }
     this.projects = new WebProjectService(db, scope, clock);
     if (transitionAdmission && typeof transitionAdmission.isPausedInSession !== "function") unavailable();
+    if (workBatchAdmission) {
+      if (!(workBatchAdmission.integrityKey instanceof Uint8Array) || workBatchAdmission.integrityKey.byteLength !== 32
+        || typeof workBatchAdmission.assertCurrent !== "function"
+        || typeof workBatchAdmission.assertAcceptedResultCurrent !== "function") unavailable();
+      this.workBatchAdmission = Object.freeze({ integrityKey: Uint8Array.from(workBatchAdmission.integrityKey),
+        assertCurrent: workBatchAdmission.assertCurrent.bind(workBatchAdmission),
+        assertAcceptedResultCurrent: workBatchAdmission.assertAcceptedResultCurrent.bind(workBatchAdmission) });
+    }
   }
   /** A bad journal answer is deliberately indistinguishable from ordinary
    * contention. It must not become a fail-open delivery path. */
@@ -188,6 +212,197 @@ export class TaskAssignmentCoordinator {
     try {
       if (await this.transitionAdmission.isPausedInSession(tx, this.scope.tenantId, nodeId)) conflict();
     } catch { conflict(); }
+  }
+  /** Work-batch admission is an additional fail-closed constraint on the
+   * ordinary canonical assignment/queue path, never a second assignment
+   * authority.  A batch job may use its dependency edges only when this
+   * append-only record still names the exact route and saved model choice and
+   * every predecessor has a retained native result accepted by the canonical
+   * completion transition. */
+  private async assertWorkBatchQueueAdmission(tx: DatabaseSession, job: JobRecord,
+    route: TaskAssignmentRoute, attemptWorkerId?: string | null): Promise<boolean> {
+    type GateRow = { item_id: string; batch_id: string; source_job_id: string; worker_id: string | null;
+      node_id: string | null; queue_position: string | number | null; worker_kind: "codex" | "claude-code" | "hermes" | null;
+      selection_key: string | null; model: string | null; effort: string | null; provider: string | null; profile: string | null;
+      admission_id: string | null; assignment_revision: string | number | null; supersedes_admission_id: string | null;
+      change_reason_code: string | null; authorized_by_identity_id: string | null;
+      admission_digest: string | null; admission_auth_tag: string | null; admitted_at: string | Date | null;
+      batch_state: string; approval_identity_id: string | null; approved_at: string | Date | null;
+      decision_reason_code: string | null; decision_digest: string | null; decision_auth_tag: string | null;
+      batch_version: string | number; batch_project_id: string; proposed_by_identity_id: string; proposed_at: string | Date;
+      proposal: unknown; queue_depth_limit: number; batch_digest: string; batch_auth_tag: string;
+      batch_created_at: string | Date; batch_updated_at: string | Date;
+      item_batch_revision: string | number; local_id: string; ordinal: number; role: "builder" | "checker" | "validator";
+      required_capability: string; depends_on_local_ids: string[]; requested_worker_id: string | null;
+      requested_worker_kind: string | null; requested_model_key: string | null; acceptance_criteria: string;
+      acceptance_tests: string; decision_state: string; item_decision_reason_code: string | null;
+      job_attempt_count: number; item_digest: string; item_auth_tag: string; item_created_at: string | Date };
+    const linked = (await tx.query<GateRow>(`SELECT item.id AS item_id,item.batch_id,item.job_id AS source_job_id,
+        admission.worker_id,admission.node_id,admission.queue_position,admission.worker_kind,admission.selection_key,
+        admission.model,admission.effort,admission.provider,admission.profile,admission.admission_id,
+        admission.assignment_revision,admission.supersedes_admission_id,admission.change_reason_code,
+        admission.authorized_by_identity_id,admission.admission_digest,
+        admission.auth_tag AS admission_auth_tag,admission.admitted_at,
+        batch.state AS batch_state,batch.approval_identity_id,batch.approved_at,batch.decision_reason_code,
+        batch.decision_digest,batch.decision_auth_tag,batch.version AS batch_version,batch.project_id AS batch_project_id,
+        batch.proposed_by_identity_id,batch.proposed_at,batch.proposal,batch.queue_depth_limit,batch.batch_digest,
+        batch.auth_tag AS batch_auth_tag,batch.created_at AS batch_created_at,batch.updated_at AS batch_updated_at,
+        item.batch_revision AS item_batch_revision,item.local_id,item.ordinal,item.role,item.required_capability,
+        item.depends_on_local_ids,item.requested_worker_id,item.requested_worker_kind,item.requested_model_key,
+        item.acceptance_criteria,item.acceptance_tests,item.decision_state,
+        item.decision_reason_code AS item_decision_reason_code,item.job_attempt_count,item.item_digest,
+        item.auth_tag AS item_auth_tag,item.created_at AS item_created_at
+      FROM work_batch_items item JOIN work_batches batch
+        ON batch.tenant_id=item.tenant_id AND batch.id=item.batch_id AND batch.project_id=item.project_id
+      LEFT JOIN work_batch_effective_queue_admissions admission
+        ON admission.tenant_id=item.tenant_id AND admission.item_id=item.id AND admission.job_id=item.job_id
+      LEFT JOIN control_task_execution_plans plan
+        ON plan.tenant_id=item.tenant_id AND plan.source_job_id=item.job_id AND plan.job_id=$2::text
+      WHERE item.tenant_id=$1 AND (item.job_id=$2::text OR plan.job_id=$2::text)`,
+    [this.scope.tenantId, job.id])).rows[0];
+    if (!linked) return false;
+    const authority = this.workBatchAdmission;
+    if (!authority || !linked.worker_id || !linked.node_id || linked.queue_position === null || !linked.worker_kind
+      || !linked.selection_key || !linked.model || !linked.effort || !linked.admission_digest
+      || !linked.admission_auth_tag || !linked.admitted_at) conflict();
+    const same = (left: string, right: string) => { const a = Buffer.from(left), b = Buffer.from(right);
+      return a.length === b.length && timingSafeEqual(a, b); };
+    const iso = (value: string | Date) => new Date(value).toISOString();
+    const proposal = workBatchProposalSchemaV1.safeParse(linked.proposal);
+    const batchMaterial = proposal.success ? { id: linked.batch_id, tenantId: this.scope.tenantId,
+      projectId: linked.batch_project_id, proposedByIdentityId: linked.proposed_by_identity_id,
+      proposedAt: iso(linked.proposed_at), state: "proposed", proposal: proposal.data,
+      queueDepthLimit: Number(linked.queue_depth_limit), batchDigest: linked.batch_digest,
+      version: 1, createdAt: iso(linked.batch_created_at), updatedAt: iso(linked.batch_created_at) } : undefined;
+    const allItems = (await tx.query<{ item_digest: string }>(`SELECT item_digest FROM work_batch_items
+      WHERE tenant_id=$1 AND batch_id=$2 ORDER BY ordinal`, [this.scope.tenantId, linked.batch_id])).rows;
+    const decisionMaterial = { id: `${linked.batch_id}:decision`, tenantId: this.scope.tenantId,
+      batchId: linked.batch_id, projectId: linked.batch_project_id, batchRevision: Number(linked.batch_version),
+      state: linked.batch_state, approvalIdentityId: linked.approval_identity_id, approvedAt: linked.approved_at ? iso(linked.approved_at) : null,
+      decisionReasonCode: linked.decision_reason_code, itemDigests: allItems.map(item => item.item_digest) };
+    const itemMaterial = { id: linked.item_id, tenantId: this.scope.tenantId, batchId: linked.batch_id,
+      batchRevision: Number(linked.item_batch_revision), projectId: linked.batch_project_id, localId: linked.local_id,
+      ordinal: Number(linked.ordinal), role: linked.role, requiredCapability: linked.required_capability,
+      dependsOnLocalIds: linked.depends_on_local_ids,
+      ...(linked.requested_worker_id ? { requestedWorkerId: linked.requested_worker_id } : {}),
+      requestedWorkerKind: linked.requested_worker_kind, requestedModelKey: linked.requested_model_key,
+      acceptanceCriteria: linked.acceptance_criteria, acceptanceTests: linked.acceptance_tests,
+      decisionState: linked.decision_state, decisionReasonCode: linked.item_decision_reason_code,
+      jobId: linked.source_job_id, jobAttemptCount: Number(linked.job_attempt_count), createdAt: iso(linked.item_created_at) };
+    const admissionMaterial = { itemId: linked.item_id, batchId: linked.batch_id, projectId: linked.batch_project_id,
+      jobId: linked.source_job_id, workerId: linked.worker_id, workerKind: linked.worker_kind, nodeId: linked.node_id,
+      position: Number(linked.queue_position), queueDepthLimit: Number(linked.queue_depth_limit),
+      selectionKey: linked.selection_key, model: linked.model, effort: linked.effort,
+      provider: linked.provider, profile: linked.profile, assignmentRevision: Number(linked.assignment_revision),
+      supersedesAdmissionId: linked.supersedes_admission_id, changeReasonCode: linked.change_reason_code,
+      authorizedByIdentityId: linked.authorized_by_identity_id, admittedAt: iso(linked.admitted_at) };
+    if (!batchMaterial || linked.batch_state !== "approved" && linked.batch_state !== "partially_approved"
+      || linked.decision_state !== "approved" || Number(linked.item_batch_revision) !== Number(linked.batch_version)
+      || workBatchProposalDigestV1(proposal.data) !== linked.batch_digest
+      || !same(hmacSha256Tag(authority.integrityKey, { purpose: "work-batch/v1", record: batchMaterial }), linked.batch_auth_tag)
+      || sha256Digest(itemMaterial) !== linked.item_digest
+      || !same(hmacSha256Tag(authority.integrityKey, { purpose: "work-batch-item/v1", record: itemMaterial }), linked.item_auth_tag)
+      || !linked.approval_identity_id || !linked.approved_at || !linked.decision_digest || !linked.decision_auth_tag
+      || sha256Digest(decisionMaterial) !== linked.decision_digest
+      || !same(hmacSha256Tag(authority.integrityKey, { purpose: "work-batch-decision/v1", record: decisionMaterial }), linked.decision_auth_tag)
+      || sha256Digest(admissionMaterial) !== linked.admission_digest
+      || linked.admission_id !== `admission:${linked.admission_digest.slice(7)}`
+      || !same(hmacSha256Tag(authority.integrityKey, { purpose: "work-batch-queue-admission/v1", record: admissionMaterial }), linked.admission_auth_tag)) conflict();
+    const admission = linked;
+    if (admission.worker_id !== route.executorId || admission.node_id !== route.nodeId
+      || attemptWorkerId !== undefined && attemptWorkerId !== route.executorId) conflict();
+    const selection = (await tx.query<{ worker_kind: string | null; selection_key: string | null;
+      model: string | null; effort: string | null; provider: string | null; profile: string | null }>(
+      // control_task_model_selections is append-only (see the equivalent
+      // reasoning at db/migrations/0104_work_batch_agent_queue.sql's guard
+      // function): the append-only owner web/coordinator roles hold no
+      // UPDATE privilege, so a row lock here refuses every batch-admitted
+      // assignment in production. The six-field equality check below is
+      // what actually authenticates the selection; no lock is needed
+      // because the row this reads can never change under us.
+      `SELECT worker_kind,selection_key,model,effort,provider,profile
+       FROM control_task_model_selections WHERE tenant_id=$1 AND job_id=$2`,
+    [this.scope.tenantId, job.id])).rows[0];
+    if (!selection || selection.worker_kind !== admission.worker_kind
+      || selection.selection_key !== admission.selection_key || selection.model !== admission.model
+      || selection.effort !== admission.effort || selection.provider !== admission.provider
+      || selection.profile !== admission.profile) conflict();
+    try {
+      await authority.assertCurrent(tx, { tenantId: this.scope.tenantId, projectId: job.projectId,
+        batchId: linked.batch_id, itemId: linked.item_id, sourceJobId: linked.source_job_id, executionJobId: job.id,
+        workerId: admission.worker_id!, workerKind: admission.worker_kind!, nodeId: admission.node_id!,
+        selectionKey: admission.selection_key!, model: admission.model!, effort: admission.effort!,
+        provider: admission.provider, profile: admission.profile });
+    } catch { conflict(); }
+    const predecessors = (await tx.query<{ job_id: string }>(`SELECT predecessor.job_id FROM (
+        SELECT d.depends_on_job_id AS job_id
+        FROM control_job_dependencies d
+        WHERE d.tenant_id=$1 AND d.job_id=$4
+        UNION
+        SELECT prior.job_id
+        FROM work_batch_effective_queue_admissions prior
+        WHERE prior.tenant_id=$1 AND prior.worker_id=$2 AND prior.queue_position<$3
+      ) predecessor ORDER BY predecessor.job_id`, [this.scope.tenantId, admission.worker_id,
+        Number(admission.queue_position), admission.source_job_id])).rows;
+    for (const predecessor of predecessors) {
+      const priorAdmission = (await tx.query<{ admission_id: string; item_id: string; batch_id: string;
+        project_id: string; job_id: string; worker_id: string; worker_kind: string; node_id: string;
+        queue_position: string | number; queue_depth_limit: number; selection_key: string; model: string;
+        effort: string; provider: string | null; profile: string | null; assignment_revision: string | number;
+        supersedes_admission_id: string | null; change_reason_code: string; authorized_by_identity_id: string;
+        admission_digest: string; auth_tag: string; admitted_at: string | Date }>(`SELECT *
+        FROM work_batch_effective_queue_admissions WHERE tenant_id=$1 AND job_id=$2`,
+      [this.scope.tenantId, predecessor.job_id])).rows[0];
+      if (!priorAdmission) conflict();
+      const priorMaterial = { itemId: priorAdmission.item_id, batchId: priorAdmission.batch_id,
+        projectId: priorAdmission.project_id, jobId: priorAdmission.job_id, workerId: priorAdmission.worker_id,
+        workerKind: priorAdmission.worker_kind, nodeId: priorAdmission.node_id,
+        position: Number(priorAdmission.queue_position), queueDepthLimit: Number(priorAdmission.queue_depth_limit),
+        selectionKey: priorAdmission.selection_key, model: priorAdmission.model, effort: priorAdmission.effort,
+        provider: priorAdmission.provider, profile: priorAdmission.profile,
+        assignmentRevision: Number(priorAdmission.assignment_revision),
+        supersedesAdmissionId: priorAdmission.supersedes_admission_id, changeReasonCode: priorAdmission.change_reason_code,
+        authorizedByIdentityId: priorAdmission.authorized_by_identity_id, admittedAt: iso(priorAdmission.admitted_at) };
+      if (sha256Digest(priorMaterial) !== priorAdmission.admission_digest
+        || priorAdmission.admission_id !== `admission:${priorAdmission.admission_digest.slice(7)}`
+        || !same(hmacSha256Tag(authority.integrityKey,
+          { purpose: "work-batch-queue-admission/v1", record: priorMaterial }), priorAdmission.auth_tag)) conflict();
+      const proof = (await tx.query<WorkBatchAcceptedResultProof>(`SELECT completed.project_id AS "projectId",
+          prior.job_id AS "sourceJobId",completed.id AS "executionJobId",attempt.id AS "attemptId",
+          artifact.run_id AS "runId",artifact.artifact_id AS "artifactId",artifact.receipt->>'contentHash' AS "contentHash",
+          review.plan->>'targetId' AS "targetId",transition.safe_metadata->'receipt'->>'targetDigest' AS "targetDigest",
+          prior.worker_id AS "workerId",prior.node_id AS "nodeId",completed.tenant_id AS "tenantId"
+        FROM work_batch_effective_queue_admissions prior
+        JOIN control_task_execution_plans completed_plan ON completed_plan.tenant_id=prior.tenant_id
+          AND completed_plan.source_job_id=prior.job_id
+        JOIN control_jobs completed ON completed.tenant_id=completed_plan.tenant_id AND completed.id=completed_plan.job_id
+          AND completed.state='succeeded'
+        JOIN control_attempts attempt ON attempt.tenant_id=completed.tenant_id AND attempt.job_id=completed.id
+          AND attempt.state='succeeded' AND attempt.worker_id=prior.worker_id AND attempt.node_id=prior.node_id
+        JOIN control_native_artifact_receipts artifact ON artifact.tenant_id=attempt.tenant_id
+          AND artifact.project_id=completed.project_id AND artifact.job_id=completed.id AND artifact.attempt_id=attempt.id
+        JOIN control_artifact_manifests manifest ON manifest.tenant_id=artifact.tenant_id
+          AND manifest.id=artifact.artifact_id AND manifest.project_id=artifact.project_id
+          AND manifest.job_id=artifact.job_id AND manifest.attempt_id=artifact.attempt_id
+          AND manifest.content_hash=artifact.receipt->>'contentHash' AND manifest.state IN ('uploaded','verified')
+        JOIN control_native_review_plans review ON review.tenant_id=artifact.tenant_id
+          AND review.project_id=artifact.project_id AND review.job_id=artifact.job_id AND review.run_id=artifact.run_id
+        JOIN control_transition_events transition ON transition.tenant_id=completed.tenant_id
+          AND transition.entity_kind='job' AND transition.entity_id=completed.id AND transition.to_state='succeeded'
+          AND transition.idempotency_key LIKE 'native-completion:%:job'
+        WHERE prior.tenant_id=$1 AND prior.job_id=$2
+          AND artifact.receipt->>'artifactId'=artifact.artifact_id AND artifact.receipt->>'runId'=artifact.run_id
+          AND artifact.receipt->>'jobId'=artifact.job_id AND artifact.receipt->>'attemptId'=artifact.attempt_id
+          AND transition.safe_metadata->'receipt'->>'artifactId'=artifact.artifact_id
+          AND transition.safe_metadata->'receipt'->>'runId'=artifact.run_id
+          AND transition.safe_metadata->'receipt'->>'jobId'=artifact.job_id
+          AND transition.safe_metadata->'receipt'->>'attemptId'=artifact.attempt_id
+          AND transition.safe_metadata->'receipt'->>'contentHash'=artifact.receipt->>'contentHash'
+        ORDER BY attempt.attempt_number DESC LIMIT 1`, [this.scope.tenantId, predecessor.job_id])).rows[0];
+      if (!proof || !proof.contentHash || !proof.targetId || !proof.targetDigest) conflict();
+      try { await authority.assertAcceptedResultCurrent(tx, proof); } catch { conflict(); }
+    }
+    return true;
   }
   webOperation(): TaskAssignmentOperation {
     return Object.freeze({ ...this.scope, assign: this.assign.bind(this), expire: this.expire.bind(this),
@@ -665,6 +880,7 @@ export class TaskAssignmentCoordinator {
       if (!route || route.executorId !== job.authority.allowedExecutor
         || route.capabilityProbeId !== HERMES_021_MACOS_LOCAL_CAPABILITY_V1
         || !Number.isSafeInteger(now) || now < 0 || now >= deadline || signal.aborted) conflict();
+      await this.assertWorkBatchQueueAdmission(tx, job, route, stored.attempt.workerId ?? null);
       // The intent is bound to every canonical fact that selects the local
       // adapter.  A queue reference remains only a locator; pickup rebuilds
       // and verifies these facts again before it can reach a private runner.
@@ -729,6 +945,7 @@ export class TaskAssignmentCoordinator {
       if (!route || route.executorId !== job.authority.allowedExecutor
         || route.capabilityProbeId !== HERMES_021_MACOS_LOCAL_CAPABILITY_V1
         || !Number.isSafeInteger(now) || now < 0 || now >= deadline) conflict();
+      await this.assertWorkBatchQueueAdmission(tx, job, route, stored.attempt.workerId ?? null);
       await this.assertTransitionAdmission(tx, route.nodeId);
       const approval = await store.readHermes021LocalQueueApprovalInSession(tx, {
         tenantId: ref.tenantId, projectId: ref.projectId, jobId: ref.jobId, attemptId: ref.attemptId, inputDigest: ref.inputDigest,
@@ -771,6 +988,7 @@ export class TaskAssignmentCoordinator {
     const now = this.clock(), deadline = Math.min(Date.parse(stored.lease.expiresAt), Date.parse(job.authority.expiresAt));
     if (!route || route.executorId !== job.authority.allowedExecutor || route.capabilityProbeId !== HERMES_LOCAL_CAPABILITY_V1
       || !Number.isSafeInteger(now) || now < 0 || now >= deadline) conflict();
+    await this.assertWorkBatchQueueAdmission(tx, job, route, stored.attempt.workerId ?? null);
     const packetDigest = macLocalQueueIntentPacketDigestV1({ schema: "control-room.hermes-macos-local-queue-intent/v1",
       planDigest: sha256Digest(plan), authorityDigest: job.authority.digest, tenantId: this.scope.tenantId,
       projectId, jobId, attemptId: stored.attempt.id, leaseId: stored.lease.id, leaseEpoch: stored.lease.epoch,
@@ -865,6 +1083,7 @@ export class TaskAssignmentCoordinator {
       const now = this.clock(), deadline = Math.min(Date.parse(stored.lease.expiresAt), Date.parse(job.authority.expiresAt));
       if (!route || route.executorId !== job.authority.allowedExecutor || route.capabilityProbeId !== HERMES_LOCAL_CAPABILITY_V1
         || !Number.isSafeInteger(now) || now < 0 || now >= deadline) conflict();
+      await this.assertWorkBatchQueueAdmission(tx, job, route, stored.attempt.workerId ?? null);
       await this.assertTransitionAdmission(tx, route.nodeId);
       const approval = await store.readHermesLocalQueueApprovalInSession(tx, {
         tenantId: ref.tenantId, projectId: ref.projectId, jobId: ref.jobId, attemptId: ref.attemptId, inputDigest: ref.inputDigest,
@@ -903,6 +1122,7 @@ export class TaskAssignmentCoordinator {
     const now = this.clock(), deadline = Math.min(Date.parse(stored.lease.expiresAt), Date.parse(job.authority.expiresAt));
     if (!route || route.executorId !== job.authority.allowedExecutor || route.capabilityProbeId !== CLAUDE_CODE_LOCAL_CAPABILITY_V1
       || !Number.isSafeInteger(now) || now < 0 || now >= deadline) conflict();
+    await this.assertWorkBatchQueueAdmission(tx, job, route, stored.attempt.workerId ?? null);
     const packetDigest = macLocalQueueIntentPacketDigestV1({ schema: "control-room.claude-code-local-queue-intent/v1", planDigest: sha256Digest(plan),
       authorityDigest: job.authority.digest, tenantId: this.scope.tenantId, projectId, jobId, attemptId: stored.attempt.id,
       leaseId: stored.lease.id, leaseEpoch: stored.lease.epoch, nodeId: route.nodeId, executorId: route.executorId,
@@ -988,6 +1208,7 @@ export class TaskAssignmentCoordinator {
         const now = this.clock(), deadline = Math.min(Date.parse(stored.lease.expiresAt), Date.parse(job.authority.expiresAt));
         if (!route || route.executorId !== job.authority.allowedExecutor || route.capabilityProbeId !== CLAUDE_CODE_LOCAL_CAPABILITY_V1
           || !Number.isSafeInteger(now) || now < 0 || now >= deadline) conflict();
+        await this.assertWorkBatchQueueAdmission(tx, job, route, stored.attempt.workerId ?? null);
         await this.assertTransitionAdmission(tx, route.nodeId);
         const approval = await store.readClaudeCodeLocalQueueApprovalInSession(tx,
           { tenantId: ref.tenantId, projectId: ref.projectId, jobId: ref.jobId, attemptId: ref.attemptId, inputDigest: ref.inputDigest });
@@ -1021,6 +1242,7 @@ export class TaskAssignmentCoordinator {
     const now = this.clock(), deadline = Math.min(Date.parse(stored.lease.expiresAt), Date.parse(job.authority.expiresAt));
     if (!route || route.executorId !== job.authority.allowedExecutor || route.capabilityProbeId !== CODEX_OWNER_TRUSTED_LOCAL_CAPABILITY_V1
       || !Number.isSafeInteger(now) || now < 0 || now >= deadline) conflict();
+    await this.assertWorkBatchQueueAdmission(tx, job, route, stored.attempt.workerId ?? null);
     const packetDigest = macLocalQueueIntentPacketDigestV1({ schema: "control-room.codex-owner-trusted-local-queue-intent/v1", planDigest: sha256Digest(plan),
       authorityDigest: job.authority.digest, tenantId: this.scope.tenantId, projectId, jobId, attemptId: stored.attempt.id,
       leaseId: stored.lease.id, leaseEpoch: stored.lease.epoch, nodeId: route.nodeId, executorId: route.executorId,
@@ -1150,6 +1372,7 @@ export class TaskAssignmentCoordinator {
         const now = this.clock(), deadline = Math.min(Date.parse(stored.lease.expiresAt), Date.parse(job.authority.expiresAt));
         if (!route || route.executorId !== job.authority.allowedExecutor || route.capabilityProbeId !== CODEX_OWNER_TRUSTED_LOCAL_CAPABILITY_V1
           || !Number.isSafeInteger(now) || now < 0 || now >= deadline) conflict();
+        await this.assertWorkBatchQueueAdmission(tx, job, route, stored.attempt.workerId ?? null);
         await this.assertTransitionAdmission(tx, route.nodeId);
         const approval = await store.readCodexOwnerTrustedLocalQueueApprovalInSession(tx,
           { tenantId: ref.tenantId, projectId: ref.projectId, jobId: ref.jobId, attemptId: ref.attemptId, inputDigest: ref.inputDigest });
@@ -1391,6 +1614,7 @@ export class TaskAssignmentCoordinator {
         || route.executorId !== job.authority.allowedExecutor
         || configured.connectorProfileDigest !== plan.connectorProfileDigest
         || configured.workspaceIntentDigest !== plan.workspaceIntentDigest) conflict();
+      await this.assertWorkBatchQueueAdmission(tx, job, route, stored.attempt.workerId ?? null);
       await this.assertTransitionAdmission(tx, route.nodeId);
       const nodeRow = (await tx.query<{ payload: unknown; state: string; version: number }>(
         "SELECT payload,state,version FROM control_nodes WHERE tenant_id=$1 AND id=$2 FOR UPDATE",
@@ -1508,6 +1732,7 @@ export class TaskAssignmentCoordinator {
         || plan.schema === "control-room.task-execution-plan/v3" || plan.schema === "control-room.task-execution-plan/v4") conflict();
       const configured = this.enrollments.find(e => e.enrollment.nodeId === stored.lease.nodeId), route = this.routes.find(r => r.nodeId === stored.lease.nodeId);
       if (!configured || !route || route.executorId !== job.authority.allowedExecutor) conflict();
+      await this.assertWorkBatchQueueAdmission(tx, job, route, stored.attempt.workerId ?? null);
       await this.assertTransitionAdmission(tx, route.nodeId);
       const enrollment = configured.enrollment;
       const row = (await tx.query<{ payload: unknown; state: string; version: number }>(
@@ -1747,6 +1972,10 @@ export class TaskAssignmentCoordinator {
       const canReassign = !!prior && (prior.lease.state === "expired" || job.state === "orphaned");
       if (prior && !canReassign) {
         if (prior.lease.nodeId !== nodeId) conflict();
+        const priorRoute = this.routes.find(route => route.nodeId === prior.lease.nodeId
+          && route.executorId === job.authority.allowedExecutor);
+        if (!priorRoute) conflict();
+        await this.assertWorkBatchQueueAdmission(tx, job, priorRoute, prior.attempt.workerId ?? null);
         return { receipt: this.receipt(job, prior.attempt, prior.lease), replayed: true };
       }
       const attemptNumber = (prior?.attempt.attemptNumber ?? 0) + 1;
@@ -1761,9 +1990,11 @@ export class TaskAssignmentCoordinator {
       // lease is created; an already-recorded lease remains recoverable.
       this.planner.assertPlanAssignable(plan);
       const route = this.routes.find(route => route.nodeId === nodeId);
-      if (!route || project.lifecycle !== "active" || project.origin !== "ordinary" || !["proposed", "ready", "orphaned"].includes(job.state)
+      if (!route) conflict();
+      const batchAdmission = await this.assertWorkBatchQueueAdmission(tx, job, route);
+      if (project.lifecycle !== "active" || project.origin !== "ordinary" || !["proposed", "ready", "orphaned"].includes(job.state)
         || job.authority.allowedExecutor !== route.executorId || job.requiredCapability !== route.capabilityProbeId
-        || job.dependsOnJobIds.length || attemptNumber > 100) conflict();
+        || (!batchAdmission && job.dependsOnJobIds.length > 0) || attemptNumber > 100) conflict();
       await this.assertTransitionAdmission(tx, route.nodeId);
       const request = requestRecordSchema.parse(await canonical.get(this.scope.tenantId, "request", plan.request.id));
       const workflow = workflowRecordSchema.parse(await canonical.get(this.scope.tenantId, "workflow", plan.workflow.id));
@@ -1846,8 +2077,7 @@ export class TaskAssignmentCoordinator {
         expectedVersion: job.version, toState: "ready", transitionId: `${ids.transitionId}:ready`,
         idempotencyKey: `${ids.idempotencyKey}:ready`, actor: actorRef, occurredAt })).entity as JobRecord;
       const claimed = await canonical.claimReadyTaskJob({ ...ids, tenantId: this.scope.tenantId, jobId, expectedJobVersion: ready.version,
-        nodeId, actor: actorRef, acquiredAt: occurredAt,
-        expiresAt: new Date(commitDeadline).toISOString() });
+        nodeId, workerId: route.executorId, actor: actorRef, acquiredAt: occurredAt, expiresAt: new Date(commitDeadline).toISOString() });
       try {
         for (const declared of declaredScopes) await tx.query(`INSERT INTO control_assignment_lease_scopes
           (tenant_id,lease_id,project_id,job_id,attempt_id,node_id,scope_kind,path,path_fold)

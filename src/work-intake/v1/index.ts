@@ -4,6 +4,7 @@ export * from "./credential";
 export * from "./errors";
 export * from "./schemas";
 export * from "./digest";
+export * from "./queue-catalog";
 export * from "./owner-schemas";
 export * from "./owner-service";
 export * from "./owner-notification";
