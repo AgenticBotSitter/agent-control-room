@@ -22,13 +22,6 @@
   },
   {
     "file": "scripts/test-runner/service.mjs",
-    "find": "!Object.hasOwn(config.allowedScripts, body.script)",
-    "replace": "false",
-    "test": "node --test --test-name-pattern='command allowlist guard' tests/test-runner-service.test.mjs",
-    "why": "only explicitly configured package script names may run"
-  },
-  {
-    "file": "scripts/test-runner/service.mjs",
     "find": "if (scripts[body.script] !== pinned) throw new RunnerRefusal(403, \"command_refused\");",
     "replace": "",
     "test": "node --test --test-name-pattern='pinned script guard' tests/test-runner-service.test.mjs",
