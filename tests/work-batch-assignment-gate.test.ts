@@ -24,7 +24,7 @@ const assign = (f: Awaited<ReturnType<typeof taskAssignmentFixture>>,
   value = coordinator(f)) => value.assign(f.identity, binding.projectId, f.prepared.receipt.jobId,
     binding.nodeId, f.prepared.receipt.inputDigest);
 
-async function seedAdmission(f: Awaited<ReturnType<typeof taskAssignmentFixture>>, input: {
+async function seedAdmission(f: Pick<Awaited<ReturnType<typeof taskAssignmentFixture>>, "db" | "scope" | "route">, input: {
   sourceJobId: string; executionJobId?: string; position: number; workerId?: string; model?: string;
 }) {
   const workerId = input.workerId ?? f.route.executorId, model = input.model ?? "model:test";
