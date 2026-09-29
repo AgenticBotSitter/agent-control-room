@@ -32,6 +32,11 @@ const HOSTILE = Object.freeze([
   { name: "tab", value: "a\tb" },
   { name: "null byte", value: "a\u0000b" },
   { name: "ampersand", value: "a&b" },
+  // Isolated so only the one widened character is under test: the rest of the
+  // value is otherwise-valid, so a widening of the body character class to
+  // admit `$` or `=` (and nothing else) is what would let this pass.
+  { name: "dollar sign", value: "a$b" },
+  { name: "equals sign", value: "a=b" },
   { name: "leading space", value: " a" },
   { name: "trailing space", value: "a " },
   { name: "empty", value: "" },

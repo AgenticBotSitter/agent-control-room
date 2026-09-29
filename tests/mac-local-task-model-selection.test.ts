@@ -98,6 +98,19 @@ test("a matching resolved row reaches each executor as the exact reviewed argv",
   assert.deepEqual(captured.codex, ["exec", "--json", "--sandbox", "read-only", "--ephemeral", "--skip-git-repo-check",
     "--color", "never", "-C", workingDirectory, "-m", "gpt-build", "-c", "model_reasoning_effort=high", "-"]);
 
+  // A second Codex row at a different offered effort, driven through the same
+  // real argument builder. `codexRow` above already used `high`, so this is
+  // what makes a hard-coded `high` visible at the argv boundary, not only at
+  // the projection's own return value.
+  const codexMedium = closure({ ...codexRow, effort: "medium" });
+  const codexMediumResult = await createOwnerTrustedLocalCodexExecutionAdapterV1(
+    createOwnerTrustedLocalCodexExecV1({ spawn: launch("codex") as never }), { executablePath: process.execPath,
+    workingDirectory, deadlineMs: 10_000, select: macLocalCodexModelSelectionV1(codexMedium.selected) })
+    .execute({ delivery, signal });
+  assert.equal(codexMediumResult.kind, "completed");
+  assert.deepEqual(captured.codex, ["exec", "--json", "--sandbox", "read-only", "--ephemeral", "--skip-git-repo-check",
+    "--color", "never", "-C", workingDirectory, "-m", "gpt-build", "-c", "model_reasoning_effort=medium", "-"]);
+
   const claude = closure(claudeRow);
   const claudeResult = await createOwnerTrustedLocalClaudeExecutionAdapterV1(
     createOwnerTrustedLocalClaudeExecV1({ spawn: launch("claude") as never }), { executablePath: process.execPath,
@@ -225,6 +238,11 @@ test("each projection carries the stored value and substitutes nothing", async (
   // The Claude projection must carry the stored effort, not a fixed one.
   assert.deepEqual(await macLocalClaudeModelSelectionV1(closure({ ...claudeRow, model: "sonnet", selection_key: "sonnet",
     effort: "high" }).selected)(jobId), { model: "sonnet", effort: "high", supportsEffort: true });
+  // The Codex projection must carry the stored effort too: the catalog offers
+  // both `medium` and `high`, and `codexRow` above already uses `high`, so a
+  // hard-coded `high` would pass unnoticed without this second, differing case.
+  assert.deepEqual(await macLocalCodexModelSelectionV1(closure({ ...codexRow, effort: "medium" }).selected)(jobId),
+    { model: "gpt-build", effort: "medium" });
 });
 
 test("each Mac-local worker gets its own projection, and only its own", async () => {

@@ -163,6 +163,8 @@ export interface ExpireLeaseInput {
   occurredAt: string;
 }
 
+export interface RevokeLeaseInput extends ExpireLeaseInput {}
+
 export interface RenewLeaseInput {
   tenantId: string;
   leaseId: string;
@@ -1175,6 +1177,44 @@ export class CanonicalStore {
         job: jobResult.entity as JobRecord,
         replayed: false,
       };
+    });
+  }
+
+  async revokeLease(input: RevokeLeaseInput): Promise<{ job: JobRecord; attempt: AttemptRecord; lease: LeaseRecord; replayed: boolean }> {
+    return this.#transaction(async (tx) => {
+      const prior = await tx.query<{ entity_id: string }>(
+        `SELECT entity_id FROM control_transition_events WHERE tenant_id=$1 AND entity_kind='lease' AND idempotency_key=$2`,
+        [input.tenantId, input.idempotencyKey]);
+      if (prior.rows.length) {
+        if (prior.rows[0].entity_id !== input.leaseId) throw new Error("Revocation idempotency key reused for another lease");
+        const lease = await this.#requireWith(tx, input.tenantId, "lease", input.leaseId) as LeaseRecord;
+        const attempt = await this.#requireWith(tx, input.tenantId, "attempt", input.attemptId) as AttemptRecord;
+        const job = await this.#requireWith(tx, input.tenantId, "job", input.jobId) as JobRecord;
+        if (lease.jobId !== job.id || lease.attemptId !== attempt.id || lease.epoch !== input.epoch
+          || lease.state !== "revoked") throw new Error("Revocation replay lineage or state mismatch");
+        return { job, attempt, lease, replayed: true };
+      }
+      const lease = await this.#requireWith(tx, input.tenantId, "lease", input.leaseId) as LeaseRecord;
+      const attempt = await this.#requireWith(tx, input.tenantId, "attempt", input.attemptId) as AttemptRecord;
+      const job = await this.#requireWith(tx, input.tenantId, "job", input.jobId) as JobRecord;
+      if (lease.jobId !== job.id || lease.attemptId !== attempt.id || lease.epoch !== input.epoch
+        || lease.state !== "active" || lease.version !== input.expectedLeaseVersion
+        || attempt.version !== input.expectedAttemptVersion || job.version !== input.expectedJobVersion) {
+        throw new Error("Lease revocation has stale state, lineage, epoch, or version");
+      }
+      const leaseResult = await this.#transitionWith(tx, { tenantId: input.tenantId, kind: "lease", entityId: lease.id,
+        expectedVersion: lease.version, toState: "revoked", transitionId: input.transitionId,
+        idempotencyKey: input.idempotencyKey, actor: input.actor, occurredAt: input.occurredAt }, true);
+      const attemptResult = await this.#transitionWith(tx, { tenantId: input.tenantId, kind: "attempt", entityId: attempt.id,
+        expectedVersion: attempt.version, toState: "cancelled", transitionId: `${input.transitionId}:attempt`,
+        idempotencyKey: `${input.idempotencyKey}:attempt`, actor: input.actor, occurredAt: input.occurredAt,
+        recordPatch: { finishedAt: input.occurredAt } }, true);
+      const jobResult = await this.#transitionWith(tx, { tenantId: input.tenantId, kind: "job", entityId: job.id,
+        expectedVersion: job.version, toState: "cancelled", transitionId: `${input.transitionId}:job`,
+        idempotencyKey: `${input.idempotencyKey}:job`, actor: input.actor, occurredAt: input.occurredAt,
+        safeMetadata: { revokedLeaseId: lease.id, leaseEpoch: lease.epoch } }, true);
+      return { lease: leaseResult.entity as LeaseRecord, attempt: attemptResult.entity as AttemptRecord,
+        job: jobResult.entity as JobRecord, replayed: false };
     });
   }
 
