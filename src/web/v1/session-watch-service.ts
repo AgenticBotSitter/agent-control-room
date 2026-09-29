@@ -82,17 +82,22 @@ export function projectSessionWatchItemV1(input: Readonly<{ run: HarnessRunV1; e
     expectedHeartbeatSeconds: SESSION_WATCH_EXPECTED_HEARTBEAT_MS_V1 / 1000 });
 }
 
+/**
+ * Parses the canonical rows and reports whether their lineage is internally consistent, instead of throwing.
+ * A `false` lineageOk means the row must be degraded to an honest per-row "unavailable" entry (never rendered
+ * as if it were a healthy session) rather than failing the whole page — the caller is responsible for that.
+ */
 function validateCanonical(row: SessionWatchRow, tenantId: string) {
   const attempt = attemptRecordSchema.parse(row.attempt_payload), job = jobRecordSchema.parse(row.job_payload);
   const workflow = workflowRecordSchema.parse(row.workflow_payload), request = requestRecordSchema.parse(row.request_payload);
-  if (attempt.id !== row.session_id || attempt.jobId !== row.job_id || attempt.state !== row.attempt_state
-    || attempt.version !== Number(row.attempt_version) || job.id !== row.job_id || job.state !== row.job_state
-    || job.version !== Number(row.job_version) || job.projectId !== row.project_id || job.workflowId !== row.workflow_id
-    || workflow.id !== row.workflow_id || workflow.projectId !== row.project_id || request.id !== workflow.requestId
-    || request.projectId !== row.project_id || !workflow.jobIds.includes(job.id)
-    || attempt.tenantId !== tenantId || job.tenantId !== tenantId || workflow.tenantId !== tenantId
-    || request.tenantId !== tenantId) throw new Error("session_watch_lineage_unavailable");
-  return { attempt, request };
+  const lineageOk = attempt.id === row.session_id && attempt.jobId === row.job_id && attempt.state === row.attempt_state
+    && attempt.version === Number(row.attempt_version) && job.id === row.job_id && job.state === row.job_state
+    && job.version === Number(row.job_version) && job.projectId === row.project_id && job.workflowId === row.workflow_id
+    && workflow.id === row.workflow_id && workflow.projectId === row.project_id && request.id === workflow.requestId
+    && request.projectId === row.project_id && workflow.jobIds.includes(job.id)
+    && attempt.tenantId === tenantId && job.tenantId === tenantId && workflow.tenantId === tenantId
+    && request.tenantId === tenantId;
+  return { attempt, request, lineageOk };
 }
 
 function unavailableItem(row: SessionWatchRow, attempt: ReturnType<typeof validateCanonical>["attempt"], request: ReturnType<typeof validateCanonical>["request"],
@@ -182,13 +187,13 @@ export class SessionWatchServiceV1 {
         SESSION_WATCH_PAGE_SIZE_V1 + 1])).rows;
       const sessions: SessionWatchItemV1[] = [];
       for (const row of rows.slice(0, SESSION_WATCH_PAGE_SIZE_V1)) {
-        const { attempt, request } = validateCanonical(row, this.scope.tenantId);
-        if (!row.run_id || row.event_rows.length > 1024) {
+        const { attempt, request, lineageOk } = validateCanonical(row, this.scope.tenantId);
+        const runLineageOk = row.run_attempt_id === attempt.id && row.run_job_id === row.job_id
+          && row.run_project_id === row.project_id && row.run_node_id === attempt.nodeId;
+        if (!lineageOk || !row.run_id || row.event_rows.length > 1024 || !runLineageOk) {
           sessions.push(unavailableItem(row, attempt, request, observedAt));
           continue;
         }
-        if (row.run_attempt_id !== attempt.id || row.run_job_id !== row.job_id || row.run_project_id !== row.project_id
-          || row.run_node_id !== attempt.nodeId) throw new Error("session_watch_lineage_unavailable");
         const stored: StoredHarnessRunRowV1 = { id: row.run_id, tenant_id: row.run_tenant_id!, project_id: row.run_project_id!,
           job_id: row.run_job_id!, attempt_id: row.run_attempt_id!, node_id: row.run_node_id!, adapter_id: row.run_adapter_id!,
           harness: row.run_harness!, native_session_key_digest: row.run_native_session_key_digest!,

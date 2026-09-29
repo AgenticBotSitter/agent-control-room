@@ -154,6 +154,40 @@ test("owner session reads stay tenant-bound and emit no task commands", async t 
   assert.deepEqual((await other.read(otherIdentity)).sessions, []);
 });
 
+test("session watch keeps sessions scoped to their own workspace, on the first page and the cursor page", async t => {
+  const fixture = await webNativeResultFixture(); t.after(fixture.close);
+  const adapterRow = await fixture.db.query<{ adapter_id: string }>(
+    "SELECT adapter_id FROM projects WHERE tenant_id=$1 AND id=$2", [fixture.scope.tenantId, "project:test"]);
+  const adapterId = adapterRow.rows[0]!.adapter_id;
+  await fixture.db.query("INSERT INTO workspaces(id,tenant_id,display_name) VALUES('workspace:other-ws','tenant:test','Other workspace')");
+  await fixture.db.query(`INSERT INTO projects(id,tenant_id,workspace_id,adapter_id,source_record_id,source_version,title,description,normalized_state,
+    domain_state,health,authority_mode,observed_at,payload,updated_at) VALUES('project:other-ws','tenant:test','workspace:other-ws',$2,
+    'project:other-ws','1','Other workspace session','Synthetic same-tenant session','planned','manual_project_active','healthy','control_room_native',$1,'{}',$1)`,
+  [at(), adapterId]);
+  const copy = async (table: string, columns: string, values: string) => fixture.db.query(`INSERT INTO ${table}(${columns}) SELECT ${values}`);
+  const replace = "replace(replace(replace(replace(payload::text,'project:test','project:other-ws'),'request:test','request:other-ws'),'workflow:test','workflow:other-ws'),'job:test','job:other-ws')::jsonb";
+  const replaceRequest = `jsonb_set(${replace},'{idempotencyKey}','"native-task-fixture-request-other-ws"')`;
+  await copy("control_requests", "id,tenant_id,project_id,state,version,idempotency_key,payload,created_at,updated_at",
+    `'request:other-ws','tenant:test','project:other-ws',state,version,'native-task-fixture-request-other-ws',${replaceRequest},created_at,updated_at FROM control_requests WHERE tenant_id='tenant:test' AND id='request:test'`);
+  await copy("control_workflows", "id,tenant_id,request_id,project_id,definition_digest,state,version,payload,created_at,updated_at",
+    `'workflow:other-ws','tenant:test','request:other-ws','project:other-ws',definition_digest,state,version,${replace},created_at,updated_at FROM control_workflows WHERE tenant_id='tenant:test' AND id='workflow:test'`);
+  await copy("control_jobs", "id,tenant_id,workflow_id,project_id,state,version,priority,required_capability,authority_digest,payload,created_at,updated_at",
+    `'job:other-ws','tenant:test','workflow:other-ws','project:other-ws',state,version,priority,required_capability,authority_digest,${replace},created_at,updated_at FROM control_jobs WHERE tenant_id='tenant:test' AND id='job:test'`);
+  await copy("control_attempts", "id,tenant_id,job_id,attempt_number,state,version,worker_id,node_id,lease_epoch,payload,created_at,updated_at",
+    `'attempt:other-ws','tenant:test','job:other-ws',attempt_number,state,version,worker_id,node_id,lease_epoch,replace(replace(payload::text,'job:test','job:other-ws'),'attempt:test','attempt:other-ws')::jsonb,created_at,updated_at FROM control_attempts WHERE tenant_id='tenant:test' AND id='attempt:test'`);
+  await fixture.db.query(`UPDATE control_attempts SET state='running',payload=jsonb_set(payload,'{state}','"running"')
+    WHERE tenant_id='tenant:test' AND id='attempt:other-ws'`);
+
+  const service = new SessionWatchServiceV1(fixture.db, fixture.scope, fixture.harnessKey, () => instant + 6000);
+  const page = await service.read(fixture.identity);
+  assert.ok(page.sessions.length >= 1, "the owner's own workspace session is still returned");
+  assert.equal(page.sessions.some(value => value.sessionId === "attempt:other-ws"), false,
+    "a session in another workspace of the same tenant is never rendered on the first page");
+  await assert.rejects(service.read(fixture.identity, "attempt:other-ws"), (error: unknown) =>
+    error instanceof WebAccessError && error.code === "invalid_request",
+  "a cursor belonging to another workspace of the same tenant is refused, not treated as a valid page boundary");
+});
+
 test("session watch refuses a same-tenant operator for both authorize and read", async t => {
   const fixture = await webNativeResultFixture(); t.after(fixture.close);
   const subject = "session-watch-operator";
@@ -172,12 +206,23 @@ test("session watch refuses a same-tenant operator for both authorize and read",
   }
 });
 
-test("session watch refuses stored run lineage that does not bind to the selected attempt", async t => {
+test("a run lineage mismatch degrades only the affected row without hiding healthy sessions", async t => {
   const fixture = await webNativeResultFixture(); t.after(fixture.close);
+  await fixture.provisionRun("run:bad-lineage", "job:bad-lineage", "attempt:bad-lineage");
+  await fixture.db.query(`UPDATE control_workflows SET payload=jsonb_set(payload,'{jobIds}',payload->'jobIds' || $3::jsonb)
+    WHERE tenant_id=$1 AND id=$2`, [fixture.scope.tenantId, "workflow:test", JSON.stringify(["job:bad-lineage"])]);
+  // job:test's run is properly signed by the fixture's harness key and must still verify and render as "running";
+  // job:bad-lineage's run is only ever given a synthetic (unsigned) digest by provisionRun, so it must be caught
+  // by the lineage check below and degraded before it ever reaches signature verification.
   const service = new SessionWatchServiceV1(transformedDatabase(fixture.db, (sql, rows) => sql.includes("WITH cursor")
-    ? rows.map(row => row.run_id ? { ...row, run_attempt_id: "attempt:other" } : row) : rows), fixture.scope, fixture.harnessKey,
-  () => instant + 6000);
-  await assert.rejects(service.read(fixture.identity), /session_watch_lineage_unavailable/);
+    ? rows.map(row => row.job_id === "job:bad-lineage" && row.run_id ? { ...row, run_attempt_id: "attempt:other" } : row) : rows),
+  fixture.scope, fixture.harnessKey, () => instant + 6000);
+  const page = await service.read(fixture.identity);
+  assert.equal(page.sessions.length, 2);
+  const bad = page.sessions.find(value => value.jobId === "job:bad-lineage");
+  assert.equal(bad?.state, "stalled"); assert.equal(bad?.runId, null);
+  const good = page.sessions.find(value => value.jobId === "job:test");
+  assert.equal(good?.state, "running");
 });
 
 test("one oversized run is unavailable without hiding healthy sessions", async t => {
