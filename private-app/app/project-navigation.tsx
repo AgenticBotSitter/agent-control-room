@@ -3,7 +3,7 @@ import { useProductModule } from "./product-configuration";
 import { useLocalRuntime } from "./local-runtime";
 import type { EffectiveProjectPresentation } from "../../src/web/v1/project-wire";
 
-type ProjectPage = "overview" | "inbox" | "work" | "pipelines" | "agents" | "automations" | "files" | "reviews" | "activity" | "news" | "coordination" | "settings";
+type ProjectPage = "overview" | "inbox" | "work" | "pipelines" | "improvements" | "agents" | "automations" | "files" | "reviews" | "activity" | "news" | "coordination" | "settings";
 
 export function ProjectNavigation({ projectId, current, presentation }: {
   projectId: string; current: ProjectPage; presentation?: EffectiveProjectPresentation;
@@ -19,6 +19,7 @@ export function ProjectNavigation({ projectId, current, presentation }: {
     <a href={href} aria-current={current === page ? "page" : undefined}>{label}</a>;
   return <nav className="private-tabs" aria-label="Project pages">
     {link(base, "Overview", "overview")}
+    {presentation?.templateId === "control-room" && link(`${base}/improvements`, "Improvements", "improvements")}
     {runtime.mode === "local" ? <>
       {runtime.status?.projectSections.includes("inbox") && link(`${base}/inbox`, "Inbox", "inbox")}
       {link(`${base}/tasks`, "Tasks", "work")}

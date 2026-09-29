@@ -20,6 +20,7 @@ import { localWorkerStateLabel, useLocalRuntime, type LocalStatus } from "./loca
 import { useVisiblePolling } from "./use-visible-polling";
 import { OperationsControlPanel } from "./operations-control";
 import { StateChip, LoadingState, EmptyState, UnavailableState, PanelHeading, PrivateCount, workerChipToneV1 } from "./owner-ui";
+import { UpdateCandidatesHome } from "./update-candidates-home";
 
 export type WorkerRead = PrivateConnectionSnapshot | { source: "local"; value: LocalStatus };
 export function isLocalWorkerRead(value: WorkerRead): value is { source: "local"; value: LocalStatus } {
@@ -83,6 +84,7 @@ export function stuckWorkerCount(value: WorkerRead): number {
 
 export function HomeDashboard({ data }: { data: HomeDashboardState }) {
   return <><a className="private-action-link" href="/projects">New task</a><div className="private-dashboard-grid">
+    <UpdateCandidatesHome />
     {/* Needs attention leads the dashboard and is visually loud (red), per
         owner-ux-feedback-2026-09-27.md items 1-3: "a clear list 'This needs
         you → why → one button to act'", a red box, and an empty state that is
