@@ -546,6 +546,27 @@ jobs:
           pnpm build
           run_browser_suite --browser-owner-e2e 15501 3219
           run_browser_suite --browser-adversarial-e2e 15502 3220
+      # NOTE: there is deliberately no "capture owner page screenshots" step
+      # here, and no owner-screenshots artifact upload.
+      #
+      # An earlier version of this workflow added one that could never run. It
+      # referenced `rehearsal_root`, a shell variable set inside the step above,
+      # from a separate `run:` block — each step is a fresh shell, so it expanded
+      # empty, `mac:rehearsal up ""` exited 2 (setup.ts requires an absolute dir),
+      # and the step's `||` branch reported success and skipped the capture on
+      # every run. On the path where it did start a cluster, its teardown was
+      # `pnpm mac:down`, which stops the app host and never touches pg_ctl, so the
+      # disposable PostgreSQL cluster was left running. A permanently-dead step
+      # that also leaks a database is worse than no step.
+      #
+      # Screenshot capture needs a stack that outlives run_browser_suite, which
+      # tears each one down (and the trap tears down the last one too). That is
+      # a change to the rehearsal harness — a mode that leaves a verified
+      # disposable cluster up for an external process to photograph — not to this
+      # workflow, and it wants the budget/security review
+      # docs/ci-budget-security-review.md calls for. It is not worth shipping a
+      # dead step in the meantime, so it is removed rather than left for a
+      # reviewer to discover. Re-adding it means adding the harness mode first.
       - name: Upload browser failure evidence
         if: ${{ failure() }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

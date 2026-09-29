@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { fixture, now, token, trust, origin, request } from "./helpers/web-foundation";
 import { articleStory } from "./helpers/article-fixture";
-import { createAccessVerifier } from "../src/web/v1/access-verifier";
+import { createAccessVerifier, WebAccessError } from "../src/web/v1/access-verifier";
+import { PostgresNewsStoryArchives, type NewsArchiveRow } from "../src/project-adapters/news/v1/story-archives";
 import { PostgresNewsStoreV1 } from "../src/project-adapters/news/v1/postgres-store";
 import { PostgresArticleDetails } from "../src/project-adapters/news/v1/article-store";
 import { readNewsArticleDetail } from "../src/project-adapters/news/v1/article-detail";
@@ -55,4 +56,100 @@ test("saved article versions replay, retain lineage, enforce scope and expire wi
     FROM control_news_article_details`, [`sha256:${"e".repeat(64)}`]);
   await assert.rejects(store.get(story.storyId, story.storyDigest), { message: "news_article_integrity_failed" });
   assert.deepEqual(await store.get(story.storyId, story.storyDigest, record.detailDigest), record);
+});
+
+async function archiveFixture(t: import("node:test").TestContext) {
+  const f = await fixture(); t.after(() => f.db.close());
+  const identity = createAccessVerifier(trust)(new Request(origin, {
+    headers: { "cf-access-jwt-assertion": token() },
+  }), now);
+  const project = await f.service.create(identity, { title: "Archive fixture", summary: "Synthetic news" }, "archive-project-fixture-01");
+  const scope = { tenantId: "tenant:web", workspaceId: "workspace:web", projectId: project.project.projectId };
+  const key = new Uint8Array(32).fill(7), story = articleStory(scope);
+  const stories = new PostgresNewsStoreV1(f.client, scope, key);
+  await stories.saveStory(story);
+  const archives = new PostgresNewsStoryArchives(f.client, scope, key);
+  const news = new WebNewsService(f.client, { tenantId: scope.tenantId, workspaceId: scope.workspaceId }, { integrityKey: key }, () => now);
+  const rows = async () => (await f.client.query<NewsArchiveRow>(
+    `SELECT story_id,revision,archived,payload,auth_tag FROM control_news_story_archives
+     WHERE tenant_id=$1 AND workspace_id=$2 AND project_id=$3 AND story_id=$4 ORDER BY revision`,
+    [scope.tenantId, scope.workspaceId, scope.projectId, story.storyId])).rows;
+  return { ...f, identity, scope, story, stories, archives, news, rows };
+}
+
+test("news archive persists and restores a saved story through the web service", async t => {
+  const f = await archiveFixture(t), { storyId } = f.story;
+  assert.equal(await f.archives.get(storyId), undefined);
+  const saved = await f.news.archive(f.identity, f.scope.projectId, { storyId, archived: true, expectedRevision: 0 });
+  assert.deepEqual(saved, { record: { storyId, archived: true, revision: 1, updatedAt: new Date(now).toISOString() },
+    replayed: false, startsWork: false, projectId: f.scope.projectId });
+  assert.deepEqual(await f.archives.get(storyId), saved.record);
+  // Archive classification is exposed by list(), not the retained article-text read.
+  const archived = await f.news.list(f.identity, f.scope.projectId, undefined, undefined, "archive");
+  assert.equal(archived.stories.length, 1);
+  assert.equal(archived.stories[0].storyId, storyId);
+  assert.equal(archived.stories[0].queue, "archive");
+  assert.equal(archived.stories[0].archiveRevision, 1);
+  const restored = await f.news.archive(f.identity, f.scope.projectId, { storyId, archived: false, expectedRevision: 1 });
+  assert.equal(restored.replayed, false);
+  assert.deepEqual(restored.record, { ...saved.record, archived: false, revision: 2 });
+  assert.deepEqual(await f.archives.get(storyId), restored.record);
+  assert.deepEqual((await f.rows()).map(row => [row.revision, row.archived]), [[1, true], [2, false]]);
+  const page = await f.news.list(f.identity, f.scope.projectId);
+  assert.equal(page.stories.length, 1);
+  assert.equal(page.stories[0].storyId, storyId);
+  assert.notEqual(page.stories[0].queue, "archive");
+  assert.equal(page.stories[0].archiveRevision, 2);
+  assert.equal((await f.news.list(f.identity, f.scope.projectId, undefined, undefined, "archive")).stories.length, 0);
+  assert.deepEqual(await f.stories.getStory(storyId, f.story.storyDigest), f.story);
+});
+
+test("news archive exact retries replay without inserting archive or audit rows", async t => {
+  const f = await archiveFixture(t), { storyId } = f.story;
+  const input = { storyId, archived: true, expectedRevision: 0 };
+  const first = await f.news.archive(f.identity, f.scope.projectId, input);
+  const before = await f.rows();
+  const auditCount = async () => (await f.client.query<{ count: string }>(
+    "SELECT count(*)::text AS count FROM audit_events WHERE action='news.archive.updated' AND project_id=$1", [f.scope.projectId])).rows[0].count;
+  const audits = await auditCount();
+  assert.equal(audits, "1");
+  // expectedRevision is the pre-write revision: replay repeats 0 for saved revision 1.
+  const replay = await f.news.archive(f.identity, f.scope.projectId, input);
+  assert.deepEqual(replay, { ...first, replayed: true });
+  assert.deepEqual(await f.rows(), before);
+  assert.equal(await auditCount(), audits);
+  const direct = await f.archives.save(storyId, true, 0, new Date(now).toISOString());
+  assert.deepEqual(direct, { record: first.record, replayed: true, startsWork: false });
+  assert.deepEqual(await f.rows(), before);
+});
+
+test("news archive stale revisions and unknown stories fail without changing persistence", async t => {
+  const f = await archiveFixture(t), { storyId } = f.story;
+  await f.news.archive(f.identity, f.scope.projectId, { storyId, archived: true, expectedRevision: 0 });
+  const before = await f.rows();
+  await assert.rejects(f.archives.save(storyId, false, 0, new Date(now).toISOString()), { message: "news_archive_conflict" });
+  await assert.rejects(f.news.archive(f.identity, f.scope.projectId, { storyId, archived: false, expectedRevision: 0 }),
+    error => error instanceof WebAccessError && error.code === "conflict");
+  await assert.rejects(f.news.archive(f.identity, f.scope.projectId, { storyId: "story:unknown", archived: true, expectedRevision: 0 }),
+    error => error instanceof WebAccessError && error.code === "not_found");
+  assert.deepEqual(await f.rows(), before);
+  assert.equal(await f.archives.get("story:unknown"), undefined);
+});
+
+test("news archive rejects an invalid stored authentication tag on verify and get", async t => {
+  const f = await archiveFixture(t), { storyId } = f.story;
+  await f.news.archive(f.identity, f.scope.projectId, { storyId, archived: true, expectedRevision: 0 });
+  const [valid] = await f.rows();
+  assert.deepEqual(f.archives.verify(valid), await f.archives.get(storyId));
+  const badTag = valid.auth_tag.slice(0, -1) + (valid.auth_tag.endsWith("0") ? "1" : "0");
+  assert.notEqual(badTag, valid.auth_tag); // Preserve SQL shape, invalidate authentication.
+  assert.throws(() => f.archives.verify({ ...valid, auth_tag: badTag }), { message: "news_archive_integrity_failed" });
+  // The store is append-only. Insert a deliberately invalid next revision in the
+  // disposable fixture rather than disabling production mutation protections.
+  await f.client.query(`INSERT INTO control_news_story_archives
+    (tenant_id,workspace_id,project_id,story_id,revision,archived,payload,auth_tag)
+    VALUES($1,$2,$3,$4,$5,$6,$7,$8)`, [f.scope.tenantId, f.scope.workspaceId, f.scope.projectId,
+    storyId, 2, true, { ...valid.payload as object, revision: 2 }, badTag]);
+  assert.equal((await f.rows()).length, 2);
+  await assert.rejects(f.archives.get(storyId), { message: "news_archive_integrity_failed" });
 });

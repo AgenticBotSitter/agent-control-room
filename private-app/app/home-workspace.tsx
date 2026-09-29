@@ -18,6 +18,7 @@ import { LocalWorkerRouteStatus, type TaskWorkerReadState } from "./local-worker
 import { PrivateOperatorCapacityWorkspace } from "./operator-capacity-workspace";
 import { localWorkerStateLabel, useLocalRuntime, type LocalStatus } from "./local-runtime";
 import { useVisiblePolling } from "./use-visible-polling";
+import { StateChip, LoadingState, EmptyState, UnavailableState, PanelHeading, PrivateCount, workerChipToneV1 } from "./owner-ui";
 
 type WorkerRead = PrivateConnectionSnapshot | { source: "local"; value: LocalStatus };
 function isLocalWorkerRead(value: WorkerRead): value is { source: "local"; value: LocalStatus } {
@@ -63,53 +64,68 @@ export function createHomeReadTransport(parentSignal: AbortSignal, transport: ty
 }
 
 function Unavailable({ children }: { children: React.ReactNode }) {
-  return <p className="private-note" role="status">{children} No zero count or all-clear is inferred.</p>;
+  // The trailing sentence is kept verbatim: it is the app's standing refusal to
+  // let an unreadable read look like an empty one. Only the presentation moves
+  // to the shared component so Home and the other pages cannot drift apart.
+  return <UnavailableState>{children} No zero count or all-clear is inferred.</UnavailableState>;
 }
 
 export function HomeDashboard({ data }: { data: HomeDashboardState }) {
   return <><a className="private-action-link" href="/projects">New task</a><div className="private-dashboard-grid">
-    <section className="private-panel" aria-labelledby="home-active"><h2 id="home-active">Running work</h2>
-      {data.activity.state === "loading" ? <p role="status">Loading saved work…</p>
+    <section className="private-panel" aria-labelledby="home-active"><PanelHeading id="home-active">Running work
+      {data.activity.state === "ready" ? <PrivateCount value={data.activity.value.active.length} /> : null}</PanelHeading>
+      {data.activity.state === "loading" ? <LoadingState>Loading saved work…</LoadingState>
         : data.activity.state === "unavailable" ? <Unavailable>Running work is unavailable.</Unavailable>
           : data.activity.value.active.length ? <ul className="private-dashboard-list">{data.activity.value.active.map(task => <li key={task.jobId}>
-            <a href={taskHref(task.projectId, task.jobId)}>{task.title}</a><span>{task.state.replaceAll("_", " ")}</span></li>)}</ul>
-            : <p>No running or approval-waiting work is recorded.</p>}
+            <a href={taskHref(task.projectId, task.jobId)}>{task.title}</a><StateChip state={task.state} /></li>)}</ul>
+            : <EmptyState>No running or approval-waiting work is recorded.</EmptyState>}
       {data.activity.state === "ready" && data.activity.value.additionalActiveOmitted
         ? <p className="private-note">More running work may exist. Open Projects to inspect it.</p> : null}
       <a className="private-action-link" href="/projects">Open projects</a>
     </section>
 
-    <section className="private-panel" aria-labelledby="home-attention"><h2 id="home-attention">Needs attention</h2>
-      {data.attention.state === "loading" ? <p role="status">Loading saved attention items…</p>
+    <section className="private-panel" aria-labelledby="home-attention"><PanelHeading id="home-attention">Needs attention
+      {data.attention.state === "ready" ? <PrivateCount value={data.attention.value.items.length} /> : null}</PanelHeading>
+      {data.attention.state === "loading" ? <LoadingState>Loading saved attention items…</LoadingState>
         : data.attention.state === "unavailable" ? <Unavailable>Attention items are unavailable.</Unavailable>
           : data.attention.value.items.length ? <ul className="private-dashboard-list">{data.attention.value.items.slice(0, 5).map(item => <li key={item.task.jobId}>
             <a href={taskHref(item.task.projectId, item.task.jobId)}>{item.task.title}</a>
-            <span>{item.reasons.join(" · ").replaceAll("_", " ")}</span></li>)}</ul>
-            : <p>No matching task attention items were found in this checked page. This is not a fleet-wide all-clear.</p>}
+            <StateChip label={item.reasons.join(" · ").replaceAll("_", " ")} tone="warn" state="attention" /></li>)}</ul>
+            : <EmptyState>No matching task attention items were found in this checked page. This is not a fleet-wide all-clear.</EmptyState>}
       {data.attention.state === "ready" && (data.attention.value.items.length > 5 || data.attention.value.nextCursor)
         ? <p className="private-note">More attention items may be available.</p> : null}
       <a className="private-action-link" href="/needs-me">Open needs attention</a>
     </section>
 
-    <section className="private-panel" aria-labelledby="home-results"><h2 id="home-results">Recent results</h2>
-      {data.activity.state === "loading" ? <p role="status">Loading verified result records…</p>
+    <section className="private-panel" aria-labelledby="home-results"><PanelHeading id="home-results">Recent results
+      {data.activity.state === "ready" && data.activity.value.resultSource === "configured"
+        ? <PrivateCount value={data.activity.value.recentResults.length} /> : null}</PanelHeading>
+      {data.activity.state === "loading" ? <LoadingState>Loading verified result records…</LoadingState>
         : data.activity.state === "unavailable" || data.activity.value.resultSource !== "configured"
           ? <Unavailable>Verified result records are unavailable.</Unavailable>
           : data.activity.value.recentResults.length ? <ul className="private-dashboard-list">{data.activity.value.recentResults.slice(0, 5).map(({ task, artifact }) =>
             <li key={artifact.artifactId}><a href={taskResultHrefV1(task.projectId, task.jobId, artifact.artifactId)}>{task.title}</a>
               <span>{task.state === "succeeded" ? `Completed${task.qualityStatus === "accepted" ? " · Accepted" : ""} · ` : ""}{artifact.sizeBytes.toLocaleString()} bytes · <ConfiguredTimestamp value={artifact.receivedAt} prefix="Received" /></span></li>)}</ul>
-            : <p>No verified result records are available yet.</p>}
+            : <EmptyState>No verified result records are available yet.</EmptyState>}
       {data.activity.state === "ready" && data.activity.value.additionalResultsOmitted
         ? <p className="private-note">More recent results exist. Open the affected projects to inspect them.</p> : null}
     </section>
 
-    <section className="private-panel" aria-labelledby="home-workers"><h2 id="home-workers">Worker status</h2>
-      {data.connections.state === "loading" ? <p role="status">Loading saved worker signals…</p>
+    <section className="private-panel" aria-labelledby="home-workers"><PanelHeading id="home-workers">Worker status</PanelHeading>
+      {data.connections.state === "loading" ? <LoadingState>Loading saved worker signals…</LoadingState>
         : data.connections.state === "unavailable" ? <Unavailable>Worker status is unavailable.</Unavailable>
           : isLocalWorkerRead(data.connections.value)
             ? <><p>{data.connections.value.value.workers.length} configured local worker route{data.connections.value.value.workers.length === 1 ? "" : "s"}.</p>
               <ul className="private-dashboard-list">{data.connections.value.value.workers.map(worker => <li key={worker.kind}>
-                <span>{worker.kind}</span><span>{localWorkerStateLabel(worker)}</span></li>)}</ul>
+                {/* The chip carries only the raw state. An earlier version also
+                    appended "readiness <proof>", which produced the string
+                    "readiness not proven" — wording the adversarial owner test
+                    explicitly forbids on the dashboard, and worse copy than
+                    main's own localWorkerStateLabel sentence right beside it.
+                    Main's label is the canonical phrasing, so it is not restated
+                    in the chip. */}
+                <span>{worker.kind}</span><StateChip state={worker.state} tone={workerChipToneV1(worker)} />
+                <span>{localWorkerStateLabel(worker)}</span></li>)}</ul>
               <p className="private-note">Current assignment, capacity and resource usage are unknown here. Open Workers and the exact task before assigning work.</p></>
             : <><p>{data.connections.value.projection.summary.connectionCount} enrolled workers · {data.connections.value.projection.summary.currentSignalCount} current signals.</p>
               <p>{data.connections.value.projection.summary.staleSignalCount} stale · {data.connections.value.projection.summary.missingSignalCount} missing · {data.connections.value.projection.summary.attentionCount} need setup or review.</p>
@@ -117,12 +133,13 @@ export function HomeDashboard({ data }: { data: HomeDashboardState }) {
       <a className="private-action-link" href="/workers">Open workers</a>
     </section>
 
-    <section className="private-panel private-dashboard-projects" aria-labelledby="home-projects"><h2 id="home-projects">Projects</h2>
-      {data.projects.state === "loading" ? <p role="status">Loading saved projects…</p>
+    <section className="private-panel private-dashboard-projects" aria-labelledby="home-projects"><PanelHeading id="home-projects">Projects
+      {data.projects.state === "ready" ? <PrivateCount value={data.projects.value.projects.length} /> : null}</PanelHeading>
+      {data.projects.state === "loading" ? <LoadingState>Loading saved projects…</LoadingState>
         : data.projects.state === "unavailable" ? <Unavailable>Projects are unavailable.</Unavailable>
           : data.projects.value.projects.length ? <ul className="private-dashboard-list">{data.projects.value.projects.slice(0, 6).map(project => <li key={project.projectId}>
-            <span><a href={`/projects/${encodeURIComponent(project.projectId)}`}>{project.title}</a>{project.lifecycle === "active" && <> · <a href={`/projects/${encodeURIComponent(project.projectId)}/tasks#new-task`}>New task</a></>}</span><span>{project.lifecycle.replaceAll("_", " ")}</span></li>)}</ul>
-            : <p>No saved projects are visible with this access.</p>}
+            <span><a href={`/projects/${encodeURIComponent(project.projectId)}`}>{project.title}</a>{project.lifecycle === "active" && <> · <a href={`/projects/${encodeURIComponent(project.projectId)}/tasks#new-task`}>New task</a></>}</span><StateChip state={project.lifecycle} /></li>)}</ul>
+            : <EmptyState>No saved projects are visible with this access.</EmptyState>}
       {data.projects.state === "ready" && (data.projects.value.projects.length > 6 || data.projects.value.nextCursor)
         ? <p className="private-note">More projects are available in the full catalog.</p> : null}
       <a className="private-action-link" href="/projects">Open all projects</a>
