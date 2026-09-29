@@ -15,6 +15,7 @@ type MacLocalWorkerKindV1 = typeof MAC_LOCAL_THREE_AGENT_KINDS_V1[number];
 type OpenedDatabase = Readonly<{ client: DatabaseClient; close(): Promise<void> }>;
 type TaskApplication = Readonly<{
   operations: object;
+  projectEvents?: import("../../project-events/v1").ProjectEventReadSourceV1;
   isReady(): boolean;
   close(): Promise<void>;
   queueDelivery?: unknown;

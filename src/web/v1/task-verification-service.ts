@@ -156,6 +156,11 @@ export class WebTaskVerificationService {
     const guarded: DatabaseClient = { query: this.db.query.bind(this.db), transaction: this.db.transaction.bind(this.db),
       transactionWithPreCommitCheck: (work, check) => this.db.transactionWithPreCommitCheck(work, async () => { await check(); await staged.flush(check); await check(); }) };
     return new WebSessionAuthority(guarded, this.scope, this.clock, "task").authenticated(identity, async (tx, actor) => {
+      // Canonical write order: parent tenant before the completion-gate integrity row. Rows
+      // inserted after the gate take a tenant FK key-share; taking it only then deadlocks
+      // with task assignment, which holds the tenant FOR UPDATE before reading the gate.
+      const tenant = await tx.query("SELECT id FROM tenants WHERE id=$1 FOR KEY SHARE", [this.scope.tenantId]);
+      if (tenant.rows.length !== 1) throw new Error("verification_task_unavailable");
       const context = await this.context(tx, actor, projectId, jobId, draft.artifactId, draft.targetId, this.gate(tx, staged.checkpoints));
       actor.require("tasks.reviews.record", projectId, true, context.risk);
       const descriptor = context.descriptors.find(value => value.scenarioId === draft.scenarioId);

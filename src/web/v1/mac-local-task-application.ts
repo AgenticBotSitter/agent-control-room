@@ -5,6 +5,7 @@ import { WebTaskVerificationService } from "./task-verification-service";
 import { createTaskCoordinatorLifecycle, type TaskCoordinatorConfiguration, type TaskCoordinatorDatabase } from "./task-coordinator-lifecycle";
 import type { MacLocalCanonicalTaskOperationsV1 } from "./mac-local-web-process";
 import { validateTaskQualityKeys } from "./task-quality-coordinator";
+import { deriveProjectEventIntegrityKeyV1, ProjectEventStoreV1, type ProjectEventReadSourceV1 } from "../../project-events/v1";
 
 /**
  * The Mac-local counterpart to the hosted task application composition.
@@ -17,8 +18,9 @@ import { validateTaskQualityKeys } from "./task-quality-coordinator";
  */
 export type MacLocalTaskApplicationV1 = Readonly<{
   operations: MacLocalCanonicalTaskOperationsV1;
-  taskReadKeys?: Pick<NonNullable<MacLocalTaskApplicationInputV1["web"]["tasks"]>, "harnessIntegrityKey" | "results" | "reviews" | "ownerReviews" | "modelCatalog" | "manualVerificationScenarios">
+  taskReadKeys?: Pick<NonNullable<MacLocalTaskApplicationInputV1["web"]["tasks"]>, "harnessIntegrityKey" | "results" | "reviews" | "ownerReviews" | "modelCatalog" | "manualVerificationScenarios" | "usagePriceTable">
     & Pick<WebTaskKeys, "taskPlanIntegrityKey">;
+  projectEvents?: ProjectEventReadSourceV1;
   isReady(): boolean;
   close(): Promise<void>;
   queueDelivery?: ReturnType<typeof createTaskCoordinatorLifecycle>["queueDelivery"];
@@ -84,10 +86,13 @@ export async function createMacLocalTaskApplicationV1(input: MacLocalTaskApplica
     });
     return Object.freeze({
       operations,
+      ...(tasks?.harnessIntegrityKey ? { projectEvents: new ProjectEventStoreV1(web.database.client,
+        deriveProjectEventIntegrityKeyV1(tasks.harnessIntegrityKey), () => new Date(clock()).toISOString()) } : {}),
       ...(tasks ? { taskReadKeys: { harnessIntegrityKey: tasks.harnessIntegrityKey,
         taskPlanIntegrityKey: Uint8Array.from(coordinator.planning.integrityKey),
         results: tasks.results, reviews: tasks.reviews, ownerReviews: tasks.ownerReviews,
-        modelCatalog: tasks.modelCatalog, manualVerificationScenarios: tasks.manualVerificationScenarios } } : {}),
+        modelCatalog: tasks.modelCatalog, manualVerificationScenarios: tasks.manualVerificationScenarios,
+        usagePriceTable: tasks.usagePriceTable } } : {}),
       isReady: lifecycle.isReady.bind(lifecycle),
       close: lifecycle.close.bind(lifecycle),
       ...(lifecycle.queueDelivery ? { queueDelivery: lifecycle.queueDelivery } : {}),

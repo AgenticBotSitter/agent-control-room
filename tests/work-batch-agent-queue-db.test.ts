@@ -154,9 +154,9 @@ test("assignment changes append revisions while the effective projection keeps o
   }), /work batch queue admission rejected/u);
 });
 
-test("0095 down migration refuses either queue metadata table and removes every owned object when empty", async t => {
+test("0104 down migration refuses either queue metadata table and removes every owned object when empty", async t => {
   const populated = await queueFixture(); t.after(() => void populated.db.close());
-  const down = await readFile("db/down/0095_work_batch_agent_queue.sql", "utf8");
+  const down = await readFile("db/down/0104_work_batch_agent_queue.sql", "utf8");
   assert.match(down, /^BEGIN;\nLOCK TABLE work_batch_items, work_batch_agent_queue_heads, work_batch_queue_admissions IN ACCESS EXCLUSIVE MODE;/u);
   await assert.rejects(populated.db.exec(down), /down migration refused/u);
   await populated.db.exec("ROLLBACK");

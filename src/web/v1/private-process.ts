@@ -3,6 +3,7 @@ import { createAccessKeyCache, type AccessKeyLoader } from "./access-key-cache";
 import { captureGatewayAssertionProviderProfileV1, captureWebOrigins, cloudflareAccessGatewayAssertionProfileV1,
   createAccessVerifier, requireSameOrigin, WebAccessError, type GatewayAssertionProviderProfileV1 } from "./access-verifier";
 import { privateResponseHeaders, webFailure, readBoundedJson } from "./http-common";
+import { applyReadValidator, readValidatorScope } from "./private-read-validator";
 import { createProjectHttpHandler } from "./project-http";
 import { WebProjectService } from "./project-service";
 import { WebIdeaProjectLifecycleOperation } from "./idea-project-lifecycle-operation";
@@ -49,6 +50,10 @@ import { createInstallationPlanViewV1 } from "../../installer/v1/installation-pl
 import { WorkBatchOwnerServiceV1, type WorkBatchQueueAdmissionAuthorityV1,
   type WorkBatchQueueCatalogV1 } from "../../work-intake/v1";
 import { createWorkBatchOwnerHttpHandlerV1 } from "./work-batch-owner-http";
+import { encodeProjectEventCursorV1, projectEventSseResponseV1, type ProjectEventReadSourceV1 } from "../../project-events/v1";
+import { ProjectActivityServiceV1 } from "./project-activity-service";
+import { SessionWatchServiceV1 } from "./session-watch-service";
+import { sessionWatchIdSchema } from "./session-watch-wire";
 
 export interface PrivateWebProcessOptions {
   origin: string; issuer: string; audience: string; tenantId: string; workspaceId: string;
@@ -126,6 +131,8 @@ export interface PrivateWebProcessOptions {
    * additionally require an Idempotency-Key header.
    */
   coordination?: { store: ProjectCoordinationCanonicalStoreAdapter };
+  /** Existing append-only projection exposed through a read-only interface. */
+  projectEvents?: ProjectEventReadSourceV1;
   clock?: () => number;
   /** Tests may shorten the production drain ceiling; never extend it. */
   drainMs?: number;
@@ -258,11 +265,13 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
   const revisions = options.revisions ? Object.freeze({ tenantId: options.tenantId, workspaceId: options.workspaceId,
     plan: options.revisions.plan.bind(options.revisions) }) : undefined;
   if (options.assignment && (options.assignment.tenantId !== options.tenantId || options.assignment.workspaceId !== options.workspaceId
-    || [options.assignment.assign, options.assignment.expire, options.assignment.options, options.assignment.projectOptions]
+    || [options.assignment.assign, options.assignment.expire, options.assignment.revoke,
+      options.assignment.options, options.assignment.projectOptions]
       .some(method => typeof method !== "function")))
     throw new Error("invalid_private_app_config");
   const assignment = options.assignment ? Object.freeze({ tenantId: options.tenantId, workspaceId: options.workspaceId,
     assign: options.assignment.assign.bind(options.assignment), expire: options.assignment.expire.bind(options.assignment),
+    revoke: options.assignment.revoke.bind(options.assignment),
     options: options.assignment.options.bind(options.assignment), projectOptions: options.assignment.projectOptions.bind(options.assignment) }) : undefined;
   const drainMs = options.drainMs ?? 30_000;
   if (options.approvals && (options.approvals.tenantId !== options.tenantId || options.approvals.workspaceId !== options.workspaceId
@@ -291,6 +300,8 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
   const workBatches = options.workBatches ? new WorkBatchOwnerServiceV1(options.database.client, tasks,
     { tenantId: options.tenantId, workspaceId: options.workspaceId }, options.workBatches.integrityKey, clock,
     options.workBatches.queueCatalog, options.workBatches.queueAdmissionAuthority) : undefined;
+  const sessionWatch = new SessionWatchServiceV1(options.database.client,
+    { tenantId: options.tenantId, workspaceId: options.workspaceId }, options.tasks?.harnessIntegrityKey, clock);
   // This is a task-planning bridge only. It is deliberately composed from the
   // same private web database and ordinary task service, not from a provider
   // runtime or a second Idea Lab worker system.
@@ -321,6 +332,8 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
         store: options.coordination.store,
       })
     : undefined;
+  const projectActivity = new ProjectActivityServiceV1(options.database.client,
+    { tenantId: options.tenantId, workspaceId: options.workspaceId }, options.projectEvents, clock);
   // Shared in-flight map so simultaneous same-key POSTs coalesce onto one
   // engine invocation. Perf-only: it is not durable replay (see
   // createCoordinationHttpHandler docs). One instance per process.
@@ -339,6 +352,36 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
   let closePromise: Promise<void> | undefined;
   let force!: () => void;
   const forced = new Promise<Response>(resolve => { force = () => resolve(webFailure(new Error())); });
+  // Records the verified session digest for the response a request is about to
+  // produce. It is keyed by the `Request` object rather than held in one shared
+  // variable: this process serves many requests concurrently, and a single shared
+  // field would let one request's scope be read by another request's response.
+  // A `WeakMap` also means a discarded request releases its entry immediately,
+  // so a scope can never outlive the request that was verified for it.
+  const validatedScopes = new WeakMap<Request, string>();
+
+    /**
+     * Adds a per-identity ETag to an authorized JSON read and answers a matching
+     * conditional request with 304.
+     *
+     * This runs strictly *after* `dispatch` has verified the identity, checked
+     * project authority and performed the read, so a 304 never skips
+     * authorization and never skips the database round trip. What it saves is
+     * the response body, its serialisation and its transfer.
+     *
+     * `cache-control: no-store` is untouched: the private response policy is
+     * applied by the transport after this returns, and this layer only ever
+     * adds an `etag` header. The scope digest includes the verified session's
+     * `tokenDigest`, so a validator can never match across two sessions and
+     * cannot survive a sign-out.
+     */
+    async function conditionalRead(request: Request, response: Response): Promise<Response> {
+      const scope = validatedScopes.get(request);
+      validatedScopes.delete(request);
+      if (scope === undefined || response.status !== 200) return response;
+      try { return (await applyReadValidator(request, response, scope, privateResponseHeaders)).response; }
+      catch { return response; }
+    }
 
     async function dispatch(request: Request, render: () => Promise<Response> | Response): Promise<Response> {
       try {
@@ -351,6 +394,12 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
         const trust = { ...await keys.get(), audience: site.audience };
         const identity = createAccessVerifier(trust, gatewayAssertionProfile)(request, clock());
         if (url.pathname.startsWith("/api/")) {
+          // Bind the validator scope to the identity that was just verified for
+          // this exact request. It is keyed by the request, so a concurrent
+          // request can never read or overwrite it, and `conditionalRead`
+          // consumes it whatever the outcome.
+          try { validatedScopes.set(request, readValidatorScope(identity.tokenDigest, request.method, url.pathname, url.search)); }
+          catch { validatedScopes.delete(request); }
           if (url.pathname === "/api/v1/product-configuration") {
             if (request.method !== "GET" || url.search) throw new WebAccessError("invalid_request");
             if (!productConfiguration) throw new WebAccessError("not_found");
@@ -643,6 +692,12 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
             if (request.method !== "GET" || url.search) throw new WebAccessError("invalid_request");
             return Response.json(await tasks.home(identity), { headers: privateResponseHeaders });
           }
+          if (url.pathname === "/api/v1/session-watch") {
+            if (request.method !== "GET" || [...url.searchParams.keys()].some(key => key !== "after")
+              || url.searchParams.getAll("after").length > 1) throw new WebAccessError("invalid_request");
+            return Response.json(await sessionWatch.read(identity, url.searchParams.get("after") ?? undefined),
+              { headers: privateResponseHeaders });
+          }
           const projectSchedules = /^\/api\/v1\/projects\/([^/]+)\/schedules$/.exec(url.pathname);
           if (projectSchedules) {
             if (request.method !== "GET" || url.search) throw new WebAccessError("invalid_request");
@@ -700,16 +755,27 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
             if (request.method !== "GET" || url.search) throw new WebAccessError("invalid_request");
             return Response.json(await connections.read(identity), { headers: privateResponseHeaders });
           }
-          const stream = /^\/api\/v1\/projects\/([^/]+)\/events$/.exec(url.pathname);
-          if (stream && request.method === "GET") {
-            if (url.search) throw new WebAccessError("invalid_request");
+          const activity = /^\/api\/v1\/projects\/([^/]+)\/(activity|events)$/.exec(url.pathname);
+          if (activity) {
+            if (request.method !== "GET" || [...url.searchParams.keys()].some(key =>
+              ![activity[2] === "activity" ? "before" : "after", "limit"].includes(key))
+              || ["before", "after", "limit"].some(key => url.searchParams.getAll(key).length > 1))
+              throw new WebAccessError("invalid_request");
             let id: string;
-            try { id = decodeURIComponent(stream[1]); } catch { throw new WebAccessError("invalid_request"); }
-            const project = await service.getView(identity, id);
-            // A finite, current-state snapshot, not a long-lived authorization or a replayable job-event history.
-            return new Response(`event: project-snapshot\ndata: ${JSON.stringify({ project })}\n\n`, {
-              headers: { ...privateResponseHeaders, "content-type": "text/event-stream", "x-accel-buffering": "no" },
-            });
+            try { id = decodeURIComponent(activity[1]); } catch { throw new WebAccessError("invalid_request"); }
+            const rawLimit = url.searchParams.get("limit") ?? "50";
+            if (!/^[1-9][0-9]{0,2}$/.test(rawLimit) || Number(rawLimit) > 100) throw new WebAccessError("invalid_request");
+            if (activity[2] === "activity") {
+              const before = url.searchParams.has("before") ? url.searchParams.get("before")! : undefined;
+              const page = await projectActivity.read(identity, id, before !== undefined ? { beforeCursor: before } : {}, Number(rawLimit));
+              const olderCursor = page.truncatedBefore
+                ? before ? page.nextCursor : page.events[0] ? encodeProjectEventCursorV1(page.events[0]) : null : null;
+              return Response.json({ page, olderCursor }, { headers: privateResponseHeaders });
+            }
+            const headerCursor = request.headers.get("last-event-id")?.trim() || undefined;
+            const queryCursor = url.searchParams.has("after") ? url.searchParams.get("after")! : undefined;
+            return projectEventSseResponseV1(await projectActivity.read(identity, id,
+              headerCursor !== undefined || queryCursor !== undefined ? { afterCursor: headerCursor ?? queryCursor! } : {}, Number(rawLimit)));
           }
           if (coordination && /^\/api\/v1\/projects\/[^/]+\/coordination(?:\/[^/]+)?$/.test(url.pathname)) {
             return await createCoordinationHttpHandler({
@@ -762,7 +828,8 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
           if (url.search) throw new WebAccessError("invalid_request");
           let id: string;
           try { id = decodeURIComponent(taskSummaryPage[1]); } catch { throw new WebAccessError("invalid_request"); }
-          await tasks.authorize(identity, id);
+          if (taskSummaryPage[2] === "activity") await projectActivity.authorize(identity, id);
+          else await tasks.authorize(identity, id);
         } else if (projectUtilityPage) {
           if (url.search) throw new WebAccessError("invalid_request");
           let id: string;
@@ -806,6 +873,11 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
         } else if (url.pathname === "/needs-me") {
           if (url.search) throw new WebAccessError("invalid_request");
           await tasks.authorizeAttentionPage(identity);
+        } else if (url.pathname === "/session-watch") {
+          if ([...url.searchParams.keys()].some(key => key !== "after") || url.searchParams.getAll("after").length > 1
+            || url.searchParams.has("after") && !sessionWatchIdSchema.safeParse(url.searchParams.get("after")).success)
+            throw new WebAccessError("invalid_request");
+          await sessionWatch.authorize(identity);
         } else if (url.pathname === "/connections" || url.pathname === "/workers") {
           if (url.search) throw new WebAccessError("invalid_request");
           await connections.authorize(identity);
@@ -834,7 +906,10 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
     async handle(request: Request, render: () => Promise<Response> | Response): Promise<Response> {
       if (closing || active >= 64) return webFailure(new Error());
       active++;
-      try { return await Promise.race([dispatch(request, render), forced]); }
+      try {
+        const response = await Promise.race([dispatch(request, render), forced]);
+        return await conditionalRead(request, response);
+      }
       finally { active--; if (closing && active === 0) drained?.(); }
     },
     close(): Promise<void> {

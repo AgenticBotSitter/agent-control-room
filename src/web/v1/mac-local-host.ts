@@ -18,7 +18,7 @@ import { captureWorkBatchQueueCatalogV1, createWorkBatchQueueSelectionAuthorityV
 
 type OpenedDatabase = Readonly<{ client: DatabaseClient; close(): Promise<void> }>;
 type LocalService = Readonly<{ start(): Promise<void>; close(): Promise<void>; isReady(): boolean }>;
-type HostedTaskApplication = Pick<MacLocalTaskApplicationV1, "operations" | "taskReadKeys" | "isReady" | "close" | "queueDelivery" | "queueRecovery" | "workBatchAuthority">;
+type HostedTaskApplication = Pick<MacLocalTaskApplicationV1, "operations" | "taskReadKeys" | "projectEvents" | "isReady" | "close" | "queueDelivery" | "queueRecovery" | "workBatchAuthority">;
 type OwnedQueueWorker = Readonly<{ close(): Promise<void>; status(): { accepting: boolean } }>;
 
 /** The protected enablement is the only Mac-local source of exact worker and
@@ -78,6 +78,7 @@ export function createMacLocalWebServiceFromConfigurationV1(input: Readonly<{
     database: input.database,
     ...(taskApplication ? { ...taskApplication.operations } : input.operations ? { ...input.operations } : {}),
     ...(taskApplication?.taskReadKeys ? { taskReadKeys: taskApplication.taskReadKeys } : {}),
+    ...(taskApplication?.projectEvents ? { projectEvents: taskApplication.projectEvents } : {}),
     ...(input.workerReadiness ? { workerReadiness: input.workerReadiness } : {}),
     taskWorkersStarted: Boolean(taskApplication),
     ...(input.workBatchIntegrityKey ? { workBatchIntegrityKey: input.workBatchIntegrityKey } : {}),

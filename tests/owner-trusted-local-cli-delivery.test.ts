@@ -42,6 +42,23 @@ test("one local CLI delivery publishes once and restart replay does not execute 
   assert.equal(replay.state, "already_delivered"); assert.equal(state.executions, 1); assert.equal(state.publishes, 1);
 });
 
+test("a measured local CLI result carries exact timing and usage through publication", async t => {
+  const f = await nativeTaskFixture(); t.after(f.close); const state = { checks: 0, executions: 0, publishes: 0, failures: 0 };
+  let published: unknown;
+  const value = { ...config(f.db, state),
+    async execute() { state.executions++; return { kind: "completed" as const, text: "measured local result",
+      startedAt: at(2001), finishedAt: at(2004), usage: { inputTokens: 7, outputTokens: 5, totalTokens: 12 } }; },
+    async publish(input: unknown) { state.publishes++; published = input; },
+  };
+  const result = await deliverOwnerTrustedLocalCliTaskV1(value, packet(), { kind: "local", workerId: worker.workerId }, at(2000));
+  assert.equal(result.state, "published");
+  assert.deepEqual(published && typeof published === "object" ? {
+    startedAt: (published as { startedAt: string }).startedAt,
+    finishedAt: (published as { finishedAt: string }).finishedAt,
+    usage: (published as { usage: unknown }).usage,
+  } : published, { startedAt: at(2001), finishedAt: at(2004), usage: { inputTokens: 7, outputTokens: 5, totalTokens: 12 } });
+});
+
 test("a post-receipt revocation cannot reach a local CLI and its replay stays fenced", async t => {
   const f = await nativeTaskFixture(); t.after(f.close); const state = { checks: 0, executions: 0, publishes: 0, failures: 0, revoke: false };
   const value = config(f.db, state); value.assertCurrent = async () => { state.checks++; if (state.checks === 2) throw new Error("lease_revoked"); };

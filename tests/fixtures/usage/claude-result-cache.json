@@ -1,0 +1,1 @@
+{"type":"result","subtype":"success","is_error":false,"session_id":"00000000-0000-4000-8000-00000000ac01","result":"fixture result with cache","usage":{"input_tokens":80,"output_tokens":20,"cache_creation_input_tokens":50000,"cache_read_input_tokens":150000}}

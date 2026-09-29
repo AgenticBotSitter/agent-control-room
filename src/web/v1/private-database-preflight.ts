@@ -15,9 +15,10 @@ export async function verifyPrivateIdeaAdapter(db: DatabaseClient, scope: { tena
   if (rows.length !== 1 || rows[0].valid !== true) throw new Error("private_idea_adapter_unavailable");
 }
 
-// Generated from public migrations 0001-0095, including generic external-content
-// migrations 0025/0026. Catalog query below; not a mutable database marker.
-export const privateWebSchemaDigest = "3b703206de9c4344e3076db80aa901c25213df0c74d97e7dfd08be699f8c085b";
+// Generated from public migrations 0001-0104 (filename order: ...0093,0100,0101,0102,0104),
+// including generic external-content migrations 0025/0026. Catalog query below;
+// not a mutable database marker.
+export const privateWebSchemaDigest = "PENDING_LIVE_RECOMPUTE";
 export const privateWebReadTables = ["control_identities", "control_role_grants", "workspaces", "control_web_sessions",
   "tenants", "control_idempotency",
   "control_schedules", "control_schedule_occurrences",
@@ -25,12 +26,13 @@ export const privateWebReadTables = ["control_identities", "control_role_grants"
   "control_idea_sessions", "control_idea_contributions", "control_idea_syntheses", "control_idea_decisions", "control_idea_bot_run_events",
   "control_idea_canonical_task_sessions", "control_idea_canonical_task_links",
   "adapter_registry", "projects", "control_manual_project_heads", "control_web_project_commands", "audit_events",
-  "control_audit_chain_heads", "control_project_lifecycle_events", "control_policy_decisions", "control_connection_registry_heads",
+  "control_audit_chain_heads", "work_intake_tenant_binding", "control_project_lifecycle_events", "control_policy_decisions", "control_connection_registry_heads",
   "control_connection_enrollments", "control_connection_authenticated_telemetry_receipts", "control_requests", "control_workflows",
   "control_jobs", "control_attempts", "control_leases", "control_task_execution_plans", "control_harness_runs", "control_harness_run_events", "control_web_task_commands",
   "control_artifact_manifests", "control_native_artifact_receipts", "control_completion_gate_records", "control_completion_gate_integrity", "control_web_task_review_commands", "control_native_review_plans",
   "control_project_coordinator_heads", "control_project_coordination_proposals", "control_project_delegation_policies",
   "control_project_coordination_operation_receipts", "control_project_coordination_operation_jobs",
+  "control_project_event_stream_heads", "control_project_events",
   "control_work_resources", "control_attempt_resource_admissions", "control_attempt_resource_scopes",
   "control_task_model_selections", "control_task_declared_scopes", "control_assignment_lease_scopes",
   "control_durable_result_write_reservations", "work_batches", "work_batch_revisions", "work_batch_items",
@@ -55,7 +57,7 @@ const updates: Record<string, readonly string[]> = {
   control_identities: ["web_lock"], control_role_grants: ["web_lock"], workspaces: ["web_lock"],
   control_connection_registry_heads: ["web_lock"], control_web_sessions: ["revoked_at"],
   control_completion_gate_integrity: ["web_lock", "revision", "record_count", "state_digest", "state_auth_tag"],
-  control_completion_gate_records: ["web_lock"],
+  control_completion_gate_records: ["web_lock"], control_jobs: ["web_lock"],
   projects: ["domain_state", "source_version", "normalized_state", "updated_at", "payload", "observed_at"],
   control_manual_project_heads: ["lifecycle", "version", "updated_at"],
   control_audit_chain_heads: ["head_hash", "event_count", "updated_at"],
@@ -74,7 +76,7 @@ const fail = () => { throw new Error("private_database_preflight_failed"); };
 const ideaCreationReads = ["workspaces", "control_identities", "control_role_grants", "control_web_sessions",
   "control_idea_sessions", "control_idea_bot_run_events", "control_idea_contributions", "control_idea_syntheses",
   "control_idea_decisions", "control_idea_owner_authorizations", "control_policy_decisions", "projects",
-  "control_project_lifecycle_events", "audit_events", "control_audit_chain_heads"];
+  "control_project_lifecycle_events", "audit_events", "control_audit_chain_heads", "work_intake_tenant_binding"];
 const ideaCreationInserts = new Set(["control_web_sessions", "control_idea_sessions", "control_idea_bot_run_events", "audit_events", "control_audit_chain_heads",
   "control_policy_decisions", "control_idea_owner_authorizations", "control_idea_decisions", "projects", "control_project_lifecycle_events", "control_idea_syntheses"]);
 const ideaCreationUpdates: Record<string, readonly string[]> = { workspaces: ["web_lock"], control_identities: ["web_lock"],
@@ -89,7 +91,7 @@ const newsIngestionUpdates: Record<string, readonly string[]> = { workspaces: ["
 const newsCoordinatorReads = ["tenants", "workspaces", "projects", "control_manual_project_heads", "control_identities", "control_role_grants",
   "control_web_sessions", "control_requests", "control_workflows", "control_jobs", "control_attempts", "control_leases", "control_nodes",
   "control_job_dependencies", "control_transition_events", "control_outbox", "control_approvals", "control_effect_intents",
-  "control_approval_consumptions", "control_policy_decisions", "control_news_feed_plans", "control_news_source_settings", "audit_events", "control_audit_chain_heads"];
+  "control_approval_consumptions", "control_policy_decisions", "control_news_feed_plans", "control_news_source_settings", "audit_events", "control_audit_chain_heads", "work_intake_tenant_binding"];
 const newsCoordinatorInserts = new Set(["control_web_sessions", "control_requests", "control_workflows", "control_jobs", "control_attempts",
   "control_leases", "control_transition_events", "control_outbox", "control_approvals", "control_effect_intents", "control_approval_consumptions",
   "control_policy_decisions", "control_news_feed_plans", "audit_events", "control_audit_chain_heads"]);
@@ -104,7 +106,7 @@ const coordinatorReads = ["tenants", "workspaces", "control_identities", "contro
   "control_attempts", "control_leases", "control_task_execution_plans", "control_nodes", "control_node_keys",
   "control_node_fleet_current", "control_node_fleet_signals", "control_job_dependencies", "control_transition_events", "control_outbox",
   "control_installation_transition_revisions",
-  "audit_events", "control_audit_chain_heads", "control_completion_gate_integrity", "control_completion_gate_records", "control_native_approval_packets", "control_native_task_queue", "control_native_delivery_preparations", "control_native_delivery_envelopes", "control_native_transmission_intents", "control_native_delivery_receipts",
+  "audit_events", "control_audit_chain_heads", "work_intake_tenant_binding", "control_completion_gate_integrity", "control_completion_gate_records", "control_native_approval_packets", "control_native_task_queue", "control_native_delivery_preparations", "control_native_delivery_envelopes", "control_native_transmission_intents", "control_native_delivery_receipts",
   "control_codex_delivery_envelopes", "control_codex_transmission_intents", "control_codex_delivery_receipts", "control_codex_activation_transmission_intents", "control_worker_delivery_receipts",
   "control_codex_result_publications",
   "control_harness_runs", "control_harness_run_events", "control_native_review_plans", "control_artifact_manifests", "control_native_artifact_receipts",
@@ -148,7 +150,7 @@ const resultReads = ["workspaces", "control_identities", "control_role_grants", 
   "control_jobs", "control_workflows", "control_requests", "control_task_execution_plans",
   "control_harness_runs", "control_harness_run_events", "control_codex_result_publications", "control_native_review_plans",
   "control_artifact_manifests", "control_native_artifact_receipts", "control_completion_gate_records",
-  "control_completion_gate_integrity", "audit_events", "control_audit_chain_heads", "control_idea_sessions",
+  "control_completion_gate_integrity", "audit_events", "control_audit_chain_heads", "work_intake_tenant_binding", "control_idea_sessions",
   "control_idea_canonical_task_links", "control_idea_contributions", "control_idea_decisions"];
 const resultInserts = new Set(["control_native_review_plans", "control_completion_gate_records", "audit_events", "control_audit_chain_heads",
   "control_idea_contributions"]);
@@ -166,7 +168,7 @@ const evidenceReads = ["workspaces", "control_identities", "control_role_grants"
   "control_task_execution_plans", "control_codex_activation_transmission_intents", "control_codex_result_publications",
   "control_artifact_manifests", "control_native_artifact_receipts", "control_native_result_write_reservations",
   "control_durable_result_write_reservations",
-  "audit_events", "control_audit_chain_heads"];
+  "audit_events", "control_audit_chain_heads", "work_intake_tenant_binding"];
 const evidenceInserts = new Set(["control_harness_runs", "control_harness_run_events", "control_codex_result_publications", "control_artifact_manifests",
   "control_native_artifact_receipts", "control_native_result_write_reservations",
   "control_worktree_change_audit_plans", "control_worktree_change_audit_records",
@@ -194,7 +196,7 @@ const publisherReads = ["workspaces", "control_identities", "control_role_grants
   "control_task_model_selections",
   "control_harness_runs", "control_harness_run_events", "control_artifact_manifests", "control_native_artifact_receipts",
   "control_durable_result_write_reservations", "control_native_review_plans",
-  "audit_events", "control_audit_chain_heads"];
+  "audit_events", "control_audit_chain_heads", "work_intake_tenant_binding"];
 const publisherInserts = new Set(["control_harness_runs", "control_harness_run_events", "control_artifact_manifests", "control_native_artifact_receipts",
   "control_durable_result_write_reservations", "control_native_review_plans",
   "audit_events", "control_audit_chain_heads"]);

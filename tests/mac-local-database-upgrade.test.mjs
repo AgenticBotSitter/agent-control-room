@@ -9,12 +9,13 @@ import { captureProvisionedMacLocalConfigurationV1,
 import { captureMacUpgradeSnapshotV1 } from "../scripts/mac-local/database-upgrade-snapshot.mjs";
 import { checkedPostgresScramVerifierV1, postgresScramVerifierV1 } from
   "../scripts/mac-local/database-upgrade-scram.mjs";
-import { applyMacGrantDiffV1, desiredMacGrantsV1, diffMacGrantsV1, readDesiredMacGrantsV1 } from
+import { applyMacGrantDiffV1, desiredMacGrantsV1, diffMacGrantsV1, macRolePlan, readDesiredMacGrantsV1 } from
   "../scripts/mac-local/database-upgrade-grants.mjs";
 import { MAC_LOCAL_DATABASE_ROLES_V1, captureMacLocalDatabaseRolesV1 } from
   "../src/web/v1/mac-local-database-roles.ts";
 import { applyMigrations } from "../deploy/postgres/apply-migrations.mjs";
-import { sanitizedMacDatabaseUpgradeFailureV1 } from "../scripts/mac-local/database-upgrade-remote.mjs";
+import { planMacDatabaseUpgradeSnapshotV1, sanitizedMacDatabaseUpgradeFailureV1 } from
+  "../scripts/mac-local/database-upgrade-remote.mjs";
 
 test("upgrade failure reports only the bounded stage, SQLSTATE and error class", () => {
   const secret = "SCRAM-SHA-256$secret-material";
@@ -100,6 +101,29 @@ test("grant convergence admits only the pinned intake identity function boundary
   await assert.rejects(applyMacGrantDiffV1(client, { extra: [],
     missing: ["control_room_private_web|function|public.other_function()||EXECUTE|plain"] }),
   /upgrade_unexpected_function_grant/u);
+});
+
+test("a database already at main plans only the owner-approval migration", async () => {
+  // main's applied ledger is this ledger without the owner-approval migration,
+  // numbered in filename order exactly as main's generator numbered it.
+  const ledger = JSON.parse(await readFile("deploy/postgres/migration-ledger.json", "utf8"));
+  const migrations = ledger.entries.filter(entry => entry.kind === "migrate");
+  const ownerApproval = migrations.filter(entry => entry.file.endsWith("_work_batch_owner_approval.sql"));
+  assert.equal(ownerApproval.length, 1);
+  assert.equal(ownerApproval[0].file, migrations.at(-1).file);
+  const applied = migrations.filter(entry => entry !== ownerApproval[0]).map((entry, index) =>
+    ({ filename: entry.file, digest: `sha256:${entry.sha256}`, ledger_order: index + 1 }));
+  assert.deepEqual(applied.at(-1), { filename: migrations.at(-2).file,
+    digest: applied.at(-1).digest, ledger_order: migrations.length - 1 });
+  const roles = [...Object.keys(macRolePlan), ...Object.values(macRolePlan)].map(rolname => ({ rolname,
+    rolcanlogin: Object.hasOwn(macRolePlan, rolname), rolinherit: true, rolsuper: false, rolcreatedb: false,
+    rolcreaterole: false, rolreplication: false, rolbypassrls: false }));
+  const memberships = Object.entries(macRolePlan).map(([member, parent]) =>
+    ({ member, parent, admin_option: false, inherit_option: true, set_option: true }));
+  const plan = await planMacDatabaseUpgradeSnapshotV1({ applied, roles, memberships, defaultAcl: 0, grants: [],
+    queue: { schemaExists: true, verified: true } });
+  assert.deepEqual(plan.pendingMigrations, [ownerApproval[0].file]);
+  assert.ok(ownerApproval[0].order > migrations.length - 1);
 });
 
 test("offline plan rejects a mismatched main commit and malformed snapshot", async t => {

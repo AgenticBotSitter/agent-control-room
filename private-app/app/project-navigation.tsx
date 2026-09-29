@@ -20,11 +20,14 @@ export function ProjectNavigation({ projectId, current, presentation }: {
   return <nav className="private-tabs" aria-label="Project pages">
     {link(base, "Overview", "overview")}
     {runtime.mode === "local" ? <>
+      {runtime.status?.projectSections.includes("inbox") && link(`${base}/inbox`, "Inbox", "inbox")}
       {link(`${base}/tasks`, "Tasks", "work")}
       {runtime.status?.projectSections.includes("pipelines") && link(`${base}/pipelines`, "Pipelines", "pipelines")}
+      {runtime.status?.projectSections.includes("agents") && link(`${base}/agents`, "Agents", "agents")}
       {runtime.status?.projectSections.includes("reviews") && link(`${base}/reviews`, "Reviews", "reviews")}
       {runtime.status?.projectSections.includes("activity") && link(`${base}/activity`, "Activity", "activity")}
       {runtime.status?.projectSections.includes("files") && link(`${base}/files`, "Files", "files")}
+      {runtime.status?.projectSections.includes("settings") && link(`${base}/settings`, "Settings", "settings")}
     </> : runtime.mode === "checking" ? link(`${base}/tasks`, "Tasks", "work") : <>
     {link(`${base}/inbox`, "Inbox", "inbox")}
     {link(`${base}/tasks`, "Tasks", "work")}

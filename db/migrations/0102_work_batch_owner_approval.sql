@@ -1,8 +1,11 @@
 -- Owner-only batch revision and decision records. Approval materializes only
 -- ordinary proposed tasks; this migration grants no queue or execution access.
 
+SET LOCAL lock_timeout = '1s';
+SET LOCAL statement_timeout = '5s';
+
 ALTER TABLE work_batches
-  ADD COLUMN auth_material_version integer NOT NULL DEFAULT 1 CHECK (auth_material_version=1),
+  ADD COLUMN auth_material_version bigint NOT NULL DEFAULT 1 CHECK (auth_material_version=1),
   ADD COLUMN decision_digest text CHECK (decision_digest IS NULL OR decision_digest ~ '^sha256:[a-f0-9]{64}$'),
   ADD COLUMN decision_auth_tag text CHECK (decision_auth_tag IS NULL OR decision_auth_tag ~ '^hmac-sha256:[a-f0-9]{64}$');
 
@@ -13,7 +16,7 @@ CREATE TABLE work_batch_items (
   batch_revision bigint NOT NULL CHECK (batch_revision >= 1),
   project_id text NOT NULL,
   local_id text NOT NULL CHECK (local_id ~ '^[a-z0-9][a-z0-9._-]{0,63}$'),
-  ordinal integer NOT NULL CHECK (ordinal BETWEEN 0 AND 31),
+  ordinal bigint NOT NULL CHECK (ordinal BETWEEN 0 AND 31),
   role text NOT NULL CHECK (role IN ('builder','checker','validator')),
   required_capability text NOT NULL,
   depends_on_local_ids text[] NOT NULL,
@@ -24,7 +27,7 @@ CREATE TABLE work_batch_items (
   decision_state text NOT NULL CHECK (decision_state IN ('approved','rejected')),
   decision_reason_code text,
   job_id text,
-  job_attempt_count integer NOT NULL DEFAULT 0 CHECK (job_attempt_count >= 0),
+  job_attempt_count bigint NOT NULL DEFAULT 0 CHECK (job_attempt_count >= 0),
   item_digest text NOT NULL CHECK (item_digest ~ '^sha256:[a-f0-9]{64}$'),
   auth_tag text NOT NULL CHECK (auth_tag ~ '^hmac-sha256:[a-f0-9]{64}$'),
   created_at timestamptz NOT NULL,
@@ -65,6 +68,40 @@ CREATE TRIGGER work_batch_items_append_only BEFORE UPDATE OR DELETE ON public.wo
 CREATE TRIGGER work_batch_items_truncate_guard BEFORE TRUNCATE ON public.work_batch_items
   FOR EACH STATEMENT EXECUTE FUNCTION public.reject_append_only_mutation();
 
+-- Items carry the batch's proposal content. Confine the shared intake login to
+-- items of batches it can already see (bound tenant, registered proposer), as
+-- 0093 confines the batches themselves. Every other role keeps its grants.
+ALTER TABLE work_batch_items ENABLE ROW LEVEL SECURITY;
+CREATE POLICY work_batch_items_existing_access ON work_batch_items
+  AS PERMISSIVE FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY work_batch_items_work_intake_scope ON work_batch_items
+  AS RESTRICTIVE FOR ALL
+  USING (NOT public.is_work_intake_session() OR (
+    work_batch_items.tenant_id=(SELECT b.tenant_id FROM public.work_intake_tenant_binding b)
+    AND EXISTS (
+    SELECT 1 FROM public.work_batches w
+    WHERE w.tenant_id=work_batch_items.tenant_id AND w.id=work_batch_items.batch_id)))
+  WITH CHECK (NOT public.is_work_intake_session() OR (
+    work_batch_items.tenant_id=(SELECT b.tenant_id FROM public.work_intake_tenant_binding b)
+    AND EXISTS (
+    SELECT 1 FROM public.work_batches w
+    WHERE w.tenant_id=work_batch_items.tenant_id AND w.id=work_batch_items.batch_id)));
+
+-- Owner revisions are edited by a human owner, so 0093's read scope hid them
+-- from the intake login and its status/list failed closed after any revision.
+-- Also admit revisions of a batch the intake login can already see. WITH CHECK
+-- is unchanged: the intake login still writes only agent-edited revisions.
+ALTER POLICY work_batch_revisions_work_intake_scope ON work_batch_revisions
+  USING (NOT public.is_work_intake_session() OR (
+    work_batch_revisions.tenant_id=(SELECT b.tenant_id FROM public.work_intake_tenant_binding b)
+    AND (EXISTS (
+    SELECT 1 FROM public.control_identities i
+    WHERE i.tenant_id=work_batch_revisions.tenant_id AND i.id=work_batch_revisions.edited_by_identity_id
+      AND i.actor_type='agent' AND i.auth_provider='work-intake')
+    OR EXISTS (
+    SELECT 1 FROM public.work_batches w
+    WHERE w.tenant_id=work_batch_revisions.tenant_id AND w.id=work_batch_revisions.batch_id))));
+
 CREATE OR REPLACE FUNCTION guard_initial_work_batch_revision_insert() RETURNS trigger
 LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $$
 DECLARE batch public.work_batches%ROWTYPE;
@@ -88,7 +125,8 @@ BEGIN
         AND i.actor_type='human' AND i.state='active' AND g.role_key='owner'
         AND (g.project_ids @> pg_catalog.to_jsonb(ARRAY[batch.project_id]::text[]) OR g.project_ids @> '["*"]'::jsonb)
         AND (g.allowed_actions @> '["work_batches.decide"]'::jsonb OR g.allowed_actions @> '["*"]'::jsonb)
-        AND g.revoked_at IS NULL AND (g.expires_at IS NULL OR g.expires_at>pg_catalog.statement_timestamp())
+        AND (g.revoked_at IS NULL OR g.revoked_at>pg_catalog.statement_timestamp())
+        AND (g.expires_at IS NULL OR g.expires_at>pg_catalog.statement_timestamp())
     ) THEN
     RAISE EXCEPTION 'work batch revision insert rejected';
   END IF;
@@ -132,7 +170,8 @@ BEGIN
         AND g.role_key='owner'
         AND (g.project_ids @> pg_catalog.to_jsonb(ARRAY[NEW.project_id]::text[]) OR g.project_ids @> '["*"]'::jsonb)
         AND (g.allowed_actions @> '["work_batches.decide"]'::jsonb OR g.allowed_actions @> '["*"]'::jsonb)
-        AND g.revoked_at IS NULL AND (g.expires_at IS NULL OR g.expires_at>pg_catalog.statement_timestamp())
+        AND (g.revoked_at IS NULL OR g.revoked_at>pg_catalog.statement_timestamp())
+        AND (g.expires_at IS NULL OR g.expires_at>pg_catalog.statement_timestamp())
     ) THEN
     RAISE EXCEPTION 'work batch decision update rejected';
   END IF;
@@ -183,6 +222,11 @@ CREATE TRIGGER control_action_inbox_work_batch_guard BEFORE INSERT ON public.con
 CREATE FUNCTION guard_work_batch_notification_update() RETURNS trigger
 LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $$
 BEGIN
+  IF pg_catalog.pg_has_role(session_user,
+      (SELECT oid FROM pg_catalog.pg_roles WHERE rolname='control_room_private_web'),'member')
+    AND OLD.id NOT LIKE 'attention:work-batch:%' THEN
+    RAISE EXCEPTION 'work batch notification update rejected';
+  END IF;
   IF OLD.id LIKE 'attention:work-batch:%' AND (
     NEW.id<>OLD.id OR NEW.tenant_id<>OLD.tenant_id OR NEW.project_id IS DISTINCT FROM OLD.project_id
     OR NEW.work_item_id IS DISTINCT FROM OLD.work_item_id OR NEW.kind<>OLD.kind
