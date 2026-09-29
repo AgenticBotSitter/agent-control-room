@@ -7,7 +7,6 @@ import type { DatabaseSession } from "../../persistence/database";
 import type { NativeQueueWorkerStartupConfiguration } from "./native-queue-worker-startup";
 import { preparePgBossNewsFeedSubmission } from "../../persistence/pg-boss-news-feed-submission";
 import { createNewsQueueWorkerBootstrap, type NewsQueueWorkerStartupConfiguration } from "./news-queue-worker-startup";
-import { startRecoveringMacLocalQueueWorkerV1 } from "./mac-local-queue-worker-recovery";
 
 /** Installed-package composition only. Import/construction opens no pool and starts no worker.
  * The caller still explicitly selects nativeQueue/queueWorker and supplies verified startup.
@@ -24,8 +23,6 @@ export function createInstalledNativeQueueFactories(options: {
     prepareNativeSubmission: (database: DatabaseSession) => preparePgBossNativeTaskSubmission(PgBoss, database, { backend, recovery: true }),
     startNativeWorker: (configuration: NativeQueueWorkerStartupConfiguration) =>
       createNativeQueueWorkerBootstrap({ PgBoss, openDatabase, backend }).start(configuration),
-    startRecoveringMacLocalNativeWorker: (configuration: NativeQueueWorkerStartupConfiguration) =>
-      startRecoveringMacLocalQueueWorkerV1(() => createNativeQueueWorkerBootstrap({ PgBoss, openDatabase, backend }).start(configuration)),
   });
 }
 

@@ -13,7 +13,7 @@ export const taskErrorMessage: Record<BrowserFailureCode, string> = {
   invalid_request: "Check the title and instructions. Do not include passwords, access tokens or other secrets.",
   conflict: "The project or save changed. Refresh saved work before making a new proposal.",
   not_found: "This task or project is not available.",
-  unavailable: "The local service or saved database is temporarily unavailable. No task action was retried and no sample progress was substituted. Check saved tasks again in a moment.",
+  unavailable: "Control Room could not read the saved task database or service. No task was started or changed, and no sample progress was substituted. Check saved tasks again when the service is ready.",
   uncertain: "This save may have completed. Check this exact save again, or look in saved tasks before creating another.",
 };
 

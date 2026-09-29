@@ -12,14 +12,11 @@ import type { NativeQueueWorkerStartupConfiguration } from "./native-queue-worke
 import { createPostgresLocalOwnerSessionStoreV1 } from "./local-owner-session-store";
 import type { LocalOwnerSessionStoreV1 } from "./local-owner-session-store";
 import type { PersistedLocalOwnerSessionV1 } from "./local-owner-session";
-import { MAC_LOCAL_QUEUE_RECOVERY_OWNER } from "./mac-local-queue-worker-recovery";
 
 type OpenedDatabase = Readonly<{ client: DatabaseClient; close(): Promise<void> }>;
 type LocalService = Readonly<{ start(): Promise<void>; close(): Promise<void>; isReady(): boolean }>;
 type HostedTaskApplication = Pick<MacLocalTaskApplicationV1, "operations" | "taskReadKeys" | "isReady" | "close" | "queueDelivery" | "queueRecovery">;
-type OwnedQueueWorkerState = "running" | "reconnecting" | "closing" | "closed" | "uncertain";
-type OwnedQueueWorker = Readonly<{ close(): Promise<void>; status(): { accepting: boolean; state?: OwnedQueueWorkerState };
-  [MAC_LOCAL_QUEUE_RECOVERY_OWNER]?: true }>;
+type OwnedQueueWorker = Readonly<{ close(): Promise<void>; status(): { accepting: boolean } }>;
 
 /** One small composition for the Mac-local web host. It deliberately uses the
  * dedicated loopback web process, rather than adapting the hosted Cloudflare
@@ -163,11 +160,7 @@ export function createMacLocalProtectedHostV1(input: Readonly<{
                 deliver: taskApplication!.queueDelivery!,
                 ...(taskApplication!.queueRecovery?.verify ? { verifyRecovery: taskApplication!.queueRecovery.verify } : {}),
               });
-              if (!worker || typeof worker.close !== "function" || typeof worker.status !== "function" || closeRequested)
-                throw new Error("mac_local_host_queue_worker_unavailable");
-              const workerStatus = worker.status();
-              const recoveryOwned = worker[MAC_LOCAL_QUEUE_RECOVERY_OWNER] === true;
-              if (workerStatus?.accepting !== true && !(recoveryOwned && workerStatus?.state === "reconnecting"))
+              if (!worker || typeof worker.close !== "function" || typeof worker.status !== "function" || !worker.status().accepting || closeRequested)
                 throw new Error("mac_local_host_queue_worker_unavailable");
             } catch (error) {
               const stopped = worker?.close ? await Promise.allSettled([closeWorker()]) : [];

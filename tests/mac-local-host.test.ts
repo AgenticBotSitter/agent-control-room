@@ -9,7 +9,6 @@ import { MAC_LOCAL_DATABASE_ROLES_V1 } from "../src/web/v1/mac-local-database-ro
 import { LOCAL_OWNER_SESSION_PROFILE_V1 } from "../src/web/v1/local-owner-session";
 import { OWNER_TRUSTED_LOCAL_ENABLEMENT_V1 } from "../src/harness/v1/owner-trusted-local-enablements";
 import { captureMacLocalProtectedConfigurationV1 } from "../src/web/v1/mac-local-protected-configuration";
-import { MAC_LOCAL_QUEUE_RECOVERY_OWNER } from "../src/web/v1/mac-local-queue-worker-recovery";
 
 const configuration = captureMacLocalProtectedConfigurationV1({ schema: MAC_LOCAL_PROTECTED_CONFIGURATION_V1, port: 3210, workspaceId: "workspace:mac-local",
   localOwnerSession: { schema: LOCAL_OWNER_SESSION_PROFILE_V1, origin: "http://127.0.0.1:3210", tenantId: "tenant:mac-local",
@@ -192,65 +191,4 @@ test("closes a rejected queue worker before it closes the local site", async () 
   });
   await assert.rejects(host.start(), /mac_local_startup_failed/);
   assert.deepEqual(trace, ["worker-close", "site-close"]);
-});
-
-test("classifies a malformed queue worker before calling its missing status method", async t => {
-  const messages: string[] = [];
-  t.mock.method(console, "error", (message: string) => { messages.push(message); });
-  const server = new EventEmitter() as Server;
-  server.listen = ((_options: object, callback: () => void) => { queueMicrotask(callback); return server; }) as Server["listen"];
-  server.close = ((callback?: (error?: Error) => void) => { queueMicrotask(() => callback?.()); return server; }) as Server["close"];
-  server.closeIdleConnections = () => {}; server.closeAllConnections = () => {};
-  const host = createMacLocalProtectedHostV1({
-    async loadConfiguration() { return configuration; }, async readVersion() { return "codex test"; },
-    openDatabase() { return { client: {} as never, async close() {} }; }, async loadDatabaseRoles() { return databaseRoles; },
-    async createTaskApplication() { return { operations: {}, isReady: () => true, async close() {},
-      async queueDelivery() { return { disposition: "delivered" as const }; } }; },
-    async startQueueWorker() { return {} as never; },
-    assets: { count: 0, digest: "test", respond() { return undefined; } }, render() { return new Response("local"); },
-    createServer: () => server, listenerTiming: { bindMs: 100, closeMs: 100 },
-  });
-  await assert.rejects(host.start(), /mac_local_startup_failed/);
-  assert.deepEqual(messages, ["mac-local-startup: mac_local_host_queue_worker_unavailable"]);
-});
-
-test("keeps the local site alive only while a recovery-owned queue worker reconnects", async () => {
-  const trace: string[] = [];
-  const server = new EventEmitter() as Server;
-  server.listen = ((_options: object, callback: () => void) => { trace.push("site-start"); queueMicrotask(callback); return server; }) as Server["listen"];
-  server.close = ((callback?: (error?: Error) => void) => { trace.push("site-close"); queueMicrotask(() => callback?.()); return server; }) as Server["close"];
-  server.closeIdleConnections = () => {}; server.closeAllConnections = () => {};
-  const host = createMacLocalProtectedHostV1({
-    async loadConfiguration() { return configuration; }, async readVersion() { return "codex test"; },
-    openDatabase() { return { client: {} as never, async close() {} }; }, async loadDatabaseRoles() { return databaseRoles; },
-    async createTaskApplication() { return { operations: {}, isReady: () => true, async close() {},
-      async queueDelivery() { return { disposition: "delivered" as const }; } }; },
-    async startQueueWorker() { return { [MAC_LOCAL_QUEUE_RECOVERY_OWNER]: true as const,
-      status: () => ({ accepting: false, state: "reconnecting" as const }),
-      async close() { trace.push("worker-close"); } }; },
-    assets: { count: 0, digest: "test", respond() { return undefined; } }, render() { return new Response("local"); },
-    createServer: () => server, listenerTiming: { bindMs: 100, closeMs: 100 },
-  });
-  const running = await host.start();
-  assert.deepEqual(trace, ["site-start"]);
-  await running.close();
-  assert.deepEqual(trace, ["site-start", "worker-close", "site-close"]);
-});
-
-test("refuses a duck-typed queue worker that merely claims to be reconnecting", async t => {
-  t.mock.method(console, "error", () => {});
-  const server = new EventEmitter() as Server;
-  server.listen = ((_options: object, callback: () => void) => { queueMicrotask(callback); return server; }) as Server["listen"];
-  server.close = ((callback?: (error?: Error) => void) => { queueMicrotask(() => callback?.()); return server; }) as Server["close"];
-  server.closeIdleConnections = () => {}; server.closeAllConnections = () => {};
-  const host = createMacLocalProtectedHostV1({
-    async loadConfiguration() { return configuration; }, async readVersion() { return "codex test"; },
-    openDatabase() { return { client: {} as never, async close() {} }; }, async loadDatabaseRoles() { return databaseRoles; },
-    async createTaskApplication() { return { operations: {}, isReady: () => true, async close() {},
-      async queueDelivery() { return { disposition: "delivered" as const }; } }; },
-    async startQueueWorker() { return { status: () => ({ accepting: false, state: "reconnecting" as const }), async close() {} }; },
-    assets: { count: 0, digest: "test", respond() { return undefined; } }, render() { return new Response("local"); },
-    createServer: () => server, listenerTiming: { bindMs: 100, closeMs: 100 },
-  });
-  await assert.rejects(host.start(), /mac_local_startup_failed/);
 });

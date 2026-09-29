@@ -41,11 +41,10 @@ test("compiled route parameters decode exactly once before reaching browser clie
     assert.throws(() => decodePrivateRouteSegment(value), /private_route_segment_invalid/);
 });
 
-test("database failures report temporary unavailability without claiming recovery", () => {
+test("database-or-service failures explain the safe read-only next step", () => {
   for (const message of [browserErrorMessage.unavailable, taskErrorMessage.unavailable]) {
-    assert.match(message, /local service or saved database is temporarily unavailable/i);
-    assert.doesNotMatch(message, /reconnecting/i);
-    assert.match(message, /No .* retried/i);
+    assert.match(message, /saved .*database or service/i);
+    assert.match(message, /No .* (?:made|started|changed)/i);
     assert.match(message, /Check saved/i);
   }
 });

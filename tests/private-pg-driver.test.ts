@@ -59,33 +59,6 @@ test("failed acquisition is sanitized and shutdown still finishes", async () => 
   await driver.terminate(); assert.equal(ends, 1);
 });
 
-test("transport failure notification distinguishes reconnectable faults from definite SQL refusals", async () => {
-  let notifications = 0, attempt = 0;
-  const driver = createPrivatePgDriver({ async connect() {
-    attempt++;
-    if (attempt === 1) throw new Error("connection detail");
-    return { async query(statement) {
-      if (statement === "SELECT definite") throw Object.assign(new Error("statement detail"), { code: "55P03" });
-      throw new Error("transport detail");
-    }, release() {} };
-  }, async end() {} }, async () => {}, { reportTransportFault: () => { notifications++; } });
-  await assert.rejects(driver.acquire(), { message: "database_unavailable" });
-  assert.equal(notifications, 1);
-  const lease = await driver.acquire();
-  await assert.rejects(lease.query("SELECT definite"), { message: "database_unavailable", sqlState: "55P03" });
-  assert.equal(notifications, 1);
-  await assert.rejects(lease.query("SELECT transport"), { message: "database_outcome_uncertain" });
-  assert.equal(notifications, 2);
-  lease.release(); await driver.terminate(); assert.equal(notifications, 2);
-});
-
-test("a failing transport observer cannot replace the sanitized database refusal", async () => {
-  const driver = createPrivatePgDriver({ async connect() { throw new Error("connection detail"); }, async end() {} },
-    async () => {}, { reportTransportFault: () => { throw new Error("observer detail"); } });
-  await assert.rejects(driver.acquire(), { message: "database_unavailable" });
-  await driver.terminate();
-});
-
 test("one bounded pool-width waits for a connection instead of failing an ordinary burst", async () => {
   let releaseFirst!: () => void, firstEntered!: () => void, secondEntered = false, acquisitions = 0;
   const entered = new Promise<void>(resolve => { firstEntered = resolve; });

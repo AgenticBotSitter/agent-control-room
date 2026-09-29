@@ -1,14 +1,12 @@
 // Local rehearsal database: a throwaway PostgreSQL 17 cluster on 127.0.0.1 with the full
 // migration ledger, the five Mac-local roles, and a protected root pointing at it.
-// Never points at the VPS. `down` removes the entire marker-owned disposable root.
-// Usage: pnpm mac:rehearsal up|down ABSOLUTE_DIR [--port 15499]
-import { execFile } from "node:child_process";
+// Never points at the VPS. Usage: pnpm mac:rehearsal up|down ABSOLUTE_DIR [--port 15499]
+import { execFileSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { PgBoss, getConstructionPlans } from "pg-boss";
 import { existsSync, mkdirSync, readdirSync, writeFileSync, chmodSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
-import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 import { applyMigrations } from "../../../deploy/postgres/apply-migrations.mjs";
 import { connectTarget } from "../../../deploy/postgres/evidence.mjs";
@@ -18,10 +16,6 @@ import { captureMacLocalDatabaseRolesV1, MAC_LOCAL_DATABASE_ROLES_V1 } from "../
 import { LOCAL_OWNER_SESSION_PROFILE_V1 } from "../../../src/web/v1/local-owner-session";
 import { OWNER_TRUSTED_LOCAL_ENABLEMENT_V1 } from "../../../src/harness/v1/owner-trusted-local-enablements";
 import { readPinnedMacExecutableVersion } from "../start-web-host.mjs";
-import { repoRoot } from "../stack.mjs";
-import { cleanupRehearsalRoot } from "./cleanup.mjs";
-import { createRehearsalOwnership, installRehearsalSignalCleanup, REHEARSAL_MARKER,
-  runBoundedChild, updateRehearsalProcesses, validateRehearsalOwnership } from "./lifecycle.mjs";
 
 const [action, dir] = process.argv.slice(2);
 const portIndex = process.argv.indexOf("--port");
@@ -41,87 +35,58 @@ if (pgBin !== undefined && (!isAbsolute(pgBin) || resolve(pgBin) !== pgBin)) {
   throw new Error("rehearsal_pg_bin_must_be_absolute");
 }
 const pgExecutable = (name: string) => pgBin ? join(pgBin, name) : name;
-let root = dir, pg = join(root, "pg");
-const shutdown = new AbortController();
-type RehearsalProcess = { kind: "setup" | "child"; pid: number; command: readonly string[]; group: boolean };
-let ownedProcesses: RehearsalProcess[] = [], ownershipReady = false;
-let processUpdate = Promise.resolve();
+const pg = join(dir, "pg");
+const bounded = { env, stdio: "ignore" as const, timeout: 120_000, killSignal: "SIGKILL" as const };
+const pgctl = (...args: string[]) => execFileSync(pgExecutable("pg_ctl"), ["-D", pg, ...args], bounded);
+let clusterStarted = false;
 let keepCluster = false;
-const exec = promisify(execFile);
-async function saveProcesses(processes: RehearsalProcess[]) {
-  processUpdate = processUpdate.then(async () => {
-    await updateRehearsalProcesses({ root, processes }); ownedProcesses = processes;
-  });
-  return processUpdate;
+let stopping = false;
+
+function stopStartedCluster() {
+  if (!clusterStarted || stopping) return;
+  stopping = true;
+  try { pgctl("stop", "-m", "fast"); } catch { /* Preserve the original setup or signal failure. */ }
+  clusterStarted = false;
 }
-async function native(command: string, args: string[], timeoutMs = 120_000) {
-  let child: RehearsalProcess | undefined;
-  const result = await runBoundedChild(command, args, { cwd: process.cwd(), env, timeoutMs, signal: shutdown.signal,
-    async onSpawn(record) {
-      const registered: RehearsalProcess = { kind: "child", ...record };
-      child = registered;
-      await saveProcesses([...ownedProcesses.filter(value => value.kind !== "child"), registered]);
-    } });
-  if (child) await saveProcesses(ownedProcesses.filter(value => value.pid !== child!.pid));
-  if (result.status !== 0) throw new Error("rehearsal_native_command_failed");
-  return result;
-}
-const pgctl = (...args: string[]) => native(pgExecutable("pg_ctl"), ["-D", pg, ...args]);
+
+for (const signal of ["SIGINT", "SIGTERM"] as const) process.once(signal, () => {
+  keepCluster = false;
+  stopStartedCluster();
+  process.exit(signal === "SIGINT" ? 130 : 143);
+});
+process.once("exit", () => { if (!keepCluster) stopStartedCluster(); });
 
 if (action === "down") {
-  const result = await cleanupRehearsalRoot({ root: dir });
-  if (!result.cleaned) {
-    console.error(result.reason === "rehearsal_ownership_marker_missing"
-      ? "rehearsal cleanup refused: this root has no ownership marker; use the legacy manual stop procedure and do not delete it automatically"
-      : `rehearsal cleanup retained state: ${result.reason}`);
-    process.exit(1);
+  if (existsSync(pg)) {
+    let running = false;
+    try { pgctl("status"); running = true; }
+    catch { /* An already-stopped disposable cluster is the requested state. */ }
+    if (running) pgctl("stop", "-m", "fast");
   }
-  console.log("alreadyCleaned" in result && result.alreadyCleaned ? "rehearsal root is already cleaned"
-    : "rehearsal-owned host, processes and database stopped; disposable root removed");
+  console.log("rehearsal database stopped (data kept; delete the directory to discard)");
   process.exit(0);
 }
 
-const existingOwnership = existsSync(join(dir, REHEARSAL_MARKER));
-const ownership = existingOwnership
-  ? (await validateRehearsalOwnership({ root: dir })).ownership
-  : await createRehearsalOwnership({ root: dir, databasePort: port, webPort, repositoryRoot: repoRoot });
-root = ownership.root;
-pg = join(root, "pg");
 const fresh = !existsSync(pg);
-if (ownership.databasePort !== port || ownership.webPort !== webPort)
-  throw new Error("rehearsal_ownership_port_mismatch");
-ownershipReady = true;
-let cleanupPromise: Promise<void> | undefined;
-const cleanup = () => cleanupPromise ??= (async () => {
-  shutdown.abort(); await processUpdate.catch(() => {});
-  if (!ownershipReady) return;
-  const result = await cleanupRehearsalRoot({ root });
-  if (!result.cleaned) throw new Error(`rehearsal_cleanup_failed:${result.reason}`);
-  ownershipReady = false;
-})();
-const signals = installRehearsalSignalCleanup(cleanup);
 try {
-  const currentCommand = (await exec("/bin/ps", ["-ww", "-o", "command=", "-p", String(process.pid)],
-    { encoding: "utf8", timeout: 10_000 })).stdout.trim();
-  if (!currentCommand) throw new Error("rehearsal_setup_identity_unavailable");
-  await saveProcesses([{ kind: "setup", pid: process.pid, command: [currentCommand], group: false }]);
   if (fresh) {
-    await native(pgExecutable("initdb"), ["-D", pg, "-U", "postgres", "--auth=trust", "-E", "UTF8"]);
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
+    execFileSync(pgExecutable("initdb"), ["-D", pg, "-U", "postgres", "--auth=trust", "-E", "UTF8"], bounded);
     writeFileSync(join(pg, ".control-room-disposable-postgres.json"), `${JSON.stringify({
-      schema: "control-room.disposable-postgres/v1", createdBy: "mac-local-rehearsal", runId: ownership.runId,
+      schema: "control-room.disposable-postgres/v1", createdBy: "mac-local-rehearsal",
     })}\n`, { mode: 0o600, flag: "wx" });
     writeFileSync(join(pg, "pg_hba.conf"), "host all postgres 127.0.0.1/32 trust\nhost all all 127.0.0.1/32 scram-sha-256\n");
   }
-  await pgctl("-l", join(root, "pg.log"), "-w", "-o", `-p ${port} -k '' -c listen_addresses=127.0.0.1`, "start");
+  pgctl("-l", join(dir, "pg.log"), "-w", "-o", `-p ${port} -k '' -c listen_addresses=127.0.0.1`, "start");
+  clusterStarted = true;
   if (!fresh) {
-    await saveProcesses([]);
     keepCluster = true;
-    console.log(`rehearsal database running on 127.0.0.1:${port}; protected root ${join(root, "protected")}`);
+    console.log(`rehearsal database running on 127.0.0.1:${port}; protected root ${join(dir, "protected")}`);
     process.exit(0);
   }
 
-await native(pgExecutable("psql"), ["-h", "127.0.0.1", "-p", String(port), "-U", "postgres", "-d", "postgres", "-v", "dbname=control_room",
-  "-f", fileURLToPath(new URL("../../../deploy/postgres/provision-database.sql", import.meta.url))]);
+execFileSync(pgExecutable("psql"), ["-h", "127.0.0.1", "-p", String(port), "-U", "postgres", "-d", "postgres", "-v", "dbname=control_room",
+  "-f", fileURLToPath(new URL("../../../deploy/postgres/provision-database.sql", import.meta.url))], bounded);
 const pw = () => randomBytes(24).toString("base64url");
 const secrets = { migrator: pw(), application: pw(), scheduler: pw() };
 const local: Record<string, string> = { control_room_web: pw(), control_room_coordinator: pw(), control_room_results: pw(), control_room_publisher: pw(), control_room_queue_worker: pw() };
@@ -132,12 +97,12 @@ await applyMigrations({ target: bootstrapTarget, rootDir: process.cwd(),
   migrateTarget: `host=127.0.0.1 port=${port} dbname=control_room user=control_room_migrator password=${secrets.migrator}`,
   env: { NODE_ENV: "test", CONTROL_ROOM_MIGRATOR_PASSWORD: secrets.migrator,
     CONTROL_ROOM_APP_PASSWORD: secrets.application, CONTROL_ROOM_SCHEDULER_PASSWORD: secrets.scheduler } });
-const psql = (database: string, file: string) => native(pgExecutable("psql"), ["-h", "127.0.0.1", "-p", String(port), "-U", "postgres", "-d", database,
-  "-v", "ON_ERROR_STOP=1", "-f", fileURLToPath(new URL(file, import.meta.url))]);
+const psql = (database: string, file: string) => execFileSync(pgExecutable("psql"), ["-h", "127.0.0.1", "-p", String(port), "-U", "postgres", "-d", database,
+  "-v", "ON_ERROR_STOP=1", "-f", fileURLToPath(new URL(file, import.meta.url))], bounded);
 // Match the reviewed package-5 sequence against this fresh disposable cluster.
 // applyMigrations installs the production roles as part of bootstrap; rerunning
 // this idempotent file here makes the rehearsal's ordering explicit.
-await psql("control_room", "../../../db/roles/production_roles.sql");
+psql("control_room", "../../../db/roles/production_roles.sql");
 // The fixed pg-boss schema/queue is installed offline before either queue role.
 const queueClient = connectTarget(bootstrapTarget); await queueClient.connect();
 try {
@@ -149,10 +114,10 @@ try {
   try { await boss.createQueue("native-task-delivery", { retryLimit: 0 }); }
   finally { await boss.stop({ graceful: false }); }
 } finally { await queueClient.end(); }
-await psql("control_room", "../../../db/roles/private_web_database.sql");
+psql("control_room", "../../../db/roles/private_web_database.sql");
 for (const file of ["private_web_roles.sql", "task_coordinator_roles.sql", "native_queue_producer_roles.sql",
   "native_results_roles.sql", "local_result_publisher_roles.sql", "native_queue_worker_roles.sql"])
-  await psql("control_room", `../../../db/roles/${file}`);
+  psql("control_room", `../../../db/roles/${file}`);
 const membership = connectTarget(bootstrapTarget); await membership.connect();
 try {
   const roleByLogin: Record<string, string> = { control_room_web: "control_room_private_web",
@@ -167,7 +132,7 @@ try {
 
 let paths: Readonly<Record<"codex" | "claude-code" | "hermes", string>>;
 if (fakeExecutables) {
-  const fakeRoot = join(root, "setup-fake-workers");
+  const fakeRoot = join(dir, "setup-fake-workers");
   mkdirSync(fakeRoot, { recursive: true, mode: 0o700 });
   paths = Object.freeze({ codex: join(fakeRoot, "codex"), "claude-code": join(fakeRoot, "claude"), hermes: join(fakeRoot, "hermes") });
   for (const [kind, path] of Object.entries(paths)) {
@@ -192,8 +157,8 @@ for (const kind of ["codex", "claude-code", "hermes"] as const)
   workers.push({ workerId: `worker:${kind === "claude-code" ? "claude" : kind}:mac-1`, kind, executablePath: paths[kind],
     recordedVersion: await readPinnedMacExecutableVersion(paths[kind]) });
 
-const protectedRoot = join(root, "protected"), config = join(protectedRoot, "config");
-mkdirSync(config, { recursive: true, mode: 0o700 }); chmodSync(protectedRoot, 0o700); chmodSync(config, 0o700);
+const root = join(dir, "protected"), config = join(root, "config");
+mkdirSync(config, { recursive: true, mode: 0o700 }); chmodSync(root, 0o700); chmodSync(config, 0o700);
 const database = { host: "127.0.0.1", port, database: "control_room", username: "control_room_web", password: local.control_room_web, majorVersion: 17 };
 const role = (username: string) => ({ ...database, username, password: local[username] });
 const roles = { schema: MAC_LOCAL_DATABASE_ROLES_V1, web: role("control_room_web"), coordinator: role("control_room_coordinator"),
@@ -207,11 +172,9 @@ const macLocal = { schema: MAC_LOCAL_PROTECTED_CONFIGURATION_V1, port: webPort, 
 captureMacLocalProtectedConfigurationV1(JSON.parse(JSON.stringify(macLocal)));
 for (const [file, body] of [["mac-local.json", JSON.stringify(macLocal)], ["database-roles.json", JSON.stringify(roles)], ["owner-sign-in.txt", ownerCode]])
   writeFileSync(join(config, file), `${body}\n`, { mode: 0o600 });
-console.log(`rehearsal database ready on 127.0.0.1:${port}; protected root ${protectedRoot}`);
+console.log(`rehearsal database ready on 127.0.0.1:${port}; protected root ${root}`);
 console.log(`next: pnpm mac:bootstrap-owner ${root} && pnpm mac:check-database ${root}`);
-  await saveProcesses([]);
   keepCluster = true;
 } finally {
-  signals.dispose();
-  if (!keepCluster) await cleanup();
+  if (!keepCluster) stopStartedCluster();
 }

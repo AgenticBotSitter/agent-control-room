@@ -12,23 +12,6 @@ if (prompt === "hang") {
   process.stdout.write("not-json\n");
 } else if (prompt === "nonzero") {
   process.exitCode = 7;
-} else if (prompt === "overflow") {
-  process.stdout.write("x".repeat(9_000));
-  process.stderr.write("x".repeat(9_000));
-} else if (prompt === "default-overflow") {
-  process.stdout.write(`${JSON.stringify({ type: "system", subtype: "init", session_id: session })}\n`);
-  for (let index = 0; index < 8; index++) {
-    process.stdout.write(`${JSON.stringify({ type: "assistant", session_id: session,
-      message: { role: "assistant", content: [{ type: "text", text: "x".repeat(140_000) }] } })}\n`);
-  }
-  process.stdout.write(`${JSON.stringify({ type: "result", subtype: "success", is_error: false,
-    session_id: session, result: "valid terminal result", usage: {} })}\n`);
-} else if (prompt === "exit-on-overflow") {
-  // Overflow the configured byte limit and exit in the same tick. The adapter detects the limit in
-  // a `data` event and then signals the group; this process is already gone by then, so the signal
-  // fails with ESRCH. That is the window where a stop must not be reported as cleanup uncertainty.
-  process.stdout.write("x".repeat(40_000));
-  process.exit(0);
 } else if (prompt === "leak") {
   // The direct process exits, but its TERM-ignoring child stays in this
   // detached group unless the adapter explicitly cleans it up.

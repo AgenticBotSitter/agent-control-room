@@ -55,9 +55,7 @@ test("dedicated package composition disables schema, scheduling and notification
   input.deliver = async () => { throw new Error("mutated callback"); };
   await f.invoke(); assert.equal(seen, 1);
   assert.deepEqual(runtime.status(), { state: "running", faulted: false, accepting: true });
-  const terminated = runtime.whenTerminated(); assert.equal(runtime.whenTerminated(), terminated);
   const close = runtime.close(); assert.equal(runtime.close(), close); await close;
-  assert.deepEqual(await terminated, { cause: "requested_close", cleanup: "closed" });
   assert.deepEqual(f.calls.slice(-3), ["off", "stop", "db-close"]);
   assert.deepEqual(runtime.status(), { state: "closed", faulted: false, accepting: false });
   await assert.rejects(db.executeSql("SELECT 1"), /native_task_runtime_unavailable/);
@@ -168,7 +166,7 @@ test("runtime fault aborts admission and active callback; late success is unreso
   } });
   const invocation = f.invoke(), rejected = assert.rejects(invocation, /delivery_unresolved/);
   await ready; f.fault(); assert.equal(observed.aborted, true); assert.equal(runtime.status().accepting, false);
-  await rejected; assert.deepEqual(await runtime.whenTerminated(), { cause: "fault", cleanup: "closed" }); await runtime.close();
+  await rejected; await runtime.close();
   assert.equal(runtime.status().faulted, true); assert.equal(f.calls.filter(x => x === "stop").length, 1);
 });
 
@@ -176,7 +174,6 @@ test("stop failure still closes the pool and retains uncertain status on repeate
   const f = fixture(); f.hooks.stop = async () => { throw new Error("private stop failure"); };
   const runtime = await f.start();
   await assert.rejects(runtime.close(), /close_uncertain/); await assert.rejects(runtime.close(), /close_uncertain/);
-  assert.deepEqual(await runtime.whenTerminated(), { cause: "requested_close", cleanup: "uncertain" });
   assert.deepEqual(runtime.status(), { state: "uncertain", faulted: false, accepting: false });
   assert.equal(f.calls.filter(x => x === "db-close").length, 1);
 });

@@ -4,10 +4,9 @@ import { isAbsolute, normalize } from "node:path";
 import { StringDecoder } from "node:string_decoder";
 import { types } from "node:util";
 import { z } from "zod";
-import { DEFAULT_MAC_LOCAL_TASK_RUN_LIMITS_V1, MAX_TASK_RUN_OUTPUT_BYTES,
-  MIN_TASK_RUN_OUTPUT_BYTES } from "../v1/owner-trusted-local-run-limits";
 
 const MAX_PROMPT_BYTES = 64 * 1024;
+const MAX_OUTPUT_BYTES = 1024 * 1024;
 const KILL_AFTER_MS = 5_000;
 const KILL_CONFIRM_MS = 50;
 const SYSTEM_PATH = "/usr/bin:/bin";
@@ -32,7 +31,7 @@ export type OwnerTrustedLocalHermesExecResultV1 = Readonly<
 
 export type OwnerTrustedLocalHermesExecV1 = Readonly<{ execute(input: Readonly<{
   executablePath: string; profile: string; model: string; provider: string;
-  prompt: string; workingDirectory: string; deadlineMs: number; outputBytes?: number; signal?: AbortSignal;
+  prompt: string; workingDirectory: string; deadlineMs: number; signal?: AbortSignal;
 }>): Promise<OwnerTrustedLocalHermesExecResultV1> }>;
 
 type Spawn = (file: string, args: readonly string[], options: Readonly<{
@@ -52,13 +51,11 @@ function safeInput(input: unknown): input is Parameters<OwnerTrustedLocalHermesE
   if (!input || typeof input !== "object" || Array.isArray(input) || types.isProxy(input)
     || Object.getPrototypeOf(input) !== Object.prototype) return false;
   const value = input as Record<string, unknown>;
-  return Object.keys(value).every(key => ["executablePath", "profile", "model", "provider", "prompt", "workingDirectory", "deadlineMs", "outputBytes", "signal"].includes(key))
+  return Object.keys(value).every(key => ["executablePath", "profile", "model", "provider", "prompt", "workingDirectory", "deadlineMs", "signal"].includes(key))
     && safePath(value.executablePath) && safePath(value.workingDirectory)
     && [value.profile, value.model, value.provider].every(value => identifier.safeParse(value).success)
     && typeof value.prompt === "string" && Buffer.byteLength(value.prompt, "utf8") <= MAX_PROMPT_BYTES
     && typeof value.deadlineMs === "number" && Number.isSafeInteger(value.deadlineMs) && value.deadlineMs >= 100 && value.deadlineMs <= 3_600_000
-    && (value.outputBytes === undefined || typeof value.outputBytes === "number" && Number.isSafeInteger(value.outputBytes)
-      && value.outputBytes >= MIN_TASK_RUN_OUTPUT_BYTES && value.outputBytes <= MAX_TASK_RUN_OUTPUT_BYTES)
     && (value.signal === undefined || value.signal instanceof AbortSignal);
 }
 function groupSignal(child: ChildProcess, signal: NodeJS.Signals): boolean {
@@ -80,7 +77,6 @@ export function createOwnerTrustedLocalHermesExecV1(dependencies: Readonly<{ spa
   const list = dependencies.readDirectory ?? readdir;
   return Object.freeze({ async execute(input) {
     if (!safeInput(input)) return failed("failed", "invalid_input");
-    const outputBytes = input.outputBytes ?? DEFAULT_MAC_LOCAL_TASK_RUN_LIMITS_V1.outputBytes;
     if (input.signal?.aborted) return failed("canceled", "aborted_before_spawn");
     // This is the worker's persistent project workspace. A prior successful
     // task may have created files that a later approved task must inspect or
@@ -136,11 +132,11 @@ export function createOwnerTrustedLocalHermesExecV1(dependencies: Readonly<{ spa
         result = parsed.data;
       };
       const receive = (chunk: Buffer) => {
-        if (settled) return; bytes += chunk.byteLength; if (bytes > outputBytes) return terminate("failed");
+        if (settled) return; bytes += chunk.byteLength; if (bytes > MAX_OUTPUT_BYTES) return terminate("failed");
         remainder += decoder.write(chunk); const lines = remainder.split("\n"); remainder = lines.pop() ?? "";
         for (const line of lines) accept(line);
       };
-      const stderr = (chunk: Buffer) => { bytes += chunk.byteLength; if (bytes > outputBytes) terminate("failed"); };
+      const stderr = (chunk: Buffer) => { bytes += chunk.byteLength; if (bytes > MAX_OUTPUT_BYTES) terminate("failed"); };
       const cancel = () => terminate("canceled");
       const deadline = setTimeout(() => terminate("timed_out"), input.deadlineMs);
       input.signal?.addEventListener("abort", cancel, { once: true });

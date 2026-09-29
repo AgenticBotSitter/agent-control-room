@@ -22,11 +22,7 @@ export interface PrivatePgPool {
 }
 
 export function createPrivatePgDriver(pool: PrivatePgPool,
-  qualify: (client: Awaited<ReturnType<PrivatePgPool["connect"]>>) => Promise<void> = async () => {},
-  options: { reportTransportFault?: () => void } = {}): PrivateDatabaseDriver {
-  if (options.reportTransportFault !== undefined && typeof options.reportTransportFault !== "function")
-    throw new Error("private_pg_driver_config_invalid");
-  const reportTransportFault = () => { try { options.reportTransportFault?.(); } catch { /* Observability cannot alter the database outcome. */ } };
+  qualify: (client: Awaited<ReturnType<PrivatePgPool["connect"]>>) => Promise<void> = async () => {}): PrivateDatabaseDriver {
   let stopped = false;
   let closing: Promise<void> | undefined;
   const pending = new Set<Promise<unknown>>();
@@ -55,7 +51,7 @@ export function createPrivatePgDriver(pool: PrivatePgPool,
           await qualify(client);
           if (stopped || released) throw new PrivateDatabaseError("database_unavailable");
         } catch {
-          rejected = true; release(); if (!stopped) reportTransportFault();
+          rejected = true; release();
           throw new PrivateDatabaseError("database_unavailable");
         }
         return {
@@ -68,7 +64,6 @@ export function createPrivatePgDriver(pool: PrivatePgPool,
             } catch (error) {
               const sqlState = definiteSqlState(error);
               if (sqlState) throw new PrivateDatabaseError("database_unavailable", sqlState);
-              if (!stopped) reportTransportFault();
               throw new PrivateDatabaseError("database_outcome_uncertain");
             }
           },
@@ -77,7 +72,7 @@ export function createPrivatePgDriver(pool: PrivatePgPool,
       });
       pending.add(acquisition);
       try { return await acquisition; }
-      catch { if (!stopped) reportTransportFault(); throw new PrivateDatabaseError("database_unavailable"); }
+      catch { throw new PrivateDatabaseError("database_unavailable"); }
       finally { pending.delete(acquisition); }
     },
     terminate() {

@@ -64,9 +64,7 @@ test("task host requires the fixed release provider and does not accept a caller
       if (path.endsWith("privatePostgres.js")) return { createPrivatePostgresDatabase: () => ({
         client: { query: async () => ({ rows: [{ id: "project:fixture" }] }) }, async close() {},
       }) };
-      if (path.endsWith("nativeQueueFactories.js")) return { createInstalledNativeQueueFactories: () => ({
-        startRecoveringMacLocalNativeWorker: async () => ({}),
-      }) };
+      if (path.endsWith("nativeQueueFactories.js")) return { createInstalledNativeQueueFactories: () => ({ startNativeWorker: async () => ({}) }) };
       if (path.endsWith("serving.js")) return { loadPrivateClientAssets: async () => ({ respond() {} }) };
       if (path.endsWith("index.js")) return { default() {} };
       throw new Error(`unexpected ${path}`);
@@ -94,9 +92,7 @@ test("a zero-project first start loads the live task provider without requiring 
     if (name === "macLocalTaskProvider.js") return { loadMacLocalTaskProviderFromRootV1: async () => ({
       workerKinds: ["hermes", "claude-code", "codex"], createTaskApplication: async () => ({}),
     }), requireMacLocalThreeAgentReadinessV1() {} };
-    if (name === "nativeQueueFactories.js") return { createInstalledNativeQueueFactories: () => ({
-      startRecoveringMacLocalNativeWorker: async () => ({}),
-    }) };
+    if (name === "nativeQueueFactories.js") return { createInstalledNativeQueueFactories: () => ({ startNativeWorker: async () => ({}) }) };
     if (name === "serving.js") return { loadPrivateClientAssets: async () => ({ respond() {} }) };
     if (name === "index.js") return { default() {} };
     throw new Error(`unexpected ${name}`);

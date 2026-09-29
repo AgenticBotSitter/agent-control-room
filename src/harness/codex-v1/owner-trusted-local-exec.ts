@@ -3,10 +3,9 @@ import { readdir } from "node:fs/promises";
 import { isAbsolute, normalize } from "node:path";
 import { StringDecoder } from "node:string_decoder";
 import { types } from "node:util";
-import { DEFAULT_MAC_LOCAL_TASK_RUN_LIMITS_V1, MAX_TASK_RUN_OUTPUT_BYTES,
-  MIN_TASK_RUN_OUTPUT_BYTES } from "../v1/owner-trusted-local-run-limits";
 
 const MAX_PROMPT_BYTES = 64 * 1024;
+const MAX_OUTPUT_BYTES = 1024 * 1024;
 const KILL_AFTER_MS = 5_000;
 const KILL_CONFIRM_MS = 50;
 const SYSTEM_PATH = "/usr/bin:/bin";
@@ -22,7 +21,6 @@ export type OwnerTrustedLocalCodexExecV1 = Readonly<{
     prompt: string;
     workingDirectory: string;
     deadlineMs: number;
-    outputBytes?: number;
     model?: string;
     effort?: string;
     signal?: AbortSignal;
@@ -48,13 +46,11 @@ function safeInput(input: unknown): input is Parameters<OwnerTrustedLocalCodexEx
   if (!input || typeof input !== "object" || Array.isArray(input) || types.isProxy(input)
     || Object.getPrototypeOf(input) !== Object.prototype) return false;
   const value = input as Record<string, unknown>;
-  return Object.keys(value).every(key => ["executablePath", "prompt", "workingDirectory", "deadlineMs", "outputBytes", "model", "effort", "signal"].includes(key))
+  return Object.keys(value).every(key => ["executablePath", "prompt", "workingDirectory", "deadlineMs", "model", "effort", "signal"].includes(key))
     && safePath(value.executablePath) && safePath(value.workingDirectory)
     && typeof value.prompt === "string" && Buffer.byteLength(value.prompt, "utf8") <= MAX_PROMPT_BYTES
     && typeof value.deadlineMs === "number" && Number.isSafeInteger(value.deadlineMs)
     && value.deadlineMs >= 100 && value.deadlineMs <= 3_600_000
-    && (value.outputBytes === undefined || typeof value.outputBytes === "number" && Number.isSafeInteger(value.outputBytes)
-      && value.outputBytes >= MIN_TASK_RUN_OUTPUT_BYTES && value.outputBytes <= MAX_TASK_RUN_OUTPUT_BYTES)
     && ((value.model === undefined && value.effort === undefined)
       || typeof value.model === "string" && /^[A-Za-z0-9][A-Za-z0-9._:/+-]{0,179}$/u.test(value.model)
         && typeof value.effort === "string" && /^(?:low|medium|high|xhigh|max)$/u.test(value.effort))
@@ -69,20 +65,6 @@ function processGroupSignal(child: ChildProcess, signal: NodeJS.Signals): boolea
 function processGroupExists(child: ChildProcess): boolean {
   if (!child.pid || child.pid < 1) return false;
   try { process.kill(-child.pid, 0); return true; } catch { return false; }
-}
-/** Signals the owned group, and reports whether the group was still there to receive it.
- *
- * A process group disappears between the decision to stop a task and the signal reaching it — the
- * child can exit on its own, or in response to whatever tripped the stop. `kill` then fails with
- * ESRCH, which is the outcome the caller wanted rather than an uncertainty about cleanup: there
- * is nothing left to clean up. EPERM is the genuine uncertainty, because the group exists and
- * this account may not signal it. */
-function processGroupStop(child: ChildProcess, signal: NodeJS.Signals): boolean {
-  if (!child.pid || child.pid < 1) return false;
-  try { process.kill(-child.pid, signal); return true; }
-  catch (error) {
-    return (error as NodeJS.ErrnoException).code === "ESRCH" ? false : !processGroupExists(child);
-  }
 }
 
 function parseLine(line: string): { kind: "message"; text: string } | { kind: "complete"; usage?: { inputTokens?: number; outputTokens?: number } } | undefined {
@@ -126,7 +108,6 @@ export function createOwnerTrustedLocalCodexExecV1(dependencies: Readonly<{ spaw
   const list = dependencies.readDirectory ?? readdir;
   return Object.freeze({ async execute(input) {
     if (!safeInput(input)) return failed("failed", "invalid_input");
-    const outputBytes = input.outputBytes ?? DEFAULT_MAC_LOCAL_TASK_RUN_LIMITS_V1.outputBytes;
     if (input.signal?.aborted) return failed("canceled", "aborted_before_spawn");
     // The configured worker directory is persistent across tasks. Listing it
     // is an accessibility check only; prior task output must not disable the
@@ -175,18 +156,11 @@ export function createOwnerTrustedLocalCodexExecV1(dependencies: Readonly<{ spaw
           return finish(stoppedResult());
         }
         stop = reason;
-        // An already-exited group is a completed stop, not an uncertain one.
-        if (!processGroupStop(child, "SIGTERM")) {
-          if (!processGroupExists(child)) { if (killer) clearTimeout(killer); finish(stoppedResult()); }
-          else finish(failed("cleanup_uncertain", "process_group_unavailable"));
-          return;
+        if (!processGroupSignal(child, "SIGTERM")) {
+          finish(failed("cleanup_uncertain", "process_group_unavailable")); return;
         }
         killer = setTimeout(() => {
-          if (!processGroupStop(child, "SIGKILL")) {
-            if (!processGroupExists(child)) { finish(stoppedResult()); return; }
-            finish(failed("cleanup_uncertain", "process_group_unavailable"));
-            return;
-          }
+          if (!processGroupSignal(child, "SIGKILL")) return finish(failed("cleanup_uncertain", "process_group_unavailable"));
           // KILL is an instruction, not proof that detached descendants are
           // gone. Confirm the whole process group before reporting a normal
           // cancellation, timeout, or malformed-output failure.
@@ -198,7 +172,7 @@ export function createOwnerTrustedLocalCodexExecV1(dependencies: Readonly<{ spaw
       const cancel = () => terminate("canceled");
       const receive = (chunk: Buffer) => {
         if (settled) return;
-        bytes += chunk.byteLength; if (bytes > outputBytes) { terminate("failed"); return; }
+        bytes += chunk.byteLength; if (bytes > MAX_OUTPUT_BYTES) { terminate("failed"); return; }
         stdout += decoder.write(chunk);
         const lines = stdout.split("\n"); stdout = lines.pop() ?? "";
         for (const raw of lines) {
@@ -211,7 +185,7 @@ export function createOwnerTrustedLocalCodexExecV1(dependencies: Readonly<{ spaw
           } catch { terminate("failed"); }
         }
       };
-      const receiveStderr = (chunk: Buffer) => { bytes += chunk.byteLength; if (bytes > outputBytes) terminate("failed"); };
+      const receiveStderr = (chunk: Buffer) => { bytes += chunk.byteLength; if (bytes > MAX_OUTPUT_BYTES) terminate("failed"); };
       const deadline = setTimeout(() => terminate("timed_out"), input.deadlineMs);
       input.signal?.addEventListener("abort", cancel, { once: true });
       child.on("error", () => terminate("failed"));
@@ -239,9 +213,6 @@ export function createOwnerTrustedLocalCodexExecV1(dependencies: Readonly<{ spaw
         // Never call a task completed until that owned group is absent.
         if (processGroupExists(child)) {
           stop = "failed";
-          // The group was just observed alive, so a failed signal here is a genuine uncertainty
-          // rather than a race with an exit: nothing has closed the window between the check and
-          // the signal the way there is in `terminate`.
           if (!processGroupSignal(child, "SIGKILL")) return finish(failed("cleanup_uncertain", "process_group_unavailable"));
           killer = setTimeout(() => processGroupExists(child)
             ? finish(failed("cleanup_uncertain", "process_group_still_running"))

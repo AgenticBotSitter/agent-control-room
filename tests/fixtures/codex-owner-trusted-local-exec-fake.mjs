@@ -11,17 +11,6 @@ if (prompt === "hang") {
   process.stdout.write("not-json\n");
 } else if (prompt === "nonzero") {
   process.exitCode = 7;
-} else if (prompt === "overflow") {
-  process.stdout.write(`${JSON.stringify({ type: "item.completed", item: {
-    type: "agent_message", text: "x".repeat(9_000),
-  } })}\n`);
-  process.stderr.write("x".repeat(9_000));
-  process.stdout.write(`${JSON.stringify({ type: "turn.completed" })}\n`);
-} else if (prompt === "default-overflow") {
-  process.stdout.write(`${JSON.stringify({ type: "item.completed", item: {
-    type: "agent_message", text: "x".repeat(1_048_576),
-  } })}\n`);
-  process.stdout.write(`${JSON.stringify({ type: "turn.completed" })}\n`);
 } else if (prompt === "leak") {
   // The direct process exits while a child remains in its detached process
   // group unless the adapter verifies and cleans the entire group.
