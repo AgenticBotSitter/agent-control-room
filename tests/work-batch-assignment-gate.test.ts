@@ -312,13 +312,20 @@ test("the batch admission gate runs on the production task-coordinator login, no
   assert.equal(attempt?.worker_id, f.route.executorId);
 });
 
-test("the model-selection equality that authenticates an admission is a real guard, not incidental coverage", { timeout: 180_000 },
+test("the model-selection equality that authenticates an admission is a real guard, not incidental coverage", { timeout: 600_000 },
   async () => {
     // Confirms, on the real working tree rather than by inspection, that
     // deleting the six-field equality block this gate checks
     // (task-assignment-coordinator.ts:319-322 at review time) makes this
     // file's own suite fail. `assertGuardBites` refuses a dirty tree and
     // restores the file in every exit path, including a crash or a timeout.
+    //
+    // The spawned command must exclude THIS test and the production-login
+    // test above: the child re-runs this whole file, and this test would
+    // otherwise recurse into `assertGuardBites` a second time against an
+    // already-mutated, git-dirty tree and fail on that alone, which would
+    // read as "the guard bit" regardless of whether the mutation itself
+    // broke anything.
     const find = `if (!selection || selection.worker_kind !== admission.worker_kind
       || selection.selection_key !== admission.selection_key || selection.model !== admission.model
       || selection.effort !== admission.effort || selection.provider !== admission.provider
@@ -327,7 +334,21 @@ test("the model-selection equality that authenticates an admission is a real gua
     try {
       await assertGuardBites({
         root: REPOSITORY_ROOT, file: "src/web/v1/task-assignment-coordinator.ts", find, replace,
-        testCmd: ["node", "--import", "tsx", "--test", "--test-concurrency=1", "tests/work-batch-assignment-gate.test.ts"],
+        // Node's --test-name-pattern is repeatable and OR-combined (a negative
+        // lookahead was tried and, empirically, is not honoured by the runner's
+        // matcher), so the child is scoped to exactly the 8 original functional
+        // tests by an explicit allow-list of substrings, one per test.
+        testCmd: ["node", "--import", "tsx", "--test", "--test-concurrency=1",
+          "--test-name-pattern", "locks the exact worker and model",
+          "--test-name-pattern", "waits for source dependencies",
+          "--test-name-pattern", "waits behind every earlier admission",
+          "--test-name-pattern", "fails closed without authority",
+          "--test-name-pattern", "protected readiness and model policy are revalidated",
+          "--test-name-pattern", "every protected local pickup revalidates",
+          "--test-name-pattern", "refuses readiness and effective-revision drift",
+          "--test-name-pattern", "rejects callback substitution",
+          "tests/work-batch-assignment-gate.test.ts"],
+        boundMs: 240_000, baselineBoundMs: 240_000,
         because: "an admitted worker/model must match the owner-authenticated selection field for field, "
           + "not merely have a row present",
       });
