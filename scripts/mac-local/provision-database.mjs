@@ -493,7 +493,27 @@ async function existingUpgradeConfiguration(protectedRoot) {
       throw new Error("upgrade_role_config_refused");
     captureMacLocalDatabaseRolesV1(oldRoles);
   }
-  return { configRoot, passwordRoot, roleFile, oldRoles };
+  let workIntake;
+  try { workIntake = await readProtectedJson(join(configRoot, "work-intake-server.json")); }
+  catch (error) { if ((error && typeof error === "object" && error.code) !== "ENOENT") throw error; }
+  if (workIntake !== undefined) {
+    const captured = captureWorkIntakeServerConfigurationV1(workIntake);
+    if (!sameEndpoint(captured.database)
+      || captured.database.password !== await readPrivatePassword(join(passwordRoot, `${bootstrapRoles.workIntake}.txt`)))
+      throw new Error("upgrade_role_config_refused");
+  }
+  return { configRoot, passwordRoot, roleFile, oldRoles, workIntake };
+}
+
+/** A login the role manifest marks `newLogin: true` is "missing" until its own
+ * local record exists: `database-roles.json`'s `publisher` entry, or a
+ * `work-intake-server.json` at all. Both are checked here, in the one place
+ * that decides what `--prepare`/`--finish` still have to do. */
+function missingNewLoginRolesV1({ oldRoles, workIntake }) {
+  const missing = [];
+  if (!oldRoles.publisher) missing.push(roleNames.publisher);
+  if (workIntake === undefined) missing.push(bootstrapRoles.workIntake);
+  return missing;
 }
 
 export async function planMacDatabaseUpgradeFromFileV1(snapshotFile, expectedMainCommit) {
@@ -513,58 +533,101 @@ export async function planMacDatabaseUpgradeFromFileV1(snapshotFile, expectedMai
   catch { throw new Error("upgrade_snapshot_content_refused"); }
 }
 
+/** Prepares every login the role manifest still marks as missing, in one
+ * pass. Each gets its own long-lived local password (reused if a previous,
+ * interrupted prepare already made one) and a fresh salt and verifier. The
+ * one handoff `code` bundles every verifier as JSON, matching what the VPS
+ * apply step's login-code reader accepts; only that code, never a password,
+ * leaves the protected root. Nothing is missing on a later upgrade, so a
+ * repeat run needs no code at all. */
 export async function prepareMacLocalDatabaseUpgradeV1(options) {
-  const { configRoot, passwordRoot, oldRoles } = await existingUpgradeConfiguration(options.protectedRoot);
+  const { configRoot, passwordRoot, oldRoles, workIntake } = await existingUpgradeConfiguration(options.protectedRoot);
   const mainCommit = options.mainCommit ?? await currentMainCommit();
   if (!/^[a-f0-9]{40}$/u.test(mainCommit)) throw new Error("upgrade_main_commit_refused");
-  // After the first upgrade no login is new, so there is no code to hand over.
-  if (oldRoles.publisher) return { mainCommit, nothingToPrepare: true };
-  const password = await privateText(join(passwordRoot, `${roleNames.publisher}.txt`), newPassword);
-  const salt = randomBytes(16);
-  const verifier = postgresScramVerifierV1(password, salt);
-  const verifierDigest = createHash("sha256").update(verifier).digest("hex");
+  const missing = missingNewLoginRolesV1({ oldRoles, workIntake });
+  if (!missing.length) return { mainCommit, nothingToPrepare: true };
+  const logins = {}, codes = {};
+  for (const role of missing) {
+    const password = await privateText(join(passwordRoot, `${role}.txt`), newPassword);
+    const salt = randomBytes(16);
+    const verifier = postgresScramVerifierV1(password, salt);
+    logins[role] = { salt: salt.toString("base64"), verifierDigest: createHash("sha256").update(verifier).digest("hex") };
+    codes[role] = verifier;
+  }
   await writePrivate(join(configRoot, "database-upgrade-prepare.json"),
-    `${JSON.stringify({ schema: "control-room.mac-database-upgrade-prepare/v1", mainCommit,
-      salt: salt.toString("base64"), verifierDigest })}\n`);
-  return { mainCommit, verifier };
+    `${JSON.stringify({ schema: "control-room.mac-database-upgrade-prepare/v2", mainCommit, logins })}\n`);
+  return { mainCommit, code: JSON.stringify(codes) };
 }
 
-async function verifyPublisherLogin(configuration) {
+async function verifyRoleLogin(configuration, expectedUsername) {
   const options = privatePostgresOptions(configuration);
   const client = new Client({ host: options.host, port: options.port, database: options.database,
     user: options.username, password: options.password, ssl: options.ssl === false ? false : options.ssl,
     connectionTimeoutMillis: 5000 });
   try {
     await client.connect();
-    const result = await client.query("SELECT current_user = 'control_room_publisher' AS matches");
-    if (result.rows[0]?.matches !== true) throw new Error("upgrade_publisher_login_refused");
+    const result = await client.query("SELECT current_user = $1 AS matches", [expectedUsername]);
+    if (result.rows[0]?.matches !== true) throw new Error("upgrade_login_refused");
   } finally { await client.end().catch(() => {}); }
 }
 
+/** Finishes every login `--prepare` bundled a code for. A code is refused
+ * (never partially applied) unless it is for this exact commit and every
+ * verifier it carries still matches the local password byte for byte; that
+ * catches a code left over from a different prepare and a tampered record
+ * alike. Each new login authenticates over the private route before its
+ * local record is written, so a record is never created for a login that
+ * cannot actually be reached yet. Roles already finished (by a previous,
+ * interrupted run) are left alone: only the roles still missing are read out
+ * of the prepared record, so a partial retry converges instead of refusing. */
 export async function finishMacLocalDatabaseUpgradeV1(options) {
-  const { configRoot, passwordRoot, roleFile, oldRoles } = await existingUpgradeConfiguration(options.protectedRoot);
+  const { configRoot, passwordRoot, roleFile, oldRoles, workIntake } = await existingUpgradeConfiguration(options.protectedRoot);
   const mainCommit = options.mainCommit ?? await currentMainCommit();
+  const missing = missingNewLoginRolesV1({ oldRoles, workIntake });
+  if (!missing.length) return { finished: true, mainCommit, nothingToFinish: true };
   const preparedFile = join(configRoot, "database-upgrade-prepare.json");
-  const prepared = oldRoles.publisher && !await lstat(preparedFile).catch(() => undefined)
-    ? undefined : await readProtectedJson(preparedFile);
-  // A later upgrade adds no login: an old record from the first one is not redone.
-  if (oldRoles.publisher && prepared?.mainCommit !== mainCommit)
-    return { finished: true, mainCommit, nothingToFinish: true };
-  if (prepared.schema !== "control-room.mac-database-upgrade-prepare/v1"
-    || prepared.mainCommit !== mainCommit || !/^[a-f0-9]{64}$/u.test(prepared.verifierDigest)
-    || typeof prepared.salt !== "string" || !/^[A-Za-z0-9+/=]{24}$/u.test(prepared.salt)
-    || Buffer.from(prepared.salt, "base64").length !== 16)
+  let prepared;
+  try { prepared = await readProtectedJson(preparedFile); }
+  catch (error) { throw (error && typeof error === "object" && error.code) === "ENOENT"
+    ? new Error("upgrade_prepare_record_refused") : error; }
+  if (!prepared || typeof prepared !== "object" || prepared.schema !== "control-room.mac-database-upgrade-prepare/v2"
+    || prepared.mainCommit !== mainCommit || !prepared.logins || typeof prepared.logins !== "object"
+    || Array.isArray(prepared.logins) || missing.some(role => !Object.hasOwn(prepared.logins, role)))
     throw new Error("upgrade_prepare_record_refused");
-  const password = await readPrivatePassword(join(passwordRoot, `${roleNames.publisher}.txt`));
-  const verifier = checkedPostgresScramVerifierV1(postgresScramVerifierV1(password, Buffer.from(prepared.salt, "base64")));
-  if (createHash("sha256").update(verifier).digest("hex") !== prepared.verifierDigest)
-    throw new Error("upgrade_prepare_record_refused");
-  const publisher = validatePrivatePostgresConfiguration({ ...oldRoles.web,
-    username: roleNames.publisher, password });
-  await (options.verifyPublisher ?? verifyPublisherLogin)(publisher);
-  const nextRoles = { ...oldRoles, publisher };
-  captureMacLocalDatabaseRolesV1(nextRoles);
-  if (!oldRoles.publisher) await writePrivate(roleFile, `${JSON.stringify(nextRoles)}\n`);
+  const verify = options.verifyLogin ?? verifyRoleLogin;
+  const passwords = {};
+  for (const role of missing) {
+    const entry = prepared.logins[role];
+    if (!entry || typeof entry !== "object" || typeof entry.salt !== "string"
+      || !/^[A-Za-z0-9+/=]{24}$/u.test(entry.salt) || Buffer.from(entry.salt, "base64").length !== 16
+      || typeof entry.verifierDigest !== "string" || !/^[a-f0-9]{64}$/u.test(entry.verifierDigest))
+      throw new Error("upgrade_prepare_record_refused");
+    const password = await readPrivatePassword(join(passwordRoot, `${role}.txt`));
+    const verifier = checkedPostgresScramVerifierV1(postgresScramVerifierV1(password, Buffer.from(entry.salt, "base64")));
+    if (createHash("sha256").update(verifier).digest("hex") !== entry.verifierDigest)
+      throw new Error("upgrade_prepare_record_refused");
+    passwords[role] = password;
+  }
+  let nextRoles = oldRoles, nextWorkIntake = workIntake;
+  if (missing.includes(roleNames.publisher)) {
+    const publisher = validatePrivatePostgresConfiguration({ ...oldRoles.web,
+      username: roleNames.publisher, password: passwords[roleNames.publisher] });
+    await verify(publisher, roleNames.publisher);
+    nextRoles = { ...nextRoles, publisher };
+  }
+  if (missing.includes(bootstrapRoles.workIntake)) {
+    const database = validatePrivatePostgresConfiguration({ ...oldRoles.web,
+      username: bootstrapRoles.workIntake, password: passwords[bootstrapRoles.workIntake] });
+    await verify(database, bootstrapRoles.workIntake);
+    nextWorkIntake = prepareProvisionedWorkIntakeConfigurationV1({ database,
+      integrityKey: randomBytes(32).toString("base64url"), credentials: [] });
+  }
+  if (nextRoles !== oldRoles) {
+    captureMacLocalDatabaseRolesV1(nextRoles);
+    await writePrivate(roleFile, `${JSON.stringify(nextRoles)}\n`);
+  }
+  if (nextWorkIntake !== workIntake)
+    await writePrivate(join(configRoot, "work-intake-server.json"), `${JSON.stringify(nextWorkIntake)}\n`);
   return { finished: true, mainCommit };
 }
 
