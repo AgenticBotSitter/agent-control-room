@@ -84,7 +84,6 @@ export function stuckWorkerCount(value: WorkerRead): number {
 
 export function HomeDashboard({ data }: { data: HomeDashboardState }) {
   return <><a className="private-action-link" href="/projects">New task</a><div className="private-dashboard-grid">
-    <UpdateCandidatesHome />
     {/* Needs attention leads the dashboard and is visually loud (red), per
         owner-ux-feedback-2026-09-27.md items 1-3: "a clear list 'This needs
         you → why → one button to act'", a red box, and an empty state that is
@@ -110,6 +109,8 @@ export function HomeDashboard({ data }: { data: HomeDashboardState }) {
         ? <details><summary>Details</summary><p className="private-note">This reflects a checked page of saved task attention. It is not a fleet-wide all-clear.</p></details> : null}
       <a className="private-action-link" href="/needs-me">Open Action Inbox</a>
     </section>
+
+    <UpdateCandidatesHome />
 
     <section className="private-panel" aria-labelledby="home-active"><PanelHeading id="home-active">Running work
       {data.activity.state === "ready" ? <PrivateCount value={data.activity.value.active.length} /> : null}</PanelHeading>

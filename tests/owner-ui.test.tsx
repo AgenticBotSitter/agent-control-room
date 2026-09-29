@@ -389,11 +389,11 @@ test("the real Home panels announce loading politely and a failed read as its ow
   // renders them.
   const loading = documentFor(renderToStaticMarkup(createElement(HomeDashboard, { data: allLoading })));
   const loadingRegions = liveRegions(loading);
-  // Six panels since the "Stuck, blocked or offline" panel joined the
-  // dashboard: it reads the same `connections` state as "Worker status" but
-  // announces its own loading region, same as every other panel here.
-  assert.equal(loadingRegions.length, 6,
-    `every one of the six Home panels is loading and each announces: ${JSON.stringify(loadingRegions)}`);
+  // Seven panels since "Update ready" joined the dashboard. It owns a
+  // separate protected read, while "Stuck, blocked or offline" shares the
+  // `connections` state with "Worker status".
+  assert.equal(loadingRegions.length, 7,
+    `every one of the seven Home panels is loading and each announces: ${JSON.stringify(loadingRegions)}`);
   for (const region of loadingRegions) {
     assert.equal(region.role, "status", "a load in progress is new but not urgent");
     assert.ok(region.text.length > 0, "a status region with no text announces nothing");
@@ -404,8 +404,11 @@ test("the real Home panels announce loading politely and a failed read as its ow
 
   const failed = documentFor(renderToStaticMarkup(createElement(HomeDashboard, { data: allUnavailable })));
   const failedRegions = liveRegions(failed);
-  assert.equal(failedRegions.length, 6, `each failed panel announces once: ${JSON.stringify(failedRegions)}`);
-  for (const region of failedRegions) {
+  assert.equal(failedRegions.length, 7, `each dashboard panel announces once: ${JSON.stringify(failedRegions)}`);
+  const candidateRead = failedRegions.find(region => /Checking signed-off update candidates/.test(region.text));
+  assert.equal(candidateRead?.role, "status",
+    "the independently loaded update-candidate read remains an honest loading status during static rendering");
+  for (const region of failedRegions.filter(region => region !== candidateRead)) {
     assert.equal(region.role, "status", "one unread section is a polite report, not an interruption");
     // Each carries its OWN sentence, so an owner can tell which read failed and
     // that no all-clear was invented for it.
