@@ -717,7 +717,9 @@ test("non-intake roles keep exactly their work-batch access", needsPg, async () 
       control_room_schema_owner:{work_batches:allBatches,work_batch_revisions:allRevisions},
       control_room_backup:{work_batches:allBatches,work_batch_revisions:allRevisions},
       control_room_reader:denied, control_room_application:denied, control_room_schedule_admissions:denied,
-      control_room_github_broker:denied, control_room_private_web:denied, control_room_task_coordinator:denied,
+      control_room_github_broker:denied,
+      control_room_private_web:{work_batches:allBatches,work_batch_revisions:allRevisions},
+      control_room_task_coordinator:denied,
     };
     const observed={};
     for (const role of Object.keys(expected)) observed[role]=await observe(role);
@@ -730,6 +732,7 @@ test("non-intake roles keep exactly their work-batch access", needsPg, async () 
       WHERE has_table_privilege(r.role,t.table_name,'INSERT') OR has_table_privilege(r.role,t.table_name,'UPDATE')
         OR has_table_privilege(r.role,t.table_name,'DELETE') ORDER BY 1,2`,[Object.keys(expected)])).rows;
     assert.deepEqual(privileges,[
+      {role:"control_room_private_web",table_name:"work_batch_revisions",insert:true,update:false,delete:false},
       {role:"control_room_schema_owner",table_name:"work_batch_revisions",insert:true,update:true,delete:true},
       {role:"control_room_schema_owner",table_name:"work_batches",insert:true,update:true,delete:true}]);
   } finally {
