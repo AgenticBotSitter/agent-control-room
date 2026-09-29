@@ -60,6 +60,19 @@ export const runBoundedEvidenceGitV1: GitEvidenceRunnerV1 = async (cwd, args, ma
 const text = (bytes: Uint8Array) => new TextDecoder("utf-8", { fatal: true }).decode(bytes);
 const digest = (bytes: Uint8Array) => `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
 
+function completeUtf8PrefixLength(bytes: Uint8Array): number {
+  if (bytes.byteLength === 0) return 0;
+  let lead = bytes.byteLength - 1;
+  while (lead >= 0 && (bytes[lead]! & 0xc0) === 0x80) lead -= 1;
+  if (lead < 0) return 0;
+  const leadingByte = bytes[lead]!;
+  const expectedBytes = leadingByte <= 0x7f ? 1
+    : leadingByte >= 0xc2 && leadingByte <= 0xdf ? 2
+      : leadingByte >= 0xe0 && leadingByte <= 0xef ? 3
+        : leadingByte >= 0xf0 && leadingByte <= 0xf4 ? 4 : 1;
+  return bytes.byteLength - lead < expectedBytes ? lead : bytes.byteLength;
+}
+
 function pairs(bytes: Uint8Array): readonly [string, string][] {
   const values = text(bytes).split("\0");
   if (values.at(-1) === "") values.pop();
@@ -80,11 +93,10 @@ function boundedDiff(bytes: Uint8Array, maximumBytes: number) {
   const markerBytes = Buffer.from(marker);
   if (markerBytes.byteLength >= maximumBytes) throw new Error("git_evidence_diff_bound_invalid");
   const prefix = Buffer.from(bytes).subarray(0, maximumBytes - markerBytes.byteLength);
-  // LF is never part of a multi-byte UTF-8 sequence. Retaining only complete
-  // diff lines gives us a valid boundary without decoding user content or
-  // confusing a literal U+FFFD with decoder damage at the cut.
-  const lastLine = prefix.lastIndexOf(0x0a);
-  const retained = lastLine < 0 ? prefix.subarray(0, 0) : prefix.subarray(0, lastLine + 1);
+  // Inspect only the trailing byte sequence. This retains nearly the complete
+  // budget even for one long line, without decoding user content or splitting
+  // a valid multi-byte character at the cut.
+  const retained = prefix.subarray(0, completeUtf8PrefixLength(prefix));
   const stored = Buffer.concat([retained, markerBytes]);
   return Object.freeze({ text: stored.toString("utf8"), originalBytes: bytes.byteLength,
     retainedBytes: stored.byteLength, truncated: true, contentDigest, retainedDigest: digest(stored) });

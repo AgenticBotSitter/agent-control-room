@@ -41,6 +41,47 @@ async function commitChange(path: string, content: string, subject = "attempt ch
   await git(path, ["add", "src/change.ts"]); await git(path, ["commit", "-qm", subject]);
 }
 
+const syntheticBase = "a".repeat(40), syntheticHead = "b".repeat(40);
+async function captureSyntheticDiff(diff: Uint8Array, maximumDiffBytes = 65_536) {
+  const worktreeLeaseDigest = sha256Digest("synthetic worktree lease");
+  const plan = createWorktreeChangeAuditPlanV1({ deliveryDigest: sha256Digest("synthetic delivery"),
+    worktreeLeaseDigest, baseRevision: syntheticBase, allowedPaths: ["src/**"],
+    maximumChangedFiles: 1, maximumChangedBytes: 512 * 1024 });
+  const confinement = recordWorkspaceWriteRefusalV1({ worktreeLeaseDigest,
+    attemptedPath: "/fixture/owner/refused.txt", safeReasonCode: "sandbox_denied" });
+  return captureGitWorktreeDiffEvidenceV1({ plan, checkoutPath: "/fixture/worktree", confinement,
+    maximumDiffBytes, runGit: async (_cwd, args) => {
+      if (args[0] === "rev-parse") return Buffer.from(`${syntheticHead}\n`);
+      if (args[0] === "merge-base") return Buffer.from(`${syntheticBase}\n`);
+      if (args[0] === "status") return Buffer.alloc(0);
+      if (args[0] === "diff" && args[1] === "--name-status") return Buffer.from("A\0src/large.ts\0");
+      if (args[0] === "diff") return diff;
+      if (args[0] === "log") return Buffer.from(`${syntheticHead}\0large one-line diff\0`);
+      throw new Error(`unexpected synthetic Git command: ${args[0] ?? "missing"}`);
+    } });
+}
+
+function oneHunkDiff(line: Uint8Array) {
+  return Buffer.concat([Buffer.from("diff --git a/src/large.ts b/src/large.ts\nnew file mode 100644\n"
+    + `index ${"0".repeat(40)}..${"1".repeat(40)}\n--- /dev/null\n+++ b/src/large.ts\n@@ -0,0 +1 @@\n+`),
+  line, Buffer.from("\n")]);
+}
+
+async function terminalCleanupCase(runId: string) {
+  const f = await fixture();
+  const manager = new CodexWorkspaceManagerV1(f.port);
+  const lease = await manager.prepareCoding({ ownerCheckoutRoot: f.owner, runId,
+    repositoryRoot: f.repository, workspaceRoot: f.workspace, revision: f.base });
+  await commitChange(lease.checkoutPath, "export const reviewed = true;\n", "reviewed head");
+  const plan = planFor(lease), confinement = recordWorkspaceWriteRefusalV1({ worktreeLeaseDigest: lease.leaseId,
+    attemptedPath: join(f.owner, "refused.txt"), safeReasonCode: "sandbox_denied" });
+  const evidence = await captureGitWorktreeDiffEvidenceV1({ plan, checkoutPath: lease.checkoutPath, confinement });
+  const authorization = createCodingWorkspaceCleanupAuthorizationV1({ lease, plan, evidence, disposition: "accepted" });
+  const restarted = await createGitWorkspacePort({ repositoryRoot: f.repository,
+    workspaceRoot: f.workspace, runGit: git });
+  return { ...f, lease, authorization, restarted };
+}
+
 test("two attempts receive disjoint named worktrees and the owner's live checkout is refused as a base", async t => {
   const f = await fixture(); t.after(f.close);
   const manager = new CodexWorkspaceManagerV1(f.port);
@@ -148,6 +189,34 @@ test("diff truncation preserves literal U+FFFD and complete multi-byte lines nea
   assert.ok(stored.retainedBytes <= maximumDiffBytes);
 });
 
+test("diff truncation retains a near-budget body for one 300,000-byte added line", async () => {
+  const maximumDiffBytes = 65_536;
+  const evidence = await captureSyntheticDiff(oneHunkDiff(Buffer.alloc(300_000, 0x78)), maximumDiffBytes);
+  const stored = evidence.git!.unifiedDiff;
+  assert.equal(stored.truncated, true);
+  assert.ok(stored.originalBytes > 300_000);
+  assert.ok(stored.retainedBytes >= maximumDiffBytes - 3);
+  assert.ok(stored.retainedBytes <= maximumDiffBytes);
+  assert.doesNotMatch(stored.text, /\uFFFD/u);
+  assert.doesNotThrow(() => new TextDecoder("utf-8", { fatal: true }).decode(Buffer.from(stored.text)));
+});
+
+test("diff truncation backs up before a four-byte emoji straddling the budget cut", async () => {
+  const maximumDiffBytes = 65_536;
+  const ascii = oneHunkDiff(Buffer.alloc(300_000, 0x78));
+  const contentDigest = `sha256:${createHash("sha256").update(ascii).digest("hex")}`;
+  const markerBytes = Buffer.byteLength(`\n[CONTROL ROOM: unified diff truncated; original ${ascii.byteLength} bytes; ${contentDigest}]\n`);
+  const rawCut = maximumDiffBytes - markerBytes;
+  const diff = Buffer.from(ascii), emoji = Buffer.from("🙂");
+  emoji.copy(diff, rawCut - 2);
+  const evidence = await captureSyntheticDiff(diff, maximumDiffBytes);
+  const stored = evidence.git!.unifiedDiff;
+  assert.equal(stored.truncated, true);
+  assert.equal(stored.retainedBytes, maximumDiffBytes - 2);
+  assert.doesNotMatch(stored.text, /\uFFFD/u);
+  assert.doesNotThrow(() => new TextDecoder("utf-8", { fatal: true }).decode(Buffer.from(stored.text)));
+});
+
 test("terminal cleanup covers accept, reject, expiry and execution terminals, including restart", async t => {
   const dispositions: CodingWorkspaceTerminalDispositionV1[] = ["accepted", "rejected", "expired", "failed", "cancelled", "orphaned"];
   for (const disposition of dispositions) {
@@ -167,6 +236,45 @@ test("terminal cleanup covers accept, reject, expiry and execution terminals, in
     assert.equal((await git(f.repository, ["branch", "--list", `control-room/${lease.checkoutPath.split("/").at(-1)}`])).trim(), "");
     assert.equal(await cleanupTerminalCodingWorkspaceV1({ port: restarted, lease, authorization }), "already_absent");
   }
+});
+
+for (const scenario of [
+  { name: "an uncommitted edit", content: "export const reviewed = false;\n", path: (checkout: string) => join(checkout, "src", "change.ts"),
+    mutate: async (checkout: string, path: string, content: string) => writeFile(path, content) },
+  { name: "a staged change", content: "export const staged = true;\n", path: (checkout: string) => join(checkout, "src", "change.ts"),
+    mutate: async (checkout: string, path: string, content: string) => { await writeFile(path, content); await git(checkout, ["add", "src/change.ts"]); } },
+  { name: "an untracked file", content: "keep this untracked file\n", path: (checkout: string) => join(checkout, "untracked.txt"),
+    mutate: async (_checkout: string, path: string, content: string) => writeFile(path, content) },
+] as const) {
+  test(`terminal cleanup preserves ${scenario.name} and its file`, async t => {
+    const x = await terminalCleanupCase(`run:preserve-${scenario.name.replaceAll(" ", "-")}`); t.after(x.close);
+    const path = scenario.path(x.lease.checkoutPath);
+    await scenario.mutate(x.lease.checkoutPath, path, scenario.content);
+    assert.notEqual((await git(x.lease.checkoutPath, ["status", "--short"])).trim(), "");
+    assert.equal(await cleanupTerminalCodingWorkspaceV1({ port: x.restarted, lease: x.lease,
+      authorization: x.authorization }), "workspace_preserved");
+    assert.equal(await readFile(path, "utf8"), scenario.content);
+    assert.notEqual((await git(x.repository,
+      ["branch", "--list", `control-room/${x.lease.checkoutPath.split("/").at(-1)}`])).trim(), "");
+  });
+}
+
+test("terminal cleanup removes a clean evidence-bound worktree", async t => {
+  const x = await terminalCleanupCase("run:clean-terminal"); t.after(x.close);
+  assert.equal(await cleanupTerminalCodingWorkspaceV1({ port: x.restarted, lease: x.lease,
+    authorization: x.authorization }), "workspace_cleaned");
+  await assert.rejects(readFile(x.lease.checkoutPath));
+});
+
+test("terminal removal preserves an untracked file written after observation", async t => {
+  const x = await terminalCleanupCase("run:late-terminal-write"); t.after(x.close);
+  const path = join(x.lease.checkoutPath, "late-untracked.txt");
+  await writeFile(path, "written after the clean observation\n");
+  await assert.rejects(x.restarted.removeTerminalWorktree!({ repositoryRealPath: x.lease.repositoryRealPath,
+    checkoutPath: x.lease.checkoutPath, baseRevision: x.authorization.baseRevision,
+    headRevision: x.authorization.headRevision, device: x.lease.device, inode: x.lease.inode,
+    cleanupDigest: x.authorization.cleanupDigest }), /workspace_terminal_uncommitted_changes/);
+  assert.equal(await readFile(path, "utf8"), "written after the clean observation\n");
 });
 
 test("restart finishes cleanup after a crash between worktree and branch removal", async t => {
@@ -191,7 +299,7 @@ test("restart finishes cleanup after a crash between worktree and branch removal
   assert.equal((await git(f.repository, ["branch", "--list", `control-room/${lease.checkoutPath.split("/").at(-1)}`])).trim(), "");
 });
 
-test("terminal cleanup refuses a worktree whose HEAD changed after evidence capture", async t => {
+test("terminal cleanup preserves a worktree whose HEAD changed after evidence capture", async t => {
   const f = await fixture(); t.after(f.close);
   const manager = new CodexWorkspaceManagerV1(f.port);
   const lease = await manager.prepareCoding({ ownerCheckoutRoot: f.owner, runId: "run:changed-terminal-head",
@@ -204,8 +312,7 @@ test("terminal cleanup refuses a worktree whose HEAD changed after evidence capt
   await commitChange(lease.checkoutPath, "export const reviewed = false;\n", "unreviewed head");
   const changedHead = (await git(lease.checkoutPath, ["rev-parse", "HEAD"])).trim();
   const restarted = await createGitWorkspacePort({ repositoryRoot: f.repository, workspaceRoot: f.workspace, runGit: git });
-  await assert.rejects(cleanupTerminalCodingWorkspaceV1({ port: restarted, lease, authorization }),
-    /workspace_terminal_head_changed/);
+  assert.equal(await cleanupTerminalCodingWorkspaceV1({ port: restarted, lease, authorization }), "workspace_preserved");
   assert.equal((await git(lease.checkoutPath, ["rev-parse", "HEAD"])).trim(), changedHead);
   assert.equal((await git(f.repository,
     ["branch", "--format=%(objectname)", "--list", `control-room/${lease.checkoutPath.split("/").at(-1)}`])).trim(), changedHead);

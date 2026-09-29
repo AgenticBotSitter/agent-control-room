@@ -27,7 +27,7 @@ export async function cleanupTerminalCodingWorkspaceV1(input: Readonly<{
   port: ObservableGitWorkspacePort;
   lease: CodexWorkspaceLeaseV1;
   authorization: ReturnType<typeof createCodingWorkspaceCleanupAuthorizationV1>;
-}>): Promise<"workspace_cleaned" | "already_absent"> {
+}>): Promise<"workspace_cleaned" | "workspace_preserved" | "already_absent"> {
   if (!input.port.removeTerminalWorktree || input.authorization.leaseId !== input.lease.leaseId
     || input.authorization.baseRevision !== input.lease.revision) throw new Error("coding_workspace_cleanup_unavailable");
   const observation = await input.port.observeCheckout({ realPath: input.lease.checkoutPath,
@@ -41,8 +41,9 @@ export async function cleanupTerminalCodingWorkspaceV1(input: Readonly<{
     return "already_absent";
   }
   if (observation.state === "changed" || observation.state === "unavailable") throw new Error("coding_workspace_reconciliation_required");
-  // Changed files are expected after a coding run; the evidence-bound forced
-  // removal rechecks identity, branch, base ancestry and exact HEAD.
+  if (observation.state === "preserve") return "workspace_preserved";
+  // The evidence-bound removal rechecks identity, branch, base ancestry, exact
+  // HEAD, index flags and worktree status immediately before its effect.
   await input.port.removeTerminalWorktree({ repositoryRealPath: input.lease.repositoryRealPath,
     checkoutPath: input.lease.checkoutPath, baseRevision: input.authorization.baseRevision,
     headRevision: input.authorization.headRevision, device: input.lease.device, inode: input.lease.inode,

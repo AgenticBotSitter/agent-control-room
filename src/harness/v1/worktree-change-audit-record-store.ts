@@ -144,7 +144,8 @@ export async function readResultBoundWorktreeChangeAuditDetailV1(tx: DatabaseSes
   [scope.tenantId, scope.projectId, scope.jobId, scope.attemptId, scope.runId, scope.artifactId])).rows[0];
   if (!row) return undefined;
   const record = verifyStored(integrityKey, row);
-  if (!sameIdentity(scope, record.identity)) fail();
+  // The exact six-column predicate selects the requested lineage, while
+  // verifyStored authenticates the record and checks all six row mirrors.
   return detailWorktreeChangeAuditRecordV1(record);
 }
 

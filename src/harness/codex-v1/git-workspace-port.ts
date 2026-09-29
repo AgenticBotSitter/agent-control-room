@@ -204,8 +204,16 @@ export async function createGitWorkspacePort(input: {
           || (await runGit(checkoutPath, ["merge-base", request.baseRevision, request.headRevision])).trim() !== request.baseRevision) {
           throw new Error("workspace_terminal_head_changed");
         }
+        const index = await runGit(checkoutPath, ["--no-optional-locks", "ls-files", "-v", "-z", "--"]);
+        const status = await runGit(checkoutPath,
+          ["--no-optional-locks", "status", "--porcelain", "--untracked-files=all", "--ignored=matching"]);
+        if (index.split("\0").filter(Boolean).some(entry => !entry.startsWith("H ")) || status.trim()) {
+          throw new Error("workspace_terminal_uncommitted_changes");
+        }
         uncertain.add(checkoutPath);
-        await runGit(repo.realPath, ["worktree", "remove", "--force", "--", checkoutPath]);
+        // Deliberately omit --force so a write racing the checks is still
+        // preserved by Git's own dirty-worktree refusal.
+        await runGit(repo.realPath, ["worktree", "remove", "--", checkoutPath]);
         try { await lstat(checkoutPath); throw new Error("workspace_removal_unconfirmed"); }
         catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
         await removeTerminalBranch({ repositoryRealPath, checkoutPath, headRevision: request.headRevision,
