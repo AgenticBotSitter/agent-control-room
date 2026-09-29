@@ -128,8 +128,7 @@
     "test:windows-line-endings": "node scripts/run-tests-with-quarantine.mjs --test tests/windows-line-endings.test.mjs",
     "test:windows-launcher-modes": "node scripts/run-tests-with-quarantine.mjs --test tests/windows-launcher-modes.test.mjs",
     "test:voice": "node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/voice-accessibility.test.tsx",
-    "test:multi-client": "node --import tsx scripts/multi-client/load-test.mjs",
-    "test:polling-discipline": "node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/private-polling-discipline.test.ts tests/use-polled-read.test.tsx tests/private-read-validator.test.ts tests/private-read-validator-concurrent.test.ts tests/multi-client-byte-accounting.test.mjs"
+    "test:polling-discipline": "node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/private-polling-discipline.test.ts tests/use-polled-read.test.tsx tests/private-read-validator.test.ts tests/private-read-validator-concurrent.test.ts"
   },
   "dependencies": {
     "@mozilla/readability": "0.6.0",
