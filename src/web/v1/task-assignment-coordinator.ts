@@ -313,8 +313,15 @@ export class TaskAssignmentCoordinator {
       || attemptWorkerId !== undefined && attemptWorkerId !== route.executorId) conflict();
     const selection = (await tx.query<{ worker_kind: string | null; selection_key: string | null;
       model: string | null; effort: string | null; provider: string | null; profile: string | null }>(
+      // control_task_model_selections is append-only (see the equivalent
+      // reasoning at db/migrations/0104_work_batch_agent_queue.sql's guard
+      // function): the append-only owner web/coordinator roles hold no
+      // UPDATE privilege, so a row lock here refuses every batch-admitted
+      // assignment in production. The six-field equality check below is
+      // what actually authenticates the selection; no lock is needed
+      // because the row this reads can never change under us.
       `SELECT worker_kind,selection_key,model,effort,provider,profile
-       FROM control_task_model_selections WHERE tenant_id=$1 AND job_id=$2 FOR SHARE`,
+       FROM control_task_model_selections WHERE tenant_id=$1 AND job_id=$2`,
     [this.scope.tenantId, job.id])).rows[0];
     if (!selection || selection.worker_kind !== admission.worker_kind
       || selection.selection_key !== admission.selection_key || selection.model !== admission.model

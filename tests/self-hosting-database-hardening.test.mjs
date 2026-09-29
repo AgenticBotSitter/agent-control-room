@@ -208,3 +208,14 @@ test("0104 confines both agent-queue tables to the bound intake tenant", async (
   assert.notEqual(guard, "");
   assert.doesNotMatch(guard, /\bFOR (?:UPDATE|NO KEY UPDATE|SHARE|KEY SHARE)\b/u);
 });
+
+test("the TypeScript batch admission gate takes no row lock on control_task_model_selections", async () => {
+  const source = await readFile("src/web/v1/task-assignment-coordinator.ts", "utf8");
+  const guard = source.match(/private async assertWorkBatchQueueAdmission\([\s\S]*?\n {2}webOperation\(\)/u)?.[0] ?? "";
+  assert.notEqual(guard, "");
+  assert.match(guard, /FROM control_task_model_selections/u);
+  // Same reasoning as the migration guard above: neither control_room_private_web
+  // nor control_room_task_coordinator holds UPDATE on this append-only table, so
+  // a row lock here refuses every batch-admitted assignment in production.
+  assert.doesNotMatch(guard, /\bFOR (?:UPDATE|NO KEY UPDATE|SHARE|KEY SHARE)\b/u);
+});
