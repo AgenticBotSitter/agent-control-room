@@ -126,12 +126,26 @@ function Eligibility({ value, capacity, connections }: { value: TaskProjectAgent
   </section>;
 }
 
-export function ProjectAgentVisibilityView({ state, projectId }: { state: State; projectId: string }) {
+export function ProjectAgentVisibilityView({ state, projectId, local = false, onRetry }: {
+  state: State; projectId: string; local?: boolean; onRetry?: () => void;
+}) {
   if (state.state === "loading") return <section className="private-panel" aria-labelledby="project-agent-eligibility-title" aria-live="polite">
     <h2 id="project-agent-eligibility-title">Eligible workers</h2><p>Reading project eligibility, worker observations, saved connections, and current work separately.</p>
   </section>;
   const { eligibility, capacity, connections, currentWork, agentWork } = state.value;
+  const sources = [eligibility, capacity, connections, currentWork, agentWork];
+  const authenticationRequired = sources.some(source => source.state === "unavailable" && source.code === "authentication_required");
+  const sourceMissing = capacity.state === "unavailable" && capacity.code === "operator_surface_unavailable"
+    || connections.state === "unavailable" && connections.code === "not_found";
+  const requestFailed = sources.some(source => source.state === "unavailable"
+    && source.code !== "authentication_required"
+    && !(source === capacity && source.code === "operator_surface_unavailable")
+    && !(source === connections && source.code === "not_found"));
   return <>
+    {authenticationRequired ? <section className="private-panel"><p role="alert">Your session has ended. Sign in again to read agent evidence.</p>
+      <a className="private-action-link" href={local ? "/session" : "/cdn-cgi/access/logout"}>Sign in again</a></section>
+      : requestFailed ? <section className="private-panel"><p role="alert">Some agent evidence could not be loaded. No worker, capacity, connection, or work state is inferred.</p>
+        {onRetry && <button type="button" onClick={onRetry}>Try again</button>}</section> : null}
     {eligibility.state === "ready" ? <Eligibility value={eligibility.value} capacity={capacity} connections={connections} />
       : <section className="private-panel" aria-labelledby="project-agent-eligibility-title"><h2 id="project-agent-eligibility-title">Eligible workers</h2>
         <p role="alert">{eligibility.code === "authentication_required" ? "Your session has ended. Sign in again to read worker eligibility."
@@ -153,13 +167,15 @@ export function ProjectAgentVisibilityView({ state, projectId }: { state: State;
         <li>Saved connection inventory: {connections.state === "ready" ? `recorded ${connections.value.projection.generatedAt}` : "unavailable"}.</li>
         <li>Current project work: {currentWork.state === "ready" ? `recorded ${currentWork.value.observedAt}` : "unavailable"}.</li>
         <li>Exact task evidence: {agentWork.state === "ready" ? `${agentWork.value.length} bounded task read(s)` : "unavailable"}.</li></ul>
+      {local && sourceMissing && !authenticationRequired && !requestFailed
+        ? <p role="status">Installation-wide capacity or connection evidence is not available on this computer yet. Project task and saved run evidence above remains independently sourced.</p> : null}
       <p className="private-note">These sources answer different questions. A saved connection is not eligibility; eligibility is not availability; capacity is not authority; current work is not attributed to a worker here.</p>
     </section>
   </>;
 }
 
-export function ProjectAgentWorkspace({ projectId, client = readProjectAgentVisibility }: { projectId: string;
-  client?: typeof readProjectAgentVisibility }) {
+export function ProjectAgentWorkspace({ projectId, client = readProjectAgentVisibility, local = false }: { projectId: string;
+  client?: typeof readProjectAgentVisibility; local?: boolean }) {
   const [state, setState] = useState<State>({ state: "loading" });
   const [generation, setGeneration] = useState(0);
   useEffect(() => {
@@ -177,6 +193,7 @@ export function ProjectAgentWorkspace({ projectId, client = readProjectAgentVisi
     });
     return () => abort.abort();
   }, [client, generation, projectId]);
-  return <><ProjectAgentVisibilityView state={state} projectId={projectId} />
-    <button type="button" onClick={() => setGeneration(value => value + 1)}>Refresh agent evidence</button></>;
+  const retry = () => setGeneration(value => value + 1);
+  return <><ProjectAgentVisibilityView state={state} projectId={projectId} local={local} onRetry={retry} />
+    <button type="button" onClick={retry}>Refresh agent evidence</button></>;
 }
