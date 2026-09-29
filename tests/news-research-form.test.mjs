@@ -161,14 +161,22 @@ test("control-center ingestion replays an identical reader result without writin
   assert.deepEqual(await s.ingest.loadBaseline(), s.result().snapshot);
 });
 
-test("control-center ingestion throws news_source_mismatch for a mismatched status", async t => {
-  const s = await discoverySetup(t, "source-mismatch");
-  const mismatched = s.result();
-  mismatched.status = { ...mismatched.status, sourceId: "source:other-source" };
-  const reader = { readSource: async () => mismatched };
-  await assert.rejects(s.ingest.collect(reader, new AbortController().signal, s.clock), /news_source_mismatch/);
-  assert.equal(await s.storyCount(), 0);
-  assert.equal(await s.ingest.loadBaseline(), undefined);
+test("control-center ingestion throws news_source_mismatch when any source identity field is wrong", async t => {
+  const corruptions = [
+    ["status-sourceId", result => { result.status = { ...result.status, sourceId: "source:other-source" }; }],
+    ["status-source", result => { result.status = { ...result.status, source: "Other source" }; }],
+    ["sourceUrl", result => { result.sourceUrl = "https://example.invalid/other-feed"; }],
+  ];
+  for (const [label, corrupt] of corruptions) {
+    const s = await discoverySetup(t, `source-mismatch-${label}`);
+    const mismatched = s.result();
+    corrupt(mismatched);
+    const reader = { readSource: async () => mismatched };
+    await assert.rejects(s.ingest.collect(reader, new AbortController().signal, s.clock), /news_source_mismatch/,
+      `expected news_source_mismatch for ${label}`);
+    assert.equal(await s.storyCount(), 0, `expected no persisted stories for ${label}`);
+    assert.equal(await s.ingest.loadBaseline(), undefined, `expected no baseline for ${label}`);
+  }
 });
 
 test("control-center ingestion rejects a future-dated item individually without failing the batch", async t => {
