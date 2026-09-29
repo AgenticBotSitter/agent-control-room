@@ -53,6 +53,15 @@ function parseAcl(value: string): ReadonlyMap<string, string> | undefined {
 function expectedTablePrivileges(table: string): ReadonlyMap<string, string> {
   const result = new Map<string, string>([[owner, "arwdDxtm"]]);
   if (table === "control_room_schema_migrations") return result;
+  if (table === "work_intake_role_anchor") {
+    result.set("control_room_work_intake", "r");
+    return result;
+  }
+  if (table === "work_intake_tenant_binding") {
+    for (const role of ["control_room_application", "control_room_reader", "control_room_backup",
+      "control_room_work_intake"]) result.set(role, "r");
+    return result;
+  }
   if (workIntakeExclusiveTables.has(table)) {
     result.set("control_room_backup", "r");
     result.set("control_room_work_intake", workIntakeExclusiveTables.get(table)!);

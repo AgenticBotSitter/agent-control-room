@@ -289,10 +289,10 @@ test("pipeline projection fails closed when the run no longer has exactly three 
   await assert.rejects(f.service.view(f.identity, f.project.projectId, run.runId), /pipeline_integrity_failed/u);
 });
 
-test("0096 down migration refuses retained pipeline records and removes all owned objects when empty", async t => {
+test("0105 down migration refuses retained pipeline records and removes all owned objects when empty", async t => {
   const populated = await fixture(); t.after(() => void populated.db.close());
   await populated.service.createTemplate(populated.identity, populated.project.projectId, template);
-  const down = await readFile("db/down/0096_linear_pipeline_runs.sql", "utf8");
+  const down = await readFile("db/down/0105_linear_pipeline_runs.sql", "utf8");
   await assert.rejects(populated.db.exec(down), /down migration refused/u); await populated.db.exec("ROLLBACK");
   const empty = await taskFixture(); t.after(() => void empty.db.close());
   await empty.db.exec(down);

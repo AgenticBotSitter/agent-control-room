@@ -73,6 +73,18 @@ export interface VerifiedWebIdentity {
   verificationExpiresAt: string;
 }
 
+/** Non-secret browser-visible bindings for memory-only owner gestures. The
+ * actor binding changes with the verified provider/subject; the epoch changes
+ * with the exact credential issuance. Neither value exposes the credential or
+ * raw subject. */
+export function authenticatedWebSessionBindingV1(identity: VerifiedWebIdentity) {
+  const digest = (value: unknown) => `sha256:${createHash("sha256").update(JSON.stringify(value)).digest("hex")}`;
+  return Object.freeze({
+    actorId: digest({ schema: "control-room.web-actor-binding/v1", provider: identity.provider, subject: identity.subject }),
+    sessionEpoch: digest({ schema: "control-room.web-session-epoch/v1", tokenDigest: identity.tokenDigest, issuedAt: identity.issuedAt }),
+  });
+}
+
 function decode(value: string): unknown {
   if (!segment.test(value)) throw new Error("invalid_encoding");
   const bytes = Buffer.from(value, "base64url");

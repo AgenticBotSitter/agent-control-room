@@ -39,6 +39,11 @@ async function seedWorkIntakeRosterV1(tx:DatabaseSession,configuration:MacLocalP
       WHERE i.tenant_id=$1 AND i.id=$2 AND g.id=$3`,[tenantId,identityId,grantId,subjectDigest,projectIdsJson])).rows[0];
     if(exact?.valid!==true) throw new Error("mac_local_owner_bootstrap_conflict");
   }
+  // The shared intake login serves exactly this tenant. Never re-bind it silently.
+  await tx.query(`INSERT INTO work_intake_tenant_binding(singleton,tenant_id) VALUES(true,$1)
+    ON CONFLICT(singleton) DO NOTHING`,[tenantId]);
+  const bound=(await tx.query<{tenant_id:string}>("SELECT tenant_id FROM work_intake_tenant_binding WHERE singleton")).rows;
+  if(bound.length!==1||bound[0]?.tenant_id!==tenantId) throw new Error("mac_local_owner_bootstrap_conflict");
 }
 
 /** Each local worker has its own assignment route. Its public identity key is

@@ -20,6 +20,7 @@ type BatchRow = { id: string; tenant_id: string; project_id: string; proposed_by
   version: number; created_at: string | Date; updated_at: string | Date };
 type RevisionRow = { revision: number; edited_by_identity_id: string; edited_at: string | Date;
   reason_code: string; proposal: unknown; revision_digest: string; auth_tag: string };
+type BatchRevisionRow = RevisionRow & { batch_id: string };
 type ItemRow = { id: string; tenant_id: string; batch_id: string; batch_revision: number; project_id: string;
   local_id: string; ordinal: number; role: "builder" | "checker" | "validator";
   required_capability: string; depends_on_local_ids: string[]; requested_worker_id: string | null;
@@ -189,6 +190,38 @@ export class WorkBatchOwnerServiceV1 {
     if (!revision) return original;
     if (Number(revision.revision) !== Number(row.version)) throw new Error("work_batch_integrity_failed");
     return this.#verifyRevision(revision, row.id);
+  }
+
+  async #currentProposals(tx: DatabaseSession, rows: readonly BatchRow[]) {
+    const proposals = new Map(rows.map(row => [row.id, this.#verifyBatch(row)]));
+    if (!rows.length) return proposals;
+    const revisions = (await tx.query<BatchRevisionRow>(`SELECT DISTINCT ON (batch_id)
+      batch_id,revision,edited_by_identity_id,edited_at,reason_code,proposal,revision_digest,auth_tag
+      FROM work_batch_revisions WHERE tenant_id=$1 AND batch_id=ANY($2::text[])
+      ORDER BY batch_id,revision DESC`, [this.scope.tenantId, rows.map(row => row.id)])).rows;
+    const latest = new Map(revisions.map(revision => [revision.batch_id, revision]));
+    for (const row of rows) {
+      const revision = latest.get(row.id);
+      if (!revision) continue;
+      if (Number(revision.revision) !== Number(row.version)) throw new Error("work_batch_integrity_failed");
+      proposals.set(row.id, this.#verifyRevision(revision, row.id));
+    }
+    return proposals;
+  }
+
+  async #itemsByBatch(tx: DatabaseSession, rows: readonly BatchRow[]) {
+    const decidedIds = rows.filter(row => row.state !== "proposed").map(row => row.id);
+    const grouped = new Map<string, ItemRow[]>();
+    if (!decidedIds.length) return grouped;
+    const items = (await tx.query<ItemRow>(`SELECT id,tenant_id,batch_id,batch_revision,
+      project_id,local_id,ordinal,role,required_capability,depends_on_local_ids,requested_worker_id,
+      requested_worker_kind,
+      requested_model_key,acceptance_criteria,acceptance_tests,decision_state,decision_reason_code,job_id,
+      job_attempt_count,item_digest,auth_tag,created_at FROM work_batch_items
+      WHERE tenant_id=$1 AND batch_id=ANY($2::text[]) ORDER BY batch_id,ordinal`,
+    [this.scope.tenantId, decidedIds])).rows;
+    for (const item of items) grouped.set(item.batch_id, [...(grouped.get(item.batch_id) ?? []), item]);
+    return grouped;
   }
 
   #verifyItem(row: ItemRow) {
@@ -525,15 +558,13 @@ export class WorkBatchOwnerServiceV1 {
         decision_digest,decision_auth_tag,version,
         created_at,updated_at FROM work_batches WHERE tenant_id=$1 AND project_id=$2 ORDER BY proposed_at DESC,id LIMIT 100`,
       [this.scope.tenantId, projectId])).rows;
+      const proposals = await this.#currentProposals(tx, rows);
+      const itemsByBatch = await this.#itemsByBatch(tx, rows);
       const summaries = [];
       for (const row of rows) {
-        const items = row.state === "proposed" ? [] : (await tx.query<ItemRow>(`SELECT id,tenant_id,batch_id,batch_revision,
-          project_id,local_id,ordinal,role,required_capability,depends_on_local_ids,requested_worker_id,requested_worker_kind,
-          requested_model_key,acceptance_criteria,acceptance_tests,decision_state,decision_reason_code,job_id,
-          job_attempt_count,item_digest,auth_tag,created_at FROM work_batch_items
-          WHERE tenant_id=$1 AND batch_id=$2 ORDER BY ordinal`, [this.scope.tenantId, row.id])).rows;
+        const items = itemsByBatch.get(row.id) ?? [];
         this.#verifyDecision(row, items);
-        const proposal = await this.#currentProposal(tx, row);
+        const proposal = proposals.get(row.id)!;
         summaries.push({ batchId: row.id, projectId,
         state: row.state, revision: Number(row.version), proposedByIdentityId: row.proposed_by_identity_id,
         proposedAt: iso(row.proposed_at), taskCount: proposal.tasks.length,
@@ -552,12 +583,32 @@ export class WorkBatchOwnerServiceV1 {
         b.created_at,b.updated_at FROM work_batches b JOIN control_action_inbox a
           ON a.tenant_id=b.tenant_id AND a.work_item_id=b.id AND a.project_id=b.project_id
         WHERE b.tenant_id=$1 AND b.state='proposed' AND a.id='attention:work-batch:' || b.id
-          AND a.state='open' ORDER BY b.proposed_at,b.id LIMIT 100`, [this.scope.tenantId])).rows
+          AND a.state='open'
+          AND EXISTS (SELECT 1 FROM control_role_grants readable WHERE readable.tenant_id=b.tenant_id
+            AND readable.identity_id=$2 AND readable.role_key IN ('owner','operator')
+            AND (readable.project_ids @> pg_catalog.to_jsonb(ARRAY[b.project_id]::text[])
+              OR readable.project_ids @> '["*"]'::jsonb)
+            AND (readable.allowed_actions @> '["tasks.read"]'::jsonb
+              OR readable.allowed_actions @> '["*"]'::jsonb)
+            AND readable.require_strong_factor=false
+            AND (readable.revoked_at IS NULL OR readable.revoked_at>$3::timestamptz)
+            AND (readable.expires_at IS NULL OR readable.expires_at>$3::timestamptz))
+          AND EXISTS (SELECT 1 FROM control_role_grants deciding WHERE deciding.tenant_id=b.tenant_id
+            AND deciding.identity_id=$2 AND deciding.role_key='owner'
+            AND (deciding.project_ids @> pg_catalog.to_jsonb(ARRAY[b.project_id]::text[])
+              OR deciding.project_ids @> '["*"]'::jsonb)
+            AND (deciding.allowed_actions @> '["work_batches.decide"]'::jsonb
+              OR deciding.allowed_actions @> '["*"]'::jsonb)
+            AND deciding.require_strong_factor=false
+            AND (deciding.revoked_at IS NULL OR deciding.revoked_at>$3::timestamptz)
+            AND (deciding.expires_at IS NULL OR deciding.expires_at>$3::timestamptz))
+          ORDER BY b.proposed_at,b.id LIMIT 100`, [this.scope.tenantId, actor.id, actor.now])).rows
         .filter(row => actor.can("tasks.read", row.project_id) && actor.can("work_batches.decide", row.project_id, true));
+      const proposals = await this.#currentProposals(tx, rows);
       const batches = [];
       for (const row of rows) {
         this.#verifyDecision(row, []);
-        const proposal = await this.#currentProposal(tx, row);
+        const proposal = proposals.get(row.id)!;
         batches.push({ batchId: row.id, projectId: row.project_id, state: row.state, revision: Number(row.version),
           proposedByIdentityId: row.proposed_by_identity_id, proposedAt: iso(row.proposed_at),
           taskCount: proposal.tasks.length, approvalIdentityId: null, decidedAt: null });

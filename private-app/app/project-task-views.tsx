@@ -7,6 +7,7 @@ import type { TaskProjectOverview } from "../../src/web/v1/task-project-overview
 import { PrivateHeader } from "./private-header";
 import { ProjectNavigation } from "./project-navigation";
 import { ConfiguredTimestamp } from "./configured-timestamp";
+import { LoadingState, StateChip, UnavailableState } from "./owner-ui";
 
 type ProjectTaskView = "reviews" | "activity";
 type ReadState = { state: "loading" } | { state: "ready"; value: TaskProjectOverview }
@@ -19,7 +20,9 @@ function taskHref(projectId: string, jobId: string) {
 function TaskLinks({ projectId, tasks }: { projectId: string; tasks: TaskProjectOverview["recent"] }) {
   return <ul className="private-dashboard-list">{tasks.map(task => <li key={task.jobId}>
     <a href={taskHref(projectId, task.jobId)}>{task.title}</a>
-    <span>{task.state.replaceAll("_", " ")} · <ConfiguredTimestamp value={task.updatedAt} prefix="Updated" /></span>
+    {/* The chip wraps only the state word; the middle dot and timestamp stay as
+        adjacent text so this element's text stays "state · Updated <time>". */}
+    <span><StateChip state={task.state} /> · <ConfiguredTimestamp value={task.updatedAt} prefix="Updated" /></span>
   </li>)}</ul>;
 }
 
@@ -28,11 +31,11 @@ export function ProjectTaskViewPanel({ projectId, view, state }: {
 }) {
   const title = view === "reviews" ? "Reviews" : "Activity";
   if (state.state === "loading") return <section className="private-panel"><h2>{title}</h2>
-    <p role="status">Loading this project’s saved {view}…</p></section>;
+    <LoadingState>Loading this project’s saved {view}…</LoadingState></section>;
   if (state.state === "unavailable") return <section className="private-panel"><h2>{title}</h2>
-    <p role="alert">{state.code === "access_denied" ? `Your current access does not include this project’s ${view}.`
+    <UnavailableState urgent>{state.code === "access_denied" ? `Your current access does not include this project’s ${view}.`
       : state.code === "authentication_required" ? `Your session has ended. Sign in again to see this project’s ${view}.`
-        : `The saved database or protected ${view} read could not be checked. No empty list or all-clear is inferred, and checking again does not start work.`}</p></section>;
+        : `The saved database or protected ${view} read could not be checked. No empty list or all-clear is inferred, and checking again does not start work.`}</UnavailableState></section>;
   const tasks = view === "reviews" ? state.value.awaitingReview : state.value.recent;
   const omitted = view === "reviews" ? state.value.additionalReviewsOmitted : state.value.additionalRecentOmitted;
   return <section className="private-panel"><h2>{title}</h2>

@@ -1,0 +1,166 @@
+{
+  "$comment": "Known search_path violations in the shipped migrations, tracked by issue 421.\nPR #420 does not edit shipped migrations; this file records each violation so the\nCI gate fails on NEW ones while these are fixed.\nEach entry is keyed on a STATE, not on a name: the routine's CATALOG IDENTITY\n(schema.name followed by the identity arguments PostgreSQL reports) AND the\nexact EFFECTIVE search_path the entry was written for, with null meaning the\nroutine pins nothing. Both halves must match. Renaming an argument or respelling\na schema cannot silently re-point a waiver at a different routine, and a later\nmigration that CHANGES a waived routine's effective search_path cannot inherit\nthe waiver for the new value: the routine counts as an unpinned violation again\nand the entry is reported as no longer matching.\nAn entry applies only while it is in date AND still matches a real violation in\nthe state it recorded. An entry with a missing or non-string searchPath, an\ninvalid date, an expiry more than 180 days after `added`, an expiry before\n`added`, a missing issue, or a key that is not a catalog identity is REFUSED. An\nexpired entry, and an entry that no longer matches any violation, both FAIL the\ngate rather than being reported and ignored.\nThe CI gate reads these identities from a live pg_proc built from the real migration\nledger, so nothing here is matched against migration text.\nRemove an entry as soon as the routine it names is hardened.",
+  "entries": [
+    {
+      "routine": "public.guard_attempt_resource_admission_update()",
+      "searchPath": null,
+      "added": "2026-09-28",
+      "expires": "2027-03-01",
+      "issue": "421"
+    },
+    {
+      "routine": "public.guard_durable_result_write_reservation_update()",
+      "searchPath": "pg_catalog, public",
+      "added": "2026-09-28",
+      "expires": "2027-03-01",
+      "issue": "421"
+    },
+    {
+      "routine": "public.guard_github_webhook_replay_delete()",
+      "searchPath": null,
+      "added": "2026-09-28",
+      "expires": "2027-03-01",
+      "issue": "421"
+    },
+    {
+      "routine": "public.guard_github_webhook_replay_update()",
+      "searchPath": null,
+      "added": "2026-09-28",
+      "expires": "2027-03-01",
+      "issue": "421"
+    },
+    {
+      "routine": "public.guard_github_worker_wake_hint_delete()",
+      "searchPath": null,
+      "added": "2026-09-28",
+      "expires": "2027-03-01",
+      "issue": "421"
+    },
+    {
+      "routine": "public.guard_github_worker_wake_hint_update()",
+      "searchPath": null,
+      "added": "2026-09-28",
+      "expires": "2027-03-01",
+      "issue": "421"
+    },
+    {
+      "routine": "public.guard_native_result_write_reservation_update()",
+      "searchPath": "pg_catalog, public",
+      "added": "2026-09-28",
+      "expires": "2027-03-01",
+      "issue": "421"
+    },
+    {
+      "routine": "public.guard_native_results_gate_insert()",
+      "searchPath": "pg_catalog, public",
+      "added": "2026-09-28",
+      "expires": "2027-03-01",
+      "issue": "421"
+    },
+    {
+      "routine": "public.guard_private_web_proposal_insert()",
+      "searchPath": "pg_catalog, public",
+      "added": "2026-09-28",
+      "expires": "2027-03-01",
+      "issue": "421"
+    },
+    {
+      "routine": "public.guard_private_web_quality_insert()",
+      "searchPath": "pg_catalog, public",
+      "added": "2026-09-28",
+      "expires": "2027-03-01",
+      "issue": "421"
+    },
+    {
+      "routine": "public.guard_project_coordinator_head_update()",
+      "searchPath": null,
+      "added": "2026-09-28",
+      "expires": "2027-03-01",
+      "issue": "421"
+    },
+    {
+      "routine": "public.guard_project_delegation_policy_update()",
+      "searchPath": null,
+      "added": "2026-09-28",
+      "expires": "2027-03-01",
+      "issue": "421"
+    },
+    {
+      "routine": "public.guard_task_coordinator_fleet_signal()",
+      "searchPath": "pg_catalog, public",
+      "added": "2026-09-28",
+      "expires": "2027-03-01",
+      "issue": "421"
+    },
+    {
+      "routine": "public.guard_task_coordinator_outbox_insert()",
+      "searchPath": "pg_catalog, public",
+      "added": "2026-09-28",
+      "expires": "2027-03-01",
+      "issue": "421"
+    },
+    {
+      "routine": "public.guard_task_coordinator_quality_insert()",
+      "searchPath": "pg_catalog, public",
+      "added": "2026-09-28",
+      "expires": "2027-03-01",
+      "issue": "421"
+    },
+    {
+      "routine": "public.protect_enrollment_challenge()",
+      "searchPath": null,
+      "added": "2026-09-28",
+      "expires": "2027-03-01",
+      "issue": "421"
+    },
+    {
+      "routine": "public.protect_enrollment_token()",
+      "searchPath": null,
+      "added": "2026-09-28",
+      "expires": "2027-03-01",
+      "issue": "421"
+    },
+    {
+      "routine": "public.protect_node_key_identity()",
+      "searchPath": null,
+      "added": "2026-09-28",
+      "expires": "2027-03-01",
+      "issue": "421"
+    },
+    {
+      "routine": "public.protect_private_web_session()",
+      "searchPath": "pg_catalog, public",
+      "added": "2026-09-28",
+      "expires": "2027-03-01",
+      "issue": "421"
+    },
+    {
+      "routine": "public.reject_append_only_mutation()",
+      "searchPath": null,
+      "added": "2026-09-28",
+      "expires": "2027-03-01",
+      "issue": "421"
+    },
+    {
+      "routine": "public.reject_node_key_delete()",
+      "searchPath": null,
+      "added": "2026-09-28",
+      "expires": "2027-03-01",
+      "issue": "421"
+    },
+    {
+      "routine": "public.validate_audit_chain_fields()",
+      "searchPath": null,
+      "added": "2026-09-28",
+      "expires": "2027-03-01",
+      "issue": "421"
+    },
+    {
+      "routine": "public.validate_control_payload_mirror()",
+      "searchPath": null,
+      "added": "2026-09-28",
+      "expires": "2027-03-01",
+      "issue": "421"
+    }
+  ]
+}

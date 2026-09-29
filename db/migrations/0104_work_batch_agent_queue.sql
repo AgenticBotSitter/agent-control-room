@@ -2,6 +2,9 @@
 -- delivery queue. These records do not assign, lease, approve execution,
 -- dispatch, or create a second pg-boss queue.
 
+SET LOCAL lock_timeout = '1s';
+SET LOCAL statement_timeout = '5s';
+
 -- Bind the owner's exact registered worker choice to the decided item. This
 -- keeps the narrow web SQL role from inventing a different assignee later.
 ALTER TABLE work_batch_items ADD COLUMN requested_worker_id text
@@ -51,7 +54,7 @@ CREATE TABLE work_batch_queue_admissions (
   worker_kind text NOT NULL CHECK (worker_kind IN ('codex','claude-code','hermes')),
   node_id text NOT NULL,
   queue_position bigint NOT NULL CHECK (queue_position >= 1),
-  queue_depth_limit integer NOT NULL CHECK (queue_depth_limit BETWEEN 1 AND 20),
+  queue_depth_limit bigint NOT NULL CHECK (queue_depth_limit BETWEEN 1 AND 20),
   selection_key text NOT NULL,
   model text NOT NULL,
   effort text NOT NULL CHECK (effort IN ('default','low','medium','high','xhigh','max')),
@@ -85,9 +88,12 @@ CREATE FUNCTION guard_work_batch_queue_admission_insert() RETURNS trigger
 LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $$
 DECLARE previous public.work_batch_queue_admissions%ROWTYPE; has_previous boolean;
 BEGIN
+  -- No row lock: the append-only owner web role holds no UPDATE privilege.
+  -- The decision already holds the batch and per-worker head row locks, and
+  -- UNIQUE (tenant_id,item_id,assignment_revision) refuses a racing revision.
   SELECT * INTO previous FROM public.work_batch_queue_admissions a
     WHERE a.tenant_id=NEW.tenant_id AND a.item_id=NEW.item_id
-    ORDER BY a.assignment_revision DESC LIMIT 1 FOR UPDATE;
+    ORDER BY a.assignment_revision DESC LIMIT 1;
   has_previous=FOUND;
   IF NOT EXISTS (
     SELECT 1 FROM public.work_batch_items i JOIN public.work_batches b
@@ -170,6 +176,28 @@ REVOKE ALL ON FUNCTION public.enforce_work_batch_agent_queue_head_consistency() 
 CREATE CONSTRAINT TRIGGER work_batch_agent_queue_heads_consistency
   AFTER INSERT OR UPDATE ON public.work_batch_agent_queue_heads DEFERRABLE INITIALLY DEFERRED
   FOR EACH ROW EXECUTE FUNCTION public.enforce_work_batch_agent_queue_head_consistency();
+
+-- Neither queue table is granted to the shared work-intake login. If one ever
+-- is, it must still see and write only its bound tenant, as 0093/0102 confine
+-- the batch tables. Every other role keeps its grants.
+ALTER TABLE work_batch_agent_queue_heads ENABLE ROW LEVEL SECURITY;
+CREATE POLICY work_batch_agent_queue_heads_existing_access ON work_batch_agent_queue_heads
+  AS PERMISSIVE FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY work_batch_agent_queue_heads_work_intake_scope ON work_batch_agent_queue_heads
+  AS RESTRICTIVE FOR ALL
+  USING (NOT public.is_work_intake_session() OR
+    work_batch_agent_queue_heads.tenant_id=(SELECT b.tenant_id FROM public.work_intake_tenant_binding b))
+  WITH CHECK (NOT public.is_work_intake_session() OR
+    work_batch_agent_queue_heads.tenant_id=(SELECT b.tenant_id FROM public.work_intake_tenant_binding b));
+ALTER TABLE work_batch_queue_admissions ENABLE ROW LEVEL SECURITY;
+CREATE POLICY work_batch_queue_admissions_existing_access ON work_batch_queue_admissions
+  AS PERMISSIVE FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY work_batch_queue_admissions_work_intake_scope ON work_batch_queue_admissions
+  AS RESTRICTIVE FOR ALL
+  USING (NOT public.is_work_intake_session() OR
+    work_batch_queue_admissions.tenant_id=(SELECT b.tenant_id FROM public.work_intake_tenant_binding b))
+  WITH CHECK (NOT public.is_work_intake_session() OR
+    work_batch_queue_admissions.tenant_id=(SELECT b.tenant_id FROM public.work_intake_tenant_binding b));
 
 -- Effective assignment is derived, never updated in place: the highest
 -- append-only revision for a stable item/job is the sole current admission.

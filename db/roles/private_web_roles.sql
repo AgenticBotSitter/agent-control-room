@@ -33,6 +33,7 @@ GRANT SELECT ON control_identities, control_role_grants, workspaces, control_web
   control_project_coordinator_heads, control_project_coordination_proposals,
   control_project_delegation_policies, control_project_coordination_operation_receipts,
   control_project_coordination_operation_jobs, control_work_resources,
+  control_project_event_stream_heads, control_project_events,
   control_attempt_resource_admissions, control_attempt_resource_scopes,
   work_batches, work_batch_revisions, work_batch_items, control_action_inbox TO control_room_private_web;
 GRANT SELECT ON pipeline_templates, pipeline_runs, pipeline_stage_runs,
@@ -42,8 +43,15 @@ GRANT SELECT ON work_batch_queue_admissions, work_batch_effective_queue_admissio
 GRANT SELECT ON control_task_model_selections, control_task_declared_scopes,
   control_assignment_lease_scopes TO control_room_private_web;
 GRANT SELECT ON control_durable_result_write_reservations TO control_room_private_web;
+-- Project coordination page (attentionList, readDependencies): exactly the
+-- read, filter and join columns the composer names. No payload, deep_link or
+-- source columns and no writes; tenant scoping is the composer's WHERE clause.
+GRANT SELECT (id, tenant_id, project_id, attention_type, title, summary, due_at, observed_at, work_item_id)
+  ON attention_items TO control_room_private_web;
+GRANT SELECT (tenant_id, job_id, depends_on_job_id) ON control_job_dependencies TO control_room_private_web;
 GRANT UPDATE (web_lock) ON control_identities, control_role_grants, workspaces,
-  control_connection_registry_heads, control_completion_gate_integrity, control_completion_gate_records TO control_room_private_web;
+  control_connection_registry_heads, control_completion_gate_integrity, control_completion_gate_records,
+  control_jobs TO control_room_private_web;
 GRANT INSERT ON control_web_sessions, adapter_registry, projects, control_manual_project_heads,
   control_web_project_commands, audit_events, control_audit_chain_heads,
   control_requests, control_workflows, control_jobs, control_web_task_commands,
@@ -84,4 +92,5 @@ GRANT UPDATE (state, approval_identity_id, approved_at, decision_reason_code, de
   decision_auth_tag, version, updated_at)
   ON work_batches TO control_room_private_web;
 GRANT UPDATE (next_position, updated_at) ON work_batch_agent_queue_heads TO control_room_private_web;
+GRANT SELECT ON work_intake_tenant_binding TO control_room_private_web;
 COMMIT;

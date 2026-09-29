@@ -1,7 +1,9 @@
 import { z } from "zod";
 import { catalogProjectIdSchema as id } from "./project-wire";
+import { MODEL_IDENTIFIER_PATTERN_V1 } from "../../domain/v1/model-identifier";
 
 const digest = z.string().regex(/^sha256:[a-f0-9]{64}$/), time = z.string().datetime();
+const modelIdentifier = z.string().regex(MODEL_IDENTIFIER_PATTERN_V1);
 export const taskReviewEvidenceSchema = z.object({ targetId: id, kind: z.enum(["code", "media", "document", "operation"]),
   targetDigest: digest, contentHash: digest, revision: z.number().int().min(0).max(20), supersedesTargetId: id.nullable(),
   status: z.enum(["pending", "changes_requested", "verification_blocked", "revision_limit_reached", "ready", "superseded"]),
@@ -30,12 +32,26 @@ const worktreeChangeSummarySchema = z.discriminatedUnion("source", [
  * for backward compatible browser reads, never as a zero-change audit. */
 export const taskWorktreeChangeSummarySchema = worktreeChangeSummarySchema;
 export type TaskWorktreeChangeSummary = z.infer<typeof taskWorktreeChangeSummarySchema>;
+export const taskWorktreeChangeDetailSchema = z.object({
+  schema: z.literal("control-room.worktree-change-audit-detail/v1"),
+  baseRevision: z.string().regex(/^[a-f0-9]{40}$/), headRevision: z.string().regex(/^[a-f0-9]{40}$/),
+  changes: z.array(z.object({ path: z.string().min(1).max(1024), kind: z.enum(["added", "modified", "deleted"]),
+    bytes: z.number().int().nonnegative().max(16 * 1024 * 1024), contentDigest: digest }).strict()).max(500),
+  commits: z.array(z.object({ revision: z.string().regex(/^[a-f0-9]{40}$/), subject: z.string().max(500) }).strict()).max(200),
+  commitsTruncated: z.boolean(),
+  unifiedDiff: z.object({ text: z.string().max(65_536), originalBytes: z.number().int().nonnegative(),
+    retainedBytes: z.number().int().nonnegative().max(65_536), truncated: z.boolean(),
+    contentDigest: digest, retainedDigest: digest }).strict(),
+  confinement: z.object({ kind: z.literal("workspace_write"), outsideWorktree: z.literal("refused"),
+    evidenceDigest: digest }).strict(),
+  evidenceDigest: digest,
+}).strict();
+export type TaskWorktreeChangeDetail = z.infer<typeof taskWorktreeChangeDetailSchema>;
 export const taskResultMetadataSchema = z.object({ artifactId: id, attemptId: id, runId: id, contentHash: digest,
   sizeBytes: z.number().int().min(0).max(65_536), receivedAt: time, byteCheck: z.literal("matched_recorded_claim"),
-  modelSelection: z.object({ model: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:/+-]{0,179}$/),
+  modelSelection: z.object({ model: modelIdentifier,
     effort: z.enum(["default", "low", "medium", "high", "xhigh", "max"]),
-    provider: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:/+-]{0,179}$/).optional(),
-    profile: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:/+-]{0,179}$/).optional() }).strict().optional(),
+    provider: modelIdentifier.optional(), profile: modelIdentifier.optional() }).strict().optional(),
   qualityAccepted: z.literal(false),
   fileAccess: z.object({ previewHref: z.string().startsWith("/api/v1/").max(4096),
     downloadHref: z.string().startsWith("/api/v1/").max(4096), expiresAt: time }).strict().optional(),
@@ -63,5 +79,6 @@ export function boundedTaskResultsPage(value: unknown): TaskResultsPage {
 }
 export const taskResultContentSchema = z.object({ projectId: id, jobId: id, artifact: taskResultMetadataSchema,
   text: z.string().refine(value => new TextEncoder().encode(value).byteLength <= 65_536),
+  worktreeChangeEvidence: taskWorktreeChangeDetailSchema.optional(),
   contentVerifiedAt: time, untrustedContent: z.literal(true) }).strict();
 export type TaskResultContent = z.infer<typeof taskResultContentSchema>;

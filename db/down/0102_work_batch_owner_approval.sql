@@ -26,6 +26,16 @@ DROP TRIGGER control_action_inbox_work_batch_update_guard ON control_action_inbo
 DROP FUNCTION guard_work_batch_notification_update();
 DROP TRIGGER work_batches_owner_update ON work_batches;
 DROP FUNCTION guard_work_batch_owner_update();
+ALTER POLICY work_batch_revisions_work_intake_scope ON work_batch_revisions
+  USING (NOT public.is_work_intake_session() OR (
+    work_batch_revisions.tenant_id=(SELECT b.tenant_id FROM public.work_intake_tenant_binding b)
+    AND EXISTS (
+    SELECT 1 FROM public.control_identities i
+    WHERE i.tenant_id=work_batch_revisions.tenant_id AND i.id=work_batch_revisions.edited_by_identity_id
+      AND i.actor_type='agent' AND i.auth_provider='work-intake')));
+DROP POLICY work_batch_items_work_intake_scope ON work_batch_items;
+DROP POLICY work_batch_items_existing_access ON work_batch_items;
+ALTER TABLE work_batch_items DISABLE ROW LEVEL SECURITY;
 DROP TRIGGER work_batch_items_truncate_guard ON work_batch_items;
 DROP TRIGGER work_batch_items_append_only ON work_batch_items;
 DROP TRIGGER work_batch_items_guard ON work_batch_items;
@@ -33,10 +43,10 @@ DROP FUNCTION guard_work_batch_item_insert();
 DROP TABLE work_batch_items;
 ALTER TABLE work_batches DROP COLUMN decision_auth_tag, DROP COLUMN decision_digest, DROP COLUMN auth_material_version;
 CREATE OR REPLACE FUNCTION guard_initial_work_batch_revision_insert() RETURNS trigger
-LANGUAGE plpgsql AS $$
+LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $$
 BEGIN
   IF NEW.revision<>1 OR NEW.reason_code<>'submitted' OR NOT EXISTS (
-    SELECT 1 FROM work_batches b WHERE b.tenant_id=NEW.tenant_id AND b.id=NEW.batch_id
+    SELECT 1 FROM public.work_batches b WHERE b.tenant_id=NEW.tenant_id AND b.id=NEW.batch_id
       AND b.proposed_by_identity_id=NEW.edited_by_identity_id AND b.proposal=NEW.proposal
       AND b.batch_digest=NEW.revision_digest
   ) THEN

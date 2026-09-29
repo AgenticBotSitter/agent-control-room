@@ -16,10 +16,19 @@ export function protectedRootFromArguments(args) {
 export function runtimePaths(root) {
   const runtime = join(root, "runtime");
   return Object.freeze({ runtime, provider: join(runtime, "task-provider.mjs"),
-    hostPid: join(runtime, "task-host.pid"), hostLog: join(runtime, "task-host.log") });
+    hostPid: join(runtime, "task-host.pid"), hostLog: join(runtime, "task-host.log"),
+    hostState: join(runtime, "task-host-state.json") });
 }
 
-export const hostCommand = root => [process.execPath, "scripts/mac-local/start-task-host.mjs", "--owner-attended", "--protected-root", root];
+export const taskHostCommand = root => [process.execPath, "scripts/mac-local/start-task-host.mjs", "--owner-attended", "--protected-root", root];
+export const hostCommand = root => [process.execPath, "scripts/mac-local/task-host-supervisor.mjs", "--protected-root", root];
+
+/** Selects only this release's supervisor or the exact pre-supervisor direct host for the same root. */
+export function recordedHostCommand(pid, root, isAlive = alive) {
+  if (isAlive(pid, hostCommand(root))) return hostCommand(root);
+  if (isAlive(pid, taskHostCommand(root))) return taskHostCommand(root);
+  return undefined;
+}
 
 export async function readPid(path) {
   try { const pid = Number((await readFile(path, "utf8")).trim()); return Number.isSafeInteger(pid) && pid > 1 ? pid : undefined; }
@@ -49,4 +58,12 @@ export async function stopRecorded(pidPath, command, graceSeconds) {
   if (alive(pid, command)) return "still_running";
   await rm(pidPath, { force: true });
   return "stopped";
+}
+
+/** Upgrade-safe stop for a PID recorded by either the current supervisor or #361's direct host. */
+export async function stopRecordedHost(pidPath, root, graceSeconds) {
+  const pid = await readPid(pidPath);
+  const command = pid ? recordedHostCommand(pid, root) : undefined;
+  if (!command) { await rm(pidPath, { force: true }); return "not_running"; }
+  return stopRecorded(pidPath, command, graceSeconds);
 }

@@ -22,7 +22,7 @@ import type { NativeApprovalPacketStore } from "./native-approval-packet-store";
 import { nativeTaskApprovalPacketSchema } from "../../harness/v1/native-approval-packet";
 import { readNativeTaskQueueIntentInSession, type NativeTaskQueueIntent, type NativeTaskQueueScope } from "./native-task-queue";
 import { macLocalQueueIntentPacketDigestV1 } from "./mac-local-queue-intent-digest";
-import type { ServerNodeSession } from "../../node-control/server-node-session";
+import type { ServerNativeChannel, ServerNodeSession } from "../../node-control/server-node-session";
 import { assertSynchronousFence } from "../../security/synchronous-fence";
 import { CODEX_APP_SERVER_CAPABILITY, CODEX_APP_SERVER_JOB_TYPE } from "../../harness/codex-v1/delivery-contract";
 import { HERMES_021_MACOS_LOCAL_CAPABILITY_V1, HERMES_021_MACOS_LOCAL_JOB_TYPE_V1 } from "../../harness/hermes-021-v1/macos-local-worker";
@@ -102,7 +102,10 @@ export function validateTaskAssignmentRoutes(routes: readonly TaskAssignmentRout
 }
 export type TaskAssignmentOperation = Readonly<{ tenantId: string; workspaceId: string;
   assign: TaskAssignmentCoordinator["assign"]; expire: TaskAssignmentCoordinator["expire"];
+  revoke: TaskAssignmentCoordinator["revoke"];
   options: TaskAssignmentCoordinator["options"]; projectOptions: TaskAssignmentCoordinator["projectOptions"] }>;
+export type OwnershipLeaseHolderV1 = Pick<ServerNativeChannel,
+  "tenantId" | "nodeId" | "expiresAt" | "assertCurrent">;
 /** A fully rechecked local queue pickup. It is deliberately not a runner input:
  * the private local composition must use it to reconstruct the controller
  * packet before it can ask the Mac-owned policy to admit a Hermes call. */
@@ -402,8 +405,15 @@ export class TaskAssignmentCoordinator {
       || attemptWorkerId !== undefined && attemptWorkerId !== route.executorId) conflict();
     const selection = (await tx.query<{ worker_kind: string | null; selection_key: string | null;
       model: string | null; effort: string | null; provider: string | null; profile: string | null }>(
+      // control_task_model_selections is append-only (see the equivalent
+      // reasoning at db/migrations/0104_work_batch_agent_queue.sql's guard
+      // function): the append-only owner web/coordinator roles hold no
+      // UPDATE privilege, so a row lock here refuses every batch-admitted
+      // assignment in production. The six-field equality check below is
+      // what actually authenticates the selection; no lock is needed
+      // because the row this reads can never change under us.
       `SELECT worker_kind,selection_key,model,effort,provider,profile
-       FROM control_task_model_selections WHERE tenant_id=$1 AND job_id=$2 FOR SHARE`,
+       FROM control_task_model_selections WHERE tenant_id=$1 AND job_id=$2`,
     [this.scope.tenantId, job.id])).rows[0];
     if (!selection || selection.worker_kind !== admission.worker_kind
       || selection.selection_key !== admission.selection_key || selection.model !== admission.model
@@ -488,6 +498,7 @@ export class TaskAssignmentCoordinator {
   }
   webOperation(): TaskAssignmentOperation {
     return Object.freeze({ ...this.scope, assign: this.assign.bind(this), expire: this.expire.bind(this),
+      revoke: this.revoke.bind(this),
       options: this.options.bind(this), projectOptions: this.projectOptions.bind(this) });
   }
   /** Trusted owner-review loader. It reconstructs one unsigned Codex permit from
@@ -2157,18 +2168,126 @@ export class TaskAssignmentCoordinator {
       const ready = job.state === "ready" ? job : (await canonical.transition({ tenantId: this.scope.tenantId, kind: "job", entityId: jobId,
         expectedVersion: job.version, toState: "ready", transitionId: `${ids.transitionId}:ready`,
         idempotencyKey: `${ids.idempotencyKey}:ready`, actor: actorRef, occurredAt })).entity as JobRecord;
-      const claimed = await canonical.claimReadyJob({ ...ids, tenantId: this.scope.tenantId, jobId, expectedJobVersion: ready.version,
+      const claimed = await canonical.claimReadyTaskJob({ ...ids, tenantId: this.scope.tenantId, jobId, expectedJobVersion: ready.version,
         nodeId, workerId: route.executorId, actor: actorRef, acquiredAt: occurredAt, expiresAt: new Date(commitDeadline).toISOString() });
-      for (const declared of declaredScopes) await tx.query(`INSERT INTO control_assignment_lease_scopes
-        (tenant_id,lease_id,project_id,job_id,attempt_id,node_id,scope_kind,path,path_fold)
-        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$8)`, [this.scope.tenantId, claimed.lease.id, projectId, jobId,
-        claimed.attempt.id, nodeId, declared.scope_kind, declared.path_fold]);
+      try {
+        for (const declared of declaredScopes) await tx.query(`INSERT INTO control_assignment_lease_scopes
+          (tenant_id,lease_id,project_id,job_id,attempt_id,node_id,scope_kind,path,path_fold)
+          VALUES($1,$2,$3,$4,$5,$6,$7,$8,$8)`, [this.scope.tenantId, claimed.lease.id, projectId, jobId,
+          claimed.attempt.id, nodeId, declared.scope_kind, declared.path_fold]);
+      } catch (error) {
+        if (["23P01", "23514"].includes((error as { code?: string }).code ?? "")) conflict();
+        throw error;
+      }
       await appendAuditWith(tx, { id: ids.auditId, tenantId: this.scope.tenantId, projectId,
         actorId: actorRef.actorId, actorType: actorRef.actorType,
         action: "tasks.assign", targetType: "job", targetId: jobId, idempotencyKey: ids.idempotencyKey, occurredAt,
         safeMetadata: { nodeId, attemptId: claimed.attempt.id, leaseId: claimed.lease.id, inputDigest: job.inputDigest,
           routeDigest: sha256Digest(route), startsWork: false, localAdmissionRequired: true } });
       return { receipt: this.receipt(claimed.job, claimed.attempt, claimed.lease), replayed: false };
+  }
+
+  /** Authenticated holder renewal. The channel is created only after node
+   * authentication; raw node ids never become renewal authority. */
+  async renewByHolder(holder: OwnershipLeaseHolderV1, projectId: string, jobId: string,
+    leaseId: string, leaseEpoch: number, expectedLeaseVersion: number, renewalId: string,
+    renewedAtValue: string, expiresAtValue: string) {
+    for (const id of [projectId, jobId, leaseId, renewalId]) localId.parse(id);
+    const renewedAt = Date.parse(z.string().datetime().parse(renewedAtValue));
+    const expiresAt = Date.parse(z.string().datetime().parse(expiresAtValue));
+    if (!Number.isSafeInteger(leaseEpoch) || leaseEpoch < 0
+      || !Number.isSafeInteger(expectedLeaseVersion) || expectedLeaseVersion < 0) conflict();
+    try { holder.assertCurrent(); } catch { conflict(); }
+    if (holder.tenantId !== this.scope.tenantId) conflict();
+    return this.db.transactionWithPreCommitCheck(async tx => {
+      try { holder.assertCurrent(); } catch { conflict(); }
+      await tx.query("SELECT id FROM tenants WHERE id=$1 FOR UPDATE", [this.scope.tenantId]);
+      await tx.query("SELECT project_id FROM control_manual_project_heads WHERE tenant_id=$1 AND project_id=$2 FOR UPDATE",
+        [this.scope.tenantId, projectId]);
+      const job = await this.job(tx, projectId, jobId), stored = await this.stored(tx, job);
+      if (!stored || stored.lease.id !== leaseId || stored.lease.epoch !== leaseEpoch
+        || stored.lease.nodeId !== holder.nodeId
+        || stored.lease.state !== "active") conflict();
+      const now = this.clock(), route = this.routes.find(value => value.nodeId === holder.nodeId);
+      if (!Number.isSafeInteger(now) || !route || now >= Date.parse(stored.lease.expiresAt)) conflict();
+      if (!Number.isFinite(renewedAt) || !Number.isFinite(expiresAt) || renewedAt > now
+        || renewedAt > Date.parse(stored.lease.expiresAt) || expiresAt <= renewedAt
+        || expiresAt > renewedAt + route.leaseSeconds * 1_000 || expiresAt > Date.parse(job.authority.expiresAt)
+        || expiresAt > Date.parse(holder.expiresAt)) conflict();
+      const suffix = sha256Digest({ tenantId: this.scope.tenantId, leaseId, leaseEpoch, renewalId }).slice(7);
+      const result = await new CanonicalStore(joined(tx)).renewLease({ tenantId: this.scope.tenantId, leaseId,
+        epoch: leaseEpoch, expectedVersion: expectedLeaseVersion, renewalId,
+        idempotencyKey: `lease-renewal:${suffix}`, renewedAt: new Date(renewedAt).toISOString(),
+        expiresAt: new Date(expiresAt).toISOString() });
+      await appendAuditWith(tx, { id: `audit:lease-renewal:${suffix}`, tenantId: this.scope.tenantId, projectId,
+        actorId: holder.nodeId, actorType: "service", action: "tasks.assignment.renew", targetType: "lease",
+        targetId: leaseId, idempotencyKey: `lease-renewal:${suffix}`, occurredAt: new Date(renewedAt).toISOString(),
+        safeMetadata: { jobId, leaseEpoch, leaseVersion: result.lease.version } });
+      return { receipt: this.receipt(job, stored.attempt, result.lease), replayed: result.replayed };
+    }, async () => { try { holder.assertCurrent(); } catch { conflict(); } });
+  }
+
+  /** Fail-closed pre-effect fence for repository writes. The authenticated
+   * holder may write only paths present in its current durable lease scopes. */
+  async assertWriteEffectsInScope(holder: OwnershipLeaseHolderV1, projectId: string, jobId: string,
+    leaseId: string, leaseEpoch: number, pathsValue: readonly string[]) {
+    for (const id of [projectId, jobId, leaseId]) localId.parse(id);
+    const paths = z.array(z.string().min(1).max(512).regex(/^[A-Za-z0-9_][A-Za-z0-9._-]{0,127}(\/[A-Za-z0-9_][A-Za-z0-9._-]{0,127})*$/))
+      .min(1).max(64).parse(pathsValue).map(path => path.toLowerCase());
+    if (new Set(paths).size !== paths.length || !Number.isSafeInteger(leaseEpoch) || leaseEpoch < 0) conflict();
+    try { holder.assertCurrent(); } catch { conflict(); }
+    if (holder.tenantId !== this.scope.tenantId) conflict();
+    return this.db.transactionWithPreCommitCheck(async tx => {
+      const job = await this.job(tx, projectId, jobId), stored = await this.stored(tx, job);
+      if (!stored || stored.lease.id !== leaseId || stored.lease.epoch !== leaseEpoch
+        || stored.lease.nodeId !== holder.nodeId || stored.lease.state !== "active"
+        || this.clock() >= Date.parse(stored.lease.expiresAt)) conflict();
+      const scopes = (await tx.query<{ scope_kind: "file" | "tree"; path_fold: string }>(
+        `SELECT scope_kind,path_fold FROM control_assignment_lease_scopes
+         WHERE tenant_id=$1 AND lease_id=$2 ORDER BY scope_kind,path_fold FOR SHARE`,
+      [this.scope.tenantId, leaseId])).rows;
+      if (!scopes.length || paths.some(path => !scopes.some(scope => scopesOverlapV1(
+        { scopeKind: "file", path }, { scopeKind: scope.scope_kind, path: scope.path_fold })))) conflict();
+      return Object.freeze({ leaseId, leaseEpoch, paths: Object.freeze(paths),
+        startsWork: false as const, grantsExecutionAuthority: false as const });
+    }, async () => { try { holder.assertCurrent(); } catch { conflict(); } });
+  }
+
+  /** Owner revocation is terminal and releases the derived scope rows in the
+   * same transaction. Existing execution freshness fences observe the revoked
+   * canonical lease before accepting later effects or results. */
+  async revoke(identity: VerifiedWebIdentity, projectId: string, jobId: string, expectedInputDigest: string) {
+    localId.parse(projectId); localId.parse(jobId); digestSchema.parse(expectedInputDigest);
+    return new WebSessionAuthority(this.db, this.scope, this.clock, "task").authenticated(identity, async (tx, actor) => {
+      actor.require("tasks.read", projectId); actor.require("tasks.assign", projectId, true);
+      await tx.query("SELECT id FROM tenants WHERE id=$1 FOR UPDATE", [this.scope.tenantId]);
+      await tx.query("SELECT project_id FROM control_manual_project_heads WHERE tenant_id=$1 AND project_id=$2 FOR UPDATE",
+        [this.scope.tenantId, projectId]);
+      await this.projects.getViewInSession(tx, actor, projectId);
+      const job = await this.job(tx, projectId, jobId), plan = await this.planner.readInSession(tx, jobId);
+      if (!plan || plan.projectId !== projectId || plan.tenantId !== this.scope.tenantId
+        || job.inputDigest !== expectedInputDigest) conflict();
+      const stored = await this.stored(tx, job); if (!stored) conflict();
+      const { lease, attempt } = stored, ids = this.ids(jobId, attempt.attemptNumber);
+      if (lease.state === "revoked") {
+        await tx.query("DELETE FROM control_assignment_lease_scopes WHERE tenant_id=$1 AND lease_id=$2",
+          [this.scope.tenantId, lease.id]);
+        return { receipt: this.receipt(job, attempt, lease), replayed: true };
+      }
+      if (lease.state !== "active") conflict();
+      const occurredAt = new Date(this.clock()).toISOString(), canonical = new CanonicalStore(joined(tx));
+      const revoked = await canonical.revokeLease({ tenantId: this.scope.tenantId, leaseId: lease.id, jobId: job.id,
+        attemptId: attempt.id, expectedLeaseVersion: lease.version, expectedAttemptVersion: attempt.version,
+        expectedJobVersion: job.version, epoch: lease.epoch, transitionId: `${ids.transitionId}:revoke`,
+        idempotencyKey: `${ids.idempotencyKey}:revoke`, actor: { actorId: actor.id, actorType: "human" }, occurredAt });
+      await tx.query("DELETE FROM control_assignment_lease_scopes WHERE tenant_id=$1 AND lease_id=$2",
+        [this.scope.tenantId, lease.id]);
+      await appendAuditWith(tx, { id: `${ids.auditId}:revoke`, tenantId: this.scope.tenantId, projectId,
+        actorId: actor.id, actorType: "human", action: "tasks.assignment.revoke", targetType: "job", targetId: jobId,
+        idempotencyKey: `${ids.idempotencyKey}:revoke`, occurredAt,
+        safeMetadata: { attemptId: attempt.id, leaseId: lease.id, leaseEpoch: lease.epoch } });
+      return { receipt: this.receipt(revoked.job, revoked.attempt, revoked.lease), replayed: revoked.replayed };
+    });
   }
 
   /** Reconcile an elapsed reservation only. This does not confirm a process stopped or make the
