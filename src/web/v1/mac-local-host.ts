@@ -15,6 +15,8 @@ import type { PersistedLocalOwnerSessionV1 } from "./local-owner-session";
 import { captureWorkBatchQueueCatalogV1, createWorkBatchQueueSelectionAuthorityV1,
   type WorkBatchQueueAdmissionAuthorityV1, type WorkBatchQueueCatalogV1,
   type WorkBatchQueueSelectionAuthorityV1 } from "../../work-intake/v1";
+import { WebOperationsModeServiceV1, operationsModeStopAuthorityV1 } from "./operations-mode-service";
+import { createOperationsModeSupervisorPortV1 } from "./operations-mode-supervisor-port";
 import type { OwnerWebPushConfigV1 } from "../../web-push/v1";
 
 type OpenedDatabase = Readonly<{ client: DatabaseClient; close(): Promise<void> }>;
@@ -61,6 +63,16 @@ export function createMacLocalWebServiceFromConfigurationV1(input: Readonly<{
   workBatchQueueCatalog?: WorkBatchQueueCatalogV1;
   workBatchQueueAdmissionAuthority?: WorkBatchQueueAdmissionAuthorityV1;
   ownerWebPush?: OwnerWebPushConfigV1;
+  /** Installation-wide Pause / Drain / Stop. The coordinator, when one is
+   * composed, also supplies the `stopped` stop authority, so a Stop actually
+   * reaches running work instead of only recording the intent. */
+  operationsModeIntegrityKey?: Uint8Array;
+  operationsModeStop?: { listRunning?: unknown; revokeRunning?: unknown };
+  /** The supervisor's machine-health port, connected to the server-owned mode.
+   * Omission leaves the supervisor without a way to pause, which the watchdog
+   * already treats as an `operations_pause_unavailable` incident. */
+  supervisorOperations?: { operations: { pauseNewStarts(input: { reasonCode: "machine_health_failed";
+    observedAt: string }): Promise<{ state: "paused" | "already_paused"; receiptId: string }> }; supervisorId: string };
 }>): LocalService {
   const configuration = input?.configuration;
   if (!configuration || !input.database?.client || typeof input.database.close !== "function"
@@ -165,11 +177,40 @@ export function createMacLocalProtectedHostV1(input: Readonly<{
           return Object.freeze({ integrityKey: Uint8Array.from(input.workBatchIntegrityKey), queueCatalog,
             selectionAuthority: createWorkBatchQueueSelectionAuthorityV1(queueCatalog, workerReadiness) });
         })() : undefined;
+        // One server-side operations mode for this installation. It is built
+        // before the web process so the supervisor port and the HTTP endpoint
+        // are the same object: a machine-health pause and an owner press are
+        // one recorded decision, not two facts that can disagree.
+        let service: WebOperationsModeServiceV1 | undefined;
+        if (input.workBatchIntegrityKey) {
+          const key = input.workBatchIntegrityKey;
+          if (!(key instanceof Uint8Array) || key.length !== 32)
+            throw new Error("mac_local_host_configuration_invalid");
+          service = new WebOperationsModeServiceV1(database.client,
+            { tenantId: configuration.localOwnerSession.tenantId, workspaceId: configuration.workspaceId },
+            key, Date.now, operationsModeStopAuthorityV1(taskApplication as unknown as
+              { listRunning?: unknown; revokeRunning?: unknown }));
+        }
         taskApplication = input.createTaskApplication
           ? await input.createTaskApplication({ configuration, database, workerReadiness, databaseRoles: databaseRoles!,
-            ...(workBatches ? { workBatches } : {}) }) : undefined;
+            ...(workBatches ? { workBatches } : {}),
+            // The supervisor's machine-health pause goes to the server-owned
+            // operations mode, never to a private copy of it. The port is only
+            // offered once the mode exists, because a supervisor that could not
+            // pause would silently protect nothing.
+            ...(service ? { supervisorOperations: createOperationsModeSupervisorPortV1(
+              { target: { pauseForMachineHealth: reason => service!.pauseForMachineHealth(reason) } }) } : {}) }) : undefined;
         if (workBatches && input.createTaskApplication && !taskApplication?.workBatchAuthority)
           throw new Error("mac_local_host_configuration_invalid");
+        // The coordinator exists only after the task application, so the stop
+        // authority is attached after the fact: `stopped` revokes on the
+        // coordinator's own login, and before that login exists there is
+        // nothing to revoke on.
+        if (service && taskApplication) {
+          const stop = operationsModeStopAuthorityV1(taskApplication as unknown as
+            { listRunning?: unknown; revokeRunning?: unknown });
+          if (stop) service.attachStopAuthority(stop);
+        }
         // Some inert composition tests intentionally supply an opaque fake
         // client. A real opened DatabaseClient always exposes query and must
         // use the durable store.
@@ -187,6 +228,8 @@ export function createMacLocalProtectedHostV1(input: Readonly<{
           ...(input.createServer ? { createServer: input.createServer } : {}),
           ...(input.listenerTiming ? { listenerTiming: input.listenerTiming } : {}),
           ...(input.ownerWebPush ? { ownerWebPush: input.ownerWebPush } : {}),
+          ...(service ? { operationsModeIntegrityKey: input.workBatchIntegrityKey,
+            operationsModeStop: taskApplication as unknown as { listRunning?: unknown; revokeRunning?: unknown } } : {}),
         });
         if (!input.startQueueWorker) return web;
         if (!taskApplication?.queueDelivery || !databaseRoles) throw new Error("mac_local_host_configuration_invalid");

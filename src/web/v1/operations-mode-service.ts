@@ -82,10 +82,16 @@ const DEFAULT_VIEW = Object.freeze({ mode: "running" as const, revision: 0, reas
 export class WebOperationsModeServiceV1 {
   readonly #key: Uint8Array;
   readonly #authority: WebSessionAuthority;
-  readonly #stop: OperationsModeStopAuthorityV1 | undefined;
+  /** The coordinator's stop authority, when one has been composed. It is
+   * attached after construction because the coordinator only exists once the
+   * task application has been built, while the service must exist before it
+   * so the supervisor port and the HTTP endpoint are the same object. */
+  #stop: OperationsModeStopAuthorityV1 | undefined;
+  readonly #clock: () => number;
   constructor(private readonly db: DatabaseClient, private readonly scope: { tenantId: string; workspaceId: string },
     integrityKey: Uint8Array, clock: () => number = Date.now,
     stopAuthority?: OperationsModeStopAuthorityV1) {
+    this.#clock = clock;
     if (!(integrityKey instanceof Uint8Array) || integrityKey.length !== 32) throw new Error("operations_mode_config_invalid");
     if (stopAuthority && (typeof stopAuthority.revokeRunning !== "function" || typeof stopAuthority.listRunningInSession !== "function"))
       throw new Error("operations_mode_config_invalid");
@@ -93,6 +99,22 @@ export class WebOperationsModeServiceV1 {
     this.#authority = new WebSessionAuthority(db, scope, clock, "installation");
     this.#stop = stopAuthority ? Object.freeze({ listRunningInSession: stopAuthority.listRunningInSession.bind(stopAuthority),
       revokeRunning: stopAuthority.revokeRunning.bind(stopAuthority) }) : undefined;
+  }
+
+  /**
+   * Attaches the coordinator's stop authority once it exists.
+   *
+   * A second attachment is refused rather than silently replacing the first:
+   * two different coordinators' stop paths would mean two answers to "what was
+   * running", and a receipt reporting the counts of the wrong one is exactly
+   * the false all-clear this control exists to prevent.
+   */
+  attachStopAuthority(stopAuthority: OperationsModeStopAuthorityV1) {
+    if (typeof stopAuthority?.revokeRunning !== "function" || typeof stopAuthority?.listRunningInSession !== "function")
+      throw new Error("operations_mode_config_invalid");
+    if (this.#stop) throw new Error("operations_mode_stop_authority_attached");
+    this.#stop = Object.freeze({ listRunningInSession: stopAuthority.listRunningInSession.bind(stopAuthority),
+      revokeRunning: stopAuthority.revokeRunning.bind(stopAuthority) });
   }
 
   async read(identity: VerifiedWebIdentity) {
@@ -110,15 +132,93 @@ export class WebOperationsModeServiceV1 {
   }
 
   async set(identity: VerifiedWebIdentity, value: unknown): Promise<OperationsModeReceiptV1> {
-    const parsed = z.object({ mode: operationsModeV1, reason: z.string().max(240) }).strict().safeParse(value);
-    if (!parsed.success) throw new WebAccessError("invalid_request");
-    const mode = parsed.data.mode, reason = parsed.data.reason.trim();
     const decided = await this.#authority.authenticated(identity, async (tx, actor) => {
       // Owner-only, and reachable only by an owner grant: this is the one
       // switch that stops an entire installation, so an operator's wildcard is
       // not enough and 0155's trigger refuses anything but a live human owner.
       actor.require("operations.read", undefined, true);
       actor.require("operations.set_mode", undefined, true);
+      return this.#decide(tx, { id: actor.id, now: actor.now }, value);
+    });
+    return this.#finish(decided);
+  }
+
+  /**
+   * The same decision, made by the installation itself rather than by a signed
+   * web session. The supervisor's machine-health check is the only caller: it
+   * runs on a timer, with no browser, no cookie and no token to present.
+   *
+   * This is deliberately NOT a way around the owner-only rule, and it is worth
+   * being precise about what it does and does not remove:
+   *
+   * - It does not mint a session. A synthetic token digest would be a forgery
+   *   of the web session authority, so this path never calls `authenticated()`
+   *   and never claims a person was at a browser.
+   * - The owner is resolved from `control_identities` and `control_role_grants`
+   *   directly, under the same conditions 0155's trigger then re-checks
+   *   independently. Two owners, no owner, a revoked grant or a non-human
+   *   identity are all refused here, and refused again by the database.
+   * - Only `paused` is reachable. A machine-health failure must not be able to
+   *   drain, stop or otherwise escalate the installation's state.
+   *
+   * The single-tenant installation case is required: this resolves "the" owner
+   * from the database, and with two live owners there is no correct one to
+   * choose, so it refuses rather than guessing. The owner pauses and drains
+   * from the Home control in that situation.
+   */
+  async pauseForMachineHealth(reason: string) {
+    const parsed = z.object({ mode: z.literal("paused"), reason: z.string().min(1).max(240) }).strict();
+    const value = parsed.safeParse({ mode: "paused", reason });
+    if (!value.success) throw new WebAccessError("invalid_request");
+    const now = new Date(this.#clock()).toISOString();
+    const decided = await this.db.transaction(async tx => {
+      // Same first lock as every other installation-wide decision and as
+      // assignment, so this cannot deadlock and cannot interleave with an
+      // owner pressing the button at the same moment.
+      await tx.query("SELECT id FROM tenants WHERE id=$1 FOR UPDATE", [this.scope.tenantId]);
+      const owner = await this.#liveOwnerInSession(tx, now);
+      // Only pause a running installation. A health check runs on a timer, and
+      // without this an unhealthy machine would append a new revision every
+      // cycle and bury the owner's own decisions in the history.
+      //
+      // An installation that has never recorded a decision is `running` by the
+      // same rule every gate uses, so it takes the pause below and produces
+      // revision 1 rather than this branch.
+      if (owner.modes.current !== "running" && owner.modes.record) {
+        return { record: owner.modes.record, replayed: true };
+      }
+      return this.#decide(tx, { id: owner.identityId, now }, value.data);
+    });
+    return this.#finish(decided);
+  }
+
+  /** The installation's one live human owner holding a live `operations.set_mode`
+   * grant, resolved inside the caller's transaction. `LIMIT 2` is deliberate:
+   * two owners is a refusal, not a choice. */
+  async #liveOwnerInSession(tx: DatabaseSession, at: string) {
+    const rows = (await tx.query<{ id: string; mode: string }>(`SELECT i.id, coalesce(
+        (SELECT m.mode FROM installation_operations_mode_revisions m WHERE m.tenant_id=i.tenant_id
+          ORDER BY m.revision DESC LIMIT 1), 'running') AS mode
+      FROM control_identities i JOIN control_role_grants g ON g.tenant_id=i.tenant_id AND g.identity_id=i.id
+      WHERE i.tenant_id=$1 AND i.actor_type='human' AND i.state='active' AND g.role_key='owner'
+        AND (g.allowed_actions @> '["operations.set_mode"]'::jsonb OR g.allowed_actions @> '["*"]'::jsonb)
+        AND (g.revoked_at IS NULL OR g.revoked_at > $2::timestamptz)
+        AND (g.expires_at IS NULL OR g.expires_at > $2::timestamptz)
+      ORDER BY i.id LIMIT 2`, [this.scope.tenantId, at])).rows;
+    if (rows.length !== 1) throw new Error("operations_mode_owner_unavailable");
+    const revisions = await journal(tx, this.#key, this.scope.tenantId);
+    return Object.freeze({ identityId: rows[0]!.id,
+      modes: Object.freeze({ current: revisions.at(-1)?.mode ?? "running", record: revisions.at(-1) }) });
+  }
+
+  /** The decision itself, shared by both entry points so the owner session and
+   * the installation's own health check cannot drift apart: the same lock
+   * order, the same replay rule, the same record, the same audit event. */
+  async #decide(tx: DatabaseSession, actor: { id: string; now: string }, value: unknown) {
+    const parsed = z.object({ mode: operationsModeV1, reason: z.string().max(240) }).strict().safeParse(value);
+    if (!parsed.success) throw new WebAccessError("invalid_request");
+    const mode = parsed.data.mode, reason = parsed.data.reason.trim();
+    {
       const current = (await journal(tx, this.#key, this.scope.tenantId)).at(-1);
       // An exact repeat is a replay, not a second decision. The same mode with a
       // different reason is a new recorded decision, which is what the owner
@@ -127,7 +227,6 @@ export class WebOperationsModeServiceV1 {
       // The tenant row is the existing lock order for an installation-wide
       // decision, so this cannot deadlock against assignment (which takes the
       // same first lock), and it serializes two owners setting the mode at once.
-      await tx.query("SELECT id FROM tenants WHERE id=$1 FOR UPDATE", [this.scope.tenantId]);
       const latest = (await journal(tx, this.#key, this.scope.tenantId)).at(-1);
       if (latest && latest.mode === mode && latest.reason === reason) return { record: latest, replayed: true };
       const record: OperationsModeRecordV1 = { schema: "control-room.installation-operations-mode/v1",
@@ -145,7 +244,10 @@ export class WebOperationsModeServiceV1 {
         occurredAt: record.setAt, safeMetadata: { revision: record.revision, mode: record.mode,
           previousMode: latest?.mode ?? "running", reason, admitsNewWork: record.mode === "running" } });
       return { record, replayed: false };
-    });
+    }
+  }
+
+  async #finish(decided: { record: OperationsModeRecordV1; replayed: boolean }): Promise<OperationsModeReceiptV1> {
     // The stop requests run AFTER the mode commits, on the coordinator's own
     // login, in their own transactions. The private web login holds no grant on
     // the canonical transition tables, so it cannot perform a revoke at all,
