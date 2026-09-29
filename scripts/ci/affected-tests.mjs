@@ -172,9 +172,26 @@ function postgresTests(result, tests, repositoryRoot) {
   return tests.filter(test => postgresTestMarker.test(readFileSync(join(repositoryRoot, test), "utf8")));
 }
 
-function nodeTestCommand(tests, repositoryRoot) {
-  const nodeArguments = ["--import", "tsx", "--test", "--test-concurrency=1", "--test-reporter=tap", ...tests];
-  if (testSources(tests, repositoryRoot).some(source => squawkTestMarker.test(source)))
+function guardedPostgresTests(result, tests, repositoryRoot) {
+  return postgresTests(result, tests.filter(test => !skippedTestExemptions.has(test)), repositoryRoot);
+}
+
+// Node's --test-timeout bounds the whole invocation it is passed to, not each
+// individual test: two files sharing one `node --test a b` command share one
+// clock, so a fast neighbor's time counts against a slow file's budget (and a
+// per-test { timeout } override on that slow file does not extend it). That
+// falsely killed tests/attack-kit.test.ts (~170s in green CI) when it shared a
+// command with other files under the previous flat 180000ms bound. Giving
+// every file its own invocation (see nodeTestCommand's single-file callers
+// below) makes the bound a true per-file budget. 600000 matches the largest
+// per-test override in the repository (tests/work-batch-assignment-gate.test.ts)
+// and comfortably clears the slowest measured file while still failing a
+// genuine hang well before the job's 45-minute limit.
+export const NODE_TEST_TIMEOUT_MS = 600_000;
+
+function nodeTestCommand(test, repositoryRoot) {
+  const nodeArguments = ["--import", "tsx", "--test", "--test-concurrency=1", `--test-timeout=${NODE_TEST_TIMEOUT_MS}`, "--test-reporter=tap", test];
+  if (testSources([test], repositoryRoot).some(source => squawkTestMarker.test(source)))
     return ["npm", ["exec", "--yes", "--package=squawk-cli@2.61.0", "--", process.execPath, ...nodeArguments]];
   return [process.execPath, nodeArguments];
 }
@@ -192,11 +209,9 @@ export function affectedTestCommands(result, tests, repositoryRoot = process.cwd
   const pgTests = postgresTests(result, guardedTests, repositoryRoot);
   const nonPgTests = guardedTests.filter(test => !pgTests.includes(test));
   return [...preparation,
-    ...(nonPgTests.length > 0 ? [nodeTestCommand(nonPgTests, repositoryRoot)] : []),
-    // Keep PostgreSQL tests in a dedicated TAP stream so they retain their
-    // database environment without leaking it to ordinary tests.
-    ...(pgTests.length > 0 ? [nodeTestCommand(pgTests, repositoryRoot)] : []),
-    ...exemptTests.map(test => nodeTestCommand([test], repositoryRoot))];
+    ...nonPgTests.map(test => nodeTestCommand(test, repositoryRoot)),
+    ...pgTests.map(test => nodeTestCommand(test, repositoryRoot)),
+    ...exemptTests.map(test => nodeTestCommand(test, repositoryRoot))];
 }
 
 export function requiresPostgres(result, tests, repositoryRoot = process.cwd()) {
@@ -211,12 +226,71 @@ export function noTestsAffectedMessage() {
   return "No test files affected: documentation-only change; no tests run.";
 }
 
+// A change that genuinely touches everything (package.json, a lockfile, a CI
+// workflow, ...) already gets duplicate coverage of the ordinary suite from
+// the path-routed lanes and full-gate — see docs/ci-budget-security-review.md
+// and scripts/check-test-lane-coverage.mjs, which proves every test file is
+// *reachable* from one of those lanes regardless of what this planner selects.
+// Reachable is not the same as executed: those lanes never set the
+// PostgreSQL-gate environment variables this job's setup steps provide, so
+// the PostgreSQL-marked subset is not actually duplicate coverage and must
+// still run here even while the rest defers (see runSelectedTests). Re-running
+// the ordinary hundreds of files here a second time, inside a 45-minute job,
+// is pure duplicate cost with a hard cutoff. The absolute floor keeps this
+// from firing on the small fixtures unit tests use, and the ratio keeps it
+// meaningful as the real suite grows.
+export const DEFER_MINIMUM_TEST_COUNT = 100;
+export const DEFER_TEST_RATIO = 0.5;
+
+export function shouldDeferToFullSuite(result, totalTestCount) {
+  if (result === "ALL") return true;
+  if (result === "DOCS_ONLY") return false;
+  return result.length >= DEFER_MINIMUM_TEST_COUNT && result.length >= totalTestCount * DEFER_TEST_RATIO;
+}
+
+export function deferralMessage(result, selectedCount, totalTestCount) {
+  const affected = result === "ALL" ? `all ${totalTestCount}` : `${selectedCount} of ${totalTestCount}`;
+  return `This change affects ${affected} test file(s). The fast lane is skipping direct execution of the bulk here: ` +
+    "the full-suite lanes (test-demo, test-server, test-components, test-articles, full-gate) already run " +
+    "the rest of the suite, so re-running it in this 45-minute lane would only duplicate that coverage. " +
+    "Any PostgreSQL-gated file still runs directly below, since no other lane sets up its environment.";
+}
+
+// needs-pg must not be gated on `defer`: even a deferred selection still runs
+// the PostgreSQL-marked subset itself (see runSelectedTests), and that subset
+// needs the job's PostgreSQL setup step to have run.
 export function selectionOutputs(result, tests, repositoryRoot = process.cwd()) {
+  const defer = shouldDeferToFullSuite(result, listTestFiles(repositoryRoot).length);
   return [
     `all=${result === "ALL"}`,
     `needs-pg=${requiresPostgres(result, tests, repositoryRoot)}`,
     `docs-only=${result === "DOCS_ONLY"}`,
+    `defer-to-full-suite=${defer}`,
   ].join("\n");
+}
+
+export function runSelectedTests(result, tests, repositoryRoot = process.cwd(), execute = executeCommand,
+  postgresAvailable = postgresBinariesAvailable, executeCapturingOutput = executeCommandCapturingOutput) {
+  if (result === "DOCS_ONLY") {
+    console.log(noTestsAffectedMessage());
+    return 0;
+  }
+  const totalTestCount = listTestFiles(repositoryRoot).length;
+  if (shouldDeferToFullSuite(result, totalTestCount)) {
+    console.log(deferralMessage(result, tests.length, totalTestCount));
+    // The full-suite lanes cover everything except the tests gated on the
+    // PostgreSQL environment variables only this job's setup steps provide
+    // (the PG17 upgrade rehearsal, the concurrency gate). Deferring the bulk
+    // must not also drop those, or a migration PR gets a green merge gate
+    // without ever running its own data-safety test. Applies to both an
+    // "ALL" and a large-array deferral.
+    const pgTests = guardedPostgresTests(result, tests, repositoryRoot);
+    if (pgTests.length === 0) return 0;
+    console.log(`Running ${pgTests.length} PostgreSQL-gated test file(s) directly; no other lane provisions them.`);
+    return runAffectedTests(pgTests, pgTests, repositoryRoot, execute, postgresAvailable, executeCapturingOutput);
+  }
+  console.log(`Running ${tests.length} affected test file(s).`);
+  return runAffectedTests(result, tests, repositoryRoot, execute, postgresAvailable, executeCapturingOutput);
 }
 
 function hasSkippedTests(output) {
@@ -235,10 +309,10 @@ export function runAffectedTests(result, tests, repositoryRoot, execute = execut
   }
   const guardedTests = tests.filter(test => !skippedTestExemptions.has(test));
   const pgTests = postgresTests(result, guardedTests, repositoryRoot);
+  const nonPgTests = guardedTests.filter(test => !pgTests.includes(test));
   const testCommands = [
-    ...(guardedTests.filter(test => !pgTests.includes(test)).length > 0
-      ? [{ tests: guardedTests.filter(test => !pgTests.includes(test)), environment: withoutPostgresTestEnvironment(), exempt: false }] : []),
-    ...(pgTests.length > 0 ? [{ tests: pgTests, environment: process.env, exempt: false }] : []),
+    ...nonPgTests.map(test => ({ tests: [test], environment: withoutPostgresTestEnvironment(), exempt: false })),
+    ...pgTests.map(test => ({ tests: [test], environment: process.env, exempt: false })),
     ...tests.filter(test => skippedTestExemptions.has(test)).map(test => ({ tests: [test], environment: withoutPostgresTestEnvironment(), exempt: true })),
   ];
   const commands = affectedTestCommands(result, tests, repositoryRoot);
@@ -281,14 +355,7 @@ function main() {
     console.log(result === "ALL" ? result : result.join("\n"));
     return;
   }
-  if (result === "DOCS_ONLY") {
-    console.log(noTestsAffectedMessage());
-    return;
-  }
-  if (result === "ALL")
-    console.log("Preparing generated application and contributor-demo artifacts for the complete test set.");
-  console.log(`Running ${tests.length} affected test file(s).`);
-  process.exitCode = runAffectedTests(result, tests, root);
+  process.exitCode = runSelectedTests(result, tests, root);
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) main();

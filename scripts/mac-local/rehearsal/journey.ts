@@ -22,9 +22,9 @@ import { MAC_LOCAL_HUMAN_VERIFICATION_SCENARIO_V1, MAC_LOCAL_TEXT_SCENARIO_V1 } 
 
 const [arg, mode] = process.argv.slice(2);
 if (!arg || ![3, 4].includes(process.argv.length) || mode !== undefined && !["--browser-proof", "--browser-e2e",
-  "--browser-owner-e2e", "--browser-adversarial-e2e", "--model-allowlists"].includes(mode)
+  "--browser-owner-e2e", "--browser-adversarial-e2e", "--browser-phone-width-e2e", "--model-allowlists"].includes(mode)
   || !isAbsolute(arg) || resolve(arg) !== arg) {
-  process.stderr.write("usage: node --import tsx scripts/mac-local/rehearsal/journey.ts ABSOLUTE_REHEARSAL_DIR [--browser-proof|--browser-e2e|--browser-owner-e2e|--browser-adversarial-e2e|--model-allowlists]\n");
+  process.stderr.write("usage: node --import tsx scripts/mac-local/rehearsal/journey.ts ABSOLUTE_REHEARSAL_DIR [--browser-proof|--browser-e2e|--browser-owner-e2e|--browser-adversarial-e2e|--browser-phone-width-e2e|--model-allowlists]\n");
   process.exit(2);
 }
 const root = resolve(arg), protectedRoot = join(root, "protected");
@@ -229,9 +229,10 @@ async function main() {
     assert.ok(cookie.startsWith("control_room_local_owner="));
     return cookie;
   };
-  if (["--browser-e2e", "--browser-owner-e2e", "--browser-adversarial-e2e"].includes(mode ?? "")) {
+  if (["--browser-e2e", "--browser-owner-e2e", "--browser-adversarial-e2e", "--browser-phone-width-e2e"].includes(mode ?? "")) {
     const browserScript = mode === "--browser-owner-e2e" ? "test:mac-local-owner-journey-browser"
-      : mode === "--browser-adversarial-e2e" ? "test:adversarial-owner-browser" : "test:mac-local-owner-browser";
+      : mode === "--browser-adversarial-e2e" ? "test:adversarial-owner-browser"
+      : mode === "--browser-phone-width-e2e" ? "test:owner-phone-width-browser" : "test:mac-local-owner-browser";
     const browser = spawnSync("pnpm", ["run", browserScript], {
       cwd: process.cwd(), encoding: "utf8", timeout: 25 * 60_000, stdio: "inherit",
       env: { ...process.env, CONTROL_ROOM_E2E_ORIGIN: origin, CONTROL_ROOM_E2E_OWNER_CODE: ownerCode,

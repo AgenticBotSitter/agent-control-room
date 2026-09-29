@@ -339,6 +339,24 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
         try { await assertAcceptedResultCurrent(tx, await proofForSource(tx, selection)); return true; }
         catch { return false; }
       },
+      async acceptedResultRevision(tx: DatabaseSession, selection: Readonly<{
+        sourceJobId: string; workerId: string; nodeId: string }>) {
+        try {
+          const proof = await proofForSource(tx, selection);
+          await assertAcceptedResultCurrent(tx, proof);
+          const accepted = await gate.acceptedContextInSession(tx, proof.tenantId, proof.projectId, proof.targetId);
+          return accepted.target.revisionNumber;
+        } catch { return null; }
+      },
+      async acceptedResultProof(tx: DatabaseSession, selection: Readonly<{
+        sourceJobId: string; workerId: string; nodeId: string }>) {
+        try {
+          const proof = await proofForSource(tx, selection);
+          await assertAcceptedResultCurrent(tx, proof);
+          const accepted = await gate.acceptedContextInSession(tx, proof.tenantId, proof.projectId, proof.targetId);
+          return Object.freeze({ contentHash: proof.contentHash, revision: accepted.target.revisionNumber });
+        } catch { return null; }
+      },
     });
     return Object.freeze({ integrityKey, ownerAuthority,
       assignmentAuthority: Object.freeze({ integrityKey,

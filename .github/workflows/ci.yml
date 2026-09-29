@@ -264,24 +264,39 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
-      # These four need no dependencies, so they report in seconds, before the
+      # These five need no dependencies, so they report in seconds, before the
       # install that the type checks require.
       - name: Test the lane coverage checker and the path routing
         # The quarantine wrapper delegates the original invocation after applying
         # its exact-name exclusions: node --test tests/check-test-lane-coverage.test.mjs
-        run: node scripts/run-tests-with-quarantine.mjs --test tests/check-test-lane-coverage.test.mjs tests/ci-path-routing.test.mjs tests/private-name-guard.test.mjs tests/verify-mutation-checks.test.mjs
+        run: node scripts/run-tests-with-quarantine.mjs --test tests/check-test-lane-coverage.test.mjs tests/ci-path-routing.test.mjs tests/private-name-guard.test.mjs tests/migration-number-check.test.mjs tests/verify-mutation-checks.test.mjs
       - name: Test the PR evidence claims checker
         run: node --test tests/check-pr-claims.test.mjs
       - name: Test the affected-test planner
         run: node --test tests/affected-tests.test.mjs
       - name: Fail if any test file is unreachable from GitHub Actions
         run: node scripts/check-test-lane-coverage.mjs
+      - name: Reject stale or incomplete test quarantines
+        run: node scripts/check-test-quarantine.mjs
+      # Refuse two migrations with the same 4-digit number, before the private-name
+      # step. Migrations are applied in filename order, so two files sharing a number
+      # have an order but no intent, and two pull requests can each be correct against
+      # main and wrong together. It reads the directory the applier reads and needs no
+      # PostgreSQL, so it belongs in the job that reports in seconds. It runs before
+      # the private-name step because that step fails closed while the denylist secret
+      # is unset, and a failing step skips the rest of the job: putting this one first
+      # means its verdict is always reported rather than hidden behind that failure.
+      - name: Refuse two migrations with the same 4-digit number
+        run: node scripts/ci/check-migration-numbers.mjs
       - name: Reject configured private names
+        # The guard fails closed when this repository's run has no list, and skips only
+        # for a fork pull request or a local run, so an unconfigured secret cannot pass
+        # as a clean scan. It needs no privileges beyond the secret it already had, and
+        # reading the event payload costs no budget. While the secret is unset this step
+        # fails, which is the guard working: the denylist must be set for this to go green.
         env:
           CONTROL_ROOM_PRIVATE_NAMES: ${{ secrets.CONTROL_ROOM_PRIVATE_NAMES }}
         run: node scripts/check-private-names.mjs
-      - name: Reject stale or incomplete test quarantines
-        run: node scripts/check-test-quarantine.mjs
       - run: pnpm install --frozen-lockfile --ignore-scripts
       - name: Test the owner review readiness helper
         run: node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/browser/owner-review-readiness.test.ts
@@ -699,6 +714,13 @@ jobs:
           pnpm build
           run_browser_suite --browser-owner-e2e 15501 3219
           run_browser_suite --browser-adversarial-e2e 15502 3220
+          # Phone-width usability (M12). A third disposable stack on its own
+          # port pair, so the measurement never shares state with the journey
+          # above it — the test signs in as the owner and creates its own
+          # project and task. It is a separate suite in the existing
+          # owner-browser-journey job rather than a new job or workflow, so
+          # this adds no runner, no new required check, and no new artifact.
+          run_browser_suite --browser-phone-width-e2e 15503 3221
       # NOTE: there is deliberately no "capture owner page screenshots" step
       # here, and no owner-screenshots artifact upload.
       #

@@ -36,6 +36,8 @@ GRANT SELECT ON control_identities, control_role_grants, workspaces, control_web
   control_project_event_stream_heads, control_project_events,
   control_attempt_resource_admissions, control_attempt_resource_scopes,
   work_batches, work_batch_revisions, work_batch_items, control_action_inbox TO control_room_private_web;
+GRANT SELECT ON pipeline_templates, pipeline_runs, pipeline_stage_runs,
+  pipeline_ordered_stage_runs TO control_room_private_web;
 GRANT SELECT ON work_batch_queue_admissions, work_batch_effective_queue_admissions,
   work_batch_agent_queue_heads, control_native_task_queue, control_job_dependencies TO control_room_private_web;
 GRANT SELECT ON control_task_model_selections, control_task_declared_scopes,
@@ -63,6 +65,12 @@ GRANT UPDATE (last_sequence,last_event_digest,head_auth_tag,updated_at)
   ON control_project_event_stream_heads TO control_room_private_web;
 GRANT INSERT ON work_batch_revisions, work_batch_items TO control_room_private_web;
 GRANT INSERT ON work_batch_queue_admissions, work_batch_agent_queue_heads TO control_room_private_web;
+GRANT INSERT ON pipeline_templates, pipeline_runs, pipeline_stage_runs TO control_room_private_web;
+-- Owner-authored dependent proposals (pipeline stages, approved batch items)
+-- write the edge between two jobs this role itself inserts. Append-only: no
+-- UPDATE or DELETE, and SELECT stays the three coordination-page columns.
+GRANT INSERT ON control_job_dependencies TO control_room_private_web;
+GRANT UPDATE (stage_kind, stage_ordinal, pipeline_run_id) ON control_jobs TO control_room_private_web;
 -- Coordinator lifecycle idempotency ledger: exact-match replay before any
 -- head mutation. SELECT plus the five inserted columns plus the completion
 -- update; INSERT is column-scoped so the role can never smuggle

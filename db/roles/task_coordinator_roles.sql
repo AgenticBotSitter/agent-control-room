@@ -27,6 +27,7 @@ GRANT SELECT ON tenants, workspaces, control_identities, control_role_grants, co
   control_project_coordination_operation_jobs, control_work_resources,
   control_attempt_resource_admissions, control_attempt_resource_scopes,
   work_batches, work_batch_items, work_batch_effective_queue_admissions,
+  pipeline_templates, pipeline_runs, pipeline_stage_runs, pipeline_ordered_stage_runs,
   control_installation_transition_revisions
   TO control_room_task_coordinator;
 GRANT SELECT ON control_task_model_selections, control_task_declared_scopes,
@@ -59,6 +60,7 @@ GRANT UPDATE (coordinator_lock) ON control_project_coordinator_heads,
 GRANT INSERT ON control_job_dependencies TO control_room_task_coordinator;
 GRANT UPDATE (state, version, payload, updated_at) ON control_requests, control_workflows,
   control_jobs, control_attempts, control_leases TO control_room_task_coordinator;
+GRANT UPDATE (stage_kind, stage_ordinal, pipeline_run_id) ON control_jobs TO control_room_task_coordinator;
 GRANT UPDATE (coordinator_lock) ON tenants, control_nodes, control_node_keys, control_manual_project_heads, projects
   TO control_room_task_coordinator;
 GRANT UPDATE (web_lock) ON control_identities, control_role_grants, workspaces,
