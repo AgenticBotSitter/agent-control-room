@@ -36,12 +36,17 @@ export async function deferNextOwnerReviewLoad(page: Page): Promise<DeferredRevi
     release,
     dispose: async () => {
       release();
-      await page.unroute("**/reviews/**", handler);
       if (!held) markFinished();
+      // Unrouting while the held request's own `route.continue()` is still in
+      // flight races Playwright's unroute cleanup to resolve the same route,
+      // which throws "Route is already handled!" for whichever call loses.
+      // Wait for the handler to actually finish first (bounded by a timeout
+      // so a request that never completes cannot hang teardown), then unroute.
       let timeout!: ReturnType<typeof setTimeout>;
       try {
         await Promise.race([finished, new Promise<void>(resolve => { timeout = setTimeout(resolve, disposeTimeoutMs); })]);
       } finally { clearTimeout(timeout); }
+      await page.unroute("**/reviews/**", handler);
     },
   });
 }
