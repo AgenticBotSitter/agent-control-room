@@ -1,6 +1,7 @@
 import type { HermesDeliveryRecovery, TaskDetail, TaskDraft, TaskPage, TaskRun } from "../../src/web/v1/task-wire";
 import { ConfiguredTimestamp } from "./configured-timestamp";
 import { formatNanoUsdV1 } from "../../src/usage/v1/usage-cost";
+import { StateChip, chipToneForStateV1 } from "./owner-ui";
 
 export const taskStateLabel: Record<TaskPage["tasks"][number]["state"], string> = {
   proposed: "Proposal saved", ready: "Ready for assignment", leased: "Assigned", running: "In progress",
@@ -118,7 +119,9 @@ export function TaskCatalogPanel({ page, after, href = (projectId, jobId, cursor
     <h2>Saved tasks</h2>
     {!page.tasks.length ? <p>{after ? "No more tasks on this page." : "No tasks have been saved for this project."}</p>
       : <ul className="private-task-list">{page.tasks.map(task => <li key={task.jobId}><a href={href(task.projectId, task.jobId)}>
-        <span className="private-state">{taskSummaryStateLabel(task)}</span><h3>{task.title}</h3>
+        {/* taskSummaryStateLabel folds in qualityStatus, so the chip carries that
+            label; only the tone comes from the raw state. */}
+        <StateChip state={task.state} label={taskSummaryStateLabel(task)} /><h3>{task.title}</h3>
         <span className="private-note"><ConfiguredTimestamp value={task.createdAt} prefix="Saved" /></span><span className="private-open">View task →</span>
       </a></li>)}</ul>}
     <nav className="private-actions" aria-label="Task pages">
@@ -159,7 +162,13 @@ export function RunPanel({ run }: { run: TaskRun }) {
       : run.routeEvidence === "local_codex" ? "local Codex adapter"
         : run.routeEvidence === "other_or_unknown" ? "another or unknown adapter" : undefined;
   return <section className="private-run" aria-label="Agent observation">
-    <h4>{run.harness} · {retained ? "Agent progress is not current" : label}</h4>
+    {/* No chip here. The heading directly above already ends in `label`, which is
+      the same string the chip would carry, so a chip repeated it verbatim beside
+      the sentence that already says it. The tone still needs to be visible, so
+      the heading itself carries it as a class rather than as a second copy of
+      the text: the same vocabulary, stated once. */}
+    <h4 className={`private-run-state is-${chipToneForStateV1(run.nativeState ?? run.state)}`}>
+      {run.harness} · {retained ? "Agent progress is not current" : label}</h4>
     {retained && <p className="private-notice">Not a current live signal. {run.availability ? `Availability: ${run.availability}. ` : ""}
       Last reported state: {label}.</p>}
     <p>{run.source === "native_snapshot" ? "Native agent evidence"
@@ -197,7 +206,7 @@ export function HermesDeliveryRecoveryPanel({ recovery }: { recovery: HermesDeli
   const labels = { no_authenticated_delivery: "No saved authenticated delivery", delivery_receipt_unresolved: "Delivery receipt saved; terminal result not staged",
     terminal_result_staged: "Terminal result safely staged" } as const;
   return <section className="private-panel" aria-label="Local Hermes recovery"><h2>Local Hermes recovery</h2>
-    <p className="private-state">{labels[recovery.status.state]}</p>
+    <StateChip state={recovery.status.state} label={labels[recovery.status.state]} />
     {recovery.status.state === "terminal_result_staged" && <><p>A bounded terminal record is saved for recovery. Its text and private runner settings are not shown here.</p>
       {recovery.status.terminal && <dl className="private-task-facts"><div><dt>Saved result size</dt><dd>{recovery.status.terminal.sizeBytes.toLocaleString()} bytes</dd></div>
         <div><dt>Reported tokens</dt><dd>{recovery.status.terminal.totalTokens.toLocaleString()}</dd></div>
@@ -222,7 +231,11 @@ function LocalRouteObservationPanel({ detail }: { detail: TaskDetail }) {
           ? `The saved ${name} route observation needs attention. Control Room will not guess whether it is still working.`
           : `Control Room has a saved ${name} route observation, but it is not current task activity.`;
   return <section className="private-panel" aria-label="Local task route"><h2>Local task route</h2>
-    <p className={observation.state === "needs_attention" ? "private-notice" : "private-state"}>{text}</p>
+    {/* This is prose about the route, not a task state, so it gets its own class.
+        It previously shared .private-state with the task's own state label, which
+        made `.private-task-detail .private-state` ambiguous — the owner journey
+        reads that selector expecting the task state. */}
+    <p className={observation.state === "needs_attention" ? "private-notice" : "private-route-observation"}>{text}</p>
     <p className="private-note">This is saved evidence for this task only. It does not show a worker identity, prove availability for another task, or start, retry, or contact an agent.</p>
   </section>;
 }
@@ -248,7 +261,7 @@ export function TaskDetailPanel({ detail }: { detail: TaskDetail }) {
         : detail.preparedFor === "configured_worker"
           ? "This route is a saved plan category. Assignment still checks the configured route and does not start a worker." : undefined;
   return <div className="private-task-detail">
-    <section className="private-panel"><span className="private-state">{taskSummaryStateLabel(detail.task)}</span><h2>{detail.task.title}</h2>
+    <section className="private-panel"><StateChip state={detail.task.state} label={taskSummaryStateLabel(detail.task)} /><h2>{detail.task.title}</h2>
       <h3>Requested result</h3><p className="private-summary">{detail.instructions}</p>
       {detail.modelSelection?.model && <p><strong>Chosen model:</strong> {detail.modelSelection.profile ? `${detail.modelSelection.profile} · ` : ""}
         {detail.modelSelection.model} · effort {detail.modelSelection.effort}{detail.modelSelection.provider ? ` · ${detail.modelSelection.provider}` : ""}</p>}
@@ -275,7 +288,12 @@ export function TaskDetailPanel({ detail }: { detail: TaskDetail }) {
         : "Task submission is not configured for this app."}</p>
       {detail.progressSource === "not_configured" && <p className="private-notice">Agent evidence is not configured for this app. Missing progress does not mean no agent work exists.</p>}
       {!detail.attempts.length && <p>No assignment attempts are recorded for this task.</p>}
-      {detail.attempts.map(attempt => <section key={attempt.attemptId} className="private-attempt"><h3>Attempt {attempt.attemptNumber} · {attempt.state.replaceAll("_", " ")}</h3>
+      {detail.attempts.map(attempt => <section key={attempt.attemptId} className="private-attempt">
+        {/* The attempt state is in this heading, so no chip repeats it beside the
+            heading that already says it. The tone moves onto the heading as a
+            class, which is what the chip dot used to convey. */}
+        <h3 className={`private-attempt-state is-${chipToneForStateV1(attempt.state)}`}>
+          Attempt {attempt.attemptNumber} · {attempt.state.replaceAll("_", " ")}</h3>
         <UsageRollup value={attempt.usageRollup} label={`Attempt ${attempt.attemptNumber}`} />
         {detail.progressSource === "configured" && !attempt.runs.length && <p>No agent observation is recorded for this attempt.</p>}
         {attempt.runs.map(run => <RunPanel key={run.runId} run={run} />)}

@@ -6,6 +6,7 @@ import { readTaskProjectOverview } from "../../src/web/v1/task-project-overview-
 import type { TaskProjectOverview } from "../../src/web/v1/task-project-overview-wire";
 import { ConfiguredTimestamp } from "./configured-timestamp";
 import { formatNanoUsdV1 } from "../../src/usage/v1/usage-cost";
+import { LoadingState, StateChip, UnavailableState } from "./owner-ui";
 
 type OverviewState = { state: "loading" } | { state: "ready"; value: TaskProjectOverview }
   | { state: "unavailable"; code: BrowserRequestError["code"] };
@@ -15,17 +16,19 @@ const href = (projectId: string, jobId: string) =>
 function TaskList({ projectId, tasks }: { projectId: string; tasks: TaskProjectOverview["recent"] }) {
   return <ul className="private-dashboard-list">{tasks.map(task => <li key={task.jobId}>
     <a href={href(projectId, task.jobId)}>{task.title}</a>
-    <span>{task.state.replaceAll("_", " ")} · <ConfiguredTimestamp value={task.updatedAt} prefix="Updated" /></span>
+    {/* The chip wraps only the state word; the middle dot and timestamp stay as
+        adjacent text so this element's text stays "state · Updated <time>". */}
+    <span><StateChip state={task.state} /> · <ConfiguredTimestamp value={task.updatedAt} prefix="Updated" /></span>
   </li>)}</ul>;
 }
 
 export function ProjectOverviewActivityView({ state, projectId }: { state: OverviewState; projectId: string }) {
   if (state.state === "loading") return <section className="private-panel"><h2>Project activity</h2>
-    <p role="status">Loading this project’s saved work…</p></section>;
+    <LoadingState>Loading this project’s saved work…</LoadingState></section>;
   if (state.state === "unavailable") return <section className="private-panel"><h2>Project activity</h2>
-    <p role="alert">{state.code === "access_denied" ? "Your current access does not include this project’s tasks."
+    <UnavailableState urgent>{state.code === "access_denied" ? "Your current access does not include this project’s tasks."
       : state.code === "authentication_required" ? "Your session has ended. Sign in again to see this project’s work."
-        : "The saved database or protected task-activity read could not be checked. No empty project or all-clear is inferred, and checking again does not start work."}</p></section>;
+        : "The saved database or protected task-activity read could not be checked. No empty project or all-clear is inferred, and checking again does not start work."}</UnavailableState></section>;
   const { value } = state;
   return <div className="private-dashboard-grid private-project-overview-grid">
     <section className="private-panel"><h2>Project usage and cost</h2>

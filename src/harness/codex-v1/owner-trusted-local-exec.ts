@@ -3,6 +3,7 @@ import { readdir } from "node:fs/promises";
 import { isAbsolute, normalize } from "node:path";
 import { StringDecoder } from "node:string_decoder";
 import { types } from "node:util";
+import type { CodexWorkspaceLeaseV1 } from "./workspace";
 
 const MAX_PROMPT_BYTES = 64 * 1024;
 const MAX_OUTPUT_BYTES = 1024 * 1024;
@@ -109,11 +110,14 @@ export function parseCodexJsonLineV1(line: string): { kind: "message"; text: str
 
 /** Owner-trusted local text execution only. This is an adapter, not queue or
  * lifecycle authority; its caller must already hold the canonical delivery claim. */
-export function createOwnerTrustedLocalCodexExecV1(dependencies: Readonly<{ spawn?: Spawn; readDirectory?: ReadDirectory }> = {}): OwnerTrustedLocalCodexExecV1 {
+function createCodexExec(dependencies: Readonly<{ spawn?: Spawn; readDirectory?: ReadDirectory }>,
+  sandbox: "read-only" | "workspace-write", requireWorkingDirectory?: (path: string) => void): OwnerTrustedLocalCodexExecV1 {
   const launch = dependencies.spawn ?? (spawn as unknown as Spawn);
   const list = dependencies.readDirectory ?? readdir;
   return Object.freeze({ async execute(input) {
     if (!safeInput(input)) return failed("failed", "invalid_input");
+    try { requireWorkingDirectory?.(input.workingDirectory); }
+    catch { return failed("failed", "working_directory_refused"); }
     if (input.signal?.aborted) return failed("canceled", "aborted_before_spawn");
     // The configured worker directory is persistent across tasks. Listing it
     // is an accessibility check only; prior task output must not disable the
@@ -124,7 +128,7 @@ export function createOwnerTrustedLocalCodexExecV1(dependencies: Readonly<{ spaw
     // it is in flight must fence the process boundary, not merely the earlier
     // input validation.
     if (input.signal?.aborted) return failed("canceled", "aborted_before_spawn");
-    const args = Object.freeze(["exec", "--json", "--sandbox", "read-only", "--ephemeral", "--skip-git-repo-check",
+    const args = Object.freeze(["exec", "--json", "--sandbox", sandbox, "--ephemeral", "--skip-git-repo-check",
       "--color", "never", "-C", input.workingDirectory,
       ...(input.model ? ["-m", input.model, "-c", `model_reasoning_effort=${input.effort}`] : []), "-"]);
     let child: ChildProcess;
@@ -231,4 +235,26 @@ export function createOwnerTrustedLocalCodexExecV1(dependencies: Readonly<{ spaw
       try { stdin.end(input.prompt, "utf8"); } catch { terminate("failed"); }
     });
   } });
+}
+
+export function createOwnerTrustedLocalCodexExecV1(
+  dependencies: Readonly<{ spawn?: Spawn; readDirectory?: ReadDirectory }> = {}): OwnerTrustedLocalCodexExecV1 {
+  return createCodexExec(dependencies, "read-only");
+}
+
+/** Explicit coding mode. It is constructed only from a manager-owned active
+ * lease and tells Codex to make that exact worktree its workspace-write root.
+ * Existing text/review execution remains read-only. */
+export function createOwnerTrustedLocalCodexCodingExecV1(input: Readonly<{
+  lease: CodexWorkspaceLeaseV1;
+  requireActiveCodingLease(lease: CodexWorkspaceLeaseV1): CodexWorkspaceLeaseV1;
+  dependencies?: Readonly<{ spawn?: Spawn; readDirectory?: ReadDirectory }>;
+}>): OwnerTrustedLocalCodexExecV1 {
+  const lease = Object.freeze({ ...input.lease });
+  if (typeof input.requireActiveCodingLease !== "function") throw new Error("coding_workspace_authority_unavailable");
+  const requireWorkingDirectory = (path: string) => {
+    const current = input.requireActiveCodingLease(lease);
+    if (path !== current.checkoutPath || path === current.repositoryRealPath) throw new Error("coding_workspace_refused");
+  };
+  return createCodexExec(input.dependencies ?? {}, "workspace-write", requireWorkingDirectory);
 }
