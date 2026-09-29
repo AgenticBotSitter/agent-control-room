@@ -70,3 +70,11 @@ test("work-intake shared-ledger policies remain restrictive and session-scoped",
           'work_batches.propose','work_batches.propose.replayed',
           'work_batches.propose.refused','work_batches.action.refused')));`));
 });
+
+test("the real-Postgres harness supplies the required work-intake bootstrap credential", async () => {
+  const harness = await readFile("tests/support/attack-kit/real-postgres.ts", "utf8");
+  assert.match(harness,
+    /control_room_work_intake_agent:\s*randomBytes\(24\)\.toString\("base64url"\)/u);
+  assert.match(harness,
+    /CONTROL_ROOM_WORK_INTAKE_PASSWORD:\s*ROLE_PASSWORDS\.control_room_work_intake_agent/u);
+});
