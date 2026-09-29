@@ -33,6 +33,10 @@ GRANT SELECT ON tenants, workspaces, control_identities, control_role_grants, co
   TO control_room_task_coordinator;
 GRANT SELECT ON control_task_model_selections, control_task_declared_scopes,
   control_assignment_lease_scopes TO control_room_task_coordinator;
+-- Read-only: the coordinator enforces a project's eligible-worker-kinds and
+-- concurrency-cap settings during assignment (task-assignment-coordinator.ts's
+-- #assignLocked), but never writes them -- that stays an owner-gated web action.
+GRANT SELECT ON control_project_settings TO control_room_task_coordinator;
 GRANT INSERT ON control_web_sessions, control_requests, control_workflows, control_jobs,
   control_attempts, control_leases, control_task_execution_plans, control_transition_events,
   control_outbox, audit_events, control_audit_chain_heads, control_native_approval_packets, control_native_task_queue, control_native_delivery_preparations, control_native_delivery_envelopes, control_native_transmission_intents, control_native_delivery_receipts,

@@ -54,6 +54,7 @@ import { taskProjectAgentOptionsSchema } from "./task-project-agents-wire";
 import { scopesOverlapV1 } from "../../project-coordination/v1/resource-conflict";
 import { workBatchProposalDigestV1 } from "../../work-intake/v1/digest";
 import { workBatchProposalSchemaV1 } from "../../work-intake/v1/schemas";
+import { taskCancelReceiptSchema } from "./task-cancel-wire";
 
 type CanonicalNativeApproval = ReturnType<typeof prepareNativeTaskApprovalWithLease> & {
   enrollment: NativeEnrollment; preparedAt: string; sourceInputDigest: string; inputDigest: string;
@@ -65,6 +66,15 @@ const routeSchema = z.object({ nodeId: localId, executorId: localId,
   maxConcurrentTasks: z.number().int().min(1).max(8), requiredScratchBytes: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
   leaseSeconds: z.number().int().min(1).max(300) }).strict();
 export type TaskAssignmentRoute = z.infer<typeof routeSchema>;
+/** Every capability probe id a route can carry, mapped to the plain worker kind a project's
+ * eligibility setting names. `controller-worker-remote` has no fixed kind -- a remote worker's
+ * kind is not known at routing time -- so it matches no restricted eligibility list; a project
+ * that restricts eligibility therefore also excludes remote-controller-worker routes. */
+const CAPABILITY_WORKER_KIND_V1: Readonly<Record<string, "codex" | "claude-code" | "hermes">> = Object.freeze({
+  "harness.hermes.native.runs.v1": "hermes", [HERMES_021_MACOS_LOCAL_CAPABILITY_V1]: "hermes",
+  [HERMES_LOCAL_CAPABILITY_V1]: "hermes", [CODEX_APP_SERVER_CAPABILITY]: "codex",
+  [CODEX_OWNER_TRUSTED_LOCAL_CAPABILITY_V1]: "codex", [CLAUDE_CODE_LOCAL_CAPABILITY_V1]: "claude-code",
+});
 export type NativeApprovalEnrollment = { enrollment: NativeEnrollment; nodeClass: string };
 export type CodexPermitEnrollment = CodexOwnerPermitBindingV1 & {
   approvalKeyId: string;
@@ -102,7 +112,7 @@ export function validateTaskAssignmentRoutes(routes: readonly TaskAssignmentRout
 }
 export type TaskAssignmentOperation = Readonly<{ tenantId: string; workspaceId: string;
   assign: TaskAssignmentCoordinator["assign"]; expire: TaskAssignmentCoordinator["expire"];
-  revoke: TaskAssignmentCoordinator["revoke"];
+  revoke: TaskAssignmentCoordinator["revoke"]; cancel: TaskAssignmentCoordinator["cancel"];
   options: TaskAssignmentCoordinator["options"]; projectOptions: TaskAssignmentCoordinator["projectOptions"] }>;
 export type OwnershipLeaseHolderV1 = Pick<ServerNativeChannel,
   "tenantId" | "nodeId" | "expiresAt" | "assertCurrent">;
@@ -526,7 +536,7 @@ export class TaskAssignmentCoordinator {
   }
   webOperation(): TaskAssignmentOperation {
     return Object.freeze({ ...this.scope, assign: this.assign.bind(this), expire: this.expire.bind(this),
-      revoke: this.revoke.bind(this),
+      revoke: this.revoke.bind(this), cancel: this.cancel.bind(this),
       options: this.options.bind(this), projectOptions: this.projectOptions.bind(this) });
   }
   /** Trusted owner-review loader. It reconstructs one unsigned Codex permit from
@@ -2111,6 +2121,14 @@ export class TaskAssignmentCoordinator {
       this.planner.assertPlanAssignable(plan);
       const route = this.routes.find(route => route.nodeId === nodeId);
       if (!route) conflict();
+      // Project settings (Settings tab): an eligibility list restricts which worker kinds may
+      // claim this project's work at all; an unrecognized capability with a restriction configured
+      // fails closed rather than assuming it is eligible.
+      const settings = await this.projects.readSettingsRowInSession(tx, projectId);
+      if (settings.eligibleWorkerKinds !== null) {
+        const kind = CAPABILITY_WORKER_KIND_V1[route.capabilityProbeId];
+        if (!kind || !settings.eligibleWorkerKinds.includes(kind)) conflict();
+      }
       const batchAdmission = await this.assertWorkBatchQueueAdmission(tx, job, route);
       if (project.lifecycle !== "active" || project.origin !== "ordinary" || !["proposed", "ready", "orphaned"].includes(job.state)
         || job.authority.allowedExecutor !== route.executorId || job.requiredCapability !== route.capabilityProbeId
@@ -2180,6 +2198,13 @@ export class TaskAssignmentCoordinator {
       const active = (await tx.query<{ count: string }>(`SELECT count(*)::text AS count FROM control_leases
         WHERE tenant_id=$1 AND node_id=$2 AND state='active'`, [this.scope.tenantId, nodeId])).rows[0];
       if (Number(active?.count) >= route.maxConcurrentTasks) conflict();
+      if (settings.maxConcurrentTasks !== null) {
+        const projectActive = (await tx.query<{ count: string }>(`SELECT count(*)::text AS count FROM control_leases l
+          JOIN control_jobs j ON j.tenant_id=l.tenant_id AND j.id=l.job_id
+          WHERE l.tenant_id=$1 AND j.project_id=$2 AND j.id<>$3 AND l.state='active'`,
+        [this.scope.tenantId, projectId, jobId])).rows[0];
+        if (Number(projectActive?.count) >= settings.maxConcurrentTasks) conflict();
+      }
       const commitDeadline = Math.min(now + Math.min(route.leaseSeconds, job.authority.maxDurationSeconds) * 1000,
         Date.parse(job.authority.expiresAt), Date.parse(telemetry.expiresAt), Date.parse(capability.expiresAt),
         key.valid_until ? new Date(key.valid_until).getTime() : Infinity);
@@ -2318,6 +2343,64 @@ export class TaskAssignmentCoordinator {
     });
   }
 
+  /** Owner-only, idempotent stop. A queued reservation (no run yet started, attempt state
+   * "offered" or "leased") is cancelled immediately: attempt and job move to "cancelled" and the
+   * lease is revoked, exactly like an explicit owner lease revocation. A running attempt cannot
+   * be claimed stopped this way -- none of the mac-local owner-trusted harnesses (Claude, Codex,
+   * Hermes-local) report a confirmed mid-run cancellation (HarnessRunV1.cancelState is always
+   * "unsupported" for them) -- so the request is only recorded, durably and idempotently, with no
+   * canonical state change. RES-010: an unsupported stop stays visibly unconfirmed, never a
+   * fabricated "cancelled". A worker/agent identity cannot call this; only an owner session can
+   * (`actor.require("tasks.assign", ...)`, the same authority `assign`/`expire`/`revoke` require). */
+  async cancel(identity: VerifiedWebIdentity, projectId: string, jobId: string, expectedInputDigest: string) {
+    localId.parse(projectId); localId.parse(jobId); digestSchema.parse(expectedInputDigest);
+    return new WebSessionAuthority(this.db, this.scope, this.clock, "task").authenticated(identity, async (tx, actor) => {
+      actor.require("tasks.read", projectId); actor.require("tasks.assign", projectId, true);
+      await tx.query("SELECT id FROM tenants WHERE id=$1 FOR UPDATE", [this.scope.tenantId]);
+      await tx.query("SELECT project_id FROM control_manual_project_heads WHERE tenant_id=$1 AND project_id=$2 FOR UPDATE",
+        [this.scope.tenantId, projectId]);
+      await this.projects.getViewInSession(tx, actor, projectId);
+      const job = await this.job(tx, projectId, jobId), plan = await this.planner.readInSession(tx, jobId);
+      if (!plan || plan.projectId !== projectId || plan.tenantId !== this.scope.tenantId
+        || job.inputDigest !== expectedInputDigest) conflict();
+      const stored = await this.stored(tx, job); if (!stored) conflict();
+      const { lease, attempt } = stored, ids = this.ids(jobId, attempt.attemptNumber);
+      const occurredAt = new Date(this.clock()).toISOString();
+      if (attempt.state === "running") {
+        const key = `${ids.idempotencyKey}:cancel-requested`;
+        const { replayed } = await appendAuditWith(tx, { id: `audit:${key}`, tenantId: this.scope.tenantId, projectId,
+          actorId: actor.id, actorType: "human", action: "tasks.cancel.requested", targetType: "job", targetId: jobId,
+          idempotencyKey: key, occurredAt,
+          safeMetadata: { attemptId: attempt.id, leaseId: lease.id, leaseEpoch: lease.epoch,
+            confirmsNativeStop: false, startsWork: false } });
+        return { receipt: taskCancelReceiptSchema.parse({ effect: "stop_requested" as const, projectId, jobId,
+          inputDigest: job.inputDigest, attemptId: attempt.id, leaseId: lease.id,
+          confirmsNativeStop: false as const, startsWork: false as const, grantsExecutionAuthority: false as const }), replayed };
+      }
+      if (lease.state === "revoked") {
+        await tx.query("DELETE FROM control_assignment_lease_scopes WHERE tenant_id=$1 AND lease_id=$2",
+          [this.scope.tenantId, lease.id]);
+        return { receipt: taskCancelReceiptSchema.parse({ effect: "cancelled" as const, projectId, jobId,
+          inputDigest: job.inputDigest, leaseId: lease.id, startsWork: false as const, grantsExecutionAuthority: false as const }),
+          replayed: true };
+      }
+      if (lease.state !== "active") conflict();
+      const canonical = new CanonicalStore(joined(tx));
+      const revoked = await canonical.revokeLease({ tenantId: this.scope.tenantId, leaseId: lease.id, jobId: job.id,
+        attemptId: attempt.id, expectedLeaseVersion: lease.version, expectedAttemptVersion: attempt.version,
+        expectedJobVersion: job.version, epoch: lease.epoch, transitionId: `${ids.transitionId}:cancel`,
+        idempotencyKey: `${ids.idempotencyKey}:cancel`, actor: { actorId: actor.id, actorType: "human" }, occurredAt });
+      await tx.query("DELETE FROM control_assignment_lease_scopes WHERE tenant_id=$1 AND lease_id=$2",
+        [this.scope.tenantId, lease.id]);
+      await appendAuditWith(tx, { id: `audit:${ids.idempotencyKey}:cancel`, tenantId: this.scope.tenantId, projectId,
+        actorId: actor.id, actorType: "human", action: "tasks.cancel", targetType: "job", targetId: jobId,
+        idempotencyKey: `${ids.idempotencyKey}:cancel`, occurredAt,
+        safeMetadata: { attemptId: attempt.id, leaseId: lease.id, leaseEpoch: lease.epoch } });
+      return { receipt: taskCancelReceiptSchema.parse({ effect: "cancelled" as const, projectId, jobId,
+        inputDigest: revoked.job.inputDigest, leaseId: revoked.lease.id,
+        startsWork: false as const, grantsExecutionAuthority: false as const }), replayed: revoked.replayed };
+    });
+  }
   /** Reconcile an elapsed reservation only. This does not confirm a process stopped or make the
    * one-attempt task retryable through this coordinator. No timer or native cancellation is installed. */
   async expire(identity: VerifiedWebIdentity, projectId: string, jobId: string, expectedInputDigest: string) {

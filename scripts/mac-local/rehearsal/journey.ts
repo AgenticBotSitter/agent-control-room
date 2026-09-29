@@ -598,9 +598,11 @@ async function main() {
       const revisionRequestBody = { runId: revisionRunId, targetId: target.targetId, targetDigest: target.targetDigest,
         contentHash: artifact.contentHash, reviewId: recorded.receipt.reviewId, feedback };
       const revisionPath = `/api/v1/projects/${idOf(projectId)}/tasks/${idOf(jobId)}/revisions`;
+      // The revisions route refuses any idempotency-key header (task-http.ts):
+      // replay is determined by matching request content against the recorded
+      // plan (reviewId/targetDigest/contentHash/feedbackDigest), not a client key.
       const revisionPrepared = await require5xxOr201(await fetch(new URL(revisionPath, origin), {
-        method: "POST", headers: { origin, cookie, "content-type": "application/json",
-          "idempotency-key": `journey-${agent.kind}-revision-0001` },
+        method: "POST", headers: { origin, cookie, "content-type": "application/json" },
         body: JSON.stringify(revisionRequestBody),
       }), `${agent.kind} prepare revision`) as { receipt: { jobId: string; inputDigest: string; revisionNumber: number; sourceJobId: string } };
       const revisionReceipt = revisionPrepared.receipt;
@@ -610,14 +612,29 @@ async function main() {
 
       // Replay: the identical revision request must return the same receipt, not prepare a second one.
       const revisionReplay = await require5xxOr201(await fetch(new URL(revisionPath, origin), {
-        method: "POST", headers: { origin, cookie, "content-type": "application/json",
-          "idempotency-key": `journey-${agent.kind}-revision-0001` },
+        method: "POST", headers: { origin, cookie, "content-type": "application/json" },
         body: JSON.stringify(revisionRequestBody),
       }), `${agent.kind} revision replay`) as { receipt: { jobId: string }; replayed: boolean };
       assert.equal(revisionReplay.replayed, true, `${agent.kind}: an identical revision request must replay`);
       assert.equal(revisionReplay.receipt.jobId, revisionReceipt.jobId);
 
       const revisedJobId = revisionReceipt.jobId;
+      // The source task's own lease still holds its declared (whole-tree, for
+      // this pre-0091-shaped legacy job) scope for up to route.leaseSeconds
+      // after completion -- nothing releases it automatically just because the
+      // attempt succeeded. A revision job has no declared-scope row of its own
+      // (task-execution-planner.ts's revise() writes none), so the assignment
+      // coordinator conservatively requires the whole tree for it too, and
+      // that would otherwise conflict with the still-active source lease. The
+      // real owner UI exposes exactly this as the "Revoke ownership lease"
+      // button (task-assignment.tsx); the journey does the same thing here.
+      const revokedSource = await require5xxOr201(await fetch(new URL(
+        `/api/v1/projects/${idOf(projectId)}/tasks/${idOf(jobId)}/assignment`, origin), {
+        method: "POST", headers: { origin, cookie, "content-type": "application/json" },
+        body: JSON.stringify({ action: "revoke", expectedInputDigest: assignedInputDigest }),
+      }), `${agent.kind} revoke source lease before revision assignment`) as { receipt: { leaseState: string } };
+      assert.equal(revokedSource.receipt.leaseState, "revoked", `${agent.kind}: source lease must be revoked, not left active`);
+
       // The revised task is a distinct, separately assignable and approvable
       // work item (RES-004): it needs its own assignment and submission.
       const revisedNodeId = `${config.enablement.nodeId}.${agent.node}`;

@@ -17,6 +17,7 @@ import { ProjectModuleAvailability } from "./project-module-availability";
 import { useInstallationTopology } from "./installation-topology";
 import { InstallationTopologySummary } from "./installation-topology-summary";
 import { ProjectAgentWorkspace } from "./project-agent-workspace";
+import { ProjectSettingsPanel } from "./project-settings-panel";
 import { useLocalRuntime } from "./local-runtime";
 import { StateChip } from "./owner-ui";
 
@@ -311,6 +312,7 @@ export function PrivateProjectWorkspace({ projectId, section = "overview", after
             <p className="private-note">Status changes preserve history. They do not stop running work. Closing this tab does not change the project.</p>
             <p className="private-note">Saved revision {project.version} · <ConfiguredTimestamp value={project.updatedAt} prefix="Updated" /></p>
           </section>}
+          {section === "settings" && project.origin === "ordinary" && <ProjectSettingsPanel projectId={projectId} />}
           {section === "overview" && <ProjectOverviewActivity key={projectId} projectId={projectId} />}
           {section === "overview" && runtime.mode === "hosted" && <>
             <section className="private-panel"><h2>Worker availability</h2>

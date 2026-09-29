@@ -41,7 +41,7 @@ export const privateWebReadTables = ["control_identities", "control_role_grants"
   "control_native_task_queue", "control_job_dependencies",
   "pipeline_templates", "pipeline_runs", "pipeline_stage_runs", "pipeline_ordered_stage_runs",
   "control_pipeline_build_publications", "control_codex_result_publications",
-  "control_action_inbox"] as const;
+  "control_action_inbox", "control_project_settings"] as const;
 const inserts = new Set(["control_web_sessions", "adapter_registry", "projects", "control_manual_project_heads",
   "control_web_project_commands", "audit_events", "control_audit_chain_heads", "control_requests", "control_workflows",
   "control_jobs", "control_web_task_commands", "control_idea_canonical_task_sessions", "control_idea_canonical_task_links",
@@ -52,6 +52,7 @@ inserts.add("work_batch_revisions"); inserts.add("work_batch_items");
 inserts.add("work_batch_queue_admissions"); inserts.add("work_batch_agent_queue_heads");
 inserts.add("pipeline_templates"); inserts.add("pipeline_runs"); inserts.add("pipeline_stage_runs");
 inserts.add("control_job_dependencies");
+inserts.add("control_project_settings");
 
 /** Tables whose INSERT grant is column-scoped rather than table-wide. Every
  * listed column must carry INSERT and every unlisted column must not — a
@@ -86,6 +87,8 @@ const updates: Record<string, readonly string[]> = {
     "decision_auth_tag", "version", "updated_at"],
   work_batch_agent_queue_heads: ["next_position", "updated_at"],
   tenants: ["coordinator_lock"],
+  control_project_settings: ["eligible_worker_kinds", "max_concurrent_tasks", "default_worker_kind",
+    "default_model", "default_effort", "version", "updated_by_identity_id", "updated_at"],
 };
 const fail = () => { throw new Error("private_database_preflight_failed"); };
 const ideaCreationReads = ["workspaces", "control_identities", "control_role_grants", "control_web_sessions",
