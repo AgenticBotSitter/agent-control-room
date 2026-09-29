@@ -24,10 +24,11 @@ import { fixedQueueShapeDigestForTestV1 } from "../scripts/mac-local/fixed-queue
 // `.ts` module could not be imported by one of its own callers.
 import { createClusterTeardown } from "../scripts/dev/postgres-cluster-lifecycle.mjs";
 
-const oldRoot = process.env.CONTROL_ROOM_PG17_OLD_ROOT ?? "/private/tmp/acr-db-0085";
+const oldRoot = process.env.CONTROL_ROOM_PG17_UPGRADE_FIXTURE_ROOT ?? "/private/tmp/acr-db-0085";
 const portBase = Number(process.env.CONTROL_ROOM_PG17_PORT_BASE ?? 15581);
 const headRoot = resolve(fileURLToPath(new URL("../", import.meta.url)));
 const oldRoles = Object.entries(macRolePlan).filter(([login]) => login !== "control_room_publisher");
+const migrationFileCount = ledger => (ledger.match(/"file": "db\/migrations\/[^"\n]+"/gu) ?? []).length;
 const exec = (file, args) => execFileSync(file, args, { encoding: "utf8", timeout: 120_000,
   env: { ...process.env, LANG: "en_US.UTF-8", LC_ALL: "en_US.UTF-8" } });
 const connection = port => `host=127.0.0.1 port=${port} dbname=control_room user=postgres`;
@@ -117,7 +118,10 @@ test("live-shaped 0085 PostgreSQL 17 installation converges to fresh HEAD withou
   timeout: 240_000,
 }, async t => {
   assert.match(exec("postgres", ["--version"]), /^postgres \(PostgreSQL\) 17\./u);
-  assert.equal((await readFile(join(oldRoot, "deploy/postgres/migration-ledger.json"), "utf8")).includes("0086_"), false);
+  const oldLedger = await readFile(join(oldRoot, "deploy/postgres/migration-ledger.json"), "utf8");
+  const headLedger = await readFile(join(headRoot, "deploy/postgres/migration-ledger.json"), "utf8");
+  assert.equal(oldLedger.includes("0086_"), false);
+  const expectedPendingMigrationCount = migrationFileCount(headLedger) - migrationFileCount(oldLedger);
   const root = await mkdtemp(join(tmpdir(), "mac-db-pg17-"));
   const old = await cluster(join(root, "old"), portBase);
   const fresh = await cluster(join(root, "fresh"), portBase + 1);
@@ -182,9 +186,10 @@ test("live-shaped 0085 PostgreSQL 17 installation converges to fresh HEAD withou
   const snapshotFile = join(root, "snapshot.json"), mainCommit = "a".repeat(40);
   await writeFile(snapshotFile, JSON.stringify(captureMacUpgradeSnapshotV1(mainCommit, raw)));
   assert.deepEqual(await planMacDatabaseUpgradeFromFileV1(snapshotFile, mainCommit), plan);
-  const headLedger = JSON.parse(await readFile(join(headRoot, "deploy/postgres/migration-ledger.json"), "utf8"));
-  assert.deepEqual(plan.pendingMigrations, headLedger.entries
-    .filter(entry => entry.kind === "migrate" && entry.file > "db/migrations/0086").map(entry => entry.file));
+  const expectedPendingMigrations = JSON.parse(headLedger).entries
+    .filter(entry => entry.kind === "migrate" && entry.file > "db/migrations/0086").map(entry => entry.file);
+  assert.equal(expectedPendingMigrations.length, expectedPendingMigrationCount);
+  assert.deepEqual(plan.pendingMigrations, expectedPendingMigrations);
   assert.ok(plan.createRoles.some(item => item.role === "control_room_publisher"));
   assert.ok(plan.grants.extra.some(item => item.includes("control_room_private_web|table|public.control_jobs||DELETE|plain")));
   assert.deepEqual(await snapshot(oldClient), prior, "dry run does not change PostgreSQL");
