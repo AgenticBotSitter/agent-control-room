@@ -19,6 +19,12 @@ import { WebOperationsModeServiceV1, operationsModeStopAuthorityV1 } from "./ope
 import { createOperationsModeSupervisorPortV1 } from "./operations-mode-supervisor-port";
 import type { OwnerWebPushConfigV1 } from "../../web-push/v1";
 
+/** The installation's one supervisor identity. The Mac-local host runs a single
+ * supervisor loop, so this is fixed rather than configurable: a second id would
+ * be a second loop over the same health observations, and each would open its
+ * own incident. */
+export const MAC_LOCAL_SUPERVISOR_ID_V1 = "supervisor:mac-local";
+
 type OpenedDatabase = Readonly<{ client: DatabaseClient; close(): Promise<void> }>;
 type LocalService = Readonly<{ start(): Promise<void>; close(): Promise<void>; isReady(): boolean }>;
 type HostedTaskApplication = Pick<MacLocalTaskApplicationV1, "operations" | "taskReadKeys" | "actionInboxSource" | "projectEvents" | "isReady" | "close" | "queueDelivery" | "queueRecovery" | "workBatchAuthority">;
@@ -67,10 +73,14 @@ export function createMacLocalWebServiceFromConfigurationV1(input: Readonly<{
    * already built, so the endpoint and the supervisor's health port are two
    * callers of one service rather than two services over one state. */
   operationsMode?: WebOperationsModeServiceV1;
-  /** The supervisor's machine-health port, connected to the server-owned mode.
+  /** The task provider's supervisor wiring, connected to the server-owned mode.
    * Omission leaves the supervisor without a way to pause, which the watchdog
-   * already treats as an `operations_pause_unavailable` incident. */
-  supervisorOperations?: { operations: { pauseNewStarts(input: { reasonCode: "machine_health_failed";
+   * already treats as an `operations_pause_unavailable` incident.
+   *
+   * This is the option the task provider actually reads, so its name is not
+   * free: it must stay `supervisor`, because a differently-named field with the
+   * same shape type-checks and then silently never arrives. */
+  supervisor?: { operations: { pauseNewStarts(input: { reasonCode: "machine_health_failed";
     observedAt: string }): Promise<{ state: "paused" | "already_paused"; receiptId: string }> }; supervisorId: string };
 }>): LocalService {
   const configuration = input?.configuration;
@@ -157,6 +167,9 @@ export function createMacLocalProtectedHostV1(input: Readonly<{
   listenerTiming?: { bindMs?: number; closeMs?: number };
   workBatchIntegrityKey?: Uint8Array;
   ownerWebPush?: OwnerWebPushConfigV1;
+  /** The identity the health loop reports under. Defaults to the one fixed
+   * Mac-local supervisor; supplied only where a distinct id is needed. */
+  supervisorId?: string;
 }>) {
   if (!input || typeof input.loadConfiguration !== "function" || typeof input.readVersion !== "function"
     || typeof input.openDatabase !== "function" || !input.assets || typeof input.assets.respond !== "function"
@@ -205,8 +218,9 @@ export function createMacLocalProtectedHostV1(input: Readonly<{
             // operations mode, never to a private copy of it. The port is only
             // offered once the mode exists, because a supervisor that could not
             // pause would silently protect nothing.
-            ...(service ? { supervisorOperations: createOperationsModeSupervisorPortV1(
-              { target: { pauseForMachineHealth: reason => service!.pauseForMachineHealth(reason) } }) } : {}) }) : undefined;
+            ...(service ? { supervisor: { operations: createOperationsModeSupervisorPortV1(
+              { target: { pauseForMachineHealth: reason => service!.pauseForMachineHealth(reason) } }),
+              supervisorId: input.supervisorId ?? MAC_LOCAL_SUPERVISOR_ID_V1 } } : {}) }) : undefined;
         if (workBatches && input.createTaskApplication && !taskApplication?.workBatchAuthority)
           throw new Error("mac_local_host_configuration_invalid");
         // The coordinator exists only after the task application, so the stop

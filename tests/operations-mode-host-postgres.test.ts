@@ -142,7 +142,7 @@ const call = (path: string, method: "GET" | "POST", body?: unknown) =>
 /** A task application that records the input the protected host gave it, and
  * exposes the coordinator's own stop methods so the host can attach them. */
 function taskApplicationSpy() {
-  const seen: { supervisorOperations?: unknown } = {};
+  const seen: { supervisor?: unknown } = {};
   const application = {
     revoked: [] as string[],
     // A batch key is configured, so the host requires the coordinator's own
@@ -195,7 +195,9 @@ function productionHost(client: DatabaseClient, options: Readonly<{ key?: Uint8A
     // the batch modules use, and it is what enables the operations mode.
     ...(options.key ? { workBatchIntegrityKey: options.key } : {}),
     ...(options.spy ? { createTaskApplication: async input => {
-      options.spy!.seen.supervisorOperations = (input as { supervisorOperations?: unknown }).supervisorOperations;
+      // Read the exact option the default task provider reads, so a
+      // differently-named field with the same shape cannot pass this test.
+      options.spy!.seen.supervisor = (input as { supervisor?: unknown }).supervisor;
       return options.spy!.application as never;
     } } : {}),
     // The roles file is the fixed owner-only manifest, and the host refuses a
@@ -285,8 +287,12 @@ test("the protected host hands the task application a working supervisor port", 
       try {
         // Without this the supervisor has no way to pause, and a failed
         // machine-health check would leave the installation running.
-        const operations = spy.seen.supervisorOperations as { pauseNewStarts(input: { reasonCode: "machine_health_failed";
-          observedAt: string }): Promise<{ state: string; receiptId: string }> } | undefined;
+        const supervisor = spy.seen.supervisor as { operations: { pauseNewStarts(input: { reasonCode: "machine_health_failed";
+          observedAt: string }): Promise<{ state: string; receiptId: string }> }; supervisorId: string } | undefined;
+        assert.ok(supervisor, "the task application must be offered the supervisor wiring");
+        assert.equal(supervisor.supervisorId, "supervisor:mac-local",
+          "the health loop must report under the one fixed Mac-local supervisor");
+        const operations = supervisor.operations;
         assert.ok(operations, "the task application must be offered the supervisor's operations port");
         assert.equal(typeof operations.pauseNewStarts, "function");
 
