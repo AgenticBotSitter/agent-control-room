@@ -17,7 +17,7 @@ import type { MacLocalWorkerReadinessV1 } from "./mac-local-worker-readiness";
 import type { LocalOwnerSessionStoreV1 } from "./local-owner-session-store";
 import type { PersistedLocalOwnerSessionV1 } from "./local-owner-session";
 import type { ActionInboxItemV1 } from "../../operator-surfaces/v1";
-import { WorkBatchOwnerServiceV1, type WorkBatchQueueAdmissionAuthorityV1,
+import { WorkBatchOwnerServiceV1, type WorkBatchQueueAcceptedResultPortV1,
   type WorkBatchQueueCatalogV1 } from "../../work-intake/v1";
 import { createWorkBatchOwnerHttpHandlerV1 } from "./work-batch-owner-http";
 import { LinearPipelineServiceV1 } from "../../pipelines/v1";
@@ -60,7 +60,7 @@ export interface MacLocalWebProcessOptionsV1 {
    * admit approved batch items to the existing per-agent queue. */
   workBatchQueueCatalog?: WorkBatchQueueCatalogV1;
   /** The same protected authority captured by the coordinator lifecycle. */
-  workBatchQueueAdmissionAuthority?: WorkBatchQueueAdmissionAuthorityV1;
+  workBatchQueueAdmissionAuthority?: WorkBatchQueueAcceptedResultPortV1;
   /** Host-owned append-only projection; this wrapper receives no writer. */
   projectEvents?: ProjectEventReadSourceV1;
   /** Host-generation display state built only after pinned executable

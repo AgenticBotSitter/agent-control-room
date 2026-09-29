@@ -341,48 +341,54 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
         throw new Error("work_batch_result_unavailable");
       return proof;
     };
-    // The accepted-result proof is derived from the coordinator's own lifecycle
-    // and transition history. control_transition_events is not readable by the
-    // private-web login, and a permission error there aborts the caller's
-    // transaction even when the JavaScript error is caught, so a page that only
-    // wanted presentation failed closed. Every proof read therefore runs in its
-    // own short transaction on this pool. The caller's session is never used
-    // for these statements, and nothing outside the minimal proof below crosses
-    // the boundary. The authority still compares against its HMAC-bound
-    // snapshot, so observing a newer accepted result refuses rather than widens.
-    const proofOnOwnPool = async <T>(work: (tx: DatabaseSession) => Promise<T>): Promise<T | null> => {
-      try { return await db.transaction(work); } catch { return null; }
+    type AcceptedSelection = Readonly<{ sourceJobId: string; workerId: string; nodeId: string }>;
+    const acceptedProofIn = async (tx: DatabaseSession, selection: AcceptedSelection) => {
+      const proof = await proofForSource(tx, selection);
+      await assertAcceptedResultCurrent(tx, proof);
+      const accepted = await gate.acceptedContextInSession(tx, proof.tenantId, proof.projectId, proof.targetId);
+      return Object.freeze({ executionJobId: proof.executionJobId, attemptId: proof.attemptId,
+        harnessRunId: proof.runId, artifactId: proof.artifactId,
+        contentHash: proof.contentHash, revision: accepted.target.revisionNumber });
     };
+    // Transaction-bound: each read runs on the caller's session, where
+    // acceptedContextInSession takes the Completion Gate tenant lock and keeps
+    // it until that caller commits. Build publication's creation, currentness
+    // and retention and the unattended advance depend on that: a review,
+    // verification or revision cannot supersede the accepted target between
+    // this proof and the caller's write.
     const ownerAuthority = Object.freeze({
+      binding: "caller_transaction" as const,
       assertCurrent: (selection: WorkBatchQueueSelectionV1) => assertSelection(selection) === true,
-      async isAcceptedResultCurrent(_caller: DatabaseSession, selection: Readonly<{
-        sourceJobId: string; workerId: string; nodeId: string }>) {
-        return await proofOnOwnPool(async tx => {
-          await assertAcceptedResultCurrent(tx, await proofForSource(tx, selection)); return true;
-        }) === true;
+      async isAcceptedResultCurrent(tx: DatabaseSession, selection: AcceptedSelection) {
+        try { await assertAcceptedResultCurrent(tx, await proofForSource(tx, selection)); return true; }
+        catch { return false; }
       },
-      async acceptedResultRevision(_caller: DatabaseSession, selection: Readonly<{
-        sourceJobId: string; workerId: string; nodeId: string }>) {
-        return await proofOnOwnPool(async tx => {
-          const proof = await proofForSource(tx, selection);
-          await assertAcceptedResultCurrent(tx, proof);
-          const accepted = await gate.acceptedContextInSession(tx, proof.tenantId, proof.projectId, proof.targetId);
-          return accepted.target.revisionNumber;
-        });
+      async acceptedResultRevision(tx: DatabaseSession, selection: AcceptedSelection) {
+        try { return (await acceptedProofIn(tx, selection)).revision; } catch { return null; }
       },
-      async acceptedResultProof(_caller: DatabaseSession, selection: Readonly<{
-        sourceJobId: string; workerId: string; nodeId: string }>) {
-        return await proofOnOwnPool(async tx => {
-          const proof = await proofForSource(tx, selection);
-          await assertAcceptedResultCurrent(tx, proof);
-          const accepted = await gate.acceptedContextInSession(tx, proof.tenantId, proof.projectId, proof.targetId);
-          return Object.freeze({ executionJobId: proof.executionJobId, attemptId: proof.attemptId,
-            harnessRunId: proof.runId, artifactId: proof.artifactId,
-            contentHash: proof.contentHash, revision: accepted.target.revisionNumber });
-        });
+      async acceptedResultProof(tx: DatabaseSession, selection: AcceptedSelection) {
+        try { return await acceptedProofIn(tx, selection); } catch { return null; }
       },
     });
-    return Object.freeze({ integrityKey, ownerAuthority,
+    // Presentation-only snapshot for the private-web login. The proof joins
+    // control_transition_events, which that login may not read, and a
+    // permission error aborts the caller's transaction even when the JavaScript
+    // error is caught. So the view takes no session at all: each answer is
+    // resolved in its own short transaction on this pool and only the minimal
+    // proof crosses back. The lock is released when that transaction commits,
+    // which is why this form must never gate a write.
+    const snapshotOnOwnPool = async <T>(work: (tx: DatabaseSession) => Promise<T>): Promise<T | null> => {
+      try { return await db.transaction(work); } catch { return null; }
+    };
+    const viewAuthority = Object.freeze({
+      binding: "coordinator_snapshot" as const,
+      assertCurrent: ownerAuthority.assertCurrent,
+      isAcceptedResultCurrent: async (selection: AcceptedSelection) => await snapshotOnOwnPool(async tx => {
+        await assertAcceptedResultCurrent(tx, await proofForSource(tx, selection)); return true;
+      }) === true,
+      acceptedResultProof: (selection: AcceptedSelection) => snapshotOnOwnPool(tx => acceptedProofIn(tx, selection)),
+    });
+    return Object.freeze({ integrityKey, ownerAuthority, viewAuthority,
       assignmentAuthority: Object.freeze({ integrityKey,
         assertCurrent: async (_tx: DatabaseSession, selection: WorkBatchQueueSelectionV1) => {
           if (assertSelection(selection) !== true) throw new Error("work_batch_selection_unavailable");
@@ -658,7 +664,8 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
   return Object.freeze({ planning, assignment: assignments, ...(approvals ? { approvals } : {}), ...(quality ? { quality } : {}),
     ...(pipelineAdvance?{pipelineAdvance:Object.freeze({advance:pipelineAdvance.advance.bind(pipelineAdvance),
       sweep:pipelineAdvance.advanceReady.bind(pipelineAdvance)})}:{}),
-    ...(workBatchAuthority ? { workBatchAuthority: workBatchAuthority.ownerAuthority } : {}),
+    ...(workBatchAuthority ? { workBatchAuthority: workBatchAuthority.ownerAuthority,
+      workBatchView: workBatchAuthority.viewAuthority } : {}),
     ...(ideaCreation ? { ideaCreation } : {}),
     ...(ideaResultProjection ? { ideaResultProjection } : {}),
     ...(nativeSubmission && (sessions || hermes021Local || hermesLocal || claudeCodeLocal || codexOwnerTrustedLocal || remoteControllerWorker) ? { queueDelivery: async (ref: Parameters<ManagedNativeSessions["deliverApproved"]>[0], signal: AbortSignal) => {

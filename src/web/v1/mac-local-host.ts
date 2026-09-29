@@ -13,13 +13,13 @@ import { createPostgresLocalOwnerSessionStoreV1 } from "./local-owner-session-st
 import type { LocalOwnerSessionStoreV1 } from "./local-owner-session-store";
 import type { PersistedLocalOwnerSessionV1 } from "./local-owner-session";
 import { captureWorkBatchQueueCatalogV1, createWorkBatchQueueSelectionAuthorityV1,
-  type WorkBatchQueueAdmissionAuthorityV1, type WorkBatchQueueCatalogV1,
+  type WorkBatchQueueAcceptedResultPortV1, type WorkBatchQueueCatalogV1,
   type WorkBatchQueueSelectionAuthorityV1 } from "../../work-intake/v1";
 import type { OwnerWebPushConfigV1 } from "../../web-push/v1";
 
 type OpenedDatabase = Readonly<{ client: DatabaseClient; close(): Promise<void> }>;
 type LocalService = Readonly<{ start(): Promise<void>; close(): Promise<void>; isReady(): boolean }>;
-type HostedTaskApplication = Pick<MacLocalTaskApplicationV1, "operations" | "taskReadKeys" | "actionInboxSource" | "projectEvents" | "isReady" | "close" | "queueDelivery" | "queueRecovery" | "workBatchAuthority">;
+type HostedTaskApplication = Pick<MacLocalTaskApplicationV1, "operations" | "taskReadKeys" | "actionInboxSource" | "projectEvents" | "isReady" | "close" | "queueDelivery" | "queueRecovery" | "workBatchAuthority" | "workBatchView">;
 type OwnedQueueWorker = Readonly<{ close(): Promise<void>; status(): { accepting: boolean } }>;
 
 /** The protected enablement is the only Mac-local source of exact worker and
@@ -59,7 +59,7 @@ export function createMacLocalWebServiceFromConfigurationV1(input: Readonly<{
   listenerTiming?: { bindMs?: number; closeMs?: number };
   workBatchIntegrityKey?: Uint8Array;
   workBatchQueueCatalog?: WorkBatchQueueCatalogV1;
-  workBatchQueueAdmissionAuthority?: WorkBatchQueueAdmissionAuthorityV1;
+  workBatchQueueAdmissionAuthority?: WorkBatchQueueAcceptedResultPortV1;
   ownerWebPush?: OwnerWebPushConfigV1;
 }>): LocalService {
   const configuration = input?.configuration;
@@ -168,7 +168,8 @@ export function createMacLocalProtectedHostV1(input: Readonly<{
         taskApplication = input.createTaskApplication
           ? await input.createTaskApplication({ configuration, database, workerReadiness, databaseRoles: databaseRoles!,
             ...(workBatches ? { workBatches } : {}) }) : undefined;
-        if (workBatches && input.createTaskApplication && !taskApplication?.workBatchAuthority)
+        if (workBatches && input.createTaskApplication
+          && (!taskApplication?.workBatchAuthority || !taskApplication.workBatchView))
           throw new Error("mac_local_host_configuration_invalid");
         // Some inert composition tests intentionally supply an opaque fake
         // client. A real opened DatabaseClient always exposes query and must
@@ -180,7 +181,7 @@ export function createMacLocalProtectedHostV1(input: Readonly<{
           configuration, database, assets: input.assets, render: input.render,
           ...(workBatches ? { workBatchIntegrityKey: workBatches.integrityKey,
             workBatchQueueCatalog: workBatches.queueCatalog,
-            workBatchQueueAdmissionAuthority: taskApplication?.workBatchAuthority } : {}),
+            workBatchQueueAdmissionAuthority: taskApplication?.workBatchView } : {}),
           ...(localOwnerSessionStore ? { localOwnerSessionStore } : {}), initialLocalOwnerSessions,
           ...(taskApplication ? { taskApplication } : input.operations ? { operations: input.operations } : {}),
           workerReadiness,
