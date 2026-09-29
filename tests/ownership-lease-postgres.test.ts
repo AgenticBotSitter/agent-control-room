@@ -190,6 +190,55 @@ test("ownership lease trigger resists clock, overlap, state, declaration, temp-s
         await insertAsCoordinator(postgres, underscoreA);
         await insertAsCoordinator(postgres, underscoreB);
 
+        // Sequential (non-racing) overlap-guard cases: the 4-way nested race above only
+        // catches a deleted overlap arm when a descendant happens to commit first, so each
+        // direction and the root/no-declared-scope cases need a deterministic ordering too.
+        const guardDescendant = { id: "guard-descendant", path: "guard/a/b" } as const;
+        await seedLease(admin, guardDescendant);
+        await insertAsCoordinator(postgres, guardDescendant);
+        const guardAncestor = { id: "guard-ancestor", path: "guard/a" } as const;
+        await seedLease(admin, guardAncestor);
+        await assert.rejects(insertAsCoordinator(postgres, guardAncestor), error => errorCode(error) === "23P01",
+          "a new ancestor tree collides with an already-held descendant tree");
+
+        const guardFile = { id: "guard-file", kind: "file", path: "guard/file2/leaf.ts" } as const;
+        await seedLease(admin, guardFile);
+        await insertAsCoordinator(postgres, guardFile);
+        const guardParentTree = { id: "guard-parent-tree", path: "guard/file2" } as const;
+        await seedLease(admin, guardParentTree);
+        await assert.rejects(insertAsCoordinator(postgres, guardParentTree), error => errorCode(error) === "23P01",
+          "a new tree collides with an already-held file underneath it");
+
+        const guardTree = { id: "guard-tree", path: "guard/tree3" } as const;
+        await seedLease(admin, guardTree);
+        await insertAsCoordinator(postgres, guardTree);
+        const guardChildFile = { id: "guard-child-file", kind: "file", path: "guard/tree3/leaf.ts" } as const;
+        await seedLease(admin, guardChildFile);
+        await assert.rejects(insertAsCoordinator(postgres, guardChildFile), error => errorCode(error) === "23P01",
+          "a new file collides with an already-held tree over it");
+
+        const guardAb = { id: "guard-ab", path: "guard/m/ab" } as const;
+        const guardAbc = { id: "guard-abc", path: "guard/m/abc" } as const;
+        await seedLease(admin, guardAb); await seedLease(admin, guardAbc);
+        await insertAsCoordinator(postgres, guardAb);
+        await insertAsCoordinator(postgres, guardAbc);
+
+        const guardNoDeclared = { id: "guard-no-declared", path: "guard/no-declared", declared: false } as const;
+        await seedLease(admin, guardNoDeclared);
+        await assert.rejects(
+          insertAsCoordinator(postgres, guardNoDeclared, { project: "beta", kind: "tree", path: "" }),
+          error => errorCode(error) === "23514",
+          "a job's own project must match the scope row even when the job has no declared scopes",
+        );
+
+        const guardRoot = { id: "guard-root", kind: "tree", path: "", project: "beta" } as const;
+        await seedLease(admin, guardRoot);
+        await insertAsCoordinator(postgres, guardRoot);
+        const guardAfterRoot = { id: "guard-after-root", path: "guard/anything", project: "beta" } as const;
+        await seedLease(admin, guardAfterRoot);
+        await assert.rejects(insertAsCoordinator(postgres, guardAfterRoot), error => errorCode(error) === "23P01",
+          "a held root tree collides with every later scope in the same project");
+
         const shadowHeld = { id: "shadow-held", path: "shadow/shared" } as const;
         const shadowNext = { id: "shadow-next", path: "shadow/shared" } as const;
         await seedLease(admin, shadowHeld); await seedLease(admin, shadowNext);
