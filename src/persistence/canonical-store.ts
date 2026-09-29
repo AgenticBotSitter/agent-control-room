@@ -829,6 +829,18 @@ export class CanonicalStore {
   }
 
   async claimReadyJob(input: ClaimJobInput): Promise<{ job: JobRecord; attempt: AttemptRecord; lease: LeaseRecord; replayed: boolean }> {
+    return this.#claimReadyJob(input, false);
+  }
+
+  /** Task assignment may bind immutable model evidence, but callers cannot
+   * supply it. The store derives it from the protected resolved task row. */
+  async claimReadyTaskJob(input: ClaimJobInput): Promise<{ job: JobRecord; attempt: AttemptRecord; lease: LeaseRecord; replayed: boolean }> {
+    return this.#claimReadyJob(input, true);
+  }
+
+  async #claimReadyJob(input: ClaimJobInput, bindTaskModel: boolean): Promise<{
+    job: JobRecord; attempt: AttemptRecord; lease: LeaseRecord; replayed: boolean;
+  }> {
     return this.#transaction(async (tx) => {
       const prior = await tx.query<{ entity_id: string; safe_metadata: { attemptId?: string; leaseId?: string } }>(
         `SELECT entity_id,safe_metadata FROM control_transition_events WHERE tenant_id=$1 AND entity_kind='job' AND idempotency_key=$2`,
@@ -876,6 +888,21 @@ export class CanonicalStore {
       );
       const next = sequence.rows[0];
 
+      let modelSelection: AttemptRecord["modelSelection"];
+      if (bindTaskModel) {
+        const selected = (await tx.query<{ worker_kind: "codex" | "claude-code" | "hermes" | null;
+          selection_key: string | null; model: string | null;
+          effort: NonNullable<AttemptRecord["modelSelection"]>["effort"] | null;
+          provider: string | null; profile: string | null }>(`SELECT worker_kind,selection_key,model,effort,provider,profile
+          FROM control_task_model_selections WHERE tenant_id=$1 AND job_id=$2`, [input.tenantId, input.jobId])).rows[0];
+        if (selected && (!selected.worker_kind || !selected.selection_key || !selected.model || !selected.effort)) {
+          throw new Error("Task model selection is unresolved");
+        }
+        if (selected) modelSelection = { workerKind: selected.worker_kind!, selectionKey: selected.selection_key!,
+          model: selected.model!, effort: selected.effort!, ...(selected.provider ? { provider: selected.provider } : {}),
+          ...(selected.profile ? { profile: selected.profile } : {}) };
+      }
+
       const attemptOffered: AttemptRecord = {
         contractVersion: job.contractVersion,
         kind: "attempt",
@@ -888,6 +915,7 @@ export class CanonicalStore {
         workerId: input.workerId,
         nodeId: input.nodeId,
         leaseEpoch: next.next_epoch,
+        ...(modelSelection ? { modelSelection } : {}),
         offeredAt: input.acquiredAt,
         createdAt: input.acquiredAt,
         updatedAt: input.acquiredAt,

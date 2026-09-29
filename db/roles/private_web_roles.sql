@@ -41,6 +41,12 @@ GRANT SELECT ON work_batch_queue_admissions, work_batch_effective_queue_admissio
 GRANT SELECT ON control_task_model_selections, control_task_declared_scopes,
   control_assignment_lease_scopes TO control_room_private_web;
 GRANT SELECT ON control_durable_result_write_reservations TO control_room_private_web;
+-- Project coordination page (attentionList, readDependencies): exactly the
+-- read, filter and join columns the composer names. No payload, deep_link or
+-- source columns and no writes; tenant scoping is the composer's WHERE clause.
+GRANT SELECT (id, tenant_id, project_id, attention_type, title, summary, due_at, observed_at, work_item_id)
+  ON attention_items TO control_room_private_web;
+GRANT SELECT (tenant_id, job_id, depends_on_job_id) ON control_job_dependencies TO control_room_private_web;
 GRANT UPDATE (web_lock) ON control_identities, control_role_grants, workspaces,
   control_connection_registry_heads, control_completion_gate_integrity, control_completion_gate_records,
   control_jobs TO control_room_private_web;

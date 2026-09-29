@@ -53,6 +53,14 @@ inserts.add("work_batch_queue_admissions"); inserts.add("work_batch_agent_queue_
 export const privateWebInsertColumns: Record<string, readonly string[]> = {
   control_idempotency: ["tenant_id", "operation_scope", "idempotency_key", "request_digest", "status"],
 };
+/** Tables whose SELECT grant is column-scoped: the project coordination
+ * page's attention and dependency reads. Listed columns must be readable and
+ * every unlisted column must not be; a table-wide SELECT fails the check. */
+export const privateWebReadColumns: Record<string, readonly string[]> = {
+  attention_items: ["id", "tenant_id", "project_id", "attention_type", "title", "summary", "due_at", "observed_at",
+    "work_item_id"],
+  control_job_dependencies: ["tenant_id", "job_id", "depends_on_job_id"],
+};
 const updates: Record<string, readonly string[]> = {
   control_identities: ["web_lock"], control_role_grants: ["web_lock"], workspaces: ["web_lock"],
   control_connection_registry_heads: ["web_lock"], control_web_sessions: ["revoked_at"],
@@ -417,7 +425,9 @@ async function verifyDatabase(db: DatabaseClient, config: PrivatePostgresConfigu
       // Column-scoped INSERT grants (currently the web role's idempotency
       // ledger): listed columns must carry INSERT, unlisted must not.
       const scopedInserts = kind === "web" ? privateWebInsertColumns : {};
-      if (!columns.length || columns.some(c => c.extra || c.read !== reads.has(c.table_name)
+      const scopedReads = kind === "web" ? privateWebReadColumns : {};
+      if (!columns.length || columns.some(c => c.extra
+        || c.read !== (reads.has(c.table_name) || !!scopedReads[c.table_name]?.includes(c.column_name))
         || c.insert !== (allowedInserts.has(c.table_name) || !!scopedInserts[c.table_name]?.includes(c.column_name))
         || c.update !== !!allowedUpdates[c.table_name]?.includes(c.column_name)
         || c.remove !== allowedDeletes.has(c.table_name))) fail();
