@@ -1,11 +1,12 @@
-import { createAccessVerifier, requireSameOrigin, WebAccessError, type AccessTrust, type GatewayAssertionProviderProfileV1 } from "./access-verifier";
+import { authenticatedWebSessionBindingV1, createAccessVerifier, requireSameOrigin, WebAccessError,
+  type AccessTrust, type GatewayAssertionProviderProfileV1 } from "./access-verifier";
 import type { LocalOwnerSessionServiceV1 } from "./local-owner-session";
 import { privateResponseHeaders, readBoundedJson, webFailure } from "./http-common";
 import type { WebTaskService } from "./task-service";
 import type { WebTaskReviewService } from "./task-review-service";
 import type { WebTaskVerificationService } from "./task-verification-service";
 import { taskVerificationDraftSchema } from "./task-verification-wire";
-import { taskReviewDraftSchema } from "./task-review-wire";
+import { taskReviewAuthenticationMismatchHeader, taskReviewDraftSchema, taskReviewRequestSchema } from "./task-review-wire";
 import type { TaskPlanningOperation } from "./task-execution-planner";
 import { taskPlanningDraftSchema, taskPlanningCommandSchema, taskPlanningOptionsSchema } from "./task-planning-wire";
 import { catalogProjectIdSchema } from "./project-wire";
@@ -41,6 +42,7 @@ export function createTaskHttpHandler(options: { origin: string; trust?: AccessT
       if (localOwnerSession) localOwnerSession.assertLocalRequest(request, !["GET", "HEAD"].includes(request.method));
       else requireSameOrigin(request, options.origin);
       const identity = localOwnerSession ? localOwnerSession.verify(request, (options.clock ?? Date.now)()) : verify!(request, (options.clock ?? Date.now)());
+      const response = await (async () => {
       const url = new URL(request.url);
       const fileRoute = /^\/api\/v1\/projects\/([^/]+)\/tasks\/([^/]+)\/files\/([^/]+)$/.exec(url.pathname);
       if (fileRoute) {
@@ -251,9 +253,24 @@ export function createTaskHttpHandler(options: { origin: string; trust?: AccessT
           revisionPlanning: options.revisions ? "configured" : "not_connected" }, { headers: privateResponseHeaders });
         if (request.method !== "POST") throw new WebAccessError("not_found");
         if (request.headers.get("content-type")?.split(";")[0].trim() !== "application/json" || !request.body) throw new WebAccessError("invalid_request");
-        const draft = taskReviewDraftSchema.safeParse(await readBoundedJson(request.body, 16_384));
-        if (!draft.success || draft.data.artifactId !== artifactId || draft.data.targetId !== targetId) throw new WebAccessError("invalid_request");
-        const result = await options.ownerReviews.record(identity, projectId, jobId, draft.data, request.headers.get("idempotency-key") ?? "");
+        const input = await readBoundedJson(request.body, 16_384);
+        const command = taskReviewRequestSchema.safeParse(input);
+        let draft;
+        if (command.success) draft = command.data.review;
+        else {
+          const legacy = taskReviewDraftSchema.safeParse(input);
+          if (!legacy.success || legacy.data.acceptanceAttestation) throw new WebAccessError("invalid_request");
+          draft = legacy.data;
+        }
+        if (draft.artifactId !== artifactId || draft.targetId !== targetId) throw new WebAccessError("invalid_request");
+        if (command.success) {
+          const current = authenticatedWebSessionBindingV1(identity), expected = command.data.expectedAuthentication;
+          if (current.actorId !== expected.actorId || current.sessionEpoch !== expected.sessionEpoch)
+            return Response.json({ error: "conflict", refusal: taskReviewAuthenticationMismatchHeader }, { status: 409,
+              headers: { ...privateResponseHeaders, "x-control-room-review-refusal": taskReviewAuthenticationMismatchHeader,
+                "x-control-room-authenticated-actor": current.actorId, "x-control-room-session-epoch": current.sessionEpoch } });
+        }
+        const result = await options.ownerReviews.record(identity, projectId, jobId, draft, request.headers.get("idempotency-key") ?? "");
         return Response.json(result, { status: result.replayed ? 200 : 201, headers: privateResponseHeaders });
       }
       if (jobId && route[3] && request.method === "GET") {
@@ -281,6 +298,11 @@ export function createTaskHttpHandler(options: { origin: string; trust?: AccessT
         return Response.json(result, { status: result.replayed ? 200 : 201, headers: privateResponseHeaders });
       }
       throw new WebAccessError("not_found");
+      })();
+      const authentication = authenticatedWebSessionBindingV1(identity);
+      response.headers.set("x-control-room-authenticated-actor", authentication.actorId);
+      response.headers.set("x-control-room-session-epoch", authentication.sessionEpoch);
+      return response;
     } catch (error) { return webFailure(error); }
   };
 }
