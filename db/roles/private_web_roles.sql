@@ -43,6 +43,15 @@ GRANT SELECT ON work_batch_queue_admissions, work_batch_effective_queue_admissio
 GRANT SELECT ON control_task_model_selections, control_task_declared_scopes,
   control_assignment_lease_scopes TO control_room_private_web;
 GRANT SELECT ON control_durable_result_write_reservations TO control_room_private_web;
+-- Per-project settings (eligible worker kinds, concurrency cap, defaults): the
+-- web role reads them both for the owner-facing Settings tab and to enforce
+-- eligibility/concurrency during assignment, and writes them only through the
+-- owner-gated settings action.
+GRANT SELECT ON control_project_settings TO control_room_private_web;
+GRANT INSERT ON control_project_settings TO control_room_private_web;
+GRANT UPDATE (eligible_worker_kinds, max_concurrent_tasks, default_worker_kind, default_model,
+  default_effort, version, updated_by_identity_id, updated_at) ON control_project_settings
+  TO control_room_private_web;
 -- Project coordination page (attentionList, readDependencies): exactly the
 -- read, filter and join columns the composer names. No payload, deep_link or
 -- source columns and no writes; tenant scoping is the composer's WHERE clause.

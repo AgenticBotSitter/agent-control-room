@@ -66,6 +66,15 @@ const routeSchema = z.object({ nodeId: localId, executorId: localId,
   maxConcurrentTasks: z.number().int().min(1).max(8), requiredScratchBytes: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
   leaseSeconds: z.number().int().min(1).max(300) }).strict();
 export type TaskAssignmentRoute = z.infer<typeof routeSchema>;
+/** Every capability probe id a route can carry, mapped to the plain worker kind a project's
+ * eligibility setting names. `controller-worker-remote` has no fixed kind -- a remote worker's
+ * kind is not known at routing time -- so it matches no restricted eligibility list; a project
+ * that restricts eligibility therefore also excludes remote-controller-worker routes. */
+const CAPABILITY_WORKER_KIND_V1: Readonly<Record<string, "codex" | "claude-code" | "hermes">> = Object.freeze({
+  "harness.hermes.native.runs.v1": "hermes", [HERMES_021_MACOS_LOCAL_CAPABILITY_V1]: "hermes",
+  [HERMES_LOCAL_CAPABILITY_V1]: "hermes", [CODEX_APP_SERVER_CAPABILITY]: "codex",
+  [CODEX_OWNER_TRUSTED_LOCAL_CAPABILITY_V1]: "codex", [CLAUDE_CODE_LOCAL_CAPABILITY_V1]: "claude-code",
+});
 export type NativeApprovalEnrollment = { enrollment: NativeEnrollment; nodeClass: string };
 export type CodexPermitEnrollment = CodexOwnerPermitBindingV1 & {
   approvalKeyId: string;
@@ -2100,6 +2109,14 @@ export class TaskAssignmentCoordinator {
       this.planner.assertPlanAssignable(plan);
       const route = this.routes.find(route => route.nodeId === nodeId);
       if (!route) conflict();
+      // Project settings (Settings tab): an eligibility list restricts which worker kinds may
+      // claim this project's work at all; an unrecognized capability with a restriction configured
+      // fails closed rather than assuming it is eligible.
+      const settings = await this.projects.readSettingsRowInSession(tx, projectId);
+      if (settings.eligibleWorkerKinds !== null) {
+        const kind = CAPABILITY_WORKER_KIND_V1[route.capabilityProbeId];
+        if (!kind || !settings.eligibleWorkerKinds.includes(kind)) conflict();
+      }
       const batchAdmission = await this.assertWorkBatchQueueAdmission(tx, job, route);
       if (project.lifecycle !== "active" || project.origin !== "ordinary" || !["proposed", "ready", "orphaned"].includes(job.state)
         || job.authority.allowedExecutor !== route.executorId || job.requiredCapability !== route.capabilityProbeId
@@ -2169,6 +2186,13 @@ export class TaskAssignmentCoordinator {
       const active = (await tx.query<{ count: string }>(`SELECT count(*)::text AS count FROM control_leases
         WHERE tenant_id=$1 AND node_id=$2 AND state='active'`, [this.scope.tenantId, nodeId])).rows[0];
       if (Number(active?.count) >= route.maxConcurrentTasks) conflict();
+      if (settings.maxConcurrentTasks !== null) {
+        const projectActive = (await tx.query<{ count: string }>(`SELECT count(*)::text AS count FROM control_leases l
+          JOIN control_jobs j ON j.tenant_id=l.tenant_id AND j.id=l.job_id
+          WHERE l.tenant_id=$1 AND j.project_id=$2 AND j.id<>$3 AND l.state='active'`,
+        [this.scope.tenantId, projectId, jobId])).rows[0];
+        if (Number(projectActive?.count) >= settings.maxConcurrentTasks) conflict();
+      }
       const commitDeadline = Math.min(now + Math.min(route.leaseSeconds, job.authority.maxDurationSeconds) * 1000,
         Date.parse(job.authority.expiresAt), Date.parse(telemetry.expiresAt), Date.parse(capability.expiresAt),
         key.valid_until ? new Date(key.valid_until).getTime() : Infinity);
