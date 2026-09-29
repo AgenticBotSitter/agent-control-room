@@ -14,7 +14,7 @@ const labels = { proposal: "Check proposal and planning status", assignment: "Ch
 export function TaskAttentionPanel({ page }: { page: TaskAttentionPage }) {
   return <div>
     <p>Checked {page.observedAt}. Examined {page.examined} candidate tasks on this page.</p>
-    {page.items.length ? <ul>{page.items.map(({ task, reasons, urgency, category, ownerQuestion }) => <li key={task.jobId}>
+    {page.items.length ? <ul className="private-task-list">{page.items.map(({ task, reasons, urgency, category, ownerQuestion }) => <li key={task.jobId}>
       <span className="private-state">{urgency === "urgent" ? "Urgent" : urgency === "soon" ? "Soon" : "Normal"} · {category.replaceAll("_", " ")}</span>
       <a href={`/projects/${encodeURIComponent(task.projectId)}/tasks/${encodeURIComponent(task.jobId)}`}>{task.title}</a>
       <p><strong>Question for you:</strong> {ownerQuestion}</p>

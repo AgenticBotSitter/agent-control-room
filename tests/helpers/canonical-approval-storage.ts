@@ -21,7 +21,7 @@ export async function canonicalApprovalStorageFixture(prepareSource?: TaskSource
     validUntil: enrollment.validUntil, keys: [pin] }, { security: native.trust, clock });
   const store = new NativeApprovalPacketStore(new Uint8Array(32).fill(75), [{ approvals, security: native.trust }], clock);
   const create = (db: DatabaseClient = f.db, submission?: NativeTaskSubmission) => new TaskAssignmentCoordinator(db, f.scope, f.planner, [f.route], clock,
-    [{ enrollment, nodeClass: "personal-compute" }], store, submission);
+    [{ enrollment, nodeClass: "personal-compute" }], store, submission, undefined, undefined, f.admission);
   const coordinator = create(), args = [f.identity, binding.projectId, f.prepared.receipt.jobId, f.prepared.receipt.inputDigest] as const;
   const prepared = await coordinator.prepareNativeApproval(...args);
   const sign = <T extends object>(body: T) => signArtifact({ ...body, bodyDigest: computeArtifactBodyDigest(body) }, keys.privateKey);

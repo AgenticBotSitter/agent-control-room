@@ -4,7 +4,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { LocalRuntimeContextV1, parseLocalStatusV1 } from "../private-app/app/local-runtime";
 import { ProjectNavigation } from "../private-app/app/project-navigation";
-import { PipelineAttention, PipelineBatchDetail, PipelineBatchList, createWorkBatchOwnerBrowserClient } from
+import { PipelineAttention, PipelineBatchDetail, PipelineBatchList, PrivateProjectPipelines, createWorkBatchOwnerBrowserClient } from
   "../private-app/app/project-pipelines-workspace";
 import type { WorkBatchOwnerViewV1 } from "../src/work-intake/v1/owner-schemas";
 
@@ -55,6 +55,15 @@ test("pipeline navigation follows Tasks in hosted and supported local project na
     taskWorkersStarted: true, workers: [], projectSections: ["overview", "work", "reviews"],
   } } }, createElement(ProjectNavigation, { projectId, current: "work" })));
   assert.doesNotMatch(unsupported, />Pipelines</);
+});
+
+test("linear pipeline route renders a read-only run projection without a start control", () => {
+  const html = renderToStaticMarkup(createElement(PrivateProjectPipelines,
+    { projectId, batchId: "pipeline-run:alpha" }));
+  assert.match(html, /Linear pipeline/);
+  assert.match(html, /Eligibility alone never starts work/);
+  assert.match(html, /Loading saved pipeline runs/);
+  assert.doesNotMatch(html, /<button[^>]*>Start/);
 });
 
 test("local runtime parser accepts pipelines and still refuses unknown project sections", () => {

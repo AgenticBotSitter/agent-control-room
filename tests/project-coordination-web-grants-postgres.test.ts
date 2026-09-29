@@ -163,7 +163,9 @@ test("the production private-web login passes preflight and serves the coordinat
       assert.doesNotMatch(JSON.stringify(page), /coord-grants-b|secret/);
     } finally { await web.close(); }
 
-    // Least privilege: exactly the composer's columns, and no writes.
+    // Least privilege: exactly the composer's columns, and no writes beyond
+    // appending the dependency edge of an owner-authored dependent proposal
+    // (tests/linear-pipeline-postgres.test.ts).
     const direct = new Client(login);
     await direct.connect();
     try {
@@ -179,7 +181,6 @@ test("the production private-web login passes preflight and serves the coordinat
         `INSERT INTO attention_items(id) VALUES('attention:forged')`,
         "UPDATE control_job_dependencies SET job_id=job_id",
         "DELETE FROM control_job_dependencies",
-        `INSERT INTO control_job_dependencies(tenant_id,job_id,depends_on_job_id) VALUES('${A.tenant}','${A.jobFirst}','${A.jobSecond}')`,
         "TRUNCATE attention_items",
       ]) await assert.rejects(direct.query(statement), /permission denied/, statement);
     } finally { await direct.end(); }

@@ -15,10 +15,10 @@ export async function verifyPrivateIdeaAdapter(db: DatabaseClient, scope: { tena
   if (rows.length !== 1 || rows[0].valid !== true) throw new Error("private_idea_adapter_unavailable");
 }
 
-// Generated from public migrations 0001-0104 (filename order: ...0093,0100,0101,0102,0104),
+// Generated from public migrations 0001-0105 (filename order: ...0093,0100,0101,0102,0104,0105),
 // including generic external-content migrations 0025/0026. Catalog query below;
 // not a mutable database marker.
-export const privateWebSchemaDigest = "c9f0e0f6ceb05f212aa3c7f9a3fd09ce5c556b035a97448692ef746038742438";
+export const privateWebSchemaDigest = "359bf107eaef4c38ad5604233bd468112c46bf8f0e14c6b6473328f0a326b733";
 export const privateWebReadTables = ["control_identities", "control_role_grants", "workspaces", "control_web_sessions",
   "tenants", "control_idempotency",
   "control_schedules", "control_schedule_occurrences",
@@ -37,7 +37,9 @@ export const privateWebReadTables = ["control_identities", "control_role_grants"
   "control_task_model_selections", "control_task_declared_scopes", "control_assignment_lease_scopes",
   "control_durable_result_write_reservations", "work_batches", "work_batch_revisions", "work_batch_items",
   "work_batch_queue_admissions", "work_batch_effective_queue_admissions", "work_batch_agent_queue_heads",
-  "control_native_task_queue", "control_job_dependencies", "control_action_inbox"] as const;
+  "control_native_task_queue", "control_job_dependencies",
+  "pipeline_templates", "pipeline_runs", "pipeline_stage_runs", "pipeline_ordered_stage_runs",
+  "control_action_inbox"] as const;
 const inserts = new Set(["control_web_sessions", "adapter_registry", "projects", "control_manual_project_heads",
   "control_web_project_commands", "audit_events", "control_audit_chain_heads", "control_requests", "control_workflows",
   "control_jobs", "control_web_task_commands", "control_idea_canonical_task_sessions", "control_idea_canonical_task_links",
@@ -46,6 +48,8 @@ const inserts = new Set(["control_web_sessions", "adapter_registry", "projects",
   "control_project_delegation_policies", "control_task_model_selections", "control_task_declared_scopes"]);
 inserts.add("work_batch_revisions"); inserts.add("work_batch_items");
 inserts.add("work_batch_queue_admissions"); inserts.add("work_batch_agent_queue_heads");
+inserts.add("pipeline_templates"); inserts.add("pipeline_runs"); inserts.add("pipeline_stage_runs");
+inserts.add("control_job_dependencies");
 
 /** Tables whose INSERT grant is column-scoped rather than table-wide. Every
  * listed column must carry INSERT and every unlisted column must not — a
@@ -65,7 +69,8 @@ const updates: Record<string, readonly string[]> = {
   control_identities: ["web_lock"], control_role_grants: ["web_lock"], workspaces: ["web_lock"],
   control_connection_registry_heads: ["web_lock"], control_web_sessions: ["revoked_at"],
   control_completion_gate_integrity: ["web_lock", "revision", "record_count", "state_digest", "state_auth_tag"],
-  control_completion_gate_records: ["web_lock"], control_jobs: ["web_lock"],
+  control_completion_gate_records: ["web_lock"],
+  control_jobs: ["web_lock", "stage_kind", "stage_ordinal", "pipeline_run_id"],
   projects: ["domain_state", "source_version", "normalized_state", "updated_at", "payload", "observed_at"],
   control_manual_project_heads: ["lifecycle", "version", "updated_at"],
   control_audit_chain_heads: ["head_hash", "event_count", "updated_at"],
@@ -134,10 +139,12 @@ const coordinatorInserts = new Set(["control_web_sessions", "control_requests", 
   "control_attempt_resource_admissions", "control_attempt_resource_scopes", "control_job_dependencies",
   "control_installation_transition_revisions", "control_node_fleet_signals", "control_node_fleet_current",
   "control_task_model_selections", "control_task_declared_scopes", "control_assignment_lease_scopes"]);
+coordinatorReads.push("pipeline_templates", "pipeline_runs", "pipeline_stage_runs", "pipeline_ordered_stage_runs");
 const coordinatorDeletes = new Set(["control_assignment_lease_scopes"]);
 const coordinatorUpdates: Record<string, readonly string[]> = {
-  ...Object.fromEntries(["control_requests", "control_workflows", "control_jobs", "control_attempts", "control_leases"]
+  ...Object.fromEntries(["control_requests", "control_workflows", "control_attempts", "control_leases"]
     .map(table => [table, ["state", "version", "payload", "updated_at"]])),
+  control_jobs: ["state", "version", "payload", "updated_at", "stage_kind", "stage_ordinal", "pipeline_run_id"],
   ...Object.fromEntries(["tenants", "control_nodes", "control_node_keys", "control_manual_project_heads", "projects", "control_node_fleet_signals"].map(table => [table, ["coordinator_lock"]])),
   control_node_fleet_current: ["signal_sequence", "fingerprint", "trust", "observed_at", "expires_at", "payload"],
   ...Object.fromEntries(["control_identities", "control_role_grants", "workspaces", "control_completion_gate_integrity"].map(table => [table, ["web_lock"]])),

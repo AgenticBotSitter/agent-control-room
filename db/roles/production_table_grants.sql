@@ -68,6 +68,9 @@ GRANT SELECT ON work_intake_tenant_binding TO control_room_application, control_
 REVOKE ALL ON work_batches, work_batch_revisions, work_batch_items, work_batch_queue_admissions,
   work_batch_effective_queue_admissions, work_batch_agent_queue_heads FROM control_room_application,
   control_room_reader, control_room_schedule_admissions, control_room_github_broker;
+REVOKE ALL ON pipeline_templates, pipeline_runs, pipeline_stage_runs, pipeline_ordered_stage_runs
+  FROM control_room_application, control_room_reader, control_room_schedule_admissions,
+  control_room_github_broker, control_room_work_intake;
 GRANT SELECT ON control_identities, control_role_grants, projects, work_batches,
   work_batch_revisions, work_batch_items, control_idempotency, audit_events, control_audit_chain_heads
   TO control_room_work_intake;

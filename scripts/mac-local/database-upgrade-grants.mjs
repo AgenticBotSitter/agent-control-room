@@ -1,14 +1,10 @@
 /** Exact direct ACL comparison for the five Mac-local database logins.
  * This is an offline installer component, never imported by the task host. */
 import { readFile } from "node:fs/promises";
+import { databaseRoleManifestV1 } from "./database-role-manifest.mjs";
 
-export const macRolePlan = Object.freeze({
-  control_room_web: "control_room_private_web",
-  control_room_coordinator: "control_room_task_coordinator",
-  control_room_results: "control_room_native_results",
-  control_room_publisher: "control_room_local_result_publisher",
-  control_room_queue_worker: "control_room_native_queue_worker",
-});
+export const macRolePlan = Object.freeze(Object.fromEntries(Object.entries(databaseRoleManifestV1.logins)
+  .filter(([, entry]) => entry.mac).map(([login, entry]) => [login, entry.group])));
 
 const roleFiles = Object.freeze([
   "private_web_roles.sql", "task_coordinator_roles.sql", "native_queue_producer_roles.sql",

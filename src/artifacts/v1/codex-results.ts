@@ -119,15 +119,16 @@ export class CodexCanonicalResultPublisherV1 {
 
   private async io<T>(operation: (signal: AbortSignal) => Promise<T>): Promise<T> {
     if (this.storageUncertain) throw new Error("codex_result_storage_uncertain");
-    const abort = new AbortController(); const started = performance.now(); let timer: ReturnType<typeof setTimeout> | undefined;
+    const abort = new AbortController(); let timer: ReturnType<typeof setTimeout> | undefined;
     try {
-      const value = await Promise.race([Promise.resolve().then(() => operation(abort.signal)), new Promise<never>((_, reject) => {
+      // Only the timer branch of the race may declare the port uncertain: it is the
+      // sole signal that the operation had not settled within the bound. Re-checking
+      // elapsed wall-clock time after a successful settle is not a valid basis for
+      // "uncertain" — a slow but verified success (e.g. under CI scheduler pressure)
+      // is not ambiguous, and re-poisoning it here previously flaked this check.
+      return await Promise.race([Promise.resolve().then(() => operation(abort.signal)), new Promise<never>((_, reject) => {
         timer = setTimeout(() => { this.storageUncertain = true; abort.abort(); reject(new Error("codex_result_storage_uncertain")); }, this.storageIoMs);
       })]);
-      if (this.storageUncertain || performance.now() - started >= this.storageIoMs) {
-        this.storageUncertain = true; abort.abort(); throw new Error("codex_result_storage_uncertain");
-      }
-      return value;
     } finally { clearTimeout(timer); }
   }
 

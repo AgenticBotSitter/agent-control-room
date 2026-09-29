@@ -1,6 +1,7 @@
 /** Runs only under the PostgreSQL owner account on the VPS. The dry run issues
- * SELECTs only. Secrets arrive on stdin for the real upgrade and never appear
- * in the report, process arguments, or a remote file. */
+ * SELECTs only. A login code (a SCRAM verifier, never a password) is read from
+ * stdin only when the plan creates a new login, and never appears in the
+ * report, process arguments, or a remote file. */
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { readFile } from "node:fs/promises";
@@ -10,17 +11,18 @@ import { connectTarget } from "../../deploy/postgres/evidence.mjs";
 import { applyMacGrantDiffV1, diffMacGrantsV1, macRolePlan, readDesiredMacGrantsV1,
   readMacGrantCatalogV1, macGrantRowsToSetV1, macGrantCatalogSqlV1 } from "./database-upgrade-grants.mjs";
 import { checkedPostgresScramVerifierV1 } from "./database-upgrade-scram.mjs";
+import { databaseRoleAttributesV1, databaseRoleManifestV1 as manifest, databaseRoleNamesV1 as principals }
+  from "./database-role-manifest.mjs";
 import { inspectFixedQueueSchemaV1, installFixedQueueSchemaV1 } from "./fixed-queue-schema.mjs";
 
 const bootstrapTarget = "host=/var/run/postgresql dbname=control_room user=postgres";
 const repoRoot = fileURLToPath(new URL("../../", import.meta.url));
-const logins = Object.keys(macRolePlan);
-const groups = Object.values(macRolePlan);
-const principals = [...logins, ...groups];
+const logins = Object.keys(manifest.logins);
+const groups = manifest.groups;
+const newLogins = logins.filter(login => manifest.logins[login].newLogin);
+const macPrincipals = [...Object.keys(macRolePlan), ...Object.values(macRolePlan)];
 const migrationLedger = new URL("../../deploy/postgres/migration-ledger.json", import.meta.url);
 const sha256 = bytes => createHash("sha256").update(bytes).digest("hex");
-const roleAttributes = role => `${role === "control_room_publisher" ? "LOGIN" : "NOLOGIN"} INHERIT `
-  + "NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS";
 
 async function pendingMigrations(applied) {
   const ledger = JSON.parse(await readFile(migrationLedger, "utf8"));
@@ -38,24 +40,23 @@ async function pendingMigrations(applied) {
 function roleState({ roles, memberships, defaultAcl }) {
   for (const role of roles) {
     if (!principals.includes(role.rolname)
-      || role.rolcanlogin !== Object.hasOwn(macRolePlan, role.rolname) || !role.rolinherit
+      || role.rolcanlogin !== Object.hasOwn(manifest.logins, role.rolname) || !role.rolinherit
       || role.rolsuper || role.rolcreatedb || role.rolcreaterole || role.rolreplication || role.rolbypassrls)
       throw new Error("upgrade_role_attributes_refused");
   }
   const found = new Set(roles.map(role => role.rolname));
-  for (const role of logins.filter(role => role !== "control_room_publisher"))
+  for (const role of logins.filter(role => !manifest.logins[role].newLogin))
     if (!found.has(role)) throw new Error("upgrade_existing_role_missing");
   const actual = new Set();
   for (const row of memberships) {
     if (!logins.includes(row.member)) throw new Error("upgrade_non_login_membership_refused");
-    if (row.parent !== macRolePlan[row.member]
-      && !(row.parent === "control_room_application" && row.member !== "control_room_publisher"))
+    if (row.parent !== manifest.logins[row.member].group && row.parent !== manifest.logins[row.member].legacyGroup)
       throw new Error("upgrade_unexpected_login_membership_refused");
     const item = `${row.member}|${row.parent}`;
     if (actual.has(item)) throw new Error("upgrade_duplicate_membership_refused");
     actual.add(item);
   }
-  const desired = new Set(Object.entries(macRolePlan).map(([member, parent]) => `${member}|${parent}`));
+  const desired = new Set(logins.map(member => `${member}|${manifest.logins[member].group}`));
   if (memberships.some(row => row.admin_option || !row.inherit_option || !row.set_option))
     throw new Error("upgrade_role_membership_options_refused");
   if (defaultAcl !== 0) throw new Error("upgrade_unexpected_default_grant");
@@ -74,7 +75,7 @@ export async function planMacDatabaseUpgradeSnapshotV1(snapshot) {
   const grants = diffMacGrantsV1(actual, desired);
   return { pendingMigrations: pending, installQueueSchema: snapshot.queue.schemaExists === false,
     createRoles: principals.filter(role => !roles.found.has(role)).sort()
-    .map(role => ({ role, attributes: roleAttributes(role) })),
+    .map(role => ({ role, attributes: databaseRoleAttributesV1(role) })),
     membership: roles.membership, grants };
 }
 
@@ -92,8 +93,8 @@ async function databaseSnapshot(client) {
     ORDER BY member.rolname,parent.rolname`, [principals, groups])).rows;
   const defaultAcl = (await client.query(`SELECT count(*)::int AS count FROM pg_default_acl d
     CROSS JOIN LATERAL aclexplode(d.defaclacl) a JOIN pg_roles r ON r.oid=a.grantee
-    WHERE r.rolname=ANY($1::text[])`, [principals])).rows[0].count;
-  const grants = (await client.query(macGrantCatalogSqlV1, [principals])).rows;
+    WHERE r.rolname=ANY($1::text[])`, [macPrincipals])).rows[0].count;
+  const grants = (await client.query(macGrantCatalogSqlV1, [macPrincipals])).rows;
   const queue = await inspectFixedQueueSchemaV1(client);
   return { applied, roles, memberships, defaultAcl, grants,
     queue: { ...queue, verified: queue.schemaExists } };
@@ -108,11 +109,31 @@ const safeMember = value => {
   return value;
 };
 const safeParent = (member, parent, verb) => {
-  if (verb === "REVOKE" && parent === "control_room_application" && member !== "control_room_publisher")
-    return parent;
-  if (verb === "GRANT" && macRolePlan[member] === parent) return parent;
+  if (verb === "REVOKE" && parent === manifest.logins[member].legacyGroup) return parent;
+  if (verb === "GRANT" && manifest.logins[member].group === parent) return parent;
   throw new Error("upgrade_role_catalog_refused");
 };
+
+/** Login codes: nothing, one bare verifier (the publisher, as before), or a
+ * JSON object of manifest login -> verifier. */
+export function parseMacDatabaseLoginCodesV1(input) {
+  const text = typeof input === "string" ? input.trim() : input === undefined ? "" : undefined;
+  if (text === undefined) throw new Error("upgrade_verifier_input_refused");
+  if (!text) return {};
+  if (!text.startsWith("{")) return { control_room_publisher: checkedPostgresScramVerifierV1(text) };
+  let codes;
+  try { codes = JSON.parse(text); } catch { throw new Error("upgrade_verifier_input_refused"); }
+  if (!codes || typeof codes !== "object" || Array.isArray(codes)
+    || Object.keys(codes).some(role => !newLogins.includes(role))) throw new Error("upgrade_verifier_input_refused");
+  return Object.fromEntries(Object.entries(codes).map(([role, code]) => [role, checkedPostgresScramVerifierV1(code)]));
+}
+
+export function plainMacDatabaseUpgradeRefusalV1(error) {
+  const names = /^upgrade_new_login_needs_verifier:([a-z_,]+)$/u.exec(error?.message ?? "")?.[1].split(",");
+  if (!names?.length || names.some(name => !newLogins.includes(name))) return undefined;
+  return `Refused: this upgrade adds the new database login ${names.join(" and ")}, and each needs its login `
+    + "code from the Mac. Nothing was changed. Run the upgrade again with the code on standard input.";
+}
 
 export async function inspectMacDatabaseUpgradeV1({ client }) {
   await client.query("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY");
@@ -130,15 +151,43 @@ export function macDatabaseUpgradePlanDigestV1(plan) {
   return `sha256:${sha256(JSON.stringify(plan))}`;
 }
 
-export async function applyMacDatabaseUpgradeV1({ publisherVerifier, client, expectedPlanDigest, applyPending,
-  onStage = () => {} }) {
+/** Roles first: missing manifest groups and new logins are created before any
+ * migration or grant refers to them. A login code is read only when the
+ * approved plan creates a login, so a repeat upgrade needs no code at all. */
+export async function applyMacDatabaseUpgradeV1({ client, expectedPlanDigest, applyPending, publisherVerifier,
+  loginVerifiers, readLoginVerifiers, onStage = () => {} }) {
   onStage("plan");
-  checkedPostgresScramVerifierV1(publisherVerifier);
   const before = await inspectMacDatabaseUpgradeV1({ client });
   if (expectedPlanDigest !== undefined && macDatabaseUpgradePlanDigestV1(before) !== expectedPlanDigest)
     throw new Error("upgrade_plan_changed_refused");
+  if (before.pendingMigrations.length && typeof applyPending !== "function")
+    throw new Error("upgrade_pending_migrations_need_peer_runner");
+  const plannedLogins = before.createRoles.map(item => item.role).filter(role => logins.includes(role));
+  let codes = {};
+  if (plannedLogins.length) {
+    codes = readLoginVerifiers ? parseMacDatabaseLoginCodesV1(await readLoginVerifiers()) : {
+      ...(publisherVerifier === undefined ? {} : { control_room_publisher: checkedPostgresScramVerifierV1(publisherVerifier) }),
+      ...parseMacDatabaseLoginCodesV1(JSON.stringify(loginVerifiers ?? {})) };
+    if (plannedLogins.some(role => !codes[role]))
+      throw new Error(`upgrade_new_login_needs_verifier:${plannedLogins.join(",")}`);
+  }
+  if (before.createRoles.length) {
+    onStage("roles");
+    await client.query("BEGIN");
+    try {
+      const state = roleState(await databaseSnapshot(client));
+      for (const role of principals.filter(name => !state.found.has(name))) {
+        if (logins.includes(role) && !codes[role]) throw new Error(`upgrade_new_login_needs_verifier:${role}`);
+        await client.query(`CREATE ROLE ${role} ${databaseRoleAttributesV1(role)}${logins.includes(role)
+          ? ` PASSWORD ${client.escapeLiteral(codes[role])}` : ""}`);
+      }
+      await client.query("COMMIT");
+    } catch (error) {
+      await client.query("ROLLBACK").catch(() => {});
+      throw error;
+    }
+  }
   if (before.pendingMigrations.length) {
-    if (typeof applyPending !== "function") throw new Error("upgrade_pending_migrations_need_peer_runner");
     onStage("migrate");
     await applyPending();
   }
@@ -146,17 +195,10 @@ export async function applyMacDatabaseUpgradeV1({ publisherVerifier, client, exp
     onStage("queue");
     await installFixedQueueSchemaV1(client);
   }
-  onStage("roles");
+  onStage("grants");
   await client.query("BEGIN");
   try {
     const state = roleState(await databaseSnapshot(client));
-    for (const group of groups.filter(role => !state.found.has(role)))
-      await client.query(`CREATE ROLE ${group} ${roleAttributes(group)}`);
-    if (!state.found.has("control_room_publisher")) {
-      await client.query(`CREATE ROLE control_room_publisher ${roleAttributes("control_room_publisher")}
-        PASSWORD ${client.escapeLiteral(publisherVerifier)}`);
-    }
-    onStage("grants");
     const current = await readMacGrantCatalogV1(client);
     const desired = await readDesiredMacGrantsV1();
     await applyMacGrantDiffV1(client, diffMacGrantsV1(current, desired));
@@ -212,6 +254,7 @@ export function sanitizedMacDatabaseUpgradeFailureV1(error, stage) {
   const known = new Set(["upgrade_input_refused", "upgrade_main_checkout_refused",
     "upgrade_verifier_input_refused", "upgrade_scram_verifier_refused", "upgrade_operator_identity_refused",
     "upgrade_plan_changed_refused", "upgrade_pending_migrations_need_peer_runner",
+    "upgrade_new_login_needs_verifier",
     "upgrade_existing_role_missing", "upgrade_role_attributes_refused", "upgrade_convergence_refused",
     "upgrade_role_catalog_refused", "upgrade_non_login_membership_refused",
     "upgrade_unexpected_login_membership_refused", "upgrade_duplicate_membership_refused",
@@ -244,7 +287,6 @@ export async function runMacDatabaseUpgradeCommandV1({ args, readVerifier, git =
   if (git(["rev-parse", "HEAD"]) !== args[2]
     || git(["rev-parse", "refs/remotes/origin/main"]) !== args[2]
     || git(["status", "--porcelain"])) throw new Error("upgrade_main_checkout_refused");
-  const verifier = applying ? checkedPostgresScramVerifierV1((await readVerifier()).trim()) : undefined;
   const client = openClient();
   await client.connect();
   try {
@@ -255,7 +297,7 @@ export async function runMacDatabaseUpgradeCommandV1({ args, readVerifier, git =
       const plan = await inspectMacDatabaseUpgradeV1({ client });
       return { plan, digest: macDatabaseUpgradePlanDigestV1(plan) };
     }
-    return await applyMacDatabaseUpgradeV1({ client, publisherVerifier: verifier,
+    return await applyMacDatabaseUpgradeV1({ client, readLoginVerifiers: readVerifier,
       expectedPlanDigest: args[4], applyPending, onStage });
   } finally { await client.end(); }
 }
@@ -264,7 +306,7 @@ async function readVerifierStdinV1() {
   let input = "";
   for await (const chunk of process.stdin) {
     input += String(chunk);
-    if (input.length > 300) throw new Error("upgrade_verifier_input_refused");
+    if (input.length > 4096) throw new Error("upgrade_verifier_input_refused");
   }
   return input;
 }
@@ -277,6 +319,8 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     process.stdout.write(`${JSON.stringify(result)}\n`);
   } catch (error) {
     process.stderr.write(`${sanitizedMacDatabaseUpgradeFailureV1(error, stage)}\n`);
+    const plain = plainMacDatabaseUpgradeRefusalV1(error);
+    if (plain) process.stderr.write(`${plain}\n`);
     process.exitCode = 1;
   }
 }
