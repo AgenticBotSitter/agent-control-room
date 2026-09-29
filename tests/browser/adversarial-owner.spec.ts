@@ -65,6 +65,10 @@ function observeBrowserErrors(page: Page, errors: string[], observeHttpFailures 
 
 async function prepareAcceptance(page: Page) {
   const attestation = page.getByLabel("I read it and it’s correct");
+  // Review options arrive after the protected result opens. A one-shot count
+  // can race that request and skip the required live gesture, leaving Accept
+  // correctly disabled. Wait for the exact review state before using its
+  // optional attestation control.
   const accept = page.getByRole("button", { name: "Accept", exact: true });
   const available = page.getByRole("region", { name: "Owner quality decision" })
     .getByRole("heading", { name: "Review this exact result" });
@@ -356,11 +360,12 @@ test.describe("disposable owner website adversarial attacks", () => {
     await signIn(page);
     const project = await createProject(page, "Review state consistency", "advreviewproject001");
     const projectPath = `/projects/${encodeURIComponent(project.projectId)}`;
-    const reviewPosts: { path: string; body: Record<string, unknown> }[] = [];
+    const reviewPosts: { path: string; body: Record<string, unknown>; key: string }[] = [];
     const captureReview = (request: Request) => {
       const path = new URL(request.url()).pathname;
       if (request.method() === "POST" && path.includes("/reviews/")) {
-        reviewPosts.push({ path, body: request.postDataJSON() as Record<string, unknown> });
+        reviewPosts.push({ path, body: request.postDataJSON() as Record<string, unknown>,
+          key: request.headers()["idempotency-key"] ?? "" });
       }
     };
     page.on("request", captureReview);
@@ -386,12 +391,13 @@ test.describe("disposable owner website adversarial attacks", () => {
       { timeout: 20_000 }).toMatch(/Saved: quality acceptance/);
     await expect.poll(async () => `${await page.locator("body").innerText()}\n${await staleReview.locator("body").innerText()}`,
       { timeout: 20_000 }).toMatch(/result or review changed|decision is already recorded/i);
-    const acceptedRequest = reviewPosts.find(request => request.body.decision === "accepted");
+    const acceptedRequest = reviewPosts.find(request => (request.body.review as Record<string, unknown> | undefined)?.decision === "accepted");
     expect(acceptedRequest).toBeDefined();
-    const acceptedDraft = { ...acceptedRequest!.body };
+    const acceptedDraft = { ...(acceptedRequest!.body.review as Record<string, unknown>) };
     delete acceptedDraft.acceptanceAttestation;
     const requestChangesAfterAccept = await api(page, acceptedRequest!.path, "POST",
-      { ...acceptedDraft, decision: "changes_requested", feedback: "This must be refused after acceptance." },
+      { review: { ...acceptedDraft, decision: "changes_requested", feedback: "This must be refused after acceptance." },
+        expectedAuthentication: acceptedRequest!.body.expectedAuthentication },
       "advchangesafteraccept1");
     expect(requestChangesAfterAccept.status).toBe(409);
     await expect(page.getByRole("button", { name: /Edit task/i })).toHaveCount(0);
@@ -407,8 +413,19 @@ test.describe("disposable owner website adversarial attacks", () => {
     await page.getByLabel("Changes you want").fill("Return a corrected harmless line in a linked revision.");
     const reviewsBeforeRevision = reviewPosts.length;
     await activateTwice(page.getByRole("button", { name: "Request changes" }));
-    await expect(page.getByText(/Saved: changes requested/)).toBeVisible();
+    const savedChanges = page.getByText(/Saved: changes requested/);
+    const checkExactSave = page.getByRole("button", { name: "Check this exact review save" });
+    await expect.poll(async () => {
+      if (await savedChanges.isVisible()) return "saved";
+      if (await checkExactSave.isEnabled().catch(() => false)) return "retry";
+      return "pending";
+    }, { timeout: 20_000 }).not.toBe("pending");
     expect(reviewPosts.length - reviewsBeforeRevision).toBe(1);
+    if (!await savedChanges.isVisible()) await checkExactSave.click();
+    await expect(savedChanges).toBeVisible();
+    const revisionReviewPosts = reviewPosts.slice(reviewsBeforeRevision);
+    expect(new Set(revisionReviewPosts.map(request => request.key)).size).toBe(1);
+    expect(revisionReviewPosts.every(request => request.key)).toBe(true);
     const revisionPosts: string[] = [];
     const captureRevision = (request: Request) => {
       if (request.method() === "POST" && request.url().endsWith("/revisions")) revisionPosts.push(request.url());
@@ -428,9 +445,13 @@ test.describe("disposable owner website adversarial attacks", () => {
     for (const path of [projectPath, `${projectPath}/tasks`, `${projectPath}/reviews`,
       `${projectPath}/activity`, `${projectPath}/files`, "/", "/needs-me"]) {
       await page.goto(path); await expectHealthy(page);
-      if (path === `${projectPath}/tasks` || path === `${projectPath}/activity` || path === `${projectPath}/files`) {
+      if (path === `${projectPath}/tasks` || path === `${projectPath}/files`) {
         await expect(page.locator("main")).toContainText("Concurrent acceptance task");
         await expect(page.locator("main")).toContainText("Revision lifecycle task");
+      }
+      if (path === `${projectPath}/activity`) {
+        await expect(page.locator("main")).toContainText("No saved project events are recorded yet");
+        await expect(page.locator("main")).toContainText("Read-only history");
       }
     }
     expect(browserErrors).toEqual([]);

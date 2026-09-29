@@ -222,6 +222,34 @@ export class ServerNodeSession {
     });
   }
 
+  /** Authenticates one holder-originated renewal request. The callback receives
+   * a session-bound identity fence, never a caller-provided node id. */
+  async acceptLeaseRenewalRequest<T>(raw: string | Uint8Array, commit: (
+    frame: SignedNodeFrame<"job.lease.renew.request">, holder: ServerNativeChannel,
+  ) => Promise<T>): Promise<T> {
+    if (!["ready", "sent", "receipted", "recovered", "controller_worker_sent", "controller_worker_receipted",
+      "codex_sent", "codex_receipted", "codex_activation_sent_unconfirmed", "codex_result_returned"].includes(this.state)
+      || !this.features.includes(NATIVE_LEASE_DELIVERY_FEATURE)) {
+      throw new Error("Lease renewal requires a current negotiated holder session");
+    }
+    return this.bounded(async () => {
+      const frame = await this.authenticate(raw, 16_384);
+      if (frame.type !== "job.lease.renew.request") throw new Error("Expected lease renewal request");
+      const assertCurrent = () => {
+        if (this.now() >= Date.parse(frame.expiresAt) || this.state === "closed") throw new Error("Lease renewal session is no longer current");
+      };
+      const holder = Object.freeze({ tenantId: this.config.tenantId, nodeId: this.config.nodeId,
+        nodeKeyId: this.config.nodeKeyId, connectionId: this.connectionId!, maxFrameBytes: this.maxFrameBytes,
+        expiresAt: frame.expiresAt, grantsExecutionAuthority: false as const, assertCurrent });
+      assertCurrent();
+      const value = await commit(structuredClone(frame), holder);
+      assertCurrent();
+      await this.send("protocol.ack", { acknowledgedMessageIds: [frame.messageId],
+        highestContiguousSequence: frame.sequence, disposition: "accepted" }, frame.messageId);
+      assertCurrent(); return value;
+    });
+  }
+
   private async authenticateCodexResult(raw: string | Uint8Array): Promise<AuthenticatedFrameResult> {
     const result = await this.ports.authentication.verify(raw, {
       expectedDirection: "node_to_server", receivedAt: new Date(this.now()).toISOString(),

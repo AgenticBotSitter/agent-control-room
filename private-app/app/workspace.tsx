@@ -10,6 +10,7 @@ import { PrivateHeader } from "./private-header";
 import { ProjectOverviewActivity } from "./project-overview-activity";
 import { ProjectNavigation } from "./project-navigation";
 import { ConfiguredTimestamp } from "./configured-timestamp";
+import { usePolledRead } from "./use-polled-read";
 import { useProductConfiguration, useProductModule } from "./product-configuration";
 import { ProjectScheduleStatusPanel } from "./schedule-status";
 import { ProjectModuleAvailability } from "./project-module-availability";
@@ -17,6 +18,7 @@ import { useInstallationTopology } from "./installation-topology";
 import { InstallationTopologySummary } from "./installation-topology-summary";
 import { ProjectAgentWorkspace } from "./project-agent-workspace";
 import { useLocalRuntime } from "./local-runtime";
+import { StateChip } from "./owner-ui";
 
 /** Browser-side canonical JSON: stable across equivalent object key ordering. Mirrors the
  * server's canonical-digest implementation so the template-selection key the browser sends
@@ -177,34 +179,33 @@ export function PrivateProjectWorkspace({ projectId, section = "overview", after
       setProjects([]); setCatalog(undefined); setProject(undefined); setState("unavailable");
     }
   };
-  useEffect(() => {
-    let live = true;
-    const load = async () => {
-      if (writeBusy.current) return;
+  // The shared polling hook owns the schedule: it pauses while the tab is
+  // hidden, refreshes on focus, never overlaps a read, and backs off when
+  // nothing changes or a read fails. The old local `setInterval` could start a
+  // second read while the first was still open. A pending write still suspends
+  // polling, so a read can never race a command this page issued.
+  const readKey = `project-workspace-${projectId ?? "catalog"}-${refresh}-${after ?? ""}-${lifecycleFilter ?? ""}`;
+  usePolledRead<true>({
+    key: readKey,
+    baseIntervalMs: 30_000,
+    read: async (signal, transport) => {
+      if (writeBusy.current) return true;
       const current = ++generation.current;
-      try {
-        if (projectId) {
-          const value = await client.get(projectId);
-          if (live && generation.current === current) setProject(value);
-        } else {
-          const page = await client.list(after, lifecycleFilter);
-          if (live && generation.current === current) { setProjects(page.projects); setCatalog(page); }
-        }
-        if (live && generation.current === current) { setState("ready"); setError(previous => previous?.code === "uncertain" ? previous : undefined); }
-      } catch (reason) {
-        if (live && generation.current === current) {
-          setProjects([]); setCatalog(undefined); setProject(undefined); setState("unavailable");
-          setError(reason instanceof BrowserRequestError ? reason : new BrowserRequestError("unavailable"));
-        }
+      if (projectId) {
+        const value = await client.get(projectId, signal, transport);
+        if (generation.current === current) setProject(value);
+      } else {
+        const page = await client.list(after, lifecycleFilter, signal, transport);
+        if (generation.current === current) { setProjects(page.projects); setCatalog(page); }
       }
-    };
-    void load();
-    // Bounded read-only refresh; never reconnect by resubmitting a write or starting an agent.
-    const interval = setInterval(() => { if (!document.hidden) void load(); }, 30_000);
-    const focus = () => { void load(); };
-    window.addEventListener("focus", focus);
-    return () => { live = false; clearInterval(interval); window.removeEventListener("focus", focus); };
-  }, [client, projectId, refresh, after, lifecycleFilter]);
+      if (generation.current === current) { setState("ready"); setError(previous => previous?.code === "uncertain" ? previous : undefined); }
+      return true;
+    },
+    onFailure: (reason: unknown) => {
+      setProjects([]); setCatalog(undefined); setProject(undefined); setState("unavailable");
+      setError(reason instanceof BrowserRequestError ? reason : new BrowserRequestError("unavailable"));
+    },
+  });
 
   async function create(draft: { title: string; summary: string; templateSelection?: { templateId: string; configurationDigest: string } }) {
     if (writeBusy.current || client.hasPending()) return;
@@ -277,7 +278,11 @@ export function PrivateProjectWorkspace({ projectId, section = "overview", after
         <a href="/projects" className="private-back">← All projects</a>
         {(state === "loading" || state === "ready" && !project) && <p role="status">Loading project…</p>}
         {state === "ready" && project && <>
-          <div className="private-heading"><span className="private-state">{project.lifecycle} · {project.origin === "idea_lab" ? "From Idea Lab" : "Ordinary project"}</span><h1>{project.title}</h1></div>
+          {/* The lifecycle chip is followed by the origin text, because the owner
+              journey asserts on the exact string /^paused ·/ and the middle dot
+              and suffix are part of that match. */}
+          <div className="private-heading"><span className="private-state"><StateChip state={project.lifecycle} />{" · "}
+            {project.origin === "idea_lab" ? "From Idea Lab" : "Ordinary project"}</span><h1>{project.title}</h1></div>
           <ProjectIdeaOrigin project={project} />
           <ProjectNavigation projectId={projectId} current={section} presentation={project.presentation} />
           {section === "overview" && <section className="private-panel"><h2>Purpose</h2>
@@ -306,7 +311,8 @@ export function PrivateProjectWorkspace({ projectId, section = "overview", after
             <p className="private-note">Status changes preserve history. They do not stop running work. Closing this tab does not change the project.</p>
             <p className="private-note">Saved revision {project.version} · <ConfiguredTimestamp value={project.updatedAt} prefix="Updated" /></p>
           </section>}
-          {section === "overview" && runtime.mode === "hosted" && <><ProjectOverviewActivity key={projectId} projectId={projectId} />
+          {section === "overview" && <ProjectOverviewActivity key={projectId} projectId={projectId} />}
+          {section === "overview" && runtime.mode === "hosted" && <>
             <section className="private-panel"><h2>Worker availability</h2>
               <p>Open Project agents to compare task-specific eligibility with separately recorded availability, capacity, connections, and current project work.</p>
               <a className="private-action-link" href={`/projects/${encodeURIComponent(projectId)}/agents`}>Open project agents</a>

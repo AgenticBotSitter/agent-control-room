@@ -7,6 +7,7 @@ import { createTaskReviewWorkspace, type TaskReviewWorkspace, type TaskReviewSes
 import { revisionErrorMessage, revisionRequestFromReview } from "../../src/web/v1/task-revision-browser-client";
 import { OwnerRevisionPanel } from "./task-owner-revision";
 import { ConfiguredTimestamp } from "./configured-timestamp";
+import { usePolledRead } from "./use-polled-read";
 
 const availability: Record<TaskReviewOptions["availability"], string> = {
   available: "Review this exact result", not_configured: "Owner review is not configured.",
@@ -14,11 +15,17 @@ const availability: Record<TaskReviewOptions["availability"], string> = {
   already_reviewed: "Your quality decision is already recorded for this revision.", target_closed: "This revision is closed for new owner decisions.",
   independence_required: "This acceptance profile requires a different independent reviewer.",
 };
-export function OwnerReviewPanel({ options, feedback, pending, held, onFeedback, onRecord }: {
-  options: TaskReviewOptions; feedback: string; pending: boolean; held: boolean;
-  onFeedback: (value: string) => void; onRecord: (decision: TaskReviewDraft["decision"], attested?: boolean) => void;
+/** The panel is presentation only. The owner's read-and-correct gesture is
+ * owned by the result-bound review session (see `task-review-workspace.ts`),
+ * which keys it on the exact review identity, so two results can never share
+ * one tick. The panel receives the current value and reports the owner's
+ * intent; it does not decide what a tick means. */
+export function OwnerReviewPanel({ options, feedback, attested, pending, held, onFeedback, onAttest, onRecord }: {
+  options: TaskReviewOptions; feedback: string; attested: boolean; pending: boolean; held: boolean;
+  onFeedback: (value: string) => void;
+  onAttest: (value: boolean) => void;
+  onRecord: (decision: TaskReviewDraft["decision"], attested?: boolean) => void;
 }) {
-  const [attested, setAttested] = useState(false);
   return <section className="private-owner-review" aria-label="Owner quality decision"><h4>{availability[options.availability]}</h4>
     {options.ownReview && <div><p>Saved {options.ownReview.decision === "accepted" ? "quality acceptance" : "request for changes"}
       {" · "}<ConfiguredTimestamp value={options.ownReview.recordedAt} /></p>
@@ -30,7 +37,7 @@ export function OwnerReviewPanel({ options, feedback, pending, held, onFeedback,
         onChange={event => onFeedback(event.target.value)} /></label>
       <p className="private-note">Use this field when requesting changes. No passwords or secrets. Maximum 4,096 UTF-8 bytes.</p>
       {options.acceptanceAttestation && <label><input type="checkbox" checked={attested} disabled={pending || held}
-        onChange={event => setAttested(event.target.checked)} /> I read it and it’s correct</label>}
+        onChange={event => onAttest(event.target.checked)} /> I read it and it’s correct</label>}
       {options.acceptanceAttestation && <p className="private-note">{options.acceptanceAttestation.instructions}</p>}
       <div className="private-actions"><button type="button" disabled={pending || held || !!options.acceptanceAttestation && !attested}
         onClick={() => onRecord("accepted", attested)}>Accept</button>
@@ -58,23 +65,22 @@ function OwnerTaskReviewController({ projectId, jobId, artifactId, targetId, tar
   ReviewWorkspaceBinding & { session: TaskReviewSession; onSaved: () => void; runId?: string; revisionEligible: boolean }) {
   const { client } = session, { feedback, pending, receipt, error: saveError } = useSyncExternalStore(session.subscribe, session.getSnapshot, session.getSnapshot);
   const { revisionPending, revisionError } = session.getSnapshot();
-  const [options, setOptions] = useState<TaskReviewOptions>();
   const [error, setError] = useState<BrowserRequestError>(), [refresh, setRefresh] = useState(0);
-  useEffect(() => {
-    let live = true, busy = false;
-    const load = async () => {
-      if (busy) return; busy = true;
-      try {
-        const next = await client.options(projectId, jobId, { artifactId, targetId, targetDigest, contentHash });
-        if (live) { setOptions(next); if (!client.hasPending()) setError(undefined); }
-      } catch (reason) { if (live) { setOptions(undefined);
-        setError(reason instanceof BrowserRequestError ? reason : new BrowserRequestError("unavailable")); } }
-      finally { busy = false; }
-    };
-    void load(); const timer = setInterval(() => { if (!document.hidden) void load(); }, 30_000);
-    const focus = () => { void load(); }; window.addEventListener("focus", focus);
-    return () => { live = false; clearInterval(timer); window.removeEventListener("focus", focus); };
-  }, [client, projectId, jobId, artifactId, targetId, targetDigest, contentHash, refresh]);
+  // The shared polling hook owns the schedule: it pauses while the tab is
+  // hidden, refreshes on focus, never overlaps a read, and backs off when
+  // nothing changes or the read fails. The local `busy` flag this replaces
+  // guarded overlap but not the fixed-interval retry on failure.
+  const reviewRead = usePolledRead<TaskReviewOptions>({
+    key: `task-owner-review-${projectId}-${jobId}-${artifactId}-${targetId}-${refresh}`,
+    baseIntervalMs: 30_000,
+    dropValueOnError: true,
+    read: (signal, transport) => client.options(projectId, jobId,
+      { artifactId, targetId, targetDigest, contentHash }, signal, transport),
+    onAccept: () => { if (!client.hasPending()) setError(undefined); },
+    onFailure: (reason: unknown) => {
+      setError(reason instanceof BrowserRequestError ? reason : new BrowserRequestError("unavailable")); },
+  });
+  const options = reviewRead.value;
   const save = async (decision?: TaskReviewDraft["decision"], attested = false) => {
     setError(undefined);
     const acceptanceAttestation = decision === "accepted" && options?.acceptanceAttestation && attested
@@ -89,10 +95,18 @@ function OwnerTaskReviewController({ projectId, jobId, artifactId, targetId, tar
     if (!options || !retry && (!revisionRequest || !revisionEligible || options.revisionPlanning !== "configured")) return;
     if (await session.prepareRevision(retry ? undefined : revisionRequest)) { setRefresh(value => value + 1); onSaved(); }
   };
+  // The identity the gesture on screen was given for. If the options poll brings
+  // back a different attestation for this exact result — a different scenario or
+  // a changed instructions digest — the owner's answer was about the old one, so
+  // the panel reads false for the new identity rather than inheriting the tick.
+  const attestation = options?.acceptanceAttestation;
+  const attested = attestation ? session.attested(attestation) : false;
   return <>
     {!options && !error && <p role="status">Loading owner review…</p>}
-    {options && <OwnerReviewPanel options={options} feedback={feedback} pending={pending} held={client.hasPending() || !!receipt}
-      onFeedback={session.setFeedback} onRecord={(decision, attested) => { void save(decision, attested); }} />}
+    {options && <OwnerReviewPanel options={options} feedback={feedback} attested={attested} pending={pending}
+      held={client.hasPending() || !!receipt} onFeedback={session.setFeedback}
+      onAttest={value => { if (attestation) session.setAttested(attestation, value); }}
+      onRecord={(decision, checked) => { void save(decision, checked); }} />}
     {pending && <p role="status">Saving your quality decision…</p>}
     {options && receipt && <p role="status">Saved: {receipt.decision === "accepted" ? "quality acceptance" : "changes requested"}. No new work has been started.</p>}
     {error && <p role="alert">{reviewErrorMessage[error.code]}</p>}

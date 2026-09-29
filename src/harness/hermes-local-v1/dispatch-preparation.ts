@@ -4,6 +4,7 @@ import type { DatabaseClient, DatabaseSession } from "../../persistence/database
 import { sha256Digest } from "../../security";
 import { HERMES_LOCAL_ADAPTER_V1, HERMES_LOCAL_CAPABILITY_V1, HERMES_LOCAL_JOB_TYPE_V1 } from "./task-planning-contract";
 import { controllerWorkerDeliverySchemaV1, createControllerWorkerDeliveryV1, type ControllerWorkerDeliveryV1 } from "../v1/controller-worker-delivery";
+import { readOwnershipLeaseWriteScopesV1 } from "../v1/ownership-lease-write-scopes";
 import { hermesLocalTaskExecutionPlanSchemaV15, hermesLocalTaskExecutionPlanSchemaV16,
   type TaskExecutionPlanner } from "../../web/v1/task-execution-planner";
 
@@ -84,9 +85,10 @@ export class HermesLocalDispatchPreparationV1 {
     const expiresAt = new Date(Math.min(Date.parse(lease.expiresAt), Date.parse(job.authority.expiresAt))).toISOString();
     const runId = `run:hermes-local:${sha256Digest({ tenantId: ref.tenantId, jobId: ref.jobId, attemptId: ref.attemptId,
       leaseId: ref.leaseId, planDigest: sha256Digest(plan) }).slice(7)}`;
+    const writeScopes = await readOwnershipLeaseWriteScopesV1(tx, ref.tenantId, ref.leaseId);
     const delivery = createControllerWorkerDeliveryV1({ identity: { tenantId: ref.tenantId, projectId: ref.projectId,
       jobId: ref.jobId, attemptId: ref.attemptId, runId, nodeId: attempt.nodeId }, worker: { workerId: this.binding.workerId,
-      adapterId: HERMES_LOCAL_ADAPTER_V1, adapterRevision: this.binding.adapterRevision }, input: plan.input,
+      adapterId: HERMES_LOCAL_ADAPTER_V1, adapterRevision: this.binding.adapterRevision }, input: plan.input, writeScopes,
       authorityDigest: job.authority.digest, connectorProfileDigest: plan.connectorProfileDigest,
       acceptanceProfileId: plan.acceptanceProfileId, acceptanceProfileDigest: plan.acceptanceProfileDigest,
       issuedAt: new Date(now).toISOString(), expiresAt });

@@ -18,7 +18,9 @@ import { createTaskExecutionWorkspace } from "../../src/web/v1/task-execution-wo
 import { createIdeaBrowserClient } from "../../src/web/v1/idea-browser-client";
 import { canPrepareIdeaExperiment, prepareIdeaExperimentDraft } from "../../src/web/v1/idea-experiment-draft";
 import { useLocalRuntime } from "./local-runtime";
+import { StateChip } from "./owner-ui";
 import type { PreparedTaskStatus } from "../../src/web/v1/task-planning-wire";
+import { usePolledRead } from "./use-polled-read";
 
 /** Polling the same task must retain its object identity. The planning,
  * assignment and result children key their protected reads to this value; a
@@ -73,10 +75,10 @@ export function TaskExecutionStage({ detail, mode, workspace, onRecorded }: {
 
 export function PrivateTaskWorkspace({ projectId, jobId, after }: { projectId: string; jobId?: string; after?: string }) {
   const runtime = useLocalRuntime();
-  const [client] = useState(() => createTaskBrowserClient());
-  const [ideas] = useState(() => createIdeaBrowserClient());
   // Neither failed task-detail reads nor failed result reads may discard an unfinished review.
   const [reviewWorkspace] = useState(() => createTaskReviewWorkspace());
+  const [client] = useState(() => createTaskBrowserClient(fetch, () => crypto.randomUUID(), reviewWorkspace.bindAuthenticatedSession));
+  const [ideas] = useState(() => createIdeaBrowserClient());
   const [verificationWorkspace] = useState(() => createTaskVerificationWorkspace());
   const [executionWorkspace] = useState(() => createTaskExecutionWorkspace());
   const [page, setPage] = useState<TaskPage>();
@@ -87,35 +89,46 @@ export function PrivateTaskWorkspace({ projectId, jobId, after }: { projectId: s
   const [preparing, setPreparing] = useState(false), preparingRef = useRef(false);
   const [experimentNotice, setExperimentNotice] = useState<string>();
   const [loading, setLoading] = useState(true), [pending, setPending] = useState(false), [refresh, setRefresh] = useState(0);
+  // An invalidated session stops the background loop rather than hammering an
+  // endpoint that will keep refusing it. Only an explicit owner retry (below)
+  // clears this and lets the loop read again.
+  const [authInvalid, setAuthInvalid] = useState(false);
   const generation = useRef(0), busy = useRef(false), alive = useRef(true);
   useEffect(() => installNewsNavigationGuard(window, document,
     () => busy.current || client.hasPending() || reviewWorkspace.hasPending() || verificationWorkspace.hasPending() || executionWorkspace.hasPending(),
     () => setNavigationNotice(true)), [client, reviewWorkspace, verificationWorkspace, executionWorkspace]);
+  // `alive` fences the write handlers below from setting state after unmount.
+  useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
   const failure = (reason: unknown) => reason instanceof BrowserRequestError ? reason : new BrowserRequestError("unavailable");
-  useEffect(() => {
-    // Busy belongs to this effect generation: a retired request must not suppress
-    // the new refresh. Old results remain fenced by live/current below.
-    let live = true, readBusy = false; alive.current = true;
-    const load = async () => {
-      if (busy.current || preparingRef.current || readBusy) return;
-      readBusy = true; const current = ++generation.current;
+  // Refresh only reads. Closing a browser tab, reconnecting or focusing cannot
+  // start/retry a task. The shared polling hook owns the schedule: it pauses
+  // while the tab is hidden, refreshes on focus, never overlaps a read, and
+  // backs off when nothing changes or the read fails. `generation` fences a
+  // retired read from overwriting a newer result, exactly as before.
+  usePolledRead<true>({
+    key: `task-workspace-${projectId}-${jobId ?? "list"}-${after ?? ""}-${refresh}`,
+    baseIntervalMs: 30_000,
+    enabled: !authInvalid,
+    read: async (signal, transport) => {
+      if (busy.current || preparingRef.current) return true;
+      const current = ++generation.current;
       try {
-        const value = jobId ? await client.detail(projectId, jobId) : await client.list(projectId, after);
-        if (live && current === generation.current) {
+        const value = jobId ? await client.detail(projectId, jobId, signal, transport)
+          : await client.list(projectId, after, signal, transport);
+        if (current === generation.current) {
           if ("task" in value) setDetail(previous => retainEquivalentTaskDetailV1(previous, value)); else setPage(value);
           setError(client.hasPending() ? new BrowserRequestError("uncertain") : undefined);
         }
       } catch (reason) {
-        if (live && current === generation.current) { setPage(undefined); setDetail(undefined); setError(failure(reason)); }
-      } finally { readBusy = false; if (live && current === generation.current) setLoading(false); }
-    };
-    void load();
-    // Refresh only reads. Closing a browser tab, reconnecting or focusing cannot start/retry a task.
-    const timer = setInterval(() => { if (!document.hidden) void load(); }, 30_000);
-    const focus = () => { void load(); }; window.addEventListener("focus", focus);
-    return () => { live = false; alive.current = false; clearInterval(timer); window.removeEventListener("focus", focus); };
-  }, [client, projectId, jobId, after, refresh]);
-
+        if (current === generation.current) {
+          const err = failure(reason);
+          if (err.code === "authentication_required") { reviewWorkspace.invalidateAuthenticatedSession(); setAuthInvalid(true); }
+          setPage(undefined); setDetail(undefined); setError(err);
+        }
+      } finally { if (current === generation.current) setLoading(false); }
+      return true;
+    },
+  });
   async function save(retry = false) {
     if (busy.current || preparingRef.current || !page || (!retry && !page.canPropose)) return;
     busy.current = true; generation.current++; setPending(true); setError(undefined);
@@ -127,6 +140,7 @@ export function PrivateTaskWorkspace({ projectId, jobId, after }: { projectId: s
     } catch (reason) {
       if (alive.current) {
         const err = failure(reason); setError(err);
+        if (err.code === "authentication_required") { reviewWorkspace.invalidateAuthenticatedSession(); setAuthInvalid(true); }
         if (["authentication_required", "access_denied", "not_found"].includes(err.code)) { setPage(undefined); setDetail(undefined); setDraft({ title: "", instructions: "" }); }
       }
     } finally { busy.current = false; if (alive.current) setPending(false); }
@@ -147,7 +161,7 @@ export function PrivateTaskWorkspace({ projectId, jobId, after }: { projectId: s
     } finally { preparingRef.current = false; if (alive.current) setPreparing(false); }
   }
   const project = detail?.project ?? page?.project;
-  const refreshSaved = () => { if (preparingRef.current) return; setLoading(true); setRefresh(value => value + 1); };
+  const refreshSaved = () => { if (preparingRef.current) return; setAuthInvalid(false); setLoading(true); setRefresh(value => value + 1); };
   const uncertain = client.hasPending();
   return <div className="private-shell"><PrivateHeader /><main id="private-main" tabIndex={-1}>
     <a className="private-back" href={jobId ? taskUrl(projectId) : "/projects"}>{jobId ? "← Project tasks" : "← All projects"}</a>
@@ -158,11 +172,12 @@ export function PrivateTaskWorkspace({ projectId, jobId, after }: { projectId: s
       : <p>{taskErrorMessage[error.code]}</p>}
       {jobId && <p>Result content has been cleared. Unfinished review text and exact pending save keys remain in this task page’s memory.
         Restore access and reopen the same result to continue. Leaving or reloading the task page discards them.</p>}
-      <div className="private-actions"><button type="button" disabled={pending || preparing} onClick={() => setRefresh(value => value + 1)}>Check saved tasks again</button>
+      <div className="private-actions"><button type="button" disabled={pending || preparing}
+        onClick={() => { setAuthInvalid(false); setRefresh(value => value + 1); }}>Check saved tasks again</button>
         {uncertain && page && <button type="button" disabled={pending} onClick={() => { void save(true); }}>Check this exact save again</button>}</div></div>}
     {loading && <p role="status">Loading protected tasks…</p>}
     {project && <button type="button" disabled={loading || pending || preparing} onClick={refreshSaved}>Check latest saved status</button>}
-    {project && <><div className="private-heading"><span className="private-state">{project.lifecycle}</span><h1>{project.title}</h1></div>
+    {project && <><div className="private-heading"><StateChip state={project.lifecycle} /><h1>{project.title}</h1></div>
       <ProjectNavigation projectId={projectId} current="work" /></>}
     {page && <div className="private-columns"><TaskCatalogPanel page={page} after={after} />
       {page.canPropose ? <div>{canPrepareIdeaExperiment(page) && <section className="private-panel" aria-label="First experiment">

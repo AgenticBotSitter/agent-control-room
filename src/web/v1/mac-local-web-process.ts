@@ -16,6 +16,11 @@ import type { TaskRevisionOperation } from "./task-revision-operation";
 import type { MacLocalWorkerReadinessV1 } from "./mac-local-worker-readiness";
 import type { LocalOwnerSessionStoreV1 } from "./local-owner-session-store";
 import type { PersistedLocalOwnerSessionV1 } from "./local-owner-session";
+import { encodeProjectEventCursorV1, projectEventSseResponseV1, type ProjectEventReadSourceV1 } from "../../project-events/v1";
+import { ProjectActivityServiceV1 } from "./project-activity-service";
+import { SessionWatchServiceV1 } from "./session-watch-service";
+import { catalogProjectIdSchema } from "./project-wire";
+import { sessionWatchIdSchema } from "./session-watch-wire";
 import { taskProjectAgentOptionsSchema } from "./task-project-agents-wire";
 
 export interface MacLocalWebProcessOptionsV1 {
@@ -36,7 +41,9 @@ export interface MacLocalWebProcessOptionsV1 {
   revisions?: TaskRevisionOperation;
   /** Read capabilities from the same host-owned task application as the
    * submission operations. Without them, a published result looks absent. */
-  taskReadKeys?: Pick<WebTaskKeys, "harnessIntegrityKey" | "results" | "reviews" | "ownerReviews" | "modelCatalog" | "taskPlanIntegrityKey">;
+  taskReadKeys?: Pick<WebTaskKeys, "harnessIntegrityKey" | "results" | "reviews" | "ownerReviews" | "modelCatalog" | "taskPlanIntegrityKey" | "usagePriceTable">;
+  /** Host-owned append-only projection; this wrapper receives no writer. */
+  projectEvents?: ProjectEventReadSourceV1;
   /** Host-generation display state built only after pinned executable
    * verification. It is not a delivery, queue, or result authority. */
   workerReadiness?: Pick<MacLocalWorkerReadinessV1, "read">;
@@ -68,6 +75,10 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
     { tenantId: profile.tenantId, workspaceId: options.workspaceId }, clock);
   const tasks = new WebTaskService(options.database.client,
     { tenantId: profile.tenantId, workspaceId: options.workspaceId }, clock, options.taskReadKeys);
+  const projectActivity = new ProjectActivityServiceV1(options.database.client,
+    { tenantId: profile.tenantId, workspaceId: options.workspaceId }, options.projectEvents, clock);
+  const sessionWatch = new SessionWatchServiceV1(options.database.client,
+    { tenantId: profile.tenantId, workspaceId: options.workspaceId }, options.taskReadKeys?.harnessIntegrityKey, clock);
   const projectHttp = createProjectHttpHandler({ origin: options.origin, localOwnerSession: sessions, service: projects, clock });
   const taskHttp = createTaskHttpHandler({ origin: options.origin, localOwnerSession: sessions, service: tasks, clock,
     ...(options.ownerReviews ? { ownerReviews: options.ownerReviews } : {}),
@@ -130,6 +141,14 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
       if (url.search) throw new WebAccessError("invalid_request");
       return render();
     }
+    if (url.pathname === "/session-watch") {
+      if ([...url.searchParams.keys()].some(name => name !== "after") || url.searchParams.getAll("after").length > 1)
+        throw new WebAccessError("invalid_request");
+      if (url.searchParams.has("after") && !sessionWatchIdSchema.safeParse(url.searchParams.get("after")).success)
+        throw new WebAccessError("invalid_request");
+      await sessionWatch.authorize(identity);
+      return render();
+    }
     const projectSection = /^\/projects\/([^/]+)\/(inbox|agents|reviews|activity|files|settings)$/.exec(url.pathname);
     if (projectSection) {
       if ([...url.searchParams.keys()].some(name => name !== "after")
@@ -138,7 +157,7 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
       const projectId = routeId(projectSection[1]);
       if (projectSection[2] === "inbox" || projectSection[2] === "reviews")
         await tasks.projectAttention(identity, projectId, projectSection[2], url.searchParams.get("after") ?? undefined);
-      else if (projectSection[2] === "activity") await tasks.projectOverview(identity, projectId);
+      else if (projectSection[2] === "activity") await projectActivity.authorize(identity, projectId);
       else if (projectSection[2] === "files") await tasks.projectFiles(identity, projectId);
       else await projects.getView(identity, projectId);
       return render();
@@ -201,9 +220,36 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
             : { ...worker, state: "unavailable", proof: "not_proven" }) }, { headers: privateResponseHeaders });
       }
       const identity = sessions.verify(request, clock());
+      const activity = /^\/api\/v1\/projects\/([^/]+)\/(activity|events)$/.exec(url.pathname);
+      if (activity) {
+        if (request.method !== "GET" || [...url.searchParams.keys()].some(key =>
+          ![activity[2] === "activity" ? "before" : "after", "limit"].includes(key))
+          || ["before", "after", "limit"].some(key => url.searchParams.getAll(key).length > 1))
+          throw new WebAccessError("invalid_request");
+        const projectId = routeId(activity[1]);
+        const rawLimit = url.searchParams.get("limit") ?? "50";
+        if (!/^[1-9][0-9]{0,2}$/.test(rawLimit) || Number(rawLimit) > 100) throw new WebAccessError("invalid_request");
+        if (activity[2] === "activity") {
+          const before = url.searchParams.has("before") ? url.searchParams.get("before")! : undefined;
+          const page = await projectActivity.read(identity, projectId, before !== undefined ? { beforeCursor: before } : {}, Number(rawLimit));
+          const olderCursor = page.truncatedBefore
+            ? before ? page.nextCursor : page.events[0] ? encodeProjectEventCursorV1(page.events[0]) : null : null;
+          return Response.json({ page, olderCursor }, { headers: privateResponseHeaders });
+        }
+        const headerCursor = request.headers.get("last-event-id")?.trim() || undefined;
+        const queryCursor = url.searchParams.has("after") ? url.searchParams.get("after")! : undefined;
+        return projectEventSseResponseV1(await projectActivity.read(identity, projectId,
+          headerCursor !== undefined || queryCursor !== undefined ? { afterCursor: headerCursor ?? queryCursor! } : {}, Number(rawLimit)));
+      }
       if (url.pathname === "/api/v1/home/tasks") {
         if (request.method !== "GET" || url.search) throw new WebAccessError("invalid_request");
         return Response.json(await tasks.home(identity), { headers: privateResponseHeaders });
+      }
+      if (url.pathname === "/api/v1/session-watch") {
+        if (request.method !== "GET" || [...url.searchParams.keys()].some(key => key !== "after")
+          || url.searchParams.getAll("after").length > 1) throw new WebAccessError("invalid_request");
+        return Response.json(await sessionWatch.read(identity, url.searchParams.get("after") ?? undefined),
+          { headers: privateResponseHeaders });
       }
       if (url.pathname === "/api/v1/needs-me/tasks") {
         if (request.method !== "GET" || [...url.searchParams.keys()].some(key => key !== "after")
