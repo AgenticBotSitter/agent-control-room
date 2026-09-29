@@ -49,6 +49,7 @@ export type {
 export {
   ConcurrencyTimeoutError,
   ConcurrentReadRaceError,
+  enforcedElapsedMs,
   NoWritesSucceededError,
   concurrently,
   concurrentWriters,

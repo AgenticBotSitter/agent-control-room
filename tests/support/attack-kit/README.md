@@ -176,6 +176,52 @@ so a test cannot pass against a pool that was silently configured larger.
 `concurrentWriters` throws `ConcurrentReadRaceError` with every failure
 collected; pass `allowReadErrors: true` to record the count instead.
 
+### A timeout failure reports at least the bound it enforced
+
+`ConcurrencyTimeoutError.elapsedMs >= error.boundMs` is a **guarantee**, not a
+rounding accident. A caller that reads `elapsedMs` is being told "the work was
+still running when the bound had passed", and a figure smaller than the bound
+would be reporting a measurement that was never made.
+
+Two things can make a raw reading land under the bound, and both were measured
+on this machine rather than assumed:
+
+- **libuv can dispatch a timer early.** The loop clock is integer milliseconds,
+  so a `setTimeout(200)` fires a fraction of a millisecond before the
+  sub-millisecond instant it was asked for — 1 in 500 runs, by 0.386 ms.
+- **`Date.now()` is quantised and not monotonic.** It is integer milliseconds,
+  so a ~200 ms window carries up to 1 ms of error in either direction (measured
+  -0.956 ms to +0.952 ms), and an NTP step can move it backwards mid-bound.
+
+So the helpers measure with `performance.now()` (monotonic and fractional) and
+report `Math.max(Math.round(measured), bound)`, with a finite guard in front so a
+non-finite reading cannot slip through as a number. `elapsedAtLeastBound` on the
+error says whether the figure is a real measurement or the bound itself. It is
+diagnostic only: the bound was still enforced, and the flag is not a reason to
+retry or re-measure. None of this masks a slow timer — a genuine early dispatch
+is a fraction of a millisecond, while a real overrun still reports its real,
+larger elapsed time.
+
+### Testing the bound without waiting for the timer to misbehave
+
+An early dispatch happens in well under 1% of runs, so a test that runs the real
+timer thousands of times still cannot make it deterministic — and a test that
+*does* see it is a test waiting for the machine to be unlucky, which is this bug
+one level up. `concurrently` and `exhaustPool` therefore take an optional
+`now` seam for the deadline's clock:
+
+```ts
+// Fires "early" at 199.4 ms for a 200 ms bound, every run.
+await assert.rejects(
+  concurrently(1, () => new Promise(() => {}), { boundMs: 200, now: earlyClock }),
+  /elapsed_200ms/,
+);
+```
+
+It defaults to the real monotonic clock, so a caller never passes it. It exists
+because without it, dropping the clamp at a call site survives every real-timer
+test in the file — which is exactly how it was caught during this fix.
+
 **Do not unref a deadline timer here.** It looks like a free optimisation and it
 silently disables the detector. An unref'd timer does not keep the event loop
 alive, and a deadlocked pool is exactly the state where the loop has no work —
