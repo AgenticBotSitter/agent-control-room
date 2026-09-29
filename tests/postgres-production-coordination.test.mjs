@@ -113,6 +113,11 @@ before(async () => {
   await native("initdb", ["-D", data, "-U", "fixture_admin", "--auth-local=trust", "--auth-host=reject", "--no-locale", "--encoding=UTF8"]);
   await native("pg_ctl", ["-D", data, "-l", join(run, "server.log"), "-w", "-t", "30", "-o",
     `-k ${socket} -p ${PORT} -h '' -c unix_socket_permissions=0700 -c shared_buffers=32MB -c max_connections=20`, "start"]);
+  // Retained while the cluster is up. WITHOUT this the teardown has no pid to
+  // signal, so it takes the branch that can only try one `pg_ctl` and then give
+  // up: the ladder — the whole point of this change — would never run for this
+  // lane, and the one path that can stop a wedged postmaster would be unused.
+  await teardown?.capturePostmasterPid();
   await query(adminDb(), `CREATE DATABASE "cr_prod_coord200" OWNER fixture_admin`);
   await applyMigrations({ target: target("cr_prod_coord200"), bootstrapTarget: bootstrapTarget("cr_prod_coord200"),
     migrateTarget: migrateTarget("cr_prod_coord200"), rootDir: ROOT, env: { ...process.env, ...passwords } });

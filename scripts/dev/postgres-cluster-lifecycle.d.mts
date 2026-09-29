@@ -4,8 +4,12 @@
 // imports it with bare `node` and no TypeScript loader, and a `.ts` module could
 // not be imported by one of its own callers. This declaration is what lets the
 // TypeScript lanes — `tests/support/attack-kit/real-postgres.ts` and the `tsx`
-// test files — import it under `strict`, without widening the types to `any` and
-// without a hand-maintained copy that could drift from the implementation.
+// test files — import it under `strict`, without widening the types to `any`.
+//
+// It IS a hand-maintained copy, and it can drift from the implementation. What
+// keeps that honest is that `pnpm check` fails on any export a caller imports
+// that is not declared here, so a removed or renamed export is caught at compile
+// time rather than at review time.
 
 /** A cooperative `pg_ctl` stop, or a signal sent to the postmaster. */
 export type ShutdownAction = "cooperative" | "signal";
@@ -60,6 +64,12 @@ export declare function pidAlive(pid: number | undefined): boolean;
 
 /** The postmaster pid a data directory currently records, if any. */
 export declare function readPostmasterPid(dataDirectory: string): Promise<number | undefined>;
+
+/**
+ * The same, read synchronously. The `exit` hook can only run synchronous work,
+ * so it cannot use the async form.
+ */
+export declare function readPostmasterPidSync(dataDirectory: string): number | undefined;
 
 /**
  * Stop a postmaster, in the order that releases its shared memory:

@@ -10,7 +10,8 @@
 // The four shapes asserted here are the four ways a test lane's teardown is
 // skipped in practice:
 //
-//   1. SIGTERM — what `with-test-slot` and the mutation helper send FIRST
+//   1. SIGTERM — what the mutation helper in tests/support/attack-kit and the
+//      operator's out-of-repo test-slot wrapper send FIRST
 //   2. SIGINT  — what a Ctrl-C, a runner's bound, and `node --test` send
 //   3. process.exit() before the lane's own teardown
 //   4. the ordinary `stop()` in a `finally`
@@ -36,7 +37,8 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
-import { SHUTDOWN_LADDER_ORDER, createClusterTeardown, shutdownLadder, pidAlive, readPostmasterPid }
+import { SHUTDOWN_LADDER_ORDER, createClusterTeardown, shutdownLadder, pidAlive, readPostmasterPid,
+  readPostmasterPidSync }
   from "../scripts/dev/postgres-cluster-lifecycle.mjs";
 
 const exec = promisify(execFile);
@@ -148,15 +150,6 @@ if (!existsSync(goFile)) throw new Error("child: the parent never released the l
 if (mode === "stop") {
   await teardown.stop();
   console.log(JSON.stringify({ cleanedUp: true }));
-} else if (mode === "slow") {
-  // A postmaster that does not take the FIRST cooperative stop, so the ladder
-  // has to reach SIGQUIT before the cluster is down. This is the real shape of
-  // a wedged postmaster, and it is what the 2 s grace in the SIGTERM test is
-  // for: only a stop that completes INSIDE the signal handler, before it
-  // yields, gets there in time.
-  const wedged = createClusterTeardown({ dataDirectory: data, runDirectory: run,
-    socketDirectory: socket, port: Number(port), pgBin, removeDirectories: false });
-  await wedged.stop();
 } else if (mode === "hang") {
   setInterval(() => {}, 1 << 30);
 } else if (mode === "exit") {
@@ -169,9 +162,23 @@ if (mode === "stop") {
 }
 `;
 
-/** Ports used by the tests below, so two tests never collide. */
+/**
+ * Ports used by the tests below, so two tests never collide.
+ *
+ * A live-cluster test that exhausts the block REFUSES rather than wrapping.
+ * Wrapping would hand the eleventh test a port the first one is still using, and
+ * the symptom would be an `EADDRINUSE` from a test that has nothing to do with
+ * ports — the exact misattribution this file exists to prevent. `with-a-PG` lanes
+ * are the only consumers, and there are fewer of them than ports.
+ */
 let nextPort = 0;
-const takePort = () => PORTS[nextPort++ % PORTS.length];
+const takePort = () => {
+  if (nextPort >= PORTS.length) {
+    throw new Error(`disposable_test_port_block_exhausted:${PORTS.join(",")}:`
+      + "add a port to the block rather than reusing one");
+  }
+  return PORTS[nextPort++];
+};
 
 /**
  * One running lane. `postmasterPid` is the pid whose SysV segment the leak
@@ -382,6 +389,33 @@ test("parseSharedMemorySegments reads macOS and Linux ipcs by header name, and r
   assert.equal(parseSharedMemorySegments(""), null);
 });
 
+test("readPostmasterPidSync reads what readPostmasterPid reads, without a promise", async t => {
+  // The `exit` hook can only run synchronous work, so it needs a synchronous
+  // read. A missing or divergent definition of that reader is invisible until a
+  // process actually exits — which is the one moment nothing can report the
+  // failure — so it is pinned here against the async form.
+  const scratch = await mkdtemp(join(tmpdir(), "shm-pidsync-"));
+  const data = join(scratch, "run", "data");
+  await mkdir(data, { recursive: true });
+  assert.equal(readPostmasterPidSync(data), undefined, "no postmaster.pid means no pid, not a throw");
+
+  const child = spawn("/usr/bin/perl", ["-e", "sleep 30"], { stdio: "ignore", detached: true }).pid;
+  t.after(() => { try { process.kill(child, "SIGKILL"); } catch { /* already gone */ } });
+  await new Promise(r => { setTimeout(r, 250); });
+  await writeFile(join(data, "postmaster.pid"), `${child}\n`, "utf8");
+  assert.equal(readPostmasterPidSync(data), child);
+  assert.equal(await readPostmasterPid(data), child, "both readers must agree on the same file");
+
+  // A half-written file is what a postmaster SIGKILLed mid-start leaves behind,
+  // and both readers must treat it as "no pid" rather than as a number.
+  await writeFile(join(data, "postmaster.pid"), "not-a-pid\n", "utf8");
+  assert.equal(readPostmasterPidSync(data), undefined);
+  assert.equal(await readPostmasterPid(data), undefined);
+
+  try { process.kill(child, "SIGKILL"); } catch { /* already gone */ }
+  await rm(scratch, { recursive: true, force: true });
+});
+
 test("the real ipcs on this host parses, so a leak test here can measure rather than assume", async () => {
   const segments = await sharedMemorySegments();
   assert.notEqual(segments, null, "ipcs is readable here, so the leak assertions below will not refuse");
@@ -420,6 +454,67 @@ function refusingPgCtl({ statusReportsRunning = false } = {}) {
     },
   };
 }
+
+test("release() disarms the signal handlers and the exit hook, and stop() disarms them too", async () => {
+  // The rehearsal deliberately hands a LIVE cluster to the owner's session, so it
+  // calls `release()` instead of `stop()`. If `release()` were a no-op, a Ctrl-C
+  // in the owner's shell would stop a database the rehearsal was asked to leave
+  // running — the exact failure the `release` seam exists to prevent, and the
+  // reason it needs a test rather than a comment.
+  //
+  // Listener counts are the observable: the hooks are `process` listeners, so a
+  // teardown that failed to remove its own is measurable from outside, and
+  // another teardown's listeners must not be taken with it.
+  const before = { SIGINT: process.listenerCount("SIGINT"), SIGTERM: process.listenerCount("SIGTERM"), exit: process.listenerCount("exit") };
+  const scratch = await mkdtemp(join(tmpdir(), "shm-release-"));
+  const data = join(scratch, "run", "data");
+  await mkdir(data, { recursive: true });
+
+  // A healthy cluster: `stop` succeeds, and `status` reports no server, which is
+  // how a `pg_ctl status` reads when nothing is running. Throwing from `status`
+  // is that signal, so the stub must do it or the teardown is right to refuse.
+  const healthyPgCtl = args => {
+    if (args.includes("status")) throw new Error("pg_ctl: no server running");
+  };
+  const released = createClusterTeardown({ dataDirectory: data, runDirectory: join(scratch, "run"),
+    socketDirectory: join(scratch, "socket"), port: 56206, pgCtl: healthyPgCtl });
+  assert.equal(process.listenerCount("SIGINT"), before.SIGINT + 1, "arming must add a SIGINT handler");
+  assert.equal(process.listenerCount("exit"), before.exit + 1, "arming must add an exit hook");
+  released.release();
+  assert.deepEqual(
+    { SIGINT: process.listenerCount("SIGINT"), SIGTERM: process.listenerCount("SIGTERM"), exit: process.listenerCount("exit") },
+    before,
+    "release() must remove every hook it added, or a released cluster is still stoppable by a signal");
+
+  const stopped = createClusterTeardown({ dataDirectory: data, runDirectory: join(scratch, "run"),
+    socketDirectory: join(scratch, "socket"), port: 56207, pgCtl: healthyPgCtl });
+  assert.equal(process.listenerCount("exit"), before.exit + 1);
+  await stopped.stop();
+  assert.deepEqual(
+    { SIGINT: process.listenerCount("SIGINT"), SIGTERM: process.listenerCount("SIGTERM"), exit: process.listenerCount("exit") },
+    before,
+    "stop() must release the hooks too, so a long test file does not accumulate one per cluster");
+  await rm(scratch, { recursive: true, force: true });
+});
+
+test("a released teardown is a no-op that leaves its cluster alone", async () => {
+  // The other half of the rehearsal contract: `release()` must disarm WITHOUT
+  // stopping. A process that is still running and recorded in postmaster.pid is
+  // the observable — if `release()` stopped anything, this process would be
+  // gone, and a test process ending there would be a spectacularly confusing
+  // failure rather than a clear assertion failure.
+  const scratch = await mkdtemp(join(tmpdir(), "shm-release-live-"));
+  const data = join(scratch, "run", "data");
+  await mkdir(data, { recursive: true });
+  let stops = 0;
+  const teardown = createClusterTeardown({ dataDirectory: data, runDirectory: join(scratch, "run"),
+    socketDirectory: join(scratch, "socket"), port: 56208, pgCtl: () => { stops += 1; } });
+  teardown.release();
+  teardown.release();
+  assert.equal(stops, 0, "release() must not run a stop, and must be safe to call twice");
+  assert.equal(existsSync(data), true, "release() must not remove the data directory");
+  await rm(scratch, { recursive: true, force: true });
+});
 
 test("a teardown that captured a pid, had it reaped, and whose pg_ctl refused, is reported as degraded",
   async t => {
@@ -524,7 +619,8 @@ test("a lane stopped with stop() releases its SysV shared-memory segment", needs
 });
 
 test("a lane SIGTERMed by a runner releases its SysV shared-memory segment", needsPgOrFail(), async t => {
-  // `with-test-slot` and the mutation helper both send SIGTERM first and SIGKILL
+  // The mutation helper in tests/support/attack-kit, and the operator's
+  // out-of-repo test-slot wrapper, both send SIGTERM first and SIGKILL
   // two seconds later. This lane has no teardown of its own after the signal:
   // the lifecycle module's handler is the whole shutdown path.
   const lane = await startLane(t, "sigterm");
@@ -559,7 +655,8 @@ test("a lane SIGINTed releases its SysV shared-memory segment", needsPgOrFail(),
 });
 
 test("a lane SIGTERMed and then SIGKILLed two seconds later still releases its SysV segment", needsPgOrFail(), async t => {
-  // The shape of a real bounded runner: the with-test-slot wrapper and the
+  // The shape of a real bounded runner: the operator's out-of-repo test-slot
+  // wrapper and the
   // mutation helper both send SIGTERM, wait a 2 s grace, and then SIGKILL the
   // process group. `pg_ctl start` runs the postmaster with `setsid`, so it is
   // its own session leader with PPID 1 and the group signal does not reach it.
@@ -592,7 +689,8 @@ test("a lane SIGTERMed and then SIGKILLed two seconds later still releases its S
 test("the signal handler runs its cooperative stop before it defers, not after", needsPgOrFail(), async t => {
   // A handler whose first action is `void stop().finally(...)` returns to the
   // event loop at the ladder's first `await`, so the process is killable while
-  // the teardown is still in flight. `with-test-slot` and the mutation helper
+  // the teardown is still in flight. The mutation helper and the operator's
+  // test-slot wrapper
   // give a lane exactly two seconds before SIGKILL, and `pg_ctl start` runs the
   // postmaster with `setsid`, so the group signal cannot reach it: a teardown
   // interrupted that way orphans a postmaster and its 56-byte segment.

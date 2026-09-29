@@ -109,6 +109,11 @@ before(async () => {
   await native("initdb", ["-D", data, "-U", "fixture_admin", "--auth-local=trust", "--auth-host=reject", "--no-locale", "--encoding=UTF8"]);
   await native("pg_ctl", ["-D", data, "-l", join(run, "server.log"), "-w", "-t", "30", "-o",
     `-k ${socket} -p ${PORT} -h '' -c unix_socket_permissions=0700 -c shared_buffers=32MB -c max_connections=20`, "start"]);
+  // Retained while the cluster is up. WITHOUT this the teardown has no pid to
+  // signal, so it takes the branch that can only try one `pg_ctl` and then give
+  // up: the ladder — the whole point of this change — would never run for this
+  // lane, and the one path that can stop a wedged postmaster would be unused.
+  await teardown?.capturePostmasterPid();
 });
 
 after(async () => {
@@ -453,20 +458,43 @@ test("documented clean-cluster provision/migrate/backup/restore/verify journey",
     await native("pg_ctl", ["-D", data, "-l", join(run, log), "-w", "-t", "30", "-o",
       `-k ${socket} -p ${port} -h '' -c unix_socket_permissions=0700 -c shared_buffers=32MB -c max_connections=20`, "start"]);
   };
+  // Both teardowns are armed BEFORE either cluster starts, and both are released
+  // here whatever the outcome. Creating them inside this hook — which is what
+  // the first version of this change did — armed nothing during `startCluster`,
+  // so a throw from the SECOND start left two live postmasters unsupervised:
+  // the exact window this change exists to close.
+  //
+  // The ladder, whose order is what RELEASES a postmaster's SysV segment. The
+  // old `catch {}` on each `pg_ctl` reported success for a cluster that was
+  // still running and then removed its data directory — leaving a live
+  // postmaster holding a segment and nothing left to stop it with.
+  const inner = [
+    createClusterTeardown({ dataDirectory: cleanData, runDirectory: cleanData,
+      socketDirectory: cleanSocket, port: CLEAN_PORT, pgBin: BIN, removeDirectories: false }),
+    createClusterTeardown({ dataDirectory: targetData, runDirectory: targetData,
+      socketDirectory: targetSocket, port: TARGET_PORT, pgBin: BIN, removeDirectories: false }),
+  ];
   t.after(async () => {
-    // Both clusters go through the shared ladder, whose order is what RELEASES
-    // a postmaster's SysV segment. The old `catch {}` on each `pg_ctl` reported
-    // success for a cluster that was still running, and then removed its data
-    // directory — leaving a live postmaster holding a segment and nothing left
-    // to stop it with.
-    for (const [directory, socketPath, port] of [[cleanData, cleanSocket, CLEAN_PORT], [targetData, targetSocket, TARGET_PORT]]) {
-      await createClusterTeardown({ dataDirectory: directory, runDirectory: directory,
-        socketDirectory: socketPath, port, pgBin: BIN }).stop();
+    // Every teardown is attempted and the failures are collected: a throw from
+    // the first `.stop()` must not skip the second cluster, which would leave
+    // precisely the orphan this is here to prevent.
+    const failures = [];
+    for (const [index, teardown] of inner.entries()) {
+      try { await teardown.stop(); }
+      catch (error) { failures.push(`cluster_${index}:${error?.message ?? String(error)}`); }
     }
-    await rm(cleanBackup, { recursive: true, force: true });
+    for (const directory of [cleanData, targetData, cleanSocket, targetSocket, cleanBackup]) {
+      await rm(directory, { recursive: true, force: true });
+    }
+    if (failures.length > 0) throw new Error(`disposable_cluster_teardown_failed:${failures.join(" | ")}`);
   });
   await startCluster(cleanSocket, cleanData, CLEAN_PORT, "clean-server.log");
+  // The pid is retained while the cluster is up. Without it the teardown has
+  // nothing to signal, so it takes the branch that can only try one `pg_ctl` and
+  // then give up: the ladder would never run for this cluster.
+  await inner[0].capturePostmasterPid();
   await startCluster(targetSocket, targetData, TARGET_PORT, "clean-target-server.log");
+  await inner[1].capturePostmasterPid();
   const pw = { migrator: "clean-install-migrator-0001", app: "clean-install-app-000001", scheduler: "clean-install-scheduler-0001" };
   const psqlFor = (socket, port) => ({
     PATH: "/usr/bin:/bin", LC_ALL: "C", TMPDIR: run,

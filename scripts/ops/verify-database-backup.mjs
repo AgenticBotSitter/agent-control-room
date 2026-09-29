@@ -135,6 +135,7 @@ export async function verifyMacLocalDatabaseBackupV1({ backup, port, pgBin = "/o
   // and nothing left to stop it with. This machine has 32 of those in total.
   const teardown = createClusterTeardown({ dataDirectory: data, runDirectory: root,
     socketDirectory: socket, port, pgBin });
+  let bodyFailure;
   try {
     await mkdir(socket, { mode: 0o700, recursive: true });
     native(pgBin, "initdb", ["-D", data, "-U", "postgres", "--auth-local=trust", "--auth-host=reject", "--no-locale", "--encoding=UTF8"]);
@@ -168,10 +169,25 @@ export async function verifyMacLocalDatabaseBackupV1({ backup, port, pgBin = "/o
     } finally { await client.end(); }
     return Object.freeze({ verified: true, identityDigest: restored.identityDigest,
       ledgerHead: Object.freeze({ ...bound.manifest.ledger.head }) });
+  } catch (error) {
+    // The body's failure is kept, not replaced. A `throw` from a `finally`
+    // REPLACES whatever was already propagating, so a teardown failure raised
+    // bare would hide `database_backup_identity_refused` — the actual reason the
+    // backup was rejected — behind a cleanup message.
+    bodyFailure = error;
+    throw error;
   } finally {
     // The teardown refuses to report success when the postmaster survives, and
     // keeps the data directory in that case so an operator can stop it by hand.
-    await teardown.stop();
+    // Its own failure is attached to the body's as a `cause` rather than raised
+    // over the top of it, so a caller still has both.
+    let teardownFailure;
+    try { await teardown.stop(); } catch (stopError) { teardownFailure = stopError; }
+    if (teardownFailure !== undefined) {
+      if (bodyFailure === undefined) throw teardownFailure;
+      throw new AggregateError([bodyFailure, teardownFailure],
+        `${bodyFailure?.message ?? String(bodyFailure)}; teardown: ${teardownFailure?.message ?? String(teardownFailure)}`);
+    }
   }
 }
 

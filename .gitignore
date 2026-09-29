@@ -39,11 +39,15 @@ node_modules/
 
 # Disposable PostgreSQL data directories for local test runs.
 #
-# `with-test-slot` stops a PostgreSQL server whose data directory is inside the
-# worktree it ran in, so a local cluster's data directory belongs here and not in
-# the system temp directory: a cluster started outside the worktree survives the
-# slot's cleanup and leaks a 56-byte SysV shared-memory segment. This machine has
-# 32 of those in total, so a leak blocks every other job.
+# A disposable cluster's data directory belongs inside the worktree and not in
+# the system temp directory. Two reasons, both measured:
+#   - `with-test-slot` (an operator-side wrapper, NOT in this repository) stops a
+#     PostgreSQL server only when its data directory is under the worktree it ran
+#     in, so a cluster outside the worktree survives that cleanup entirely.
+#   - a postmaster killed without a clean shutdown leaves a 56-byte SysV
+#     shared-memory segment behind, and this machine has 32 of those in total.
+# So a cluster outside the worktree both survives cleanup and costs the machine a
+# segment, and a leak blocks every other job on it.
 #
 # Nothing under this path is release source. It is listed explicitly rather than
 # under a broad rule, so a source directory that happens to be called

@@ -27,7 +27,9 @@
 // by one of its callers.
 
 import { execFileSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { readFile, rm } from "node:fs/promises";
+import { join } from "node:path";
 
 /** Every shutdown step, in the order that releases shared memory. */
 export const SHUTDOWN_LADDER_ORDER = Object.freeze([
@@ -38,6 +40,24 @@ export const SHUTDOWN_LADDER_ORDER = Object.freeze([
 export function pidAlive(pid) {
   try { process.kill(pid, 0); return true; }
   catch (error) { return (error)?.code === "EPERM"; }
+}
+
+/**
+ * The postmaster pid a data directory records, read SYNCHRONOUSLY.
+ *
+ * The async `readPostmasterPid` cannot be used from the `exit` hook, which only
+ * ever runs synchronous work: an `await` there is a promise that never settles
+ * before the process is gone, so the hook would read nothing and then either
+ * stop nothing or claim a stop it never performed.
+ */
+export function readPostmasterPidSync(dataDirectory) {
+  try {
+    const first = readFileSync(join(dataDirectory, "postmaster.pid"), "utf8").split("\n")[0]?.trim();
+    return first && /^\d+$/u.test(first) ? Number(first) : undefined;
+  } catch {
+    // A postmaster that never came up leaves no file, which is itself evidence.
+    return undefined;
+  }
 }
 
 /** The postmaster pid a data directory currently records, if any. */
@@ -106,7 +126,7 @@ const firstLineOf = error => `${error?.message ?? String(error)}`.split("\n")[0]
  * Three hooks, because three different exits skip `after()`:
  *
  *  - `SIGINT`/`SIGTERM` — what every runner sends FIRST
- *    (`with-test-slot`, the mutation helper, a Ctrl-C). The postmaster is asked
+ *    (the mutation helper, a Ctrl-C, any bounded runner). The postmaster is asked
  *    to shut down cooperatively, then the process exits with the signal's
  *    conventional code so the caller still sees a signalled failure.
  *  - `exit` — a lane that returns or calls `process.exit()` without reaching
@@ -142,6 +162,11 @@ export function createClusterTeardown(options) {
    * forced teardown" branches are asserted by nothing. The ladder, the liveness
    * checks, the directory removal and the error shapes all still run.
    */
+  // The seam is `(args) => void` while the built-in path is
+  // `(args, timeout) => void`. A test double therefore cannot observe or change
+  // the timeout, so the production timeout behaviour is not reproducible through
+  // the seam. That is deliberate: a seam that could change a timeout could also
+  // be used to shorten one in production, and every test here needs the default.
   const pgCtl = options.pgCtl
     ? (args) => options.pgCtl(args)
     : (args, timeout = 90_000) => execFileSync(
@@ -152,8 +177,9 @@ export function createClusterTeardown(options) {
    * A bounded, SYNCHRONOUS cooperative stop, safe to call from a signal handler.
    *
    * The async ladder yields at its first `await`, and a runner that sends
-   * SIGTERM and SIGKILLs two seconds later (`with-test-slot`, the mutation
-   * helper) could catch the process in that window with the postmaster still
+   * SIGTERM and SIGKILLs two seconds later — which is what
+   * `tests/support/attack-kit/mutation.ts` and the operator's out-of-repo
+   * test-slot wrapper both do — could catch the process in that window with the postmaster still
    * running. Running the whole `pg_ctl -m fast` inside the handler closes it.
    *
    * Honest limit on what this is worth: MUTATION-CHECKED, and removing the
@@ -279,8 +305,37 @@ export function createClusterTeardown(options) {
   // the signal handlers above cannot. It cannot run on SIGKILL: nothing can.
   const onExit = () => {
     if (stopped) return;
+    // The flag is set ONLY when the stop actually confirmed the postmaster is
+    // gone. Setting it unconditionally would make a later `stop()` a silent
+    // no-op, and the two things it would then skip — the ladder, and the
+    // `degraded` reporting — are exactly what an interrupted teardown needs.
+    // The stop is attempted, and `stopped` is set only when it CONFIRMED the
+    // postmaster is gone — so a later `stop()` still runs the ladder and still
+    // reports `degraded`, which is what an interrupted teardown needs.
+    //
+    // It used to set the flag unconditionally, which made that later `stop()` a
+    // silent no-op and skipped both.
+    //
+    // Deliberately NOT guarded on "is there a recorded pid": a `postmaster.pid`
+    // on disk is exactly the normal case here, and treating its presence as a
+    // reason to do nothing would defeat the hook on every real cluster.
+    const recorded = postmasterPid ?? readPostmasterPidSync(dataDirectory);
+    const alreadyGone = recorded === undefined || !pidAlive(recorded);
+    if (alreadyGone) { stopped = true; return; }
     cooperativeStopSync();
-    stopped = true;
+    // Confirmed only by re-reading liveness: `pg_ctl` refusing a stop is not
+    // proof the postmaster is gone, and claiming it is would hide the very
+    // orphan this whole module exists to prevent.
+    //
+    // MUTATION-CHECKED, and setting the flag unconditionally changes no test
+    // result. The reason is that this hook only runs on a real process exit,
+    // where no later `stop()` can happen, so the difference is unobservable from
+    // inside a test process — and a test written to appear to catch it would
+    // pass either way, which is worse than no test. Recorded as a limit rather
+    // than claimed as a guard. The condition is still the right one: it costs
+    // one `pidAlive` call and removes a way for the flag to be set while a
+    // postmaster is still running.
+    if (!pidAlive(recorded)) stopped = true;
   };
   process.once("exit", onExit);
 

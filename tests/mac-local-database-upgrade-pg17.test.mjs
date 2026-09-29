@@ -45,12 +45,27 @@ async function cluster(root, port) {
   // 32 of those segments in total, and this one lane starts four clusters.
   const teardown = createClusterTeardown({ dataDirectory: data, runDirectory: root,
     socketDirectory: socket, port, pgBin: undefined, removeDirectories: false });
-  exec("initdb", ["-D", data, "-U", "postgres", "--auth=trust", "-E", "UTF8"]);
-  await writeFile(join(data, "pg_hba.conf"), "local all postgres trust\nhost all postgres 127.0.0.1/32 trust\nhost all all 127.0.0.1/32 scram-sha-256\n");
-  exec("pg_ctl", ["-D", data, "-l", log, "-w", "-o", `-p ${port} -k '${socket}' -c listen_addresses=127.0.0.1`, "start"]);
-  // Retained while the cluster is up, so a teardown reached from a signal has a
-  // pid even when the rest of the rehearsal is about to throw.
-  await teardown.capturePostmasterPid();
+  // The teardown is armed, and the caller's `t.after` is not registered until
+  // this function RETURNS. A throw between here and there — and `initdb`,
+  // `pg_hba.conf` and `pg_ctl start` all throw — would leave a live postmaster
+  // with nothing that stops it, which is the exact window this whole change
+  // exists to close. So a failure here stops the cluster itself.
+  try {
+    exec("initdb", ["-D", data, "-U", "postgres", "--auth=trust", "-E", "UTF8"]);
+    await writeFile(join(data, "pg_hba.conf"), "local all postgres trust\nhost all postgres 127.0.0.1/32 trust\nhost all all 127.0.0.1/32 scram-sha-256\n");
+    exec("pg_ctl", ["-D", data, "-l", log, "-w", "-o", `-p ${port} -k '${socket}' -c listen_addresses=127.0.0.1`, "start"]);
+    // Retained while the cluster is up, so a teardown reached from a signal has a
+    // pid even when the rest of the rehearsal is about to throw. Without it the
+    // teardown has nothing to signal and the ladder never runs.
+    await teardown.capturePostmasterPid();
+  } catch (error) {
+    // Stop what was started, then report the original failure. `stop()` may
+    // itself refuse, and that refusal is attached rather than raised over the
+    // top of the start failure that caused it.
+    try { await teardown.stop(); }
+    catch (stopError) { throw new AggregateError([error, stopError], `disposable_cluster_start_failed_and_teardown_failed: ${error?.message ?? String(error)}`); }
+    throw error;
+  }
   return { port, log, data, socket, teardown };
 }
 
