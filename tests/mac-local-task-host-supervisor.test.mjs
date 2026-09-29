@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
 import { EventEmitter, once } from "node:events";
-import { chmod, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { chmod, link, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { readFileSync } from "node:fs";
 import { connect, createServer } from "node:net";
 import { tmpdir } from "node:os";
@@ -103,6 +103,24 @@ const exactProcess = (child, command) => {
     if (JSON.stringify(child.spawnargs) !== JSON.stringify(command)) return false;
     try { process.kill(child.pid, 0); return true; }
     catch { return false; }
+  }
+};
+
+/** The process group a pid leads or belongs to, or undefined if the pid is gone. `ps` is the only
+ * dependency-free way to read another process's pgid on macOS; kill(0) cannot answer it. The EPERM
+ * branch matches pidAlive/exactProcess: a sandboxed local runner can refuse ps even for a child it
+ * owns, and an unreadable pgid must not be silently read as "not in the group". */
+const processGroupOf = pid => {
+  try {
+    const value = execFileSync("/bin/ps", ["-o", "pgid=", "-p", String(pid)], { encoding: "utf8" }).trim();
+    const pgid = Number(value);
+    return Number.isSafeInteger(pgid) && pgid > 1 ? pgid : undefined;
+  }
+  catch (error) {
+    if (error?.code !== "EPERM") return undefined;
+    // No portable fallback: group membership is a property of the OS process table, not of argv.
+    // A caller that needs it under a sandbox must treat undefined as "not verified" and say so.
+    return process.pid === pid ? process.pid : undefined;
   }
 };
 
@@ -985,19 +1003,237 @@ test("a replacement supervisor refuses to clean up beside a live exact superviso
   // The first half of the same guard: if the recorded supervisor is still the exact supervisor for
   // this root, its child is already supervised and there is nothing to clean up. Without this the
   // replacement would kill a perfectly healthy supervised child.
-  const root = await rootFixture(t), paths = runtimePaths(root), livePid = 4_242, signals = [];
-  await writeFile(paths.hostState, `${JSON.stringify({ state: "running", pid: 4_241,
-    childPid: livePid, at: new Date().toISOString() })}\n`, { mode: 0o600 });
-  // The old supervisor is alive; its child is an unrelated (already recycled) pid.
-  const exactAlive = (pid, command) => pid === 4_241
-    && JSON.stringify(command) === JSON.stringify(hostCommand(root));
-  const code = await superviseTaskHost(root, {
-    alive: exactAlive,
-    signal: (pid, signal) => signals.push([pid, signal]),
-    spawn: () => fakeChild({ code: 0, stdout: "", stderr: "" }),
+  //
+  // Both recorded pids are exact-alive here, and deliberately so. With only the supervisor alive
+  // the guard's second clause (the child's own exact-command check) returned early on its own and
+  // this test passed whether or not the live-supervisor clause existed, so deleting that clause
+  // changed nothing. The child is exact-alive in its own right below, which is what makes the
+  // first clause the only thing standing between the replacement and a SIGKILL to a healthy group.
+  const root = await rootFixture(t), paths = runtimePaths(root), supervisorPid = 4_241, childPid = 4_242;
+  const recordRunning = () => writeFile(paths.hostState,
+    `${JSON.stringify({ state: "running", pid: supervisorPid, childPid, at: new Date().toISOString() })}\n`,
+    { mode: 0o600 });
+  await recordRunning();
+  // The child is alive until a signal in this fixture actually takes effect: the guard waits for
+  // the kill to land and throws mac_local_stale_task_host_would_not_stop if it never does. Liveness
+  // is folded into the selector, so deleting the live-supervisor clause shows up as a signal being
+  // sent to a healthy child rather than as a wait-loop timeout.
+  const live = { child: true };
+  const exact = (pid, command) => {
+    if (pid === supervisorPid) return JSON.stringify(command) === JSON.stringify(hostCommand(root));
+    if (pid === childPid) return live.child && JSON.stringify(command) === JSON.stringify(taskHostCommand(root));
+    return false;
+  };
+  const replace = async alive => {
+    const signals = [];
+    // Each run rewrites the state file it read, so the fixture has to be restored before the next
+    // half. Without this the second run sees "stopped" and skips the guard entirely.
+    await recordRunning();
+    const code = await superviseTaskHost(root, { alive,
+      signal: (pid, signal) => { signals.push([pid, signal]); live.child = false; },
+      spawn: () => fakeChild({ code: 0, stdout: "", stderr: "" }) });
+    return { code, signals };
+  };
+
+  // The refusal: a live exact supervisor holding its own exact task host.
+  const refused = await replace(exact);
+  assert.equal(refused.code, 1);
+  assert.deepEqual(refused.signals, [], "a live exact supervisor means there is no orphan to clean up");
+  assert.equal(live.child, true, "the refusal is what left the healthy child running");
+
+  // The control, on the same fixture: the moment the recorded supervisor is gone, the identical
+  // child must be signalled. Without it, a fixture that could never signal would satisfy the
+  // refusal above for the wrong reason, and this test would pin nothing.
+  const orphan = await replace((pid, command) => exact(pid, command) && pid !== supervisorPid && live.child);
+  assert.equal(orphan.code, 1);
+  assert.deepEqual(orphan.signals, [[-childPid, "SIGKILL"]],
+    "with the recorded supervisor gone, this exact child is the orphan the replacement must clear");
+  assert.equal(live.child, false, "the orphan was killed before the replacement spawned");
+});
+
+test("openHostLog refuses a symlinked log even when its target is a private 0600 file we own", async t => {
+  // The existing symlink assertion in "a host log and a host state file ... stay private and
+  // unfollowed" points at a default-mode (0644) target, so the mode/uid check on the opened file
+  // refuses it too. Deleting O_NOFOLLOW therefore changed nothing there. The target here is a
+  // private 0600 regular file owned by this uid, so every other condition in openHostLog passes and
+  // O_NOFOLLOW is the only thing that can refuse it. A symlink that resolves to a file we already
+  // own is exactly the shape that matters: a restored backup, a link dropped in by something else
+  // on the same account, or a log path an attacker-shaped link replaced.
+  const root = await rootFixture(t), paths = runtimePaths(root), target = join(root, "private-target");
+  await writeFile(target, "PRECIOUS\n", { mode: 0o600 });
+  await chmod(target, 0o600);
+  assert.equal((await stat(target)).mode & 0o777, 0o600,
+    "the target must satisfy every other openHostLog condition, or this test proves nothing");
+  await symlink(target, paths.hostLog);
+
+  assert.throws(() => openHostLog(paths.hostLog),
+    `O_NOFOLLOW must refuse a symlink at the log path even to a private target: ${paths.hostLog}`);
+  assert.equal(await readFile(target, "utf8"), "PRECIOUS\n", "the target must not be written through");
+
+  // The same refusal one layer up, end to end through the real RotatingHostLog: the unsafe entry
+  // is replaced with a fresh private log and the target keeps its contents.
+  const log = await RotatingHostLog.open(paths.hostLog, 4_096, 2);
+  await log.line("fixture line");
+  await log.close();
+  assert.equal(await readFile(target, "utf8"), "PRECIOUS\n", "recovery must not append to the symlink target");
+  assert.doesNotMatch(await readFile(paths.hostLog, "utf8"), /PRECIOUS/u);
+  assert.match(await readFile(paths.hostLog, "utf8"), /replaced unsafe existing host log/u);
+});
+
+test("a hardlinked host log is refused before rotation and on the opened descriptor", async t => {
+  // O_NOFOLLOW cannot see this one. A hardlink is a second directory entry for the same inode, so
+  // open(path, O_NOFOLLOW) succeeds and the mode and uid checks on the opened file both pass. The
+  // only thing that knows a name outside this private runtime still reaches every byte appended is
+  // the link count, so it is checked in both places a log file is accepted: the lstat that decides
+  // whether to rotate, and the fstat of the descriptor that is about to be written.
+  const root = await rootFixture(t), paths = runtimePaths(root), other = join(root, "elsewhere/kept.log");
+  await mkdir(join(root, "elsewhere"), { mode: 0o700 });
+  await writeFile(paths.hostLog, "PRECIOUS\n", { mode: 0o600 });
+  await chmod(paths.hostLog, 0o600);
+  await link(paths.hostLog, other);
+  assert.equal((await stat(paths.hostLog)).nlink, 2, "the fixture must be a real hardlink");
+  assert.equal((await stat(paths.hostLog)).mode & 0o777, 0o600, "mode must not be what refuses it");
+
+  // The pre-rotation check: rotation renames the directory entry, not the file, so rotating a
+  // hardlinked log leaves its other name holding the live inode, still being appended to.
+  await assert.rejects(rotateHostLog(paths.hostLog, 1, 2), /host_log_invalid/u,
+    "a hardlinked log must not be rotated");
+
+  // The descriptor check, on its own, with rotation never attempted, so the open itself is what
+  // has to refuse. O_NOFOLLOW is inert here: the entry is a real file, not a symlink.
+  assert.throws(() => openHostLog(paths.hostLog), /host_log_invalid/u,
+    "a hardlinked log must be refused on the opened descriptor, not only before rotation");
+  assert.equal((await stat(paths.hostLog)).nlink, 2, "a refused open must not have rewritten the log");
+  assert.equal(await readFile(other, "utf8"), "PRECIOUS\n");
+
+  // The refusal is fail-closed but not wedging: the real writer recovers through the same path the
+  // loose-log case uses — remove the directory entry, create a fresh private single-link log.
+  const log = await RotatingHostLog.open(paths.hostLog, 4_096, 2);
+  await log.line("fixture line");
+  await log.close();
+  assert.equal(await readFile(other, "utf8"), "PRECIOUS\n", "the other name received nothing");
+  assert.match(await readFile(paths.hostLog, "utf8"), /replaced unsafe existing host log/u);
+});
+
+test("an unsafe backup generation stops rotation, loose or hardlinked alike", async t => {
+  // The blast radius of the link-count check, stated as a test rather than left implicit. A backup
+  // generation is checked by the same helper the current log is, so a hardlinked `path.1` is
+  // refused exactly the way a 0644 `path.1` already is on main: rotation stops instead of renaming
+  // a file that still has a name outside this runtime. That is the safe direction — refusing, not
+  // accepting — and it is the pre-existing contract for an unsafe backup, widened by one condition
+  // and not invented here. The loose case is kept as the control so the hardlink case cannot pass
+  // by making both halves fail for some other reason.
+  for (const [name, unsafeBackup] of [
+    ["loose backup (pre-existing on main)", async dir => {
+      await writeFile(`${runtimePaths(dir).hostLog}.1`, "old generation\n", { mode: 0o644 });
+      await chmod(`${runtimePaths(dir).hostLog}.1`, 0o644);
+    }],
+    ["hardlinked backup (new)", async dir => {
+      await writeFile(`${runtimePaths(dir).hostLog}.1`, "old generation\n", { mode: 0o600 });
+      await link(`${runtimePaths(dir).hostLog}.1`, join(dir, "kept-generation.log"));
+    }],
+  ]) {
+    await t.test(name, async t => {
+      const dir = await rootFixture(t), paths = runtimePaths(dir);
+      await writeFile(paths.hostLog, "x".repeat(200), { mode: 0o600 });
+      await unsafeBackup(dir);
+      await assert.rejects(rotateHostLog(paths.hostLog, 10, 2), /host_log_invalid/u,
+        "an unsafe backup must stop rotation, whether it is loose or hardlinked");
+      assert.equal(await readFile(`${paths.hostLog}.1`, "utf8"), "old generation\n",
+        "the refused backup generation must not be renamed or removed");
+    });
+  }
+});
+
+test("the real supervisor replaces a hardlinked log and never writes through the other name", async t => {
+  // The user-visible half: the owner still gets a bounded private log, and the name outside the
+  // private runtime receives nothing. This is the recovery path the loose-log case already uses —
+  // refuse, remove the directory entry, create a fresh 0600 log — reached from a hardlink instead.
+  const root = await rootFixture(t), paths = runtimePaths(root), other = join(root, "elsewhere/kept.log");
+  await mkdir(join(root, "elsewhere"), { mode: 0o700 });
+  await writeFile(paths.hostLog, "restored hardlink\n", { mode: 0o600 });
+  await link(paths.hostLog, other);
+  const supervisor = startRealSupervisor(root, ["-e", "console.log('FIXTURE-CHILD-OUTPUT'); process.exit(23)"]);
+  t.after(async () => { if (pidAlive(supervisor.pid)) supervisor.kill("SIGKILL"); });
+  assert.equal((await runToCompletion(supervisor)).code, 1);
+
+  const kept = await readFile(other, "utf8");
+  assert.doesNotMatch(kept, /FIXTURE-CHILD-OUTPUT/u, "the other name must not receive the host's output");
+  assert.doesNotMatch(kept, /replaced unsafe existing host log/u, "the host log is not that file any more");
+  const log = await readFile(paths.hostLog, "utf8");
+  assert.match(log, /replaced unsafe existing host log with a new private log/u);
+  assert.match(log, /FIXTURE-CHILD-OUTPUT/u, "the owner still gets the child output in the new private log");
+  assert.match(log, /host stopped because exit code 23/u);
+  assert.equal((await stat(paths.hostLog)).nlink, 1, "the live log must be a single-link file");
+  assert.equal((await stat(paths.hostLog)).mode & 0o777, 0o600);
+  assert.deepEqual(await readHostState(paths.hostState).then(state => ({ state: state.state, reason: state.reason })),
+    { state: "stopped", reason: "exit code 23" });
+});
+
+test("a replacement supervisor signals the process group, so a non-detached grandchild cannot outlive it", async t => {
+  // Mutation D: `process.kill(child.pid, signal)` instead of `process.kill(-child.pid, signal)`.
+  // The real child is spawned detached, so it is a process-group leader, and its own helpers are
+  // not all detached: src/node-bridge/private-macos-claude-code-process-host-ports.ts:149 and
+  // src/node-bridge/codex-native-process.ts spawn without `detached`, so they land in the child's
+  // group. Signalling only the pid stops the leader and leaves those helpers running, holding the
+  // ports the next supervisor has to bind. So the claim under test is about the *group*.
+  const root = await rootFixture(t), paths = runtimePaths(root);
+  // The fixture child spawns a grandchild that reports its own pid on stdout, then idles. The
+  // grandchild is NOT detached, so it inherits the child's process group; the real group
+  // membership is read back from ps below rather than trusted from anything the fixture prints.
+  const grandchildSource = `console.log(JSON.stringify({ pid: process.pid, alive: true }));\n`
+    + `setInterval(() => {}, 1000);\n`;
+  // The forwarding line is built by concatenation, not nested template literals, so the only
+  // escaping here is the one this file's other fixtures use.
+  const childSource = `import { spawn } from "node:child_process";\n`
+    + `const grandchild = spawn(process.execPath, ["-e", ${JSON.stringify(grandchildSource)}],\n`
+    + `  { stdio: ["ignore", "pipe", "inherit"] });\n`
+    + 'grandchild.stdout.on("data", chunk => process.stdout.write("grandchild ready " + chunk.toString("utf8")));\n'
+    + `setInterval(() => {}, 1000);\n`;
+
+  const supervisor = startRealSupervisor(root, ["--input-type=module", "-e", childSource]);
+  const state = await runningState(root);
+  const grandchildPid = { value: undefined };
+  t.after(async () => {
+    if (pidAlive(supervisor.pid)) supervisor.kill("SIGKILL");
+    // closeWithin is already past by the time a failing assertion unwinds, so a leftover child is
+    // not waited for: this hook has to bound itself. The pids are ours, recorded above.
+    for (const pid of [grandchildPid.value, state.childPid]) if (pid) {
+      try { process.kill(pid, "SIGKILL"); } catch {}
+      try { process.kill(-pid, "SIGKILL"); } catch {}
+    }
   });
-  assert.equal(code, 1);
-  assert.deepEqual(signals, [], "a live exact supervisor means there is no orphan to clean up");
+
+  // waitFor resolves to undefined, not to the check's value, so the pid is read back from the
+  // mutable cell the check wrote.
+  await waitFor(() => {
+    const log = readFileSync(paths.hostLog, "utf8");
+    const match = /grandchild ready \{"pid":(\d+),"alive":true\}/u.exec(log);
+    if (!match) return false;
+    grandchildPid.value = Number(match[1]);
+    return grandchildPid.value > 1;
+  }, "the fixture grandchild never reported its pid", 20_000);
+  assert.ok(grandchildPid.value, "the grandchild pid was read from the host log");
+
+  // The grandchild must really be in the child's process group, and really be alive. Otherwise this
+  // test would pass for a reason that has nothing to do with the signal target.
+  const childGroup = processGroupOf(state.childPid);
+  assert.equal(childGroup, state.childPid, "the supervised child is spawned detached and leads its own group");
+  assert.equal(processGroupOf(grandchildPid.value), childGroup,
+    "a non-detached grandchild shares the child's group, which is what the group signal reaches");
+  assert.ok(pidAlive(grandchildPid.value), "the grandchild is running before the stop");
+
+  // A requested stop is a foreground stop, not a recovery: the leader takes SIGTERM, drains and
+  // exits, and the supervisor has to record that as deliberate and exit 0. A child that cannot
+  // stop on its own is the escalation case, covered by the next test, so here the SIGTERM is
+  // expected to land and take the whole group with it.
+  supervisor.kill("SIGTERM");
+  await waitFor(() => !pidAlive(grandchildPid.value),
+    `grandchild ${grandchildPid.value} outlived the supervisor's group signal: it was signalled by pid, not by group`);
+  await waitFor(() => !pidAlive(state.childPid), "the supervised child survived a requested stop");
+  const [code, exitSignal] = await closeWithin(supervisor, 10_000);
+  assert.deepEqual([code, exitSignal], [0, null]);
+  assert.equal((await readHostState(paths.hostState)).reason, "requested SIGTERM");
 });
 
 test("upgrade selection recognizes only the current supervisor or exact legacy host", () => {
