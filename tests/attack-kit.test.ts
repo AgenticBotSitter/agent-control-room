@@ -35,6 +35,8 @@ import {
   proconfigSearchPath,
   realPostgresSkipMessage,
   requiresRealPostgres,
+  newSharedMemorySegments,
+  parseSharedMemory,
   roleCan,
   roleCannot,
   searchPathEndsInPgTemp,
@@ -1587,6 +1589,74 @@ describe("attack kit: the teardown ladder (shared-memory safety)", () => {
     // separately; here the point is that the classifier does not invent a
     // verdict from data it does not have.
     assert.deepEqual(sharedMemoryLeaks(same, null, running), []);
+  });
+
+  // The suite guard runs in CI on ubuntu-latest, and the two platforms print
+  // `ipcs -m -p` in completely different shapes. A positional parse reads the
+  // wrong columns on one of them, which is not a crash but a wrong answer — and
+  // the first version of this guard did exactly that, so the first CI run at
+  // this head failed with `ipcs_could_not_be_read_on_this_host` on Linux while
+  // passing on macOS. Both layouts are pinned here from real captured output.
+
+  test("parseSharedMemory reads macOS ipcs, by header name", () => {
+    // Captured verbatim on this machine (`LC_ALL=C ipcs -m -p`). The header is
+    // eight columns with NO attachment count: `nattch` needs `-a`, which is why
+    // a leak is identified by a dead creator rather than by nattach.
+    const macos = [
+      "IPC status from <running system> as of Mon Sep 28 20:00:17 MDT 2026",
+      "T     ID     KEY        MODE       OWNER    GROUP  CPID  LPID",
+      "Shared Memory:",
+      "m 6881280 0x08f483b1 --rw------- alastairfraser    staff  39836  39836",
+      "m 43188225 0x08f483e6 --rw------- alastairfraser    staff  39867  39867",
+      "",
+    ].join("\n");
+    const rows = parseSharedMemory(macos);
+    assert.ok(rows !== null, "macOS output is recognised");
+    assert.equal(rows.length, 2, "and both rows are read");
+    assert.deepEqual(rows[0], { id: "6881280", owner: "alastairfraser", creatorPid: 39836, lastPid: 39836 });
+    assert.deepEqual(rows[1], { id: "43188225", owner: "alastairfraser", creatorPid: 39867, lastPid: 39867 });
+  });
+
+  test("parseSharedMemory reads Linux ipcs, by header name", () => {
+    // The util-linux layout is four columns with lowercase headings and no type
+    // marker. A parse that assumed macOS's `m ` prefix and 8 columns would read
+    // `shmid` as the id, `owner` as the owner, and then find no cpid at all.
+    const linux = [
+      "IPC status from <running system> as of Mon Sep 28 18:30:53 UTC 2026",
+      "------ Shared Memory Creator/Last-op PIDs --------",
+      "key      0x00000000 0x08ad575a  -r-------  1000 someuser  78587  78587",
+      "shmid      owner      cpid       lpid",
+      "62455816  someuser   78587      78587",
+      "12713993  someuser   5559       0",
+      "",
+    ].join("\n");
+    const rows = parseSharedMemory(linux);
+    assert.ok(rows !== null, "Linux output is recognised");
+    assert.deepEqual(rows, [
+      { id: "62455816", owner: "someuser", creatorPid: 78587, lastPid: 78587 },
+      { id: "12713993", owner: "someuser", creatorPid: 5559, lastPid: 0 },
+    ], "the same fields come out of both layouts");
+  });
+
+  test("parseSharedMemory refuses output that is not an ipcs table", () => {
+    assert.equal(parseSharedMemory(""), null);
+    assert.equal(parseSharedMemory("ipcs: command not found\n"), null);
+    assert.equal(parseSharedMemory("some unrelated output\nwith no headings\n"), null);
+    // A header with no creator column is not something to guess at.
+    assert.equal(parseSharedMemory("T     ID     KEY        MODE       OWNER\nm 1 0x1 --rw- u g\n"), null);
+  });
+
+  test("the real ipcs on this host parses, and reports our own segments", async () => {
+    // Proves the live path end to end on the machine the suite runs on, and that
+    // the ownership filter keeps another user's segments out.
+    const segments = await sharedMemorySegments([56170]);
+    assert.ok(segments !== null, "ipcs is readable here, so the guard will not refuse");
+    assert.ok(Array.isArray(segments));
+    for (const one of segments) {
+      assert.equal(one.owner, process.env.USER, "only this user's segments are reported");
+      assert.ok(/^\d+$/u.test(one.id));
+      assert.ok(Number.isInteger(one.creatorPid));
+    }
   });
 });
 

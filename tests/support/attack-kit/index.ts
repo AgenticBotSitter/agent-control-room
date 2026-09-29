@@ -16,6 +16,7 @@ export {
   assertPortAvailable,
   disposableRunDirectories,
   newSharedMemorySegments,
+  parseSharedMemory,
   portIsOccupied,
   readClusterRegistry,
   realPostgresSkipMessage,

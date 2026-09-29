@@ -250,6 +250,16 @@ export interface ShutdownStep {
   readonly stopped: boolean;
   /** The cooperative attempt failed, or the wait expired. */
   readonly failed: boolean;
+  /**
+   * The first line of the error a cooperative step raised, when it raised one.
+   *
+   * Carried rather than discarded because a bare `pg_ctl_stop_fast_failed` tells
+   * an operator nothing about WHY the stop was refused, which is the only thing
+   * that distinguishes "the postmaster was already gone" from "the data
+   * directory is gone" from "permission denied" on a machine that is out of SysV
+   * segments.
+   */
+  readonly error?: string;
 }
 
 export interface ShutdownLadderOptions {
@@ -307,16 +317,18 @@ export async function shutdownLadder(options: ShutdownLadderOptions): Promise<Sh
 
   for (const mode of ["fast", "immediate"] as const) {
     if (!options.alive()) break;
-    let failed = false;
+    let error: string | undefined;
     try {
       await options.cooperativeStop(mode);
-    } catch {
+    } catch (thrown) {
       // Expected when the postmaster never came up, or is already gone. Whether
-      // that is a failure is decided by asking whether it is still running.
-      failed = true;
+      // that is a failure is decided by asking whether it is still running — and
+      // the reason is kept, because it is the only thing that says why.
+      error = `${thrown instanceof Error ? thrown.message : String(thrown)}`
+        .split("\n")[0]!.slice(0, 200);
     }
     const stopped = !options.alive();
-    steps.push({ action: "cooperative", mode, stopped, failed: failed && !stopped });
+    steps.push({ action: "cooperative", mode, stopped, failed: error !== undefined && !stopped, ...(error === undefined ? {} : { error }) });
     if (stopped) return { steps, stopped: true, forced: false };
   }
 
@@ -680,22 +692,6 @@ async function startCluster(options: WithRealPostgresOptions & { pgBin: string }
     started = false;
     const pid = postmasterPid;
     const failures: string[] = [];
-    if (wasStarted) {
-      // A cooperative fast shutdown first, whether or not the pid was captured.
-      try {
-        if (options.stopAttemptFault === "no_op") {
-          // Report success without stopping anything, as a `pg_ctl` does when a
-          // postmaster will not take the shutdown request. The confirmation
-          // below is what must catch it.
-        } else {
-          await native(pgBin, run, "pg_ctl", ["-D", dataDirectory, "-m", "fast", "-w", "-t", "30", "stop"]);
-        }
-      } catch (error) {
-        // Expected when the postmaster never came up, or is already gone; the
-        // confirmation below is what decides whether that is a failure.
-        failures.push(`pg_ctl_stop_failed:${firstLineOf(error)}`);
-      }
-    }
     if (pid !== undefined) {
       if (pidAlive(pid)) {
         // The ladder's order is the whole fix, and it is asserted in
@@ -704,13 +700,23 @@ async function startCluster(options: WithRealPostgresOptions & { pgBin: string }
         // postmaster's SysV shared-memory segment and SIGKILL never does, so the
         // ladder is ordered by what RELEASES the segment rather than by what
         // ends the process soonest.
+        //
+        // This ladder is the ONLY shutdown path when the pid is known. There
+        // used to be a separate `pg_ctl -m fast` before it, which the ladder's
+        // first step repeats; two stops meant two chances to record a failure
+        // reason, and the second one lost the `pg_ctl` error text an operator
+        // needs. The pre-ladder stop now runs ONLY for the case the ladder
+        // cannot serve: `wasStarted` with no captured pid, handled below.
         const ladder = await shutdownLadder({
           alive: () => pidAlive(pid!),
           cooperativeStop: async (mode) => {
-            if (options.stopAttemptFault === "no_op" && mode === "fast") {
+            if (options.stopAttemptFault === "no_op") {
               // Report success without stopping anything, as a `pg_ctl` does when
               // a postmaster will not take the shutdown request. The ladder's own
-              // liveness check is what must notice.
+              // liveness check is what must notice. BOTH cooperative steps are
+              // stubbed: the fault is documented as one that can only ever skip a
+              // real stop, and a real `pg_ctl -m immediate` in its place would
+              // stop the postmaster for real.
               return;
             }
             await native(pgBin, run, "pg_ctl", ["-D", dataDirectory, "-m", mode, "-w", "-t", "60", "stop"]);
@@ -720,7 +726,7 @@ async function startCluster(options: WithRealPostgresOptions & { pgBin: string }
         for (const step of ladder.steps) {
           if (step.failed) {
             failures.push(step.action === "cooperative"
-              ? `pg_ctl_stop_${step.mode}_failed`
+              ? `pg_ctl_stop_${step.mode}_failed:${step.error ?? "stop_did_not_confirm"}`
               : `${step.signal ?? "signal"}_did_not_stop_the_postmaster`);
           }
         }
@@ -742,12 +748,25 @@ async function startCluster(options: WithRealPostgresOptions & { pgBin: string }
       // `postmasterPid` is intentionally NOT cleared: it is the evidence the
       // post-teardown liveness check needs, and the process is confirmed gone.
     } else if (wasStarted) {
-      // Started, but the pid was never captured. Nothing has been deleted yet,
-      // so the data directory is still there to be read: a `postmaster.pid` that
-      // is absent or non-numeric is a stopped postmaster (PostgreSQL removes
-      // the file on clean shutdown), and `pg_ctl status` exits non-zero when
-      // there is no server in that data directory. Only BOTH agreeing counts as
-      // a confirmed shutdown.
+      // Started, but the pid was never captured. The ladder cannot run without a
+      // pid, so the cooperative stop is attempted here directly, and the
+      // confirmation is made from evidence that still exists because nothing has
+      // been deleted yet: a `postmaster.pid` that is absent or non-numeric is a
+      // stopped postmaster (PostgreSQL removes the file on clean shutdown), and
+      // `pg_ctl status` exits non-zero when there is no server in that data
+      // directory. Only BOTH agreeing counts as a confirmed shutdown.
+      try {
+        if (options.stopAttemptFault === "no_op") {
+          // Report success without stopping anything, as a `pg_ctl` does when a
+          // postmaster will not take the shutdown request.
+        } else {
+          await native(pgBin, run, "pg_ctl", ["-D", dataDirectory, "-m", "fast", "-w", "-t", "30", "stop"]);
+        }
+      } catch (error) {
+        // Expected when the postmaster never came up, or is already gone; the
+        // confirmation below is what decides whether that is a failure.
+        failures.push(`pg_ctl_stop_failed:${firstLineOf(error)}`);
+      }
       const stillRecorded = await postmasterAlive(dataDirectory);
       let statusReportsRunning = false;
       try {
@@ -1151,14 +1170,63 @@ export async function disposableRunDirectories(pattern = /^attack-kit-pg-/): Pro
 // ---------------------------------------------------------------------------
 
 /**
+ * Parse `ipcs -m -p` output into segment rows, by HEADER NAME.
+ *
+ * The two platforms disagree completely, and a positional parse silently reads
+ * the wrong columns on one of them:
+ *
+ *   macOS   T ID KEY MODE OWNER GROUP CPID LPID      rows start with "m "
+ *   Linux   shmid owner cpid lpid                    (util-linux `ipcs -p`)
+ *
+ * Parsed by header name, so the caller gets the same fields on both. `nattch` is
+ * not in either layout, which is why a leak is identified by a dead creator
+ * rather than by an attachment count.
+ *
+ * Returns null when the output is not a recognisable `ipcs` table, so a caller
+ * REFUSES rather than reporting a clean result it did not measure.
+ */
+export function parseSharedMemory(
+  stdout: string,
+): { id: string; owner: string; creatorPid: number; lastPid: number }[] | null {
+  const lines = stdout.split("\n").map(line => line.trim()).filter(Boolean);
+  const headerAt = lines.findIndex(line => /\bcpid\b/iu.test(line));
+  if (headerAt === -1) return null;
+  const headings = lines[headerAt]!.split(/\s+/u);
+  const indexOf = (...names: string[]): number =>
+    headings.findIndex(heading => names.some(name => heading.toLowerCase() === name));
+  const id = indexOf("id", "shmid");
+  const owner = indexOf("owner");
+  const cpid = indexOf("cpid");
+  const lpid = indexOf("lpid");
+  if (id === -1 || owner === -1 || cpid === -1) return null;
+  // A macOS row is prefixed with its type ("m "); a Linux row is not.
+  const rows: { id: string; owner: string; creatorPid: number; lastPid: number }[] = [];
+  for (const line of lines.slice(headerAt + 1)) {
+    if (/^(?:key|shared|type|size|^-+)/iu.test(line)) continue;
+    const fields = line.split(/\s+/u);
+    // No column offset: a macOS row's leading `m` is the VALUE of the header's
+    // leading `T` column, not an extra field. Shifting by one to "drop" it
+    // reads the key as the id, the mode as the owner, and the owner as the
+    // creator — every field one to the right, silently.
+    const at = (position: number): string | undefined => fields[position];
+    const segmentId = at(id);
+    const creator = at(cpid);
+    if (segmentId === undefined || creator === undefined) continue;
+    if (!/^\d+$/u.test(segmentId) || !/^\d+$/u.test(creator)) continue;
+    const last = lpid === -1 ? undefined : at(lpid);
+    rows.push({
+      id: segmentId,
+      owner: at(owner) ?? "",
+      creatorPid: Number(creator),
+      lastPid: last !== undefined && /^\d+$/u.test(last) ? Number(last) : 0,
+    });
+  }
+  return rows;
+}
+
+/**
  * The ids of the SysV shared-memory segments owned by this user, each attributed
  * to this suite when its creator's command line says so.
- *
- * `ipcs -m -p` columns are T ID KEY MODE OWNER GROUP CPID LPID, so the owner is
- * field 5 (1-based), the creator field 7, and the last-attaching pid field 8.
- * `nattch` is NOT in `ipcs -m`'s default output — it is in `ipcs -m -a -p` — so
- * this cannot see it, and a leak is identified by a DEAD creator instead, which
- * is the same signature the orphaned segments on this machine show.
  *
  * Returns null when `ipcs` is unavailable or its output cannot be read, so a
  * caller can REFUSE rather than report a clean result it did not measure. This
@@ -1171,37 +1239,27 @@ export async function sharedMemorySegments(
   const { stdout } = await exec("/usr/bin/ipcs", ["-m", "-p"], { timeout: 10_000 })
     .then(value => ({ stdout: String(value.stdout ?? "") }))
     .catch(() => ({ stdout: "" }));
-  // `-p` adds CPID/LPID to the header, so its presence is the proof that this
-  // output carries the creator pids. Without it the parse below would be
-  // reading the wrong columns, which is the silent-wrong-answer this function
-  // returns null to avoid.
-  if (!/\bCPID\b/u.test(stdout)) return null;
-  const rows = stdout.split("\n")
-    .map(line => line.trim().split(/\s+/u))
-    .filter(fields => fields.length > 7 && fields[0] === "m" && /^\d+$/u.test(fields[1] ?? ""));
+  const rows = parseSharedMemory(stdout);
+  if (rows === null) return null;
   // Only this user's segments: the count has to be comparable with the count
   // taken before the suite, and another user's are not ours to account for.
   // `USER` is the name `ipcs` prints; with no name available every segment is
   // returned rather than silently none.
   const user = process.env.USER;
-  const mine = user === undefined || user === "" ? rows : rows.filter(fields => fields[4] === user);
-  const commands = await readCommands([...new Set(mine.map(fields =>
-    /^\d+$/u.test(fields[6] ?? "") ? fields[6]! : ""))].filter(Boolean));
+  const mine = user === undefined || user === "" ? rows : rows.filter(row => row.owner === user);
+  const commands = await readCommands([...new Set(mine.map(row => String(row.creatorPid)))]);
   const pattern = oursPattern(ports);
-  return mine.map(fields => {
-    const creatorPid = /^\d+$/u.test(fields[6] ?? "") ? Number(fields[6]) : 0;
-    return {
-      id: fields[1]!,
-      owner: fields[4]!,
-      creatorPid,
-      lastPid: /^\d+$/u.test(fields[7] ?? "") ? Number(fields[7]) : 0,
-      // A dead creator has no command line left, so it is never attributed by
-      // inspection. The leak guard treats a dead creator as a leak whatever its
-      // attribution, because only `ipcrm` frees such a segment and nothing here
-      // may run that.
-      ours: pattern !== null && pattern.test(commands.get(creatorPid) ?? ""),
-    };
-  });
+  return mine.map(row => ({
+    id: row.id,
+    owner: row.owner,
+    creatorPid: row.creatorPid,
+    lastPid: row.lastPid,
+    // A dead creator has no command line left, so it is never attributed by
+    // inspection. The leak guard treats a dead creator as a leak whatever its
+    // attribution, because only `ipcrm` frees such a segment and nothing here
+    // may run that.
+    ours: pattern !== null && pattern.test(commands.get(row.creatorPid) ?? ""),
+  }));
 }
 
 export interface SharedMemorySegment {

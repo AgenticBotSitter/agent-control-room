@@ -11,6 +11,7 @@
 // leave the mutation in someone's working tree.
 
 import { spawn } from "node:child_process";
+import { shutdownLadder } from "./real-postgres.ts";
 import { readFile, writeFile, stat, mkdir, mkdtemp, readdir, rm, appendFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { dirname, isAbsolute, join, resolve } from "node:path";
@@ -269,44 +270,30 @@ export async function reapKitClusters(
       const { execFile } = await import("node:child_process");
       const { promisify } = await import("node:util");
       const run_ = promisify(execFile);
-      await run_(join(entry.pgBin, "pg_ctl"),
-        ["-D", entry.dataDirectory, "-m", "fast", "-w", "-t", "30", "stop"],
-        { timeout: 60_000, env: { PATH: "/usr/bin:/bin", LC_ALL: "C", TMPDIR: run, NODE_ENV: "test" } })
-        .catch(() => { /* the pid escalation below is what decides */ });
+      const pgCtl = (args: string[], timeout: number) =>
+        run_(join(entry.pgBin, "pg_ctl"), args,
+          { timeout, env: { PATH: "/usr/bin:/bin", LC_ALL: "C", TMPDIR: run, NODE_ENV: "test" } })
+          .catch(() => { /* the ladder's own liveness check decides */ });
+      // The ladder itself, not a copy of its shape. This reaper is the last line
+      // of defence for a cluster whose test command was killed, so it is exactly
+      // where a too-eager `SIGKILL` turns an orphan into a permanently held
+      // segment on a machine with 32 of them — and a hand-copied ladder is how
+      // the two copies drift apart. The order is measured in
+      // `real-postgres.ts`: `SIGKILL` is the only signal that leaks a segment,
+      // because it cannot run PostgreSQL's exit path.
       let pid = await readPostmasterPid(entry.dataDirectory);
       if (pid !== undefined && pidAlive(pid)) {
-        // Cooperative shutdowns FIRST, for the reason measured in
-        // `real-postgres.ts`: only `SIGKILL` of a postmaster leaks its SysV
-        // shared-memory segment, because `SIGKILL` cannot run PostgreSQL's exit
-        // path. This reaper is the last line of defence for a cluster whose test
-        // command was killed, so it is exactly where a too-eager `SIGKILL` turns
-        // an orphan into a permanently held segment on a machine with 32 of them.
-        // `pg_ctl -m fast`, then `-m immediate`, then `SIGQUIT`; `SIGKILL` only
-        // if the postmaster survives all three.
-        for (const mode of ["fast", "immediate"] as const) {
-          if (pid === undefined || !pidAlive(pid)) break;
-          await run_(join(entry.pgBin, "pg_ctl"),
-            ["-D", entry.dataDirectory, "-m", mode, "-w", "-t", "60", "stop"],
-            { timeout: 90_000, env: { PATH: "/usr/bin:/bin", LC_ALL: "C", TMPDIR: run, NODE_ENV: "test" } })
-            .catch(() => { /* the signal ladder below is what decides */ });
-        }
-        pid = await readPostmasterPid(entry.dataDirectory) ?? pid;
-        if (pid !== undefined && pidAlive(pid)) {
-          try { process.kill(pid, "SIGQUIT"); } catch { /* already gone */ }
-          const quitDeadline = Date.now() + timeoutMs;
-          while (Date.now() < quitDeadline && pidAlive(pid)) {
-            await new Promise(done => { setTimeout(done, 100); });
-          }
-        }
-        if (pid !== undefined && pidAlive(pid)) {
-          // Last resort, and the only signal that leaks a SysV segment. A
-          // survivor past this is reported below by name and pid.
-          try { process.kill(pid, "SIGKILL"); } catch { /* already gone */ }
-          const deadline = Date.now() + timeoutMs;
-          while (Date.now() < deadline && pidAlive(pid)) {
-            await new Promise(done => { setTimeout(done, 100); });
-          }
-        }
+        await shutdownLadder({
+          alive: () => pid !== undefined && pidAlive(pid),
+          cooperativeStop: async (mode) => {
+            await pgCtl(["-D", entry.dataDirectory, "-m", mode, "-w", "-t", "60", "stop"], 90_000);
+          },
+          signal: (signal) => { if (pid !== undefined) try { process.kill(pid, signal); } catch { /* gone */ } },
+          // This reaper runs on a killed command's leftovers, so it must not
+          // block a test run for longer than the caller agreed to wait.
+          graceMs: timeoutMs,
+        });
+        pid = (await readPostmasterPid(entry.dataDirectory)) ?? pid;
       }
       pid = await readPostmasterPid(entry.dataDirectory);
       if (pid !== undefined && pidAlive(pid)) {
