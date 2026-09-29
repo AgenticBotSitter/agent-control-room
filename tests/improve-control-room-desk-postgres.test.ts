@@ -72,6 +72,7 @@ function pool(postgres: Parameters<Parameters<typeof withRealPostgres>[0]>[0], r
   const bound = bindPrivatePgPool(new Pool({ ...privatePgOptions(config), host: login.host }));
   // Record the statement a refusal came from, so a failure names it.
   const traced = (session: DatabaseSession): DatabaseSession => ({ query: async (sql, params) => {
+    await barrier?.arrive(sql);
     try { return await session.query(sql, params); }
     catch (error) { refused.push(`${String((error as { sqlState?: unknown }).sqlState)} ${sql.replace(/\s+/g, " ").trim()}`); throw error; }
   } });
@@ -81,6 +82,18 @@ function pool(postgres: Parameters<Parameters<typeof withRealPostgres>[0]>[0], r
   return { client, config, close: () => bound.close() };
 }
 const refused: string[] = [];
+/** Holds two callers at the same INSERT so both have already missed the replay read:
+ * the race a double-click or a double publication really produces. */
+let barrier: { arrive(sql: string): Promise<void> } | undefined;
+function holdTwoAt(statement: RegExp) {
+  let waiting = 0, open!: () => void;
+  const opened = new Promise<void>(resolve => { open = resolve; });
+  barrier = { async arrive(sql) {
+    if (!statement.test(sql)) return;
+    if (++waiting >= 2) { barrier = undefined; open(); }
+    await Promise.race([opened, new Promise(resolve => setTimeout(resolve, 5_000))]);
+  } };
+}
 
 test("production web and coordinator roles complete the inert desk lifecycle and refuse every forged path", async t => {
   const skip = needsPg(); if (skip) { t.skip(skip.skip); return; } ran += 1;
@@ -126,6 +139,7 @@ test("production web and coordinator roles complete the inert desk lifecycle and
       const draft = { description: "Exercise the production-role desk path.", pipelineTemplateId: saved.templateId,
         selectedWorkerIds: ["worker:build", "worker:check"], leadWorkerId: "worker:lead" };
       // A double-submitted form: one request, one pipeline run, the second caller replays the first.
+      // (Web writes lock the owner's identity row, so these two serialize; no barrier here.)
       const [first, second] = await Promise.all([desk.create(identity, ids.project, draft, "improve-postgres-request-0001"),
         desk.create(identity, ids.project, draft, "improve-postgres-request-0001")]);
       request = first.request;
@@ -153,6 +167,7 @@ test("production web and coordinator roles complete the inert desk lifecycle and
       await asAdmin("UPDATE pipeline_stage_runs SET state='succeeded' WHERE pipeline_run_id=$1 AND stage_kind='signoff'",
         [request.pipelineRunId]);
       // A double publication: one candidate, the loser replays it.
+      holdTwoAt(/INSERT INTO control_update_candidates/u);
       const [a, b] = await Promise.all([publisher.recordCandidate(candidateInput(request)),
         publisher.recordCandidate(candidateInput(request))]);
       assert.equal(a.candidate.candidateId, b.candidate.candidateId);
@@ -193,6 +208,10 @@ test("production web and coordinator roles complete the inert desk lifecycle and
         candidateRecordDigest: candidate.recordDigest, decision: value });
       await assert.rejects(desk.decide(operator, decision("accept"), "improve-postgres-operator-0001"), /access_denied/u,
         "an operator grant, even with every action, is not the owner");
+      await assert.rejects(desk.decide(identity, { ...decision("accept"), expectedVersion: 2 }, "improve-postgres-stale-0001"),
+        /conflict/u, "a decision for a version the owner never saw is refused");
+      await assert.rejects(desk.decide(identity, { ...decision("accept"), candidateRecordDigest: DIGEST },
+        "improve-postgres-stale-0002"), /conflict/u, "a decision for evidence the owner never saw is refused");
       // Accept and Decline pressed in two tabs: exactly one owner decision lands.
       const raced = await Promise.allSettled([desk.decide(identity, decision("accept"), "improve-postgres-decision-0001"),
         desk.decide(identity, decision("decline"), "improve-postgres-decision-0002")]);

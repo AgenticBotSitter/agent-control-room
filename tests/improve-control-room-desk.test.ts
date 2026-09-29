@@ -55,6 +55,8 @@ test("the self-project request binds exact template workers and creates one ordi
   assert.equal((await f.db.query<{ count: number }>("SELECT count(*)::int count FROM pipeline_runs")).rows[0]!.count, 1);
   await assert.rejects(f.desk.create(f.identity, f.project.projectId, { ...draft,
     selectedWorkerIds: ["worker:builder"] }, "improvement-request-0002"), /conflict/u);
+  await assert.rejects(f.desk.create(f.identity, f.project.projectId, { ...draft,
+    leadWorkerId: "worker:builder" }, "improvement-request-0003"), /conflict/u, "the lead is the template's sign-off worker");
 });
 
 test("candidate acceptance records an exact owner decision and cannot deploy", async t => {
@@ -77,6 +79,11 @@ test("candidate acceptance records an exact owner decision and cannot deploy", a
   assert.equal(recorded.candidate.startsDeploy, false);
   const ready = await f.desk.ready(f.identity);
   assert.equal(ready.candidates.length, 1); assert.equal(ready.signedDeployApprovalCreated, false);
+  const exact = { candidateId: recorded.candidate.candidateId, expectedVersion: 1,
+    candidateRecordDigest: recorded.candidate.recordDigest, decision: "accept" as const };
+  await assert.rejects(f.desk.decide(f.identity, { ...exact, expectedVersion: 2 }, "update-owner-stale-0001"), /conflict/u);
+  await assert.rejects(f.desk.decide(f.identity, { ...exact, candidateRecordDigest: `sha256:${"9".repeat(64)}` },
+    "update-owner-stale-0002"), /conflict/u);
   const receipt = await f.desk.decide(f.identity, { candidateId: recorded.candidate.candidateId,
     expectedVersion: 1, candidateRecordDigest: recorded.candidate.recordDigest, decision: "accept" },
   "update-owner-decision-0001");
