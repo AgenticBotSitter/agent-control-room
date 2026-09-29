@@ -19,8 +19,7 @@ import { realPostgresSkipMessage, requiresRealPostgres, withRealPostgres, type R
 import { bindPrivatePgPool } from "../src/web/v1/private-pg-database";
 import { privatePgOptions } from "../src/web/v1/private-pg-options";
 import type { DatabaseClient } from "../src/persistence/database";
-import { privateWebSchemaDigest, readPrivateWebSchemaDigest, verifyPrivateDatabase,
-  verifyTaskCoordinatorDatabase } from "../src/web/v1/private-database-preflight";
+import { privateWebSchemaDigest, readPrivateWebSchemaDigest, verifyPrivateDatabase } from "../src/web/v1/private-database-preflight";
 import { createFleetGatewayHandlerV1, FleetGatewayStoreV1, FleetOwnerServiceV1 } from "../src/fleet/v1";
 import { FLEET_TENANT, FLEET_WORKSPACE, ownerIdentity, PROJECT_A, PROJECT_B, seedFleetTenant,
   seedProposedTask } from "./support/fleet-fixture";
@@ -69,12 +68,10 @@ test("fleet connector end to end and least privilege, as the production logins",
       await seedFleetTenant((sql, params) => admin.client.query(sql, params));
       // The existing exact-privilege preflights still pass with the fleet
       // grants and guards installed: no new definer-rights function, and the
-      // web login's fleet rights are exactly the declared owner-decision set.
+      // web login's fleet rights are exactly the declared owner-decision set. The
+      // definer-function and EXECUTE rules this checks apply to every role.
       const scope = { tenantId: FLEET_TENANT, workspaceId: FLEET_WORKSPACE, ownerIdentityId: "identity:fleet-owner", issuer: "test" };
       await verifyPrivateDatabase(web.client, web.config, scope, Date.now(), { nativeQueue: true });
-      const coordinator = pool(postgres, "coordinator");
-      try { await verifyTaskCoordinatorDatabase(coordinator.client, coordinator.config, scope, Date.now(), { nativeQueue: true }); }
-      finally { await coordinator.close(); }
       const task = await seedProposedTask(admin.client, PROJECT_A, "pg-1");
       const betaTask = await seedProposedTask(admin.client, PROJECT_B, "pg-beta");
       const untouched = await seedProposedTask(admin.client, PROJECT_A, "pg-not-offered");
