@@ -388,64 +388,80 @@ test("every owner page is usable at phone width", async ({ page }) => {
 });
 
 for (const mode of ["mac-local", "hosted"] as const) {
-  test(`Home reads in one order in ${mode} mode at phone width`, async ({ page }) => {
-    await page.setViewportSize({ width: PHONE_WIDTH, height: PHONE_HEIGHT });
+  // Named with explicit literals rather than a `${mode}` template so that the
+  // PR-claims checker can resolve a citation to a single named test: its
+  // `hasNamedTest` pattern matches a string literal passed directly to
+  // `test(...)`, so neither a backtick template nor a name held in a variable
+  // can be cited. A guard nobody can name is a guard nobody reviews.
+  if (mode === "hosted") {
+    test("Home reads in one order in hosted mode at phone width", async ({ page }) => {
+      await assertHomeReadsInOneOrder(page, mode);
+    });
+  } else {
+    test("Home reads in one order in mac-local mode at phone width", async ({ page }) => {
+      await assertHomeReadsInOneOrder(page, mode);
+    });
+  }
+}
 
-    if (mode === "hosted") {
-      // Hosted mode is reached the way the app itself decides it.
-      // `LocalRuntimeProvider` treats HTTP 404 from /api/v1/local-workers as
-      // "this browser is not on a Mac-local host" — see
-      // private-app/app/local-runtime.tsx. Fulfilling that one response runs
-      // the app's real detection, its real rendering and its real focus order;
-      // no component is stubbed and no state is injected. The rehearsal stack
-      // only ever serves Mac-local, so without this the hosted Home that the
-      // original defect hurt worst would go unmeasured.
-      await page.route("**/api/v1/local-workers", route => route.fulfill({ status: 404 }));
-    }
+/** Everything the two per-mode Home tests assert, given the mode they run in. */
+async function assertHomeReadsInOneOrder(page: Page, mode: "mac-local" | "hosted") {
+  await page.setViewportSize({ width: PHONE_WIDTH, height: PHONE_HEIGHT });
 
-    await signIn(page);
-    await page.goto("/");
-    await expect(page.locator("main")).toBeVisible();
-    // Prove the mode really is the one under test rather than whatever the
-    // stack happened to serve. Hosted Home shows the operator-capacity panel and
-    // no local-worker-evidence panel; Mac-local Home is the reverse.
-    const operatorCapacity = page.locator('main section[aria-labelledby="operator-capacity-title"]');
-    const localEvidence = page.locator("main .private-local-worker-evidence");
-    await expect(operatorCapacity, `${mode} mode must be the one under test`).toHaveCount(mode === "hosted" ? 1 : 0, { timeout: 30_000 });
-    await expect(localEvidence).toHaveCount(mode === "hosted" ? 0 : 1);
-    await expect(page.locator('[role="status"]').filter({ hasText: /Loading|Checking saved|Reading|Saving…/i }))
-      .toHaveCount(0, { timeout: 30_000 });
+  if (mode === "hosted") {
+    // Hosted mode is reached the way the app itself decides it.
+    // `LocalRuntimeProvider` treats HTTP 404 from /api/v1/local-workers as
+    // "this browser is not on a Mac-local host" — see
+    // private-app/app/local-runtime.tsx. Fulfilling that one response runs
+    // the app's real detection, its real rendering and its real focus order;
+    // no component is stubbed and no state is injected. The rehearsal stack
+    // only ever serves Mac-local, so without this the hosted Home that the
+    // original defect hurt worst would go unmeasured.
+    await page.route("**/api/v1/local-workers", route => route.fulfill({ status: 404 }));
+  }
 
-    const stops = await tabWalkInMain(page);
-    // Every focusable in `main`, read from the DOM rather than from the walk.
-    // A positive `tabindex` moves an element to the FRONT of the document's
-    // tab order, and Chromium's sequential navigation from a seeded start
-    // point does not necessarily visit it — so the walk alone can report a
-    // positive tabindex only as "something is wrong upstream". This reads the
-    // attribute directly, on every control the page actually rendered, and
-    // names the control when it is wrong.
-    const positiveTabIndex = await page.evaluate(() => [...document.querySelectorAll("main *")]
-      .map(element => ({ element, tabIndex: element.getAttribute("tabindex") }))
-      .filter(entry => entry.tabIndex !== null && Number(entry.tabIndex) > 0)
-      .map(({ element, tabIndex }) => `main element ${element.tagName.toLowerCase()}${element.className ? `.${String(element.className).split(/\s+/).join(".")}` : ""} carries tabindex="${tabIndex}", which moves it ahead of every other control in the document's tab sequence`));
-    const failures = [...positiveTabIndex, ...focusOrderFailures("/", mode, stops)];
-    // A walk that reached nothing, or stopped before the last control, would
-    // satisfy every comparison above — so a complete walk is asserted rather
-    // than assumed. The re-check button is the one control the original defect
-    // moved, and it is last by design, so a walk that never reached it did not
-    // walk the whole of `main` and its verdict is not a verdict.
-    //
-    // A positive `tabindex` also produces a short walk, because the element
-    // jumps to the front of the document's tab order and the walk stops there.
-    // That case is already reported above with the element named, so the count
-    // is only asked for once the walk itself is known to be clean.
-    if (failures.length === 0) {
-      expect(stops.some(stop => stop.label.includes("Check saved dashboard again")),
-        `${mode}: the walk reached ${stops.length} controls and stopped before the re-check button, so it did not walk the whole of main`)
-        .toBe(true);
-      expect(stops.length, `${mode}: the tab walk reached ${stops.length} controls in main, too few to judge the order`)
-        .toBeGreaterThanOrEqual(6);
-    }
-    expect(failures, failures.join("\n")).toEqual([]);
-  });
+  await signIn(page);
+  await page.goto("/");
+  await expect(page.locator("main")).toBeVisible();
+  // Prove the mode really is the one under test rather than whatever the
+  // stack happened to serve. Hosted Home shows the operator-capacity panel and
+  // no local-worker-evidence panel; Mac-local Home is the reverse.
+  const operatorCapacity = page.locator('main section[aria-labelledby="operator-capacity-title"]');
+  const localEvidence = page.locator("main .private-local-worker-evidence");
+  await expect(operatorCapacity, `${mode} mode must be the one under test`).toHaveCount(mode === "hosted" ? 1 : 0, { timeout: 30_000 });
+  await expect(localEvidence).toHaveCount(mode === "hosted" ? 0 : 1);
+  await expect(page.locator('[role="status"]').filter({ hasText: /Loading|Checking saved|Reading|Saving…/i }))
+    .toHaveCount(0, { timeout: 30_000 });
+
+  const stops = await tabWalkInMain(page);
+  // Every focusable in `main`, read from the DOM rather than from the walk.
+  // A positive `tabindex` moves an element to the FRONT of the document's
+  // tab order, and Chromium's sequential navigation from a seeded start
+  // point does not necessarily visit it — so the walk alone can report a
+  // positive tabindex only as "something is wrong upstream". This reads the
+  // attribute directly, on every control the page actually rendered, and
+  // names the control when it is wrong.
+  const positiveTabIndex = await page.evaluate(() => [...document.querySelectorAll("main *")]
+    .map(element => ({ element, tabIndex: element.getAttribute("tabindex") }))
+    .filter(entry => entry.tabIndex !== null && Number(entry.tabIndex) > 0)
+    .map(({ element, tabIndex }) => `main element ${element.tagName.toLowerCase()}${element.className ? `.${String(element.className).split(/\s+/).join(".")}` : ""} carries tabindex="${tabIndex}", which moves it ahead of every other control in the document's tab sequence`));
+  const failures = [...positiveTabIndex, ...focusOrderFailures("/", mode, stops)];
+  // A walk that reached nothing, or stopped before the last control, would
+  // satisfy every comparison above — so a complete walk is asserted rather
+  // than assumed. The re-check button is the one control the original defect
+  // moved, and it is last by design, so a walk that never reached it did not
+  // walk the whole of `main` and its verdict is not a verdict.
+  //
+  // A positive `tabindex` also produces a short walk, because the element
+  // jumps to the front of the document's tab order and the walk stops there.
+  // That case is already reported above with the element named, so the count
+  // is only asked for once the walk itself is known to be clean.
+  if (failures.length === 0) {
+    expect(stops.some(stop => stop.label.includes("Check saved dashboard again")),
+      `${mode}: the walk reached ${stops.length} controls and stopped before the re-check button, so it did not walk the whole of main`)
+      .toBe(true);
+    expect(stops.length, `${mode}: the tab walk reached ${stops.length} controls in main, too few to judge the order`)
+      .toBeGreaterThanOrEqual(6);
+  }
+  expect(failures, failures.join("\n")).toEqual([]);
 }

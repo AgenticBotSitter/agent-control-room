@@ -390,120 +390,139 @@ test("no owner page may use a positive tabindex", () => {
     `a positive tabindex reorders the tab sequence independently of the DOM: ${JSON.stringify(positive)}`);
 });
 
-for (const mode of ["local", "hosted"] as const) {
-  test(`Home in ${mode} mode paints its focusable controls in tab order`, async () => {
-    const mounted = await mountHome(mode);
-    try {
-      const { document, window, restore } = mounted;
-      const { isFlex, isGrid, painted } = paintedOrderOf(document, window);
-      assert.ok(!isFlex && !isGrid,
-        "main must not be a flex or grid container, or paint order could diverge from source order again");
+// Named with explicit literals rather than a `${mode}` template, so a PR claim
+// can cite one of these by name: the claims checker's `hasNamedTest` pattern
+// matches a string literal passed directly to `test(...)`, so neither a
+// backtick template nor a name held in a variable can be cited. A guard nobody
+// can name is a guard nobody reviews.
+test("Home in hosted mode paints its focusable controls in tab order", async () => {
+  await assertPaintsInTabOrder("hosted");
+});
+test("Home in local mode paints its focusable controls in tab order", async () => {
+  await assertPaintsInTabOrder("local");
+});
 
-      // Every control a keyboard can reach inside `main`, in the order it is
-      // reached, mapped to where it paints.
-      const focusables = [...document.querySelectorAll("main a[href], main button, main input, main select, main textarea")];
-      assert.ok(focusables.length >= 4, `expected real controls in main, got ${focusables.length}`);
-      const main = document.querySelector("main")!;
-      const indexOfChild = new Map([...main.children].map((child, index) => [child as Element, index] as const));
-      const paintedRank = new Map(painted.map((domIndex, rank) => [domIndex, rank]));
-      const describe = (element: Element) => `${element.tagName.toLowerCase()}` +
-        `${element.className ? `.${element.className}` : ""} "${(element.textContent ?? "").trim().slice(0, 30)}"`;
-      // The window's own implementation, against the real `private.css` now
-      // loaded into this document — not a cascade that resolves nothing.
-      const style = mounted.window.getComputedStyle.bind(mounted.window);
+/** What the two per-mode paint-order tests assert, for one runtime mode. */
+async function assertPaintsInTabOrder(mode: Mode) {
+  const mounted = await mountHome(mode);
+  try {
+    const { document, window } = mounted;
+    const { isFlex, isGrid, painted } = paintedOrderOf(document, window);
+    assert.ok(!isFlex && !isGrid,
+      "main must not be a flex or grid container, or paint order could diverge from source order again");
 
-      let previousRank = -1;
-      for (const control of focusables) {
-        // Climb to the child of main that owns this control, then read that
-        // child's paint rank. Two controls inside one block share a rank, and
-        // the sweep below checks their order within the block separately.
-        let owner: Element = control;
-        while (owner.parentElement && owner.parentElement.tagName !== "MAIN") owner = owner.parentElement;
-        const rank = paintedRank.get(indexOfChild.get(owner)!)!;
-        assert.ok(rank >= previousRank,
-          `paint order disagrees with tab order in ${mode} mode: ${describe(control)} paints at rank ${rank} after rank ${previousRank}`);
-        previousRank = rank;
-        // A second, computed-style guard on the same property, now reading a
-        // real cascade. jsdom reports an unset `order` as "" and an explicit one
-        // as its number, so "no order was set" is exactly `order === ""`.
-        const computedOrder = style(owner as HTMLElement).order;
-        assert.ok(computedOrder === "" || Number(computedOrder) === 0,
-          `${describe(owner)} has a computed CSS order of "${computedOrder}" in ${mode} mode, so its paint position can diverge from its tab position`);
-        // `order` and a positive `tabindex` are the two mechanisms that move
-        // a control away from its painted position; the static scans above
-        // cover both, and this is the same claim made of the rendered result
-        // so a rule the scan cannot parse still has to show up here.
-        const tabIndex = (control as HTMLElement).getAttribute("tabindex");
-        assert.ok(tabIndex === null || Number(tabIndex) <= 0,
-          `${describe(control)} carries tabindex="${tabIndex}" in ${mode} mode, so it is reached out of painted order`);
-      }
+    // Every control a keyboard can reach inside `main`, in the order it is
+    // reached, mapped to where it paints.
+    const focusables = [...document.querySelectorAll("main a[href], main button, main input, main select, main textarea")];
+    assert.ok(focusables.length >= 4, `expected real controls in main, got ${focusables.length}`);
+    const main = document.querySelector("main")!;
+    const indexOfChild = new Map([...main.children].map((child, index) => [child as Element, index] as const));
+    const paintedRank = new Map(painted.map((domIndex, rank) => [domIndex, rank]));
+    const describe = (element: Element) => `${element.tagName.toLowerCase()}` +
+      `${element.className ? `.${element.className}` : ""} "${(element.textContent ?? "").trim().slice(0, 30)}"`;
+    // The window's own implementation, against the real `private.css` now
+    // loaded into this document — not a cascade that resolves nothing.
+    const style = mounted.window.getComputedStyle.bind(mounted.window);
 
-      // Within one painted block the controls keep their own source order.
-      // `order` equal for all of them, so compare document positions directly.
-      const byPosition = focusables.map(control => ({
-        control, position: [...main.querySelectorAll("*")].indexOf(control),
-      }));
-      for (const [index, entry] of byPosition.entries()) {
-        assert.ok(entry.position > -1, `every control must be reachable in the main tree: ${describe(entry.control)}`);
-        if (index === 0) continue;
-        const previous = byPosition[index - 1]!;
-        // Only compare two controls that share a painted block; across blocks
-        // the rank comparison above already decided the order.
-        const sameOwner = (() => { let a: Element = entry.control, b: Element = previous.control;
-          while (a.parentElement && a.parentElement.tagName !== "MAIN") a = a.parentElement;
-          while (b.parentElement && b.parentElement.tagName !== "MAIN") b = b.parentElement;
-          return a === b; })();
-        if (sameOwner) assert.ok(entry.position > previous.position,
-          `within one block ${describe(entry.control)} comes after ${describe(previous.control)} in the DOM but is painted first`);
-      }
-    } finally { await mounted.restore(); }
-  });
+    let previousRank = -1;
+    for (const control of focusables) {
+      // Climb to the child of main that owns this control, then read that
+      // child's paint rank. Two controls inside one block share a rank, and
+      // the sweep below checks their order within the block separately.
+      let owner: Element = control;
+      while (owner.parentElement && owner.parentElement.tagName !== "MAIN") owner = owner.parentElement;
+      const rank = paintedRank.get(indexOfChild.get(owner)!)!;
+      assert.ok(rank >= previousRank,
+        `paint order disagrees with tab order in ${mode} mode: ${describe(control)} paints at rank ${rank} after rank ${previousRank}`);
+      previousRank = rank;
+      // A second, computed-style guard on the same property, now reading a
+      // real cascade. jsdom reports an unset `order` as "" and an explicit one
+      // as its number, so "no order was set" is exactly `order === ""`.
+      const computedOrder = style(owner as HTMLElement).order;
+      assert.ok(computedOrder === "" || Number(computedOrder) === 0,
+        `${describe(owner)} has a computed CSS order of "${computedOrder}" in ${mode} mode, so its paint position can diverge from its tab position`);
+      // `order` and a positive `tabindex` are the two mechanisms that move
+      // a control away from its painted position; the static scans above
+      // cover both, and this is the same claim made of the rendered result
+      // so a rule the scan cannot parse still has to show up here.
+      const tabIndex = (control as HTMLElement).getAttribute("tabindex");
+      assert.ok(tabIndex === null || Number(tabIndex) <= 0,
+        `${describe(control)} carries tabindex="${tabIndex}" in ${mode} mode, so it is reached out of painted order`);
+    }
 
-  test(`Home in ${mode} mode puts needs-attention ahead of the other panels`, async () => {
-    const mounted = await mountHome(mode);
-    try {
-      const children = mainChildren(mounted.document);
-      const dashboard = children.findIndex(child => child.className.includes("private-dashboard-grid"));
-      assert.ok(dashboard > -1, `the dashboard must be a child of main in ${mode} mode`);
-      // Everything before the dashboard is the workspace heading and the
-      // dashboard's own "New task" action — no panel of setup text, which is
-      // what pushed attention below the fold in hosted mode.
-      assert.ok(children.slice(0, dashboard).every(child => !/private-panel/.test(child.className)),
-        `only the heading and the action link may precede the dashboard in ${mode} mode, found: ` +
-        `${JSON.stringify(children.slice(0, dashboard).map(child => child.className))}`);
+    // Within one painted block the controls keep their own source order.
+    // `order` equal for all of them, so compare document positions directly.
+    const byPosition = focusables.map(control => ({
+      control, position: [...main.querySelectorAll("*")].indexOf(control),
+    }));
+    for (const [index, entry] of byPosition.entries()) {
+      assert.ok(entry.position > -1, `every control must be reachable in the main tree: ${describe(entry.control)}`);
+      if (index === 0) continue;
+      const previous = byPosition[index - 1]!;
+      // Only compare two controls that share a painted block; across blocks
+      // the rank comparison above already decided the order.
+      const sameOwner = (() => { let a: Element = entry.control, b: Element = previous.control;
+        while (a.parentElement && a.parentElement.tagName !== "MAIN") a = a.parentElement;
+        while (b.parentElement && b.parentElement.tagName !== "MAIN") b = b.parentElement;
+        return a === b; })();
+      if (sameOwner) assert.ok(entry.position > previous.position,
+        `within one block ${describe(entry.control)} comes after ${describe(previous.control)} in the DOM but is painted first`);
+    }
+  } finally { await mounted.restore(); }
+}
 
-      const attention = mounted.document.querySelector("main .private-dashboard-grid .private-panel[aria-labelledby='home-attention']");
-      assert.ok(attention, "the dashboard must carry a Needs attention panel");
-      const panels = [...mounted.document.querySelectorAll("main .private-dashboard-grid .private-panel")];
-      // Deliberately NOT asserting that Needs attention precedes Running work.
-      // The dashboard has always led with Running work, inside a two-column
-      // grid that stacks at phone width, and both panels are inside the first
-      // block of `main`. Which of the two an owner reads first is not a promise
-      // this app makes; what it must promise is that the whole dashboard is
-      // reachable without scrolling past another page's worth of text, which is
-      // what the `main` children assertions above establish. Asserting the
-      // panel order here would be inventing a requirement, and a future panel
-      // reordering would then "fail" for no owner-visible reason.
-      assert.ok(panels.length >= 4,
-        `the dashboard must carry its full panel set, got ${panels.length}`);
-      // NOT `panels.includes(attention)`: `attention` was matched by the same
-      // selector `panels` is built from, so that assertion cannot fail and
-      // would read as coverage of the panel's position when it is not. The
-      // panel's position is deliberately not asserted; see above.
+test("Home in hosted mode puts needs-attention ahead of the other panels", async () => {
+  await assertAttentionLeadsMain("hosted");
+});
+test("Home in local mode puts needs-attention ahead of the other panels", async () => {
+  await assertAttentionLeadsMain("local");
+});
 
-      // The framing copy and its button are last, so the copy is reached last
-      // by keyboard and announced last by a screen reader. This is the check
-      // that carries the attention-first result in the reading order.
-      const lead = children.findIndex(child => child.className.includes("private-home-lead"));
-      assert.equal(lead, children.length - 1,
-        `the framing copy must be the last child of main in ${mode} mode, found at ${lead} of ${children.length}`);
-      const leadButton = mounted.document.querySelector("main .private-home-lead button");
-      assert.ok(leadButton, "the lead block keeps its re-check button");
-      const leadOwnerIndex = indexOfOwner(children, leadButton as Element);
-      assert.equal(leadOwnerIndex, children.length - 1,
-        `the re-check button must paint with the last block, found at ${leadOwnerIndex}`);
-    } finally { await mounted.restore(); }
-  });
+/** What the two per-mode attention-order tests assert, for one runtime mode. */
+async function assertAttentionLeadsMain(mode: Mode) {
+  const mounted = await mountHome(mode);
+  try {
+    const children = mainChildren(mounted.document);
+    const dashboard = children.findIndex(child => child.className.includes("private-dashboard-grid"));
+    assert.ok(dashboard > -1, `the dashboard must be a child of main in ${mode} mode`);
+    // Everything before the dashboard is the workspace heading and the
+    // dashboard's own "New task" action — no panel of setup text, which is
+    // what pushed attention below the fold in hosted mode.
+    assert.ok(children.slice(0, dashboard).every(child => !/private-panel/.test(child.className)),
+      `only the heading and the action link may precede the dashboard in ${mode} mode, found: ` +
+      `${JSON.stringify(children.slice(0, dashboard).map(child => child.className))}`);
+
+    const attention = mounted.document.querySelector("main .private-dashboard-grid .private-panel[aria-labelledby='home-attention']");
+    assert.ok(attention, "the dashboard must carry a Needs attention panel");
+    const panels = [...mounted.document.querySelectorAll("main .private-dashboard-grid .private-panel")];
+    // Deliberately NOT asserting that Needs attention precedes Running work.
+    // The dashboard has always led with Running work, inside a two-column
+    // grid that stacks at phone width, and both panels are inside the first
+    // block of `main`. Which of the two an owner reads first is not a promise
+    // this app makes; what it must promise is that the whole dashboard is
+    // reachable without scrolling past another page's worth of text, which is
+    // what the `main` children assertions above establish. Asserting the
+    // panel order here would be inventing a requirement, and a future panel
+    // reordering would then "fail" for no owner-visible reason.
+    assert.ok(panels.length >= 4,
+      `the dashboard must carry its full panel set, got ${panels.length}`);
+    // NOT `panels.includes(attention)`: `attention` was matched by the same
+    // selector `panels` is built from, so that assertion cannot fail and
+    // would read as coverage of the panel's position when it is not. The
+    // panel's position is deliberately not asserted; see above.
+
+    // The framing copy and its button are last, so the copy is reached last
+    // by keyboard and announced last by a screen reader. This is the check
+    // that carries the attention-first result in the reading order.
+    const lead = children.findIndex(child => child.className.includes("private-home-lead"));
+    assert.equal(lead, children.length - 1,
+      `the framing copy must be the last child of main in ${mode} mode, found at ${lead} of ${children.length}`);
+    const leadButton = mounted.document.querySelector("main .private-home-lead button");
+    assert.ok(leadButton, "the lead block keeps its re-check button");
+    const leadOwnerIndex = indexOfOwner(children, leadButton as Element);
+    assert.equal(leadOwnerIndex, children.length - 1,
+      `the re-check button must paint with the last block, found at ${leadOwnerIndex}`);
+  } finally { await mounted.restore(); }
 }
 
 /** The index in `main`'s children of the block that contains `element`. */
