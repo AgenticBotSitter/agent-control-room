@@ -161,10 +161,25 @@ coordinatorReads.push("pipeline_templates", "pipeline_runs", "pipeline_stage_run
   "pipeline_unattended_transitions", "pipeline_advance_receipts",
   "control_agent_review_plans", "control_pipeline_build_publications");
 coordinatorReads.push("control_improvement_requests", "control_update_candidates");
+// Scheduling reads each project's worker and concurrency settings (0135).
+coordinatorReads.push("control_project_settings");
 coordinatorInserts.add("control_agent_review_plans");
 coordinatorInserts.add("control_pipeline_build_publications");
 coordinatorInserts.add("pipeline_advance_receipts");
 coordinatorInserts.add("control_update_candidates");
+// Supervisor (0177-0179 and the 0017 incident tables): reconciliation heads,
+// health, loop heads and provider waits; incidents are column-scoped writes.
+coordinatorReads.push("control_supervisor_task_heads", "control_supervisor_reconciliation_events",
+  "control_supervisor_agent_health", "control_supervisor_loop_heads", "control_supervisor_health_observations",
+  "control_provider_waits", "control_service_incident_heads", "control_service_incidents");
+for (const table of ["control_supervisor_task_heads", "control_supervisor_reconciliation_events",
+  "control_supervisor_agent_health", "control_supervisor_loop_heads", "control_supervisor_health_observations",
+  "control_provider_waits"]) coordinatorInserts.add(table);
+const coordinatorInsertColumns: Record<string, readonly string[]> = {
+  control_service_incident_heads: ["tenant_id", "correlation_key"],
+  control_service_incidents: ["id", "tenant_id", "correlation_key", "generation", "service_id", "severity",
+    "safe_reason_code", "safe_remedy_code", "state", "opened_at", "last_observed_at"],
+};
 const coordinatorDeletes = new Set(["control_assignment_lease_scopes"]);
 const coordinatorUpdates: Record<string, readonly string[]> = {
   ...Object.fromEntries(["control_requests", "control_workflows", "control_attempts", "control_leases"]
@@ -188,6 +203,12 @@ const coordinatorUpdates: Record<string, readonly string[]> = {
     "unattended_last_swept_at"],
   control_completion_gate_integrity: ["web_lock", "revision", "record_count", "state_digest", "state_auth_tag"],
   control_project_event_stream_heads: ["last_sequence", "last_event_digest", "head_auth_tag", "updated_at"],
+  control_supervisor_task_heads: ["lapse_count", "last_attempt_id", "state", "updated_at"],
+  control_supervisor_agent_health: ["node_id", "state", "safe_reason_code", "last_heartbeat_at", "observed_at"],
+  control_supervisor_loop_heads: ["version", "last_started_at", "last_completed_at", "state"],
+  control_provider_waits: ["state", "released_at"],
+  control_service_incident_heads: ["next_generation"],
+  control_service_incidents: ["severity", "safe_reason_code", "safe_remedy_code", "state", "last_observed_at", "resolved_at"],
 };
 const resultReads = ["workspaces", "control_identities", "control_role_grants", "projects",
   "control_jobs", "control_workflows", "control_requests", "control_task_execution_plans",
@@ -500,7 +521,7 @@ async function verifyDatabase(db: DatabaseClient, config: PrivatePostgresConfigu
       const reads: ReadonlySet<string> = new Set(allowedReads);
       // Column-scoped INSERT grants (currently the web role's idempotency
       // ledger): listed columns must carry INSERT, unlisted must not.
-      const scopedInserts = kind === "web" ? privateWebInsertColumns : {};
+      const scopedInserts = kind === "web" ? privateWebInsertColumns : kind === "coordinator" ? coordinatorInsertColumns : {};
       const scopedReads = kind === "web" ? privateWebReadColumns : {};
       if (!columns.length || columns.some(c => c.extra
         || c.read !== (reads.has(c.table_name) || !!scopedReads[c.table_name]?.includes(c.column_name))
