@@ -16,6 +16,7 @@ import type { TaskRevisionOperation } from "./task-revision-operation";
 import type { MacLocalWorkerReadinessV1 } from "./mac-local-worker-readiness";
 import type { LocalOwnerSessionStoreV1 } from "./local-owner-session-store";
 import type { PersistedLocalOwnerSessionV1 } from "./local-owner-session";
+import { taskProjectAgentOptionsSchema } from "./task-project-agents-wire";
 
 export interface MacLocalWebProcessOptionsV1 {
   origin: string;
@@ -129,16 +130,17 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
       if (url.search) throw new WebAccessError("invalid_request");
       return render();
     }
-    const projectSection = /^\/projects\/([^/]+)\/(reviews|activity|files)$/.exec(url.pathname);
+    const projectSection = /^\/projects\/([^/]+)\/(inbox|agents|reviews|activity|files|settings)$/.exec(url.pathname);
     if (projectSection) {
       if ([...url.searchParams.keys()].some(name => name !== "after")
-        || url.searchParams.getAll("after").length > 1 || projectSection[2] !== "reviews" && url.search)
+        || url.searchParams.getAll("after").length > 1 || !["inbox", "reviews"].includes(projectSection[2]) && url.search)
         throw new WebAccessError("invalid_request");
       const projectId = routeId(projectSection[1]);
-      if (projectSection[2] === "reviews")
-        await tasks.projectAttention(identity, projectId, "reviews", url.searchParams.get("after") ?? undefined);
+      if (projectSection[2] === "inbox" || projectSection[2] === "reviews")
+        await tasks.projectAttention(identity, projectId, projectSection[2], url.searchParams.get("after") ?? undefined);
       else if (projectSection[2] === "activity") await tasks.projectOverview(identity, projectId);
-      else await tasks.projectFiles(identity, projectId);
+      else if (projectSection[2] === "files") await tasks.projectFiles(identity, projectId);
+      else await projects.getView(identity, projectId);
       return render();
     }
     const taskDetail = /^\/projects\/([^/]+)\/tasks\/([^/]+)$/.exec(url.pathname);
@@ -193,7 +195,8 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
         sessions.verify(request, clock());
         return Response.json({ taskWorkersStarted: options.taskWorkersStarted === true,
           ...(options.taskWorkersStarted === true ? {} : { instruction: "create your first project, then run mac:down && mac:up" }),
-          projectSections: ["overview", "work", "reviews", "activity", ...(options.taskReadKeys?.results ? ["files"] : [])],
+          projectSections: ["overview", "inbox", "work", "agents", "reviews", "activity",
+            ...(options.taskReadKeys?.results ? ["files"] : []), "settings"],
           workers: options.workerReadiness.read().map(worker => options.taskWorkersStarted === true ? worker
             : { ...worker, state: "unavailable", proof: "not_proven" }) }, { headers: privateResponseHeaders });
       }
@@ -226,6 +229,27 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
           || url.searchParams.getAll("after").length > 1) throw new WebAccessError("invalid_request");
         return Response.json(await tasks.projectAttention(identity, decodeURIComponent(projectReviews[1]), "reviews",
           url.searchParams.get("after") ?? undefined), { headers: privateResponseHeaders });
+      }
+      const projectInbox = /^\/api\/v1\/projects\/([^/]+)\/inbox$/.exec(url.pathname);
+      if (projectInbox) {
+        if (request.method !== "GET" || [...url.searchParams.keys()].some(key => key !== "after")
+          || url.searchParams.getAll("after").length > 1) throw new WebAccessError("invalid_request");
+        return Response.json(await tasks.projectAttention(identity, routeId(projectInbox[1]), "inbox",
+          url.searchParams.get("after") ?? undefined), { headers: privateResponseHeaders });
+      }
+      const projectAgents = /^\/api\/v1\/projects\/([^/]+)\/agents$/.exec(url.pathname);
+      if (projectAgents) {
+        if (request.method !== "GET" || url.search) throw new WebAccessError("invalid_request");
+        const projectId = routeId(projectAgents[1]);
+        if (options.assignment) return Response.json(taskProjectAgentOptionsSchema.parse(
+          await options.assignment.projectOptions(identity, projectId)), { headers: privateResponseHeaders });
+        await tasks.authorize(identity, projectId);
+        return Response.json(taskProjectAgentOptionsSchema.parse({
+          projectId, eligibilitySource: "not_configured", workers: [], tasksExamined: 0,
+          additionalTasksOmitted: false, candidateEvidence: "configured_routes_only",
+          observedAt: new Date(clock()).toISOString(), startsWork: false,
+          grantsAssignmentAuthority: false, grantsExecutionAuthority: false,
+        }), { headers: privateResponseHeaders });
       }
       if (url.pathname === "/api/v1/projects"
         || /^\/api\/v1\/projects\/[^/]+(?:\/(?:lifecycle|idea-lifecycle))?$/.test(url.pathname)) return projectHttp(request);
