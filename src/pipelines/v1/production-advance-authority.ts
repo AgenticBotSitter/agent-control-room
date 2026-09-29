@@ -34,9 +34,15 @@ export class ProductionPipelineAdvanceAuthorityV1 implements Pick<PipelineAdvanc
   assertSelectionCurrentInSession(_tx:DatabaseSession,selection:PipelineAdvanceSelectionV1){return this.assertSelectionCurrent(selection);}
   async resolveStageInSession(tx:DatabaseSession,input:Omit<PipelineAdvanceSelectionV1,"executionJobId">):Promise<PipelineStageResolutionV1>{
     if(input.tenantId!==this.scope.tenantId)fail("selection_not_current");
+    // Only the job row is locked: the coordinator may lock it, and it is the
+    // row whose state can move. Execution plans are immutable (0045's trigger)
+    // and model selections have no UPDATE grant, so a lock on either would
+    // need a privilege the coordinator login does not hold.
     let accepted:null|Readonly<{executionJobId:string}>=null;
     try{accepted=await this.accepted.acceptedResultProof(tx,input);}catch{fail("stage_uncertain");}
-    const rows=(await tx.query<{job_id:string;input_digest:string;state:string}>(`SELECT p.job_id,j.input_digest,j.state
+    // The input digest lives in the canonical job record; control_jobs has no column for it.
+    const rows=(await tx.query<{job_id:string;input_digest:string;state:string}>(`SELECT p.job_id,
+      j.payload->>'inputDigest' AS input_digest,j.state
       FROM control_task_execution_plans p JOIN control_jobs j ON j.tenant_id=p.tenant_id AND j.id=p.job_id
       JOIN control_task_model_selections s ON s.tenant_id=j.tenant_id AND s.job_id=j.id
       JOIN pipeline_stage_runs st ON st.tenant_id=j.tenant_id AND st.pipeline_run_id=j.pipeline_run_id
@@ -46,7 +52,7 @@ export class ProductionPipelineAdvanceAuthorityV1 implements Pick<PipelineAdvanc
         AND s.provider IS NOT DISTINCT FROM $10 AND s.profile IS NOT DISTINCT FROM $11
         AND st.worker_id=$12 AND st.node_id=$13 AND st.worker_kind=$6 AND st.selection_key=$7 AND st.model=$8
         AND st.effort=$9 AND st.provider IS NOT DISTINCT FROM $10 AND st.profile IS NOT DISTINCT FROM $11
-      ORDER BY j.created_at DESC LIMIT 2 FOR SHARE OF p,j,s`,[input.tenantId,input.projectId,input.sourceJobId,input.runId,
+      ORDER BY j.created_at DESC LIMIT 2 FOR SHARE OF j`,[input.tenantId,input.projectId,input.sourceJobId,input.runId,
       input.stageOrdinal,input.workerKind,input.selectionKey,input.model,input.effort,input.provider,input.profile,
       input.workerId,input.nodeId])).rows;
     if(accepted){const row=rows.find(value=>value.job_id===accepted!.executionJobId);
@@ -64,7 +70,7 @@ export class ProductionPipelineAdvanceAuthorityV1 implements Pick<PipelineAdvanc
     const edge=(await tx.query<{present:boolean}>(`SELECT EXISTS(SELECT 1 FROM control_job_dependencies WHERE tenant_id=$1
       AND job_id=$2 AND depends_on_job_id=$3) present`,[input.tenantId,input.successorJobId,input.predecessorJobId])).rows[0];
     const predecessor=(await tx.query<{worker_id:string;node_id:string}>(`SELECT worker_id,node_id FROM pipeline_stage_runs
-      WHERE tenant_id=$1 AND project_id=$2 AND pipeline_run_id=$3 AND current_job_id=$4 FOR SHARE`,
+      WHERE tenant_id=$1 AND project_id=$2 AND pipeline_run_id=$3 AND current_job_id=$4`,
     [input.tenantId,input.projectId,input.runId,input.predecessorJobId])).rows[0];
     if(!edge?.present||!predecessor||!await this.accepted.isAcceptedResultCurrent(tx,{sourceJobId:input.predecessorJobId,
       workerId:predecessor.worker_id,nodeId:predecessor.node_id}))fail("dependency_not_accepted");

@@ -68,7 +68,7 @@ type StageRow = { stage_ordinal: number; stage_kind: "build"|"check"|"signoff"; 
   worker_kind: "codex"|"claude-code"|"hermes"; node_id: string; selection_key: string; model: string;
   effort: string; provider: string|null; profile: string|null; current_attempt_id: string|null; current_lease_id: string|null;
   state: string; max_loops: number; handoff_from_result_digest: string|null; signoff_review_id: string|null;
-  allowed_paths: unknown|null; maximum_changed_files: number|null; maximum_changed_bytes: number|null;
+  allowed_paths: unknown|null; maximum_changed_files: number|string|null; maximum_changed_bytes: number|string|null;
   started_at: string|Date|null; finished_at: string|Date|null; record_digest: string; auth_tag: string; version: number };
 type PolicyRow = { id: string; project_id: string; coordinator_identity_id: string; coordinator_version: number|string;
   owner_identity_id: string; state: string; version: number|string; policy_digest: string; allowed_actions: unknown; eligible_routes: unknown;
@@ -102,8 +102,10 @@ function runMaterial(scope: { tenantId: string }, row: RunRow) { return { id: ro
   unattended: row.unattended, version: Number(row.version) }; }
 function stageMaterial(scope: { tenantId: string }, row: StageRow) {
   const policy = row.stage_kind === "build" && row.allowed_paths !== null
+    // The bound columns are bigint, which the production driver returns as text.
     ? pipelineBuildWritePolicySchemaV1.parse({ allowedPaths: row.allowed_paths,
-      maximumChangedFiles: row.maximum_changed_files, maximumChangedBytes: row.maximum_changed_bytes }) : null;
+      maximumChangedFiles: row.maximum_changed_files === null ? null : Number(row.maximum_changed_files),
+      maximumChangedBytes: row.maximum_changed_bytes === null ? null : Number(row.maximum_changed_bytes) }) : null;
   return { id: `${row.pipeline_run_id}:stage:${Number(row.stage_ordinal)}`,
   tenantId: scope.tenantId, projectId: row.project_id, pipelineRunId: row.pipeline_run_id,
   stageOrdinal: Number(row.stage_ordinal), stageKind: row.stage_kind, role: row.role, workerId: row.worker_id,
@@ -170,7 +172,7 @@ export class PipelineAdvanceServiceV1 {
       const prior = (await tx.query<UnattendedTransitionRow>(`SELECT id,project_id,pipeline_run_id,pipeline_template_id,
         template_version,template_digest,run_version,run_digest,policy_id,policy_version,policy_digest,owner_identity_id,enabled,
         idempotency_key,request_digest,transition_digest,auth_tag,occurred_at
-        FROM pipeline_unattended_transitions WHERE tenant_id=$1 AND owner_identity_id=$2 AND idempotency_key=$3 FOR SHARE`,
+        FROM pipeline_unattended_transitions WHERE tenant_id=$1 AND owner_identity_id=$2 AND idempotency_key=$3`,
       [this.scope.tenantId, actor.id, idempotencyKey])).rows[0];
       if (prior) { const material={ id:prior.id,tenantId:this.scope.tenantId,projectId:prior.project_id,
           pipelineRunId:prior.pipeline_run_id,pipelineTemplateId:prior.pipeline_template_id,
@@ -185,7 +187,7 @@ export class PipelineAdvanceServiceV1 {
           templateId: prior.pipeline_template_id, policyId: prior.policy_id, enabled: prior.enabled,
           runVersion: Number(prior.run_version), templateVersion: Number(prior.template_version), occurredAt: iso(prior.occurred_at),
           replayed: true, startsWork: false, grantsExecutionAuthority: false }); }
-      const { run, template, stages } = await this.#lockedSnapshot(tx, projectId, parsed.data.runId);
+      const { run, template, stages } = await this.#lockedSnapshot(tx, projectId, parsed.data.runId, true);
       if (run.template_id !== parsed.data.templateId || Number(run.version) !== parsed.data.expectedRunVersion
         || Number(template.version) !== parsed.data.expectedTemplateVersion) throw new WebAccessError("conflict");
       this.#verifySnapshot(run, template, stages);
@@ -252,12 +254,12 @@ export class PipelineAdvanceServiceV1 {
       this.#assertInstall();
       const locator = (await tx.query<{ project_id:string }>(`SELECT project_id FROM pipeline_runs WHERE tenant_id=$1 AND id=$2`,
         [this.scope.tenantId,runId])).rows[0]; if (!locator) refuse("advance_conflict");
-      const { run, template, stages } = await this.#lockedSnapshot(tx, locator.project_id, runId);
+      const { run, template, stages } = await this.#lockedSnapshot(tx, locator.project_id, runId, false);
       this.#verifySnapshot(run,template,stages);
       const consent=(await tx.query<UnattendedTransitionRow>(`SELECT id,project_id,pipeline_run_id,pipeline_template_id,
         template_version,template_digest,run_version,run_digest,policy_id,policy_version,policy_digest,owner_identity_id,enabled,
         idempotency_key,request_digest,transition_digest,auth_tag,occurred_at FROM pipeline_unattended_transitions
-        WHERE tenant_id=$1 AND project_id=$2 AND pipeline_run_id=$3 ORDER BY run_version DESC,id DESC LIMIT 1 FOR SHARE`,
+        WHERE tenant_id=$1 AND project_id=$2 AND pipeline_run_id=$3 ORDER BY run_version DESC,id DESC LIMIT 1`,
       [this.scope.tenantId,run.project_id,run.id])).rows[0];
       if(!consent)refuse("unattended_not_authorized");
       const consentMaterial={id:consent.id,tenantId:this.scope.tenantId,projectId:consent.project_id,
@@ -346,7 +348,7 @@ export class PipelineAdvanceServiceV1 {
         || execution.authority.effectPolicy!=="none" || execution.authority.allowedNetworkDestinations.length!==0)
         refuse("execution_authority_missing");
       const plan = (await tx.query<{source_job_id:string}>(`SELECT source_job_id FROM control_task_execution_plans
-        WHERE tenant_id=$1 AND project_id=$2 AND job_id=$3 FOR SHARE`,[this.scope.tenantId,run.project_id,execution.id])).rows[0];
+        WHERE tenant_id=$1 AND project_id=$2 AND job_id=$3`,[this.scope.tenantId,run.project_id,execution.id])).rows[0];
       if (!plan || plan.source_job_id!==source.id) refuse("advance_conflict");
       if (selected.stageOrdinal>0) { const predecessor=stages[selected.stageOrdinal-1]; if (!predecessor) refuse("dependency_not_accepted");
         try { await capability.assertAcceptedPredecessorInSession(tx,{tenantId:this.scope.tenantId,projectId:run.project_id,
@@ -442,54 +444,9 @@ export class PipelineAdvanceServiceV1 {
     return Object.freeze({checked:candidates.rows.length,advanced:Object.freeze(receipts),completed:Object.freeze(completed)});
   }
 
-  async history(projectId:string,runId:string,limit=100):Promise<PipelineHistoryV1>{
-    if(!Number.isInteger(limit)||limit<1||limit>200)refuse("advance_conflict");
-    return this.db.transaction(async tx=>{
-      const run=(await tx.query<{id:string}>(`SELECT id FROM pipeline_runs WHERE tenant_id=$1 AND project_id=$2 AND id=$3`,
-        [this.scope.tenantId,projectId,runId])).rows[0];if(!run)refuse("advance_conflict");
-      const rows=(await tx.query<{id:string;actor_id:string;actor_type:"human"|"agent"|"worker"|"service"|"adapter";
-        action:string;target_type:string;target_id:string;safe_metadata:unknown;occurred_at:string|Date;chain_partition:string;
-        chain_sequence:number|string;event_hash:string}>(`WITH RECURSIVE source_jobs AS (
-          SELECT current_job_id id FROM pipeline_stage_runs WHERE tenant_id=$1 AND project_id=$2 AND pipeline_run_id=$3),
-        execution_jobs AS (SELECT p.job_id id FROM control_task_execution_plans p JOIN source_jobs s ON s.id=p.source_job_id
-          WHERE p.tenant_id=$1 AND p.project_id=$2), attempts AS (
-          SELECT a.id FROM control_attempts a JOIN execution_jobs j ON j.id=a.job_id WHERE a.tenant_id=$1), artifacts AS (
-          SELECT r.artifact_id id FROM control_native_artifact_receipts r JOIN execution_jobs j ON j.id=r.job_id WHERE r.tenant_id=$1),
-        review_targets AS (SELECT p.plan->>'targetId' id FROM control_native_review_plans p JOIN execution_jobs j ON j.id=p.job_id
-          WHERE p.tenant_id=$1 AND p.project_id=$2 AND jsonb_typeof(p.plan)='object' AND p.plan->>'targetId' IS NOT NULL),
-        gate_records AS (SELECT r.id FROM control_completion_gate_records r JOIN review_targets t ON t.id=r.id
-          WHERE r.tenant_id=$1 AND r.project_id=$2 UNION ALL SELECT child.id FROM control_completion_gate_records child
-          JOIN gate_records parent ON child.parent_id=parent.id WHERE child.tenant_id=$1 AND child.project_id=$2),
-        batches AS (SELECT DISTINCT i.batch_id id FROM work_batch_items i JOIN source_jobs s ON s.id=i.job_id
-          WHERE i.tenant_id=$1 AND i.project_id=$2), lineage AS (
-          SELECT $3::text id UNION SELECT id FROM source_jobs UNION SELECT id FROM execution_jobs UNION SELECT id FROM attempts
-          UNION SELECT id FROM artifacts UNION SELECT id FROM review_targets UNION SELECT id FROM gate_records
-          UNION SELECT id FROM batches)
-        SELECT e.id,e.actor_id,e.actor_type,e.action,e.target_type,e.target_id,e.safe_metadata,e.occurred_at,
-          e.chain_partition,e.chain_sequence,e.event_hash FROM audit_events e WHERE e.tenant_id=$1 AND e.project_id=$2
-          AND e.chain_version=1 AND e.action=ANY($5::text[])
-          AND (e.target_id IN(SELECT id FROM lineage) OR e.correlation_id IN(SELECT id FROM lineage))
-          ORDER BY e.chain_partition,e.chain_sequence LIMIT $4`,
-      [this.scope.tenantId,projectId,runId,limit+1,Object.keys(HISTORY_VOCABULARY)])).rows;
-      const audit=new AuditStore({query:tx.query.bind(tx),transaction:async work=>work(tx),
-        transactionWithPreCommitCheck:async(work,check)=>{const value=await work(tx);await check();return value;}});
-      for(const partition of new Set(rows.map(row=>row.chain_partition))){const verified=await audit.verify(this.scope.tenantId,partition);
-        if(!verified.valid)refuse("advance_conflict");}
-      const events=rows.slice(0,limit).flatMap(row=>{const kind=HISTORY_VOCABULARY[row.action as keyof typeof HISTORY_VOCABULARY];
-        if(!kind)return[];
-        const metadata=row.safe_metadata&&typeof row.safe_metadata==="object"?row.safe_metadata as Record<string,unknown>:{};
-        const reason=metadata.reasonCode;return[{id:row.id,kind,actorId:row.actor_id,actorType:row.actor_type,action:row.action,
-          targetType:row.target_type,targetId:row.target_id,safeReason:typeof reason==="string"&&/^[a-z0-9._:-]{1,120}$/.test(reason)?reason:null,
-          occurredAt:iso(row.occurred_at),chainPartition:row.chain_partition,chainSequence:safeInteger(row.chain_sequence),eventHash:row.event_hash}];});
-      return pipelineHistorySchemaV1.parse({runId,projectId,events,truncated:rows.length>limit,chainVerified:true,
-        observedAt:new Date(this.#now()).toISOString(),startsWork:false,grantsExecutionAuthority:false});
-    });
-  }
-
-  /** Authenticated owner projection for the private-web history route.  The
-   * server-only history method remains usable by coordinator composition, but
-   * an HTTP caller must prove both current project read access and the current
-   * tenant owner grant before any lineage is read. */
+  /** Authenticated owner projection, and the only history entrypoint: the
+   * caller must prove both current project read access and the current tenant
+   * owner grant before any lineage is read. */
   async historyForOwner(identity: VerifiedWebIdentity, projectId:string, runId:string, limit=100):Promise<PipelineHistoryV1>{
     return this.#owner.authenticated(identity, async (tx, actor) => {
       actor.require("tasks.read", projectId);
@@ -497,65 +454,24 @@ export class PipelineAdvanceServiceV1 {
         ON i.tenant_id=g.tenant_id AND i.id=g.identity_id WHERE g.tenant_id=$1 AND g.identity_id=$2 AND g.role_key='owner'
         AND g.revoked_at IS NULL AND i.state='active' FOR SHARE OF g,i`, [this.scope.tenantId,actor.id])).rows[0];
       if (!owner) throw new WebAccessError("access_denied");
-      return this.#historyInSession(tx,projectId,runId,limit);
+      return readPipelineHistoryInSessionV1(tx,this.scope.tenantId,projectId,runId,limit,this.#now());
     });
   }
 
-  async #historyInSession(tx:DatabaseSession,projectId:string,runId:string,limit:number):Promise<PipelineHistoryV1>{
-    if(!Number.isInteger(limit)||limit<1||limit>200)refuse("advance_conflict");
-    const run=(await tx.query<{id:string}>(`SELECT id FROM pipeline_runs WHERE tenant_id=$1 AND project_id=$2 AND id=$3`,
-      [this.scope.tenantId,projectId,runId])).rows[0];if(!run)refuse("advance_conflict");
-    const rows=(await tx.query<{id:string;actor_id:string;actor_type:"human"|"agent"|"worker"|"service"|"adapter";
-      action:string;target_type:string;target_id:string;safe_metadata:unknown;occurred_at:string|Date;chain_partition:string;
-      chain_sequence:number|string;event_hash:string}>(`WITH RECURSIVE source_jobs AS (
-        SELECT current_job_id id FROM pipeline_stage_runs WHERE tenant_id=$1 AND project_id=$2 AND pipeline_run_id=$3),
-      execution_jobs AS (SELECT p.job_id id FROM control_task_execution_plans p JOIN source_jobs s ON s.id=p.source_job_id
-        WHERE p.tenant_id=$1 AND p.project_id=$2), attempts AS (
-        SELECT a.id FROM control_attempts a JOIN execution_jobs j ON j.id=a.job_id WHERE a.tenant_id=$1), artifacts AS (
-        SELECT r.artifact_id id FROM control_native_artifact_receipts r JOIN execution_jobs j ON j.id=r.job_id WHERE r.tenant_id=$1),
-      review_targets AS (SELECT p.plan->>'targetId' id FROM control_native_review_plans p JOIN execution_jobs j ON j.id=p.job_id
-        WHERE p.tenant_id=$1 AND p.project_id=$2 AND jsonb_typeof(p.plan)='object' AND p.plan->>'targetId' IS NOT NULL),
-      gate_records AS (SELECT r.id FROM control_completion_gate_records r JOIN review_targets t ON t.id=r.id
-        WHERE r.tenant_id=$1 AND r.project_id=$2 UNION ALL SELECT child.id FROM control_completion_gate_records child
-        JOIN gate_records parent ON child.parent_id=parent.id WHERE child.tenant_id=$1 AND child.project_id=$2),
-      batches AS (SELECT DISTINCT i.batch_id id FROM work_batch_items i JOIN source_jobs s ON s.id=i.job_id
-        WHERE i.tenant_id=$1 AND i.project_id=$2), lineage AS (
-        SELECT $3::text id UNION SELECT id FROM source_jobs UNION SELECT id FROM execution_jobs UNION SELECT id FROM attempts
-        UNION SELECT id FROM artifacts UNION SELECT id FROM review_targets UNION SELECT id FROM gate_records
-        UNION SELECT id FROM batches)
-      SELECT e.id,e.actor_id,e.actor_type,e.action,e.target_type,e.target_id,e.safe_metadata,e.occurred_at,
-        e.chain_partition,e.chain_sequence,e.event_hash FROM audit_events e WHERE e.tenant_id=$1 AND e.project_id=$2
-        AND e.chain_version=1 AND e.action=ANY($5::text[])
-        AND (e.target_id IN(SELECT id FROM lineage) OR e.correlation_id IN(SELECT id FROM lineage))
-        ORDER BY e.chain_partition,e.chain_sequence LIMIT $4`,
-    [this.scope.tenantId,projectId,runId,limit+1,Object.keys(HISTORY_VOCABULARY)])).rows;
-    const audit=new AuditStore({query:tx.query.bind(tx),transaction:async work=>work(tx),
-      transactionWithPreCommitCheck:async(work,check)=>{const value=await work(tx);await check();return value;}});
-    for(const partition of new Set(rows.map(row=>row.chain_partition))){const verified=await audit.verify(this.scope.tenantId,partition);
-      if(!verified.valid)refuse("advance_conflict");}
-    const events=rows.slice(0,limit).flatMap(row=>{const kind=HISTORY_VOCABULARY[row.action as keyof typeof HISTORY_VOCABULARY];
-      if(!kind)return[];
-      const metadata=row.safe_metadata&&typeof row.safe_metadata==="object"?row.safe_metadata as Record<string,unknown>:{};
-      const reason=metadata.reasonCode;return[{id:row.id,kind,actorId:row.actor_id,actorType:row.actor_type,action:row.action,
-        targetType:row.target_type,targetId:row.target_id,safeReason:typeof reason==="string"&&/^[a-z0-9._:-]{1,120}$/.test(reason)?reason:null,
-        occurredAt:iso(row.occurred_at),chainPartition:row.chain_partition,chainSequence:safeInteger(row.chain_sequence),eventHash:row.event_hash}];});
-    return pipelineHistorySchemaV1.parse({runId,projectId,events,truncated:rows.length>limit,chainVerified:true,
-      observedAt:new Date(this.#now()).toISOString(),startsWork:false,grantsExecutionAuthority:false});
-  }
-
-  async #lockedSnapshot(tx:DatabaseSession,projectId:string,runId:string){
+  async #lockedSnapshot(tx:DatabaseSession,projectId:string,runId:string,lockTemplate:boolean){
     const run=(await tx.query<RunRow>(`SELECT id,project_id,request_id,template_id,template_version,template_digest,workflow_id,title,
       state,started_at,updated_at,completed_at,current_stage_ordinal,unattended,record_digest,auth_tag,version FROM pipeline_runs
       WHERE tenant_id=$1 AND project_id=$2 AND id=$3 FOR UPDATE`,[this.scope.tenantId,projectId,runId])).rows[0];
     if(!run)refuse("advance_conflict");
     const template=(await tx.query<TemplateRow>(`SELECT id,project_id,name,description,stages,max_stages,max_total_loops,
       may_advance_unattended,max_duration_seconds,record_digest,auth_tag,version,created_at,updated_at FROM pipeline_templates
-      WHERE tenant_id=$1 AND project_id=$2 AND id=$3 FOR UPDATE`,[this.scope.tenantId,projectId,run.template_id])).rows[0];
+      WHERE tenant_id=$1 AND project_id=$2 AND id=$3${lockTemplate ? " FOR UPDATE" : ""}`,
+    [this.scope.tenantId,projectId,run.template_id])).rows[0];
     const stages=(await tx.query<StageRow>(`SELECT project_id,pipeline_run_id,stage_ordinal,stage_kind,role,current_job_id,worker_id,
       worker_kind,node_id,selection_key,model,effort,provider,profile,current_attempt_id,current_lease_id,state,max_loops,
       handoff_from_result_digest,allowed_paths,maximum_changed_files,maximum_changed_bytes,
       signoff_review_id,started_at,finished_at,record_digest,auth_tag,version FROM pipeline_stage_runs
-      WHERE tenant_id=$1 AND project_id=$2 AND pipeline_run_id=$3 ORDER BY stage_ordinal FOR UPDATE`,
+      WHERE tenant_id=$1 AND project_id=$2 AND pipeline_run_id=$3 ORDER BY stage_ordinal`,
     [this.scope.tenantId,projectId,runId])).rows;
     if(!template||stages.length!==3||stages.some((value,index)=>Number(value.stage_ordinal)!==index))refuse("pipeline_integrity_failed");
     return{run,template,stages};
@@ -607,7 +523,7 @@ export class PipelineAdvanceServiceV1 {
     stage_ordinal,source_job_id,execution_job_id,attempt_id,queue_id,selection_digest,template_version,template_digest,run_version,
     run_digest,policy_id,policy_version,policy_digest,delegation_receipt_id,delegation_receipt_digest,delegation_task_units,
     delegation_cost_microusd,delegation_cost_evidence_digest,request_digest,receipt_digest,
-    auth_tag,advanced_at FROM pipeline_advance_receipts WHERE tenant_id=$1 AND pipeline_run_id=$2 AND stage_ordinal=$3 FOR SHARE`,
+    auth_tag,advanced_at FROM pipeline_advance_receipts WHERE tenant_id=$1 AND pipeline_run_id=$2 AND stage_ordinal=$3`,
     [this.scope.tenantId,runId,ordinal])).rows[0];}
   #replayReceipt(row:AdvanceReceiptRow,selection:PipelineAdvanceSelectionV1,policyId:string){const material={id:row.id,
     tenantId:this.scope.tenantId,projectId:row.project_id,pipelineRunId:row.pipeline_run_id,stageOrdinal:Number(row.stage_ordinal),
@@ -627,3 +543,56 @@ export class PipelineAdvanceServiceV1 {
   #now(){const now=this.clock();if(!Number.isSafeInteger(now)||now<0)refuse("deadline_reached");return now;}
   #assertInstall(){if(!this.#enabled()||!this.#capability)refuse("unattended_disabled");}
 }
+
+/** The lineage projection for one pipeline run inside the caller's
+ * transaction. It checks no identity: the only production caller is
+ * `historyForOwner`, which authenticates the owner first. */
+export async function readPipelineHistoryInSessionV1(tx:DatabaseSession,tenantId:string,projectId:string,runId:string,
+limit:number,observedAt:number):Promise<PipelineHistoryV1>{
+  if(!Number.isInteger(limit)||limit<1||limit>200)refuse("advance_conflict");
+  const run=(await tx.query<{id:string}>(`SELECT id FROM pipeline_runs WHERE tenant_id=$1 AND project_id=$2 AND id=$3`,
+    [tenantId,projectId,runId])).rows[0];if(!run)refuse("advance_conflict");
+  const rows=(await tx.query<{id:string;actor_id:string;actor_type:"human"|"agent"|"worker"|"service"|"adapter";
+    action:string;target_type:string;target_id:string;safe_metadata:unknown;occurred_at:string|Date;chain_partition:string;
+    chain_sequence:number|string;event_hash:string}>(`WITH RECURSIVE source_jobs AS (
+      SELECT current_job_id id FROM pipeline_stage_runs WHERE tenant_id=$1 AND project_id=$2 AND pipeline_run_id=$3),
+    execution_jobs AS (SELECT p.job_id id FROM control_task_execution_plans p JOIN source_jobs s ON s.id=p.source_job_id
+      WHERE p.tenant_id=$1 AND p.project_id=$2), attempts AS (
+      SELECT a.id FROM control_attempts a JOIN execution_jobs j ON j.id=a.job_id WHERE a.tenant_id=$1), artifacts AS (
+      SELECT r.artifact_id id FROM control_native_artifact_receipts r JOIN execution_jobs j ON j.id=r.job_id WHERE r.tenant_id=$1),
+    review_targets AS (SELECT p.plan->>'targetId' id FROM control_native_review_plans p JOIN execution_jobs j ON j.id=p.job_id
+      WHERE p.tenant_id=$1 AND p.project_id=$2 AND jsonb_typeof(p.plan)='object' AND p.plan->>'targetId' IS NOT NULL),
+    gate_records AS (SELECT r.id FROM control_completion_gate_records r JOIN review_targets t ON t.id=r.id
+      WHERE r.tenant_id=$1 AND r.project_id=$2 UNION ALL SELECT child.id FROM control_completion_gate_records child
+      JOIN gate_records parent ON child.parent_id=parent.id WHERE child.tenant_id=$1 AND child.project_id=$2),
+    batches AS (SELECT DISTINCT i.batch_id id FROM work_batch_items i JOIN source_jobs s ON s.id=i.job_id
+      WHERE i.tenant_id=$1 AND i.project_id=$2), lineage AS (
+      SELECT $3::text id UNION SELECT id FROM source_jobs UNION SELECT id FROM execution_jobs UNION SELECT id FROM attempts
+      UNION SELECT id FROM artifacts UNION SELECT id FROM review_targets UNION SELECT id FROM gate_records
+      UNION SELECT id FROM batches)
+    SELECT e.id,e.actor_id,e.actor_type,e.action,e.target_type,e.target_id,e.safe_metadata,e.occurred_at,
+      e.chain_partition,e.chain_sequence,e.event_hash FROM audit_events e WHERE e.tenant_id=$1 AND e.project_id=$2
+      AND e.chain_version=1 AND e.action=ANY($5::text[])
+      AND (e.target_id IN(SELECT id FROM lineage) OR e.correlation_id IN(SELECT id FROM lineage))
+      ORDER BY e.chain_partition,e.chain_sequence LIMIT $4`,
+  [tenantId,projectId,runId,limit+1,Object.keys(HISTORY_VOCABULARY)])).rows;
+  const audit=new AuditStore({query:tx.query.bind(tx),transaction:async work=>work(tx),
+    transactionWithPreCommitCheck:async(work,check)=>{const value=await work(tx);await check();return value;}});
+  for(const partition of new Set(rows.map(row=>row.chain_partition))){const verified=await audit.verify(tenantId,partition);
+    if(!verified.valid)refuse("advance_conflict");}
+  const events=rows.slice(0,limit).flatMap(row=>{const kind=HISTORY_VOCABULARY[row.action as keyof typeof HISTORY_VOCABULARY];
+    if(!kind)return[];
+    const metadata=row.safe_metadata&&typeof row.safe_metadata==="object"?row.safe_metadata as Record<string,unknown>:{};
+    const reason=metadata.reasonCode;return[{id:row.id,kind,actorId:row.actor_id,actorType:row.actor_type,action:row.action,
+      targetType:row.target_type,targetId:row.target_id,safeReason:typeof reason==="string"&&/^[a-z0-9._:-]{1,120}$/.test(reason)?reason:null,
+      occurredAt:iso(row.occurred_at),chainPartition:row.chain_partition,chainSequence:safeInteger(row.chain_sequence),eventHash:row.event_hash}];});
+  return pipelineHistorySchemaV1.parse({runId,projectId,events,truncated:rows.length>limit,chainVerified:true,
+    observedAt:new Date(observedAt).toISOString(),startsWork:false,grantsExecutionAuthority:false});
+}
+
+// Row locks need UPDATE privilege. The run lock is the one serialization
+// point: every consent and every advance takes it first, so the append-only
+// consent and receipt rows it guards need no lock of their own. Stage rows
+// have no application writer (0108's trigger freezes their selection), and a
+// template changes only through the owner consent that holds `lockTemplate`;
+// the coordinator reads an activated template, which never changes again.

@@ -105,6 +105,28 @@ CREATE TRIGGER pipeline_advance_receipts_no_truncate BEFORE TRUNCATE ON public.p
 
 REVOKE ALL ON pipeline_unattended_transitions, pipeline_advance_receipts FROM PUBLIC;
 
+-- No shared login is granted either table. If one ever is, the work-intake
+-- session must still see and write only its bound tenant, as 0104 and 0108
+-- confine their tables. Every other role keeps its grants.
+ALTER TABLE pipeline_unattended_transitions ENABLE ROW LEVEL SECURITY;
+CREATE POLICY pipeline_unattended_transitions_existing_access ON pipeline_unattended_transitions
+  AS PERMISSIVE FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY pipeline_unattended_transitions_work_intake_scope ON pipeline_unattended_transitions
+  AS RESTRICTIVE FOR ALL
+  USING (NOT public.is_work_intake_session() OR
+    pipeline_unattended_transitions.tenant_id=(SELECT b.tenant_id FROM public.work_intake_tenant_binding b))
+  WITH CHECK (NOT public.is_work_intake_session() OR
+    pipeline_unattended_transitions.tenant_id=(SELECT b.tenant_id FROM public.work_intake_tenant_binding b));
+ALTER TABLE pipeline_advance_receipts ENABLE ROW LEVEL SECURITY;
+CREATE POLICY pipeline_advance_receipts_existing_access ON pipeline_advance_receipts
+  AS PERMISSIVE FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY pipeline_advance_receipts_work_intake_scope ON pipeline_advance_receipts
+  AS RESTRICTIVE FOR ALL
+  USING (NOT public.is_work_intake_session() OR
+    pipeline_advance_receipts.tenant_id=(SELECT b.tenant_id FROM public.work_intake_tenant_binding b))
+  WITH CHECK (NOT public.is_work_intake_session() OR
+    pipeline_advance_receipts.tenant_id=(SELECT b.tenant_id FROM public.work_intake_tenant_binding b));
+
 -- Existing installations already have these NOLOGIN roles. Keep the upgrade
 -- grant as narrow as the fresh-install role files; absence is valid while an
 -- operator is still applying migrations before role provisioning.

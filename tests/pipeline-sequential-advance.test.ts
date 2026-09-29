@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 import type { DatabaseClient, DatabaseSession, QueryResult } from "../src/persistence/database";
 import { LinearPipelineServiceV1, PipelineAdvanceErrorV1, PipelineAdvanceServiceV1, ProductionPipelineAdvanceAuthorityV1,
+  readPipelineHistoryInSessionV1,
   ProductionPipelineAdvanceCapabilityV1,
   type PipelineAdvanceCapabilityV1 } from "../src/pipelines/v1";
 import type { PipelineStageResolutionV1 } from "../src/pipelines/v1";
@@ -76,6 +77,7 @@ function fixture(overrides:{unattended?:boolean;tamperStage?:boolean;route?:stri
   startedAt?:number|null;updatedAt?:number;
   states?: PipelineStageResolutionV1["state"][];
   disableDuringDispatch?:boolean;coordinatorDeadline?:number;advanceClockBeforePrecommit?:number;staleConsent?:boolean;
+  tamperConsent?:boolean;
   driftAfterSweepSelection?:boolean}={}){
   const rows=signedRows(overrides),policy={id:"policy:test",project_id:"project:test",coordinator_identity_id:"agent:lead",
     coordinator_version:1,owner_identity_id:"identity:owner",state:"active",version:1,policy_digest:digest("p"),allowed_actions:["tasks.assign"],
@@ -92,7 +94,8 @@ function fixture(overrides:{unattended?:boolean;tamperStage?:boolean;route?:stri
     policy_id:consentMaterial.policyId,policy_version:1,policy_digest:consentMaterial.policyDigest,
     owner_identity_id:consentMaterial.ownerIdentityId,enabled:true,idempotency_key:consentMaterial.idempotencyKey,
     request_digest:consentMaterial.requestDigest,transition_digest:sha256Digest(consentMaterial),
-    auth_tag:hmacSha256Tag(key,{purpose:"pipeline-unattended-transition/v1",record:consentMaterial}),occurred_at:iso()};
+    auth_tag:overrides.tamperConsent?`hmac-sha256:${"0".repeat(64)}`
+      :hmacSha256Tag(key,{purpose:"pipeline-unattended-transition/v1",record:consentMaterial}),occurred_at:iso()};
   let states=overrides.states??["eligible","terminal_failure","terminal_failure"],clock=at;
   const query:DatabaseSession["query"]=async<T>(sql:string,params:unknown[]=[]):Promise<QueryResult<T>>=>{
     if(sql.includes("FROM pipeline_runs r JOIN LATERAL")){const selected={...consent};if(overrides.driftAfterSweepSelection){
@@ -101,12 +104,12 @@ function fixture(overrides:{unattended?:boolean;tamperStage?:boolean;route?:stri
       return result([selected] as T[]);}
     if(sql.startsWith("SELECT project_id FROM pipeline_runs"))return result([{project_id:"project:test"}] as T[]);
     if(sql.includes("FROM pipeline_runs")&&sql.includes("FOR UPDATE"))return result([rows.run] as T[]);
-    if(sql.includes("FROM pipeline_templates")&&sql.includes("FOR UPDATE"))return result([rows.template] as T[]);
-    if(sql.includes("FROM pipeline_stage_runs")&&sql.includes("ORDER BY stage_ordinal FOR UPDATE"))return result(rows.stages as T[]);
+    if(sql.includes("FROM pipeline_templates"))return result([rows.template] as T[]);
+    if(sql.includes("FROM pipeline_stage_runs")&&sql.includes("ORDER BY stage_ordinal"))return result(rows.stages as T[]);
     if(sql.includes("FROM pipeline_unattended_transitions")&&sql.includes("ORDER BY run_version"))return result([consent] as T[]);
     if(sql.startsWith("UPDATE pipeline_runs SET unattended_last_swept_at"))return result([] as T[]);
     if(sql.includes("FROM projects p"))return result([{lifecycle:"active"}] as T[]);
-    if(sql.includes("FROM pipeline_advance_receipts")&&sql.includes("FOR SHARE"))return result((receipts.has(Number(params[2]))?[receipts.get(Number(params[2]))]:[]) as T[]);
+    if(sql.includes("FROM pipeline_advance_receipts"))return result((receipts.has(Number(params[2]))?[receipts.get(Number(params[2]))]:[]) as T[]);
     if(sql.includes("FROM control_jobs")){const id=String(params[2]),ordinal=Number(id.split(":").at(-1)),stage=rows.stages[ordinal]!;
       const value=job(id);value.authority.allowedExecutor=stage.worker_id;value.authority.digest=computeAuthorityDigest(value.authority);
       return result([{payload:value,project_id:"project:test",workflow_id:"workflow:test",pipeline_run_id:"pipeline-run:test",
@@ -176,6 +179,11 @@ test("template and run unattended consent are both required",async()=>{const f=f
 test("a stale authenticated owner consent refuses before assignment or queue effects",async()=>{const f=fixture({staleConsent:true});
   await assert.rejects(f.service.advance("pipeline-run:test","policy:test"),
     (error:unknown)=>error instanceof PipelineAdvanceErrorV1&&error.safeReason==="unattended_not_authorized");assert.equal(f.effects,0);});
+test("a forged owner consent tag refuses advance before assignment or queue effects",async()=>{
+  const f=fixture({tamperConsent:true});
+  await assert.rejects(f.service.advance("pipeline-run:test","policy:test"),
+    (error:unknown)=>error instanceof PipelineAdvanceErrorV1&&error.safeReason==="pipeline_integrity_failed");
+  assert.equal(f.effects,0);assert.equal(f.receipts.size,0);});
 test("advance cycle refuses a replaced owner transition selected before its transaction",async()=>{
   const f=fixture({driftAfterSweepSelection:true});const page=await f.service.advanceReady();
   assert.equal(page.checked,1);assert.equal(page.advanced.length,0);assert.equal(f.effects,0);});
@@ -287,6 +295,13 @@ test("0109 owner transition authenticates and persists both unattended consents 
   const service=new PipelineAdvanceServiceV1(f.client,{tenantId:"tenant:web",workspaceId:"workspace:web"},key,{},()=>webNow);
   const command={runId:run.runId,templateId:saved.templateId,policyId:"policy:advance",enabled:true,
     expectedRunVersion:1,expectedTemplateVersion:1};
+  // Without a live owner grant the consent is refused and nothing is written.
+  await f.db.query("UPDATE control_role_grants SET revoked_at=$1 WHERE identity_id=$2",
+    [new Date(webNow-1).toISOString(),"identity:web"]);
+  await assert.rejects(service.setUnattended(f.identity,f.project.projectId,command,"pipeline-unattended-revoked-0001"),
+    /access_denied/u);
+  assert.equal((await f.db.query<{count:number}>("SELECT count(*)::int count FROM pipeline_unattended_transitions")).rows[0]!.count,0);
+  await f.db.query("UPDATE control_role_grants SET revoked_at=NULL WHERE identity_id=$1",["identity:web"]);
   const first=await service.setUnattended(f.identity,f.project.projectId,command,"pipeline-unattended-enable-0001");
   const replay=await service.setUnattended(f.identity,f.project.projectId,command,"pipeline-unattended-enable-0001");
   assert.equal(first.replayed,false);assert.equal(replay.replayed,true);assert.equal(first.occurredAt,replay.occurredAt);
@@ -507,11 +522,12 @@ test("history filters before its bound and maps the complete explicit lifecycle 
     if(sql.includes("SELECT head_hash,event_count FROM control_audit_chain_heads"))return result([{head_hash:previous,event_count:stored.length}] as T[]);
     throw new Error(`unexpected SQL: ${sql}`);};
   const db:DatabaseClient={query,transaction:async work=>work({query}),transactionWithPreCommitCheck:async(work,check)=>{const value=await work({query});await check();return value;}};
-  const service=new PipelineAdvanceServiceV1(db,{tenantId:"tenant:test",workspaceId:"workspace:test"},key,{},()=>at);
-  const bounded=await service.history("project:test","pipeline-run:test",6);
+  const history=(limit:number)=>db.transaction(tx=>readPipelineHistoryInSessionV1(tx,"tenant:test","project:test",
+    "pipeline-run:test",limit,at));
+  const bounded=await history(6);
   assert.equal(bounded.chainVerified,true);assert.equal(bounded.truncated,true);assert.deepEqual(bounded.events.map(event=>event.kind),
     ["proposed","revised","approved","rejected","partially_approved","revision_planned"]);
-  const complete=await service.history("project:test","pipeline-run:test",30);
+  const complete=await history(30);
   assert.equal(complete.truncated,false);assert.deepEqual(complete.events.map(event=>event.kind),
     ["proposed","revised","approved","rejected","partially_approved","revision_planned","ran","assignment_expired",
       "delivery_prepared","delivery_staged","transmission_requested","delivery_received","queue_recovered","delivery_staged",
