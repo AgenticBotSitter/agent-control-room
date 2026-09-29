@@ -5,6 +5,7 @@ import { deliverOwnerPushV1, ownerPushPayloadIsMinimalV1, ownerPushPayloadV1, pa
 import { renderToStaticMarkup } from "react-dom/server";
 import { createElement } from "react";
 import { OwnerWebPushSettings } from "../private-app/app/owner-web-push";
+import { PostgresOwnerPushStoreV1 } from "../src/web-push/v1/postgres-store";
 
 const subscription = Object.freeze({ id: "push:a", tenantId: "tenant:test", endpoint: "https://push.example.invalid/subscription",
   p256dh: "A".repeat(87), auth: "B".repeat(22), expiresAt: null });
@@ -50,4 +51,12 @@ test("phone notification controls are owner-facing labelled buttons", () => {
   const html = renderToStaticMarkup(createElement(OwnerWebPushSettings));
   assert.match(html, /Phone notifications/); assert.match(html, /Subscribe this browser/);
   assert.match(html, /Unsubscribe this browser/); assert.match(html, /Send test/);
+});
+
+test("subscription reads prune expired endpoints before returning send targets", async () => {
+  const statements: string[] = [];
+  const db = { async query(sql: string) { statements.push(sql); return { rows: [] }; } };
+  await new PostgresOwnerPushStoreV1(db as never).list("tenant:test");
+  assert.match(statements[0]!, /DELETE FROM owner_web_push_subscriptions/);
+  assert.match(statements[0]!, /expires_at<=now\(\)/);
 });
