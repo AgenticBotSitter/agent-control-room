@@ -203,20 +203,27 @@ test("ordered upgrade applies a pending suffix in two phases", needsPg, async ()
 
 // A database already at main applied every migration up to the one before the
 // owner-approval migration existed. Upgrading it must append the new
-// migration after that row, never slot it in before an applied order.
+// migration after that row, never slot it in before an applied order. This
+// checkout may itself have later migrations stacked on top of owner-approval
+// (from a branch merged in after it landed on main); the "upgrade" here
+// targets a second stage frozen at owner-approval, not this checkout's own
+// tip, so the test still exercises exactly the one-migration append it names.
 test("upgrade from main's applied ledger appends only the owner-approval migration", needsPg, async () => {
   const stage = await mkdtemp(join(tmpdir(), "cr-pg63main-"));
+  const upgradeStage = await mkdtemp(join(tmpdir(), "cr-pg63owner-"));
   try {
     for (const dir of ["deploy/postgres", "db/migrations", "db/roles", "db/setup"])
       await mkdir(join(stage, dir), { recursive: true });
     const migrations = (await readdir(join(ROOT, "db/migrations"))).filter(name => name.endsWith(".sql")).sort();
     const ownerApproval = migrations.filter(name => name.endsWith("_work_batch_owner_approval.sql"));
     assert.equal(ownerApproval.length, 1);
-    assert.equal(ownerApproval[0], migrations.at(-1));
-    const mainLast = migrations.at(-2);
-    const mainLastOrder = migrations.length - 1;
-    const ownerApprovalOrder = migrations.length;
-    for (const file of migrations.filter(name => name !== ownerApproval[0]))
+    const ownerApprovalIndex = migrations.indexOf(ownerApproval[0]);
+    const mainLast = migrations[ownerApprovalIndex - 1];
+    const mainLastOrder = ownerApprovalIndex;
+    const ownerApprovalOrder = ownerApprovalIndex + 1;
+    // "At main": every migration strictly before owner-approval -- excluding it
+    // and excluding anything that landed after it on this checkout.
+    for (const file of migrations.slice(0, ownerApprovalIndex))
       await cp(join(ROOT, "db/migrations", file), join(stage, "db/migrations", file));
     for (const file of ["production_roles.sql", "production_provision.sql"])
       await cp(join(ROOT, "db/roles", file), join(stage, "db/roles", file));
@@ -231,6 +238,19 @@ test("upgrade from main's applied ledger appends only the owner-approval migrati
     const ledgerPath = join(stage, "deploy/postgres/migration-ledger.json");
     await writeFile(ledgerPath, JSON.stringify({ version: 1, digest: ledgerDigest(entries), entries }));
 
+    // The upgrade target: "at main" plus exactly the owner-approval migration,
+    // still excluding anything stacked on top of it on this checkout.
+    for (const dir of ["deploy/postgres", "db/migrations", "db/roles", "db/setup"])
+      await mkdir(join(upgradeStage, dir), { recursive: true });
+    for (const file of migrations.slice(0, ownerApprovalIndex + 1))
+      await cp(join(ROOT, "db/migrations", file), join(upgradeStage, "db/migrations", file));
+    for (const file of ["production_roles.sql", "production_provision.sql", "production_table_grants.sql"])
+      await cp(join(ROOT, "db/roles", file), join(upgradeStage, "db/roles", file));
+    await cp(join(ROOT, "db/setup/production_migration_ledger.sql"), join(upgradeStage, "db/setup/production_migration_ledger.sql"));
+    const upgradeEntries = await collectLedgerEntries(upgradeStage);
+    await writeFile(join(upgradeStage, "deploy/postgres/migration-ledger.json"),
+      JSON.stringify({ version: 1, digest: ledgerDigest(upgradeEntries), entries: upgradeEntries }));
+
     await freshDatabase("cr_prod_upgrade_main");
     const db = target("cr_prod_upgrade_main");
     const atMain = await applyMigrations({ target: db, bootstrapTarget: bootstrapTarget("cr_prod_upgrade_main"),
@@ -242,7 +262,7 @@ test("upgrade from main's applied ledger appends only the owner-approval migrati
     assert.equal((await query(db, "SELECT to_regclass('public.work_batch_items') AS present")).rows[0].present, null);
 
     const upgraded = await applyMigrations({ target: db, bootstrapTarget: bootstrapTarget("cr_prod_upgrade_main"),
-      migrateTarget: migrateTarget("cr_prod_upgrade_main"), rootDir: ROOT });
+      migrateTarget: migrateTarget("cr_prod_upgrade_main"), rootDir: upgradeStage });
     assert.deepEqual(upgraded.applied.map(entry => [entry.file, entry.order]),
       [[`db/migrations/${ownerApproval[0]}`, ownerApprovalOrder]]);
     assert.equal(upgraded.grants, "applied");
@@ -261,11 +281,12 @@ test("upgrade from main's applied ledger appends only the owner-approval migrati
     { intake_items: true, intake_inbox: true, reader_items: false });
 
     const rerun = await applyMigrations({ target: db, bootstrapTarget: bootstrapTarget("cr_prod_upgrade_main"),
-      migrateTarget: migrateTarget("cr_prod_upgrade_main"), rootDir: ROOT });
+      migrateTarget: migrateTarget("cr_prod_upgrade_main"), rootDir: upgradeStage });
     assert.equal(rerun.noOp, true);
     assert.equal(rerun.grants, "applied");
   } finally {
     await rm(stage, { recursive: true, force: true });
+    await rm(upgradeStage, { recursive: true, force: true });
   }
 });
 
