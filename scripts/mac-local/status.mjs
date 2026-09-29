@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { alive, hostCommand, protectedRootFromArguments, readPid, recordedHostCommand,
   runtimePaths, taskHostCommand } from "./stack.mjs";
 import { serviceInstalled, serviceStatus } from "./service.mjs";
-import { readHostState } from "./task-host-supervisor.mjs";
+import { readHostState, readRecoverableHostState } from "./task-host-supervisor.mjs";
 
 const portOpen = port => new Promise(resolve => {
   const socket = connect({ host: "127.0.0.1", port });
@@ -22,7 +22,9 @@ export async function inspectMacLocalHost(root, port, runtime = {}) {
     { protectedRoot: root, logPath: paths.hostLog, env: runtime.env ?? process.env }) : undefined;
   const recordedPid = await (runtime.readPid ?? readPid)(paths.hostPid);
   const pid = service?.pid ?? recordedPid;
-  const state = await (runtime.readHostState ?? readHostState)(paths.hostState);
+  const { state, unreadable } = await readRecoverableHostState(paths.hostState,
+    runtime.readHostState ?? readHostState);
+  const stateWarning = unreadable ? "task-host-state.json is unreadable and was ignored" : undefined;
   const exactAlive = runtime.alive ?? alive;
   const processAlive = Boolean(pid && state?.state === "running" && state.pid === pid
     && exactAlive(pid, hostCommand(root)));
@@ -30,15 +32,17 @@ export async function inspectMacLocalHost(root, port, runtime = {}) {
     && exactAlive(state.childPid, taskHostCommand(root)));
   const legacyAlive = Boolean(pid && !state && recordedHostCommand(pid, root, exactAlive));
   const serving = (childAlive || legacyAlive) && await (runtime.portOpen ?? portOpen)(port);
-  if (serving) return Object.freeze({ status: "running", exitCode: 0, pid, service });
+  if (serving) return Object.freeze({ status: "running", exitCode: 0, pid, service,
+    ...(stateWarning ? { stateWarning } : {}) });
   if (legacyAlive) return Object.freeze({ status: "unhealthy", exitCode: 1, pid, service,
-    reason: "recorded host process is running but not serving" });
+    reason: "recorded host process is running but not serving", ...(stateWarning ? { stateWarning } : {}) });
   if (processAlive) return Object.freeze({ status: "unhealthy", exitCode: 1, pid, service,
-    reason: childAlive ? "host process is running but not serving" : "host supervisor is running but its task host is not" });
+    reason: childAlive ? "host process is running but not serving" : "host supervisor is running but its task host is not",
+    ...(stateWarning ? { stateWarning } : {}) });
   const reason = state?.state === "stopped" && typeof state.reason === "string" ? state.reason
     : state?.state === "running" ? "its supervisor disappeared without recording an exit" : "no stop reason was recorded";
   return Object.freeze({ status: installed && service?.loaded && service.enabled !== false ? "dead/restarting" : "dead",
-    exitCode: 1, service, reason: `host stopped because ${reason}` });
+    exitCode: 1, service, reason: `host stopped because ${reason}`, ...(stateWarning ? { stateWarning } : {}) });
 }
 
 async function main() {
@@ -49,8 +53,9 @@ async function main() {
     throw new Error("mac_local_status_configuration_invalid");
   const result = await inspectMacLocalHost(root, configuration.port);
   const service = result.service ? ` service=${result.service.state}` : " service=not_installed";
-  if (result.status === "running") console.log(`mac:status running pid=${result.pid}${service}`);
-  else console.error(`mac:status ${result.status}: ${result.reason}${service}`);
+  const warning = result.stateWarning ? ` warning=${result.stateWarning}` : "";
+  if (result.status === "running") console.log(`mac:status running pid=${result.pid}${service}${warning}`);
+  else console.error(`mac:status ${result.status}: ${result.reason}${service}${warning}`);
   process.exitCode = result.exitCode;
 }
 

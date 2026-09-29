@@ -20,6 +20,7 @@ const repoRoot = join(import.meta.dirname, "..");
 const supervisorModule = pathToFileURL(join(repoRoot, "scripts/mac-local/task-host-supervisor.mjs")).href;
 const taskHostModule = pathToFileURL(join(repoRoot, "scripts/mac-local/start-task-host.mjs")).href;
 const upModule = pathToFileURL(join(repoRoot, "scripts/mac-local/up.mjs")).href;
+const statusModule = join(repoRoot, "scripts/mac-local/status.mjs");
 
 /** The accepting connection handler every fixture server shares. The "error" guard is load-bearing:
  * a readiness probe that connects and destroys its socket sends an RST on macOS, which reaches the
@@ -393,6 +394,57 @@ test("rotation refuses a symlink and a loose existing log", async t => {
   await assert.rejects(rotateHostLog(path, 1, 2), /host_log_invalid/u);
 });
 
+test("an unsafe backup never causes replacement of the private current log", async t => {
+  const root = await rootFixture(t), path = runtimePaths(root).hostLog;
+  await writeFile(path, "private current log\n", { mode: 0o600 });
+  await writeFile(`${path}.1`, "loose backup\n", { mode: 0o644 });
+  await chmod(`${path}.1`, 0o644);
+  await assert.rejects(RotatingHostLog.open(path, 1, 2), /host_log_invalid/u);
+  assert.equal(await readFile(path, "utf8"), "private current log\n",
+    "only an unsafe current log may be replaced during recovery");
+});
+
+test("the real supervisor replaces a restored loose log instead of wedging recovery", async t => {
+  for (const stateShape of ["no state", "loose state"]) {
+    await t.test(stateShape, async t => {
+      const root = await rootFixture(t), paths = runtimePaths(root);
+      await writeFile(paths.hostLog, "restored log from backup\n", { mode: 0o644 });
+      await chmod(paths.hostLog, 0o644);
+      if (stateShape === "loose state") {
+        await writeFile(paths.hostState, `${JSON.stringify({ state: "stopped", reason: "exit code 0",
+          at: "2026-09-27T00:00:00.000Z" })}\n`, { mode: 0o644 });
+        await chmod(paths.hostState, 0o644);
+      }
+      const supervisor = startRealSupervisor(root, ["-e", "process.exit(23)"]);
+      t.after(async () => { if (pidAlive(supervisor.pid)) supervisor.kill("SIGKILL"); });
+      const result = await runToCompletion(supervisor);
+      assert.equal(result.code, 1);
+      const log = await readFile(paths.hostLog, "utf8");
+      assert.doesNotMatch(log, /restored log from backup/u, "the unsafe log must not be appended to");
+      assert.match(log, /replaced unsafe existing host log with a new private log/u);
+      assert.match(log, /host stopped because exit code 23/u);
+      if (stateShape === "loose state") assert.match(log, /state file .* could not be read/u);
+      assert.equal((await stat(paths.hostLog)).mode & 0o777, 0o600);
+      assert.deepEqual(await readHostState(paths.hostState).then(state => ({ state: state.state, reason: state.reason })),
+        { state: "stopped", reason: "exit code 23" });
+    });
+  }
+});
+
+test("the supervisor entry point reports an unopenable log on stderr and still records stopped state", async t => {
+  const root = await rootFixture(t), paths = runtimePaths(root);
+  await mkdir(paths.hostLog);
+  const supervisor = spawn(process.execPath, [join(repoRoot, "scripts/mac-local/task-host-supervisor.mjs"),
+    "--protected-root", root], { cwd: repoRoot, stdio: ["ignore", "pipe", "pipe"], env: process.env });
+  t.after(async () => { if (pidAlive(supervisor.pid)) supervisor.kill("SIGKILL"); });
+  const result = await runToCompletion(supervisor);
+  assert.equal(result.code, 1);
+  assert.match(result.output, /host stopped because supervisor error/u,
+    "launchd's stderr path must retain the failure when the rotating log cannot open");
+  assert.deepEqual(await readHostState(paths.hostState).then(state => ({ state: state.state, reason: state.reason })),
+    { state: "stopped", reason: "supervisor error" });
+});
+
 test("mac:status distinguishes serving, unhealthy, and dead/restarting hosts", async () => {
   const root = "/protected/root";
   const base = {
@@ -414,6 +466,25 @@ test("mac:status distinguishes serving, unhealthy, and dead/restarting hosts", a
   const dead = await inspectMacLocalHost(root, 3210, { ...base, alive: () => false, portOpen: async () => false });
   assert.equal(dead.status, "dead/restarting");
   assert.equal(dead.reason, "host stopped because its supervisor disappeared without recording an exit");
+});
+
+test("the real mac:status reports dead rather than failing on a restored loose state file", async t => {
+  const root = await rootFixture(t), paths = runtimePaths(root);
+  await mkdir(join(root, "config"), { recursive: true });
+  await writeFile(join(root, "config/mac-local.json"), `${JSON.stringify({ port: await unusedPort() })}\n`);
+  await writeFile(paths.hostState, `${JSON.stringify({ state: "stopped", reason: "exit code 9",
+    at: "2026-09-27T00:00:00.000Z" })}\n`, { mode: 0o644 });
+  await chmod(paths.hostState, 0o644);
+  const status = spawn(process.execPath, [statusModule, "--protected-root", root], {
+    cwd: repoRoot, stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, HOME: join(root, "home") },
+  });
+  t.after(async () => { if (pidAlive(status.pid)) status.kill("SIGKILL"); });
+  const result = await runToCompletion(status);
+  assert.equal(result.code, 1);
+  assert.match(result.output, /mac:status dead: host stopped because no stop reason was recorded/u);
+  assert.match(result.output, /task-host-state\.json is unreadable and was ignored/u);
+  assert.doesNotMatch(result.output, /mac:status FAILED|mac_local_host_state_invalid/u,
+    "an unsafe diagnostic file must not turn health reporting into an internal failure");
 });
 
 test("mac:status recognizes a serving legacy host with no supervisor state", async t => {

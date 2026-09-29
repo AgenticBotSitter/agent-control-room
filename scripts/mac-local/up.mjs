@@ -14,7 +14,7 @@ import { alive, hostCommand, protectedRootFromArguments, readPid, repoRoot, runt
   stopRecorded, stopRecordedHost, taskHostCommand } from "./stack.mjs";
 import { installOrRefreshService, plistPath, serviceInstalled, servicePid, serviceUpToDate } from "./service.mjs";
 import { captureMacLocalBuildSourceV1, macLocalBuildSourceV1 } from "./build-source.mjs";
-import { readHostState } from "./task-host-supervisor.mjs";
+import { readRecoverableHostState } from "./task-host-supervisor.mjs";
 
 const PROVIDER_MODULE = "dist-vps/server/macLocalDefaultTaskProvider.js";
 const BUILD_SOURCE = "dist-vps/server/mac-local-build-source.json";
@@ -43,18 +43,19 @@ const fail = (line, code = 1) => { console.error(`mac:up FAILED ${line}`); proce
  * a recovery situation, and the checks below it are the ones that can act on it, so the reason is
  * dropped, the owner is told what to clear and why, and the preflight continues. */
 export async function readPreviousHostState(path) {
-  try { return await readHostState(path); }
-  catch (error) {
+  const { state, unreadable } = await readRecoverableHostState(path);
+  if (unreadable) {
     const name = path.split("/").slice(-2).join("/");
     // The cause is named in plain words, not by its internal identifier: the owner needs to know
     // the file is not private enough to read, and an identifier is not a thing they can act on.
-    const why = error instanceof Error && /mac_local_host_state_invalid/u.test(error.message)
+    const why = /mac_local_host_state_invalid/u.test(unreadable)
       ? "it is not a private regular file this account owns"
       : "it is not readable as recorded host state";
     log(`host state file ${name} is unreadable (${why}); starting without a recorded stop reason`);
     log(`to clear it: rm ${path} — it records the last stop and is not state this stack needs`);
     return undefined;
   }
+  return state;
 }
 
 function run(args) {

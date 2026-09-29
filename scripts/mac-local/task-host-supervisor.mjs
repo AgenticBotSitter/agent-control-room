@@ -9,11 +9,17 @@ import { alive, hostCommand, protectedRootFromArguments, repoRoot, runtimePaths,
 export const HOST_LOG_MAX_BYTES = 5 * 1024 * 1024;
 export const HOST_LOG_BACKUPS = 3;
 
+function invalidHostLog(path) {
+  const error = new Error("mac_local_host_log_invalid");
+  error.path = path;
+  return error;
+}
+
 async function regularPrivateFile(path) {
   try {
     const entry = await lstat(path);
     if (!entry.isFile() || entry.isSymbolicLink() || (entry.mode & 0o077) !== 0 || entry.uid !== process.getuid())
-      throw new Error("mac_local_host_log_invalid");
+      throw invalidHostLog(path);
     return entry;
   } catch (error) {
     if (error?.code === "ENOENT") return undefined;
@@ -39,7 +45,7 @@ export function openHostLog(path) {
   const entry = fstatSync(fd);
   if (!entry.isFile() || (entry.mode & 0o077) !== 0 || entry.uid !== process.getuid()) {
     closeSync(fd);
-    throw new Error("mac_local_host_log_invalid");
+    throw invalidHostLog(path);
   }
   return fd;
 }
@@ -55,9 +61,24 @@ export class RotatingHostLog {
   }
 
   static async open(path, maxBytes = HOST_LOG_MAX_BYTES, backups = HOST_LOG_BACKUPS) {
-    await rotateHostLog(path, maxBytes, backups);
-    const fd = openHostLog(path);
-    return new RotatingHostLog(path, fd, fstatSync(fd).size, maxBytes, backups);
+    let fd, replacedUnsafeLog = false;
+    try {
+      await rotateHostLog(path, maxBytes, backups);
+      fd = openHostLog(path);
+    } catch (error) {
+      if (error?.path !== path
+        || (error?.message !== "mac_local_host_log_invalid" && error?.code !== "ELOOP")) throw error;
+      // The log is bounded diagnostic output, not authority-bearing state. A loose or symlinked
+      // file restored into the private runtime must never be appended to, but it must not wedge
+      // launchd's restart loop either. Removing the directory entry is safe: rm does not follow a
+      // symlink, and without recursive=true it refuses a directory or other unexpected shape.
+      await rm(path, { force: true });
+      fd = openHostLog(path);
+      replacedUnsafeLog = true;
+    }
+    const log = new RotatingHostLog(path, fd, fstatSync(fd).size, maxBytes, backups);
+    if (replacedUnsafeLog) await log.line("replaced unsafe existing host log with a new private log");
+    return log;
   }
 
   write(value) {
@@ -133,6 +154,16 @@ export async function readHostState(path) {
   }
 }
 
+/** Recorded host state is diagnostic context. Callers that are trying to recover or report health
+ * need the refusal as evidence, but must not let an unsafe restored file block the host itself. */
+export async function readRecoverableHostState(path, reader = readHostState) {
+  try { return Object.freeze({ state: await reader(path) }); }
+  catch (error) {
+    return Object.freeze({ state: undefined,
+      unreadable: cleanDetail(error instanceof Error ? error.message : "unknown") });
+  }
+}
+
 export async function superviseTaskHost(root, runtime = {}) {
   const paths = runtimePaths(root);
   const [defaultCommand, ...defaultArgs] = taskHostCommand(root);
@@ -174,12 +205,7 @@ export async function superviseTaskHost(root, runtime = {}) {
     // in runtime/ from outside — must not be able to stop the host from serving. The read is
     // narrowed rather than propagated, exactly as status.mjs narrows its own reason, and the
     // condition is written to the log so the owner can see and clear it.
-    let previous, stateUnreadable;
-    try { previous = await readHostState(paths.hostState); }
-    catch (error) {
-      previous = undefined;
-      stateUnreadable = error instanceof Error ? error.message : "unknown";
-    }
+    const { state: previous, unreadable: stateUnreadable } = await readRecoverableHostState(paths.hostState);
     await log.line("task host supervisor started");
     if (stateUnreadable)
       await log.line(`host state file task-host-state.json could not be read (${cleanDetail(stateUnreadable)}); `
@@ -240,15 +266,18 @@ async function main() {
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   void main().catch(async error => {
     const root = protectedRootFromArguments(process.argv.slice(2));
+    const message = `${new Date().toISOString()} host stopped because supervisor error: ${cleanDetail(error?.message ?? "unknown")}`;
     if (root) {
+      const paths = runtimePaths(root);
       try {
-        const paths = runtimePaths(root), fd = openHostLog(paths.hostLog);
-        writeSync(fd, `${new Date().toISOString()} host stopped because supervisor error: ${cleanDetail(error?.message ?? "unknown")}\n`);
+        const fd = openHostLog(paths.hostLog);
+        writeSync(fd, `${message}\n`);
         closeSync(fd);
-        await writeState(paths.hostState, { schema: "control-room.mac-local-host-state/v1", state: "stopped",
-          reason: "supervisor error", at: new Date().toISOString() });
-      } catch {}
-    }
+      } catch { console.error(message); }
+      try { await writeState(paths.hostState, { schema: "control-room.mac-local-host-state/v1", state: "stopped",
+        reason: "supervisor error", at: new Date().toISOString() }); }
+      catch (stateError) { console.error(`${message}; state could not be recorded: ${cleanDetail(stateError?.message ?? "unknown")}`); }
+    } else console.error(message);
     process.exitCode = 1;
   });
 }
