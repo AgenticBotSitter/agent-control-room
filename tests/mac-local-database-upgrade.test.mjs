@@ -136,13 +136,16 @@ test("grant convergence applies only the pinned function boundaries", async () =
   // SQL-standard form (timestamp with time zone), which can never equal the
   // spelling in the role files, so such a grant would never converge. The
   // zero-argument form must still render as `()` rather than a NULL.
-  assert.match(macGrantCatalogSqlV1, /pg_type t ON t\.oid = u\.oid/u,
+  // The comment above names the function this replaced, so assert against the
+  // query with its own `--` comments stripped out.
+  const catalogQuery = macGrantCatalogSqlV1.replace(/--[^\n]*/gu, " ");
+  assert.match(catalogQuery, /pg_type t ON t\.oid = u\.oid/u,
     "catalog signatures use the compact type name the role files spell");
-  assert.match(macGrantCatalogSqlV1, /string_agg\(\s*pg_catalog\.quote_ident\(t\.typname\), ', ' ORDER BY u\.ord\)/u,
+  assert.match(catalogQuery, /string_agg\(\s*pg_catalog\.quote_ident\(t\.typname\), ', ' ORDER BY u\.ord\)/u,
     "argument types keep their declared order and quoting");
-  assert.match(macGrantCatalogSqlV1, /COALESCE\(\(SELECT string_agg/u,
+  assert.match(catalogQuery, /COALESCE\(\(SELECT string_agg/u,
     "a zero-argument function still renders an empty argument list");
-  assert.doesNotMatch(macGrantCatalogSqlV1, /oidvectortypes/u,
+  assert.doesNotMatch(catalogQuery, /oidvectortypes/u,
     "oidvectortypes expands type aliases and would never match the role files");
   assert.doesNotMatch(macGrantCatalogSqlV1, /pg_get_function_identity_arguments/u);
 });

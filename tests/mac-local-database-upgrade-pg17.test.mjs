@@ -32,6 +32,8 @@ const oldRoles = Object.entries(macRolePlan).filter(([login]) => !databaseRoleMa
 const plannedNewLogins = Object.keys(databaseRoleManifestV1.logins)
   .filter(login => databaseRoleManifestV1.logins[login].newLogin).sort();
 const migrationFileCount = ledger => (ledger.match(/"file": "db\/migrations\/[^"\n]+"/gu) ?? []).length;
+/** The plan orders its membership rows by the joined "member|parent" key. */
+const planMembershipOrder = (a, b) => `${a.member}|${a.parent}`.localeCompare(`${b.member}|${b.parent}`);
 const exec = (file, args) => execFileSync(file, args, { encoding: "utf8", timeout: 120_000,
   env: { ...process.env, LANG: "en_US.UTF-8", LC_ALL: "en_US.UTF-8" } });
 const connection = port => `host=127.0.0.1 port=${port} dbname=control_room user=postgres`;
@@ -161,10 +163,16 @@ test("live-shaped 0085 PostgreSQL 17 installation converges to fresh HEAD withou
   ].map(role => ({ role, attributes: `${plannedNewLogins.includes(role) ? "LOGIN" : "NOLOGIN"} INHERIT `
     + "NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS" })));
   assert.deepEqual(plan.membership.revoke, oldRoles.map(([member]) => ({ member,
-    parent: "control_room_application" })).sort((a, b) => a.member.localeCompare(b.member)));
+    parent: "control_room_application" })).sort(planMembershipOrder));
+  // The plan sorts the joined "member|parent" key and splits it back, so the
+  // expectation has to sort the same joined key. Sorting by member alone
+  // disagrees as soon as one member name is a prefix of another: `|` (0x7c)
+  // sorts after `_` (0x5f), so control_room_fleet_owner precedes
+  // control_room_fleet. The order carries no meaning; only that it is the
+  // documented deterministic one does.
   assert.deepEqual(plan.membership.grant, Object.entries(macRolePlan)
     .filter(([member]) => member !== "control_room_web")
-    .map(([member, parent]) => ({ member, parent })).sort((a, b) => a.member.localeCompare(b.member)));
+    .map(([member, parent]) => ({ member, parent })).sort(planMembershipOrder));
   for (const [login] of oldRoles) {
     const broad = connectTarget(`host=127.0.0.1 port=${old.port} dbname=control_room user=${login}
       password=${"p".repeat(40) + login}`);
