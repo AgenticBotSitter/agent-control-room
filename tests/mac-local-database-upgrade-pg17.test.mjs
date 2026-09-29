@@ -24,7 +24,8 @@ import { fixedQueueShapeDigestForTestV1 } from "../scripts/mac-local/fixed-queue
 // `.ts` module could not be imported by one of its own callers.
 import { createClusterTeardown } from "../scripts/dev/postgres-cluster-lifecycle.mjs";
 
-const oldRoot = "/private/tmp/acr-db-0085";
+const oldRoot = process.env.CONTROL_ROOM_PG17_OLD_ROOT ?? "/private/tmp/acr-db-0085";
+const portBase = Number(process.env.CONTROL_ROOM_PG17_PORT_BASE ?? 15581);
 const headRoot = resolve(fileURLToPath(new URL("../", import.meta.url)));
 const oldRoles = Object.entries(macRolePlan).filter(([login]) => login !== "control_room_publisher");
 const exec = (file, args) => execFileSync(file, args, { encoding: "utf8", timeout: 120_000,
@@ -118,8 +119,8 @@ test("live-shaped 0085 PostgreSQL 17 installation converges to fresh HEAD withou
   assert.match(exec("postgres", ["--version"]), /^postgres \(PostgreSQL\) 17\./u);
   assert.equal((await readFile(join(oldRoot, "deploy/postgres/migration-ledger.json"), "utf8")).includes("0086_"), false);
   const root = await mkdtemp(join(tmpdir(), "mac-db-pg17-"));
-  const old = await cluster(join(root, "old"), 15581);
-  const fresh = await cluster(join(root, "fresh"), 15582);
+  const old = await cluster(join(root, "old"), portBase);
+  const fresh = await cluster(join(root, "fresh"), portBase + 1);
   const clients = [];
   t.after(async () => {
     for (const client of clients) { try { await client.end(); } catch {} }
@@ -170,7 +171,7 @@ test("live-shaped 0085 PostgreSQL 17 installation converges to fresh HEAD withou
   changedLogin.roles.find(role => role.rolname === "control_room_results").rolcreatedb = true;
   await assert.rejects(planMacDatabaseUpgradeSnapshotV1(changedLogin), /upgrade_role_attributes_refused/u);
   const outsideMember = structuredClone(readOnlySnapshot);
-  outsideMember.memberships.push({ member: "control_room_app", parent: "control_room_private_web",
+  outsideMember.memberships.push({ member: "control_room_reader", parent: "control_room_private_web",
     admin_option: false, inherit_option: true, set_option: true });
   await assert.rejects(planMacDatabaseUpgradeSnapshotV1(outsideMember), /upgrade_non_login_membership_refused/u);
   const unexpectedParent = structuredClone(readOnlySnapshot);
@@ -181,7 +182,9 @@ test("live-shaped 0085 PostgreSQL 17 installation converges to fresh HEAD withou
   const snapshotFile = join(root, "snapshot.json"), mainCommit = "a".repeat(40);
   await writeFile(snapshotFile, JSON.stringify(captureMacUpgradeSnapshotV1(mainCommit, raw)));
   assert.deepEqual(await planMacDatabaseUpgradeFromFileV1(snapshotFile, mainCommit), plan);
-  assert.equal(plan.pendingMigrations.length, 5);
+  const headLedger = JSON.parse(await readFile(join(headRoot, "deploy/postgres/migration-ledger.json"), "utf8"));
+  assert.deepEqual(plan.pendingMigrations, headLedger.entries
+    .filter(entry => entry.kind === "migrate" && entry.file > "db/migrations/0086").map(entry => entry.file));
   assert.ok(plan.createRoles.some(item => item.role === "control_room_publisher"));
   assert.ok(plan.grants.extra.some(item => item.includes("control_room_private_web|table|public.control_jobs||DELETE|plain")));
   assert.deepEqual(await snapshot(oldClient), prior, "dry run does not change PostgreSQL");
@@ -216,11 +219,13 @@ test("live-shaped 0085 PostgreSQL 17 installation converges to fresh HEAD withou
     onStage: stage => { failureStage = stage; },
   }), error => error === simulatedSqlError);
   assert.equal(failureStage, "migrate");
-  assert.deepEqual(await inspectMacDatabaseUpgradeV1({ client: oldClient }), plan,
-    "a failure before migrations leaves the approved plan unchanged");
+  // Roles come first, so a failed migration leaves only the new roles behind.
+  const resumed = await inspectMacDatabaseUpgradeV1({ client: oldClient });
+  assert.deepEqual(resumed, { ...plan, createRoles: [] },
+    "a failure in migrations leaves the approved plan minus the roles it created");
   const cli = await runMacDatabaseUpgradeCommandV1({
     args: ["--apply", "--expected-main", mainCommit,
-      "--expected-plan-digest", macDatabaseUpgradePlanDigestV1(plan)],
+      "--expected-plan-digest", macDatabaseUpgradePlanDigestV1(resumed)],
     readVerifier: async () => `${request.publisherVerifier}\n`,
     git: params => params[0] === "status" ? "" : mainCommit,
     openClient: () => connectTarget(connection(old.port)),
@@ -265,7 +270,7 @@ test("post-incident ledger 90 with old memberships needs only the role and grant
   timeout: 240_000,
 }, async t => {
   const root = await mkdtemp(join(tmpdir(), "mac-db-ledger90-"));
-  const live = await cluster(root, 15583);
+  const live = await cluster(root, portBase + 2);
   const client = connectTarget(connection(live.port));
   t.after(async () => {
     try { await client.end(); } catch {}
@@ -331,7 +336,7 @@ test("a post-install queue shape mismatch removes only this empty new schema and
   timeout: 240_000,
 }, async t => {
   const root = await mkdtemp(join(tmpdir(), "mac-db-queue-rollback-"));
-  const local = await cluster(root, 15584);
+  const local = await cluster(root, portBase + 3);
   const client = connectTarget(connection(local.port));
   t.after(async () => {
     try { await client.end(); } catch {}
@@ -370,9 +375,11 @@ test("a post-install queue shape mismatch removes only this empty new schema and
   assert.equal(altered, true);
   assert.equal(stage, "queue");
   assert.equal(await fixedQueueShapeDigestForTestV1(client), null, "failed attempt leaves no queue schema");
-  assert.deepEqual(await inspectMacDatabaseUpgradeV1({ client }), plan,
-    "the original reviewed plan remains valid after cleanup");
-  const retry = await applyMacDatabaseUpgradeV1({ ...request, client });
+  const resumed = await inspectMacDatabaseUpgradeV1({ client });
+  assert.deepEqual(resumed, { ...plan, createRoles: [] },
+    "after cleanup the reviewed plan remains, minus the roles created first");
+  const retry = await applyMacDatabaseUpgradeV1({ ...request, client,
+    expectedPlanDigest: macDatabaseUpgradePlanDigestV1(resumed) });
   assert.equal(retry.after.installQueueSchema, false);
   assert.equal((await inspectMacDatabaseUpgradeV1({ client })).installQueueSchema, false);
 
