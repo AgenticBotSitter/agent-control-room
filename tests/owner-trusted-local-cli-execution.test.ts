@@ -28,6 +28,26 @@ test("the Codex adapter pins its executable, empty task directory, and deadline 
     prompt: ownerTrustedLocalCliPromptV1(delivery.input), signal: (observed as { signal: AbortSignal }).signal });
 });
 
+test("the Codex and Claude adapters preserve their exact cached input token counts", async () => {
+  const codex = createOwnerTrustedLocalCodexExecutionAdapterV1({ async execute() {
+    return { status: "completed" as const, text: "codex text", usage: { inputTokens: 100_000, outputTokens: 30,
+      totalTokens: 100_030, cachedInputTokens: 90_000 } };
+  } }, { ...configuration, model: "gpt-test", effort: "high" });
+  const claude = createOwnerTrustedLocalClaudeExecutionAdapterV1({ async execute() {
+    return { status: "completed" as const, text: "claude text", usage: { inputTokens: 80, outputTokens: 20,
+      totalTokens: 100, cachedInputTokens: 200_000 } };
+  } }, { ...configuration, model: "sonnet", effort: "high", supportsEffort: true });
+
+  const [codexResult, claudeResult] = await Promise.all([
+    codex.execute({ delivery, signal: new AbortController().signal }),
+    claude.execute({ delivery, signal: new AbortController().signal }),
+  ]);
+  assert.equal(codexResult.kind, "completed");
+  assert.equal(claudeResult.kind, "completed");
+  assert.equal(codexResult.usage?.cachedInputTokens, 90_000);
+  assert.equal(claudeResult.usage?.cachedInputTokens, 200_000);
+});
+
 test("an unconfigured Codex worker reaches the direct runner without a model override", async () => {
   let observed: Record<string, unknown> | undefined;
   const adapter = createOwnerTrustedLocalCodexExecutionAdapterV1({ async execute(input) {

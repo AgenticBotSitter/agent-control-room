@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { createProjectBrowserClient } from "../../src/web/v1/browser-client";
 import { readPrivateConnections, type PrivateConnectionSnapshot } from "../../src/web/v1/connection-browser-client";
 import { readTaskAttention } from "../../src/web/v1/queue-attention-browser-client";
@@ -17,6 +17,7 @@ import { InstallationTopologySummary } from "./installation-topology-summary";
 import { LocalWorkerRouteStatus, type TaskWorkerReadState } from "./local-worker-route-status";
 import { PrivateOperatorCapacityWorkspace } from "./operator-capacity-workspace";
 import { localWorkerStateLabel, useLocalRuntime, type LocalStatus } from "./local-runtime";
+import { useVisiblePolling } from "./use-visible-polling";
 import { StateChip, LoadingState, EmptyState, UnavailableState, PanelHeading, PrivateCount, workerChipToneV1 } from "./owner-ui";
 
 type WorkerRead = PrivateConnectionSnapshot | { source: "local"; value: LocalStatus };
@@ -174,68 +175,35 @@ export function PrivateHome() {
   const installationTopology = useInstallationTopology();
   const [data, setData] = useState<HomeDashboardState>(loadingState);
   const [runtimeDetectionTimedOut, setRuntimeDetectionTimedOut] = useState(false);
-  const refresh = useRef<() => void>(() => {});
   useEffect(() => {
     if (runtime.mode !== "checking") { setRuntimeDetectionTimedOut(false); return; }
     const timeout = setTimeout(() => setRuntimeDetectionTimedOut(true), 5_000);
     return () => clearTimeout(timeout);
   }, [runtime.mode]);
+  const pollingEnabled = runtime.mode !== "checking" || runtimeDetectionTimedOut;
   useEffect(() => {
-    refresh.current = () => {};
     setData(loadingState);
-    if (runtime.mode === "checking" && !runtimeDetectionTimedOut) return;
-    let live = true, inFlight = false;
-    let poll: ReturnType<typeof setTimeout> | undefined;
-    let request: AbortController | undefined;
+    if (!pollingEnabled) return;
     setData(runtime.mode === "local" ? { ...loadingState,
       connections: runtime.status ? { state: "ready", value: { source: "local", value: runtime.status } } : { state: "unavailable" } }
       : loadingState);
-    // This dashboard only reads already-saved records.  Keep an open local
-    // Control Room view useful without inventing browser-side scheduling or
-    // treating an old page load as a current worker status.  Hidden tabs do
-    // not poll; they refresh once when the owner returns to the tab. Schedule
-    // the next poll only after this one settles, and coalesce every other
-    // trigger while it is in flight.
-    const schedulePoll = () => { if (live) poll = setTimeout(refreshWhenVisible, 30_000); };
-    const load = async () => {
-      if (!live || inFlight) return;
-      inFlight = true;
-      clearTimeout(poll);
-      request = new AbortController();
-      const transport = createHomeReadTransport(request.signal);
-      const settle = <T,>(promise: Promise<T>, key: keyof HomeDashboardState) => promise.then(value => {
-        if (live) setData(current => ({ ...current, [key]: { state: "ready", value } }));
-      }, () => { if (live) setData(current => ({ ...current, [key]: { state: "unavailable" } })); });
-      const reads = [settle(createProjectBrowserClient(transport).list(), "projects"),
-        settle(readTaskHomeActivity(transport), "activity"), settle(readTaskAttention(undefined, transport), "attention")];
-      if (runtime.mode === "hosted") reads.push(settle(readPrivateConnections(transport), "connections"));
-      try { await Promise.all(reads); }
-      finally { request = undefined; inFlight = false; schedulePoll(); }
-    };
-    const refreshWhenVisible = () => {
-      if (!document.hidden) void load();
-    };
-    refresh.current = refreshWhenVisible;
-    // Deferring the first read lets React's development StrictMode clean up
-    // its probe effect before any network request begins.
-    const initial = setTimeout(refreshWhenVisible, 0);
-    window.addEventListener("focus", refreshWhenVisible);
-    document.addEventListener("visibilitychange", refreshWhenVisible);
-    return () => {
-      live = false;
-      refresh.current = () => {};
-      clearTimeout(initial);
-      clearTimeout(poll);
-      request?.abort();
-      window.removeEventListener("focus", refreshWhenVisible);
-      document.removeEventListener("visibilitychange", refreshWhenVisible);
-    };
-  }, [runtime.mode, runtime.status, runtimeDetectionTimedOut]);
+  }, [pollingEnabled, runtime.mode, runtime.status]);
+  const load = useCallback(async (signal: AbortSignal) => {
+    const transport = createHomeReadTransport(signal);
+    const settle = <T,>(promise: Promise<T>, key: keyof HomeDashboardState) => promise.then(value => {
+      if (!signal.aborted) setData(current => ({ ...current, [key]: { state: "ready", value } }));
+    }, () => { if (!signal.aborted) setData(current => ({ ...current, [key]: { state: "unavailable" } })); });
+    const reads = [settle(createProjectBrowserClient(transport).list(), "projects"),
+      settle(readTaskHomeActivity(transport), "activity"), settle(readTaskAttention(undefined, transport), "attention")];
+    if (runtime.mode === "hosted") reads.push(settle(readPrivateConnections(transport), "connections"));
+    await Promise.all(reads);
+  }, [runtime.mode]);
+  const refresh = useVisiblePolling(load, pollingEnabled);
   return <div className="private-shell"><PrivateHeader /><main id="private-main" tabIndex={-1}>
     <section className="private-home-intro" aria-labelledby="home-title"><p className="private-eyebrow">Private workspace</p>
       <h1 id="home-title">{displayName}</h1><p>Current saved work, results and attention from the protected Control Room services. This page refreshes while it is open and again when you return to it. Each section reports unavailable data instead of replacing it with a zero.</p>
       <p className="private-note">Unavailable means the saved database or protected read could not be checked. Checking again only rereads saved records; it does not start, assign, approve or retry work.</p>
-      <button type="button" onClick={() => refresh.current()}>Check saved dashboard again</button></section>
+      <button type="button" onClick={refresh}>Check saved dashboard again</button></section>
     {runtime.mode === "local" ? <MacLocalWorkerEvidence status={runtime.status} />
       : <HomeInstallationStatus topology={installationTopology} showSetupGuidance={runtime.mode === "hosted"} />}
     <HomeDashboard data={data} />

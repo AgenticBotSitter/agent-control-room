@@ -25,6 +25,7 @@ Example:
       "billing": {
         "kind": "token",
         "inputNanoUsdPerToken": "1250",
+        "cachedInputNanoUsdPerToken": "125",
         "outputNanoUsdPerToken": "10000"
       }
     }
@@ -33,5 +34,7 @@ Example:
 ```
 
 Token prices use integer nano-USD per token (one nano-USD is one billionth of a US dollar). This keeps every run and rollup exact. A subscription entry displays **included in subscription** and never invents a per-token cost.
+
+A run with cache tokens and no recorded cache price reports cost as unknown; Control Room never assumes a cache discount. Cache tokens are a subset of input for `codex`, and additional to input for `claude` and `hermes`.
 
 The file must be a regular owner-owned file with no group or world permissions. A missing file is valid and leaves costs unknown; an unsafe or malformed file stops startup rather than silently ignoring recorded billing facts.
