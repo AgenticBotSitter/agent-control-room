@@ -95,3 +95,12 @@ test("0094 pins every owner trigger authority fence and the browser inbox bounda
   assert.equal(count(/g\.allowed_actions\s+@>\s+'\["work_batches\.decide"\]'::jsonb\s+OR\s+g\.allowed_actions\s+@>\s+'\["\*"\]'::jsonb/gu), 2);
   assert.match(migration, /pg_catalog\.pg_has_role\(session_user,[\s\S]*?pg_catalog\.pg_roles\s+WHERE\s+rolname='control_room_private_web'\),'member'\)[\s\S]*?OLD\.id\s+NOT\s+LIKE\s+'attention:work-batch:%'/u);
 });
+
+test("0094 bounds migration locks and uses bigint counters", async () => {
+  const migration = await readFile("db/migrations/0094_work_batch_owner_approval.sql", "utf8");
+  assert.match(migration, /SET LOCAL lock_timeout = '1s';\s+SET LOCAL statement_timeout = '5s';\s+ALTER TABLE work_batches/u);
+  assert.match(migration, /ADD COLUMN auth_material_version bigint NOT NULL DEFAULT 1/u);
+  assert.match(migration, /ordinal bigint NOT NULL CHECK \(ordinal BETWEEN 0 AND 31\)/u);
+  assert.match(migration, /job_attempt_count bigint NOT NULL DEFAULT 0/u);
+  assert.doesNotMatch(migration, /\b(?:auth_material_version|ordinal|job_attempt_count) integer\b/u);
+});

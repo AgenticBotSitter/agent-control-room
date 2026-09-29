@@ -1,8 +1,11 @@
 -- Owner-only batch revision and decision records. Approval materializes only
 -- ordinary proposed tasks; this migration grants no queue or execution access.
 
+SET LOCAL lock_timeout = '1s';
+SET LOCAL statement_timeout = '5s';
+
 ALTER TABLE work_batches
-  ADD COLUMN auth_material_version integer NOT NULL DEFAULT 1 CHECK (auth_material_version=1),
+  ADD COLUMN auth_material_version bigint NOT NULL DEFAULT 1 CHECK (auth_material_version=1),
   ADD COLUMN decision_digest text CHECK (decision_digest IS NULL OR decision_digest ~ '^sha256:[a-f0-9]{64}$'),
   ADD COLUMN decision_auth_tag text CHECK (decision_auth_tag IS NULL OR decision_auth_tag ~ '^hmac-sha256:[a-f0-9]{64}$');
 
@@ -13,7 +16,7 @@ CREATE TABLE work_batch_items (
   batch_revision bigint NOT NULL CHECK (batch_revision >= 1),
   project_id text NOT NULL,
   local_id text NOT NULL CHECK (local_id ~ '^[a-z0-9][a-z0-9._-]{0,63}$'),
-  ordinal integer NOT NULL CHECK (ordinal BETWEEN 0 AND 31),
+  ordinal bigint NOT NULL CHECK (ordinal BETWEEN 0 AND 31),
   role text NOT NULL CHECK (role IN ('builder','checker','validator')),
   required_capability text NOT NULL,
   depends_on_local_ids text[] NOT NULL,
@@ -24,7 +27,7 @@ CREATE TABLE work_batch_items (
   decision_state text NOT NULL CHECK (decision_state IN ('approved','rejected')),
   decision_reason_code text,
   job_id text,
-  job_attempt_count integer NOT NULL DEFAULT 0 CHECK (job_attempt_count >= 0),
+  job_attempt_count bigint NOT NULL DEFAULT 0 CHECK (job_attempt_count >= 0),
   item_digest text NOT NULL CHECK (item_digest ~ '^sha256:[a-f0-9]{64}$'),
   auth_tag text NOT NULL CHECK (auth_tag ~ '^hmac-sha256:[a-f0-9]{64}$'),
   created_at timestamptz NOT NULL,

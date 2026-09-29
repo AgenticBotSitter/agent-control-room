@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "digest": "4ac9046e4c54a6569ecb75bd6cf31b03f421d46b568f6ad92fd2eeef2097895e",
+  "digest": "89b1187837b3d7d1a231ab30e2f9cc2d9b8276e197d5815a0939d917574f3860",
   "entries": [
     {
       "file": "db/migrations/0001_control_room_core.sql",
@@ -563,7 +563,7 @@
     {
       "file": "db/migrations/0094_work_batch_owner_approval.sql",
       "order": 94,
-      "sha256": "9e2bca891cc655e2f8d0a8c2854f1c17f2af99b6bea7ece5584ccd69168dfcae",
+      "sha256": "ace4b1ef1ba0643a112fb4ae22b45b1a296e07cf3dd9f119c11704572d48ea2d",
       "kind": "migrate"
     },
     {
