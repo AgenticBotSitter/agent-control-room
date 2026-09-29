@@ -34,7 +34,7 @@ test("the Codex and Claude adapters preserve their exact cached input token coun
       totalTokens: 100_030, cachedInputTokens: 90_000 } };
   } }, { ...configuration, model: "gpt-test", effort: "high" });
   const claude = createOwnerTrustedLocalClaudeExecutionAdapterV1({ async execute() {
-    return { status: "completed" as const, text: "claude text", usage: { inputTokens: 80, outputTokens: 20,
+    return { status: "completed" as const, text: "claude text", usageReported: true, usage: { inputTokens: 80, outputTokens: 20,
       totalTokens: 100, cachedInputTokens: 200_000 } };
   } }, { ...configuration, model: "sonnet", effort: "high", supportsEffort: true });
 
