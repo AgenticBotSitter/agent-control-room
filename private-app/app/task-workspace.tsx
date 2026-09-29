@@ -18,6 +18,7 @@ import { createTaskExecutionWorkspace } from "../../src/web/v1/task-execution-wo
 import { createIdeaBrowserClient } from "../../src/web/v1/idea-browser-client";
 import { canPrepareIdeaExperiment, prepareIdeaExperimentDraft } from "../../src/web/v1/idea-experiment-draft";
 import { useLocalRuntime } from "./local-runtime";
+import { StateChip } from "./owner-ui";
 import type { PreparedTaskStatus } from "../../src/web/v1/task-planning-wire";
 
 /** Polling the same task must retain its object identity. The planning,
@@ -73,10 +74,10 @@ export function TaskExecutionStage({ detail, mode, workspace, onRecorded }: {
 
 export function PrivateTaskWorkspace({ projectId, jobId, after }: { projectId: string; jobId?: string; after?: string }) {
   const runtime = useLocalRuntime();
-  const [client] = useState(() => createTaskBrowserClient());
-  const [ideas] = useState(() => createIdeaBrowserClient());
   // Neither failed task-detail reads nor failed result reads may discard an unfinished review.
   const [reviewWorkspace] = useState(() => createTaskReviewWorkspace());
+  const [client] = useState(() => createTaskBrowserClient(fetch, () => crypto.randomUUID(), reviewWorkspace.bindAuthenticatedSession));
+  const [ideas] = useState(() => createIdeaBrowserClient());
   const [verificationWorkspace] = useState(() => createTaskVerificationWorkspace());
   const [executionWorkspace] = useState(() => createTaskExecutionWorkspace());
   const [page, setPage] = useState<TaskPage>();
@@ -106,7 +107,11 @@ export function PrivateTaskWorkspace({ projectId, jobId, after }: { projectId: s
           setError(client.hasPending() ? new BrowserRequestError("uncertain") : undefined);
         }
       } catch (reason) {
-        if (live && current === generation.current) { setPage(undefined); setDetail(undefined); setError(failure(reason)); }
+        if (live && current === generation.current) {
+          const error = failure(reason);
+          if (error.code === "authentication_required") reviewWorkspace.invalidateAuthenticatedSession();
+          setPage(undefined); setDetail(undefined); setError(error);
+        }
       } finally { readBusy = false; if (live && current === generation.current) setLoading(false); }
     };
     void load();
@@ -114,7 +119,7 @@ export function PrivateTaskWorkspace({ projectId, jobId, after }: { projectId: s
     const timer = setInterval(() => { if (!document.hidden) void load(); }, 30_000);
     const focus = () => { void load(); }; window.addEventListener("focus", focus);
     return () => { live = false; alive.current = false; clearInterval(timer); window.removeEventListener("focus", focus); };
-  }, [client, projectId, jobId, after, refresh]);
+  }, [client, projectId, jobId, after, refresh, reviewWorkspace]);
 
   async function save(retry = false) {
     if (busy.current || preparingRef.current || !page || (!retry && !page.canPropose)) return;
@@ -127,6 +132,7 @@ export function PrivateTaskWorkspace({ projectId, jobId, after }: { projectId: s
     } catch (reason) {
       if (alive.current) {
         const err = failure(reason); setError(err);
+        if (err.code === "authentication_required") reviewWorkspace.invalidateAuthenticatedSession();
         if (["authentication_required", "access_denied", "not_found"].includes(err.code)) { setPage(undefined); setDetail(undefined); setDraft({ title: "", instructions: "" }); }
       }
     } finally { busy.current = false; if (alive.current) setPending(false); }
@@ -162,7 +168,7 @@ export function PrivateTaskWorkspace({ projectId, jobId, after }: { projectId: s
         {uncertain && page && <button type="button" disabled={pending} onClick={() => { void save(true); }}>Check this exact save again</button>}</div></div>}
     {loading && <p role="status">Loading protected tasks…</p>}
     {project && <button type="button" disabled={loading || pending || preparing} onClick={refreshSaved}>Check latest saved status</button>}
-    {project && <><div className="private-heading"><span className="private-state">{project.lifecycle}</span><h1>{project.title}</h1></div>
+    {project && <><div className="private-heading"><StateChip state={project.lifecycle} /><h1>{project.title}</h1></div>
       <ProjectNavigation projectId={projectId} current="work" /></>}
     {page && <div className="private-columns"><TaskCatalogPanel page={page} after={after} />
       {page.canPropose ? <div>{canPrepareIdeaExperiment(page) && <section className="private-panel" aria-label="First experiment">
