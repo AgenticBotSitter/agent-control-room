@@ -1,0 +1,8 @@
+{
+  "name": "control-room-upgrade-tool",
+  "private": true,
+  "dependencies": {
+    "pg": "8.23.0",
+    "pg-boss": "12.30.0"
+  }
+}

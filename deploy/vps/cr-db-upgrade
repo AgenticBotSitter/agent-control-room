@@ -1,0 +1,145 @@
+#!/bin/bash
+# cr-db-upgrade <commit> — the one VPS command of a live database upgrade.
+# cr-db-upgrade --refresh-cache <commit> — the one-off download of its tools.
+#
+# Installed once, root-owned, from a reviewed commit; never updated from main.
+# It takes the lock, refuses unless origin/main is exactly the commit the Mac
+# built, stages a clean copy of that commit, installs the pinned upgrade tools
+# (pg, pg-boss) offline, shows the plan in plain words and asks on a real
+# terminal. After a yes it backs up, then applies. All database code from main
+# runs as `postgres` (as_postgres below), never as root. The EXIT trap removes
+# only this run's own stage directory; the backup and the plan JSON are kept.
+#
+# Test mode: when the caller is not root and CR_UPGRADE_TEST_ROOT is set, the
+# paths below come from CR_UPGRADE_TEST_* and nothing switches user. A non-root
+# caller cannot switch to postgres or write the real paths anyway, so this
+# grants nothing; as root the fixed paths are always used.
+set -euo pipefail
+umask 077
+
+refuse() {
+  printf 'upgrade_error:%s stage=%s\n' "$1" "$2" >&2
+  if [ -n "${3:-}" ]; then printf '%s\n' "$3" >&2; fi
+  exit 1
+}
+
+test_root=
+if [ "$(id -u)" -eq 0 ]; then
+  PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+  source_repo=/opt/control-room/upgrade-source
+  stage_parent=/var/tmp
+  lock_file=/run/cr-db-upgrade.lock
+  backup_root=/var/backups/control-room
+  store=/var/cache/cr-db-upgrade/pnpm-store
+  pg_bin=/usr/lib/postgresql/17/bin
+  pg_target="host=/var/run/postgresql dbname=control_room user=postgres"
+  space_factor=2
+elif [ -n "${CR_UPGRADE_TEST_ROOT:-}" ]; then
+  test_root=$CR_UPGRADE_TEST_ROOT
+  source_repo=$test_root/source
+  stage_parent=$test_root/stages
+  lock_file=$test_root/upgrade.lock
+  backup_root=$test_root/backups
+  store=$CR_UPGRADE_TEST_STORE
+  pg_bin=$CR_UPGRADE_TEST_PG_BIN
+  pg_target=$CR_UPGRADE_TEST_PG_TARGET
+  space_factor=${CR_UPGRADE_TEST_DISK_FACTOR:-2}
+else
+  refuse upgrade_not_root start "Run this as root: sudo cr-db-upgrade <commit>"
+fi
+
+refresh=
+if [ "${1:-}" = "--refresh-cache" ]; then refresh=1; shift; fi
+prefix=${1:-}
+if [ "$#" -ne 1 ] || ! printf '%s' "$prefix" | grep -Eq '^[0-9a-f]{7,40}$'; then
+  refuse upgrade_input_refused start "Usage: cr-db-upgrade <commit> (the commit the Mac printed)"
+fi
+if [ ! -t 0 ]; then
+  refuse upgrade_terminal_required start "Refused: run this at a real terminal; answers cannot be piped in."
+fi
+
+# flock(2) on fd 9, as `flock -n 9` does; perl is used because it is on every
+# Debian system and on the Mac that runs the tests. The lock lives until exit.
+exec 9>>"$lock_file"
+perl -MFcntl=:flock -e 'open(my $l, ">&=", 9) or exit 2; flock($l, LOCK_EX | LOCK_NB) or exit 1' \
+  || refuse upgrade_lock_held lock "Refused: another cr-db-upgrade is running. Nothing was changed."
+
+git -C "$source_repo" fetch --quiet --no-tags origin || refuse upgrade_fetch_failed commit
+main=$(git -C "$source_repo" rev-parse --verify 'refs/remotes/origin/main^{commit}') || refuse upgrade_fetch_failed commit
+case $main in
+  "$prefix"*) ;;
+  *) refuse upgrade_main_moved commit "Refused: main moved to ${main:0:7} — rerun mac:upgrade. Nothing was changed." ;;
+esac
+short=${main:0:7}
+
+stage=
+cleanup() {
+  if [ -n "$stage" ] && [ -d "$stage" ]; then
+    case $stage in "$stage_parent"/cr-upgrade.*) rm -rf -- "$stage" ;; esac
+  fi
+}
+trap cleanup EXIT
+trap 'exit 130' HUP INT TERM
+stage=$(mktemp -d "$stage_parent/cr-upgrade.XXXXXXXX") || refuse upgrade_stage_failed stage
+chmod 755 "$stage"
+cd "$stage"
+umask 022 # the staged code and tools must be readable by postgres; umask 077 returns below
+{ git init --quiet "$stage/src" \
+  && git -C "$stage/src" fetch --quiet --depth 1 --no-tags "file://$source_repo" "$main" \
+  && git -C "$stage/src" checkout --quiet --detach FETCH_HEAD \
+  && git -C "$stage/src" update-ref refs/remotes/origin/main "$main"; } >/dev/null 2>&1 \
+  || refuse upgrade_stage_failed stage
+stage_clean() {
+  [ "$(git -C "$stage/src" rev-parse HEAD)" = "$main" ] && [ -z "$(git -C "$stage/src" status --porcelain)" ]
+}
+stage_clean || refuse upgrade_stage_dirty stage "Refused: the staged copy is not exactly $short."
+
+cp "$stage/src/deploy/vps/upgrade-tool/package.json" "$stage/src/deploy/vps/upgrade-tool/pnpm-lock.yaml" "$stage/"
+if [ -n "$refresh" ]; then
+  printf 'This downloads the pinned upgrade tools of %s (pg, pg-boss and their dependencies) into\n%s, each checked against its lockfile hash.\n' "$short" "$store"
+  read -r -p "Download? [y/N] " answer
+  [ "$answer" = y ] || [ "$answer" = Y ] || refuse upgrade_not_approved dependencies "Nothing was downloaded."
+  pnpm fetch --frozen-lockfile --store-dir "$store" >"$stage/install.log" 2>&1 \
+    || refuse upgrade_dependency_download_failed dependencies
+  printf 'Upgrade tools cached. Now run: cr-db-upgrade %s\n' "$short"
+  exit 0
+fi
+if ! pnpm install --offline --frozen-lockfile --ignore-scripts --store-dir "$store" >"$stage/install.log" 2>&1; then
+  if grep -q 'NO_OFFLINE' "$stage/install.log"; then
+    refuse upgrade_dependency_cache_missing dependencies \
+      "Refused: the pinned upgrade tools are not cached. Run once: cr-db-upgrade --refresh-cache $short"
+  fi
+  refuse upgrade_dependency_install_failed dependencies
+fi
+stage_clean || refuse upgrade_stage_dirty stage "Refused: the staged copy is not exactly $short."
+umask 077
+
+as_postgres() {
+  if [ -n "$test_root" ]; then "$@"; else runuser -u postgres -- "$@"; fi
+}
+# A clean environment; safe.directory lets postgres read git state of the root-owned stage.
+step_env=(PATH="$PATH" LANG=C.UTF-8 GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.directory GIT_CONFIG_VALUE_0="$stage/src")
+step() {
+  as_postgres env -i "${step_env[@]}" node "$stage/src/scripts/mac-local/database-upgrade-vps-step.mjs" \
+    "$1" "$main" "$pg_target" "$backup_root" "$pg_bin" "$space_factor" "${2:-}"
+}
+
+plan=$(step plan </dev/null) || exit 1
+printf '%s\n' "$plan" | sed '$d'
+printf '%s\n' "$plan" | tail -n 1 >"$stage/plan.json"
+if grep -q '"nothingToDo":true' "$stage/plan.json"; then exit 0; fi
+digest=$(grep -oE '"digest":"sha256:[0-9a-f]{64}"' "$stage/plan.json" | cut -d'"' -f4)
+[ -n "$digest" ] || refuse upgrade_plan_unreadable plan
+
+code=
+if grep -q '"needsLoginCode":true' "$stage/plan.json"; then
+  read -r -s -p "Paste the login code from the Mac (it is not shown): " code
+  printf '\n'
+  [ -n "$code" ] || refuse upgrade_new_login_needs_verifier approve \
+    "Refused: this upgrade adds a new database login and needs the code the Mac printed. Nothing was changed."
+fi
+read -r -p "Apply? [y/N] " answer
+[ "$answer" = y ] || [ "$answer" = Y ] || refuse upgrade_not_approved approve "Nothing was changed."
+stage_clean || refuse upgrade_stage_dirty apply "Refused: the staged copy changed after approval. Nothing was changed."
+
+printf '%s' "$code" | step apply "$digest" || exit 1
