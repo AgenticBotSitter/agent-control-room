@@ -224,67 +224,80 @@ test("ordered upgrade applies a pending suffix in two phases", needsPg, async ()
   }
 });
 
-// A database already at main (S1 0093, 0100, 0101 and S2 0102 applied) must
-// upgrade by appending only this head's queue migration after main's last
-// applied order, never by slotting it in before an applied order.
-test("upgrade from main's applied ledger appends only the agent-queue migration", needsPg, async () => {
-  const stage = await mkdtemp(join(tmpdir(), "cr-pg63main-"));
+// A database at an older applied ledger must upgrade by appending only the
+// migrations it lacks after its last applied order, never by slotting one in
+// before an applied order (which duplicates a ledger_order and wedges every
+// later apply with migration_gap).
+const PIPELINE_GRANTS = "REVOKE ALL ON pipeline_templates, pipeline_runs, pipeline_stage_runs, pipeline_ordered_stage_runs\n"
+  + "  FROM control_room_application, control_room_reader, control_room_schedule_admissions,\n"
+  + "  control_room_github_broker, control_room_work_intake;\n";
+const QUEUE_GRANTS = ", work_batch_queue_admissions,\n  work_batch_effective_queue_admissions, work_batch_agent_queue_heads";
+const SHARED_LOGINS = ["control_room_work_intake", "control_room_work_intake_agent", "control_room_reader",
+  "control_room_application", "control_room_schedule_admissions", "control_room_github_broker"];
+
+async function upgradeFromAppliedPrefix({ database, pending, withoutGrants, newObjects }) {
+  const stage = await mkdtemp(join(tmpdir(), "cr-pg63prefix-"));
   try {
     for (const dir of ["deploy/postgres", "db/migrations", "db/roles", "db/setup"])
       await mkdir(join(stage, dir), { recursive: true });
     const migrations = (await readdir(join(ROOT, "db/migrations"))).filter(name => name.endsWith(".sql")).sort();
-    const queue = migrations.filter(name => name.endsWith("_work_batch_agent_queue.sql"));
-    assert.equal(queue.length, 1);
-    const mainMigrations = migrations.filter(name => name !== queue[0]);
+    const suffix = pending.map(ending => {
+      const found = migrations.filter(name => name.endsWith(ending));
+      assert.equal(found.length, 1, ending);
+      return found[0];
+    });
+    // The pending migrations are the newest files, in filename order.
+    assert.deepEqual(migrations.slice(-suffix.length), suffix);
+    const applied = migrations.slice(0, -suffix.length);
     for (const shipped of ["0100_ownership_lease_collision_guard.sql", "0101_owner_review_job_lock.sql",
-      "0102_work_batch_owner_approval.sql"]) assert.ok(mainMigrations.includes(shipped), shipped);
-    for (const file of mainMigrations)
+      "0102_work_batch_owner_approval.sql"]) assert.ok(applied.includes(shipped), shipped);
+    for (const file of applied)
       await cp(join(ROOT, "db/migrations", file), join(stage, "db/migrations", file));
     for (const file of ["production_roles.sql", "production_provision.sql"])
       await cp(join(ROOT, "db/roles", file), join(stage, "db/roles", file));
-    // main's grants: this head's file without the agent-queue additions.
-    const grants = await readFile(join(ROOT, "db/roles/production_table_grants.sql"), "utf8");
-    const mainGrants = grants.replace(", work_batch_queue_admissions,\n  work_batch_effective_queue_admissions, work_batch_agent_queue_heads", "");
-    assert.notEqual(mainGrants, grants);
-    await writeFile(join(stage, "db/roles/production_table_grants.sql"), mainGrants);
+    // The older grants: this head's file without the pending objects' grants.
+    let grants = await readFile(join(ROOT, "db/roles/production_table_grants.sql"), "utf8");
+    for (const text of withoutGrants) {
+      assert.ok(grants.includes(text), text);
+      grants = grants.replace(text, "");
+    }
+    await writeFile(join(stage, "db/roles/production_table_grants.sql"), grants);
     await cp(join(ROOT, "db/setup/production_migration_ledger.sql"), join(stage, "db/setup/production_migration_ledger.sql"));
     const entries = await collectLedgerEntries(stage);
     const ledgerPath = join(stage, "deploy/postgres/migration-ledger.json");
     await writeFile(ledgerPath, JSON.stringify({ version: 1, digest: ledgerDigest(entries), entries }));
 
-    await freshDatabase("cr_prod_upgrade_main");
-    const db = target("cr_prod_upgrade_main");
-    const atMain = await applyMigrations({ target: db, bootstrapTarget: bootstrapTarget("cr_prod_upgrade_main"),
-      migrateTarget: migrateTarget("cr_prod_upgrade_main"), rootDir: stage, ledgerPath, env: { ...process.env, ...passwords } });
-    assert.equal(atMain.grants, "applied");
-    const mainLedger = (await query(db, "SELECT filename, ledger_order FROM control_room_schema_migrations ORDER BY ledger_order")).rows;
-    assert.deepEqual(mainLedger.map(row => row.filename), mainMigrations.map(file => `db/migrations/${file}`));
-    assert.equal((await query(db, "SELECT to_regclass('public.work_batch_queue_admissions') AS present")).rows[0].present, null);
+    await freshDatabase(database);
+    const db = target(database);
+    const before = await applyMigrations({ target: db, bootstrapTarget: bootstrapTarget(database),
+      migrateTarget: migrateTarget(database), rootDir: stage, ledgerPath, env: { ...process.env, ...passwords } });
+    assert.equal(before.grants, "applied");
+    const priorLedger = (await query(db, "SELECT filename, ledger_order FROM control_room_schema_migrations ORDER BY ledger_order")).rows;
+    assert.deepEqual(priorLedger.map(row => row.filename), applied.map(file => `db/migrations/${file}`));
+    for (const object of newObjects)
+      assert.equal((await query(db, "SELECT to_regclass($1) AS present", [`public.${object}`])).rows[0].present, null, object);
 
-    const upgraded = await applyMigrations({ target: db, bootstrapTarget: bootstrapTarget("cr_prod_upgrade_main"),
-      migrateTarget: migrateTarget("cr_prod_upgrade_main"), rootDir: ROOT });
+    const upgraded = await applyMigrations({ target: db, bootstrapTarget: bootstrapTarget(database),
+      migrateTarget: migrateTarget(database), rootDir: ROOT });
     assert.deepEqual(upgraded.applied.map(entry => [entry.file, entry.order]),
-      [[`db/migrations/${queue[0]}`, mainMigrations.length + 1]]);
+      suffix.map((file, index) => [`db/migrations/${file}`, applied.length + index + 1]));
     assert.equal(upgraded.grants, "applied");
     assert.deepEqual((await query(db, `SELECT ledger_order, count(*)::int AS rows FROM control_room_schema_migrations
       GROUP BY ledger_order HAVING count(*) > 1`)).rows, []);
     const ledger = (await query(db, "SELECT filename, ledger_order FROM control_room_schema_migrations ORDER BY ledger_order")).rows;
     assert.deepEqual(ledger.map(row => row.ledger_order), ledger.map((_, index) => index + 1));
-    assert.deepEqual(ledger.slice(0, -1), mainLedger);
-    assert.deepEqual(ledger.at(-1), { filename: `db/migrations/${queue[0]}`, ledger_order: mainMigrations.length + 1 });
+    assert.deepEqual(ledger.slice(0, priorLedger.length), priorLedger);
+    assert.deepEqual(ledger.slice(priorLedger.length), suffix.map((file, index) =>
+      ({ filename: `db/migrations/${file}`, ledger_order: applied.length + index + 1 })));
     // Grants converged on the new objects in the same run: no shared or agent login reaches them.
-    assert.deepEqual((await query(db, `SELECT r.role, t.name,
-      has_table_privilege(r.role, t.name, 'SELECT') OR has_table_privilege(r.role, t.name, 'INSERT')
-        OR has_table_privilege(r.role, t.name, 'UPDATE') OR has_table_privilege(r.role, t.name, 'DELETE') AS any
-      FROM unnest(ARRAY['control_room_work_intake','control_room_work_intake_agent','control_room_reader',
-        'control_room_application','control_room_schedule_admissions','control_room_github_broker']) r(role)
-      CROSS JOIN unnest(ARRAY['work_batch_queue_admissions','work_batch_agent_queue_heads',
-        'work_batch_effective_queue_admissions']) t(name)
+    assert.deepEqual((await query(db, `SELECT r.role, t.name
+      FROM unnest($1::text[]) r(role) CROSS JOIN unnest($2::text[]) t(name)
       WHERE has_table_privilege(r.role, t.name, 'SELECT') OR has_table_privilege(r.role, t.name, 'INSERT')
-        OR has_table_privilege(r.role, t.name, 'UPDATE') OR has_table_privilege(r.role, t.name, 'DELETE')`)).rows, []);
+        OR has_table_privilege(r.role, t.name, 'UPDATE') OR has_table_privilege(r.role, t.name, 'DELETE')`,
+    [SHARED_LOGINS, newObjects])).rows, []);
 
-    const rerun = await applyMigrations({ target: db, bootstrapTarget: bootstrapTarget("cr_prod_upgrade_main"),
-      migrateTarget: migrateTarget("cr_prod_upgrade_main"), rootDir: ROOT });
+    const rerun = await applyMigrations({ target: db, bootstrapTarget: bootstrapTarget(database),
+      migrateTarget: migrateTarget(database), rootDir: ROOT });
     assert.equal(rerun.noOp, true);
     assert.equal(rerun.grants, "applied");
     assert.deepEqual((await query(db, "SELECT filename, ledger_order FROM control_room_schema_migrations ORDER BY ledger_order")).rows,
@@ -292,7 +305,22 @@ test("upgrade from main's applied ledger appends only the agent-queue migration"
   } finally {
     await rm(stage, { recursive: true, force: true });
   }
-});
+}
+
+// A database already at main (S1 0093, 0100, 0101 and S2 0102 applied) takes
+// S3's queue migration and then S4's pipeline migration, in that order.
+test("upgrade from main's applied ledger appends only the agent-queue and pipeline migrations", needsPg, () =>
+  upgradeFromAppliedPrefix({ database: "cr_prod_upgrade_main",
+    pending: ["_work_batch_agent_queue.sql", "_linear_pipeline_runs.sql"],
+    withoutGrants: [QUEUE_GRANTS, PIPELINE_GRANTS],
+    newObjects: ["work_batch_queue_admissions", "work_batch_agent_queue_heads", "work_batch_effective_queue_admissions",
+      "pipeline_templates", "pipeline_runs", "pipeline_stage_runs", "pipeline_ordered_stage_runs"] }));
+
+// A database at main plus S3 (0104 applied) takes only S4's 0105.
+test("upgrade from main plus S3's applied ledger appends only the pipeline migration", needsPg, () =>
+  upgradeFromAppliedPrefix({ database: "cr_prod_upgrade_s3",
+    pending: ["_linear_pipeline_runs.sql"], withoutGrants: [PIPELINE_GRANTS],
+    newObjects: ["pipeline_templates", "pipeline_runs", "pipeline_stage_runs", "pipeline_ordered_stage_runs"] }));
 
 test("tampered history fails closed: altered, deleted-row and forged-digest states", needsPg, async () => {
   await freshDatabase("cr_prod_tamper");

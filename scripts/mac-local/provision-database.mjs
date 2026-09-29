@@ -30,6 +30,7 @@ import { capturePrivatePostgresEndpointPolicyV2, isSupportedPrivatePostgresHostV
   privatePostgresEndpointFingerprintV1, PRIVATE_POSTGRES_ENDPOINT_V2 } from "../../src/web/v1/private-postgres-endpoint";
 import { privatePostgresOptions, validatePrivatePostgresConfiguration } from "../../src/web/v1/private-postgres";
 import { macGrantCatalogSqlV1, macRolePlan } from "./database-upgrade-grants.mjs";
+import { databaseRoleManifestV1, databaseRoleNamesV1 } from "./database-role-manifest.mjs";
 import { planMacDatabaseUpgradeSnapshotV1 } from "./database-upgrade-remote.mjs";
 import { checkedPostgresScramVerifierV1, postgresScramVerifierV1 } from "./database-upgrade-scram.mjs";
 import { captureWorkIntakeClientConfigurationV1, captureWorkIntakeServerConfigurationV1,
@@ -420,10 +421,10 @@ exit "$status"`;
 }
 
 export function macDatabaseUpgradeReadOnlySqlV1() {
-  const principals = [...Object.keys(macRolePlan), ...Object.values(macRolePlan)];
-  const names = `ARRAY[${principals.map(name => `'${name}'`).join(",")}]::text[]`;
-  const groupNames = `ARRAY[${Object.values(macRolePlan).map(name => `'${name}'`).join(",")}]::text[]`;
-  const grants = macGrantCatalogSqlV1.replaceAll("$1::text[]", names);
+  const array = values => `ARRAY[${values.map(name => `'${name}'`).join(",")}]::text[]`;
+  const names = array(databaseRoleNamesV1), groupNames = array(databaseRoleManifestV1.groups);
+  const macNames = array([...Object.keys(macRolePlan), ...Object.values(macRolePlan)]);
+  const grants = macGrantCatalogSqlV1.replaceAll("$1::text[]", macNames);
   const sql = `BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY;
 SELECT json_build_object(
   'applied', (SELECT coalesce(json_agg(row_to_json(x)), '[]'::json) FROM
@@ -439,7 +440,7 @@ SELECT json_build_object(
       ORDER BY member.rolname,parent.rolname) x),
   'defaultAcl', (SELECT count(*)::int FROM pg_default_acl d
     CROSS JOIN LATERAL aclexplode(d.defaclacl) a JOIN pg_roles r ON r.oid=a.grantee
-    WHERE r.rolname=ANY(${names})),
+    WHERE r.rolname=ANY(${macNames})),
   'queue', json_build_object('schemaExists', EXISTS (SELECT 1 FROM pg_namespace
     WHERE nspname='control_room_queue')),
   'grants', (SELECT coalesce(json_agg(row_to_json(x)), '[]'::json) FROM (${grants}) x)
@@ -514,9 +515,10 @@ export async function planMacDatabaseUpgradeFromFileV1(snapshotFile, expectedMai
 
 export async function prepareMacLocalDatabaseUpgradeV1(options) {
   const { configRoot, passwordRoot, oldRoles } = await existingUpgradeConfiguration(options.protectedRoot);
-  if (oldRoles.publisher) throw new Error("upgrade_already_finished");
   const mainCommit = options.mainCommit ?? await currentMainCommit();
   if (!/^[a-f0-9]{40}$/u.test(mainCommit)) throw new Error("upgrade_main_commit_refused");
+  // After the first upgrade no login is new, so there is no code to hand over.
+  if (oldRoles.publisher) return { mainCommit, nothingToPrepare: true };
   const password = await privateText(join(passwordRoot, `${roleNames.publisher}.txt`), newPassword);
   const salt = randomBytes(16);
   const verifier = postgresScramVerifierV1(password, salt);
@@ -542,7 +544,12 @@ async function verifyPublisherLogin(configuration) {
 export async function finishMacLocalDatabaseUpgradeV1(options) {
   const { configRoot, passwordRoot, roleFile, oldRoles } = await existingUpgradeConfiguration(options.protectedRoot);
   const mainCommit = options.mainCommit ?? await currentMainCommit();
-  const prepared = await readProtectedJson(join(configRoot, "database-upgrade-prepare.json"));
+  const preparedFile = join(configRoot, "database-upgrade-prepare.json");
+  const prepared = oldRoles.publisher && !await lstat(preparedFile).catch(() => undefined)
+    ? undefined : await readProtectedJson(preparedFile);
+  // A later upgrade adds no login: an old record from the first one is not redone.
+  if (oldRoles.publisher && prepared?.mainCommit !== mainCommit)
+    return { finished: true, mainCommit, nothingToFinish: true };
   if (prepared.schema !== "control-room.mac-database-upgrade-prepare/v1"
     || prepared.mainCommit !== mainCommit || !/^[a-f0-9]{64}$/u.test(prepared.verifierDigest)
     || typeof prepared.salt !== "string" || !/^[A-Za-z0-9+/=]{24}$/u.test(prepared.salt)

@@ -219,3 +219,37 @@ test("the TypeScript batch admission gate takes no row lock on control_task_mode
   // a row lock here refuses every batch-admitted assignment in production.
   assert.doesNotMatch(guard, /\bFOR (?:UPDATE|NO KEY UPDATE|SHARE|KEY SHARE)\b/u);
 });
+
+test("the pipeline admission gate and pipeline service take no row lock on append-only rows", async () => {
+  // Row locks need UPDATE privilege. The coordinator and web logins hold none
+  // on the pipeline tables, execution plans, model selections or dependency
+  // edges, so a lock there refuses every call in production
+  // (tests/linear-pipeline-postgres.test.ts runs these paths as the real logins).
+  const coordinator = await readFile("src/web/v1/task-assignment-coordinator.ts", "utf8");
+  const gate = coordinator.match(/private async assertPipelineAdmission\([\s\S]*?\n {2}private async assertWorkBatchQueueAdmission\(/u)?.[0] ?? "";
+  assert.notEqual(gate, "");
+  assert.match(gate, /FROM pipeline_stage_runs/u);
+  assert.doesNotMatch(gate, /\bFOR (?:UPDATE|NO KEY UPDATE|SHARE|KEY SHARE)\b/u);
+  const service = await readFile("src/pipelines/v1/service.ts", "utf8");
+  assert.match(service, /FROM pipeline_templates/u);
+  for (const statement of service.match(/`[^`]*`/gu) ?? [])
+    if (/\bFROM (?:pipeline_\w+|control_task_model_selections|control_job_dependencies|control_task_execution_plans)\b/u.test(statement))
+      assert.doesNotMatch(statement, /\bFOR (?:UPDATE|NO KEY UPDATE|SHARE|KEY SHARE)\b/u, statement);
+});
+
+test("pipeline lineage on control_jobs is write-once in the 0105 migration", async () => {
+  // Both shared logins hold column UPDATE on the lineage so instantiate and the
+  // planner can label a job once; clearing or relabelling it would take a stage
+  // out of pipeline admission (tests/linear-pipeline*.test.ts prove the refusal).
+  const [migration, down] = await Promise.all([readFile("db/migrations/0105_linear_pipeline_runs.sql", "utf8"),
+    readFile("db/down/0105_linear_pipeline_runs.sql", "utf8")]);
+  const normalize = source => source.replace(/\s+/gu, " ").trim();
+  const body = normalize(migration.match(/CREATE FUNCTION guard_control_job_pipeline_lineage\(\)[\s\S]*?END \$\$;/u)?.[0] ?? "");
+  assert.match(body, /RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS/u);
+  assert.match(body, /IF \(OLD\.stage_kind IS NOT NULL OR OLD\.stage_ordinal IS NOT NULL OR OLD\.pipeline_run_id IS NOT NULL\) AND \(NEW\.stage_kind IS DISTINCT FROM OLD\.stage_kind OR NEW\.stage_ordinal IS DISTINCT FROM OLD\.stage_ordinal OR NEW\.pipeline_run_id IS DISTINCT FROM OLD\.pipeline_run_id\) THEN RAISE EXCEPTION 'pipeline lineage is write-once';/u);
+  assert.doesNotMatch(body, /SECURITY DEFINER/u);
+  assert.match(normalize(migration), /REVOKE ALL ON FUNCTION public\.guard_control_job_pipeline_lineage\(\) FROM PUBLIC; CREATE TRIGGER control_jobs_pipeline_lineage_write_once BEFORE UPDATE OF stage_kind, stage_ordinal, pipeline_run_id ON public\.control_jobs FOR EACH ROW EXECUTE FUNCTION public\.guard_control_job_pipeline_lineage\(\);/u);
+  // The all-or-none CHECK refuses a partial first write the trigger lets through.
+  assert.match(migration, /ADD CONSTRAINT ck_control_jobs_pipeline_columns_all_or_none CHECK/u);
+  assert.match(normalize(down), /DROP TRIGGER control_jobs_pipeline_lineage_write_once ON control_jobs; DROP FUNCTION guard_control_job_pipeline_lineage\(\);/u);
+});
