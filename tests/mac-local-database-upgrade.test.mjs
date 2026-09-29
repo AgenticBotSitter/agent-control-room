@@ -103,17 +103,18 @@ test("grant convergence admits only the pinned intake identity function boundary
   /upgrade_unexpected_function_grant/u);
 });
 
-test("a database already at main (0100 applied at order 94) plans only the owner-approval migration", async () => {
+test("a database already at main plans only the owner-approval migration", async () => {
   // main's applied ledger is this ledger without the owner-approval migration,
   // numbered in filename order exactly as main's generator numbered it.
   const ledger = JSON.parse(await readFile("deploy/postgres/migration-ledger.json", "utf8"));
   const migrations = ledger.entries.filter(entry => entry.kind === "migrate");
   const ownerApproval = migrations.filter(entry => entry.file.endsWith("_work_batch_owner_approval.sql"));
   assert.equal(ownerApproval.length, 1);
+  assert.equal(ownerApproval[0].file, migrations.at(-1).file);
   const applied = migrations.filter(entry => entry !== ownerApproval[0]).map((entry, index) =>
     ({ filename: entry.file, digest: `sha256:${entry.sha256}`, ledger_order: index + 1 }));
-  assert.deepEqual(applied.at(-1), { filename: "db/migrations/0100_ownership_lease_collision_guard.sql",
-    digest: applied.at(-1).digest, ledger_order: 94 });
+  assert.deepEqual(applied.at(-1), { filename: migrations.at(-2).file,
+    digest: applied.at(-1).digest, ledger_order: migrations.length - 1 });
   const roles = [...Object.keys(macRolePlan), ...Object.values(macRolePlan)].map(rolname => ({ rolname,
     rolcanlogin: Object.hasOwn(macRolePlan, rolname), rolinherit: true, rolsuper: false, rolcreatedb: false,
     rolcreaterole: false, rolreplication: false, rolbypassrls: false }));
@@ -122,7 +123,7 @@ test("a database already at main (0100 applied at order 94) plans only the owner
   const plan = await planMacDatabaseUpgradeSnapshotV1({ applied, roles, memberships, defaultAcl: 0, grants: [],
     queue: { schemaExists: true, verified: true } });
   assert.deepEqual(plan.pendingMigrations, [ownerApproval[0].file]);
-  assert.ok(ownerApproval[0].order > 94);
+  assert.ok(ownerApproval[0].order > migrations.length - 1);
 });
 
 test("offline plan rejects a mismatched main commit and malformed snapshot", async t => {

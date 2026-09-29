@@ -201,7 +201,7 @@ test("ordered upgrade applies a pending suffix in two phases", needsPg, async ()
   }
 });
 
-// A database already at main applied 0100 at ledger order 94, before the
+// A database already at main applied every migration up to the one before the
 // owner-approval migration existed. Upgrading it must append the new
 // migration after that row, never slot it in before an applied order.
 test("upgrade from main's applied ledger appends only the owner-approval migration", needsPg, async () => {
@@ -212,6 +212,10 @@ test("upgrade from main's applied ledger appends only the owner-approval migrati
     const migrations = (await readdir(join(ROOT, "db/migrations"))).filter(name => name.endsWith(".sql")).sort();
     const ownerApproval = migrations.filter(name => name.endsWith("_work_batch_owner_approval.sql"));
     assert.equal(ownerApproval.length, 1);
+    assert.equal(ownerApproval[0], migrations.at(-1));
+    const mainLast = migrations.at(-2);
+    const mainLastOrder = migrations.length - 1;
+    const ownerApprovalOrder = migrations.length;
     for (const file of migrations.filter(name => name !== ownerApproval[0]))
       await cp(join(ROOT, "db/migrations", file), join(stage, "db/migrations", file));
     for (const file of ["production_roles.sql", "production_provision.sql"])
@@ -234,21 +238,21 @@ test("upgrade from main's applied ledger appends only the owner-approval migrati
     assert.equal(atMain.grants, "applied");
     assert.deepEqual((await query(db, `SELECT filename, ledger_order FROM control_room_schema_migrations
       ORDER BY ledger_order DESC LIMIT 1`)).rows,
-    [{ filename: "db/migrations/0100_ownership_lease_collision_guard.sql", ledger_order: 94 }]);
+    [{ filename: `db/migrations/${mainLast}`, ledger_order: mainLastOrder }]);
     assert.equal((await query(db, "SELECT to_regclass('public.work_batch_items') AS present")).rows[0].present, null);
 
     const upgraded = await applyMigrations({ target: db, bootstrapTarget: bootstrapTarget("cr_prod_upgrade_main"),
       migrateTarget: migrateTarget("cr_prod_upgrade_main"), rootDir: ROOT });
     assert.deepEqual(upgraded.applied.map(entry => [entry.file, entry.order]),
-      [[`db/migrations/${ownerApproval[0]}`, 95]]);
+      [[`db/migrations/${ownerApproval[0]}`, ownerApprovalOrder]]);
     assert.equal(upgraded.grants, "applied");
     assert.deepEqual((await query(db, `SELECT ledger_order, count(*)::int AS rows FROM control_room_schema_migrations
       GROUP BY ledger_order HAVING count(*) > 1`)).rows, []);
     const ledger = (await query(db, "SELECT filename, ledger_order FROM control_room_schema_migrations ORDER BY ledger_order")).rows;
     assert.deepEqual(ledger.map(row => row.ledger_order), ledger.map((_, index) => index + 1));
     assert.deepEqual(ledger.slice(-2), [
-      { filename: "db/migrations/0100_ownership_lease_collision_guard.sql", ledger_order: 94 },
-      { filename: `db/migrations/${ownerApproval[0]}`, ledger_order: 95 }]);
+      { filename: `db/migrations/${mainLast}`, ledger_order: mainLastOrder },
+      { filename: `db/migrations/${ownerApproval[0]}`, ledger_order: ownerApprovalOrder }]);
     // Grants converged on the new objects in the same run.
     assert.deepEqual((await query(db, `SELECT
       has_table_privilege('control_room_work_intake','work_batch_items','SELECT') AS intake_items,

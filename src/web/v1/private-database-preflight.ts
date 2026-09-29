@@ -15,10 +15,10 @@ export async function verifyPrivateIdeaAdapter(db: DatabaseClient, scope: { tena
   if (rows.length !== 1 || rows[0].valid !== true) throw new Error("private_idea_adapter_unavailable");
 }
 
-// Generated from public migrations 0001-0102 (filename order: ...0093,0100,0102),
+// Generated from public migrations 0001-0102 (filename order: ...0093,0100,0101,0102),
 // including generic external-content migrations 0025/0026. Catalog query below;
 // not a mutable database marker.
-export const privateWebSchemaDigest = "4ecac6abc6aa1e4febfc8930bc6addcaef6ccfaadb50ee107bacc9938c7fc96f";
+export const privateWebSchemaDigest = "f7c1f0a5c12e2da3d17d1fa4b004dd4b5fbdbe9aeb42b5a4e1a9cca91639293a";
 export const privateWebReadTables = ["control_identities", "control_role_grants", "workspaces", "control_web_sessions",
   "tenants", "control_idempotency",
   "control_schedules", "control_schedule_occurrences",
@@ -55,7 +55,7 @@ const updates: Record<string, readonly string[]> = {
   control_identities: ["web_lock"], control_role_grants: ["web_lock"], workspaces: ["web_lock"],
   control_connection_registry_heads: ["web_lock"], control_web_sessions: ["revoked_at"],
   control_completion_gate_integrity: ["web_lock", "revision", "record_count", "state_digest", "state_auth_tag"],
-  control_completion_gate_records: ["web_lock"],
+  control_completion_gate_records: ["web_lock"], control_jobs: ["web_lock"],
   projects: ["domain_state", "source_version", "normalized_state", "updated_at", "payload", "observed_at"],
   control_manual_project_heads: ["lifecycle", "version", "updated_at"],
   control_audit_chain_heads: ["head_hash", "event_count", "updated_at"],
