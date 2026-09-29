@@ -1403,24 +1403,12 @@ test("build publication holds the Completion Gate lock from its accepted-result 
       if (current) { current.reached(); await current.released; }
       return { repositoryUrl };
     } };
-    // KNOWN SEPARATE DEFECT: the publication snapshot schema and 0108's
-    // CHECK(result_revision>0) refuse revision 0, but a first-round Completion
-    // Gate acceptance IS revision 0, so the real authority cannot publish one.
-    // Fixing that needs a migration. Until then this shifts only the reported
-    // round number; the proof itself, and the lock under test, stay the real
-    // lifecycle's, resolved on the caller's own transaction.
-    const firstRoundShifted = authority => Object.freeze({ binding: authority.binding,
-      assertCurrent: authority.assertCurrent, isAcceptedResultCurrent: authority.isAcceptedResultCurrent,
-      acceptedResultProof: async (tx, selection) => {
-        const proof = await authority.acceptedResultProof(tx, selection);
-        return proof && { ...proof, revision: proof.revision + 1 };
-      } });
     const acceptedPublication = async (suffix, fill) => {
       const accepted = await acceptedBuildOnRealAuthority(client, coordinator, suffix, fill);
       const { own, build, at, reviewKey } = accepted;
       assert.equal(accepted.lifecycle.workBatchAuthority.binding, "caller_transaction");
       const controller = new LinearPipelineServiceV1(coordinator.db, accepted.scope, reviewKey,
-        firstRoundShifted(accepted.lifecycle.workBatchAuthority), () => webNow, repositories);
+        accepted.lifecycle.workBatchAuthority, () => webNow, repositories);
       const delivery = createControllerWorkerDeliveryV1({ identity: { tenantId: own.tenantId,
         projectId: own.project.projectId, jobId: build.jobId, attemptId: build.attemptId, runId: build.runId,
         nodeId: build.nodeId }, worker: { workerId: build.workerId, adapterId: "adapter:test", adapterRevision: "1234567" },
@@ -1429,7 +1417,8 @@ test("build publication holds the Completion Gate lock from its accepted-result 
       acceptanceProfileDigest: sha256Digest(own.profile), issuedAt: at,
       expiresAt: new Date(webNow + 3_600_000).toISOString() });
       const snapshot = await controller.createBuildPublicationAuthority(delivery);
-      assert.deepEqual([snapshot.resultRevision, snapshot.retainedResultDigest], [1, accepted.accepted.contentHash]);
+      assert.deepEqual([snapshot.resultRevision, snapshot.retainedResultDigest], [0, accepted.accepted.contentHash],
+        "a first-round Completion Gate acceptance must produce a publishable revision-0 snapshot");
       const { plan, evidence } = signedBuildPublication(derivePipelineBuildPublicationEvidenceKeyV1(reviewKey), {
         snapshot, deliveryDigest: delivery.deliveryDigest,
         modelSelection: { workerId: build.workerId, model: "build-test", effort: "medium" },
@@ -1465,6 +1454,8 @@ test("build publication holds the Completion Gate lock from its accepted-result 
       "a review must not commit between the retention proof and its insert");
     gap.release();
     assert.deepEqual(await retaining, { evidenceDigest: late.retained.evidence.evidenceDigest, replayed: false });
+    assert.equal(await late.publications(), 1,
+      "the first-round acceptance must be retained as one build publication");
     assert.equal((await superseding).replayed, false);
 
     // Once the acceptance is superseded every path refuses: currentness,

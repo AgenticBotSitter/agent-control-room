@@ -25,12 +25,12 @@ connectorProfileDigest: sha256Digest("profile"), acceptanceProfileId: "profile:t
 acceptanceProfileDigest: sha256Digest("acceptance"), issuedAt: "2026-09-27T00:00:00.000Z",
 expiresAt: "2026-09-27T01:00:00.000Z" });
 
-function snapshot() {
+function snapshot(resultRevision = 1) {
   return createPipelineBuildPublicationAuthoritySnapshotV1(key, {
     schema: "control-room.pipeline-build-publication-authority/v1", deliveryDigest: delivery.deliveryDigest,
     tenantId: delivery.identity.tenantId, projectId: delivery.identity.projectId, sourceJobId: "job:source",
     executionJobId: delivery.identity.jobId, attemptId: delivery.identity.attemptId, runId: delivery.identity.runId,
-    artifactId: "artifact:test", resultRevision: 1,
+    artifactId: "artifact:test", resultRevision,
     pipelineRunId: "pipeline-run:test", stageOrdinal: 0, stageRecordDigest: sha256Digest("stage"),
     workerId: delivery.worker.workerId, model: "model:exact", effort: "high", allowedPaths: ["src/**"],
     maximumChangedFiles: 12, maximumChangedBytes: 65536, retainedResultDigest: sha256Digest("result"),
@@ -66,6 +66,12 @@ test("snapshot field or authentication tampering is refused before policy or pub
   assert.throws(() => createPipelineBuildPublicationAuthorityV1({ integrityKey: key,
     snapshot: { ...saved, repositoryUrl: "https://example.invalid/foreign/repository" },
     assertControllerCurrent: async () => {} }), /unavailable/);
+});
+
+test("publication authority admits a first-round result and refuses a negative round", () => {
+  const firstRound = snapshot(0);
+  assert.equal(verifyPipelineBuildPublicationAuthoritySnapshotV1(key, firstRound).resultRevision, 0);
+  assert.throws(() => snapshot(-1), /expected number to be >=0/);
 });
 
 test("controller refuses a delivery from retry B when Completion Gate accepted retry A", async () => {
