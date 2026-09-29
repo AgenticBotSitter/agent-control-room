@@ -16,6 +16,7 @@ import type { TaskRevisionOperation } from "./task-revision-operation";
 import type { MacLocalWorkerReadinessV1 } from "./mac-local-worker-readiness";
 import type { LocalOwnerSessionStoreV1 } from "./local-owner-session-store";
 import type { PersistedLocalOwnerSessionV1 } from "./local-owner-session";
+import type { ActionInboxItemV1 } from "../../operator-surfaces/v1";
 import { WorkBatchOwnerServiceV1 } from "../../work-intake/v1";
 import { createWorkBatchOwnerHttpHandlerV1 } from "./work-batch-owner-http";
 import { encodeProjectEventCursorV1, projectEventSseResponseV1, type ProjectEventReadSourceV1 } from "../../project-events/v1";
@@ -54,6 +55,11 @@ export interface MacLocalWebProcessOptionsV1 {
   workerReadiness?: Pick<MacLocalWorkerReadinessV1, "read">;
   /** A website-only first start verifies CLI versions but has no task workers. */
   taskWorkersStarted?: boolean;
+  /** Read-only canonical owner attention, supplied by the separately restricted
+   * task-coordinator connection. The local web role cannot read these tables. */
+  actionInboxSource?: Readonly<{ read(input: { tenantId: string; actorId: string; grantedAt: string; now: string }): Promise<{
+    observedAt: string; items: ActionInboxItemV1[]; truncated: boolean;
+  }> }>;
   clock?: () => number;
 }
 
@@ -273,6 +279,15 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
           || url.searchParams.getAll("after").length > 1) throw new WebAccessError("invalid_request");
         return Response.json(await tasks.attention(identity, url.searchParams.get("after") ?? undefined),
           { headers: privateResponseHeaders });
+      }
+      if (url.pathname === "/api/v1/needs-me/action-items") {
+        if (request.method !== "GET" || url.search) throw new WebAccessError("invalid_request");
+        if (!options.actionInboxSource) throw new WebAccessError("not_found");
+        const owner = await tasks.authorizeActionInbox(identity);
+        const now = new Date(clock()).toISOString();
+        const source = await options.actionInboxSource.read({ tenantId: profile.tenantId,
+          actorId: owner.actorId, grantedAt: owner.grantedAt, now });
+        return Response.json(source, { headers: privateResponseHeaders });
       }
       if (url.pathname === "/api/v1/needs-me/pipelines") {
         if (request.method !== "GET" || url.search || !workBatches) throw new WebAccessError("not_found");

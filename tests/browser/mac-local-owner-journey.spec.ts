@@ -315,7 +315,7 @@ test("owner completes the real local website journey for every configured worker
   await expect(page.locator('section[aria-labelledby="home-active"]')).not.toContainText("Claude browser task");
   await expect(page.locator('section[aria-labelledby="home-attention"]')).not.toContainText("Claude browser task");
   await page.goto("/needs-me");
-  await expect(page.getByRole("heading", { name: "Tasks needing attention" }).locator("..")).not.toContainText("Claude browser task");
+  await expect(page.getByRole("region", { name: "Action Inbox" })).not.toContainText("Claude browser task");
 
   await createPreparedTask(page, projectPath, "Codex browser task", "Codex");
   await openResult(page);
