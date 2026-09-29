@@ -15,11 +15,9 @@ REVOKE ALL ON ALL TABLES IN SCHEMA public FROM control_room_agent_reviewer;
 REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM control_room_agent_reviewer;
 REVOKE ALL ON ALL FUNCTIONS IN SCHEMA public FROM control_room_agent_reviewer;
 GRANT USAGE ON SCHEMA public TO control_room_agent_reviewer;
--- Exact review commit set: inspect the immutable plan and call the single
--- authenticated server-side commit boundary. No raw table write is granted.
-GRANT SELECT ON control_agent_review_plans, control_completion_gate_records,
-  control_completion_gate_integrity, control_harness_runs, control_attempts, control_task_execution_plans,
-  pipeline_stage_runs TO control_room_agent_reviewer;
-GRANT UPDATE (web_lock) ON control_completion_gate_records TO control_room_agent_reviewer;
-GRANT EXECUTE ON FUNCTION commit_agent_review(text,jsonb,jsonb,bytea) TO control_room_agent_reviewer;
+-- Exact review set: read the one bound plan and call the single authenticated
+-- server-side commit. Both boundaries serve only the installation tenant. No
+-- table privilege of any kind is granted, so no row of any tenant is readable.
+GRANT EXECUTE ON FUNCTION read_agent_review_plan(text),
+  commit_agent_review(text,jsonb,jsonb,bytea) TO control_room_agent_reviewer;
 COMMIT;

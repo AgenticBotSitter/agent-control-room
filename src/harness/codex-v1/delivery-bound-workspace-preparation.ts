@@ -66,6 +66,30 @@ function assertBinding(delivery: ControllerWorkerDeliveryV1, intent: WorkspaceIn
     || activation.connectorProfileDigest !== delivery.connectorProfileDigest) unavailable();
 }
 
+function containsScope(container: string, candidate: string): boolean {
+  if (!container.endsWith('/**')) return container === candidate;
+  const root = container.slice(0, -3);
+  const candidateRoot = candidate.endsWith('/**') ? candidate.slice(0, -3) : candidate;
+  return candidateRoot === root || candidateRoot.startsWith(`${root}/`);
+}
+
+/** Intersects the host's configured ceiling with the signed durable lease
+ * scopes. Neither side can widen the other. */
+export function effectiveOwnershipLeaseAllowedPathsV1(delivery: ControllerWorkerDeliveryV1,
+  configured: readonly string[]): readonly string[] {
+  const leased = delivery.writeScopes.map(scope => scope.scopeKind === 'file' ? scope.path
+    : scope.path === '' ? undefined : `${scope.path}/**`);
+  if (leased.some(scope => scope === undefined)) return configured;
+  const result = new Set<string>();
+  for (const host of configured) for (const lease of leased) {
+    if (!lease) continue;
+    if (containsScope(host, lease)) result.add(lease);
+    else if (containsScope(lease, host)) result.add(host);
+  }
+  if (!result.size) unavailable();
+  return Object.freeze([...result].sort());
+}
+
 /**
  * Binds one shared controller delivery to the existing journaled Codex
  * workspace port and retains the lifecycle holder in this closure. It exposes
@@ -110,9 +134,10 @@ export function createCodexDeliveryBoundWorkspacePreparationV1(input: Readonly<{
         intent, assertCurrent });
       const policy = input.publication?.authority.workspacePolicy?.(bound) ?? legacyPolicy;
       if (policy === undefined) return unavailable();
+      const leaseAllowedPaths = effectiveOwnershipLeaseAllowedPathsV1(bound, policy.allowedPaths);
       holder ??= new CodingWorkspaceLifecycleHolderV1({
         maximumConcurrentWorkspaces: 1,
-        allowedPaths: policy.allowedPaths,
+        allowedPaths: leaseAllowedPaths,
         maximumChangedFiles: policy.maximumChangedFiles,
         maximumChangedBytes: policy.maximumChangedBytes,
         workspacePort: Object.freeze({ ...durableWorkspacePort,
@@ -121,6 +146,7 @@ export function createCodexDeliveryBoundWorkspacePreparationV1(input: Readonly<{
       });
       const observation = await holder.acquire({ delivery: bound, repositoryRoot: intent.repositoryRoot,
         workspaceRoot: intent.workspaceRoot, revision: intent.revision });
+      const auditPlan = observation.auditPlan;
       // Authority may have changed while the physical workspace was acquired.
       // Recheck before accepting it and before the start runtime can open its
       // separately owned process session.
@@ -128,8 +154,10 @@ export function createCodexDeliveryBoundWorkspacePreparationV1(input: Readonly<{
       if (observation.disposition !== 'workspace_held' || observation.reconciliationRequired
         || !observation.workspaceCapacityHeld || observation.runId !== intent.runId
         || observation.deliveryDigest !== bound.deliveryDigest
-        || observation.auditPlan?.deliveryDigest !== bound.deliveryDigest
-        || observation.auditPlan?.baseRevision !== intent.revision
+        || !auditPlan || auditPlan.deliveryDigest !== bound.deliveryDigest
+        || auditPlan.baseRevision !== intent.revision
+        || auditPlan.allowedPaths.length !== leaseAllowedPaths.length
+        || auditPlan.allowedPaths.some((path, index) => path !== leaseAllowedPaths[index])
         || observation.startsAdapter || observation.releasesCapacity) unavailable();
     },
     async publishBuildPullRequest() {

@@ -2,6 +2,7 @@ import { expect, test, type Locator, type Page, type Request } from "@playwright
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { Client } from "pg";
+import { openResultWithDeferredOwnerReview, ownerReviewControlsWhenReady, requestChangesControlWhenReady } from "./owner-review-readiness";
 
 const ownerCode = process.env.CONTROL_ROOM_E2E_OWNER_CODE;
 if (!ownerCode) throw new Error("CONTROL_ROOM_E2E_OWNER_CODE is required");
@@ -17,7 +18,7 @@ async function signIn(page: Page) {
   await page.goto("/session");
   await page.getByLabel("Owner code").fill(ownerCode!);
   await page.getByRole("button", { name: "Sign in" }).click();
-  await expect(page.getByRole("heading", { name: "Projects" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Projects", exact: true })).toBeVisible();
 }
 
 async function api(page: Page, path: string, method = "GET", body?: unknown, key?: string): Promise<ApiResult> {
@@ -64,10 +65,9 @@ function observeBrowserErrors(page: Page, errors: string[], observeHttpFailures 
 }
 
 async function prepareAcceptance(page: Page) {
-  await expect(page.getByRole("region", { name: "Owner quality decision" })).toBeVisible();
-  const attestation = page.getByLabel("I read it and it’s correct");
-  if (await attestation.count()) await attestation.check();
-  await expect(page.getByRole("button", { name: "Accept", exact: true })).toBeEnabled();
+  const { attestation, accept } = await ownerReviewControlsWhenReady(page);
+  await attestation.check();
+  await expect(accept).toBeEnabled();
 }
 
 async function activateTwice(locator: Locator) {
@@ -125,8 +125,8 @@ async function assignAndOpenResult(page: Page, doubleClick = false) {
   expect(assignments, "one owner gesture must record at most one assignment").toHaveLength(1);
   expect(submissions, "one owner gesture must queue at most one submission").toHaveLength(1);
   await refreshUntil(page, "Read result");
-  await page.getByRole("button", { name: "Read result" }).last().click();
-  await expect(page.getByRole("heading", { name: "Received result" })).toBeVisible();
+  // Revision rounds add results; the newest one is the result under test.
+  await openResultWithDeferredOwnerReview(page, "last");
 }
 
 async function disposableAdmin() {
@@ -228,7 +228,7 @@ test.describe("disposable owner website adversarial attacks", () => {
     await page.reload();
     await expect(page.getByRole("heading", { name: hostileTitle })).toBeVisible();
     await page.goBack();
-    await expect(page.getByRole("heading", { name: "Projects" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Projects", exact: true })).toBeVisible();
     await page.goForward();
     await expect(page.getByRole("heading", { name: hostileTitle })).toBeVisible();
 
@@ -353,11 +353,12 @@ test.describe("disposable owner website adversarial attacks", () => {
     await signIn(page);
     const project = await createProject(page, "Review state consistency", "advreviewproject001");
     const projectPath = `/projects/${encodeURIComponent(project.projectId)}`;
-    const reviewPosts: { path: string; body: Record<string, unknown> }[] = [];
+    const reviewPosts: { path: string; body: Record<string, unknown>; key: string }[] = [];
     const captureReview = (request: Request) => {
       const path = new URL(request.url()).pathname;
       if (request.method() === "POST" && path.includes("/reviews/")) {
-        reviewPosts.push({ path, body: request.postDataJSON() as Record<string, unknown> });
+        reviewPosts.push({ path, body: request.postDataJSON() as Record<string, unknown>,
+          key: request.headers()["idempotency-key"] ?? "" });
       }
     };
     page.on("request", captureReview);
@@ -371,8 +372,7 @@ test.describe("disposable owner website adversarial attacks", () => {
     staleReview.on("request", captureReview);
     await staleReview.goto(completedTaskPath);
     await refreshUntil(staleReview, "Read result");
-    await staleReview.getByRole("button", { name: "Read result" }).first().click();
-    await expect(staleReview.getByRole("heading", { name: "Received result" })).toBeVisible();
+    await openResultWithDeferredOwnerReview(staleReview);
     await prepareAcceptance(page);
     await prepareAcceptance(staleReview);
     await Promise.all([
@@ -383,12 +383,13 @@ test.describe("disposable owner website adversarial attacks", () => {
       { timeout: 20_000 }).toMatch(/Saved: quality acceptance/);
     await expect.poll(async () => `${await page.locator("body").innerText()}\n${await staleReview.locator("body").innerText()}`,
       { timeout: 20_000 }).toMatch(/result or review changed|decision is already recorded/i);
-    const acceptedRequest = reviewPosts.find(request => request.body.decision === "accepted");
+    const acceptedRequest = reviewPosts.find(request => (request.body.review as Record<string, unknown> | undefined)?.decision === "accepted");
     expect(acceptedRequest).toBeDefined();
-    const acceptedDraft = { ...acceptedRequest!.body };
+    const acceptedDraft = { ...(acceptedRequest!.body.review as Record<string, unknown>) };
     delete acceptedDraft.acceptanceAttestation;
     const requestChangesAfterAccept = await api(page, acceptedRequest!.path, "POST",
-      { ...acceptedDraft, decision: "changes_requested", feedback: "This must be refused after acceptance." },
+      { review: { ...acceptedDraft, decision: "changes_requested", feedback: "This must be refused after acceptance." },
+        expectedAuthentication: acceptedRequest!.body.expectedAuthentication },
       "advchangesafteraccept1");
     expect(requestChangesAfterAccept.status).toBe(409);
     await expect(page.getByRole("button", { name: /Edit task/i })).toHaveCount(0);
@@ -401,17 +402,35 @@ test.describe("disposable owner website adversarial attacks", () => {
 
     await prepareTask(page, project.projectId, "Revision lifecycle task");
     await assignAndOpenResult(page);
-    await page.getByLabel("Changes you want").fill("Return a corrected harmless line in a linked revision.");
+    const requestChanges = await requestChangesControlWhenReady(page, "Return a corrected harmless line in a linked revision.");
     const reviewsBeforeRevision = reviewPosts.length;
-    await activateTwice(page.getByRole("button", { name: "Request changes" }));
-    await expect(page.getByText(/Saved: changes requested/)).toBeVisible();
+    await activateTwice(requestChanges);
+    const savedChanges = page.getByText(/Saved: changes requested/);
+    const checkExactSave = page.getByRole("button", { name: "Check this exact review save" });
+    // Each poll probe must return at once. `isEnabled()` auto-waits for its
+    // element, and the retry button is removed as soon as a fast save resolves,
+    // so it would block the whole poll waiting for a button that never returns.
+    // Counting enabled matches never waits.
+    const enabledCheckExactSave = page.getByRole("button", { name: "Check this exact review save", disabled: false });
+    await expect.poll(async () => {
+      if (await savedChanges.isVisible()) return "saved";
+      if (await enabledCheckExactSave.count()) return "retry";
+      return "pending";
+    }, { timeout: 20_000 }).not.toBe("pending");
     expect(reviewPosts.length - reviewsBeforeRevision).toBe(1);
+    if (!await savedChanges.isVisible()) await checkExactSave.click();
+    await expect(savedChanges).toBeVisible();
+    const revisionReviewPosts = reviewPosts.slice(reviewsBeforeRevision);
+    expect(new Set(revisionReviewPosts.map(request => request.key)).size).toBe(1);
+    expect(revisionReviewPosts.every(request => request.key)).toBe(true);
     const revisionPosts: string[] = [];
     const captureRevision = (request: Request) => {
       if (request.method() === "POST" && request.url().endsWith("/revisions")) revisionPosts.push(request.url());
     };
     page.on("request", captureRevision);
-    await activateTwice(page.getByRole("button", { name: "Prepare revised task" }));
+    const prepareRevision = page.getByRole("button", { name: "Prepare revised task" });
+    await expect(prepareRevision).toBeEnabled();
+    await activateTwice(prepareRevision);
     await expect(page.getByRole("link", { name: "Open revised task" })).toBeVisible();
     page.off("request", captureRevision);
     expect(revisionPosts).toHaveLength(1);
@@ -425,9 +444,13 @@ test.describe("disposable owner website adversarial attacks", () => {
     for (const path of [projectPath, `${projectPath}/tasks`, `${projectPath}/reviews`,
       `${projectPath}/activity`, `${projectPath}/files`, "/", "/needs-me"]) {
       await page.goto(path); await expectHealthy(page);
-      if (path === `${projectPath}/tasks` || path === `${projectPath}/activity` || path === `${projectPath}/files`) {
+      if (path === `${projectPath}/tasks` || path === `${projectPath}/files`) {
         await expect(page.locator("main")).toContainText("Concurrent acceptance task");
         await expect(page.locator("main")).toContainText("Revision lifecycle task");
+      }
+      if (path === `${projectPath}/activity`) {
+        await expect(page.locator("main")).toContainText("No saved project events are recorded yet");
+        await expect(page.locator("main")).toContainText("Read-only history");
       }
     }
     expect(browserErrors).toEqual([]);

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { createCodexDeliveryBoundWorkspacePreparationV1 }
+import { createCodexDeliveryBoundWorkspacePreparationV1, effectiveOwnershipLeaseAllowedPathsV1 }
   from '../src/harness/codex-v1/delivery-bound-workspace-preparation';
 import type { CodexLocalStartBindingV1 } from '../src/harness/codex-v1/local-start-runtime';
 import { createControllerWorkerDeliveryV1 } from '../src/harness/v1/controller-worker-delivery';
@@ -15,12 +15,14 @@ const intent = Object.freeze({ schema: 'control-room.workspace-intent/v1' as con
   repositoryRoot: '/synthetic/repository', workspaceRoot: '/synthetic/workspaces',
   checkoutPath: `/synthetic/workspaces/codex-${sha256Digest('run:test').slice(7, 31)}`, revision });
 
-function delivery(change: { jobId?: string; prompt?: string } = {}) {
+function delivery(change: { jobId?: string; prompt?: string;
+  writeScopes?: readonly Readonly<{ scopeKind: 'file' | 'tree'; path: string }>[] } = {}) {
   return createControllerWorkerDeliveryV1({
     identity: { tenantId: intent.tenantId, nodeId: intent.nodeId, projectId: intent.projectId,
       jobId: change.jobId ?? intent.jobId, attemptId: intent.attemptId, runId: intent.runId },
     worker: { workerId: 'worker:codex', adapterId: 'codex-app-server/v1', adapterRevision: 'source-test' },
     input: { prompt: change.prompt ?? 'Do the exact task.', instructions: 'Return bounded evidence.' },
+    writeScopes: change.writeScopes,
     authorityDigest: sha256Digest('authority'), connectorProfileDigest: sha256Digest('profile'),
     acceptanceProfileId: 'profile:codex', acceptanceProfileDigest: sha256Digest('acceptance'),
     issuedAt: '2026-09-24T00:00:00.000Z', expiresAt: '2026-09-24T00:10:00.000Z',
@@ -40,7 +42,7 @@ function binding(packet = delivery()): CodexLocalStartBindingV1 {
 }
 
 function fixture(options: { failCreate?: boolean; revokeDuringCreate?: boolean; publication?: boolean;
-  driftBeforeOpen?: boolean } = {}) {
+  driftBeforeOpen?: boolean; allowedPaths?: readonly string[] } = {}) {
   let creates = 0, removes = 0, inspections = 0, opens = 0, retains = 0, controllerChecks = 0, current = true;
   let canonicalSelectedModel = 'model:current';
   const publications = new Map<string, unknown>();
@@ -76,7 +78,7 @@ function fixture(options: { failCreate?: boolean; revokeDuringCreate?: boolean; 
       if (canonicalSelectedModel !== snapshot.model) throw new Error('canonical_selection_changed');
     } });
   const preparation = createCodexDeliveryBoundWorkspacePreparationV1({ workspaceIntent: intent, journal,
-    policy: { allowedPaths: ['src/**'], maximumChangedFiles: 5, maximumChangedBytes: 4096 },
+    policy: { allowedPaths: options.allowedPaths ?? ['src/**'], maximumChangedFiles: 5, maximumChangedBytes: 4096 },
     ...(options.publication ? { publication: { integrityKey, journal, authority,
       runGit: async (_cwd: string, args: readonly string[]) => {
         if (args.includes('status')) return Buffer.from('');
@@ -123,6 +125,28 @@ test('one exact shared delivery prepares and retains one workspace while its dig
     'the shared delivery binding is one-use even when the packet is exact');
   assert.equal('cleanup' in f.preparation, false); assert.equal('lease' in f.preparation, false);
   assert.equal('workspacePath' in f.preparation, false);
+});
+
+test('durable ownership scopes narrow the real workspace change-audit policy', async () => {
+  const packet = delivery({ writeScopes: [{ scopeKind: 'tree', path: 'src/leased' }] });
+  assert.deepEqual(effectiveOwnershipLeaseAllowedPathsV1(packet, ['src/**']), ['src/leased/**']);
+  assert.throws(() => effectiveOwnershipLeaseAllowedPathsV1(packet, ['docs/**']), /unavailable/,
+    'a host policy that has no overlap refuses before workspace creation');
+  assert.throws(() => effectiveOwnershipLeaseAllowedPathsV1(
+    delivery({ writeScopes: [{ scopeKind: 'tree', path: 'srcx' }] }), ['src/**']), /unavailable/,
+  'scope containment requires a slash boundary');
+
+  const narrowed = fixture(), startBinding = binding(packet);
+  narrowed.preparation.bindDelivery(packet);
+  await narrowed.preparation.prepare(startBinding, narrowed.assertCurrent);
+  assert.deepEqual(narrowed.counts(), { creates: 1, removes: 0, inspections: 2, opens: 0 },
+    'the production holder accepts the exact lease intersection');
+
+  const disjoint = fixture({ allowedPaths: ['docs/**'] });
+  disjoint.preparation.bindDelivery(packet);
+  await assert.rejects(disjoint.preparation.prepare(startBinding, disjoint.assertCurrent), /unavailable/,
+    'the production preparation cannot fall back to the wider host ceiling');
+  assert.deepEqual(disjoint.counts(), { creates: 0, removes: 0, inspections: 0, opens: 0 });
 });
 
 test('absent, changed, or mismatched shared delivery refuses before workspace effects', async () => {

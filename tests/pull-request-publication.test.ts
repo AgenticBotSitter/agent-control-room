@@ -12,7 +12,7 @@ import { createAuthenticatedModelSelectionV1, createAuthenticatedPublicationDeli
   createPullRequestPublicationPlanV1, createPullRequestPublisherV1,
   type DurablePullRequestPublicationStoreV1, verifyPullRequestPublicationEvidenceV1 }
   from "../src/harness/v1/pull-request-publication";
-import { canonicalJson, sha256Digest } from "../src/security";
+import { canonicalJson, hmacSha256Tag, sha256Digest } from "../src/security";
 import { composeBuildStagePullRequestPublicationV1 }
   from "../src/harness/codex-v1/build-stage-pull-request-publication";
 import { createManagedWorktreeChangeAuditAuthorityV1 }
@@ -180,6 +180,23 @@ test("a recomputed digest cannot forge the retained pull request URL", async () 
   const forged = { ...material, url: `${repositoryUrl}/pull/22` };
   assert.throws(() => verifyPullRequestPublicationEvidenceV1({ ...forged,
     evidenceDigest: sha256Digest(forged), authenticationTag }, f.plan, key), /unavailable/);
+});
+
+test("correctly signed evidence for a different commit than the plan is refused", async () => {
+  const f = await fixture(), store = new MemoryStore();
+  const published = await createPullRequestPublisherV1({ integrityKey: key, plan: f.plan, publicationContent,
+    port: createPullRequestOpenPortV1(async () => ({ status: "opened", url: `${repositoryUrl}/pull/23`,
+      observedCommit: head })), store, assertCurrent: () => {} }).publish();
+  assert.equal(published.status, "published");
+  if (published.status !== "published") return;
+  // The evidence key holder re-signs everything, so only the plan binding can refuse.
+  const { evidenceDigest: _digest, authenticationTag: _tag, ...material } = published.evidence;
+  const forged = { ...material, commitDigest: "c".repeat(40) };
+  const evidenceDigest = sha256Digest(forged);
+  const resigned = { ...forged, evidenceDigest, authenticationTag: hmacSha256Tag(key,
+    { purpose: "pull-request-publication-evidence/v1", value: { ...forged, evidenceDigest } }) };
+  assert.throws(() => verifyPullRequestPublicationEvidenceV1(resigned, f.plan, key), /pull_request_publication_unavailable/);
+  assert.deepEqual(verifyPullRequestPublicationEvidenceV1(published.evidence, f.plan, key), published.evidence);
 });
 
 test("SQLite retains the exact published result across a real journal restart without reopening", async t => {

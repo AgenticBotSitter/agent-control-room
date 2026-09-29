@@ -14,7 +14,9 @@ export interface CodexWorkspaceCreateEvidenceV1 extends CodexWorkspaceIdentityV1
 
 export interface CodexWorkspacePortV1 {
   inspectExisting(path: string): Promise<CodexWorkspaceIdentityV1>;
+  inspectOwnerCheckout?(path: string): Promise<CodexWorkspaceIdentityV1>;
   createDetachedWorktree(input: { repositoryRealPath: string; checkoutPath: string; revision: string }): Promise<CodexWorkspaceCreateEvidenceV1>;
+  createCodingWorktree?(input: { repositoryRealPath: string; checkoutPath: string; revision: string }): Promise<CodexWorkspaceCreateEvidenceV1>;
   removeWorktree(input: { repositoryRealPath: string; checkoutPath: string }): Promise<void>;
 }
 
@@ -39,6 +41,7 @@ export interface CodexWorkspaceLeaseV1 {
 
 export class CodexWorkspaceManagerV1 {
   private readonly active = new Map<string, CodexWorkspaceLeaseV1>();
+  private readonly coding = new Set<string>();
   private readonly busy = new Set<string>();
   private readonly uncertainCreates = new Set<string>();
 
@@ -50,11 +53,32 @@ export class CodexWorkspaceManagerV1 {
     if (this.uncertainCreates.has(input.runId)) throw new Error("Codex workspace creation requires reconciliation");
     if (this.busy.has(input.runId)) throw new Error("Codex workspace operation is already pending");
     this.busy.add(input.runId);
-    try { return await this.prepareExclusive(input as typeof input & { deliveryDigest: string }); }
+    try { return await this.prepareExclusive(input as typeof input & { deliveryDigest: string }, false); }
     finally { this.busy.delete(input.runId); }
   }
 
-  private async prepareExclusive(input: { deliveryDigest: string; runId: string; repositoryRoot: string; workspaceRoot: string; revision: string }): Promise<CodexWorkspaceLeaseV1> {
+  /** Coding tasks must use a repository source distinct from the owner's live
+   * checkout. The canonical identity check happens before any create effect. */
+  async prepareCoding(input: { deliveryDigest?: string; runId: string; repositoryRoot: string; workspaceRoot: string;
+    ownerCheckoutRoot: string; revision: string }): Promise<CodexWorkspaceLeaseV1> {
+    input = { ...input, deliveryDigest: input.deliveryDigest
+      ?? sha256Digest({ purpose: "legacy-workspace-delivery/v1", runId: input.runId }) };
+    if (!isAbsolute(input.ownerCheckoutRoot)) throw new Error("Codex owner checkout root must be absolute");
+    if (resolve(input.repositoryRoot) === resolve(input.ownerCheckoutRoot))
+      throw new Error("Codex owner live checkout cannot be a coding base");
+    if (!this.port.inspectOwnerCheckout) throw new Error("Codex owner checkout inspection is unavailable");
+    const [repository, owner] = await Promise.all([this.port.inspectExisting(resolve(input.repositoryRoot)),
+      this.port.inspectOwnerCheckout(resolve(input.ownerCheckoutRoot))]);
+    requireCanonicalRoot(owner, input.ownerCheckoutRoot, "owner checkout");
+    if (sameIdentity(repository, owner)) throw new Error("Codex owner live checkout cannot be a coding base");
+    if (this.uncertainCreates.has(input.runId)) throw new Error("Codex workspace creation requires reconciliation");
+    if (this.busy.has(input.runId)) throw new Error("Codex workspace operation is already pending");
+    this.busy.add(input.runId);
+    try { return await this.prepareExclusive(input as typeof input & { deliveryDigest: string }, true); }
+    finally { this.busy.delete(input.runId); }
+  }
+
+  private async prepareExclusive(input: { deliveryDigest: string; runId: string; repositoryRoot: string; workspaceRoot: string; revision: string }, coding: boolean): Promise<CodexWorkspaceLeaseV1> {
     if (!/^[a-zA-Z0-9][a-zA-Z0-9._:-]{2,179}$/.test(input.runId)) throw new Error("Codex workspace run id is invalid");
     if (!/^sha256:[a-f0-9]{64}$/.test(input.deliveryDigest)) throw new Error("Codex workspace delivery digest is invalid");
     if (!/^[a-f0-9]{40}$/.test(input.revision)) throw new Error("Codex workspace revision must be a full Git commit");
@@ -71,7 +95,9 @@ export class CodexWorkspaceManagerV1 {
     if (relative(workspace.realPath, checkoutPath).split("/").length !== 1) throw new Error("Codex checkout must be a direct workspace child");
     // Once the effect boundary is crossed, absence cannot be inferred from an error.
     this.uncertainCreates.add(input.runId);
-    const created = await this.port.createDetachedWorktree({ repositoryRealPath: repository.realPath, checkoutPath, revision: input.revision });
+    if (coding && !this.port.createCodingWorktree) throw new Error("Codex coding workspace port is unavailable");
+    const create = coding ? this.port.createCodingWorktree!.bind(this.port) : this.port.createDetachedWorktree.bind(this.port);
+    const created = await create({ repositoryRealPath: repository.realPath, checkoutPath, revision: input.revision });
     if (created.realPath !== checkoutPath || created.repositoryRealPath !== repository.realPath || created.headRevision !== input.revision) {
       throw new Error("Codex created worktree failed identity verification");
     }
@@ -92,6 +118,7 @@ export class CodexWorkspaceManagerV1 {
       inode: created.inode,
     };
     this.active.set(input.runId, lease);
+    if (coding) this.coding.add(input.runId);
     this.uncertainCreates.delete(input.runId);
     return { ...lease };
   }
@@ -121,6 +148,12 @@ export class CodexWorkspaceManagerV1 {
     return { ...active };
   }
 
+  requireActiveCodingLease(leaseValue: CodexWorkspaceLeaseV1): CodexWorkspaceLeaseV1 {
+    const lease = this.requireActiveLease(leaseValue);
+    if (!this.coding.has(lease.runId)) throw new Error("Codex coding workspace lease is not active");
+    return lease;
+  }
+
   private async cleanupExclusive(lease: CodexWorkspaceLeaseV1): Promise<void> {
     const active = this.active.get(lease.runId);
     assertCodexWorkspaceLeaseV1(lease);
@@ -131,6 +164,7 @@ export class CodexWorkspaceManagerV1 {
     }
     await this.port.removeWorktree({ repositoryRealPath: active.repositoryRealPath, checkoutPath: active.checkoutPath });
     this.active.delete(active.runId);
+    this.coding.delete(active.runId);
   }
 }
 
@@ -168,4 +202,10 @@ function sameLease(left: CodexWorkspaceLeaseV1, right: CodexWorkspaceLeaseV1): b
     && left.runId === right.runId && left.repositoryRealPath === right.repositoryRealPath
     && left.repositoryDevice === right.repositoryDevice && left.repositoryInode === right.repositoryInode
     && left.checkoutPath === right.checkoutPath && left.revision === right.revision && left.device === right.device && left.inode === right.inode;
+}
+
+function sameIdentity(left: CodexWorkspaceIdentityV1, right: CodexWorkspaceIdentityV1): boolean {
+  // Canonical paths are checked independently. Device + inode identify the
+  // same directory even when the OS exposes it through a distinct bind path.
+  return left.device === right.device && left.inode === right.inode;
 }

@@ -34,7 +34,8 @@ import { PersistentLocalArtifactStorageV1 } from "../../artifacts/v1/persistent-
 import { CODEX_RESULT_RETURN_FEATURE_V1 } from "../../harness/codex-v1/result-return";
 import { captureCodexResultIntakeSettingsV1, type CodexResultIntakeSettingsV1 } from "./codex-result-intake";
 import { inspectHermes021MacosDeliveryRecoveryStatusV1 } from "../../harness/hermes-021-v1/delivery-recovery-status";
-import { readResultBoundWorktreeChangeAuditSummariesV1 } from "../../harness/v1/worktree-change-audit-record-store";
+import { readResultBoundWorktreeChangeAuditDetailV1,
+  readResultBoundWorktreeChangeAuditSummariesV1 } from "../../harness/v1/worktree-change-audit-record-store";
 import { summarizeInstallationReadinessV1, verifyInstallationReadinessV1 } from "../../harness/v1/installation-readiness";
 import { localBackupRestoreEvidenceDigestForInstallationPlanV1 } from "../../harness/v1/local-backup-restore-readiness";
 import { summarizeLocalSupervisorReadinessV1 } from "../../harness/v1/local-supervisor-readiness";
@@ -566,7 +567,16 @@ export function createPrivateTaskBootstrap(dependencies: {
       // browser task service receives only this callback; it cannot inspect a
       // record, receipt, audit plan, key, or evidence database.
       const worktreeChangeEvidence = evidenceDatabase && config.web.tasks
-        ? Object.freeze({ inspectMany: async (scopes: readonly { tenantId: string; projectId: string; jobId: string;
+        ? Object.freeze({ inspectOne: async (scope: { tenantId: string; projectId: string; jobId: string;
+          attemptId: string; runId: string; artifactId: string }) => {
+          requireActive();
+          if (!evidenceDatabase.isAvailable() || scope.tenantId !== config.web.tenantId)
+            throw new Error("worktree_change_evidence_unavailable");
+          const detail = await evidenceDatabase.client.transaction(tx =>
+            readResultBoundWorktreeChangeAuditDetailV1(tx, config.web.tasks!.harnessIntegrityKey, scope));
+          requireActive();
+          return detail;
+        }, inspectMany: async (scopes: readonly { tenantId: string; projectId: string; jobId: string;
           attemptId: string; runId: string; artifactId: string }[]) => {
           requireActive();
           if (!evidenceDatabase.isAvailable() || scopes.some(scope => scope.tenantId !== config.web.tenantId))

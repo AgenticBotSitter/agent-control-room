@@ -19,11 +19,17 @@ import { macRolePlan, readMacGrantCatalogV1 } from "../scripts/mac-local/databas
 import { provisionMacLocalNarrowRolesV1 } from "../scripts/mac-local/narrow-role-provision.mjs";
 import { postgresScramVerifierV1 } from "../scripts/mac-local/database-upgrade-scram.mjs";
 import { fixedQueueShapeDigestForTestV1 } from "../scripts/mac-local/fixed-queue-schema.mjs";
+// The shared disposable-cluster teardown. `.mjs` because
+// `scripts/ops/verify-database-backup.mjs` imports it with bare `node`, and a
+// `.ts` module could not be imported by one of its own callers.
+import { createClusterTeardown } from "../scripts/dev/postgres-cluster-lifecycle.mjs";
 
-const oldRoot = "/private/tmp/acr-db-0085";
+const oldRoot = process.env.CONTROL_ROOM_PG17_UPGRADE_FIXTURE_ROOT ?? "/private/tmp/acr-db-0085";
+const portBase = Number(process.env.CONTROL_ROOM_PG17_PORT_BASE ?? 15581);
 const headRoot = resolve(fileURLToPath(new URL("../", import.meta.url)));
 const oldRoles = Object.entries(macRolePlan).filter(([login]) =>
   !["control_room_publisher", "control_room_agent_reviewer_login"].includes(login));
+const migrationFileCount = ledger => (ledger.match(/"file": "db\/migrations\/[^"\n]+"/gu) ?? []).length;
 const exec = (file, args) => execFileSync(file, args, { encoding: "utf8", timeout: 120_000,
   env: { ...process.env, LANG: "en_US.UTF-8", LC_ALL: "en_US.UTF-8" } });
 const connection = port => `host=127.0.0.1 port=${port} dbname=control_room user=postgres`;
@@ -33,10 +39,37 @@ async function cluster(root, port) {
   const data = join(root, "pg"), log = join(root, "pg.log"), socket = join(root, "socket");
   await mkdir(root, { recursive: true, mode: 0o700 });
   await mkdir(socket, { mode: 0o700 });
-  exec("initdb", ["-D", data, "-U", "postgres", "--auth=trust", "-E", "UTF8"]);
-  await writeFile(join(data, "pg_hba.conf"), "local all postgres trust\nhost all postgres 127.0.0.1/32 trust\nhost all all 127.0.0.1/32 scram-sha-256\n");
-  exec("pg_ctl", ["-D", data, "-l", log, "-w", "-o", `-p ${port} -k '${socket}' -c listen_addresses=127.0.0.1`, "start"]);
-  return { port, log, data, socket };
+  // Registered BEFORE initdb, and that ordering is the fix. This lane had no
+  // SIGINT/SIGTERM handler at all, so a runner that stopped it at its bound, or
+  // a Ctrl-C, skipped every `t.after()` and left four postmasters holding
+  // 56-byte SysV shared-memory segments with dead creators. `pg_ctl start` runs
+  // the postmaster with `setsid`, so it is its own session leader with PPID 1
+  // and a group signal from the runner cannot reach it either. This machine has
+  // 32 of those segments in total, and this one lane starts four clusters.
+  const teardown = createClusterTeardown({ dataDirectory: data, runDirectory: root,
+    socketDirectory: socket, port, pgBin: undefined, removeDirectories: false });
+  // The teardown is armed, and the caller's `t.after` is not registered until
+  // this function RETURNS. A throw between here and there — and `initdb`,
+  // `pg_hba.conf` and `pg_ctl start` all throw — would leave a live postmaster
+  // with nothing that stops it, which is the exact window this whole change
+  // exists to close. So a failure here stops the cluster itself.
+  try {
+    exec("initdb", ["-D", data, "-U", "postgres", "--auth=trust", "-E", "UTF8"]);
+    await writeFile(join(data, "pg_hba.conf"), "local all postgres trust\nhost all postgres 127.0.0.1/32 trust\nhost all all 127.0.0.1/32 scram-sha-256\n");
+    exec("pg_ctl", ["-D", data, "-l", log, "-w", "-o", `-p ${port} -k '${socket}' -c listen_addresses=127.0.0.1`, "start"]);
+    // Retained while the cluster is up, so a teardown reached from a signal has a
+    // pid even when the rest of the rehearsal is about to throw. Without it the
+    // teardown has nothing to signal and the ladder never runs.
+    await teardown.capturePostmasterPid();
+  } catch (error) {
+    // Stop what was started, then report the original failure. `stop()` may
+    // itself refuse, and that refusal is attached rather than raised over the
+    // top of the start failure that caused it.
+    try { await teardown.stop(); }
+    catch (stopError) { throw new AggregateError([error, stopError], `disposable_cluster_start_failed_and_teardown_failed: ${error?.message ?? String(error)}`); }
+    throw error;
+  }
+  return { port, log, data, socket, teardown };
 }
 
 async function baseDatabase(root, port, suffix) {
@@ -86,15 +119,22 @@ test("live-shaped 0085 PostgreSQL 17 installation converges to fresh HEAD withou
   timeout: 240_000,
 }, async t => {
   assert.match(exec("postgres", ["--version"]), /^postgres \(PostgreSQL\) 17\./u);
-  assert.equal((await readFile(join(oldRoot, "deploy/postgres/migration-ledger.json"), "utf8")).includes("0086_"), false);
+  const oldLedger = await readFile(join(oldRoot, "deploy/postgres/migration-ledger.json"), "utf8");
+  const headLedger = await readFile(join(headRoot, "deploy/postgres/migration-ledger.json"), "utf8");
+  assert.equal(oldLedger.includes("0086_"), false);
+  const expectedPendingMigrationCount = migrationFileCount(headLedger) - migrationFileCount(oldLedger);
   const root = await mkdtemp(join(tmpdir(), "mac-db-pg17-"));
-  const old = await cluster(join(root, "old"), 15581);
-  const fresh = await cluster(join(root, "fresh"), 15582);
+  const old = await cluster(join(root, "old"), portBase);
+  const fresh = await cluster(join(root, "fresh"), portBase + 1);
   const clients = [];
   t.after(async () => {
     for (const client of clients) { try { await client.end(); } catch {} }
+    // The shared ladder refuses to report success when a postmaster survives.
+    // The old `catch {}` on each `pg_ctl` reported success for a cluster that
+    // was still running and then removed its data directory — leaving a live
+    // postmaster holding a segment and nothing left to stop it with.
     for (const item of [old, fresh]) {
-      try { exec("pg_ctl", ["-D", item.data, "-m", "fast", "stop"]); } catch {}
+      try { await item.teardown.stop(); } catch { /* the segment is the finding; report it below */ }
     }
     await rm(root, { recursive: true, force: true });
   });
@@ -136,7 +176,7 @@ test("live-shaped 0085 PostgreSQL 17 installation converges to fresh HEAD withou
   changedLogin.roles.find(role => role.rolname === "control_room_results").rolcreatedb = true;
   await assert.rejects(planMacDatabaseUpgradeSnapshotV1(changedLogin), /upgrade_role_attributes_refused/u);
   const outsideMember = structuredClone(readOnlySnapshot);
-  outsideMember.memberships.push({ member: "control_room_app", parent: "control_room_private_web",
+  outsideMember.memberships.push({ member: "control_room_reader", parent: "control_room_private_web",
     admin_option: false, inherit_option: true, set_option: true });
   await assert.rejects(planMacDatabaseUpgradeSnapshotV1(outsideMember), /upgrade_non_login_membership_refused/u);
   const unexpectedParent = structuredClone(readOnlySnapshot);
@@ -147,14 +187,18 @@ test("live-shaped 0085 PostgreSQL 17 installation converges to fresh HEAD withou
   const snapshotFile = join(root, "snapshot.json"), mainCommit = "a".repeat(40);
   await writeFile(snapshotFile, JSON.stringify(captureMacUpgradeSnapshotV1(mainCommit, raw)));
   assert.deepEqual(await planMacDatabaseUpgradeFromFileV1(snapshotFile, mainCommit), plan);
-  assert.equal(plan.pendingMigrations.length, 5);
+  const expectedPendingMigrations = JSON.parse(headLedger).entries
+    .filter(entry => entry.kind === "migrate" && entry.file > "db/migrations/0086").map(entry => entry.file);
+  assert.equal(expectedPendingMigrations.length, expectedPendingMigrationCount);
+  assert.deepEqual(plan.pendingMigrations, expectedPendingMigrations);
   assert.ok(plan.createRoles.some(item => item.role === "control_room_publisher"));
   assert.ok(plan.grants.extra.some(item => item.includes("control_room_private_web|table|public.control_jobs||DELETE|plain")));
   assert.deepEqual(await snapshot(oldClient), prior, "dry run does not change PostgreSQL");
   const publisherPassword = "q".repeat(40);
   const reviewerPassword = "w".repeat(40);
-  const request = { client: oldClient, publisherVerifier: postgresScramVerifierV1(publisherPassword),
-    agentReviewerVerifier: postgresScramVerifierV1(reviewerPassword) };
+  const loginVerifiers = { control_room_publisher: postgresScramVerifierV1(publisherPassword),
+    control_room_agent_reviewer_login: postgresScramVerifierV1(reviewerPassword) };
+  const request = { client: oldClient, loginVerifiers };
   await assert.rejects(applyMacDatabaseUpgradeV1(request), /upgrade_pending_migrations_need_peer_runner/u);
   const retainedLogins = ["control_room_migrator", "control_room_app", "control_room_scheduler",
     ...oldRoles.map(([login]) => login)];
@@ -172,31 +216,49 @@ test("live-shaped 0085 PostgreSQL 17 installation converges to fresh HEAD withou
   const localPeer = `host=${old.socket} port=${old.port} dbname=control_room user=postgres`;
   await assert.rejects(applyMacDatabaseUpgradeV1({ ...request,
     expectedPlanDigest: `sha256:${"0".repeat(64)}` }), /upgrade_plan_changed_refused/u);
+  // The reviewer login is a planned new LOGIN: without its own code nothing is written.
+  for (const partial of [{ control_room_publisher: loginVerifiers.control_room_publisher }, {}]) {
+    await assert.rejects(applyMacDatabaseUpgradeV1({ client: oldClient, loginVerifiers: partial,
+      expectedPlanDigest: macDatabaseUpgradePlanDigestV1(plan),
+      applyPending: async () => { throw new Error("migrations must not start without every login code"); } }),
+    /^Error: upgrade_new_login_needs_verifier:control_room_agent_reviewer_login,control_room_publisher$/u);
+    assert.deepEqual(await snapshot(oldClient), prior, "a refused upgrade changes nothing");
+  }
   let failureStage = "plan";
   const simulatedSqlError = Object.assign(new Error("private diagnostic must not print"), { code: "42501" });
   await assert.rejects(runMacDatabaseUpgradeCommandV1({
     args: ["--apply", "--expected-main", mainCommit,
       "--expected-plan-digest", macDatabaseUpgradePlanDigestV1(plan)],
-    readVerifier: async () => `${JSON.stringify({ publisher: request.publisherVerifier,
-      agentReviewer: request.agentReviewerVerifier })}\n`,
+    readVerifier: async () => `${JSON.stringify(loginVerifiers)}\n`,
     git: params => params[0] === "status" ? "" : mainCommit,
     openClient: () => connectTarget(connection(old.port)),
     applyPending: async () => { throw simulatedSqlError; },
     onStage: stage => { failureStage = stage; },
   }), error => error === simulatedSqlError);
   assert.equal(failureStage, "migrate");
-  assert.deepEqual(await inspectMacDatabaseUpgradeV1({ client: oldClient }), plan,
-    "a failure before migrations leaves the approved plan unchanged");
+  // Roles come first, so a failed migration leaves only the new roles behind.
+  const resumed = await inspectMacDatabaseUpgradeV1({ client: oldClient });
+  assert.deepEqual(resumed, { ...plan, createRoles: [] },
+    "a failure in migrations leaves the approved plan minus the roles it created");
+  assert.deepEqual((await oldClient.query(`SELECT rolname,rolcanlogin,rolinherit,rolsuper,rolcreatedb,
+    rolcreaterole,rolreplication,rolbypassrls FROM pg_roles WHERE rolname LIKE 'control_room_agent_reviewer%'
+    ORDER BY rolname`)).rows, [["control_room_agent_reviewer", false], ["control_room_agent_reviewer_login", true]]
+    .map(([rolname, rolcanlogin]) => ({ rolname, rolcanlogin, rolinherit: true, rolsuper: false, rolcreatedb: false,
+      rolcreaterole: false, rolreplication: false, rolbypassrls: false })),
+  "the reviewer group and login exist before any migration refers to them");
   const cli = await runMacDatabaseUpgradeCommandV1({
     args: ["--apply", "--expected-main", mainCommit,
-      "--expected-plan-digest", macDatabaseUpgradePlanDigestV1(plan)],
-    readVerifier: async () => `${JSON.stringify({ publisher: request.publisherVerifier,
-      agentReviewer: request.agentReviewerVerifier })}\n`,
+      "--expected-plan-digest", macDatabaseUpgradePlanDigestV1(resumed)],
+    // The roles already exist, so the resumed upgrade must not ask for a code.
+    readVerifier: async () => { throw new Error("the resumed upgrade read a code it did not need"); },
     git: params => params[0] === "status" ? "" : mainCommit,
     openClient: () => connectTarget(connection(old.port)),
     applyPending: () => applyPendingMacMigrationsV1(localPeer),
   });
   assert.equal(cli.upgraded, true);
+  const appliedTail = (await oldClient.query(`SELECT filename FROM control_room_schema_migrations
+    ORDER BY ledger_order DESC LIMIT 2`)).rows.map(row => row.filename).reverse();
+  assert.deepEqual(appliedTail, ["db/migrations/0105_linear_pipeline_runs.sql", "db/migrations/0106_agent_review_plans.sql"]);
   assert.deepEqual(await passwordSnapshot(), beforePasswords,
     "migrator, app, scheduler and four existing login password verifiers are byte-identical");
   assert.deepEqual(await otherMemberships(), beforeOtherMemberships,
@@ -235,11 +297,11 @@ test("post-incident ledger 90 with old memberships needs only the role and grant
   timeout: 240_000,
 }, async t => {
   const root = await mkdtemp(join(tmpdir(), "mac-db-ledger90-"));
-  const live = await cluster(root, 15583);
+  const live = await cluster(root, portBase + 2);
   const client = connectTarget(connection(live.port));
   t.after(async () => {
     try { await client.end(); } catch {}
-    try { exec("pg_ctl", ["-D", live.data, "-m", "fast", "stop"]); } catch {}
+    try { await live.teardown.stop(); } catch { /* the segment is the finding; report it below */ }
     await rm(root, { recursive: true, force: true });
   });
   await baseDatabase(oldRoot, live.port, "n");
@@ -250,7 +312,9 @@ test("post-incident ledger 90 with old memberships needs only the role and grant
   const before = await inspectMacDatabaseUpgradeV1({ client });
   assert.deepEqual(before.pendingMigrations, []);
   assert.equal(before.installQueueSchema, true);
-  assert.equal(before.createRoles.length, 5);
+  assert.deepEqual(before.createRoles.map(item => item.role), ["control_room_agent_reviewer",
+    "control_room_agent_reviewer_login", "control_room_local_result_publisher", "control_room_native_queue_worker",
+    "control_room_native_results", "control_room_publisher", "control_room_task_coordinator"]);
   assert.equal(before.membership.revoke.length, 4);
   const oldVerifiers = (await client.query(`SELECT rolname,rolpassword FROM pg_authid
     WHERE rolname=ANY($1::text[]) ORDER BY rolname`, [
@@ -262,7 +326,8 @@ test("post-incident ledger 90 with old memberships needs only the role and grant
   const result = await runMacDatabaseUpgradeCommandV1({
     args: ["--apply", "--expected-main", mainCommit,
       "--expected-plan-digest", macDatabaseUpgradePlanDigestV1(before)],
-    readVerifier: async () => `${postgresScramVerifierV1("z".repeat(40))}\n`,
+    readVerifier: async () => `${JSON.stringify({ control_room_publisher: postgresScramVerifierV1("z".repeat(40)),
+      control_room_agent_reviewer_login: postgresScramVerifierV1("y".repeat(40)) })}\n`,
     git: params => params[0] === "status" ? "" : mainCommit,
     openClient: () => connectTarget(connection(live.port)),
     applyPending: () => { pendingCalled = true; throw new Error("unexpected_migration"); },
@@ -277,7 +342,7 @@ test("post-incident ledger 90 with old memberships needs only the role and grant
     WHERE rolname=ANY($1::text[]) ORDER BY rolname`, [oldVerifiers.map(row => row.rolname)])).rows,
   oldVerifiers);
   for (const [login, password] of [...oldRoles.map(([name]) => [name, "p".repeat(40) + name]),
-    ["control_room_publisher", "z".repeat(40)]]) {
+    ["control_room_publisher", "z".repeat(40)], ["control_room_agent_reviewer_login", "y".repeat(40)]]) {
     const restricted = connectTarget(`host=127.0.0.1 port=${live.port} dbname=control_room user=${login} password=${password}`);
     await restricted.connect();
     try {
@@ -301,11 +366,11 @@ test("a post-install queue shape mismatch removes only this empty new schema and
   timeout: 240_000,
 }, async t => {
   const root = await mkdtemp(join(tmpdir(), "mac-db-queue-rollback-"));
-  const local = await cluster(root, 15584);
+  const local = await cluster(root, portBase + 3);
   const client = connectTarget(connection(local.port));
   t.after(async () => {
     try { await client.end(); } catch {}
-    try { exec("pg_ctl", ["-D", local.data, "-m", "fast", "stop"]); } catch {}
+    try { await local.teardown.stop(); } catch { /* the segment is the finding; report it below */ }
     await rm(root, { recursive: true, force: true });
   });
   await baseDatabase(oldRoot, local.port, "r");
@@ -329,8 +394,8 @@ test("a post-install queue shape mismatch removes only this empty new schema and
     escapeLiteral: value => client.escapeLiteral(value),
   };
   let stage = "plan";
-  const request = { publisherVerifier: postgresScramVerifierV1("r".repeat(40)),
-    agentReviewerVerifier: postgresScramVerifierV1("s".repeat(40)),
+  const request = { loginVerifiers: { control_room_publisher: postgresScramVerifierV1("r".repeat(40)),
+    control_room_agent_reviewer_login: postgresScramVerifierV1("s".repeat(40)) },
     expectedPlanDigest: macDatabaseUpgradePlanDigestV1(plan), onStage: next => { stage = next; } };
   await assert.rejects(applyMacDatabaseUpgradeV1({ ...request, client: mismatchedCatalogClient }), error => {
     assert.match(error.message, /upgrade_queue_shape_refused/u);
@@ -341,9 +406,11 @@ test("a post-install queue shape mismatch removes only this empty new schema and
   assert.equal(altered, true);
   assert.equal(stage, "queue");
   assert.equal(await fixedQueueShapeDigestForTestV1(client), null, "failed attempt leaves no queue schema");
-  assert.deepEqual(await inspectMacDatabaseUpgradeV1({ client }), plan,
-    "the original reviewed plan remains valid after cleanup");
-  const retry = await applyMacDatabaseUpgradeV1({ ...request, client });
+  const resumed = await inspectMacDatabaseUpgradeV1({ client });
+  assert.deepEqual(resumed, { ...plan, createRoles: [] },
+    "after cleanup the reviewed plan remains, minus the roles created first");
+  const retry = await applyMacDatabaseUpgradeV1({ ...request, client,
+    expectedPlanDigest: macDatabaseUpgradePlanDigestV1(resumed) });
   assert.equal(retry.after.installQueueSchema, false);
   assert.equal((await inspectMacDatabaseUpgradeV1({ client })).installQueueSchema, false);
 

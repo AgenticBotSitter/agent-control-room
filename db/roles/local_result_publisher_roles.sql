@@ -50,4 +50,5 @@ GRANT UPDATE (state,contract_digest,reservation,auth_tag,updated_at)
   ON control_durable_result_write_reservations TO control_room_local_result_publisher;
 GRANT UPDATE (head_hash,event_count,updated_at) ON control_audit_chain_heads TO control_room_local_result_publisher;
 GRANT EXECUTE ON FUNCTION is_work_intake_session() TO control_room_local_result_publisher;
+GRANT SELECT ON work_intake_tenant_binding TO control_room_local_result_publisher;
 COMMIT;

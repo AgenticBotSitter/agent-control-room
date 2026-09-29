@@ -7,6 +7,7 @@ import { HERMES_021_MACOS_LOCAL_ADAPTER_V1, HERMES_021_MACOS_LOCAL_CAPABILITY_V1
   HERMES_021_MACOS_LOCAL_JOB_TYPE_V1, hermes021MacosLocalBindingSchemaV1 } from "./macos-local-worker";
 import { deriveHermes021MacosLocalTaskPolicyPortV1 } from "./local-task-policy";
 import { controllerWorkerDeliverySchemaV1, createControllerWorkerDeliveryV1, type ControllerWorkerDeliveryV1 } from "../v1/controller-worker-delivery";
+import { readOwnershipLeaseWriteScopesV1 } from "../v1/ownership-lease-write-scopes";
 import { hermes021TaskExecutionPlanSchemaV5, hermes021TaskExecutionPlanSchemaV6, hermes021TaskExecutionPlanSchemaV7, hermes021TaskExecutionPlanSchemaV8,
   type TaskExecutionPlanner } from "../../web/v1/task-execution-planner";
 
@@ -152,9 +153,10 @@ export class Hermes021MacosDispatchPreparationV1 {
     const workerId = id.parse(this.binding.workerId);
     const adapterRevision = z.string().regex(/^[a-f0-9]{8,64}$/).parse(this.binding.sourceRevision);
     const nodeId = id.parse(attempt.nodeId);
+    const writeScopes = await readOwnershipLeaseWriteScopesV1(tx, ref.tenantId, ref.leaseId);
     const delivery = createControllerWorkerDeliveryV1({ identity: { tenantId: ref.tenantId, projectId: ref.projectId,
       jobId: ref.jobId, attemptId: ref.attemptId, runId, nodeId }, worker: { workerId,
-      adapterId: HERMES_021_MACOS_LOCAL_ADAPTER_V1, adapterRevision }, input: plan.input,
+      adapterId: HERMES_021_MACOS_LOCAL_ADAPTER_V1, adapterRevision }, input: plan.input, writeScopes,
       authorityDigest: job.authority.digest, connectorProfileDigest: plan.connectorProfileDigest,
       acceptanceProfileId: plan.acceptanceProfileId, acceptanceProfileDigest: plan.acceptanceProfileDigest,
       issuedAt: new Date(now).toISOString(), expiresAt });

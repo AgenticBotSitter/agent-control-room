@@ -8,7 +8,7 @@ import test from "node:test";
 import { CodexWorkspaceManagerV1 } from "../src/harness/codex-v1/workspace";
 import { createGitWorkspacePort } from "../src/harness/codex-v1/git-workspace-port";
 import { inventoryManagedGitWorktreeChangesV1 } from "../src/harness/codex-v1/git-worktree-change-inventory";
-import { createWorktreeChangeAuditPlanV1 } from "../src/harness/v1/worktree-change-audit";
+import { createWorktreeChangeAuditEvidenceV1, createWorktreeChangeAuditPlanV1 } from "../src/harness/v1/worktree-change-audit";
 import { sha256Digest } from "../src/security/canonical-digest";
 
 const run = promisify(execFile);
@@ -91,4 +91,43 @@ test("real Git inventory sends scope and byte excess through the existing refusa
     baseRevision: revision, allowedPaths: ["src/**"], maximumChangedFiles: 1, maximumChangedBytes: 1 });
   await assert.rejects(inventoryManagedGitWorktreeChangesV1({ workspaceManager: manager, workspacePort: port, lease,
     auditPlan: plan, runGit: git }), /worktree_change_audit_evidence_out_of_scope/);
+});
+
+test("the path allowlist alone refuses one small out-of-scope file before its content is read", async t => {
+  const root = await mkdtemp(join(canonicalTmp, "acr-s6-allowlist-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const repository = join(root, "repository"), workspaces = join(root, "workspaces");
+  await mkdir(repository); await mkdir(workspaces);
+  const reads: string[][] = [];
+  const git = async (cwd: string, args: readonly string[]) => {
+    reads.push([...args]);
+    return Buffer.from((await run("git", ["-c", "core.hooksPath=/dev/null", "-c", "protocol.file.allow=never", ...args],
+      { cwd, encoding: "buffer", env: { PATH: process.env.PATH ?? "", NODE_ENV: "test" } })).stdout);
+  };
+  await git(repository, ["init", "--quiet"]); await git(repository, ["config", "user.name", "Fixture"]);
+  await git(repository, ["config", "user.email", "fixture@example.invalid"]);
+  await mkdir(join(repository, "src"));
+  await writeFile(join(repository, "README.md"), "base\n"); await writeFile(join(repository, "src", "kept.txt"), "base\n");
+  await git(repository, ["add", "--", "README.md", "src/kept.txt"]); await git(repository, ["commit", "--quiet", "-m", "base"]);
+  const revision = Buffer.from(await git(repository, ["rev-parse", "HEAD"])).toString("utf8").trim();
+  const port = await createGitWorkspacePort({ repositoryRoot: repository, workspaceRoot: workspaces,
+    runGit: async (cwd, args) => Buffer.from(await git(cwd, args)).toString("utf8") });
+  const manager = new CodexWorkspaceManagerV1(port);
+  const lease = await manager.prepare({ deliveryDigest, runId: "run:allowlist-refusal", repositoryRoot: repository,
+    workspaceRoot: workspaces, revision });
+  // Two bytes, one file: well inside both budgets, so only the path allowlist can refuse.
+  await writeFile(join(lease.checkoutPath, "README.md"), "x\n");
+  await git(lease.checkoutPath, ["add", "--", "README.md"]); await git(lease.checkoutPath, ["commit", "--quiet", "-m", "outside"]);
+  const plan = createWorktreeChangeAuditPlanV1({ deliveryDigest, worktreeLeaseDigest: lease.leaseId,
+    baseRevision: revision, allowedPaths: ["src/**"], maximumChangedFiles: 10, maximumChangedBytes: 100_000 });
+  reads.length = 0;
+  await assert.rejects(inventoryManagedGitWorktreeChangesV1({ workspaceManager: manager, workspacePort: port, lease,
+    auditPlan: plan, runGit: git }), /worktree_change_audit_evidence_out_of_scope/);
+  assert.deepEqual(reads.filter(args => args.includes("cat-file")), [], "out-of-scope content is never read");
+  // The shared evidence contract refuses the same inventory on its own.
+  assert.throws(() => createWorktreeChangeAuditEvidenceV1(plan, { baseRevision: revision, headRevision: "c".repeat(40),
+    changes: [{ path: "README.md", kind: "modified", bytes: 2, contentDigest: sha256Digest("x\n") }] }),
+  /worktree_change_audit_evidence_out_of_scope/);
+  assert.equal(createWorktreeChangeAuditEvidenceV1(plan, { baseRevision: revision, headRevision: "c".repeat(40),
+    changes: [{ path: "src/kept.txt", kind: "modified", bytes: 2, contentDigest: sha256Digest("x\n") }] }).changes.length, 1);
 });

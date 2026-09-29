@@ -2,14 +2,26 @@ import { z } from "zod";
 import { jobStates, attemptStates } from "../../domain/v1/types";
 import { harnessRunStates } from "../../harness/v1/types";
 import { projectViewSchema, catalogProjectIdSchema } from "./project-wire";
+import { MODEL_IDENTIFIER_PATTERN_V1 } from "../../domain/v1/model-identifier";
 
 const id = catalogProjectIdSchema;
 const text = (max: number) => z.string().trim().min(1).max(max).refine(value => ![...value].some(char =>
   (char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127) && !["\n", "\r", "\t"].includes(char)));
 const digest = z.string().regex(/^sha256:[a-f0-9]{64}$/);
 const count = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
-const model = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:/+-]{0,179}$/);
+const model = z.string().regex(MODEL_IDENTIFIER_PATTERN_V1);
 const effort = z.enum(["default", "low", "medium", "high", "xhigh", "max"]);
+const usageUnknownReason = z.enum(["usage_not_reported", "model_not_recorded", "price_table_not_recorded",
+  "price_entry_not_recorded", "partial_token_usage", "cache_pricing_not_recorded"]);
+export const usageCostSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("known"), nanoUsd: z.string().regex(/^(?:0|[1-9][0-9]*)$/), priceEntryId: id, tableId: id }).strict(),
+  z.object({ kind: z.literal("included_in_subscription"), priceEntryId: id, tableId: id }).strict(),
+  z.object({ kind: z.literal("unknown"), reason: usageUnknownReason }).strict(),
+]);
+export const usageRollupSchema = z.object({ runs: count, inputTokens: count.nullable(), outputTokens: count.nullable(),
+  totalTokens: count.nullable(), wallTimeMs: count.nullable(), knownCostNanoUsd: z.string().regex(/^(?:0|[1-9][0-9]*)$/),
+  knownCostRuns: count, subscriptionRuns: count, unknownCostRuns: count,
+  unknownCostReasons: z.array(usageUnknownReason) }).strict();
 const declaredScope = z.object({ kind: z.enum(["file", "tree"]), path: z.string().max(512)
   .refine(value => value === "" || /^[A-Za-z0-9_][A-Za-z0-9._-]{0,127}(\/[A-Za-z0-9_][A-Za-z0-9._-]{0,127})*$/.test(value)) }).strict()
   .transform(value => ({ ...value, path: value.path.toLowerCase() }));
@@ -35,8 +47,12 @@ export const taskPageSchema = z.object({ project: projectViewSchema, tasks: z.ar
     choices: z.array(z.object({ key: model, label: z.string().min(1).max(240), model, efforts: z.array(effort).min(1).max(5),
       limited: z.boolean() }).strict()).min(1).max(32), defaultModel: model, defaultEffort: effort }).strict()).max(3).optional() }).strict();
 export type TaskPage = z.infer<typeof taskPageSchema>;
-const nativeState = z.enum(["prepared", "dispatching", "queued", "running", "waiting_approval", "stopping", "completed",
-  "failed", "cancelled", "interrupted", "ambiguous"]);
+/** The states a native agent run can report. Exported so the owner-UI test lane
+ * can hold the shared chip vocabulary against the states records really carry,
+ * rather than against a list copied out of this file. */
+export const nativeRunStateValues = ["prepared", "dispatching", "queued", "running", "waiting_approval", "stopping",
+  "completed", "failed", "cancelled", "interrupted", "ambiguous"] as const;
+const nativeState = z.enum(nativeRunStateValues);
 const hermesDeliveryRecoveryStatus = z.object({
   state: z.enum(["no_authenticated_delivery", "delivery_receipt_unresolved", "terminal_result_staged"]),
   terminal: z.object({ terminalResultDigest: digest, contentDigest: digest, sizeBytes: count,
@@ -64,7 +80,7 @@ export const taskRunSchema = z.object({ runId: id, harness: z.enum(["codex", "he
   source: z.enum(["native_snapshot", "legacy"]), nativeState: nativeState.nullable(),
   availability: z.enum(["unknown", "current", "offline", "expired"]).nullable(),
   usage: z.object({ inputTokens: count.nullable(), outputTokens: count.nullable(), totalTokens: count.nullable(),
-    costUsd: z.null(), hardCostLimitEnforced: z.literal(false) }).strict().nullable(),
+    wallTimeMs: count.nullable(), cachedInputTokens: count.nullable().optional() }).strict().nullable(), cost: usageCostSchema,
   resultClaim: z.object({ contentHash: digest, sizeBytes: count, verified: z.literal(false) }).strict().nullable(),
   timeline: z.array(progressPoint).max(50), earlierObservationsOmitted: z.boolean() }).strict();
 export type TaskRun = z.infer<typeof taskRunSchema>;
@@ -80,7 +96,9 @@ export const taskDetailSchema = z.object({ project: projectViewSchema, task: tas
   ownershipLeases: z.array(z.object({ nodeId: id, scopes: z.array(z.object({ kind: z.enum(["file", "tree"]), path: z.string().max(512) }).strict()).max(64),
     expiresAt: z.string().datetime(), state: z.enum(["active", "released", "expired", "revoked"]), current: z.boolean() }).strict()).max(10),
   attempts: z.array(z.object({ attemptId: id, attemptNumber: count, state: z.enum(attemptStates),
-    runs: z.array(taskRunSchema).max(10), additionalRunsOmitted: z.boolean() }).strict()).max(10),
+    runs: z.array(taskRunSchema).max(10), additionalRunsOmitted: z.boolean(), usageRollup: usageRollupSchema }).strict()).max(10),
+  usageRollup: usageRollupSchema,
+  priceTable: z.object({ state: z.enum(["recorded", "not_recorded"]), tableId: id.nullable(), recordedAt: z.string().datetime().nullable() }).strict(),
   earlierAttemptsOmitted: z.boolean(), preparedFor: z.enum(["hermes", "codex", "claude", "configured_worker"]).nullable(),
   localRouteObservation: taskLocalRouteObservationSchema,
   hermesDeliveryRecovery: hermesDeliveryRecoverySchema,

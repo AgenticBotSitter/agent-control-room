@@ -271,7 +271,7 @@ test("the coordinator's stricter deadline is enforced by the outer precommit bou
     (error:unknown)=>error instanceof PipelineAdvanceErrorV1&&error.safeReason==="deadline_reached");
 });
 
-test("0100 owner transition authenticates and persists both unattended consents with exact replay",async t=>{
+test("0109 owner transition authenticates and persists both unattended consents with exact replay",async t=>{
   const f=await taskFixture();t.after(()=>void f.db.close());
   const linear=new LinearPipelineServiceV1(f.client,{tenantId:"tenant:web",workspaceId:"workspace:web"},key,
     {assertCurrent:()=>true,isAcceptedResultCurrent:()=>false},()=>webNow);
@@ -300,7 +300,7 @@ test("0100 owner transition authenticates and persists both unattended consents 
     "pipeline-unattended-enable-0001"),/conflict/u);
   await assert.rejects(f.db.query("UPDATE pipeline_runs SET started_at=NULL WHERE id=$1",[run.runId]),
     /pipeline_runs_active_started_at_check/u);
-  // Simulate an authenticated legacy row created before 0100's NOT VALID
+  // Simulate an authenticated legacy row created before 0109's NOT VALID
   // lifecycle constraint.  Owner consent must not re-sign this active/null-start
   // state or turn mutable updated_at into the run's deadline anchor.
   await f.db.exec("ALTER TABLE pipeline_runs DROP CONSTRAINT pipeline_runs_active_started_at_check");
@@ -320,7 +320,7 @@ test("0100 owner transition authenticates and persists both unattended consents 
   await f.db.exec("ALTER TABLE pipeline_unattended_transitions ENABLE TRIGGER pipeline_unattended_transitions_immutable");
   await assert.rejects(service.setUnattended(f.identity,f.project.projectId,command,"pipeline-unattended-enable-0001"),
     (error:unknown)=>error instanceof PipelineAdvanceErrorV1&&error.safeReason==="pipeline_integrity_failed");
-  const down=await readFile("db/down/0100_pipeline_unattended_advance.sql","utf8");
+  const down=await readFile("db/down/0109_pipeline_unattended_advance.sql","utf8");
   await assert.rejects(f.db.exec(down),/down migration refused/u);await f.db.exec("ROLLBACK");
 });
 
@@ -375,9 +375,9 @@ test("shared template activation is monotonic while sibling run consent remains 
     FROM pipeline_templates WHERE id=$1`,[saved.templateId])).rows[0],{version:2,may_advance_unattended:true});
 });
 
-test("0100 owns append-only records, least-privilege grants, and a guarded down path",async()=>{
-  const [up,down,grants,web,coordinator,preflight]=await Promise.all([readFile("db/migrations/0100_pipeline_unattended_advance.sql","utf8"),
-    readFile("db/down/0100_pipeline_unattended_advance.sql","utf8"),readFile("db/roles/production_table_grants.sql","utf8"),
+test("0109 owns append-only records, least-privilege grants, and a guarded down path",async()=>{
+  const [up,down,grants,web,coordinator,preflight]=await Promise.all([readFile("db/migrations/0109_pipeline_unattended_advance.sql","utf8"),
+    readFile("db/down/0109_pipeline_unattended_advance.sql","utf8"),readFile("db/roles/production_table_grants.sql","utf8"),
     readFile("db/roles/private_web_roles.sql","utf8"),readFile("db/roles/task_coordinator_roles.sql","utf8"),
     readFile("src/web/v1/private-database-preflight.ts","utf8")]);
   for(const table of ["pipeline_unattended_transitions","pipeline_advance_receipts"]){

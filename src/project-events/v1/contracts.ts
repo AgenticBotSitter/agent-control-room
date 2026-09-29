@@ -44,6 +44,13 @@ export function encodeProjectEventCursorV1(event: ProjectEventV1): string {
     .toString("base64url");
 }
 
+/** Stable beginning-of-stream cursor. This lets an empty snapshot establish a
+ * replay boundary before the first event exists. It carries no authority. */
+export function encodeProjectEventOriginCursorV1(projectId: string): string {
+  const cursor = parse(projectEventCursorSchemaV1, { projectId, sequence: 0, eventDigest: null });
+  return Buffer.from(JSON.stringify(cursor), "utf8").toString("base64url");
+}
+
 export function decodeProjectEventCursorV1(value: unknown): ProjectEventCursorV1 | undefined {
   if (typeof value !== "string" || value.length < 16 || value.length > 500 || !/^[A-Za-z0-9_-]+$/.test(value)) return undefined;
   try { return parse(projectEventCursorSchemaV1, JSON.parse(Buffer.from(value,"base64url").toString("utf8"))) as ProjectEventCursorV1; }

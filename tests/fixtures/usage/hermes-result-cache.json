@@ -1,0 +1,1 @@
+{"type":"result","session_id":"fixture_session","exit_code":0,"text":"fixture result with cache","tokens":{"input":50,"output":10,"total":15060,"cache_read":10000,"cache_write":5000},"duration_ms":1250,"timestamp":1}

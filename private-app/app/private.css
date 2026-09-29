@@ -16,6 +16,23 @@
 .private-home-intro { max-width: 46rem; margin-bottom: 2rem; }
 .private-home-intro h1 { margin: .35rem 0 .75rem; font-size: clamp(2rem, 5vw, 3.25rem); letter-spacing: -.045em; }
 .private-home-intro p:not(.private-eyebrow) { color: var(--muted); }
+/* Home's framing copy, which moved here from `.private-home-intro` when the
+ * attention-first DOM reorder shipped. It carries its own rules rather than
+ * inheriting `.private-home-intro p`, because it is no longer inside it, and
+ * because the two selectors mean different things: this block is the closing
+ * note under the whole page, not the introduction above the heading.
+ *
+ * Both declarations are load-bearing and both were lost by the move until a
+ * later pass restored them. The copy is framing, not content: without
+ * `color` the first paragraph painted at full `--text` at every width, sitting
+ * directly above a muted `.private-note` and reading as the most important text
+ * on a page whose actual content is the panels. Without `max-width` it lost the
+ * 46rem measure the intro had, so the paragraphs ran the full width of a
+ * desktop window — 3.5 lines where there had been 2. tests/
+ * owner-home-reading-order.test.tsx asserts the copy is last in `main` in both
+ * runtime modes; this is what "moved" has to mean, not "moved and restyled". */
+.private-home-lead { max-width: 46rem; }
+.private-home-lead > p:not(.private-eyebrow) { color: var(--muted); }
 .private-home-grid { list-style: none; padding: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; }
 .private-home-grid li { min-width: 0; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); }
 .private-home-grid a { display: grid; min-height: 11rem; gap: .65rem; padding: 1.25rem; }
@@ -66,6 +83,10 @@
 .private-project-grid h3 { margin: .75rem 0 .3rem; font-size: 1.1rem; }
 .private-project-grid p { color: var(--muted); white-space: pre-wrap; }
 .private-state { text-transform: capitalize; font-size: .875rem; background: var(--surface-3); border-radius: 2rem; padding: .2rem .65rem; display: inline-block; }
+/* Prose about a route, not a state chip. It used to borrow .private-state, which
+   made the task's own state label ambiguous to the owner journey's selector; the
+   muted note treatment below is what it effectively looked like anyway. */
+.private-route-observation { color: var(--muted); font-size: .9375rem; }
 .private-open { font-weight: 650; color: var(--green); }
 .private-create, .private-panel { padding: 1.5rem; }
 .private-create { display: grid; gap: .7rem; }
@@ -120,6 +141,11 @@
 .private-pipeline-decisions select, .private-pipeline-decisions input, .private-panel details input, .private-panel details textarea { width: 100%; padding: .65rem; border: 1px solid var(--border-strong); border-radius: .5rem; color: var(--text); background: var(--surface); font: inherit; }
 .private-panel > details { border-top: 1px solid var(--border); padding-block: 1rem; }
 .private-panel > details summary { min-height: 44px; cursor: pointer; font-weight: 700; }
+.private-session-watch-list { list-style: none; padding: 0; display: grid; gap: 1rem; }
+.private-session-watch-list > li { border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); padding: 1.25rem; overflow-wrap: anywhere; }
+.private-session-watch-heading { display: flex; flex-wrap: wrap; align-items: center; gap: .75rem; margin-bottom: 1rem; }
+.private-session-watch-heading h2 { margin: 0; font-size: 1.15rem; }
+.private-session-stalled, .private-session-blocked { background: var(--amber-soft); }
 .private-task-detail { display: grid; gap: 1.25rem; }
 .private-task-detail h2 { margin-top: .5rem; }
 .private-attempt { border-top: 1px solid var(--border); margin-top: 1.5rem; }
@@ -146,7 +172,206 @@
 .private-result-content { margin-top: 1.5rem; border-top: 1px solid var(--border); }
 .private-result-content .private-actions { align-items: center; justify-content: space-between; }
 .private-result-content textarea { display: block; width: 100%; min-height: 20rem; resize: vertical; font: inherit; color: var(--text); padding: 1rem; background: var(--surface-2); border: 1px solid var(--border); border-radius: .5rem; }
+.private-code-diff { max-height: 32rem; overflow: auto; white-space: pre; padding: 1rem; color: var(--text); background: var(--surface-2); border: 1px solid var(--border); border-radius: .5rem; }
+
+/* ---------------------------------------------------------------- *
+ * Shared design system
+ *
+ * One vocabulary for the things the owner reads at a glance: state,
+ * empty, unavailable and loading. The rule these encode is the one
+ * the page copy already keeps making — "unavailable" is not "empty"
+ * and neither is "all clear". Visually they were identical grey
+ * text on the same card, so a glance could not tell a checked
+ * nothing from an unchecked anything.
+ *
+ * Colour never carries the meaning alone: every state keeps its
+ * text, so this stays legible without colour perception and passes
+ * the contrast rules the token values already satisfy.
+ * ---------------------------------------------------------------- */
+
+/* A state chip. The text is supplied by the caller and is the real
+ * content; the dot and the tint are decoration on top of it. */
+.private-chip { display: inline-flex; align-items: center; gap: .4rem; width: fit-content;
+  border: 1px solid var(--border); border-radius: 999px; background: var(--surface-3);
+  padding: .15rem .6rem; font-size: .8rem; font-weight: 700; text-transform: capitalize; }
+.private-chip::before { content: ""; flex: none; width: .5rem; height: .5rem; border-radius: 50%; background: var(--muted); }
+/* Tones map to the existing state tokens. Each was contrast-checked on every
+ * surface it can be painted on by tests/mac-local-accessibility.test.tsx, which
+ * reads the --green/--amber/--red/--blue pairings this file paints them with. */
+.private-chip.is-good::before { background: var(--green); }
+.private-chip.is-warn::before { background: var(--amber); }
+.private-chip.is-bad::before { background: var(--red); }
+.private-chip.is-busy::before { background: var(--blue); }
+
+/* The same tones, for a heading that already carries the state word. The run and
+ * attempt panels state the state in their own heading, so a chip beside it
+ * repeated the sentence. These put the tone on the heading instead: one dot per
+ * state, stated once, with the same tokens as the chips above. */
+.private-run-state, .private-attempt-state { display: flex; align-items: center; gap: .4rem; }
+.private-run-state::before, .private-attempt-state::before { content: ""; flex: none;
+  width: .5rem; height: .5rem; border-radius: 50%; background: var(--muted); }
+.private-run-state.is-good::before, .private-attempt-state.is-good::before { background: var(--green); }
+.private-run-state.is-warn::before, .private-attempt-state.is-warn::before { background: var(--amber); }
+.private-run-state.is-bad::before, .private-attempt-state.is-bad::before { background: var(--red); }
+.private-run-state.is-busy::before, .private-attempt-state.is-busy::before { background: var(--blue); }
+
+/* The three read outcomes, as three visibly different things. */
+.private-state-empty { color: var(--muted); font-size: .9rem; }
+.private-state-unavailable { border: 1px solid var(--amber); border-radius: .6rem;
+  background: var(--amber-soft); color: var(--text); padding: .7rem .85rem; font-size: .9rem; }
+.private-state-loading { display: flex; align-items: center; gap: .5rem; color: var(--muted); font-size: .9rem; }
+.private-state-loading::before { content: ""; flex: none; width: .7rem; height: .7rem;
+  border: 2px solid var(--border-strong); border-top-color: var(--green); border-radius: 50%; }
+/* The animated spinner is decorative: the sentence beside it already says the
+ * read is in progress, and a looping animation is suppressed under
+ * prefers-reduced-motion (the global rule at the end of control-room.css). */
+@media (prefers-reduced-motion: no-preference) {
+  .private-state-loading::before { animation: private-state-spin .9s linear infinite; }
+}
+@keyframes private-state-spin { to { transform: rotate(360deg); } }
+
+/* A panel heading with an optional trailing count, so a list can be scanned
+ * without counting rows by eye. */
+.private-panel-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; margin-bottom: .75rem; }
+.private-panel-heading h2 { margin: 0; }
+.private-count { flex: none; min-width: 1.6rem; border-radius: 999px; background: var(--surface-3);
+  color: var(--muted); padding: .1rem .55rem; font-size: .8rem; font-weight: 700; text-align: center; }
+
 @media (max-width: 800px) { .private-columns, .private-settings-grid, .private-dashboard-grid { grid-template-columns: 1fr; } .private-dashboard-projects { grid-column: auto; } .private-create { grid-row: 1; } .private-shell main { padding: 1.25rem; } .private-header { padding: 1rem; flex-wrap: wrap; } }
+
+/* ---------------------------------------------------------------- *
+ * Phone width (M12, plan item A-071)
+ *
+ * Everything below was measured on a real disposable rehearsal stack
+ * at 375x812 and 390x844, not reasoned about in the abstract.
+ *
+ * 1. Tap targets. WCAG 2.2 SC 2.5.8 asks for 44x44. The inline-in-a-sentence
+ *    exemption is real, and the existing 24px prose floor for links inside a
+ *    paragraph is a correct reading of it, so that judgement is kept. What was
+ *    missing is the standalone controls: the brand, the back links, the
+ *    project tabs, the status filter pills, the worker-choice select and the
+ *    skip link. `.private-back` and `.private-tabs a` carried no height at
+ *    all, so they measured 24px tall and 33-41px wide.
+ * 2. Attention first. Home's "Needs attention" panel measured top=1150px on a
+ *    812px-tall phone, below the fold. The fix is a REAL DOM reorder in
+ *    home-workspace.tsx, not a paint trick: the framing copy — which describes
+ *    how the page reads rather than anything the owner needs on arrival — was
+ *    moved to be the last child of `main`, after the panels, and the panels
+ *    that followed it moved up with it. The reading order is heading ->
+ *    panels -> copy, so a keyboard, a screen reader and a sighted owner all
+ *    walk the page in the same sequence.
+ *
+ *    An earlier attempt here used a flex column plus CSS `order` to achieve the
+ *    same painted result without touching the DOM. That was reverted: `order`
+ *    changes paint order only, so the focusable "Check saved dashboard again"
+ *    button was the first control in `main` for a keyboard while painting last
+ *    for a sighted owner, and in hosted mode it was worse still. The shipped
+ *    measurement on the real stack is in the PR body, and the guard that keeps
+ *    `order` out — along with grid placement, reversed axes and positive
+ *    tabindex — is tests/owner-home-reading-order.test.tsx plus the real
+ *    Chromium tab walk in tests/browser/owner-phone-width.spec.ts.
+ * ---------------------------------------------------------------- */
+
+/* Standalone controls that measured under 44px on a phone. These are their own
+ * targets, not links inside a sentence, so they take the full size.
+ *
+ * `select` is deliberately absent from the display change: it is a replaced
+ * element, and an inline-flex box stops it painting its own control. It takes
+ * the height and padding below instead.
+ *
+ * The project tab row is `flex-wrap: wrap` with a 1.5rem gap, so a tab is only
+ * as wide as its own label ("Files" measured 36.3px). It is a standalone
+ * target, so it takes a horizontal floor too rather than relying on the label. */
+@media (max-width: 560px) {
+  .private-brand, .private-back, .private-tabs a, .private-filter-tabs a,
+  .private-shell summary { min-height: 44px; display: inline-flex; align-items: center; }
+  .private-shell select { min-height: 44px; padding-block: .5rem; }
+  .private-back { padding: .5rem 0; }
+  /* The project tabs already have a 3px current-page underline; centring the
+     text inside the taller target keeps that underline where it was. */
+  .private-tabs a { min-width: 44px; padding: 0 .25rem; justify-content: center; }
+  .private-filter-tabs a { padding: 0 .8rem; }
+  /* The brand is a flex child of the header, so it needs the target in both
+     axes without becoming a block. */
+  .private-brand { min-width: 44px; }
+  /* A paragraph whose only child is a single link is a standalone target, not a
+     link inside a sentence — "Open projects" on Workers measured 102x28.8. The
+     prose rule below cannot tell the two apart from the element alone, and
+     `:has()` is used rather than a class so a future call site is covered by
+     the same reasoning instead of needing to be remembered. */
+  .private-shell main p > a:only-child { min-height: 44px; }
+  /* The skip link is the keyboard owner's first stop, so it is a real target
+     and not a decorative one; 10px+14px padding on a 15px/1.5 line-height
+     measured 42.5px, 1.5px under the floor. */
+  .skip-link { padding-block: 14px; }
+}
+
+/* List rows: the task/project title link is the whole row's target, so the
+ * 24px inline floor the prose rule sets is too small for it.
+ *
+ * The selectors are qualified with `.private-shell main` on purpose. The prose
+ * rule above (`.private-shell main li a`) is (0,1,3) and would otherwise outrank
+ * a bare `.private-dashboard-list a` at (0,1,1), so these declarations would
+ * simply not apply — which is exactly what the first version of this block did
+ * when it was measured and changed nothing. */
+@media (max-width: 560px) {
+  .private-shell main .private-dashboard-list a,
+  .private-shell main .private-task-list a,
+  .private-shell main .private-summary { min-height: 44px; }
+  .private-dashboard-list li { padding-block: .35rem; }
+  /* Home's intro is a paragraph of framing copy above the panels. At phone
+     width the owner needs the counts and the attention box first, and the
+     full wording stays one scroll away. */
+  .private-home-intro { margin-bottom: 1rem; }
+  .private-home-lead > p:not(.private-eyebrow) { margin-block: .4rem; }
+  .private-home-lead button { min-height: 44px; }
+  .private-heading { margin-bottom: 1rem; }
+  .private-heading p, .private-heading .private-note { margin-block: .35rem; }
+  /* The local-worker-evidence panel is a paragraph wall on a phone. Tighten it
+     rather than removing it: its "neither signal means a worker is running"
+     line is the honesty this app exists to keep. */
+  .private-local-worker-evidence > p { margin-block: .3rem; }
+
+  /* Attention first, with no paint reordering anywhere.
+     The attention-first result is delivered by the DOM order in
+     home-workspace.tsx, not by this block: `main`'s children are already in
+     their reading order in the markup, and the framing copy is the last of
+     them, so the dashboard — whose "Needs attention" panel is its first panel
+     — leads. This block only keeps that last block compact, and adds the
+     divider that makes the change of section legible.
+
+     An earlier version made `main` a flex column here and gave the intro, the
+     dashboard, the worker-evidence panel and this copy explicit `order`
+     values, so the panels could be painted above the copy without touching the
+     DOM. That was the wrong tool and it is reverted. CSS `order` changes paint
+     order only: keyboard focus and screen-reader reading order still follow
+     the DOM, so the focusable "Check saved dashboard again" button was the
+     first control in `main` for a keyboard while painting last for a sighted
+     owner. In hosted mode it was worse — the installation panels, the "New
+     task" link and operator capacity carry no `order`, so they painted at the
+     default 0, ahead of the dashboard's `order: 1`, and the attention-first
+     result did not hold at all.
+
+     tests/owner-home-reading-order.test.tsx asserts none of this can come
+     back, in any spelling: `order`, `*-reverse`, explicit grid placement on
+     these blocks, a formatting context on `main`, or a positive tabindex. */
+  .private-home-intro { margin-bottom: 0; }
+  .private-home-lead { border-top: 1px solid var(--border); padding-top: 1rem; }
+
+  /* The status chips must be the first thing on the page. At 800px and below
+     `.private-columns` becomes one column and `.private-create` is pinned to
+     grid-row 1, so the "New project" form (measured 392px tall) sits above
+     the project catalog and pushes the first lifecycle chip to 866px — below
+     the fold on a 812px-tall phone. The catalog is what reports status, and
+     the form is a deliberate action, so at phone width only the catalog leads
+     and the form follows it.
+
+     Scoped to the projects page on purpose. `.private-create` alone also matches
+     the proposal form on the Task page, which is itself inside a
+     `.private-columns`; `grid-row: auto` there moves a control the owner needs
+     to reach, and the Task page has no filter-tabs nav to key off. */
+  .private-shell .private-filter-tabs ~ .private-columns .private-create { grid-row: auto; }
+}
 @media (max-width: 560px) {
   .private-header { gap: .75rem; }
   .private-context { font-size: .875rem; }
