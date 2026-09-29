@@ -131,8 +131,19 @@ test("grant convergence applies only the pinned function boundaries", async () =
   await assert.rejects(applyMacGrantDiffV1(client, {
     extra: ["control_room_private_web|function|public.other_function(text)||EXECUTE|plain"], missing: [],
   }), /upgrade_unexpected_function_grant/u);
-  assert.match(macGrantCatalogSqlV1, /oidvectortypes\(p\.proargtypes\)/u,
-    "catalog signatures use identity types without declared argument names");
+  // The catalog must spell argument types the way db/roles/*.sql spells them
+  // (pg_type.typname, e.g. timestamptz). oidvectortypes() expands to the
+  // SQL-standard form (timestamp with time zone), which can never equal the
+  // spelling in the role files, so such a grant would never converge. The
+  // zero-argument form must still render as `()` rather than a NULL.
+  assert.match(macGrantCatalogSqlV1, /pg_type t ON t\.oid = u\.oid/u,
+    "catalog signatures use the compact type name the role files spell");
+  assert.match(macGrantCatalogSqlV1, /string_agg\(\s*pg_catalog\.quote_ident\(t\.typname\), ', ' ORDER BY u\.ord\)/u,
+    "argument types keep their declared order and quoting");
+  assert.match(macGrantCatalogSqlV1, /COALESCE\(\(SELECT string_agg/u,
+    "a zero-argument function still renders an empty argument list");
+  assert.doesNotMatch(macGrantCatalogSqlV1, /oidvectortypes/u,
+    "oidvectortypes expands type aliases and would never match the role files");
   assert.doesNotMatch(macGrantCatalogSqlV1, /pg_get_function_identity_arguments/u);
 });
 

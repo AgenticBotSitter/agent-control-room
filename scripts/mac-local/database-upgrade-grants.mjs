@@ -130,7 +130,17 @@ SELECT r.rolname, 'database', d.datname, '', a.privilege_type, a.is_grantable
 FROM pg_database d CROSS JOIN LATERAL aclexplode(d.datacl) a
 JOIN pg_roles r ON r.oid=a.grantee WHERE r.rolname = ANY($1::text[])
 UNION ALL
-SELECT r.rolname, 'function', n.nspname || '.' || p.proname || '(' || oidvectortypes(p.proargtypes) || ')', '', a.privilege_type, a.is_grantable
+-- The argument types must be spelled the way db/roles/*.sql spells them, which
+-- is pg_type.typname (timestamptz), not the SQL-standard expansion
+-- oidvectortypes prints (timestamp with time zone). Comparing an expanded
+-- spelling against a compact one can never match, so a function whose signature
+-- contains an alias would stay permanently "missing" and refuse convergence
+-- after its grant had in fact been applied. quote_ident covers a type that has
+-- to be quoted; COALESCE keeps the zero-argument case rendering as empty.
+SELECT r.rolname, 'function', n.nspname || '.' || p.proname || '(' || COALESCE((SELECT string_agg(
+  pg_catalog.quote_ident(t.typname), ', ' ORDER BY u.ord)
+  FROM unnest(p.proargtypes) WITH ORDINALITY AS u(oid, ord)
+  JOIN pg_type t ON t.oid = u.oid), '') || ')', '', a.privilege_type, a.is_grantable
 FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
 CROSS JOIN LATERAL aclexplode(p.proacl) a
 JOIN pg_roles r ON r.oid=a.grantee WHERE r.rolname = ANY($1::text[])`;
