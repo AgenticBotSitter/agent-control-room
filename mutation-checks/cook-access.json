@@ -1,0 +1,184 @@
+[
+ {
+  "file": "src/web/v1/access-verifier.ts",
+  "find": "      jwt.verify(token, key, {",
+  "replace": "      jwt.decode(token, {",
+  "test": "node --import tsx --test tests/mac-local-remote-access.test.ts",
+  "why": "the Access token signature must verify against the team key"
+ },
+ {
+  "file": "src/web/v1/access-verifier.ts",
+  "find": "      jwt.verify(token, key, { algorithms: [\"RS256\"], issuer: expectedIssuer, audience,\n        // Time policy below owns the injected clock and exact session ceiling.\n        // jsonwebtoken treats clockTimestamp=0 as a request for wall-clock time.\n        ignoreExpiration: true, ignoreNotBefore: true });\n      const claims = (profile.claimContract === \"cloudflare_access_app\" ? cloudflareClaimsSchema : baseClaimsSchema).parse(decode(c));\n      const now = nowMs / 1000;\n      const expires = Math.min(claims.exp, claims.iat + maxSessionSeconds);\n      if (claims.iss !== expectedIssuer || !claims.aud.includes(audience) || claims.iat > now",
+  "replace": "      jwt.verify(token, key, { algorithms: [\"RS256\"], issuer: expectedIssuer,\n        // Time policy below owns the injected clock and exact session ceiling.\n        // jsonwebtoken treats clockTimestamp=0 as a request for wall-clock time.\n        ignoreExpiration: true, ignoreNotBefore: true });\n      const claims = (profile.claimContract === \"cloudflare_access_app\" ? cloudflareClaimsSchema : baseClaimsSchema).parse(decode(c));\n      const now = nowMs / 1000;\n      const expires = Math.min(claims.exp, claims.iat + maxSessionSeconds);\n      if (claims.iss !== expectedIssuer || claims.iat > now",
+  "test": "node --import tsx --test tests/mac-local-remote-access.test.ts",
+  "why": "the Access token aud must include the application AUD tag"
+ },
+ {
+  "file": "src/web/v1/access-verifier.ts",
+  "find": "      jwt.verify(token, key, { algorithms: [\"RS256\"], issuer: expectedIssuer, audience,\n        // Time policy below owns the injected clock and exact session ceiling.\n        // jsonwebtoken treats clockTimestamp=0 as a request for wall-clock time.\n        ignoreExpiration: true, ignoreNotBefore: true });\n      const claims = (profile.claimContract === \"cloudflare_access_app\" ? cloudflareClaimsSchema : baseClaimsSchema).parse(decode(c));\n      const now = nowMs / 1000;\n      const expires = Math.min(claims.exp, claims.iat + maxSessionSeconds);\n      if (claims.iss !== expectedIssuer || !claims.aud.includes(audience) || claims.iat > now",
+  "replace": "      jwt.verify(token, key, { algorithms: [\"RS256\"], audience,\n        // Time policy below owns the injected clock and exact session ceiling.\n        // jsonwebtoken treats clockTimestamp=0 as a request for wall-clock time.\n        ignoreExpiration: true, ignoreNotBefore: true });\n      const claims = (profile.claimContract === \"cloudflare_access_app\" ? cloudflareClaimsSchema : baseClaimsSchema).parse(decode(c));\n      const now = nowMs / 1000;\n      const expires = Math.min(claims.exp, claims.iat + maxSessionSeconds);\n      if (!claims.aud.includes(audience) || claims.iat > now",
+  "test": "node --import tsx --test tests/mac-local-remote-access.test.ts",
+  "why": "the Access token iss must be the configured team domain"
+ },
+ {
+  "file": "src/web/v1/access-verifier.ts",
+  "find": " || expires <= now",
+  "replace": "",
+  "test": "node --import tsx --test tests/mac-local-remote-access.test.ts",
+  "why": "an expired Access token must be refused"
+ },
+ {
+  "file": "src/web/v1/access-verifier.ts",
+  "find": "        || claims.nbf !== undefined && claims.nbf > now ||",
+  "replace": "        ||",
+  "test": "node --import tsx --test tests/mac-local-remote-access.test.ts",
+  "why": "a not-yet-valid (nbf) Access token must be refused"
+ },
+ {
+  "file": "src/web/v1/access-verifier.ts",
+  "find": " || claims.iat > now",
+  "replace": "",
+  "test": "node --import tsx --test tests/mac-local-remote-access.test.ts",
+  "why": "an Access token issued in the future must be refused"
+ },
+ {
+  "file": "src/web/v1/access-verifier.ts",
+  "find": "const expires = Math.min(claims.exp, claims.iat + maxSessionSeconds);",
+  "replace": "const expires = claims.exp;",
+  "test": "node --import tsx --test tests/mac-local-remote-access.test.ts",
+  "why": "the session ceiling must cap an old Access token"
+ },
+ {
+  "file": "src/web/v1/access-verifier.ts",
+  "find": "baseClaimsSchema.extend({ type: z.literal(\"app\") })",
+  "replace": "baseClaimsSchema.extend({ type: z.string() })",
+  "test": "node --import tsx --test tests/mac-local-remote-access.test.ts",
+  "why": "only Access application tokens are accepted"
+ },
+ {
+  "file": "src/web/v1/mac-local-remote-access.ts",
+  "find": " || claims.email.toLowerCase() !== access.ownerEmail) throw new Error();",
+  "replace": ") throw new Error();",
+  "test": "node --import tsx --test tests/mac-local-remote-access.test.ts",
+  "why": "the signed email must equal the configured owner"
+ },
+ {
+  "file": "src/web/v1/mac-local-remote-access.ts",
+  "find": "if (!/^[\\x21-\\x7e]+$/u.test(claims.email) || ",
+  "replace": "if (",
+  "test": "node --import tsx --test tests/mac-local-remote-access.test.ts",
+  "why": "a non-ASCII email must not case-fold onto the owner"
+ },
+ {
+  "file": "src/web/v1/mac-local-remote-access.ts",
+  "find": "          cache.expire();\n",
+  "replace": "",
+  "test": "node --import tsx --test tests/mac-local-remote-access.test.ts",
+  "why": "a token from a rotated key forces one key refresh"
+ },
+ {
+  "file": "src/web/v1/mac-local-remote-access.ts",
+  "find": "          if (now - lastForcedRefresh < unknownKeyRefreshMs) throw new Error();\n",
+  "replace": "",
+  "test": "node --import tsx --test tests/mac-local-remote-access.test.ts",
+  "why": "unknown key ids must not trigger repeated key fetches"
+ },
+ {
+  "file": "src/web/v1/mac-local-remote-access.ts",
+  "find": "  if (!login || !/^[\\x21-\\x7e]+$/u.test(login) || login.toLowerCase() !== access.ownerLogin) throw new RemoteAccessRefusedError();",
+  "replace": "  if (!login) throw new RemoteAccessRefusedError();",
+  "test": "node --import tsx --test tests/mac-local-remote-access.test.ts",
+  "why": "the Tailscale owner login must match when configured"
+ },
+ {
+  "file": "src/web/v1/mac-local-remote-access.ts",
+  "find": "    teamDomain: exactHttpsOrigin.refine(value => /^https:\\/\\/[a-z0-9-]{1,63}\\.cloudflareaccess\\.com$/u.test(value)),",
+  "replace": "    teamDomain: exactHttpsOrigin,",
+  "test": "node --import tsx --test tests/mac-local-remote-access.test.ts",
+  "why": "keys are fetched only from a Cloudflare Access team domain"
+ },
+ {
+  "file": "src/web/v1/mac-local-remote-access.ts",
+  "find": "  if (legacyTrustedOrigin !== undefined && parsed?.tailscale) throw new Error(\"mac_local_remote_access_invalid\");\n",
+  "replace": "",
+  "test": "node --import tsx --test tests/mac-local-remote-access.test.ts",
+  "why": "legacy and new Tailscale origins together must be refused"
+ },
+ {
+  "file": "src/web/v1/private-node-handler.ts",
+  "find": "        if (gate) {",
+  "replace": "        if (false) {",
+  "test": "node --import tsx --test tests/mac-local-remote-access.test.ts",
+  "why": "every request on a remote origin must pass its gate first"
+ },
+ {
+  "file": "src/web/v1/private-node-handler.ts",
+  "find": "    const proxied = mode.admitProxyHeadersOnSecondary && origin !== origins[0];",
+  "replace": "    const proxied = mode.admitProxyHeadersOnSecondary;",
+  "test": "node --import tsx --test tests/mac-local-remote-access.test.ts",
+  "why": "loopback must still refuse proxy headers"
+ },
+ {
+  "file": "src/web/v1/private-node-handler.ts",
+  "find": "    if (proxied && (all.has(\"x-forwarded-proto\") && all.get(\"x-forwarded-proto\") !== \"https\"",
+  "replace": "    if (proxied && (false",
+  "test": "node --import tsx --test tests/mac-local-remote-access.test.ts",
+  "why": "a proxied request must claim https"
+ },
+ {
+  "file": "src/web/v1/private-node-handler.ts",
+  "find": "      || all.has(\"x-forwarded-host\") && all.get(\"x-forwarded-host\") !== url.host)) throw new RequestFailure(403);",
+  "replace": "      || false)) throw new RequestFailure(403);",
+  "test": "node --import tsx --test tests/mac-local-remote-access.test.ts",
+  "why": "a proxied request must name the selected host"
+ },
+ {
+  "file": "src/web/v1/private-node-handler.ts",
+  "find": "  if (remote.length > 2 || new Set(every).size !== every.length || remote.some(gate => {",
+  "replace": "  if (remote.length > 2 || remote.some(gate => {",
+  "test": "node --import tsx --test tests/mac-local-remote-access.test.ts",
+  "why": "a remote origin must not duplicate the loopback or legacy origin"
+ },
+ {
+  "file": "src/web/v1/mac-local-web-process.ts",
+  "find": "      if (!allowedOrigins.has(url.origin)) throw new WebAccessError(\"access_denied\");",
+  "replace": "",
+  "test": "node --import tsx --test tests/mac-local-remote-access.test.ts",
+  "why": "the website must refuse an unconfigured origin"
+ },
+ {
+  "file": "src/web/v1/mac-local-web-process.ts",
+  "find": "        return renderLocalOwnerSignOutPageV1(url.origin === options.cloudflareAccessOrigin\n          ? \"/cdn-cgi/access/logout\" : \"/session\");",
+  "replace": "        return renderLocalOwnerSignOutPageV1(\"/session\");",
+  "test": "node --import tsx --test tests/mac-local-remote-access.test.ts",
+  "why": "sign-out on the Cloudflare origin must also end the Access session"
+ },
+ {
+  "file": "src/web/v1/mac-local-serving.ts",
+  "find": "  if (!remote && options.localOwnerSession.remoteOrigins !== undefined || remote && (remoteOrigins.length",
+  "replace": "  if (remote && (remoteOrigins.length",
+  "test": "node --import tsx --test tests/mac-local-remote-access.test.ts",
+  "why": "a session origin without a transport gate must be refused"
+ },
+ {
+  "file": "src/web/v1/mac-local-protected-configuration.ts",
+  "find": "      && \"remoteOrigins\" in (record.localOwnerSession as object)) throw new Error();",
+  "replace": "      && false) throw new Error();",
+  "test": "node --import tsx --test tests/mac-local-remote-access.test.ts",
+  "why": "remote session origins must come only from remoteAccess"
+ },
+ {
+  "file": "scripts/mac-local/remote-access.ts",
+  "find": "      if (text !== renderCloudflaredConfig(configuration, tunnel, credentialsFile)) throw new Error(\"content\");",
+  "replace": "",
+  "test": "node --import tsx --test tests/mac-local-remote-access-setup.test.ts",
+  "why": "an edited cloudflared config must fail the dry-run check"
+ },
+ {
+  "file": "scripts/mac-local/remote-access.ts",
+  "find": "    if (leaks.length) fail(",
+  "replace": "    if (false) fail(",
+  "test": "node --import tsx --test tests/mac-local-remote-access-setup.test.ts",
+  "why": "private addresses in tracked files must fail the dry-run check"
+ }
+]

@@ -127,6 +127,7 @@
     "mac:up": "node scripts/mac-local/up.mjs",
     "mac:down": "node scripts/mac-local/down.mjs",
     "mac:status": "node scripts/mac-local/status.mjs",
+    "mac:remote-access": "node --import tsx scripts/mac-local/remote-access.ts",
     "test:mac-host-supervisor": "node --test tests/mac-local-task-host-supervisor.test.mjs",
     "mac:service-status": "node scripts/mac-local/service-status.mjs",
     "mac:uninstall-service": "node scripts/mac-local/uninstall-service.mjs",
