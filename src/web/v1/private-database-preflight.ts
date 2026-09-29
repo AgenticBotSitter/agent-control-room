@@ -15,11 +15,12 @@ export async function verifyPrivateIdeaAdapter(db: DatabaseClient, scope: { tena
   if (rows.length !== 1 || rows[0].valid !== true) throw new Error("private_idea_adapter_unavailable");
 }
 
-// Generated from public migrations 0001-0109 (filename order: ...0093,0100,0101,0102,0104,0105,0106,0108,0109),
+// Generated from public migrations 0001-0154 (filename order: ...0093,0100,0101,0102,0104,0105,0106,0108,0109,
+// 0150,0151,0152,0153,0154),
 // including generic external-content migrations 0025/0026, read from a live
 // PostgreSQL 17 cluster installed the production way. Catalog query below;
 // not a mutable database marker.
-export const privateWebSchemaDigest = "6ff2f55219166cfa736be4f6d96faf7e225bef84557e70165444b0920101be03";
+export const privateWebSchemaDigest = "7f075905df06d9505f545382af6a50c45f5141b3e08666b046a55a7d47d922a5";
 export const privateWebReadTables = ["control_identities", "control_role_grants", "workspaces", "control_web_sessions",
   "tenants", "control_idempotency",
   "control_schedules", "control_schedule_occurrences",
@@ -41,6 +42,7 @@ export const privateWebReadTables = ["control_identities", "control_role_grants"
   "control_native_task_queue", "control_job_dependencies",
   "pipeline_templates", "pipeline_runs", "pipeline_stage_runs", "pipeline_ordered_stage_runs",
   "pipeline_unattended_transitions",
+  "pipeline_installation_allowances", "pipeline_machine_capacity_observations",
   "control_pipeline_build_publications", "control_codex_result_publications",
   "control_action_inbox"] as const;
 const inserts = new Set(["control_web_sessions", "adapter_registry", "projects", "control_manual_project_heads",
@@ -54,6 +56,7 @@ inserts.add("work_batch_queue_admissions"); inserts.add("work_batch_agent_queue_
 inserts.add("pipeline_templates"); inserts.add("pipeline_runs"); inserts.add("pipeline_stage_runs");
 inserts.add("control_job_dependencies");
 inserts.add("pipeline_unattended_transitions");
+inserts.add("pipeline_installation_allowances"); inserts.add("pipeline_machine_capacity_observations");
 
 /** Tables whose INSERT grant is column-scoped rather than table-wide. Every
  * listed column must carry INSERT and every unlisted column must not — a
@@ -88,6 +91,9 @@ const updates: Record<string, readonly string[]> = {
     "decision_auth_tag", "version", "updated_at"],
   work_batch_agent_queue_heads: ["next_position", "updated_at"],
   pipeline_templates: ["may_advance_unattended", "version", "updated_at", "record_digest", "auth_tag"],
+  pipeline_installation_allowances: ["runs_per_hour", "runs_per_agent_per_day", "machine_max_agent_processes",
+    "machine_max_db_clusters", "dollar_cap_microusd", "owner_identity_id", "version", "record_digest", "auth_tag",
+    "updated_at"],
   pipeline_runs: ["unattended", "state", "started_at", "updated_at", "version", "template_version", "template_digest",
     "record_digest", "auth_tag"],
   tenants: ["coordinator_lock"],
@@ -148,10 +154,12 @@ const coordinatorInserts = new Set(["control_web_sessions", "control_requests", 
   "control_task_model_selections", "control_task_declared_scopes", "control_assignment_lease_scopes"]);
 coordinatorReads.push("pipeline_templates", "pipeline_runs", "pipeline_stage_runs", "pipeline_ordered_stage_runs",
   "pipeline_unattended_transitions", "pipeline_advance_receipts",
+  "pipeline_installation_allowances", "pipeline_machine_capacity_observations", "pipeline_stage_loop_counts",
   "control_agent_review_plans", "control_pipeline_build_publications");
 coordinatorInserts.add("control_agent_review_plans");
 coordinatorInserts.add("control_pipeline_build_publications");
 coordinatorInserts.add("pipeline_advance_receipts");
+coordinatorInserts.add("pipeline_stage_loop_counts");
 const coordinatorDeletes = new Set(["control_assignment_lease_scopes"]);
 const coordinatorUpdates: Record<string, readonly string[]> = {
   ...Object.fromEntries(["control_requests", "control_workflows", "control_attempts", "control_leases"]
@@ -173,6 +181,8 @@ const coordinatorUpdates: Record<string, readonly string[]> = {
   control_attempt_resource_scopes: ["coordinator_lock"],
   pipeline_runs: ["state", "completed_at", "current_stage_ordinal", "updated_at", "version", "record_digest", "auth_tag",
     "unattended_last_swept_at"],
+  ...Object.fromEntries(["pipeline_installation_allowances", "pipeline_stage_loop_counts"]
+    .map(table => [table, ["coordinator_lock"]])),
   control_completion_gate_integrity: ["web_lock", "revision", "record_count", "state_digest", "state_auth_tag"],
 };
 const resultReads = ["workspaces", "control_identities", "control_role_grants", "projects",

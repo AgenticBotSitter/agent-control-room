@@ -29,6 +29,7 @@ GRANT SELECT ON tenants, workspaces, control_identities, control_role_grants, co
   work_batches, work_batch_items, work_batch_effective_queue_admissions,
   pipeline_templates, pipeline_runs, pipeline_stage_runs, pipeline_ordered_stage_runs, control_agent_review_plans,
   control_pipeline_build_publications, pipeline_unattended_transitions, pipeline_advance_receipts,
+  pipeline_installation_allowances, pipeline_machine_capacity_observations, pipeline_stage_loop_counts,
   control_installation_transition_revisions
   TO control_room_task_coordinator;
 GRANT SELECT ON control_task_model_selections, control_task_declared_scopes,
@@ -50,6 +51,13 @@ GRANT INSERT ON control_project_coordination_proposals,
   control_project_coordination_operation_receipts, control_project_coordination_operation_jobs,
   control_action_inbox TO control_room_task_coordinator;
 GRANT INSERT ON pipeline_advance_receipts TO control_room_task_coordinator;
+-- The counted fix rounds. The coordinator appends a round against the receipt
+-- that opened it; it can never rewrite or delete one.
+GRANT INSERT ON pipeline_stage_loop_counts TO control_room_task_coordinator;
+-- The installation ceilings are read-only here, and the only updatable column
+-- is the false-valued lock the row lock needs.
+GRANT UPDATE (coordinator_lock) ON pipeline_installation_allowances, pipeline_stage_loop_counts
+  TO control_room_task_coordinator;
 GRANT UPDATE (state, completed_at, current_stage_ordinal, updated_at, version, record_digest, auth_tag, unattended_last_swept_at)
   ON pipeline_runs TO control_room_task_coordinator;
 GRANT INSERT ON control_work_resources, control_attempt_resource_admissions,

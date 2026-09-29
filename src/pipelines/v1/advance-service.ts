@@ -7,9 +7,18 @@ import type { VerifiedWebIdentity } from "../../web/v1/access-verifier";
 import { WebAccessError } from "../../web/v1/access-verifier";
 import { WebSessionAuthority } from "../../web/v1/session-authority";
 import { linearPipelineTemplateInputSchemaV1, pipelineAdvanceReceiptSchemaV1, pipelineBuildWritePolicySchemaV1, pipelineHistorySchemaV1,
-  pipelineTerminalReceiptSchemaV1,
+  pipelineInstallationAllowanceInputSchemaV1, pipelineInstallationAllowanceReceiptSchemaV1, pipelineTerminalReceiptSchemaV1,
   pipelineUnattendedTransitionReceiptSchemaV1, pipelineUnattendedTransitionSchemaV1,
-  type PipelineAdvanceReceiptV1, type PipelineHistoryV1, type PipelineTerminalReceiptV1 } from "./schemas";
+  type PipelineAdvanceReceiptV1, type PipelineHistoryV1, type PipelineInstallationAllowanceInputV1,
+  type PipelineInstallationAllowanceReceiptV1, type PipelineTerminalReceiptV1 } from "./schemas";
+import { PIPELINE_ALLOWANCE_DEFAULTS_V1, PIPELINE_MACHINE_CEILING_V1, allowanceReceiptV1,
+  latestClusterObservationV1, parseAllowanceInputV1, pipelineAllowanceDigestV1, pipelineAllowanceMaterialV1,
+  pipelineAllowanceTagV1, type PipelineAllowanceReasonCodeV1, type PipelineAllowanceRowV1 } from "./installation-allowance";
+import { pipelineEffectiveMaxLoopsV1, pipelineEffectiveMaxTotalLoopsV1, pipelineLoopAttentionItemV1,
+  pipelineLoopCountDigestV1, pipelineLoopCountMaterialV1, pipelineLoopCountTagV1 } from "./loop-counts";
+
+const HOUR_MS = 3_600_000;
+const DAY_MS = 86_400_000;
 
 const ADVANCE_ACTION = "tasks.assign" as const;
 const SERVICE_ACTOR = "service:pipeline-advance:v1" as const;
@@ -45,7 +54,18 @@ export type PipelineAdvanceSafeReasonV1 = "unattended_disabled" | "unattended_no
   | "policy_inactive" | "policy_action_not_permitted" | "policy_route_mismatch"
   | "policy_risk_exceeded" | "policy_task_allowance_exhausted" | "policy_cost_allowance_exhausted"
   | "policy_cost_unknown" | "policy_concurrency_exhausted" | "deadline_reached" | "advance_conflict"
-  | "pipeline_integrity_failed";
+  | "pipeline_integrity_failed" | "stage_loop_limit_reached" | "run_loop_limit_reached"
+  | PipelineAllowanceReasonCodeV1;
+/** Every installation ceiling, with the plain reason code the owner sees. One
+ * vocabulary for the runs-per-hour, per-agent-per-day, machine and loop caps,
+ * so a refusal never says "quota" and never reads as a lost error. */
+export const PIPELINE_ALLOWANCE_SAFE_REASONS_V1 = Object.freeze([
+  "installation_allowance_missing", "installation_runs_per_hour_exhausted",
+  "installation_agent_runs_per_day_exhausted", "installation_agent_process_ceiling_reached",
+  "installation_db_cluster_ceiling_reached", "installation_cluster_count_unknown",
+  "installation_cost_ceiling_exhausted", "stage_loop_limit_reached", "run_loop_limit_reached",
+] as const);
+export type PipelineAllowanceSafeReasonV1 = (typeof PIPELINE_ALLOWANCE_SAFE_REASONS_V1)[number];
 export class PipelineAdvanceErrorV1 extends Error {
   constructor(readonly safeReason: PipelineAdvanceSafeReasonV1) { super(safeReason); this.name = "PipelineAdvanceErrorV1"; }
 }
@@ -78,8 +98,15 @@ type AdvanceReceiptRow = { id: string; project_id: string; pipeline_run_id: stri
   source_job_id: string; execution_job_id: string; attempt_id: string; queue_id: string; selection_digest: string;
   template_version: number; template_digest: string; run_version: number; run_digest: string; policy_id: string;
   policy_version: number|string; policy_digest: string; delegation_receipt_id: string; delegation_receipt_digest: string;
-  delegation_task_units:number|string; delegation_cost_microusd:number|string; delegation_cost_evidence_digest:string;
+  delegation_task_units:number|string; delegation_cost_microusd:number|string|null; delegation_cost_state:"known"|"unknown";
+  delegation_cost_evidence_digest:string|null;
   request_digest: string; receipt_digest: string; auth_tag: string; advanced_at: string|Date };
+type LoopCountRow = { id: string; pipeline_run_id: string; stage_ordinal: number|string; worker_id: string;
+  loop_index: number|string; max_loops: number|string; max_total_loops: number|string;
+  run_total_loops: number|string; reason_code: string; receipt_id: string; receipt_digest: string;
+  request_digest: string; auth_tag: string; recorded_at: string|Date };
+type UsageRow = { runs_this_hour: string|number; agent_runs_today: string|number;
+  active_agent_processes: string|number; spent_microusd: string|number };
 type UnattendedTransitionRow = { id:string; project_id:string; pipeline_run_id:string; pipeline_template_id:string;
   template_version:number|string; template_digest:string; run_version:number|string; run_digest:string; policy_id:string;
   policy_version:number|string; policy_digest:string; owner_identity_id:string; enabled:boolean; idempotency_key:string;
@@ -358,8 +385,16 @@ export class PipelineAdvanceServiceV1 {
       const policy=await this.#policy(tx,run.project_id,policyId);
       if(Number(consent.policy_version)!==Number(policy.version)||consent.policy_digest!==policy.policy_digest)
         refuse("unattended_not_authorized");
+      // The loop ceilings and the installation allowance are both claimed here,
+      // in the SAME transaction that inserts the advance receipt below: a check
+      // and its claim commit together or not at all, so two concurrent advances
+      // can never both see the last unit of a ceiling as free.
+      const loop=await this.#claimLoopRound(tx,run,stage,template);
       const delegation=await capability.authorizeDelegationInSession(tx,selected,policyId);
-      this.#assertDelegation(policy,delegation,stage,execution,this.#now());
+      const nextCost=delegation.nextCost;
+      const allowance=await this.#claimInstallationAllowance(tx,loop.workerId,
+        nextCost.kind==="known"?nextCost.microUsd:null);
+      this.#assertDelegation(policy,delegation,stage,execution,this.#now(),allowance.cost);
       const runDeadline=runStartedAtMillis+Number(template.max_duration_seconds)*1000;
       let deadline=Math.min(runDeadline,millis(policy.valid_until),Date.parse(execution.authority.expiresAt),Date.parse(delegation.validUntil));
       if (!Number.isFinite(deadline)||this.#now()>=deadline) refuse("deadline_reached");
@@ -384,25 +419,33 @@ export class PipelineAdvanceServiceV1 {
         return refuse("execution_authority_missing");});
       await authenticate();
       const advancedAt=new Date(this.#now()).toISOString(),receiptId=`pipeline-advance:${run.id}:${selected.stageOrdinal}`;
+      // "Count runs, never dollars": an unknown cost is recorded as unknown, with
+      // no invented number and no refusal. The pairing check in 0152 refuses any
+      // other combination of the three cost columns.
+      const costKnown=nextCost.kind==="known";
       const material={id:receiptId,tenantId:this.scope.tenantId,projectId:run.project_id,pipelineRunId:run.id,
         stageOrdinal:selected.stageOrdinal,sourceJobId:source.id,executionJobId:execution.id,attemptId:effect.attemptId,
         queueId:effect.queueId,selectionDigest,templateVersion:Number(template.version),templateDigest:template.record_digest,
         runVersion:Number(effectiveRun.version),runDigest:effectiveRun.record_digest,policyId:policy.id,policyVersion:Number(policy.version),
         policyDigest:policy.policy_digest,delegationReceiptId:delegation.receiptId,
         delegationReceiptDigest:delegation.receiptDigest,delegationTaskUnits:1,
-        delegationCostMicroUsd:delegation.nextCost.kind==="known"?delegation.nextCost.microUsd:refuse("policy_cost_unknown"),
-        delegationCostEvidenceDigest:delegation.nextCost.kind==="known"?delegation.nextCost.evidenceDigest:refuse("policy_cost_unknown"),
+        delegationCostState:costKnown?"known":"unknown",
+        delegationCostMicroUsd:costKnown?nextCost.microUsd:null,
+        delegationCostEvidenceDigest:costKnown?nextCost.evidenceDigest:null,
         requestDigest,advancedAt};
       const receiptDigest=sha256Digest(material),authTag=hmacSha256Tag(this.#key,{purpose:"pipeline-advance-receipt/v1",record:material});
       await tx.query(`INSERT INTO pipeline_advance_receipts(id,tenant_id,project_id,pipeline_run_id,stage_ordinal,source_job_id,
         execution_job_id,attempt_id,queue_id,selection_digest,template_version,template_digest,run_version,run_digest,policy_id,
         policy_version,policy_digest,delegation_receipt_id,delegation_receipt_digest,delegation_task_units,
-        delegation_cost_microusd,delegation_cost_evidence_digest,request_digest,receipt_digest,auth_tag,advanced_at)
-        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26)`,
+        delegation_cost_state,delegation_cost_microusd,delegation_cost_evidence_digest,request_digest,receipt_digest,auth_tag,advanced_at)
+        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27)`,
       [receiptId,this.scope.tenantId,run.project_id,run.id,selected.stageOrdinal,source.id,execution.id,effect.attemptId,effect.queueId,
         selectionDigest,template.version,template.record_digest,effectiveRun.version,effectiveRun.record_digest,policy.id,Number(policy.version),
-        policy.policy_digest,delegation.receiptId,delegation.receiptDigest,1,material.delegationCostMicroUsd,
-        material.delegationCostEvidenceDigest,requestDigest,receiptDigest,authTag,advancedAt]);
+        policy.policy_digest,delegation.receiptId,delegation.receiptDigest,1,material.delegationCostState,
+        material.delegationCostMicroUsd,material.delegationCostEvidenceDigest,requestDigest,receiptDigest,authTag,advancedAt]);
+      // The counted round is appended against the receipt that opened it, in the
+      // same transaction, so the loop count can never disagree with the run.
+      await this.#appendLoopCount(tx,run,stage,template,loop,requestDigest,receiptId,receiptDigest,advancedAt);
       await appendAuditWith(tx,{id:`audit:${receiptId}`,...this.scope,projectId:run.project_id,actorId:SERVICE_ACTOR,actorType:"service",
         action:"pipelines.stage.advanced",targetType:"pipeline_run",targetId:run.id,correlationId:execution.id,
         idempotencyKey:receiptId,occurredAt:advancedAt,safeMetadata:{stageOrdinal:selected.stageOrdinal,sourceJobId:source.id,
@@ -411,6 +454,89 @@ export class PipelineAdvanceServiceV1 {
         attemptId:effect.attemptId,queueId:effect.queueId,replayed:false,advancedAt,startsWork:true,
         grantsExecutionAuthority:false,claimsCancellation:false});
     },()=>precommit());
+  }
+
+  /** The owner sets this installation's one allowance record. It carries no
+   * project scope: these are whole-machine ceilings for unattended work, and
+   * they are checked in the same transaction as every advance receipt. */
+  async setAllowance(identity: VerifiedWebIdentity, value: unknown): Promise<PipelineInstallationAllowanceReceiptV1> {
+    const parsed = pipelineInstallationAllowanceInputSchemaV1.safeParse(value);
+    if (!parsed.success) throw new WebAccessError("invalid_request");
+    const input: PipelineInstallationAllowanceInputV1 = parseAllowanceInputV1(parsed.data);
+    // The product's own review ceiling. A stored column may allow more; an
+    // unattended night may not run above these.
+    if (input.machineMaxAgentProcesses > PIPELINE_MACHINE_CEILING_V1.agentProcesses
+      || input.machineMaxDbClusters > PIPELINE_MACHINE_CEILING_V1.dbClusters)
+      throw new WebAccessError("invalid_request");
+    return this.#owner.authenticated(identity, async (tx, actor) => {
+      actor.require("tasks.assign", undefined, true);
+      const owner = (await tx.query<{ id: string }>(`SELECT g.id FROM control_role_grants g JOIN control_identities i
+        ON i.tenant_id=g.tenant_id AND i.id=g.identity_id WHERE g.tenant_id=$1 AND g.identity_id=$2 AND g.role_key='owner'
+        AND g.revoked_at IS NULL AND i.state='active' FOR SHARE OF g,i`, [this.scope.tenantId, actor.id])).rows[0];
+      if (!owner) throw new WebAccessError("access_denied");
+      const now = actor.now;
+      const existing = await this.#allowanceRow(tx, false);
+      const version = existing ? Number(existing.version) + 1 : 1;
+      const material = pipelineAllowanceMaterialV1(this.scope, { runs_per_hour: input.runsPerHour,
+        runs_per_agent_per_day: input.runsPerAgentPerDay, machine_max_agent_processes: input.machineMaxAgentProcesses,
+        machine_max_db_clusters: input.machineMaxDbClusters, dollar_cap_microusd: input.dollarCapMicroUsd,
+        owner_identity_id: actor.id, version, updated_at: now });
+      const digest = pipelineAllowanceDigestV1(material), tag = pipelineAllowanceTagV1(this.#key, material);
+      if (existing) {
+        const changed = await tx.query<{ version: number | string; record_digest: string; auth_tag: string }>(
+          `UPDATE pipeline_installation_allowances SET runs_per_hour=$1,runs_per_agent_per_day=$2,
+            machine_max_agent_processes=$3,machine_max_db_clusters=$4,dollar_cap_microusd=$5,owner_identity_id=$6,
+            version=$7,record_digest=$8,auth_tag=$9,updated_at=$10
+          WHERE tenant_id=$11 AND workspace_id=$12 AND version=$13 RETURNING version,record_digest,auth_tag`,
+          [input.runsPerHour, input.runsPerAgentPerDay, input.machineMaxAgentProcesses, input.machineMaxDbClusters,
+            input.dollarCapMicroUsd, actor.id, version, digest, tag, now, this.scope.tenantId, this.scope.workspaceId,
+            existing.version]);
+        if (changed.rows.length !== 1 || Number(changed.rows[0]?.version) !== version
+          || changed.rows[0]?.record_digest !== digest || changed.rows[0]?.auth_tag !== tag)
+          refuse("advance_conflict");
+      } else {
+        await tx.query(`INSERT INTO pipeline_installation_allowances(tenant_id,workspace_id,runs_per_hour,
+          runs_per_agent_per_day,machine_max_agent_processes,machine_max_db_clusters,dollar_cap_microusd,owner_identity_id,
+          version,record_digest,auth_tag,updated_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+          [this.scope.tenantId, this.scope.workspaceId, input.runsPerHour, input.runsPerAgentPerDay,
+            input.machineMaxAgentProcesses, input.machineMaxDbClusters, input.dollarCapMicroUsd, actor.id,
+            version, digest, tag, now]);
+      }
+      const row = await this.#allowanceRow(tx, true);
+      if (!row) refuse("advance_conflict");
+      this.#verifyAllowance(row);
+      // The owner's cluster count is recorded in the same transaction as the
+      // ceilings it is judged against, so the record is never older than the
+      // limits that use it.
+      await tx.query(`INSERT INTO pipeline_machine_capacity_observations(id,tenant_id,workspace_id,source,db_clusters,
+        observed_at) VALUES($1,$2,$3,'owner_reported',$4,$5) ON CONFLICT DO NOTHING`,
+      [`machine-capacity:${sha256Digest({ tenantId:this.scope.tenantId, workspaceId:this.scope.workspaceId, now })}`,
+        this.scope.tenantId, this.scope.workspaceId, input.observedDbClusters, now]);
+      const observed = await this.#clusterObservation(tx);
+      await appendAuditWith(tx, { id: `audit:pipeline-allowance:${version}`, ...this.scope,
+        projectId: undefined, actorId: actor.id, actorType: "human", action: "pipelines.allowance.set",
+        targetType: "workspace", targetId: this.scope.workspaceId, idempotencyKey: `pipeline-allowance:${version}`,
+        occurredAt: now, safeMetadata: { allowanceVersion: version, runsPerHour: input.runsPerHour,
+          runsPerAgentPerDay: input.runsPerAgentPerDay, machineMaxAgentProcesses: input.machineMaxAgentProcesses,
+          machineMaxDbClusters: input.machineMaxDbClusters, dollarCapMicroUsd: input.dollarCapMicroUsd,
+          observedDbClusters: input.observedDbClusters } });
+      return allowanceReceiptV1({ row, replayed: false, recordedDbClusters: observed.dbClusters,
+        recordedDbClustersAt: observed.observedAt });
+    });
+  }
+
+  /** The owner reads the current ceilings, or the shipped defaults when no
+   * record exists yet. It starts no work and grants no authority. */
+  async allowance(): Promise<PipelineInstallationAllowanceReceiptV1> {
+    const row = await this.#allowanceRow(this.db, false);
+    const observed = await this.#clusterObservation(this.db);
+    if (!row) return pipelineInstallationAllowanceReceiptSchemaV1.parse({ allowanceVersion: 0,
+      ...PIPELINE_ALLOWANCE_DEFAULTS_V1, recordedDbClusters: observed.dbClusters,
+      recordedDbClustersAt: observed.observedAt, updatedAt: new Date(this.#now()).toISOString(), replayed: false,
+      startsWork: false, grantsExecutionAuthority: false });
+    this.#verifyAllowance(row);
+    return allowanceReceiptV1({ row, replayed: true, recordedDbClusters: observed.dbClusters,
+      recordedDbClustersAt: observed.observedAt });
   }
 
   /** Bounded controller-cycle entrypoint. It selects only owner-consented
@@ -490,6 +616,166 @@ export class PipelineAdvanceServiceV1 {
         refuse("pipeline_integrity_failed");
     }
   }
+  /** The one signed allowance record, locked for the duration of the advance
+   * transaction. A missing record is a refusal, not a default: an installation
+   * that never set its ceilings must not start unattended work silently. */
+  async #allowanceRow(db: DatabaseClient | DatabaseSession, lock: boolean) {
+    return (await db.query<PipelineAllowanceRowV1>(`SELECT runs_per_hour,runs_per_agent_per_day,
+      machine_max_agent_processes,machine_max_db_clusters,dollar_cap_microusd,version,owner_identity_id,
+      record_digest,auth_tag,updated_at FROM pipeline_installation_allowances
+      WHERE tenant_id=$1 AND workspace_id=$2${lock?" FOR UPDATE":""}`,
+    [this.scope.tenantId,this.scope.workspaceId])).rows[0];
+  }
+  #verifyAllowance(row: PipelineAllowanceRowV1) {
+    const material = pipelineAllowanceMaterialV1(this.scope,row);
+    if (sha256Digest(material)!==row.record_digest
+      || !same(hmacSha256Tag(this.#key,{purpose:"pipeline-installation-allowance/v1",record:material}),row.auth_tag))
+      refuse("pipeline_integrity_failed");
+  }
+  async #clusterObservation(db: DatabaseClient | DatabaseSession) {
+    const row = (await db.query<{ db_clusters: number | string; observed_at: string | Date }>(
+      `SELECT db_clusters,observed_at FROM pipeline_machine_capacity_observations
+        WHERE tenant_id=$1 AND workspace_id=$2 ORDER BY observed_at DESC,id DESC LIMIT 1`,
+      [this.scope.tenantId,this.scope.workspaceId])).rows[0];
+    return latestClusterObservationV1(row,this.#now());
+  }
+
+  /** Every ceiling, counted and claimed in this transaction. The counts come
+   * from the loop-count rows this transaction is about to append, plus the
+   * rows it already committed: the check and the claim are the same statement
+   * pair against the same locked record, so a concurrent advance waits here
+   * and then sees the first one's count. */
+  async #claimInstallationAllowance(tx: DatabaseSession, workerId: string, nextCostMicroUsd: number | null) {
+    const row = await this.#allowanceRow(tx, true);
+    if (!row) refuse("installation_allowance_missing");
+    this.#verifyAllowance(row);
+    const now = this.#now();
+    const usage = (await tx.query<UsageRow>(`SELECT
+      (SELECT COUNT(*) FROM pipeline_stage_loop_counts WHERE tenant_id=$1
+        AND recorded_at > $2::timestamptz - interval '1 hour')::text AS runs_this_hour,
+      (SELECT COUNT(*) FROM pipeline_stage_loop_counts WHERE tenant_id=$1 AND worker_id=$3
+        AND recorded_at > $2::timestamptz - interval '1 day')::text AS agent_runs_today,
+      (SELECT COUNT(DISTINCT id) FROM control_harness_runs WHERE tenant_id=$1
+        AND state IN('discovered','starting','running','waiting_input','waiting_approval','cancelling'))::text
+        AS active_agent_processes,
+      (SELECT COALESCE(SUM(delegation_cost_microusd),0) FROM pipeline_advance_receipts WHERE tenant_id=$1
+        AND delegation_cost_state='known')::text AS spent_microusd`,
+    [this.scope.tenantId,new Date(now).toISOString(),workerId])).rows[0];
+    const runsThisHour = safeInteger(usage?.runs_this_hour ?? "0");
+    const agentRunsToday = safeInteger(usage?.agent_runs_today ?? "0");
+    const activeProcesses = safeInteger(usage?.active_agent_processes ?? "0");
+    const spent = safeInteger(usage?.spent_microusd ?? "0");
+    const runsPerHour = safeInteger(row.runs_per_hour);
+    const runsPerAgentPerDay = safeInteger(row.runs_per_agent_per_day);
+    const agentCeiling = Math.min(safeInteger(row.machine_max_agent_processes),PIPELINE_MACHINE_CEILING_V1.agentProcesses);
+    const clusterCeiling = Math.min(safeInteger(row.machine_max_db_clusters),PIPELINE_MACHINE_CEILING_V1.dbClusters);
+    // The next run is inside the hour only while the run that would be started
+    // still fits under the ceiling: refuse AT the boundary, not past it.
+    if (runsThisHour+1>runsPerHour) refuse("installation_runs_per_hour_exhausted");
+    if (agentRunsToday+1>runsPerAgentPerDay) refuse("installation_agent_runs_per_day_exhausted");
+    if (activeProcesses+1>agentCeiling) refuse("installation_agent_process_ceiling_reached");
+    const observed = await this.#clusterObservation(tx);
+    // A cluster count nobody has recorded, or one too old to be true, refuses.
+    // An unknown machine state is never a pass.
+    const dbClusters = observed.dbClusters;
+    if (dbClusters === null) throw new PipelineAdvanceErrorV1("installation_cluster_count_unknown");
+    if (dbClusters + 1 > clusterCeiling) refuse("installation_db_cluster_ceiling_reached");
+    const cap = row.dollar_cap_microusd===null?null:safeInteger(row.dollar_cap_microusd);
+    if (cap!==null&&nextCostMicroUsd!==null&&(spent>cap||nextCostMicroUsd>cap-spent))
+      refuse("installation_cost_ceiling_exhausted");
+    return { cost:{spent,cap,next:nextCostMicroUsd}, runsThisHour, agentRunsToday, activeProcesses,
+      runsPerHour, runsPerAgentPerDay, agentCeiling, clusterCeiling, dbClusters };
+  }
+
+  /** The counted fix round this advance is about to start, or the refusal that
+   * stops it. `max_loops` and `max_total_loops` are compared here for the first
+   * time in the product's life. At the ceiling the run stops advancing and the
+   * owner gets one Needs Attention item instead of an endless retry. */
+  async #claimLoopRound(tx: DatabaseSession, run: RunRow, stage: StageRow, template: TemplateRow) {
+    const stageOrdinal = Number(stage.stage_ordinal);
+    const maxLoops = pipelineEffectiveMaxLoopsV1(safeInteger(stage.max_loops));
+    const maxTotalLoops = pipelineEffectiveMaxTotalLoopsV1(safeInteger(template.max_total_loops));
+    const rounds = (await tx.query<LoopCountRow>(`SELECT id,pipeline_run_id,stage_ordinal,worker_id,loop_index,
+      max_loops,max_total_loops,run_total_loops,reason_code,receipt_id,receipt_digest,request_digest,auth_tag,recorded_at
+      FROM pipeline_stage_loop_counts WHERE tenant_id=$1 AND pipeline_run_id=$2 ORDER BY stage_ordinal,loop_index`,
+    [this.scope.tenantId,run.id])).rows;
+    const stageRounds = rounds.filter(row=>safeInteger(row.stage_ordinal)===stageOrdinal
+      && row.worker_id===stage.worker_id);
+    const runTotal = rounds.length;
+    for (const row of stageRounds) {
+      // The row is signed over material that includes the receipt digest it
+      // counted, so a rewritten count or a repointed receipt fails the tag. The
+      // receipt's own digest and tag are verified by its replay path.
+      const material = pipelineLoopCountMaterialV1({ tenantId:this.scope.tenantId, projectId:run.project_id,
+        runId:row.pipeline_run_id, stageOrdinal:safeInteger(row.stage_ordinal), workerId:row.worker_id,
+        loopIndex:safeInteger(row.loop_index), maxLoops:safeInteger(row.max_loops),
+        maxTotalLoops:safeInteger(row.max_total_loops), runTotalLoops:safeInteger(row.run_total_loops),
+        receiptId:row.receipt_id, receiptDigest:row.receipt_digest, requestDigest:row.request_digest,
+        recordedAt:iso(row.recorded_at) });
+      if (!same(hmacSha256Tag(this.#key,{purpose:"pipeline-stage-loop-count/v1",record:material}),row.auth_tag))
+        refuse("pipeline_integrity_failed");
+    }
+    const loopIndex = stageRounds.length;
+    const nextRunTotal = runTotal+1;
+    if (loopIndex>maxLoops) {
+      await this.#raiseLoopAttention(tx,run,stage,template,"pipeline_stage_loop_limit_reached",
+        loopIndex,maxLoops,maxTotalLoops,nextRunTotal);
+      refuse("stage_loop_limit_reached");
+    }
+    if (nextRunTotal>maxTotalLoops) {
+      await this.#raiseLoopAttention(tx,run,stage,template,"pipeline_run_loop_limit_reached",
+        loopIndex,maxLoops,maxTotalLoops,nextRunTotal);
+      refuse("run_loop_limit_reached");
+    }
+    return { stageOrdinal, workerId:stage.worker_id, loopIndex, maxLoops, maxTotalLoops, runTotalLoops:nextRunTotal };
+  }
+  async #appendLoopCount(tx: DatabaseSession, run: RunRow, stage: StageRow, template: TemplateRow,
+    loop: { stageOrdinal: number; workerId: string; loopIndex: number; maxLoops: number; maxTotalLoops: number;
+      runTotalLoops: number }, requestDigest: string, receiptId: string, receiptDigest: string, recordedAt: string) {
+    const id = `pipeline-loop:${run.id}:${loop.stageOrdinal}:${loop.loopIndex}`;
+    const material = pipelineLoopCountMaterialV1({ tenantId:this.scope.tenantId, projectId:run.project_id,
+      runId:run.id, stageOrdinal:loop.stageOrdinal, workerId:loop.workerId, loopIndex:loop.loopIndex,
+      maxLoops:loop.maxLoops, maxTotalLoops:loop.maxTotalLoops, runTotalLoops:loop.runTotalLoops,
+      receiptId, receiptDigest, requestDigest, recordedAt });
+    const digest = pipelineLoopCountDigestV1(material), tag = pipelineLoopCountTagV1(this.#key,material);
+    await tx.query(`INSERT INTO pipeline_stage_loop_counts(id,tenant_id,project_id,pipeline_run_id,stage_ordinal,
+      worker_id,loop_index,max_loops,max_total_loops,run_total_loops,reason_code,receipt_id,receipt_digest,request_digest,
+      auth_tag,recorded_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'stage_advanced',$11,$12,$13,$14,$15)`,
+    [id,this.scope.tenantId,run.project_id,run.id,loop.stageOrdinal,loop.workerId,loop.loopIndex,loop.maxLoops,
+      loop.maxTotalLoops,loop.runTotalLoops,receiptId,receiptDigest,requestDigest,tag,recordedAt]);
+    // The row lock on the run is already held, so no two advances can open the
+    // same round; the unique key is the database's own second opinion.
+  }
+  /** One Needs Attention item per run, written in the transaction that refuses.
+   * An exact replay is recognised by its payload, so a repeated refusal at the
+   * same ceiling does not pile up copies. */
+  async #raiseLoopAttention(tx: DatabaseSession, run: RunRow, stage: StageRow, template: TemplateRow,
+    reasonCode: "pipeline_stage_loop_limit_reached"|"pipeline_run_loop_limit_reached", loopIndex: number,
+    maxLoops: number, maxTotalLoops: number, runTotalLoops: number) {
+    const at = new Date(this.#now()).toISOString();
+    const receipts = (await tx.query<{ id: string }>(`SELECT id FROM pipeline_advance_receipts
+      WHERE tenant_id=$1 AND pipeline_run_id=$2 ORDER BY stage_ordinal,id`,
+    [this.scope.tenantId,run.id])).rows.map(row=>row.id);
+    const item = pipelineLoopAttentionItemV1({ tenantId:this.scope.tenantId, projectId:run.project_id, runId:run.id,
+      stageOrdinal:Number(stage.stage_ordinal), stageKind:stage.stage_kind, reasonCode, loopIndex, maxLoops,
+      maxTotalLoops, runTotalLoops, receiptIds:receipts, createdAt:at });
+    const prior = (await tx.query<{ payload: unknown }>(`SELECT payload FROM control_action_inbox
+      WHERE tenant_id=$1 AND id=$2`,[this.scope.tenantId,item.id])).rows[0];
+    if (prior) {
+      const existing = prior.payload as Readonly<Record<string,unknown>>|null;
+      if (existing&&existing.reasonCode===reasonCode&&existing.createdAt===at) return;
+      if (existing&&typeof existing.createdAt==="string") return;  // already raised for this run
+      refuse("advance_conflict");
+    }
+    await tx.query(`INSERT INTO control_action_inbox(id,tenant_id,project_id,work_item_id,kind,state,delivery_state,
+      created_at,expires_at,payload) VALUES($1,$2,$3,$4,'question','open','not_requested',$5,NULL,$6::jsonb)`,
+    [item.id,item.tenantId,item.projectId,item.workItemId,item.createdAt,JSON.stringify(item)]);
+    await appendAuditWith(tx,{id:`audit:${item.id}`,...this.scope,projectId:run.project_id,actorId:SERVICE_ACTOR,
+      actorType:"service",action:"pipelines.loops.exhausted",targetType:"pipeline_run",targetId:run.id,
+      idempotencyKey:item.id,occurredAt:at,
+      safeMetadata:{reasonCode,stageOrdinal:Number(stage.stage_ordinal),loopIndex,maxLoops,maxTotalLoops,runTotalLoops}});
+  }
+
   async #policy(tx:DatabaseSession,projectId:string,policyId:string){const row=(await tx.query<PolicyRow>(`SELECT id,project_id,
     coordinator_identity_id,coordinator_version,owner_identity_id,state,version,policy_digest,allowed_actions,eligible_routes,risk_ceiling,
     max_total_tasks,max_total_cost_microusd,max_concurrent_tasks,valid_from,valid_until FROM control_project_delegation_policies
@@ -499,7 +785,8 @@ export class PipelineAdvanceServiceV1 {
     ||millis(now)>=millis(policy.valid_until))refuse("policy_inactive");const actions=strings(policy.allowed_actions);
     if(!actions.includes(ADVANCE_ACTION)||actions.includes("*"))refuse("policy_action_not_permitted");}
   #assertDelegation(policy:PolicyRow,receipt:PipelineDelegationReceiptV1,stage:StageRow,
-    execution:ReturnType<typeof jobRecordSchema.parse>,now:number){
+    execution:ReturnType<typeof jobRecordSchema.parse>,now:number,installationCostCap:{spent:number;
+    cap:number|null; next:number|null}){
     this.#assertOwnerPolicyCurrent(policy,new Date(now).toISOString());
     if(receipt.policyId!==policy.id||receipt.policyVersion!==Number(policy.version)||receipt.policyDigest!==policy.policy_digest
       ||receipt.coordinatorVersion!==Number(policy.coordinator_version)||receipt.ownerIdentityId!==policy.owner_identity_id
@@ -508,10 +795,13 @@ export class PipelineAdvanceServiceV1 {
     if(RISK[execution.authority.maxRisk]>RISK[policy.risk_ceiling])refuse("policy_risk_exceeded");
     if(safeInteger(receipt.taskUnits)>=safeInteger(policy.max_total_tasks))refuse("policy_task_allowance_exhausted");
     if(safeInteger(receipt.concurrentTasks)>=safeInteger(policy.max_concurrent_tasks))refuse("policy_concurrency_exhausted");
-    const currentCost=receipt.nextCost;if(currentCost.kind!=="known")throw new PipelineAdvanceErrorV1("policy_cost_unknown");
-    const spent=safeInteger(receipt.committedCostMicroUsd),next=safeInteger(currentCost.microUsd),
-      ceiling=safeInteger(policy.max_total_cost_microusd);
-    if(spent>ceiling||next>ceiling-spent)refuse("policy_cost_allowance_exhausted");}
+    // "Count runs, never dollars." An unknown cost is recorded as unknown and
+    // never refuses. The dollar ceiling is the installation's optional cap, so
+    // it is enforced exactly when the owner has set one and the cost is known.
+    if(installationCostCap.cap!==null&&installationCostCap.next!==null
+      &&(installationCostCap.spent>installationCostCap.cap
+        ||installationCostCap.next>installationCostCap.cap-installationCostCap.spent))
+      refuse("installation_cost_ceiling_exhausted");}
   async #job(tx:DatabaseSession,run:RunRow,id:string,stage:StageRow,source:boolean){const row=(await tx.query<{payload:unknown;
     project_id:string;workflow_id:string;pipeline_run_id:string|null;stage_kind:string|null;stage_ordinal:number|null}>(`SELECT payload,
     project_id,workflow_id,pipeline_run_id,stage_kind,stage_ordinal FROM control_jobs WHERE tenant_id=$1 AND project_id=$2 AND id=$3 FOR SHARE`,
@@ -531,8 +821,12 @@ export class PipelineAdvanceServiceV1 {
     selectionDigest:row.selection_digest,templateVersion:Number(row.template_version),templateDigest:row.template_digest,
     runVersion:Number(row.run_version),runDigest:row.run_digest,policyId:row.policy_id,policyVersion:Number(row.policy_version),
     policyDigest:row.policy_digest,delegationReceiptId:row.delegation_receipt_id,delegationReceiptDigest:row.delegation_receipt_digest,
-    delegationTaskUnits:safeInteger(row.delegation_task_units),delegationCostMicroUsd:safeInteger(row.delegation_cost_microusd),
-    delegationCostEvidenceDigest:row.delegation_cost_evidence_digest,
+    delegationTaskUnits:safeInteger(row.delegation_task_units),
+    delegationCostMicroUsd:row.delegation_cost_state==="known"&&row.delegation_cost_microusd!==null
+      ?safeInteger(row.delegation_cost_microusd):null,
+    delegationCostState:row.delegation_cost_state,
+    delegationCostEvidenceDigest:row.delegation_cost_state==="known"&&row.delegation_cost_evidence_digest!==null
+      ?row.delegation_cost_evidence_digest:null,
     requestDigest:row.request_digest,advancedAt:iso(row.advanced_at)};
     verify(this.#key,"pipeline-advance-receipt/v1",material,row.receipt_digest,row.auth_tag);
     if(row.policy_id!==policyId||row.source_job_id!==selection.sourceJobId||row.execution_job_id!==selection.executionJobId

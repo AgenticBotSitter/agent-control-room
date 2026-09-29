@@ -18,6 +18,12 @@ export const pipelineBuildWritePolicySchemaV1 = z.object({
   maximumChangedFiles: z.number().int().min(1).max(500),
   maximumChangedBytes: z.number().int().min(1).max(16 * 1024 * 1024),
 }).strict();
+/** The product's two fix rounds, everywhere: a stage's first attempt is round
+ * 0, so `maxLoops` is the number of corrections it may be sent back for. The
+ * stored column allows 20; the ceiling below is what unattended advance
+ * enforces, and a template may only lower it. */
+export const PIPELINE_MAX_LOOPS_CEILING_V1 = 2;
+export const PIPELINE_MAX_TOTAL_LOOPS_CEILING_V1 = 6;
 const baseStage = z.object({ ordinal: z.number().int().min(0).max(2), description: safeText,
   requiredCapability: id, workerId: id, workerKind, nodeId: id, selectionKey: id,
   model: z.string().min(1).max(180), effort, provider: id.nullable().default(null),
@@ -119,6 +125,57 @@ export const pipelineUnattendedTransitionSchemaV1 = z.object({
   expectedRunVersion: z.number().int().positive(),
   expectedTemplateVersion: z.number().int().positive(),
 }).strict();
+/** The one installation allowance record. Counted runs, never dollars: every
+ * ceiling is a whole number of runs, and the optional dollar cap is off unless
+ * the owner has set it. Zero is a real ceiling, not "unset". */
+export const pipelineInstallationAllowanceInputSchemaV1 = z.object({
+  runsPerHour: z.number().int().min(0).max(10000),
+  runsPerAgentPerDay: z.number().int().min(0).max(10000),
+  machineMaxAgentProcesses: z.number().int().min(0).max(4096),
+  machineMaxDbClusters: z.number().int().min(0).max(256),
+  dollarCapMicroUsd: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).nullable().default(null),
+  /** The database clusters the owner is seeing right now. Nothing in the system
+   * can observe a host-level postmaster, so the owner reports it with the rest
+   * of the ceilings and the coordinator enforces what they report. */
+  observedDbClusters: z.number().int().min(0).max(256),
+}).strict();
+export const pipelineInstallationAllowanceReceiptSchemaV1 = z.object({
+  allowanceVersion: z.number().int().positive(),
+  runsPerHour: z.number().int().nonnegative(),
+  runsPerAgentPerDay: z.number().int().nonnegative(),
+  machineMaxAgentProcesses: z.number().int().nonnegative(),
+  machineMaxDbClusters: z.number().int().nonnegative(),
+  dollarCapMicroUsd: z.number().int().nonnegative().nullable(),
+  recordedDbClusters: z.number().int().nonnegative().nullable(),
+  recordedDbClustersAt: z.string().datetime({ offset: true }).nullable(),
+  updatedAt: z.string().datetime({ offset: true }),
+  replayed: z.boolean(),
+  startsWork: z.literal(false),
+  grantsExecutionAuthority: z.literal(false),
+}).strict();
+/** The counted fix rounds, and the honest live position. `usedThisHour` and
+ * `usedByAgentToday` are read inside the advance transaction, so what the owner
+ * sees is the same count the cap is compared against. */
+export const pipelineLoopAllowanceViewSchemaV1 = z.object({
+  runId: id,
+  stageOrdinal: z.number().int().min(0).max(2),
+  workerId: id,
+  loopIndex: z.number().int().nonnegative(),
+  maxLoops: z.number().int().nonnegative(),
+  runTotalLoops: z.number().int().nonnegative(),
+  maxTotalLoops: z.number().int().nonnegative(),
+  usedThisHour: z.number().int().nonnegative(),
+  runsPerHour: z.number().int().nonnegative(),
+  usedByAgentToday: z.number().int().nonnegative(),
+  runsPerAgentPerDay: z.number().int().nonnegative(),
+  activeAgentProcesses: z.number().int().nonnegative(),
+  machineMaxAgentProcesses: z.number().int().nonnegative(),
+  recordedDbClusters: z.number().int().nonnegative().nullable(),
+  machineMaxDbClusters: z.number().int().nonnegative(),
+  startedWork: z.boolean(),
+  startsWork: z.literal(false),
+  grantsExecutionAuthority: z.literal(false),
+}).strict();
 export const pipelineUnattendedTransitionReceiptSchemaV1 = z.object({
   transitionId: id,
   runId: id,
@@ -169,3 +226,6 @@ export type PipelineAdvanceReceiptV1 = z.infer<typeof pipelineAdvanceReceiptSche
 export type PipelineTerminalReceiptV1 = z.infer<typeof pipelineTerminalReceiptSchemaV1>;
 export type PipelineHistoryV1 = z.infer<typeof pipelineHistorySchemaV1>;
 export type PipelineUnattendedTransitionV1 = z.infer<typeof pipelineUnattendedTransitionSchemaV1>;
+export type PipelineInstallationAllowanceInputV1 = z.infer<typeof pipelineInstallationAllowanceInputSchemaV1>;
+export type PipelineInstallationAllowanceReceiptV1 = z.infer<typeof pipelineInstallationAllowanceReceiptSchemaV1>;
+export type PipelineLoopAllowanceViewV1 = z.infer<typeof pipelineLoopAllowanceViewSchemaV1>;

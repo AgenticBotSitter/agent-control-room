@@ -38,6 +38,7 @@ GRANT SELECT ON control_identities, control_role_grants, workspaces, control_web
   work_batches, work_batch_revisions, work_batch_items, control_action_inbox TO control_room_private_web;
 GRANT SELECT ON pipeline_templates, pipeline_runs, pipeline_stage_runs,
   pipeline_ordered_stage_runs, pipeline_unattended_transitions,
+  pipeline_installation_allowances, pipeline_machine_capacity_observations,
   control_pipeline_build_publications, control_codex_result_publications
   TO control_room_private_web;
 GRANT SELECT ON work_batch_queue_admissions, work_batch_effective_queue_admissions,
@@ -70,6 +71,13 @@ GRANT INSERT ON pipeline_templates, pipeline_runs, pipeline_stage_runs TO contro
 -- UPDATE or DELETE, and SELECT stays the three coordination-page columns.
 GRANT INSERT ON control_job_dependencies TO control_room_private_web;
 GRANT INSERT ON pipeline_unattended_transitions TO control_room_private_web;
+-- The one installation allowance record and the owner-reported cluster count.
+-- The owner sets and re-signs the limits; no other login may raise one.
+GRANT INSERT ON pipeline_installation_allowances, pipeline_machine_capacity_observations
+  TO control_room_private_web;
+GRANT UPDATE (runs_per_hour, runs_per_agent_per_day, machine_max_agent_processes, machine_max_db_clusters,
+  dollar_cap_microusd, owner_identity_id, version, record_digest, auth_tag, updated_at)
+  ON pipeline_installation_allowances TO control_room_private_web;
 GRANT UPDATE (may_advance_unattended, version, updated_at, record_digest, auth_tag)
   ON pipeline_templates TO control_room_private_web;
 GRANT UPDATE (unattended, state, started_at, updated_at, version, template_version, template_digest,
