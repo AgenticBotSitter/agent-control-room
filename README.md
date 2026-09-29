@@ -256,7 +256,7 @@ production acceptance.
 - [Setup and verified check commands](SETUP.md)
 - [How to contribute and get work assigned](CONTRIBUTING.md)
 - [Substantial MVP-first work packages](WORK_PACKAGES.md)
-- [Full roadmap and completion criteria](ROADMAP.md)
+- [Roadmap: phases, acceptance and risk](docs/ROADMAP.md)
 - [Architecture and trust boundaries](docs/ARCHITECTURE.md)
 - [Shared connector and result contract](docs/SHARED_CONNECTOR_CONTRACT.md)
 - [Security, portable configuration and recovery contract](docs/SECURITY_CONFIGURATION_CONTRACT.md)
