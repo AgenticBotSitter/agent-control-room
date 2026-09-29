@@ -267,7 +267,7 @@ jobs:
     needs: route
     if: ${{ !cancelled() && (needs.route.result != 'success' || needs.route.outputs.components != 'false') }}
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
