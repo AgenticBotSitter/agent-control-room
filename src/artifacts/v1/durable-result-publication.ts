@@ -53,16 +53,21 @@ export async function durableStorageIo<T>(state: DurableStorageIoState,
     state.storageUncertain = true; throw new Error(uncertainError);
   }
   if (state.storageUncertain) throw new Error(uncertainError);
-  const abort = new AbortController(), started = performance.now();
+  const abort = new AbortController();
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     const result = await Promise.race([Promise.resolve().then(() => operation(abort.signal)), new Promise<never>((_, reject) => {
       timer = setTimeout(() => { state.storageUncertain = true; abort.abort(); reject(new Error(uncertainError)); }, state.storageIoMs);
     })]);
-    // Re-check the shared port-level poisoning AFTER the await: TS narrowed
-    // it at the top of the function, but the underlying flag can change.
+    // Re-check state AFTER the await: a concurrent sibling call sharing this
+    // state (or the port's own poisoning flag) may have gone uncertain while
+    // this operation was in flight, even though it settled successfully.
+    // Wall-clock elapsed time is NOT re-checked here: only the timer branch of
+    // the race above is a valid signal that the operation missed its bound —
+    // a slow-but-verified success (e.g. under CI scheduler pressure) is not
+    // ambiguous, and re-poisoning on elapsed time alone flaked this check.
     const sharedUncertain = (port as StoragePoisoningPortV1 | undefined)?.isStorageUncertain === true;
-    if (state.storageUncertain || performance.now() - started >= state.storageIoMs || sharedUncertain) {
+    if (state.storageUncertain || sharedUncertain) {
       state.storageUncertain = true; abort.abort(); throw new Error(uncertainError);
     }
     return result;
