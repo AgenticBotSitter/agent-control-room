@@ -2,6 +2,9 @@
 -- project-scoped advisory lock serializes concurrent inserts even when callers
 -- use different application processes; the trigger then checks the committed
 -- live set before accepting each scope row.
+SET lock_timeout = '5s';
+SET statement_timeout = '120s';
+
 CREATE OR REPLACE FUNCTION enforce_assignment_lease_scope_collision()
 RETURNS trigger
 LANGUAGE plpgsql
