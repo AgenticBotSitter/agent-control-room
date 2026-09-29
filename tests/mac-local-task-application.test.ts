@@ -51,6 +51,8 @@ test("Mac-local task composition reuses the canonical operations without startin
     "the result page must advertise owner review only when its mounted review operation is configured");
   assert.equal(app.taskReadKeys?.manualVerificationScenarios, manualVerificationScenarios,
     "the Mac-local result page receives the same human-only scenario source as the write operation");
+  assert.equal(typeof app.projectEvents?.read, "function",
+    "the Mac-local task host receives the canonical read-only project-event source");
   const actionSource = await app.actionInboxSource?.read({ tenantId: configuration.web.tenantId,
     actorId: "identity:test", grantedAt: "2026-09-28T10:00:00.000Z", now: "2026-09-28T11:00:00.000Z" });
   assert.deepEqual(actionSource, { observedAt: "2026-09-28T11:00:00.000Z", items: [], truncated: false },

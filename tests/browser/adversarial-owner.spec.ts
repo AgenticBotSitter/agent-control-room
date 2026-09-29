@@ -445,9 +445,13 @@ test.describe("disposable owner website adversarial attacks", () => {
     for (const path of [projectPath, `${projectPath}/tasks`, `${projectPath}/reviews`,
       `${projectPath}/activity`, `${projectPath}/files`, "/", "/needs-me"]) {
       await page.goto(path); await expectHealthy(page);
-      if (path === `${projectPath}/tasks` || path === `${projectPath}/activity` || path === `${projectPath}/files`) {
+      if (path === `${projectPath}/tasks` || path === `${projectPath}/files`) {
         await expect(page.locator("main")).toContainText("Concurrent acceptance task");
         await expect(page.locator("main")).toContainText("Revision lifecycle task");
+      }
+      if (path === `${projectPath}/activity`) {
+        await expect(page.locator("main")).toContainText("No saved project events are recorded yet");
+        await expect(page.locator("main")).toContainText("Read-only history");
       }
     }
     expect(browserErrors).toEqual([]);

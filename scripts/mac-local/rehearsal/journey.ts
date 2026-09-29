@@ -17,6 +17,8 @@ import { connectTarget } from "../../../deploy/postgres/evidence.mjs";
 import { sha256Digest } from "../../../src/security/canonical-digest";
 import { applyMacLocalFirstOwnerV1 } from "../first-owner-vps.mjs";
 import { serviceInstalled } from "../service.mjs";
+import { checkOwnerAcceptedStateV1, ownerAcceptedStateMessageV1 } from "./owner-accepted-state";
+import { MAC_LOCAL_HUMAN_VERIFICATION_SCENARIO_V1, MAC_LOCAL_TEXT_SCENARIO_V1 } from "../../../src/web/v1/mac-local-owner-review-profile";
 
 const [arg, mode] = process.argv.slice(2);
 if (!arg || ![3, 4].includes(process.argv.length) || mode !== undefined && !["--browser-proof", "--browser-e2e",
@@ -420,7 +422,10 @@ async function main() {
       model: string; effort: string; profile?: string; provider?: string;
     } }[];
       reviews: { targetId: string; targetDigest: string; contentHash: string; status: string;
-        matchingArtifactIds: string[]; reviews: { decision: string }[] }[] } | undefined;
+        matchingArtifactIds: string[];
+        missingVerificationScenarioIds: string[]; openFindingCount: number;
+        verifications: { scenarioId: string; outcome: string }[];
+        reviews: { decision: string; authority: string }[] }[] } | undefined;
     const polled = await waitFor(async () => {
       const results = await fetch(new URL(`/api/v1/projects/${idOf(projectId)}/tasks/${idOf(jobId)}/results`, origin), { headers: { cookie } });
       if (results.status !== 200) return false;
@@ -503,7 +508,20 @@ async function main() {
     assert.equal(after.reviews.length, 1, `${agent.kind}: target must remain singular after review`);
     // An owner acceptance is a saved quality vote, not automatic completion:
     // this profile also requires the separate structural verification scenario.
-    assert.equal(after.reviews[0]?.status, decision === "accepted" ? "pending" : "changes_requested");
+    //
+    // The bare `status === "pending"` this replaced was a race against the
+    // rehearsal host's own background quality sweep (`setInterval(..., 2_000)` in
+    // mac-local-default-task-provider.ts), which records that automatic
+    // verification and can therefore carry the target to `ready` between this
+    // review committing and this read returning. Assert the status the completion
+    // gate actually derives for the verification evidence THIS page reports, so
+    // both real orders pass and a genuinely wrong status still fails.
+    const acceptedPage = after.reviews[0]!;
+    const acceptedVerdict = checkOwnerAcceptedStateV1(acceptedPage, { decision,
+      requiredVerificationScenarioIds: [MAC_LOCAL_HUMAN_VERIFICATION_SCENARIO_V1, MAC_LOCAL_TEXT_SCENARIO_V1],
+      minimumIndependentReviews: 1 });
+    assert.ok(acceptedVerdict.ok,
+      `${ownerAcceptedStateMessageV1(agent.kind, decision)}: ${acceptedVerdict.ok ? "" : acceptedVerdict.problem}`);
     assert.equal(after.reviews[0]?.reviews.length, 1, `${agent.kind}: owner decision must be recorded exactly once`);
     assert.equal(after.reviews[0]?.reviews[0]?.decision, decision);
     const afterOptions = await requireOk(await fetch(new URL(reviewPath, origin), { headers: { cookie } }), 200,
