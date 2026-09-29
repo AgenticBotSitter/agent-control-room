@@ -51,8 +51,25 @@ const BIN = process.env.PG_BIN ?? "/usr/lib/postgresql/17/bin";
 const PG_AVAILABLE = existsSync(join(BIN, "initdb")) && existsSync(join(BIN, "postgres"));
 const needsPg = PG_AVAILABLE ? undefined : { skip: "needs PostgreSQL 17 binaries (PG_BIN or /usr/lib/postgresql/17/bin)" };
 // Socket-only clusters; the base is overridable so concurrent local runs can
-// stay inside an assigned port range. PORT..PORT+3 are used.
+// stay inside an assigned port range. PORT..PORT+2 are the shared fixtures, and
+// PORT+3 is reused by the six backup-verification calls below, which run one at a
+// time and tear each cluster down before the next starts.
 const PORT = Number(process.env.CONTROL_ROOM_PG_TEST_PORT_BASE ?? 15630);
+// The backup verifier refuses any port outside its own accepted block
+// (15620..15649 by default), so this lane has to say which block it is in before
+// a local run can move the base into a different assigned range.
+//
+// The verification port is `PORT+3`, and the accepted block is that lane's own:
+// `CONTROL_ROOM_BACKUP_VERIFY_PORT_RANGE` when the operator set one, otherwise
+// the module default. With the documented base that is the default block and
+// nothing is set at all, so the same command passes today; with a moved base the
+// run sets the variable and the verifier checks against the range it was given.
+const BACKUP_VERIFY_PORT = PORT + 3;
+const backupVerify = () => ({ port: BACKUP_VERIFY_PORT });
+/** The same two settings for the CLI, which takes its range as a flag. */
+const backupVerifyFlags = () => ["--port", String(BACKUP_VERIFY_PORT),
+  ...(process.env.CONTROL_ROOM_BACKUP_VERIFY_PORT_RANGE === undefined ? []
+    : ["--port-range", process.env.CONTROL_ROOM_BACKUP_VERIFY_PORT_RANGE])];
 const exec = promisify(execFile);
 
 let run = "", socket = "", data = "";
@@ -1968,7 +1985,7 @@ test("documented clean-cluster provision/migrate/backup/restore/verify journey",
   const manifest = await createMacLocalDatabaseBackupV1({ source: db, out: macBackup, pgBin: BIN,
     now: () => "2026-09-27T00:00:00.000Z" });
   assert.match(manifest.dumpDigest, /^sha256:[a-f0-9]{64}$/u);
-  const verified = await verifyMacLocalDatabaseBackupV1({ backup: macBackup, port: PORT + 3, pgBin: BIN });
+  const verified = await verifyMacLocalDatabaseBackupV1({ backup: macBackup, ...backupVerify(), pgBin: BIN });
   assert.equal(verified.verified, true);
   assert.equal(verified.identityDigest, manifest.restoreIdentityDigest);
   // The same backup, verified again against a teardown whose `pg_ctl` stops all
@@ -1981,12 +1998,13 @@ test("documented clean-cluster provision/migrate/backup/restore/verify journey",
   // `finally`, which the CLI turns into `database backup verification FAIL` and
   // `process.exitCode = 1` — a `FAIL` for a backup whose digests, ledger,
   // ownership and grants had all matched, and the response
-  // docs/BACKUP_AND_RESTORE.md:41-44 prescribes for a mismatch. Port 15635 is
-  // this lane's own block; the degraded reason is still logged, and the
-  // companion assertion is that a FORCED teardown is still a failure.
+  // docs/BACKUP_AND_RESTORE.md:41-44 prescribes for a mismatch. The degraded
+  // port is one of this lane's own six verification slots; the degraded reason is
+  // still logged, and the companion assertion is that a FORCED teardown is still
+  // a failure.
   const degraded = [];
   const verifiedThroughSlowShutdown = await verifyMacLocalDatabaseBackupV1({ backup: macBackup,
-    port: 15635, pgBin: BIN, teardown: { degradedLogger: line => { degraded.push(line); },
+    ...backupVerify(), pgBin: BIN, teardown: { degradedLogger: line => { degraded.push(line); },
       pgCtl: args => {
         if (args.includes("stop")) throw new Error("pg_ctl: server does not take a fast shutdown request");
         execFileSync(join(BIN, "pg_ctl"), args, { encoding: "utf8", timeout: 90_000 });
@@ -2012,7 +2030,7 @@ test("documented clean-cluster provision/migrate/backup/restore/verify journey",
     port: 1, pgBin: "/also/unused/bin", removeDirectories: false };
   const realDirectories = [], livePids = [];
   const notHijacked = await verifyMacLocalDatabaseBackupV1({ backup: macBackup,
-    port: 15638, pgBin: BIN, teardown: { ...hijack,
+    ...backupVerify(), pgBin: BIN, teardown: { ...hijack,
       degradedLogger: line => { degraded.push(line); },
       pgCtl: args => {
         const directory = args[args.indexOf("-D") + 1] ?? "";
@@ -2061,7 +2079,7 @@ test("documented clean-cluster provision/migrate/backup/restore/verify journey",
   // report "undefined !== 0" and hide the output that says why. The result is
   // captured either way, so a failure prints what the CLI actually said.
   const cli = await exec(process.execPath, [join(ROOT, "scripts/ops/verify-database-backup.mjs"),
-    "--backup", macBackup, "--port", "15636", "--pg-bin", shimBin],
+    "--backup", macBackup, ...backupVerifyFlags(), "--pg-bin", shimBin],
     { encoding: "utf8", timeout: 300_000, maxBuffer: 1 << 24 })
     .then(value => ({ stdout: value.stdout, stderr: value.stderr, code: 0 }),
       error => ({ stdout: error.stdout ?? "", stderr: error.stderr ?? "", code: error.code ?? null }));
@@ -2077,7 +2095,7 @@ test("documented clean-cluster provision/migrate/backup/restore/verify journey",
   // teardown no longer fails the run" would be indistinguishable from "the run
   // can no longer fail".
   await exec(process.execPath, [join(ROOT, "scripts/ops/verify-database-backup.mjs"),
-    "--backup", join(macBackup, "..", "does-not-exist"), "--port", "15637", "--pg-bin", BIN],
+    "--backup", join(macBackup, "..", "does-not-exist"), ...backupVerifyFlags(), "--pg-bin", BIN],
     { encoding: "utf8", timeout: 60_000 }).then(
     () => assert.fail("the CLI must exit non-zero when the backup does not verify"),
     error => {
@@ -2088,6 +2106,6 @@ test("documented clean-cluster provision/migrate/backup/restore/verify journey",
   const dumpPath = join(macBackup, "database.dump"), altered = await readFile(dumpPath);
   altered[0] ^= 0xff;
   await writeFile(dumpPath, altered);
-  await assert.rejects(verifyMacLocalDatabaseBackupV1({ backup: macBackup, port: 15634, pgBin: BIN }),
+  await assert.rejects(verifyMacLocalDatabaseBackupV1({ backup: macBackup, ...backupVerify(), pgBin: BIN }),
     /database_backup_digest_refused/u);
 });

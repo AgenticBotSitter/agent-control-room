@@ -44,6 +44,22 @@ node scripts/ops/verify-database-backup.mjs \
 
 Any mismatch prints `FAIL`, destroys the disposable cluster, and leaves the source and backup unchanged. Do not promote or overwrite a database as part of verification. Investigate a failed backup as a recovery incident and create a new backup only after the cause is understood.
 
+### Choosing a different port range
+
+The verifier accepts `15620` to `15649` and refuses anything else, so a run restricted to a different assigned block needs that block stated:
+
+```sh
+node scripts/ops/verify-database-backup.mjs \
+  --backup /absolute/private/path/control-room-backup-YYYYMMDD \
+  --port 58675 \
+  --port-range 58675-58679 \
+  --pg-bin /absolute/path/to/postgresql-17/bin
+```
+
+Set `CONTROL_ROOM_BACKUP_VERIFY_PORT_RANGE=MIN-MAX` instead to change the accepted range for a shell without changing the command. Without either, the accepted range is `15620-15649` exactly as documented above.
+
+A range is two decimal integers `MIN-MAX` with `MIN` at or above `1024`, `MAX` at or below `65535`, `MAX` not below `MIN`, and no more than 1024 ports in it. Anything else prints `FAIL` with `database_backup_verification_port_range_refused` and no cluster is started. A refused range is not replaced by the default, so a mistyped value cannot quietly put a cluster back on a port the run is not allowed to use.
+
 ## Emergency cleanup
 
 If the verifier is killed before its normal cleanup can run, inspect first:
