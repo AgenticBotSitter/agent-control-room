@@ -47,7 +47,7 @@ import { IdeaLabErrorV1 } from "../../idea-lab/v1/errors";
 import { parseOperatorSurfaceSnapshotV1, type ActionInboxItemV1, type OperatorSurfaceSnapshotV1 } from "../../operator-surfaces/v1";
 import { verifyInstallationPlanV1, type InstallationPlanV1 } from "../../installer/v1/installation-plan";
 import { createInstallationPlanViewV1 } from "../../installer/v1/installation-plan-view";
-import { WorkBatchOwnerServiceV1, type WorkBatchQueueAdmissionAuthorityV1,
+import { WorkBatchOwnerServiceV1, type WorkBatchQueueAcceptedResultPortV1,
   type WorkBatchQueueCatalogV1 } from "../../work-intake/v1";
 import { createWorkBatchOwnerHttpHandlerV1 } from "./work-batch-owner-http";
 import { LinearPipelineServiceV1, PipelineAdvanceServiceV1, type CanonicalPipelineRepositoryRegistryV1 } from "../../pipelines/v1";
@@ -121,7 +121,7 @@ export interface PrivateWebProcessOptions {
   /** Optional proposal-intake integrity key. It enables owner batch review;
    * omission keeps the Pipelines routes absent. */
   workBatches?: { integrityKey: Uint8Array; queueCatalog?: WorkBatchQueueCatalogV1;
-    queueAdmissionAuthority?: WorkBatchQueueAdmissionAuthorityV1;
+    queueAdmissionAuthority?: WorkBatchQueueAcceptedResultPortV1;
     pipelineRepositories?: CanonicalPipelineRepositoryRegistryV1 };
   /** Trusted control-plane operation only. No planner key, privileged pool or native adapter is
    * given to the web SQL service. Its resource lifecycle is owned by the supplying composition. */
