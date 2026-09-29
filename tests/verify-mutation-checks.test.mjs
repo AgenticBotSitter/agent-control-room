@@ -599,9 +599,19 @@ test("the verifier runs green in a linked worktree", () => {
 
 test("SIGKILL leaves only a dirty target, which can be restored without a wedged verifier", async () => {
   const root = fixture();
+  // Outside root: the fixture is a Git checkout the verifier itself insists stays
+  // clean, so a marker file left inside it would trip that guard.
+  const pidFile = join(tmpdir(), `mutation-checks-grandchild-${process.pid}-${Date.now()}.pid`);
   try {
+    // SIGKILL to the verifier's own process group can't reach this command: runTest()
+    // spawns it detached (its own session/group) so signal delivery and group-based
+    // reaping still work for the *normal* timeout/exit paths. That means a bare
+    // SIGKILL of the verifier here deliberately leaves this setInterval process
+    // running forever -- record its pid so the test can reap it itself instead of
+    // leaking a process (and, over the CI job's many repeated suite runs, exhausting
+    // the runner's process/fd limits) on every run.
     const path = manifest(root, {
-      test: 'exec node -e "const fs=require(\'fs\');if(fs.readFileSync(\'src/guard.mjs\',\'utf8\').includes(\'allow\'))setInterval(()=>{},1000)"',
+      test: `exec node -e "const fs=require('fs');fs.writeFileSync('${pidFile}',String(process.pid));if(fs.readFileSync('src/guard.mjs','utf8').includes('allow'))setInterval(()=>{},1000)"`,
     });
     const child = spawn(process.execPath, [verifier, path], { cwd: root, detached: true, stdio: "ignore" });
     child.unref();
@@ -628,6 +638,14 @@ test("SIGKILL leaves only a dirty target, which can be restored without a wedged
     const result = run(root, restoredManifest);
     assert.equal(result.status, 0, output(result));
   } finally {
+    try {
+      const pid = Number(readFileSync(pidFile, "utf8"));
+      if (Number.isInteger(pid) && pid > 0) process.kill(pid, "SIGKILL");
+    } catch {
+      // No pid file (the verifier never reached the mutated test command) or the
+      // process is already gone -- nothing to reap.
+    }
+    rmSync(pidFile, { force: true });
     rmSync(root, { recursive: true, force: true });
   }
 });
