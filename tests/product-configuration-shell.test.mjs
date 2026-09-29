@@ -53,8 +53,9 @@ test("one client shell binds truthful links to two distinct sanitized configurat
       assert.equal(dom.window.document.querySelector(".private-brand")?.textContent, configuration.displayName);
       const workspaceLinks = [...dom.window.document.querySelectorAll("#private-workspace-navigation a")]
         .map(link => [link.textContent?.replaceAll(/\s+/g, " ").trim(), link.getAttribute("href")]);
-      assert.deepEqual(workspaceLinks.slice(0, 7), [["Home", "/"], ["Projects", "/projects"], ["Workers", "/workers"],
-        ["Setup", "/setup"], ["Control Room", "/workboard"], ["Needs attention", "/needs-me"], ["Settings", "/settings"]]);
+      assert.deepEqual(workspaceLinks.slice(0, 8), [["Home", "/"], ["Projects", "/projects"], ["Workers", "/workers"],
+        ["Session watch", "/session-watch"], ["Setup", "/setup"], ["Control Room", "/workboard"],
+        ["Needs attention", "/needs-me"], ["Settings", "/settings"]]);
       assert.equal(dom.window.document.querySelector('a[href="/ideas"]') !== null, optionalLinks);
       assert.equal(dom.window.document.querySelector('a[href="/projects/project%3Aalpha/news"]')?.textContent === "News", optionalLinks);
       assert.equal(dom.window.document.querySelector('[data-module="session-observations"]') !== null, optionalLinks);
@@ -96,6 +97,7 @@ test("local client shell exposes only reachable routes and reads only local work
     assert.deepEqual(reads, ["/api/v1/local-workers"]);
     const links = [...dom.window.document.querySelectorAll("a[href]")].map(link => link.getAttribute("href"));
     assert.ok(links.includes("/workers"));
+    assert.ok(links.includes("/session-watch"));
     assert.ok(links.includes("/needs-me"));
     assert.ok(links.includes("/projects/project%3Aalpha/tasks"));
     for (const supported of ["inbox", "agents", "reviews", "activity", "files"])

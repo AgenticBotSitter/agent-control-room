@@ -32,6 +32,50 @@
   --radius: 18px;
 }
 
+/* The dark palette below is the same token set the [data-theme="dark"] block
+ * declares. It was contrast-checked (see tests/mac-local-accessibility.test.tsx)
+ * but unreachable, because nothing in the application ever set data-theme: the
+ * owner saw the light palette even with the operating system in dark mode.
+ *
+ * `data-theme` still wins in both directions, so an explicit owner choice
+ * overrides the OS preference. The two blocks are kept byte-identical in token
+ * values on purpose: the test reads the [data-theme="dark"] block and asserts
+ * contrast on it, and a second hand-maintained copy would drift from it. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --bg: #10130f;
+    --surface: #171b15;
+    --surface-2: #1c211a;
+    --surface-3: #252b22;
+    --border: #30372d;
+    --border-strong: #465043;
+    --text: #edf0e9;
+    --muted: #a1aa9b;
+    /* --faint is lightened from the original value: it missed 4.5:1 on
+     * --surface-3, --surface-2 and --sidebar. Solved in HLS preserving hue. */
+    --faint: #8b9487;
+    --sidebar: #141812;
+    --green: #91b686;
+    --green-soft: #263522;
+    --amber: #d7a85d;
+    --amber-soft: #3c3020;
+    --red: #dc8075;
+    --red-soft: #422825;
+    --blue: #82aabe;
+    --blue-soft: #23343c;
+    --violet: #aa93be;
+    --violet-soft: #332a3c;
+    --shadow: 0 12px 34px rgba(0, 0, 0, 0.24);
+  }
+}
+
+/* An explicit light choice must beat an OS dark preference, so it is restated
+ * at the same specificity as the media rule above and after it. */
+:root[data-theme="light"] {
+  color-scheme: light;
+}
+
 :root[data-theme="dark"] {
   color-scheme: dark;
   --bg: #10130f;

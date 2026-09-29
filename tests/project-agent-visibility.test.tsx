@@ -14,6 +14,9 @@ import { binding, instant } from "./hermes-native-fixture";
 
 const observedAt = "2026-09-04T12:00:08.000Z";
 const digest = `sha256:${"a".repeat(64)}`;
+const projectUsage = { usageRollup: { runs: 0, inputTokens: 0, outputTokens: 0, totalTokens: 0, wallTimeMs: 0,
+  knownCostNanoUsd: "0", knownCostRuns: 0, subscriptionRuns: 0, unknownCostRuns: 0, unknownCostReasons: [] },
+priceTable: { state: "not_recorded" as const, tableId: null, recordedAt: null } };
 const options: TaskProjectAgentOptions = {
   projectId: binding.projectId,
   eligibilitySource: "configured",
@@ -34,18 +37,23 @@ const options: TaskProjectAgentOptions = {
 };
 
 function taskDetail(jobId: string, routeEvidence: "local_hermes" | "local_claude" = "local_claude"): TaskDetail {
+  const usageRollup = { runs: 1, inputTokens: 7, outputTokens: 5, totalTokens: 12, wallTimeMs: null,
+    knownCostNanoUsd: "0", knownCostRuns: 0, subscriptionRuns: 0, unknownCostRuns: 1,
+    unknownCostReasons: ["price_table_not_recorded" as const] };
   return {
     project: { projectId: binding.projectId, title: "Agent visibility", summary: "Fixture", origin: "ordinary",
       lifecycle: "active", version: 1, createdAt: observedAt, updatedAt: observedAt, lifecycleEditable: true },
     task: { jobId, projectId: binding.projectId, requestId: `request:${jobId.split(":").at(-1)}`, title: "Current project task",
       state: "running", version: 2, createdAt: observedAt, updatedAt: observedAt },
     instructions: "Review the bounded input", inputDigest: digest, observedAt, modelSelection: null, ownershipLeases: [],
+    usageRollup, priceTable: { state: "not_recorded", tableId: null, recordedAt: null },
     attempts: [{ attemptId: `attempt:${jobId.split(":").at(-1)}`, attemptNumber: 1, state: "running",
       runs: [{ runId: `run:${jobId.split(":").at(-1)}`, harness: "claude", state: "running", lastObservedAt: observedAt,
         stale: false, routeEvidence, firstObservedExecutionAt: observedAt, finishedObservedAt: null,
         cancellation: "requested", source: "native_snapshot", nativeState: "running", availability: "current",
-        usage: { inputTokens: 7, outputTokens: 5, totalTokens: 12, costUsd: null, hardCostLimitEnforced: false },
-        resultClaim: null, timeline: [], earlierObservationsOmitted: false }], additionalRunsOmitted: false }],
+        usage: { inputTokens: 7, outputTokens: 5, totalTokens: 12, wallTimeMs: null },
+        cost: { kind: "unknown", reason: "price_table_not_recorded" },
+        resultClaim: null, timeline: [], earlierObservationsOmitted: false }], additionalRunsOmitted: false, usageRollup }],
     earlierAttemptsOmitted: false, preparedFor: "claude", localRouteObservation: { state: "configured_local_route", adapter: "claude" },
     hermesDeliveryRecovery: { source: "not_applicable" }, progressSource: "configured", dispatch: "configured",
     artifacts: "configured", review: "recorded",
@@ -105,7 +113,7 @@ test("project reader uses the protected detail GET for each bounded current task
   const overview = { projectId: binding.projectId,
     current: [taskDetail("job:one").task, { ...taskDetail("job:two").task, jobId: "job:two", requestId: "request:two" }],
     awaitingReview: [], recent: [], additionalCurrentOmitted: false, additionalReviewsOmitted: false,
-    additionalRecentOmitted: false, observedAt, startsWork: false } as const;
+    additionalRecentOmitted: false, observedAt, startsWork: false, ...projectUsage } as const;
   const calls: Array<{ path: string; method?: string; signal?: AbortSignal | null }> = [];
   const transport = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const path = String(input); calls.push({ path, method: init?.method, signal: init?.signal });
@@ -127,7 +135,7 @@ test("project reader uses the protected detail GET for each bounded current task
 test("navigation cancellation reaches an in-flight exact task evidence read", async () => {
   const overview = { projectId: binding.projectId, current: [taskDetail("job:one").task], awaitingReview: [], recent: [],
     additionalCurrentOmitted: false, additionalReviewsOmitted: false, additionalRecentOmitted: false,
-    observedAt, startsWork: false } as const;
+    observedAt, startsWork: false, ...projectUsage } as const;
   let detailAttached = false;
   const transport = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const path = String(input);
@@ -157,7 +165,7 @@ test("project view presents eligibility, availability, connections, and work as 
       current: [{ jobId: "job:two", projectId: binding.projectId, requestId: "request:two", title: "Current project task",
         state: "running", version: 2, createdAt: observedAt, updatedAt: observedAt }],
       awaitingReview: [], recent: [], additionalCurrentOmitted: false, additionalReviewsOmitted: false,
-      additionalRecentOmitted: false, observedAt, startsWork: false,
+      additionalRecentOmitted: false, observedAt, startsWork: false, ...projectUsage,
     } },
     agentWork: { state: "ready", value: [{ jobId: "job:two", detail: { state: "ready", value: taskDetail("job:two") } }] },
   };
@@ -194,6 +202,9 @@ test("Mac-local agent view names unavailable installation sources without hiding
     connections: { state: "unavailable", code: "not_found" },
     currentWork: { state: "ready", value: { projectId: binding.projectId, current: [], awaitingReview: [], recent: [],
       additionalCurrentOmitted: false, additionalReviewsOmitted: false, additionalRecentOmitted: false,
+      usageRollup: { runs: 0, inputTokens: null, outputTokens: null, totalTokens: null, wallTimeMs: null,
+        knownCostNanoUsd: "0", knownCostRuns: 0, subscriptionRuns: 0, unknownCostRuns: 0, unknownCostReasons: [] },
+      priceTable: { state: "not_recorded", tableId: null, recordedAt: null },
       observedAt, startsWork: false } },
     agentWork: { state: "ready", value: [] },
   };
@@ -240,7 +251,8 @@ test("project task card downgrades uncertain local-route evidence without invent
     capacity: { state: "unavailable", code: "operator_surface_unavailable" },
     connections: { state: "unavailable", code: "unavailable" },
     currentWork: { state: "ready", value: { projectId: binding.projectId, current: [detail.task], awaitingReview: [], recent: [],
-      additionalCurrentOmitted: false, additionalReviewsOmitted: false, additionalRecentOmitted: false, observedAt, startsWork: false } },
+      additionalCurrentOmitted: false, additionalReviewsOmitted: false, additionalRecentOmitted: false, observedAt, startsWork: false,
+      ...projectUsage } },
     agentWork: { state: "ready", value: [{ jobId: detail.task.jobId, detail: { state: "ready", value: detail } }] },
   };
   const html = renderToStaticMarkup(createElement(ProjectAgentVisibilityView, {

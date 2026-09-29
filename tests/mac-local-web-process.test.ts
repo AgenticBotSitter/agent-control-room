@@ -119,6 +119,13 @@ test("the real Mac-local wrapper signs in locally and reaches the existing proje
   const homeTasks = await app.handle(request("/api/v1/home/tasks", { headers: { cookie: cookie! } }), () => new Response("unused"));
   assert.equal(homeTasks.status, 200);
   assert.equal((await homeTasks.json() as { startsWork: boolean }).startsWork, false);
+  const sessionWatch = await app.handle(request("/api/v1/session-watch", { headers: { cookie: cookie! } }), () => new Response("unused"));
+  assert.equal(sessionWatch.status, 200);
+  assert.deepEqual(await sessionWatch.json(), { source: "configured", sessions: [], nextCursor: null,
+    observedAt: new Date(conformanceNow).toISOString(), startsWork: false });
+  const sessionWatchWrite = await app.handle(request("/api/v1/session-watch", { method: "POST", headers: { cookie: cookie! } }),
+    () => new Response("unused"));
+  assert.equal(sessionWatchWrite.status, 400);
   const attention = await app.handle(request("/api/v1/needs-me/tasks", { headers: { cookie: cookie! } }), () => new Response("unused"));
   assert.equal(attention.status, 200);
   assert.equal((await attention.json() as { items: unknown[]; startsWork: boolean }).startsWork, false);
@@ -183,6 +190,9 @@ test("the real Mac-local wrapper signs in locally and reaches the existing proje
   assert.doesNotMatch(missingHtml, /\{"error"/);
   const workersShell = await app.handle(request("/workers", { headers: { cookie: cookie! } }), () => new Response("real workers shell"));
   assert.equal(workersShell.status, 200); assert.equal(await workersShell.text(), "real workers shell");
+  const sessionWatchShell = await app.handle(request("/session-watch", { headers: { cookie: cookie! } }),
+    () => new Response("real session watch shell"));
+  assert.equal(sessionWatchShell.status, 200); assert.equal(await sessionWatchShell.text(), "real session watch shell");
   const needsShell = await app.handle(request("/needs-me", { headers: { cookie: cookie! } }), () => new Response("real needs shell"));
   assert.equal(needsShell.status, 200); assert.equal(await needsShell.text(), "real needs shell");
   for (const section of ["inbox", "agents", "reviews", "activity", "files", "settings"]) {
