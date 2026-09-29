@@ -208,7 +208,7 @@ export async function applyMigrations({ target, rootDir = root, ledgerPath, env 
     const ownership = (await client.query(
       `SELECT n.nspname || '.' || c.relname AS object, pg_get_userbyid(c.relowner) AS owner
        FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
-       WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p', 'S') ORDER BY 1`)).rows;
+       WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p', 'S', 'v') ORDER BY 1`)).rows;
     const nonOwnerObjects = ownership.filter(row => row.owner !== "control_room_schema_owner");
     if (nonOwnerObjects.length > 0) {
       throw new Error(`migration_refused_non_owner_objects:${nonOwnerObjects.slice(0, 3).map(row => `${row.object}:${row.owner}`).join(",")}`);

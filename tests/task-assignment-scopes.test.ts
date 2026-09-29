@@ -13,6 +13,19 @@ import { ownerReviewFixture } from "./helpers/web-owner-review";
 import { captureTaskModelCatalogV1 } from "../src/web/v1/task-model-selection";
 import { createAccessVerifier, WebAccessError } from "../src/web/v1/access-verifier";
 import { request, token, trust } from "./helpers/web-foundation";
+import { taskAssignmentFixture } from "./helpers/task-assignment";
+
+test("pre-upgrade assignment without worker identity remains replayable", async t => {
+  const f = await taskAssignmentFixture(); t.after(f.close);
+  const first = await f.assign();
+  await f.db.query("DROP TRIGGER control_attempts_payload_mirror ON control_attempts");
+  await f.db.query(`UPDATE control_attempts SET worker_id=NULL,payload=payload - 'workerId'
+    WHERE tenant_id=$1 AND id=$2`, [f.scope.tenantId, first.receipt.attemptId]);
+
+  const replay = await f.assign();
+  assert.equal(replay.replayed, true);
+  assert.deepEqual(replay.receipt, first.receipt);
+});
 
 test("assignment scopes refuse overlap, allow disjoint work, and recover after expiry or a crash", async t => {
   const f = await ownerReviewFixture(); t.after(f.close);

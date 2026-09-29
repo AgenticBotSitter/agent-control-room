@@ -103,18 +103,24 @@ test("grant convergence admits only the pinned intake identity function boundary
   /upgrade_unexpected_function_grant/u);
 });
 
-test("a database already at main plans only the owner-approval migration", async () => {
-  // main's applied ledger is this ledger without the owner-approval migration,
-  // numbered in filename order exactly as main's generator numbered it.
+test("a database already at main plans exactly the migrations this branch adds beyond main", async () => {
+  // main's tip is still the owner-approval migration (merged as part of S2): main's
+  // applied ledger is this ledger truncated right after that entry, numbered in
+  // filename order exactly as main's generator numbered it. Everything after it in
+  // ledger order is what this branch adds beyond main, and a database already at main
+  // must plan exactly that set, in ledger order, and nothing else.
   const ledger = JSON.parse(await readFile("deploy/postgres/migration-ledger.json", "utf8"));
   const migrations = ledger.entries.filter(entry => entry.kind === "migrate");
-  const ownerApproval = migrations.filter(entry => entry.file.endsWith("_work_batch_owner_approval.sql"));
-  assert.equal(ownerApproval.length, 1);
-  assert.equal(ownerApproval[0].file, migrations.at(-1).file);
-  const applied = migrations.filter(entry => entry !== ownerApproval[0]).map((entry, index) =>
+  const mainTip = migrations.filter(entry => entry.file.endsWith("_work_batch_owner_approval.sql"));
+  assert.equal(mainTip.length, 1);
+  const mainTipIndex = migrations.indexOf(mainTip[0]);
+  const onMain = migrations.slice(0, mainTipIndex + 1);
+  const beyondMain = migrations.slice(mainTipIndex + 1);
+  assert.ok(beyondMain.length > 0);
+  const applied = onMain.map((entry, index) =>
     ({ filename: entry.file, digest: `sha256:${entry.sha256}`, ledger_order: index + 1 }));
-  assert.deepEqual(applied.at(-1), { filename: migrations.at(-2).file,
-    digest: applied.at(-1).digest, ledger_order: migrations.length - 1 });
+  assert.deepEqual(applied.at(-1), { filename: mainTip[0].file,
+    digest: applied.at(-1).digest, ledger_order: onMain.length });
   const roles = [...Object.keys(macRolePlan), ...Object.values(macRolePlan)].map(rolname => ({ rolname,
     rolcanlogin: Object.hasOwn(macRolePlan, rolname), rolinherit: true, rolsuper: false, rolcreatedb: false,
     rolcreaterole: false, rolreplication: false, rolbypassrls: false }));
@@ -122,8 +128,8 @@ test("a database already at main plans only the owner-approval migration", async
     ({ member, parent, admin_option: false, inherit_option: true, set_option: true }));
   const plan = await planMacDatabaseUpgradeSnapshotV1({ applied, roles, memberships, defaultAcl: 0, grants: [],
     queue: { schemaExists: true, verified: true } });
-  assert.deepEqual(plan.pendingMigrations, [ownerApproval[0].file]);
-  assert.ok(ownerApproval[0].order > migrations.length - 1);
+  assert.deepEqual(plan.pendingMigrations, beyondMain.map(entry => entry.file));
+  for (const entry of beyondMain) assert.ok(entry.order > mainTip[0].order);
 });
 
 test("offline plan rejects a mismatched main commit and malformed snapshot", async t => {
