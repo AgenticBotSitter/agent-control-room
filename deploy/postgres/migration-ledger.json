@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "digest": "8287ba689215ad22af38302da62b17d01fbedc7456f69df4a584fc8a88d2be3a",
+  "digest": "17caa99edcdf2870b92a1039e8bb489db026a5a94b2454172a577f2e9a62cce6",
   "entries": [
     {
       "file": "db/migrations/0001_control_room_core.sql",
@@ -581,7 +581,7 @@
     {
       "file": "db/migrations/0104_work_batch_agent_queue.sql",
       "order": 97,
-      "sha256": "221440da31dead5747c1c977472dbd2305eaf31aaa22fcd6522b266e7eb8660a",
+      "sha256": "ef44c9f43ab52a47fb94940c6bfe6b489b05a45c6945c9d31a0d3a5794177654",
       "kind": "migrate"
     },
     {

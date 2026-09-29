@@ -28,6 +28,7 @@ import { sha256Digest } from "../src/security/canonical-digest.ts";
 import { SecurityStore } from "../src/security/security-store.ts";
 import { WebProjectService } from "../src/web/v1/project-service.ts";
 import { WebTaskService } from "../src/web/v1/task-service.ts";
+import { captureTaskModelCatalogV1 } from "../src/web/v1/task-model-selection.ts";
 import { createAccessVerifier } from "../src/web/v1/access-verifier.ts";
 import { now as webNow, request as webRequest, trust as webTrust } from "./helpers/web-foundation.ts";
 
@@ -203,29 +204,27 @@ test("ordered upgrade applies a pending suffix in two phases", needsPg, async ()
   }
 });
 
-// A database already at main applied every migration up to the one before the
-// owner-approval migration existed. Upgrading it must append the new
-// migration after that row, never slot it in before an applied order.
-test("upgrade from main's applied ledger appends only the owner-approval migration", needsPg, async () => {
+// A database already at main (S1 0093, 0100, 0101 and S2 0102 applied) must
+// upgrade by appending only this head's queue migration after main's last
+// applied order, never by slotting it in before an applied order.
+test("upgrade from main's applied ledger appends only the agent-queue migration", needsPg, async () => {
   const stage = await mkdtemp(join(tmpdir(), "cr-pg63main-"));
   try {
     for (const dir of ["deploy/postgres", "db/migrations", "db/roles", "db/setup"])
       await mkdir(join(stage, dir), { recursive: true });
     const migrations = (await readdir(join(ROOT, "db/migrations"))).filter(name => name.endsWith(".sql")).sort();
-    const ownerApproval = migrations.filter(name => name.endsWith("_work_batch_owner_approval.sql"));
-    assert.equal(ownerApproval.length, 1);
-    assert.equal(ownerApproval[0], migrations.at(-1));
-    const mainLast = migrations.at(-2);
-    const mainLastOrder = migrations.length - 1;
-    const ownerApprovalOrder = migrations.length;
-    for (const file of migrations.filter(name => name !== ownerApproval[0]))
+    const queue = migrations.filter(name => name.endsWith("_work_batch_agent_queue.sql"));
+    assert.equal(queue.length, 1);
+    const mainMigrations = migrations.filter(name => name !== queue[0]);
+    for (const shipped of ["0100_ownership_lease_collision_guard.sql", "0101_owner_review_job_lock.sql",
+      "0102_work_batch_owner_approval.sql"]) assert.ok(mainMigrations.includes(shipped), shipped);
+    for (const file of mainMigrations)
       await cp(join(ROOT, "db/migrations", file), join(stage, "db/migrations", file));
     for (const file of ["production_roles.sql", "production_provision.sql"])
       await cp(join(ROOT, "db/roles", file), join(stage, "db/roles", file));
-    // main's grants: this head's file without the owner-approval additions.
+    // main's grants: this head's file without the agent-queue additions.
     const grants = await readFile(join(ROOT, "db/roles/production_table_grants.sql"), "utf8");
-    const mainGrants = grants.replaceAll(", work_batch_items", "")
-      .replace("GRANT INSERT ON control_action_inbox TO control_room_work_intake;\n", "");
+    const mainGrants = grants.replace(", work_batch_queue_admissions,\n  work_batch_effective_queue_admissions, work_batch_agent_queue_heads", "");
     assert.notEqual(mainGrants, grants);
     await writeFile(join(stage, "db/roles/production_table_grants.sql"), mainGrants);
     await cp(join(ROOT, "db/setup/production_migration_ledger.sql"), join(stage, "db/setup/production_migration_ledger.sql"));
@@ -238,34 +237,38 @@ test("upgrade from main's applied ledger appends only the owner-approval migrati
     const atMain = await applyMigrations({ target: db, bootstrapTarget: bootstrapTarget("cr_prod_upgrade_main"),
       migrateTarget: migrateTarget("cr_prod_upgrade_main"), rootDir: stage, ledgerPath, env: { ...process.env, ...passwords } });
     assert.equal(atMain.grants, "applied");
-    assert.deepEqual((await query(db, `SELECT filename, ledger_order FROM control_room_schema_migrations
-      ORDER BY ledger_order DESC LIMIT 1`)).rows,
-    [{ filename: `db/migrations/${mainLast}`, ledger_order: mainLastOrder }]);
-    assert.equal((await query(db, "SELECT to_regclass('public.work_batch_items') AS present")).rows[0].present, null);
+    const mainLedger = (await query(db, "SELECT filename, ledger_order FROM control_room_schema_migrations ORDER BY ledger_order")).rows;
+    assert.deepEqual(mainLedger.map(row => row.filename), mainMigrations.map(file => `db/migrations/${file}`));
+    assert.equal((await query(db, "SELECT to_regclass('public.work_batch_queue_admissions') AS present")).rows[0].present, null);
 
     const upgraded = await applyMigrations({ target: db, bootstrapTarget: bootstrapTarget("cr_prod_upgrade_main"),
       migrateTarget: migrateTarget("cr_prod_upgrade_main"), rootDir: ROOT });
     assert.deepEqual(upgraded.applied.map(entry => [entry.file, entry.order]),
-      [[`db/migrations/${ownerApproval[0]}`, ownerApprovalOrder]]);
+      [[`db/migrations/${queue[0]}`, mainMigrations.length + 1]]);
     assert.equal(upgraded.grants, "applied");
     assert.deepEqual((await query(db, `SELECT ledger_order, count(*)::int AS rows FROM control_room_schema_migrations
       GROUP BY ledger_order HAVING count(*) > 1`)).rows, []);
     const ledger = (await query(db, "SELECT filename, ledger_order FROM control_room_schema_migrations ORDER BY ledger_order")).rows;
     assert.deepEqual(ledger.map(row => row.ledger_order), ledger.map((_, index) => index + 1));
-    assert.deepEqual(ledger.slice(-2), [
-      { filename: `db/migrations/${mainLast}`, ledger_order: mainLastOrder },
-      { filename: `db/migrations/${ownerApproval[0]}`, ledger_order: ownerApprovalOrder }]);
-    // Grants converged on the new objects in the same run.
-    assert.deepEqual((await query(db, `SELECT
-      has_table_privilege('control_room_work_intake','work_batch_items','SELECT') AS intake_items,
-      has_table_privilege('control_room_work_intake','control_action_inbox','INSERT') AS intake_inbox,
-      has_table_privilege('control_room_reader','work_batch_items','SELECT') AS reader_items`)).rows[0],
-    { intake_items: true, intake_inbox: true, reader_items: false });
+    assert.deepEqual(ledger.slice(0, -1), mainLedger);
+    assert.deepEqual(ledger.at(-1), { filename: `db/migrations/${queue[0]}`, ledger_order: mainMigrations.length + 1 });
+    // Grants converged on the new objects in the same run: no shared or agent login reaches them.
+    assert.deepEqual((await query(db, `SELECT r.role, t.name,
+      has_table_privilege(r.role, t.name, 'SELECT') OR has_table_privilege(r.role, t.name, 'INSERT')
+        OR has_table_privilege(r.role, t.name, 'UPDATE') OR has_table_privilege(r.role, t.name, 'DELETE') AS any
+      FROM unnest(ARRAY['control_room_work_intake','control_room_work_intake_agent','control_room_reader',
+        'control_room_application','control_room_schedule_admissions','control_room_github_broker']) r(role)
+      CROSS JOIN unnest(ARRAY['work_batch_queue_admissions','work_batch_agent_queue_heads',
+        'work_batch_effective_queue_admissions']) t(name)
+      WHERE has_table_privilege(r.role, t.name, 'SELECT') OR has_table_privilege(r.role, t.name, 'INSERT')
+        OR has_table_privilege(r.role, t.name, 'UPDATE') OR has_table_privilege(r.role, t.name, 'DELETE')`)).rows, []);
 
     const rerun = await applyMigrations({ target: db, bootstrapTarget: bootstrapTarget("cr_prod_upgrade_main"),
       migrateTarget: migrateTarget("cr_prod_upgrade_main"), rootDir: ROOT });
     assert.equal(rerun.noOp, true);
     assert.equal(rerun.grants, "applied");
+    assert.deepEqual((await query(db, "SELECT filename, ledger_order FROM control_room_schema_migrations ORDER BY ledger_order")).rows,
+      ledger);
   } finally {
     await rm(stage, { recursive: true, force: true });
   }
@@ -818,7 +821,10 @@ test("non-intake roles keep exactly their work-batch access", needsPg, async () 
       control_room_reader:denied, control_room_application:denied, control_room_schedule_admissions:denied,
       control_room_github_broker:denied,
       control_room_private_web:all,
-      control_room_task_coordinator:denied,
+      // The assignment gate reads batch and item records to verify admissions;
+      // it never reads proposal revisions.
+      control_room_task_coordinator:{work_batches:allBatches,work_batch_revisions:"permission denied",
+        work_batch_items:allItems},
     };
     const observed={};
     for (const role of Object.keys(expected)) observed[role]=await observe(role);
@@ -918,6 +924,182 @@ test("intake status and list stay readable on the production login after owner r
     [[batch.batchId,"partially_approved"],[untouched.batchId,"proposed"]].sort());
   assert.equal((await query(intake,"SELECT count(*)::int AS items FROM work_batch_items WHERE batch_id=$1",
     [batch.batchId])).rows[0].items,3);
+});
+
+// S3 queue records. Two realistic tenants: each has its own owner and a
+// work-intake agent with a valid proposer grant, proposes through the real
+// store as the production intake login, and is admitted to the exact-worker
+// queue by the real owner service. The intake login must never reach the
+// other tenant's queue records, and the owner web role must be able to write
+// and render them on its own narrow grants.
+test("agent-queue records stay in the bound intake tenant and work on the production logins", needsPg, async () => {
+  await freshDatabase("cr_prod_agent_queue");
+  const db=target("cr_prod_agent_queue");
+  await applyMigrations({ target:db, bootstrapTarget:bootstrapTarget("cr_prod_agent_queue"),
+    migrateTarget:migrateTarget("cr_prod_agent_queue"), rootDir:ROOT, env:{...process.env,...passwords} });
+  const admin=postgresDatabase(db), clock=()=>webNow, at=new Date(webNow).toISOString();
+  const key=new Uint8Array(32).fill(7);
+  const identity=createAccessVerifier(webTrust)(webRequest(),webNow);
+  const catalog=[{ workerId:"worker:codex-one", workerKind:"codex", nodeId:"node:mac.codex",
+    modelPolicy:{ models:["gpt-build","gpt-check"], defaultModel:"gpt-build", efforts:["high"], defaultEffort:"high" } }];
+  const modelCatalog=captureTaskModelCatalogV1(catalog.map(worker=>({ kind:worker.workerKind, policy:worker.modelPolicy })));
+  const authority={ assertCurrent:()=>true, isAcceptedResultCurrent:()=>false };
+  const intake={...target("cr_prod_agent_queue","control_room_work_intake_agent"),
+    password:passwords.CONTROL_ROOM_WORK_INTAKE_PASSWORD};
+  const store=new WorkBatchStoreV1(postgresDatabase(intake),key);
+  const bind=async tenantId=>{ await query(db,"DELETE FROM work_intake_tenant_binding");
+    await query(db,"INSERT INTO work_intake_tenant_binding(singleton,tenant_id) VALUES(true,$1)",[tenantId]); };
+  const task=localId=>({localId,title:`${localId} the change`,instructions:`${localId} the bounded change.`,
+    requiredCapability:"code.change",role:"builder",requestedWorkerId:"worker:codex-one",requestedWorkerKind:"codex",
+    requestedModelKey:"gpt-build",acceptanceCriteria:`SECRET ${localId} criteria`,acceptanceTests:`Run the ${localId} tests.`});
+  const tenants={};
+  for (const [name,tenantId] of [["own","tenant:queue-own"],["other","tenant:queue-other"]]) {
+    const scope={tenantId,workspaceId:`workspace:queue-${name}`};
+    await query(db,"INSERT INTO tenants(id,display_name) VALUES($1,$1)",[tenantId]);
+    await query(db,"INSERT INTO workspaces(id,tenant_id,display_name) VALUES($1,$2,'workspace')",[scope.workspaceId,tenantId]);
+    await new SecurityStore(admin).bootstrapOwner({ tenantId, provider:webTrust.issuer, subject:"test-owner",
+      identityId:`identity:queue-owner-${name}`, grantId:`grant:queue-owner-${name}`, displayName:"Test owner",
+      verifiedAt:new Date(webNow-60_000).toISOString(), expiresAt:new Date(webNow+300_000).toISOString(), now:at });
+    const { project }=await new WebProjectService(admin,scope,clock).create(identity,
+      { title:"Queue project", summary:"Real PostgreSQL agent queue" },`queue-project-${name}-0001`);
+    const agentId=`identity:work-intake:queue-${name}`;
+    await query(db,`INSERT INTO control_identities(id,tenant_id,actor_type,display_name,auth_provider,
+      auth_subject_digest,state,created_at,updated_at) VALUES($1,$2,'agent','Batch agent','work-intake',$3,'active',$4,$4)`,
+    [agentId,tenantId,sha256Digest(`queue-agent-${name}`),at]);
+    await query(db,`INSERT INTO control_role_grants(id,tenant_id,identity_id,role_key,allowed_actions,project_ids,
+      risk_ceiling,allow_external_effects,require_strong_factor,created_at,updated_at) VALUES($1,$2,$3,
+      'work_batch_proposer','["work_batches.propose"]',$4::jsonb,'low',false,false,$5,$5)`,
+    [`grant:work-intake:queue-${name}`,tenantId,agentId,JSON.stringify([project.projectId]),at]);
+    const principal={tenantId,identityId:agentId,actorType:"agent",
+      authenticatedAt:"2026-09-04T11:59:00.000Z",expiresAt:"2026-09-04T13:00:00.000Z"};
+    const owner=new WorkBatchOwnerServiceV1(admin,new WebTaskService(admin,scope,clock,{modelCatalog}),scope,key,clock,
+      catalog,authority);
+    tenants[name]={tenantId,scope,projectId:project.projectId,principal,owner};
+  }
+  // Each tenant's agent proposes while the owner has its tenant bound; the
+  // owner then admits the batch to the exact worker queue.
+  for (const name of ["other","own"]) {
+    const t=tenants[name];
+    await bind(t.tenantId);
+    const value={schema:"control-room.work-batch-proposal/v1",projectId:t.projectId,tasks:[task("build")],edges:[]};
+    t.batch=await store.create({principal:t.principal,proposal:value,proposalDigest:workBatchProposalDigestV1(value),
+      idempotencyKey:`queue-${name}-submit-0001`,now:at,queueDepthLimit:5});
+    const decided=await t.owner.command(identity,t.projectId,{ operation:"decide", batchId:t.batch.batchId,
+      expectedRevision:1, items:[{localId:"build",decision:"approve"}] },`queue-${name}-decide-0001`);
+    assert.equal(decided.state,"approved");
+  }
+  const byTenant=async (conn,table)=>(await query(conn,`SELECT tenant_id FROM ${table} ORDER BY tenant_id`)).rows
+    .map(row=>row.tenant_id);
+  const queueTables=["work_batch_agent_queue_heads","work_batch_queue_admissions"];
+  for (const table of queueTables)
+    assert.deepEqual(await byTenant(db,table),["tenant:queue-other","tenant:queue-own"],table);
+
+  // Agent-facing reads on the production intake login, bound to its own tenant:
+  // the decided batch (items now carry the exact requested worker) verifies.
+  const own=tenants.own, other=tenants.other;
+  const status=await store.status(own.principal,own.projectId,own.batch.batchId,at);
+  assert.equal(status.state,"approved");
+  assert.deepEqual((await store.list(own.principal,own.projectId,at)).map(row=>[row.batchId,row.state]),
+    [[own.batch.batchId,"approved"]]);
+  assert.deepEqual((await query(intake,"SELECT tenant_id,requested_worker_id FROM work_batch_items")).rows,
+    [{tenant_id:"tenant:queue-own",requested_worker_id:"worker:codex-one"}]);
+  await assert.rejects(store.status(other.principal,other.projectId,other.batch.batchId,at),{safeCode:"batch_not_found"});
+  // The intake login holds no grant on the queue records at all.
+  for (const table of [...queueTables,"work_batch_effective_queue_admissions"])
+    await assert.rejects(query(intake,`SELECT tenant_id FROM ${table}`),/permission denied/u,table);
+  // Defence in depth: even if a later grant exposed the queue tables to the
+  // intake group, the tenant binding still hides and refuses the other tenant.
+  await query(db,`GRANT SELECT,INSERT ON work_batch_agent_queue_heads,work_batch_queue_admissions
+    TO control_room_work_intake`);
+  try {
+    for (const table of queueTables) {
+      assert.deepEqual(await byTenant(intake,table),["tenant:queue-own"],table);
+      assert.deepEqual((await query(intake,`SELECT * FROM ${table} WHERE tenant_id='tenant:queue-other'`)).rows,[],table);
+    }
+    await assert.rejects(query(intake,`INSERT INTO work_batch_agent_queue_heads(tenant_id,worker_id,next_position,updated_at)
+      VALUES('tenant:queue-other','worker:forged',1,$1)`,[at]),/row-level security/u);
+    await query(db,"DELETE FROM work_intake_tenant_binding");
+    for (const table of queueTables) assert.deepEqual(await byTenant(intake,table),[],table);
+  } finally {
+    await query(db,`REVOKE SELECT,INSERT ON work_batch_agent_queue_heads,work_batch_queue_admissions
+      FROM control_room_work_intake`);
+    await bind(own.tenantId);
+  }
+
+  // Owner-facing queue writes and reads on the restricted private-web role.
+  // Role definitions are cluster-global, so the role is installed inside one
+  // transaction and every service transaction runs as a savepoint that fires
+  // the deferred queue-head consistency check before it is released.
+  const client=new Client(db);
+  await client.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query((await readFile(join(ROOT,"db/roles/private_web_roles.sql"),"utf8")).replace(/^(?:BEGIN|COMMIT);$/gmu,""));
+    await client.query("SET LOCAL ROLE control_room_private_web");
+    let savepoint=0;
+    const session={query:(sql,params=[])=>client.query(sql,params)};
+    const nested=async (work,check)=>{
+      const name=`service_${++savepoint}`;
+      await client.query(`SAVEPOINT ${name}`);
+      try {
+        const result=await work(session);
+        if (check) await check();
+        await client.query("SET CONSTRAINTS ALL IMMEDIATE");
+        await client.query("SET CONSTRAINTS ALL DEFERRED");
+        await client.query(`RELEASE SAVEPOINT ${name}`);
+        return result;
+      } catch (error) { await client.query(`ROLLBACK TO SAVEPOINT ${name}`); throw error; }
+    };
+    const web={query:(sql,params=[])=>client.query(sql,params),transaction:work=>nested(work),
+      transactionWithPreCommitCheck:(work,check)=>nested(work,check)};
+    const webOwner=new WorkBatchOwnerServiceV1(web,new WebTaskService(web,own.scope,clock,{modelCatalog}),own.scope,key,
+      clock,catalog,authority);
+    assert.equal((await client.query("SELECT current_user AS role")).rows[0].role,"control_room_private_web");
+    const view=await webOwner.view(identity,own.projectId,own.batch.batchId);
+    assert.deepEqual(view.queue.map(item=>[item.localId,item.position,item.workerId,item.state]),
+      [["build",1,"worker:codex-one","awaiting_preparation"]]);
+    // The store needs the intake login; propose the second batch there, then
+    // decide it on the private-web role inside this uncommitted transaction.
+    await client.query("RESET ROLE");
+    const second={schema:"control-room.work-batch-proposal/v1",projectId:own.projectId,tasks:[task("check")],edges:[]};
+    const secondBatch=await new WorkBatchStoreV1(web,key).create({principal:own.principal,proposal:second,
+      proposalDigest:workBatchProposalDigestV1(second),idempotencyKey:"queue-own-submit-0002",now:at,queueDepthLimit:5});
+    await client.query("SET LOCAL ROLE control_room_private_web");
+    const decided=await webOwner.command(identity,own.projectId,{ operation:"decide", batchId:secondBatch.batchId,
+      expectedRevision:1, items:[{localId:"check",decision:"approve"}] },"queue-own-decide-0002");
+    assert.equal(decided.state,"approved");
+    assert.deepEqual((await webOwner.view(identity,own.projectId,secondBatch.batchId)).queue
+      .map(item=>[item.localId,item.position,item.workerId]),[["check",2,"worker:codex-one"]]);
+    assert.deepEqual((await client.query(`SELECT tenant_id,next_position::int FROM work_batch_agent_queue_heads
+      ORDER BY tenant_id`)).rows,[{tenant_id:"tenant:queue-other",next_position:2},{tenant_id:"tenant:queue-own",next_position:3}]);
+    // Narrow grants: no delete, no rewrite of an admission, no head rewind.
+    await client.query("SAVEPOINT refusals");
+    await assert.rejects(client.query("DELETE FROM work_batch_queue_admissions"),/permission denied/u);
+    await client.query("ROLLBACK TO SAVEPOINT refusals");
+    await assert.rejects(client.query("UPDATE work_batch_queue_admissions SET model='tampered'"),/permission denied/u);
+    await client.query("ROLLBACK TO SAVEPOINT refusals");
+    await assert.rejects(client.query(`UPDATE work_batch_agent_queue_heads SET next_position=1
+      WHERE tenant_id='tenant:queue-own'`),/queue head update rejected/u);
+    await client.query("ROLLBACK TO SAVEPOINT refusals");
+    // The assignment gate's coordinator role reads the queue only through the
+    // effective-admission view, never the raw records or heads.
+    await client.query("RESET ROLE");
+    await client.query((await readFile(join(ROOT,"db/roles/task_coordinator_roles.sql"),"utf8")).replace(/^(?:BEGIN|COMMIT);$/gmu,""));
+    await client.query("SET LOCAL ROLE control_room_task_coordinator");
+    assert.deepEqual((await client.query(`SELECT tenant_id,queue_position::int FROM work_batch_effective_queue_admissions
+      WHERE tenant_id='tenant:queue-own' ORDER BY queue_position`)).rows,
+    [{tenant_id:"tenant:queue-own",queue_position:1},{tenant_id:"tenant:queue-own",queue_position:2}]);
+    await client.query("SAVEPOINT coordinator");
+    for (const table of queueTables) {
+      await assert.rejects(client.query(`SELECT 1 FROM ${table}`),/permission denied/u,table);
+      await client.query("ROLLBACK TO SAVEPOINT coordinator");
+    }
+  } finally {
+    await client.query("ROLLBACK").catch(()=>{});
+    await client.end();
+  }
+  assert.deepEqual((await query(db,`SELECT rolname FROM pg_roles WHERE rolname IN
+    ('control_room_private_web','control_room_task_coordinator')`)).rows,[]);
 });
 
 test("backup and disposable restore preserve rows, owners, grants and identity", needsPg, async () => {
