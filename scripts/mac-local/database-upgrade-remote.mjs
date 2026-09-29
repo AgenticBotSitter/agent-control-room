@@ -266,10 +266,12 @@ export function sanitizedMacDatabaseUpgradeFailureV1(error, stage) {
     "migration_peer_identity_refused", "migration_live_schema_drift", "migration_failed",
     "migration_gap", "migration_missing", "migration_altered", "migration_ledger_digest_mismatch",
     "migration_unknown_row", "migration_unknown_rows", "migration_unknown_kind",
-    "migration_refused_non_owner_objects"]);
+    "migration_refused_non_owner_objects", "upgrade_mac_login_connected", "upgrade_schema_drift_refused",
+    "upgrade_disk_space_low", "upgrade_backup_failed"]);
   const candidate = /^(?:upgrade|migration)_[a-z0-9_]+/u.exec(message)?.[0];
   const code = candidate && known.has(candidate) ? candidate : "remote_refused";
-  return `upgrade_error:${code} stage=${["plan", "migrate", "queue", "roles", "grants", "verify"].includes(stage)
+  return `upgrade_error:${code} stage=${["check", "plan", "backup", "migrate", "queue", "roles", "grants", "verify"]
+    .includes(stage)
     ? stage : "plan"} sqlstate=${safeSqlstate(error)} class=${safeErrorClass(error)} system=${safeSystemCode(error)}`;
 }
 
