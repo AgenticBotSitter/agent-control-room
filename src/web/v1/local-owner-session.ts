@@ -15,6 +15,10 @@ export interface LocalOwnerSessionProfileV1 {
   sessionSeconds: number;
   /** Optional owner-configured HTTPS origin for a loopback reverse proxy. */
   trustedOrigin?: string;
+  /** Exact HTTPS origins of the configured remote-access paths. Derived by the
+   * protected configuration from its `remoteAccess` block, whose transport
+   * gates run before any request reaches this service. */
+  remoteOrigins?: readonly string[];
 }
 
 export type PersistedLocalOwnerSessionV1 = Readonly<{ tokenDigest: string; issuedAt: string; expiresAt: string }>;
@@ -29,7 +33,8 @@ function safeEqual(left: string, right: string): boolean {
 
 function localRequest(request: Request, profile: LocalOwnerSessionProfileV1, requireOrigin: boolean): void {
   const url = new URL(request.url), expected = new URL(profile.origin);
-  const allowed = new Set([profile.origin, ...(profile.trustedOrigin ? [profile.trustedOrigin] : [])]);
+  const allowed = new Set([profile.origin, ...(profile.trustedOrigin ? [profile.trustedOrigin] : []),
+    ...(profile.remoteOrigins ?? [])]);
   if (expected.protocol !== "http:" || expected.hostname !== "127.0.0.1" || !expected.port
     || expected.origin !== profile.origin || !allowed.has(url.origin)
     || request.headers.has("forwarded") || [...request.headers.keys()].some(name => name.startsWith("x-forwarded-")))
@@ -64,9 +69,19 @@ export function captureLocalOwnerSessionProfileV1(value: unknown): LocalOwnerSes
     || trustedOrigin.origin !== input.trustedOrigin || trustedOrigin.pathname !== "/" || trustedOrigin.search || trustedOrigin.hash
     || trustedOrigin.username || trustedOrigin.password || trustedOrigin.hostname.includes("*")
     || trustedOrigin.origin === input.origin)) throw new Error("invalid_local_owner_session_profile");
+  const remoteOrigins = input.remoteOrigins;
+  if (remoteOrigins !== undefined && (!Array.isArray(remoteOrigins) || remoteOrigins.length < 1 || remoteOrigins.length > 2
+    || new Set(remoteOrigins).size !== remoteOrigins.length || remoteOrigins.some(value => {
+      if (typeof value !== "string" || value === input.origin || value === input.trustedOrigin) return true;
+      try {
+        const url = new URL(value);
+        return url.protocol !== "https:" || url.origin !== value || url.username || url.password || url.hostname.includes("*");
+      } catch { return true; }
+    }))) throw new Error("invalid_local_owner_session_profile");
   return Object.freeze({ schema: LOCAL_OWNER_SESSION_PROFILE_V1, origin: input.origin, tenantId: input.tenantId,
     provider: input.provider, subject: input.subject, ownerCodeDigest: input.ownerCodeDigest!, sessionSeconds: input.sessionSeconds!,
-    ...(input.trustedOrigin ? { trustedOrigin: input.trustedOrigin } : {}) });
+    ...(input.trustedOrigin ? { trustedOrigin: input.trustedOrigin } : {}),
+    ...(remoteOrigins ? { remoteOrigins: Object.freeze([...remoteOrigins]) } : {}) });
 }
 
 /**
@@ -193,6 +208,26 @@ input:focus-visible,button:focus-visible{outline:3px solid var(--green);outline-
 <p id="message" role="status"></p>
 <script>document.getElementById("sign-in").addEventListener("submit",async e=>{e.preventDefault();const code=new FormData(e.currentTarget).get("ownerCode");const r=await fetch("/api/v1/local-owner-session",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({ownerCode:code})});if(r.ok)location.assign("/projects");else document.getElementById("message").textContent="Sign-in was not accepted."});</script>
 </main></body></html>`;
+
+/** Sign-out is a button, not an automatic effect of loading the page, so a
+ * link elsewhere cannot end the owner's session. The page first revokes the
+ * Control Room session (a same-origin DELETE that still needs the exact Origin),
+ * then continues to `next`: the local sign-in page, or Cloudflare's fixed
+ * Access logout path, which ends the Access session for this browser. */
+export function renderLocalOwnerSignOutPageV1(next: "/session" | "/cdn-cgi/access/logout"): Response {
+  if (next !== "/session" && next !== "/cdn-cgi/access/logout") throw new Error("invalid_sign_out_target");
+  const page = signInPageV1()
+    .replace("<title>Control Room sign in</title>", "<title>Control Room sign out</title>")
+    .replace(/<a class="skip-link"[\s\S]*<\/main>/u, `<a class="skip-link" href="#private-main">Skip to sign out</a>
+<main id="private-main" tabindex="-1">
+<h1>Sign out</h1><p>This ends your Control Room session on this device${next === "/session" ? "" : " and signs you out of Cloudflare Access"}.</p>
+<form id="sign-out"><button>Sign out</button></form>
+<p id="message" role="status"></p>
+<script>document.getElementById("sign-out").addEventListener("submit",async e=>{e.preventDefault();try{await fetch("/api/v1/local-owner-session",{method:"DELETE"})}catch{}location.assign(${JSON.stringify(next)})});</script>
+</main>`);
+  return new Response(page,
+    { status: 200, headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", "x-robots-tag": "noindex, nofollow" } });
+}
 
 export function renderLocalOwnerSignInPageV1(): Response {
   return new Response(signInPageV1(),

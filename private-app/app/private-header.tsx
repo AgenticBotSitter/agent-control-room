@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { useProductDisplayName, useProductModule } from "./product-configuration";
 import { useLocalRuntime } from "./local-runtime";
 
-type NavigationItem = { href: string; label: string; optional?: boolean };
+type NavigationItem = { href: string; label: string; optional?: boolean; localOnly?: boolean };
 
 const navigation: readonly NavigationItem[] = [
   { href: "/", label: "Home" },
@@ -16,6 +16,7 @@ const navigation: readonly NavigationItem[] = [
   { href: "/needs-me", label: "Action Inbox" },
   { href: "/settings", label: "Settings" },
   { href: "/ideas", label: "Idea Lab", optional: true },
+  { href: "/sign-out", label: "Sign out", localOnly: true },
 ];
 
 function isCurrent(pathname: string | undefined, href: string) {
@@ -54,8 +55,8 @@ export function PrivateHeader() {
       toggle's `aria-expanded` is what conveys the collapsed state. */}
     <nav id="private-workspace-navigation" className={menuOpen ? "private-navigation is-open" : "private-navigation"}
       aria-label="Workspace pages">
-      {navigation.filter(item => runtime.mode === "hosted" ? !item.optional || ideaLab
-        : ["/", "/projects", "/workers", "/session-watch", "/needs-me"].includes(item.href)).map(item => <a key={item.href} href={item.href}
+      {navigation.filter(item => runtime.mode === "hosted" ? !item.localOnly && (!item.optional || ideaLab)
+        : ["/", "/projects", "/workers", "/session-watch", "/needs-me", "/sign-out"].includes(item.href)).map(item => <a key={item.href} href={item.href}
         aria-current={isCurrent(pathname, item.href) ? "page" : undefined}>
         {item.label}{item.optional ? <span className="private-optional">Optional</span> : null}
       </a>)}

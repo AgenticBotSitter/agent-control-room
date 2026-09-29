@@ -2,7 +2,7 @@ import type { DatabaseClient } from "../../persistence/database";
 import { WebAccessError } from "./access-verifier";
 import { privateResponseHeaders, webFailure } from "./http-common";
 import { captureLocalOwnerSessionProfileV1, LocalOwnerSessionServiceV1, readLocalOwnerCodeV1,
-  renderLocalOwnerSignInPageV1, type LocalOwnerSessionProfileV1 } from "./local-owner-session";
+  renderLocalOwnerSignInPageV1, renderLocalOwnerSignOutPageV1, type LocalOwnerSessionProfileV1 } from "./local-owner-session";
 import { WebProjectService } from "./project-service";
 import { createProjectHttpHandler } from "./project-http";
 import { WebTaskService, type WebTaskKeys } from "./task-service";
@@ -32,6 +32,10 @@ import { taskProjectAgentOptionsSchema } from "./task-project-agents-wire";
 export interface MacLocalWebProcessOptionsV1 {
   origin: string;
   localOwnerSession: Readonly<LocalOwnerSessionProfileV1>;
+  /** The one remote origin behind Cloudflare Access, if configured. Its
+   * transport gate already verified the Access token; sign-out there also
+   * ends the Access session at Cloudflare's fixed logout path. */
+  cloudflareAccessOrigin?: string;
   localOwnerSessionStore?: LocalOwnerSessionStoreV1;
   initialLocalOwnerSessions?: readonly PersistedLocalOwnerSessionV1[];
   workspaceId: string;
@@ -89,6 +93,10 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
     || profile.origin !== options.origin || !options.workspaceId || !options.database || typeof options.database.close !== "function")
     throw new Error("mac_local_web_process_config_invalid");
   const clock = options.clock ?? Date.now;
+  const allowedOrigins = new Set([options.origin, ...(profile.trustedOrigin ? [profile.trustedOrigin] : []),
+    ...(profile.remoteOrigins ?? [])]);
+  if (options.cloudflareAccessOrigin !== undefined && !profile.remoteOrigins?.includes(options.cloudflareAccessOrigin))
+    throw new Error("mac_local_web_process_config_invalid");
   const sessions = new LocalOwnerSessionServiceV1(profile, options.localOwnerSessionStore, options.initialLocalOwnerSessions);
   const projects = new WebProjectService(options.database.client,
     { tenantId: profile.tenantId, workspaceId: options.workspaceId }, clock);
@@ -226,11 +234,17 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
   async function handle(request: Request, render: () => Promise<Response> | Response): Promise<Response> {
     try {
       const url = new URL(request.url);
-      if (url.origin !== options.origin && url.origin !== profile.trustedOrigin) throw new WebAccessError("access_denied");
+      if (!allowedOrigins.has(url.origin)) throw new WebAccessError("access_denied");
       if (url.pathname === "/session") {
         if (request.method !== "GET" || url.search) throw new WebAccessError("invalid_request");
         sessions.assertLocalRequest(request);
         return renderLocalOwnerSignInPageV1();
+      }
+      if (url.pathname === "/sign-out") {
+        if (request.method !== "GET" || url.search) throw new WebAccessError("invalid_request");
+        sessions.assertLocalRequest(request);
+        return renderLocalOwnerSignOutPageV1(url.origin === options.cloudflareAccessOrigin
+          ? "/cdn-cgi/access/logout" : "/session");
       }
       if (url.pathname === "/api/v1/local-owner-session") {
         if (url.search) throw new WebAccessError("invalid_request");
