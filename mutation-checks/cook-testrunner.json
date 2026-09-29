@@ -22,10 +22,24 @@
   },
   {
     "file": "scripts/test-runner/service.mjs",
-    "find": "!config.allowedScripts.includes(body.script)",
+    "find": "!Object.hasOwn(config.allowedScripts, body.script)",
     "replace": "false",
     "test": "node --test --test-name-pattern='command allowlist guard' tests/test-runner-service.test.mjs",
     "why": "only explicitly configured package script names may run"
+  },
+  {
+    "file": "scripts/test-runner/service.mjs",
+    "find": "if (scripts[body.script] !== pinned) throw new RunnerRefusal(403, \"command_refused\");",
+    "replace": "",
+    "test": "node --test --test-name-pattern='pinned script guard' tests/test-runner-service.test.mjs",
+    "why": "an allowed script name may only run the exact command text the lead pinned in the config, never whatever the worktree's package.json currently says"
+  },
+  {
+    "file": "scripts/test-runner/service.mjs",
+    "find": "child = spawn(SANDBOX_EXEC, [\"-p\", profile, command.executable, ...command.argv], {",
+    "replace": "child = spawn(command.executable, command.argv, {",
+    "test": "node --test --test-name-pattern='sandbox guard blocks writes' tests/test-runner-service.test.mjs",
+    "why": "every approved command is worktree-written code and must run inside the macOS sandbox, never with the service account's full file access"
   },
   {
     "file": "scripts/test-runner/service.mjs",

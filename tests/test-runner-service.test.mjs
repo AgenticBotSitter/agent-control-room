@@ -1,10 +1,15 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
 import { chmod, mkdir, mkdtemp, readFile, realpath, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
 import { createTestRunnerService, readOrCreateToken } from "../scripts/test-runner/service.mjs";
+
+const REAL_PG_BIN = [process.env.PG_BIN, "/opt/homebrew/opt/postgresql@17/bin", "/usr/lib/postgresql/17/bin"]
+  .find(candidate => candidate && existsSync(join(candidate, "initdb")) && existsSync(join(candidate, "postgres")));
 
 async function eventually(check, timeoutMs = 2_000) {
   const deadline = Date.now() + timeoutMs;
@@ -15,6 +20,8 @@ async function eventually(check, timeoutMs = 2_000) {
   assert.fail("condition did not become true");
 }
 
+const DATABASE_SCRIPT = "node --test tests/database.test.mjs";
+
 async function fixture(t, overrides = {}) {
   const root = await mkdtemp(join(tmpdir(), "acr-test-runner-test-"));
   const privateDirectory = join(root, "private");
@@ -22,11 +29,12 @@ async function fixture(t, overrides = {}) {
   const config = {
     schema: "control-room.test-runner/v1",
     port: 0,
+    configPath: join(privateDirectory, "config.json"),
     tokenFile: join(privateDirectory, "token"),
     auditLog: join(privateDirectory, "audit.jsonl"),
     allowedWorktreePrefixes: [join(await realpath(root), "worktree-")],
-    allowedScripts: ["test:database"],
-    pnpmBin: process.execPath,
+    protectedReadPrefixes: [],
+    allowedScripts: { "test:database": DATABASE_SCRIPT },
     pgBin: dirname(process.execPath),
     nodeBin: process.execPath,
     portPool: { start: 28100, end: 28139, blockSize: 10 },
@@ -45,9 +53,11 @@ async function fixture(t, overrides = {}) {
     await mkdir(join(worktree, "node_modules", "tsx"), { recursive: true });
     await writeFile(join(worktree, "node_modules", "tsx", "package.json"), JSON.stringify({ type: "module", exports: "./index.mjs" }));
     await writeFile(join(worktree, "node_modules", "tsx", "index.mjs"), "// Test-only no-op import hook.\n");
+    await writeFile(join(worktree, "tests", "database.test.mjs"),
+      'import test from "node:test"; test("database placeholder", () => {});\n');
     await writeFile(join(worktree, "package.json"), JSON.stringify({
       type: "module",
-      scripts: { "test:database": "node ignored", "test:everything": "node ignored" },
+      scripts: { "test:database": DATABASE_SCRIPT, "test:everything": "node ignored" },
     }));
     for (const [path, source] of Object.entries(files)) {
       await mkdir(dirname(join(worktree, path)), { recursive: true });
@@ -271,4 +281,200 @@ test("failing command reports its TAP name and the client exits nonzero", async 
   assert.equal(result.code, 1, result.stdout + result.stderr);
   assert.match(result.stdout, /1 failed/u);
   assert.match(result.stdout, /intentional fake failure/u);
+});
+
+test("client waits past several seconds for a long-running command with no timeout of its own", async t => {
+  const f = await fixture(t, { timeoutMs: 8_000 });
+  const worktree = await f.makeWorktree("slow-client", {
+    "tests/slow.test.mjs": `import test from "node:test"; test("slow", () => new Promise(resolve => setTimeout(resolve, 3000)));`,
+  });
+  const configPath = join(f.root, "slow-client-config.json");
+  await writeFile(configPath, JSON.stringify({ ...f.config, port: f.address.port }));
+  const client = join(process.cwd(), "scripts/test-runner/client.mjs");
+  const startedAt = Date.now();
+  const result = await new Promise(resolveResult => {
+    const child = spawn(process.execPath, [client, "--config", configPath, "--worktree", worktree,
+      "--file", "tests/slow.test.mjs"], { stdio: ["ignore", "pipe", "pipe"] });
+    let stdout = "", stderr = "";
+    child.stdout.on("data", chunk => { stdout += chunk; });
+    child.stderr.on("data", chunk => { stderr += chunk; });
+    child.once("close", code => resolveResult({ code, stdout, stderr }));
+  });
+  const elapsedMs = Date.now() - startedAt;
+  assert.equal(result.code, 0, result.stdout + result.stderr);
+  assert.ok(elapsedMs >= 3_000, `expected the client to wait for the full run, only waited ${elapsedMs}ms`);
+});
+
+test("sandbox guard blocks writes outside the worktree and this run's temp directory", async t => {
+  const f = await fixture(t);
+  const target = join(f.root, "escape-write.txt");
+  const worktree = await f.makeWorktree("sandbox-write", {
+    "tests/escape.test.mjs": `
+      import assert from "node:assert/strict";
+      import { writeFileSync } from "node:fs";
+      import test from "node:test";
+      test("attempt to write outside the worktree", () => {
+        assert.throws(() => writeFileSync(${JSON.stringify(target)}, "PWNED"));
+      });
+    `,
+  });
+  const result = await f.call({ worktree, file: "tests/escape.test.mjs" });
+  assert.equal(result.status, 200);
+  assert.equal(result.body.exitCode, 0, result.body.logExcerpt);
+  await assert.rejects(stat(target));
+});
+
+test("sandbox guard blocks reading the private token file", async t => {
+  const f = await fixture(t);
+  const worktree = await f.makeWorktree("sandbox-read", {
+    "tests/read.test.mjs": `
+      import assert from "node:assert/strict";
+      import { readFileSync } from "node:fs";
+      import test from "node:test";
+      test("attempt to read the runner's own token file", () => {
+        assert.throws(() => readFileSync(${JSON.stringify(f.config.tokenFile)}, "utf8"));
+      });
+    `,
+  });
+  const result = await f.call({ worktree, file: "tests/read.test.mjs" });
+  assert.equal(result.status, 200);
+  assert.equal(result.body.exitCode, 0, result.body.logExcerpt);
+});
+
+test("sandbox guard blocks a connection to a port outside this run's assigned block", async t => {
+  const f = await fixture(t);
+  const blocker = createServer(socket => socket.destroy());
+  await new Promise(resolveReady => blocker.listen(0, "127.0.0.1", resolveReady));
+  const blockedPort = blocker.address().port;
+  t.after(() => new Promise(resolveClosed => blocker.close(resolveClosed)));
+  const worktree = await f.makeWorktree("sandbox-network", {
+    "tests/network.test.mjs": `
+      import assert from "node:assert/strict";
+      import { connect } from "node:net";
+      import test from "node:test";
+      test("attempt to reach a port outside the assigned block", async () => {
+        await assert.rejects(new Promise((resolveResult, reject) => {
+          const socket = connect(${blockedPort}, "127.0.0.1");
+          socket.once("connect", () => { socket.destroy(); resolveResult(); });
+          socket.once("error", reject);
+        }));
+      });
+    `,
+  });
+  const result = await f.call({ worktree, file: "tests/network.test.mjs" });
+  assert.equal(result.status, 200);
+  assert.equal(result.body.exitCode, 0, result.body.logExcerpt);
+});
+
+test("pinned script guard refuses a worktree package.json that diverges from the configured exact command", async t => {
+  const f = await fixture(t);
+  const worktree = await f.makeWorktree("pin-mismatch");
+  await writeFile(join(worktree, "package.json"), JSON.stringify({
+    type: "module",
+    scripts: { "test:database": `${DATABASE_SCRIPT} --extra-flag` },
+  }));
+  const result = await f.call({ worktree, script: "test:database" });
+  assert.deepEqual(result, { status: 403, body: { error: "command_refused" } });
+});
+
+test("pinned script mode runs the exact configured node argv directly, without pnpm", async t => {
+  const f = await fixture(t);
+  const worktree = await f.makeWorktree("script-happy");
+  const result = await f.call({ worktree, script: "test:database" });
+  assert.equal(result.status, 200);
+  assert.equal(result.body.exitCode, 0, result.body.logExcerpt);
+  assert.equal(result.body.command, DATABASE_SCRIPT);
+});
+
+test("bounded pipe guard settles within timeoutMs plus grace even when a detached grandchild under TMPDIR holds the output pipe", async t => {
+  // node's own `--test` runner does not exit on its own while a detached child
+  // still holds its inherited stdout/stderr pipe open, so the fix under test
+  // is not "the run finishes quickly" (it cannot, on its own) — it is that our
+  // own timeout forcibly ends it well within timeoutMs + STOP_GRACE_MS rather
+  // than the old `close`-based wait, which would have run out the clock on the
+  // grandchild's full (here much longer) lifetime instead.
+  const f = await fixture(t, { timeoutMs: 1_500 });
+  const worktree = await f.makeWorktree("pipe-hold", {
+    "tests/pipe-hold.test.mjs": `
+      import { spawn } from "node:child_process";
+      import { writeFileSync } from "node:fs";
+      import test from "node:test";
+      test("spawn a detached grandchild under this run's tmp dir that inherits stdio", () => {
+        const child = spawn(process.execPath, ["-e", "setTimeout(() => {}, 8000)"],
+          { detached: true, stdio: "inherit", cwd: process.env.TMPDIR });
+        writeFileSync("grandchild.pid", String(child.pid));
+        child.unref();
+      });
+    `,
+  });
+  const startedAt = Date.now();
+  const result = await f.call({ worktree, file: "tests/pipe-hold.test.mjs" });
+  const elapsedMs = Date.now() - startedAt;
+  assert.equal(result.status, 200);
+  assert.equal(result.body.timedOut, true, result.body.logExcerpt);
+  assert.ok(elapsedMs < 3_000, `expected the run to settle within timeoutMs + grace, took ${elapsedMs}ms`);
+  const pid = Number(await readFile(join(worktree, "grandchild.pid"), "utf8"));
+  await eventually(() => {
+    try { process.kill(pid, 0); return false; } catch (error) { return error.code === "ESRCH"; }
+  }, 3_000);
+});
+
+test("server aborts a run and frees its slot when the client disconnects before it finishes", async t => {
+  const f = await fixture(t, { timeoutMs: 10_000 });
+  const worktree = await f.makeWorktree("disconnect", {
+    "tests/hold.test.mjs": `import test from "node:test"; test("hold", () => new Promise(resolve => setTimeout(resolve, 6000)));`,
+  });
+  const controller = new AbortController();
+  const requestPromise = fetch(`http://127.0.0.1:${f.address.port}/v1/runs`, {
+    method: "POST",
+    headers: { authorization: `Bearer ${f.token}`, "content-type": "application/json" },
+    body: JSON.stringify({ worktree, file: "tests/hold.test.mjs" }),
+    signal: controller.signal,
+  }).catch(() => {});
+  await eventually(() => f.service.activeRuns.size === 1);
+  controller.abort();
+  await requestPromise;
+  await eventually(() => f.service.activeRuns.size === 0, 3_000);
+});
+
+test("ownership guard reaps a real pg_ctl-started postmaster on timeout, even though setsid removes it from the run's process group", { skip: REAL_PG_BIN ? false : "needs PostgreSQL 17 binaries" }, async t => {
+  const f = await fixture(t, { pgBin: REAL_PG_BIN, timeoutMs: 6_000 });
+  const worktree = await f.makeWorktree("pgctl-timeout", {
+    "tests/pgctl-hang.test.mjs": `
+      import { spawnSync } from "node:child_process";
+      import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+      import { join, dirname } from "node:path";
+      import { fileURLToPath } from "node:url";
+      import test from "node:test";
+
+      const pgBin = process.env.PG_BIN;
+      const tmp = process.env.TMPDIR;
+      const dataDirectory = join(tmp, "pgctl-hang-data");
+      const socketDirectory = join(tmp, "pgctl-hang-sock");
+      const port = process.env.CONTROL_ROOM_PG_TEST_PORT_BASE;
+      const marker = join(dirname(fileURLToPath(import.meta.url)), "..", "pgctl-hang-marker.json");
+      mkdirSync(dataDirectory, { recursive: true });
+      mkdirSync(socketDirectory, { recursive: true });
+
+      test("start a real cluster with pg_ctl (setsid) and hang", async () => {
+        const init = spawnSync(join(pgBin, "initdb"), ["-D", dataDirectory, "-U", "postgres", "-A", "trust", "--no-sync"], { stdio: "ignore" });
+        if (init.status !== 0) throw new Error("initdb failed");
+        const start = spawnSync(join(pgBin, "pg_ctl"), ["-D", dataDirectory, "-l", join(dataDirectory, "log"), "-w", "-t", "30", "-o",
+          \`-k \${socketDirectory} -p \${port} -h '' -c unix_socket_permissions=0700 -c shared_buffers=32MB -c max_connections=20\`, "start"],
+          { stdio: "ignore" });
+        if (start.status !== 0) throw new Error("pg_ctl start failed");
+        const pid = Number(readFileSync(join(dataDirectory, "postmaster.pid"), "utf8").split("\\n")[0]);
+        writeFileSync(marker, JSON.stringify({ pid }));
+        setInterval(() => {}, 1000);
+        await new Promise(() => {});
+      });
+    `,
+  });
+  const result = await f.call({ worktree, file: "tests/pgctl-hang.test.mjs" });
+  assert.equal(result.status, 200);
+  assert.equal(result.body.timedOut, true, result.body.logExcerpt);
+  const marker = JSON.parse(await readFile(join(worktree, "pgctl-hang-marker.json"), "utf8"));
+  await eventually(() => {
+    try { process.kill(marker.pid, 0); return false; } catch (error) { return error.code === "ESRCH"; }
+  }, 8_000);
 });

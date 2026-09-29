@@ -23,6 +23,53 @@ const LOOPBACK = "127.0.0.1";
 const REQUEST_LIMIT_BYTES = 64 * 1024;
 const TOKEN_BYTES = 32;
 const STOP_GRACE_MS = 500;
+const SANDBOX_EXEC = "/usr/bin/sandbox-exec";
+const CLUSTER_REGISTRY_NAME = "attack-kit-clusters.json";
+
+const ENV_PREFIX = /^PG_BIN="\$\{PG_BIN:-[^"$`\\\n]*\}"\s+/u;
+const FLAG_TOKEN = /^--[a-z][a-z0-9-]*(?:=[A-Za-z0-9_.:,-]+)?$/u;
+const IMPORT_VALUE_TOKEN = /^[A-Za-z0-9_./-]+$/u;
+const TEST_FILE_TOKEN = /^tests\/[a-zA-Z0-9_./-]+\.test\.(?:ts|tsx|mjs)$/u;
+
+/**
+ * Parses a pinned `package.json` script body into a literal argv for `node`,
+ * with no shell involved. Only two shapes are accepted: an optional ignored
+ * `PG_BIN="${PG_BIN:-...}"` prefix (the fixed environment always sets the
+ * real PG_BIN, so this prefix's value is never read), then `node` with an
+ * optional `scripts/run-tests-with-quarantine.mjs` first argument, flags, and
+ * one or more `tests/*.test.{ts,tsx,mjs}` files. Anything else is refused.
+ */
+export function parsePinnedScriptCommand(pinned) {
+  if (typeof pinned !== "string" || pinned.length === 0) return undefined;
+  const withoutEnvironmentPrefix = pinned.replace(ENV_PREFIX, "");
+  if (/[;&|`$<>\n\r]/u.test(withoutEnvironmentPrefix)) return undefined;
+  const tokens = withoutEnvironmentPrefix.split(" ").filter(token => token.length > 0);
+  if (tokens.join(" ") !== withoutEnvironmentPrefix) return undefined;
+  if (tokens[0] !== "node") return undefined;
+  const argv = [];
+  let index = 1;
+  if (tokens[index] === "scripts/run-tests-with-quarantine.mjs") { argv.push(tokens[index]); index += 1; }
+  for (;;) {
+    const token = tokens[index];
+    if (token === "--import" && IMPORT_VALUE_TOKEN.test(tokens[index + 1] ?? "")) {
+      argv.push(token, tokens[index + 1]);
+      index += 2;
+      continue;
+    }
+    if (typeof token === "string" && FLAG_TOKEN.test(token)) { argv.push(token); index += 1; continue; }
+    break;
+  }
+  const testFiles = [];
+  while (index < tokens.length) {
+    const token = tokens[index];
+    if (!TEST_FILE_TOKEN.test(token) || token.split("/").includes("..")) return undefined;
+    argv.push(token);
+    testFiles.push(token);
+    index += 1;
+  }
+  if (testFiles.length === 0) return undefined;
+  return Object.freeze({ argv: Object.freeze(argv), testFiles: Object.freeze(testFiles) });
+}
 
 export class RunnerRefusal extends Error {
   constructor(status, code, message = code) {
@@ -67,9 +114,16 @@ export async function readConfiguration(path = DEFAULT_CONFIG_PATH) {
   if (!Array.isArray(raw.allowedWorktreePrefixes) || raw.allowedWorktreePrefixes.length === 0) {
     throw new Error("configuration_invalid: allowedWorktreePrefixes");
   }
-  if (!Array.isArray(raw.allowedScripts) || raw.allowedScripts.length === 0 ||
-      raw.allowedScripts.some(value => typeof value !== "string" || !/^[a-z0-9][a-z0-9:._-]*$/u.test(value))) {
+  if (!raw.allowedScripts || typeof raw.allowedScripts !== "object" || Array.isArray(raw.allowedScripts) ||
+      Object.keys(raw.allowedScripts).length === 0) {
     throw new Error("configuration_invalid: allowedScripts");
+  }
+  const allowedScripts = {};
+  for (const [name, pinned] of Object.entries(raw.allowedScripts)) {
+    if (!/^[a-z0-9][a-z0-9:._-]*$/u.test(name) || !parsePinnedScriptCommand(pinned)) {
+      throw new Error(`configuration_invalid: allowedScripts.${name}`);
+    }
+    allowedScripts[name] = pinned;
   }
   const portPool = raw.portPool;
   if (!portPool || typeof portPool !== "object" || Array.isArray(portPool)) {
@@ -80,10 +134,9 @@ export async function readConfiguration(path = DEFAULT_CONFIG_PATH) {
   const blockSize = integer(portPool.blockSize, "portPool.blockSize", { minimum: 2, maximum: end - start + 1 });
   const port = integer(raw.port, "port", { minimum: 1024, maximum: 65535 });
   if (port >= start && port <= end) throw new Error("configuration_invalid: service port overlaps portPool");
-  const pnpmBin = absolutePath(raw.pnpmBin, "pnpmBin");
   const pgBin = absolutePath(raw.pgBin, "pgBin");
   const nodeBin = raw.nodeBin === undefined ? process.execPath : absolutePath(raw.nodeBin, "nodeBin");
-  for (const [name, path, directory] of [["pnpmBin", pnpmBin, false], ["pgBin", pgBin, true], ["nodeBin", nodeBin, false]]) {
+  for (const [name, path, directory] of [["pgBin", pgBin, true], ["nodeBin", nodeBin, false]]) {
     let details;
     try { details = await stat(path); } catch { throw new Error(`configuration_invalid: ${name}`); }
     if (directory ? !details.isDirectory() : !details.isFile()) throw new Error(`configuration_invalid: ${name}`);
@@ -92,6 +145,13 @@ export async function readConfiguration(path = DEFAULT_CONFIG_PATH) {
   for (const [index, value] of raw.allowedWorktreePrefixes.entries()) {
     allowedWorktreePrefixes.push(await canonicalPrefix(value, `allowedWorktreePrefixes[${index}]`));
   }
+  const protectedReadPrefixes = [];
+  if (raw.protectedReadPrefixes !== undefined) {
+    if (!Array.isArray(raw.protectedReadPrefixes)) throw new Error("configuration_invalid: protectedReadPrefixes");
+    for (const [index, value] of raw.protectedReadPrefixes.entries()) {
+      protectedReadPrefixes.push(await canonicalPrefix(value, `protectedReadPrefixes[${index}]`));
+    }
+  }
   return Object.freeze({
     schema: TEST_RUNNER_SCHEMA,
     configPath,
@@ -99,8 +159,8 @@ export async function readConfiguration(path = DEFAULT_CONFIG_PATH) {
     tokenFile: absolutePath(raw.tokenFile, "tokenFile"),
     auditLog: absolutePath(raw.auditLog, "auditLog"),
     allowedWorktreePrefixes: Object.freeze(allowedWorktreePrefixes),
-    allowedScripts: Object.freeze([...new Set(raw.allowedScripts)]),
-    pnpmBin,
+    protectedReadPrefixes: Object.freeze(protectedReadPrefixes),
+    allowedScripts: Object.freeze(allowedScripts),
     pgBin,
     nodeBin,
     portPool: Object.freeze({ start, end, blockSize }),
@@ -218,13 +278,27 @@ export async function resolveApprovedCommand(config, body) {
   if (shape !== "file\0worktree" && shape !== "script\0worktree") throw new RunnerRefusal(400, "invalid_request");
   const worktree = await resolveWorktree(config, body.worktree);
   if (shape === "script\0worktree") {
-    if (typeof body.script !== "string" || !config.allowedScripts.includes(body.script)) {
+    if (typeof body.script !== "string" || !Object.hasOwn(config.allowedScripts, body.script)) {
       throw new RunnerRefusal(403, "command_refused");
     }
     const scripts = await packageScripts(worktree);
-    if (typeof scripts[body.script] !== "string") throw new RunnerRefusal(403, "command_refused");
-    return Object.freeze({ worktree, display: `pnpm run ${body.script}`, executable: config.pnpmBin,
-      argv: Object.freeze(["run", body.script]) });
+    const pinned = config.allowedScripts[body.script];
+    if (scripts[body.script] !== pinned) throw new RunnerRefusal(403, "command_refused");
+    const parsed = parsePinnedScriptCommand(pinned);
+    if (!parsed) throw new RunnerRefusal(403, "command_refused");
+    const testsRoot = await realpath(join(worktree, "tests")).catch(() => undefined);
+    if (!testsRoot) throw new RunnerRefusal(403, "command_refused");
+    const resolvedFiles = new Map();
+    for (const file of parsed.testFiles) {
+      const candidate = await realpath(join(worktree, file)).catch(() => undefined);
+      if (!candidate || !inside(testsRoot, candidate)) throw new RunnerRefusal(403, "command_refused");
+      const fileDetails = await stat(candidate);
+      if (!fileDetails.isFile()) throw new RunnerRefusal(403, "command_refused");
+      resolvedFiles.set(file, candidate);
+    }
+    const argv = parsed.argv.map(token => resolvedFiles.get(token) ?? token);
+    return Object.freeze({ worktree, display: `node ${parsed.argv.join(" ")}`, executable: config.nodeBin,
+      argv: Object.freeze(argv) });
   }
   if (typeof body.file !== "string" || !/^tests\/[a-zA-Z0-9_./-]+\.test\.(?:ts|tsx|mjs)$/u.test(body.file) ||
       body.file.split("/").includes("..")) {
@@ -288,11 +362,13 @@ export function tapSummary(text) {
 
 function fixedEnvironment(config, ports, tempDirectory) {
   const environment = {
-    PATH: [...new Set([dirname(config.nodeBin), dirname(config.pnpmBin), config.pgBin, "/usr/bin", "/bin"])].join(":"),
+    PATH: [...new Set([dirname(config.nodeBin), config.pgBin, "/usr/bin", "/bin"])].join(":"),
     PG_BIN: config.pgBin,
     CONTROL_ROOM_PG_TEST_PORT_BASE: String(ports.base),
     CONTROL_ROOM_BACKUP_VERIFY_PORT_RANGE: `${ports.base + 1}-${ports.end}`,
     TMPDIR: tempDirectory,
+    LC_ALL: "C",
+    LANG: "C",
   };
   return Object.freeze(environment);
 }
@@ -302,27 +378,78 @@ function signalGroup(pid, signal) {
   try { process.kill(-pid, signal); } catch (error) { if (error.code !== "ESRCH") throw error; }
 }
 
-async function processGroup(pid) {
+async function commandName(pid) {
   return await new Promise(resolveResult => {
-    const child = spawn("/bin/ps", ["-o", "pgid=", "-p", String(pid)], { stdio: ["ignore", "pipe", "ignore"] });
+    const child = spawn("/bin/ps", ["-o", "comm=", "-p", String(pid)], { stdio: ["ignore", "pipe", "ignore"] });
     let output = "";
     child.stdout.on("data", chunk => { output += chunk; });
     child.once("error", () => resolveResult(undefined));
-    child.once("close", code => resolveResult(code === 0 && /^\s*\d+\s*$/u.test(output) ? Number(output.trim()) : undefined));
+    child.once("close", code => resolveResult(code === 0 ? output.trim() : undefined));
   });
 }
 
-async function findPostmasterFiles(root, depth = 0, found = []) {
-  if (depth > 8 || found.length >= 100) return found;
+async function processCwd(pid) {
+  return await new Promise(resolveResult => {
+    const child = spawn("/usr/sbin/lsof", ["-a", "-p", String(pid), "-d", "cwd", "-Fn"], { stdio: ["ignore", "pipe", "ignore"] });
+    let output = "";
+    child.stdout.on("data", chunk => { output += chunk; });
+    child.once("error", () => resolveResult(undefined));
+    child.once("close", code => {
+      if (code !== 0) { resolveResult(undefined); return; }
+      const line = output.split(/\r?\n/u).find(entry => entry.startsWith("n"));
+      resolveResult(line ? line.slice(1) : undefined);
+    });
+  });
+}
+
+/**
+ * Proves a pid is really a postmaster rooted at `dataDirectory`, without
+ * trusting process-group membership: `pg_ctl start` runs the postmaster
+ * under `setsid`, in its own session, so it is never a member of the runner
+ * child's process group. A postmaster always `chdir`s into its data
+ * directory, so command name plus cwd is the ownership proof instead. This
+ * still refuses a forged `postmaster.pid` pointing at an unrelated process
+ * (for example the live app), because that process is neither named
+ * `postgres` nor `chdir`'d into the claimed data directory.
+ */
+async function ownsPostgresProcess(pid, dataDirectory) {
+  if (!Number.isSafeInteger(pid) || pid <= 0) return false;
+  const [comm, cwd] = await Promise.all([commandName(pid), processCwd(pid)]);
+  if (comm !== "postgres" && !(typeof comm === "string" && comm.endsWith("/postgres"))) return false;
+  if (!cwd) return false;
+  let realCwd, realData;
+  try { [realCwd, realData] = await Promise.all([realpath(cwd), realpath(dataDirectory)]); } catch { return false; }
+  return realCwd === realData;
+}
+
+async function findRunArtifacts(root, depth = 0, found = { postmasterFiles: [], registryFiles: [] }) {
+  if (depth > 8 || found.postmasterFiles.length + found.registryFiles.length >= 200) return found;
   let entries;
   try { entries = await readdir(root, { withFileTypes: true }); } catch { return found; }
   for (const entry of entries) {
-    if (found.length >= 100) break;
+    if (found.postmasterFiles.length + found.registryFiles.length >= 200) break;
     const path = join(root, entry.name);
-    if (entry.isDirectory() && !entry.isSymbolicLink()) await findPostmasterFiles(path, depth + 1, found);
-    else if (entry.isFile() && entry.name === "postmaster.pid") found.push(path);
+    if (entry.isDirectory() && !entry.isSymbolicLink()) await findRunArtifacts(path, depth + 1, found);
+    else if (entry.isFile() && entry.name === "postmaster.pid") found.postmasterFiles.push(path);
+    else if (entry.isFile() && entry.name === CLUSTER_REGISTRY_NAME) found.registryFiles.push(path);
   }
   return found;
+}
+
+/** Reads the attack kit's own cluster registry (see tests/support/attack-kit), so a
+ *  cluster it started is reapable even if the recursive directory walk misses it. */
+async function readClusterRegistryEntries(path) {
+  let text;
+  try { text = await readFile(path, "utf8"); } catch { return []; }
+  const entries = [];
+  for (const line of text.split("\n")) {
+    if (line.trim() === "") continue;
+    try {
+      const parsed = JSON.parse(line);
+      if (typeof parsed.port === "number" && typeof parsed.dataDirectory === "string") entries.push(parsed);
+    } catch { /* a half-written line from a killed process is not a cluster */ }
+  }
+  return entries;
 }
 
 async function runUtility(executable, argv, environment, timeoutMs = 12_000) {
@@ -336,22 +463,118 @@ async function runUtility(executable, argv, environment, timeoutMs = 12_000) {
   });
 }
 
-async function stopOwnedPostgres(config, tempDirectory, ports, processGroupId, environment) {
+async function stopOwnedPostgres(config, tempDirectory, ports, environment) {
   const stopped = [], errors = [];
-  for (const pidFile of await findPostmasterFiles(tempDirectory)) {
+  const artifacts = await findRunArtifacts(tempDirectory);
+  const dataDirectories = new Set(artifacts.postmasterFiles.map(pidFile => dirname(pidFile)));
+  const candidates = [...artifacts.postmasterFiles];
+  for (const registryFile of artifacts.registryFiles) {
+    for (const entry of await readClusterRegistryEntries(registryFile)) {
+      if (dataDirectories.has(entry.dataDirectory)) continue;
+      dataDirectories.add(entry.dataDirectory);
+      candidates.push(join(entry.dataDirectory, "postmaster.pid"));
+    }
+  }
+  for (const pidFile of candidates) {
     let lines;
     try { lines = (await readFile(pidFile, "utf8")).split(/\r?\n/u); } catch { continue; }
     const pid = Number(lines[0]), port = Number(lines[3]);
     if (!Number.isSafeInteger(pid) || pid <= 0 || !Number.isSafeInteger(port) || port < ports.base || port > ports.end) continue;
-    if (await processGroup(pid) !== processGroupId) continue;
+    if (!(await ownsPostgresProcess(pid, dirname(pidFile)))) continue;
     const code = await runUtility(join(config.pgBin, "pg_ctl"), ["-D", dirname(pidFile), "stop", "-m", "immediate", "-w", "-t", "10"], environment);
     if (code === 0) stopped.push(port); else errors.push(port);
   }
   return { stopped, errors };
 }
 
+/** Kills any process (regardless of process group) whose cwd is under the run's
+ *  temp directory — the last line of defense against a detached grandchild that
+ *  escaped the runner child's process group by starting its own session. */
+async function killByCwd(tempDirectory) {
+  let real;
+  try { real = await realpath(tempDirectory); } catch { return; }
+  const prefix = real.endsWith(sep) ? real : `${real}${sep}`;
+  // `lsof +D <dir>` walks the whole subtree looking for a match and can hang
+  // for a long time (or on a directory Full Disk Access would gate). Instead,
+  // list every process' cwd in one pass — a plain process-table read, not a
+  // filesystem walk — and filter the (small) result ourselves.
+  const entries = await new Promise(resolveResult => {
+    const child = spawn("/usr/sbin/lsof", ["-a", "-d", "cwd", "-Fpn"], { stdio: ["ignore", "pipe", "ignore"] });
+    let output = "";
+    child.stdout.on("data", chunk => { output += chunk; });
+    child.once("error", () => resolveResult(""));
+    child.once("close", () => resolveResult(output));
+  });
+  let pid;
+  for (const line of entries.split(/\r?\n/u)) {
+    if (line.startsWith("p")) { pid = Number(line.slice(1)); continue; }
+    if (!line.startsWith("n") || pid === undefined) continue;
+    const cwd = line.slice(1);
+    if (cwd === real || cwd.startsWith(prefix)) {
+      try { process.kill(pid, "SIGKILL"); } catch (error) { if (error.code !== "ESRCH") { /* best effort */ } }
+    }
+  }
+}
+
 function wait(milliseconds) {
   return new Promise(resolveResult => setTimeout(resolveResult, milliseconds));
+}
+
+function sandboxLiteral(value) {
+  if (typeof value !== "string" || value.length === 0 || /["\\\n\r]/u.test(value)) {
+    throw new Error("sandbox_path_invalid");
+  }
+  return value;
+}
+
+async function realDirectory(path) {
+  try { return await realpath(path); } catch { return resolve(path); }
+}
+
+/**
+ * Builds a per-run macOS Seatbelt (sandbox-exec) profile: writes only to the
+ * worktree and this run's temp directory, no reading of the token file, audit
+ * log, config, `~/.ssh`, keychains, or any configured protected prefix, and
+ * network loopback only on this run's assigned port block. Everything else
+ * stays at the default allow, because the outer host sandbox (not this
+ * profile) is what bounds the helper; this profile's only job is to stop the
+ * command it runs from stepping outside the worktree, the run, and its ports.
+ */
+async function buildSeatbeltProfile(config, { worktree, tempDirectory, ports }) {
+  const worktreeReal = sandboxLiteral(await realpath(worktree));
+  const tempReal = sandboxLiteral(await realpath(tempDirectory));
+  const denyReadPrefixes = [];
+  for (const candidate of [
+    dirname(config.tokenFile),
+    dirname(config.auditLog),
+    dirname(config.configPath),
+    join(homedir(), ".ssh"),
+    join(homedir(), "Library", "Keychains"),
+    ...(config.protectedReadPrefixes ?? []),
+  ]) {
+    denyReadPrefixes.push(sandboxLiteral(await realDirectory(candidate)));
+  }
+  const lines = [
+    "(version 1)",
+    "(allow default)",
+    "(deny file-write*)",
+    `(allow file-write* (subpath "${worktreeReal}") (subpath "${tempReal}") (literal "/dev/null") (literal "/dev/tty") (regex #"^/dev/fd/"))`,
+    ...[...new Set(denyReadPrefixes)].map(prefix => `(deny file-read* (subpath "${prefix}"))`),
+    // A protected prefix (for example the config directory) could happen to be
+    // an ANCESTOR of the worktree or this run's temp directory. Seatbelt takes
+    // the last matching rule, so without this the deny above would also
+    // silently deny reading the worktree itself. This restores reads there
+    // unconditionally, after every deny, regardless of that overlap.
+    `(allow file-read* (subpath "${worktreeReal}") (subpath "${tempReal}"))`,
+    "(deny network-outbound (remote ip))",
+    "(deny network-bind)",
+    `(allow network-bind (local unix-socket (subpath "${tempReal}")))`,
+  ];
+  for (let port = ports.base; port <= ports.end; port += 1) {
+    lines.push(`(allow network-outbound (remote ip "localhost:${port}"))`);
+    lines.push(`(allow network-bind (local ip "localhost:${port}"))`);
+  }
+  return lines.join("\n");
 }
 
 export async function executeApprovedCommand(config, command, ports, { signal } = {}) {
@@ -366,7 +589,7 @@ export async function executeApprovedCommand(config, command, ports, { signal } 
     if (reason === "cancel") cancelled = true;
     stopStarted = (async () => {
       if (!child?.pid) return;
-      await stopOwnedPostgres(config, tempDirectory, ports, child.pid, environment);
+      await stopOwnedPostgres(config, tempDirectory, ports, environment);
       signalGroup(child.pid, "SIGTERM");
       killHandle = setTimeout(() => signalGroup(child.pid, "SIGKILL"), STOP_GRACE_MS);
     })();
@@ -374,8 +597,9 @@ export async function executeApprovedCommand(config, command, ports, { signal } 
   };
   const abort = () => { void requestStop("cancel"); };
   try {
+    const profile = await buildSeatbeltProfile(config, { worktree: command.worktree, tempDirectory, ports });
     const completion = new Promise(resolveResult => {
-      child = spawn(command.executable, command.argv, {
+      child = spawn(SANDBOX_EXEC, ["-p", profile, command.executable, ...command.argv], {
         cwd: command.worktree,
         detached: true,
         env: environment,
@@ -385,19 +609,34 @@ export async function executeApprovedCommand(config, command, ports, { signal } 
       child.stdout.on("data", chunk => output.add(chunk));
       child.stderr.on("data", chunk => output.add(chunk));
       child.once("error", error => resolveResult({ code: null, signal: null, spawnError: error.message }));
-      child.once("close", (code, closeSignal) => resolveResult({ code, signal: closeSignal }));
+      child.once("exit", (code, exitSignal) => {
+        let settled = false, drainTimer;
+        const finish = () => { if (settled) return; settled = true; clearTimeout(drainTimer); resolveResult({ code, signal: exitSignal }); };
+        const remaining = new Set();
+        for (const stream of [child.stdout, child.stderr]) {
+          if (stream.closed) continue;
+          remaining.add(stream);
+          stream.once("close", () => { remaining.delete(stream); if (remaining.size === 0) finish(); });
+        }
+        if (remaining.size === 0) { finish(); return; }
+        // The pipe stays open as long as ANY holder (including an escaped
+        // detached grandchild) keeps its inherited fd — bound the wait rather
+        // than let that grandchild block the run forever.
+        drainTimer = setTimeout(() => { child.stdout.destroy(); child.stderr.destroy(); finish(); }, STOP_GRACE_MS);
+      });
     });
     if (signal?.aborted) abort();
     else signal?.addEventListener("abort", abort, { once: true });
     timeoutHandle = setTimeout(() => requestStop("timeout"), config.timeoutMs);
     const status = await completion;
     clearTimeout(timeoutHandle);
-    await stopOwnedPostgres(config, tempDirectory, ports, child.pid, environment);
+    await stopOwnedPostgres(config, tempDirectory, ports, environment);
     signalGroup(child.pid, "SIGTERM");
     await wait(25);
     signalGroup(child.pid, "SIGKILL");
     if (stopStarted) await stopStarted;
     clearTimeout(killHandle);
+    await killByCwd(tempDirectory);
     const bounded = output.result();
     return Object.freeze({
       exitCode: status.code,
@@ -449,9 +688,12 @@ async function requestBody(request) {
 }
 
 function respond(response, status, body) {
+  if (response.writableEnded) return;
   const serialized = JSON.stringify(body);
-  response.writeHead(status, { "content-type": "application/json", "content-length": Buffer.byteLength(serialized), "cache-control": "no-store" });
-  response.end(serialized);
+  try {
+    response.writeHead(status, { "content-type": "application/json", "content-length": Buffer.byteLength(serialized), "cache-control": "no-store" });
+    response.end(serialized);
+  } catch { /* the client is already gone; nothing left to notify */ }
 }
 
 export async function createTestRunnerService(config) {
@@ -460,6 +702,7 @@ export async function createTestRunnerService(config) {
   const activeRuns = new Map();
   let reservations = 0;
   const server = createServer(async (request, response) => {
+    response.on("error", () => {});
     if (!authorized(request.headers.authorization, token)) {
       respond(response, 401, { error: "auth_refused" });
       return;
@@ -489,6 +732,11 @@ export async function createTestRunnerService(config) {
     const controller = new AbortController();
     const running = executeApprovedCommand(config, command, portBlock, { signal: controller.signal });
     activeRuns.set(runId, { controller, running });
+    // A client that disconnects mid-run must not hold its slot and port block
+    // until the timeout: abort the run the moment the connection is gone,
+    // unless this handler already finished and closed it itself.
+    const onResponseClose = () => { if (!response.writableEnded) controller.abort(); };
+    response.once("close", onResponseClose);
     try {
       const result = await running;
       await appendAudit(config, {
@@ -509,6 +757,7 @@ export async function createTestRunnerService(config) {
     } catch {
       respond(response, 500, { error: "run_failed", runId });
     } finally {
+      response.removeListener("close", onResponseClose);
       activeRuns.delete(runId);
       ports.release(portBlock);
       reservations -= 1;
