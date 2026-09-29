@@ -6,6 +6,7 @@ import { WebAccessError, type VerifiedWebIdentity } from "./access-verifier";
 import { catalogProjectIdSchema } from "./project-wire";
 import { IdeaLabBotRunStoreV1 } from "../../idea-lab/v1/coordinator-store";
 import { IdeaLabCanonicalTaskLinkStoreV1 } from "../../idea-lab/v1/canonical-task-link-store";
+import { IdeaLabPromotionTaskLinkStoreV1 } from "../../idea-lab/v1/promotion-task-link-store";
 
 const joined = (tx: DatabaseSession): DatabaseClient => ({ query: tx.query.bind(tx), transaction: async work => work(tx),
   transactionWithPreCommitCheck: async (work, check) => { const result = await work(tx); await check(); return result; } });
@@ -52,6 +53,8 @@ export class WebIdeaService {
       const contributions = await store.listContributions(this.scope.tenantId, sessionId);
       const synthesis = await store.getSynthesis(this.scope.tenantId, sessionId);
       const decision = await store.getDecision(this.scope.tenantId, sessionId);
+      const promotionTask = decision?.decision === "create_project"
+        ? await new IdeaLabPromotionTaskLinkStoreV1(joined(tx), this.key).get(this.scope.tenantId, sessionId) : undefined;
       const canonicalLinks = await new IdeaLabCanonicalTaskLinkStoreV1(joined(tx), this.key).list(this.scope.tenantId, sessionId);
       const canonicalTasks = canonicalLinks.length ? (() => {
         const projectId = canonicalLinks[0].projectId;
@@ -94,7 +97,9 @@ export class WebIdeaService {
       })() : null;
       const canPrepareNextRound = this.startConfigured && nextCanonicalRound !== null
         && actor.can("idea_lab.panel_start", undefined, true);
-      return { session, contributions: presentationContributions, synthesis: synthesis ?? null, decision: decision ?? null, canDecide,
+      return { session, contributions: presentationContributions, synthesis: synthesis ?? null, decision: decision ?? null,
+        promotionTask: promotionTask ? { projectId: promotionTask.projectId, jobId: promotionTask.jobId,
+          requestId: promotionTask.requestId, startsWork: false as const } : null, canDecide,
         canSynthesize: this.synthesisConfigured && !synthesis && !decision && (run
           ? run.state === "completed" && contributions.length === session.maxMessages
           : !!canonicalTasks && canonicalTasks.taskCount === session.maxMessages && contributions.length === session.maxMessages
