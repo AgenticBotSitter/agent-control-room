@@ -13,10 +13,10 @@ Read it alongside:
   their priority terms.
 - [Local to multi-system execution plan](LOCAL_TO_MULTI_SYSTEM_EXECUTION_PLAN.md) —
   how one machine becomes several.
-- [Design: multi-agent pipelines (Phase 4)](https://github.com/AgenticBotSitter/agent-control-room/pull/363)
-  — the pipeline design, still in review.
-- [Work packages](../WORK_PACKAGES.md) and the repository
-  [roadmap](../ROADMAP.md) for how work is actually assigned and accepted.
+- [Design: multi-agent pipelines (Phase 4)](MULTI_AGENT_PIPELINES_DESIGN.md)
+  — the pipeline design. It is design only: no code, migration or live effect.
+- [Work packages](../WORK_PACKAGES.md) and [contributing](../CONTRIBUTING.md)
+  for how work is actually assigned and accepted.
 
 Everything here is aspirational. A phase is not done because code exists; it is
 done when the acceptance evidence in its own section exists.
@@ -43,7 +43,8 @@ for assignments, permissions, status, evidence and decisions.
 The public repository holds the generic product only. An operator's names,
 machines, connections and data live in their installation, never in the source
 tree. The name guard in `scripts/check-private-names.mjs` enforces the
-separation; see [contributing](../CONTRIBUTING.md).
+separation; see [contributing](../CONTRIBUTING.md) and the support
+[matrix](SUPPORT_MATRIX.md).
 
 ## 3. Rules that do not change between phases
 
@@ -173,15 +174,16 @@ recovery mid-pipeline. B — a multi-stage, multi-agent pipeline with a forced
 failure. C — the owner runs a real pipeline on a small real job.
 
 **Risk:** highest. New territory, so it is built in small reviewed steps. See the
-[pipeline design in review](https://github.com/AgenticBotSitter/agent-control-room/pull/363).
+[pipeline design](MULTI_AGENT_PIPELINES_DESIGN.md), which is design only.
 
 ### Phase 5 — more machines
 
 **Delivers:** remote worker enrollment, result delivery and reconnect, with the
-code that already exists activated and proven; worker revocation and refusal of
-mismatched versions; connectors for additional platforms; a connection-centre
-page; hardware and capability discovery; and moving the website and coordinator
-onto an always-on private host, after which a desktop machine becomes a worker.
+code that already exists activated and proven, on top of the capacity rules
+Phase 4 establishes; worker revocation and refusal of mismatched versions;
+connectors for additional platforms; a connection-centre page; hardware and
+capability discovery; and moving the website and coordinator onto an
+always-on private host, after which a desktop machine becomes a worker.
 
 **Accept:** A — identity, revocation and replay. B — a two-machine throwaway
 rehearsal. C — the owner sets up each machine once, then runs a pipeline across
@@ -208,9 +210,7 @@ review pass.
 
 **Delivers:** outbound-only tunnel ingress with an identity-aware access proxy
 and multi-factor authentication on a private hostname; remembered sessions on
-trusted devices; strict separation of browser and machine identities. A
-non-overlay route is offered so the product does not require any particular
-overlay network.
+trusted devices; strict separation of browser and machine identities.
 
 **Accept:** A — direct origin access is refused. B — a test tunnel. C — the
 owner reaches it from mobile data.
@@ -221,9 +221,10 @@ owner reaches it from mobile data.
 
 **Delivers:** a work queue with self-claiming by eligible agents; continuous
 queue-stocking of proposed work; a morning summary; **MCP exposure**, so agents
-can create and track Control Room tasks; supplemental automated code review; and
-**staged updates with drain, health check and rollback**, which unlocks rung
-**R5**.
+can create and track Control Room tasks; supplemental automated code review;
+migrating the existing repository-automation job into Control Room, so one
+scheduler stays authoritative; and **staged updates with drain, health check and
+rollback**, which unlocks rung **R5**.
 
 **Accept:** B — a simulated night of many tasks. C — a real night, with morning
 reviews becoming routine.
@@ -234,7 +235,8 @@ reviews becoming routine.
 
 **Delivers:** a Linux install from a public release; running as an unprivileged
 service; documented migration rules; license, NOTICE and an SBOM; a public work
-queue with atomic claims; the adapter SDK and a conformance kit; a public
+queue with atomic claims; the adapter SDK and a conformance kit; **the module
+system, so later domain features are project packs rather than forks**; a public
 information site; and the non-overlay access route.
 
 **Accept:** a clean-room operator completes the documented install and connects
@@ -305,6 +307,12 @@ reuse; and a public beta, only after sustained real use.
 - Prefer a proven, permissively licensed component with a small adapter over
   custom infrastructure. New infrastructure must name the requirement it serves,
   the alternatives considered, its license fit and its maintenance cost.
+- Support is recorded per tested OS, runtime and version combination in the
+  [support matrix](SUPPORT_MATRIX.md), never inferred from a package compiling.
+  A worker declines an unsupported task before starting it.
+- Build and deployment decisions stay with maintainers. No scheduled builds,
+  automatic per-push deployment, private runners or paid usage is added without
+  maintainer approval.
 - Tests support acceptance. File counts, elapsed effort and a long list of green
   checks do not establish that a phase is done.
 

@@ -25,7 +25,7 @@ readiness are tracked separately; this is not a production release. A platform l
 an assignment describes its requirements, not support for the entire application.
 
 See the [public build plan](PUBLIC_BUILD_PLAN.md), [setup](SETUP.md),
-[work packages](WORK_PACKAGES.md), and [roadmap](ROADMAP.md). The plan records reuse
+[work packages](WORK_PACKAGES.md), and [roadmap](docs/ROADMAP.md). The plan records reuse
 decisions and the current main/component-branch distinction. Reuse evidence should name
 the decision IDs, donor and revision, existing evidence, remaining fit test, and final
 attribution. Follow the handbook's [assignment requirements](CONTRIBUTOR_HANDBOOK.md#read-the-assignment-before-claiming)
