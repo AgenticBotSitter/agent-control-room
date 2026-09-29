@@ -56,6 +56,8 @@ import { encodeProjectEventCursorV1, projectEventSseResponseV1, type ProjectEven
 import { ProjectActivityServiceV1 } from "./project-activity-service";
 import { SessionWatchServiceV1 } from "./session-watch-service";
 import { sessionWatchIdSchema } from "./session-watch-wire";
+import { ImproveControlRoomDeskServiceV1 } from "../../improve-control-room/v1";
+import { createImproveControlRoomHttpHandlerV1 } from "./improve-control-room-http";
 
 export interface PrivateWebProcessOptions {
   origin: string; issuer: string; audience: string; tenantId: string; workspaceId: string;
@@ -323,6 +325,8 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
     options.workBatches.queueAdmissionAuthority, clock, options.workBatches.pipelineRepositories) : undefined;
   const pipelineAdvance = options.workBatches ? new PipelineAdvanceServiceV1(options.database.client,
     { tenantId: options.tenantId, workspaceId: options.workspaceId }, options.workBatches.integrityKey,{},clock) : undefined;
+  const improvementDesk = options.workBatches && pipelines ? new ImproveControlRoomDeskServiceV1(options.database.client,
+    { tenantId: options.tenantId, workspaceId: options.workspaceId }, options.workBatches.integrityKey, pipelines, clock) : undefined;
   const sessionWatch = new SessionWatchServiceV1(options.database.client,
     { tenantId: options.tenantId, workspaceId: options.workspaceId }, options.tasks?.harnessIntegrityKey, clock);
   // This is a task-planning bridge only. It is deliberately composed from the
@@ -836,6 +840,11 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
           if (pipelines && /^\/api\/v1\/projects\/[^/]+\/pipeline-(?:templates|runs)(?:\/|$)/.test(url.pathname))
             return createLinearPipelineHttpHandlerV1({ origin: site.origin, trust,
               gatewayAssertionProfile, service: pipelines, advance:pipelineAdvance, clock })(request);
+          if (improvementDesk && (url.pathname === "/api/v1/update-candidates"
+            || /^\/api\/v1\/update-candidates\/[^/]+\/decision$/.test(url.pathname)
+            || /^\/api\/v1\/projects\/[^/]+\/improvements$/.test(url.pathname)))
+            return createImproveControlRoomHttpHandlerV1({ origin: site.origin, trust,
+              gatewayAssertionProfile, service: improvementDesk, clock })(request);
           return await createProjectHttpHandler({ origin: site.origin, trust, service, gatewayAssertionProfile, clock })(request);
         }
         if (request.method !== "GET" && request.method !== "HEAD") throw new WebAccessError("invalid_request");
@@ -844,7 +853,7 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
         const filesPage = /^\/projects\/([^/]+)\/files$/.exec(url.pathname);
         const taskSummaryPage = /^\/projects\/([^/]+)\/(reviews|activity)$/.exec(url.pathname);
         const pipelinesPage = /^\/projects\/([^/]+)\/pipelines(?:\/([^/]+))?$/.exec(url.pathname);
-        const projectUtilityPage = /^\/projects\/([^/]+)\/(inbox|agents|automations)$/.exec(url.pathname);
+        const projectUtilityPage = /^\/projects\/([^/]+)\/(inbox|agents|automations|improvements)$/.exec(url.pathname);
         const ideaPage = /^\/ideas(?:\/([^/]+))?$/.exec(url.pathname);
         const detail = /^\/projects\/([^/]+)(?:\/(overview|settings))?$/.exec(url.pathname);
         if (ideaPage) {

@@ -130,6 +130,7 @@ test("local client shell exposes only reachable routes and reads only local work
   globalThis.fetch = path => {
     reads.push(path);
     if (path === "/api/v1/needs-me/tasks") return Promise.resolve(Response.json(attentionPage([])));
+    if (path === "/api/v1/product-configuration") return Promise.resolve(Response.json(profile("Control Room", false)));
     if (path !== "/api/v1/local-workers") throw new Error(`unsupported local fetch: ${path}`);
     return Promise.resolve(Response.json({ taskWorkersStarted: true,
       projectSections: ["overview", "inbox", "work", "agents", "reviews", "activity", "files"], workers: [
@@ -145,11 +146,11 @@ test("local client shell exposes only reachable routes and reads only local work
           React.createElement(WorkersWorkspace),
           React.createElement(ProjectNavigation, { projectId: "project:alpha", current: "overview" }))))));
     // WorkersWorkspace mounts the shared PrivateHeader, and the Mac-local
-    // host serves /api/v1/needs-me/tasks, so the nav badge is a legitimate
-    // second read here. What must stay bounded is that it is *only* that one
-    // extra read — no hosted-only route is contacted.
+    // host serves both the sanitized product configuration and
+    // /api/v1/needs-me/tasks, so those are legitimate reads here. What must
+    // stay bounded is that no hosted-only route is contacted.
     await flushBadgeRead();
-    assert.deepEqual(reads, ["/api/v1/local-workers", "/api/v1/needs-me/tasks"]);
+    assert.deepEqual(reads, ["/api/v1/local-workers", "/api/v1/product-configuration", "/api/v1/needs-me/tasks"]);
     const links = [...dom.window.document.querySelectorAll("a[href]")].map(link => link.getAttribute("href"));
     assert.ok(links.includes("/workers"));
     assert.ok(links.includes("/morning"));

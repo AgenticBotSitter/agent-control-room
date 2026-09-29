@@ -15,10 +15,10 @@ export async function verifyPrivateIdeaAdapter(db: DatabaseClient, scope: { tena
   if (rows.length !== 1 || rows[0].valid !== true) throw new Error("private_idea_adapter_unavailable");
 }
 
-// Generated from public migrations through 0190 (filename order, including assigned gaps),
+// Generated from public migrations through 0190 (filename order, including assigned gaps and 0160),
 // including generic external-content migrations 0025/0026, by the controlled
 // PGlite digest script. Catalog query below; not a mutable database marker.
-export const privateWebSchemaDigest = "80ba0d203ccf349c501d89dcbedbc9033ab6ab035ff23c3bc75a549e2fdac79c";
+export const privateWebSchemaDigest = "5973c13797a648067ca405288bf73465178091f19c4f6e5d9cb50daa82137683";
 export const privateWebReadTables = ["control_identities", "control_role_grants", "workspaces", "control_web_sessions",
   "tenants", "control_idempotency",
   "control_schedules", "control_schedule_occurrences",
@@ -41,7 +41,7 @@ export const privateWebReadTables = ["control_identities", "control_role_grants"
   "pipeline_templates", "pipeline_runs", "pipeline_stage_runs", "pipeline_ordered_stage_runs",
   "pipeline_unattended_transitions",
   "control_pipeline_build_publications", "control_codex_result_publications",
-  "control_action_inbox", "control_project_settings", "owner_web_push_subscriptions", "owner_web_push_deliveries", "fleet_enrollment_codes", "fleet_workers", "fleet_worker_credentials", "fleet_worker_presence", "fleet_work_offers", "fleet_enrollment_redemptions", "fleet_claims", "fleet_worker_events", "fleet_results", "fleet_result_files", "fleet_result_reviews"] as const;
+  "control_action_inbox", "control_project_settings", "owner_web_push_subscriptions", "owner_web_push_deliveries", "fleet_enrollment_codes", "fleet_workers", "fleet_worker_credentials", "fleet_worker_presence", "fleet_work_offers", "fleet_enrollment_redemptions", "fleet_claims", "fleet_worker_events", "fleet_results", "fleet_result_files", "fleet_result_reviews", "control_improvement_requests", "control_update_candidates", "control_update_candidate_decisions", "control_news_task_proposal_links"] as const;
 const inserts = new Set(["control_web_sessions", "adapter_registry", "projects", "control_manual_project_heads",
   "control_web_project_commands", "audit_events", "control_audit_chain_heads", "control_requests", "control_workflows",
   "control_jobs", "control_web_task_commands", "control_idea_canonical_task_sessions", "control_idea_canonical_task_links",
@@ -53,7 +53,10 @@ inserts.add("work_batch_queue_admissions"); inserts.add("work_batch_agent_queue_
 inserts.add("pipeline_templates"); inserts.add("pipeline_runs"); inserts.add("pipeline_stage_runs");
 inserts.add("control_job_dependencies");
 inserts.add("control_project_settings"); inserts.add("pipeline_unattended_transitions");
+inserts.add("control_improvement_requests"); inserts.add("control_update_candidate_decisions");
 inserts.add("owner_web_push_subscriptions"); inserts.add("owner_web_push_deliveries");
+// 0190: a task proposal may cite a retained news story (append-only provenance).
+inserts.add("control_news_task_proposal_links");
 
 /** Tables whose INSERT grant is column-scoped rather than table-wide. Every
  * listed column must carry INSERT and every unlisted column must not — a
@@ -94,6 +97,7 @@ const updates: Record<string, readonly string[]> = {
   tenants: ["coordinator_lock"],
   control_project_settings: ["eligible_worker_kinds", "max_concurrent_tasks", "default_worker_kind",
     "default_model", "default_effort", "version", "updated_by_identity_id", "updated_at"],
+  control_update_candidates: ["state", "version", "decided_at"],
   owner_web_push_deliveries: ["state", "status_code", "completed_at"],
 };
 const fail = () => { throw new Error("private_database_preflight_failed"); };
@@ -154,9 +158,26 @@ const coordinatorInserts = new Set(["control_web_sessions", "control_requests", 
 coordinatorReads.push("pipeline_templates", "pipeline_runs", "pipeline_stage_runs", "pipeline_ordered_stage_runs",
   "pipeline_unattended_transitions", "pipeline_advance_receipts",
   "control_agent_review_plans", "control_pipeline_build_publications");
+coordinatorReads.push("control_improvement_requests", "control_update_candidates");
+// Scheduling reads each project's worker and concurrency settings (0135).
+coordinatorReads.push("control_project_settings");
 coordinatorInserts.add("control_agent_review_plans");
 coordinatorInserts.add("control_pipeline_build_publications");
 coordinatorInserts.add("pipeline_advance_receipts");
+coordinatorInserts.add("control_update_candidates");
+// Supervisor (0177-0179 and the 0017 incident tables): reconciliation heads,
+// health, loop heads and provider waits; incidents are column-scoped writes.
+coordinatorReads.push("control_supervisor_task_heads", "control_supervisor_reconciliation_events",
+  "control_supervisor_agent_health", "control_supervisor_loop_heads", "control_supervisor_health_observations",
+  "control_provider_waits", "control_service_incident_heads", "control_service_incidents");
+for (const table of ["control_supervisor_task_heads", "control_supervisor_reconciliation_events",
+  "control_supervisor_agent_health", "control_supervisor_loop_heads", "control_supervisor_health_observations",
+  "control_provider_waits"]) coordinatorInserts.add(table);
+const coordinatorInsertColumns: Record<string, readonly string[]> = {
+  control_service_incident_heads: ["tenant_id", "correlation_key"],
+  control_service_incidents: ["id", "tenant_id", "correlation_key", "generation", "service_id", "severity",
+    "safe_reason_code", "safe_remedy_code", "state", "opened_at", "last_observed_at"],
+};
 const coordinatorDeletes = new Set(["control_assignment_lease_scopes"]);
 const coordinatorUpdates: Record<string, readonly string[]> = {
   ...Object.fromEntries(["control_requests", "control_workflows", "control_attempts", "control_leases"]
@@ -180,6 +201,12 @@ const coordinatorUpdates: Record<string, readonly string[]> = {
     "unattended_last_swept_at"],
   control_completion_gate_integrity: ["web_lock", "revision", "record_count", "state_digest", "state_auth_tag"],
   control_project_event_stream_heads: ["last_sequence", "last_event_digest", "head_auth_tag", "updated_at"],
+  control_supervisor_task_heads: ["lapse_count", "last_attempt_id", "state", "updated_at"],
+  control_supervisor_agent_health: ["node_id", "state", "safe_reason_code", "last_heartbeat_at", "observed_at"],
+  control_supervisor_loop_heads: ["version", "last_started_at", "last_completed_at", "state"],
+  control_provider_waits: ["state", "released_at"],
+  control_service_incident_heads: ["next_generation"],
+  control_service_incidents: ["severity", "safe_reason_code", "safe_remedy_code", "state", "last_observed_at", "resolved_at"],
 };
 const resultReads = ["workspaces", "control_identities", "control_role_grants", "projects",
   "control_jobs", "control_workflows", "control_requests", "control_task_execution_plans",
@@ -500,9 +527,9 @@ async function verifyDatabase(db: DatabaseClient, config: PrivatePostgresConfigu
         FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace JOIN pg_attribute a ON a.attrelid=c.oid
         WHERE n.nspname='public' AND c.relkind IN ('r','p','v','m','f') AND a.attnum>0 AND NOT a.attisdropped`)).rows;
       const reads: ReadonlySet<string> = new Set(allowedReads);
-      // Column-scoped INSERT grants (currently the web role's idempotency
-      // ledger): listed columns must carry INSERT, unlisted must not.
-      const scopedInserts = kind === "web" ? privateWebInsertColumns : {};
+      // Column-scoped INSERT grants (the web role's idempotency ledger, the
+      // coordinator's incident rows): listed columns must carry INSERT, unlisted must not.
+      const scopedInserts = kind === "web" ? privateWebInsertColumns : kind === "coordinator" ? coordinatorInsertColumns : {};
       const scopedReads = kind === "web" ? privateWebReadColumns : {};
       if (!columns.length || columns.some(c => c.extra
         || c.read !== (reads.has(c.table_name) || !!scopedReads[c.table_name]?.includes(c.column_name))

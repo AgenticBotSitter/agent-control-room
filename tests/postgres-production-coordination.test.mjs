@@ -47,7 +47,7 @@ const BIN = CANDIDATE_BINS.find((dir) => existsSync(join(dir, "initdb")) && exis
   ?? "/usr/lib/postgresql/17/bin";
 const PG_AVAILABLE = existsSync(join(BIN, "initdb")) && existsSync(join(BIN, "postgres"));
 const needsPg = PG_AVAILABLE ? undefined : { skip: "needs PostgreSQL 17 binaries (PG_BIN, /opt/homebrew/opt/postgresql@17/bin, or /usr/lib/postgresql/17/bin)" };
-const PORT = 65437;
+const PORT = Number(process.env.CONTROL_ROOM_PG_TEST_PORT_BASE ?? 65437);
 const exec = promisify(execFile);
 
 let run = "", socket = "", data = "";
