@@ -314,6 +314,7 @@ test("shared managed queue routes Codex once and completes only after its authen
     stage: f.assignment.stageQueuedNativeDelivery.bind(f.assignment),
     transmit: f.assignment.transmitQueuedNativeDelivery.bind(f.assignment),
     receipt: async () => { nativeReceiptCalls++; throw new Error("native receipt must not run"); },
+    renew: f.assignment.renewByHolder.bind(f.assignment),
     codexReceipt: f.assignment.receiveCodexDeliveryReceipt.bind(f.assignment),
     progress: async () => { throw new Error("Codex progress must not use native snapshots"); },
     recover: async () => { throw new Error("Codex must not use native recovery"); },
