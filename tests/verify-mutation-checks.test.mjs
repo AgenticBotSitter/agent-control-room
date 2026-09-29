@@ -518,7 +518,10 @@ test("deleting the SIGINT handler fails the mutated-run restoration test", async
       test: 'exec node -e "setTimeout(() => process.exit(0), 1000)"',
     });
     const mutant = join(root, "verify-mutation-checks-no-sigint.mjs");
-    writeFileSync(mutant, readFileSync(verifier, "utf8").replace('process.on("SIGINT", () => restoreOnSignal("SIGINT"));\n', ""));
+    writeFileSync(mutant, readFileSync(verifier, "utf8").replace(
+      /process\.on\("SIGINT",(?:\s|\/\*.*?\*\/)*\(\) => restoreOnSignal\("SIGINT"\)\);\n/u,
+      "",
+    ));
     git(root, "add", mutant);
     git(root, "commit", "-qm", "SIGINT-handler mutant");
     const result = await interruptDuringMutation(root, path, "SIGINT", mutant);
