@@ -73,4 +73,7 @@ workflow diff, the ten successful browser jobs, and the pre-guard failure.
 
 ## Final delivery
 
-Pending synchronization with `origin/main`, PR creation, and final head SHA.
+PR: [#422](https://github.com/AgenticBotSitter/agent-control-room/pull/422)
+
+Submitted source head: `190d6dd5a941fd4bba5fe9c8d0c5847f26e74ce0`, after merging
+`origin/main` at `021e8fd0`. Final PR CI is pending its new head.
