@@ -4,6 +4,7 @@ import { validateTaskQualityKeys } from "./task-quality-coordinator";
 import { timingSafeEqual } from "node:crypto";
 import { DatabaseOperatorFleetReadSourceV1, OperatorSurfaceReadServiceV1, OperatorSurfaceStoreV1 } from "../../operator-surfaces/v1";
 import { ServiceIncidentStore } from "../../services/v1/incident-store";
+import { deriveProjectEventIntegrityKeyV1, ProjectEventStoreV1 } from "../../project-events/v1";
 
 /** Trusted composition for two separately verified resources; not a deployment preflight bypass.
  * No pools are opened here. The separate task bootstrap verifies both roles before calling this factory.
@@ -55,7 +56,12 @@ export async function createPrivateTaskApplication(web: Omit<PrivateWebProcessOp
     return poolClose;
   } };
   let app: ReturnType<typeof createPrivateWebProcess>;
-  try { app = createPrivateWebProcess({ ...web, database, operatorSurface, planning: tasks.planning, assignment: tasks.assignment, approvals: tasks.approvals, submission: tasks.submission, revisions: tasks.revisions, queueAttention: tasks.queueAttention, ideaCreation: tasks.ideaCreation, ideaResultProjection: tasks.ideaResultProjection }); }
+  try { app = createPrivateWebProcess({ ...web, database, operatorSurface,
+    ...(web.projectEvents ? {} : web.tasks?.harnessIntegrityKey ? { projectEvents: new ProjectEventStoreV1(web.database.client,
+      deriveProjectEventIntegrityKeyV1(web.tasks.harnessIntegrityKey), () => new Date(web.clock?.() ?? Date.now()).toISOString()) } : {}),
+    planning: tasks.planning, assignment: tasks.assignment, approvals: tasks.approvals, submission: tasks.submission,
+    revisions: tasks.revisions, queueAttention: tasks.queueAttention, ideaCreation: tasks.ideaCreation,
+    ideaResultProjection: tasks.ideaResultProjection }); }
   catch {
     const results = await Promise.allSettled([tasks.close(), database.close()]);
     if (results.some(result => result.status === "rejected")) throw new Error("private_task_application_cleanup_uncertain");

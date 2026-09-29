@@ -5,7 +5,9 @@ function data(value:unknown):string{return JSON.stringify(value).replaceAll("\u2
 
 export function formatProjectEventSseV1(page:ProjectEventPageV1):string{
   const lines=["retry: 1000",""];
-  if(page.mode==="reset")lines.push("event: stream.reset",`data: ${data({code:"cursor_reset",pageDigest:page.pageDigest})}`,"");
+  // A blank id clears the browser's remembered Last-Event-ID. Without it, an
+  // empty reset snapshot would reconnect forever with the same rejected cursor.
+  if(page.mode==="reset")lines.push("id:","event: stream.reset",`data: ${data({code:"cursor_reset",pageDigest:page.pageDigest})}`,"");
   for(const event of page.events)lines.push(`id: ${encodeProjectEventCursorV1(event)}`,"event: project.event",`data: ${data(event)}`,"");
   lines.push("event: stream.head",`data: ${data({mode:page.mode,nextCursor:page.nextCursor,hasMore:page.hasMore,
     truncatedBefore:page.truncatedBefore,pageDigest:page.pageDigest})}`,"",": keepalive","");

@@ -7,6 +7,7 @@ import { createTaskReviewWorkspace, type TaskReviewWorkspace, type TaskReviewSes
 import { revisionErrorMessage, revisionRequestFromReview } from "../../src/web/v1/task-revision-browser-client";
 import { OwnerRevisionPanel } from "./task-owner-revision";
 import { ConfiguredTimestamp } from "./configured-timestamp";
+import { usePolledRead } from "./use-polled-read";
 
 const availability: Record<TaskReviewOptions["availability"], string> = {
   available: "Review this exact result", not_configured: "Owner review is not configured.",
@@ -64,23 +65,22 @@ function OwnerTaskReviewController({ projectId, jobId, artifactId, targetId, tar
   ReviewWorkspaceBinding & { session: TaskReviewSession; onSaved: () => void; runId?: string; revisionEligible: boolean }) {
   const { client } = session, { feedback, pending, receipt, error: saveError } = useSyncExternalStore(session.subscribe, session.getSnapshot, session.getSnapshot);
   const { revisionPending, revisionError } = session.getSnapshot();
-  const [options, setOptions] = useState<TaskReviewOptions>();
   const [error, setError] = useState<BrowserRequestError>(), [refresh, setRefresh] = useState(0);
-  useEffect(() => {
-    let live = true, busy = false;
-    const load = async () => {
-      if (busy) return; busy = true;
-      try {
-        const next = await client.options(projectId, jobId, { artifactId, targetId, targetDigest, contentHash });
-        if (live) { setOptions(next); if (!client.hasPending()) setError(undefined); }
-      } catch (reason) { if (live) { setOptions(undefined);
-        setError(reason instanceof BrowserRequestError ? reason : new BrowserRequestError("unavailable")); } }
-      finally { busy = false; }
-    };
-    void load(); const timer = setInterval(() => { if (!document.hidden) void load(); }, 30_000);
-    const focus = () => { void load(); }; window.addEventListener("focus", focus);
-    return () => { live = false; clearInterval(timer); window.removeEventListener("focus", focus); };
-  }, [client, projectId, jobId, artifactId, targetId, targetDigest, contentHash, refresh]);
+  // The shared polling hook owns the schedule: it pauses while the tab is
+  // hidden, refreshes on focus, never overlaps a read, and backs off when
+  // nothing changes or the read fails. The local `busy` flag this replaces
+  // guarded overlap but not the fixed-interval retry on failure.
+  const reviewRead = usePolledRead<TaskReviewOptions>({
+    key: `task-owner-review-${projectId}-${jobId}-${artifactId}-${targetId}-${refresh}`,
+    baseIntervalMs: 30_000,
+    dropValueOnError: true,
+    read: (signal, transport) => client.options(projectId, jobId,
+      { artifactId, targetId, targetDigest, contentHash }, signal, transport),
+    onAccept: () => { if (!client.hasPending()) setError(undefined); },
+    onFailure: (reason: unknown) => {
+      setError(reason instanceof BrowserRequestError ? reason : new BrowserRequestError("unavailable")); },
+  });
+  const options = reviewRead.value;
   const save = async (decision?: TaskReviewDraft["decision"], attested = false) => {
     setError(undefined);
     const acceptanceAttestation = decision === "accepted" && options?.acceptanceAttestation && attested

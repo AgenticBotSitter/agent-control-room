@@ -161,6 +161,7 @@ export async function managedNativeSessionFixture(context?: ManagedNativePrepare
       stage: (...args) => admin(() => f.coordinator.stageQueuedNativeDelivery(...args)),
       transmit: (...args) => admin(() => f.coordinator.transmitQueuedNativeDelivery(...args)),
       receipt: (session, raw, signal) => f.store.receiveDeliveryReceipt(canonicalSetupDb, session, raw, signal),
+      renew: (...args) => admin(() => queueCoordinator.renewByHolder(...args)),
       progress: receiver.receive.bind(receiver),
       recover: receiver.recover.bind(receiver),
       register: (...args) => { inputRegistrations++; return receiver.register(...args); },

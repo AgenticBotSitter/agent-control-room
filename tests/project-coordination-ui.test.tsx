@@ -495,10 +495,10 @@ test("policy pause, resume, and revoke are not offered before #220", () => {
 
 test("page content and versions come from one repeatable-read snapshot", async (t) => {
   const f = await seed(); t.after(() => f.dispose());
-  // Wrap the database handle: the read path must run authorization and the
-  // whole page composition in exactly one transaction whose first statement
-  // requests the repeatable-read snapshot — observable here instead of
-  // trusted from the implementation.
+  // Wrap the database handle: first use establishes the immutable session in
+  // a short READ COMMITTED transaction, then authorization and the whole page
+  // composition share a second transaction whose first statement requests the
+  // repeatable-read snapshot — observable here instead of trusted from source.
   const txFirstStatements: string[] = [];
   let guardedTxCount = 0;
   let snapshotIsolation: string | null = null;
@@ -535,10 +535,13 @@ test("page content and versions come from one repeatable-read snapshot", async (
     store: f.store,
   });
   const page = await service.read(f.identity, "project:alpha");
-  // One guarded transaction total: authorization locks and every page query
-  // share it, so no revocation or content commit can land in between.
-  assert.equal(guardedTxCount, 1);
-  assert.match(txFirstStatements[0] ?? "", /SET TRANSACTION ISOLATION LEVEL REPEATABLE READ/);
+  // The session upsert is kept out of REPEATABLE READ so concurrent first-use
+  // requests can resolve ON CONFLICT normally. The page transaction rechecks
+  // and locks that session before reading any page data.
+  assert.equal(guardedTxCount, 2);
+  assert.match(txFirstStatements[0] ?? "", /SELECT id FROM control_identities/);
+  assert.doesNotMatch(txFirstStatements[0] ?? "", /SET TRANSACTION ISOLATION LEVEL/);
+  assert.match(txFirstStatements[1] ?? "", /SET TRANSACTION ISOLATION LEVEL REPEATABLE READ/);
   assert.equal(snapshotIsolation, "repeatable read");
   // The snapshot still serves the real saved content and versions.
   assert.equal(page.attention.length, 2);

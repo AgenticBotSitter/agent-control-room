@@ -29,10 +29,12 @@ export function createTaskVerificationBrowserClient(transport: typeof fetch = fe
   const ids = (...values: string[]) => {
     if (values.some(value => !catalogProjectIdSchema.safeParse(value).success)) throw new BrowserRequestError("invalid_request");
   };
-  async function call(url: string, body?: string) {
+  async function call(url: string, body?: string, signal?: AbortSignal, transportOverride: typeof fetch = transport) {
+    signal?.throwIfAborted();
     try {
-      return await transport(url, { method: body === undefined ? "GET" : "POST", credentials: "same-origin", cache: "no-store",
-        redirect: "error", signal: AbortSignal.timeout(10_000), headers: { accept: "application/json", "x-requested-with": "XMLHttpRequest",
+      return await transportOverride(url, { method: body === undefined ? "GET" : "POST", credentials: "same-origin", cache: "no-store",
+        redirect: "error", signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(10_000)]) : AbortSignal.timeout(10_000),
+        headers: { accept: "application/json", "x-requested-with": "XMLHttpRequest",
           ...(body === undefined ? {} : { "content-type": "application/json" }) }, ...(body === undefined ? {} : { body }) });
     } catch { throw new BrowserRequestError(body === undefined ? "unavailable" : "uncertain"); }
   }
@@ -78,10 +80,11 @@ export function createTaskVerificationBrowserClient(transport: typeof fetch = fe
   }
   return {
     hasPending: () => !!pending,
-    async options(projectId: string, jobId: string, bound: TaskVerificationBinding) {
+    async options(projectId: string, jobId: string, bound: TaskVerificationBinding, signal?: AbortSignal,
+      readTransport?: typeof fetch) {
       ids(projectId, jobId, bound.artifactId, bound.targetId);
       try {
-        const response = await call(path(projectId, jobId, bound));
+        const response = await call(path(projectId, jobId, bound), undefined, signal, readTransport);
         if (!response.ok) throw new BrowserRequestError(failure(response.status));
         const options = taskVerificationOptionsSchema.parse(await json(response));
         if (options.projectId !== projectId || options.jobId !== jobId || options.artifactId !== bound.artifactId

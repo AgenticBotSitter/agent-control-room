@@ -202,6 +202,15 @@ const leaseRenewed = z.object({
   if (Date.parse(value.expiresAt) <= Date.parse(value.renewedAt)) context.addIssue({ code: "custom", path: ["expiresAt"], message: "renewed lease must expire after renewal" });
   if (value.authorityDigest !== value.authority.digest) context.addIssue({ code: "custom", path: ["authorityDigest"], message: "renewed authority digest must match the complete authority" });
 });
+const leaseRenewalRequest = z.object({
+  projectId: id, jobId: id, attemptId: id, leaseId: id,
+  leaseEpoch: z.number().int().nonnegative(), expectedLeaseVersion: z.number().int().nonnegative(),
+  renewalId: id, renewedAt: isoDate, expiresAt: isoDate,
+}).strict().superRefine((value, context) => {
+  if (Date.parse(value.expiresAt) <= Date.parse(value.renewedAt)) {
+    context.addIssue({ code: "custom", path: ["expiresAt"], message: "requested lease expiry must follow renewal" });
+  }
+});
 const artifactLineage = z.object({
   schema: z.literal("control-room.artifact-lineage/v1"),
   artifactId: id,
@@ -365,6 +374,7 @@ export const signedNodeFrameSchema = z.discriminatedUnion("type", [
   frame("job.offer", jobOffer),
   frame("job.offer.decision", offerDecision),
   frame("job.lease.grant", leaseGrantSchema),
+  frame("job.lease.renew.request", leaseRenewalRequest, { direction: "node_to_server", senderKind: "node" }),
   frame("job.lease.renewed", leaseRenewed),
   frame("job.event", jobEvent),
   frame("harness.native.snapshot", nativeTaskSnapshotBodySchema, { direction: "node_to_server", senderKind: "node" }),
@@ -481,5 +491,5 @@ export const signedNodeFrameSchema = z.discriminatedUnion("type", [
   }
 });
 
-export const nodeToServerTypes = new Set(["connection.hello", "connection.enrollment.deliver", "node.heartbeat", "node.fleet.signal", "job.offer.decision", "job.event", "harness.native.snapshot", "harness.native.dispatch.receipt", "harness.codex.dispatch.receipt", "harness.codex.current-admission.read", "harness.codex.result.return", "controller.worker.delivery.receipt", "controller.worker.delivery.receipt.recovery", "controller.worker.result.progress", "controller.worker.result.terminal", "job.cancel.ack", "node.reconciliation.report", "node.operation.ack", "protocol.ack", "protocol.error"]);
+export const nodeToServerTypes = new Set(["connection.hello", "connection.enrollment.deliver", "node.heartbeat", "node.fleet.signal", "job.offer.decision", "job.lease.renew.request", "job.event", "harness.native.snapshot", "harness.native.dispatch.receipt", "harness.codex.dispatch.receipt", "harness.codex.current-admission.read", "harness.codex.result.return", "controller.worker.delivery.receipt", "controller.worker.delivery.receipt.recovery", "controller.worker.result.progress", "controller.worker.result.terminal", "job.cancel.ack", "node.reconciliation.report", "node.operation.ack", "protocol.ack", "protocol.error"]);
 export const serverToNodeTypes = new Set(["connection.accepted", "job.offer", "job.lease.grant", "job.lease.renewed", "job.cancel", "harness.native.dispatch", "harness.codex.dispatch", "harness.codex.dispatch.activation", "harness.codex.current-admission.read.response", "harness.codex.result.return.receipt", "controller.worker.delivery", "node.reconciliation.request", "node.operation.request", "protocol.ack", "protocol.error"]);

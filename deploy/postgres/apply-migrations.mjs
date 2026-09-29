@@ -8,7 +8,7 @@
 // Each migration file applies inside one transaction together with its ledger row.
 // Refuses: altered digest of an applied file, missing file, reordered files,
 // partially recorded rows, and gaps in the pending suffix. Optional logins come only
-// from PG_MIGRATOR_PASSWORD / PG_APP_PASSWORD env (never argv); without them the
+// from protected CONTROL_ROOM_*_PASSWORD env values (never argv); without them the
 // operator receives the exact psql command for db/roles/production_provision.sql.
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
@@ -247,17 +247,21 @@ async function runBootstrap({ target, env, rootDir }) {
     const existing = (await client.query(
       `SELECT rolname FROM pg_roles WHERE rolname IN ('control_room_schema_owner', 'control_room_migrator',
          'control_room_application', 'control_room_app', 'control_room_schedule_admissions',
-         'control_room_scheduler')`)).rows;
+         'control_room_scheduler', 'control_room_work_intake', 'control_room_work_intake_agent')`)).rows;
     const existingSet = new Set(existing.map(row => row.rolname));
     const needsMigratorPassword = !existingSet.has("control_room_migrator");
     const needsAppPassword = !existingSet.has("control_room_app");
     const needsSchedulerPassword = !existingSet.has("control_room_scheduler");
+    const needsWorkIntakePassword = !existingSet.has("control_room_work_intake_agent");
     const migratorPassword = env.CONTROL_ROOM_MIGRATOR_PASSWORD;
     const appPassword = env.CONTROL_ROOM_APP_PASSWORD;
     const schedulerPassword = env.CONTROL_ROOM_SCHEDULER_PASSWORD;
+    const workIntakePassword = env.CONTROL_ROOM_WORK_INTAKE_PASSWORD;
     if (needsMigratorPassword && (!migratorPassword || migratorPassword.length < 24)) throw new Error("provision_refused_short_password");
     if (needsAppPassword && (!appPassword || appPassword.length < 24)) throw new Error("provision_refused_short_password");
     if (needsSchedulerPassword && schedulerPassword && schedulerPassword.length < 24) throw new Error("provision_refused_short_password");
+    if (needsWorkIntakePassword && (!workIntakePassword || workIntakePassword.length < 24))
+      throw new Error("provision_refused_short_password");
     await client.query(`DO $$
       BEGIN
         IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'control_room_schema_owner') THEN
@@ -278,8 +282,14 @@ async function runBootstrap({ target, env, rootDir }) {
         IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'control_room_github_broker') THEN
           CREATE ROLE control_room_github_broker NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
         END IF;
+        IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'control_room_work_intake') THEN
+          CREATE ROLE control_room_work_intake NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
+        END IF;
         IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'control_room_scheduler') THEN
           CREATE ROLE control_room_scheduler LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'control_room_work_intake_agent') THEN
+          CREATE ROLE control_room_work_intake_agent LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
         END IF;
       END;
     $$;`);
@@ -292,11 +302,15 @@ async function runBootstrap({ target, env, rootDir }) {
     if (needsSchedulerPassword && schedulerPassword) {
       await client.query(`ALTER ROLE control_room_scheduler PASSWORD ${client.escapeLiteral(schedulerPassword)}`);
     }
+    if (needsWorkIntakePassword) {
+      await client.query(`ALTER ROLE control_room_work_intake_agent PASSWORD ${client.escapeLiteral(workIntakePassword)}`);
+    }
     await client.query("GRANT control_room_schema_owner TO control_room_migrator");
     await client.query("GRANT control_room_application TO control_room_app");
     if (needsSchedulerPassword) {
       await client.query("GRANT control_room_schedule_admissions TO control_room_scheduler");
     }
+    await client.query("GRANT control_room_work_intake TO control_room_work_intake_agent");
     // control_room_schema_migrations owned by schema owner so the migrator
     // (IN ROLE schema_owner) can INSERT through its membership. CREATE TABLE
     // IF NOT EXISTS is idempotent across fresh installs and existing clusters.
