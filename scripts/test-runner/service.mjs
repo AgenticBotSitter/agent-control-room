@@ -24,6 +24,15 @@ const REQUEST_LIMIT_BYTES = 64 * 1024;
 const TOKEN_BYTES = 32;
 const STOP_GRACE_MS = 500;
 const SANDBOX_EXEC = "/usr/bin/sandbox-exec";
+// tests/support/attack-kit/real-postgres.ts always puts a disposable
+// cluster's Unix socket directly under /tmp as "ak<pid>-attack-kit-pg-…",
+// bypassing TMPDIR, because a socket path under macOS's much longer
+// /var/folders/... tmpdir would exceed the ~103-byte Unix-socket path limit.
+// Our own TMPDIR is already short, but this helper does it unconditionally,
+// so the sandbox must allow this one specific, narrowly-scoped /tmp pattern
+// in addition to the run's own worktree and temp directory.
+// Seatbelt matches the canonical path, and /tmp is a symlink to /private/tmp.
+const ATTACK_KIT_SHORT_SOCKET_PATTERN = "/private/tmp/ak[0-9]+-attack-kit-pg-";
 const CLUSTER_REGISTRY_NAME = "attack-kit-clusters.json";
 
 const ENV_PREFIX = /^PG_BIN="\$\{PG_BIN:-[^"$`\\\n]*\}"\s+/u;
@@ -566,11 +575,13 @@ async function buildSeatbeltProfile(config, { worktree, tempDirectory, ports }) 
     "(version 1)",
     "(allow default)",
     "(deny file-write*)",
-    `(allow file-write* (subpath "${worktreeReal}") (subpath "${tempReal}") (literal "/dev/null") (literal "/dev/tty") (regex #"^/dev/fd/"))`,
+    `(allow file-write* (subpath "${worktreeReal}") (subpath "${tempReal}") (literal "/dev/null") (literal "/dev/tty") (regex #"^/dev/fd/")`
+      + ` (regex #"^${ATTACK_KIT_SHORT_SOCKET_PATTERN}"))`,
     ...[...denyReadPrefixes].map(prefix => `(deny file-read* (subpath "${prefix}"))`),
     "(deny network-outbound (remote ip))",
     "(deny network-bind)",
     `(allow network-bind (local unix-socket (subpath "${tempReal}")))`,
+    `(allow network-bind (local unix-socket (regex #"^${ATTACK_KIT_SHORT_SOCKET_PATTERN}")))`,
   ];
   for (let port = ports.base; port <= ports.end; port += 1) {
     lines.push(`(allow network-outbound (remote ip "localhost:${port}"))`);
