@@ -207,7 +207,7 @@ test("a Hermes 0.21 worker template creates a pinned text-review plan, not an ol
   const localPolicy = { assertAdmitted() { throw new Error("stale_policy_must_not_be_used"); } };
 
   let launches = 0;
-  const execution = { preparation: dispatcher, runs: new HarnessRunStoreV1(f.db, new Uint8Array(32).fill(25)),
+  const execution = { preparation: dispatcher, runs: new HarnessRunStoreV1(f.db, f.harnessKey),
     delivery: { db: f.db, integrityKey: new Uint8Array(32).fill(24),
     binding: localBinding, policy: localPolicy, terminalResultStorage: f.storage }, clock: () => deliveryNow };
   const results = { db: f.db, integrityKey: f.resultKey, reviewKey: f.reviewKey, storage: f.storage,
@@ -297,7 +297,7 @@ test("a Hermes 0.21 worker template creates a pinned text-review plan, not an ol
   const restartedExecutor = createHermes021LocalSubprocessQueueExecutorV1({ tenantId: binding.tenantId,
     execution: { ...execution,
       preparation: new Hermes021MacosDispatchPreparationV1(f.db, planner, localBinding, () => deliveryNow),
-      runs: new HarnessRunStoreV1(f.db, new Uint8Array(32).fill(25)) },
+      runs: new HarnessRunStoreV1(f.db, f.harnessKey) },
     results, assertAuthority: delivery => assert.equal(delivery.authorityDigest, saved.job.authority.digest),
     host: { async execute() { launches++; throw new Error("restart must never invoke Hermes"); } },
   });
