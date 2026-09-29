@@ -90,3 +90,42 @@ for (const projectOrigin of ['ordinary', 'idea_lab']) test(`${projectOrigin} nav
     }
   }
 });
+
+test('project Settings renders saved and empty values, and keeps failed reads unavailable without commands', async () => {
+  const dom = new JSDOM('<div id="root"></div>', { pretendToBeVisual: true });
+  const saved = Object.fromEntries(['window', 'document', 'IS_REACT_ACT_ENVIRONMENT', 'fetch']
+    .map(key => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
+  Object.assign(globalThis, { window: dom.window, document: dom.window.document, IS_REACT_ACT_ENVIRONMENT: true });
+  const requests = [];
+  globalThis.fetch = (url, options) => new Promise(resolve => requests.push({ url, options, resolve }));
+  const root = createRoot(document.getElementById('root'));
+  const project = (id, summary) => ({ projectId: id, title: 'Saved project settings', summary, lifecycle: 'active',
+    version: 4, origin: 'ordinary', lifecycleEditable: false,
+    createdAt: '2026-09-09T12:00:00.000Z', updatedAt: '2026-09-09T13:00:00.000Z' });
+  try {
+    await act(async () => root.render(React.createElement(PrivateProjectWorkspace,
+      { key: 'real', projectId: 'project:real', section: 'settings' })));
+    await act(async () => requests[0].resolve(Response.json({ project: project('project:real', 'Real saved purpose') })));
+    assert.match(document.body.textContent, /Project status/); assert.match(document.body.textContent, /Real saved purpose/);
+    assert.match(document.body.textContent, /Saved revision 4/); assert.match(document.body.textContent, /viewing this project, not changing its status/);
+    assert.equal(requests[0].options.method, 'GET'); assert.equal(requests.some(item => item.options.method !== 'GET'), false);
+
+    await act(async () => root.render(React.createElement(PrivateProjectWorkspace,
+      { key: 'empty', projectId: 'project:empty', section: 'settings' })));
+    await act(async () => requests[1].resolve(Response.json({ project: project('project:empty', '') })));
+    assert.match(document.body.textContent, /No summary added/);
+
+    await act(async () => root.render(React.createElement(PrivateProjectWorkspace,
+      { key: 'unavailable', projectId: 'project:unavailable', section: 'settings' })));
+    await act(async () => requests[2].resolve(new Response('', { status: 503 })));
+    assert.match(document.body.textContent, /saved database or service is unavailable/i);
+    assert.match(document.body.textContent, /no sample data was substituted/i);
+    assert.doesNotMatch(document.body.textContent, /Project status|No summary added|Real saved purpose/);
+    assert.equal(requests.every(item => item.options.method === 'GET'), true, 'Settings reads must not emit commands');
+  } finally {
+    await act(async () => root.unmount()); dom.window.close();
+    for (const [key, descriptor] of Object.entries(saved)) {
+      if (descriptor) Object.defineProperty(globalThis, key, descriptor); else delete globalThis[key];
+    }
+  }
+});
