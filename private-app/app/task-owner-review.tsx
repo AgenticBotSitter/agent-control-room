@@ -15,11 +15,17 @@ const availability: Record<TaskReviewOptions["availability"], string> = {
   already_reviewed: "Your quality decision is already recorded for this revision.", target_closed: "This revision is closed for new owner decisions.",
   independence_required: "This acceptance profile requires a different independent reviewer.",
 };
-export function OwnerReviewPanel({ options, feedback, pending, held, onFeedback, onRecord }: {
-  options: TaskReviewOptions; feedback: string; pending: boolean; held: boolean;
-  onFeedback: (value: string) => void; onRecord: (decision: TaskReviewDraft["decision"], attested?: boolean) => void;
+/** The panel is presentation only. The owner's read-and-correct gesture is
+ * owned by the result-bound review session (see `task-review-workspace.ts`),
+ * which keys it on the exact review identity, so two results can never share
+ * one tick. The panel receives the current value and reports the owner's
+ * intent; it does not decide what a tick means. */
+export function OwnerReviewPanel({ options, feedback, attested, pending, held, onFeedback, onAttest, onRecord }: {
+  options: TaskReviewOptions; feedback: string; attested: boolean; pending: boolean; held: boolean;
+  onFeedback: (value: string) => void;
+  onAttest: (value: boolean) => void;
+  onRecord: (decision: TaskReviewDraft["decision"], attested?: boolean) => void;
 }) {
-  const [attested, setAttested] = useState(false);
   return <section className="private-owner-review" aria-label="Owner quality decision"><h4>{availability[options.availability]}</h4>
     {options.ownReview && <div><p>Saved {options.ownReview.decision === "accepted" ? "quality acceptance" : "request for changes"}
       {" · "}<ConfiguredTimestamp value={options.ownReview.recordedAt} /></p>
@@ -31,7 +37,7 @@ export function OwnerReviewPanel({ options, feedback, pending, held, onFeedback,
         onChange={event => onFeedback(event.target.value)} /></label>
       <p className="private-note">Use this field when requesting changes. No passwords or secrets. Maximum 4,096 UTF-8 bytes.</p>
       {options.acceptanceAttestation && <label><input type="checkbox" checked={attested} disabled={pending || held}
-        onChange={event => setAttested(event.target.checked)} /> I read it and it’s correct</label>}
+        onChange={event => onAttest(event.target.checked)} /> I read it and it’s correct</label>}
       {options.acceptanceAttestation && <p className="private-note">{options.acceptanceAttestation.instructions}</p>}
       <div className="private-actions"><button type="button" disabled={pending || held || !!options.acceptanceAttestation && !attested}
         onClick={() => onRecord("accepted", attested)}>Accept</button>
@@ -89,10 +95,18 @@ function OwnerTaskReviewController({ projectId, jobId, artifactId, targetId, tar
     if (!options || !retry && (!revisionRequest || !revisionEligible || options.revisionPlanning !== "configured")) return;
     if (await session.prepareRevision(retry ? undefined : revisionRequest)) { setRefresh(value => value + 1); onSaved(); }
   };
+  // The identity the gesture on screen was given for. If the options poll brings
+  // back a different attestation for this exact result — a different scenario or
+  // a changed instructions digest — the owner's answer was about the old one, so
+  // the panel reads false for the new identity rather than inheriting the tick.
+  const attestation = options?.acceptanceAttestation;
+  const attested = attestation ? session.attested(attestation) : false;
   return <>
     {!options && !error && <p role="status">Loading owner review…</p>}
-    {options && <OwnerReviewPanel options={options} feedback={feedback} pending={pending} held={client.hasPending() || !!receipt}
-      onFeedback={session.setFeedback} onRecord={(decision, attested) => { void save(decision, attested); }} />}
+    {options && <OwnerReviewPanel options={options} feedback={feedback} attested={attested} pending={pending}
+      held={client.hasPending() || !!receipt} onFeedback={session.setFeedback}
+      onAttest={value => { if (attestation) session.setAttested(attestation, value); }}
+      onRecord={(decision, checked) => { void save(decision, checked); }} />}
     {pending && <p role="status">Saving your quality decision…</p>}
     {options && receipt && <p role="status">Saved: {receipt.decision === "accepted" ? "quality acceptance" : "changes requested"}. No new work has been started.</p>}
     {error && <p role="alert">{reviewErrorMessage[error.code]}</p>}

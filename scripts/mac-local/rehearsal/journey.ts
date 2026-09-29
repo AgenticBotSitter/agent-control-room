@@ -83,7 +83,7 @@ printf '%s\\n' '{"type":"system","subtype":"init","session_id":"'"$session_id"'"
 printf '%s\\n' '{"type":"rate_limit_event","session_id":"'"$session_id"'","rate_limit_info":{"status":"allowed"}}'
 printf '%s\\n' '{"type":"system","subtype":"thinking_tokens","session_id":"'"$session_id"'","thinking_tokens":2}'
 printf '%s\\n' '{"type":"assistant","session_id":"'"$session_id"'","message":{"role":"assistant","content":[{"type":"text","text":"Fake Claude Code pinned executable result '"$session_id"'."}]}}'
-printf '%s\\n' '{"type":"result","subtype":"success","is_error":false,"session_id":"'"$session_id"'","result":"Fake Claude Code pinned executable result '"$session_id"'.","terminal_reason":"completed","total_cost_usd":0,"usage":{}}'
+printf '%s\\n' '{"type":"result","subtype":"success","is_error":false,"session_id":"'"$session_id"'","result":"Fake Claude Code pinned executable result '"$session_id"'.","terminal_reason":"completed","total_cost_usd":0,"usage":{"input_tokens":3,"output_tokens":5}}'
 exit 0
 `;
 }
@@ -440,11 +440,35 @@ async function main() {
         ? { model: "model-rehearsal", effort: "default", profile: "build", provider: "provider-rehearsal" }
         : { model: agent.worker === "claude-code" ? "sonnet-rehearsal" : "gpt-rehearsal", effort: "high" }
       : { model: "default", effort: "default" }, `${agent.kind}: result must record selected or default model evidence`);
+
+    // Prove the owner price table -- written by `mac:rehearsal up` into this
+    // protected root's `usage-prices.json` -- reached this real, separately
+    // started task host process through the full production composition
+    // (Control Room #412 review finding 3: the provider's own load-and-carry
+    // hop, `mac-local-default-task-provider.ts`, was never exercised end to
+    // end). Every fake harness reports 3 input / 5 output tokens; the price
+    // table prices every model this journey can select at the same rate, so
+    // the expected cost is fixed regardless of mode: 3*1000 + 5*2000 = 13000.
+    const taskDetail = await requireOk(await fetch(new URL(`/api/v1/projects/${idOf(projectId)}/tasks/${idOf(jobId)}`, origin),
+      { headers: { cookie } }), 200, `${agent.kind} task detail for price table wiring`) as { priceTable: { state: string };
+        attempts: { runs: { cost: { kind: string; nanoUsd?: string } }[] }[] };
+    assert.equal(taskDetail.priceTable.state, "recorded",
+      `${agent.kind}: the task detail page must show the rehearsal owner price table as recorded`);
+    const runCost = taskDetail.attempts[0]?.runs[0]?.cost;
+    assert.equal(runCost?.kind, "known",
+      `${agent.kind}: a run priced by the rehearsal table must show a computed cost, not an unknown reason`);
+    assert.equal(runCost?.nanoUsd, "13000", `${agent.kind}: the computed cost must match the rehearsal table's prices exactly`);
+
     assert.deepEqual(target.matchingArtifactIds, [artifact.artifactId], `${agent.kind}: the pending target must bind the one saved artifact`);
     assert.equal(target.contentHash, artifact.contentHash);
     assert.equal(target.reviews.length, 0);
     const reviewPath = `/api/v1/projects/${idOf(projectId)}/tasks/${idOf(jobId)}/results/${idOf(artifact.artifactId)}/reviews/${idOf(target.targetId)}`;
-    const options = await requireOk(await fetch(new URL(reviewPath, origin), { headers: { cookie } }), 200,
+    const optionsResponse = await fetch(new URL(reviewPath, origin), { headers: { cookie } });
+    const expectedAuthentication = { actorId: optionsResponse.headers.get("x-control-room-authenticated-actor"),
+      sessionEpoch: optionsResponse.headers.get("x-control-room-session-epoch") };
+    assert.ok(expectedAuthentication.actorId, `${agent.kind}: review options must bind the authenticated actor`);
+    assert.ok(expectedAuthentication.sessionEpoch, `${agent.kind}: review options must bind the session epoch`);
+    const options = await requireOk(optionsResponse, 200,
       `${agent.kind} review options`) as { canReview: boolean; availability: string; targetDigest: string;
         contentHash: string; ownReview: null | { decision: string; reviewId: string };
         acceptanceAttestation?: null | { scenarioId: string; instructionsDigest: string } };
@@ -464,7 +488,7 @@ async function main() {
     const reviewKey = `journey-${agent.kind}-owner-review-0001`;
     const writeReview = () => fetch(new URL(reviewPath, origin), { method: "POST",
       headers: { origin, cookie, "content-type": "application/json", "idempotency-key": reviewKey },
-      body: JSON.stringify(draft) });
+      body: JSON.stringify({ review: draft, expectedAuthentication }) });
     const recorded = await requireOk(await writeReview(), 201, `${agent.kind} owner review`) as
       { receipt: { reviewId: string; findingId: string | null; decision: string }; replayed: boolean };
     assert.equal(recorded.replayed, false);

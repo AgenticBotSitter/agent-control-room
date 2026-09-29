@@ -1,17 +1,19 @@
-import { BrowserRequestError, type BrowserFailureCode } from "./browser-client";
+import { BrowserRequestError, observeBrowserAuthentication, type BrowserAuthenticationObserver,
+  type BrowserFailureCode } from "./browser-client";
 import { catalogProjectIdSchema } from "./project-wire";
-import { taskReviewDraftSchema, taskReviewCommandSchema, taskReviewOptionsSchema,
-  type TaskReviewDraft, type TaskReviewReceipt } from "./task-review-wire";
+import { taskReviewAuthenticationExpectationSchema, taskReviewDraftSchema, taskReviewCommandSchema, taskReviewOptionsSchema,
+  taskReviewRequestSchema, type TaskReviewAuthenticationExpectation, type TaskReviewDraft, type TaskReviewReceipt } from "./task-review-wire";
 
 export const reviewErrorMessage: Record<BrowserFailureCode, string> = {
   authentication_required: "Sign in again to read or record this review.", access_denied: "Your current access does not permit this review.",
   invalid_request: "Check your review and changes requested. Do not include credentials or other secrets.",
-  conflict: "This result or review changed, or your decision is already recorded. Refresh its saved review.",
+  conflict: "This result, review, or signed-in session changed. Refresh it and re-confirm any owner attestation.",
   not_found: "This result or review is not available.", unavailable: "Review information is unavailable. No decision has been invented.",
   uncertain: "This review may have saved. Check this exact save before making another decision.",
 };
 type Binding = Pick<TaskReviewDraft, "artifactId" | "targetId" | "targetDigest" | "contentHash">;
-export function createTaskReviewBrowserClient(transport: typeof fetch = fetch, makeKey: () => string = () => crypto.randomUUID()) {
+export function createTaskReviewBrowserClient(transport: typeof fetch = fetch, makeKey: () => string = () => crypto.randomUUID(),
+  observeAuthentication?: BrowserAuthenticationObserver) {
   let pending: { projectId: string; jobId: string; draft: TaskReviewDraft; body: string; key: string; uncertain: boolean } | undefined, busy = false;
   const path = (projectId: string, jobId: string, bound: Binding) => `/api/v1/projects/${encodeURIComponent(projectId)}/tasks/${encodeURIComponent(jobId)}/results/${encodeURIComponent(bound.artifactId)}/reviews/${encodeURIComponent(bound.targetId)}`;
   const ids = (...values: string[]) => { if (values.some(value => !catalogProjectIdSchema.safeParse(value).success)) throw new BrowserRequestError("invalid_request"); };
@@ -20,10 +22,13 @@ export function createTaskReviewBrowserClient(transport: typeof fetch = fetch, m
   async function call(url: string, command?: { body: string; key: string }, signal?: AbortSignal,
     transportOverride: typeof fetch = transport) {
     signal?.throwIfAborted();
-    try { return await transportOverride(url, { method: command ? "POST" : "GET", credentials: "same-origin", cache: "no-store", redirect: "error",
-      signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(10_000)]) : AbortSignal.timeout(10_000),
-      headers: { accept: "application/json", "x-requested-with": "XMLHttpRequest",
-        ...(command ? { "content-type": "application/json", "idempotency-key": command.key } : {}) }, ...(command ? { body: command.body } : {}) }); }
+    try {
+      const response = await transportOverride(url, { method: command ? "POST" : "GET", credentials: "same-origin", cache: "no-store", redirect: "error",
+        signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(10_000)]) : AbortSignal.timeout(10_000),
+        headers: { accept: "application/json", "x-requested-with": "XMLHttpRequest",
+          ...(command ? { "content-type": "application/json", "idempotency-key": command.key } : {}) }, ...(command ? { body: command.body } : {}) });
+      observeBrowserAuthentication(response, observeAuthentication); return response;
+    }
     catch { throw new BrowserRequestError(command ? "uncertain" : "unavailable"); }
   }
   async function json(response: Response) {
@@ -78,10 +83,12 @@ export function createTaskReviewBrowserClient(transport: typeof fetch = fetch, m
         return options;
       } catch (error) { throw error instanceof BrowserRequestError ? error : new BrowserRequestError("unavailable"); }
     },
-    async record(projectId: string, jobId: string, input: unknown) {
+    async record(projectId: string, jobId: string, input: unknown, expectedAuthentication: TaskReviewAuthenticationExpectation) {
       ids(projectId, jobId); const parsed = taskReviewDraftSchema.safeParse(input);
-      if (!parsed.success) throw new BrowserRequestError("invalid_request");
-      const body = JSON.stringify(parsed.data);
+      const expected = taskReviewAuthenticationExpectationSchema.safeParse(expectedAuthentication);
+      if (!parsed.success || !expected.success) throw new BrowserRequestError("invalid_request");
+      const request = taskReviewRequestSchema.parse({ review: parsed.data, expectedAuthentication: expected.data });
+      const body = JSON.stringify(request);
       if (pending && (pending.projectId !== projectId || pending.jobId !== jobId || pending.body !== body)) throw new BrowserRequestError("uncertain");
       pending ??= { projectId, jobId, draft: parsed.data, body, key: makeKey(), uncertain: false };
       return commit();

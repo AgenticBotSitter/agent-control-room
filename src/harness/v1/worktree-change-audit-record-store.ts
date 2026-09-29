@@ -4,7 +4,7 @@ import type { DatabaseSession } from "../../persistence/database";
 import { assertNoSecretMaterial, hmacSha256Tag, sha256Digest } from "../../security";
 import { verifyDurableResultReceiptV1 } from "../../artifacts/v1/durable-result-receipt";
 import { createWorktreeChangeAuditRecordV1, verifyWorktreeChangeAuditRecordV1,
-  summarizeWorktreeChangeAuditRecordV1, type WorktreeChangeAuditRecordV1,
+  summarizeWorktreeChangeAuditRecordV1, detailWorktreeChangeAuditRecordV1, type WorktreeChangeAuditRecordV1,
   type WorktreeChangeAuditSummaryV1 } from "./worktree-change-audit-record";
 import { readManagedWorktreeChangeAuditPlanV1 } from "./worktree-change-audit-plan-store";
 
@@ -130,6 +130,22 @@ export async function readResultBoundWorktreeChangeAuditSummaryV1(tx: DatabaseSe
   const record = verifyStored(integrityKey, row);
   if (!sameIdentity(scope, record.identity)) fail();
   return summarizeWorktreeChangeAuditRecordV1(record);
+}
+
+/** Exact-lineage full evidence read for the separately authorized owner-review
+ * endpoint. The returned patch is already bounded by the evidence contract. */
+export async function readResultBoundWorktreeChangeAuditDetailV1(tx: DatabaseSession, integrityKey: Uint8Array,
+  scopeValue: unknown) {
+  if (!(integrityKey instanceof Uint8Array) || integrityKey.length !== 32) fail();
+  const scope = scopeSchema.parse(scopeValue);
+  const row = (await tx.query<Row>(`SELECT tenant_id,project_id,job_id,attempt_id,run_id,artifact_id,record,auth_tag
+    FROM control_worktree_change_audit_records
+    WHERE tenant_id=$1 AND project_id=$2 AND job_id=$3 AND attempt_id=$4 AND run_id=$5 AND artifact_id=$6`,
+  [scope.tenantId, scope.projectId, scope.jobId, scope.attemptId, scope.runId, scope.artifactId])).rows[0];
+  if (!row) return undefined;
+  const record = verifyStored(integrityKey, row);
+  if (!sameIdentity(scope, record.identity)) fail();
+  return detailWorktreeChangeAuditRecordV1(record);
 }
 
 /** Fixed-query aggregate reader for a bounded result page. */

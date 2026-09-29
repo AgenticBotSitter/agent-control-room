@@ -1,4 +1,5 @@
-import { BrowserRequestError, type BrowserFailureCode } from "./browser-client";
+import { BrowserRequestError, observeBrowserAuthentication, type BrowserAuthenticationObserver,
+  type BrowserFailureCode } from "./browser-client";
 import type { NewsWorkOrderProposalV1 } from "../../project-adapters/news/v1/types";
 import { newsResearchTaskDraft } from "./news-research-draft";
 import { readBrowserJson as json } from "./browser-json";
@@ -17,7 +18,8 @@ export const taskErrorMessage: Record<BrowserFailureCode, string> = {
   uncertain: "This save may have completed. Check this exact save again, or look in saved tasks before creating another.",
 };
 
-export function createTaskBrowserClient(transport: typeof fetch = fetch, makeKey: () => string = () => crypto.randomUUID()) {
+export function createTaskBrowserClient(transport: typeof fetch = fetch, makeKey: () => string = () => crypto.randomUUID(),
+  observeAuthentication?: BrowserAuthenticationObserver) {
   let pending: { projectId: string; body: string; key: string; uncertain: boolean; source?: "news" } | undefined, busy = false;
   const checkId = (id: string) => { if (!catalogProjectIdSchema.safeParse(id).success) throw new BrowserRequestError("invalid_request"); };
   const path = (id: string) => `/api/v1/projects/${encodeURIComponent(id)}/tasks`;
@@ -27,10 +29,11 @@ export function createTaskBrowserClient(transport: typeof fetch = fetch, makeKey
     transportOverride: typeof fetch = transport) {
     try {
       signal?.throwIfAborted();
-      return await transportOverride(url, { method: command ? "POST" : "GET", credentials: "same-origin", redirect: "error", cache: "no-store",
+      const response = await transportOverride(url, { method: command ? "POST" : "GET", credentials: "same-origin", redirect: "error", cache: "no-store",
         signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(10_000)]) : AbortSignal.timeout(10_000), headers: { accept: "application/json", "x-requested-with": "XMLHttpRequest",
           ...(command ? { "content-type": "application/json", "idempotency-key": command.key } : {}) },
         ...(command ? { body: command.body } : {}) });
+      observeBrowserAuthentication(response, observeAuthentication); return response;
     } catch { throw new BrowserRequestError(command ? "uncertain" : "unavailable"); }
   }
   async function read(url: string, signal?: AbortSignal, readTransport?: typeof fetch) {

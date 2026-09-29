@@ -61,8 +61,12 @@ test("owner acceptance presents the configured read-and-correct attestation besi
     acceptanceAttestation: { scenarioId: MAC_LOCAL_HUMAN_VERIFICATION_SCENARIO_V1,
       label: "Owner human verification", instructions: "Read the protected text result and confirm it satisfies the task.",
       instructionsDigest }, grantsExecutionAuthority: false };
-  const markup = renderToStaticMarkup(<OwnerReviewPanel options={reviewOptions} feedback="" pending={false} held={false}
-    onFeedback={() => {}} onRecord={() => {}} />);
+  // The panel is presentation only: it renders the gesture the result-bound
+  // session hands it. What the gesture MEANS — that it belongs to exactly this
+  // result and never to another one — is proven in tests/review-memory.test.tsx
+  // against the real workspace rather than a prop supplied here.
+  const markup = renderToStaticMarkup(<OwnerReviewPanel options={reviewOptions} feedback="" attested={false}
+    pending={false} held={false} onFeedback={() => {}} onAttest={() => {}} onRecord={() => {}} />);
   assert.match(markup, /I read it and it’s correct/);
   assert.match(markup, />Accept</);
   assert.match(markup, /Request changes/);
@@ -81,6 +85,13 @@ test("a delayed revised-target read binds the newest revision and enables Accept
       requestedTargets.push(requested.targetId); return delayedOptions;
     }, async record() { throw new Error("record_not_expected"); }, async retrySave() { throw new Error("retry_not_expected"); } };
   const workspace = createTaskReviewWorkspace(() => client as never);
+  // Attestation is scoped to an authenticated session (see
+  // tests/review-memory.test.tsx and src/web/v1/task-review-workspace.ts).
+  // In production this binding arrives from the task client's own
+  // authenticated response before the owner ever sees the review panel; this
+  // test renders the panel directly, so it must establish the same binding
+  // itself rather than exercise an owner who was never signed in.
+  workspace.bindAuthenticatedSession({ actorId: sha256Digest("actor:one"), sessionEpoch: sha256Digest("session:one") });
   const artifact = { artifactId: "artifact:revised", attemptId: "attempt:one", runId: "run:one",
     contentHash: binding.contentHash, sizeBytes: 12, receivedAt: at, byteCheck: "matched_recorded_claim" as const,
     qualityAccepted: false as const };
