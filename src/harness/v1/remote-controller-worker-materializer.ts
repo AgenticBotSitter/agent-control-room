@@ -16,6 +16,7 @@ import { CONTROLLER_WORKER_REMOTE_ADAPTER_V1, CONTROLLER_WORKER_REMOTE_CAPABILIT
 import { readCurrentRemoteWorkerEnrollmentV1 } from "./remote-worker-enrollment-store";
 import { createAuthenticatedRemoteNodeSessionDeliveryBridgeV1, type AuthenticatedRemoteNodeSessionV1,
   type RemoteNodeDeliveryTransmissionV1 } from "./remote-session-delivery-bridge";
+import { readOwnershipLeaseWriteScopesV1 } from "./ownership-lease-write-scopes";
 
 const id = z.string().min(3).max(180).regex(/^[a-zA-Z0-9][a-zA-Z0-9._:-]*$/);
 const digest = z.string().regex(/^sha256:[a-f0-9]{64}$/);
@@ -431,12 +432,13 @@ export class RemoteControllerWorkerMaterializerV1 {
     if (target.nodeId !== attempt.nodeId || target.enrollment.state !== "enrolled") unavailable();
     await this.assertCanonicalEnrollment(tx, ref.tenantId, target);
     const expiresAt = new Date(Math.min(Date.parse(lease.expiresAt), Date.parse(job.authority.expiresAt))).toISOString();
+    const writeScopes = await readOwnershipLeaseWriteScopesV1(tx, ref.tenantId, ref.leaseId);
     const delivery = createControllerWorkerDeliveryV1({ identity: { tenantId: ref.tenantId, projectId: ref.projectId,
       jobId: ref.jobId, attemptId: ref.attemptId, runId: `run:controller-worker-remote:${sha256Digest({ tenantId: ref.tenantId,
         jobId: ref.jobId, attemptId: ref.attemptId, leaseId: ref.leaseId, leaseEpoch: lease.epoch,
         planDigest: sha256Digest(plan) }).slice(7)}`,
       nodeId: id.parse(attempt.nodeId) }, worker: { workerId: target.workerId, adapterId: target.adapterId,
-      adapterRevision: target.adapterRevision }, input: plan.input, authorityDigest: job.authority.digest,
+      adapterRevision: target.adapterRevision }, input: plan.input, writeScopes, authorityDigest: job.authority.digest,
       connectorProfileDigest: plan.connectorProfileDigest, acceptanceProfileId: plan.acceptanceProfileId,
       acceptanceProfileDigest: plan.acceptanceProfileDigest, issuedAt: lease.acquiredAt, expiresAt });
     const admission = admitRemoteWorkerDeliveryV1({ delivery, route: { kind: "remote", workerId: target.workerId },

@@ -4,9 +4,13 @@ import test from "node:test";
 import { LinearPipelineServiceV1 } from "../src/pipelines/v1";
 import { sha256Digest } from "../src/security";
 import { createLinearPipelineHttpHandlerV1 } from "../src/web/v1/linear-pipeline-http";
-import { TaskAssignmentCoordinator, type WorkBatchAssignmentAdmissionAuthority } from "../src/web/v1/task-assignment-coordinator";
-import { taskFixture } from "./helpers/web-task";
+import { TaskAssignmentCoordinator, type TaskAssignmentRoute,
+  type WorkBatchAssignmentAdmissionAuthority } from "../src/web/v1/task-assignment-coordinator";
+import type { JobRecord } from "../src/domain/v1";
+import { taskDraft, taskFixture } from "./helpers/web-task";
 import { taskAssignmentFixture } from "./helpers/task-assignment";
+import { taskStartupFixture } from "./helpers/task-startup";
+import { TaskExecutionPlanner } from "../src/web/v1/task-execution-planner";
 import { now, origin, request, trust } from "./helpers/web-foundation";
 import { binding, instant } from "./hermes-native-fixture";
 import { nativeQualityCompletionFixture, qualityText } from "./helpers/native-quality-completion";
@@ -33,7 +37,7 @@ async function fixture() {
   return { ...f, projects: f.service, service };
 }
 
-async function completedPredecessorFixture() {
+async function completedPredecessorFixture(options: { productionCoordinatorLogin?: boolean } = {}) {
   let runJobIds: readonly string[] = [];
   const pipelineKey = new Uint8Array(32).fill(55);
   const quality = await nativeQualityCompletionFixture(qualityText, async base => {
@@ -45,22 +49,28 @@ async function completedPredecessorFixture() {
     const run = await service.instantiate(base.identity, binding.projectId,
       { templateId: saved.templateId, title: "Authenticated predecessor" }, "linear-completed-predecessor-0001");
     runJobIds = run.jobIds;
-    // The lifecycle fixture owns stage-zero assignment and predates pipeline
-    // admission. Unlink only that source job so it can produce the real
-    // retained completion proof consumed by the stage-one admission below.
-    await base.db.query(`UPDATE control_jobs SET stage_kind=NULL,stage_ordinal=NULL,pipeline_run_id=NULL
-      WHERE tenant_id=$1 AND id=$2`, [binding.tenantId, run.jobIds[0]]);
+    // Stage zero keeps its lineage and runs the whole native lifecycle through
+    // the real pipeline gate; its retained completion proof is what the
+    // stage-one admission below consumes.
     return { draft: { title: "Authenticated predecessor", instructions: template.description },
-      source: { receipt: { jobId: run.jobIds[0]! } } };
+      source: { receipt: { jobId: run.jobIds[0]! } },
+      admission: { integrityKey: pipelineKey, assertCurrent: async () => {}, assertAcceptedResultCurrent: async () => {} } };
   });
   await quality.ready(); await quality.complete();
   const base = quality.f.assignmentFixture;
+  // Production composes the planner and the assignment coordinator on the
+  // coordinator login (task-coordinator-lifecycle.ts). With the option set,
+  // both run as a LOGIN role that inherits exactly the real
+  // db/roles/task_coordinator_roles.sql grants instead of the superuser.
+  const db = options.productionCoordinatorLogin ? (await taskStartupFixture(base)).coordinator.client : base.db;
+  const planner = options.productionCoordinatorLogin
+    ? new TaskExecutionPlanner(db, base.scope, base.plannerConfig, () => instant + 7000) : base.planner;
   const expected = sha256Digest({ title: "Authenticated predecessor", instructions: template.description });
-  const prepared = await base.planner.plan(base.identity, binding.projectId, runJobIds[1]!, expected);
+  const prepared = await planner.plan(base.identity, binding.projectId, runJobIds[1]!, expected);
   let acceptedChecks = 0;
   const authority: WorkBatchAssignmentAdmissionAuthority = { integrityKey: pipelineKey,
     assertCurrent: async () => {}, assertAcceptedResultCurrent: async () => { acceptedChecks += 1; } };
-  const coordinator = new TaskAssignmentCoordinator(base.db, base.scope, base.planner, [base.route], () => instant + 8000,
+  const coordinator = new TaskAssignmentCoordinator(db, base.scope, planner, [base.route], () => instant + 8000,
     [], undefined, undefined, undefined, undefined, authority);
   const assign = () => coordinator.assign(base.identity, binding.projectId, prepared.receipt.jobId,
     binding.nodeId, prepared.receipt.inputDigest);
@@ -206,6 +216,20 @@ test("pipeline assignment admits an exact stage after an authenticated accepted 
   assert.equal(f.acceptedChecks(), 1);
 });
 
+test("pipeline planning and exact-stage admission run on the production coordinator login", async t => {
+  // Every other assignment test here runs on the superuser connection, where
+  // a row lock or write the coordinator role cannot perform still succeeds.
+  const f = await completedPredecessorFixture({ productionCoordinatorLogin: true }); t.after(f.quality.close);
+  const lineage = (await f.base.db.query<{ stage_kind: string; stage_ordinal: number }>(
+    "SELECT stage_kind,stage_ordinal FROM control_jobs WHERE id=$1", [f.prepared.receipt.jobId])).rows[0];
+  assert.deepEqual(lineage, { stage_kind: "check", stage_ordinal: 1 });
+  const inherited = (await f.base.db.query<{ inherited_from_job_id: string; model: string }>(
+    "SELECT inherited_from_job_id,model FROM control_task_model_selections WHERE job_id=$1", [f.prepared.receipt.jobId])).rows[0];
+  assert.deepEqual(inherited, { inherited_from_job_id: f.runJobIds[1], model: "claude-test" });
+  await f.assign();
+  assert.equal(f.acceptedChecks(), 1);
+});
+
 test("pipeline assignment independently rechecks the exact predecessor dependency edge", async t => {
   const f = await completedPredecessorFixture(); t.after(f.quality.close);
   await f.base.db.query("DELETE FROM control_job_dependencies WHERE tenant_id=$1 AND job_id=$2",
@@ -289,11 +313,11 @@ test("pipeline projection fails closed when the run no longer has exactly three 
   await assert.rejects(f.service.view(f.identity, f.project.projectId, run.runId), /pipeline_integrity_failed/u);
 });
 
-test("0096 down migration refuses retained pipeline records and removes all owned objects when empty", async t => {
+test("0105 down migration refuses retained pipeline records and removes all owned objects when empty", async t => {
   const populated = await fixture(); t.after(() => void populated.db.close());
   await populated.service.createTemplate(populated.identity, populated.project.projectId, template);
-  const down = await readFile("db/down/0096_linear_pipeline_runs.sql", "utf8");
-  const agentReviewDown = await readFile("db/down/0097_agent_review_plans.sql", "utf8");
+  const down = await readFile("db/down/0105_linear_pipeline_runs.sql", "utf8");
+  const agentReviewDown = await readFile("db/down/0106_agent_review_plans.sql", "utf8");
   await assert.rejects(populated.db.exec(down), /down migration refused/u); await populated.db.exec("ROLLBACK");
   const empty = await taskFixture(); t.after(() => void empty.db.close());
   await empty.db.exec(agentReviewDown);
@@ -301,4 +325,195 @@ test("0096 down migration refuses retained pipeline records and removes all owne
   assert.deepEqual((await empty.db.query<{ templates: string | null; runs: string | null; stages: string | null }>(`SELECT
     to_regclass('pipeline_templates')::text templates,to_regclass('pipeline_runs')::text runs,
     to_regclass('pipeline_stage_runs')::text stages`)).rows[0], { templates: null, runs: null, stages: null });
+  assert.deepEqual((await empty.db.query<{ guard: string | null }>(
+    "SELECT to_regproc('guard_control_job_pipeline_lineage')::text guard")).rows[0], { guard: null });
+});
+
+/** Stage zero planned through the real planner with a coordinator that holds the
+ * pipeline admission authority; nothing is assigned yet. */
+async function plannedStageFixture() {
+  let runId = "", runJobIds: readonly string[] = [];
+  const pipelineKey = new Uint8Array(32).fill(55);
+  const admission: WorkBatchAssignmentAdmissionAuthority = { integrityKey: pipelineKey,
+    assertCurrent: async () => {}, assertAcceptedResultCurrent: async () => {} };
+  const f = await taskAssignmentFixture(async base => {
+    const service = new LinearPipelineServiceV1(base.db, base.scope, pipelineKey,
+      { assertCurrent: () => true, isAcceptedResultCurrent: () => false }, () => instant + 5000);
+    const stages = template.stages.map(stage => ({ ...stage, workerId: "executor:hermes-native", workerKind: "hermes" as const,
+      nodeId: binding.nodeId, provider: "provider:test", profile: "profile:test" }));
+    const saved = await service.createTemplate(base.identity, binding.projectId, { ...template, stages });
+    const run = await service.instantiate(base.identity, binding.projectId,
+      { templateId: saved.templateId, title: "Guarded pipeline stage" }, "linear-guarded-stage-0001");
+    runId = run.runId; runJobIds = run.jobIds;
+    return { draft: { title: "Guarded pipeline stage", instructions: template.description },
+      source: { receipt: { jobId: run.jobIds[0]! } } };
+  });
+  const coordinator = new TaskAssignmentCoordinator(f.db, f.scope, f.planner, [f.route], () => instant + 8000,
+    [], undefined, undefined, undefined, undefined, admission);
+  const assign = (receipt: { jobId: string; inputDigest: string }) =>
+    coordinator.assign(f.identity, binding.projectId, receipt.jobId, binding.nodeId, receipt.inputDigest);
+  const planStage = (ordinal: number) => f.planner.plan(f.identity, binding.projectId, runJobIds[ordinal]!,
+    sha256Digest({ title: "Guarded pipeline stage", instructions: template.description }));
+  const attempts = async (jobId: string) => (await f.db.query<{ count: number }>(
+    "SELECT count(*)::int count FROM control_attempts WHERE tenant_id=$1 AND job_id=$2", [binding.tenantId, jobId])).rows[0]!.count;
+  // Models a bypass of the write-once lineage trigger (a privileged or future
+  // regressed writer): the assignment gate must still refuse on its own.
+  const bypassLineageTrigger = (sql: string, params: unknown[]) => f.db.transaction(async tx => {
+    await tx.query("SET LOCAL session_replication_role = replica");
+    await tx.query(sql, params);
+  });
+  // The pipeline gate is a private method; call it with the exact production SQL.
+  const gate = (jobId: string, attemptWorkerId?: string | null) => f.db.transaction(async tx =>
+    (coordinator as unknown as { assertPipelineAdmission(tx: unknown, job: JobRecord, route: TaskAssignmentRoute,
+      attemptWorkerId?: string | null): Promise<boolean> }).assertPipelineAdmission(tx,
+      { id: jobId, projectId: binding.projectId } as JobRecord, f.route, attemptWorkerId));
+  return { f, runId, runJobIds, coordinator, assign, planStage, attempts, bypassLineageTrigger, gate, pipelineKey };
+}
+
+test("pipeline lineage is write-once on control_jobs", async t => {
+  const f = await fixture(); t.after(() => void f.db.close());
+  const saved = await f.service.createTemplate(f.identity, f.project.projectId, template);
+  const run = await f.service.instantiate(f.identity, f.project.projectId,
+    { templateId: saved.templateId, title: "Write-once lineage" }, "linear-write-once-0001");
+  const other = await f.service.instantiate(f.identity, f.project.projectId,
+    { templateId: saved.templateId, title: "Other run" }, "linear-write-once-0002");
+  for (const [assignment, params] of [
+    ["stage_kind=NULL,stage_ordinal=NULL,pipeline_run_id=NULL", []],
+    ["stage_kind='signoff'", []], ["stage_ordinal=0", []], ["pipeline_run_id=$2", [other.runId]],
+  ] as const) await assert.rejects(f.db.query(`UPDATE control_jobs SET ${assignment} WHERE id=$1`,
+    [run.jobIds[1], ...params]), /pipeline lineage is write-once/u, assignment);
+  // A no-op rewrite of the same lineage and unrelated column updates still pass.
+  await f.db.query("UPDATE control_jobs SET stage_kind=stage_kind,stage_ordinal=stage_ordinal WHERE id=$1", [run.jobIds[1]]);
+  assert.deepEqual((await f.db.query("SELECT stage_kind,stage_ordinal::int,pipeline_run_id FROM control_jobs WHERE id=$1",
+    [run.jobIds[1]])).rows[0], { stage_kind: "check", stage_ordinal: 1, pipeline_run_id: run.runId });
+});
+
+test("clearing a planned stage's lineage cannot take it out of pipeline admission", async t => {
+  const s = await plannedStageFixture(); t.after(() => void s.f.close());
+  const stage1 = (await s.planStage(1)).receipt;
+  await assert.rejects(s.assign(stage1), /conflict/u);
+  // Unlinked, the execution job looks like ordinary work with no dependencies.
+  // Pipeline membership still follows from its immutable execution plan and stage row.
+  await s.bypassLineageTrigger(`UPDATE control_jobs SET stage_kind=NULL,stage_ordinal=NULL,pipeline_run_id=NULL
+    WHERE tenant_id=$1 AND id=$2`, [binding.tenantId, stage1.jobId]);
+  await assert.rejects(s.assign(stage1), /conflict/u);
+  assert.equal(await s.attempts(stage1.jobId), 0);
+  assert.equal(await s.attempts(s.f.prepared.receipt.jobId), 0);
+  // Stage zero too: an unlinked stage must not escape its saved route and selection.
+  await s.bypassLineageTrigger(`UPDATE control_jobs SET stage_kind=NULL,stage_ordinal=NULL,pipeline_run_id=NULL
+    WHERE tenant_id=$1 AND id=$2`, [binding.tenantId, s.f.prepared.receipt.jobId]);
+  await assert.rejects(s.assign(s.f.prepared.receipt), /conflict/u);
+  assert.equal(await s.attempts(s.f.prepared.receipt.jobId), 0);
+});
+
+test("pipeline admission refuses a stage-one result produced by a worker other than the stage-zero owner", async t => {
+  const f = await completedPredecessorFixture(); t.after(f.quality.close);
+  // Stage zero now names another owner's worker; the accepted result belongs to
+  // executor:hermes-native, so it must not unlock stage one.
+  await f.base.db.query("DROP TRIGGER pipeline_stage_runs_guard ON pipeline_stage_runs");
+  await f.base.db.query("UPDATE pipeline_stage_runs SET worker_id='executor:someone-else' WHERE tenant_id=$1 AND current_job_id=$2",
+    [binding.tenantId, f.runJobIds[0]]);
+  await assert.rejects(f.assign(), /conflict/u);
+  assert.equal(f.acceptedChecks(), 0);
+});
+
+test("pipeline admission refuses an unrelated job labelled as a pipeline stage", async t => {
+  const s = await plannedStageFixture(); t.after(() => void s.f.close());
+  // The web and coordinator logins may write lineage once onto any unlabelled
+  // job. Labelling ordinary work as stage zero must not borrow that stage's
+  // admission (which would skip the ordinary dependency check).
+  const task = await s.f.tasks.propose(s.f.identity, binding.projectId, taskDraft, "linear-borrowed-stage-0001");
+  const ordinary = (await s.f.planner.plan(s.f.identity, binding.projectId, task.receipt.jobId, sha256Digest(taskDraft))).receipt;
+  await s.f.db.query("UPDATE control_jobs SET stage_kind='build',stage_ordinal=0,pipeline_run_id=$1 WHERE tenant_id=$2 AND id=$3",
+    [s.runId, binding.tenantId, ordinary.jobId]);
+  await s.f.db.query("DELETE FROM control_task_model_selections WHERE tenant_id=$1 AND job_id=$2", [binding.tenantId, ordinary.jobId]);
+  await s.f.db.query(`INSERT INTO control_task_model_selections(tenant_id,project_id,job_id,worker_kind,selection_key,model,effort,
+      provider,profile,created_at) SELECT tenant_id,project_id,$2,worker_kind,selection_key,model,effort,provider,profile,created_at
+    FROM control_task_model_selections WHERE tenant_id=$1 AND job_id=$3`, [binding.tenantId, ordinary.jobId, s.f.prepared.receipt.jobId]);
+  await assert.rejects(s.assign(ordinary), /conflict/u);
+  assert.equal(await s.attempts(ordinary.jobId), 0);
+});
+
+test("pipeline admission refuses an execution job whose stage kind disagrees with its stage row", async t => {
+  const s = await plannedStageFixture(); t.after(() => void s.f.close());
+  await s.bypassLineageTrigger("UPDATE control_jobs SET stage_kind='check' WHERE tenant_id=$1 AND id=$2",
+    [binding.tenantId, s.f.prepared.receipt.jobId]);
+  await assert.rejects(s.assign(s.f.prepared.receipt), /conflict/u);
+  assert.equal(await s.attempts(s.f.prepared.receipt.jobId), 0);
+});
+
+test("pipeline admission refuses a recorded attempt worker other than the stage worker", async t => {
+  const s = await plannedStageFixture(); t.after(() => void s.f.close());
+  assert.equal(await s.gate(s.f.prepared.receipt.jobId), true);
+  assert.equal(await s.gate(s.f.prepared.receipt.jobId, "executor:hermes-native"), true);
+  await assert.rejects(s.gate(s.f.prepared.receipt.jobId, "executor:someone-else"), /conflict/u);
+  await assert.rejects(s.gate(s.f.prepared.receipt.jobId, null), /conflict/u);
+});
+
+test("pipeline admission refuses stage zero once its source job carries a dependency edge", async t => {
+  const s = await plannedStageFixture(); t.after(() => void s.f.close());
+  await s.f.db.query("INSERT INTO control_job_dependencies(tenant_id,job_id,depends_on_job_id) VALUES($1,$2,$3)",
+    [binding.tenantId, s.runJobIds[0], s.runJobIds[2]]);
+  await assert.rejects(s.assign(s.f.prepared.receipt), /conflict/u);
+  assert.equal(await s.attempts(s.f.prepared.receipt.jobId), 0);
+});
+
+test("pipeline admission refuses a predecessor proof without a review target digest", async t => {
+  const f = await completedPredecessorFixture(); t.after(f.quality.close);
+  await f.base.db.query("DROP TRIGGER control_transition_events_append_only ON control_transition_events");
+  await f.base.db.query(`UPDATE control_transition_events SET safe_metadata=safe_metadata #- '{receipt,targetDigest}'
+    WHERE tenant_id=$1 AND entity_kind='job' AND entity_id=$2 AND to_state='succeeded'
+      AND idempotency_key LIKE 'native-completion:%:job'`, [binding.tenantId, f.base.prepared.receipt.jobId]);
+  await assert.rejects(f.assign(), /conflict/u);
+  assert.equal(f.acceptedChecks(), 0);
+});
+
+test("pipeline admission refuses a partial lineage even when the schema check is missing", async t => {
+  const s = await plannedStageFixture(); t.after(() => void s.f.close());
+  await s.f.db.query("ALTER TABLE control_jobs DROP CONSTRAINT ck_control_jobs_pipeline_columns_all_or_none");
+  await s.bypassLineageTrigger("UPDATE control_jobs SET stage_ordinal=NULL WHERE tenant_id=$1 AND id=$2",
+    [binding.tenantId, s.f.prepared.receipt.jobId]);
+  await assert.rejects(s.assign(s.f.prepared.receipt), /conflict/u);
+  assert.equal(await s.attempts(s.f.prepared.receipt.jobId), 0);
+});
+
+test("pipeline instantiation requires tasks.propose under a non-wildcard grant", async t => {
+  const f = await fixture(); t.after(() => void f.db.close());
+  const saved = await f.service.createTemplate(f.identity, f.project.projectId, template);
+  const grant = (actions: readonly string[]) => f.db.query(`UPDATE control_role_grants SET allowed_actions=$1::jsonb,
+    project_ids=$2::jsonb WHERE tenant_id='tenant:web' AND identity_id='identity:web'`,
+  [JSON.stringify(actions), JSON.stringify([f.project.projectId])]);
+  await grant(["tasks.read"]);
+  await assert.rejects(f.service.instantiate(f.identity, f.project.projectId,
+    { templateId: saved.templateId, title: "Read-only instantiate" }, "linear-read-only-0001"), /access_denied/u);
+  assert.equal((await f.db.query("SELECT 1 FROM pipeline_runs")).rows.length, 0);
+  await grant(["tasks.read", "tasks.propose"]);
+  await f.service.instantiate(f.identity, f.project.projectId,
+    { templateId: saved.templateId, title: "Proposer instantiate" }, "linear-proposer-0001");
+  assert.equal((await f.db.query("SELECT 1 FROM pipeline_runs")).rows.length, 1);
+});
+
+test("pipeline instantiation refuses a paused project", async t => {
+  const f = await fixture(); t.after(() => void f.db.close());
+  const saved = await f.service.createTemplate(f.identity, f.project.projectId, template);
+  await f.projects.transition(f.identity, f.project.projectId, { lifecycle: "paused", expectedVersion: 1 },
+    "pipeline-instantiate-pause-0001");
+  await assert.rejects(f.service.instantiate(f.identity, f.project.projectId,
+    { templateId: saved.templateId, title: "Paused instantiate" }, "linear-paused-instantiate-0001"), /conflict/u);
+  assert.equal((await f.db.query("SELECT 1 FROM pipeline_runs")).rows.length, 0);
+});
+
+test("pipeline HTTP route refuses cross-origin requests", async t => {
+  const f = await fixture(); t.after(() => void f.db.close());
+  const handler = createLinearPipelineHttpHandlerV1({ origin, trust, service: f.service, clock: () => now });
+  const path = `/api/v1/projects/${encodeURIComponent(f.project.projectId)}/pipeline-templates`;
+  const post = request(path, "POST", template);
+  const foreign = new Request(post.url, { method: "POST", body: JSON.stringify(template),
+    headers: { ...Object.fromEntries(post.headers), origin: "https://attacker.example" } });
+  assert.equal((await handler(foreign)).status, 403);
+  const crossSite = request(`/api/v1/projects/${encodeURIComponent(f.project.projectId)}/pipeline-runs`);
+  crossSite.headers.set("sec-fetch-site", "cross-site");
+  assert.equal((await handler(crossSite)).status, 403);
+  assert.equal((await f.db.query("SELECT 1 FROM pipeline_templates")).rows.length, 0);
+  assert.equal((await handler(request(path, "POST", template))).status, 201);
 });

@@ -17,6 +17,8 @@ import { connectTarget } from "../../../deploy/postgres/evidence.mjs";
 import { sha256Digest } from "../../../src/security/canonical-digest";
 import { applyMacLocalFirstOwnerV1 } from "../first-owner-vps.mjs";
 import { serviceInstalled } from "../service.mjs";
+import { checkOwnerAcceptedStateV1, ownerAcceptedStateMessageV1 } from "./owner-accepted-state";
+import { MAC_LOCAL_HUMAN_VERIFICATION_SCENARIO_V1, MAC_LOCAL_TEXT_SCENARIO_V1 } from "../../../src/web/v1/mac-local-owner-review-profile";
 
 const [arg, mode] = process.argv.slice(2);
 if (!arg || ![3, 4].includes(process.argv.length) || mode !== undefined && !["--browser-proof", "--browser-e2e",
@@ -83,7 +85,7 @@ printf '%s\\n' '{"type":"system","subtype":"init","session_id":"'"$session_id"'"
 printf '%s\\n' '{"type":"rate_limit_event","session_id":"'"$session_id"'","rate_limit_info":{"status":"allowed"}}'
 printf '%s\\n' '{"type":"system","subtype":"thinking_tokens","session_id":"'"$session_id"'","thinking_tokens":2}'
 printf '%s\\n' '{"type":"assistant","session_id":"'"$session_id"'","message":{"role":"assistant","content":[{"type":"text","text":"Fake Claude Code pinned executable result '"$session_id"'."}]}}'
-printf '%s\\n' '{"type":"result","subtype":"success","is_error":false,"session_id":"'"$session_id"'","result":"Fake Claude Code pinned executable result '"$session_id"'.","terminal_reason":"completed","total_cost_usd":0,"usage":{}}'
+printf '%s\\n' '{"type":"result","subtype":"success","is_error":false,"session_id":"'"$session_id"'","result":"Fake Claude Code pinned executable result '"$session_id"'.","terminal_reason":"completed","total_cost_usd":0,"usage":{"input_tokens":3,"output_tokens":5}}'
 exit 0
 `;
 }
@@ -420,7 +422,10 @@ async function main() {
       model: string; effort: string; profile?: string; provider?: string;
     } }[];
       reviews: { targetId: string; targetDigest: string; contentHash: string; status: string;
-        matchingArtifactIds: string[]; reviews: { decision: string }[] }[] } | undefined;
+        matchingArtifactIds: string[];
+        missingVerificationScenarioIds: string[]; openFindingCount: number;
+        verifications: { scenarioId: string; outcome: string }[];
+        reviews: { decision: string; authority: string }[] }[] } | undefined;
     const polled = await waitFor(async () => {
       const results = await fetch(new URL(`/api/v1/projects/${idOf(projectId)}/tasks/${idOf(jobId)}/results`, origin), { headers: { cookie } });
       if (results.status !== 200) return false;
@@ -440,11 +445,35 @@ async function main() {
         ? { model: "model-rehearsal", effort: "default", profile: "build", provider: "provider-rehearsal" }
         : { model: agent.worker === "claude-code" ? "sonnet-rehearsal" : "gpt-rehearsal", effort: "high" }
       : { model: "default", effort: "default" }, `${agent.kind}: result must record selected or default model evidence`);
+
+    // Prove the owner price table -- written by `mac:rehearsal up` into this
+    // protected root's `usage-prices.json` -- reached this real, separately
+    // started task host process through the full production composition
+    // (Control Room #412 review finding 3: the provider's own load-and-carry
+    // hop, `mac-local-default-task-provider.ts`, was never exercised end to
+    // end). Every fake harness reports 3 input / 5 output tokens; the price
+    // table prices every model this journey can select at the same rate, so
+    // the expected cost is fixed regardless of mode: 3*1000 + 5*2000 = 13000.
+    const taskDetail = await requireOk(await fetch(new URL(`/api/v1/projects/${idOf(projectId)}/tasks/${idOf(jobId)}`, origin),
+      { headers: { cookie } }), 200, `${agent.kind} task detail for price table wiring`) as { priceTable: { state: string };
+        attempts: { runs: { cost: { kind: string; nanoUsd?: string } }[] }[] };
+    assert.equal(taskDetail.priceTable.state, "recorded",
+      `${agent.kind}: the task detail page must show the rehearsal owner price table as recorded`);
+    const runCost = taskDetail.attempts[0]?.runs[0]?.cost;
+    assert.equal(runCost?.kind, "known",
+      `${agent.kind}: a run priced by the rehearsal table must show a computed cost, not an unknown reason`);
+    assert.equal(runCost?.nanoUsd, "13000", `${agent.kind}: the computed cost must match the rehearsal table's prices exactly`);
+
     assert.deepEqual(target.matchingArtifactIds, [artifact.artifactId], `${agent.kind}: the pending target must bind the one saved artifact`);
     assert.equal(target.contentHash, artifact.contentHash);
     assert.equal(target.reviews.length, 0);
     const reviewPath = `/api/v1/projects/${idOf(projectId)}/tasks/${idOf(jobId)}/results/${idOf(artifact.artifactId)}/reviews/${idOf(target.targetId)}`;
-    const options = await requireOk(await fetch(new URL(reviewPath, origin), { headers: { cookie } }), 200,
+    const optionsResponse = await fetch(new URL(reviewPath, origin), { headers: { cookie } });
+    const expectedAuthentication = { actorId: optionsResponse.headers.get("x-control-room-authenticated-actor"),
+      sessionEpoch: optionsResponse.headers.get("x-control-room-session-epoch") };
+    assert.ok(expectedAuthentication.actorId, `${agent.kind}: review options must bind the authenticated actor`);
+    assert.ok(expectedAuthentication.sessionEpoch, `${agent.kind}: review options must bind the session epoch`);
+    const options = await requireOk(optionsResponse, 200,
       `${agent.kind} review options`) as { canReview: boolean; availability: string; targetDigest: string;
         contentHash: string; ownReview: null | { decision: string; reviewId: string };
         acceptanceAttestation?: null | { scenarioId: string; instructionsDigest: string } };
@@ -464,7 +493,7 @@ async function main() {
     const reviewKey = `journey-${agent.kind}-owner-review-0001`;
     const writeReview = () => fetch(new URL(reviewPath, origin), { method: "POST",
       headers: { origin, cookie, "content-type": "application/json", "idempotency-key": reviewKey },
-      body: JSON.stringify(draft) });
+      body: JSON.stringify({ review: draft, expectedAuthentication }) });
     const recorded = await requireOk(await writeReview(), 201, `${agent.kind} owner review`) as
       { receipt: { reviewId: string; findingId: string | null; decision: string }; replayed: boolean };
     assert.equal(recorded.replayed, false);
@@ -479,7 +508,20 @@ async function main() {
     assert.equal(after.reviews.length, 1, `${agent.kind}: target must remain singular after review`);
     // An owner acceptance is a saved quality vote, not automatic completion:
     // this profile also requires the separate structural verification scenario.
-    assert.equal(after.reviews[0]?.status, decision === "accepted" ? "pending" : "changes_requested");
+    //
+    // The bare `status === "pending"` this replaced was a race against the
+    // rehearsal host's own background quality sweep (`setInterval(..., 2_000)` in
+    // mac-local-default-task-provider.ts), which records that automatic
+    // verification and can therefore carry the target to `ready` between this
+    // review committing and this read returning. Assert the status the completion
+    // gate actually derives for the verification evidence THIS page reports, so
+    // both real orders pass and a genuinely wrong status still fails.
+    const acceptedPage = after.reviews[0]!;
+    const acceptedVerdict = checkOwnerAcceptedStateV1(acceptedPage, { decision,
+      requiredVerificationScenarioIds: [MAC_LOCAL_HUMAN_VERIFICATION_SCENARIO_V1, MAC_LOCAL_TEXT_SCENARIO_V1],
+      minimumIndependentReviews: 1 });
+    assert.ok(acceptedVerdict.ok,
+      `${ownerAcceptedStateMessageV1(agent.kind, decision)}: ${acceptedVerdict.ok ? "" : acceptedVerdict.problem}`);
     assert.equal(after.reviews[0]?.reviews.length, 1, `${agent.kind}: owner decision must be recorded exactly once`);
     assert.equal(after.reviews[0]?.reviews[0]?.decision, decision);
     const afterOptions = await requireOk(await fetch(new URL(reviewPath, origin), { headers: { cookie } }), 200,

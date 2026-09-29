@@ -1,6 +1,9 @@
 -- Proposal-only agent work intake. These records cannot create a canonical task,
 -- queue delivery, assignment, approval, effect, or execution authority.
 
+SET LOCAL lock_timeout = '1s';
+SET LOCAL statement_timeout = '5s';
+
 CREATE TABLE work_batches (
   id text NOT NULL,
   tenant_id text NOT NULL,
@@ -13,7 +16,7 @@ CREATE TABLE work_batches (
   approved_at timestamptz,
   decision_reason_code text,
   proposal jsonb NOT NULL CHECK (jsonb_typeof(proposal)='object'),
-  queue_depth_limit integer NOT NULL CHECK (queue_depth_limit BETWEEN 1 AND 20),
+  queue_depth_limit bigint NOT NULL CHECK (queue_depth_limit BETWEEN 1 AND 20),
   batch_digest text NOT NULL CHECK (batch_digest ~ '^sha256:[a-f0-9]{64}$'),
   auth_tag text NOT NULL CHECK (auth_tag ~ '^hmac-sha256:[a-f0-9]{64}$'),
   version bigint NOT NULL CHECK (version >= 1),
@@ -115,14 +118,65 @@ REVOKE ALL ON FUNCTION public.guard_initial_work_batch_revision_insert() FROM PU
 CREATE TRIGGER work_batch_revisions_initial_only BEFORE INSERT ON public.work_batch_revisions
   FOR EACH ROW EXECUTE FUNCTION public.guard_initial_work_batch_revision_insert();
 
+-- The one tenant the shared intake login serves. The owner bootstrap writes
+-- this row; the intake group and the roles that evaluate the policies below
+-- may only read it. Without a row the intake login sees and writes nothing.
+CREATE TABLE work_intake_tenant_binding (
+  singleton boolean PRIMARY KEY CHECK (singleton),
+  tenant_id text NOT NULL REFERENCES tenants(id) ON DELETE RESTRICT
+);
+REVOKE ALL ON work_intake_tenant_binding FROM PUBLIC;
+
 CREATE TRIGGER work_batch_revisions_append_only BEFORE UPDATE OR DELETE ON public.work_batch_revisions
   FOR EACH ROW EXECUTE FUNCTION public.reject_append_only_mutation();
 CREATE TRIGGER work_batch_revisions_truncate_guard BEFORE TRUNCATE ON public.work_batch_revisions
   FOR EACH STATEMENT EXECUTE FUNCTION public.reject_append_only_mutation();
 
+-- The intake login is shared by every registered proposal agent. Confine its
+-- proposal rows to the tenant bound in work_intake_tenant_binding, and within
+-- that tenant to identities the owner registered for work intake, so that login
+-- cannot read or add another tenant's proposals. The database cannot tell one
+-- registered agent from another in the bound tenant; the service binds each
+-- request to its own identity. Every other role keeps its existing grants.
+ALTER TABLE work_batches ENABLE ROW LEVEL SECURITY;
+CREATE POLICY work_batches_existing_access ON work_batches
+  AS PERMISSIVE FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY work_batches_work_intake_scope ON work_batches
+  AS RESTRICTIVE FOR ALL
+  USING (NOT public.is_work_intake_session() OR (
+    work_batches.tenant_id=(SELECT b.tenant_id FROM public.work_intake_tenant_binding b)
+    AND EXISTS (
+    SELECT 1 FROM public.control_identities i
+    WHERE i.tenant_id=work_batches.tenant_id AND i.id=work_batches.proposed_by_identity_id
+      AND i.actor_type='agent' AND i.auth_provider='work-intake')))
+  WITH CHECK (NOT public.is_work_intake_session() OR (
+    work_batches.tenant_id=(SELECT b.tenant_id FROM public.work_intake_tenant_binding b)
+    AND EXISTS (
+    SELECT 1 FROM public.control_identities i
+    WHERE i.tenant_id=work_batches.tenant_id AND i.id=work_batches.proposed_by_identity_id
+      AND i.actor_type='agent' AND i.auth_provider='work-intake')));
+
+ALTER TABLE work_batch_revisions ENABLE ROW LEVEL SECURITY;
+CREATE POLICY work_batch_revisions_existing_access ON work_batch_revisions
+  AS PERMISSIVE FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY work_batch_revisions_work_intake_scope ON work_batch_revisions
+  AS RESTRICTIVE FOR ALL
+  USING (NOT public.is_work_intake_session() OR (
+    work_batch_revisions.tenant_id=(SELECT b.tenant_id FROM public.work_intake_tenant_binding b)
+    AND EXISTS (
+    SELECT 1 FROM public.control_identities i
+    WHERE i.tenant_id=work_batch_revisions.tenant_id AND i.id=work_batch_revisions.edited_by_identity_id
+      AND i.actor_type='agent' AND i.auth_provider='work-intake')))
+  WITH CHECK (NOT public.is_work_intake_session() OR (
+    work_batch_revisions.tenant_id=(SELECT b.tenant_id FROM public.work_intake_tenant_binding b)
+    AND EXISTS (
+    SELECT 1 FROM public.control_identities i
+    WHERE i.tenant_id=work_batch_revisions.tenant_id AND i.id=work_batch_revisions.edited_by_identity_id
+      AND i.actor_type='agent' AND i.auth_provider='work-intake')));
+
 -- The production intake login uses shared idempotency and audit ledgers. Keep
--- its raw table privileges inside the proposal-only namespace even if the
--- process holding that login is compromised. Membership is derived from
+-- its raw table privileges inside the proposal-only namespace and the bound
+-- tenant even if the process holding that login is compromised. Membership is derived from
 -- session_user so SET ROLE cannot turn the login-level boundary off and a
 -- future login granted the same group cannot bypass it.
 CREATE FUNCTION guard_work_intake_idempotency_write() RETURNS trigger
@@ -185,9 +239,11 @@ CREATE POLICY control_idempotency_existing_access ON control_idempotency
 CREATE POLICY control_idempotency_work_intake_scope ON control_idempotency
   AS RESTRICTIVE FOR ALL
   USING (NOT public.is_work_intake_session()
-    OR operation_scope ~ '^work-batches\.propose/v1:[A-Za-z0-9][A-Za-z0-9._:-]{2,179}$')
+    OR (control_idempotency.tenant_id=(SELECT b.tenant_id FROM public.work_intake_tenant_binding b)
+      AND operation_scope ~ '^work-batches\.propose/v1:[A-Za-z0-9][A-Za-z0-9._:-]{2,179}$'))
   WITH CHECK (NOT public.is_work_intake_session()
-    OR operation_scope ~ '^work-batches\.propose/v1:[A-Za-z0-9][A-Za-z0-9._:-]{2,179}$');
+    OR (control_idempotency.tenant_id=(SELECT b.tenant_id FROM public.work_intake_tenant_binding b)
+      AND operation_scope ~ '^work-batches\.propose/v1:[A-Za-z0-9][A-Za-z0-9._:-]{2,179}$'));
 
 CREATE FUNCTION work_intake_canonical_jsonb(input jsonb) RETURNS text
 LANGUAGE plpgsql IMMUTABLE SET search_path = pg_catalog, public, pg_temp AS $$
@@ -311,11 +367,13 @@ CREATE POLICY audit_events_existing_access ON audit_events
 CREATE POLICY audit_events_work_intake_scope ON audit_events
   AS RESTRICTIVE FOR ALL
   USING (NOT public.is_work_intake_session()
-    OR (id ~ '^audit:work-intake[-:]' AND action IN (
+    OR (audit_events.tenant_id=(SELECT b.tenant_id FROM public.work_intake_tenant_binding b)
+      AND id ~ '^audit:work-intake[-:]' AND action IN (
       'work_batches.propose','work_batches.propose.replayed',
       'work_batches.propose.refused','work_batches.action.refused')))
   WITH CHECK (NOT public.is_work_intake_session()
-    OR (id ~ '^audit:work-intake[-:]' AND action IN (
+    OR (audit_events.tenant_id=(SELECT b.tenant_id FROM public.work_intake_tenant_binding b)
+      AND id ~ '^audit:work-intake[-:]' AND action IN (
       'work_batches.propose','work_batches.propose.replayed',
       'work_batches.propose.refused','work_batches.action.refused')));
 

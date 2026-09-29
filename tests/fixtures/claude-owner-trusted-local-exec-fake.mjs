@@ -21,5 +21,6 @@ if (prompt === "hang") {
   const received = { args: process.argv.slice(2), env: Object.keys(process.env).sort(), prompt };
   process.stdout.write(`${JSON.stringify({ type: "system", subtype: "init", session_id: session })}\n`);
   process.stdout.write(`${JSON.stringify({ type: "assistant", session_id: session, message: { role: "assistant", content: [] } })}\n`);
-  process.stdout.write(`${JSON.stringify({ type: "result", subtype: "success", is_error: false, session_id: session, result: JSON.stringify(received), usage: {} })}\n`);
+  process.stdout.write(`${JSON.stringify({ type: "result", subtype: "success", is_error: false, session_id: session,
+    result: JSON.stringify(received), usage: { input_tokens: 4, output_tokens: 2 } })}\n`);
 }

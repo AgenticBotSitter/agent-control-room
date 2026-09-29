@@ -23,6 +23,10 @@ import { PostgresArticleDetails } from "../src/project-adapters/news/v1/article-
 import { readNewsArticleDetail } from "../src/project-adapters/news/v1/article-detail";
 import { PostgresNewsSourceSettings } from "../src/project-adapters/news/v1/source-settings";
 import { createControlCenterCollection } from "../src/project-adapters/news/v1/control-center-collection";
+// The shared disposable-cluster teardown. `.mjs` because
+// `scripts/ops/verify-database-backup.mjs` imports it with bare `node`, and a
+// `.ts` module could not be imported by one of its own callers.
+import { createClusterTeardown } from "./dev/postgres-cluster-lifecycle.mjs";
 
 const bin = resolve(process.argv[2] ?? "");
 assert.ok(process.argv[2], "supply the reviewed PostgreSQL 17 bin directory");
@@ -32,6 +36,13 @@ const data = join(run, "data"), socket = join(run, "socket");
 await mkdir(socket, { mode: 0o700 });
 const native = (name: string, args: string[]) => exec(join(bin, name), args,
   { env: { PATH: "/usr/bin:/bin", LC_ALL: "C", TMPDIR: run, NODE_ENV: "test" }, timeout: 20000 });
+// The shared teardown, created BEFORE initdb, so a fixture that is signalled,
+// exits early, or fails mid-start never leaves a postmaster holding a 56-byte
+// SysV shared-memory segment. This machine has 32 of those in total. The old
+// `attempted` flag was set only AFTER `initdb` returned and the stop was a bare
+// `pg_ctl -m fast` with no ladder behind it.
+const teardown = createClusterTeardown({ dataDirectory: data, runDirectory: run,
+  socketDirectory: socket, port: 65435, pgBin: bin, removeDirectories: false });
 let attempted = false, stopped = false;
 let db: ReturnType<typeof boundPrivateDatabase> | undefined;
 let boss: PgBoss | undefined;
@@ -42,6 +53,9 @@ try {
   attempted = true;
   await native("pg_ctl", ["-D", data, "-l", join(run, "server.log"), "-w", "-t", "10", "-o",
     `-k ${socket} -p 65435 -h '' -c unix_socket_permissions=0700 -c shared_buffers=32MB -c max_connections=12 -c shared_preload_libraries=''`, "start"]);
+  // Retained while the cluster is up, so a teardown reached from a signal has a
+  // pid even when the rest of the fixture is about to throw.
+  await teardown.capturePostmasterPid();
   const options = privatePgOptions({ host: "127.0.0.1", port: 65435, database: "postgres",
     username: "fixture_user", password: "fixture_only", majorVersion: 17 });
   // Test-only socket override; production still permits loopback TCP only.
@@ -226,11 +240,33 @@ try {
 } finally {
   try { try { await boss?.stop({ graceful: false }); } finally { await db?.close(); } }
   finally {
+    // The shared ladder, then the directory removal. The old code reported
+    // `cleanup: true` from a flag it set itself, so a postmaster that refused to
+    // stop was reported as a clean teardown while still holding its 56-byte SysV
+    // segment. A failure here still throws, and a throw from a `finally` REPLACES
+    // the body's error — so the body's failure is reported alongside the
+    // teardown failure rather than lost behind it.
+    let teardownFailure: unknown;
     if (attempted) {
-      await native("pg_ctl", ["-D", data, "-m", "fast", "-w", "-t", "10", "stop"]);
-      stopped = true;
+      try { await teardown.stop(); stopped = true; }
+      catch (error) { teardownFailure = error; }
     }
     if (!attempted || stopped) await rm(run, { recursive: true });
-    console.log(JSON.stringify({ cleanup: !attempted || stopped }));
+    console.log(JSON.stringify({ cleanup: !attempted || stopped,
+      // A teardown that stopped the postmaster without reaching SIGKILL did not
+      // throw, and did not leak: a `fast` stop that missed its window followed by
+      // an `immediate` that worked is a slow shutdown, not a defect. It is
+      // reported here, and on stderr, rather than turned into a failed run — this
+      // script's JSON is the evidence the operator keeps, and marking a completed
+      // run failed on a timing artefact misreports it.
+      ...(teardown.degraded().length > 0 ? { teardownDegraded: teardown.degraded() } : {}) }));
+    if (teardownFailure !== undefined) {
+      // Rethrown with `cause` set rather than raised bare, because a `throw`
+      // from a `finally` REPLACES the body's error: raising it plain would make
+      // a teardown failure hide the fixture assertion that failed first. With
+      // the cause attached the caller still has both.
+      throw Object.assign(new Error(`disposable_cluster_teardown_failed:${(teardownFailure as Error)?.message ?? String(teardownFailure)}`),
+        { cause: teardownFailure });
+    }
   }
 }

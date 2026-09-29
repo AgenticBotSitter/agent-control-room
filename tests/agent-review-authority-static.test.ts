@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 test("agent review guard binds the dedicated role to one server-created predecessor plan", async () => {
-  const sql = await readFile("db/migrations/0097_agent_review_plans.sql", "utf8");
+  const sql = await readFile("db/migrations/0106_agent_review_plans.sql", "utf8");
   assert.match(sql, /control_room_agent_reviewer/u);
   assert.match(sql, /agent reviewer raw insert rejected/u);
   assert.match(sql, /CREATE FUNCTION commit_agent_review[\s\S]*SECURITY DEFINER SET search_path = pg_catalog, public, pg_temp/u);
@@ -45,8 +45,8 @@ test("agent reviewer role has only completion-review commit privileges", async (
   assert.match(provider, /verifyAgentReviewerDatabase\(reviewerPool\.client,[\s\S]*\{ nativeQueue: true \}\)/u);
 });
 
-test("0097 down migration refuses to erase review authority history", async () => {
-  const sql = await readFile("db/down/0097_agent_review_plans.sql", "utf8");
+test("0106 down migration refuses to erase review authority history", async () => {
+  const sql = await readFile("db/down/0106_agent_review_plans.sql", "utf8");
   assert.match(sql, /LOCK TABLE control_completion_gate_records, control_agent_review_plans IN ACCESS EXCLUSIVE MODE/u);
   assert.match(sql, /agent review history exists/u);
   assert.match(sql, /IF EXISTS \(SELECT 1 FROM pg_roles WHERE rolname='control_room_agent_reviewer'\)/u);

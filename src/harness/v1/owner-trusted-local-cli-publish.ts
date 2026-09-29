@@ -55,7 +55,9 @@ export function createOwnerTrustedLocalCliLifecycleV1(config: OwnerTrustedLocalC
   if (!config || !config.db || !(config.runIntegrityKey instanceof Uint8Array) || config.runIntegrityKey.length !== 32
     || !config.publication || typeof config.registerRun !== "function") unavailable();
   const runs = new HarnessRunStoreV1(config.db, config.runIntegrityKey);
-  async function record(input: Readonly<{ delivery: unknown; receipt: unknown; signal: AbortSignal }>, terminal: "succeeded" | "failed") {
+  async function record(input: Readonly<{ delivery: unknown; receipt: unknown; signal: AbortSignal; startedAt?: string;
+    finishedAt?: string; usage?: Readonly<{ inputTokens: number | null; outputTokens: number | null; totalTokens: number | null;
+      cachedInputTokens?: number }> | null }>, terminal: "succeeded" | "failed") {
     if (!input || !(input.signal instanceof AbortSignal) || input.signal.aborted) unavailable();
     const delivery = controllerWorkerDeliverySchemaV1.parse(input.delivery);
     const receipt = controllerWorkerDeliveryReceiptSchemaV1.parse(input.receipt);
@@ -77,25 +79,53 @@ export function createOwnerTrustedLocalCliLifecycleV1(config: OwnerTrustedLocalC
       delete initial.startedAt; delete initial.finishedAt; delete initial.safeReasonCode;
       if (sha256Digest(initial) !== sha256Digest(run)) unavailable();
     }
-    for (const state of (terminal === "succeeded" ? ["starting", "running", "succeeded"] : ["failed"]) as HarnessRunState[]) {
+    const startedAt = input.startedAt ? z.string().datetime().parse(input.startedAt) : receipt.receivedAt;
+    const finishedAt = input.finishedAt ? z.string().datetime().parse(input.finishedAt) : startedAt;
+    if (Date.parse(startedAt) < Date.parse(receipt.receivedAt) || Date.parse(finishedAt) < Date.parse(startedAt)) unavailable();
+    const states = (terminal === "succeeded" ? ["starting", "running"] : ["starting", "running"]) as HarnessRunState[];
+    for (const state of states) {
       if (input.signal.aborted) unavailable();
       const snapshot = await runs.inspect(run.tenantId, run.id);
       if (!snapshot) return unavailable();
       const prior = snapshot.events.find(event => event.payload.category === "lifecycle" && event.payload.state === state);
       if (prior) continue;
       if (snapshot.run.state === terminal) unavailable();
-      const occurredAt = new Date(Math.max(Date.now(), Date.parse(snapshot.run.lastObservedAt))).toISOString();
+      const occurredAt = new Date(Math.max(Date.parse(startedAt), Date.parse(snapshot.run.lastObservedAt))).toISOString();
       await runs.append({ schemaVersion: "control-room-harness-event/v1", tenantId: run.tenantId, runId: run.id,
         sequence: snapshot.events.length + 1, occurredAt, source: "adapter",
         sourceEventKeyDigest: sha256Digest({ runId: run.id, localCliOutcome: state }),
         payload: { category: "lifecycle", state,
           ...(state === "failed" ? { reasonCode: "local_cli_execution_failed" } : {}) } });
     }
+    if (input.startedAt !== undefined || input.finishedAt !== undefined || input.usage !== undefined) {
+      const snapshot = await runs.inspect(run.tenantId, run.id);
+      if (!snapshot) return unavailable();
+      const prior = snapshot.events.find(event => event.payload.category === "usage");
+      const payload = { category: "usage" as const, inputTokens: input.usage?.inputTokens ?? null, outputTokens: input.usage?.outputTokens ?? null,
+        totalTokens: input.usage?.totalTokens ?? null, cachedInputTokens: input.usage?.cachedInputTokens ?? null, reasoningTokens: null,
+        wallTimeMs: Date.parse(finishedAt) - Date.parse(startedAt) };
+      if (prior) { if (sha256Digest(prior.payload) !== sha256Digest(payload)) unavailable(); }
+      else await runs.append({ schemaVersion: "control-room-harness-event/v1", tenantId: run.tenantId, runId: run.id,
+        sequence: snapshot.events.length + 1, occurredAt: new Date(Math.max(Date.parse(finishedAt), Date.parse(snapshot.run.lastObservedAt))).toISOString(),
+        source: "adapter", sourceEventKeyDigest: sha256Digest({ runId: run.id, localCliOutcome: "usage" }), payload });
+    }
+    {
+      const snapshot = await runs.inspect(run.tenantId, run.id);
+      if (!snapshot) return unavailable();
+      const prior = snapshot.events.find(event => event.payload.category === "lifecycle" && event.payload.state === terminal);
+      if (!prior) await runs.append({ schemaVersion: "control-room-harness-event/v1", tenantId: run.tenantId, runId: run.id,
+        sequence: snapshot.events.length + 1, occurredAt: new Date(Math.max(Date.parse(finishedAt), Date.parse(snapshot.run.lastObservedAt))).toISOString(),
+        source: "adapter", sourceEventKeyDigest: sha256Digest({ runId: run.id, localCliOutcome: terminal }),
+        payload: { category: "lifecycle", state: terminal,
+          ...(terminal === "failed" ? { reasonCode: "local_cli_execution_failed" } : {}) } });
+    }
     const current = await runs.get(run.tenantId, run.id);
     if (!current || current.state !== terminal) return unavailable();
     return { delivery, receipt, run: current };
   }
-  async function publish(input: Readonly<{ delivery: unknown; receipt: unknown; text: string; signal: AbortSignal }>): Promise<void> {
+  async function publish(input: Readonly<{ delivery: unknown; receipt: unknown; text: string; signal: AbortSignal;
+    startedAt?: string; finishedAt?: string; usage?: Readonly<{ inputTokens: number | null; outputTokens: number | null; totalTokens: number | null;
+      cachedInputTokens?: number }> | null }>): Promise<void> {
     const body = text.parse(input.text);
     const { delivery, run } = await record(input, "succeeded");
 
@@ -122,7 +152,9 @@ export function createOwnerTrustedLocalCliLifecycleV1(config: OwnerTrustedLocalC
     await publishDurableResultV1(config.publication, { binding, bytes, receivedAt: run.finishedAt,
       assertAuthority: () => { if (input.signal.aborted) unavailable(); } });
   };
-  return Object.freeze({ publish, recordFailure: (input: Readonly<{ delivery: unknown; receipt: unknown; signal: AbortSignal }>) => record(input, "failed").then(() => {}) });
+  return Object.freeze({ publish, recordFailure: (input: Readonly<{ delivery: unknown; receipt: unknown; signal: AbortSignal;
+    startedAt?: string; finishedAt?: string; usage?: Readonly<{ inputTokens: number | null; outputTokens: number | null; totalTokens: number | null;
+      cachedInputTokens?: number }> | null }>) => record(input, "failed").then(() => {}) });
 }
 
 export function createOwnerTrustedLocalCliPublishV1(config: OwnerTrustedLocalCliPublishConfigurationV1) {

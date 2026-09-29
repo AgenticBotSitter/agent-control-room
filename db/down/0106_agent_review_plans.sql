@@ -4,7 +4,7 @@ DO $$ BEGIN
   IF EXISTS (SELECT 1 FROM control_agent_review_plans)
     OR EXISTS (SELECT 1 FROM control_completion_gate_records
       WHERE kind='review' AND payload->'reviewer'->>'actorType'='agent') THEN
-    RAISE EXCEPTION '0097 down migration refused: agent review history exists';
+    RAISE EXCEPTION '0106 down migration refused: agent review history exists';
   END IF;
 END $$;
 DO $$ BEGIN

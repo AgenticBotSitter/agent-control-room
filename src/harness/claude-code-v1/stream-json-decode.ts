@@ -123,6 +123,8 @@ export interface ClaudeCodeResultFrameV1 {
   readonly resultTextDigest: string | undefined;
   readonly totalCostUsd: number | undefined;
   readonly usageReported: boolean;
+  readonly usage: Readonly<{ inputTokens: number; outputTokens: number; totalTokens: number;
+    cachedInputTokens?: number }> | undefined;
   readonly frameDigest: string;
 }
 
@@ -309,6 +311,25 @@ export function createClaudeCodeStreamDecoderV1(input: Readonly<{ expectedSessio
       totalCostUsd = parsed.total_cost_usd;
     }
     if (parsed.usage !== undefined && !plainObject(parsed.usage)) return fail("malformed_usage");
+    let usage: ClaudeCodeResultFrameV1["usage"];
+    if (plainObject(parsed.usage)) {
+      const inputTokens = parsed.usage.input_tokens, outputTokens = parsed.usage.output_tokens;
+      const cacheCreation = parsed.usage.cache_creation_input_tokens, cacheRead = parsed.usage.cache_read_input_tokens;
+      if (inputTokens !== undefined || outputTokens !== undefined) {
+        if (typeof inputTokens !== "number" || !Number.isSafeInteger(inputTokens) || inputTokens < 0
+          || typeof outputTokens !== "number" || !Number.isSafeInteger(outputTokens) || outputTokens < 0)
+          return fail("malformed_usage");
+        if (cacheCreation !== undefined && (typeof cacheCreation !== "number" || !Number.isSafeInteger(cacheCreation) || cacheCreation < 0)
+          || cacheRead !== undefined && (typeof cacheRead !== "number" || !Number.isSafeInteger(cacheRead) || cacheRead < 0))
+          return fail("malformed_usage");
+        // Cache creation and cache read tokens are additional to `input_tokens`,
+        // never a subset of it (Claude's own accounting), so they are recorded
+        // as one combined "cached" count rather than folded into input.
+        const cachedInputTokens = (cacheCreation ?? 0) + (cacheRead ?? 0);
+        usage = Object.freeze({ inputTokens, outputTokens, totalTokens: inputTokens + outputTokens,
+          ...(cacheCreation !== undefined || cacheRead !== undefined ? { cachedInputTokens } : {}) });
+      }
+    }
     let resultText: string | undefined;
     let resultBytes = 0;
     let resultTextDigest: string | undefined;
@@ -338,6 +359,7 @@ export function createClaudeCodeStreamDecoderV1(input: Readonly<{ expectedSessio
       resultTextDigest,
       totalCostUsd,
       usageReported: parsed.usage !== undefined,
+      usage,
       frameDigest,
     });
   };

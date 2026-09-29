@@ -11,6 +11,7 @@ import type { WorkBatchQueueAdmissionAuthorityV1, WorkBatchQueueCatalogV1 } from
 import { WebTaskService } from "../src/web/v1/task-service";
 import { captureTaskModelCatalogV1 } from "../src/web/v1/task-model-selection";
 import { workBatchQueueItemSchemaV1 } from "../src/work-intake/v1/owner-schemas";
+import type { DatabaseClient, DatabaseSession } from "../src/persistence/database";
 
 const key = new Uint8Array(32).fill(7);
 const agent = (): AuthenticatedPrincipal => ({ tenantId: "tenant:web", identityId: "identity:batch-agent",
@@ -317,6 +318,18 @@ test("queue admission integrity failures refuse owner reads", async t => {
   await assert.rejects(f.owner.view(f.identity, f.project.projectId, batch.batchId), /work_batch_integrity_failed/u);
 });
 
+function observed(db: DatabaseClient) {
+  let queries = 0;
+  const wrap = (tx: DatabaseSession): DatabaseSession => ({ query: async <T>(sql: string, params?: unknown[]) => {
+    queries += 1; return tx.query<T>(sql, params);
+  } });
+  const client: DatabaseClient = { query: async <T>(sql: string, params?: unknown[]) => {
+    queries += 1; return db.query<T>(sql, params);
+  }, transaction: work => db.transaction(tx => work(wrap(tx))),
+  transactionWithPreCommitCheck: (work, check) => db.transactionWithPreCommitCheck(tx => work(wrap(tx)), check) };
+  return { client, count: () => queries };
+}
+
 test("owner approval atomically materializes ordinary proposed tasks and exact replay is inert", async t => {
   const f = await ownerFixture(); t.after(() => void f.db.close());
   const batch = await f.submit(), command = { operation: "decide" as const, batchId: batch.batchId, expectedRevision: 1,
@@ -371,6 +384,93 @@ test("saved item and final-decision integrity failures refuse owner reads", asyn
     new Date(now).toISOString()), /integrity_failed/u);
 });
 
+test("revision and item HMAC-only tampering refuses owner and intake reads", async t => {
+  const revision = await ownerFixture(); t.after(() => void revision.db.close());
+  const revisionBatch = await revision.submit(), changed = proposal(revision.project.projectId);
+  changed.tasks[0] = { ...changed.tasks[0]!, title: "Revised before tag tampering" };
+  await revision.owner.command(revision.identity, revision.project.projectId,
+    { operation: "revise", batchId: revisionBatch.batchId, expectedRevision: 1,
+      reasonCode: "owner_edit", proposal: changed }, "owner-revision-hmac-0001");
+  await revision.db.query("DROP TRIGGER work_batch_revisions_append_only ON work_batch_revisions");
+  await revision.db.query("UPDATE work_batch_revisions SET auth_tag=$1 WHERE batch_id=$2 AND revision=2",
+    [`hmac-sha256:${"0".repeat(64)}`, revisionBatch.batchId]);
+  await assert.rejects(revision.owner.view(revision.identity, revision.project.projectId, revisionBatch.batchId),
+    /work_batch_integrity_failed/u);
+  await assert.rejects(revision.store.status(agent(), revision.project.projectId, revisionBatch.batchId,
+    new Date(now).toISOString()), /integrity_failed/u);
+
+  const item = await ownerFixture(); t.after(() => void item.db.close());
+  const itemBatch = await item.submit();
+  await item.owner.command(item.identity, item.project.projectId,
+    { operation: "decide", batchId: itemBatch.batchId, expectedRevision: 1,
+      items: [{ localId: "build", decision: "approve" }, { localId: "check", decision: "approve" }] },
+    "owner-item-hmac-0001");
+  await item.db.query("DROP TRIGGER work_batch_items_append_only ON work_batch_items");
+  await item.db.query("UPDATE work_batch_items SET auth_tag=$1 WHERE batch_id=$2 AND local_id='build'",
+    [`hmac-sha256:${"0".repeat(64)}`, itemBatch.batchId]);
+  await assert.rejects(item.owner.view(item.identity, item.project.projectId, itemBatch.batchId),
+    /work_batch_integrity_failed/u);
+  await assert.rejects(item.store.status(agent(), item.project.projectId, itemBatch.batchId,
+    new Date(now).toISOString()), /integrity_failed/u);
+});
+
+test("database owner guards enforce every identity and grant authority boundary", async t => {
+  const f = await ownerFixture(); t.after(() => void f.db.close());
+  const batch = await f.submit(), changed = proposal(f.project.projectId);
+  changed.tasks[0] = { ...changed.tasks[0]!, title: "Direct revision attack" };
+  const digest = workBatchProposalDigestV1(changed);
+  const ownerId = (await f.db.query<{ identity_id: string }>(
+    "SELECT identity_id FROM control_role_grants WHERE id='grant:web'")).rows[0]!.identity_id;
+  const rejectRevision = () => assert.rejects(f.db.query(`INSERT INTO work_batch_revisions
+    (id,tenant_id,batch_id,revision,edited_by_identity_id,edited_at,reason_code,proposal,revision_digest,auth_tag)
+    VALUES($1,'tenant:web',$2,2,$3,$4,'owner_edit',$5::jsonb,$6,$7)`,
+  [`${batch.batchId}:revision:2`, batch.batchId, ownerId, new Date(now).toISOString(), JSON.stringify(changed), digest,
+    `hmac-sha256:${"0".repeat(64)}`]), /work batch revision insert rejected/u);
+  const rejectDecision = () => assert.rejects(f.db.query(`UPDATE work_batches SET state='approved',approval_identity_id=$1,approved_at=$2,
+    decision_digest=$3,decision_auth_tag=$4,updated_at=$2 WHERE id=$5`,
+  [ownerId, new Date(now).toISOString(), `sha256:${"0".repeat(64)}`, `hmac-sha256:${"0".repeat(64)}`, batch.batchId]),
+  /work batch decision update rejected/u);
+  const attacks = [
+    { name: "revoked grant", apply: "UPDATE control_role_grants SET revoked_at='2026-09-04T12:00:00.000Z' WHERE id='grant:web'",
+      restore: "UPDATE control_role_grants SET revoked_at=NULL WHERE id='grant:web'" },
+    { name: "expired grant", apply: "UPDATE control_role_grants SET expires_at='2026-09-04T11:59:59.000Z' WHERE id='grant:web'",
+      restore: "UPDATE control_role_grants SET expires_at=NULL WHERE id='grant:web'" },
+    { name: "operator role", apply: "UPDATE control_role_grants SET role_key='operator' WHERE id='grant:web'",
+      restore: "UPDATE control_role_grants SET role_key='owner' WHERE id='grant:web'" },
+    { name: "missing action", apply: `UPDATE control_role_grants SET allowed_actions='["tasks.read"]'::jsonb WHERE id='grant:web'`,
+      restore: `UPDATE control_role_grants SET allowed_actions='["*"]'::jsonb WHERE id='grant:web'` },
+    { name: "wrong project", apply: `UPDATE control_role_grants SET project_ids='["project:other"]'::jsonb WHERE id='grant:web'`,
+      restore: `UPDATE control_role_grants SET project_ids='["*"]'::jsonb WHERE id='grant:web'` },
+    { name: "inactive identity", apply: "UPDATE control_identities SET state='suspended' WHERE id=$1",
+      restore: "UPDATE control_identities SET state='active' WHERE id=$1", params: [ownerId] },
+    { name: "non-human identity", apply: "UPDATE control_identities SET actor_type='service' WHERE id=$1",
+      restore: "UPDATE control_identities SET actor_type='human' WHERE id=$1", params: [ownerId] },
+  ];
+  for (const attack of attacks) {
+    await f.db.query(attack.apply, attack.params);
+    await rejectRevision().catch(error => { throw new Error(`${attack.name} revision attack was not rejected`, { cause: error }); });
+    await rejectDecision().catch(error => { throw new Error(`${attack.name} decision attack was not rejected`, { cause: error }); });
+    await f.db.query(attack.restore, attack.params);
+  }
+});
+
+test("future revocation remains valid until its effective timestamp", async t => {
+  const f = await ownerFixture(); t.after(() => void f.db.close());
+  const batch = await f.submit(), changed = proposal(f.project.projectId);
+  changed.tasks[0] = { ...changed.tasks[0]!, title: "Revise before scheduled revocation" };
+  await f.db.query("UPDATE control_role_grants SET revoked_at='2099-01-01T00:00:00.000Z' WHERE id='grant:web'");
+  assert.deepEqual((await f.owner.attention(f.identity)).batches.map(item => item.batchId), [batch.batchId]);
+  const revised = await f.owner.command(f.identity, f.project.projectId,
+    { operation: "revise", batchId: batch.batchId, expectedRevision: 1, reasonCode: "owner_edit", proposal: changed },
+    "owner-future-revocation-revise-0001");
+  assert.equal(revised.revision, 2);
+  const decided = await f.owner.command(f.identity, f.project.projectId,
+    { operation: "decide", batchId: batch.batchId, expectedRevision: 2,
+      items: [{ localId: "build", decision: "approve" }, { localId: "check", decision: "approve" }] },
+    "owner-future-revocation-decide-0001");
+  assert.equal(decided.state, "approved");
+});
+
 test("revision history and rejected items remain visible", async t => {
   const f = await ownerFixture(); t.after(() => void f.db.close());
   const batch = await f.submit(), changed = proposal(f.project.projectId);
@@ -409,6 +509,50 @@ test("current revision task count is consistent across owner and intake summarie
   assert.equal(attention.batches[0]?.revision, 2);
   assert.equal(attention.batches[0]?.taskCount, 3);
   assert.equal(status.taskCount, 3);
+  assert.equal(status.proposalDigest, workBatchProposalDigestV1(changed));
+  assert.notEqual(status.proposalDigest, batch.proposalDigest);
+});
+
+test("owner list and attention query counts stay fixed as proposed batches grow", async t => {
+  const f = await ownerFixture(); t.after(() => void f.db.close());
+  await f.submit();
+  const measure = async (read: (owner: WorkBatchOwnerServiceV1) => Promise<unknown>) => {
+    const watched = observed(f.client);
+    const owner = new WorkBatchOwnerServiceV1(watched.client, f.tasks,
+      { tenantId: "tenant:web", workspaceId: "workspace:web" }, key, () => now);
+    await read(owner); return watched.count();
+  };
+  const one = { list: await measure(owner => owner.list(f.identity, f.project.projectId)),
+    attention: await measure(owner => owner.attention(f.identity)) };
+  for (let index = 0; index < 9; index += 1) await f.submit();
+  const ten = { list: await measure(owner => owner.list(f.identity, f.project.projectId)),
+    attention: await measure(owner => owner.attention(f.identity)) };
+  assert.deepEqual(ten, one, `owner batch reads added per-batch queries: ${JSON.stringify({ one, ten })}`);
+});
+
+test("unauthorized batches cannot consume the owner attention limit", async t => {
+  const f = await ownerFixture(); t.after(() => void f.db.close());
+  const otherProjectId = "project:batch-attention-other";
+  await f.db.query(`INSERT INTO projects(id,tenant_id,workspace_id,adapter_id,source_record_id,source_version,title,
+    description,normalized_state,domain_state,health,authority_mode,observed_at,payload,updated_at)
+    SELECT $1,tenant_id,workspace_id,adapter_id,$1,source_version,'Other project',description,normalized_state,
+      domain_state,health,authority_mode,observed_at,payload,updated_at FROM projects WHERE tenant_id=$2 AND id=$3`,
+  [otherProjectId, "tenant:web", f.project.projectId]);
+  await f.db.query(`INSERT INTO control_manual_project_heads(tenant_id,project_id,lifecycle,version,created_at,updated_at)
+    SELECT tenant_id,$1,lifecycle,version,created_at,updated_at FROM control_manual_project_heads
+    WHERE tenant_id=$2 AND project_id=$3`, [otherProjectId, "tenant:web", f.project.projectId]);
+  await f.db.query("UPDATE control_role_grants SET project_ids=$1::jsonb WHERE id='grant:batch-agent'",
+    [JSON.stringify([f.project.projectId, otherProjectId])]);
+  await f.db.query("UPDATE control_role_grants SET project_ids=$1::jsonb WHERE id='grant:web'",
+    [JSON.stringify([f.project.projectId])]);
+  const otherProposal = proposal(otherProjectId);
+  for (let index = 0; index < 100; index += 1) await f.store.create({ principal: agent(), proposal: otherProposal,
+    proposalDigest: workBatchProposalDigestV1(otherProposal),
+    idempotencyKey: `other-attention-${String(index).padStart(4, "0")}`,
+    now: new Date(now - 1000).toISOString(), queueDepthLimit: 10 });
+  const authorized = await f.submit();
+  const attention = await f.owner.attention(f.identity);
+  assert.deepEqual(attention.batches.map(batch => batch.batchId), [authorized.batchId]);
 });
 
 test("an S1-authenticated batch remains readable after the S2 migration and first revision", async t => {
@@ -420,7 +564,7 @@ test("an S1-authenticated batch remains readable after the S2 migration and firs
       proposed_by_identity_id,proposed_at,proposal,queue_depth_limit,batch_digest,auth_tag,
       auth_material_version,created_at FROM work_batches WHERE id=$1`, [batch.batchId])).rows[0]!;
   const createdAt = new Date(before.created_at).toISOString();
-  assert.equal(before.auth_material_version, 1, "0094 backfills the S1 auth-material version");
+  assert.equal(before.auth_material_version, 1, "0102 backfills the S1 auth-material version");
   assert.equal(before.auth_tag, hmacSha256Tag(key, { purpose: "work-batch/v1", record: {
     id: before.id, tenantId: "tenant:web", projectId: before.project_id,
     proposedByIdentityId: before.proposed_by_identity_id, proposedAt: new Date(before.proposed_at).toISOString(),

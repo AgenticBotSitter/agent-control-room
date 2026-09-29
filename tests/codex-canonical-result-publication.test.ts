@@ -1045,6 +1045,7 @@ test("managed native input authenticates and serializes a boundary Codex result 
     queue: { async locate() { throw new Error("unused"); }, async stage() {}, async transmit() {},
       async codexStage() {}, async codexTransmit() { return { activationSent: true as const }; } },
     async stage() {}, async transmit() {}, async receipt() { throw new Error("unused"); },
+    async renew() { throw new Error("unused"); },
     async codexReceipt() { throw new Error("unused"); }, codexResult: intake,
     async progress() { throw new Error("unused"); }, async recover() { throw new Error("unused"); },
     async register() { throw new Error("unused"); },

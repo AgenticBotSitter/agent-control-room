@@ -2,6 +2,7 @@ import { isAbsolute, normalize } from "node:path";
 import type { OwnerTrustedLocalClaudeExecV1 } from "../claude-code-v1/owner-trusted-local-exec";
 import type { OwnerTrustedLocalCodexExecV1 } from "../codex-v1/owner-trusted-local-exec";
 import type { OwnerTrustedLocalCliExecutionV1 } from "./owner-trusted-local-cli-delivery";
+import { MODEL_IDENTIFIER_PATTERN_V1 } from "../../domain/v1/model-identifier";
 
 const MAX_PROMPT_BYTES = 49_152;
 const invalid = (): never => { throw new Error("owner_trusted_local_cli_execution_unavailable"); };
@@ -28,7 +29,7 @@ function safeConfiguration(value: unknown, claude: boolean): value is Readonly<{
     && safePath(record.executablePath) && safePath(record.workingDirectory)
     && typeof record.deadlineMs === "number" && Number.isSafeInteger(record.deadlineMs)
     && record.deadlineMs >= 100 && record.deadlineMs <= 3_600_000
-    && (dynamic || !fixedSelection || typeof record.model === "string" && /^[A-Za-z0-9][A-Za-z0-9._:/+-]{0,179}$/u.test(record.model)
+    && (dynamic || !fixedSelection || typeof record.model === "string" && MODEL_IDENTIFIER_PATTERN_V1.test(record.model)
       && typeof record.effort === "string" && /^(?:low|medium|high|xhigh|max)$/u.test(record.effort)
       && (!claude || typeof record.supportsEffort === "boolean"));
 }
@@ -50,11 +51,19 @@ export function ownerTrustedLocalCliPromptV1(input: unknown): string {
   return prompt;
 }
 
-function mapped(result: Readonly<{ status: string; text?: string; reason?: string }>): OwnerTrustedLocalCliExecutionV1 {
-  if (result.status === "completed" && typeof result.text === "string") return Object.freeze({ kind: "completed" as const, text: result.text });
+function mapped(result: Readonly<{ status: string; text?: string; reason?: string;
+  usage?: Readonly<{ inputTokens?: number; outputTokens?: number; totalTokens?: number; cachedInputTokens?: number }> }>,
+  startedAt: string, finishedAt: string): OwnerTrustedLocalCliExecutionV1 {
+  const usage = result.usage ? Object.freeze({ inputTokens: result.usage.inputTokens ?? null,
+    outputTokens: result.usage.outputTokens ?? null,
+    totalTokens: result.usage.totalTokens ?? (result.usage.inputTokens !== undefined && result.usage.outputTokens !== undefined
+      ? result.usage.inputTokens + result.usage.outputTokens : null),
+    ...(result.usage.cachedInputTokens !== undefined ? { cachedInputTokens: result.usage.cachedInputTokens } : {}) }) : null;
+  if (result.status === "completed" && typeof result.text === "string") return Object.freeze({ kind: "completed" as const,
+    text: result.text, startedAt, finishedAt, usage });
   if ((result.status === "failed" || result.status === "canceled" || result.status === "timed_out" || result.status === "cleanup_uncertain")
     && typeof result.reason === "string" && result.reason.length >= 1 && result.reason.length <= 240)
-    return Object.freeze({ kind: "failed" as const, reason: `${result.status}:${result.reason}` });
+    return Object.freeze({ kind: "failed" as const, reason: `${result.status}:${result.reason}`, startedAt, finishedAt, usage });
   return invalid();
 }
 
@@ -69,12 +78,13 @@ function capture(executor: Readonly<{ execute(input: Readonly<{ executablePath: 
     const selected = fixed.select ? await fixed.select(input.delivery.identity.jobId)
       : typeof fixed.model === "string" ? fixed as CliSelection : undefined;
     if (selected && (typeof selected.model !== "string" || typeof selected.effort !== "string")) invalid();
+    const startedAt = new Date().toISOString();
     const result = await executor.execute(Object.freeze({ executablePath: fixed.executablePath,
       workingDirectory: fixed.workingDirectory, deadlineMs: fixed.deadlineMs,
       ...(selected ? { model: selected.model, effort: selected.effort,
         ...(claude ? { supportsEffort: selected.supportsEffort === true } : {}) } : {}),
       prompt: ownerTrustedLocalCliPromptV1(input.delivery.input), signal: input.signal }));
-    return mapped(result);
+    return mapped(result, startedAt, new Date().toISOString());
   } });
 }
 

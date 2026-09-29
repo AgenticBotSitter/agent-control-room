@@ -5,7 +5,8 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
-import { createOwnerTrustedLocalHermesExecV1, OWNER_TRUSTED_LOCAL_HERMES_FIXED_ARGS_V1 } from "../src/harness/hermes-local-v1";
+import { createOwnerTrustedLocalHermesExecV1, createOwnerTrustedLocalHermesExecutionAdapterV1,
+  OWNER_TRUSTED_LOCAL_HERMES_FIXED_ARGS_V1 } from "../src/harness/hermes-local-v1";
 
 const root = await mkdtemp(join(tmpdir(), "acr-hermes-exec-"));
 const fake = join(dirname(fileURLToPath(import.meta.url)), "fixtures", "hermes-owner-trusted-local-exec-fake.mjs");
@@ -17,7 +18,7 @@ function adapter(capture?: { args?: readonly string[]; env?: Readonly<Record<str
   } });
 }
 function input(workingDirectory: string, prompt = "hello", deadlineMs = 10_000, signal?: AbortSignal) {
-  return { executablePath: process.execPath, profile: "cr", model: "space-bunny-free", provider: "opencode-go", prompt, workingDirectory, deadlineMs, signal };
+  return { executablePath: process.execPath, profile: "cr", model: "space-bunny+free", provider: "opencode-go", prompt, workingDirectory, deadlineMs, signal };
 }
 
 test("runs a text-only Hermes task with protected model selection and no inherited environment", async () => {
@@ -25,12 +26,29 @@ test("runs a text-only Hermes task with protected model selection and no inherit
   const cwd = await taskDirectory(); const result = await adapter(captured).execute(input(cwd));
   assert.equal(result.status, "completed"); if (result.status !== "completed") throw new Error("expected completion");
   assert.deepEqual(captured.args, ["-p", "cr", ...OWNER_TRUSTED_LOCAL_HERMES_FIXED_ARGS_V1,
-    "--run-budget", "10", "--in", cwd, "--model", "space-bunny-free", "--provider", "opencode-go"]);
+    "--run-budget", "10", "--in", cwd, "--model", "space-bunny+free", "--provider", "opencode-go"]);
   const received = JSON.parse(result.text) as { args: string[]; env: string[]; prompt: string };
   assert.deepEqual(received.args, captured.args); assert.equal(received.prompt, "hello");
   assert.equal(received.env.includes("SECRET_SHOULD_NOT_LEAK"), false);
   assert.deepEqual(Object.keys(captured.env ?? {}).sort(), ["HOME", "LANG", "PATH", "TMPDIR"]);
-  assert.deepEqual(result.usage, { inputTokens: 2, outputTokens: 3, totalTokens: 5 }); assert.deepEqual(await readdir(cwd), []);
+  assert.deepEqual(result.usage, { inputTokens: 2, outputTokens: 3, totalTokens: 5, cachedInputTokens: 0 }); assert.deepEqual(await readdir(cwd), []);
+});
+
+test("the shared adapter sends a named per-task Hermes profile through the real executor", async () => {
+  const cwd = await taskDirectory(); const captured: { args?: readonly string[] } = {};
+  const selected = createOwnerTrustedLocalHermesExecutionAdapterV1(adapter(captured), {
+    executablePath: process.execPath, workingDirectory: cwd, deadlineMs: 10_000,
+    async select(jobId: string) {
+      assert.equal(jobId, "job:selected");
+      return { profile: "review", model: "space-bunny+free", provider: "opencode-go" };
+    },
+  });
+  const result = await selected.execute({ delivery: { identity: { jobId: "job:selected" },
+    input: { instructions: "Read only the supplied task.", prompt: "Return the bounded result." } },
+  signal: new AbortController().signal });
+  assert.equal(result.kind, "completed");
+  assert.deepEqual(captured.args, ["-p", "review", ...OWNER_TRUSTED_LOCAL_HERMES_FIXED_ARGS_V1,
+    "--run-budget", "10", "--in", cwd, "--model", "space-bunny+free", "--provider", "opencode-go"]);
 });
 
 test("refuses cancellation but reuses the persistent project workspace", async () => {

@@ -5,6 +5,8 @@ import { WebTaskVerificationService } from "./task-verification-service";
 import { createTaskCoordinatorLifecycle, type TaskCoordinatorConfiguration, type TaskCoordinatorDatabase } from "./task-coordinator-lifecycle";
 import type { MacLocalCanonicalTaskOperationsV1 } from "./mac-local-web-process";
 import { validateTaskQualityKeys } from "./task-quality-coordinator";
+import { OperatorSurfaceStoreV1 } from "../../operator-surfaces/v1";
+import { deriveProjectEventIntegrityKeyV1, ProjectEventStoreV1, type ProjectEventReadSourceV1 } from "../../project-events/v1";
 
 /**
  * The Mac-local counterpart to the hosted task application composition.
@@ -17,8 +19,9 @@ import { validateTaskQualityKeys } from "./task-quality-coordinator";
  */
 export type MacLocalTaskApplicationV1 = Readonly<{
   operations: MacLocalCanonicalTaskOperationsV1;
-  taskReadKeys?: Pick<NonNullable<MacLocalTaskApplicationInputV1["web"]["tasks"]>, "harnessIntegrityKey" | "results" | "reviews" | "ownerReviews" | "modelCatalog" | "manualVerificationScenarios">
+  taskReadKeys?: Pick<NonNullable<MacLocalTaskApplicationInputV1["web"]["tasks"]>, "harnessIntegrityKey" | "results" | "reviews" | "ownerReviews" | "modelCatalog" | "manualVerificationScenarios" | "usagePriceTable">
     & Pick<WebTaskKeys, "taskPlanIntegrityKey">;
+  projectEvents?: ProjectEventReadSourceV1;
   isReady(): boolean;
   close(): Promise<void>;
   queueDelivery?: ReturnType<typeof createTaskCoordinatorLifecycle>["queueDelivery"];
@@ -26,6 +29,7 @@ export type MacLocalTaskApplicationV1 = Readonly<{
   results?: ReturnType<typeof createTaskCoordinatorLifecycle>["results"];
   quality?: ReturnType<typeof createTaskCoordinatorLifecycle>["quality"];
   workBatchAuthority?: NonNullable<ReturnType<typeof createTaskCoordinatorLifecycle>["workBatchAuthority"]>;
+  actionInboxSource?: NonNullable<import("./mac-local-web-process").MacLocalWebProcessOptionsV1["actionInboxSource"]>;
 }>;
 
 export type MacLocalTaskApplicationInputV1 = Readonly<{
@@ -82,12 +86,25 @@ export async function createMacLocalTaskApplicationV1(input: MacLocalTaskApplica
       ...(ownerReviews ? { ownerReviews } : {}),
       ...(ownerVerifications ? { ownerVerifications } : {}),
     });
+    const operatorSurfaceStore = new OperatorSurfaceStoreV1(coordinator.database.client);
+    const actionInboxSource = Object.freeze({ read: async (scope: {
+      tenantId: string; actorId: string; grantedAt: string; now: string;
+    }) => {
+      if (scope.tenantId !== coordinator.scope.tenantId || !scope.actorId
+        || Date.parse(scope.grantedAt) > Date.parse(scope.now)) throw new Error("action_inbox_scope_mismatch");
+      const items = await operatorSurfaceStore.listInbox({ tenantId: scope.tenantId, state: "open", limit: 500 });
+      return { observedAt: scope.now, items, truncated: items.length === 500 };
+    } });
     return Object.freeze({
       operations,
+      actionInboxSource,
+      ...(tasks?.harnessIntegrityKey ? { projectEvents: new ProjectEventStoreV1(web.database.client,
+        deriveProjectEventIntegrityKeyV1(tasks.harnessIntegrityKey), () => new Date(clock()).toISOString()) } : {}),
       ...(tasks ? { taskReadKeys: { harnessIntegrityKey: tasks.harnessIntegrityKey,
         taskPlanIntegrityKey: Uint8Array.from(coordinator.planning.integrityKey),
         results: tasks.results, reviews: tasks.reviews, ownerReviews: tasks.ownerReviews,
-        modelCatalog: tasks.modelCatalog, manualVerificationScenarios: tasks.manualVerificationScenarios } } : {}),
+        modelCatalog: tasks.modelCatalog, manualVerificationScenarios: tasks.manualVerificationScenarios,
+        usagePriceTable: tasks.usagePriceTable } } : {}),
       isReady: lifecycle.isReady.bind(lifecycle),
       close: lifecycle.close.bind(lifecycle),
       ...(lifecycle.queueDelivery ? { queueDelivery: lifecycle.queueDelivery } : {}),
