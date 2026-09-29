@@ -117,3 +117,17 @@ test("replays cleanly on a retry with the exact same text, and refuses an aborte
   const controller = new AbortController(); controller.abort();
   await assert.rejects(publish({ delivery, receipt, text: "unreachable", signal: controller.signal }));
 });
+
+test("carries the cache token count through to the persisted usage event, never hard-coding it null", async t => {
+  const { f, publish, delivery, receipt } = await setup(t, "run:cli-publish-cache");
+  await publish({ delivery, receipt, text: "The task completed successfully.", signal: new AbortController().signal,
+    usage: { inputTokens: 100_000, outputTokens: 30, cachedInputTokens: 90_000, totalTokens: 100_030 } });
+  const usageEvent = await f.db.query<{ payload: { cachedInputTokens: number | null; inputTokens: number | null } }>(
+    `SELECT payload->'payload' AS payload FROM control_harness_run_events
+      WHERE tenant_id=$1 AND run_id=$2 AND payload->'payload'->>'category'='usage'`,
+    [binding.tenantId, delivery.identity.runId]);
+  assert.equal(usageEvent.rows.length, 1, "exactly one usage event must be recorded");
+  assert.equal(usageEvent.rows[0]?.payload.cachedInputTokens, 90_000,
+    "the recorded cache token count must match what the CLI adapter reported, not a hard-coded null");
+  assert.equal(usageEvent.rows[0]?.payload.inputTokens, 100_000);
+});
