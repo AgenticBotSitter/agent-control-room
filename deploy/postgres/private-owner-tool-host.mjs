@@ -182,7 +182,8 @@ function requestEnvelope(value) {
       || request.environmentMode !== "replace" || request.ledgerPath !== "deploy/postgres/migration-ledger.json"
       || typeof request.releaseDigest !== "string" || !fullDigestPattern.test(request.releaseDigest)
       || typeof request.requestDigest !== "string" || !fullDigestPattern.test(request.requestDigest)) throw new Error();
-    const env = exact(request.env, ["CONTROL_ROOM_MIGRATOR_PASSWORD", "CONTROL_ROOM_APP_PASSWORD", "CONTROL_ROOM_SCHEDULER_PASSWORD"]);
+    const env = exact(request.env, ["CONTROL_ROOM_MIGRATOR_PASSWORD", "CONTROL_ROOM_APP_PASSWORD",
+      "CONTROL_ROOM_SCHEDULER_PASSWORD", "CONTROL_ROOM_WORK_INTAKE_PASSWORD"]);
     for (const name of Object.keys(env)) if (typeof env[name] !== "string" || env[name].length < 24
       || env[name].length > 4096 || env[name].includes("\0")) throw new Error();
     const bootstrapTarget = target(request.bootstrapTarget), migrateTarget = target(request.migrateTarget);

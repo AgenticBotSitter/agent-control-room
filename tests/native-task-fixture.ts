@@ -24,12 +24,15 @@ export function snapshot(patch: Partial<NativeSnapshot> = {}): NativeSnapshot {
 }
 export const observation = (patch: Partial<NativeSnapshot> = {}) => nativeTaskObservation(snapshot(patch), registration.nativeTask!);
 
+/** Test-only stand-in with the PGlite surface this fixture uses, e.g. a real PostgreSQL pool. */
+export type NativeTaskFixtureDatabase = Pick<PGlite, "exec" | "query" | "transaction" | "close">;
+
 export async function nativeTaskFixture(pgliteOptions: { dataDir?: string; inputDigest?: string;
   authority?: JobRecord["authority"]; jobType?: string; requiredCapability?: string;
-  exactRepositorySimulation?: true } = {}) {
+  exactRepositorySimulation?: true; database?: NativeTaskFixtureDatabase } = {}) {
   const repositorySimulation = pgliteOptions.exactRepositorySimulation
     ? await createRepositorySimulationDatabaseV1({ testOnly: true }) : undefined;
-  const raw = repositorySimulation ?? new PGlite(pgliteOptions.dataDir);
+  const raw = repositorySimulation ?? pgliteOptions.database ?? new PGlite(pgliteOptions.dataDir);
   for (const name of (await readdir(resolve("db/migrations"))).filter(name => name.endsWith(".sql")).sort()) {
     await raw.exec(await readFile(resolve("db/migrations", name), "utf8"));
   }

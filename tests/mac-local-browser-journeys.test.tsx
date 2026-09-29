@@ -22,10 +22,16 @@
 // Database
 // --------
 // A DISPOSABLE PostgreSQL 17 cluster, created by this file in `before` via
-// initdb/pg_ctl against a temp data directory on a nonstandard loopback port,
-// torn down in `after`. It never reads the protected root and never reaches a
-// non-loopback host. If PostgreSQL binaries are absent the whole file SKIPS
-// (loudly, with a reason) rather than silently reporting green.
+// initdb/pg_ctl and torn down in `after`, on a nonstandard loopback port. The
+// port comes from `CONTROL_ROOM_TEST_PG_PORT` or from a port the OS hands out at
+// runtime, and the data directory lives under `<cwd>/.test-tmp/` — never the
+// system temp dir — so a run that is interrupted leaves a cluster the worktree's
+// own cleanups can still find and stop. `tests/helpers/disposable-postgres-cluster.ts`
+// owns all of that, and `tests/mac-local-journey-cluster-hygiene.test.ts` proves
+// the three leak scenarios (two runs at once, SIGTERM mid-run, a failing
+// assertion) leave nothing behind. It never reads the protected root and never
+// reaches a non-loopback host. If PostgreSQL binaries are absent the whole file
+// SKIPS (loudly, with a reason) rather than silently reporting green.
 //
 // NOTE on the `*_not_configured` refusals
 // ---------------------------------------
@@ -48,12 +54,6 @@
 
 import assert from "node:assert/strict";
 import test, { after, before, describe, type TestContext } from "node:test";
-import { execFile, execFileSync } from "node:child_process";
-import { promisify } from "node:util";
-import { existsSync, readFileSync } from "node:fs";
-import { mkdtemp, mkdir, readFile, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 
 import { sha256Digest } from "../src/security/canonical-digest";
 import { LOCAL_OWNER_SESSION_PROFILE_V1 } from "../src/web/v1/local-owner-session";
@@ -66,32 +66,9 @@ import type { MacLocalWebProcessOptionsV1 } from "../src/web/v1/mac-local-web-pr
 import { conformanceNow, conformanceSubject, syntheticAssertion, syntheticSigningKey, syntheticAccessTrust }
   from "./helpers/private-owner-bootstrap-conformance";
 import { openDisposableMacLocalDatabase } from "./helpers/mac-local-disposable-database";
+import { needsPg, PG_AVAILABLE, startCluster, stopCluster, installProcessTeardown, type Cluster }
+  from "./helpers/disposable-postgres-cluster";
 
-const exec = promisify(execFile);
-
-/**
- * PG_BIN is how the repo's own live-cluster tests (package.json
- * `test:postgres-production`) locate PostgreSQL. Homebrew's bin directory
- * holds initdb/pg_ctl/psql directly, so probe both shapes.
- */
-function resolvePostgresBin(): string | undefined {
-  const candidates = [process.env.PG_BIN, "/opt/homebrew/bin", "/opt/homebrew/opt/postgresql@17/bin",
-    "/usr/lib/postgresql/17/bin"].filter((value): value is string => !!value);
-  for (const dir of candidates) {
-    if (existsSync(join(dir, "initdb")) && existsSync(join(dir, "pg_ctl")) && existsSync(join(dir, "postgres")))
-      return dir;
-  }
-  return undefined;
-}
-
-const PG_BIN = resolvePostgresBin();
-const PG_AVAILABLE = PG_BIN !== undefined;
-// The repo's own PG tests pass this as the second `test()` argument; keep the
-// same convention so a missing PostgreSQL reads as a loud skip, never green.
-const needsPg = PG_AVAILABLE ? false : "needs PostgreSQL 17 binaries (PG_BIN, /opt/homebrew/bin, or /usr/lib/postgresql/17/bin)";
-
-/** Nonstandard loopback port (<= 65535), clear of the repo's other PG tests (65434, 5432). */
-const PORT = 65_431;
 const origin = "http://127.0.0.1:3210";
 const ownerCode = "mac-local-journey-owner-code-000001";
 // Anchor the clock and the owner subject to the repo's existing conformance
@@ -107,97 +84,32 @@ const digestB = `sha256:${"b".repeat(64)}`;
 const digestC = `sha256:${"c".repeat(64)}`;
 const digestD = `sha256:${"d".repeat(64)}`;
 
-interface Cluster { run: string; data: string; socket: string; pgCtl: string; fixturePassword: string }
 let cluster: Cluster | undefined;
+// The teardown handlers must be installed before the cluster exists so a
+// signal arriving during `startCluster` still stops whatever it created. The
+// variable is read lazily, so the handlers see the cluster once it is assigned.
+const removeProcessTeardown = installProcessTeardown(() => cluster);
 
-const execOptions = { timeout: 120_000, maxBuffer: 1 << 26, encoding: "utf8" as const };
-
-async function startCluster(): Promise<Cluster> {
-  const run = await mkdtemp(join(tmpdir(), "cr-mac-local-m2-"));
-  const data = join(run, "data");
-  const socket = join(run, "socket");
-  await mkdir(socket, { mode: 0o700 });
-  const base = { env: { ...process.env, PATH: "/usr/bin:/bin:/opt/homebrew/bin", LC_ALL: "C", TMPDIR: run,
-      NODE_ENV: "test" as const }, ...execOptions };
-  // initdb into a temp dir only. `-U fixture_admin` is a synthetic role; the
-  // password set below is a throwaway constant, never a real credential.
-  await exec(join(PG_BIN!, "initdb"), ["-D", data, "-U", "fixture_admin", "-E", "UTF8", "--auth-local=trust"], base);
-  // Loopback-only TCP with scram. initdb with --auth-local=trust writes a
-  // stock pg_hba.conf whose loopback TCP rule is `trust` (with --auth-host=reject
-  // it is `reject` instead). pg_hba is first-match-wins, so rewrite whatever the
-  // stock loopback TCP rule is rather than appending a line that never applies.
-  const hba = join(data, "pg_hba.conf");
-  const { readFile: read, writeFile: write } = await import("node:fs/promises");
-  const stock = await read(hba, "utf8");
-  const patched = stock.replace(/^(host\s+all\s+all\s+127\.0\.0\.1\/32\s+)\S+(\s*)$/m,
-    "host    all             all             127.0.0.1/32            scram-sha-256$2");
-  assert.notEqual(patched, stock,
-    "pg_hba.conf must still contain a stock loopback TCP rule to patch to scram");
-  await write(hba, patched, "utf8");
-  const fixturePassword = "disposable-fixture-password";
-  await exec(join(PG_BIN!, "pg_ctl"), ["-D", data, "-o",
-    `-p ${PORT} -k ${socket} -h 127.0.0.1 -c listen_addresses=127.0.0.1 -c fsync=off -c full_page_writes=off`,
-    "-l", join(run, "server.log"), "-w", "-t", "60", "start"], base);
-  // Set the synthetic role password over the local socket (trust auth).
-  await exec(join(PG_BIN!, "psql"), ["-h", socket, "-p", String(PORT), "-U", "fixture_admin",
-    "-d", "postgres", "-Atc", `ALTER ROLE fixture_admin PASSWORD '${fixturePassword}';`], execOptions);
-  return { run, data, socket, pgCtl: join(PG_BIN!, "pg_ctl"), fixturePassword };
-}
-
-/** Stop the cluster and prove it is gone before the data directory is removed.
- *
- * A swallowed stop failure used to be followed by `rm` anyway, which could
- * delete the socket and data directory out from under a still-running
- * postmaster, leave an unreaped process and a bound port behind, and make the
- * next run fail with an unrelated-looking EADDRINUSE. Teardown now fails
- * loudly instead: it falls back to the recorded postmaster pid, verifies the
- * process is gone, and only then removes the directory. */
-async function stopCluster(target: Cluster) {
-  const stopped = await exec(target.pgCtl, ["-D", target.data, "-m", "immediate", "-w", "-t", "60", "stop"],
-    { timeout: 120_000, maxBuffer: 1 << 26, encoding: "utf8" }).then(() => true,
-      (error: Error) => { stopFailure = error; return false; });
-  if (!stopped) {
-    // pg_ctl writes postmaster.pid into the data directory; use it as the fallback.
-    const pidFile = join(target.data, "postmaster.pid");
-    let pid: number | undefined;
-    try { pid = Number((await readFile(pidFile, "utf8")).split("\n")[0]?.trim()); } catch { pid = undefined; }
-    if (typeof pid === "number" && Number.isSafeInteger(pid) && pid > 1) {
-      try { process.kill(pid, "SIGKILL"); } catch { /* already gone */ }
-    }
-    // Give the kernel a moment to release the listening socket.
-    for (let attempt = 0; attempt < 20; attempt += 1) {
-      if (!(await isPostmasterAlive(pid))) break;
-      await new Promise(resolve => setTimeout(resolve, 250));
-    }
-    if (await isPostmasterAlive(pid))
-      throw new Error(`disposable_cluster_stop_failed: ${stopFailure?.message ?? "postmaster still alive"}`);
-  }
-  if (await isPostmasterAlive(await readPostmasterPid(target)))
-    throw new Error("disposable_cluster_survived_teardown");
-  await rm(target.run, { recursive: true, force: true });
-}
-
-let stopFailure: Error | undefined;
-
-async function readPostmasterPid(target: Cluster): Promise<number | undefined> {
-  try { const raw = (await readFile(join(target.data, "postmaster.pid"), "utf8")).split("\n")[0]?.trim();
-    return Number.isSafeInteger(Number(raw)) && Number(raw) > 1 ? Number(raw) : undefined; }
-  catch { return undefined; }
-}
-
-/** A pid is only "alive" if it exists AND is the postgres postmaster, so a
- * recycled pid belonging to something else can never be reported as ours. */
-function isPostmasterAlive(pid: number | undefined): boolean {
-  if (typeof pid !== "number" || !Number.isSafeInteger(pid) || pid <= 1) return false;
-  try { process.kill(pid, 0); } catch { return false; }
+before(async () => {
+  if (!PG_AVAILABLE) return;
   try {
-    const command = execFileSync("/bin/ps", ["-o", "command=", "-p", String(pid)], { encoding: "utf8" });
-    return /\bpostgres\b/u.test(command);
-  } catch { return false; }
-}
-
-before(async () => { if (PG_AVAILABLE) cluster = await startCluster(); });
-after(async () => { if (cluster) await stopCluster(cluster); });
+    cluster = await startCluster("journey-m2-");
+  } catch (error) {
+    // A failed start must not leave a half-built cluster or a live handler set
+    // behind for the rest of the process to trip over.
+    removeProcessTeardown();
+    throw error;
+  }
+});
+after(async () => {
+  // Runs on the failing path too: node's runner always reaches the file-level
+  // `after`, so a failed assertion cannot leak the cluster.
+  try {
+    if (cluster) await stopCluster(cluster);
+  } finally {
+    removeProcessTeardown();
+  }
+});
 
 interface Journey {
   request: (path: string, init?: RequestInit) => Promise<Response>;
@@ -208,8 +120,11 @@ interface Journey {
 /** Boot the real `mac-local` composition against a freshly migrated database. */
 async function journeyFixture(t: TestContext, fresh: string, extra: Partial<MacLocalWebProcessOptionsV1> = {}): Promise<Journey> {
   const active = cluster!;
-  const database = await openDisposableMacLocalDatabase({ run: active.run, port: PORT, name: fresh,
-    fixtureUser: "fixture_admin", fixturePassword: active.fixturePassword });
+  // `active.port` is the port the postmaster actually bound (requested, env
+  // override or runtime-free), never a constant, so a parallel copy of this
+  // file never collides with this one.
+  const database = await openDisposableMacLocalDatabase({ run: active.run, socket: active.socket,
+    port: active.port, name: fresh, fixtureUser: "fixture_admin", fixturePassword: active.fixturePassword });
   const key = syntheticSigningKey();
   // The trust window, the assertion exp and the run clock all share conformanceNow.
   const trust: AccessTrust = syntheticAccessTrust(key, nowMs);
@@ -219,7 +134,7 @@ async function journeyFixture(t: TestContext, fresh: string, extra: Partial<MacL
     identityId: `identity:synthetic-owner-${fresh}`, grantId: `grant:synthetic-owner-${fresh}`,
     displayName: "Synthetic owner", expectedOwnerSubjectDigest: sha256Digest({ provider: trust.issuer, subject }),
   };
-  const pgConfig: PrivatePostgresConfiguration = { host: "127.0.0.1", port: PORT, database: database.name,
+  const pgConfig: PrivatePostgresConfiguration = { host: "127.0.0.1", port: active.port, database: database.name,
     username: "fixture_admin", password: active.fixturePassword, majorVersion: 17 };
   const opened = createPrivatePostgresDatabase(pgConfig);
   const ownerCreated = await createPrivateOwnerBootstrapCommand({

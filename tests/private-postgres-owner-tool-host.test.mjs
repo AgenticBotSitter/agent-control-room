@@ -77,7 +77,8 @@ test("private owner tool host frames entry before the fixed migration export and
     bootstrapTarget: target("control-room-owner-bootstrap"), migrateTarget: target("control-room-owner-migrate"),
     ledgerPath: paths[3], env: { CONTROL_ROOM_MIGRATOR_PASSWORD: secret,
       CONTROL_ROOM_APP_PASSWORD: "application-password-0000000000",
-      CONTROL_ROOM_SCHEDULER_PASSWORD: "scheduler-password-000000000000" } };
+      CONTROL_ROOM_SCHEDULER_PASSWORD: "scheduler-password-000000000000",
+      CONTROL_ROOM_WORK_INTAKE_PASSWORD: "work-intake-password-00000000000" } };
   const result = await invoke(f.root, f.manifestDigest, request);
   assert.equal(result.code, 0); assert.equal(result.signal, null); assert.equal(result.stderr, "");
   assert.deepEqual(result.frames.map(frame => frame.type), ["entered", "result"]);

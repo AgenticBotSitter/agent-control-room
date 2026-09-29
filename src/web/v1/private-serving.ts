@@ -58,6 +58,11 @@ export function createGitHubBrokerLoopbackService(bridge: GitHubBrokerBridge, op
   return createLoopbackService(options, () => bridge as RequestBridge);
 }
 
+/** Dedicated machine-intake wrapper over the same reviewed loopback lifecycle. */
+export function createWorkIntakeLoopbackService(bridge: GitHubBrokerBridge, options: ListenerOptions) {
+  return createLoopbackService(options, () => bridge as RequestBridge);
+}
+
 /** Dedicated first-run wrapper over the same reviewed loopback lifecycle. */
 export function createLocalSetupLoopbackService(bridge: LocalSetupBridge, options: ListenerOptions) {
   return createLoopbackService(options, () => bridge as RequestBridge);

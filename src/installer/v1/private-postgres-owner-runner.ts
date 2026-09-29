@@ -271,6 +271,8 @@ const requiredRoles = Object.freeze(new Map<string, boolean>([
   ["control_room_backup", false],
   ["control_room_schedule_admissions", false],
   ["control_room_github_broker", false],
+  ["control_room_work_intake", false],
+  ["control_room_work_intake_agent", true],
   ["control_room_scheduler", true],
 ]));
 
