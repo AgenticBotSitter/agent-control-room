@@ -577,15 +577,66 @@ async function startCluster(options: WithRealPostgresOptions & { pgBin: string }
     }
     if (pid !== undefined) {
       if (pidAlive(pid)) {
-        // Escalate: SIGQUIT is PostgreSQL's immediate shutdown, SIGKILL the
-        // last resort. A disposable fixture cluster is ours to end.
-        for (const signal of ["SIGQUIT", "SIGKILL"] as const) {
-          try { process.kill(pid, signal); } catch { /* already gone */ }
+        // A cooperative shutdown is tried BEFORE any SIGKILL, and it is tried
+        // twice, because the choice of signal is the difference between
+        // releasing PostgreSQL's SysV shared-memory segment and leaking it.
+        //
+        // MEASURED against PostgreSQL 17.11 on this machine, snapshotting
+        // `ipcs -m` before and after every shape:
+        //
+        //   pg_ctl -m fast stop ......... segment released   (3/3)
+        //   SIGQUIT, idle ............... released, 4 ms      (3/3)
+        //   SIGQUIT, prepared xact ...... released             (1/1)
+        //   SIGKILL ..................... LEAKED               (6/6)
+        //   SIGKILL during startup ...... LEAKED               (6/6)
+        //   shared_memory_type=mmap + SIGKILL ... LEAKED       (5/5)
+        //
+        // `SIGKILL` cannot run PostgreSQL's exit path, so the 56-byte segment is
+        // left with a dead creator and `nattch 0`. `shared_memory_type=mmap` does
+        // NOT help: that segment is created unconditionally and is not the
+        // `shared_buffers` region, so it leaks on every SIGKILL regardless. This
+        // machine has 32 SysV segments in total, so each orphan is a resource
+        // every other job needs.
+        //
+        // So the ladder is ordered by what RELEASES the segment, not by what
+        // ends the process soonest. The previous order sent SIGQUIT, waited
+        // 10 s, then SIGKILL — so any postmaster slower than 10 s to exit (the
+        // suite runs concurrent-writer and pool-exhaustion tests against it, and
+        // this Mac is loaded) got SIGKILL and leaked a segment. Two cooperative
+        // `pg_ctl` attempts come first, each given its own generous bound, and
+        // `SIGQUIT` follows them; only a postmaster that survives ALL of that is
+        // signalled `SIGKILL`, and that case is reported as a leak rather than
+        // reported as a clean teardown.
+        for (const attempt of [
+          { signal: null, mode: "fast" as const },
+          { signal: null, mode: "immediate" as const },
+        ]) {
+          if (!pidAlive(pid)) break;
+          try {
+            await native(pgBin, run, "pg_ctl",
+              ["-D", dataDirectory, "-m", attempt.mode, "-w", "-t", "60", "stop"]);
+          } catch (error) {
+            failures.push(`pg_ctl_stop_${attempt.mode}_failed:${firstLineOf(error)}`);
+          }
+        }
+        if (pidAlive(pid)) {
+          try { process.kill(pid, "SIGQUIT"); } catch { /* already gone */ }
+          const deadline = Date.now() + 30_000;
+          while (Date.now() < deadline && pidAlive(pid)) {
+            await new Promise(resolve => { setTimeout(resolve, 100); });
+          }
+        }
+        if (pidAlive(pid)) {
+          // Every cooperative path is exhausted. This is the ONLY path that
+          // leaks a SysV segment, so it is a last resort and the fact that it was
+          // reached is recorded as a failure: the caller learns that teardown had
+          // to be forced rather than that the cluster stopped cleanly.
+          failures.push("postmaster_required_sigkill_which_leaks_its_shared_memory_segment");
+          try { process.kill(pid, "SIGKILL"); } catch { /* already gone */ }
           const deadline = Date.now() + 10_000;
           while (Date.now() < deadline && pidAlive(pid)) {
             await new Promise(resolve => { setTimeout(resolve, 100); });
           }
-          if (!pidAlive(pid)) break;
         }
       }
       if (pidAlive(pid)) {
@@ -989,4 +1040,76 @@ export async function assertClusterDestroyed(
 export async function disposableRunDirectories(pattern = /^attack-kit-pg-/): Promise<string[]> {
   const entries = await readdir(tmpdir()).catch(() => [] as string[]);
   return entries.filter(entry => pattern.test(entry)).map(entry => join(tmpdir(), entry));
+}
+
+// ---------------------------------------------------------------------------
+// SysV shared-memory accounting.
+//
+// A PostgreSQL postmaster creates one 56-byte SysV shared-memory segment, and
+// releases it on any shutdown that runs its exit path. SIGKILL cannot, so a
+// killed postmaster leaves the segment behind with a dead creator and `nattch 0`
+// — MEASURED 6/6, while `pg_ctl stop` and `SIGQUIT` released it every time (see
+// the ladder in `stop`). This machine has 32 such segments in total, so every
+// orphan is a resource another job needs, and a test that starts clusters
+// without checking for them is the reason the machine fills up.
+//
+// `ipcs -m` is the only account of this that is not the kit's own opinion of
+// itself, so it is what the suite's leak guard uses.
+// ---------------------------------------------------------------------------
+
+/**
+ * The ids of the SysV shared-memory segments owned by this user.
+ *
+ * `ipcs -m -p` columns are T ID KEY MODE OWNER GROUP CPID LPID, so the owner is
+ * field 5 (1-based) and the last-attaching pid is field 8. `nattch` is NOT in
+ * `ipcs -m`'s default output — it is in `ipcs -m -a -p` — so this counts by OWNER
+ * and records the creator/attaching pids separately, which is enough to tell a
+ * leak (a dead creator) from another job's live cluster.
+ *
+ * Returns null when `ipcs` is unavailable or its output cannot be read, so a
+ * caller can REFUSE rather than report a clean result it did not measure. This
+ * is the same rule the rest of the kit follows: a guard that cannot run must not
+ * read as a guard that passed.
+ */
+export async function sharedMemorySegments(): Promise<SharedMemorySegment[] | null> {
+  const { stdout } = await exec("/usr/bin/ipcs", ["-m", "-p"], { timeout: 10_000 })
+    .then(value => ({ stdout: String(value.stdout ?? "") }))
+    .catch(() => ({ stdout: "" }));
+  // `-p` adds CPID/LPID to the header, so its presence is the proof that this
+  // output carries the creator pids. Without it the parse below would be
+  // reading the wrong columns, which is the silent-wrong-answer this function
+  // returns null to avoid.
+  if (!/\bCPID\b/u.test(stdout)) return null;
+  const rows = stdout.split("\n")
+    .map(line => line.trim().split(/\s+/u))
+    .filter(fields => fields.length > 7 && fields[0] === "m" && /^\d+$/u.test(fields[1] ?? ""));
+  const segments = rows.map(fields => ({
+    id: fields[1]!,
+    owner: fields[4]!,
+    creatorPid: /^\d+$/u.test(fields[6] ?? "") ? Number(fields[6]) : 0,
+    lastPid: /^\d+$/u.test(fields[7] ?? "") ? Number(fields[7]) : 0,
+  }));
+  // Only this user's segments: the count has to be comparable with the count
+  // taken before the suite, and another job's segments are not ours to account
+  // for. `USER` is the name `ipcs` prints; with no name available every segment
+  // is returned rather than silently none.
+  const user = process.env.USER;
+  return user === undefined || user === "" ? segments : segments.filter(segment => segment.owner === user);
+}
+
+export interface SharedMemorySegment {
+  readonly id: string;
+  readonly owner: string;
+  readonly creatorPid: number;
+  readonly lastPid: number;
+}
+
+/** Segment ids now present that were not in `before`, in numeric order. */
+export function newSharedMemorySegments(
+  before: readonly SharedMemorySegment[],
+  after: readonly SharedMemorySegment[] | null,
+): SharedMemorySegment[] {
+  if (after === null) return [];
+  const known = new Set(before.map(segment => segment.id));
+  return after.filter(segment => !known.has(segment.id));
 }

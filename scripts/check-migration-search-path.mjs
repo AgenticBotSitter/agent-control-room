@@ -86,9 +86,14 @@ const audit = async (client) => {
   if (result0.catalogRows === 0) {
     throw new Error(`search_path_gate_empty_catalog:${client.connectionParameters?.database}:no_routines_at_all`);
   }
+  // `used` is what the audit actually covered with a waiver, as
+  // identity + effective search_path. A waiver that no longer matches the
+  // routine's current state is reported here as a STALE entry, so a state
+  // change fails the gate twice: the routine counts as unpinned again, and the
+  // waiver that used to describe it is reported as no longer describing it.
   const used = [
-    ...result0.allowlisted.map(finding => finding.routine),
-    ...result0.expiredAllowlistEntries.map(entry => entry.routine),
+    ...result0.allowlisted.map(finding => ({ routine: finding.routine, searchPath: finding.searchPath })),
+    ...result0.expiredAllowlistEntries.map(entry => ({ routine: entry.routine, searchPath: entry.searchPath })),
   ];
   return { ...result0, staleAllowlistEntries: staleAllowlistEntries(allowlist, used) };
 };
@@ -169,9 +174,12 @@ for (const entry of result.expiredAllowlistEntries) {
 // A stale entry is ALSO a failure. It used to print a console message and pass:
 // an allowlist that no longer describes reality is no longer evidence of
 // anything, and letting it survive means the next entry nobody checks is
-// equally invisible.
+// equally invisible. A waiver whose recorded search_path no longer matches the
+// routine's effective one lands here too, which is why this is the second of
+// the two failures a state change produces.
 for (const entry of result.staleAllowlistEntries) {
-  console.error(`search_path_allowlist_entry_stale:${entry.routine}`
+  console.error(`search_path_allowlist_waiver_no_longer_matches:${entry.routine}`
+    + `:recorded_search_path=${entry.searchPath ?? "<none>"}`
     + `:expires=${entry.expires}:issue=${entry.issue}`);
 }
 

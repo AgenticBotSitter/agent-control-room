@@ -112,6 +112,52 @@ body's own error attached as `cause` when both failed. Clusters are also torn
 down on `SIGINT`/`SIGTERM` (exiting 130/143), because a leaked postmaster holds
 a SysV segment that can block every other job.
 
+### The teardown ladder, and why it is ordered that way
+
+A postmaster creates one 56-byte SysV shared-memory segment and releases it on
+any shutdown that runs its exit path. **`SIGKILL` cannot run an exit path**, so a
+killed postmaster leaves the segment behind with a dead creator and `nattch 0`.
+Measured against PostgreSQL 17.11 with `ipcs -m` snapshots around each shape:
+
+| teardown | segment released? |
+| --- | --- |
+| `pg_ctl -m fast stop` | yes (3/3) |
+| `SIGQUIT`, idle | yes, in ~4 ms (3/3) |
+| `SIGQUIT` with a prepared transaction pending | yes (1/1) |
+| **`SIGKILL`** | **no (6/6)** |
+| **`SIGKILL` during startup** | **no (6/6)** |
+| `shared_memory_type=mmap` + `SIGKILL` | **no (5/5)** |
+
+`shared_memory_type=mmap` is *not* the fix, despite being PostgreSQL's answer to
+this class of leak: that GUC governs the `shared_buffers` region, and the 56-byte
+segment is created unconditionally beside it, so it leaks on every `SIGKILL`
+regardless. It was measured rather than assumed, and it does not work.
+
+So the ladder is ordered by **what releases the segment**, not by what ends the
+process soonest: `pg_ctl -m fast`, then `pg_ctl -m immediate`, then `SIGQUIT`
+with a 30 s grace, and only then `SIGKILL`. Reaching `SIGKILL` is recorded in
+`failures` as `postmaster_required_sigkill_which_leaks_its_shared_memory_segment`,
+so a forced teardown is reported as a forced teardown rather than as a clean
+one. The same ladder is in the reaper (`reapKitClusters`), which is the last line
+of defence for a cluster whose test command was killed.
+
+To account for a whole run:
+
+```ts
+import { sharedMemorySegments, newSharedMemorySegments } from "./support/attack-kit/index.ts";
+
+const before = await sharedMemorySegments();   // null when `ipcs` is unreadable
+// ... run everything that starts a cluster ...
+const leaked = newSharedMemorySegments(before!, await sharedMemorySegments());
+assert.deepEqual(leaked, [], "a cluster was killed rather than stopped");
+```
+
+Both helpers return `null` rather than an empty list when `ipcs` cannot be read,
+so a guard that could not run refuses instead of reporting a clean result it
+never measured. `tests/attack-kit.test.ts` asserts this over the whole suite,
+comparing by segment id rather than by count — a teardown that released one
+cluster's segment while leaking another's would otherwise show a flat count.
+
 ## Concurrency
 
 ```ts
@@ -245,14 +291,27 @@ nested-comment decoy, a quoted identifier. A regex model of PostgreSQL SQL
 cannot be made sound, so the text audit was removed from CI entirely. The
 catalog is the parser.
 
-The allowlist (`search-path-allowlist.json`) is keyed on the routine's **catalog
-identity** — `schema.name(identity arguments)` from
-`pg_get_function_identity_arguments` — with an `added` date, an `expires` date
-within 180 days of it, and a tracking issue. A new unpinned routine fails
-immediately. So does an entry that has expired, an entry that no longer matches
-any violation, an entry with an invalid date such as `9999-99-99`, and an audit
-that could not classify a schema it was asked to cover. Known violations in the
-shipped migrations are baselined there and tracked by issue 421.
+The allowlist (`search-path-allowlist.json`) is keyed on a **state**, not on a
+name: the routine's **catalog identity** — `schema.name(identity arguments)`
+from `pg_get_function_identity_arguments` — **and** the exact effective
+`search_path` the entry was written for, with `null` meaning the routine pins
+nothing. It also carries an `added` date, an `expires` date within 180 days of
+it, and a tracking issue. A new unpinned routine fails immediately. So does an
+entry that has expired, an entry that no longer matches any violation, an entry
+with an invalid date such as `9999-99-99`, an entry whose `searchPath` is
+missing or is not a string-or-null, and an audit that could not classify a
+schema it was asked to cover. Known violations in the shipped migrations are
+baselined there and tracked by issue 421.
+
+Both halves of the key are load-bearing. Matching on the identity alone meant a
+waiver survived a later migration that changed the routine's effective
+`search_path` — the routine could be walked onto an attacker-controlled schema
+and the gate stayed green, because the entry still named it. Matching on the
+recorded value means such a change fails **twice**: the routine counts as an
+unpinned violation again, and the entry is reported as
+`search_path_allowlist_waiver_no_longer_matches` with the state it recorded. A
+waiver is permission to ship a known bad state, and only ever for the state that
+was actually reviewed.
 
 ## `securityDefinerAudit` — a local HINT, not a gate
 

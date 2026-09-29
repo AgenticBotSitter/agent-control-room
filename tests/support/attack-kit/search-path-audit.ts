@@ -56,7 +56,18 @@ export interface FunctionFinding {
 export interface SearchPathAllowlistEntry {
   /** Catalog identity: `schema.name(identity arguments)`. */
   readonly routine: string;
-  /** The `search_path` the entry was written for, or null. */
+  /**
+   * The EFFECTIVE `search_path` this entry was written for, exactly as
+   * PostgreSQL reports it, or null when the routine pins nothing.
+   *
+   * This is part of the waiver's identity, not a comment. A waiver is a claim
+   * about a state: "this routine, in this state, is a known violation tracked by
+   * this issue". A later migration can change the state — set the path to a
+   * schema an attacker controls, clear it, or make it worse — and a waiver that
+   * matched on the name alone would keep suppressing the violation. So a waiver
+   * applies only to the exact state it was written for, and any difference
+   * fails the gate.
+   */
   readonly searchPath: string | null;
   /** ISO date the entry was added. The expiry horizon is measured from it. */
   readonly added: string;
@@ -68,7 +79,7 @@ export interface SearchPathAllowlistEntry {
 
 export interface LoadedSearchPathAllowlist {
   readonly entries: readonly SearchPathAllowlistEntry[];
-  /** In-date entries, by routine identity. */
+  /** In-date entries, by waiver key: identity AND the recorded search_path. */
   readonly active: ReadonlyMap<string, SearchPathAllowlistEntry>;
   /** Entries past their expiry date. Their violations count again, and the
    * entry is itself a failure so a lapsed waiver cannot pass unnoticed. */
@@ -308,8 +319,13 @@ export async function securityDefinerAuditLive(
 
   const unpinned = findings.filter(finding => !finding.endsInPgTemp);
   const active = options.allowlist?.active ?? new Map<string, SearchPathAllowlistEntry>();
-  const allowlisted = unpinned.filter(finding => active.has(finding.routine));
-  const waived = new Set(allowlisted.map(finding => finding.routine));
+  // A waiver is matched on identity AND the exact effective search_path it was
+  // written for. `waiverKey` is the same key the allowlist is stored under, so
+  // `active.get` returning nothing means either "no entry for this routine" or
+  // "an entry for this routine in a DIFFERENT state" — and both leave the
+  // violation counted, which is the point. See `allowlistKey`.
+  const allowlisted = unpinned.filter(finding => active.has(allowlistKey(finding)));
+  const waived = new Set(allowlisted.map(finding => allowlistKey(finding)));
   // A schema present in the catalog but outside the requested set is REFUSED,
   // not skipped. A narrowed audit that quietly leaves a schema out is the same
   // false clean as a parser that cannot read a definition: the gate has to be
@@ -317,7 +333,7 @@ export async function securityDefinerAuditLive(
   const unclassifiedSchemas = wanted === null ? [] : present.filter(schema => !wanted.has(schema));
   return {
     findings,
-    unpinned: unpinned.filter(finding => !waived.has(finding.routine)),
+    unpinned: unpinned.filter(finding => !waived.has(allowlistKey(finding))),
     allowlisted,
     expiredAllowlistEntries: options.allowlist?.expired ?? [],
     staleAllowlistEntries: options.staleAllowlistEntries ?? [],
@@ -331,9 +347,26 @@ export async function securityDefinerAuditLive(
 // The allowlist.
 // ---------------------------------------------------------------------------
 
-/** Stable identity of one violation, so an allowlist entry cannot drift. */
-export function allowlistKey(value: { routine: string }): string {
-  return value.routine;
+/**
+ * The key a waiver is stored and matched under: the routine's catalog identity
+ * AND the exact effective `search_path` the entry was written for.
+ *
+ * Matching on the identity alone is what the first version did, and it is the
+ * defect this key exists to close. A mock catalog row for a waived routine whose
+ * effective path had become `attacker` was still reported as `allowlisted`, so a
+ * later migration could walk an already-waived routine onto an
+ * attacker-controlled schema and the merge gate would stay green. A waiver is
+ * permission to ship a known bad state, and it is only ever permission for the
+ * state that was actually reviewed.
+ *
+ * The separator is a character that cannot appear in a `search_path` element
+ * list as a boundary ambiguity, and `null` is encoded rather than omitted so a
+ * waiver for a routine that pins nothing can never collide with one that pins
+ * the empty-ish string.
+ */
+export function allowlistKey(value: { routine: string; searchPath?: string | null }): string {
+  const path = value.searchPath ?? null;
+  return `${value.routine}\u0000${path === null ? "<none>" : path}`;
 }
 
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
@@ -400,6 +433,18 @@ export async function loadSearchPathAllowlist(
       throw new SearchPathAllowlistError(
         `allowlist_entry_not_a_catalog_identity:${entry.routine}:expected_schema_dot_name_parens`);
     }
+    // `searchPath` must be a string or null, never a missing or other value. It
+    // is part of the key, and a missing one used to be indistinguishable from an
+    // explicit null while a typo'd string would key an entry that could never
+    // match anything.
+    if (entry.searchPath === undefined) {
+      throw new SearchPathAllowlistError(
+        `allowlist_entry_missing_search_path:${entry.routine}:a waiver_records_the_state_it_waives`);
+    }
+    if (entry.searchPath !== null && typeof entry.searchPath !== "string") {
+      throw new SearchPathAllowlistError(
+        `allowlist_entry_search_path_not_a_string_or_null:${entry.routine}`);
+    }
     const added = parseIsoDate(entry.added ?? "");
     if (added === null) throw new SearchPathAllowlistError(`allowlist_entry_added_not_a_date:${entry.routine}`);
     const expires = parseIsoDate(entry.expires ?? "");
@@ -427,9 +472,9 @@ export async function loadSearchPathAllowlist(
 /** In-date entries that match no current violation: dead weight to remove. */
 export function staleAllowlistEntries(
   allowlist: LoadedSearchPathAllowlist,
-  used: readonly string[],
+  used: readonly { routine: string; searchPath: string | null }[],
 ): SearchPathAllowlistEntry[] {
-  const covered = new Set(used.map(routine => allowlistKey({ routine })));
+  const covered = new Set(used.map(value => allowlistKey(value)));
   return allowlist.entries.filter(entry => !covered.has(allowlistKey(entry)));
 }
 
@@ -440,8 +485,12 @@ export class UnpinnedSearchPathError extends Error {
     const lapsed = result.expiredAllowlistEntries
       .map(entry => `${entry.routine}:allowlist_entry_expired_${entry.expires}_issue_${entry.issue}`)
       .join("; ");
+    // A stale entry is reported with the STATE it recorded, because "stale" is
+    // the least obvious of the three failures and the recorded value is what an
+    // operator needs in order to see that the routine's path has moved.
     const stale = result.staleAllowlistEntries
-      .map(entry => `${entry.routine}:allowlist_entry_stale_expires_${entry.expires}_issue_${entry.issue}`)
+      .map(entry => `${entry.routine}:search_path=${entry.searchPath ?? "<none>"}`
+        + `:allowlist_entry_no_longer_matches_expires_${entry.expires}_issue_${entry.issue}`)
       .join("; ");
     super(`search_path_audit_failed:${result.unpinned.length}_unpinned_of_${result.findings.length}`
       + `:${[detail, lapsed, stale].filter(Boolean).join("; ")}`);

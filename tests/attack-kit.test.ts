@@ -40,6 +40,7 @@ import {
   searchPathEndsInPgTemp,
   securityDefinerAudit,
   securityDefinerAuditLive,
+  sharedMemorySegments,
   shortSocketDirectories,
   splitSqlStatements,
   staleAllowlistEntries,
@@ -113,10 +114,16 @@ function needsPgOrFail(): undefined | { skip: string } {
   return { skip: PG_MESSAGE };
 }
 
-/** Record that a real-cluster test body actually executed. */
+/** Record what a real-PostgreSQL test body actually executed. */
 function countedRealPostgresRun(): void {
   realPostgresRan += 1;
 }
+
+// ---- ATTACK SCENARIO: the whole suite must leave no new shared-memory
+// segment. The snapshot is taken at module load, BEFORE any cluster starts, and
+// compared at the very end of the file, so it covers every test in the run
+// rather than the one that happens to read it.
+const sharedMemoryBefore = await sharedMemorySegments();
 
 describe("attack kit: concurrency", () => {
   test("concurrently completes pool-size+1 operations inside the bound", async () => {
@@ -888,7 +895,7 @@ describe("attack kit: search_path gate (catalog)", () => {
       ["public.quoted_upper()", "public.single_literal()"]);
   });
 
-  // ---- the allowlist, keyed on catalog identity ----
+  // ---- the allowlist, keyed on catalog identity AND the recorded state ----
 
   const entry = (over: Partial<{ routine: string; searchPath: string | null; added: string; expires: string; issue: string }> = {}) => ({
     routine: over.routine ?? "public.f()",
@@ -954,12 +961,84 @@ describe("attack kit: search_path gate (catalog)", () => {
     const allowlist = await loadSearchPathAllowlist(allowlistFile, new Date("2026-12-31T00:00:00Z"));
     const result = await securityDefinerAuditLive(catalog([row({ name: "f" })]).query, { allowlist });
     assert.equal(result.unpinned.length, 1, "the live violation still counts");
-    const stale = staleAllowlistEntries(allowlist, [...result.allowlisted.map(f => f.routine)]);
+    const stale = staleAllowlistEntries(allowlist,
+      result.allowlisted.map(f => ({ routine: f.routine, searchPath: f.searchPath })));
     assert.deepEqual(stale.map(e => e.routine), ["public.gone()"]);
     await assert.rejects(
       assertSearchPathPinned(catalog([row({ name: "f" })]).query, { allowlist, staleAllowlistEntries: stale }),
-      /public\.gone\(\):allowlist_entry_stale/,
+      /public\.gone\(\):search_path=<none>:allowlist_entry_no_longer_matches_expires_2027-01-01_issue_999/,
     );
+  });
+
+  // ---- ATTACK SCENARIO: a waived routine whose search_path a later migration
+  // changes. The waiver records the state it was written for, so a different
+  // effective path is not that state, and the gate must fail twice over.
+
+  test("a waiver does not survive a change to the routine's effective search_path", async () => {
+    // The reported defect: `active` was keyed on `routine` alone, so this exact
+    // catalog — a waived routine whose path is now `attacker` — came back
+    // `unpinned: 0, allowlisted: 1` and the gate stayed green.
+    const directory = await temporary("attack-kit-allow-state-");
+    const allowlistFile = join(directory, "allowlist.json");
+    await writeFile(allowlistFile, JSON.stringify({ entries: [entry({ searchPath: null })] }));
+    const allowlist = await loadSearchPathAllowlist(allowlistFile, new Date("2026-12-31T00:00:00Z"));
+
+    // The later migration: the routine now sets a path it did not have.
+    const moved = await securityDefinerAuditLive(
+      catalog([row({ name: "f", proconfig: ["search_path=attacker"] })]).query, { allowlist });
+    assert.equal(moved.allowlisted.length, 0,
+      "a waiver for no search_path must not cover a routine that now sets one");
+    assert.equal(moved.unpinned.length, 1, "the routine counts as unpinned again");
+    assert.equal(moved.unpinned[0]!.searchPath, "attacker");
+    // And the entry no longer describes reality, so it is reported as such.
+    const stale = staleAllowlistEntries(allowlist,
+      moved.allowlisted.map(f => ({ routine: f.routine, searchPath: f.searchPath })));
+    assert.deepEqual(stale.map(e => e.routine), ["public.f()"],
+      "the old entry is stale: it records a state the routine no longer has");
+    await assert.rejects(
+      assertSearchPathPinned(catalog([row({ name: "f", proconfig: ["search_path=attacker"] })]).query,
+        { allowlist, staleAllowlistEntries: stale }),
+      /allowlist_entry_no_longer_matches/,
+      "the gate fails, naming the waiver rather than silently re-allowing");
+
+    // The same in the other direction: a routine that HAD a path, and a later
+    // migration REMOVES it (ALTER ... RESET, which deletes the proconfig
+    // element). A null waiver must not cover a routine that pins nothing.
+    await writeFile(allowlistFile, JSON.stringify({ entries: [entry({ searchPath: "pg_catalog, public" })] }));
+    const withPath = await loadSearchPathAllowlist(allowlistFile, new Date("2026-12-31T00:00:00Z"));
+    const reset = await securityDefinerAuditLive(catalog([row({ name: "f" })]).query, { allowlist: withPath });
+    assert.equal(reset.allowlisted.length, 0,
+      "a waiver for a specific path must not cover a routine that was RESET to none");
+    assert.equal(reset.unpinned.length, 1);
+
+    // And two routines differing only in their path need two waivers. This is
+    // the state-keying working in the direction that matters: one entry, one
+    // state, and the other state is a violation.
+    await writeFile(allowlistFile, JSON.stringify({
+      entries: [entry({ searchPath: "pg_catalog, public" }), entry({ routine: "public.g()", searchPath: "attacker" })],
+    }));
+    const twoStates = await loadSearchPathAllowlist(allowlistFile, new Date("2026-12-31T00:00:00Z"));
+    assert.equal(twoStates.active.size, 2);
+    const pair = await securityDefinerAuditLive(catalog([
+      row({ name: "f", proconfig: ["search_path=pg_catalog, public"] }),
+      row({ name: "g", proconfig: ["search_path=attacker"] }),
+    ]).query, { allowlist: twoStates });
+    assert.equal(pair.unpinned.length, 0, "each routine is waived in the state it was written for");
+    assert.equal(pair.allowlisted.length, 2);
+  });
+
+  test("a waiver is refused when it does not record the state it waives", async () => {
+    const directory = await temporary("attack-kit-allow-nostate-");
+    const allowlistFile = join(directory, "allowlist.json");
+    // `searchPath` is part of the key, so a missing one is a waiver that cannot
+    // be matched against anything — and an absent field must not be silently
+    // read as the explicit null it looks like.
+    await writeFile(allowlistFile, JSON.stringify({ entries: [{ routine: "public.f()", added: "2026-09-28", expires: "2027-01-01", issue: "999" }] }));
+    await assert.rejects(loadSearchPathAllowlist(allowlistFile, new Date("2026-12-31T00:00:00Z")),
+      /allowlist_entry_missing_search_path:public\.f\(\)/);
+    await writeFile(allowlistFile, JSON.stringify({ entries: [entry({ searchPath: 42 as unknown as string })] }));
+    await assert.rejects(loadSearchPathAllowlist(allowlistFile, new Date("2026-12-31T00:00:00Z")),
+      /allowlist_entry_search_path_not_a_string_or_null:public\.f\(\)/);
   });
 
   test("the allowlist refuses an invalid date, an over-long horizon, and a bad key", async () => {
@@ -1220,6 +1299,66 @@ describe("attack kit: search_path gate (real PostgreSQL)", () => {
       assert.match(expired.stderr, /search_path_allowlist_entry_expired:probe\.waived\(\)/);
       assert.match(expired.stderr, /probe\.waived\(\):security-definer_search_path_does_not_end_in_pg_temp/,
         "and the routine it named counts again");
+    }, { port, allowedPorts: PORTS, database: "control_room" });
+  });
+
+  // ---- ATTACK SCENARIO, against a REAL cluster: a waived routine whose
+  // effective search_path a later migration changes. This is the exact shape
+  // the review reported, run against PostgreSQL rather than a mock, so the
+  // answer comes from `proconfig` and not from a hand-written row.
+
+  test("a later migration that changes a waived routine's search_path fails the gate", needsPgOrFail(), async () => {
+    countedRealPostgresRun();
+    const port = PORTS[9]!;
+    await withRealPostgres(async postgres => {
+      const allowlistFile = join(await temporary("attack-kit-gate-state-real-"), "allowlist.json");
+      const shipped = JSON.parse(await readFile(
+        join(REPOSITORY_ROOT, "tests/support/attack-kit/search-path-allowlist.json"), "utf8")) as { entries: unknown[] };
+      const { Client } = await import("pg");
+      const client = new Client(postgres.admin());
+      const waived = {
+        routine: "probe.waived()", searchPath: "pg_catalog, public",
+        added: "2026-09-28", expires: "2027-03-01", issue: "999",
+      };
+      await client.connect();
+      try {
+        await client.query("DROP SCHEMA IF EXISTS probe CASCADE; CREATE SCHEMA probe;");
+        // The shipped state: pinned to a list that does not end in pg_temp, and
+        // waived for exactly that value.
+        await client.query(`CREATE FUNCTION probe.waived() RETURNS integer LANGUAGE sql SECURITY DEFINER
+          SET search_path = pg_catalog, public AS $$ SELECT 1 $$;`);
+      } finally {
+        await client.end();
+      }
+      await writeFile(allowlistFile, JSON.stringify({ entries: [...shipped.entries, waived] }));
+
+      // Before the later migration: waived in the state it was written for.
+      const before = await runGate(postgres, allowlistFile, ["--json"]);
+      assert.equal(before.code, 0,
+        `the waiver must hold while the routine is in the recorded state, got: ${before.stderr.slice(0, 600)}`);
+
+      // THE ATTACK. A later migration moves the routine onto a schema an
+      // attacker controls. The waiver still names the routine, and its recorded
+      // search_path no longer describes reality.
+      const mover = new Client(postgres.admin());
+      await mover.connect();
+      try {
+        await mover.query("CREATE SCHEMA IF NOT EXISTS attacker;");
+        await mover.query("ALTER FUNCTION probe.waived() SET search_path = attacker;");
+      } finally {
+        await mover.end();
+      }
+
+      const after = await runGate(postgres, allowlistFile, ["--json"]);
+      assert.notEqual(after.code, 0,
+        "a waived routine whose search_path a later migration changed must fail the gate");
+      assert.match(after.stderr,
+        /probe\.waived\(\):security-definer_search_path_does_not_end_in_pg_temp:attacker/,
+        "and the routine it names is reported with the NEW path");
+      assert.match(after.stderr, /search_path_allowlist_waiver_no_longer_matches:probe\.waived\(\)/,
+        "and the waiver is reported as no longer matching, with the value it recorded");
+      assert.match(after.stderr, /recorded_search_path=pg_catalog, public/,
+        "so an operator can see which state the waiver was written for");
     }, { port, allowedPorts: PORTS, database: "control_room" });
   });
 
@@ -1961,6 +2100,7 @@ test("the kit left no disposable cluster behind", async () => {
     "attack-kit-allow-stale-", "attack-kit-allow-bounds-", "attack-kit-gate-real-",
     "attack-kit-gate-expiry-real-", "attack-kit-gate-vacuous-", "attack-kit-hint-",
     "attack-kit-hint-cross-", "attack-kit-hint-comment-", "attack-kit-skipprobe-",
+    "attack-kit-allow-state-", "attack-kit-allow-nostate-", "attack-kit-gate-state-real-",
     // A timeout test that never reached its own `finally` would leave a
     // directory holding a still-running CPU burner. The sweep has to see it.
     ];
@@ -1969,6 +2109,47 @@ test("the kit left no disposable cluster behind", async () => {
       .filter(directory => !mine.has(directory));
     assert.deepEqual(leftovers, [], `leaked ${prefix} directories: ${leftovers.join(", ")}`);
   }
+});
+
+test("the whole suite left no new SysV shared-memory segment", async () => {
+  // The directory sweep above is the kit's own opinion of itself: it finds
+  // directories the kit created. This is the machine's opinion, and it is the
+  // one that matters. A postmaster that is SIGKILLed cannot run PostgreSQL's
+  // exit path and so leaves its 56-byte segment behind with a dead creator —
+  // MEASURED 6/6, while `pg_ctl stop` and `SIGQUIT` released it every time. This
+  // machine has 32 SysV segments in total, so an orphan here blocks every other
+  // job, and it is invisible to a directory sweep because the data directory is
+  // removed.
+  //
+  // What counts as a leak is a NEW segment whose creator is DEAD. A new segment
+  // with a LIVE creator belongs to a cluster another job is running right now
+  // — this Mac runs four test slots in parallel — and failing on it would be a
+  // false accusation. A dead creator can never be used again: only `ipcrm` frees
+  // it, and nothing here may run that. Comparing ids rather than counts also
+  // means a teardown that released one cluster's segment while leaking another's
+  // cannot hide behind a flat count, and a segment that another job cleaned up
+  // mid-run cannot be mistaken for a leak.
+  const after = await sharedMemorySegments();
+  if (sharedMemoryBefore === null || after === null) {
+    // `ipcs` is unreadable, so nothing can be compared. That is REFUSED, not
+    // passed: a guard that could not run must not read as a guard that passed.
+    assert.fail("attack_kit_shared_memory_count_unavailable:ipcs_could_not_be_read_on_this_host");
+  }
+  const known = new Set(sharedMemoryBefore.map(segment => segment.id));
+  const appeared = after.filter(segment => !known.has(segment.id));
+  const alive = (pid: number): boolean => {
+    if (pid === 0) return false;
+    try { process.kill(pid, 0); return true; } catch (error) {
+      return (error as { code?: string }).code === "EPERM";
+    }
+  };
+  const orphans = appeared.filter(segment => !alive(segment.creatorPid));
+  assert.deepEqual(orphans.map(segment => `id=${segment.id} creator=${segment.creatorPid} last=${segment.lastPid}`), [],
+    "the suite created SysV shared-memory segments it did not release: a postmaster "
+    + "was SIGKILLed instead of stopped, and its segment is now unreclaimable");
+  assert.equal(after.length, sharedMemoryBefore.length,
+    `segment count for this user changed: before=${sharedMemoryBefore.length} after=${after.length}`
+    + `${appeared.length > 0 ? ` (new, with a live creator: ${appeared.map(s => s.id).join(",")})` : ""}`);
 });
 
 test("the kit's own sources are all present and the working tree is as it was", async () => {

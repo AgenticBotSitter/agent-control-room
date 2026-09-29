@@ -275,13 +275,37 @@ export async function reapKitClusters(
         .catch(() => { /* the pid escalation below is what decides */ });
       let pid = await readPostmasterPid(entry.dataDirectory);
       if (pid !== undefined && pidAlive(pid)) {
-        for (const signal of ["SIGQUIT", "SIGKILL"] as const) {
-          try { process.kill(pid, signal); } catch { /* already gone */ }
+        // Cooperative shutdowns FIRST, for the reason measured in
+        // `real-postgres.ts`: only `SIGKILL` of a postmaster leaks its SysV
+        // shared-memory segment, because `SIGKILL` cannot run PostgreSQL's exit
+        // path. This reaper is the last line of defence for a cluster whose test
+        // command was killed, so it is exactly where a too-eager `SIGKILL` turns
+        // an orphan into a permanently held segment on a machine with 32 of them.
+        // `pg_ctl -m fast`, then `-m immediate`, then `SIGQUIT`; `SIGKILL` only
+        // if the postmaster survives all three.
+        for (const mode of ["fast", "immediate"] as const) {
+          if (pid === undefined || !pidAlive(pid)) break;
+          await run_(join(entry.pgBin, "pg_ctl"),
+            ["-D", entry.dataDirectory, "-m", mode, "-w", "-t", "60", "stop"],
+            { timeout: 90_000, env: { PATH: "/usr/bin:/bin", LC_ALL: "C", TMPDIR: run, NODE_ENV: "test" } })
+            .catch(() => { /* the signal ladder below is what decides */ });
+        }
+        pid = await readPostmasterPid(entry.dataDirectory) ?? pid;
+        if (pid !== undefined && pidAlive(pid)) {
+          try { process.kill(pid, "SIGQUIT"); } catch { /* already gone */ }
+          const quitDeadline = Date.now() + timeoutMs;
+          while (Date.now() < quitDeadline && pidAlive(pid)) {
+            await new Promise(done => { setTimeout(done, 100); });
+          }
+        }
+        if (pid !== undefined && pidAlive(pid)) {
+          // Last resort, and the only signal that leaks a SysV segment. A
+          // survivor past this is reported below by name and pid.
+          try { process.kill(pid, "SIGKILL"); } catch { /* already gone */ }
           const deadline = Date.now() + timeoutMs;
           while (Date.now() < deadline && pidAlive(pid)) {
             await new Promise(done => { setTimeout(done, 100); });
           }
-          if (!pidAlive(pid)) break;
         }
       }
       pid = await readPostmasterPid(entry.dataDirectory);
