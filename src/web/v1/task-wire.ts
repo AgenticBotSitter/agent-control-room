@@ -35,8 +35,12 @@ export const taskPageSchema = z.object({ project: projectViewSchema, tasks: z.ar
     choices: z.array(z.object({ key: model, label: z.string().min(1).max(240), model, efforts: z.array(effort).min(1).max(5),
       limited: z.boolean() }).strict()).min(1).max(32), defaultModel: model, defaultEffort: effort }).strict()).max(3).optional() }).strict();
 export type TaskPage = z.infer<typeof taskPageSchema>;
-const nativeState = z.enum(["prepared", "dispatching", "queued", "running", "waiting_approval", "stopping", "completed",
-  "failed", "cancelled", "interrupted", "ambiguous"]);
+/** The states a native agent run can report. Exported so the owner-UI test lane
+ * can hold the shared chip vocabulary against the states records really carry,
+ * rather than against a list copied out of this file. */
+export const nativeRunStateValues = ["prepared", "dispatching", "queued", "running", "waiting_approval", "stopping",
+  "completed", "failed", "cancelled", "interrupted", "ambiguous"] as const;
+const nativeState = z.enum(nativeRunStateValues);
 const hermesDeliveryRecoveryStatus = z.object({
   state: z.enum(["no_authenticated_delivery", "delivery_receipt_unresolved", "terminal_result_staged"]),
   terminal: z.object({ terminalResultDigest: digest, contentDigest: digest, sizeBytes: count,

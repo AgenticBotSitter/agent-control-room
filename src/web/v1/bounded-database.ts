@@ -85,12 +85,16 @@ export function boundPrivateDatabase(driver: PrivateDatabaseDriver,
     return closing;
   }
   async function run<T>(transaction: boolean, callback: (session: DatabaseSession) => Promise<T>, check: () => void | Promise<void>): Promise<T> {
-    const operationStarted = performance.now(), totalMs = transaction ? limits.transactionMs : limits.statementMs;
+    const totalMs = transaction ? limits.transactionMs : limits.statementMs;
     const parent = databaseOperationSignal();
     await admit(parent, Math.min(limits.checkoutMs, totalMs));
     // `await` yields even when a slot was immediately available. Close may
     // have started in that turn; refuse before acquisition and return the slot.
     if (stopped || parent?.aborted) { releaseAdmission(); throw new PrivateDatabaseError("database_unavailable"); }
+    // Admission has its own bounded wait. Start the operation budget only once
+    // this caller owns a slot, so queue contention cannot consume the budget
+    // and turn an otherwise bounded request into a pool-wide timeout.
+    const operationStarted = performance.now();
     const remainingMs = () => Math.max(1, totalMs - (performance.now() - operationStarted));
     const operation = new AbortController();
     const signal = parent ? AbortSignal.any([parent, operation.signal]) : operation.signal;

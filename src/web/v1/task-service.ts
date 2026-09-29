@@ -92,7 +92,9 @@ export interface WebTaskKeys {
   worktreeChangeEvidence?: { inspectMany(identities: readonly { tenantId: string; projectId: string; jobId: string;
     attemptId: string; runId: string; artifactId: string }[]):
     Promise<readonly (Readonly<{ changedFiles: number; changedBytes: number; addedFiles: number; modifiedFiles: number;
-      deletedFiles: number; evidenceDigest: string }> | undefined)[]> };
+      deletedFiles: number; evidenceDigest: string }> | undefined)[]>;
+    inspectOne?(identity: { tenantId: string; projectId: string; jobId: string; attemptId: string;
+      runId: string; artifactId: string }): Promise<unknown | undefined> };
   /** Bound installation-owned read only. The web service never receives its
    * receipt key, storage port, runner, profile, model, or workspace settings. */
   hermesDeliveryRecovery?: { inspect(scope: { tenantId: string; projectId: string; jobId: string; attemptId: string }):
@@ -150,7 +152,9 @@ export class WebTaskService {
     }
     if (keys?.worktreeChangeEvidence) {
       if (typeof keys.worktreeChangeEvidence.inspectMany !== "function") throw new Error("task_key_invalid");
-      this.worktreeChangeEvidence = Object.freeze({ inspectMany: keys.worktreeChangeEvidence.inspectMany.bind(keys.worktreeChangeEvidence) });
+      this.worktreeChangeEvidence = Object.freeze({ inspectMany: keys.worktreeChangeEvidence.inspectMany.bind(keys.worktreeChangeEvidence),
+        ...(keys.worktreeChangeEvidence.inspectOne
+          ? { inspectOne: keys.worktreeChangeEvidence.inspectOne.bind(keys.worktreeChangeEvidence) } : {}) });
     }
     if (keys?.reviews) {
       if (!(keys.reviews.integrityKey instanceof Uint8Array) || keys.reviews.integrityKey.length !== 32) throw new Error("task_key_invalid");
@@ -436,13 +440,20 @@ export class WebTaskService {
       const row = (await tx.query<TaskRow>(`SELECT ${selection} WHERE j.tenant_id=$1 AND j.project_id=$2 AND j.id=$3`,
         [this.scope.tenantId, projectId, jobId])).rows[0];
       if (!row) throw new WebAccessError("not_found");
-      validated(row, this.scope.tenantId, projectId);
+      const task = validated(row, this.scope.tenantId, projectId);
       if (artifactId !== undefined) {
         actor.require("tasks.results.read", projectId);
         if (!this.resultStore) throw new Error("task_results_not_configured");
         const content = await this.resultStore.read(tx, this.scope.tenantId, projectId, jobId, artifactId);
         if (!content) throw new WebAccessError("not_found");
+        // Full patches are restricted to the human who requested the task.
+        // Other project owners may retain ordinary result access, but cannot
+        // use that broader grant to inspect this coding workspace evidence.
+        const worktreeChangeEvidence = actor.id === task.request.requestedBy.actorId && this.worktreeChangeEvidence?.inspectOne
+          ? await this.worktreeChangeEvidence.inspectOne({ tenantId: this.scope.tenantId, projectId, jobId,
+            attemptId: content.receipt.attemptId, runId: content.receipt.runId, artifactId }) : undefined;
         return taskResultContentSchema.parse({ projectId, jobId, artifact: resultMetadata(content.receipt), text: content.text,
+          ...(worktreeChangeEvidence ? { worktreeChangeEvidence } : {}),
           contentVerifiedAt: new Date(this.clock()).toISOString(), untrustedContent: true });
       }
       return this.resultPage(tx, actor, projectId, jobId);

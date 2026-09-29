@@ -99,6 +99,161 @@ test("faint stays visually distinct from muted in both themes", () => {
     "dark --faint must be darker than --muted");
 });
 
+/* ------------------------------------------------------------------ *
+ * The shared owner vocabulary (owner-ui.tsx / private.css)
+ *
+ * private.css claims its chip, unavailable and count classes were
+ * contrast-checked by this file. Until now it did not, which made the
+ * claim in the comment worth less than no comment: a palette edit to
+ * --green/--amber/--red/--blue or to the surfaces would have shipped
+ * without failing anything. These read the real declarations out of
+ * private.css and check the pairings the rules actually paint, in both
+ * themes, so the citation is true and stays true.
+ * ------------------------------------------------------------------ */
+
+/** Tones for the dot each chip and state heading paints, as a non-text UI
+ * indicator. WCAG 1.4.11 sets 3:1 for the visual information needed to identify
+ * a state, and the dot is that information when the owner scans a row. */
+const OWNER_VOCABULARY_DOTS: readonly { selector: string; token: string; kind: string }[] = [
+  { selector: ".private-chip::before", token: "muted", kind: "neutral chip dot" },
+  { selector: ".private-chip.is-good::before", token: "green", kind: "good chip dot" },
+  { selector: ".private-chip.is-warn::before", token: "amber", kind: "warn chip dot" },
+  { selector: ".private-chip.is-bad::before", token: "red", kind: "bad chip dot" },
+  { selector: ".private-chip.is-busy::before", token: "blue", kind: "busy chip dot" },
+  { selector: ".private-run-state::before", token: "muted", kind: "neutral run heading dot" },
+  { selector: ".private-run-state.is-good::before", token: "green", kind: "good run heading dot" },
+  { selector: ".private-run-state.is-warn::before", token: "amber", kind: "warn run heading dot" },
+  { selector: ".private-run-state.is-bad::before", token: "red", kind: "bad run heading dot" },
+  { selector: ".private-run-state.is-busy::before", token: "blue", kind: "busy run heading dot" },
+  { selector: ".private-attempt-state::before", token: "muted", kind: "neutral attempt heading dot" },
+  { selector: ".private-attempt-state.is-good::before", token: "green", kind: "good attempt heading dot" },
+  { selector: ".private-attempt-state.is-warn::before", token: "amber", kind: "warn attempt heading dot" },
+  { selector: ".private-attempt-state.is-bad::before", token: "red", kind: "bad attempt heading dot" },
+  { selector: ".private-attempt-state.is-busy::before", token: "blue", kind: "busy attempt heading dot" },
+];
+
+/** Text pairings, at the 4.5:1 AA minimum. `on` is the surface the rule is
+ * painted on: the read states and the count pill sit inside a panel (--surface),
+ * the count pill on the raised --surface-3, and the unavailable state paints its
+ * own --amber-soft, so its text is measured against that rather than --surface. */
+const OWNER_VOCABULARY_TEXT: readonly { selector: string; token: string; on: string; kind: string }[] = [
+  { selector: ".private-state-empty", token: "muted", on: "surface", kind: "empty state" },
+  { selector: ".private-state-loading", token: "muted", on: "surface", kind: "loading state" },
+  { selector: ".private-state-unavailable", token: "text", on: "amber-soft", kind: "unavailable text" },
+  { selector: ".private-count", token: "muted", on: "surface-3", kind: "count pill" },
+];
+
+/** The unavailable state's border is a 1px amber edge, not text. It is checked at
+ * the 3:1 non-text minimum rather than 4.5:1, because it is the only thing that
+ * distinguishes the amber unavailable card from a plain notice at a glance. */
+const OWNER_VOCABULARY_BORDERS: readonly { selector: string; token: string; on: string; kind: string }[] = [
+  { selector: ".private-state-unavailable", token: "amber", on: "surface", kind: "unavailable border" },
+];
+
+/** A chip's own 1px border is deliberately NOT in the tables above. It measures
+ * 1.70:1 on --surface, and that is acceptable rather than an oversight: the
+ * border is decorative. A chip's state is carried by the dot (3:1, checked) and
+ * its label (4.5:1, checked below), and its body by --surface-3 against
+ * --surface, so deleting the border entirely would remove no information. This
+ * is recorded here so the omission reads as a decision and not as a gap. */
+
+/** Surfaces each of the above can be painted on, so a palette edit to any one of
+ * them is caught rather than only the one that happens to be first. */
+const VOCABULARY_BACKDROPS = ["surface", "surface-2", "surface-3"] as const;
+
+/** private.css groups the run and attempt selectors, so "is this selector
+ * declared" has to match a selector list, not require the rule to start with it. */
+function declaresSelector(css: string, selector: string): boolean {
+  const escaped = selector.replace(/[.[\]():]/g, "\\$&");
+  for (const match of css.matchAll(/([^{}]+)\{/g)) {
+    const list = match[1] ?? "";
+    // Ignore the comment text a grouped rule can be preceded by.
+    const withoutComments = list.replace(/\/\*[\s\S]*?\*\//g, "");
+    if (new RegExp(`(?:^|[,\\s])${escaped}(?:[,\\s]|$)`).test(withoutComments)) return true;
+  }
+  return false;
+}
+
+/** Everything the shared vocabulary paints, in one list so the selector-and-token
+ * existence check covers all of it. `on` is the surface a rule is painted on and
+ * is absent for the dot rules, whose backdrop is checked separately against
+ * every surface. */
+type OwnerVocabularyPaint = { selector: string; token: string; kind: string; on?: string };
+
+const ALL_OWNER_VOCABULARY_PAINTS: readonly OwnerVocabularyPaint[] = [
+  ...OWNER_VOCABULARY_DOTS, ...OWNER_VOCABULARY_TEXT, ...OWNER_VOCABULARY_BORDERS,
+];
+
+test("the shared owner vocabulary paints only selectors and tokens that both themes define", () => {
+  // A rule naming a token this file cannot resolve would silently escape every
+  // contrast check below, because there would be no value to measure.
+  for (const [theme, tokens] of [["light", LIGHT], ["dark", DARK]] as const) {
+    for (const paint of ALL_OWNER_VOCABULARY_PAINTS) {
+      assert.ok(declaresSelector(privateStylesheet, paint.selector),
+        `private.css must still declare ${paint.selector} (${paint.kind})`);
+      for (const token of [paint.token, ...(paint.on ? [paint.on] : [])]) {
+        assert.equal(typeof tokens[token], "string",
+          `${theme} has no --${token} for ${paint.selector} (${paint.kind})`);
+      }
+    }
+  }
+});
+
+test("every shared-vocabulary dot clears the 3:1 non-text minimum on every surface", () => {
+  for (const [theme, tokens] of [["light", LIGHT], ["dark", DARK]] as const) {
+    for (const paint of OWNER_VOCABULARY_DOTS) {
+      for (const backdrop of VOCABULARY_BACKDROPS) {
+        const ratio = contrastRatio(tokens[paint.token], tokens[backdrop]);
+        assert.ok(ratio >= 3,
+          `${theme} ${paint.kind} --${paint.token} on --${backdrop} is ${ratio.toFixed(2)}:1,`
+          + ` below the 3:1 non-text minimum (${paint.selector})`);
+      }
+    }
+  }
+});
+
+test("every shared-vocabulary text pairing clears AA in both themes", () => {
+  for (const [theme, tokens] of [["light", LIGHT], ["dark", DARK]] as const) {
+    for (const paint of OWNER_VOCABULARY_TEXT) {
+      const ratio = contrastRatio(tokens[paint.token], tokens[paint.on]);
+      assert.ok(ratio >= 4.5,
+        `${theme} ${paint.kind} --${paint.token} on --${paint.on} is ${ratio.toFixed(2)}:1,`
+        + ` below the 4.5:1 AA minimum (${paint.selector})`);
+    }
+  }
+});
+
+test("the unavailable card's border clears the 3:1 non-text minimum", () => {
+  for (const [theme, tokens] of [["light", LIGHT], ["dark", DARK]] as const) {
+    for (const paint of OWNER_VOCABULARY_BORDERS) {
+      for (const backdrop of VOCABULARY_BACKDROPS) {
+        const ratio = contrastRatio(tokens[paint.token], tokens[backdrop]);
+        assert.ok(ratio >= 3,
+          `${theme} ${paint.kind} --${paint.token} on --${backdrop} is ${ratio.toFixed(2)}:1,`
+          + ` below the 3:1 non-text minimum (${paint.selector})`);
+      }
+    }
+  }
+});
+
+test("the dark palette reachable from the OS preference is the one that was checked", () => {
+  // The new @media (prefers-color-scheme: dark) block is what actually paints
+  // now that nothing sets data-theme. Every contrast assertion above reads the
+  // :root[data-theme="dark"] block, so the two must stay identical in token
+  // values or the checks are measuring a palette no user ever sees.
+  const mediaStart = stylesheet.indexOf("@media (prefers-color-scheme: dark)");
+  assert.notEqual(mediaStart, -1, "the OS-preference dark block must exist");
+  const body = stylesheet.slice(mediaStart, stylesheet.indexOf("\n}", mediaStart));
+  const media = Object.fromEntries([...body.matchAll(/--([a-z0-9-]+):\s*(#[0-9a-f]{6})/gi)]
+    .map(match => [match[1], match[2].toLowerCase()]));
+  const checked = new Set(ALL_OWNER_VOCABULARY_PAINTS.flatMap(paint =>
+    [paint.token, ...(paint.on ? [paint.on] : [])]));
+  for (const token of checked) {
+    assert.equal(media[token], DARK[token],
+      `--${token} differs between the painted dark block and the checked [data-theme="dark"] block`);
+  }
+});
+
 test("the focus ring is a solid indicator that clears 3:1 on every surface", () => {
   // A focus ring is a non-text UI indicator, so the 3:1 minimum applies. The
   // 55%-alpha color-mix this replaced composited to roughly 2.2:1 in the light
