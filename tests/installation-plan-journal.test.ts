@@ -90,6 +90,144 @@ test("exact sequential and concurrent replay succeeds while changed same-revisio
   } finally { await f.cleanup(); }
 });
 
+test("a concurrent writer's in-flight publication never refuses another exact writer", async () => {
+  const root = await realpath(await mkdtemp(join(tmpdir(), "control-room-plan-inflight-")));
+  await chmod(root, 0o700);
+  const installationId = "local-installation-inflight", ownerUid = process.getuid!();
+  const witnessName = `${installationId}.installation-plan.revision-0000000000.publish.json`;
+  // Hold the winner after its witness is durable and on disk but before it links
+  // the target. That is a normal mid-publication state, not a corrupt journal, and
+  // the late writer must not be told the journal is unusable.
+  let atWitness!: () => void;
+  const witnessCreated = new Promise<void>(resolve => { atWitness = resolve; });
+  let releaseWinner!: () => void;
+  const winnerMayFinish = new Promise<void>(resolve => { releaseWinner = resolve; });
+  const winner = new InstallationPlanFilesystemJournalV1({ rootDirectory: root, installationId, ownerUid },
+    async request => {
+      const base = await openInstallationPlanFilesystemStorageSessionV1(request);
+      let witnessSynced = false;
+      return Object.freeze({ ...base,
+        // Held right after the witness's own directory sync makes it visible, and
+        // before the target is hard-linked. That is the live mid-publication state.
+        async syncDirectory() {
+          await base.syncDirectory();
+          if (witnessSynced) return;
+          // The temp file is synced first, so only trigger once the witness itself
+          // is the newest entry on disk.
+          if ((await readdir(root)).includes(witnessName)) { witnessSynced = true; atWitness(); await winnerMayFinish; }
+        },
+      });
+    });
+  // The late writer is deliberately uninstrumented, so it observes only the real
+  // filesystem state a concurrent writer leaves behind.
+  const late = new InstallationPlanFilesystemJournalV1({ rootDirectory: root, installationId, ownerUid });
+  try {
+    const plan = create();
+    const winnerResult = winner.append(plan);
+    await atWitness;
+    const lateResult = late.append(plan);
+    releaseWinner();
+    const [first, second] = await Promise.all([winnerResult, lateResult]);
+    // Which of the two wins the link race is not this test's concern; what
+    // matters is that both settle on one publication with matching content, and
+    // that neither is refused with installation_plan_journal_unavailable.
+    assert.equal([first.replayed, second.replayed].filter(replayed => !replayed).length, 1);
+    assert.equal([first.replayed, second.replayed].filter(Boolean).length, 1);
+    assert.equal(first.planDigest, plan.planDigest);
+    assert.equal(second.planDigest, plan.planDigest);
+    assert.deepEqual((await readdir(root)).sort(), [name(installationId, 0)]);
+    assert.equal((await lstat(join(root, name(installationId, 0)))).nlink, 1);
+    assert.equal((await late.readHistory()).length, 1);
+  } finally { releaseWinner(); await rm(root, { recursive: true, force: true }); }
+});
+
+test("a read-only read still refuses a witness with no target and never repairs it", async () => {
+  const f = await fixture();
+  try {
+    const plan = create();
+    const tempName = `${f.installationId}.installation-plan.revision-0000000000.66666666-6666-4666-8666-666666666666.tmp`;
+    const witness = `${f.installationId}.installation-plan.revision-0000000000.publish.json`;
+    await writeFile(join(f.root, tempName), `${canonicalJson(plan)}\n`, { mode: 0o600, flag: "wx" });
+    await writeFile(join(f.root, witness), `${canonicalJson({ schema: "control-room.installation-plan-publication/v1",
+      revision: 0, tempName, planDigest: plan.planDigest })}\n`, { mode: 0o600, flag: "wx" });
+    const before = (await readdir(f.root)).sort();
+    // A genuine crash in that window is indistinguishable from a live writer, so
+    // the repairing read must still fail closed rather than wait it out forever.
+    await assert.rejects(() => f.journal.readHistory(), /installation_plan_journal_unavailable/);
+    await assert.rejects(() => f.journal.inspectSettledHistory(), /installation_plan_journal_unavailable/);
+    assert.deepEqual((await readdir(f.root)).sort(), before, "a refused read must not repair or delete");
+  } finally { await f.cleanup(); }
+});
+
+test("a recovery reader waits out a live publication instead of refusing it", async () => {
+  const root = await realpath(await mkdtemp(join(tmpdir(), "control-room-plan-waitout-")));
+  await chmod(root, 0o700);
+  const installationId = "local-installation-waitout", ownerUid = process.getuid!();
+  let atWitness!: () => void;
+  const witnessCreated = new Promise<void>(resolve => { atWitness = resolve; });
+  let releaseWinner!: () => void;
+  const winnerMayFinish = new Promise<void>(resolve => { releaseWinner = resolve; });
+  const winner = new InstallationPlanFilesystemJournalV1({ rootDirectory: root, installationId, ownerUid },
+    async request => {
+      const base = await openInstallationPlanFilesystemStorageSessionV1(request);
+      return Object.freeze({ ...base,
+        async createExclusiveEntry(entryName: string) {
+          const identity = await base.createExclusiveEntry(entryName);
+          if (entryName.endsWith(".publish.json")) { atWitness(); await winnerMayFinish; }
+          return identity;
+        },
+      });
+    });
+  // The reader must observe the witness *before* the winner links its target, so
+  // it is held until the witness is actually on disk. Pausing at create time is
+  // too early: the witness entry exists but the directory is still empty, and a
+  // reader that arrives then correctly reads an empty journal.
+  const reader = new InstallationPlanFilesystemJournalV1({ rootDirectory: root, installationId, ownerUid });
+  try {
+    const plan = create();
+    const winnerResult = winner.append(plan);
+    await atWitness;
+    const witnessName = `${installationId}.installation-plan.revision-0000000000.publish.json`;
+    while (!(await readdir(root)).includes(witnessName)) await new Promise(resolve => { setTimeout(resolve, 1); });
+    const reading = reader.readHistory();
+    assert.ok((await readdir(root)).includes(witnessName), "the reader starts while the witness is live");
+    releaseWinner();
+    await winnerResult;
+    const history = await reading;
+    assert.equal(history.length, 1, "a live publication must be waited out, not refused");
+    assert.equal(history[0]!.planDigest, plan.planDigest);
+    assert.deepEqual((await readdir(root)).sort(), [name(installationId, 0)]);
+  } finally { releaseWinner(); await rm(root, { recursive: true, force: true }); }
+});
+
+test("two readers retiring one settled witness both succeed and retire it once", async () => {
+  const root = await realpath(await mkdtemp(join(tmpdir(), "control-room-plan-double-retire-")));
+  await chmod(root, 0o700);
+  const installationId = "local-installation-double-retire", ownerUid = process.getuid!();
+  try {
+    const plan = create();
+    // A settled revision that still carries its witness: exactly the state two
+    // concurrent recoverers both observe and both try to retire.
+    const target = join(root, name(installationId, 0));
+    const tempName = `${installationId}.installation-plan.revision-0000000000.77777777-7777-4777-8777-777777777777.tmp`;
+    await writeFile(join(root, tempName), `${canonicalJson(plan)}\n`, { mode: 0o600, flag: "wx" });
+    await link(join(root, tempName), target);
+    await writeFile(join(root, `${installationId}.installation-plan.revision-0000000000.publish.json`),
+      `${canonicalJson({ schema: "control-room.installation-plan-publication/v1", revision: 0,
+        tempName, planDigest: plan.planDigest })}\n`, { mode: 0o600, flag: "wx" });
+    const first = new InstallationPlanFilesystemJournalV1({ rootDirectory: root, installationId, ownerUid });
+    const second = new InstallationPlanFilesystemJournalV1({ rootDirectory: root, installationId, ownerUid });
+    // Both recover the same publication concurrently; retiring its witness is
+    // idempotent, so the loser of the unlink race must not be told it cannot.
+    const [left, right] = await Promise.all([first.readHistory(), second.readHistory()]);
+    assert.equal(left.length, 1); assert.equal(right.length, 1);
+    assert.equal(left[0]!.planDigest, plan.planDigest);
+    assert.equal((await lstat(target)).nlink, 1);
+    assert.deepEqual((await readdir(root)).sort(), [name(installationId, 0)],
+      "the temp and the witness are retired exactly once");
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
 test("four exact writers repeatedly settle as one publication and clean replays", async () => {
   for (let attempt = 0; attempt < 40; attempt += 1) {
     const f = await fixture();

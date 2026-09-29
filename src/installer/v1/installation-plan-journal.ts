@@ -13,6 +13,10 @@ import { type InstallationPlanJournalEntryIdentityV1 as Identity,
 
 const MAX_PLAN_BYTES = 64 * 1024;
 const MAX_REVISIONS = 10_000;
+// A concurrent writer publishes, retires its temp and retires its witness within
+// a handful of filesystem round trips. This bounds how long a writer waits for
+// that to finish before it treats the journal as genuinely unusable.
+const SETTLE_WINDOW_MS = 5_000;
 const installationIdPattern = /^[a-z0-9](?:[a-z0-9-]{1,61}[a-z0-9])?$/;
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
@@ -34,6 +38,17 @@ type PublicationWitness = Readonly<{ schema: "control-room.installation-plan-pub
   tempName: string; planDigest: string }>;
 
 const unavailable = (): never => { throw new Error("installation_plan_journal_unavailable"); };
+// Raised when the filesystem changed between two observations of the same entry,
+// which a concurrent writer publishing or retiring can do legitimately. The
+// refusal carries the same message as a genuinely unusable journal, but this
+// marker lets a caller re-observe within a bounded window instead of refusing a
+// journal that is merely still settling. Every genuinely impossible state stays
+// terminal and is never retried.
+const unavailableWhileSettling = (): never => {
+  throw Object.assign(new Error("installation_plan_journal_unavailable"), { journalObservationSettling: true });
+};
+const observationWasSettling = (error: unknown): boolean =>
+  error instanceof Error && (error as { journalObservationSettling?: boolean }).journalObservationSettling === true;
 const conflict = (): never => { throw new Error("installation_plan_journal_conflict"); };
 
 function capture(input: unknown): Configuration {
@@ -122,6 +137,14 @@ export class InstallationPlanFilesystemJournalV1 {
       && entry.size > 0 && entry.size <= maximumBytes;
   }
 
+  // A publication witness is created empty and filled immediately afterwards, so
+  // unlike a settled revision it may legitimately be observed with size 0. It
+  // must still be a canonical, owner-private, single-linked file within bounds.
+  private validWitnessEntry(entry: InstallationPlanJournalEntryV1) {
+    return entry.kind === "file" && entry.canonical && entry.ownerUid === this.config.ownerUid
+      && entry.linkCount === 1 && (entry.mode & 0o077) === 0 && entry.size <= 1024;
+  }
+
   private async readPlan(revision: number, session: InstallationPlanJournalStorageSessionV1): Promise<InstallationPlanV1> {
     try {
       const read = await session.readEntry(this.targetName(revision), MAX_PLAN_BYTES);
@@ -140,11 +163,31 @@ export class InstallationPlanFilesystemJournalV1 {
   Promise<{ value: PublicationWitness; identity: Identity } | undefined> {
     const name = this.witnessName(revision), before = await session.statEntry(name);
     if (!before) return undefined;
-    if (!this.validPrivateFile(before, 1024, 1)) unavailable();
+    if (!this.validWitnessEntry(before)) {
+      // A concurrent writer creates the witness empty (O_CREAT|O_EXCL) and fills
+      // it a moment later, so a size-0 witness is a publication still being
+      // written rather than a corrupt one.
+      const reobserved = await session.statEntry(name);
+      if (!reobserved) return undefined;
+      if (!this.validWitnessEntry(reobserved)) unavailable();
+      return this.readWitness(revision, session);
+    }
     try {
-      const read = await session.readEntry(name, 1024);
-      if (read.entry.identity.device !== before.identity.device || read.entry.identity.inode !== before.identity.inode
-        || !this.validPrivateFile(read.entry, 1024, 1)) unavailable();
+      let read: Awaited<ReturnType<InstallationPlanJournalStorageSessionV1["readEntry"]>>;
+      try { read = await session.readEntry(name, 1024); }
+      catch (error) {
+        // A concurrent recoverer can retire this witness between our statEntry
+        // and the read. An entry that is no longer there is a publication that
+        // has just settled, not a corrupt one, so let the caller re-observe.
+        if (!await session.statEntry(name)) return undefined;
+        throw error;
+      }
+      if (read.entry.identity.device !== before.identity.device || read.entry.identity.inode !== before.identity.inode) {
+        // The witness we statEntry-ed is not the one we opened, so it was
+        // retired and recreated under us while it was being read.
+        return unavailableWhileSettling();
+      }
+      if (!this.validWitnessEntry(read.entry)) unavailable();
       const raw: unknown = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(read.bytes));
       if (!raw || typeof raw !== "object" || Array.isArray(raw)) unavailable();
       const value = raw as Record<string, unknown>;
@@ -171,7 +214,9 @@ export class InstallationPlanFilesystemJournalV1 {
   private async recoverPublishedRevision(revision: number, session: InstallationPlanJournalStorageSessionV1) {
     const targetName = this.targetName(revision), targetEntry = await session.statEntry(targetName);
     if (!targetEntry) {
-      if (await this.readWitness(revision, session)) unavailable();
+      // A witness with no target is the live mid-publication window: the witness
+      // is made durable before the target is hard-linked.
+      if (await this.readWitness(revision, session)) unavailableWhileSettling();
       return;
     }
     const witness = await this.readWitness(revision, session);
@@ -180,16 +225,41 @@ export class InstallationPlanFilesystemJournalV1 {
       const plan = await this.readPlan(revision, session);
       if (plan.planDigest !== witness.value.planDigest) unavailable();
       if (await session.statEntry(witness.value.tempName)) unavailable();
-      await this.unlinkWitness(revision, witness.identity, session);
+      // Retiring a witness is idempotent: concurrent recoverers all observe the
+      // same settled publication and all try to retire its witness, so the first
+      // one to unlink wins and the rest must see that as success. allowMissing
+      // only tolerates an absent witness; a witness replaced by a different file
+      // is still refused, because the identity check is unchanged.
+      await this.unlinkWitness(revision, witness.identity, session, true);
       return;
     }
+    // A live publication always holds its witness: the witness is created and
+    // made durable before the target is hard-linked, and is retired only after
+    // the temp is. So a target carrying two links and no witness cannot be a
+    // publication still settling; it is a hard-linked revision this journal
+    // never published, and stays terminal.
     if (!this.validPrivateFile(targetEntry, MAX_PLAN_BYTES, 2)) unavailable();
     if (!witness) return unavailable();
     const tempEntry = await session.statEntry(witness.value.tempName);
-    if (!tempEntry) return unavailable();
+    if (!tempEntry) {
+      // A concurrent recovery, or the original writer, retired the temp between
+      // our two observations. That is a publication still settling, not a broken
+      // one, so re-observe the target and accept it if it has now settled. A temp
+      // that is genuinely absent while the target still carries two links is a
+      // publication that cannot complete, so that stays terminal below.
+      const settled = await session.statEntry(targetName);
+      if (!settled) return unavailableWhileSettling();
+      if (settled.linkCount !== 1
+        || settled.identity.device !== targetEntry.identity.device
+        || settled.identity.inode !== targetEntry.identity.inode) return unavailableWhileSettling();
+      const settledPlan = await this.readPlan(revision, session);
+      if (settledPlan.planDigest !== witness.value.planDigest) unavailable();
+      await this.unlinkWitness(revision, witness.identity, session, true);
+      return;
+    }
     if (!this.validPrivateFile(tempEntry, MAX_PLAN_BYTES, 2)
       || tempEntry.identity.device !== targetEntry.identity.device
-      || tempEntry.identity.inode !== targetEntry.identity.inode) unavailable();
+      || tempEntry.identity.inode !== targetEntry.identity.inode) return unavailableWhileSettling();
     await session.unlinkExact(witness.value.tempName, tempEntry.identity, true);
     await session.syncDirectory();
     const current = await session.statEntry(targetName);
@@ -200,8 +270,8 @@ export class InstallationPlanFilesystemJournalV1 {
     await this.unlinkWitness(revision, witness.identity, session, true);
   }
 
-  private async readHistoryInSession(session: InstallationPlanJournalStorageSessionV1, signal?: AbortSignal):
-  Promise<readonly InstallationPlanV1[]> {
+  private async readHistoryInSession(session: InstallationPlanJournalStorageSessionV1, signal?: AbortSignal,
+    pendingRevision?: number): Promise<readonly InstallationPlanV1[]> {
     signal?.throwIfAborted();
     const prefix = `${this.config.installationId}.installation-plan.`;
     const targetPattern = new RegExp(`^${this.config.installationId}\\.installation-plan\\.revision-(\\d{10})\\.json$`);
@@ -222,7 +292,14 @@ export class InstallationPlanFilesystemJournalV1 {
     }
     revisions.sort((left, right) => left - right);
     if (revisions.length > MAX_REVISIONS || revisions.some((value, index) => value !== index)) unavailable();
-    if ([...witnessed].some(value => !revisions.includes(value))) unavailable();
+    if ([...witnessed].some(value => !revisions.includes(value) && value !== pendingRevision)) {
+      // A witness with no target is exactly what a live writer holds between
+      // making its witness durable and linking its target, so re-observe rather
+      // than refuse: a concurrent writer finishes this in a few round trips. A
+      // crashed writer never does, and once the bounded window closes
+      // whileSettling rethrows this unchanged, so the journal still fails closed.
+      unavailableWhileSettling();
+    }
     const history: InstallationPlanV1[] = [];
     for (const revision of revisions) {
       signal?.throwIfAborted();
@@ -238,7 +315,11 @@ export class InstallationPlanFilesystemJournalV1 {
   }
 
   async readHistory(signal?: AbortSignal): Promise<readonly InstallationPlanV1[]> {
-    return this.withSession("read_history", signal, session => this.readHistoryInSession(session, signal));
+    // readHistory performs publication recovery, so it contends with a live
+    // writer exactly as append does. Re-observe only while a concurrent writer is
+    // provably still settling; a genuinely unusable journal is never repaired.
+    return this.withSession("read_history", signal, session =>
+      this.whileSettling(signal, () => this.readHistoryInSession(session, signal)));
   }
 
   /**
@@ -297,7 +378,7 @@ export class InstallationPlanFilesystemJournalV1 {
     // Bound this by elapsed time rather than a retry count. On a loaded CI
     // host a nominal 2 ms timer can be delayed by tens of milliseconds, which
     // previously exhausted 100 retries before the winning writer was scheduled.
-    const settleDeadline = performance.now() + 5_000;
+    const settleDeadline = performance.now() + SETTLE_WINDOW_MS;
     while (performance.now() < settleDeadline) {
       signal?.throwIfAborted();
       try {
@@ -305,18 +386,46 @@ export class InstallationPlanFilesystemJournalV1 {
         return await this.readPlan(revision, session);
       }
       catch (error) {
-        if (!(error instanceof Error) || error.message !== "installation_plan_journal_unavailable") throw error;
+        // Only a state a concurrent writer can still resolve is retried. A
+        // terminal refusal (a foreign root, an owned file with the wrong shape, a
+        // digest mismatch) propagates immediately and is never waited out.
+        if (!observationWasSettling(error)
+          && (!(error instanceof Error) || error.message !== "installation_plan_journal_unavailable")) throw error;
       }
       await delay(2, undefined, signal ? { signal } : undefined);
     }
     return unavailable();
   }
 
+  /**
+   * Runs one observation, re-running it while a concurrent writer is provably
+   * still settling, up to the same bounded window readSettledWinner uses. Every
+   * terminal refusal is rethrown on the first attempt, so this never converts a
+   * genuinely unusable journal into a success and never repairs one.
+   */
+  private async whileSettling<T>(signal: AbortSignal | undefined, observe: () => Promise<T>): Promise<T> {
+    const settleDeadline = performance.now() + SETTLE_WINDOW_MS;
+    while (true) {
+      signal?.throwIfAborted();
+      try { return await observe(); }
+      catch (error) {
+        if (!observationWasSettling(error) || performance.now() >= settleDeadline) throw error;
+      }
+      await delay(2, undefined, signal ? { signal } : undefined);
+    }
+  }
+
   async append(value: unknown, signal?: AbortSignal): Promise<InstallationPlanJournalAppendResultV1> {
     const plan = verifyInstallationPlanV1(value);
     return this.withSession("append", signal, async session => {
     signal?.throwIfAborted();
-    const history = await this.readHistoryInSession(session, signal);
+    // The revision this writer is about to publish. Passing it lets the initial
+    // read tolerate a concurrent writer's in-flight witness for this same
+    // revision instead of refusing a journal that is perfectly healthy. Every
+    // other settling state is re-observed until it settles, and every terminal
+    // refusal still propagates on the first attempt.
+    const history = await this.whileSettling(signal,
+      () => this.readHistoryInSession(session, signal, plan.revision));
     const existing = history[plan.revision];
     if (existing) {
       if (!installationPlanReplayMatchesV1(existing, plan)) conflict();
