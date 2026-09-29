@@ -738,6 +738,11 @@ export class TaskExecutionPlanner {
         await check(); if (materializing) requireTemplateTime();
       }) };
     return new WebSessionAuthority(db, this.scope, this.clock, "task").authenticated(identity, async (tx, actor) => {
+      // Canonical write order: parent tenant before the completion-gate integrity row. Rows
+      // inserted after the gate take a tenant FK key-share; taking it only then deadlocks
+      // with task assignment, which holds the tenant FOR UPDATE before reading the gate.
+      const tenant = await tx.query("SELECT id FROM tenants WHERE id=$1 FOR KEY SHARE", [this.scope.tenantId]);
+      if (tenant.rows.length !== 1) return fail();
       actor.require("tasks.read", projectId); actor.require("tasks.plan", projectId, true);
       const project = await this.projects.getViewInSession(tx, actor, projectId);
       const source = await this.source(tx, projectId, sourceJobId);
@@ -915,6 +920,11 @@ export class TaskExecutionPlanner {
         } });
       }, async () => { current(); await check(); current(); }) };
     const result = await new WebSessionAuthority(guarded, this.scope, this.clock, "task").authenticated(identity, async (tx, actor) => {
+      // Canonical write order: parent tenant before the completion-gate integrity row. Rows
+      // inserted after the gate take a tenant FK key-share; taking it only then deadlocks
+      // with task assignment, which holds the tenant FOR UPDATE before reading the gate.
+      const tenant = await tx.query("SELECT id FROM tenants WHERE id=$1 FOR KEY SHARE", [this.scope.tenantId]);
+      if (tenant.rows.length !== 1) return fail();
       actor.require("tasks.read", projectId); actor.require("tasks.results.read", projectId);
       actor.require("tasks.plan", projectId, true); actor.require("tasks.reviews.record", projectId, true);
       const project = await this.projects.getViewInSession(tx, actor, projectId); current();

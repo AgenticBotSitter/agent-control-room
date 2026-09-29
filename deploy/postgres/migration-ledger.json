@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "digest": "388fac65c422c61956a25f96daf4a0b86e152ca41025dd52965d7cd0a66fd4b3",
+  "digest": "e850ef9c3bb76fcb2c26f96251c5bd7c64c2e857a57870e018601ee722f9cb40",
   "entries": [
     {
       "file": "db/migrations/0001_control_room_core.sql",
@@ -567,26 +567,32 @@
       "kind": "migrate"
     },
     {
-      "file": "db/migrations/0101_task_project_activity_events.sql",
+      "file": "db/migrations/0101_owner_review_job_lock.sql",
       "order": 95,
+      "sha256": "98e7fbdd2078b2a1879681a6387604fe356752cdb0781b891d2ca77370b8a5e8",
+      "kind": "migrate"
+    },
+    {
+      "file": "db/migrations/0103_task_project_activity_events.sql",
+      "order": 96,
       "sha256": "5d5f87eda09bf15eab1701bf9fbc538e21feb681f63071a66aa9f267b4cd0ad3",
       "kind": "migrate"
     },
     {
       "file": "db/roles/production_roles.sql",
-      "order": 96,
+      "order": 97,
       "sha256": "a0da14218b3f2b69e498a1354924d4f5bca46717ef2202a83c52dd270e009203",
       "kind": "grants"
     },
     {
       "file": "db/roles/production_table_grants.sql",
-      "order": 97,
+      "order": 98,
       "sha256": "9c2b5a8190b6b16ecfcae667e6d7837dec8d69e082bab22d7fe1a37caedac6e1",
       "kind": "grants"
     },
     {
       "file": "db/roles/production_provision.sql",
-      "order": 98,
+      "order": 99,
       "sha256": "aa123bf48866eb1e0a3c4962347f8719c7f69b16ca46606e44a0a80563a5c358",
       "kind": "provision"
     }
