@@ -538,6 +538,7 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
   const assignments: TaskAssignmentOperation = Object.freeze({ ...scope,
     assign: (...args) => run(() => assignment.assign(...args)), expire: (...args) => run(() => assignment.expire(...args)),
     revoke: (...args) => run(() => assignment.revoke(...args)),
+    cancel: (...args) => run(() => assignment.cancel(...args)),
     options: (...args) => run(() => assignment.options(...args)),
     projectOptions: (...args) => run(() => assignment.projectOptions(...args)) });
   const approvals: TaskApprovalOperation | undefined = input.approvals ? Object.freeze({ ...scope,

@@ -11,6 +11,7 @@ import { createTaskReviewWorkspace, type TaskReviewWorkspace } from "../../src/w
 import { createTaskVerificationWorkspace, type TaskVerificationWorkspace } from "../../src/web/v1/task-verification-workspace";
 import { PrivateTaskPlanning } from "./task-planning";
 import { PrivateTaskAssignment } from "./task-assignment";
+import { PrivateTaskCancel } from "./task-cancel";
 import { PrivateTaskApproval } from "./task-approval";
 import { TaskWorkflowGuide } from "./task-workflow-guide";
 import { installNewsNavigationGuard } from "../../src/web/v1/news-navigation-guard";
@@ -60,6 +61,7 @@ export function TaskExecutionStage({ detail, mode, workspace, onRecorded }: {
   if (mode === "checking") return <p className="private-note">Checking this installation’s task workflow…</p>;
   if (mode === "hosted") return <><PrivateTaskPlanning detail={detail} client={workspace.planning} />
     <PrivateTaskAssignment detail={detail} client={workspace.assignment} onRecorded={onRecorded} />
+    <PrivateTaskCancel detail={detail} client={workspace.cancel} onRecorded={onRecorded} />
     <PrivateTaskApproval detail={detail} workspace={workspace} /></>;
   if (!detail.preparedFor) return <><PrivateTaskPlanning detail={detail} client={workspace.planning} onPreparedTask={recordPreparedTask} />
     {preparedFromSource ? null : <>
@@ -70,6 +72,7 @@ export function TaskExecutionStage({ detail, mode, workspace, onRecorded }: {
       <p>Execution approval follows preparation and assignment. No permission has been granted and no agent starts from this page automatically.</p>
       <button type="button" disabled>Approve after assignment</button></section></>}</>;
   return <><PrivateTaskAssignment detail={detail} client={workspace.assignment} onRecorded={onRecorded} runOnAssign />
+    <PrivateTaskCancel detail={detail} client={workspace.cancel} onRecorded={onRecorded} />
     <PrivateTaskApproval detail={detail} workspace={workspace} local /></>;
 }
 

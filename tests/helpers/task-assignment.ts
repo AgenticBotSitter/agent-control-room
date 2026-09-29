@@ -18,8 +18,9 @@ export type TaskSourcePreparation = (fixture: Awaited<ReturnType<typeof ownerRev
   admission?: WorkBatchAssignmentAdmissionAuthority;
 }>;
 
-export async function taskAssignmentFixture(prepareSource?: TaskSourcePreparation) {
-  const f = await ownerReviewFixture();
+export async function taskAssignmentFixture(prepareSource?: TaskSourcePreparation,
+  options: { exactRepositorySimulation?: true } = {}) {
+  const f = await ownerReviewFixture(undefined, undefined, options);
   try {
   const authority: NativeTaskTemplate["authority"] = { projectId: binding.projectId, allowedExecutor: "executor:hermes-native",
     allowedOperations: ["harness.hermes.native.start"], credentialRefs: ["credential:test"], filesystemRoots: [],
