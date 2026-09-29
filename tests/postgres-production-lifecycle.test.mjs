@@ -833,6 +833,10 @@ test("real reviewer login cannot replay the three raw authority attacks", needsP
   }
   await assert.rejects(reviewer.query("SELECT * FROM commit_agent_review($1,$2::jsonb,NULL,$3::bytea)",
     [plan.planId,JSON.stringify(floored),new Uint8Array(32).fill(99)]),/integrity key rejected/u);
+  // With the right key, the database itself still enforces the risk floor: a
+  // direct call below the profile's minimum risk is refused, not recorded.
+  await assert.rejects(reviewer.query("SELECT * FROM commit_agent_review($1,$2::jsonb,NULL,$3::bytea)",
+    [plan.planId,JSON.stringify(review),reviewKey]),/agent review commit binding rejected/u);
   // The in-function membership gate is its own layer: a restricted login outside
   // the reviewer group is refused even when EXECUTE is granted to it directly.
   await query(admin,`CREATE ROLE agent_review_nonmember_probe LOGIN PASSWORD '${password}' INHERIT NOSUPERUSER NOCREATEDB
