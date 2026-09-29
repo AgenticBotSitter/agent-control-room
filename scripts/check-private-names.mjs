@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
-function configuredTerms(env = process.env) {
+export function configuredPrivateNameTerms(env = process.env) {
   let source = env.CONTROL_ROOM_PRIVATE_NAMES;
   if (env.CONTROL_ROOM_PRIVATE_NAMES_FILE) {
     try {
@@ -28,8 +28,13 @@ function redactor(terms) {
   return value => value.replace(expression, "<redacted>");
 }
 
+export function redactPrivateNames(value, env = process.env) {
+  const terms = configuredPrivateNameTerms(env);
+  return terms.length === 0 ? value : redactor(terms)(value);
+}
+
 export function findPrivateNameMatches({ root = process.cwd(), env = process.env } = {}) {
-  const terms = configuredTerms(env);
+  const terms = configuredPrivateNameTerms(env);
   if (terms.length === 0) return { configured: false, matches: [] };
 
   let tracked;
