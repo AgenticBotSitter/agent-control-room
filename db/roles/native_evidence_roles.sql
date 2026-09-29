@@ -15,6 +15,9 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON TABLES FROM PUBLIC;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON SEQUENCES FROM PUBLIC;
 ALTER DEFAULT PRIVILEGES REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;
 GRANT USAGE ON SCHEMA public TO control_room_native_evidence;
+GRANT SELECT, INSERT ON control_project_event_stream_heads, control_project_events TO control_room_native_evidence;
+GRANT UPDATE (last_sequence,last_event_digest,head_auth_tag,updated_at)
+  ON control_project_event_stream_heads TO control_room_native_evidence;
 GRANT SELECT ON workspaces, control_identities, control_role_grants, projects, control_manual_project_heads,
   control_jobs, control_attempts, control_leases, control_nodes, control_node_keys, control_harness_runs, control_harness_run_events,
   control_native_delivery_envelopes, control_native_transmission_intents, control_native_delivery_receipts,

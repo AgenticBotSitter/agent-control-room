@@ -7,7 +7,8 @@ import { assertNoSecretMaterial, computeAuthorityDigest, hmacSha256Tag, sha256Di
 import type { VerifiedWebIdentity } from "../../web/v1/access-verifier";
 import { WebAccessError } from "../../web/v1/access-verifier";
 import { WebSessionAuthority } from "../../web/v1/session-authority";
-import type { WorkBatchQueueAdmissionAuthorityV1, WorkBatchQueueAdmissionSelectionV1 } from "../../work-intake/v1/owner-service";
+import type { WorkBatchQueueAcceptedResultPortV1, WorkBatchQueueAcceptedResultProofV1,
+  WorkBatchQueueAcceptedResultSelectionV1, WorkBatchQueueAdmissionSelectionV1 } from "../../work-intake/v1/owner-service";
 import { instantiateLinearPipelineSchemaV1, legacyLinearPipelineTemplateInputSchemaV1,
   linearPipelineTemplateInputSchemaV1, pipelineBuildWritePolicySchemaV1, pipelineRunPageSchemaV1,
   pipelineRunReceiptSchemaV1, pipelineRunViewSchemaV1, pipelineTemplateReceiptSchemaV1,
@@ -71,7 +72,7 @@ export class LinearPipelineServiceV1 {
   readonly #publicationEvidenceKey: Uint8Array;
   readonly #authority: WebSessionAuthority;
   constructor(private readonly db: DatabaseClient, private readonly scope: { tenantId: string; workspaceId: string },
-    integrityKey: Uint8Array, private readonly selection?: WorkBatchQueueAdmissionAuthorityV1,
+    integrityKey: Uint8Array, private readonly selection?: WorkBatchQueueAcceptedResultPortV1,
     private readonly clock: () => number = Date.now,
     private readonly repositories?: CanonicalPipelineRepositoryRegistryV1) {
     if (!(integrityKey instanceof Uint8Array) || integrityKey.length !== 32) throw new Error("pipeline_configuration_invalid");
@@ -81,14 +82,37 @@ export class LinearPipelineServiceV1 {
     this.#authority = new WebSessionAuthority(db, scope, clock, "pipeline");
   }
 
+  /** The transaction-bound accepted-result proof, the only form a build
+   * publication may be created, checked or retained on. It runs on the
+   * caller's transaction, whose Completion Gate tenant lock then lasts until
+   * that transaction commits. The coordinator snapshot the web process holds
+   * releases the lock before it returns, so it is refused here. */
+  #acceptedResultInSession(): (tx: DatabaseSession, selection: WorkBatchQueueAcceptedResultSelectionV1) =>
+    Promise<WorkBatchQueueAcceptedResultProofV1 | null> {
+    const selection = this.selection;
+    if (!selection || selection.binding === "coordinator_snapshot" || !selection.acceptedResultProof || !this.repositories)
+      throw new Error("pipeline_build_publication_unavailable");
+    const proof = selection.acceptedResultProof.bind(selection);
+    return async (tx, value) => await proof(tx, value);
+  }
+
+  /** Accepted-result proof for presentation only: the web's coordinator
+   * snapshot, or the transaction-bound form on the reader's own session. */
+  async #presentedAcceptedResult(tx: DatabaseSession, value: WorkBatchQueueAcceptedResultSelectionV1) {
+    const selection = this.selection;
+    if (!selection) return null;
+    if (selection.binding === "coordinator_snapshot") return await selection.acceptedResultProof(value);
+    return selection.acceptedResultProof ? await selection.acceptedResultProof(tx, value) : null;
+  }
+
   // These reads take no row lock: FOR SHARE needs UPDATE on every locked
   // table, and the coordinator login that runs them holds none on the stage,
   // run, execution-plan or model-selection rows. The stage row is HMAC-verified
   // and its write bound is immutable in the database, the accepted-result proof
-  // is re-read in the same transaction, and the publication insert's own
-  // foreign key locks the stage key it records.
+  // is re-read in the same transaction under the Completion Gate tenant lock,
+  // and the publication insert's own foreign key locks the stage key it records.
   async createBuildPublicationAuthority(deliveryValue: unknown) {
-    if (!this.selection?.acceptedResultProof || !this.repositories) throw new Error("pipeline_build_publication_unavailable");
+    const acceptedInSession = this.#acceptedResultInSession();
     const delivery = controllerWorkerDeliverySchemaV1.parse(deliveryValue), identity = delivery.identity;
     if (identity.tenantId !== this.scope.tenantId) throw new Error("pipeline_build_publication_unavailable");
     return this.db.transaction(async tx => {
@@ -116,7 +140,7 @@ export class LinearPipelineServiceV1 {
       this.#verifyStage(row);
       const policy = pipelineBuildWritePolicySchemaV1.safeParse(storedWritePolicy(row));
       if (!policy.success) throw new Error("pipeline_build_publication_unavailable");
-      const proof = await this.selection!.acceptedResultProof!(tx, { sourceJobId: row.current_job_id,
+      const proof = await acceptedInSession(tx, { sourceJobId: row.current_job_id,
         workerId: row.worker_id, nodeId: row.node_id });
       const repository = await this.repositories!.resolve(tx, { ...this.scope, projectId: row.project_id });
       if (!proof || !repository) throw new Error("pipeline_build_publication_unavailable");
@@ -152,7 +176,7 @@ export class LinearPipelineServiceV1 {
   }
 
   async assertBuildPublicationAuthorityCurrent(snapshotValue: unknown): Promise<void> {
-    if (!this.selection?.acceptedResultProof || !this.repositories) throw new Error("pipeline_build_publication_unavailable");
+    const acceptedInSession = this.#acceptedResultInSession();
     const snapshot = verifyPipelineBuildPublicationAuthoritySnapshotV1(this.#publicationAuthorityKey, snapshotValue);
     if (snapshot.tenantId !== this.scope.tenantId) throw new Error("pipeline_build_publication_unavailable");
     await this.db.transaction(async tx => {
@@ -182,7 +206,7 @@ export class LinearPipelineServiceV1 {
       if (!row) throw new Error("pipeline_build_publication_unavailable");
       this.#verifyStage(row);
       const policy = pipelineBuildWritePolicySchemaV1.safeParse(storedWritePolicy(row));
-      const proof = await this.selection!.acceptedResultProof!(tx, { sourceJobId: row.current_job_id,
+      const proof = await acceptedInSession(tx, { sourceJobId: row.current_job_id,
         workerId: row.worker_id, nodeId: row.node_id });
       const repository = await this.repositories!.resolve(tx, { ...this.scope, projectId: row.project_id });
       const body = `Automated build-stage proposal for ${row.pipeline_run_id}, stage ${Number(row.stage_ordinal)}.`;
@@ -202,7 +226,7 @@ export class LinearPipelineServiceV1 {
   }
 
   async retainBuildPublication(input: Readonly<{ snapshot: unknown; plan: unknown; evidence: unknown }>) {
-    if (!this.selection?.acceptedResultProof || !this.repositories) throw new Error("pipeline_build_publication_unavailable");
+    const acceptedInSession = this.#acceptedResultInSession();
     const snapshot = verifyPipelineBuildPublicationAuthoritySnapshotV1(this.#publicationAuthorityKey, input.snapshot);
     const evidence = verifyPullRequestPublicationEvidenceV1(input.evidence, input.plan, this.#publicationEvidenceKey);
     const plan = input.plan as { authoritySnapshotDigest?: string; repositoryUrl?: string };
@@ -226,7 +250,7 @@ export class LinearPipelineServiceV1 {
         snapshot.executionJobId])).rows[0];
       if (!stage) throw new Error("pipeline_build_publication_unavailable");
       this.#verifyStage(stage);
-      const proof = await this.selection!.acceptedResultProof!(tx, { sourceJobId: stage.current_job_id,
+      const proof = await acceptedInSession(tx, { sourceJobId: stage.current_job_id,
         workerId: stage.worker_id, nodeId: stage.node_id });
       const repository = await this.repositories!.resolve(tx, { ...this.scope, projectId: stage.project_id });
       if (stage.record_digest !== snapshot.stageRecordDigest || stage.current_job_id !== snapshot.sourceJobId
@@ -368,7 +392,7 @@ export class LinearPipelineServiceV1 {
         AND canonical.job_id=publication.job_id AND canonical.attempt_id=publication.attempt_id
       WHERE publication.tenant_id=$1 AND publication.delivery_digest=$2`,
     [this.scope.tenantId, deliveryDigest])).rows[0];
-    if (!row || !this.selection?.acceptedResultProof || row.artifact_content_hash !== row.retained_result_digest
+    if (!row || !this.selection || row.artifact_content_hash !== row.retained_result_digest
       || !/^sha256:[a-f0-9]{64}$/.test(row.canonical_result_digest)) return undefined;
     const stage = (await tx.query<StageRow>(`SELECT project_id,pipeline_run_id,stage_ordinal,stage_kind,role,current_job_id,
       worker_id,worker_kind,node_id,selection_key,model,effort,provider,profile,current_attempt_id,current_lease_id,state,max_loops,
@@ -383,7 +407,7 @@ export class LinearPipelineServiceV1 {
     if (stage.current_job_id !== row.source_job_id) return undefined;
     if (stage.worker_id !== row.worker_id || stage.node_id !== row.node_id)
       throw new Error("pipeline_build_publication_integrity_failed");
-    const proof = await this.selection.acceptedResultProof(tx, { sourceJobId: row.source_job_id,
+    const proof = await this.#presentedAcceptedResult(tx, { sourceJobId: row.source_job_id,
       workerId: row.worker_id, nodeId: row.node_id });
     if (proof?.executionJobId !== row.job_id || proof?.attemptId !== row.attempt_id
       || proof?.harnessRunId !== row.harness_run_id || proof?.artifactId !== row.artifact_id
@@ -613,8 +637,7 @@ export class LinearPipelineServiceV1 {
         let own = { ok: false, digest: null as string | null, round: null as number | null };
         if (this.selection) try {
           const selection = { sourceJobId: row.current_job_id, workerId: row.worker_id, nodeId: row.node_id };
-          const proof = this.selection.acceptedResultProof
-            ? await this.selection.acceptedResultProof(tx, selection) : null;
+          const proof = await this.#presentedAcceptedResult(tx, selection);
           own = { ok: proof !== null, digest: proof?.contentHash ?? null, round: proof?.revision ?? null };
         } catch { own = { ok: false, digest: null, round: null }; }
         const job = (await tx.query<{ state: string }>(`SELECT state FROM control_jobs WHERE tenant_id=$1 AND project_id=$2 AND id=$3`,

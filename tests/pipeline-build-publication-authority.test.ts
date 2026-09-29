@@ -8,6 +8,8 @@ import { createPipelineBuildPublicationAuthoritySnapshotV1,
 import { sha256Digest } from "../src/security";
 import { hmacSha256Tag } from "../src/security";
 import { LinearPipelineServiceV1 } from "../src/pipelines/v1/service";
+import { ProductionPipelineAdvanceAuthorityV1 } from "../src/pipelines/v1/production-advance-authority";
+import type { WorkBatchQueueAcceptedResultViewV1, WorkBatchQueueAdmissionAuthorityV1 } from "../src/work-intake/v1";
 import type { DatabaseClient } from "../src/persistence/database";
 import { createPrivateTaskApplication } from "../src/web/v1/private-task-application";
 import type { InstalledPipelineCodexWorkerCompositionInputV1 } from "../src/node-bridge/codex-worker-composition";
@@ -23,12 +25,12 @@ connectorProfileDigest: sha256Digest("profile"), acceptanceProfileId: "profile:t
 acceptanceProfileDigest: sha256Digest("acceptance"), issuedAt: "2026-09-27T00:00:00.000Z",
 expiresAt: "2026-09-27T01:00:00.000Z" });
 
-function snapshot() {
+function snapshot(resultRevision = 1) {
   return createPipelineBuildPublicationAuthoritySnapshotV1(key, {
     schema: "control-room.pipeline-build-publication-authority/v1", deliveryDigest: delivery.deliveryDigest,
     tenantId: delivery.identity.tenantId, projectId: delivery.identity.projectId, sourceJobId: "job:source",
     executionJobId: delivery.identity.jobId, attemptId: delivery.identity.attemptId, runId: delivery.identity.runId,
-    artifactId: "artifact:test", resultRevision: 1,
+    artifactId: "artifact:test", resultRevision,
     pipelineRunId: "pipeline-run:test", stageOrdinal: 0, stageRecordDigest: sha256Digest("stage"),
     workerId: delivery.worker.workerId, model: "model:exact", effort: "high", allowedPaths: ["src/**"],
     maximumChangedFiles: 12, maximumChangedBytes: 65536, retainedResultDigest: sha256Digest("result"),
@@ -64,6 +66,12 @@ test("snapshot field or authentication tampering is refused before policy or pub
   assert.throws(() => createPipelineBuildPublicationAuthorityV1({ integrityKey: key,
     snapshot: { ...saved, repositoryUrl: "https://example.invalid/foreign/repository" },
     assertControllerCurrent: async () => {} }), /unavailable/);
+});
+
+test("publication authority admits a first-round result and refuses a negative round", () => {
+  const firstRound = snapshot(0);
+  assert.equal(verifyPipelineBuildPublicationAuthoritySnapshotV1(key, firstRound).resultRevision, 0);
+  assert.throws(() => snapshot(-1), /expected number to be >=0/);
 });
 
 test("controller refuses a delivery from retry B when Completion Gate accepted retry A", async () => {
@@ -119,6 +127,67 @@ test("controller refuses a delivery from retry B when Completion Gate accepted r
   await installed.authority.assertControllerCurrent(current);
   await assert.rejects(installed.authority.assertControllerCurrent({ ...current,
     retainedResultDigest: sha256Digest("tampered") }), /unavailable/);
+});
+
+// The web process holds only the coordinator snapshot, which has released its
+// Completion Gate lock before it returns. A controller composed with it must
+// refuse every publication mutation before any read, even when the snapshot's
+// proof would match, and the types must refuse it where a session is required.
+test("a coordinator snapshot can present a proof but never create, check or retain a build publication", async () => {
+  const resultDigest = sha256Digest("accepted snapshot");
+  const stageMaterial = { id: "pipeline-run:test:stage:0", tenantId: delivery.identity.tenantId,
+    projectId: delivery.identity.projectId, pipelineRunId: "pipeline-run:test", stageOrdinal: 0,
+    stageKind: "build", role: "builder", workerId: delivery.worker.workerId, workerKind: "codex",
+    nodeId: delivery.identity.nodeId, selectionKey: "selection:test", model: "model:exact", effort: "high",
+    provider: null, profile: null, currentJobId: "job:source", currentAttemptId: null, currentLeaseId: null,
+    state: "proposed", maxLoops: 3, handoffFromResultDigest: null, allowedPaths: ["src/**"],
+    maximumChangedFiles: 12, maximumChangedBytes: 65536, signoffReviewId: null,
+    startedAt: null, finishedAt: null, version: 1 };
+  const stage = { project_id: stageMaterial.projectId, pipeline_run_id: stageMaterial.pipelineRunId,
+    stage_ordinal: 0, stage_kind: "build", role: "builder", current_job_id: "job:source",
+    worker_id: delivery.worker.workerId, worker_kind: "codex", node_id: delivery.identity.nodeId,
+    selection_key: "selection:test", model: "model:exact", effort: "high", provider: null, profile: null,
+    current_attempt_id: null, current_lease_id: null, state: "proposed", max_loops: 3,
+    allowed_paths: ["src/**"], maximum_changed_files: 12, maximum_changed_bytes: 65536,
+    handoff_from_result_digest: null, signoff_review_id: null, started_at: null, finished_at: null,
+    record_digest: sha256Digest(stageMaterial), auth_tag: hmacSha256Tag(key,
+      { purpose: "pipeline-stage-run/v1", record: stageMaterial }), version: 1, run_title: "Canonical run" };
+  let transactions = 0;
+  const query = async () => ({ rows: [stage], rowCount: 1 });
+  const db = { query, transaction: async <T>(work: (tx: any) => Promise<T>) => { transactions += 1; return work({ query }); },
+    transactionWithPreCommitCheck: async <T>(work: (tx: any) => Promise<T>, check: () => void | Promise<void>) => {
+      transactions += 1; const value = await work({ query }); await check(); return value; } } as unknown as DatabaseClient;
+  const proof = { executionJobId: delivery.identity.jobId, attemptId: delivery.identity.attemptId,
+    harnessRunId: delivery.identity.runId, artifactId: "artifact:snapshot", contentHash: resultDigest, revision: 1 };
+  const repositories = { resolve: async () => ({ repositoryUrl: "https://example.invalid/controller/repository" }) };
+  const scope = { tenantId: delivery.identity.tenantId, workspaceId: "workspace:test" };
+  // Control: the same proof through the transaction-bound form is accepted.
+  const bound = new LinearPipelineServiceV1(db, scope, key, { binding: "caller_transaction",
+    assertCurrent: () => true, isAcceptedResultCurrent: async () => true, acceptedResultProof: async () => proof },
+  Date.now, repositories);
+  const saved = await bound.createBuildPublicationAuthority(delivery);
+  await bound.assertBuildPublicationAuthorityCurrent(saved);
+  let snapshotReads = 0;
+  const view: WorkBatchQueueAcceptedResultViewV1 = { binding: "coordinator_snapshot", assertCurrent: () => true,
+    isAcceptedResultCurrent: async () => { snapshotReads += 1; return true; },
+    acceptedResultProof: async () => { snapshotReads += 1; return proof; } };
+  const presenting = new LinearPipelineServiceV1(db, scope, key, view, Date.now, repositories);
+  transactions = 0;
+  await assert.rejects(presenting.createBuildPublicationAuthority(delivery), /pipeline_build_publication_unavailable/);
+  await assert.rejects(presenting.assertBuildPublicationAuthorityCurrent(saved), /pipeline_build_publication_unavailable/);
+  await assert.rejects(presenting.retainBuildPublication({ snapshot: saved, plan: {}, evidence: {} }),
+    /pipeline_build_publication_unavailable/);
+  await assert.rejects(presenting.createInstalledBuildPublication(delivery, { runGit: async () => new Uint8Array(),
+    journal: {} as never, openPullRequest: async () => { throw new Error("must not open"); } }),
+  /pipeline_build_publication_unavailable/);
+  assert.equal(snapshotReads, 0, "the snapshot is never consulted for a mutation");
+  assert.equal(transactions, 0, "the refusal comes before any read");
+  // @ts-expect-error The snapshot cannot stand in for the transaction-bound authority.
+  const widened: WorkBatchQueueAdmissionAuthorityV1 = view;
+  void widened;
+  // @ts-expect-error Nor can it serve the unattended advance, which commits under the proof's lock.
+  void new ProductionPipelineAdvanceAuthorityV1(scope, { assertCurrent: () => true }, view,
+    { currentCost: async () => ({ kind: "unknown" as const }) } as never);
 });
 
 test("installed build publication is absent without canonical result and repository authority", async () => {

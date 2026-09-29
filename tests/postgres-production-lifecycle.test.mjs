@@ -131,7 +131,10 @@ async function query(target, sql, params = []) {
   }
 }
 
-function postgresDatabase(target) {
+// `hooks` lets a concurrency test act inside a transaction: `afterBegin` runs
+// first on the session, and `beforeCommit` is awaited with the work done and
+// every lock still held.
+function postgresDatabase(target, hooks = {}) {
   const one = async (callback) => {
     const client=new Client(target); await client.connect();
     try { return await callback(client); } finally { await client.end(); }
@@ -139,7 +142,10 @@ function postgresDatabase(target) {
   const database={
     query:(sql,params=[])=>one(client=>client.query(sql,params)),
     transaction:(callback)=>one(async client=>{ await client.query("BEGIN");
-      try { const result=await callback({query:(sql,params=[])=>client.query(sql,params)});
+      try { const session={query:(sql,params=[])=>client.query(sql,params)};
+        await hooks.afterBegin?.(session);
+        const result=await callback(session);
+        await hooks.beforeCommit?.();
         await client.query("COMMIT"); return result; }
       catch(error){ await client.query("ROLLBACK"); throw error; } }),
     transactionWithPreCommitCheck:(callback,check)=>one(async client=>{ await client.query("BEGIN");
@@ -402,12 +408,24 @@ async function upgradeFromAppliedPrefix({ database, pending, withoutGrants, newO
   }
 }
 
+// The pending suffix is always the newest migration files, so every rung below
+// names 0107 and 0135 as well as its own stage: a rung that did not would be
+// asserting a pending set the applier never sees. 0107 grants on roles and
+// creates no object, and 0135's object reaches the shared roles through
+// production_table_grants.sql's blanket `ON ALL TABLES` grants rather than a
+// per-table REVOKE, so neither appears in `newObjects`; the 0107 grant
+// convergence itself is asserted against a purpose-built cluster in
+// tests/project-activity-lifecycle-postgres.test.ts, which applies the real
+// role files to its own database and reads the privileges as the server reports
+// them.
+//
 // A database already at S2 (S1 0093, 0100, 0101 and S2 0102 applied) takes
 // everything the ledger orders from S3's queue migration onwards, in that
-// order. Each test names the migration its slice STARTS at; the rest of the
-// pending suffix is derived from the ledger, so a migration added later is
-// part of the expected apply set rather than a failure.
-test("upgrade from S2's applied ledger appends only the agent-queue, pipeline, agent-review, build-publication and unattended-advance migrations", needsPg, async () =>
+// order — 0107's activity grants, 0135's project settings and every migration
+// after them included. Each test names only the migration its slice STARTS at;
+// the rest of the pending suffix is derived from the ledger, so a migration
+// added later is part of the expected apply set rather than a failure.
+test("upgrade from S2's applied ledger appends only the agent-queue, pipeline, agent-review, activity, build-publication, unattended-advance and project-settings migrations", needsPg, async () =>
   upgradeFromAppliedPrefix({ database: "cr_prod_upgrade_s2",
     pending: await pendingFromLedger(sliceOrder("_work_batch_agent_queue.sql")),
     withoutGrants: [QUEUE_GRANTS, UNATTENDED_GRANTS, PIPELINE_GRANTS, AGENT_REVIEW_GRANTS, PUBLICATION_GRANTS],
@@ -416,7 +434,7 @@ test("upgrade from S2's applied ledger appends only the agent-queue, pipeline, a
       "control_pipeline_build_publications", ...UNATTENDED_OBJECTS] }));
 
 // A database at main (S3's 0104 applied) takes S4's pipeline migration onwards.
-test("upgrade from main's applied ledger appends only the pipeline, agent-review, build-publication and unattended-advance migrations", needsPg, async () =>
+test("upgrade from main's applied ledger appends only the pipeline, agent-review, activity, build-publication, unattended-advance and project-settings migrations", needsPg, async () =>
   upgradeFromAppliedPrefix({ database: "cr_prod_upgrade_main",
     pending: await pendingFromLedger(sliceOrder("_linear_pipeline_runs.sql")),
     withoutGrants: [UNATTENDED_GRANTS, PIPELINE_GRANTS, AGENT_REVIEW_GRANTS, PUBLICATION_GRANTS],
@@ -424,23 +442,33 @@ test("upgrade from main's applied ledger appends only the pipeline, agent-review
       "control_agent_review_plans", "control_pipeline_build_publications", ...UNATTENDED_OBJECTS] }));
 
 // A database at main plus S4 (0105 applied) takes S5's agent-review migration onwards.
-test("upgrade from main plus S4's applied ledger appends only the agent-review, build-publication and unattended-advance migrations", needsPg, async () =>
+test("upgrade from main plus S4's applied ledger appends only the agent-review, activity, build-publication, unattended-advance and project-settings migrations", needsPg, async () =>
   upgradeFromAppliedPrefix({ database: "cr_prod_upgrade_s4",
     pending: await pendingFromLedger(sliceOrder("_agent_review_plans.sql")),
     withoutGrants: [UNATTENDED_GRANTS, AGENT_REVIEW_GRANTS, PUBLICATION_GRANTS],
     newObjects: ["control_agent_review_plans", "control_pipeline_build_publications", ...UNATTENDED_OBJECTS] }));
 
-// A database at main plus S4 and S5 (0106 applied) takes S6's build-publication migration onwards.
-test("upgrade from main plus S4 and S5's applied ledger appends only the build-publication and unattended-advance migrations", needsPg, async () =>
+// A database at main plus S4 and S5 (0106 applied) is the first that takes
+// 0107's activity grants, then S6's build-publication migration onwards.
+test("upgrade from main plus S4 and S5's applied ledger appends only the activity, build-publication, unattended-advance and project-settings migrations", needsPg, async () =>
   upgradeFromAppliedPrefix({ database: "cr_prod_upgrade_s5",
     pending: await pendingFromLedger(sliceOrder("_pipeline_build_publications.sql")),
     withoutGrants: [UNATTENDED_GRANTS, PUBLICATION_GRANTS],
     newObjects: ["control_pipeline_build_publications", ...UNATTENDED_OBJECTS] }));
 
-// A database at main plus S4, S5 and S6 (0108 applied) takes S7's 0109 and
-// whatever the ledger orders after it: no duplicate ledger_order, and a second
-// run is a clean no-op.
-test("upgrade from main plus S4, S5 and S6's applied ledger appends only the unattended-advance migration", needsPg, async () =>
+// A database at main plus S4, S5 and 0107 (0108 applied) takes S7's 0109,
+// 0135 and whatever the ledger orders after it: no duplicate ledger_order, and
+// a second run is a clean no-op.
+test("upgrade from main plus S4, S5 and 0107's applied ledger appends only the unattended-advance and project-settings migrations", needsPg, async () =>
+  upgradeFromAppliedPrefix({ database: "cr_prod_upgrade_s6",
+    pending: await pendingFromLedger(sliceOrder("_pipeline_unattended_advance.sql")),
+    withoutGrants: [UNATTENDED_GRANTS, PUBLICATION_GRANTS],
+    newObjects: ["control_pipeline_build_publications", ...UNATTENDED_OBJECTS] }));
+
+// A database at main plus S4, S5 and 0107 (0108 applied) takes S7's 0109,
+// 0135 and whatever the ledger orders after it: no duplicate ledger_order,
+// and a second run is a clean no-op.
+test("upgrade from main plus S4, S5 and 0107's applied ledger appends only the unattended-advance and project-settings migrations", needsPg, async () =>
   upgradeFromAppliedPrefix({ database: "cr_prod_upgrade_s6",
     pending: await pendingFromLedger(sliceOrder("_pipeline_unattended_advance.sql")),
     withoutGrants: [UNATTENDED_GRANTS],
@@ -1234,88 +1262,118 @@ function nativeReviewPlanRowV1(reviewKey, { tenantId, projectId, jobId, runId, a
   return { plan: material, auth_tag: nativeReviewPlanTag(reviewKey, material) };
 }
 
-// The S5 defect, proved on the real logins with the REAL ownerAuthority.
+// A genuinely accepted build stage and the REAL task-coordinator lifecycle,
+// composed on the coordinator login exactly as mac-local-host.ts composes it.
+// Completion Gate acceptance is an independent reviewer's accepted decision and
+// the profile's one required verification scenario, both committed through the
+// real store so its tenant state digest advances. The target is already
+// registered by seedAgentReviewTenant, and acceptedResultRecords proved the plan
+// and receipt derive exactly that record. `fill` keeps each tenant's keys apart.
+async function acceptedBuildOnRealAuthority(client, coordinator, suffix, fill) {
+  const at = new Date(webNow).toISOString(), reviewKey = new Uint8Array(32).fill(fill);
+  const harnessKey = new Uint8Array(32).fill(fill + 1), resultKey = new Uint8Array(32).fill(fill + 2);
+  const checkpoints = new InMemoryRollbackCheckpointStoreV1({ testOnly: true });
+  const own = await seedAgentReviewTenant(client, suffix, reviewKey, checkpoints, at);
+  const build = await seedBuildExecution(client, own, suffix, at, { deferResultRows: true });
+  const scope = { tenantId: own.tenantId, workspaceId: own.workspaceId };
+  const accepted = acceptedResultRecords(own, build, own.profile, reviewKey, at);
+  await writeAcceptedBuildStage(client, own, build, resultKey, accepted, at);
+  const gate = new CompletionGateStoreV1(client, reviewKey, checkpoints, () => at);
+  const { targetId, targetDigest } = accepted;
+  const projectId = own.project.projectId;
+  // The reviewer is the check stage's protected agent principal, which the
+  // seeded tenant already proved independent of the build producer: different
+  // worker, agent profile, harness and model family.
+  await gate.recordReview({ ...own.reviewPayload(), id: `review:${targetId}`, targetId, targetDigest });
+  await gate.recordVerification({ schemaVersion: "control-room-completion-gate/v1",
+    id: `verification:${targetId}`, tenantId: own.tenantId, projectId, targetId, targetDigest,
+    acceptanceProfileId: own.profile.id, acceptanceProfileDigest: sha256Digest(own.profile),
+    scenarioId: own.profile.requiredVerificationScenarioIds[0], outcome: "passed",
+    verifier: { actorId: `identity:web-${suffix}`, actorType: "human" },
+    evidenceDigests: [sha256Digest(`${suffix} verification`)], verifiedAt: at,
+    grantsApproval: false, grantsExecutionAuthority: false });
+  // Only the host-generation selection check is supplied. The retained bytes
+  // are served by the local result store's own read port, keyed by artifact id.
+  const storage = { read: async artifactId => artifactId === build.artifactId ? accepted.bytes : undefined };
+  const lifecycle = createTaskCoordinatorLifecycle({
+    scope, database: { client: coordinator.db, close: async () => {}, isAvailable: () => true },
+    planning: { template: { id: `template:${suffix}`, adapter: "hermes-native-runs/v1",
+      instructions: "Use only the supplied information.", acceptanceProfileId: own.profile.id,
+      acceptanceProfileDigest: sha256Digest(own.profile),
+      authority: await nativeTemplateAuthority(projectId) },
+      integrityKey: new Uint8Array(32).fill(fill + 3), reviewIntegrityKey: reviewKey, checkpoints },
+    routes: own.routes,
+    workBatches: { integrityKey: reviewKey, selectionAuthority: { assertCurrent: () => true } },
+    quality: { integrityKey: reviewKey, harnessIntegrityKey: harnessKey, scenarios: [],
+      results: { integrityKey: resultKey, storageClass: "local", storage }, checkpoints },
+    clock: () => webNow });
+  // A second, independent completion-gate reviewer requesting changes with one
+  // finding. Completion Gate then reads the target as changes_requested, so the
+  // acceptance the proof relied on is superseded.
+  const changesRequested = () => {
+    const reviewId = `review:${targetId}:changes`, findingId = `finding:${targetId}:changes`;
+    const evidence = [sha256Digest(`${suffix} changes`)];
+    return [{ schemaVersion: "control-room-completion-gate/v1", id: reviewId, tenantId: own.tenantId, projectId,
+      targetId, targetDigest, acceptanceProfileId: own.profile.id, acceptanceProfileDigest: sha256Digest(own.profile),
+      reviewer: { actorId: `identity:second-reviewer-${suffix}`, actorType: "human" }, authority: "completion_gate",
+      decision: "changes_requested", assessedRisk: "low", effectiveRisk: "critical", evidenceDigests: evidence,
+      findingIds: [findingId], reviewedAt: at, grantsApproval: false, grantsExecutionAuthority: false },
+    [{ schemaVersion: "control-room-completion-gate/v1", id: findingId, tenantId: own.tenantId, projectId, targetId,
+      targetDigest, reviewId, code: "code:stale-result", severity: "high",
+      statementDigest: sha256Digest(`${suffix} finding`), evidenceDigests: evidence, raisedAt: at }]];
+  };
+  return { at, reviewKey, checkpoints, own, build, scope, accepted, lifecycle, changesRequested,
+    selection: { sourceJobId: build.jobId, workerId: build.workerId, nodeId: build.nodeId } };
+}
+
+// The S5 defect, proved on the real logins with the REAL lifecycle.
 //
 // The pipeline run view runs on the private-web login. Its accepted-result
 // proof reads control_transition_events through the task coordinator, and
 // control_room_web holds no SELECT on that table. Running that read on the
 // caller's transaction aborted it, so the page failed with
-// database_unavailable even though the JavaScript error was caught. The fix
-// routes the proof through the coordinator's own pool. This test builds a real
-// accepted result, composes the real createTaskCoordinatorLifecycle, renders the
-// view AS control_room_web, and asserts both the working proof and the
-// unchanged narrow web privilege.
+// database_unavailable even though the JavaScript error was caught. The web
+// therefore holds the coordinator snapshot (workBatchView), which takes no
+// session and resolves on the coordinator's own pool. The transaction-bound
+// authority (workBatchAuthority) keeps running on its caller's session, which is
+// exactly why it cannot serve the web login. This test builds a real accepted
+// result, renders the view AS control_room_web, and asserts the working proof,
+// both forms' binding, and the unchanged narrow web privilege.
 test("the pipeline run view renders on the production web login through the real accepted-result authority", needsPg, () =>
   withMacLocalLogins("cr_run_view_authority", async ({ client, login }) => {
     const coordinator = login("control_room_coordinator"), web = login("control_room_web");
-    const at = new Date(webNow).toISOString(), reviewKey = new Uint8Array(32).fill(63);
-    const harnessKey = new Uint8Array(32).fill(64), resultKey = new Uint8Array(32).fill(65);
-    const checkpoints = new InMemoryRollbackCheckpointStoreV1({ testOnly: true });
-    const own = await seedAgentReviewTenant(client, "view", reviewKey, checkpoints, at);
-    const build = await seedBuildExecution(client, own, "view", at, { deferResultRows: true });
-    const scope = { tenantId: own.tenantId, workspaceId: own.workspaceId };
-    const accepted = acceptedResultRecords(own, build, own.profile, reviewKey, at);
-    await writeAcceptedBuildStage(client, own, build, resultKey, accepted, at);
-    // Completion Gate acceptance: an independent reviewer's accepted decision
-    // and the profile's one required verification scenario, both committed
-    // through the real store so its tenant state digest advances. The target is
-    // already registered by seedAgentReviewTenant, and acceptedResultRecords
-    // proved the plan and receipt derive exactly that record.
-    const gate = new CompletionGateStoreV1(client, reviewKey, checkpoints, () => at);
-    const { targetId, targetDigest } = accepted;
-    // The reviewer is the check stage's protected agent principal, which the
-    // seeded tenant already proved independent of the build producer: different
-    // worker, agent profile, harness and model family.
-    await gate.recordReview({ ...own.reviewPayload(), id: `review:${targetId}`, targetId, targetDigest });
-    await gate.recordVerification({ schemaVersion: "control-room-completion-gate/v1",
-      id: `verification:${targetId}`, tenantId: own.tenantId, projectId: own.project.projectId,
-      targetId, targetDigest, acceptanceProfileId: own.profile.id,
-      acceptanceProfileDigest: sha256Digest(own.profile),
-      scenarioId: own.profile.requiredVerificationScenarioIds[0], outcome: "passed",
-      verifier: { actorId: "identity:web-view", actorType: "human" },
-      evidenceDigests: [sha256Digest("view verification")], verifiedAt: at,
-      grantsApproval: false, grantsExecutionAuthority: false });
+    const { own, build, scope, accepted, lifecycle, selection, reviewKey } =
+      await acceptedBuildOnRealAuthority(client, coordinator, "view", 63);
+    const view = lifecycle.workBatchView, authority = lifecycle.workBatchAuthority;
+    assert.equal(view?.binding, "coordinator_snapshot");
+    assert.equal(authority?.binding, "caller_transaction");
 
-    // The real lifecycle on the real coordinator pool, with the real work-batch
-    // authority. Only the host-generation selection check is supplied, exactly as
-    // mac-local-host.ts composes it. The retained bytes are served by the local
-    // result store's own read port, keyed by artifact id.
-    const storage = { read: async artifactId => artifactId === build.artifactId ? accepted.bytes : undefined };
-    const lifecycle = createTaskCoordinatorLifecycle({
-      scope, database: { client: coordinator.db, close: async () => {}, isAvailable: () => true },
-      planning: { template: { id: "template:view", adapter: "hermes-native-runs/v1",
-        instructions: "Use only the supplied information.", acceptanceProfileId: own.profile.id,
-        acceptanceProfileDigest: sha256Digest(own.profile),
-        authority: await nativeTemplateAuthority(own.project.projectId) },
-        integrityKey: new Uint8Array(32).fill(66), reviewIntegrityKey: reviewKey, checkpoints },
-      routes: own.routes,
-      workBatches: { integrityKey: reviewKey, selectionAuthority: { assertCurrent: () => true } },
-      quality: { integrityKey: reviewKey, harnessIntegrityKey: harnessKey, scenarios: [],
-        results: { integrityKey: resultKey, storageClass: "local", storage }, checkpoints },
-      clock: () => webNow });
-    const authority = lifecycle.workBatchAuthority;
-    assert.equal(typeof authority?.acceptedResultProof, "function");
-
-    const selection = { sourceJobId: build.jobId, workerId: build.workerId, nodeId: build.nodeId };
-    // The caller's session is handed to the authority and must be ignored: the
-    // web login cannot read the lifecycle table the proof joins on. This session
-    // throws on any statement, exactly as the real web transaction does once
-    // PostgreSQL has aborted it.
-    const unreadableSession = { query: async () => { throw new Error("permission denied for table control_transition_events"); } };
-    assert.deepEqual(await authority.acceptedResultProof(unreadableSession, selection),
-      { executionJobId: build.jobId, attemptId: build.attemptId, harnessRunId: build.runId,
-        artifactId: build.artifactId, contentHash: accepted.contentHash, revision: 0 });
-    assert.equal(await authority.isAcceptedResultCurrent(unreadableSession, selection), true);
-    assert.equal(await authority.acceptedResultRevision(unreadableSession, selection), 0);
+    // The snapshot takes the selection only; no caller session reaches it.
+    const expected = { executionJobId: build.jobId, attemptId: build.attemptId, harnessRunId: build.runId,
+      artifactId: build.artifactId, contentHash: accepted.contentHash, revision: 0 };
+    assert.deepEqual(await view.acceptedResultProof(selection), expected);
+    assert.equal(await view.isAcceptedResultCurrent(selection), true);
     // An unbound selection resolves to no proof, never to another stage's.
-    assert.equal(await authority.acceptedResultProof(unreadableSession, { ...selection, nodeId: "node:build:other" }), null);
+    assert.equal(await view.acceptedResultProof({ ...selection, nodeId: "node:build:other" }), null);
 
-    // The reason the proof cannot run on the caller, and the exact symptom the
+    // The transaction-bound form runs on the session it is given: on the
+    // coordinator login it proves the same result, and on the web login it
+    // aborts that caller's own transaction rather than reading elsewhere.
+    assert.deepEqual(await coordinator.db.transaction(tx => authority.acceptedResultProof(tx, selection)), expected);
+    assert.equal(await coordinator.db.transaction(tx => authority.isAcceptedResultCurrent(tx, selection)), true);
+    assert.equal(await coordinator.db.transaction(tx => authority.acceptedResultRevision(tx, selection)), 0);
+    for (const [operation, refused] of [["acceptedResultProof", null], ["isAcceptedResultCurrent", false],
+      ["acceptedResultRevision", null]])
+      await assert.rejects(web.db.transaction(async tx => {
+        assert.equal(await authority[operation](tx, selection), refused);
+        await tx.query("SELECT 1");
+      }), /database_unavailable/u, `the transaction-bound ${operation} must use the caller's session`);
+
+    // The reason the view cannot run on the caller, and the exact symptom the
     // review reported: on the production web login this statement fails the
     // request with database_unavailable, because the private driver withholds
     // the server's refusal text. Catching the JavaScript error does not repair
-    // the aborted transaction, so the view died here. The authority avoids it
-    // by issuing the identical statement on its own pool, never on the caller.
+    // the aborted transaction, so the view died here.
     const proofStatement = `SELECT j.id FROM control_task_execution_plans p JOIN control_jobs j
       ON j.tenant_id=p.tenant_id AND j.id=p.job_id
       JOIN control_transition_events e ON e.tenant_id=j.tenant_id AND e.entity_kind='job' AND e.entity_id=j.id
@@ -1329,23 +1387,23 @@ test("the pipeline run view renders on the production web login through the real
 
     // The view, rendered AS control_room_web, on the web transaction.
     const identity = createAccessVerifier(webTrust)(webRequest(), webNow);
-    const view = await new LinearPipelineServiceV1(web.db, scope, reviewKey, authority, () => webNow)
+    const page = await new LinearPipelineServiceV1(web.db, scope, reviewKey, view, () => webNow)
       .view(identity, own.project.projectId, own.pipeline.runId);
-    assert.equal(view.stages[0].state, "completed",
+    assert.equal(page.stages[0].state, "completed",
       "the accepted build stage must read as completed, not uncertain");
-    assert.equal(view.stages[0].round, 0);
-    assert.equal(view.stages[0].predecessorResultDigest, null);
-    assert.equal(view.stages[1].predecessorResultDigest, accepted.contentHash,
+    assert.equal(page.stages[0].round, 0);
+    assert.equal(page.stages[0].predecessorResultDigest, null);
+    assert.equal(page.stages[1].predecessorResultDigest, accepted.contentHash,
       "the next stage must show the accepted predecessor result digest");
-    // The same view through the same real authority on the coordinator login.
-    const coordinatorView = await new LinearPipelineServiceV1(coordinator.db, scope, reviewKey, authority, () => webNow)
+    // The same view through the transaction-bound authority on the coordinator login.
+    const coordinatorPage = await new LinearPipelineServiceV1(coordinator.db, scope, reviewKey, authority, () => webNow)
       .view(identity, own.project.projectId, own.pipeline.runId);
-    assert.deepEqual(coordinatorView.stages, view.stages,
-      "the proof must not depend on which pool the caller presents from");
+    assert.deepEqual(coordinatorPage.stages, page.stages,
+      "the snapshot and the transaction-bound proof must present the same result");
 
     // Least privilege is unchanged: the web login still cannot read the
-    // lifecycle table the proof reads, which is the whole reason the proof runs
-    // on the coordinator pool.
+    // lifecycle table the proof reads, which is the whole reason the view
+    // resolves on the coordinator pool.
     const catalog = target("cr_run_view_authority");
     assert.equal((await query(catalog, `SELECT has_table_privilege('control_room_web',
       'control_transition_events','SELECT') AS allowed`)).rows[0].allowed, false);
@@ -1353,6 +1411,132 @@ test("the pipeline run view renders on the production web login through the real
       'control_transition_events','SELECT') AS allowed`)).rows[0].allowed, true);
     await assert.rejects(web.direct.query("SELECT id FROM control_transition_events"), /permission denied/u);
     await lifecycle.close();
+  }));
+
+// Settles true when `promise` settles within `ms`, false while it still waits.
+const settlesWithin = (promise, ms) => Promise.race([promise.then(() => true, () => true),
+  new Promise(resolve => setTimeout(() => resolve(false), ms))]);
+
+// The race the transaction-bound proof exists for, on the real logins.
+//
+// The web's coordinator snapshot releases its Completion Gate lock when its own
+// short transaction commits. Build publication's creation, currentness and
+// retention must instead hold that lock until their own transaction commits:
+// otherwise a review landing between the proof and the insert leaves a
+// publication recorded against an acceptance that no longer holds. Each of those
+// transactions looks up the repository right after its proof, so pausing that
+// lookup pauses the path after proof resolution with its locks still held.
+test("build publication holds the Completion Gate lock from its accepted-result proof to its commit", needsPg, () =>
+  withMacLocalLogins("cr_publication_race", async ({ client, login }) => {
+    const coordinator = login("control_room_coordinator"), web = login("control_room_web");
+    const admin = target("cr_publication_race"), repositoryUrl = "https://example.invalid/controller/repository";
+    // A failed assertion must not leave a paused transaction behind: that
+    // would surface as a pool-close rejection and hide the real failure.
+    let pause;
+    const releases = [], inflight = [];
+    const pauseNextLookup = () => {
+      let reached, release;
+      const hit = new Promise(resolve => { reached = resolve; }), released = new Promise(resolve => { release = resolve; });
+      pause = { reached, released }; releases.push(release);
+      return { hit, release };
+    };
+    const tracked = promise => { inflight.push(promise.catch(() => {})); return promise; };
+    const repositories = { resolve: async () => {
+      const current = pause; pause = undefined;
+      if (current) { current.reached(); await current.released; }
+      return { repositoryUrl };
+    } };
+    const acceptedPublication = async (suffix, fill) => {
+      const accepted = await acceptedBuildOnRealAuthority(client, coordinator, suffix, fill);
+      const { own, build, at, reviewKey } = accepted;
+      assert.equal(accepted.lifecycle.workBatchAuthority.binding, "caller_transaction");
+      const controller = new LinearPipelineServiceV1(coordinator.db, accepted.scope, reviewKey,
+        accepted.lifecycle.workBatchAuthority, () => webNow, repositories);
+      const delivery = createControllerWorkerDeliveryV1({ identity: { tenantId: own.tenantId,
+        projectId: own.project.projectId, jobId: build.jobId, attemptId: build.attemptId, runId: build.runId,
+        nodeId: build.nodeId }, worker: { workerId: build.workerId, adapterId: "adapter:test", adapterRevision: "1234567" },
+      input: { prompt: "Build.", instructions: "Commit bounded work." }, authorityDigest: sha256Digest("authority"),
+      connectorProfileDigest: sha256Digest("profile"), acceptanceProfileId: own.profile.id,
+      acceptanceProfileDigest: sha256Digest(own.profile), issuedAt: at,
+      expiresAt: new Date(webNow + 3_600_000).toISOString() });
+      const snapshot = await controller.createBuildPublicationAuthority(delivery);
+      assert.deepEqual([snapshot.resultRevision, snapshot.retainedResultDigest], [0, accepted.accepted.contentHash],
+        "a first-round Completion Gate acceptance must produce a publishable revision-0 snapshot");
+      const { plan, evidence } = signedBuildPublication(derivePipelineBuildPublicationEvidenceKeyV1(reviewKey), {
+        snapshot, deliveryDigest: delivery.deliveryDigest,
+        modelSelection: { workerId: build.workerId, model: "build-test", effort: "medium" },
+        commitDigest: "c".repeat(40), url: `${repositoryUrl}/pull/${fill}` });
+      const publications = async () => (await client.query(`SELECT count(*)::int AS n
+        FROM control_pipeline_build_publications WHERE tenant_id=$1`, [own.tenantId])).rows[0].n;
+      return { ...accepted, controller, delivery, snapshot, retained: { snapshot, plan, evidence }, publications };
+    };
+
+    try {
+    // 1. The review arrives after the proof, inside the window.
+    const late = await acceptedPublication("race", 71);
+    // Currentness, paused after its proof: a review from a second transaction
+    // cannot take the lock, so it is refused instead of committing underneath.
+    let gap = pauseNextLookup();
+    const checking = tracked(late.controller.assertBuildPublicationAuthorityCurrent(late.snapshot));
+    await gap.hit;
+    const impatient = new CompletionGateStoreV1(postgresDatabase(admin, { afterBegin: session =>
+      session.query("SET LOCAL lock_timeout='300ms'") }), late.reviewKey, late.checkpoints, () => late.at);
+    await assert.rejects(impatient.recordReview(...late.changesRequested()), /lock timeout/u,
+      "the currentness check must hold the Completion Gate lock after its proof");
+    gap.release(); await checking;
+
+    // Retention, paused after its proof: the review waits on the lock, the
+    // publication commits while its acceptance still holds, and only then can
+    // the review land.
+    gap = pauseNextLookup();
+    const retaining = tracked(late.controller.retainBuildPublication(late.retained));
+    await gap.hit;
+    const superseding = tracked(new CompletionGateStoreV1(client, late.reviewKey, late.checkpoints, () => late.at)
+      .recordReview(...late.changesRequested()));
+    assert.equal(await settlesWithin(superseding, 400), false,
+      "a review must not commit between the retention proof and its insert");
+    gap.release();
+    assert.deepEqual(await retaining, { evidenceDigest: late.retained.evidence.evidenceDigest, replayed: false });
+    assert.equal(await late.publications(), 1,
+      "the first-round acceptance must be retained as one build publication");
+    assert.equal((await superseding).replayed, false);
+
+    // Once the acceptance is superseded every path refuses: currentness,
+    // creation, a retention replay, the retained read and the run view.
+    await assert.rejects(late.controller.assertBuildPublicationAuthorityCurrent(late.snapshot),
+      /pipeline_build_publication_unavailable/u);
+    await assert.rejects(late.controller.createBuildPublicationAuthority(late.delivery),
+      /pipeline_build_publication_unavailable/u);
+    await assert.rejects(late.controller.retainBuildPublication(late.retained), /pipeline_build_publication_unavailable/u);
+    assert.equal(await late.controller.readRetainedBuildPublication(late.delivery.deliveryDigest), undefined);
+    const identity = createAccessVerifier(webTrust)(webRequest(), webNow);
+    const page = await new LinearPipelineServiceV1(web.db, late.scope, late.reviewKey, late.lifecycle.workBatchView,
+      () => webNow).view(identity, late.own.project.projectId, late.own.pipeline.runId);
+    assert.notEqual(page.stages[0].state, "completed");
+    assert.equal(page.stages[0].pullRequestEvidence, null);
+    await late.lifecycle.close();
+
+    // 2. The review takes the lock first and holds it uncommitted. The
+    // retention proof waits for it, then refuses: nothing stale is recorded.
+    const early = await acceptedPublication("racewin", 81);
+    let reached, release;
+    const holding = new Promise(resolve => { reached = resolve; }), released = new Promise(resolve => { release = resolve; });
+    releases.push(release);
+    const first = tracked(new CompletionGateStoreV1(postgresDatabase(admin, { beforeCommit: async () => { reached(); await released; } }),
+      early.reviewKey, early.checkpoints, () => early.at).recordReview(...early.changesRequested()));
+    await holding;
+    const refused = tracked(early.controller.retainBuildPublication(early.retained));
+    assert.equal(await settlesWithin(refused, 400), false, "the retention proof must wait for the review's lock");
+    release(); await first;
+    await assert.rejects(refused, /pipeline_build_publication_unavailable/u);
+    assert.equal(await early.publications(), 0);
+    await assert.rejects(early.controller.assertBuildPublicationAuthorityCurrent(early.snapshot),
+      /pipeline_build_publication_unavailable/u);
+    await early.lifecycle.close();
+    } finally {
+      for (const release of releases) release();
+      await Promise.all(inflight);
+    }
   }));
 
 // The commit boundary stores the payloads it is given, and the Completion Gate
@@ -1542,10 +1726,21 @@ const aclEntries = (acl) => acl === null ? null : acl.slice(1, -1).split(",").so
 async function catalogState(db){
   const client=postgresDatabase(db);
   const acl=(await client.query(`SELECT jsonb_build_object(
-    'relations',(SELECT jsonb_agg(jsonb_build_array(c.relname,c.relkind,c.relacl::text,c.relrowsecurity,
-      pg_get_userbyid(c.relowner)) ORDER BY c.relname) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+    -- An acl rendered as text lists its grantees in role-OID order, so two
+    -- databases holding the IDENTICAL privilege set print it in a different
+    -- order whenever the roles were created in a different sequence -- which is
+    -- exactly what a baseline and a head database are. The grantee list is
+    -- therefore sorted, so the comparison is over the privilege set rather than
+    -- over an artefact of creation order, while still failing the moment a grant
+    -- is added or dropped.
+    'relations',(SELECT jsonb_agg(jsonb_build_array(c.relname,c.relkind,
+      (SELECT string_agg('{x}'::text, ', ' ORDER BY '{x}'::text) FROM unnest(COALESCE(c.relacl, ARRAY[]::aclitem[])) AS x),
+      c.relrowsecurity, pg_get_userbyid(c.relowner)) ORDER BY c.relname)
+      FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
       WHERE n.nspname='public' AND c.relkind IN ('r','v','p','S') AND c.relname<>'control_room_schema_migrations'),
-    'columns',(SELECT jsonb_agg(jsonb_build_array(c.relname,a.attname,a.attacl::text) ORDER BY c.relname,a.attnum)
+    'columns',(SELECT jsonb_agg(jsonb_build_array(c.relname,a.attname,
+      (SELECT string_agg('{x}'::text, ', ' ORDER BY '{x}'::text) FROM unnest(COALESCE(a.attacl, ARRAY[]::aclitem[])) AS x))
+      ORDER BY c.relname,a.attnum)
       FROM pg_attribute a JOIN pg_class c ON c.oid=a.attrelid JOIN pg_namespace n ON n.oid=c.relnamespace
       WHERE n.nspname='public' AND c.relkind IN ('r','v','p') AND a.attnum>0 AND NOT a.attisdropped AND a.attacl IS NOT NULL),
     'functions',(SELECT jsonb_agg(jsonb_build_array(p.oid::regprocedure::text,p.proacl::text,p.proconfig,
@@ -1568,6 +1763,10 @@ async function catalogState(db){
 // was written is applied to BOTH sides and the comparison stays the one that
 // matters: what those two down files revoke, nothing more and nothing less.
 test("0109 then 0108 down return a head database to exactly the main plus S4 and S5 state", needsPg, async () => {
+  // Only 0108 and 0109 are withheld, so every migration the ledger orders after
+  // 0109 — 0135's project settings included — is applied to BOTH sides. The
+  // comparison therefore stays exactly about what these two down files revoke:
+  // the head is not rolled back past a migration the baseline also carries.
   const { stage, ledgerPath } = await stageAppliedPrefix({
     withheld: ["_pipeline_build_publications.sql", "_pipeline_unattended_advance.sql"],
     withoutGrants: [UNATTENDED_GRANTS, PUBLICATION_GRANTS] });
@@ -1774,7 +1973,7 @@ async function installMacRoleFilesWithout(database, withheld) {
 // The narrow-role installer's database steps, from the real role files with
 // `edits` applied, as the cluster superuser the fixed queue expects. Roles are
 // cluster-wide, so a second database skips the files' plain CREATE ROLE.
-async function installMacRoleFiles(database, edits = {}) {
+async function installMacRoleFiles(database, edits = {}, absentObjects = []) {
   const client = new Client(target(database, "postgres")); await client.connect();
   try {
     await client.query(await readFile(join(ROOT, "db/roles/production_roles.sql"), "utf8"));
@@ -1782,6 +1981,15 @@ async function installMacRoleFiles(database, edits = {}) {
     await client.query(await readFile(join(ROOT, "db/roles/private_web_database.sql"), "utf8"));
     for (const file of MAC_ROLE_FILES) {
       let sql = await readFile(join(ROOT, "db/roles", file), "utf8");
+      // Grants on objects this database does not have are removed from their
+      // statement rather than the whole file: an S6-era baseline predates 0135,
+      // so replaying the shipped role files onto it raises 42P01 on
+      // `control_project_settings`, and dropping the statements that mention it
+      // would drop the grants that DO apply along with it.
+      for (const object of absentObjects)
+        sql = sql
+          .split(/(?=^GRANT )/gmu).map(statement => (
+            new RegExp(`\\b${object}\\b`, "u").test(statement) ? "" : statement)).join("");
       const pairs = edits[file] ?? [];
       for (let index = 0; index < pairs.length; index += 2) {
         assert.ok(sql.includes(pairs[index]), `${file}: ${pairs[index]}`);
@@ -1800,6 +2008,9 @@ async function installMacRoleFiles(database, edits = {}) {
 // Only 0109 is withheld, so every later migration the ledger orders is staged
 // on BOTH sides and the comparison is still exactly about 0109's down file.
 test("0109 down returns a Mac-local head database to exactly the main plus S4, S5 and S6 state", needsPg, async () => {
+  // Only 0109 is withheld, so every migration the ledger orders after it —
+  // 0135's project settings included — is installed on BOTH sides, and the
+  // comparison is still exactly about what 0109's down file revokes.
   const withheld = ["_pipeline_unattended_advance.sql"];
   const { stage, ledgerPath } = await stageAppliedPrefix({ withheld, withoutGrants: [UNATTENDED_GRANTS] });
   const admin = adminDb();

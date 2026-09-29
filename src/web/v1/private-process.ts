@@ -29,7 +29,7 @@ import type { TaskRevisionOperation } from "./task-revision-operation";
 import type { QueueAttentionSource } from "./queue-attention-wire";
 import { taskProjectAgentOptionsSchema } from "./task-project-agents-wire";
 import { newsCollectionStatusSchema, newsCollectionHistorySchema } from "./news-collection-status-wire";
-import { ideaCreationOptionsSchema } from "./idea-wire";
+import { ideaCreationOptionsSchema, ideaDecisionDraftSchema } from "./idea-wire";
 import { parseProductConfigurationV1, type ProductConfigurationV1 } from "../../config/v1/product-configuration";
 import { verifyInstallationTopologyPlanV1, type InstallationTopologyPlanV1 } from "../../harness/v1/installation-topology";
 import { verifyInstallationReadinessV1, type InstallationReadinessV1 } from "../../harness/v1/installation-readiness";
@@ -44,10 +44,11 @@ import { readProjectScheduleStatus } from "../../schedules/read-service";
 import { ProjectCoordinationHttpService, type ProjectCoordinationCanonicalStoreAdapter } from "./project-coordination-http";
 import { createCoordinationHttpHandler } from "./coordination-http";
 import { IdeaLabErrorV1 } from "../../idea-lab/v1/errors";
+import { IdeaLabPromotionTaskLinkStoreV1, IDEA_LAB_PROMOTION_TASK_LINK_V1 } from "../../idea-lab/v1/promotion-task-link-store";
 import { parseOperatorSurfaceSnapshotV1, type ActionInboxItemV1, type OperatorSurfaceSnapshotV1 } from "../../operator-surfaces/v1";
 import { verifyInstallationPlanV1, type InstallationPlanV1 } from "../../installer/v1/installation-plan";
 import { createInstallationPlanViewV1 } from "../../installer/v1/installation-plan-view";
-import { WorkBatchOwnerServiceV1, type WorkBatchQueueAdmissionAuthorityV1,
+import { WorkBatchOwnerServiceV1, type WorkBatchQueueAcceptedResultPortV1,
   type WorkBatchQueueCatalogV1 } from "../../work-intake/v1";
 import { createWorkBatchOwnerHttpHandlerV1 } from "./work-batch-owner-http";
 import { LinearPipelineServiceV1, PipelineAdvanceServiceV1, type CanonicalPipelineRepositoryRegistryV1 } from "../../pipelines/v1";
@@ -56,6 +57,8 @@ import { encodeProjectEventCursorV1, projectEventSseResponseV1, type ProjectEven
 import { ProjectActivityServiceV1 } from "./project-activity-service";
 import { SessionWatchServiceV1 } from "./session-watch-service";
 import { sessionWatchIdSchema } from "./session-watch-wire";
+import { ImproveControlRoomDeskServiceV1 } from "../../improve-control-room/v1";
+import { createImproveControlRoomHttpHandlerV1 } from "./improve-control-room-http";
 
 export interface PrivateWebProcessOptions {
   origin: string; issuer: string; audience: string; tenantId: string; workspaceId: string;
@@ -119,7 +122,7 @@ export interface PrivateWebProcessOptions {
   /** Optional proposal-intake integrity key. It enables owner batch review;
    * omission keeps the Pipelines routes absent. */
   workBatches?: { integrityKey: Uint8Array; queueCatalog?: WorkBatchQueueCatalogV1;
-    queueAdmissionAuthority?: WorkBatchQueueAdmissionAuthorityV1;
+    queueAdmissionAuthority?: WorkBatchQueueAcceptedResultPortV1;
     pipelineRepositories?: CanonicalPipelineRepositoryRegistryV1 };
   /** Trusted control-plane operation only. No planner key, privileged pool or native adapter is
    * given to the web SQL service. Its resource lifecycle is owned by the supplying composition. */
@@ -309,11 +312,12 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
     { tenantId: options.tenantId, workspaceId: options.workspaceId }, clock, options.ideaProjects?.integrityKey,
     options.ideaProjects ? new WebIdeaProjectLifecycleOperation(options.database.client,
       { tenantId: options.tenantId, workspaceId: options.workspaceId }, options.ideaProjects.integrityKey, clock) : undefined,
-    productConfiguration);
+    productConfiguration, options.tasks?.harnessIntegrityKey);
   const connections = new WebConnectionService(options.database.client,
     { tenantId: options.tenantId, workspaceId: options.workspaceId }, clock, options.connections);
   const tasks = new WebTaskService(options.database.client, { tenantId: options.tenantId, workspaceId: options.workspaceId }, clock,
-    { ...options.tasks, ideaIntegrityKey: options.ideaProjects?.integrityKey });
+    { ...options.tasks, ideaIntegrityKey: options.ideaProjects?.integrityKey, newsIntegrityKey: options.news?.integrityKey,
+      productConfiguration });
   const workBatches = options.workBatches ? new WorkBatchOwnerServiceV1(options.database.client, tasks,
     { tenantId: options.tenantId, workspaceId: options.workspaceId }, options.workBatches.integrityKey, clock,
     options.workBatches.queueCatalog, options.workBatches.queueAdmissionAuthority) : undefined;
@@ -322,6 +326,8 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
     options.workBatches.queueAdmissionAuthority, clock, options.workBatches.pipelineRepositories) : undefined;
   const pipelineAdvance = options.workBatches ? new PipelineAdvanceServiceV1(options.database.client,
     { tenantId: options.tenantId, workspaceId: options.workspaceId }, options.workBatches.integrityKey,{},clock) : undefined;
+  const improvementDesk = options.workBatches && pipelines ? new ImproveControlRoomDeskServiceV1(options.database.client,
+    { tenantId: options.tenantId, workspaceId: options.workspaceId }, options.workBatches.integrityKey, pipelines, clock) : undefined;
   const sessionWatch = new SessionWatchServiceV1(options.database.client,
     { tenantId: options.tenantId, workspaceId: options.workspaceId }, options.tasks?.harnessIntegrityKey, clock);
   // This is a task-planning bridge only. It is deliberately composed from the
@@ -331,7 +337,7 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
     ? new WebIdeaRoundProposalOperation(options.database.client, { tenantId: options.tenantId, workspaceId: options.workspaceId },
       options.ideaProjects.integrityKey, tasks, clock, ideaResultProjection) : undefined;
   const news = new WebNewsService(options.database.client, { tenantId: options.tenantId, workspaceId: options.workspaceId },
-    { integrityKey: options.news?.integrityKey, ideaIntegrityKey: options.ideaProjects?.integrityKey }, clock);
+    { integrityKey: options.news?.integrityKey, ideaIntegrityKey: options.ideaProjects?.integrityKey, productConfiguration }, clock);
   const herdr = new WebHerdrService(options.database.client, { tenantId: options.tenantId, workspaceId: options.workspaceId },
     options.herdrObservations ?? [], clock, options.ideaProjects?.integrityKey);
   const ideas = new WebIdeaService(options.database.client, { tenantId: options.tenantId, workspaceId: options.workspaceId },
@@ -572,8 +578,26 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
               || request.headers.get("content-type")?.split(";")[0].trim().toLowerCase() !== "application/json") throw new WebAccessError("invalid_request");
             if (!ideaCreation?.decide) throw new Error("idea_decision_not_configured");
             let sessionId: string; try { sessionId = decodeURIComponent(ideaDecision[1]); } catch { throw new WebAccessError("invalid_request"); }
-            const result = await ideaCreation.decide(identity, sessionId, await readBoundedJson(request.body, 4096));
-            return Response.json(result, { status: result.replayed ? 200 : 201, headers: privateResponseHeaders });
+            const body = ideaDecisionDraftSchema.safeParse(await readBoundedJson(request.body, 8192));
+            if (!body.success) throw new WebAccessError("invalid_request");
+            const decision = await ideaCreation.decide(identity, sessionId, body.data);
+            if (body.data.intent.decision !== "create_project") {
+              return Response.json({ ...decision, firstTask: null },
+                { status: decision.replayed ? 200 : 201, headers: privateResponseHeaders });
+            }
+            if (!decision.projectId || !body.data.promotionTask || !options.ideaProjects) throw new Error("idea_promotion_unavailable");
+            const firstTask = await tasks.propose(identity, decision.projectId, body.data.promotionTask,
+              `idea-promotion:${decision.decisionDigest.slice(7)}`);
+            await new IdeaLabPromotionTaskLinkStoreV1(options.database.client, options.ideaProjects.integrityKey).record({
+              contractVersion: IDEA_LAB_PROMOTION_TASK_LINK_V1, tenantId: options.tenantId, sessionId,
+              decisionDigest: decision.decisionDigest, projectId: decision.projectId,
+              jobId: firstTask.receipt.jobId, requestId: firstTask.receipt.requestId,
+              createdAt: firstTask.receipt.createdAt, startsWork: false,
+              grantsAssignmentAuthority: false, grantsApproval: false, grantsExecutionAuthority: false,
+            });
+            const replayed = decision.replayed && firstTask.replayed;
+            return Response.json({ ...decision, firstTask, replayed },
+              { status: replayed ? 200 : 201, headers: privateResponseHeaders });
           }
           const ideaStop = /^\/api\/v1\/ideas\/([^/]+)\/stop$/.exec(url.pathname);
           if (ideaStop) {
@@ -835,6 +859,11 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
           if (pipelines && /^\/api\/v1\/projects\/[^/]+\/pipeline-(?:templates|runs)(?:\/|$)/.test(url.pathname))
             return createLinearPipelineHttpHandlerV1({ origin: site.origin, trust,
               gatewayAssertionProfile, service: pipelines, advance:pipelineAdvance, clock })(request);
+          if (improvementDesk && (url.pathname === "/api/v1/update-candidates"
+            || /^\/api\/v1\/update-candidates\/[^/]+\/decision$/.test(url.pathname)
+            || /^\/api\/v1\/projects\/[^/]+\/improvements$/.test(url.pathname)))
+            return createImproveControlRoomHttpHandlerV1({ origin: site.origin, trust,
+              gatewayAssertionProfile, service: improvementDesk, clock })(request);
           return await createProjectHttpHandler({ origin: site.origin, trust, service, gatewayAssertionProfile, clock })(request);
         }
         if (request.method !== "GET" && request.method !== "HEAD") throw new WebAccessError("invalid_request");
@@ -843,7 +872,7 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
         const filesPage = /^\/projects\/([^/]+)\/files$/.exec(url.pathname);
         const taskSummaryPage = /^\/projects\/([^/]+)\/(reviews|activity)$/.exec(url.pathname);
         const pipelinesPage = /^\/projects\/([^/]+)\/pipelines(?:\/([^/]+))?$/.exec(url.pathname);
-        const projectUtilityPage = /^\/projects\/([^/]+)\/(inbox|agents|automations)$/.exec(url.pathname);
+        const projectUtilityPage = /^\/projects\/([^/]+)\/(inbox|agents|automations|improvements)$/.exec(url.pathname);
         const ideaPage = /^\/ideas(?:\/([^/]+))?$/.exec(url.pathname);
         const detail = /^\/projects\/([^/]+)(?:\/(overview|settings))?$/.exec(url.pathname);
         if (ideaPage) {

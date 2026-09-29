@@ -20,7 +20,8 @@ export function createIdeaDecisionClient(transport: typeof fetch = fetch) {
       const result = ideaDecisionReceiptSchema.parse(await readBrowserJson(response));
       const sent = ideaDecisionDraftSchema.parse(JSON.parse(pending.body));
       if (result.sessionId !== pending.sessionId || result.sessionDigest !== sent.sessionDigest || result.synthesisDigest !== sent.synthesisDigest
-        || result.decision !== sent.intent.decision || result.projectId !== (sent.intent.project?.projectId ?? null)) throw new Error();
+        || result.decision !== sent.intent.decision || result.projectId !== (sent.intent.project?.projectId ?? null)
+        || (result.firstTask !== null) !== (sent.promotionTask !== undefined)) throw new Error();
       pending = undefined; return result;
     } catch (error) { if (pending) pending.uncertain = true;
       throw error instanceof BrowserRequestError ? error : new BrowserRequestError("uncertain");
