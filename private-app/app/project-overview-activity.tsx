@@ -5,6 +5,7 @@ import { BrowserRequestError } from "../../src/web/v1/browser-client";
 import { readTaskProjectOverview } from "../../src/web/v1/task-project-overview-browser-client";
 import type { TaskProjectOverview } from "../../src/web/v1/task-project-overview-wire";
 import { ConfiguredTimestamp } from "./configured-timestamp";
+import { formatNanoUsdV1 } from "../../src/usage/v1/usage-cost";
 import { LoadingState, StateChip, UnavailableState } from "./owner-ui";
 
 type OverviewState = { state: "loading" } | { state: "ready"; value: TaskProjectOverview }
@@ -30,6 +31,18 @@ export function ProjectOverviewActivityView({ state, projectId }: { state: Overv
         : "The saved database or protected task-activity read could not be checked. No empty project or all-clear is inferred, and checking again does not start work."}</UnavailableState></section>;
   const { value } = state;
   return <div className="private-dashboard-grid private-project-overview-grid">
+    <section className="private-panel"><h2>Project usage and cost</h2>
+      <dl className="private-task-facts"><div><dt>Runs</dt><dd>{value.usageRollup.runs.toLocaleString()}</dd></div>
+        <div><dt>Input tokens</dt><dd>{value.usageRollup.inputTokens === null ? "Unknown — not reported by every run" : value.usageRollup.inputTokens.toLocaleString()}</dd></div>
+        <div><dt>Output tokens</dt><dd>{value.usageRollup.outputTokens === null ? "Unknown — not reported by every run" : value.usageRollup.outputTokens.toLocaleString()}</dd></div>
+        <div><dt>Wall time</dt><dd>{value.usageRollup.wallTimeMs === null ? "Unknown — not recorded for every run" : `${value.usageRollup.wallTimeMs.toLocaleString()} ms`}</dd></div>
+        <div><dt>Known cost</dt><dd>{formatNanoUsdV1(value.usageRollup.knownCostNanoUsd)} across {value.usageRollup.knownCostRuns} run(s)</dd></div>
+        <div><dt>Subscription</dt><dd>{value.usageRollup.subscriptionRuns} run(s) included in subscription</dd></div>
+        <div><dt>Unknown cost</dt><dd>{value.usageRollup.unknownCostRuns} run(s)</dd></div></dl>
+      <p className="private-note">{value.priceTable.state === "recorded"
+        ? <>Prices use owner-recorded table <code>{value.priceTable.tableId}</code>, recorded <ConfiguredTimestamp value={value.priceTable.recordedAt!} />.</>
+        : "No owner price table is recorded. Token usage is shown, but per-token cost remains unknown."}</p>
+    </section>
     <section className="private-panel"><h2>Current work</h2>
       {value.current.length ? <TaskList projectId={projectId} tasks={value.current} />
         : <p>No proposed, queued, running, approval-waiting, or recovery work is recorded for this project.</p>}

@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { catalogProjectIdSchema } from "./project-wire";
-import { taskSummarySchema } from "./task-wire";
+import { taskSummarySchema, usageRollupSchema } from "./task-wire";
 
 const currentTask = taskSummarySchema.refine(task =>
   ["proposed", "ready", "leased", "running", "waiting_approval", "orphaned"].includes(task.state),
@@ -16,6 +16,12 @@ export const taskProjectOverviewSchema = z.object({
   additionalCurrentOmitted: z.boolean(),
   additionalReviewsOmitted: z.boolean(),
   additionalRecentOmitted: z.boolean(),
+  usageRollup: usageRollupSchema,
+  // The same ID schema the price table and the task detail's own `priceTable.tableId`
+  // use (`usage-cost.ts`'s `id`, `task-wire.ts`'s `id`): a table that passes the
+  // owner-file loader must never be admitted here and refused on the detail page.
+  priceTable: z.object({ state: z.enum(["recorded", "not_recorded"]), tableId: catalogProjectIdSchema.nullable(),
+    recordedAt: z.string().datetime().nullable() }).strict(),
   observedAt: z.string().datetime(),
   startsWork: z.literal(false),
 }).strict().superRefine((value, context) => {

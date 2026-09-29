@@ -41,7 +41,7 @@ export interface MacLocalWebProcessOptionsV1 {
   revisions?: TaskRevisionOperation;
   /** Read capabilities from the same host-owned task application as the
    * submission operations. Without them, a published result looks absent. */
-  taskReadKeys?: Pick<WebTaskKeys, "harnessIntegrityKey" | "results" | "reviews" | "ownerReviews" | "modelCatalog" | "taskPlanIntegrityKey">;
+  taskReadKeys?: Pick<WebTaskKeys, "harnessIntegrityKey" | "results" | "reviews" | "ownerReviews" | "modelCatalog" | "taskPlanIntegrityKey" | "usagePriceTable">;
   /** Same protected installation key used by proposal intake. Omission keeps
    * the Pipelines owner module absent. */
   workBatchIntegrityKey?: Uint8Array;

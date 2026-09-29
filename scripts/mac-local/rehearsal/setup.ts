@@ -193,6 +193,28 @@ for (const [file, body] of [["mac-local.json", JSON.stringify(macLocal)], ["data
   writeFileSync(join(config, file), `${body}\n`, { mode: 0o600 });
 const clientRoot=join(config,"work-intake-clients"); mkdirSync(clientRoot,{recursive:true,mode:0o700});
 for(const {worker,client} of clients) writeFileSync(join(clientRoot,workIntakeClientFileNameV1(worker.workerId)),`${JSON.stringify(client)}\n`,{mode:0o600});
+// An owner price table, present for every rehearsal run: this is the only
+// end-to-end proof that the real production provider (mac-local-default-task-provider.ts)
+// actually loads `usage-prices.json` and carries it through the full
+// composition into the started host's own HTTP responses (Control Room #412
+// review finding 3 -- the untested provider hop). Prices cover both the
+// default and `--model-allowlists` journeys; unmatched entries are inert.
+const usagePriceTable = { schema: "control-room.usage-price-table/v1", tableId: "rehearsal-usage-prices",
+  recordedAt: "2026-01-01T00:00:00.000Z", entries: [
+    { entryId: "rehearsal-hermes-default", harness: "hermes", model: "default",
+      billing: { kind: "token", inputNanoUsdPerToken: "1000", outputNanoUsdPerToken: "2000" } },
+    { entryId: "rehearsal-claude-default", harness: "claude", model: "default",
+      billing: { kind: "token", inputNanoUsdPerToken: "1000", outputNanoUsdPerToken: "2000" } },
+    { entryId: "rehearsal-codex-default", harness: "codex", model: "default",
+      billing: { kind: "token", inputNanoUsdPerToken: "1000", outputNanoUsdPerToken: "2000" } },
+    { entryId: "rehearsal-hermes-allowlist", harness: "hermes", model: "model-rehearsal",
+      billing: { kind: "token", inputNanoUsdPerToken: "1000", outputNanoUsdPerToken: "2000" } },
+    { entryId: "rehearsal-claude-allowlist", harness: "claude", model: "sonnet-rehearsal",
+      billing: { kind: "token", inputNanoUsdPerToken: "1000", outputNanoUsdPerToken: "2000" } },
+    { entryId: "rehearsal-codex-allowlist", harness: "codex", model: "gpt-rehearsal",
+      billing: { kind: "token", inputNanoUsdPerToken: "1000", outputNanoUsdPerToken: "2000" } },
+  ] };
+writeFileSync(join(root, "usage-prices.json"), `${JSON.stringify(usagePriceTable)}\n`, { mode: 0o600 });
 console.log(`rehearsal database ready on 127.0.0.1:${port}; protected root ${root}`);
 console.log(`next: pnpm mac:bootstrap-owner ${root} && pnpm mac:check-database ${root}`);
   keepCluster = true;
