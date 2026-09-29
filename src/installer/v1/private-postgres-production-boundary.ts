@@ -858,7 +858,7 @@ async function loadPrivateConfiguration(configuration: Parsed, ports: CapturedPo
     const value: unknown = JSON.parse(text);
     const captured = exactHostDataSnapshotV1(value, ["schema", "majorVersion", "host", "port", "database",
       "maintenanceDatabase", "operator", "migratorPassword", "applicationPassword", "schedulerPassword",
-      "requiredTables"]);
+      "workIntakePassword", "requiredTables"]);
     const operator = exactHostDataSnapshotV1(captured?.operator, ["username", "password"]);
     const tables = exactHostDataArrayV1(captured?.requiredTables, 64);
     if (!captured || !operator || !tables) return refuse();

@@ -11,7 +11,7 @@ const refuse = () => { throw new Error("mac_local_node_key_receipt_refused"); };
 
 /** A first-owner receipt is public evidence. Still reject links, oversized input,
  * extra fields, missing nodes, and malformed fingerprints before opening a DB. */
-export function parseMacLocalFirstOwnerReceiptV1(value, nodeIds) {
+export function parseMacLocalFirstOwnerReceiptV1(value, nodeIds, expectedRows = 14) {
   if (!value || typeof value !== "object" || Array.isArray(value)
     || Object.getPrototypeOf(value) !== Object.prototype) return refuse();
   const keys = ["schema", "manifestDigest", "tenantId", "created", "kept", "fingerprints"];
@@ -22,7 +22,8 @@ export function parseMacLocalFirstOwnerReceiptV1(value, nodeIds) {
     || typeof value.tenantId !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,179}$/u.test(value.tenantId)
     || !Number.isSafeInteger(value.created) || value.created < 0
     || !Number.isSafeInteger(value.kept) || value.kept < 0
-    || value.created + value.kept !== 14
+    || !Number.isSafeInteger(expectedRows) || ![14, 21].includes(expectedRows)
+    || value.created + value.kept !== expectedRows
     || !value.fingerprints || typeof value.fingerprints !== "object" || Array.isArray(value.fingerprints)
     || Object.getPrototypeOf(value.fingerprints) !== Object.prototype
     || Object.keys(value.fingerprints).length !== 3
@@ -32,12 +33,12 @@ export function parseMacLocalFirstOwnerReceiptV1(value, nodeIds) {
   return Object.freeze({ ...value, fingerprints: Object.freeze({ ...value.fingerprints }) });
 }
 
-export async function readMacLocalFirstOwnerReceiptV1(path, nodeIds) {
+export async function readMacLocalFirstOwnerReceiptV1(path, nodeIds, expectedRows = 14) {
   if (!isAbsolute(path) || resolve(path) !== path) return refuse();
   try {
     const entry = await lstat(path);
     if (!entry.isFile() || entry.isSymbolicLink() || entry.size > 16 * 1024) return refuse();
-    return parseMacLocalFirstOwnerReceiptV1(JSON.parse(await readFile(path, "utf8")), nodeIds);
+    return parseMacLocalFirstOwnerReceiptV1(JSON.parse(await readFile(path, "utf8")), nodeIds, expectedRows);
   } catch { return refuse(); }
 }
 
@@ -49,8 +50,9 @@ export async function pinMacLocalNodeKeysV1(protectedRoot, receiptPath, runtime 
   if (!isAbsolute(protectedRoot) || resolve(protectedRoot) !== protectedRoot) return refuse();
   const configuration = await loadConfiguration(protectedRoot);
   const nodeIds = ["hermes", "claude", "codex"].map(kind => `${configuration.enablement.nodeId}.${kind}`);
-  const receipt = runtime.receipt ?? await readMacLocalFirstOwnerReceiptV1(receiptPath, nodeIds);
-  const expected = parseMacLocalFirstOwnerReceiptV1(receipt, nodeIds);
+  const expectedRows = 14 + (configuration.workIntakeProjectIds.length > 0 ? 7 : 0);
+  const receipt = runtime.receipt ?? await readMacLocalFirstOwnerReceiptV1(receiptPath, nodeIds, expectedRows);
+  const expected = parseMacLocalFirstOwnerReceiptV1(receipt, nodeIds, expectedRows);
   const roles = await loadRoles(protectedRoot);
   const database = openDatabase(roles.coordinator);
   try {

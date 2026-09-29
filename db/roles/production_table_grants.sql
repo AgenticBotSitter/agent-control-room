@@ -10,7 +10,7 @@ REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM PUBLIC;
 REVOKE ALL ON ALL FUNCTIONS IN SCHEMA public FROM PUBLIC;
 
 GRANT USAGE ON SCHEMA public TO control_room_application, control_room_reader, control_room_backup,
-  control_room_schedule_admissions, control_room_github_broker;
+  control_room_schedule_admissions, control_room_github_broker, control_room_work_intake;
 GRANT SELECT, INSERT, UPDATE ON ALL TABLES IN SCHEMA public TO control_room_application;
 GRANT DELETE ON projects, work_items, executions, blockers, attention_items, machine_nodes, worker_runtimes, agent_identities
   TO control_room_application;
@@ -50,11 +50,51 @@ GRANT SELECT, INSERT, DELETE ON control_github_webhook_replays TO control_room_g
 GRANT SELECT, INSERT, DELETE ON control_github_worker_wake_hints TO control_room_github_broker;
 GRANT USAGE ON SEQUENCE control_github_worker_wake_hints_hint_id_seq TO control_room_github_broker;
 
+-- Proposal-only machine intake: no task, queue, assignment, approval or effect
+-- tables. Migration 0093 additionally confines the shared-ledger grants below
+-- by login-aware triggers and row-level policies; they are not unrestricted
+-- shared-ledger authority.
+REVOKE ALL ON ALL TABLES IN SCHEMA public FROM control_room_work_intake;
+REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM control_room_work_intake;
+REVOKE ALL ON work_intake_role_anchor FROM control_room_application, control_room_reader,
+  control_room_backup, control_room_schedule_admissions, control_room_github_broker;
+GRANT SELECT ON work_intake_role_anchor TO control_room_work_intake;
+-- The intake tenant binding is written only by the owner bootstrap. Every role
+-- that evaluates the intake policies must read it; none of them may change it.
+REVOKE ALL ON work_intake_tenant_binding FROM control_room_application, control_room_reader,
+  control_room_backup, control_room_schedule_admissions, control_room_github_broker;
+GRANT SELECT ON work_intake_tenant_binding TO control_room_application, control_room_reader,
+  control_room_backup, control_room_work_intake;
+REVOKE ALL ON work_batches, work_batch_revisions, work_batch_items FROM control_room_application,
+  control_room_reader, control_room_schedule_admissions, control_room_github_broker;
+GRANT SELECT ON control_identities, control_role_grants, projects, work_batches,
+  work_batch_revisions, work_batch_items, control_idempotency, audit_events, control_audit_chain_heads
+  TO control_room_work_intake;
+GRANT INSERT ON work_batches, work_batch_revisions, audit_events,
+  control_audit_chain_heads TO control_room_work_intake;
+GRANT INSERT (tenant_id, operation_scope, idempotency_key, request_digest, status)
+  ON control_idempotency TO control_room_work_intake;
+GRANT UPDATE (status, result, completed_at) ON control_idempotency TO control_room_work_intake;
+GRANT UPDATE (head_hash, event_count, updated_at) ON control_audit_chain_heads TO control_room_work_intake;
+-- Row-lock carrier columns are CHECK-pinned false. They permit FOR SHARE
+-- authorization locks without granting mutation of identity, grant or project data.
+GRANT UPDATE (web_lock) ON control_identities, control_role_grants TO control_room_work_intake;
+GRANT UPDATE (coordinator_lock) ON projects TO control_room_work_intake;
+GRANT EXECUTE ON FUNCTION work_intake_canonical_jsonb(jsonb) TO control_room_work_intake;
+-- Shared-ledger policies call this predicate for the roles that can reach the
+-- protected ledgers. Keep it off PUBLIC so unprovisioned roles cannot invoke a
+-- SECURITY DEFINER function.
+GRANT EXECUTE ON FUNCTION is_work_intake_session() TO control_room_application,
+  control_room_reader, control_room_backup, control_room_work_intake;
+GRANT INSERT ON control_action_inbox TO control_room_work_intake;
+
 ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON TABLES FROM PUBLIC;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON SEQUENCES FROM PUBLIC;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON FUNCTIONS FROM PUBLIC;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON TABLES FROM control_room_application, control_room_reader, control_room_backup, control_room_schedule_admissions;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON TABLES FROM control_room_github_broker;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON SEQUENCES FROM control_room_github_broker;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON TABLES FROM control_room_work_intake;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON SEQUENCES FROM control_room_work_intake;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON SEQUENCES FROM control_room_application, control_room_reader, control_room_backup, control_room_schedule_admissions;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON FUNCTIONS FROM control_room_application, control_room_reader, control_room_backup, control_room_schedule_admissions;

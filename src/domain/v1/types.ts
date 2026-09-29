@@ -115,6 +115,16 @@ export interface AttemptRecord extends DomainRecord {
   workerId?: string;
   nodeId?: string;
   leaseEpoch?: number;
+  /** Immutable execution choice copied from the prepared task when this
+   * attempt is reserved. A later policy change cannot rewrite its evidence. */
+  modelSelection?: {
+    workerKind: "codex" | "claude-code" | "hermes";
+    selectionKey: string;
+    model: string;
+    effort: "default" | "low" | "medium" | "high" | "xhigh" | "max";
+    provider?: string;
+    profile?: string;
+  };
   offeredAt: string;
   startedAt?: string;
   finishedAt?: string;

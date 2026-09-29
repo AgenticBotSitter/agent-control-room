@@ -27,56 +27,40 @@ const line = z.string().min(1).max(180).refine((value) => !/[\r\n]/.test(value),
  * route authorization. `projectId` is present only so a result produced for a
  * different project fails a comparison instead of being silently adopted.
  */
+export const projectCoordinationProposalTaskSchemaV1 = z.object({
+  localId,
+  title: line,
+  instructions: z.string().min(1).max(4_000),
+  requiredCapability: id,
+  recommendedRouteId: id.optional(),
+}).strict();
+
+export function validateProjectCoordinationProposalGraphV1(value:{tasks:readonly {localId:string}[];
+  edges:readonly {fromLocalId:string;toLocalId:string}[]},context:z.RefinementCtx){
+  const locals = value.tasks.map((task) => task.localId);
+  if (new Set(locals).size !== locals.length) context.addIssue({ code: "custom", message: "task local ids must be unique" });
+  const known = new Set(locals), edges = new Set<string>();
+  for (const edge of value.edges) {
+    if (edge.fromLocalId === edge.toLocalId) context.addIssue({ code: "custom", message: "an edge cannot be a self loop" });
+    if (!known.has(edge.fromLocalId) || !known.has(edge.toLocalId)) context.addIssue({ code: "custom", message: "edges must reference proposed tasks" });
+    const key = `${edge.fromLocalId}\u0000${edge.toLocalId}`;
+    if (edges.has(key)) context.addIssue({ code: "custom", message: "duplicate dependency edge" }); edges.add(key);
+  }
+  const outgoing = new Map<string,string[]>(); for(const edge of value.edges) outgoing.set(edge.fromLocalId,[...(outgoing.get(edge.fromLocalId)??[]),edge.toLocalId]);
+  const state=new Map<string,0|1|2>(); const cyclic=(node:string):boolean=>{const seen=state.get(node);if(seen===1)return true;if(seen===2)return false;
+    state.set(node,1);for(const next of outgoing.get(node)??[])if(cyclic(next))return true;state.set(node,2);return false;};
+  if(locals.some(cyclic))context.addIssue({code:"custom",message:"dependency edges must not form a cycle"});
+}
+
 export const projectCoordinationProposalSchemaV1 = z.object({
   schema: z.literal(PROJECT_COORDINATION_PROPOSAL_V1),
   projectId: id,
-  tasks: z.array(z.object({
-    localId,
-    title: line,
-    instructions: z.string().min(1).max(4_000),
-    requiredCapability: id,
-    recommendedRouteId: id.optional(),
-  }).strict()).min(1).max(PROJECT_COORDINATION_MAX_TASKS_V1),
+  tasks: z.array(projectCoordinationProposalTaskSchemaV1).min(1).max(PROJECT_COORDINATION_MAX_TASKS_V1),
   edges: z.array(z.object({
     fromLocalId: localId,
     toLocalId: localId,
   }).strict()).max(PROJECT_COORDINATION_MAX_EDGES_V1),
-}).strict().superRefine((value, context) => {
-  const locals = value.tasks.map((task) => task.localId);
-  if (new Set(locals).size !== locals.length) {
-    context.addIssue({ code: "custom", message: "task local ids must be unique" });
-  }
-  const known = new Set(locals);
-  const edges = new Set<string>();
-  for (const edge of value.edges) {
-    if (edge.fromLocalId === edge.toLocalId) context.addIssue({ code: "custom", message: "an edge cannot be a self loop" });
-    if (!known.has(edge.fromLocalId) || !known.has(edge.toLocalId)) {
-      context.addIssue({ code: "custom", message: "edges must reference proposed tasks" });
-    }
-    const key = `${edge.fromLocalId}\u0000${edge.toLocalId}`;
-    if (edges.has(key)) context.addIssue({ code: "custom", message: "duplicate dependency edge" });
-    edges.add(key);
-  }
-  // A cycle would produce canonical jobs that can never satisfy their
-  // dependencies, so it is refused here rather than persisted.
-  const outgoing = new Map<string, string[]>();
-  for (const edge of value.edges) {
-    outgoing.set(edge.fromLocalId, [...(outgoing.get(edge.fromLocalId) ?? []), edge.toLocalId]);
-  }
-  const state = new Map<string, 0 | 1 | 2>();
-  const cyclic = (node: string): boolean => {
-    const seen = state.get(node);
-    if (seen === 1) return true;
-    if (seen === 2) return false;
-    state.set(node, 1);
-    for (const next of outgoing.get(node) ?? []) if (cyclic(next)) return true;
-    state.set(node, 2);
-    return false;
-  };
-  if (locals.some((local) => cyclic(local))) {
-    context.addIssue({ code: "custom", message: "dependency edges must not form a cycle" });
-  }
-});
+}).strict().superRefine(validateProjectCoordinationProposalGraphV1);
 export type ProjectCoordinationProposalV1 = z.infer<typeof projectCoordinationProposalSchemaV1>;
 
 export function projectCoordinationProposalDigestV1(value: unknown): string {

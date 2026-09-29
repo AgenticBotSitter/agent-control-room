@@ -15,6 +15,7 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON SEQUENCES FROM PUBLIC;
 -- Function defaults are global; a per-schema revoke cannot undo the global PUBLIC default.
 ALTER DEFAULT PRIVILEGES REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;
 GRANT USAGE ON SCHEMA public TO control_room_private_web;
+GRANT EXECUTE ON FUNCTION is_work_intake_session() TO control_room_private_web;
 -- Lead-approved read-only schedule presentation; no occurrence or schedule mutation.
 GRANT SELECT ON control_schedules, control_schedule_occurrences TO control_room_private_web;
 GRANT SELECT ON control_identities, control_role_grants, workspaces, control_web_sessions,
@@ -33,12 +34,20 @@ GRANT SELECT ON control_identities, control_role_grants, workspaces, control_web
   control_project_delegation_policies, control_project_coordination_operation_receipts,
   control_project_coordination_operation_jobs, control_work_resources,
   control_project_event_stream_heads, control_project_events,
-  control_attempt_resource_admissions, control_attempt_resource_scopes TO control_room_private_web;
+  control_attempt_resource_admissions, control_attempt_resource_scopes,
+  work_batches, work_batch_revisions, work_batch_items, control_action_inbox TO control_room_private_web;
 GRANT SELECT ON control_task_model_selections, control_task_declared_scopes,
   control_assignment_lease_scopes TO control_room_private_web;
 GRANT SELECT ON control_durable_result_write_reservations TO control_room_private_web;
+-- Project coordination page (attentionList, readDependencies): exactly the
+-- read, filter and join columns the composer names. No payload, deep_link or
+-- source columns and no writes; tenant scoping is the composer's WHERE clause.
+GRANT SELECT (id, tenant_id, project_id, attention_type, title, summary, due_at, observed_at, work_item_id)
+  ON attention_items TO control_room_private_web;
+GRANT SELECT (tenant_id, job_id, depends_on_job_id) ON control_job_dependencies TO control_room_private_web;
 GRANT UPDATE (web_lock) ON control_identities, control_role_grants, workspaces,
-  control_connection_registry_heads, control_completion_gate_integrity, control_completion_gate_records TO control_room_private_web;
+  control_connection_registry_heads, control_completion_gate_integrity, control_completion_gate_records,
+  control_jobs TO control_room_private_web;
 GRANT INSERT ON control_web_sessions, adapter_registry, projects, control_manual_project_heads,
   control_web_project_commands, audit_events, control_audit_chain_heads,
   control_requests, control_workflows, control_jobs, control_web_task_commands,
@@ -47,6 +56,7 @@ GRANT INSERT ON control_web_sessions, adapter_registry, projects, control_manual
   control_policy_decisions, control_project_lifecycle_events,
   control_project_coordinator_heads, control_project_delegation_policies TO control_room_private_web;
 GRANT INSERT ON control_task_model_selections, control_task_declared_scopes TO control_room_private_web;
+GRANT INSERT ON work_batch_revisions, work_batch_items TO control_room_private_web;
 -- Coordinator lifecycle idempotency ledger: exact-match replay before any
 -- head mutation. SELECT plus the five inserted columns plus the completion
 -- update; INSERT is column-scoped so the role can never smuggle
@@ -70,4 +80,9 @@ GRANT UPDATE (revoked_at) ON control_web_sessions TO control_room_private_web;
 GRANT UPDATE (domain_state, source_version, normalized_state, updated_at, payload, observed_at) ON projects TO control_room_private_web;
 GRANT UPDATE (lifecycle, version, updated_at) ON control_manual_project_heads TO control_room_private_web;
 GRANT UPDATE (head_hash, event_count, updated_at) ON control_audit_chain_heads TO control_room_private_web;
+GRANT UPDATE (state, payload) ON control_action_inbox TO control_room_private_web;
+GRANT UPDATE (state, approval_identity_id, approved_at, decision_reason_code, decision_digest,
+  decision_auth_tag, version, updated_at)
+  ON work_batches TO control_room_private_web;
+GRANT SELECT ON work_intake_tenant_binding TO control_room_private_web;
 COMMIT;

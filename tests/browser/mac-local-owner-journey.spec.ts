@@ -10,6 +10,12 @@ import { sha256Digest } from "../../src/security";
 import { createPrivatePostgresDatabase } from "../../src/web/v1/private-postgres";
 import { openMacLocalRollbackCheckpointStoreV1 } from "../../src/web/v1/mac-local-rollback-checkpoint-store";
 import { loadMacLocalTaskRuntimeFromRootV1 } from "../../src/web/v1/mac-local-task-runtime";
+import { AuditStore, auditPartition } from "../../src/audit/audit-store";
+import type { DatabaseClient } from "../../src/persistence/database";
+import { workBatchProposalDigestV1 } from "../../src/work-intake/v1/digest";
+import { captureWorkIntakeClientConfigurationV1, captureWorkIntakeServerConfigurationV1,
+  workIntakeClientFileNameV1,
+} from "../../src/work-intake/v1";
 
 const ownerCode = process.env.CONTROL_ROOM_E2E_OWNER_CODE;
 if (!ownerCode) throw new Error("CONTROL_ROOM_E2E_OWNER_CODE is required");
@@ -90,6 +96,61 @@ async function removePostUpgradeProposalRows(jobId: string) {
     await client.query("COMMIT");
   } catch (error) { await client.query("ROLLBACK"); throw error; }
   finally { await client.end(); }
+}
+
+async function submitProposalOnlyBatch(projectId: string) {
+  const { client, config } = await disposableAdmin();
+  const installed = captureWorkIntakeServerConfigurationV1(JSON.parse(
+    await readFile(`${rehearsalRoot}/protected/config/work-intake-server.json`, "utf8")));
+  const worker=config.enablement.workers.find((candidate:{kind:string})=>candidate.kind==="hermes");
+  if(!worker)throw new Error("browser_fixture_missing_proposal_agent");
+  const agentClient = captureWorkIntakeClientConfigurationV1(JSON.parse(await readFile(
+    `${rehearsalRoot}/protected/config/work-intake-clients/${workIntakeClientFileNameV1(worker.workerId)}`, "utf8")));
+  const proposal = { schema: "control-room.work-batch-proposal/v1", projectId, tasks: [{ localId: "build",
+    title: "Machine-only proposed batch", instructions: "Remain a proposal for this boundary check.",
+    requiredCapability: "code.change", role: "builder", acceptanceCriteria: "No ordinary task exists.",
+    acceptanceTests: "Owner task surface stays unchanged." }], edges: [] };
+  try {
+    const before = (await client.query<{ requests: string; workflows: string; jobs: string; tasks: string; queue: string }>(`SELECT
+      (SELECT count(*)::text FROM control_requests) requests,
+      (SELECT count(*)::text FROM control_workflows) workflows,
+      (SELECT count(*)::text FROM control_jobs) jobs,
+      (SELECT count(*)::text FROM work_items) tasks,
+      (SELECT count(*)::text FROM control_room_queue.job) queue`)).rows[0]!;
+    const envelope = JSON.stringify({ idempotencyKey: "browser-machine-intake-0001", proposal });
+    const origin = agentClient.origin;
+    const headers = { authorization: `Bearer ${agentClient.bearerSecret}`, "content-type": "application/json" };
+    const submitted = await fetch(`${origin}/v1/projects/${encodeURIComponent(projectId)}/work-batches`,
+      { method: "POST", headers, body: envelope });
+    expect(submitted.status).toBe(202);
+    const receipt = (await submitted.json()).result;
+    expect(receipt).toMatchObject({ projectId, state: "proposed", proposalDigest: workBatchProposalDigestV1(proposal),
+      revision: 1, replayed: false, startsWork: false, grantsExecutionAuthority: false });
+    const replay = await fetch(`${origin}/v1/projects/${encodeURIComponent(projectId)}/work-batches`,
+      { method: "POST", headers, body: envelope });
+    expect(replay.status).toBe(202);
+    expect((await replay.json()).result.replayed).toBe(true);
+    const status = await fetch(`${origin}/v1/projects/${encodeURIComponent(projectId)}/work-batches/${encodeURIComponent(receipt.batchId)}`,
+      { headers: { authorization: `Bearer ${agentClient.bearerSecret}` } });
+    expect(status.status, "status reread must verify the stored digest and HMAC").toBe(200);
+    const durable = (await client.query<{ revisions: string; proposes: string; replays: string }>(`SELECT
+      (SELECT count(*)::text FROM work_batch_revisions WHERE tenant_id=$1 AND batch_id=$2) revisions,
+      (SELECT count(*)::text FROM audit_events WHERE tenant_id=$1 AND target_id=$2 AND action='work_batches.propose') proposes,
+      (SELECT count(*)::text FROM audit_events WHERE tenant_id=$1 AND target_id=$2 AND action='work_batches.propose.replayed') replays`,
+    [config.localOwnerSession.tenantId, receipt.batchId])).rows[0]!;
+    expect(durable).toEqual({ revisions: "1", proposes: "1", replays: "1" });
+    const audit = await new AuditStore(client as unknown as DatabaseClient).verify(config.localOwnerSession.tenantId,
+      auditPartition(new Date().toISOString()));
+    expect(audit.valid, "the real proposal and replay must preserve the audit chain").toBe(true);
+    const after = (await client.query<{ requests: string; workflows: string; jobs: string; tasks: string; queue: string }>(`SELECT
+      (SELECT count(*)::text FROM control_requests) requests,
+      (SELECT count(*)::text FROM control_workflows) workflows,
+      (SELECT count(*)::text FROM control_jobs) jobs,
+      (SELECT count(*)::text FROM work_items) tasks,
+      (SELECT count(*)::text FROM control_room_queue.job) queue`)).rows[0]!;
+    expect(after, "a proposal-only batch cannot create an ordinary task, workflow, job, or queue item").toEqual(before);
+    return { batchId: receipt.batchId as string, before };
+  } finally { await client.end(); }
 }
 
 async function waitForLatestDisposableLeaseExpiry(jobId: string) {
@@ -194,7 +255,34 @@ test("owner completes the real local website journey for every configured worker
   await page.getByRole("button", { name: "Create project" }).click();
   await expect(page.getByRole("heading", { name: "Owner browser journey" })).toBeVisible();
   const projectPath = new URL(page.url()).pathname;
+  const projectId = decodeURIComponent(projectPath.split("/").at(-1)!);
   await expect(page.getByRole("link", { name: "New task" })).toBeVisible();
+
+  const browserMachineBoundary = await page.evaluate(async ({ projectId }) => (await fetch(
+    `/v1/projects/${encodeURIComponent(projectId)}/work-batches`)).status, { projectId });
+  expect(browserMachineBoundary, "the owner website must not expose the machine-intake route").toBe(404);
+  const proposedBatch = await submitProposalOnlyBatch(projectId);
+  await page.goto(`${projectPath}/tasks`);
+  await expect(page.getByText("Machine-only proposed batch")).toHaveCount(0);
+  await page.goto(`${projectPath}/pipelines/${encodeURIComponent(proposedBatch.batchId)}`);
+  await expect(page.getByRole("heading", { name: "Pipeline batch" })).toBeVisible();
+  await expect(page.getByText("Machine-only proposed batch").first()).toBeVisible();
+  await expect(page.getByText(/does not assign, approve execution, dispatch, or start work/).first()).toBeVisible();
+  await page.getByRole("button", { name: "Approve all items" }).click();
+  await page.getByRole("button", { name: "Save all item decisions" }).click();
+  await expect(page.getByRole("heading", { name: "Recorded item decisions" })).toBeVisible();
+  const { client: approvalClient } = await disposableAdmin();
+  try {
+    const afterApproval = (await approvalClient.query<{ jobs: string; queue: string; attempts: string }>(`SELECT
+      (SELECT count(*)::text FROM control_jobs) jobs,
+      (SELECT count(*)::text FROM control_room_queue.job) queue,
+      (SELECT count(*)::text FROM control_attempts) attempts`)).rows[0]!;
+    expect(Number(afterApproval.jobs)).toBe(Number(proposedBatch.before.jobs) + 1);
+    expect(afterApproval.queue).toBe(proposedBatch.before.queue);
+    expect(afterApproval.attempts).toBe("0");
+  } finally { await approvalClient.end(); }
+  await page.goto(`${projectPath}/tasks`);
+  await expect(page.getByText("Machine-only proposed batch").first()).toBeVisible();
 
   await createPreparedTask(page, projectPath, "Hermes browser task", "Hermes Agent", true, true, true);
   await openResult(page);
@@ -227,7 +315,7 @@ test("owner completes the real local website journey for every configured worker
   await expect(page.locator('section[aria-labelledby="home-active"]')).not.toContainText("Claude browser task");
   await expect(page.locator('section[aria-labelledby="home-attention"]')).not.toContainText("Claude browser task");
   await page.goto("/needs-me");
-  await expect(page.getByRole("heading", { name: "Tasks needing attention" }).locator("..")).not.toContainText("Claude browser task");
+  await expect(page.getByRole("region", { name: "Action Inbox" })).not.toContainText("Claude browser task");
 
   await createPreparedTask(page, projectPath, "Codex browser task", "Codex");
   await openResult(page);
