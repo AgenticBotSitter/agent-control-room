@@ -268,6 +268,9 @@ test("terminal cleanup removes a clean evidence-bound worktree", async t => {
 
 test("terminal removal preserves an untracked file written after observation", async t => {
   const x = await terminalCleanupCase("run:late-terminal-write"); t.after(x.close);
+  assert.deepEqual(await x.restarted.observeCheckout({ realPath: x.lease.checkoutPath,
+    device: x.lease.device, inode: x.lease.inode, repositoryRealPath: x.lease.repositoryRealPath,
+    headRevision: x.authorization.headRevision }), { state: "unchanged" });
   const path = join(x.lease.checkoutPath, "late-untracked.txt");
   await writeFile(path, "written after the clean observation\n");
   await assert.rejects(x.restarted.removeTerminalWorktree!({ repositoryRealPath: x.lease.repositoryRealPath,
