@@ -10,6 +10,11 @@
 # runs as `postgres` (as_postgres below), never as root. The EXIT trap removes
 # only this run's own stage directory; the backup and the plan JSON are kept.
 #
+# pnpm, node and git look for config and code in parent folders, and they run
+# here as root. So the stage lives under a folder only root can change (checked
+# up to /, refused otherwise), and pnpm gets a clean environment, reads no
+# workspace or pnpmfile, and never switches to a pnpm the staged manifest names.
+#
 # Test mode: when the caller is not root and CR_UPGRADE_TEST_ROOT is set, the
 # paths below come from CR_UPGRADE_TEST_* and nothing switches user. A non-root
 # caller cannot switch to postgres or write the real paths anyway, so this
@@ -26,8 +31,10 @@ refuse() {
 test_root=
 if [ "$(id -u)" -eq 0 ]; then
   PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+  export HOME=/root # sudo may keep the caller's HOME; git and pnpm read config there
   source_repo=/opt/control-room/upgrade-source
-  stage_parent=/var/tmp
+  stage_top=/
+  stage_parent=/var/lib/cr-db-upgrade/stages
   lock_file=/run/cr-db-upgrade.lock
   backup_root=/var/backups/control-room
   store=/var/cache/cr-db-upgrade/pnpm-store
@@ -37,6 +44,7 @@ if [ "$(id -u)" -eq 0 ]; then
 elif [ -n "${CR_UPGRADE_TEST_ROOT:-}" ]; then
   test_root=$CR_UPGRADE_TEST_ROOT
   source_repo=$test_root/source
+  stage_top=$test_root
   stage_parent=$test_root/stages
   lock_file=$test_root/upgrade.lock
   backup_root=$test_root/backups
@@ -72,6 +80,24 @@ case $main in
 esac
 short=${main:0:7}
 
+# 0711: postgres may pass through to its readable stage, but not list or write.
+for dir in "${stage_parent%/*}" "$stage_parent"; do
+  [ -d "$dir" ] || mkdir -m 0711 "$dir" || refuse upgrade_stage_failed stage
+done
+stage_parent=$(cd -P "$stage_parent" && pwd -P) || refuse upgrade_stage_failed stage
+stage_top=$(cd -P "$stage_top" && pwd -P) || refuse upgrade_stage_failed stage
+# From the stage parent (links resolved) up to $stage_top: a real folder, not
+# writable by group or others, owned by this account or (above the parent) root.
+perl -e 'my ($dir, $top, $me) = @ARGV; my $parent = 1;
+  while (1) {
+    my @s = lstat($dir) or exit 1;
+    exit 1 unless -d _ && !($s[2] & 022) && ($s[4] == $me || (!$parent && $s[4] == 0));
+    last if $dir eq $top || $dir eq "/";
+    $dir =~ s{/[^/]*$}{}; $dir = "/" if $dir eq ""; $parent = 0;
+  }' "$stage_parent" "$stage_top" "$(id -u)" \
+  || refuse upgrade_stage_unsafe stage \
+    "Refused: another account could change $stage_parent or a folder above it. Nothing was changed."
+
 stage=
 cleanup() {
   if [ -n "$stage" ] && [ -d "$stage" ]; then
@@ -95,16 +121,19 @@ stage_clean() {
 stage_clean || refuse upgrade_stage_dirty stage "Refused: the staged copy is not exactly $short."
 
 cp "$stage/src/deploy/vps/upgrade-tool/package.json" "$stage/src/deploy/vps/upgrade-tool/pnpm-lock.yaml" "$stage/"
+pinned_pnpm() {
+  env -i PATH="$PATH" HOME="$HOME" pnpm "$@" --ignore-workspace --ignore-pnpmfile --pm-on-fail=ignore --store-dir "$store"
+}
 if [ -n "$refresh" ]; then
   printf 'This downloads the pinned upgrade tools of %s (pg, pg-boss and their dependencies) into\n%s, each checked against its lockfile hash.\n' "$short" "$store"
   read -r -p "Download? [y/N] " answer
   [ "$answer" = y ] || [ "$answer" = Y ] || refuse upgrade_not_approved dependencies "Nothing was downloaded."
-  pnpm fetch --frozen-lockfile --store-dir "$store" >"$stage/install.log" 2>&1 \
+  pinned_pnpm fetch --frozen-lockfile >"$stage/install.log" 2>&1 \
     || refuse upgrade_dependency_download_failed dependencies
   printf 'Upgrade tools cached. Now run: cr-db-upgrade %s\n' "$short"
   exit 0
 fi
-if ! pnpm install --offline --frozen-lockfile --ignore-scripts --store-dir "$store" >"$stage/install.log" 2>&1; then
+if ! pinned_pnpm install --offline --frozen-lockfile --ignore-scripts >"$stage/install.log" 2>&1; then
   if grep -q 'NO_OFFLINE' "$stage/install.log"; then
     refuse upgrade_dependency_cache_missing dependencies \
       "Refused: the pinned upgrade tools are not cached. Run once: cr-db-upgrade --refresh-cache $short"

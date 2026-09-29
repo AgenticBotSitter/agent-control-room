@@ -6,7 +6,7 @@
 import assert from "node:assert/strict";
 import { after, before, test } from "node:test";
 import { execFileSync, spawn, spawnSync } from "node:child_process";
-import { cp, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, cp, mkdir, mkdtemp, readdir, readFile, rename, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -180,7 +180,9 @@ before(async () => {
   git(state.upstream, "add", "-A");
   git(state.upstream, "commit", "--quiet", "--allow-empty", "-m", "code under test");
   state.vps = join(state.root, "vps");
-  for (const directory of ["stages/cr-upgrade.keep", "backups"]) await mkdir(join(state.vps, directory), { recursive: true });
+  for (const directory of ["stages/cr-upgrade.keep", "backups"]) {
+    await mkdir(join(state.vps, directory), { recursive: true, mode: 0o755 });
+  }
   execFileSync("git", ["clone", "--quiet", "--no-local", state.upstream, join(state.vps, "source")]);
   state.store = execFileSync("pnpm", ["store", "path"], { cwd: repoRoot, encoding: "utf8" }).trim();
 });
@@ -343,6 +345,67 @@ test("refuses when the backup fails, and writes nothing", { skip }, async () => 
     answers: approve(codes.both) }), "upgrade_backup_failed", "backup");
   assert.match(output, /Nothing was changed/u);
 });
+
+test("refuses to stage under a folder another account could change", { skip }, async () => {
+  const stageParent = join(state.vps, "stages");
+  // A no-code answer ends a run that wrongly gets past the check, so it fails fast.
+  const run = () => upgrade([head().slice(0, 7)], { answers: [[codePrompt, "\n"]] });
+  for (const [dir, mode] of [[stageParent, 0o777], [stageParent, 0o775], [state.vps, 0o1777]]) {
+    await chmod(dir, mode);
+    try {
+      const output = await refused(run, "upgrade_stage_unsafe", "stage");
+      assert.match(output, /another account could change/u);
+    } finally { await chmod(dir, 0o755); }
+  }
+  // Owned by another account (root): the stage parent is a link to "/".
+  await rename(stageParent, `${stageParent}.real`);
+  await symlink("/", stageParent);
+  try {
+    const { code, output } = await run();
+    assert.notEqual(code, 0, output);
+    assert.match(output, /upgrade_error:upgrade_stage_unsafe stage=stage/u, output);
+  } finally { await rm(stageParent); await rename(`${stageParent}.real`, stageParent); }
+  assert.deepEqual(await stages(), ["cr-upgrade.keep"]);
+  // A missing stage parent is created passable but not listable by others.
+  const fresh = await mkdtemp(join(state.root, "fresh-"));
+  await symlink(join(state.vps, "source"), join(fresh, "source"));
+  const { output } = await upgrade(["--refresh-cache", head().slice(0, 7)], { env: { CR_UPGRADE_TEST_ROOT: fresh },
+    answers: [[/Download\? \[y\/N\] $/u, "\n"]] });
+  assert.match(output, /upgrade_error:upgrade_not_approved stage=dependencies/u, output);
+  assert.equal((await stat(join(fresh, "stages"))).mode & 0o7777, 0o711);
+  assert.deepEqual(await readdir(join(fresh, "stages")), []);
+});
+
+test("a pnpm workspace or pnpmfile planted above the stage never runs, and the manifest cannot switch pnpm",
+  { skip }, async () => {
+    const stageParent = join(state.vps, "stages"), marker = join(state.root, "planted-code-ran");
+    const planted = ["pnpm-workspace.yaml", ".pnpmfile.cjs"];
+    await writeFile(join(stageParent, planted[0]), 'packages: ["*"]\n');
+    await writeFile(join(stageParent, planted[1]),
+      `require("node:fs").appendFileSync(${JSON.stringify(marker)}, "ran\\n");\nmodule.exports = {};\n`);
+    // A pnpm version that does not exist: any attempt to switch to it fails the run.
+    const tool = join(state.upstream, "deploy/vps/upgrade-tool/package.json");
+    await writeFile(tool, JSON.stringify({ ...JSON.parse(await readFile(tool, "utf8")), packageManager: "pnpm@99.99.99" }));
+    git(state.upstream, "commit", "--quiet", "-am", "name another pnpm");
+    const beforeCatalog = await catalog(), beforeBackups = await backups();
+    try {
+      const declined = await upgrade([head().slice(0, 7)], { answers: [[codePrompt, `${codes.both}\n`],
+        [applyPrompt, "n\n"]] });
+      assert.equal(existsSync(marker), false, "the planted pnpmfile ran during the install");
+      assert.match(declined.output, /upgrade_error:upgrade_not_approved stage=approve/u, declined.output);
+      const refreshed = await upgrade(["--refresh-cache", head().slice(0, 7)],
+        { answers: [[/Download\? \[y\/N\] $/u, "y\n"]] });
+      assert.equal(existsSync(marker), false, "the planted pnpmfile ran during the download");
+      assert.equal(refreshed.code, 0, refreshed.output);
+      assert.match(refreshed.output, /Upgrade tools cached/u);
+    } finally {
+      for (const file of planted) await rm(join(stageParent, file), { force: true });
+      git(state.upstream, "revert", "--quiet", "--no-edit", "HEAD");
+    }
+    assert.deepEqual(await catalog(), beforeCatalog);
+    assert.deepEqual(await backups(), beforeBackups);
+    assert.deepEqual(await stages(), ["cr-upgrade.keep"]);
+  });
 
 test("upgrades an older ledger to HEAD with one code, a backup first and an empty after-plan", { skip }, async () => {
   const kept = ["control_room_migrator", "control_room_app", "control_room_scheduler", ...legacyMacLogins];
