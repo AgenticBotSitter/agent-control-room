@@ -76,6 +76,19 @@ REVOKE ALL ON control_agent_review_plans FROM control_room_application, control_
 REVOKE ALL ON control_pipeline_build_publications
   FROM control_room_application, control_room_reader, control_room_schedule_admissions,
   control_room_github_broker, control_room_work_intake;
+-- Installation-wide operations mode (Pause / Drain / Stop). Read-only for the
+-- shared ledgers, the reader and the backup role; only the private owner web
+-- login may append a revision, and the guard trigger refuses anything but a
+-- live human owner's grant. The shared intake login reads nothing here.
+--
+-- The coordinator's SELECT is in task_coordinator_roles.sql, because that role
+-- does not exist yet when this file is applied: naming it here would fail the
+-- whole grant file on a fresh install.
+REVOKE ALL ON installation_operations_mode_revisions, installation_effective_operations_mode
+  FROM control_room_application, control_room_reader, control_room_schedule_admissions,
+  control_room_github_broker, control_room_work_intake;
+GRANT SELECT ON installation_operations_mode_revisions, installation_effective_operations_mode
+  TO control_room_application, control_room_reader, control_room_backup;
 GRANT SELECT ON control_identities, control_role_grants, projects, work_batches,
   work_batch_revisions, work_batch_items, control_idempotency, audit_events, control_audit_chain_heads
   TO control_room_work_intake;

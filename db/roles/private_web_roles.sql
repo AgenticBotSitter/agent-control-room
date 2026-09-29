@@ -97,5 +97,10 @@ GRANT UPDATE (state, approval_identity_id, approved_at, decision_reason_code, de
   decision_auth_tag, version, updated_at)
   ON work_batches TO control_room_private_web;
 GRANT UPDATE (next_position, updated_at) ON work_batch_agent_queue_heads TO control_room_private_web;
+-- Installation-wide operations mode. The owner session is the only writer, and
+-- 0155's guard trigger refuses any identity that is not a live human owner.
+-- No UPDATE or DELETE: a recorded decision is appended, never rewritten.
+GRANT SELECT, INSERT ON installation_operations_mode_revisions TO control_room_private_web;
+GRANT SELECT ON installation_effective_operations_mode TO control_room_private_web;
 GRANT SELECT ON work_intake_tenant_binding TO control_room_private_web;
 COMMIT;

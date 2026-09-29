@@ -15,11 +15,13 @@ export async function verifyPrivateIdeaAdapter(db: DatabaseClient, scope: { tena
   if (rows.length !== 1 || rows[0].valid !== true) throw new Error("private_idea_adapter_unavailable");
 }
 
-// Generated from public migrations 0001-0108 (filename order: ...0093,0100,0101,0102,0104,0105,0106,0108),
+// Generated from the public migrations in filename order (0001-0002, then
+// 0003-0093, 0100, 0101, 0102, 0104, 0105, 0106, 0108, 0155, 0156, 0157),
 // including generic external-content migrations 0025/0026, read from a live
-// PostgreSQL 17 cluster installed the production way. Catalog query below;
-// not a mutable database marker.
-export const privateWebSchemaDigest = "b90b1aa59c3a2186c6f35a72694216e72f899783d7f4137a4dac671cf15a6e89";
+// PostgreSQL 17 cluster installed the production way (see
+// scripts/operations-mode-digest.ts). Catalog query below; not a mutable
+// database marker.
+export const privateWebSchemaDigest = "d2ccecf5717a5ea0dbd6a02aff3cdc35cbd9c6757b6052462a91151d785db49e";
 export const privateWebReadTables = ["control_identities", "control_role_grants", "workspaces", "control_web_sessions",
   "tenants", "control_idempotency",
   "control_schedules", "control_schedule_occurrences",
@@ -41,6 +43,7 @@ export const privateWebReadTables = ["control_identities", "control_role_grants"
   "control_native_task_queue", "control_job_dependencies",
   "pipeline_templates", "pipeline_runs", "pipeline_stage_runs", "pipeline_ordered_stage_runs",
   "control_pipeline_build_publications", "control_codex_result_publications",
+  "installation_operations_mode_revisions", "installation_effective_operations_mode",
   "control_action_inbox"] as const;
 const inserts = new Set(["control_web_sessions", "adapter_registry", "projects", "control_manual_project_heads",
   "control_web_project_commands", "audit_events", "control_audit_chain_heads", "control_requests", "control_workflows",
@@ -52,6 +55,7 @@ inserts.add("work_batch_revisions"); inserts.add("work_batch_items");
 inserts.add("work_batch_queue_admissions"); inserts.add("work_batch_agent_queue_heads");
 inserts.add("pipeline_templates"); inserts.add("pipeline_runs"); inserts.add("pipeline_stage_runs");
 inserts.add("control_job_dependencies");
+inserts.add("installation_operations_mode_revisions");
 
 /** Tables whose INSERT grant is column-scoped rather than table-wide. Every
  * listed column must carry INSERT and every unlisted column must not — a
@@ -142,7 +146,8 @@ const coordinatorInserts = new Set(["control_web_sessions", "control_requests", 
   "control_installation_transition_revisions", "control_node_fleet_signals", "control_node_fleet_current",
   "control_task_model_selections", "control_task_declared_scopes", "control_assignment_lease_scopes"]);
 coordinatorReads.push("pipeline_templates", "pipeline_runs", "pipeline_stage_runs", "pipeline_ordered_stage_runs",
-  "control_agent_review_plans", "control_pipeline_build_publications");
+  "control_agent_review_plans", "control_pipeline_build_publications",
+  "installation_operations_mode_revisions");
 coordinatorInserts.add("control_agent_review_plans");
 coordinatorInserts.add("control_pipeline_build_publications");
 const coordinatorDeletes = new Set(["control_assignment_lease_scopes"]);
