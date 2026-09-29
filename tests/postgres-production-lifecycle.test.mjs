@@ -1301,10 +1301,12 @@ test("the pipeline run view renders on the production web login through the real
     assert.deepEqual(await coordinator.db.transaction(tx => authority.acceptedResultProof(tx, selection)), expected);
     assert.equal(await coordinator.db.transaction(tx => authority.isAcceptedResultCurrent(tx, selection)), true);
     assert.equal(await coordinator.db.transaction(tx => authority.acceptedResultRevision(tx, selection)), 0);
-    await assert.rejects(web.db.transaction(async tx => {
-      assert.equal(await authority.acceptedResultProof(tx, selection), null);
-      await tx.query("SELECT 1");
-    }), /database_unavailable/u, "the transaction-bound proof must use the caller's session");
+    for (const [operation, refused] of [["acceptedResultProof", null], ["isAcceptedResultCurrent", false],
+      ["acceptedResultRevision", null]])
+      await assert.rejects(web.db.transaction(async tx => {
+        assert.equal(await authority[operation](tx, selection), refused);
+        await tx.query("SELECT 1");
+      }), /database_unavailable/u, `the transaction-bound ${operation} must use the caller's session`);
 
     // The reason the view cannot run on the caller, and the exact symptom the
     // review reported: on the production web login this statement fails the
@@ -1367,13 +1369,17 @@ test("build publication holds the Completion Gate lock from its accepted-result 
   withMacLocalLogins("cr_publication_race", async ({ client, login }) => {
     const coordinator = login("control_room_coordinator"), web = login("control_room_web");
     const admin = target("cr_publication_race"), repositoryUrl = "https://example.invalid/controller/repository";
+    // A failed assertion must not leave a paused transaction behind: that
+    // would surface as a pool-close rejection and hide the real failure.
     let pause;
+    const releases = [], inflight = [];
     const pauseNextLookup = () => {
       let reached, release;
       const hit = new Promise(resolve => { reached = resolve; }), released = new Promise(resolve => { release = resolve; });
-      pause = { reached, released };
+      pause = { reached, released }; releases.push(release);
       return { hit, release };
     };
+    const tracked = promise => { inflight.push(promise.catch(() => {})); return promise; };
     const repositories = { resolve: async () => {
       const current = pause; pause = undefined;
       if (current) { current.reached(); await current.released; }
@@ -1415,12 +1421,13 @@ test("build publication holds the Completion Gate lock from its accepted-result 
       return { ...accepted, controller, delivery, snapshot, retained: { snapshot, plan, evidence }, publications };
     };
 
+    try {
     // 1. The review arrives after the proof, inside the window.
     const late = await acceptedPublication("race", 71);
     // Currentness, paused after its proof: a review from a second transaction
     // cannot take the lock, so it is refused instead of committing underneath.
     let gap = pauseNextLookup();
-    const checking = late.controller.assertBuildPublicationAuthorityCurrent(late.snapshot);
+    const checking = tracked(late.controller.assertBuildPublicationAuthorityCurrent(late.snapshot));
     await gap.hit;
     const impatient = new CompletionGateStoreV1(postgresDatabase(admin, { afterBegin: session =>
       session.query("SET LOCAL lock_timeout='300ms'") }), late.reviewKey, late.checkpoints, () => late.at);
@@ -1432,10 +1439,10 @@ test("build publication holds the Completion Gate lock from its accepted-result 
     // publication commits while its acceptance still holds, and only then can
     // the review land.
     gap = pauseNextLookup();
-    const retaining = late.controller.retainBuildPublication(late.retained);
+    const retaining = tracked(late.controller.retainBuildPublication(late.retained));
     await gap.hit;
-    const superseding = new CompletionGateStoreV1(client, late.reviewKey, late.checkpoints, () => late.at)
-      .recordReview(...late.changesRequested());
+    const superseding = tracked(new CompletionGateStoreV1(client, late.reviewKey, late.checkpoints, () => late.at)
+      .recordReview(...late.changesRequested()));
     assert.equal(await settlesWithin(superseding, 400), false,
       "a review must not commit between the retention proof and its insert");
     gap.release();
@@ -1462,10 +1469,11 @@ test("build publication holds the Completion Gate lock from its accepted-result 
     const early = await acceptedPublication("racewin", 81);
     let reached, release;
     const holding = new Promise(resolve => { reached = resolve; }), released = new Promise(resolve => { release = resolve; });
-    const first = new CompletionGateStoreV1(postgresDatabase(admin, { beforeCommit: async () => { reached(); await released; } }),
-      early.reviewKey, early.checkpoints, () => early.at).recordReview(...early.changesRequested());
+    releases.push(release);
+    const first = tracked(new CompletionGateStoreV1(postgresDatabase(admin, { beforeCommit: async () => { reached(); await released; } }),
+      early.reviewKey, early.checkpoints, () => early.at).recordReview(...early.changesRequested()));
     await holding;
-    const refused = early.controller.retainBuildPublication(early.retained);
+    const refused = tracked(early.controller.retainBuildPublication(early.retained));
     assert.equal(await settlesWithin(refused, 400), false, "the retention proof must wait for the review's lock");
     release(); await first;
     await assert.rejects(refused, /pipeline_build_publication_unavailable/u);
@@ -1473,6 +1481,10 @@ test("build publication holds the Completion Gate lock from its accepted-result 
     await assert.rejects(early.controller.assertBuildPublicationAuthorityCurrent(early.snapshot),
       /pipeline_build_publication_unavailable/u);
     await early.lifecycle.close();
+    } finally {
+      for (const release of releases) release();
+      await Promise.all(inflight);
+    }
   }));
 
 // The commit boundary stores the payloads it is given, and the Completion Gate
