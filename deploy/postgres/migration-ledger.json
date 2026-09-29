@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "digest": "d0c9ce364336da2e70d85c431fa3c15cf96f321dcff36158e7e9ad4f3d3cfb4d",
+  "digest": "c04abf7a70e17c82a86946188347b3c3db83f10664201ecea8ff8b27b0914338",
   "entries": [
     {
       "file": "db/migrations/0001_control_room_core.sql",
@@ -561,20 +561,26 @@
       "kind": "migrate"
     },
     {
-      "file": "db/roles/production_roles.sql",
+      "file": "db/migrations/0100_ownership_lease_collision_guard.sql",
       "order": 94,
+      "sha256": "a91e629f09bec5f2e2d31bda5ff81a82693b4126c5ae9e5a9ccfa96435cfa9a1",
+      "kind": "migrate"
+    },
+    {
+      "file": "db/roles/production_roles.sql",
+      "order": 95,
       "sha256": "a0da14218b3f2b69e498a1354924d4f5bca46717ef2202a83c52dd270e009203",
       "kind": "grants"
     },
     {
       "file": "db/roles/production_table_grants.sql",
-      "order": 95,
+      "order": 96,
       "sha256": "212778d881bf36b2abb82fd74d84301c15a5e1aae0522ae911b4851dd5553f56",
       "kind": "grants"
     },
     {
       "file": "db/roles/production_provision.sql",
-      "order": 96,
+      "order": 97,
       "sha256": "aa123bf48866eb1e0a3c4962347f8719c7f69b16ca46606e44a0a80563a5c358",
       "kind": "provision"
     }

@@ -23,10 +23,16 @@ const identitySchema = z.object({ tenantId: id, projectId: id, jobId: id, attemp
 const workerSchema = z.object({ workerId: id, adapterId: controllerWorkerAdapterIdSchemaV1,
   adapterRevision: z.string().min(7).max(180) }).strict();
 const inputSchema = z.object({ prompt: taskText, instructions: z.string().max(8192).refine(value => Buffer.byteLength(value, "utf8") <= 8192) }).strict();
+const writeScopeSchema = z.object({ scopeKind: z.enum(["file", "tree"]), path: z.string().max(512)
+  .regex(/^(?:[a-z0-9_][a-z0-9._-]{0,127}(?:\/[a-z0-9_][a-z0-9._-]{0,127})*)?$/) }).strict()
+  .superRefine((value, context) => {
+    if (value.scopeKind === "file" && value.path === "") context.addIssue({ code: "custom", message: "file scope needs a path" });
+  });
 
 const materialSchema = z.object({
   schema: z.literal(CONTROLLER_WORKER_DELIVERY_V1), identity: identitySchema, worker: workerSchema,
-  input: inputSchema, inputDigest: digest, authorityDigest: digest, connectorProfileDigest: digest,
+  input: inputSchema, inputDigest: digest, writeScopes: z.array(writeScopeSchema).min(1).max(64),
+  authorityDigest: digest, connectorProfileDigest: digest,
   acceptanceProfileId: id, acceptanceProfileDigest: digest, issuedAt: instant, expiresAt: instant,
   deliveryId: id,
 }).strict();
@@ -35,6 +41,7 @@ export const controllerWorkerDeliverySchemaV1 = materialSchema.extend({ delivery
   const { deliveryDigest, ...material } = value;
   const expectedInput = sha256Digest(value.input);
   const expectedId = `delivery:${sha256Digest({ identity: value.identity, worker: value.worker, inputDigest: expectedInput,
+    writeScopes: value.writeScopes,
     authorityDigest: value.authorityDigest, connectorProfileDigest: value.connectorProfileDigest,
     acceptanceProfileId: value.acceptanceProfileId, acceptanceProfileDigest: value.acceptanceProfileDigest,
     issuedAt: value.issuedAt, expiresAt: value.expiresAt }).slice(7)}`;
@@ -60,15 +67,20 @@ export const controllerWorkerDeliveryReceiptSchemaV1 = z.object({
 });
 export type ControllerWorkerDeliveryReceiptV1 = z.infer<typeof controllerWorkerDeliveryReceiptSchemaV1>;
 
-export function createControllerWorkerDeliveryV1(value: Omit<ControllerWorkerDeliveryV1, "schema" | "inputDigest" | "deliveryId" | "deliveryDigest">): ControllerWorkerDeliveryV1 {
+export function createControllerWorkerDeliveryV1(value: Omit<ControllerWorkerDeliveryV1,
+  "schema" | "inputDigest" | "writeScopes" | "deliveryId" | "deliveryDigest"> &
+  Readonly<{ writeScopes?: readonly Readonly<{ scopeKind: "file" | "tree"; path: string }>[] }>): ControllerWorkerDeliveryV1 {
   const base = z.object({ identity: identitySchema, worker: workerSchema, input: inputSchema, authorityDigest: digest,
-    connectorProfileDigest: digest, acceptanceProfileId: id, acceptanceProfileDigest: digest, issuedAt: instant, expiresAt: instant }).strict().parse(value);
+    writeScopes: z.array(writeScopeSchema).min(1).max(64).optional(), connectorProfileDigest: digest,
+    acceptanceProfileId: id, acceptanceProfileDigest: digest, issuedAt: instant, expiresAt: instant }).strict().parse(value);
+  const writeScopes = [...(base.writeScopes ?? [{ scopeKind: "tree" as const, path: "" }])]
+    .sort((left, right) => left.scopeKind.localeCompare(right.scopeKind) || left.path.localeCompare(right.path));
   const inputDigest = sha256Digest(base.input);
-  const deliveryId = `delivery:${sha256Digest({ identity: base.identity, worker: base.worker, inputDigest,
+  const deliveryId = `delivery:${sha256Digest({ identity: base.identity, worker: base.worker, inputDigest, writeScopes,
     authorityDigest: base.authorityDigest, connectorProfileDigest: base.connectorProfileDigest,
     acceptanceProfileId: base.acceptanceProfileId, acceptanceProfileDigest: base.acceptanceProfileDigest,
     issuedAt: base.issuedAt, expiresAt: base.expiresAt }).slice(7)}`;
-  const material = { schema: CONTROLLER_WORKER_DELIVERY_V1, ...base, inputDigest, deliveryId };
+  const material = { schema: CONTROLLER_WORKER_DELIVERY_V1, ...base, writeScopes, inputDigest, deliveryId };
   return Object.freeze(controllerWorkerDeliverySchemaV1.parse({ ...material, deliveryDigest: sha256Digest(material) }));
 }
 
