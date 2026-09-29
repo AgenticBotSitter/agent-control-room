@@ -85,3 +85,90 @@ CREATE INDEX control_improvement_requests_project_created
   ON control_improvement_requests(tenant_id, project_id, created_at DESC);
 CREATE INDEX control_update_candidates_ready_created
   ON control_update_candidates(tenant_id, state, created_at DESC);
+
+-- Requests and owner decisions are append only.
+CREATE TRIGGER control_improvement_requests_immutable BEFORE UPDATE OR DELETE ON control_improvement_requests
+  FOR EACH ROW EXECUTE FUNCTION reject_append_only_mutation();
+CREATE TRIGGER control_improvement_requests_no_truncate BEFORE TRUNCATE ON control_improvement_requests
+  FOR EACH STATEMENT EXECUTE FUNCTION reject_append_only_mutation();
+CREATE TRIGGER control_update_candidate_decisions_immutable BEFORE UPDATE OR DELETE ON control_update_candidate_decisions
+  FOR EACH ROW EXECUTE FUNCTION reject_append_only_mutation();
+CREATE TRIGGER control_update_candidate_decisions_no_truncate BEFORE TRUNCATE ON control_update_candidate_decisions
+  FOR EACH STATEMENT EXECUTE FUNCTION reject_append_only_mutation();
+CREATE TRIGGER control_update_candidates_no_delete BEFORE DELETE ON control_update_candidates
+  FOR EACH ROW EXECUTE FUNCTION reject_append_only_mutation();
+CREATE TRIGGER control_update_candidates_no_truncate BEFORE TRUNCATE ON control_update_candidates
+  FOR EACH STATEMENT EXECUTE FUNCTION reject_append_only_mutation();
+
+-- A candidate is born ready, and only for a succeeded run whose sign-off stage
+-- succeeded under the named lead. Whoever holds INSERT cannot publish one
+-- already accepted, nor one the pipeline never signed off.
+CREATE FUNCTION guard_update_candidate_insert() RETURNS trigger
+LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $$
+BEGIN
+  IF NEW.state <> 'ready' OR NEW.version <> 1 OR NEW.decided_at IS NOT NULL THEN
+    RAISE EXCEPTION 'update candidate must be published ready' USING ERRCODE = '23514';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM control_improvement_requests request
+      JOIN pipeline_runs run ON run.tenant_id=request.tenant_id AND run.id=request.pipeline_run_id
+        AND run.project_id=request.project_id AND run.state='succeeded'
+      JOIN pipeline_stage_runs stage ON stage.tenant_id=run.tenant_id AND stage.pipeline_run_id=run.id
+        AND stage.project_id=run.project_id AND stage.stage_kind='signoff' AND stage.state='succeeded'
+        AND stage.worker_id=NEW.lead_worker_id
+      WHERE request.tenant_id=NEW.tenant_id AND request.id=NEW.improvement_request_id
+        AND request.project_id=NEW.project_id AND request.pipeline_run_id=NEW.pipeline_run_id
+        AND request.lead_worker_id=NEW.lead_worker_id) THEN
+    RAISE EXCEPTION 'update candidate has no signed-off pipeline' USING ERRCODE = '23514';
+  END IF;
+  RETURN NEW;
+END $$;
+REVOKE ALL ON FUNCTION public.guard_update_candidate_insert() FROM PUBLIC;
+CREATE TRIGGER control_update_candidates_insert_guard BEFORE INSERT ON control_update_candidates
+  FOR EACH ROW EXECUTE FUNCTION guard_update_candidate_insert();
+
+-- An owner decision binds the exact ready candidate version and digest, and its
+-- author must hold an active owner grant able to take a high-risk decision.
+CREATE FUNCTION guard_update_candidate_decision_insert() RETURNS trigger
+LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM control_update_candidates candidate
+      WHERE candidate.tenant_id=NEW.tenant_id AND candidate.id=NEW.candidate_id AND candidate.project_id=NEW.project_id
+        AND candidate.state='ready' AND candidate.version=NEW.candidate_version
+        AND candidate.record_digest=NEW.candidate_record_digest) THEN
+    RAISE EXCEPTION 'update candidate decision is stale' USING ERRCODE = '23514';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM control_role_grants g
+      WHERE g.tenant_id=NEW.tenant_id AND g.identity_id=NEW.owner_identity_id AND g.role_key='owner'
+        AND g.risk_ceiling IN ('high','critical') AND g.revoked_at IS NULL
+        AND (g.expires_at IS NULL OR g.expires_at > NEW.decided_at)
+        AND (g.allowed_actions ? '*' OR g.allowed_actions ? 'updates.decide')
+        AND (g.project_ids ? '*' OR g.project_ids ? NEW.project_id)) THEN
+    RAISE EXCEPTION 'update candidate decision needs the owner' USING ERRCODE = '42501';
+  END IF;
+  RETURN NEW;
+END $$;
+REVOKE ALL ON FUNCTION public.guard_update_candidate_decision_insert() FROM PUBLIC;
+CREATE TRIGGER control_update_candidate_decisions_insert_guard BEFORE INSERT ON control_update_candidate_decisions
+  FOR EACH ROW EXECUTE FUNCTION guard_update_candidate_decision_insert();
+
+-- The only transition is ready -> accepted/declined, one version up, and only
+-- when the matching owner decision row already exists.
+CREATE FUNCTION guard_update_candidate_update() RETURNS trigger
+LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $$
+BEGIN
+  IF OLD.state <> 'ready' OR NEW.state NOT IN ('accepted','declined') OR NEW.version <> OLD.version + 1
+    OR (to_jsonb(NEW)-ARRAY['state','version','decided_at'])
+       IS DISTINCT FROM (to_jsonb(OLD)-ARRAY['state','version','decided_at']) THEN
+    RAISE EXCEPTION 'update candidate transition rejected' USING ERRCODE = '23514';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM control_update_candidate_decisions d
+      WHERE d.tenant_id=OLD.tenant_id AND d.candidate_id=OLD.id AND d.candidate_version=OLD.version
+        AND d.candidate_record_digest=OLD.record_digest AND d.decided_at=NEW.decided_at
+        AND d.decision = CASE NEW.state WHEN 'accepted' THEN 'accept' ELSE 'decline' END) THEN
+    RAISE EXCEPTION 'update candidate transition has no owner decision' USING ERRCODE = '23514';
+  END IF;
+  RETURN NEW;
+END $$;
+REVOKE ALL ON FUNCTION public.guard_update_candidate_update() FROM PUBLIC;
+CREATE TRIGGER control_update_candidates_update_guard BEFORE UPDATE ON control_update_candidates
+  FOR EACH ROW EXECUTE FUNCTION guard_update_candidate_update();

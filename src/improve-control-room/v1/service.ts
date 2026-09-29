@@ -146,15 +146,19 @@ export class ImproveControlRoomDeskServiceV1 {
       { templateId: parsed.data.pipelineTemplateId, title }, `improve:${idempotencyKey}`);
     return this.#authority.authenticated(identity, async (tx, actor) => {
       actor.require("tasks.propose", projectId, true); await this.#requireSelfProject(tx, projectId);
-      const existing = (await tx.query<RequestRow>(`SELECT id,project_id,description,pipeline_template_id,
-        pipeline_template_version,pipeline_template_digest,selected_worker_ids,lead_worker_id,pipeline_run_id,
-        owner_identity_id,idempotency_key,request_digest,record_digest,auth_tag,created_at
-        FROM control_improvement_requests WHERE tenant_id=$1 AND owner_identity_id=$2 AND idempotency_key=$3 FOR UPDATE`,
-      [this.scope.tenantId, actor.id, idempotencyKey])).rows[0];
-      if (existing) {
+      // The web login holds no UPDATE on requests, so no row lock: the idempotency
+      // unique key serializes a concurrent retry and the loser replays the winner.
+      const replay = async () => {
+        const existing = (await tx.query<RequestRow>(`SELECT id,project_id,description,pipeline_template_id,
+          pipeline_template_version,pipeline_template_digest,selected_worker_ids,lead_worker_id,pipeline_run_id,
+          owner_identity_id,idempotency_key,request_digest,record_digest,auth_tag,created_at
+          FROM control_improvement_requests WHERE tenant_id=$1 AND owner_identity_id=$2 AND idempotency_key=$3`,
+        [this.scope.tenantId, actor.id, idempotencyKey])).rows[0];
+        if (!existing) return undefined;
         if (existing.request_digest !== requestDigest || existing.pipeline_run_id !== run.runId) throw new WebAccessError("conflict");
         return { request: this.#requestView(existing), replayed: true };
-      }
+      };
+      const prior = await replay(); if (prior) return prior;
       const now = actor.now, id = `improvement:${randomUUID()}`, template = prepared.template!;
       const partial: RequestRow = { id, project_id: projectId, description: parsed.data.description,
         pipeline_template_id: template.row.id, pipeline_template_version: Number(template.row.version),
@@ -163,13 +167,18 @@ export class ImproveControlRoomDeskServiceV1 {
         idempotency_key: idempotencyKey, request_digest: requestDigest, record_digest: "", auth_tag: "", created_at: now };
       const material = this.#requestMaterial(partial), recordDigest = sha256Digest(material);
       const authTag = hmacSha256Tag(this.#key, { purpose: "improvement-request/v1", record: material });
-      await tx.query(`INSERT INTO control_improvement_requests(tenant_id,id,project_id,description,pipeline_template_id,
+      const inserted = await tx.query<{ id: string }>(`INSERT INTO control_improvement_requests(tenant_id,id,project_id,description,pipeline_template_id,
         pipeline_template_version,pipeline_template_digest,selected_worker_ids,lead_worker_id,pipeline_run_id,
         owner_identity_id,idempotency_key,request_digest,record_digest,auth_tag,created_at)
-        VALUES($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9,$10,$11,$12,$13,$14,$15,$16)`,
+        VALUES($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9,$10,$11,$12,$13,$14,$15,$16)
+        ON CONFLICT (tenant_id, owner_identity_id, idempotency_key) DO NOTHING RETURNING id`,
       [this.scope.tenantId, id, projectId, partial.description, partial.pipeline_template_id,
         partial.pipeline_template_version, partial.pipeline_template_digest, JSON.stringify(partial.selected_worker_ids),
         partial.lead_worker_id, partial.pipeline_run_id, actor.id, idempotencyKey, requestDigest, recordDigest, authTag, now]);
+      if (!inserted.rows.length) {
+        const winner = await replay(); if (!winner) throw new WebAccessError("conflict");
+        return winner;
+      }
       return { request: this.#requestView({ ...partial, record_digest: recordDigest, auth_tag: authTag }), replayed: false };
     });
   }
@@ -211,15 +220,17 @@ export class ImproveControlRoomDeskServiceV1 {
       [this.scope.tenantId, parsed.improvementRequestId, parsed.projectId, parsed.pipelineRunId])).rows[0];
       if (!binding || binding.run_state !== "succeeded" || binding.signoff_state !== "succeeded"
         || binding.signoff_worker !== parsed.leadWorkerId) throw new Error("update_candidate_not_ready");
-      const existing = (await tx.query<CandidateRow>(`SELECT id,project_id,improvement_request_id,pipeline_run_id,
-        base_revision,candidate_revision,summary,changed_areas,test_results,database_changes,lead_worker_id,state,version,
-        record_digest,auth_tag,created_at,decided_at FROM control_update_candidates
-        WHERE tenant_id=$1 AND pipeline_run_id=$2`, [this.scope.tenantId, parsed.pipelineRunId])).rows[0];
-      if (existing) {
+      const replay = async () => {
+        const existing = (await tx.query<CandidateRow>(`SELECT id,project_id,improvement_request_id,pipeline_run_id,
+          base_revision,candidate_revision,summary,changed_areas,test_results,database_changes,lead_worker_id,state,version,
+          record_digest,auth_tag,created_at,decided_at FROM control_update_candidates
+          WHERE tenant_id=$1 AND pipeline_run_id=$2`, [this.scope.tenantId, parsed.pipelineRunId])).rows[0];
+        if (!existing) return undefined;
         const view = this.#candidateView(existing);
         if (view.candidateRevision !== parsed.candidateRevision) throw new Error("update_candidate_conflict");
         return { candidate: view, replayed: true };
-      }
+      };
+      const prior = await replay(); if (prior) return prior;
       const now = new Date(this.clock()).toISOString(), id = `update-candidate:${randomUUID()}`;
       const partial: CandidateRow = { id, project_id: parsed.projectId, improvement_request_id: parsed.improvementRequestId,
         pipeline_run_id: parsed.pipelineRunId, base_revision: parsed.baseRevision, candidate_revision: parsed.candidateRevision,
@@ -228,12 +239,19 @@ export class ImproveControlRoomDeskServiceV1 {
         record_digest: "", auth_tag: "", created_at: now, decided_at: null };
       const material = this.#candidateMaterial(partial), recordDigest = sha256Digest(material);
       const authTag = hmacSha256Tag(this.#key, { purpose: "update-candidate/v1", record: material });
-      await tx.query(`INSERT INTO control_update_candidates(tenant_id,id,project_id,improvement_request_id,pipeline_run_id,
+      // No UPDATE grant, so no row lock: a concurrent publisher of the same run loses the
+      // unique key and replays the winner.
+      const inserted = await tx.query<{ id: string }>(`INSERT INTO control_update_candidates(tenant_id,id,project_id,improvement_request_id,pipeline_run_id,
         base_revision,candidate_revision,summary,changed_areas,test_results,database_changes,lead_worker_id,state,version,
-        record_digest,auth_tag,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10::jsonb,$11::jsonb,$12,'ready',1,$13,$14,$15)`,
+        record_digest,auth_tag,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10::jsonb,$11::jsonb,$12,'ready',1,$13,$14,$15)
+        ON CONFLICT (tenant_id, pipeline_run_id) DO NOTHING RETURNING id`,
       [this.scope.tenantId, id, parsed.projectId, parsed.improvementRequestId, parsed.pipelineRunId,
         parsed.baseRevision, parsed.candidateRevision, parsed.summary, JSON.stringify(parsed.changedAreas),
         JSON.stringify(parsed.testResults), JSON.stringify(parsed.databaseChanges), parsed.leadWorkerId, recordDigest, authTag, now]);
+      if (!inserted.rows.length) {
+        const winner = await replay(); if (!winner) throw new Error("update_candidate_conflict");
+        return winner;
+      }
       return { candidate: this.#candidateView({ ...partial, record_digest: recordDigest, auth_tag: authTag }), replayed: false };
     });
   }

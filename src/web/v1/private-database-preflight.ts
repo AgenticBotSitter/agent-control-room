@@ -18,7 +18,7 @@ export async function verifyPrivateIdeaAdapter(db: DatabaseClient, scope: { tena
 // Generated from public migrations through 0190 (filename order, including assigned gaps and 0160),
 // including generic external-content migrations 0025/0026, by the controlled
 // PGlite digest script. Catalog query below; not a mutable database marker.
-export const privateWebSchemaDigest = "1ac0f072a9f9c75beb8cacc73ea0b38cab9ea11d9fa57c1179088c2fbbe68e8a";
+export const privateWebSchemaDigest = "64f25992466180b20f92051273735aaca4905e8dcd2c2c66a258636b1641f76a";
 export const privateWebReadTables = ["control_identities", "control_role_grants", "workspaces", "control_web_sessions",
   "tenants", "control_idempotency",
   "control_schedules", "control_schedule_occurrences",
@@ -43,7 +43,7 @@ export const privateWebReadTables = ["control_identities", "control_role_grants"
   "control_pipeline_build_publications", "control_codex_result_publications",
   "control_action_inbox", "control_project_settings", "control_improvement_requests",
   "control_update_candidates", "control_update_candidate_decisions",
-  "owner_web_push_subscriptions", "owner_web_push_deliveries"] as const;
+  "owner_web_push_subscriptions", "owner_web_push_deliveries", "control_news_task_proposal_links"] as const;
 const inserts = new Set(["control_web_sessions", "adapter_registry", "projects", "control_manual_project_heads",
   "control_web_project_commands", "audit_events", "control_audit_chain_heads", "control_requests", "control_workflows",
   "control_jobs", "control_web_task_commands", "control_idea_canonical_task_sessions", "control_idea_canonical_task_links",
@@ -57,6 +57,8 @@ inserts.add("control_job_dependencies");
 inserts.add("control_project_settings"); inserts.add("pipeline_unattended_transitions");
 inserts.add("control_improvement_requests"); inserts.add("control_update_candidate_decisions");
 inserts.add("owner_web_push_subscriptions"); inserts.add("owner_web_push_deliveries");
+// 0190: a task proposal may cite a retained news story (append-only provenance).
+inserts.add("control_news_task_proposal_links");
 
 /** Tables whose INSERT grant is column-scoped rather than table-wide. Every
  * listed column must carry INSERT and every unlisted column must not — a

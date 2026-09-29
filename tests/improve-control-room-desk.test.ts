@@ -7,7 +7,7 @@ import { LinearPipelineServiceV1 } from "../src/pipelines/v1";
 import { taskFixture } from "./helpers/web-task";
 import { now } from "./helpers/web-foundation";
 import { ImprovementRequestForm } from "../private-app/app/improve-control-room-workspace";
-import { UpdateCandidatesHome } from "../private-app/app/update-candidates-home";
+import { UpdateCandidatesHome, UpdateCandidatesPanel } from "../private-app/app/update-candidates-home";
 
 const key = new Uint8Array(32).fill(64);
 const template = { name: "Build, check, sign off", description: "Improve the Control Room in one bounded pipeline.",
@@ -105,6 +105,9 @@ test("candidate integrity drift fails closed", async t => {
     summary: "Integrity-bound candidate.", changedAreas: ["desk"],
     testResults: [{ profile: "fast", status: "passed", summary: "Passed.", evidenceDigest: `sha256:${"c".repeat(64)}` }],
     databaseChanges: { kind: "none" }, leadWorkerId: "worker:lead" });
+  // The row guard refuses any edit but an owner decision; tamper beneath it.
+  await assert.rejects(f.db.query("UPDATE control_update_candidates SET summary='tampered'"), /transition rejected/u);
+  await f.db.query("ALTER TABLE control_update_candidates DISABLE TRIGGER control_update_candidates_update_guard");
   await f.db.query("UPDATE control_update_candidates SET summary='tampered'");
   await assert.rejects(f.desk.ready(f.identity), /improvement_desk_integrity_failed/u);
 });
@@ -121,6 +124,24 @@ test("desk UI labels worker selection and keeps deployment inactive", () => {
   assert.match(html, /What should Control Room improve/);
   assert.match(html, /Choose a build, check and sign-off pipeline/);
   assert.match(html, /does not deploy, restart, upgrade the database or publish a release/);
-  const home = renderToStaticMarkup(createElement(UpdateCandidatesHome));
-  assert.match(home, /Update ready/); assert.match(home, /Deploy and restart are not active/);
+  // Attention first: nothing on Home until a candidate waits or the read fails.
+  assert.equal(renderToStaticMarkup(createElement(UpdateCandidatesHome)), "");
+  const panel = (state: Parameters<typeof UpdateCandidatesPanel>[0]["state"], message?: "saved") =>
+    renderToStaticMarkup(createElement(UpdateCandidatesPanel, { state, message, onDecide: () => {}, onRetry: () => {} }));
+  assert.equal(panel({ state: "loading" }), "");
+  assert.equal(panel({ state: "not_configured" }), "", "an installation without the desk raises no alarm");
+  assert.equal(panel({ state: "ready", candidates: [] }), "");
+  assert.match(panel({ state: "unavailable" }), /role="alert">Update candidates are unavailable/);
+  assert.match(panel({ state: "ready", candidates: [] }, "saved"), /Owner decision recorded. No deployment started./);
+  const candidate = { candidateId: "update-candidate:test", projectId: "project:test", improvementRequestId: "improvement:test",
+    pipelineRunId: "pipeline-run:test", baseRevision: "a".repeat(40), candidateRevision: "b".repeat(40),
+    summary: "Adds the owner card.", changedAreas: ["Home"], testResults: [{ profile: "fast" as const,
+      status: "not_run" as const, summary: "Pending.", evidenceDigest: null }], databaseChanges: { kind: "none" as const },
+    leadWorkerId: "worker:lead", state: "ready" as const, version: 1, recordDigest: `sha256:${"e".repeat(64)}`,
+    createdAt: new Date(now).toISOString(), decidedAt: null, startsDeploy: false as const, signedDeployApprovalCreated: false as const };
+  const home = panel({ state: "ready", candidates: [candidate] });
+  assert.match(home, /Update ready/); assert.match(home, /Adds the owner card/); assert.match(home, /fast not run/);
+  assert.match(home, />Accept</); assert.match(home, />Decline</);
+  assert.match(home, /Deploy and restart are not active/);
+  assert.doesNotMatch(home, /deploy now|restart now|install/i, "no control on the card starts a deployment");
 });
