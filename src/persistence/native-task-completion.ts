@@ -8,6 +8,7 @@ import { assertNoSecretMaterial, hmacSha256Tag, sha256Digest } from "../security
 import { NativeResultSubmissionService } from "../completion-gate/v1/native-result-submission";
 import { nativeQualityRequestSchema, type NativeQualityConfiguration, type NativeQualityRequest } from "../completion-gate/v1/native-result-verification";
 import type { SubmittedTaskResultInspectionV1, TaskResultInspectionSourceV1 } from "../completion-gate/v1/task-result-inspection";
+import { deriveProjectEventIntegrityKeyV1, ProjectEventStoreV1, TaskProjectEventWriterV1 } from "../project-events/v1";
 
 const id = z.string().min(3).max(180).regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/), digest = z.string().regex(/^sha256:[a-f0-9]{64}$/);
 const receiptSchema = nativeQualityRequestSchema.extend({ projectId: id, jobId: id, attemptId: id, leaseId: id, nodeId: id,
@@ -31,12 +32,15 @@ const states = { job: jobTransitions, attempt: attemptTransitions, lease: leaseT
 export class NativeTaskCompletionService {
   private readonly submission: NativeResultSubmissionService;
   private readonly key: Uint8Array;
+  private readonly projectEvents: TaskProjectEventWriterV1;
   private lastObserved = Number.NEGATIVE_INFINITY;
   private time() { const now = this.clock(); if (!Number.isSafeInteger(now) || now < this.lastObserved) return deny();
     this.lastObserved = now; return now; }
   constructor(private readonly db: DatabaseClient, config: NativeQualityConfiguration, private readonly clock: () => number = Date.now,
     private readonly inspectionSource?: TaskResultInspectionSourceV1) {
     this.submission = new NativeResultSubmissionService(db, config); this.key = Uint8Array.from(config.integrityKey);
+    this.projectEvents = new TaskProjectEventWriterV1(new ProjectEventStoreV1(db,
+      deriveProjectEventIntegrityKeyV1(config.harnessIntegrityKey), () => new Date(this.clock()).toISOString()));
   }
   private async inspect(tx: DatabaseSession, request: NativeQualityRequest): Promise<SubmittedTaskResultInspectionV1> {
     if (this.inspectionSource) return this.inspectionSource.inspectSubmitted(tx, request.tenantId, request.runId);
@@ -239,6 +243,12 @@ export class NativeTaskCompletionService {
         actorId: "service:native-task-completion", actorType: "service", action: "task.native.completed", targetType: "job", targetId: job.id,
         occurredAt: recordedAt, idempotencyKey: requestDigest,
         safeMetadata: { runId: run.id, attemptId: attempt.id, artifactId: receipt.artifactId, targetDigest: request.targetDigest, contentHash: request.contentHash, grantsExecutionAuthority: false } });
+      const project = (await tx.query<{ workspace_id: string }>(
+        "SELECT workspace_id FROM projects WHERE tenant_id=$1 AND id=$2", [request.tenantId, run.projectId])).rows[0];
+      if (!project) return deny();
+      await this.projectEvents.appendInSession(tx, { tenantId: request.tenantId, workspaceId: project.workspace_id,
+        projectId: run.projectId, subjectId: job.id, action: "task_completed", sourceId: run.id,
+        sourceVersion: "quality-completion-v1", occurredAt: recordedAt });
       current(); return { receipt, replayed: false };
     }, () => { current(); });
     current(); return result;

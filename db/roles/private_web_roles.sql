@@ -71,6 +71,9 @@ GRANT INSERT ON control_web_sessions, adapter_registry, projects, control_manual
   control_policy_decisions, control_project_lifecycle_events,
   control_project_coordinator_heads, control_project_delegation_policies TO control_room_private_web;
 GRANT INSERT ON control_task_model_selections, control_task_declared_scopes TO control_room_private_web;
+GRANT INSERT ON control_project_event_stream_heads, control_project_events TO control_room_private_web;
+GRANT UPDATE (last_sequence,last_event_digest,head_auth_tag,updated_at)
+  ON control_project_event_stream_heads TO control_room_private_web;
 GRANT INSERT ON work_batch_revisions, work_batch_items TO control_room_private_web;
 GRANT INSERT ON work_batch_queue_admissions, work_batch_agent_queue_heads TO control_room_private_web;
 GRANT INSERT ON pipeline_templates, pipeline_runs, pipeline_stage_runs TO control_room_private_web;

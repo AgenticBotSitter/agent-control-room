@@ -360,47 +360,65 @@ async function upgradeFromAppliedPrefix({ database, pending, withoutGrants, newO
   }
 }
 
+// The pending suffix is always the newest migration files, so every rung below
+// names 0107 and 0135 as well as its own stage: a rung that did not would be
+// asserting a pending set the applier never sees. 0107 grants on roles and
+// creates no object, and 0135's object reaches the shared roles through
+// production_table_grants.sql's blanket `ON ALL TABLES` grants rather than a
+// per-table REVOKE, so neither appears in `newObjects`; the 0107 grant
+// convergence itself is asserted against a purpose-built cluster in
+// tests/project-activity-lifecycle-postgres.test.ts, which applies the real
+// role files to its own database and reads the privileges as the server reports
+// them.
+//
 // A database already at S2 (S1 0093, 0100, 0101 and S2 0102 applied) takes
 // S3's queue migration, S4's pipeline migration, S5's agent-review migration,
-// S6's build-publication migration and S7's unattended-advance migration, in
-// that order.
-test("upgrade from S2's applied ledger appends only the agent-queue, pipeline, agent-review, build-publication and unattended-advance migrations", needsPg, () =>
+// 0107's activity grants, S6's build-publication migration, S7's
+// unattended-advance migration and 0135's project settings, in that order.
+test("upgrade from S2's applied ledger appends only the agent-queue, pipeline, agent-review, activity, build-publication, unattended-advance and project-settings migrations", needsPg, () =>
   upgradeFromAppliedPrefix({ database: "cr_prod_upgrade_s2",
     pending: ["_work_batch_agent_queue.sql", "_linear_pipeline_runs.sql", "_agent_review_plans.sql",
-      "_pipeline_build_publications.sql", "_pipeline_unattended_advance.sql"],
+      "_task_project_activity_events.sql", "_pipeline_build_publications.sql",
+      "_pipeline_unattended_advance.sql", "_control_project_settings.sql"],
     withoutGrants: [QUEUE_GRANTS, UNATTENDED_GRANTS, PIPELINE_GRANTS, AGENT_REVIEW_GRANTS, PUBLICATION_GRANTS],
     newObjects: ["work_batch_queue_admissions", "work_batch_agent_queue_heads", "work_batch_effective_queue_admissions",
       "pipeline_templates", "pipeline_runs", "pipeline_stage_runs", "pipeline_ordered_stage_runs", "control_agent_review_plans",
       "control_pipeline_build_publications", ...UNATTENDED_OBJECTS] }));
 
-// A database at main (S3's 0104 applied) takes S4's 0105, S5's 0106, S6's 0108, then S7's 0109.
-test("upgrade from main's applied ledger appends only the pipeline, agent-review, build-publication and unattended-advance migrations", needsPg, () =>
+// A database at main (S3's 0104 applied) takes S4's 0105, S5's 0106, 0107,
+// S6's 0108, S7's 0109 and 0135.
+test("upgrade from main's applied ledger appends only the pipeline, agent-review, activity, build-publication, unattended-advance and project-settings migrations", needsPg, () =>
   upgradeFromAppliedPrefix({ database: "cr_prod_upgrade_main",
-    pending: ["_linear_pipeline_runs.sql", "_agent_review_plans.sql", "_pipeline_build_publications.sql",
-      "_pipeline_unattended_advance.sql"],
+    pending: ["_linear_pipeline_runs.sql", "_agent_review_plans.sql", "_task_project_activity_events.sql",
+      "_pipeline_build_publications.sql", "_pipeline_unattended_advance.sql", "_control_project_settings.sql"],
     withoutGrants: [UNATTENDED_GRANTS, PIPELINE_GRANTS, AGENT_REVIEW_GRANTS, PUBLICATION_GRANTS],
     newObjects: ["pipeline_templates", "pipeline_runs", "pipeline_stage_runs", "pipeline_ordered_stage_runs",
       "control_agent_review_plans", "control_pipeline_build_publications", ...UNATTENDED_OBJECTS] }));
 
-// A database at main plus S4 (0105 applied) takes S5's 0106, S6's 0108, then S7's 0109.
-test("upgrade from main plus S4's applied ledger appends only the agent-review, build-publication and unattended-advance migrations", needsPg, () =>
+// A database at main plus S4 (0105 applied) takes S5's 0106, 0107, S6's 0108,
+// S7's 0109 and 0135.
+test("upgrade from main plus S4's applied ledger appends only the agent-review, activity, build-publication, unattended-advance and project-settings migrations", needsPg, () =>
   upgradeFromAppliedPrefix({ database: "cr_prod_upgrade_s4",
-    pending: ["_agent_review_plans.sql", "_pipeline_build_publications.sql", "_pipeline_unattended_advance.sql"],
+    pending: ["_agent_review_plans.sql", "_task_project_activity_events.sql", "_pipeline_build_publications.sql",
+      "_pipeline_unattended_advance.sql", "_control_project_settings.sql"],
     withoutGrants: [UNATTENDED_GRANTS, AGENT_REVIEW_GRANTS, PUBLICATION_GRANTS],
     newObjects: ["control_agent_review_plans", "control_pipeline_build_publications", ...UNATTENDED_OBJECTS] }));
 
-// A database at main plus S4 and S5 (0106 applied) takes S6's 0108, then S7's 0109.
-test("upgrade from main plus S4 and S5's applied ledger appends only the build-publication and unattended-advance migrations", needsPg, () =>
+// A database at main plus S4 and S5 (0106 applied) is the first that takes
+// 0107's activity grants, then S6's 0108, S7's 0109 and 0135.
+test("upgrade from main plus S4 and S5's applied ledger appends only the activity, build-publication, unattended-advance and project-settings migrations", needsPg, () =>
   upgradeFromAppliedPrefix({ database: "cr_prod_upgrade_s5",
-    pending: ["_pipeline_build_publications.sql", "_pipeline_unattended_advance.sql"],
+    pending: ["_task_project_activity_events.sql", "_pipeline_build_publications.sql",
+      "_pipeline_unattended_advance.sql", "_control_project_settings.sql"],
     withoutGrants: [UNATTENDED_GRANTS, PUBLICATION_GRANTS],
     newObjects: ["control_pipeline_build_publications", ...UNATTENDED_OBJECTS] }));
 
-// A database at main plus S4, S5 and S6 (0108 applied) takes only S7's 0109:
-// no duplicate ledger_order, and a second run is a clean no-op.
-test("upgrade from main plus S4, S5 and S6's applied ledger appends only the unattended-advance migration", needsPg, () =>
+// A database at main plus S4, S5 and 0107 (0108 applied) takes S7's 0109 and
+// 0135: no duplicate ledger_order, and a second run is a clean no-op.
+test("upgrade from main plus S4, S5 and 0107's applied ledger appends only the unattended-advance and project-settings migrations", needsPg, () =>
   upgradeFromAppliedPrefix({ database: "cr_prod_upgrade_s6",
-    pending: ["_pipeline_unattended_advance.sql"], withoutGrants: [UNATTENDED_GRANTS],
+    pending: ["_pipeline_unattended_advance.sql", "_control_project_settings.sql"],
+    withoutGrants: [UNATTENDED_GRANTS],
     newObjects: UNATTENDED_OBJECTS }));
 
 test("tampered history fails closed: altered, deleted-row and forged-digest states", needsPg, async () => {
