@@ -25,7 +25,8 @@ function runRunDigest(runId: string, tag: string, prefix: "sha256" | "hmac-sha25
   return `${prefix}:${hex}`;
 }
 
-export async function webNativeResultFixture(options: { exactRepositorySimulation?: true } = {}) {
+export async function webNativeResultFixture(options: Pick<NonNullable<Parameters<typeof nativeTaskFixture>[0]>,
+  "exactRepositorySimulation" | "database"> = {}) {
   const f = await nativeTaskFixture(options), scope = { tenantId: binding.tenantId, workspaceId: "workspace:test" };
   await f.db.query("INSERT INTO workspaces(id,tenant_id,display_name) VALUES('workspace:test','tenant:test','Result fixture')");
   await new SecurityStore(f.db).bootstrapOwner({ tenantId: scope.tenantId, provider: trust.issuer, subject: "test-owner",
