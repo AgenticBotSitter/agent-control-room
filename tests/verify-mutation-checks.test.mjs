@@ -72,6 +72,14 @@ async function interruptDuringMutation(root, path, signal, verifierPath = verifi
       // nested inside a real mutation-check run, the whole CI job) far past this
       // test's own failure.
       child.kill(signal);
+      // The marker was never observed, so the verifier never reached the mutated
+      // test command and never spawned its detached grandchild -- there is nothing
+      // for a forceful kill to leak here. If the intended signal doesn't finish the
+      // job soon (the verifier can be stuck in a slow synchronous git call under a
+      // loaded CI runner), escalate so this process's "close" event -- and the
+      // whole CI job -- can't hang indefinitely on it.
+      const forceKill = setTimeout(() => child.kill("SIGKILL"), 5_000);
+      child.once("close", () => clearTimeout(forceKill));
       rejectDone(new Error(`verifier never reached ${marker}: ${transcript}`));
     }, 20_000);
     const observe = data => {
