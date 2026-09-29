@@ -136,6 +136,7 @@
 .private-result-content { margin-top: 1.5rem; border-top: 1px solid var(--border); }
 .private-result-content .private-actions { align-items: center; justify-content: space-between; }
 .private-result-content textarea { display: block; width: 100%; min-height: 20rem; resize: vertical; font: inherit; color: var(--text); padding: 1rem; background: var(--surface-2); border: 1px solid var(--border); border-radius: .5rem; }
+.private-code-diff { max-height: 32rem; overflow: auto; white-space: pre; padding: 1rem; color: var(--text); background: var(--surface-2); border: 1px solid var(--border); border-radius: .5rem; }
 
 /* ---------------------------------------------------------------- *
  * Shared design system
