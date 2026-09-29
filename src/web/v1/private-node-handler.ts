@@ -33,7 +33,7 @@ export type PrivateBuiltHandler = (request: Request) => Promise<Response> | Resp
 // mismatch is answered with the full representation. It is relayed so an
 // unchanged protected read can be answered with 304. It is deliberately added
 // alone; no other header is admitted, and no cache directive is changed.
-const forwarded = new Set(["accept", "accept-language", "origin", "sec-fetch-site",
+const forwarded = new Set(["accept", "accept-language", "origin", "sec-fetch-site", "last-event-id",
   "content-type", "idempotency-key", "x-requested-with", "rsc", "next-router-state-tree", "next-router-prefetch",
   "next-router-segment-prefetch", "next-url", "if-none-match"]);
 class RequestFailure extends Error { constructor(readonly status: number) { super("private_request_rejected"); } }
