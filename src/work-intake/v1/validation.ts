@@ -1,7 +1,8 @@
 import { assertNoSecretMaterial } from "../../security";
 import { parseStrictJsonObjectV1 } from "../../project-coordination/v1/strict-json";
 import { ProjectCoordinationErrorV1 } from "../../project-coordination/v1/errors";
-import { workBatchProposalDigestV1, workBatchProposalSchemaV1, type WorkBatchProposalV1 } from "./schemas";
+import { workBatchProposalSchemaV1, type WorkBatchProposalV1 } from "./schemas";
+import { workBatchProposalDigestV1 } from "./digest";
 
 export type WorkBatchRejectionCodeV1 = "content_invalid" | "content_duplicate_key" | "content_over_limit"
   | "proposal_schema_mismatch" | "proposal_limit_exceeded" | "proposal_cross_project"
