@@ -42,7 +42,8 @@ import { WebProjectService } from "../src/web/v1/project-service.ts";
 import { WebTaskService } from "../src/web/v1/task-service.ts";
 import { captureTaskModelCatalogV1 } from "../src/web/v1/task-model-selection.ts";
 import { createAccessVerifier } from "../src/web/v1/access-verifier.ts";
-import { privateWebSchemaDigest, readPrivateWebSchemaDigest, verifyAgentReviewerDatabase } from "../src/web/v1/private-database-preflight.ts";
+import { privateWebSchemaDigest, readPrivateWebSchemaDigest, verifyAgentReviewerDatabase, verifyPrivateDatabase,
+  verifyTaskCoordinatorDatabase } from "../src/web/v1/private-database-preflight.ts";
 import { bindPrivatePgPool } from "../src/web/v1/private-pg-database.ts";
 import { privatePgOptions } from "../src/web/v1/private-pg-options.ts";
 import { now as webNow, request as webRequest, trust as webTrust } from "./helpers/web-foundation.ts";
@@ -949,6 +950,12 @@ test("S7 unattended consent, advance, sweep and history run on the Mac-local pro
     const scope={tenantId:own.tenantId,workspaceId:own.workspaceId}, projectId=own.project.projectId;
     const runId=own.pipeline.runId, buildJob=own.pipeline.jobIds[0];
     await seedAdvancePolicy(client,own,"policy:advance",at);
+    // Both logins' startup preflights accept the real installed grants,
+    // including S7's column grants and its two tables.
+    const preflightScope={tenantId:own.tenantId,workspaceId:own.workspaceId,ownerIdentityId:"identity:web-advance",
+      issuer:webTrust.issuer};
+    await verifyPrivateDatabase(web.db,web.config,preflightScope,Date.now(),{nativeQueue:true});
+    await verifyTaskCoordinatorDatabase(coordinator.db,coordinator.config,preflightScope,Date.now(),{nativeQueue:true});
     const identity=createAccessVerifier(webTrust)(webRequest(),webNow);
     const view=await new LinearPipelineServiceV1(web.db,scope,key,{assertCurrent:()=>true,isAcceptedResultCurrent:()=>false},
       ()=>webNow).view(identity,projectId,runId);
