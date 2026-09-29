@@ -104,10 +104,12 @@ test("only the exact server-created agent review plan can append a review", asyn
   const f = await fixture("critical"); t.after(() => void f.db.close());
   const bound = (await f.db.query<Record<string, unknown>>(
     "SELECT * FROM control_agent_review_plans WHERE id=$1", [f.plan.planId])).rows[0]!;
-  for (const [column, value] of [["reviewer_job_id", f.pipeline.jobIds[0]], ["reviewer_run_id", "run:wrong"],
-    ["project_id", "project:wrong"]] as const) {
-    const changed = { ...bound, id: `agent-review-plan:wrong-${column}`, review_id: `review:wrong-${column}`,
-      finding_id: `finding:wrong-${column}`, [column]: value };
+  // A plan cannot move the review off the check stage: not onto the producer's
+  // own build job, and not forward onto the signoff stage's job.
+  for (const [column, value] of [["reviewer_job_id", f.pipeline.jobIds[0]], ["reviewer_job_id", f.pipeline.jobIds[2]],
+    ["producer_job_id", f.pipeline.jobIds[1]], ["reviewer_run_id", "run:wrong"], ["project_id", "project:wrong"]] as const) {
+    const changed = { ...bound, id: `agent-review-plan:wrong-${column}-${value}`, review_id: `review:wrong-${column}-${value}`,
+      finding_id: `finding:wrong-${column}-${value}`, [column]: value };
     await assert.rejects(f.db.query(`INSERT INTO control_agent_review_plans(id,tenant_id,project_id,pipeline_run_id,
       producer_job_id,reviewer_job_id,reviewer_run_id,target_id,target_digest,acceptance_profile_id,
       acceptance_profile_digest,review_id,finding_id,reviewer,plan_digest,auth_tag,created_at)

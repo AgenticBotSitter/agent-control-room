@@ -10,7 +10,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join, resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { tmpdir } from "node:os";
-import { Client } from "pg";
+import { Client, Pool } from "pg";
 import { applyMigrations, readSchemaDigest } from "../deploy/postgres/apply-migrations.mjs";
 // The shared disposable-cluster teardown. `.mjs` because
 // `scripts/ops/verify-database-backup.mjs` imports it with bare `node`, and a
@@ -37,7 +37,9 @@ import { WebProjectService } from "../src/web/v1/project-service.ts";
 import { WebTaskService } from "../src/web/v1/task-service.ts";
 import { captureTaskModelCatalogV1 } from "../src/web/v1/task-model-selection.ts";
 import { createAccessVerifier } from "../src/web/v1/access-verifier.ts";
-import { privateWebSchemaDigest, readPrivateWebSchemaDigest } from "../src/web/v1/private-database-preflight.ts";
+import { privateWebSchemaDigest, readPrivateWebSchemaDigest, verifyAgentReviewerDatabase } from "../src/web/v1/private-database-preflight.ts";
+import { bindPrivatePgPool } from "../src/web/v1/private-pg-database.ts";
+import { privatePgOptions } from "../src/web/v1/private-pg-options.ts";
 import { now as webNow, request as webRequest, trust as webTrust } from "./helpers/web-foundation.ts";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -710,7 +712,7 @@ test("agent-review down migration removes every surviving direct privilege", nee
 // One installation tenant with a server-created agent review plan: the build
 // stage's target, the check stage's succeeded run, and the plan binding them.
 // Every id carries the suffix, so a second tenant can live in the same database.
-async function seedAgentReviewTenant(client,suffix,reviewKey,checkpoints,at){
+async function seedAgentReviewTenant(client,suffix,reviewKey,checkpoints,at,planDb=client){
   const tenantId=`tenant:review-${suffix}`, workspaceId=`workspace:review-${suffix}`;
   await client.query("INSERT INTO tenants(id,display_name) VALUES($1,'Review probe')",[tenantId]);
   await client.query("INSERT INTO workspaces(id,tenant_id,display_name) VALUES($1,$2,'Review probe')",[workspaceId,tenantId]);
@@ -765,7 +767,7 @@ async function seedAgentReviewTenant(client,suffix,reviewKey,checkpoints,at){
     `sha256:${"1".repeat(64)}`,`sha256:${"2".repeat(64)}`,`hmac-sha256:${"3".repeat(64)}`,at]);
   const routes=[{nodeId:`node:check:${suffix}`,executorId:`worker:check:${suffix}`,capabilityProbeId:"harness.claude-code.local.v1",
     maxConcurrentTasks:1,requiredScratchBytes:0,leaseSeconds:60}];
-  const planner=new AgentReviewServiceV1(client,tenantId,reviewKey,checkpoints,routes,()=>at);
+  const planner=new AgentReviewServiceV1(planDb,tenantId,reviewKey,checkpoints,routes,()=>at);
   const plan=await planner.createPlan({projectId:project.projectId,pipelineRunId:pipeline.runId,producerJobId:pipeline.jobIds[0],
     reviewerJobId:pipeline.jobIds[1],reviewerRunId:`run:review-${suffix}`,targetId:targetRecord.id});
   const state=async()=> (await client.query("SELECT revision,record_count,state_digest,state_auth_tag FROM control_completion_gate_integrity WHERE tenant_id=$1",[tenantId])).rows[0];
@@ -874,6 +876,61 @@ test("real reviewer login cannot replay the three raw authority attacks", needsP
     evidenceDigests:[sha256Digest("probe evidence")]}),/existing record integrity rejected/u);
   assert.deepEqual(await state(),beforeDrift);
   assert.deepEqual(await checkpoints.read("completion-gate:tenant:review-probe"),checkpointBeforeDrift);
+});
+
+// Every S5 statement runs on the Mac-local login that executes it in
+// production (mac-local-default-task-provider.ts, codex-results.ts,
+// native-result-submission.ts), provisioned by the real narrow-role installer
+// with the real role files, and with the private pool's session settings.
+test("S5 agent-review reads and writes run on the Mac-local production logins", needsPg, async () => {
+  const database="cr_agent_review_logins";
+  await freshDatabase(database);
+  const admin=target(database), client=postgresDatabase(admin);
+  await applyMigrations({target:admin,bootstrapTarget:bootstrapTarget(database),migrateTarget:migrateTarget(database),
+    rootDir:ROOT,env:{...process.env,...passwords}});
+  const logins=["control_room_web","control_room_coordinator","control_room_results","control_room_publisher",
+    "control_room_agent_reviewer_login","control_room_queue_worker"];
+  const loginPasswords=Object.fromEntries(logins.map((name,index)=>[name,`${index}`.repeat(40)]));
+  // The installer's fixed queue shape assumes the cluster superuser is named
+  // postgres, as on the documented Mac cluster (see the journey test below).
+  if (!(await query(admin,"SELECT 1 FROM pg_roles WHERE rolname='postgres'")).rows.length)
+    await query(admin,"CREATE ROLE postgres SUPERUSER LOGIN");
+  const provisioner=new Client(target(database,"postgres")); await provisioner.connect();
+  try { await provisionMacLocalNarrowRolesV1(provisioner,loginPasswords); } finally { await provisioner.end(); }
+  const pools=[];
+  const login=name=>{
+    const config={host:"127.0.0.1",port:PORT,database,username:name,password:loginPasswords[name],majorVersion:17};
+    const bound=bindPrivatePgPool(new Pool({...privatePgOptions(config),host:socket}));
+    pools.push(bound); return {config,db:bound.client};
+  };
+  try {
+    const coordinator=login("control_room_coordinator"), reviewer=login("control_room_agent_reviewer_login");
+    const results=login("control_room_results"), publisher=login("control_room_publisher");
+    const at=new Date(webNow).toISOString(), reviewKey=new Uint8Array(32).fill(54);
+    const checkpoints=new InMemoryRollbackCheckpointStoreV1({testOnly:true});
+    // The coordinator login creates the plan (the plan-binding trigger runs as it).
+    const own=await seedAgentReviewTenant(client,"logins",reviewKey,checkpoints,at,coordinator.db);
+    await client.query("INSERT INTO work_intake_tenant_binding(singleton,tenant_id) VALUES(true,$1)",[own.tenantId]);
+    // The reviewer's startup preflight accepts the real provisioned database.
+    await verifyAgentReviewerDatabase(reviewer.db,reviewer.config,{tenantId:own.tenantId,workspaceId:own.workspaceId,
+      ownerIdentityId:"identity:web-logins",issuer:webTrust.issuer},Date.now(),{nativeQueue:true});
+    const committed=await new AgentReviewServiceV1(reviewer.db,own.tenantId,reviewKey,checkpoints,own.routes,()=>at)
+      .record({planId:own.plan.planId,decision:"changes_requested",assessedRisk:"medium",
+        evidenceDigests:[sha256Digest("probe evidence")],findingStatementDigest:sha256Digest("probe finding")});
+    assert.equal(committed.review.effectiveRisk,"critical");
+    assert.deepEqual(committed.review.findingIds,[own.plan.findingId]);
+    await own.gate.verifyProvisionedTenantV1(own.tenantId);
+    // The producer-principal reads S5 added to result publication and submission.
+    const attemptId="attempt:review-logins", checkJob=own.pipeline.jobIds[1];
+    for (const [name,db] of [["coordinator",coordinator.db],["results",results.db],["publisher",publisher.db]]) {
+      assert.deepEqual((await db.query("SELECT job_id,node_id,worker_id FROM control_attempts WHERE tenant_id=$1 AND id=$2",
+        [own.tenantId,attemptId])).rows,[{job_id:checkJob,node_id:"node:check:logins",worker_id:"worker:check:logins"}],name);
+      assert.equal((await db.query("SELECT model,effort FROM control_task_model_selections WHERE tenant_id=$1 AND project_id=$2 AND job_id=$3",
+        [own.tenantId,own.project.projectId,checkJob])).rows.length,1,name);
+    }
+  } finally {
+    await Promise.all(pools.map(pool=>pool.close()));
+  }
 });
 
 // The reviewer login serves one installation. A second tenant in the same
