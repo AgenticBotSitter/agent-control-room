@@ -44,12 +44,12 @@ const forgeCandidate = (request: { requestId: string; pipelineRunId: string }, i
     candidate_revision,summary,changed_areas,test_results,database_changes,lead_worker_id,state,version,record_digest,
     auth_tag,created_at,decided_at) VALUES($1,$2,$3,$4,$5,$6,$7,'forged','["x"]','[]','{"kind":"none"}','worker:lead',$8,1,$9,$10,now(),$11)`,
   [scope.tenantId, id, ids.project, request.requestId, request.pipelineRunId, "a".repeat(40), "b".repeat(40), state,
-    DIGEST, TAG, decidedAt]] as const;
+    DIGEST, TAG, decidedAt]] as [string, unknown[]];
 const forgeDecision = (candidateId: string, version: number, recordDigest: string, owner: string, key: string) => [
   `INSERT INTO control_update_candidate_decisions(tenant_id,id,candidate_id,project_id,candidate_version,
     candidate_record_digest,decision,owner_identity_id,idempotency_key,decision_digest,auth_tag,decided_at)
     VALUES($1,$2,$3,$4,$5,$6,'accept',$7,$8,$9,$10,now())`,
-  [scope.tenantId, `update-decision:${key}`, candidateId, ids.project, version, recordDigest, owner, key, DIGEST, TAG]] as const;
+  [scope.tenantId, `update-decision:${key}`, candidateId, ids.project, version, recordDigest, owner, key, DIGEST, TAG]] as [string, unknown[]];
 const template = { name: "Improve and check", description: "Build, independently check and sign off.", stages: [
   { ordinal: 0, stageKind: "build", role: "builder", description: "Build.", requiredCapability: "code.change",
     workerId: "worker:build", workerKind: "codex", nodeId: "node:build", selectionKey: "build.standard",
