@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 import {
   checkMigrationNumbers,
   findDuplicateMigrationNumbers,
+  listMigrationNames,
   migrationNumber,
 } from "../scripts/ci/check-migration-numbers.mjs";
 
@@ -22,6 +23,27 @@ function copyOfRealMigrations() {
   mkdirSync(join(root, "db"), { recursive: true });
   cpSync(join(repositoryRoot, "db/migrations"), join(root, "db/migrations"), { recursive: true });
   return root;
+}
+
+// Fixtures are numbered ABOVE every number the real tree uses, and the ceiling is read
+// from the tree rather than hardcoded. Hardcoding a "currently free" number is a test
+// that goes red the day a legitimate migration claims it — and 0100/0101 are exactly
+// the numbers two open pull requests are already adding, so a fixture built on them
+// would break on the first honest change. Reading the ceiling keeps these fixtures
+// colliding with each other and with nothing real, however far the tree grows.
+function ceilingMigrationNumber() {
+  const numbers = listMigrationNames(join(repositoryRoot, "db/migrations"))
+    .map(migrationNumber)
+    .filter(number => number !== null)
+    .map(Number);
+  assert.ok(numbers.length > 0, "the real tree must contain numbered migrations");
+  return Math.max(...numbers);
+}
+
+function freeNumberFixture(root, offset) {
+  const number = String(ceilingMigrationNumber() + offset).padStart(4, "0");
+  assert.match(number, /^\d{4,}$/u);
+  return number;
 }
 
 function addMigration(root, name) {
@@ -96,12 +118,13 @@ test("the check refuses a duplicate number in a copy of the real tree, and names
 test("the check refuses every colliding pair at once, not only the first", () => {
   const root = copyOfRealMigrations();
   try {
-    addMigration(root, "0100_first_fixture.sql");
-    addMigration(root, "0100_second_fixture.sql");
-    addMigration(root, "0100_third_fixture.sql");
+    const number = freeNumberFixture(root, 1);
+    addMigration(root, `${number}_first_fixture.sql`);
+    addMigration(root, `${number}_second_fixture.sql`);
+    addMigration(root, `${number}_third_fixture.sql`);
     const result = checkMigrationNumbers({ root });
     assert.equal(result.ok, false);
-    assert.deepEqual(result.duplicates.map(entry => entry.number), ["0100"]);
+    assert.deepEqual(result.duplicates.map(entry => entry.number), [number]);
     assert.equal(result.duplicates[0].files.length, 3);
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
@@ -111,13 +134,14 @@ test("two independently duplicated numbers are both reported, not just the first
   // finding, which is the shape a "report everything" guard usually decays into.
   const root = copyOfRealMigrations();
   try {
-    addMigration(root, "0100_first_fixture.sql");
-    addMigration(root, "0100_second_fixture.sql");
-    addMigration(root, "0101_third_fixture.sql");
-    addMigration(root, "0101_fourth_fixture.sql");
+    const first = freeNumberFixture(root, 1), second = freeNumberFixture(root, 2);
+    addMigration(root, `${first}_third_fixture.sql`);
+    addMigration(root, `${first}_fourth_fixture.sql`);
+    addMigration(root, `${second}_fifth_fixture.sql`);
+    addMigration(root, `${second}_sixth_fixture.sql`);
     const result = checkMigrationNumbers({ root });
     assert.equal(result.ok, false);
-    assert.deepEqual(result.duplicates.map(entry => entry.number), ["0100", "0101"],
+    assert.deepEqual(result.duplicates.map(entry => entry.number), [first, second],
       "a second, unrelated collision must not be swallowed by the first");
     assert.equal(result.duplicates[0].files.length, 2);
     assert.equal(result.duplicates[1].files.length, 2);
@@ -130,13 +154,14 @@ test("a colliding non-SQL file in the real tree is refused, not skipped by exten
   // the check stayed green, and a human would still read it as a duplicate.
   const root = copyOfRealMigrations();
   try {
-    addMigration(root, "0100_real_fixture.sql");
-    writeFileSync(join(root, "db/migrations/0100_notes.md"), "notes\n");
+    const number = freeNumberFixture(root, 1);
+    addMigration(root, `${number}_real_fixture.sql`);
+    writeFileSync(join(root, `db/migrations/${number}_notes.md`), "notes\n");
     const result = checkMigrationNumbers({ root });
     assert.equal(result.ok, false, "an extension must not buy a way around the check");
     assert.deepEqual(
       result.duplicates,
-      [{ number: "0100", files: ["0100_notes.md", "0100_real_fixture.sql"] }],
+      [{ number, files: [`${number}_notes.md`, `${number}_real_fixture.sql`] }],
       "the pair is a collision whichever extension one of them carries",
     );
   } finally { rmSync(root, { recursive: true, force: true }); }
