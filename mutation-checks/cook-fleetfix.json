@@ -1,0 +1,58 @@
+[
+  {
+    "file": "db/roles/fleet_gateway_roles.sql",
+    "find": "  fleet_result_reviews TO control_room_private_web;",
+    "replace": "  fleet_result_reviews TO control_room_private_web;\nGRANT INSERT ON fleet_result_reviews TO control_room_private_web;",
+    "test": "node --import tsx --test --test-name-pattern \"owner decision tables\" tests/fleet-connector.test.ts",
+    "why": "the ordinary web login cannot write an owner decision"
+  },
+  {
+    "file": "db/roles/fleet_gateway_roles.sql",
+    "find": "  fleet_worker_credentials, fleet_worker_presence TO control_room_fleet_gateway;",
+    "replace": "  fleet_worker_credentials, fleet_worker_presence, fleet_enrollment_redemptions TO control_room_fleet_gateway;",
+    "test": "node --import tsx --test --test-name-pattern \"owner decision tables\" tests/fleet-connector.test.ts",
+    "why": "the gateway cannot manufacture an enrollment redemption by direct SQL"
+  },
+  {
+    "file": "db/migrations/0141_fleet_owner_authority.sql",
+    "find": "    IF redemption.client_nonce_digest<>p_client_nonce_digest\n      OR redemption.credential_digest<>p_credential_digest THEN RETURN; END IF;",
+    "replace": "    IF redemption.credential_digest<>p_credential_digest THEN RETURN; END IF;",
+    "test": "node --import tsx --test --test-name-pattern \"lost enrollment response\" tests/fleet-connector.test.ts",
+    "why": "an enrollment replay remains bound to the original client nonce"
+  },
+  {
+    "file": "scripts/fleet/connector.mjs",
+    "find": "  const secret = pending?.secret ?? newSecret();",
+    "replace": "  const secret = newSecret();",
+    "test": "node --import tsx --test --test-name-pattern \"lost enrollment response\" tests/fleet-connector.test.ts",
+    "why": "a retry reuses the pending credential whose digest the server committed"
+  },
+  {
+    "file": "src/fleet/v1/gateway-http.ts",
+    "find": "!tick(global[kind], now, globalLimit[kind]) || !tick(state, now, perIp[kind])",
+    "replace": "false || !tick(state, now, perIp[kind])",
+    "test": "node --import tsx --test --test-name-pattern \"global limit\" tests/fleet-connector.test.ts",
+    "why": "unauthenticated traffic is bounded globally across client addresses"
+  },
+  {
+    "file": "src/fleet/v1/gateway-http.ts",
+    "find": "|| !tick(state, now, perIp[kind]) || active >= maxConcurrent",
+    "replace": "|| false || active >= maxConcurrent",
+    "test": "node --import tsx --test --test-name-pattern \"oversized and rate-limited\" tests/fleet-connector.test.ts",
+    "why": "unauthenticated traffic is bounded per client address"
+  },
+  {
+    "file": "src/fleet/v1/gateway-http.ts",
+    "find": "|| active >= maxConcurrent)",
+    "replace": "|| false)",
+    "test": "node --import tsx --test --test-name-pattern \"caps concurrent\" tests/fleet-connector.test.ts",
+    "why": "pre-authentication database work has a global concurrency ceiling"
+  },
+  {
+    "file": "src/fleet/v1/gateway-http.ts",
+    "find": "{ enroll: 4 * 1024, small: 32 * 1024,",
+    "replace": "{ enroll: 64 * 1024, small: 32 * 1024,",
+    "test": "node --import tsx --test --test-name-pattern \"oversized and rate-limited\" tests/fleet-connector.test.ts",
+    "why": "the unauthenticated enrollment body is capped at 4 KiB"
+  }
+]

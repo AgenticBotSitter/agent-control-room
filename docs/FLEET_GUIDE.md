@@ -30,6 +30,10 @@ readable only by you). The key renews itself every few weeks while `run` is goin
 
 - *The code was refused:* it was already used, cancelled, or more than 10
   minutes old. Make a new one.
+- *The network dropped during join:* run the same join command again within
+  the code's 10-minute lifetime. The pending credential file keeps the same
+  secret and client nonce, so Control Room returns the already-created worker
+  instead of creating another one. A different machine still cannot reuse it.
 - *A machine is lost or you are unsure about it:* open its **Details** and choose
   **Remove**. It stops working at once. Anything it was doing goes back to the
   queue when its time runs out; nothing is marked done.
@@ -97,4 +101,14 @@ The connector talks to the **fleet gateway**, a small service on the Control
 Room computer: `pnpm fleet:gateway <config.json>`. It listens on this computer
 only (`127.0.0.1`); publish it through Tailscale Serve or your tunnel. Its
 config names its own database login (`control_room_fleet`), which can only do
-fleet work. Workers never see that login.
+fleet work. Owner enrollment, offer, review and revocation records use a
+different protected login in `control_room_fleet_owner_authority`; the normal
+web and gateway logins have no direct write grant on those records. Workers
+never see either login.
+
+The unauthenticated join endpoint accepts at most 4 KiB, defaults to 8 attempts
+per client address and 80 attempts total per minute, and shares a 16-request
+pre-authentication concurrency ceiling with credential checks. Rejections happen
+before a request body or database lookup. Because the gateway binds to loopback,
+it accepts `CF-Connecting-IP` or the first `X-Forwarded-For` address only from
+that loopback proxy; a non-loopback peer cannot supply its own rate-limit identity.
