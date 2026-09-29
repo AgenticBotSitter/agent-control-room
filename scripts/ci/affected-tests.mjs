@@ -11,6 +11,11 @@ const documentationPath = /^docs\//;
 const documentationReadPattern = /["'](docs\/[^"'\\]+)["']/g;
 const postgresTestMarker = /(?:requiresRealPostgres|\bPG_BIN\b|\binitdb\b|\bpg_ctl\b|CONTROL_ROOM_PG17_UPGRADE_REHEARSAL|CONTROL_ROOM_PG_CONCURRENCY_GATE|CONTROL_ROOM_TEST_PG_URL_)/;
 const squawkTestMarker = /\bsquawk\b/iu;
+// This list is deliberately small. Each entry is an owner-attended Mac-only
+// rehearsal that cannot execute in GitHub Actions; its skip is logged below.
+const skippedTestExemptions = new Map([
+  ["tests/mac-local-pg17-rehearsal.test.mjs", "requires an owner-attended Mac"],
+]);
 
 function normalized(value) {
   return value.split(sep).join("/").replace(/^\.\//, "");
@@ -166,13 +171,16 @@ export function affectedTestCommands(result, tests, repositoryRoot = process.cwd
     ...(needsVpsBuild ? [["pnpm", ["build"]]] : []),
     ...(needsDemoBuild ? [["pnpm", ["run", "build:demo"]]] : []),
   ];
-  const pgTests = postgresTests(result, tests, repositoryRoot);
-  const nonPgTests = tests.filter(test => !pgTests.includes(test));
+  const exemptTests = tests.filter(test => skippedTestExemptions.has(test));
+  const guardedTests = tests.filter(test => !skippedTestExemptions.has(test));
+  const pgTests = postgresTests(result, guardedTests, repositoryRoot);
+  const nonPgTests = guardedTests.filter(test => !pgTests.includes(test));
   return [...preparation,
     ...(nonPgTests.length > 0 ? [nodeTestCommand(nonPgTests, repositoryRoot)] : []),
-    // Inspect a dedicated TAP stream: unrelated, intentional skips must not
-    // obscure a database-precondition skip in the selected PostgreSQL tests.
-    ...(pgTests.length > 0 ? [nodeTestCommand(pgTests, repositoryRoot)] : [])];
+    // Keep PostgreSQL tests in a dedicated TAP stream so they retain their
+    // database environment without leaking it to ordinary tests.
+    ...(pgTests.length > 0 ? [nodeTestCommand(pgTests, repositoryRoot)] : []),
+    ...exemptTests.map(test => nodeTestCommand([test], repositoryRoot))];
 }
 
 export function requiresPostgres(result, tests, repositoryRoot = process.cwd()) {
@@ -206,25 +214,33 @@ export function runAffectedTests(result, tests, repositoryRoot, execute = execut
     console.error("Selected test plan requires PostgreSQL 17 binaries, but PG_BIN does not contain initdb, pg_ctl, postgres, and psql.");
     return 1;
   }
+  const guardedTests = tests.filter(test => !skippedTestExemptions.has(test));
+  const pgTests = postgresTests(result, guardedTests, repositoryRoot);
+  const testCommands = [
+    ...(guardedTests.filter(test => !pgTests.includes(test)).length > 0
+      ? [{ tests: guardedTests.filter(test => !pgTests.includes(test)), environment: withoutPostgresTestEnvironment(), exempt: false }] : []),
+    ...(pgTests.length > 0 ? [{ tests: pgTests, environment: process.env, exempt: false }] : []),
+    ...tests.filter(test => skippedTestExemptions.has(test)).map(test => ({ tests: [test], environment: withoutPostgresTestEnvironment(), exempt: true })),
+  ];
   const commands = affectedTestCommands(result, tests, repositoryRoot);
-  const hasPostgresTestCommand = postgresTests(result, tests, repositoryRoot).length > 0;
+  const preparationCount = commands.length - testCommands.length;
   for (const [index, [command, arguments_]] of commands.entries()) {
-    const isPostgresTestCommand = hasPostgresTestCommand && index === commands.length - 1;
-    if (isPostgresTestCommand) {
-      const execution = executeCapturingOutput(command, arguments_, repositoryRoot, process.env);
-      const status = typeof execution === "number" ? execution : execution.status;
+    if (index < preparationCount) {
+      const status = execute(command, arguments_, repositoryRoot, withoutPostgresTestEnvironment());
       if (status !== 0) return status;
-      if (hasSkippedTests(typeof execution === "number" ? "" : execution.output)) {
-        console.error("Selected PostgreSQL test plan reported skipped tests; database preconditions must run or fail, never skip green.");
-        return 1;
-      }
       continue;
     }
-    // The PGDG lane exports its database settings at job scope. Do not let an
-    // unrelated selected test take an optional database-only branch merely
-    // because this invocation also contains a PostgreSQL-marked test.
-    const status = execute(command, arguments_, repositoryRoot, withoutPostgresTestEnvironment());
+    const testCommand = testCommands[index - preparationCount];
+    if (testCommand.exempt) {
+      console.log(`Allowing skipped test exemption: ${testCommand.tests[0]} — ${skippedTestExemptions.get(testCommand.tests[0])}`);
+    }
+    const execution = executeCapturingOutput(command, arguments_, repositoryRoot, testCommand.environment);
+    const status = typeof execution === "number" ? execution : execution.status;
     if (status !== 0) return status;
+    if (!testCommand.exempt && hasSkippedTests(typeof execution === "number" ? "" : execution.output)) {
+      console.error("Selected test plan reported skipped tests; merge-gated tests must run or fail unless explicitly exempted.");
+      return 1;
+    }
   }
   return 0;
 }

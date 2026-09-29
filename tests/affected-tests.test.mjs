@@ -156,6 +156,38 @@ test("a positive skip count for a selected PostgreSQL plan fails the lane", () =
   } finally { rmSync(root, { recursive: true }); }
 });
 
+test("an unmarked env-gated test cannot skip to a green merge-gated lane", () => {
+  const root = fixture({
+    "tests/unset-env.test.mjs": "import test from 'node:test'; test('gate', { skip: !process.env.UNRELATED_GATE }, () => {});",
+  });
+  try {
+    assert.equal(runAffectedTests(["tests/unset-env.test.mjs"], ["tests/unset-env.test.mjs"], root,
+      () => 0, () => true, () => ({ status: 0, output: "# skipped 1\n" })), 1);
+  } finally { rmSync(root, { recursive: true }); }
+});
+
+test("an explicitly exempt skipped test passes and prints its reason", () => {
+  const root = fixture({ "tests/mac-local-pg17-rehearsal.test.mjs": "import test from 'node:test'; test('gate', { skip: true }, () => {});" });
+  const messages = [], originalLog = console.log;
+  console.log = message => messages.push(message);
+  try {
+    assert.equal(runAffectedTests(["tests/mac-local-pg17-rehearsal.test.mjs"], ["tests/mac-local-pg17-rehearsal.test.mjs"], root,
+      () => 0, () => true, () => ({ status: 0, output: "# skipped 1\n" })), 0);
+    assert.match(messages.join("\n"), /mac-local-pg17-rehearsal\.test\.mjs.*requires an owner-attended Mac/u);
+  } finally {
+    console.log = originalLog;
+    rmSync(root, { recursive: true });
+  }
+});
+
+test("a zero skip count remains green", () => {
+  const root = fixture({ "tests/no-skip.test.mjs": "import test from 'node:test'; test('runs', () => {});" });
+  try {
+    assert.equal(runAffectedTests(["tests/no-skip.test.mjs"], ["tests/no-skip.test.mjs"], root,
+      () => 0, () => true, () => ({ status: 0, output: "# skipped 0\n" })), 0);
+  } finally { rmSync(root, { recursive: true }); }
+});
+
 test("PostgreSQL settings are scoped to the selected PostgreSQL subprocess", () => {
   const root = fixture({
     "tests/normal.test.mjs": "",
@@ -164,20 +196,16 @@ test("PostgreSQL settings are scoped to the selected PostgreSQL subprocess", () 
   const original = process.env.CONTROL_ROOM_PG_CONCURRENCY_GATE;
   process.env.CONTROL_ROOM_PG_CONCURRENCY_GATE = "1";
   const environments = [];
-  let postgresEnvironment;
   try {
     assert.equal(runAffectedTests(["tests/normal.test.mjs", "tests/postgres.test.mjs"],
       ["tests/normal.test.mjs", "tests/postgres.test.mjs"], root,
+      () => 0, () => true,
       (_command, _arguments, _root, environment) => {
         environments.push(environment);
-        return 0;
-      }, () => true,
-      (_command, _arguments, _root, environment) => {
-        postgresEnvironment = environment;
         return { status: 0, output: "" };
       }), 0);
     assert.equal(environments[0].CONTROL_ROOM_PG_CONCURRENCY_GATE, undefined);
-    assert.equal(postgresEnvironment.CONTROL_ROOM_PG_CONCURRENCY_GATE, "1");
+    assert.equal(environments[1].CONTROL_ROOM_PG_CONCURRENCY_GATE, "1");
   } finally {
     if (original === undefined) delete process.env.CONTROL_ROOM_PG_CONCURRENCY_GATE;
     else process.env.CONTROL_ROOM_PG_CONCURRENCY_GATE = original;
@@ -196,15 +224,18 @@ test("a selected migration test uses the pinned Squawk runner from migration-lin
 
 test("the runner executes every planned ALL command in order", () => {
   const root = fixture({ "tests/example.test.ts": "" });
-  const executed = [];
+  const executed = [], captured = [];
   try {
     const status = runAffectedTests("ALL", ["tests/example.test.ts"], root, (command, arguments_, commandRoot) => {
       executed.push([command, arguments_, commandRoot]);
       return 0;
-    }, () => true);
+    }, () => true, (command, arguments_, commandRoot) => {
+      captured.push([command, arguments_, commandRoot]);
+      return { status: 0, output: "# skipped 0\n" };
+    });
     assert.equal(status, 0);
-    assert.equal(executed.length, 3);
-    assert.deepEqual(executed.map(call => call[0]), ["pnpm", "pnpm", process.execPath]);
+    assert.deepEqual(executed.map(call => call[0]), ["pnpm", "pnpm"]);
+    assert.deepEqual(captured.map(call => call[0]), [process.execPath]);
   } finally { rmSync(root, { recursive: true }); }
 });
 
