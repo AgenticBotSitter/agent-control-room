@@ -1,0 +1,16 @@
+[
+  {
+    "file": "src/pipelines/v1/schemas.ts",
+    "find": "    ...pipelineBuildWritePolicySchemaV1.shape }).strict(),",
+    "replace": "    allowedPaths: pipelineBuildWritePolicySchemaV1.shape.allowedPaths.optional(),\n    maximumChangedFiles: pipelineBuildWritePolicySchemaV1.shape.maximumChangedFiles.optional(),\n    maximumChangedBytes: pipelineBuildWritePolicySchemaV1.shape.maximumChangedBytes.optional() }).strict(),",
+    "test": "PG_BIN=${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin} CONTROL_ROOM_PG_TEST_PORT_BASE=${CONTROL_ROOM_PG_TEST_PORT_BASE:-58340} node --import tsx --test tests/linear-pipeline-postgres.test.ts",
+    "why": "a build stage's write bounds are mandatory, so a template that omits them must still be refused"
+  },
+  {
+    "file": "src/web/v1/session-authority.ts",
+    "find": "      WHERE tenant_id=$1 AND auth_provider=$2 AND auth_subject_digest=$3 AND actor_type='human' AND state='active' ${authorityLock}`,",
+    "replace": "      WHERE auth_provider=$2 AND auth_subject_digest=$3 AND actor_type='human' AND state='active' ${authorityLock}`,",
+    "test": "PG_BIN=${PG_BIN:-/opt/homebrew/opt/postgresql@17/bin} CONTROL_ROOM_PG_TEST_PORT_BASE=${CONTROL_ROOM_PG_TEST_PORT_BASE:-58340} node --import tsx --test tests/linear-pipeline-postgres.test.ts",
+    "why": "an identity is only ever the one in the caller's own tenant, so a cross-tenant template create must be refused"
+  }
+]
