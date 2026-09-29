@@ -1,6 +1,6 @@
 import { randomUUID, timingSafeEqual } from "node:crypto";
 import type { DatabaseClient, DatabaseSession } from "../../persistence/database";
-import { assertNoSecretMaterial, hmacSha256Tag, sha256Digest } from "../../security";
+import { assertNoSecretMaterial, canonicalJson, hmacSha256Tag, sha256Digest } from "../../security";
 import type { VerifiedWebIdentity } from "../../web/v1/access-verifier";
 import { WebAccessError } from "../../web/v1/access-verifier";
 import { WebSessionAuthority } from "../../web/v1/session-authority";
@@ -21,7 +21,8 @@ type RequestRow = { id: string; project_id: string; description: string; pipelin
   request_digest: string; record_digest: string; auth_tag: string; created_at: string | Date };
 type CandidateRow = { id: string; project_id: string; improvement_request_id: string; pipeline_run_id: string;
   base_revision: string; candidate_revision: string; summary: string; changed_areas: unknown; test_results: unknown;
-  database_changes: unknown; lead_worker_id: string; state: "ready" | "accepted" | "declined";
+  database_changes: unknown; risk_flags: unknown; independent_reviews: unknown; lead_worker_id: string;
+  state: "ready" | "accepted" | "declined";
   version: number | string; record_digest: string; auth_tag: string; created_at: string | Date; decided_at: string | Date | null };
 
 const iso = (value: string | Date) => new Date(value).toISOString();
@@ -33,7 +34,7 @@ export class ImproveControlRoomDeskServiceV1 {
   readonly #authority: WebSessionAuthority;
 
   constructor(private readonly db: DatabaseClient, private readonly scope: { tenantId: string; workspaceId: string },
-    integrityKey: Uint8Array, private readonly pipelines: Pick<LinearPipelineServiceV1, "instantiate">,
+    integrityKey: Uint8Array, private readonly pipelines: Pick<LinearPipelineServiceV1, "instantiate"> | undefined,
     private readonly clock: () => number = Date.now) {
     if (!(integrityKey instanceof Uint8Array) || integrityKey.length !== 32) throw new Error("improvement_desk_configuration_invalid");
     this.#key = Uint8Array.from(integrityKey);
@@ -117,6 +118,7 @@ export class ImproveControlRoomDeskServiceV1 {
   }
 
   async create(identity: VerifiedWebIdentity, projectId: string, draft: unknown, idempotencyKey: string) {
+    if (!this.pipelines) throw new Error("improvement_desk_configuration_invalid");
     const parsed = improvementRequestDraftSchemaV1.safeParse(draft);
     if (!parsed.success || !/^[A-Za-z0-9:_-]{16,100}$/.test(idempotencyKey)) throw new WebAccessError("invalid_request");
     try { assertNoSecretMaterial(parsed.data); } catch { throw new WebAccessError("invalid_request"); }
@@ -188,6 +190,7 @@ export class ImproveControlRoomDeskServiceV1 {
       improvementRequestId: row.improvement_request_id, pipelineRunId: row.pipeline_run_id,
       baseRevision: row.base_revision, candidateRevision: row.candidate_revision, summary: row.summary,
       changedAreas: row.changed_areas, testResults: row.test_results, databaseChanges: row.database_changes,
+      riskFlags: row.risk_flags, independentReviews: row.independent_reviews,
       leadWorkerId: row.lead_worker_id, createdAt: iso(row.created_at) };
   }
 
@@ -200,6 +203,7 @@ export class ImproveControlRoomDeskServiceV1 {
       improvementRequestId: row.improvement_request_id, pipelineRunId: row.pipeline_run_id,
       baseRevision: row.base_revision, candidateRevision: row.candidate_revision, summary: row.summary,
       changedAreas: row.changed_areas, testResults: row.test_results, databaseChanges: row.database_changes,
+      riskFlags: row.risk_flags, independentReviews: row.independent_reviews,
       leadWorkerId: row.lead_worker_id, state: row.state, version: Number(row.version), recordDigest: row.record_digest,
       createdAt: iso(row.created_at), decidedAt: row.decided_at ? iso(row.decided_at) : null,
       startsDeploy: false, signedDeployApprovalCreated: false });
@@ -222,12 +226,15 @@ export class ImproveControlRoomDeskServiceV1 {
         || binding.signoff_worker !== parsed.leadWorkerId) throw new Error("update_candidate_not_ready");
       const replay = async () => {
         const existing = (await tx.query<CandidateRow>(`SELECT id,project_id,improvement_request_id,pipeline_run_id,
-          base_revision,candidate_revision,summary,changed_areas,test_results,database_changes,lead_worker_id,state,version,
+          base_revision,candidate_revision,summary,changed_areas,test_results,database_changes,risk_flags,independent_reviews,
+          lead_worker_id,state,version,
           record_digest,auth_tag,created_at,decided_at FROM control_update_candidates
           WHERE tenant_id=$1 AND pipeline_run_id=$2`, [this.scope.tenantId, parsed.pipelineRunId])).rows[0];
         if (!existing) return undefined;
         const view = this.#candidateView(existing);
-        if (view.candidateRevision !== parsed.candidateRevision) throw new Error("update_candidate_conflict");
+        const { candidateId: _id, state: _state, version: _version, recordDigest: _digest, createdAt: _created,
+          decidedAt: _decided, startsDeploy: _deploy, signedDeployApprovalCreated: _approval, ...evidence } = view;
+        if (canonicalJson(evidence) !== canonicalJson(parsed)) throw new Error("update_candidate_conflict");
         return { candidate: view, replayed: true };
       };
       const prior = await replay(); if (prior) return prior;
@@ -235,19 +242,22 @@ export class ImproveControlRoomDeskServiceV1 {
       const partial: CandidateRow = { id, project_id: parsed.projectId, improvement_request_id: parsed.improvementRequestId,
         pipeline_run_id: parsed.pipelineRunId, base_revision: parsed.baseRevision, candidate_revision: parsed.candidateRevision,
         summary: parsed.summary, changed_areas: parsed.changedAreas, test_results: parsed.testResults,
-        database_changes: parsed.databaseChanges, lead_worker_id: parsed.leadWorkerId, state: "ready", version: 1,
+        database_changes: parsed.databaseChanges, risk_flags: parsed.riskFlags,
+        independent_reviews: parsed.independentReviews, lead_worker_id: parsed.leadWorkerId, state: "ready", version: 1,
         record_digest: "", auth_tag: "", created_at: now, decided_at: null };
       const material = this.#candidateMaterial(partial), recordDigest = sha256Digest(material);
       const authTag = hmacSha256Tag(this.#key, { purpose: "update-candidate/v1", record: material });
       // No UPDATE grant, so no row lock: a concurrent publisher of the same run loses the
       // unique key and replays the winner.
       const inserted = await tx.query<{ id: string }>(`INSERT INTO control_update_candidates(tenant_id,id,project_id,improvement_request_id,pipeline_run_id,
-        base_revision,candidate_revision,summary,changed_areas,test_results,database_changes,lead_worker_id,state,version,
-        record_digest,auth_tag,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10::jsonb,$11::jsonb,$12,'ready',1,$13,$14,$15)
+        base_revision,candidate_revision,summary,changed_areas,test_results,database_changes,risk_flags,independent_reviews,
+        lead_worker_id,state,version,record_digest,auth_tag,created_at)
+        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10::jsonb,$11::jsonb,$12::jsonb,$13::jsonb,$14,'ready',1,$15,$16,$17)
         ON CONFLICT (tenant_id, pipeline_run_id) DO NOTHING RETURNING id`,
       [this.scope.tenantId, id, parsed.projectId, parsed.improvementRequestId, parsed.pipelineRunId,
         parsed.baseRevision, parsed.candidateRevision, parsed.summary, JSON.stringify(parsed.changedAreas),
-        JSON.stringify(parsed.testResults), JSON.stringify(parsed.databaseChanges), parsed.leadWorkerId, recordDigest, authTag, now]);
+        JSON.stringify(parsed.testResults), JSON.stringify(parsed.databaseChanges), JSON.stringify(parsed.riskFlags),
+        JSON.stringify(parsed.independentReviews), parsed.leadWorkerId, recordDigest, authTag, now]);
       if (!inserted.rows.length) {
         const winner = await replay(); if (!winner) throw new Error("update_candidate_conflict");
         return winner;
@@ -260,7 +270,8 @@ export class ImproveControlRoomDeskServiceV1 {
     return this.#authority.authenticated(identity, async (tx, actor) => {
       actor.require("projects.read", undefined, true);
       const rows = (await tx.query<CandidateRow>(`SELECT id,project_id,improvement_request_id,pipeline_run_id,
-        base_revision,candidate_revision,summary,changed_areas,test_results,database_changes,lead_worker_id,state,version,
+        base_revision,candidate_revision,summary,changed_areas,test_results,database_changes,risk_flags,independent_reviews,
+        lead_worker_id,state,version,
         record_digest,auth_tag,created_at,decided_at FROM control_update_candidates
         WHERE tenant_id=$1 AND state='ready' ORDER BY created_at DESC,id DESC LIMIT 100`, [this.scope.tenantId])).rows;
       return updateCandidatePageSchemaV1.parse({ candidates: rows.map(row => this.#candidateView(row)),
@@ -289,7 +300,8 @@ export class ImproveControlRoomDeskServiceV1 {
           grantsDeployAuthority: false });
       }
       const row = (await tx.query<CandidateRow>(`SELECT id,project_id,improvement_request_id,pipeline_run_id,
-        base_revision,candidate_revision,summary,changed_areas,test_results,database_changes,lead_worker_id,state,version,
+        base_revision,candidate_revision,summary,changed_areas,test_results,database_changes,risk_flags,independent_reviews,
+        lead_worker_id,state,version,
         record_digest,auth_tag,created_at,decided_at FROM control_update_candidates
         WHERE tenant_id=$1 AND id=$2 FOR UPDATE`, [this.scope.tenantId, parsed.data.candidateId])).rows[0];
       if (!row) throw new WebAccessError("not_found");
