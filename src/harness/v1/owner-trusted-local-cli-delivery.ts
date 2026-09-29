@@ -15,8 +15,16 @@ function unavailable(): never { throw new Error("owner_trusted_local_cli_deliver
  * installation-owned publisher below is responsible for projecting this text
  * into the existing canonical result/review lifecycle. */
 export type OwnerTrustedLocalCliExecutionV1 = Readonly<
-  | { kind: "completed"; text: string }
-  | { kind: "failed"; reason: string }
+  | { kind: "completed"; text: string; startedAt: string; finishedAt: string;
+      usage: Readonly<{ inputTokens: number | null; outputTokens: number | null; totalTokens: number | null; cachedInputTokens?: number }> | null }
+  | { kind: "failed"; reason: string; startedAt: string; finishedAt: string;
+      usage: Readonly<{ inputTokens: number | null; outputTokens: number | null; totalTokens: number | null; cachedInputTokens?: number }> | null }
+>;
+export type OwnerTrustedLocalCliExecutionInputV1 = Readonly<
+  | { kind: "completed"; text: string; startedAt?: string; finishedAt?: string;
+      usage?: Readonly<{ inputTokens: number | null; outputTokens: number | null; totalTokens: number | null; cachedInputTokens?: number }> | null }
+  | { kind: "failed"; reason: string; startedAt?: string; finishedAt?: string;
+      usage?: Readonly<{ inputTokens: number | null; outputTokens: number | null; totalTokens: number | null; cachedInputTokens?: number }> | null }
 >;
 
 export type OwnerTrustedLocalCliDeliveryBindingV1 = Readonly<{
@@ -37,14 +45,14 @@ export type OwnerTrustedLocalCliDeliveryV1 = Readonly<{
     signal: AbortSignal): Promise<void>;
   /** An adapter-owned process call. It cannot choose a worker from the packet. */
   execute(input: Readonly<{ delivery: ControllerWorkerDeliveryV1; receipt: ControllerWorkerDeliveryReceiptV1;
-    signal: AbortSignal }>): Promise<OwnerTrustedLocalCliExecutionV1>;
+    signal: AbortSignal }>): Promise<OwnerTrustedLocalCliExecutionInputV1>;
   /** An installation-owned closure over the existing result binding and
    * publisher. This bridge neither creates a result record nor a second store. */
   publish(input: Readonly<{ delivery: ControllerWorkerDeliveryV1; receipt: ControllerWorkerDeliveryReceiptV1;
-    text: string; signal: AbortSignal }>): Promise<void>;
+    text: string; startedAt: string; finishedAt: string; usage: OwnerTrustedLocalCliExecutionV1["usage"]; signal: AbortSignal }>): Promise<void>;
   /** Records an observed failed process without creating a result. */
   recordFailure(input: Readonly<{ delivery: ControllerWorkerDeliveryV1; receipt: ControllerWorkerDeliveryReceiptV1;
-    signal: AbortSignal }>): Promise<void>;
+    startedAt: string; finishedAt: string; usage: OwnerTrustedLocalCliExecutionV1["usage"]; signal: AbortSignal }>): Promise<void>;
 }>;
 
 function validBinding(binding: unknown): binding is OwnerTrustedLocalCliDeliveryBindingV1 {
@@ -68,10 +76,20 @@ function validate(config: OwnerTrustedLocalCliDeliveryV1, delivery: ControllerWo
 function result(value: unknown): OwnerTrustedLocalCliExecutionV1 {
   if (!value || typeof value !== "object" || Array.isArray(value)) unavailable();
   const candidate = value as Record<string, unknown>;
-  if (candidate.kind === "completed" && Object.keys(candidate).length === 2 && typeof candidate.text === "string")
-    return Object.freeze({ kind: "completed" as const, text: text.parse(candidate.text) });
-  if (candidate.kind === "failed" && Object.keys(candidate).length === 2 && typeof candidate.reason === "string"
-    && candidate.reason.length >= 1 && candidate.reason.length <= 240) return Object.freeze({ kind: "failed" as const, reason: candidate.reason });
+  const keys = Object.keys(candidate), fallback = new Date().toISOString();
+  const startedAt = z.string().datetime().safeParse(candidate.startedAt ?? fallback), finishedAt = z.string().datetime().safeParse(candidate.finishedAt ?? fallback);
+  const candidateUsage = candidate.usage ?? null;
+  const usageResult = candidateUsage === null ? undefined : z.object({ inputTokens: z.number().int().nonnegative().nullable(),
+    outputTokens: z.number().int().nonnegative().nullable(), totalTokens: z.number().int().nonnegative().nullable(),
+    cachedInputTokens: z.number().int().nonnegative().optional() }).strict().safeParse(candidate.usage);
+  if (!startedAt.success || !finishedAt.success || Date.parse(finishedAt.data) < Date.parse(startedAt.data)
+    || candidateUsage !== null && !usageResult?.success) return unavailable();
+  const usage = candidateUsage === null ? null : usageResult!.success ? usageResult!.data : unavailable();
+  const common = { startedAt: startedAt.data, finishedAt: finishedAt.data, usage };
+  if (candidate.kind === "completed" && (keys.length === 2 || keys.length === 5) && typeof candidate.text === "string")
+    return Object.freeze({ kind: "completed" as const, text: text.parse(candidate.text), ...common });
+  if (candidate.kind === "failed" && (keys.length === 2 || keys.length === 5) && typeof candidate.reason === "string"
+    && candidate.reason.length >= 1 && candidate.reason.length <= 240) return Object.freeze({ kind: "failed" as const, reason: candidate.reason, ...common });
   return unavailable();
 }
 
@@ -117,7 +135,8 @@ export async function deliverOwnerTrustedLocalCliTaskV1(config: OwnerTrustedLoca
       startsWork: false as const, grantsExecutionAuthority: false as const });
     const execution = result(await config.execute(Object.freeze({ delivery, receipt, signal })));
     if (execution.kind === "failed") {
-      await config.recordFailure(Object.freeze({ delivery, receipt, signal }));
+      await config.recordFailure(Object.freeze({ delivery, receipt, startedAt: execution.startedAt,
+        finishedAt: execution.finishedAt, usage: execution.usage, signal }));
       return Object.freeze({ delivery, receipt, state: "execution_failed" as const,
         reason: execution.reason, startsWork: false as const, grantsExecutionAuthority: false as const });
     }
@@ -129,7 +148,8 @@ export async function deliverOwnerTrustedLocalCliTaskV1(config: OwnerTrustedLoca
     await config.assertCurrent(delivery, route, signal);
     if (signal.aborted) return Object.freeze({ delivery, receipt, state: "delivery_cancelled" as const,
       startsWork: false as const, grantsExecutionAuthority: false as const });
-    await config.publish(Object.freeze({ delivery, receipt, text: execution.text, signal }));
+    await config.publish(Object.freeze({ delivery, receipt, text: execution.text, startedAt: execution.startedAt,
+      finishedAt: execution.finishedAt, usage: execution.usage, signal }));
     return Object.freeze({ delivery, receipt, state: "published" as const, contentDigest: sha256Digest(execution.text),
       startsWork: false as const, grantsExecutionAuthority: false as const });
   } catch {
