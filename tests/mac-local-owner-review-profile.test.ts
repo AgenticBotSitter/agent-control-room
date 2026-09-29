@@ -80,12 +80,27 @@ test("an owner who accepted a legacy-profile target can record its missing pass-
     contentHash: f.artifact.contentHash, scenarioId: scenario.scenarioId,
     instructionsDigest: scenario.instructionsDigest, outcome: "failed", note: READ_CORRECT_ATTESTATION_NOTE_V1,
   }), (error: unknown) => (error as { code?: string }).code === "invalid_request");
-  const saved = await verifications.record(f.identity, binding.projectId, binding.jobId, {
+  const statements: string[] = [];
+  const traced = (tx: DatabaseSession): DatabaseSession => ({ query: async <T>(sql: string, params?: unknown[]) => {
+    statements.push(sql.replace(/\s+/gu, " ").trim()); return tx.query<T>(sql, params);
+  } });
+  const saved = await new WebTaskVerificationService({ query: f.db.query.bind(f.db),
+    transaction: work => f.db.transaction(tx => work(traced(tx))),
+    transactionWithPreCommitCheck: (work, check) => f.db.transactionWithPreCommitCheck(tx => work(traced(tx)), check) }, f.scope, {
+    integrityKey: f.reviewKey, checkpoints: f.checkpoints, harnessIntegrityKey: f.harnessKey,
+    results: f.config, manualVerificationScenarios: createMacLocalHumanVerificationRegistryV1([current]),
+  }, () => instant + 7000).record(f.identity, binding.projectId, binding.jobId, {
     artifactId: f.artifact.artifactId, targetId: f.target.id, targetDigest: sha256Digest(f.target),
     contentHash: f.artifact.contentHash, scenarioId: scenario.scenarioId,
     instructionsDigest: scenario.instructionsDigest, outcome: "passed", note: READ_CORRECT_ATTESTATION_NOTE_V1,
   });
   assert.equal(saved.receipt.grantsExecutionAuthority, false);
+  // Its audit INSERT key-shares the tenant; that parent must be held before the gate,
+  // or it can deadlock with assignment (tenant FOR UPDATE, then the gate).
+  const tenantLock = statements.findIndex(sql => sql === "SELECT id FROM tenants WHERE id=$1 FOR KEY SHARE");
+  const gateLock = statements.findIndex(sql => /control_completion_gate_integrity.*FOR UPDATE/u.test(sql));
+  const auditInsert = statements.findIndex(sql => /^INSERT INTO audit_events/u.test(sql));
+  assert.ok(tenantLock >= 0 && gateLock > tenantLock && auditInsert > gateLock, JSON.stringify({ tenantLock, gateLock, auditInsert }));
   assert.equal((await f.reviewStore.snapshot(binding.tenantId, f.target.id)).status, "ready");
   const audit = await f.db.query<{ action: string; actor_type: string }>(
     "SELECT action,actor_type FROM audit_events WHERE tenant_id=$1 AND target_id=$2", [binding.tenantId, saved.receipt.verificationId]);
