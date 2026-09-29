@@ -53,6 +53,13 @@ export type InstallationPlanJournalStorageSessionFactoryV1 =
   (request: InstallationPlanJournalStorageSessionOpenV1) => Promise<InstallationPlanJournalStorageSessionV1>;
 
 const unavailable = (): never => { throw new Error("installation_plan_journal_unavailable"); };
+// Same message, plus a marker saying the filesystem changed between two
+// observations, which a concurrent writer publishing or retiring can legitimately
+// do. The journal retries only those, within a bounded window, so a genuine
+// refusal still propagates on the first attempt.
+const unavailableWhileSettling = (): never => {
+  throw Object.assign(new Error("installation_plan_journal_unavailable"), { journalObservationSettling: true });
+};
 const identity = (device: bigint, inode: bigint): InstallationPlanJournalEntryIdentityV1 =>
   Object.freeze({ device, inode });
 const sameIdentity = (left: InstallationPlanJournalEntryIdentityV1,
@@ -173,7 +180,11 @@ InstallationPlanJournalStorageSessionFactoryV1 = async request => {
       if (!current) { if (allowMissing) return; return unavailable(); }
       if (!sameIdentity(current.identity, expectedIdentity) || current.kind !== "file" || !current.canonical) {
         if (allowMissing && !await statEntry(name)) return;
-        return unavailable();
+        // A concurrent writer can unlink and recreate this entry between our two
+        // observations, so the exact-identity rule refused a publication that is
+        // merely still settling rather than a journal that is unusable. Only an
+        // exact identity is ever removed; the replacement is left untouched.
+        return unavailableWhileSettling();
       }
       await verifyRoot();
       try { await unlink(join(rootPath, name)); }
