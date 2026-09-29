@@ -283,6 +283,8 @@ jobs:
       - name: Reject stale or incomplete test quarantines
         run: node scripts/check-test-quarantine.mjs
       - run: pnpm install --frozen-lockfile --ignore-scripts
+      - name: Test the owner review readiness helper
+        run: node scripts/run-tests-with-quarantine.mjs --import tsx --test tests/browser/owner-review-readiness.test.ts
       # The privileged-routine search_path gate does NOT run here. It used to:
       # it read migration files as text, needed no PostgreSQL, and every
       # review round found a way to fool it (a cross-file ALTER FUNCTION, a
