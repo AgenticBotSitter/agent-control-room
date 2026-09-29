@@ -89,10 +89,17 @@ export class IdeaLabPromotionTaskLinkStoreV1 {
         request_id,link_digest,link_auth_tag,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)
         ON CONFLICT (tenant_id,session_id) DO NOTHING RETURNING link_digest`, [link.tenantId, link.sessionId, link.decisionDigest,
         link.projectId, link.jobId, link.requestId, link.linkDigest, tag, link.createdAt]);
+      // No row lock here on purpose. `control_idea_promotion_task_links` is
+      // append-only: the reject_append_only_mutation() trigger refuses UPDATE,
+      // DELETE and TRUNCATE, so no concurrent statement can change or remove
+      // the row this transaction just read back. A `FOR SHARE` lock would add
+      // nothing, and in PostgreSQL it requires table-level UPDATE privilege -
+      // which the least-privilege web role deliberately does not hold on this
+      // provenance table, so the lock would make every promotion fail.
       const result = await tx.query<{ tenant_id: string; session_id: string; decision_digest: string; project_id: string;
         job_id: string; request_id: string; link_digest: string; link_auth_tag: string; created_at: string | Date }>(
         `SELECT tenant_id,session_id,decision_digest,project_id,job_id,request_id,link_digest,link_auth_tag,created_at
-         FROM control_idea_promotion_task_links WHERE tenant_id=$1 AND session_id=$2 FOR SHARE`,
+         FROM control_idea_promotion_task_links WHERE tenant_id=$1 AND session_id=$2`,
         [link.tenantId, link.sessionId]);
       const row = result.rows[0];
       if (!row) throw new IdeaLabErrorV1("integrity_failed");
