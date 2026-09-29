@@ -12,13 +12,18 @@
 //   1. the listen port comes from `CONTROL_ROOM_TEST_PG_PORT` or from a port the
 //      OS hands out at runtime — never a literal;
 //   2. the data directory lives under `<cwd>/.test-tmp/`, which is gitignored,
-//      so both `with-test-slot` and `scripts/dev/cleanup-test-postgres.mjs` can
-//      see and stop the cluster;
+//      so `with-test-slot` — which only stops postmasters whose -D is under its
+//      $PWD — can still see and stop a cluster the in-process teardown missed;
 //   3. teardown stops the postmaster, proves it is gone, and only then removes
 //      the directory — from an `after` hook, from `process.on("exit")`, and from
 //      SIGINT/SIGTERM;
 //   4. a start that loses a port race is retried on a fresh port and data
 //      directory rather than being reported as an unrelated-looking failure.
+//
+// What this does NOT do: `scripts/dev/cleanup-test-postgres.mjs` still will not
+// see these clusters. It only treats a data directory as disposable when it is
+// under `os.tmpdir()` or carries a `mac-local-rehearsal` marker, and a test
+// lane writes neither. The teardown below is what stops them.
 //
 // Loopback only: the postmaster is started with `-h 127.0.0.1` and
 // `listen_addresses=127.0.0.1`, so the cluster is never reachable off-host. The
@@ -214,11 +219,26 @@ let stopFailure: Error | undefined;
 const execOptions = { timeout: 120_000, maxBuffer: 1 << 26, encoding: "utf8" as const };
 
 /** True when a start failed because something else already holds the port.
- * Matched on the message rather than the exit code because pg_ctl reports it
- * through the postmaster's log, not as a distinct status. */
-export function isPortConflict(error: unknown): boolean {
-  const text = error instanceof Error ? `${error.message}\n${(error as { stderr?: string }).stderr ?? ""}` : String(error);
-  return /address already in use|EADDRINUSE|could not bind|Address already in use/u.test(text);
+ *
+ * The message has to be read from the postmaster's own log, not from the
+ * rejection: `pg_ctl -l` redirects postmaster output to that file, so a real
+ * collision surfaces as a bare `pg_ctl: could not start server` on stderr. A
+ * probe of a real collision (block the port, then start a cluster on it) shows
+ * the decisive line is only ever in `server.log`:
+ *
+ *   LOG:  could not bind IPv4 address "127.0.0.1": Address already in use
+ *   HINT: Is another postmaster already running on port 64702?
+ *
+ * Matching only the rejection would therefore never fire, leaving the retry
+ * loop dead code and a lost race to surface as an unrelated-looking failure. */
+export function isPortConflict(error: unknown, logText = ""): boolean {
+  const attached = typeof error === "object" && error !== null
+    ? String((error as { serverLog?: string }).serverLog ?? "")
+    : "";
+  const text = error instanceof Error
+    ? `${error.message}\n${(error as { stderr?: string }).stderr ?? ""}\n${attached}\n${logText}`
+    : `${String(error)}\n${attached}\n${logText}`;
+  return /address already in use|EADDRINUSE|could not bind|could not create any TCP\/IP sockets/iu.test(text);
 }
 
 async function startOnce(port: number, run: string): Promise<Cluster> {
@@ -244,27 +264,42 @@ async function startOnce(port: number, run: string): Promise<Cluster> {
   await writeFile(hba, patched, "utf8");
   const fixturePassword = "disposable-fixture-password";
   const pgCtl = join(PG_BIN!, "pg_ctl");
+  const cluster: Cluster = { run, data, socket, port, pgCtl, fixturePassword };
   try {
     await exec(pgCtl, ["-D", data, "-o",
       `-p ${port} -k ${socket} -h 127.0.0.1 -c listen_addresses=127.0.0.1 -c fsync=off -c full_page_writes=off`,
       "-l", join(run, "server.log"), "-w", "-t", "60", "start"], base);
+    // Record the port the postmaster actually bound, not the one we asked for:
+    // it is the value the rest of the lane must connect to.
+    const bound = await readBoundPort(data);
+    if (bound === undefined) throw new Error("disposable_cluster_port_unreadable");
+    cluster.port = bound;
+    // Set the synthetic role password over the local socket (trust auth).
+    await exec(join(PG_BIN!, "psql"), ["-h", socket, "-p", String(bound), "-U", "fixture_admin",
+      "-d", "postgres", "-Atc", `ALTER ROLE fixture_admin PASSWORD '${fixturePassword}';`], execOptions);
+    return cluster;
   } catch (error) {
-    // pg_ctl may have failed after the postmaster bound the port; never leave
-    // that process behind just because the start is being retried.
-    stopClusterSync({ run, data, socket, port, pgCtl, fixturePassword });
-    throw error;
+    // The guard has to span every step after initdb, not just the pg_ctl call.
+    // Once the postmaster is up it owns the port and the data directory, and
+    // `startCluster` removes the run directory on the way out — so a failure in
+    // the port read or the psql call used to delete a live cluster's files and
+    // leave an unreapable postmaster behind, the exact mode this module exists
+    // to prevent. Stopping here is what makes the caller's `rm` safe.
+    //
+    // Read the postmaster log BEFORE stopping: the decisive "address already in
+    // use" line only exists there, and stopping removes the run directory.
+    const log = await readFile(join(run, "server.log"), "utf8").catch(() => "");
+    stopClusterSync(cluster);
+    throw withLog(error, log);
   }
-  // Record the port the postmaster actually bound, not the one we asked for:
-  // it is the value the rest of the lane must connect to.
-  const bound = await readBoundPort(data);
-  if (bound === undefined) {
-    stopClusterSync({ run, data, socket, port, pgCtl, fixturePassword });
-    throw new Error("disposable_cluster_port_unreadable");
-  }
-  // Set the synthetic role password over the local socket (trust auth).
-  await exec(join(PG_BIN!, "psql"), ["-h", socket, "-p", String(bound), "-U", "fixture_admin",
-    "-d", "postgres", "-Atc", `ALTER ROLE fixture_admin PASSWORD '${fixturePassword}';`], execOptions);
-  return { run, data, socket, port: bound, pgCtl, fixturePassword };
+}
+
+/** Attach the postmaster log to the error so the retry decision in
+ * `startCluster` can see a port conflict after the run directory is gone. */
+function withLog(error: unknown, log: string): unknown {
+  if (!log || typeof error !== "object" || error === null) return error;
+  (error as { serverLog?: string }).serverLog = log;
+  return error;
 }
 
 /**
@@ -272,6 +307,16 @@ async function startOnce(port: number, run: string): Promise<Cluster> {
  *
  * `prefix` names the lane so a leaked directory is identifiable in `ps` and on
  * disk. Throws when every candidate port is taken.
+ *
+ * Known trade-off, accepted deliberately: because the data directory is now
+ * under the worktree, `with-test-slot` will stop this cluster on the way out if
+ * a run is interrupted — it reaps any postmaster whose -D is under its $PWD
+ * that appeared since it took its snapshot, regardless of which process started
+ * it. Two jobs sharing one worktree and running this lane simultaneously can
+ * therefore have one job's reaper stop the other job's cluster. The brief
+ * requires the worktree location (it is what makes the reaper able to see the
+ * cluster at all), so this is inherent to the fix rather than a bug in it. Jobs
+ * that need isolation should use separate worktrees.
  */
 export async function startCluster(prefix = "journey-cluster-"): Promise<Cluster> {
   const root = resolvePath(process.cwd(), TEST_TMP_DIRECTORY);

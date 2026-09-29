@@ -27,7 +27,7 @@
 // never by pattern (standing rule: other jobs run the same programs).
 
 import assert from "node:assert/strict";
-import { spawn, type ChildProcessByStdio } from "node:child_process";
+import { execFileSync, spawn, type ChildProcessByStdio } from "node:child_process";
 import type { Readable } from "node:stream";
 import { existsSync, readFileSync } from "node:fs";
 import { readFile, rm } from "node:fs/promises";
@@ -109,14 +109,33 @@ async function waitFor(predicate: () => boolean | Promise<boolean>, timeoutMs = 
   }
 }
 
-/** True when any postmaster is still running against this data directory. This
- * is the `pgrep -f <datadir>` check from the brief, scoped to the directory the
- * run recorded. */
+/** True when a postmaster is still running against this data directory. This is
+ * the `pgrep -f <datadir>` check from the brief, scoped to the directory the run
+ * recorded.
+ *
+ * A missing pid file does NOT mean "stopped". Teardown that removes the data dir
+ * out from under a live postmaster is the single worst outcome here — the
+ * process survives with its files gone — and a pid-file-only check would report
+ * that as clean. So a missing pid file falls through to a process scan for any
+ * postmaster whose command line still names this directory. */
 async function postmasterStillRunning(dataDir: string): Promise<boolean> {
   const pidFile = join(dataDir, "postmaster.pid");
-  if (!existsSync(pidFile)) return false;
-  const pid = Number((await readFile(pidFile, "utf8")).split("\n")[0]?.trim());
-  return isPostmasterAlive(Number.isSafeInteger(pid) ? pid : undefined);
+  if (existsSync(pidFile)) {
+    const pid = Number((await readFile(pidFile, "utf8")).split("\n")[0]?.trim());
+    return isPostmasterAlive(Number.isSafeInteger(pid) ? pid : undefined);
+  }
+  return postmasterReferencesDir(dataDir);
+}
+
+/** Any live postmaster whose command line still names this data directory. */
+function postmasterReferencesDir(dataDir: string): boolean {
+  try {
+    const listing = execFileSync("/bin/ps", ["-axo", "pid=,command="], { encoding: "utf8", maxBuffer: 1 << 24 });
+    return listing.split("\n").some(line => {
+      const match = /^\s*(\d+)\s+(.+)$/u.exec(line);
+      return match !== null && /(?:\/|^)postgres(?:\s|$)/u.test(match[2]) && match[2].includes(dataDir);
+    });
+  } catch { return false; }
 }
 
 /** Wait until the scenario has reported both a data dir with a live postmaster
@@ -294,9 +313,27 @@ test("a runtime port is unprivileged, loopback-safe, and really free", async () 
 test("port conflicts are recognised so a start can be retried on a fresh port", () => {
   assert.equal(isPortConflict(new Error("pg_ctl: could not start server\naddress already in use")), true);
   assert.equal(isPortConflict(Object.assign(new Error("boom"), { stderr: "FATAL:  bind: Address already in use" })), true);
+  // The case that matters and that a hand-written string missed: `pg_ctl -l`
+  // sends the postmaster's complaint to server.log, so the rejection carries
+  // only "could not start server" and the decisive line is in the attached log.
+  // Captured verbatim from a real collision on this machine.
+  const realLog = [
+    "2026-09-28 20:34:43.161 MDT [85057] LOG:  starting PostgreSQL 17.11 (Homebrew) on aarch64-apple-darwin25.6.0",
+    '2026-09-28 20:34:43.161 MDT [85057] LOG:  could not bind IPv4 address "127.0.0.1": Address already in use',
+    "2026-09-28 20:34:43.161 MDT [85057] HINT:  Is another postmaster already running on port 64702? If not, wait a few seconds and retry.",
+    "2026-09-28 20:34:43.161 MDT [85057] FATAL:  could not create any TCP/IP sockets",
+  ].join("\n");
+  const bareRejection = Object.assign(new Error("Command failed: /opt/homebrew/bin/pg_ctl -D <data> -o -p 64702 ... start\npg_ctl: could not start server\nExamine the log output.\n"), { stderr: "pg_ctl: could not start server\nExamine the log output.\n" });
+  assert.equal(isPortConflict(bareRejection), false,
+    "the rejection alone is not enough — it never carries the reason");
+  assert.equal(isPortConflict(Object.assign(bareRejection, { serverLog: realLog })), true,
+    "the real postmaster log must be what identifies a port conflict");
+  // An unrelated failure must not be mistaken for a race, or a genuine defect
+  // would be retried five times and still reported as a port problem.
   assert.equal(isPortConflict(new Error('pg_hba.conf must still contain a stock loopback TCP rule')), false,
     "an unrelated failure must not be mistaken for a port race and retried");
   assert.equal(isPortConflict(new Error("initdb: directory exists but is not empty")), false);
+  assert.equal(isPortConflict(new Error("initdb: could not create shared memory segment")), false);
 });
 
 test("the journey lane no longer hard-codes a PostgreSQL port", async () => {
