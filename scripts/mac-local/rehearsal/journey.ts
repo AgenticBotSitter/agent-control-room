@@ -445,7 +445,12 @@ async function main() {
     assert.equal(target.contentHash, artifact.contentHash);
     assert.equal(target.reviews.length, 0);
     const reviewPath = `/api/v1/projects/${idOf(projectId)}/tasks/${idOf(jobId)}/results/${idOf(artifact.artifactId)}/reviews/${idOf(target.targetId)}`;
-    const options = await requireOk(await fetch(new URL(reviewPath, origin), { headers: { cookie } }), 200,
+    const optionsResponse = await fetch(new URL(reviewPath, origin), { headers: { cookie } });
+    const expectedAuthentication = { actorId: optionsResponse.headers.get("x-control-room-authenticated-actor"),
+      sessionEpoch: optionsResponse.headers.get("x-control-room-session-epoch") };
+    assert.ok(expectedAuthentication.actorId, `${agent.kind}: review options must bind the authenticated actor`);
+    assert.ok(expectedAuthentication.sessionEpoch, `${agent.kind}: review options must bind the session epoch`);
+    const options = await requireOk(optionsResponse, 200,
       `${agent.kind} review options`) as { canReview: boolean; availability: string; targetDigest: string;
         contentHash: string; ownReview: null | { decision: string; reviewId: string };
         acceptanceAttestation?: null | { scenarioId: string; instructionsDigest: string } };
@@ -465,7 +470,7 @@ async function main() {
     const reviewKey = `journey-${agent.kind}-owner-review-0001`;
     const writeReview = () => fetch(new URL(reviewPath, origin), { method: "POST",
       headers: { origin, cookie, "content-type": "application/json", "idempotency-key": reviewKey },
-      body: JSON.stringify(draft) });
+      body: JSON.stringify({ review: draft, expectedAuthentication }) });
     const recorded = await requireOk(await writeReview(), 201, `${agent.kind} owner review`) as
       { receipt: { reviewId: string; findingId: string | null; decision: string }; replayed: boolean };
     assert.equal(recorded.replayed, false);

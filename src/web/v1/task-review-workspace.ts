@@ -93,7 +93,8 @@ export function createTaskReviewWorkspace(
           if (decision === "accepted" && acceptanceAttestation) retryAttestation = acceptanceAttestation;
           const receipt = decision ? await client.record(bound.projectId, bound.jobId, { artifactId: bound.artifactId,
             targetId: bound.targetId, targetDigest: bound.targetDigest, contentHash: bound.contentHash, decision,
-            feedback: decision === "changes_requested" ? snapshot.feedback : "", ...(acceptanceAttestation ? { acceptanceAttestation } : {}) }) : await client.retrySave();
+            feedback: decision === "changes_requested" ? snapshot.feedback : "", ...(acceptanceAttestation ? { acceptanceAttestation } : {}) },
+          authentication!) : await client.retrySave();
           // The decision is saved against this exact binding, so the gesture
           // that authorised it has been spent. Leaving it set would let a later
           // re-render re-enable Accept with a gesture the owner already used.

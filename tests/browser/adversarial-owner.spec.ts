@@ -17,7 +17,7 @@ async function signIn(page: Page) {
   await page.goto("/session");
   await page.getByLabel("Owner code").fill(ownerCode!);
   await page.getByRole("button", { name: "Sign in" }).click();
-  await expect(page.getByRole("heading", { name: "Projects" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Projects", exact: true })).toBeVisible();
 }
 
 async function api(page: Page, path: string, method = "GET", body?: unknown, key?: string): Promise<ApiResult> {
@@ -67,11 +67,14 @@ async function prepareAcceptance(page: Page) {
   const attestation = page.getByLabel("I read it and it’s correct");
   // Review options arrive after the protected result opens. A one-shot count
   // can race that request and skip the required live gesture, leaving Accept
-  // correctly disabled. This journey uses the attested profile throughout, so
-  // wait for its control and perform the gesture explicitly.
-  await expect(attestation).toBeVisible();
-  await attestation.check();
-  await expect(page.getByRole("button", { name: "Accept", exact: true })).toBeEnabled();
+  // correctly disabled. Wait for the exact review state before using its
+  // optional attestation control.
+  const accept = page.getByRole("button", { name: "Accept", exact: true });
+  const available = page.getByRole("region", { name: "Owner quality decision" })
+    .getByRole("heading", { name: "Review this exact result" });
+  await expect(available).toBeVisible({ timeout: 10_000 });
+  if (await attestation.isVisible()) await attestation.check();
+  await expect(accept).toBeEnabled();
 }
 
 async function activateTwice(locator: Locator) {
@@ -232,7 +235,7 @@ test.describe("disposable owner website adversarial attacks", () => {
     await page.reload();
     await expect(page.getByRole("heading", { name: hostileTitle })).toBeVisible();
     await page.goBack();
-    await expect(page.getByRole("heading", { name: "Projects" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Projects", exact: true })).toBeVisible();
     await page.goForward();
     await expect(page.getByRole("heading", { name: hostileTitle })).toBeVisible();
 
@@ -357,11 +360,12 @@ test.describe("disposable owner website adversarial attacks", () => {
     await signIn(page);
     const project = await createProject(page, "Review state consistency", "advreviewproject001");
     const projectPath = `/projects/${encodeURIComponent(project.projectId)}`;
-    const reviewPosts: { path: string; body: Record<string, unknown> }[] = [];
+    const reviewPosts: { path: string; body: Record<string, unknown>; key: string }[] = [];
     const captureReview = (request: Request) => {
       const path = new URL(request.url()).pathname;
       if (request.method() === "POST" && path.includes("/reviews/")) {
-        reviewPosts.push({ path, body: request.postDataJSON() as Record<string, unknown> });
+        reviewPosts.push({ path, body: request.postDataJSON() as Record<string, unknown>,
+          key: request.headers()["idempotency-key"] ?? "" });
       }
     };
     page.on("request", captureReview);
@@ -387,12 +391,13 @@ test.describe("disposable owner website adversarial attacks", () => {
       { timeout: 20_000 }).toMatch(/Saved: quality acceptance/);
     await expect.poll(async () => `${await page.locator("body").innerText()}\n${await staleReview.locator("body").innerText()}`,
       { timeout: 20_000 }).toMatch(/result or review changed|decision is already recorded/i);
-    const acceptedRequest = reviewPosts.find(request => request.body.decision === "accepted");
+    const acceptedRequest = reviewPosts.find(request => (request.body.review as Record<string, unknown> | undefined)?.decision === "accepted");
     expect(acceptedRequest).toBeDefined();
-    const acceptedDraft = { ...acceptedRequest!.body };
+    const acceptedDraft = { ...(acceptedRequest!.body.review as Record<string, unknown>) };
     delete acceptedDraft.acceptanceAttestation;
     const requestChangesAfterAccept = await api(page, acceptedRequest!.path, "POST",
-      { ...acceptedDraft, decision: "changes_requested", feedback: "This must be refused after acceptance." },
+      { review: { ...acceptedDraft, decision: "changes_requested", feedback: "This must be refused after acceptance." },
+        expectedAuthentication: acceptedRequest!.body.expectedAuthentication },
       "advchangesafteraccept1");
     expect(requestChangesAfterAccept.status).toBe(409);
     await expect(page.getByRole("button", { name: /Edit task/i })).toHaveCount(0);
@@ -408,8 +413,19 @@ test.describe("disposable owner website adversarial attacks", () => {
     await page.getByLabel("Changes you want").fill("Return a corrected harmless line in a linked revision.");
     const reviewsBeforeRevision = reviewPosts.length;
     await activateTwice(page.getByRole("button", { name: "Request changes" }));
-    await expect(page.getByText(/Saved: changes requested/)).toBeVisible();
+    const savedChanges = page.getByText(/Saved: changes requested/);
+    const checkExactSave = page.getByRole("button", { name: "Check this exact review save" });
+    await expect.poll(async () => {
+      if (await savedChanges.isVisible()) return "saved";
+      if (await checkExactSave.isEnabled().catch(() => false)) return "retry";
+      return "pending";
+    }, { timeout: 20_000 }).not.toBe("pending");
     expect(reviewPosts.length - reviewsBeforeRevision).toBe(1);
+    if (!await savedChanges.isVisible()) await checkExactSave.click();
+    await expect(savedChanges).toBeVisible();
+    const revisionReviewPosts = reviewPosts.slice(reviewsBeforeRevision);
+    expect(new Set(revisionReviewPosts.map(request => request.key)).size).toBe(1);
+    expect(revisionReviewPosts.every(request => request.key)).toBe(true);
     const revisionPosts: string[] = [];
     const captureRevision = (request: Request) => {
       if (request.method() === "POST" && request.url().endsWith("/revisions")) revisionPosts.push(request.url());
