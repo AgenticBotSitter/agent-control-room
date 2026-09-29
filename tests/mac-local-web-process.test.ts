@@ -193,12 +193,12 @@ test("the real Mac-local wrapper signs in locally and reaches the existing proje
   assert.equal(foreign.status, 403);
   const fakePreview = await app.handle(request("/local-preview", { headers: { cookie: cookie! } }), () => new Response("must not render"));
   assert.equal(fakePreview.status, 404);
-  await fixture.client.query(`UPDATE control_role_grants SET revoked_at=$1
-    WHERE tenant_id=$2 AND role_key='owner'`, [new Date(conformanceNow).toISOString(), fixture.configuration.tenantId]);
-  const revokedInbox = await app.handle(request("/api/v1/needs-me/action-items", { headers: { cookie: cookie! } }),
+  await fixture.client.query(`UPDATE control_role_grants SET role_key='operator'
+    WHERE tenant_id=$1 AND role_key='owner'`, [fixture.configuration.tenantId]);
+  const nonOwnerInbox = await app.handle(request("/api/v1/needs-me/action-items", { headers: { cookie: cookie! } }),
     () => new Response("unused"));
-  assert.equal(revokedInbox.status, 403);
-  assert.equal(actionInboxReads, 1, "revoked owner authority is rechecked before the canonical source is called");
+  assert.equal(nonOwnerInbox.status, 403, "wildcard actions do not replace the owner-role requirement");
+  assert.equal(actionInboxReads, 1, "owner-role authority is rechecked before the canonical source is called");
   await app.close();
 });
 

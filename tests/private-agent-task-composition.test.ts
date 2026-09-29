@@ -30,6 +30,10 @@ import { instant } from "./hermes-native-fixture";
 import { privateAgentTaskCompositionFixture } from "./helpers/private-agent-task-composition";
 import { assemblePrivateAgentTaskOperatorConfiguration } from "../src/web/v1/private-agent-task-operator-configuration";
 import { operatorConfigurationScenario } from "./helpers/private-agent-task-operator-configuration";
+import { createPrivateTaskApplication } from "../src/web/v1/private-task-application";
+import { OperatorSurfaceStoreV1, type ActionInboxItemV1 } from "../src/operator-surfaces/v1";
+import { now as webNow, request } from "./helpers/web-foundation";
+import { taskStartupFixture } from "./helpers/task-startup";
 
 const handler = async () => new Response("synthetic");
 const assets = { count: 0, digest: "synthetic", respond: () => undefined };
@@ -84,6 +88,31 @@ function resultReturnQualification(tenantId = "tenant:test", nodeId = "node:test
   return { connectorProfileDigest, settings: { qualificationReceipt: signArtifact(body, keys.privateKey),
     qualificationPublicKeySpki: publicKeySpki, qualificationMaximumAgeMs: 300_000 } };
 }
+
+test("hosted Action Inbox uses the composed coordinator inbox reader and forwards the open-only filter", async t => {
+  const f = await taskStartupFixture(); t.after(f.close);
+  const store = new OperatorSurfaceStoreV1(f.db);
+  const item = (id: string, state: ActionInboxItemV1["state"], createdAt: string): ActionInboxItemV1 => ({
+    id, tenantId: f.scope.tenantId, projectId: f.scope.workspaceId, workItemId: `job:${id}`,
+    kind: "approval", state, requestedAction: `Review ${id}`, reasonCode: "owner_decision_required",
+    blockedWorkItemIds: [], legalResponses: [{ id: `response:${id}`, kind: "record_decision",
+      label: "Record the decision", requiresConfirmation: true, available: true }],
+    evidence: [], createdAt, deliveryState: "not_requested",
+  });
+  await store.upsertInbox(item("attention:older-open", "open", "2025-01-01T00:00:00.000Z"));
+  for (let index = 0; index < 101; index += 1) await store.upsertInbox(item(`attention:resolved-${index}`, "resolved",
+    `2026-01-01T00:${String(index % 60).padStart(2, "0")}:${String(index % 60).padStart(2, "0")}.000Z`));
+  const app = await createPrivateTaskApplication({ ...f.config.web, database: f.web, clock: () => webNow }, {
+    ...f.config.coordinator, scope: f.scope, database: f.coordinator,
+  });
+  t.after(() => app.close());
+  const response = await app.handle(request("/api/v1/needs-me/action-items", "GET", undefined,
+    "composed-action-inbox-read-001"), () => new Response("fallback", { status: 500 }));
+  assert.equal(response.status, 200, await response.clone().text());
+  const body = await response.json() as { items: ActionInboxItemV1[]; truncated: boolean };
+  assert.deepEqual(body.items.map(value => value.id), ["attention:older-open"]);
+  assert.equal(body.truncated, false, "resolved history must not consume the hosted inbox cap");
+});
 
 test("agent-tasks composition acquires, becomes ready, drains and closes every owned resource exactly once", async t => {
   const fixture = await privateAgentTaskCompositionFixture(); t.after(fixture.close);

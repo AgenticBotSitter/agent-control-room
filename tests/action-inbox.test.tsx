@@ -112,13 +112,20 @@ test("Action Inbox claims empty only after every source succeeds", () => {
     tasks: { state: "available", pages: [emptyPage], truncated: false }, operator: { state: "available",
       source: { observedAt: now, items: emptySnapshot.actionInbox, truncated: false } },
   } satisfies ActionInboxState }));
-  assert.match(ready, /No owner actions are waiting in the checked sources/);
+  assert.match(ready, /No actions are waiting in the sources you can access/);
+  const ideaOnly = renderToStaticMarkup(createElement(ActionInboxPanel, { data: {
+    tasks: { state: "available", pages: [emptyPage], truncated: false },
+    operator: { state: "unavailable", code: "access_denied" },
+  } satisfies ActionInboxState }));
+  assert.match(ideaOnly, /Workspace action records need owner access/);
+  assert.match(ideaOnly, /No actions are waiting in the sources you can access/);
+  assert.doesNotMatch(ideaOnly, /role="alert"|This is not an all-clear|Owner access is required to read cross-project task attention/);
   const partial = renderToStaticMarkup(createElement(ActionInboxPanel, { data: {
     tasks: { state: "available", pages: [emptyPage], truncated: false }, operator: { state: "unavailable", code: "request_failed" },
   } satisfies ActionInboxState }));
   assert.match(partial, /No empty inbox or all-clear is inferred/);
   assert.match(partial, /This is not an all-clear/);
-  assert.doesNotMatch(partial, /No owner actions are waiting/);
+  assert.doesNotMatch(partial, /No actions are waiting/);
   const loading = renderToStaticMarkup(createElement(ActionInboxPanel, { data: {
     tasks: { state: "loading" }, operator: { state: "loading" },
   } satisfies ActionInboxState }));

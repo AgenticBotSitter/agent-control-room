@@ -33,18 +33,23 @@ export async function createPrivateTaskApplication(web: Omit<PrivateWebProcessOp
   // control handle. This uses the existing operator projection rather than a
   // local dashboard cache, so the same screen can later serve local and remote
   // workers from the one installation database.
+  const operatorSurfaceStore = new OperatorSurfaceStoreV1(coordinator.database.client);
   const operatorSurfaceService = new OperatorSurfaceReadServiceV1(
-    new OperatorSurfaceStoreV1(coordinator.database.client),
+    operatorSurfaceStore,
     new ServiceIncidentStore(coordinator.database.client),
     new DatabaseOperatorFleetReadSourceV1(coordinator.database.client),
   );
   const operatorSurface = Object.freeze({ read: async (input: {
     tenantId: string; actorId: string; grantedAt: string; now: string;
-    inboxFilter?: { states?: ("open" | "resolved" | "expired")[] };
   }) => (await operatorSurfaceService.read({
     scope: { tenantId: input.tenantId, actorId: input.actorId, grantedAt: input.grantedAt }, now: input.now,
-    ...(input.inboxFilter ? { inboxFilter: { limit: 100, ...input.inboxFilter } } : {}),
   })).snapshot });
+  const actionInboxSource = Object.freeze({ read: async (input: {
+    tenantId: string; actorId: string; grantedAt: string; now: string; state: "open";
+  }) => {
+    const items = await operatorSurfaceStore.listInbox({ tenantId: input.tenantId, state: input.state, limit: 100 });
+    return { observedAt: input.now, items, truncated: items.length === 100 };
+  } });
   const available = web.database.isAvailable.bind(web.database), closePool = web.database.close.bind(web.database);
   let poolClose: Promise<void> | undefined;
   const database = { client: web.database.client, close: () => {
@@ -57,7 +62,7 @@ export async function createPrivateTaskApplication(web: Omit<PrivateWebProcessOp
     return poolClose;
   } };
   let app: ReturnType<typeof createPrivateWebProcess>;
-  try { app = createPrivateWebProcess({ ...web, database, operatorSurface, planning: tasks.planning, assignment: tasks.assignment, approvals: tasks.approvals, submission: tasks.submission, revisions: tasks.revisions, queueAttention: tasks.queueAttention, ideaCreation: tasks.ideaCreation, ideaResultProjection: tasks.ideaResultProjection }); }
+  try { app = createPrivateWebProcess({ ...web, database, operatorSurface, actionInboxSource, planning: tasks.planning, assignment: tasks.assignment, approvals: tasks.approvals, submission: tasks.submission, revisions: tasks.revisions, queueAttention: tasks.queueAttention, ideaCreation: tasks.ideaCreation, ideaResultProjection: tasks.ideaResultProjection }); }
   catch {
     const results = await Promise.allSettled([tasks.close(), database.close()]);
     if (results.some(result => result.status === "rejected")) throw new Error("private_task_application_cleanup_uncertain");

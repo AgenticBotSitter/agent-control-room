@@ -43,7 +43,7 @@ import { readProjectScheduleStatus } from "../../schedules/read-service";
 import { ProjectCoordinationHttpService, type ProjectCoordinationCanonicalStoreAdapter } from "./project-coordination-http";
 import { createCoordinationHttpHandler } from "./coordination-http";
 import { IdeaLabErrorV1 } from "../../idea-lab/v1/errors";
-import { parseOperatorSurfaceSnapshotV1, type ActionInboxFilterV1, type OperatorSurfaceSnapshotV1 } from "../../operator-surfaces/v1";
+import { parseOperatorSurfaceSnapshotV1, type ActionInboxItemV1, type OperatorSurfaceSnapshotV1 } from "../../operator-surfaces/v1";
 import { verifyInstallationPlanV1, type InstallationPlanV1 } from "../../installer/v1/installation-plan";
 import { createInstallationPlanViewV1 } from "../../installer/v1/installation-plan-view";
 
@@ -95,8 +95,13 @@ export interface PrivateWebProcessOptions {
    */
   operatorSurface?: { read: (input: {
     tenantId: string; actorId: string; grantedAt: string; now: string;
-    inboxFilter?: Pick<ActionInboxFilterV1, "states">;
   }) => Promise<OperatorSurfaceSnapshotV1> };
+  /** Owner-only canonical attention reader supplied by trusted composition.
+   * It is intentionally separate from the full operator snapshot so the
+   * coordinator role needs access only to the inbox table for this route. */
+  actionInboxSource?: { read: (input: {
+    tenantId: string; actorId: string; grantedAt: string; now: string; state: "open";
+  }) => Promise<{ observedAt: string; items: ActionInboxItemV1[]; truncated: boolean }> };
   /** Existing harness evidence verification key. No key means progress is unavailable, not no runs. */
   tasks?: Omit<WebTaskKeys, "ideaIntegrityKey"> & { harnessIntegrityKey: Uint8Array };
   /** Trusted control-plane operation only. No planner key, privileged pool or native adapter is
@@ -229,6 +234,10 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
   if (options.operatorSurface && typeof options.operatorSurface.read !== "function") throw new Error("invalid_private_app_config");
   const operatorSurface = options.operatorSurface ? Object.freeze({
     read: options.operatorSurface.read.bind(options.operatorSurface),
+  }) : undefined;
+  if (options.actionInboxSource && typeof options.actionInboxSource.read !== "function") throw new Error("invalid_private_app_config");
+  const actionInboxSource = options.actionInboxSource ? Object.freeze({
+    read: options.actionInboxSource.read.bind(options.actionInboxSource),
   }) : undefined;
   if (options.planning && (options.planning.tenantId !== options.tenantId || options.planning.workspaceId !== options.workspaceId
     || typeof options.planning.plan !== "function" || options.planning.readSaved !== undefined && typeof options.planning.readSaved !== "function"
@@ -377,16 +386,13 @@ export function createPrivateWebProcess(options: PrivateWebProcessOptions) {
           }
           if (url.pathname === "/api/v1/needs-me/action-items") {
             if (request.method !== "GET" || url.search) throw new WebAccessError("invalid_request");
-            if (!operatorSurface) throw new WebAccessError("not_found");
+            if (!actionInboxSource) throw new WebAccessError("not_found");
             const scope = await productConfigurationAuthority.authenticated(identity, async (_, actor) => {
               actor.require("projects.read", undefined, true);
               return Object.freeze({ tenantId: options.tenantId, actorId: actor.id, grantedAt: actor.now, now: actor.now });
             });
-            const snapshot = parseOperatorSurfaceSnapshotV1(await operatorSurface.read({ ...scope,
-              inboxFilter: { states: ["open"] } }));
-            if (snapshot.tenantId !== options.tenantId) throw new Error("operator_surface_scope_mismatch");
-            return Response.json({ observedAt: snapshot.generatedAt, items: snapshot.actionInbox,
-              truncated: snapshot.actionInbox.length === 100 }, { headers: privateResponseHeaders });
+            const source = await actionInboxSource.read({ ...scope, state: "open" });
+            return Response.json(source, { headers: privateResponseHeaders });
           }
           if (url.pathname === "/api/v1/operator-surface") {
             if (request.method !== "GET" || url.search) throw new WebAccessError("invalid_request");
