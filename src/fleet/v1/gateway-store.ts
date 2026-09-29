@@ -98,6 +98,35 @@ export class FleetGatewayStoreV1 {
     });
   }
 
+  /** A previously issued credential can still identify a revoked or expired
+   * machine for audit attribution. This never authenticates it or reads the
+   * request body, and an unknown secret creates no attacker-chosen audit row. */
+  async recordRefusedMcpAuthentication(input: Readonly<{ bearer: unknown; declaredWorkerId: unknown;
+    callId: unknown; toolName: unknown }>) {
+    if (typeof input.bearer !== "string" || !FLEET_SECRET_PATTERN_V1.test(input.bearer)
+      || typeof input.declaredWorkerId !== "string" || !FLEET_WORKER_ID_PATTERN_V1.test(input.declaredWorkerId)
+      || typeof input.callId !== "string" || !mcpCallPattern.test(input.callId)
+      || typeof input.toolName !== "string" || !mcpToolNames.includes(input.toolName as never)) return false;
+    const digest = plainSha256V1(input.bearer), declaredWorkerId = input.declaredWorkerId,
+      callId = input.callId, toolName = input.toolName;
+    const auditId = `audit:fleet-mcp-denied:${callId.slice("mcp-call:".length)}`;
+    return this.db.transaction(async tx => {
+      const worker = (await tx.query<{ identity_id: string }>(`SELECT w.identity_id FROM fleet_worker_credentials c
+        JOIN fleet_workers w ON w.tenant_id=c.tenant_id AND w.worker_id=c.worker_id
+        WHERE c.tenant_id=$1 AND c.secret_digest=$2 AND c.worker_id=$3`,
+      [this.#tenantId, digest, declaredWorkerId])).rows[0];
+      if (!worker) return false;
+      const prior = (await tx.query<{ actor_id: string; safe_metadata: { toolName?: string } }>(
+        "SELECT actor_id,safe_metadata FROM audit_events WHERE id=$1", [auditId])).rows[0];
+      if (prior) return prior.actor_id === worker.identity_id && prior.safe_metadata.toolName === toolName;
+      await appendAuditWith(tx, { id: auditId, tenantId: this.#tenantId, actorId: worker.identity_id,
+        actorType: "worker", action: "fleet.mcp.authentication_refused", targetType: "worker",
+        targetId: declaredWorkerId, correlationId: callId, occurredAt: this.#now(),
+        safeMetadata: { toolName, reasonCode: "unauthenticated" } });
+      return true;
+    });
+  }
+
   /** Redeems one enrollment code. The machine generated its credential locally
    * and sends only the digest, so no secret travels back in the response. */
   async enroll(input: Readonly<{ code: unknown; credentialDigest: unknown; platform: unknown; architecture: unknown;

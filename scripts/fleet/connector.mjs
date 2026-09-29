@@ -92,11 +92,12 @@ export async function loadConfig(path) {
 }
 
 export function createClient(config, fetcher = globalThis.fetch) {
-  async function call(method, path, body, secret = config.secret) {
+  async function call(method, path, body, secret = config.secret, extraHeaders = {}) {
     const response = await fetcher(`${config.server}${path}`, { method, redirect: "error",
       signal: AbortSignal.timeout(30_000),
       headers: { accept: "application/json", ...(secret ? { authorization: `Bearer ${secret}` } : {}),
         ...(config.workerId ? { "x-control-room-worker": config.workerId } : {}),
+        ...extraHeaders,
         ...(body === undefined ? {} : { "content-type": "application/json" }) },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
     let value;
@@ -123,7 +124,8 @@ export function createClient(config, fetcher = globalThis.fetch) {
       { summary, idempotencyKey, ...(files.length ? { files } : {}) }),
     propose: (projectId, proposal, idempotencyKey) => call("POST",
       `/fleet/v1/projects/${encodeURIComponent(projectId)}/proposals`, { proposal, idempotencyKey }),
-    mcpCall: (callId, toolName) => call("POST", "/fleet/v1/mcp/calls", { callId, toolName }),
+    mcpCall: (callId, toolName) => call("POST", "/fleet/v1/mcp/calls", { callId, toolName }, config.secret,
+      { "x-control-room-mcp-call": callId, "x-control-room-mcp-tool": toolName }),
   });
 }
 

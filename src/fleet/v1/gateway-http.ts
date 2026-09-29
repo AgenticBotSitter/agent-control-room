@@ -173,7 +173,19 @@ export function createFleetGatewayHandlerV1(options: FleetGatewayHttpOptionsV1) 
       || path === "/fleet/v1/work" || path === "/fleet/v1/claims" || path === "/fleet/v1/mcp/calls"
       || claimRoute.test(path) || proposalRoute.test(path);
     if (!known) return fleetFail("not_found");
-    const principal = await authenticated(request);
+    let principal: FleetWorkerPrincipalV1;
+    try { principal = await authenticated(request); }
+    catch (error) {
+      if (path === "/fleet/v1/mcp/calls" && error instanceof FleetErrorV1 && error.code === "unauthenticated") {
+        const authorization = header(request, "authorization");
+        await options.store.recordRefusedMcpAuthentication({
+          bearer: authorization?.startsWith("Bearer ") ? authorization.slice(7) : undefined,
+          declaredWorkerId: header(request, "x-control-room-worker"),
+          callId: header(request, "x-control-room-mcp-call"), toolName: header(request, "x-control-room-mcp-tool"),
+        });
+      }
+      throw error;
+    }
     if (method === "GET" && path === "/fleet/v1/me") return send(response, 200, { ok: true, result: options.store.me(principal) });
     if (method === "GET" && path === "/fleet/v1/work") return send(response, 200, { ok: true, result: await options.store.listWork(principal) });
     if (method === "GET" && path === "/fleet/v1/claims") return send(response, 200, { ok: true, result: await options.store.myClaims(principal) });

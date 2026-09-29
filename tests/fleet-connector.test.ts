@@ -251,6 +251,15 @@ test("a revoked worker is refused at once and its lease cannot be used", async t
   const claim = await worker.client.claim(task.offerId, "claim-key-revoke1");
   await f.owner.revokeWorker(ownerIdentity(), worker.joined.workerId);
   await assert.rejects(worker.client.me(), /unauthenticated/u);
+  const dispatch = connector.createMcpDispatcher({ client: worker.client, workspaceRoot: f.dir });
+  const refused = await dispatch({ jsonrpc: "2.0", id: 1, method: "tools/call",
+    params: { name: "list_eligible_work", arguments: {} } }) as any;
+  assert.equal(refused.result.isError, true);
+  assert.match(refused.result.content[0].text, /unauthenticated/u);
+  const refusedAudit = await f.query<{ action: string; safe_metadata: { toolName: string; reasonCode: string } }>(
+    "SELECT action,safe_metadata FROM audit_events WHERE action='fleet.mcp.authentication_refused'");
+  assert.deepEqual(refusedAudit, [{ action: "fleet.mcp.authentication_refused",
+    safe_metadata: { toolName: "list_eligible_work", reasonCode: "unauthenticated" } }]);
   await assert.rejects(worker.client.progress(claim.claimId, "still here", "progress-key-rv1"), /unauthenticated/u);
   // Even a direct write under the live claim is refused by the database guard.
   await assert.rejects(f.raw.query(`INSERT INTO fleet_worker_events(tenant_id,event_id,claim_id,worker_id,kind,message,

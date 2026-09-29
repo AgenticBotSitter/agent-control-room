@@ -42,6 +42,13 @@
     "why": "MCP audit metadata contains only a bounded allowlisted tool label"
   },
   {
+    "file": "src/fleet/v1/gateway-http.ts",
+    "find": "        await options.store.recordRefusedMcpAuthentication({",
+    "replace": "        await Promise.resolve({",
+    "test": "node --import tsx --test --test-name-pattern \"revoked worker is refused\" tests/fleet-connector.test.ts",
+    "why": "a recognized revoked or expired machine credential leaves a bounded refusal audit before body parsing"
+  },
+  {
     "file": "src/fleet/v1/gateway-store.ts",
     "find": "!principal.projectIds.includes(offer.project_id) || ",
     "replace": "",
