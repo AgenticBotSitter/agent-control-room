@@ -38,6 +38,22 @@ const MAX_PORT_RANGE_SPAN = 1024;
 const PORT_RANGE_REFUSED = "database_backup_verification_port_range_refused";
 const PORT_RANGE_PATTERN = /^(\d{1,5})-(\d{1,5})$/u;
 
+/** One accepted port block. Exported through the two functions below; the
+ * bounds are `number`s here and are proved to be safe integers there, so a
+ * caller reading this type learns the shape, not that the values are valid. */
+/** @typedef {Readonly<{ min: number, max: number }>} DatabaseBackupVerificationPortRangeV1 */
+/** @typedef {Readonly<Record<string, string | undefined>>} DatabaseBackupVerificationEnvV1 */
+/** @typedef {(args: readonly string[]) => unknown} DatabaseBackupVerificationPgCtlV1 */
+/** The observation seams the tests need, on top of the keys the module decides
+ * for itself. The extra `Record` arm is why a caller MAY hand over
+ * `dataDirectory`/`port`/`pgBin`/... — they are still ignored at runtime, by the
+ * allowlist below, and the test asserts that handing them over changes nothing. */
+/** @typedef {Readonly<{ pgCtl?: DatabaseBackupVerificationPgCtlV1,
+ *   degradedLogger?: (line: string) => void }> & Readonly<Record<string, unknown>>}
+ *   DatabaseBackupVerificationTeardownOptionsV1 */
+
+/** @param {unknown} range
+ *  @returns {DatabaseBackupVerificationPortRangeV1} */
 function validatedDatabaseBackupVerificationPortRangeV1(range) {
   if (range === null || typeof range !== "object" || Array.isArray(range)) throw new Error(PORT_RANGE_REFUSED);
   const { min, max } = range;
@@ -49,7 +65,9 @@ function validatedDatabaseBackupVerificationPortRangeV1(range) {
 /** Parse one `MIN-MAX` range. Strict: two decimal integers in ascending order,
  * both inside the unprivileged port space, and a span narrow enough to be an
  * assignment rather than a mistyped `1-65535`. Everything else is refused, so a
- * bad value in CI is a loud failure instead of a silently wider blast radius. */
+ * bad value in CI is a loud failure instead of a silently wider blast radius.
+ * @param {unknown} value
+ * @returns {DatabaseBackupVerificationPortRangeV1} */
 export function parseDatabaseBackupVerificationPortRangeV1(value) {
   if (typeof value !== "string") throw new Error(PORT_RANGE_REFUSED);
   const match = PORT_RANGE_PATTERN.exec(value.trim());
@@ -58,7 +76,10 @@ export function parseDatabaseBackupVerificationPortRangeV1(value) {
 }
 
 /** The range in force for a call: the caller's `portRange` when it gave one,
- * otherwise the environment variable, otherwise the documented default. */
+ * otherwise the environment variable, otherwise the documented default.
+ * @param {DatabaseBackupVerificationPortRangeV1 | string | undefined} portRange
+ * @param {DatabaseBackupVerificationEnvV1} [env]
+ * @returns {DatabaseBackupVerificationPortRangeV1} */
 export function resolveDatabaseBackupVerificationPortRangeV1(
   portRange, env = process.env) {
   if (portRange !== undefined) {
@@ -169,6 +190,20 @@ export async function normalizeMacApplicationOwnershipV1(client) {
   }
 }
 
+/** Verify one bound backup by restoring it into a new disposable cluster, then
+ * proving the restored database's identity, ownership and grants. The cluster is
+ * always stopped and removed, and `PASS` is reported only for the backup's own
+ * observed facts.
+ *
+ * `portRange`/`portRangeEnv` are the seam a caller restricted to a different
+ * assigned range uses; with neither, the accepted port block is the documented
+ * default and nothing else.
+ * @param {{ backup: string, port: number, pgBin?: string,
+ *   teardown?: DatabaseBackupVerificationTeardownOptionsV1,
+ *   portRange?: DatabaseBackupVerificationPortRangeV1 | string,
+ *   portRangeEnv?: DatabaseBackupVerificationEnvV1 }} options
+ * @returns {Promise<Readonly<{ verified: true, identityDigest: string,
+ *   ledgerHead: Readonly<{ order: number, file: string, digest: string }> }>>} */
 export async function verifyMacLocalDatabaseBackupV1({ backup, port, pgBin = "/opt/homebrew/bin",
   teardown: teardownOptions = {}, portRange = undefined, portRangeEnv = process.env }) {
   if (teardownOptions === null || typeof teardownOptions !== "object" || Array.isArray(teardownOptions))
