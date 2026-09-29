@@ -96,6 +96,8 @@ export async function createPrivateTaskApplication(web: Omit<PrivateWebProcessOp
     // Narrow authenticated submission is shared with HTTP; recovery stays server-only.
     ...(tasks.submission ? { submission: tasks.submission } : {}),
     ...(tasks.queueRecovery ? { queueRecovery: tasks.queueRecovery } : {}),
+    ...(tasks.pipelineAdvance ? { advancePipeline: tasks.pipelineAdvance.advance,
+      sweepPipelineAdvances:tasks.pipelineAdvance.sweep } : {}),
     ...(tasks.quality ? { quality: tasks.quality } : {}),
     ...(tasks.revisions ? { revisions: tasks.revisions } : {}),
     ...(tasks.results ? { results: tasks.results } : {}),

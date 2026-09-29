@@ -44,6 +44,9 @@ import { PlanSelectedTaskResultReaderV1 } from "./task-result-reader";
 import { CanonicalIdeaTaskResultProjectionServiceV1 } from "../../idea-lab/v1/canonical-result-projection";
 import { IdeaLabCanonicalTaskLinkStoreV1 } from "../../idea-lab/v1/canonical-task-link-store";
 import { IdeaLabProjectRegistryStoreV1 } from "../../idea-lab/v1/store";
+import type { CoordinationCostEvidencePortV1 } from "../../project-coordination/v1/schemas";
+import { PipelineAdvanceServiceV1, ProductionPipelineAdvanceAuthorityV1,
+  ProductionPipelineAdvanceCapabilityV1 } from "../../pipelines/v1";
 
 export type TaskApprovalOperation = Readonly<{ tenantId: string; workspaceId: string;
   prepare: TaskAssignmentCoordinator["prepareNativeApproval"]; store: TaskAssignmentCoordinator["storeNativeApproval"];
@@ -105,6 +108,9 @@ export type TaskCoordinatorConfiguration = {
    * Requires quality/result configuration so predecessor acceptance is checked
    * from retained bytes and checkpoint-authenticated Completion Gate state. */
   workBatches?: { integrityKey: Uint8Array; selectionAuthority: WorkBatchQueueSelectionAuthorityV1 };
+  /** Explicit installation-owned unattended continuation. Absent is disabled;
+   * a configured callback still defaults operationally off until it returns true. */
+  pipelineAdvance?: { enabled: () => boolean; costEvidence: CoordinationCostEvidencePortV1 };
   quality?: TaskQualityConfiguration;
   revisionPlanning?: true;
   /** Installation-owned, authenticated result reader for a supported local adapter.
@@ -142,6 +148,9 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
   if (input.workBatches && (!(input.workBatches.integrityKey instanceof Uint8Array)
     || input.workBatches.integrityKey.length !== 32 || !input.quality
     || typeof input.workBatches.selectionAuthority?.assertCurrent !== "function"))
+    throw new Error("task_coordinator_config_invalid");
+  if (input.pipelineAdvance && (!input.workBatches || !input.approvals || !input.nativeSubmission
+    || typeof input.pipelineAdvance.enabled!=="function"||typeof input.pipelineAdvance.costEvidence?.currentCost!=="function"))
     throw new Error("task_coordinator_config_invalid");
   if (input.ensurePlanningProject !== undefined && typeof input.ensurePlanningProject !== "function")
     throw new Error("task_coordinator_config_invalid");
@@ -397,6 +406,15 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
   const assignment = new TaskAssignmentCoordinator(db, scope, planner, input.routes, input.clock,
     input.approvals?.enrollments, input.approvals?.store, nativeSubmission, input.codex, transitionAdmission,
     workBatchAuthority?.assignmentAuthority);
+  const pipelineAdvance = input.pipelineAdvance && workBatchAuthority ? (() => {
+    const supporting=new ProductionPipelineAdvanceAuthorityV1(scope,input.workBatches!.selectionAuthority,
+      workBatchAuthority.ownerAuthority,input.pipelineAdvance!.costEvidence,input.clock);
+    const capability=new ProductionPipelineAdvanceCapabilityV1(supporting,assignment,{
+      enqueueAssignedInSession:(tx,value,authority)=>assignment.enqueuePipelineHermes021InSession(tx,value,authority),
+    });
+    return new PipelineAdvanceServiceV1(db,scope,workBatchAuthority.integrityKey,
+      {unattendedEnabled:input.pipelineAdvance.enabled,capability},input.clock);
+  })():undefined;
   if (input.quality && (input.quality.integrityKey.length !== input.planning.reviewIntegrityKey.length
     || !timingSafeEqual(input.quality.integrityKey, input.planning.reviewIntegrityKey)))
     throw new Error("task_coordinator_config_invalid");
@@ -624,6 +642,8 @@ export function createTaskCoordinatorLifecycle(input: TaskCoordinatorConfigurati
     },
   }) : undefined;
   return Object.freeze({ planning, assignment: assignments, ...(approvals ? { approvals } : {}), ...(quality ? { quality } : {}),
+    ...(pipelineAdvance?{pipelineAdvance:Object.freeze({advance:pipelineAdvance.advance.bind(pipelineAdvance),
+      sweep:pipelineAdvance.advanceReady.bind(pipelineAdvance)})}:{}),
     ...(workBatchAuthority ? { workBatchAuthority: workBatchAuthority.ownerAuthority } : {}),
     ...(ideaCreation ? { ideaCreation } : {}),
     ...(ideaResultProjection ? { ideaResultProjection } : {}),

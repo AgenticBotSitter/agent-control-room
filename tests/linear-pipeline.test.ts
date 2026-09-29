@@ -344,6 +344,23 @@ test("pipeline HTTP route requires gateway authentication", async t => {
   assert.equal((await handler(request(`/api/v1/projects/${encodeURIComponent(f.project.projectId)}/pipeline-runs`))).status, 200);
 });
 
+test("pipeline unattended and history HTTP routes are owner-service operations on runs only", async t=>{
+  const f=await fixture();t.after(()=>void f.db.close());let transitions=0,histories=0;
+  const advance={setUnattended:async()=>{transitions++;return{replayed:false}},
+    historyForOwner:async()=>{histories++;return{runId:"pipeline-run:test"}}};
+  const handler=createLinearPipelineHttpHandlerV1({origin,trust,service:f.service,advance:advance as never,clock:()=>now});
+  const project=encodeURIComponent(f.project.projectId),run=encodeURIComponent("pipeline-run:test");
+  const history=await handler(request(`/api/v1/projects/${project}/pipeline-runs/${run}/history`));
+  assert.equal(history.status,200);assert.equal(histories,1);
+  const unattended=await handler(request(`/api/v1/projects/${project}/pipeline-runs/${run}/unattended`,"POST",
+    {runId:"pipeline-run:test"},"pipeline-consent-0001"));
+  assert.equal(unattended.status,201);assert.equal(transitions,1);
+  assert.equal((await handler(request(`/api/v1/projects/${project}/pipeline-templates/${run}/history`))).status,404);
+  assert.ok((await handler(request(`/api/v1/projects/${project}/pipeline-templates/${run}/unattended`,"POST",
+    {runId:"pipeline-run:test"}))).status>=400);
+  assert.equal(histories,1);assert.equal(transitions,1);
+});
+
 test("schema constraints refuse partial pipeline columns, unknown kinds and cross-job attempt lineage", async t => {
   const f = await fixture(); t.after(() => void f.db.close());
   const task = await f.tasks.propose(f.identity, f.project.projectId,
@@ -384,14 +401,16 @@ test("pipeline projection fails closed when the run no longer has exactly three 
   await assert.rejects(f.service.view(f.identity, f.project.projectId, run.runId), /pipeline_integrity_failed/u);
 });
 
-test("0108 and 0105 down migrations refuse retained policy/history and remove owned objects only when empty", async t => {
+test("0109, 0108 and 0105 down migrations refuse retained policy/history and remove owned objects only when empty", async t => {
   const populated = await fixture(); t.after(() => void populated.db.close());
   const populatedTemplate = await populated.service.createTemplate(populated.identity, populated.project.projectId, template);
   await populated.service.instantiate(populated.identity, populated.project.projectId,
     { templateId: populatedTemplate.templateId, title: "Retained down guard" }, "linear-down-guard-0001");
+  const unattendedDown = await readFile("db/down/0109_pipeline_unattended_advance.sql", "utf8");
   const down = await readFile("db/down/0105_linear_pipeline_runs.sql", "utf8");
   const agentReviewDown = await readFile("db/down/0106_agent_review_plans.sql", "utf8");
   const publicationDown = await readFile("db/down/0108_pipeline_build_publications.sql", "utf8");
+  await populated.db.exec(unattendedDown);
   await assert.rejects(populated.db.exec(publicationDown), /0108 down migration refused/u);
   await populated.db.exec("ROLLBACK");
   await populated.db.exec(`ALTER TABLE pipeline_stage_runs DISABLE TRIGGER pipeline_stage_runs_guard;
@@ -400,6 +419,7 @@ test("0108 and 0105 down migrations refuse retained policy/history and remove ow
   await populated.db.exec(publicationDown);
   await assert.rejects(populated.db.exec(down), /down migration refused/u); await populated.db.exec("ROLLBACK");
   const empty = await taskFixture(); t.after(() => void empty.db.close());
+  await empty.db.exec(unattendedDown);
   await empty.db.exec(publicationDown);
   await empty.db.exec(agentReviewDown);
   await empty.db.exec(down);

@@ -280,7 +280,8 @@ export class LinearPipelineServiceV1 {
     const parsed = current.success ? current.data : legacyLinearPipelineTemplateInputSchemaV1.parse(raw);
     return { id: row.id, tenantId: this.scope.tenantId, projectId: row.project_id, name: row.name,
       description: row.description, stages: parsed.stages,
-      maxStages: Number(row.max_stages), maxTotalLoops: Number(row.max_total_loops), mayAdvanceUnattended: false,
+      maxStages: Number(row.max_stages), maxTotalLoops: Number(row.max_total_loops),
+      mayAdvanceUnattended: row.may_advance_unattended,
       maxDurationSeconds: Number(row.max_duration_seconds), version: Number(row.version),
       createdAt: iso(row.created_at), updatedAt: iso(row.updated_at) };
   }
@@ -307,6 +308,15 @@ export class LinearPipelineServiceV1 {
     const material = this.#runMaterial(row);
     if (sha256Digest(material) !== row.record_digest
       || !same(hmacSha256Tag(this.#key, { purpose: "pipeline-run/v1", record: material }), row.auth_tag))
+      throw new Error("pipeline_integrity_failed");
+  }
+  #verifyTemplateBinding(run: RunRow, template: TemplateRow) {
+    const runVersion = Number(run.template_version), templateVersion = Number(template.version);
+    const current = runVersion === templateVersion && run.template_digest === template.record_digest;
+    // An opted-out run retains its authenticated historical template pin when
+    // another run activates the shared template's monotonic unattended ceiling.
+    // An unattended run must always be pinned to the exact current ceiling.
+    if (!current && (run.unattended || templateVersion <= runVersion))
       throw new Error("pipeline_integrity_failed");
   }
   #stageMaterial(row: StageRow) {
@@ -563,9 +573,9 @@ export class LinearPipelineServiceV1 {
           may_advance_unattended,max_duration_seconds,record_digest,auth_tag,version,created_at,updated_at
           FROM pipeline_templates WHERE tenant_id=$1 AND project_id=$2 AND id=$3`,
         [this.scope.tenantId, projectId, row.template_id])).rows[0];
-        if (!template || template.record_digest !== row.template_digest || Number(template.version) !== Number(row.template_version))
-          throw new Error("pipeline_integrity_failed");
+        if (!template) throw new Error("pipeline_integrity_failed");
         this.#verifyTemplate(template);
+        this.#verifyTemplateBinding(row, template);
       }
       return pipelineRunPageSchemaV1.parse({ projectId, runs: rows.map(row => ({ runId: row.id, title: row.title,
         state: row.state, updatedAt: iso(row.updated_at) })), startsWork: false, grantsExecutionAuthority: false });
@@ -584,9 +594,9 @@ export class LinearPipelineServiceV1 {
         may_advance_unattended,max_duration_seconds,record_digest,auth_tag,version,created_at,updated_at
         FROM pipeline_templates WHERE tenant_id=$1 AND project_id=$2 AND id=$3`,
       [this.scope.tenantId, projectId, run.template_id])).rows[0];
-      if (!template || template.record_digest !== run.template_digest || Number(template.version) !== Number(run.template_version))
-        throw new Error("pipeline_integrity_failed");
+      if (!template) throw new Error("pipeline_integrity_failed");
       this.#verifyTemplate(template);
+      this.#verifyTemplateBinding(run, template);
       const rows = (await tx.query<StageRow>(`SELECT project_id,pipeline_run_id,stage_ordinal,stage_kind,role,current_job_id,
         worker_id,worker_kind,node_id,selection_key,model,effort,provider,profile,current_attempt_id,current_lease_id,
         state,max_loops,allowed_paths,maximum_changed_files,maximum_changed_bytes,handoff_from_result_digest,signoff_review_id,
@@ -640,6 +650,8 @@ export class LinearPipelineServiceV1 {
         accepted.push(own);
       }
       return pipelineRunViewSchemaV1.parse({ runId, projectId, title: run.title, state: run.state,
+        templateId:run.template_id,runVersion:Number(run.version),templateVersion:Number(template.version),
+        unattended:run.unattended,mayAdvanceUnattended:template.may_advance_unattended,
         stages, updatedAt: iso(run.updated_at), startsWork: false, grantsExecutionAuthority: false });
     });
   }

@@ -22,6 +22,7 @@ import { collectDatabaseEvidence, digestOf } from "../deploy/postgres/evidence.m
 import { computeDatabaseRestoreIdentity, verifyRestoredIdentity } from "../deploy/postgres/restore-identity.mjs";
 import { collectLedgerEntries, ledgerDigest } from "../scripts/generate-migration-ledger.mjs";
 import { provisionMacLocalNarrowRolesV1 } from "../scripts/mac-local/narrow-role-provision.mjs";
+import { inspectFixedQueueSchemaV1, installFixedQueueSchemaV1 } from "../scripts/mac-local/fixed-queue-schema.mjs";
 import { createMacLocalDatabaseBackupV1 } from "../scripts/ops/backup-database.mjs";
 import { verifyMacLocalDatabaseBackupV1 } from "../scripts/ops/verify-database-backup.mjs";
 import { AuditStore } from "../src/audit/audit-store.ts";
@@ -34,13 +35,15 @@ import { createControllerWorkerDeliveryV1 } from "../src/harness/v1/controller-w
 import { derivePipelineBuildPublicationEvidenceKeyV1 } from "../src/pipelines/v1/build-publication-authority.ts";
 import { InMemoryRollbackCheckpointStoreV1 } from "../src/security/rollback-checkpoint.ts";
 import { SecurityStore } from "../src/security/security-store.ts";
-import { LinearPipelineServiceV1 } from "../src/pipelines/v1/index.ts";
+import { LinearPipelineServiceV1, PipelineAdvanceServiceV1, ProductionPipelineAdvanceAuthorityV1,
+  ProductionPipelineAdvanceCapabilityV1 } from "../src/pipelines/v1/index.ts";
 import { AgentReviewServiceV1, CompletionGateStoreV1 } from "../src/completion-gate/v1/index.ts";
 import { WebProjectService } from "../src/web/v1/project-service.ts";
 import { WebTaskService } from "../src/web/v1/task-service.ts";
 import { captureTaskModelCatalogV1 } from "../src/web/v1/task-model-selection.ts";
 import { createAccessVerifier } from "../src/web/v1/access-verifier.ts";
-import { privateWebSchemaDigest, readPrivateWebSchemaDigest, verifyAgentReviewerDatabase } from "../src/web/v1/private-database-preflight.ts";
+import { privateWebSchemaDigest, readPrivateWebSchemaDigest, verifyAgentReviewerDatabase, verifyPrivateDatabase,
+  verifyTaskCoordinatorDatabase } from "../src/web/v1/private-database-preflight.ts";
 import { bindPrivatePgPool } from "../src/web/v1/private-pg-database.ts";
 import { privatePgOptions } from "../src/web/v1/private-pg-options.ts";
 import { now as webNow, request as webRequest, trust as webTrust } from "./helpers/web-foundation.ts";
@@ -248,6 +251,9 @@ const AGENT_REVIEW_GRANTS = "REVOKE ALL ON control_agent_review_plans FROM contr
 const PUBLICATION_GRANTS = "REVOKE ALL ON control_pipeline_build_publications\n"
   + "  FROM control_room_application, control_room_reader, control_room_schedule_admissions,\n"
   + "  control_room_github_broker, control_room_work_intake;\n";
+// S7's two tables join the pipeline REVOKE list, so they are removed first.
+const UNATTENDED_GRANTS = ",\n  pipeline_unattended_transitions, pipeline_advance_receipts";
+const UNATTENDED_OBJECTS = ["pipeline_unattended_transitions", "pipeline_advance_receipts"];
 const QUEUE_GRANTS = ", work_batch_queue_admissions,\n  work_batch_effective_queue_admissions, work_batch_agent_queue_heads";
 const SHARED_LOGINS = ["control_room_work_intake", "control_room_work_intake_agent", "control_room_reader",
   "control_room_application", "control_room_schedule_admissions", "control_room_github_broker"];
@@ -338,38 +344,47 @@ async function upgradeFromAppliedPrefix({ database, pending, withoutGrants, newO
 }
 
 // A database already at S2 (S1 0093, 0100, 0101 and S2 0102 applied) takes
-// S3's queue migration, S4's pipeline migration, S5's agent-review migration
-// and S6's build-publication migration, in that order.
-test("upgrade from S2's applied ledger appends only the agent-queue, pipeline, agent-review and build-publication migrations", needsPg, () =>
+// S3's queue migration, S4's pipeline migration, S5's agent-review migration,
+// S6's build-publication migration and S7's unattended-advance migration, in
+// that order.
+test("upgrade from S2's applied ledger appends only the agent-queue, pipeline, agent-review, build-publication and unattended-advance migrations", needsPg, () =>
   upgradeFromAppliedPrefix({ database: "cr_prod_upgrade_s2",
     pending: ["_work_batch_agent_queue.sql", "_linear_pipeline_runs.sql", "_agent_review_plans.sql",
-      "_pipeline_build_publications.sql"],
-    withoutGrants: [QUEUE_GRANTS, PIPELINE_GRANTS, AGENT_REVIEW_GRANTS, PUBLICATION_GRANTS],
+      "_pipeline_build_publications.sql", "_pipeline_unattended_advance.sql"],
+    withoutGrants: [QUEUE_GRANTS, UNATTENDED_GRANTS, PIPELINE_GRANTS, AGENT_REVIEW_GRANTS, PUBLICATION_GRANTS],
     newObjects: ["work_batch_queue_admissions", "work_batch_agent_queue_heads", "work_batch_effective_queue_admissions",
       "pipeline_templates", "pipeline_runs", "pipeline_stage_runs", "pipeline_ordered_stage_runs", "control_agent_review_plans",
-      "control_pipeline_build_publications"] }));
+      "control_pipeline_build_publications", ...UNATTENDED_OBJECTS] }));
 
-// A database at main (S3's 0104 applied) takes S4's 0105, S5's 0106, then S6's 0108.
-test("upgrade from main's applied ledger appends only the pipeline, agent-review and build-publication migrations", needsPg, () =>
+// A database at main (S3's 0104 applied) takes S4's 0105, S5's 0106, S6's 0108, then S7's 0109.
+test("upgrade from main's applied ledger appends only the pipeline, agent-review, build-publication and unattended-advance migrations", needsPg, () =>
   upgradeFromAppliedPrefix({ database: "cr_prod_upgrade_main",
-    pending: ["_linear_pipeline_runs.sql", "_agent_review_plans.sql", "_pipeline_build_publications.sql"],
-    withoutGrants: [PIPELINE_GRANTS, AGENT_REVIEW_GRANTS, PUBLICATION_GRANTS],
+    pending: ["_linear_pipeline_runs.sql", "_agent_review_plans.sql", "_pipeline_build_publications.sql",
+      "_pipeline_unattended_advance.sql"],
+    withoutGrants: [UNATTENDED_GRANTS, PIPELINE_GRANTS, AGENT_REVIEW_GRANTS, PUBLICATION_GRANTS],
     newObjects: ["pipeline_templates", "pipeline_runs", "pipeline_stage_runs", "pipeline_ordered_stage_runs",
-      "control_agent_review_plans", "control_pipeline_build_publications"] }));
+      "control_agent_review_plans", "control_pipeline_build_publications", ...UNATTENDED_OBJECTS] }));
 
-// A database at main plus S4 (0105 applied) takes S5's 0106, then S6's 0108.
-test("upgrade from main plus S4's applied ledger appends only the agent-review and build-publication migrations", needsPg, () =>
+// A database at main plus S4 (0105 applied) takes S5's 0106, S6's 0108, then S7's 0109.
+test("upgrade from main plus S4's applied ledger appends only the agent-review, build-publication and unattended-advance migrations", needsPg, () =>
   upgradeFromAppliedPrefix({ database: "cr_prod_upgrade_s4",
-    pending: ["_agent_review_plans.sql", "_pipeline_build_publications.sql"],
-    withoutGrants: [AGENT_REVIEW_GRANTS, PUBLICATION_GRANTS],
-    newObjects: ["control_agent_review_plans", "control_pipeline_build_publications"] }));
+    pending: ["_agent_review_plans.sql", "_pipeline_build_publications.sql", "_pipeline_unattended_advance.sql"],
+    withoutGrants: [UNATTENDED_GRANTS, AGENT_REVIEW_GRANTS, PUBLICATION_GRANTS],
+    newObjects: ["control_agent_review_plans", "control_pipeline_build_publications", ...UNATTENDED_OBJECTS] }));
 
-// A database at main plus S4 and S5 (0106 applied) takes only S6's 0108: no
-// duplicate ledger_order, and a second run is a clean no-op.
-test("upgrade from main plus S4 and S5's applied ledger appends only the build-publication migration", needsPg, () =>
+// A database at main plus S4 and S5 (0106 applied) takes S6's 0108, then S7's 0109.
+test("upgrade from main plus S4 and S5's applied ledger appends only the build-publication and unattended-advance migrations", needsPg, () =>
   upgradeFromAppliedPrefix({ database: "cr_prod_upgrade_s5",
-    pending: ["_pipeline_build_publications.sql"], withoutGrants: [PUBLICATION_GRANTS],
-    newObjects: ["control_pipeline_build_publications"] }));
+    pending: ["_pipeline_build_publications.sql", "_pipeline_unattended_advance.sql"],
+    withoutGrants: [UNATTENDED_GRANTS, PUBLICATION_GRANTS],
+    newObjects: ["control_pipeline_build_publications", ...UNATTENDED_OBJECTS] }));
+
+// A database at main plus S4, S5 and S6 (0108 applied) takes only S7's 0109:
+// no duplicate ledger_order, and a second run is a clean no-op.
+test("upgrade from main plus S4, S5 and S6's applied ledger appends only the unattended-advance migration", needsPg, () =>
+  upgradeFromAppliedPrefix({ database: "cr_prod_upgrade_s6",
+    pending: ["_pipeline_unattended_advance.sql"], withoutGrants: [UNATTENDED_GRANTS],
+    newObjects: UNATTENDED_OBJECTS }));
 
 test("tampered history fails closed: altered, deleted-row and forged-digest states", needsPg, async () => {
   await freshDatabase("cr_prod_tamper");
@@ -683,8 +698,10 @@ test("work-intake login cannot read or forge another subsystem's shared-ledger r
   assert.deepEqual(retained,{column_update:true,guard_count:1,policy_count:1});
   await query(db,"DROP POLICY test_dependent_policy ON audit_events");
   // The owner-approval slice depends on the intake tables, and the queue and
-  // build-publication tenant policies read the intake binding. Exercise the
-  // reviewed recovery order, newest first, before removing the base slice.
+  // build-publication and unattended-advance tenant policies read the intake
+  // binding. Exercise the reviewed recovery order, newest first, before
+  // removing the base slice.
+  await query(db,await readFile(join(ROOT,"db/down/0109_pipeline_unattended_advance.sql"),"utf8"));
   await query(db,await readFile(join(ROOT,"db/down/0108_pipeline_build_publications.sql"),"utf8"));
   await query(db,queueDown);
   await query(db,ownerDown);
@@ -903,6 +920,162 @@ test("S6 build publication runs on the Mac-local production logins and stays ten
     }
   }));
 
+// An owner delegation policy and the active coordinator head it is bound to,
+// for the S7 advance path.
+async function seedAdvancePolicy(client,own,policyId,at){
+  const identityId="identity:web-advance", owner=sha256Digest(identityId);
+  await client.query(`INSERT INTO control_project_coordinator_heads(tenant_id,project_id,state,coordinator_identity_id,
+    coordinator_actor_type,assigned_by_owner_identity_id,version,assigned_at,updated_at,payload)
+    VALUES($1,$2,'active',$3,'human',$3,1,$4,$4,'{}')`,[own.tenantId,own.project.projectId,identityId,at]);
+  await client.query(`INSERT INTO control_project_delegation_policies(tenant_id,id,project_id,coordinator_identity_id,
+    coordinator_version,state,version,policy_digest,owner_identity_id,owner_identity_digest,allowed_actions,eligible_routes,
+    risk_ceiling,effect_ceiling,max_total_tasks,max_total_cost_microusd,max_concurrent_tasks,valid_from,valid_until,payload,
+    created_at,updated_at) VALUES($1,$2,$3,$4,1,'active',1,$5,$4,$5,'["tasks.assign"]',
+    '["node:build:advance","node:check:advance","node:validate:advance"]','low','none',
+    3,1000,2,$6,$7,'{}',$6,$6)`,[own.tenantId,policyId,own.project.projectId,identityId,owner,
+    new Date(webNow-1000).toISOString(),new Date(webNow+600_000).toISOString()]);
+}
+
+// Every S7 statement runs on the Mac-local login that executes it in
+// production: private-process.ts builds the owner consent and history routes
+// on the web pool, and task-coordinator-lifecycle.ts builds the advance and
+// the bounded sweep on the coordinator pool. Row locks need UPDATE privilege,
+// so a lock the login may not take fails here and nowhere else.
+test("S7 unattended consent, advance, sweep and history run on the Mac-local production logins", needsPg, () =>
+  withMacLocalLogins("cr_unattended_logins",async({client,login})=>{
+    const coordinator=login("control_room_coordinator"), web=login("control_room_web");
+    const at=new Date(webNow).toISOString(), key=new Uint8Array(32).fill(57);
+    const checkpoints=new InMemoryRollbackCheckpointStoreV1({testOnly:true});
+    const own=await seedAgentReviewTenant(client,"advance",key,checkpoints,at);
+    const scope={tenantId:own.tenantId,workspaceId:own.workspaceId}, projectId=own.project.projectId;
+    const runId=own.pipeline.runId, buildJob=own.pipeline.jobIds[0];
+    await seedAdvancePolicy(client,own,"policy:advance",at);
+    // Both logins' startup preflights accept the real installed grants,
+    // including S7's column grants and its two tables.
+    const preflightScope={tenantId:own.tenantId,workspaceId:own.workspaceId,ownerIdentityId:"identity:web-advance",
+      issuer:webTrust.issuer};
+    await verifyPrivateDatabase(web.db,web.config,preflightScope,Date.now(),{nativeQueue:true});
+    await verifyTaskCoordinatorDatabase(coordinator.db,coordinator.config,preflightScope,Date.now(),{nativeQueue:true});
+    const identity=createAccessVerifier(webTrust)(webRequest(),webNow);
+    const view=await new LinearPipelineServiceV1(web.db,scope,key,{assertCurrent:()=>true,isAcceptedResultCurrent:()=>false},
+      ()=>webNow).view(identity,projectId,runId);
+
+    // Owner consent on the web login, then an exact replay.
+    const owner=new PipelineAdvanceServiceV1(web.db,scope,key,{},()=>webNow);
+    const command={runId,templateId:view.templateId,policyId:"policy:advance",enabled:true,
+      expectedRunVersion:view.runVersion,expectedTemplateVersion:view.templateVersion};
+    const consent=await owner.setUnattended(identity,projectId,command,"pipeline-unattended-logins-0001");
+    assert.equal(consent.replayed,false);
+    assert.equal((await owner.setUnattended(identity,projectId,command,"pipeline-unattended-logins-0001")).replayed,true);
+
+    // The coordinator advances stage 0 through the production read authority.
+    // Assignment and the native queue are the existing protected composition,
+    // so they are stubbed to one real attempt row.
+    // The coordinator advances each stage through the production read
+    // authority. The Completion Gate acceptance, assignment and the native
+    // queue are the existing protected composition, so they are stubbed: the
+    // stub accepts the stages in `accepted` and returns one real attempt row.
+    const [,checkJob,signoffJob]=own.pipeline.jobIds;
+    await client.query(`INSERT INTO control_task_execution_plans(tenant_id,project_id,source_job_id,job_id,plan,auth_tag)
+      VALUES($1,$2,$3,$3,'{}'::jsonb,$4)`,[own.tenantId,projectId,signoffJob,`hmac-sha256:${"9".repeat(64)}`]);
+    const attempts=new Map();
+    for (const [job,stage] of [[buildJob,"build"],[signoffJob,"validate"]]) {
+      const nodeId=`node:${stage}:advance`, workerId=`worker:${stage}:advance`, attemptId=`attempt:${stage}-advance`;
+      await client.query(`INSERT INTO control_nodes(id,tenant_id,state,version,identity_key_id,payload,created_at,updated_at)
+        VALUES($1,$2,'active',1,'key:stage',$3::jsonb,$4,$4)`,
+      [nodeId,own.tenantId,JSON.stringify({id:nodeId,tenantId:own.tenantId,state:"active",version:1,identityKeyId:"key:stage"}),at]);
+      await client.query(`INSERT INTO control_attempts(id,tenant_id,job_id,attempt_number,state,version,worker_id,node_id,lease_epoch,
+        payload,created_at,updated_at) VALUES($1,$2,$3,1,'offered',1,$4,$5,1,$6::jsonb,$7,$7)`,
+      [attemptId,own.tenantId,job,workerId,nodeId,JSON.stringify({id:attemptId,tenantId:own.tenantId,state:"offered",version:1,
+        jobId:job,attemptNumber:1,workerId,nodeId,leaseEpoch:1}),at]);
+      attempts.set(job,attemptId);
+    }
+    attempts.set(checkJob,"attempt:review-advance");
+    const accepted=new Set();
+    let queued=0;
+    const supporting=new ProductionPipelineAdvanceAuthorityV1(scope,{assertCurrent:()=>true},
+      {acceptedResultProof:async(_tx,value)=>accepted.has(value.sourceJobId)?{executionJobId:value.sourceJobId}:null,
+        isAcceptedResultCurrent:async(_tx,value)=>accepted.has(value.sourceJobId)},
+      {currentCost:async()=>({kind:"known",admittedCostMicroUsd:10,evidenceDigest:sha256Digest("cost")})},()=>webNow);
+    const capability=new ProductionPipelineAdvanceCapabilityV1(supporting,
+      {assignScheduledInSession:async(_tx,value)=>({receipt:{attemptId:attempts.get(value.jobId),
+        leaseId:`lease:${value.jobId}`,leaseEpoch:1},replayed:false})},
+      {enqueueAssignedInSession:async()=>{queued+=1;return {queueId:`queue:advance-logins-${queued}`,replayed:false};}});
+    const advance=new PipelineAdvanceServiceV1(coordinator.db,scope,key,{unattendedEnabled:()=>true,capability},()=>webNow);
+    const receipt=await advance.advance(runId,"policy:advance");
+    assert.deepEqual([receipt.startsWork,receipt.stageOrdinal,receipt.jobId,receipt.attemptId,receipt.replayed],
+      [true,0,buildJob,"attempt:build-advance",false]);
+    // The bounded sweep selects the consented run, moves its cursor and
+    // replays the stored receipt without a second queue effect.
+    const swept=await advance.advanceReady(8);
+    assert.equal(swept.checked,1);
+    assert.deepEqual(swept.advanced.map(value=>[value.stageOrdinal,value.replayed]),[[0,true]]);
+    assert.equal(queued,1);
+    assert.notEqual((await client.query("SELECT unattended_last_swept_at FROM pipeline_runs WHERE id=$1",[runId]))
+      .rows[0].unattended_last_swept_at,null);
+    // A later stage's acceptance cannot skip the unaccepted current stage:
+    // the run stays on stage 0 and replays its receipt.
+    accepted.add(checkJob);
+    assert.deepEqual(await advance.advance(runId,"policy:advance").then(value=>[value.stageOrdinal,value.replayed]),[0,true]);
+    accepted.delete(checkJob);
+    // The coordinator login may write the run's ordinal column, but an
+    // unsigned move is refused before any stage is resolved or queued.
+    const signed=(await client.query("SELECT current_stage_ordinal FROM pipeline_runs WHERE id=$1",[runId])).rows[0];
+    await coordinator.direct.query("UPDATE pipeline_runs SET current_stage_ordinal=2 WHERE id=$1",[runId]);
+    await assert.rejects(advance.advance(runId,"policy:advance"),error=>error.safeReason==="pipeline_integrity_failed");
+    await coordinator.direct.query("UPDATE pipeline_runs SET current_stage_ordinal=$2 WHERE id=$1",
+      [runId,signed.current_stage_ordinal]);
+    // The sweep cursor is the one unsigned column; moving it only reorders
+    // sweeps and never authorizes anything.
+    await coordinator.direct.query("UPDATE pipeline_runs SET unattended_last_swept_at='1970-01-01' WHERE id=$1",[runId]);
+    assert.equal(queued,1);
+    // Each accepted stage moves the run exactly one ordinal, checking the
+    // predecessor edge; the accepted final stage completes the run.
+    accepted.add(buildJob);
+    assert.deepEqual(await advance.advance(runId,"policy:advance").then(value=>[value.stageOrdinal,value.jobId]),[1,checkJob]);
+    accepted.add(checkJob);
+    assert.deepEqual(await advance.advance(runId,"policy:advance").then(value=>[value.stageOrdinal,value.jobId]),[2,signoffJob]);
+    accepted.add(signoffJob);
+    const done=await advance.advance(runId,"policy:advance");
+    assert.deepEqual([done.startsWork,done.state],[false,"succeeded"]);
+    assert.equal(queued,3);
+    assert.deepEqual((await client.query(`SELECT state,current_stage_ordinal,(SELECT count(*)::int FROM pipeline_advance_receipts
+      WHERE pipeline_run_id=$1) receipts FROM pipeline_runs WHERE id=$1`,[runId])).rows[0],
+    {state:"succeeded",current_stage_ordinal:null,receipts:3});
+    // The Hermes route's owner re-check locks the policy and identity rows as
+    // the coordinator; both carry a column the coordinator may update.
+    assert.deepEqual((await client.query(`SELECT
+      has_any_column_privilege('control_room_task_coordinator','control_project_delegation_policies','UPDATE') policies,
+      has_any_column_privilege('control_room_task_coordinator','control_identities','UPDATE') identities`)).rows[0],
+    {policies:true,identities:true});
+
+    // The shared intake login holds no grant on either new table. Were one
+    // ever added, the tenant binding would still hide every other tenant's rows.
+    const intake={...target("cr_unattended_logins","control_room_work_intake_agent"),
+      password:passwords.CONTROL_ROOM_WORK_INTAKE_PASSWORD};
+    await client.query("INSERT INTO tenants(id,display_name) VALUES('tenant:advance-other','Other tenant')");
+    for (const table of ["pipeline_unattended_transitions","pipeline_advance_receipts"]) {
+      await assert.rejects(query(intake,`SELECT tenant_id FROM ${table}`),/permission denied/u,table);
+      await client.query("INSERT INTO work_intake_tenant_binding(singleton,tenant_id) VALUES(true,'tenant:advance-other')");
+      await client.query(`GRANT SELECT ON ${table} TO control_room_work_intake`);
+      try {
+        assert.deepEqual((await query(intake,`SELECT DISTINCT tenant_id FROM ${table}`)).rows,[],table);
+        await client.query("DELETE FROM work_intake_tenant_binding");
+        assert.deepEqual((await query(intake,`SELECT DISTINCT tenant_id FROM ${table}`)).rows,[],table);
+        await client.query("INSERT INTO work_intake_tenant_binding(singleton,tenant_id) VALUES(true,$1)",[own.tenantId]);
+        assert.deepEqual((await query(intake,`SELECT DISTINCT tenant_id FROM ${table}`)).rows,[{tenant_id:own.tenantId}],table);
+      } finally {
+        await client.query(`REVOKE SELECT ON ${table} FROM control_room_work_intake`);
+        await client.query("DELETE FROM work_intake_tenant_binding");
+      }
+    }
+
+    // Owner history on the web login includes the consent and the advance.
+    const history=await owner.historyForOwner(identity,projectId,runId);
+    assert.ok(history.events.some(event=>event.action==="pipelines.unattended.enabled"));
+    assert.ok(history.events.some(event=>event.action==="pipelines.stage.advanced"));
+  }));
+
 // The commit boundary stores the payloads it is given, and the Completion Gate
 // store re-parses every stored row, so one malformed review would leave the
 // tenant's gate unreadable for good. Each probe calls the boundary as the
@@ -1093,11 +1266,12 @@ async function catalogState(db){
   return {schema:await readSchemaDigest(client),acl};
 }
 
-// 0108's down file returns a head database to exactly the main + S4 + S5
+// 0109's then 0108's down files return a head database to exactly the main + S4 + S5
 // state: the same objects and function bodies, and the same privileges.
-test("0108 down returns a head database to exactly the main plus S4 and S5 state", needsPg, async () => {
-  const { stage, ledgerPath } = await stageAppliedPrefix({ pending: ["_pipeline_build_publications.sql"],
-    withoutGrants: [PUBLICATION_GRANTS] });
+test("0109 then 0108 down return a head database to exactly the main plus S4 and S5 state", needsPg, async () => {
+  const { stage, ledgerPath } = await stageAppliedPrefix({
+    pending: ["_pipeline_build_publications.sql", "_pipeline_unattended_advance.sql"],
+    withoutGrants: [UNATTENDED_GRANTS, PUBLICATION_GRANTS] });
   try {
     await freshDatabase("cr_prod_s6_baseline");
     await applyMigrations({ target: target("cr_prod_s6_baseline"), bootstrapTarget: bootstrapTarget("cr_prod_s6_baseline"),
@@ -1106,10 +1280,87 @@ test("0108 down returns a head database to exactly the main plus S4 and S5 state
     await applyMigrations({ target: target("cr_prod_s6_down"), bootstrapTarget: bootstrapTarget("cr_prod_s6_down"),
       migrateTarget: migrateTarget("cr_prod_s6_down"), rootDir: ROOT, env: { ...process.env, ...passwords } });
     assert.notDeepEqual(await catalogState(target("cr_prod_s6_down")), await catalogState(target("cr_prod_s6_baseline")));
+    await query(target("cr_prod_s6_down"), await readFile(join(ROOT, "db/down/0109_pipeline_unattended_advance.sql"), "utf8"));
     await query(target("cr_prod_s6_down"), await readFile(join(ROOT, "db/down/0108_pipeline_build_publications.sql"), "utf8"));
     assert.deepEqual(await catalogState(target("cr_prod_s6_down")), await catalogState(target("cr_prod_s6_baseline")));
   } finally {
     await rm(stage, { recursive: true, force: true });
+  }
+});
+
+// S7's additions to the Mac-local role files. Removing them rebuilds the S6
+// role state; each must be present verbatim, so a changed grant fails here.
+const S7_ROLE_EDITS = {
+  "private_web_roles.sql": [
+    "  pipeline_ordered_stage_runs, pipeline_unattended_transitions,\n  control_pipeline_build_publications",
+    "  pipeline_ordered_stage_runs, control_pipeline_build_publications",
+    "GRANT INSERT ON pipeline_unattended_transitions TO control_room_private_web;\n"
+      + "GRANT UPDATE (may_advance_unattended, version, updated_at, record_digest, auth_tag)\n"
+      + "  ON pipeline_templates TO control_room_private_web;\n"
+      + "GRANT UPDATE (unattended, state, started_at, updated_at, version, template_version, template_digest,\n"
+      + "  record_digest, auth_tag) ON pipeline_runs TO control_room_private_web;\n", ""],
+  "task_coordinator_roles.sql": [
+    "control_pipeline_build_publications, pipeline_unattended_transitions, pipeline_advance_receipts,",
+    "control_pipeline_build_publications,",
+    "GRANT INSERT ON pipeline_advance_receipts TO control_room_task_coordinator;\n"
+      + "GRANT UPDATE (state, completed_at, current_stage_ordinal, updated_at, version, record_digest, auth_tag, unattended_last_swept_at)\n"
+      + "  ON pipeline_runs TO control_room_task_coordinator;\n", ""],
+};
+const MAC_ROLE_FILES = ["private_web_roles.sql", "task_coordinator_roles.sql", "native_queue_producer_roles.sql",
+  "native_results_roles.sql", "local_result_publisher_roles.sql", "native_queue_worker_roles.sql", "agent_reviewer_roles.sql"];
+const MAC_ROLE_GROUPS = ["control_room_private_web", "control_room_task_coordinator", "control_room_native_results",
+  "control_room_local_result_publisher", "control_room_agent_reviewer", "control_room_native_queue_worker"];
+
+// The narrow-role installer's database steps, from the real role files with
+// `edits` applied, as the cluster superuser the fixed queue expects. Roles are
+// cluster-wide, so a second database skips the files' plain CREATE ROLE.
+async function installMacRoleFiles(database, edits = {}) {
+  const client = new Client(target(database, "postgres")); await client.connect();
+  try {
+    await client.query(await readFile(join(ROOT, "db/roles/production_roles.sql"), "utf8"));
+    if (!(await inspectFixedQueueSchemaV1(client)).schemaExists) await installFixedQueueSchemaV1(client);
+    await client.query(await readFile(join(ROOT, "db/roles/private_web_database.sql"), "utf8"));
+    for (const file of MAC_ROLE_FILES) {
+      let sql = await readFile(join(ROOT, "db/roles", file), "utf8");
+      const pairs = edits[file] ?? [];
+      for (let index = 0; index < pairs.length; index += 2) {
+        assert.ok(sql.includes(pairs[index]), `${file}: ${pairs[index]}`);
+        sql = sql.replace(pairs[index], pairs[index + 1]);
+      }
+      for (const [statement, role] of sql.matchAll(/^CREATE ROLE (\w+)[^;]*;/gmu))
+        if ((await client.query("SELECT 1 FROM pg_roles WHERE rolname=$1", [role])).rows.length) sql = sql.replace(statement, "");
+      await client.query(sql);
+    }
+  } finally { await client.end(); }
+}
+
+// 0109's down file returns a Mac-local head database to exactly the S6 state:
+// the same objects, and the same privileges for every role, including the web
+// and coordinator column grants that exist only in the Mac-local role files.
+test("0109 down returns a Mac-local head database to exactly the main plus S4, S5 and S6 state", needsPg, async () => {
+  const { stage, ledgerPath } = await stageAppliedPrefix({ pending: ["_pipeline_unattended_advance.sql"],
+    withoutGrants: [UNATTENDED_GRANTS] });
+  const admin = adminDb();
+  const createdPostgres = !(await query(admin, "SELECT 1 FROM pg_roles WHERE rolname='postgres'")).rows.length;
+  if (createdPostgres) await query(admin, "CREATE ROLE postgres SUPERUSER LOGIN");
+  assert.deepEqual((await query(admin, "SELECT rolname FROM pg_roles WHERE rolname=ANY($1::text[])", [MAC_ROLE_GROUPS])).rows, []);
+  try {
+    await freshDatabase("cr_prod_s7_baseline");
+    await applyMigrations({ target: target("cr_prod_s7_baseline"), bootstrapTarget: bootstrapTarget("cr_prod_s7_baseline"),
+      migrateTarget: migrateTarget("cr_prod_s7_baseline"), rootDir: stage, ledgerPath, env: { ...process.env, ...passwords } });
+    await installMacRoleFiles("cr_prod_s7_baseline", S7_ROLE_EDITS);
+    await freshDatabase("cr_prod_s7_down");
+    await applyMigrations({ target: target("cr_prod_s7_down"), bootstrapTarget: bootstrapTarget("cr_prod_s7_down"),
+      migrateTarget: migrateTarget("cr_prod_s7_down"), rootDir: ROOT, env: { ...process.env, ...passwords } });
+    await installMacRoleFiles("cr_prod_s7_down");
+    const head = await catalogState(target("cr_prod_s7_down"));
+    assert.notDeepEqual(head, await catalogState(target("cr_prod_s7_baseline")));
+    await query(target("cr_prod_s7_down"), await readFile(join(ROOT, "db/down/0109_pipeline_unattended_advance.sql"), "utf8"));
+    assert.deepEqual(await catalogState(target("cr_prod_s7_down")), await catalogState(target("cr_prod_s7_baseline")));
+  } finally {
+    await rm(stage, { recursive: true, force: true });
+    for (const database of ["cr_prod_s7_baseline", "cr_prod_s7_down"]) await query(admin, `DROP DATABASE IF EXISTS ${database}`);
+    for (const role of [...MAC_ROLE_GROUPS, ...createdPostgres ? ["postgres"] : []]) await query(admin, `DROP ROLE IF EXISTS ${role}`);
   }
 });
 

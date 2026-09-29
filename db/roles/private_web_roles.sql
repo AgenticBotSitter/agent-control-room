@@ -37,7 +37,8 @@ GRANT SELECT ON control_identities, control_role_grants, workspaces, control_web
   control_attempt_resource_admissions, control_attempt_resource_scopes,
   work_batches, work_batch_revisions, work_batch_items, control_action_inbox TO control_room_private_web;
 GRANT SELECT ON pipeline_templates, pipeline_runs, pipeline_stage_runs,
-  pipeline_ordered_stage_runs, control_pipeline_build_publications, control_codex_result_publications
+  pipeline_ordered_stage_runs, pipeline_unattended_transitions,
+  control_pipeline_build_publications, control_codex_result_publications
   TO control_room_private_web;
 GRANT SELECT ON work_batch_queue_admissions, work_batch_effective_queue_admissions,
   work_batch_agent_queue_heads, control_native_task_queue, control_job_dependencies TO control_room_private_web;
@@ -68,6 +69,11 @@ GRANT INSERT ON pipeline_templates, pipeline_runs, pipeline_stage_runs TO contro
 -- write the edge between two jobs this role itself inserts. Append-only: no
 -- UPDATE or DELETE, and SELECT stays the three coordination-page columns.
 GRANT INSERT ON control_job_dependencies TO control_room_private_web;
+GRANT INSERT ON pipeline_unattended_transitions TO control_room_private_web;
+GRANT UPDATE (may_advance_unattended, version, updated_at, record_digest, auth_tag)
+  ON pipeline_templates TO control_room_private_web;
+GRANT UPDATE (unattended, state, started_at, updated_at, version, template_version, template_digest,
+  record_digest, auth_tag) ON pipeline_runs TO control_room_private_web;
 GRANT UPDATE (stage_kind, stage_ordinal, pipeline_run_id) ON control_jobs TO control_room_private_web;
 -- Coordinator lifecycle idempotency ledger: exact-match replay before any
 -- head mutation. SELECT plus the five inserted columns plus the completion
