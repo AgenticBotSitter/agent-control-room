@@ -149,15 +149,27 @@ jobs:
       - name: Test the lane coverage checker and the path routing
         # The quarantine wrapper delegates the original invocation after applying
         # its exact-name exclusions: node --test tests/check-test-lane-coverage.test.mjs
-        run: node scripts/run-tests-with-quarantine.mjs --test tests/check-test-lane-coverage.test.mjs tests/ci-path-routing.test.mjs tests/private-name-guard.test.mjs
+        # tests/ci-path-routing.test.mjs tests/private-name-guard.test.mjs
+        # tests/migration-number-check.test.mjs
+        run: node scripts/run-tests-with-quarantine.mjs --test tests/check-test-lane-coverage.test.mjs tests/ci-path-routing.test.mjs tests/private-name-guard.test.mjs tests/migration-number-check.test.mjs
       - name: Test the PR evidence claims checker
         run: node --test tests/check-pr-claims.test.mjs
       - name: Fail if any test file is unreachable from GitHub Actions
         run: node scripts/check-test-lane-coverage.mjs
       - name: Reject configured private names
+        # The guard fails closed when this repository's run has no list, and skips
+        # only for a fork pull request or a local run, so an unconfigured secret
+        # cannot pass as a clean scan. It needs no privileges beyond the secret it
+        # already had, and reading the event payload costs no budget.
         env:
           CONTROL_ROOM_PRIVATE_NAMES: ${{ secrets.CONTROL_ROOM_PRIVATE_NAMES }}
         run: node scripts/check-private-names.mjs
+      - name: Refuse two migrations with the same 4-digit number
+        # Migrations are applied in filename order, so two files sharing a number
+        # have an order but no intent, and two pull requests can each be correct
+        # against main and wrong together. It reads the directory the applier reads
+        # and needs no PostgreSQL, so it belongs in the job that reports in seconds.
+        run: node scripts/ci/check-migration-numbers.mjs
       - name: Reject stale or incomplete test quarantines
         run: node scripts/check-test-quarantine.mjs
       - run: pnpm install --frozen-lockfile --ignore-scripts
