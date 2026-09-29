@@ -54,7 +54,7 @@ CREATE TABLE work_batch_queue_admissions (
   worker_kind text NOT NULL CHECK (worker_kind IN ('codex','claude-code','hermes')),
   node_id text NOT NULL,
   queue_position bigint NOT NULL CHECK (queue_position >= 1),
-  queue_depth_limit integer NOT NULL CHECK (queue_depth_limit BETWEEN 1 AND 20),
+  queue_depth_limit bigint NOT NULL CHECK (queue_depth_limit BETWEEN 1 AND 20),
   selection_key text NOT NULL,
   model text NOT NULL,
   effort text NOT NULL CHECK (effort IN ('default','low','medium','high','xhigh','max')),
