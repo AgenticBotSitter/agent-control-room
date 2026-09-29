@@ -37,6 +37,7 @@ import { WebProjectService } from "../src/web/v1/project-service.ts";
 import { WebTaskService } from "../src/web/v1/task-service.ts";
 import { captureTaskModelCatalogV1 } from "../src/web/v1/task-model-selection.ts";
 import { createAccessVerifier } from "../src/web/v1/access-verifier.ts";
+import { privateWebSchemaDigest, readPrivateWebSchemaDigest } from "../src/web/v1/private-database-preflight.ts";
 import { now as webNow, request as webRequest, trust as webTrust } from "./helpers/web-foundation.ts";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -206,6 +207,9 @@ test("clean install applies the full ledger, creates logins, then reruns as no-o
   assert.equal(second.noOp, true);
   assert.deepEqual(second.applied, []);
   assert.equal(second.schemaDigest, first.schemaDigest);
+  // The private hosts refuse any schema whose structural digest differs from the
+  // reviewed constant; pin it against a real cluster installed the production way.
+  assert.equal(await readPrivateWebSchemaDigest(postgresDatabase(target("cr_prod_install"))), privateWebSchemaDigest);
 });
 
 test("ordered upgrade applies a pending suffix in two phases", needsPg, async () => {
