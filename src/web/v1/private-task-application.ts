@@ -38,8 +38,9 @@ export async function createPrivateTaskApplication(web: Omit<PrivateWebProcessOp
   // control handle. This uses the existing operator projection rather than a
   // local dashboard cache, so the same screen can later serve local and remote
   // workers from the one installation database.
+  const operatorSurfaceStore = new OperatorSurfaceStoreV1(coordinator.database.client);
   const operatorSurfaceService = new OperatorSurfaceReadServiceV1(
-    new OperatorSurfaceStoreV1(coordinator.database.client),
+    operatorSurfaceStore,
     new ServiceIncidentStore(coordinator.database.client),
     new DatabaseOperatorFleetReadSourceV1(coordinator.database.client),
   );
@@ -48,6 +49,12 @@ export async function createPrivateTaskApplication(web: Omit<PrivateWebProcessOp
   }) => (await operatorSurfaceService.read({
     scope: { tenantId: input.tenantId, actorId: input.actorId, grantedAt: input.grantedAt }, now: input.now,
   })).snapshot });
+  const actionInboxSource = Object.freeze({ read: async (input: {
+    tenantId: string; actorId: string; grantedAt: string; now: string; state: "open";
+  }) => {
+    const items = await operatorSurfaceStore.listInbox({ tenantId: input.tenantId, state: input.state, limit: 100 });
+    return { observedAt: input.now, items, truncated: items.length === 100 };
+  } });
   const available = web.database.isAvailable.bind(web.database), closePool = web.database.close.bind(web.database);
   let poolClose: Promise<void> | undefined;
   const database = { client: web.database.client, close: () => {
@@ -60,7 +67,7 @@ export async function createPrivateTaskApplication(web: Omit<PrivateWebProcessOp
     return poolClose;
   } };
   let app: ReturnType<typeof createPrivateWebProcess>;
-  try { app = createPrivateWebProcess({ ...web, database, operatorSurface,
+  try { app = createPrivateWebProcess({ ...web, database, operatorSurface, actionInboxSource,
     ...(web.workBatches && tasks.workBatchAuthority ? { workBatches: { ...web.workBatches,
       queueAdmissionAuthority: tasks.workBatchAuthority } } : {}),
     ...(web.projectEvents ? {} : web.tasks?.harnessIntegrityKey ? { projectEvents: new ProjectEventStoreV1(web.database.client,
