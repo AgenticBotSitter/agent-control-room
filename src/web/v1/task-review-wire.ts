@@ -13,6 +13,11 @@ export const taskReviewDraftSchema = z.object({ artifactId: id, targetId: id, ta
     ? value.feedback.length > 0 && value.acceptanceAttestation === undefined
     : value.feedback.length === 0);
 export type TaskReviewDraft = z.infer<typeof taskReviewDraftSchema>;
+export const taskReviewAuthenticationExpectationSchema = z.object({ actorId: digest, sessionEpoch: digest }).strict();
+export type TaskReviewAuthenticationExpectation = z.infer<typeof taskReviewAuthenticationExpectationSchema>;
+export const taskReviewRequestSchema = z.object({ review: taskReviewDraftSchema,
+  expectedAuthentication: taskReviewAuthenticationExpectationSchema }).strict();
+export const taskReviewAuthenticationMismatchHeader = "authenticated-session-changed";
 export const taskReviewReceiptSchema = z.object({ projectId: id, jobId: id, artifactId: id, targetId: id,
   targetDigest: digest, contentHash: digest, reviewId: id, findingId: id.nullable(),
   decision: z.enum(["accepted", "changes_requested"]), feedbackDigest: digest, recordedAt: z.string().datetime(),

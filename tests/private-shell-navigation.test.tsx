@@ -263,7 +263,8 @@ test("home waits for runtime detection and coalesces strict, focus, visibility a
   const saved = Object.fromEntries(["window", "document", "IS_REACT_ACT_ENVIRONMENT", "fetch"]
     .map(key => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
   Object.assign(globalThis, { window: dom.window, document: dom.window.document, IS_REACT_ACT_ENVIRONMENT: true });
-  Object.defineProperty(dom.window.document, "hidden", { configurable: true, get: () => false });
+  let hidden = false;
+  Object.defineProperty(dom.window.document, "hidden", { configurable: true, get: () => hidden });
   const paths = ["/api/v1/projects", "/api/v1/home/tasks", "/api/v1/needs-me/tasks"];
   const requests: string[] = [];
   const pending: { path: string; resolve: (response: Response) => void }[] = [];
@@ -320,6 +321,15 @@ test("home waits for runtime detection and coalesces strict, focus, visibility a
     });
     await tick();
     assert.deepEqual(counts(), Object.fromEntries(paths.map(path => [path, 2])), "settled batch permits one refresh");
+    await settle();
+    hidden = true;
+    await React.act(async () => { dom.window.document.dispatchEvent(new dom.window.Event("visibilitychange")); });
+    await tick();
+    assert.deepEqual(counts(), Object.fromEntries(paths.map(path => [path, 2])), "hidden Home pauses polling");
+    hidden = false;
+    await React.act(async () => { dom.window.document.dispatchEvent(new dom.window.Event("visibilitychange")); });
+    await tick();
+    assert.deepEqual(counts(), Object.fromEntries(paths.map(path => [path, 3])), "visible Home resumes one saved-state refresh");
     await settle();
   } finally {
     await React.act(async () => { root.unmount(); });
@@ -381,9 +391,12 @@ test("project overview shows scoped current, review and recent work without comm
   const running = { ...base, jobId: "job:running", title: "Prepare report", state: "running" as const };
   const review = { ...base, jobId: "job:review", title: "Review report", state: "waiting_approval" as const };
   const done = { ...base, jobId: "job:done", title: "Earlier research", state: "succeeded" as const };
+  const usage = { usageRollup: { runs: 0, inputTokens: 0, outputTokens: 0, totalTokens: 0, wallTimeMs: 0,
+    knownCostNanoUsd: "0", knownCostRuns: 0, subscriptionRuns: 0, unknownCostRuns: 0, unknownCostReasons: [] },
+    priceTable: { state: "not_recorded" as const, tableId: null, recordedAt: null } };
   const value = { projectId: base.projectId, current: [running, review], awaitingReview: [review], recent: [done, review, running],
     additionalCurrentOmitted: false, additionalReviewsOmitted: false, additionalRecentOmitted: false,
-    observedAt: "2026-09-04T12:00:00.000Z", startsWork: false as const };
+    observedAt: "2026-09-04T12:00:00.000Z", startsWork: false as const, ...usage };
   const html = renderToStaticMarkup(createElement(ProjectOverviewActivityView,
     { projectId: base.projectId, state: { state: "ready", value } }));
   for (const label of ["Current work", "Waiting for approval", "Recent task activity", "Prepare report", "Earlier research"])
@@ -465,9 +478,12 @@ test("project review and activity pages reuse exact saved task links without com
     createdAt: "2026-09-04T10:00:00.000Z", updatedAt: "2026-09-04T12:00:00.000Z" };
   const review = { ...base, jobId: "job:review", title: "Review report", state: "waiting_approval" as const };
   const done = { ...base, jobId: "job:done", title: "Completed research", state: "succeeded" as const };
+  const usage = { usageRollup: { runs: 0, inputTokens: 0, outputTokens: 0, totalTokens: 0, wallTimeMs: 0,
+    knownCostNanoUsd: "0", knownCostRuns: 0, subscriptionRuns: 0, unknownCostRuns: 0, unknownCostReasons: [] },
+    priceTable: { state: "not_recorded" as const, tableId: null, recordedAt: null } };
   const value = { projectId: base.projectId, current: [review], awaitingReview: [review], recent: [done, review],
     additionalCurrentOmitted: false, additionalReviewsOmitted: false, additionalRecentOmitted: false,
-    observedAt: "2026-09-04T12:00:00.000Z", startsWork: false as const };
+    observedAt: "2026-09-04T12:00:00.000Z", startsWork: false as const, ...usage };
   const reviews = renderToStaticMarkup(createElement(ProjectTaskViewPanel,
     { projectId: base.projectId, view: "reviews", state: { state: "ready", value } }));
   assert.match(reviews, /Review report/);

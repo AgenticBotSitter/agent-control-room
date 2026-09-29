@@ -1,4 +1,5 @@
 import { ConfiguredTimestamp } from "../../private-app/app/configured-timestamp";
+import { StateChip, LoadingState, EmptyState, UnavailableState, PanelHeading, PrivateCount } from "../../private-app/app/owner-ui";
 
 export interface ProjectCatalogProps {
   state: "loading" | "ready" | "unavailable";
@@ -10,17 +11,20 @@ export interface ProjectCatalogProps {
 }
 export function ProjectCatalog({ state, projects, selectedProjectId, paginated,
   projectHref = id => `/projects/${encodeURIComponent(id)}` }: ProjectCatalogProps) {
-  if (state === "loading") return <p role="status">Loading projects…</p>;
-  if (state === "unavailable") return <p role="alert">Projects are unavailable. Try refreshing this view.</p>;
-  if (!projects.length) return <p>{paginated ? "No projects on this page with your current access." : "No projects yet. Create your first project here."}</p>;
+  if (state === "loading") return <LoadingState>Loading projects…</LoadingState>;
+  if (state === "unavailable") return <UnavailableState urgent>Projects are unavailable. Try refreshing this view.</UnavailableState>;
+  if (!projects.length) return <EmptyState>{paginated ? "No projects on this page with your current access." : "No projects yet. Create your first project here."}</EmptyState>;
   const section = (archived: boolean) => {
     const entries = projects.filter(project => (project.lifecycle === "archived") === archived);
     if (!entries.length) return null;
     return <section aria-label={archived ? "Archived projects" : "Current projects"}>
-      <h2>{archived ? "Archived" : "Your projects"}{paginated ? " on this page" : ""}</h2>
+      <PanelHeading id={archived ? "projects-archived" : "projects-current"}>
+        {archived ? "Archived" : "Your projects"}{paginated ? " on this page" : ""}
+        <PrivateCount value={entries.length} />
+      </PanelHeading>
       <ul className="private-project-grid">{entries.map(project => <li key={project.projectId}>
         <a href={projectHref(project.projectId)} aria-current={selectedProjectId === project.projectId ? "page" : undefined}>
-          <span className="private-state">{project.lifecycle}</span><h3>{project.title}</h3><p>{project.summary || "No summary added."}</p>
+          <StateChip state={project.lifecycle} /><h3>{project.title}</h3><p>{project.summary || "No summary added."}</p>
           {project.origin && <span className="private-note">{project.origin === "idea_lab" ? "From Idea Lab" : "Ordinary project"}</span>}
           <span className="private-note"><ConfiguredTimestamp value={project.updatedAt} prefix="Updated" /></span>
           <span className="private-open">Open project →</span>

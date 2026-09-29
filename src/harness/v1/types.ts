@@ -65,7 +65,8 @@ export type HarnessEventPayloadV1 =
   | { category: "lifecycle"; state: HarnessRunState; reasonCode?: string }
   | { category: "activity"; activity: "tool" | "file" | "test" | "checkpoint"; phase: "started" | "progress" | "completed" | "failed"; count?: number }
   | { category: "attention"; attention: "input" | "approval"; state: "requested" | "resolved" }
-  | { category: "usage"; inputTokens: number; outputTokens: number; cachedInputTokens: number; reasoningTokens: number; estimatedCostUsd?: string }
+  | { category: "usage"; inputTokens: number | null; outputTokens: number | null; totalTokens?: number | null;
+      cachedInputTokens: number | null; reasoningTokens: number | null; wallTimeMs?: number; estimatedCostUsd?: string }
   | { category: "transport"; state: "connected" | "disconnected" | "reconnected" | "drift"; reasonCode?: string };
 
 export interface HarnessRunEventV1 {
@@ -80,9 +81,11 @@ export interface HarnessRunEventV1 {
 }
 
 export interface HarnessRunUsageV1 {
-  inputTokens: number;
-  outputTokens: number;
-  cachedInputTokens: number;
-  reasoningTokens: number;
+  inputTokens: number | null;
+  outputTokens: number | null;
+  totalTokens?: number | null;
+  cachedInputTokens: number | null;
+  reasoningTokens: number | null;
+  wallTimeMs?: number;
   estimatedCostUsd?: string;
 }

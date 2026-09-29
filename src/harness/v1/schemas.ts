@@ -59,7 +59,9 @@ const eventPayloadSchema = z.discriminatedUnion("category", [
   z.object({ category: z.literal("lifecycle"), state: z.enum(harnessRunStates), reasonCode: id.optional() }).strict(),
   z.object({ category: z.literal("activity"), activity: z.enum(["tool", "file", "test", "checkpoint"]), phase: z.enum(["started", "progress", "completed", "failed"]), count: boundedCount.optional() }).strict(),
   z.object({ category: z.literal("attention"), attention: z.enum(["input", "approval"]), state: z.enum(["requested", "resolved"]) }).strict(),
-  z.object({ category: z.literal("usage"), inputTokens: boundedCount, outputTokens: boundedCount, cachedInputTokens: boundedCount, reasoningTokens: boundedCount, estimatedCostUsd: money.optional() }).strict(),
+  z.object({ category: z.literal("usage"), inputTokens: boundedCount.nullable(), outputTokens: boundedCount.nullable(),
+    totalTokens: boundedCount.nullable().optional(), cachedInputTokens: boundedCount.nullable(), reasoningTokens: boundedCount.nullable(),
+    wallTimeMs: boundedCount.optional(), estimatedCostUsd: money.optional() }).strict(),
   z.object({ category: z.literal("transport"), state: z.enum(["connected", "disconnected", "reconnected", "drift"]), reasonCode: id.optional() }).strict(),
 ]);
 
