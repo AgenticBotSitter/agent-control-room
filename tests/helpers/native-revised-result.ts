@@ -224,6 +224,10 @@ export async function nativeRevisedExecutionFixture(configuration: { topologyRou
   let planned: Awaited<ReturnType<TaskExecutionPlanner["revise"]>>;
   try {
     await original.verify();
+    // Revisions must not overlap the still-active ownership lease of their
+    // source. Follow the production quality coordinator by releasing capacity
+    // once the terminal result is durably available, before planning its child.
+    await original.createCompletion().releaseCapacity(original.request, () => {});
     changeReview = (await original.review("changes_requested")).receipt;
     const planner = new TaskExecutionPlanner(original.f.db, original.f.scope, original.f.plannerConfig,
       original.f.clock, original.f.ownerConfig);
@@ -234,7 +238,7 @@ export async function nativeRevisedExecutionFixture(configuration: { topologyRou
   // Ownership transfers here. Preparation closes the original fixture on its own failure,
   // so this wrapper must not catch and close it a second time.
   return prepareNativeRevisedExecution(original, planned, changeReview,
-    { sourceCapacityReleased: false, ownsOriginal: true, topologyRoute: configuration.topologyRoute,
+    { sourceCapacityReleased: true, ownsOriginal: true, topologyRoute: configuration.topologyRoute,
       topologyWorker: configuration.topologyWorker });
 }
 

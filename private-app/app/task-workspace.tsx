@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { BrowserRequestError, browserAuthenticationRecovery } from "../../src/web/v1/browser-client";
 import { createTaskBrowserClient, taskErrorMessage } from "../../src/web/v1/task-browser-client";
 import type { TaskDetail, TaskDraft, TaskPage, TaskReceipt } from "../../src/web/v1/task-wire";
@@ -18,6 +18,18 @@ import { createTaskExecutionWorkspace } from "../../src/web/v1/task-execution-wo
 import { createIdeaBrowserClient } from "../../src/web/v1/idea-browser-client";
 import { canPrepareIdeaExperiment, prepareIdeaExperimentDraft } from "../../src/web/v1/idea-experiment-draft";
 import { useLocalRuntime } from "./local-runtime";
+import type { PreparedTaskStatus } from "../../src/web/v1/task-planning-wire";
+
+/** Polling the same task must retain its object identity. The planning,
+ * assignment and result children key their protected reads to this value; a
+ * fresh but equal object otherwise fans one 30-second poll into more reads and
+ * resets in-progress owner choices. */
+export function retainEquivalentTaskDetailV1<T extends { observedAt: string }>(previous: T | undefined, next: T): T {
+  if (!previous) return next;
+  const { observedAt: _previousObservation, ...previousValue } = previous;
+  const { observedAt: _nextObservation, ...nextValue } = next;
+  return JSON.stringify(previousValue) === JSON.stringify(nextValue) ? previous : next;
+}
 
 export function TaskAuthenticationRecovery({ held }: { held: boolean }) {
   return <p>{browserAuthenticationRecovery(held)}</p>;
@@ -38,12 +50,24 @@ export function TaskExecutionStage({ detail, mode, workspace, onRecorded }: {
   detail: TaskDetail; mode: "checking" | "local" | "hosted"; workspace: ReturnType<typeof createTaskExecutionWorkspace>;
   onRecorded?: () => void;
 }) {
+  const [preparedContinuation, setPreparedContinuation] = useState<{ sourceJobId: string; task: PreparedTaskStatus }>();
+  const recordPreparedTask = useCallback((sourceJobId: string, task?: PreparedTaskStatus) => {
+    setPreparedContinuation(task ? { sourceJobId, task } : undefined);
+  }, []);
+  const preparedFromSource = preparedContinuation?.sourceJobId === detail.task.jobId ? preparedContinuation.task : undefined;
   if (mode === "checking") return <p className="private-note">Checking this installation’s task workflow…</p>;
   if (mode === "hosted") return <><PrivateTaskPlanning detail={detail} client={workspace.planning} />
     <PrivateTaskAssignment detail={detail} client={workspace.assignment} onRecorded={onRecorded} />
     <PrivateTaskApproval detail={detail} workspace={workspace} /></>;
-  if (!detail.preparedFor) return <PrivateTaskPlanning detail={detail} client={workspace.planning} />;
-  return <><PrivateTaskAssignment detail={detail} client={workspace.assignment} onRecorded={onRecorded} />
+  if (!detail.preparedFor) return <><PrivateTaskPlanning detail={detail} client={workspace.planning} onPreparedTask={recordPreparedTask} />
+    {preparedFromSource ? null : <>
+    <section id="task-assignment" className="private-panel" aria-label="Task assignment"><h2>Task assignment</h2>
+      <p>Prepare this saved proposal before choosing a configured machine. Assignment will reserve capacity without starting work.</p>
+      <button type="button" disabled>Assign after preparation</button></section>
+    <section id="task-approval" className="private-panel" aria-label="Execution approval"><h2>Execution approval</h2>
+      <p>Execution approval follows preparation and assignment. No permission has been granted and no agent starts from this page automatically.</p>
+      <button type="button" disabled>Approve after assignment</button></section></>}</>;
+  return <><PrivateTaskAssignment detail={detail} client={workspace.assignment} onRecorded={onRecorded} runOnAssign />
     <PrivateTaskApproval detail={detail} workspace={workspace} local /></>;
 }
 
@@ -78,7 +102,7 @@ export function PrivateTaskWorkspace({ projectId, jobId, after }: { projectId: s
       try {
         const value = jobId ? await client.detail(projectId, jobId) : await client.list(projectId, after);
         if (live && current === generation.current) {
-          if ("task" in value) setDetail(value); else setPage(value);
+          if ("task" in value) setDetail(previous => retainEquivalentTaskDetailV1(previous, value)); else setPage(value);
           setError(client.hasPending() ? new BrowserRequestError("uncertain") : undefined);
         }
       } catch (reason) {
@@ -134,7 +158,7 @@ export function PrivateTaskWorkspace({ projectId, jobId, after }: { projectId: s
       : <p>{taskErrorMessage[error.code]}</p>}
       {jobId && <p>Result content has been cleared. Unfinished review text and exact pending save keys remain in this task page’s memory.
         Restore access and reopen the same result to continue. Leaving or reloading the task page discards them.</p>}
-      <div className="private-actions"><button type="button" disabled={pending || preparing} onClick={() => setRefresh(value => value + 1)}>Refresh saved tasks</button>
+      <div className="private-actions"><button type="button" disabled={pending || preparing} onClick={() => setRefresh(value => value + 1)}>Check saved tasks again</button>
         {uncertain && page && <button type="button" disabled={pending} onClick={() => { void save(true); }}>Check this exact save again</button>}</div></div>}
     {loading && <p role="status">Loading protected tasks…</p>}
     {project && <button type="button" disabled={loading || pending || preparing} onClick={refreshSaved}>Check latest saved status</button>}
@@ -147,7 +171,7 @@ export function PrivateTaskWorkspace({ projectId, jobId, after }: { projectId: s
           onClick={() => { void prepareExperiment(); }}>{preparing ? "Reading experiment…" : "Prepare first experiment task"}</button>
         {(!!draft.title || !!draft.instructions) && <p>Clear both draft fields first if you want to prepare it again. Existing text is never replaced.</p>}
       </section>}{experimentNotice && <p role="status">{experimentNotice}</p>}
-        <TaskProposalForm draft={draft} setDraft={setDraft} pending={pending} preparing={preparing} uncertain={uncertain} onSave={() => { void save(); }} /></div>
+        <TaskProposalForm draft={draft} setDraft={setDraft} modelOptions={page.modelOptions} pending={pending} preparing={preparing} uncertain={uncertain} onSave={() => { void save(); }} /></div>
         : <p className="private-note">{page.project.lifecycle !== "active" ? "Reopen this project before proposing more work." : "Your current access allows reading tasks, not proposing new work."}</p>}</div>}
     {detail && <TaskDetailPanel detail={detail} />}
     {detail && <TaskStateGuidance detail={detail} refreshing={loading} onRefresh={refreshSaved} />}

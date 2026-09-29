@@ -1,7 +1,7 @@
-// Migration 0086: the real restricted private-web role may register exactly the
-// fixed Mac-local "Owner review" profile through the production completion-gate
-// store, and nothing looser. Applies db/roles/private_web_roles.sql for real and
-// drops to a login that inherits only that role.
+// Migrations 0086/0092: the real restricted private-web role may register
+// exactly the current fixed Mac-local "Owner review" profile through the
+// production completion-gate store, and nothing looser. Applies the real role
+// SQL and drops to a login that inherits only that role.
 import assert from "node:assert/strict";
 import test from "node:test";
 import { readFile, readdir } from "node:fs/promises";
@@ -15,7 +15,11 @@ import { createMacLocalOwnerReviewProfileV1 } from "../src/web/v1/mac-local-owne
 const NOW = "2026-09-25T12:00:00.000Z";
 const digest = (c: string) => `sha256:${c.repeat(64)}`;
 
-async function seed(revokedOwner = false) {
+const legacy = () => ({ ...fixed(), id: "profile:mac-local-owner-review:project:alpha",
+  requiredVerificationScenarioIds: ["scenario:mac-local-text"],
+  reviewerSeparation: { actor: true, worker: false, agentProfile: false, harness: false, modelFamily: false } });
+
+async function seed(options: Readonly<{ revokedOwner?: boolean; legacyProfile?: boolean }> = {}) {
   const pg = new PGlite();
   for (const file of (await readdir("db/migrations")).filter(f => f.endsWith(".sql")).sort())
     await pg.exec(await readFile(`db/migrations/${file}`, "utf8"));
@@ -28,7 +32,7 @@ async function seed(revokedOwner = false) {
       ('identity:other','tenant:b','human','Other','test','${digest("c")}','active','${NOW}','${NOW}'),
       ('identity:nonowner','tenant:a','human','Nonowner','test','${digest("d")}','active','${NOW}','${NOW}');
     INSERT INTO control_role_grants(id,tenant_id,identity_id,role_key,allowed_actions,project_ids,risk_ceiling,revoked_at,created_at,updated_at)
-      VALUES('grant:owner','tenant:a','identity:owner','owner','["*"]','["*"]','high',${revokedOwner ? `'${NOW}'` : "NULL"},'${NOW}','${NOW}');
+      VALUES('grant:owner','tenant:a','identity:owner','owner','["*"]','["*"]','high',${options.revokedOwner ? `'${NOW}'` : "NULL"},'${NOW}','${NOW}');
     INSERT INTO adapter_registry(id,tenant_id,source_system,contract_version,authority_mode,status,redaction_policy_version,cursor_retention_days)
       VALUES('adapter:test','tenant:a','control-room-manual','1.0.0','control_room_native','disabled','v1',30);
     INSERT INTO projects(id,tenant_id,workspace_id,adapter_id,source_record_id,source_version,title,description,
@@ -40,7 +44,9 @@ async function seed(revokedOwner = false) {
   const key = new Uint8Array(32).fill(7);
   const checkpoints = new InMemoryRollbackCheckpointStoreV1({ testOnly: true });
   // First-owner setup runs with operator authority, before the web login exists.
-  await new CompletionGateStoreV1(db, key, checkpoints).provisionTenant("tenant:a");
+  const operatorStore = new CompletionGateStoreV1(db, key, checkpoints);
+  await operatorStore.provisionTenant("tenant:a");
+  if (options.legacyProfile) await operatorStore.registerProfile(legacy());
   await pg.exec(await readFile("db/roles/private_web_roles.sql", "utf8"));
   await pg.exec(`CREATE ROLE web_login_test LOGIN INHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
     GRANT control_room_private_web TO web_login_test;
@@ -62,6 +68,15 @@ test("the web login registers the fixed owner-review profile, and a restart repl
   assert.equal(rows.rows[0]?.n, 1);
 });
 
+test("an existing old-shape profile is preserved while startup registers the current version", async t => {
+  const { pg, store } = await seed({ legacyProfile: true }); t.after(() => pg.close());
+  assert.equal((await store.registerProfile(fixed())).replayed, false);
+  const rows = await pg.query<{ id: string; payload: unknown }>(
+    "SELECT id,payload FROM control_completion_gate_records WHERE kind='profile' ORDER BY id");
+  assert.deepEqual(rows.rows.map(row => row.id), [legacy().id, fixed().id]);
+  assert.deepEqual(rows.rows[0]?.payload, legacy(), "the old immutable profile row is not rewritten");
+});
+
 for (const [name, change] of [
   ["automatic low-risk disposition", (p: Record<string, unknown>) => ({ ...p, automaticLowRiskDisposition: true })],
   ["more revision rounds", (p: Record<string, unknown>) => ({ ...p, maximumRevisionRounds: 5 })],
@@ -81,7 +96,7 @@ for (const [name, change] of [
 });
 
 test("the web login cannot use a revoked owner grant", async t => {
-  const { pg, store } = await seed(true); t.after(() => pg.close());
+  const { pg, store } = await seed({ revokedOwner: true }); t.after(() => pg.close());
   await assert.rejects(store.registerProfile(fixed()), /private quality insert rejected/);
 });
 
@@ -97,8 +112,8 @@ test("a long project id admits only its own digest-form profile id", async t => 
     SET SESSION AUTHORIZATION web_login_test; SET search_path = pg_catalog, public;`);
   const profile = createMacLocalOwnerReviewProfileV1({ tenantId: "tenant:a", projectId: longId,
     ownerIdentityId: "identity:owner", projectCreatedAt: NOW });
-  assert.match(profile.id, /^profile:mac-local-owner-review:[a-f0-9]{32}$/u);
-  await assert.rejects(store.registerProfile({ ...profile, id: `profile:mac-local-owner-review:${"0".repeat(32)}` }));
+  assert.match(profile.id, /^profile:mac-local-owner-review:v2:[a-f0-9]{32}$/u);
+  await assert.rejects(store.registerProfile({ ...profile, id: `profile:mac-local-owner-review:v2:${"0".repeat(32)}` }));
   assert.equal((await store.registerProfile(profile)).replayed, false);
 });
 

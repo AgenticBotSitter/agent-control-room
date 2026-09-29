@@ -8,6 +8,7 @@ import { TaskWorkflowGuide } from "../private-app/app/task-workflow-guide";
 import { TaskExecutionStage } from "../private-app/app/task-workspace";
 import { TaskPlanningPanel } from "../private-app/app/task-planning";
 import { createTaskExecutionWorkspace } from "../src/web/v1/task-execution-workspace";
+import { createTaskPlanningBrowserClient } from "../src/web/v1/task-planning-browser-client";
 import { HERMES_LOCAL_ADAPTER_V1 } from "../src/harness/hermes-local-v1/task-planning-contract";
 import { CODEX_OWNER_TRUSTED_LOCAL_ADAPTER_V1 } from "../src/harness/codex-v1/owner-trusted-local-task-planning-contract";
 import type { TaskDetail } from "../src/web/v1/task-wire";
@@ -118,11 +119,35 @@ test("workflow guidance distinguishes local preview from hosted signing", () => 
   assert.doesNotMatch(source, /href="#task-assignment"|href="#task-approval"/);
 });
 
-test("source proposal offers preparation, never the assignment read or approval", () => {
+test("source proposal shows the later assignment and approval steps as disabled, without reading or submitting them", () => {
   const html = renderToStaticMarkup(createElement(TaskExecutionStage,
     { detail: { ...detail, preparedFor: null, attempts: [] } as TaskDetail, mode: "local", workspace: createTaskExecutionWorkspace() }));
   assert.match(html, /Prepare task/);
-  assert.doesNotMatch(html, /Task assignment|Execution approval|Submit task/);
+  assert.match(html, /Task assignment/);
+  assert.match(html, /Execution approval/);
+  assert.match(html, /Assign after preparation/);
+  assert.match(html, /Approve after assignment/);
+  assert.equal((html.match(/disabled=""/g) ?? []).length, 2);
+  assert.doesNotMatch(html, /Submit task/);
+});
+
+test("a refreshed source proposal replaces obsolete disabled steps with its prepared continuation", async () => {
+  const source = { ...detail, preparedFor: null, attempts: [] } as TaskDetail;
+  const preparedJobId = "job:prepared";
+  const savedPlan = { projectId: source.task.projectId, sourceJobId: source.task.jobId, jobId: preparedJobId,
+    sourceInputDigest: source.inputDigest, inputDigest: digest("e"), plannedAt: at, startsWork: false,
+    grantsExecutionAuthority: false };
+  const options = { projectId: source.task.projectId, sourceJobId: source.task.jobId, inputDigest: source.inputDigest,
+    availability: "already_planned", startsWork: false, savedPlan,
+    preparedTask: { jobId: preparedJobId, state: "proposed", version: 0, updatedAt: at } };
+  const workspace = createTaskExecutionWorkspace({ planning: () => createTaskPlanningBrowserClient(async () => Response.json(options)) });
+  const view = await mounted([], createElement(TaskExecutionStage, { detail: source, mode: "local", workspace }));
+  try {
+    await view.act(async () => { await Promise.resolve(); });
+    assert.match(view.dom.window.document.body.textContent ?? "", /Prepared task status: proposed/);
+    assert.equal(view.dom.window.document.body.textContent?.includes("Assign after preparation"), false);
+    assert.equal(view.dom.window.document.body.textContent?.includes("Approve after assignment"), false);
+  } finally { await view.close(); }
 });
 
 test("prepared Mac task offers assignment and local submission, not a second plan or hosted signing", () => {
@@ -161,4 +186,18 @@ test("the planning selector names all three server-supplied local worker choices
   assert.match(html, /Claude Code/);
   assert.match(html, /Codex/);
   assert.match(html, /Choose a worker/);
+});
+
+test("a saved source plan links to the prepared task and shows its canonical status", () => {
+  const preparedJobId = "job:prepared";
+  const savedPlan = { projectId: detail.task.projectId, sourceJobId: detail.task.jobId, jobId: preparedJobId,
+    sourceInputDigest: detail.inputDigest, inputDigest: digest("d"), plannedAt: at, startsWork: false as const,
+    grantsExecutionAuthority: false as const };
+  const html = renderToStaticMarkup(createElement(TaskPlanningPanel, { options: {
+    projectId: detail.task.projectId, sourceJobId: detail.task.jobId, inputDigest: detail.inputDigest,
+    availability: "already_planned", startsWork: false, savedPlan,
+    preparedTask: { jobId: preparedJobId, state: "leased", version: 2, updatedAt: at },
+  }, receipt: savedPlan, pending: false, uncertain: false, onSelectTemplate() {}, onPrepare() {}, onRetry() {} }));
+  assert.match(html, /Prepared task status:.*leased/);
+  assert.match(html, new RegExp(encodeURIComponent(preparedJobId)));
 });

@@ -35,6 +35,14 @@ test("a missing or version-drifted executable leaves only that worker unavailabl
   assert.deepEqual(checked, { nodeId: "mac-1", enabledWorkerIds: ["worker:codex"], unavailableWorkerIds: [] });
 });
 
+test("a missing model allowlist boots without capability probing", async () => {
+  let probes = 0;
+  const checked = await verifyOwnerTrustedLocalEnablementV1({ ...valid, workers: [valid.workers[0]] },
+    async () => "codex 0.155.0", async () => { probes++; return false; });
+  assert.deepEqual(checked.enabledWorkerIds, ["worker:codex"]);
+  assert.equal(probes, 0);
+});
+
 test("accepts an already captured record only while its digest still matches", async () => {
   const captured = captureOwnerTrustedLocalEnablementV1(valid);
   assert.deepEqual(captureOwnerTrustedLocalEnablementV1(JSON.parse(JSON.stringify(captured))), captured);
@@ -43,4 +51,28 @@ test("accepts an already captured record only while its digest still matches", a
   assert.throws(() => captureOwnerTrustedLocalEnablementV1({ ...captured, enablementDigest: `sha256:${"0".repeat(64)}` }));
   const swapped = { ...captured, workers: [{ ...captured.workers[0], executablePath: "/tmp/other-codex" }, captured.workers[1]] };
   assert.throws(() => captureOwnerTrustedLocalEnablementV1(swapped));
+});
+
+test("captures bounded per-worker model policies and requires startup capability validation", async () => {
+  const configured = { ...valid, workers: [{ ...valid.workers[0], modelPolicy: {
+    models: ["gpt-test", "gpt-check"], defaultModel: "gpt-test", efforts: ["low", "high"], defaultEffort: "low",
+  } }, { ...valid.workers[1], kind: "hermes" as const, modelPolicy: {
+    profiles: [{ name: "build", provider: "provider-test", model: "model-test" }],
+    defaultProfile: "build", efforts: ["default"], defaultEffort: "default",
+  } }] };
+  const captured = captureOwnerTrustedLocalEnablementV1(configured);
+  assert.equal(captured.workers[0]!.modelPolicy && "models" in captured.workers[0].modelPolicy
+    ? captured.workers[0].modelPolicy.defaultModel : undefined, "gpt-test");
+  const unavailable = await verifyOwnerTrustedLocalEnablementV1(configured,
+    async path => path.includes("Codex") ? "codex 0.155.0" : "hermes 0.21.3", async worker => worker.kind === "codex");
+  assert.deepEqual(unavailable, { nodeId: "mac-1", enabledWorkerIds: ["worker:codex"], unavailableWorkerIds: ["worker:hermes-worker"] });
+  const validPolicy = await verifyOwnerTrustedLocalEnablementV1({ ...configured, workers: [configured.workers[0]] },
+    async () => "codex 0.155.0", async () => true);
+  assert.deepEqual(validPolicy.enabledWorkerIds, ["worker:codex"]);
+  await assert.rejects(verifyOwnerTrustedLocalEnablementV1({ ...configured, workers: [configured.workers[0]] },
+    async () => "codex 0.155.0", async () => false), /owner_trusted_local_enablement_invalid/);
+  await assert.rejects(verifyOwnerTrustedLocalEnablementV1(configured,
+    async path => path.includes("Codex") ? "codex 0.155.0" : "hermes 0.21.3"));
+  assert.throws(() => captureOwnerTrustedLocalEnablementV1({ ...configured, workers: [{ ...configured.workers[0],
+    modelPolicy: { ...configured.workers[0].modelPolicy, defaultModel: "tampered" } }] }));
 });

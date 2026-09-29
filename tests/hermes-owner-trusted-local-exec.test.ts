@@ -33,11 +33,12 @@ test("runs a text-only Hermes task with protected model selection and no inherit
   assert.deepEqual(result.usage, { inputTokens: 2, outputTokens: 3, totalTokens: 5 }); assert.deepEqual(await readdir(cwd), []);
 });
 
-test("refuses cancellation and a nonempty directory before spawning", async () => {
+test("refuses cancellation but reuses the persistent project workspace", async () => {
   const signal = new AbortController(); signal.abort();
   assert.deepEqual(await adapter().execute(input(await taskDirectory(), "hello", 10_000, signal.signal)), { status: "canceled", reason: "aborted_before_spawn" });
   const cwd = await taskDirectory(); await chmod(cwd, 0o700); await writeFile(join(cwd, "not-empty"), "x");
-  assert.deepEqual(await adapter().execute(input(cwd)), { status: "failed", reason: "working_directory_not_empty" });
+  assert.equal((await adapter().execute(input(cwd))).status, "completed");
+  assert.deepEqual(await readdir(cwd), ["not-empty"]);
 });
 
 test("refuses malformed output and cleans a cancelled or deadline-bound process group", async () => {

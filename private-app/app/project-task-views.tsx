@@ -32,15 +32,15 @@ export function ProjectTaskViewPanel({ projectId, view, state }: {
   if (state.state === "unavailable") return <section className="private-panel"><h2>{title}</h2>
     <p role="alert">{state.code === "access_denied" ? `Your current access does not include this project’s ${view}.`
       : state.code === "authentication_required" ? `Your session has ended. Sign in again to see this project’s ${view}.`
-        : `This project’s ${view} are unavailable. No empty list or all-clear is inferred.`}</p></section>;
+        : `The saved database or protected ${view} read could not be checked. No empty list or all-clear is inferred, and checking again does not start work.`}</p></section>;
   const tasks = view === "reviews" ? state.value.awaitingReview : state.value.recent;
   const omitted = view === "reviews" ? state.value.additionalReviewsOmitted : state.value.additionalRecentOmitted;
   return <section className="private-panel"><h2>{title}</h2>
     {tasks.length ? <TaskLinks projectId={projectId} tasks={tasks} />
       : <p>{view === "reviews" ? "No task is currently recorded as waiting for approval. This does not replace other review checks."
         : "No saved task activity is recorded for this project yet."}</p>}
-    {omitted && <p className="private-note">More {view} exist. Open Work to see the full saved task list.</p>}
-    <a className="private-action-link" href={`/projects/${encodeURIComponent(projectId)}/tasks`}>Open project work</a>
+    {omitted && <p className="private-note">More {view} exist. Open Tasks to see the full saved task list.</p>}
+    <a className="private-action-link" href={`/projects/${encodeURIComponent(projectId)}/tasks`}>Open project tasks</a>
   </section>;
 }
 
@@ -66,6 +66,6 @@ export function PrivateProjectTaskView({ projectId, view }: { projectId: string;
           : "This is recorded task history. Refreshing it never starts or retries work."}</p></div>
       <ProjectNavigation projectId={projectId} current={view} />
       <ProjectTaskViewPanel projectId={projectId} view={view} state={state} />
-      <button type="button" onClick={() => setGeneration(value => value + 1)}>Refresh saved {view}</button>
+      <button type="button" onClick={() => setGeneration(value => value + 1)}>Check saved {view} again</button>
     </main></div>;
 }

@@ -2,6 +2,7 @@ import { randomBytes, timingSafeEqual } from "node:crypto";
 import { sha256Digest, type VerifiedAuthentication } from "../../security";
 import { readBoundedJson } from "./http-common";
 import { WebAccessError, type VerifiedWebIdentity } from "./access-verifier";
+import type { LocalOwnerSessionStoreV1 } from "./local-owner-session-store";
 
 export const LOCAL_OWNER_SESSION_PROFILE_V1 = "control-room.local-owner-session/v1" as const;
 export interface LocalOwnerSessionProfileV1 {
@@ -12,9 +13,11 @@ export interface LocalOwnerSessionProfileV1 {
   subject: string;
   ownerCodeDigest: string;
   sessionSeconds: number;
+  /** Optional owner-configured HTTPS origin for a loopback reverse proxy. */
+  trustedOrigin?: string;
 }
 
-type Session = Readonly<{ tokenDigest: string; issuedAt: string; expiresAt: string }>;
+export type PersistedLocalOwnerSessionV1 = Readonly<{ tokenDigest: string; issuedAt: string; expiresAt: string }>;
 const cookieName = "control_room_local_owner";
 const maxFailures = 5;
 const failureWindowMs = 60_000;
@@ -24,14 +27,15 @@ function safeEqual(left: string, right: string): boolean {
   return a.length === b.length && timingSafeEqual(a, b);
 }
 
-function localRequest(request: Request, origin: string, requireOrigin: boolean): void {
-  const url = new URL(request.url), expected = new URL(origin);
+function localRequest(request: Request, profile: LocalOwnerSessionProfileV1, requireOrigin: boolean): void {
+  const url = new URL(request.url), expected = new URL(profile.origin);
+  const allowed = new Set([profile.origin, ...(profile.trustedOrigin ? [profile.trustedOrigin] : [])]);
   if (expected.protocol !== "http:" || expected.hostname !== "127.0.0.1" || !expected.port
-    || expected.origin !== origin || url.origin !== origin || url.protocol !== "http:"
+    || expected.origin !== profile.origin || !allowed.has(url.origin)
     || request.headers.has("forwarded") || [...request.headers.keys()].some(name => name.startsWith("x-forwarded-")))
     throw new WebAccessError("access_denied");
   const suppliedOrigin = request.headers.get("origin");
-  if (requireOrigin && suppliedOrigin !== origin || suppliedOrigin !== null && suppliedOrigin !== origin)
+  if (requireOrigin && suppliedOrigin !== url.origin || suppliedOrigin !== null && suppliedOrigin !== url.origin)
     throw new WebAccessError("access_denied");
   const fetchSite = request.headers.get("sec-fetch-site");
   if (fetchSite !== null && fetchSite !== "same-origin" && fetchSite !== "none") throw new WebAccessError("access_denied");
@@ -48,28 +52,47 @@ export function captureLocalOwnerSessionProfileV1(value: unknown): LocalOwnerSes
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("invalid_local_owner_session_profile");
   const input = value as Partial<LocalOwnerSessionProfileV1>;
   const origin = typeof input.origin === "string" ? new URL(input.origin) : undefined;
+  const trustedOrigin = typeof input.trustedOrigin === "string" ? new URL(input.trustedOrigin) : undefined;
   if (input.schema !== LOCAL_OWNER_SESSION_PROFILE_V1 || !origin || origin.protocol !== "http:" || origin.hostname !== "127.0.0.1"
     || !origin.port || origin.origin !== input.origin || typeof input.tenantId !== "string" || !input.tenantId
     || typeof input.provider !== "string" || !input.provider || typeof input.subject !== "string" || !input.subject
     || !/^sha256:[a-f0-9]{64}$/.test(input.ownerCodeDigest ?? "") || !Number.isSafeInteger(input.sessionSeconds)
     || input.sessionSeconds! < 300 || input.sessionSeconds! > 86_400)
     throw new Error("invalid_local_owner_session_profile");
+  if (input.trustedOrigin !== undefined && (!trustedOrigin || trustedOrigin.protocol !== "https:"
+    || trustedOrigin.origin !== input.trustedOrigin || trustedOrigin.pathname !== "/" || trustedOrigin.search || trustedOrigin.hash
+    || trustedOrigin.username || trustedOrigin.password || trustedOrigin.hostname.includes("*")
+    || trustedOrigin.origin === input.origin)) throw new Error("invalid_local_owner_session_profile");
   return Object.freeze({ schema: LOCAL_OWNER_SESSION_PROFILE_V1, origin: input.origin, tenantId: input.tenantId,
-    provider: input.provider, subject: input.subject, ownerCodeDigest: input.ownerCodeDigest!, sessionSeconds: input.sessionSeconds! });
+    provider: input.provider, subject: input.subject, ownerCodeDigest: input.ownerCodeDigest!, sessionSeconds: input.sessionSeconds!,
+    ...(input.trustedOrigin ? { trustedOrigin: input.trustedOrigin } : {}) });
 }
 
 /**
- * Loopback-only, process-local session issuer. It intentionally has no database
- * tables of its own: existing WebSessionAuthority records the normalized session
- * digest and still enforces the currently active owner/grant on every request.
+ * Loopback-only session issuer. It optionally persists only installation-bound
+ * token digests in the existing web-session table; WebSessionAuthority still
+ * enforces the currently active owner/grant on every protected request.
  */
 export class LocalOwnerSessionServiceV1 {
-  private readonly sessions = new Map<string, Session>();
+  private readonly sessions = new Map<string, PersistedLocalOwnerSessionV1>();
   private failures: number[] = [];
-  constructor(readonly profile: LocalOwnerSessionProfileV1) {}
+  private readonly installationBindingDigest: string;
+  constructor(readonly profile: LocalOwnerSessionProfileV1, private readonly store?: LocalOwnerSessionStoreV1,
+    initialSessions: readonly PersistedLocalOwnerSessionV1[] = []) {
+    this.installationBindingDigest = sha256Digest({ schema: LOCAL_OWNER_SESSION_PROFILE_V1,
+      origin: profile.origin, tenantId: profile.tenantId, provider: profile.provider,
+      subject: profile.subject, ownerCodeDigest: profile.ownerCodeDigest });
+    for (const session of initialSessions) {
+      if (!/^sha256:[a-f0-9]{64}$/u.test(session.tokenDigest)
+        || !Number.isFinite(Date.parse(session.issuedAt)) || new Date(session.issuedAt).toISOString() !== session.issuedAt
+        || !Number.isFinite(Date.parse(session.expiresAt)) || new Date(session.expiresAt).toISOString() !== session.expiresAt
+        || Date.parse(session.expiresAt) <= Date.parse(session.issuedAt)) throw new Error("local_owner_session_store_invalid");
+      this.sessions.set(session.tokenDigest, Object.freeze({ ...session }));
+    }
+  }
 
   assertLocalRequest(request: Request, requireOrigin = false): void {
-    localRequest(request, this.profile.origin, requireOrigin);
+    localRequest(request, this.profile, requireOrigin);
   }
 
   async issue(request: Request, ownerCode: unknown, nowMs: number): Promise<{ cookie: string; expiresAt: string }> {
@@ -82,16 +105,21 @@ export class LocalOwnerSessionServiceV1 {
       throw new WebAccessError("authentication_required");
     }
     this.failures = [];
-    const token = randomBytes(32).toString("base64url"), tokenDigest = sha256Digest({ token });
+    const token = randomBytes(32).toString("base64url"), tokenDigest = sha256Digest({ token,
+      installationBindingDigest: this.installationBindingDigest });
     const issuedAt = new Date(nowMs).toISOString(), expiresAt = new Date(nowMs + this.profile.sessionSeconds * 1000).toISOString();
-    this.sessions.set(tokenDigest, Object.freeze({ tokenDigest, issuedAt, expiresAt }));
-    return Object.freeze({ cookie: `${cookieName}=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${this.profile.sessionSeconds}`,
+    const session = Object.freeze({ tokenDigest, issuedAt, expiresAt });
+    await this.store?.save(session);
+    this.sessions.set(tokenDigest, session);
+    const secure = new URL(request.url).protocol === "https:" ? "; Secure" : "";
+    return Object.freeze({ cookie: `${cookieName}=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${this.profile.sessionSeconds}${secure}`,
       expiresAt });
   }
 
   verify(request: Request, nowMs: number): VerifiedWebIdentity {
     this.assertLocalRequest(request);
-    const token = oneCookie(request), tokenDigest = sha256Digest({ token }), session = this.sessions.get(tokenDigest);
+    const token = oneCookie(request), tokenDigest = sha256Digest({ token,
+      installationBindingDigest: this.installationBindingDigest }), session = this.sessions.get(tokenDigest);
     if (!session || Date.parse(session.issuedAt) > nowMs || Date.parse(session.expiresAt) <= nowMs)
       throw new WebAccessError("authentication_required");
     return Object.freeze({ provider: this.profile.provider, subject: this.profile.subject, tokenDigest,
@@ -102,6 +130,13 @@ export class LocalOwnerSessionServiceV1 {
     const identity = this.verify(request, nowMs);
     return Object.freeze({ tenantId: this.profile.tenantId, provider: identity.provider, subject: identity.subject,
       verifiedAt: identity.issuedAt, expiresAt: identity.expiresAt });
+  }
+
+  async revoke(request: Request, nowMs: number): Promise<void> {
+    this.assertLocalRequest(request, true);
+    const identity = this.verify(request, nowMs);
+    await this.store?.revoke(identity.tokenDigest, new Date(nowMs).toISOString());
+    this.sessions.delete(identity.tokenDigest);
   }
 }
 

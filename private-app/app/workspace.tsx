@@ -94,13 +94,47 @@ export function ProjectSaveRecovery({ pending, onRetry }: { pending: boolean; on
   </section>;
 }
 
+/** Lifecycle action buttons are filtered by the project's current state, so
+ * activating one unmounts it and mounts its opposite in the same place. The
+ * focused element is removed with it, focus falls back to <body>, and a
+ * keyboard user loses their place entirely. This restores focus to the first
+ * control of the re-rendered set.
+ *
+ * The flag is set only by the button's own click, so focus is never stolen on
+ * first mount or by the 30-second background poll that re-renders this subtree. */
+function useActionGroupFocus() {
+  const group = useRef<HTMLDivElement>(null);
+  const afterAction = useRef(false);
+  const onActivate = () => { afterAction.current = true; };
+  useEffect(() => {
+    if (!afterAction.current) return;
+    afterAction.current = false;
+    const first = group.current?.querySelector<HTMLElement>("button:not([disabled])")
+      ?? group.current?.querySelector<HTMLElement>("button");
+    first?.focus();
+  });
+  return { group, onActivate };
+}
+
 export function IdeaProjectStatusActions({ project, pending, onAction }: {
   project: ProjectView; pending: boolean; onAction: (action: IdeaProjectAction) => void;
 }) {
+  const focus = useActionGroupFocus();
   if (project.origin !== "idea_lab" || !project.lifecycleEditable) return null;
-  return <div className="private-actions">{project.ideaLifecycleActions?.map(action =>
-    <button type="button" key={action} disabled={pending} onClick={() => onAction(action)}>
+  return <div className="private-actions" ref={focus.group}>{project.ideaLifecycleActions?.map(action =>
+    <button type="button" key={action} disabled={pending} onClick={() => { focus.onActivate(); onAction(action); }}>
       {{ pause: "Pause project", resume: "Resume project", complete: "Mark complete", archive: "Archive project", reopen: "Reopen project" }[action]}</button>)}</div>;
+}
+
+export function OrdinaryProjectStatusActions({ project, pending, onTransition }: {
+  project: ProjectView; pending: boolean; onTransition: (lifecycle: WebProject["lifecycle"]) => void;
+}) {
+  const focus = useActionGroupFocus();
+  if (!project.lifecycleEditable || project.origin !== "ordinary") return null;
+  return <div className="private-actions" ref={focus.group}>{(["active", "paused", "completed", "archived"] as const)
+    .filter(value => value !== project.lifecycle && (project.lifecycle !== "archived" || value === "active"))
+    .map(value => <button type="button" key={value} disabled={pending} onClick={() => { focus.onActivate(); onTransition(value); }}>
+      {{ active: "Reopen project", paused: "Pause project", completed: "Mark complete", archived: "Archive project" }[value]}</button>)}</div>;
 }
 
 export function ProjectIdeaOrigin({ project }: { project: ProjectView }) {
@@ -108,8 +142,9 @@ export function ProjectIdeaOrigin({ project }: { project: ProjectView }) {
     ? <p><a href={`/ideas/${encodeURIComponent(project.sourceIdeaSessionId)}`}>View original Idea Lab discussion and decision</a></p> : null;
 }
 
-export function PrivateProjectWorkspace({ projectId, section = "overview", after, lifecycleFilter }: {
+export function PrivateProjectWorkspace({ projectId, section = "overview", after, lifecycleFilter, invalidLifecycleFilter = false }: {
   projectId?: string; section?: ProjectSection; after?: string; lifecycleFilter?: WebProject["lifecycle"];
+  invalidLifecycleFilter?: boolean;
 }) {
   const runtime = useLocalRuntime();
   const sessionObservations = useProductModule("sessionObservations");
@@ -210,11 +245,17 @@ export function PrivateProjectWorkspace({ projectId, section = "overview", after
     <PrivateHeader />
     <main id="private-main" tabIndex={-1}>
       {state === "ready" && client.hasPending() && <ProjectSaveRecovery pending={pending} onRetry={() => { void retryOriginal(); }} />}
-      {error && <div className="private-notice" role="alert"><p>{browserErrorMessage[error.code]}</p>
+      {error && <div className="private-notice">
+        {/* The live region covers only the message, not the recovery control.
+          * A 30s poll re-renders this subtree, so an alert region that also
+          * contained the button re-announced the button's label on every cycle
+          * and the region was larger than the message it existed to convey. */}
+        <p role="alert">{browserErrorMessage[error.code]}</p>
         {error.code === "authentication_required" ? <><p>This also ends Access sessions for other protected applications.</p><a href="/cdn-cgi/access/logout">Sign in again</a></>
-          : <button type="button" disabled={pending} onClick={() => setRefresh(value => value + 1)}>Refresh saved state</button>}</div>}
+          : <button type="button" disabled={pending} onClick={() => setRefresh(value => value + 1)}>Check saved state again</button>}</div>}
       {!projectId ? <>
         <div className="private-heading"><h1>Projects</h1><p>Open a project here or use “Open in new tab” to monitor several projects side by side. Closing a tab does not stop work, complete or archive its project.</p></div>
+        {invalidLifecycleFilter && <p className="private-notice" role="alert">The project status filter was invalid and has been reset to All. <a href="/projects">Use the canonical All projects URL</a>.</p>}
         <nav className="private-filter-tabs" aria-label="Filter projects by status">
           <a href="/projects" aria-current={lifecycleFilter === undefined ? "page" : undefined}>All</a>
           {(["active", "paused", "completed", "archived"] as const).map(value => <a key={value}
@@ -241,20 +282,23 @@ export function PrivateProjectWorkspace({ projectId, section = "overview", after
           <ProjectNavigation projectId={projectId} current={section} presentation={project.presentation} />
           {section === "overview" && <section className="private-panel"><h2>Purpose</h2>
             <p className="private-summary">{project.summary || "No summary added."}</p>
-            <p className="private-note"><a href={`/projects/${encodeURIComponent(projectId)}/tasks`}>Open project tasks</a> to prepare work, check assignment and approval, and inspect recorded progress and results. Task controls report unavailable services rather than assuming a live agent is connected.</p>
+            {project.lifecycle === "active" && <a className="private-action-link" href={`/projects/${encodeURIComponent(projectId)}/tasks#new-task`}>New task</a>}
+            <h3>Project lifecycle</h3>
+            <OrdinaryProjectStatusActions project={project} pending={pending || client.hasPending()}
+              onTransition={value => { void transition(value); }} />
+            <p className="private-note">Completing or archiving preserves project history and does not stop running work. Reopening permits new proposals again.</p>
+            <p className="private-note"><a href={`/projects/${encodeURIComponent(projectId)}/tasks`}>Open all work</a> to prepare tasks, check assignment and approval, and inspect recorded progress and results. Task controls report unavailable services rather than assuming a live agent is connected.</p>
             <p className="private-note">Saved revision {project.version} · <ConfiguredTimestamp value={project.updatedAt} prefix="Updated" /></p>
           </section>}
           <ProjectModuleAvailability presentation={project.presentation} />
-          {section === "agents" && <><ProjectAgentWorkspace projectId={projectId} />
+          {section === "agents" && <><ProjectAgentWorkspace projectId={projectId} local={runtime.mode === "local"} />
             <ProjectAgentInstallationStatus topology={installationTopology} />
           {sessionObservations && <SessionObservations projectId={projectId} />}</>}
           {section === "automations" && <ProjectScheduleStatusPanel projectId={projectId} />}
           {section === "settings" && <section className="private-panel"><h2>Project status</h2>
             <p className="private-summary">{project.summary || "No summary added."}</p>
-            {project.lifecycleEditable && project.origin === "ordinary" ? <div className="private-actions">{(["active", "paused", "completed", "archived"] as const)
-              .filter(value => value !== project.lifecycle && (project.lifecycle !== "archived" || value === "active"))
-              .map(value => <button type="button" key={value} disabled={pending || client.hasPending()} onClick={() => { void transition(value); }}>
-                {{ active: "Reopen project", paused: "Pause project", completed: "Mark complete", archived: "Archive project" }[value]}</button>)}</div>
+            {project.lifecycleEditable && project.origin === "ordinary" ? <OrdinaryProjectStatusActions project={project}
+              pending={pending || client.hasPending()} onTransition={value => { void transition(value); }} />
               : project.lifecycleEditable && project.origin === "idea_lab" ? <IdeaProjectStatusActions project={project}
                 pending={pending || client.hasPending()} onAction={action => { void transitionIdea(action); }} />
               : <p className="private-note">{project.origin === "idea_lab" ? "No Idea Lab status changes are available with the current access and configuration. Its history is preserved."

@@ -30,6 +30,25 @@ export async function readPinnedMacExecutableVersion(executablePath, runtime = {
   } catch { throw new Error("mac_local_executable_version_unavailable"); }
 }
 
+/** Non-executing startup introspection for the owner-protected model policy.
+ * A changed CLI surface makes only that worker unavailable. */
+export async function verifyPinnedMacModelPolicy(worker, runtime = { execFile }) {
+  if (!worker?.modelPolicy || !isAbsolute(worker.executablePath) || resolve(worker.executablePath) !== worker.executablePath) return false;
+  const run = async args => (await runtime.execFile(worker.executablePath, args, {
+    windowsHide: true, timeout: 5_000, killSignal: "SIGKILL", maxBuffer: 262_144,
+    encoding: "utf8", env: { PATH: "/usr/bin:/bin", HOME: process.env.HOME ?? "", NODE_ENV: "production" },
+  })).stdout;
+  try {
+    if (worker.kind === "codex") {
+      const [models, help] = await Promise.all([run(["debug", "models"]), run(["exec", "--help"])]);
+      return help.includes("--model") && worker.modelPolicy.models.every(model => models.includes(model));
+    }
+    const help = await run(["--help"]);
+    if (worker.kind === "claude-code") return help.includes("--model") && help.includes("--effort");
+    return help.includes("--model") && help.includes("--provider") && help.includes("--profile");
+  } catch { return false; }
+}
+
 export async function startMacLocalWebHost(input, runtime = {}) {
   if (!input || typeof input.protectedRoot !== "string") throw new Error("mac_local_web_host_arguments_invalid");
   const releaseRoot = new URL("../../dist-vps/server/", import.meta.url);
@@ -46,6 +65,7 @@ export async function startMacLocalWebHost(input, runtime = {}) {
   const host = hostModule.createMacLocalProtectedHostV1({
     loadConfiguration: () => loaderModule.loadMacLocalProtectedConfigurationFromRootV1(input.protectedRoot),
     readVersion: runtime.readVersion ?? readPinnedMacExecutableVersion,
+    verifyModelPolicy: runtime.verifyModelPolicy ?? verifyPinnedMacModelPolicy,
     openDatabase: postgresModule.createPrivatePostgresDatabase,
     assets, render: rendererModule.default,
   });
@@ -59,26 +79,6 @@ export async function startMacLocalTaskHost(input, runtime = {}) {
   if (!input || typeof input.protectedRoot !== "string") throw new Error("mac_local_web_host_arguments_invalid");
   const releaseRoot = new URL("../../dist-vps/server/", import.meta.url);
   const load = runtime.load ?? (path => import(path));
-  // A new installation has no project template. Start the real website so the
-  // owner can create the first project, but never construct a task worker.
-  const [firstLoader, firstPostgres] = await Promise.all([
-    load(new URL("macLocalProtectedLoader.js", releaseRoot).href),
-    load(new URL("privatePostgres.js", releaseRoot).href),
-  ]);
-  const firstConfiguration = await firstLoader.loadMacLocalProtectedConfigurationFromRootV1(input.protectedRoot);
-  const firstDatabase = firstPostgres.createPrivatePostgresDatabase(firstConfiguration.database);
-  let activeProjects;
-  try {
-    const rows = await firstDatabase.client.query(`SELECT p.id FROM projects p
-      JOIN control_manual_project_heads h ON h.project_id=p.id AND h.tenant_id=p.tenant_id
-      WHERE p.tenant_id=$1 AND p.workspace_id=$2 AND h.lifecycle='active' LIMIT 1`,
-    [firstConfiguration.localOwnerSession.tenantId, firstConfiguration.workspaceId]);
-    activeProjects = rows.rows.length;
-  } finally { await firstDatabase.close(); }
-  if (activeProjects === 0) {
-    console.log("Control Room website-only: create your first project, then run mac:down && mac:up. Task workers are not started.");
-    return startMacLocalWebHost(input, runtime);
-  }
   const [hostModule, loaderModule, providerModule, postgresModule, queueModule, servingModule, rendererModule] = await Promise.all([
     load(new URL("macLocalHost.js", releaseRoot).href), load(new URL("macLocalProtectedLoader.js", releaseRoot).href),
     load(new URL("macLocalTaskProvider.js", releaseRoot).href), load(new URL("privatePostgres.js", releaseRoot).href),
@@ -99,6 +99,7 @@ export async function startMacLocalTaskHost(input, runtime = {}) {
     loadConfiguration: () => loaderModule.loadMacLocalProtectedConfigurationFromRootV1(input.protectedRoot),
     loadDatabaseRoles: () => loaderModule.loadMacLocalDatabaseRolesFromRootV1(input.protectedRoot),
     readVersion: runtime.readVersion ?? readPinnedMacExecutableVersion,
+    verifyModelPolicy: runtime.verifyModelPolicy ?? verifyPinnedMacModelPolicy,
     openDatabase: postgresModule.createPrivatePostgresDatabase,
     createTaskApplication: async hostInput => {
       providerModule.requireMacLocalThreeAgentReadinessV1(provider, hostInput.workerReadiness);

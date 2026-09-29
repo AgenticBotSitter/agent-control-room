@@ -22,7 +22,9 @@ import { durableResultReceiptSchemaV1 } from "../src/artifacts/v1/durable-result
 import { durableResultReviewPlanSchemaV1, durableReviewTargetV1 } from "../src/completion-gate/v1/durable-result-review-plan";
 import { DurableResultReviewSubmissionServiceV1 } from "../src/completion-gate/v1/durable-result-review-submission";
 import { DurableLocalResultInspectionServiceV1 } from "../src/completion-gate/v1/durable-local-result-inspection";
-import { RoutedTaskResultInspectionServiceV1 } from "../src/completion-gate/v1/routed-result-inspection";
+import { isRoutedLocalResultAdapterV1, RoutedTaskResultInspectionServiceV1 } from "../src/completion-gate/v1/routed-result-inspection";
+import { HERMES_LOCAL_ADAPTER_V1 } from "../src/harness/hermes-local-v1/task-planning-contract";
+import { CODEX_OWNER_TRUSTED_LOCAL_ADAPTER_V1 } from "../src/harness/codex-v1/owner-trusted-local-task-planning-contract";
 import { NativeResultVerificationService, type AutomaticDocumentScenario } from "../src/completion-gate/v1/native-result-verification";
 import { NativeTaskCompletionService } from "../src/persistence/native-task-completion";
 import type { ControllerWorkerDeliveryPortV1, ControllerWorkerDeliveryV1 } from "../src/harness/v1/controller-worker-delivery";
@@ -36,6 +38,13 @@ function deferred() {
   const promise = new Promise<void>(done => { resolve = done; });
   return Object.freeze({ promise, resolve });
 }
+
+test("the result router admits every current local CLI adapter", () => {
+  assert.equal(isRoutedLocalResultAdapterV1(HERMES_LOCAL_ADAPTER_V1), true);
+  assert.equal(isRoutedLocalResultAdapterV1(CLAUDE_CODE_LOCAL_ADAPTER_V1), true);
+  assert.equal(isRoutedLocalResultAdapterV1(CODEX_OWNER_TRUSTED_LOCAL_ADAPTER_V1), true);
+  assert.equal(isRoutedLocalResultAdapterV1("connector:unknown-local-v1"), false);
+});
 
 class FinishedClaudeProcess {
   private firstRead = true;
@@ -104,8 +113,12 @@ test("Hermes and Claude run concurrently through one durable lifecycle without c
     CLAUDE_CODE_LOCAL_ADAPTER_V1, "executor:claude", CLAUDE_CODE_LOCAL_START_OPERATION_V1,
     CLAUDE_CODE_CONNECTOR_PROFILE_DIGEST_V1), integrityKey: new Uint8Array(32).fill(62),
     reviewIntegrityKey: f.reviewKey, checkpoints: f.checkpoints }, () => now);
-  const hermesSource = await f.tasks.propose(f.identity, binding.projectId, { ...taskDraft, title: "Hermes shared lifecycle" }, "shared-hermes-source");
-  const claudeSource = await f.tasks.propose(f.identity, binding.projectId, { ...taskDraft, title: "Claude shared lifecycle" }, "shared-claude-source");
+  const hermesDraft = { ...taskDraft, title: "Hermes shared lifecycle",
+    scopes: [{ kind: "tree" as const, path: "tasks/shared-hermes" }] };
+  const claudeDraft = { ...taskDraft, title: "Claude shared lifecycle",
+    scopes: [{ kind: "tree" as const, path: "tasks/shared-claude" }] };
+  const hermesSource = await f.tasks.propose(f.identity, binding.projectId, hermesDraft, "shared-hermes-source");
+  const claudeSource = await f.tasks.propose(f.identity, binding.projectId, claudeDraft, "shared-claude-source");
   const hermesPlan = await hermesPlanner.plan(f.identity, binding.projectId, hermesSource.receipt.jobId,
     sha256Digest({ ...taskDraft, title: "Hermes shared lifecycle" }));
   const claudePlan = await claudePlanner.plan(f.identity, binding.projectId, claudeSource.receipt.jobId,

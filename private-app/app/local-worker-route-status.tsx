@@ -57,18 +57,19 @@ function useLocalTaskWorkerStatus(): TaskWorkerReadState {
  * projection already sent to the browser: neither an enrollment, a template,
  * nor a capacity sample may be presented as a running local worker.
  */
-export function LocalWorkerRouteStatus({ setup, state, taskWorkerStatus }: { setup?: Readonly<InstallationSetupViewV1>;
-  state: SetupReadState; taskWorkerStatus?: TaskWorkerReadState }) {
+export function LocalWorkerRouteStatus({ setup, state, taskWorkerStatus, showSetupGuidance = true }: { setup?: Readonly<InstallationSetupViewV1>;
+  state: SetupReadState; taskWorkerStatus?: TaskWorkerReadState; showSetupGuidance?: boolean }) {
   const fetchedTaskWorkers = useLocalTaskWorkerStatus();
   const taskWorkers = taskWorkerStatus ?? fetchedTaskWorkers;
+  const setupGuidance = showSetupGuidance ? <p><a href="/setup">View read-only setup and proof guidance</a></p> : null;
   if (state === "loading") return <section className="private-panel" aria-labelledby="local-worker-routes-title">
     <h2 id="local-worker-routes-title">Local worker routes</h2><p role="status">Checking saved local worker setup…</p>
-    <p><a href="/setup">View read-only setup and proof guidance</a></p>
+    {setupGuidance}
   </section>;
   if (state === "unavailable") return <section className="private-panel private-notice" aria-labelledby="local-worker-routes-title">
     <h2 id="local-worker-routes-title">Local worker routes are unavailable</h2>
     <p>Control Room could not read the saved setup status. It does not guess whether Hermes Agent, Claude Code, or Codex is ready or running.</p>
-    <p><a href="/setup">View read-only setup and proof guidance</a></p>
+    {setupGuidance}
   </section>;
   if (taskWorkers.state === "loading") return <section className="private-panel" aria-labelledby="local-worker-routes-title">
     <h2 id="local-worker-routes-title">Local worker routes</h2><p role="status">Checking whether task workers started…</p>
@@ -76,18 +77,18 @@ export function LocalWorkerRouteStatus({ setup, state, taskWorkerStatus }: { set
   if (taskWorkers.state === "unavailable") return <section className="private-panel private-notice" aria-labelledby="local-worker-routes-title">
     <h2 id="local-worker-routes-title">Local task worker status unavailable</h2>
     <p>Control Room could not read the host status. It does not infer that task workers are ready or running.</p>
-    <p><a href="/setup">View read-only setup and proof guidance</a></p>
+    {setupGuidance}
   </section>;
   if (!taskWorkers.value.taskWorkersStarted) return <section className="private-panel" aria-labelledby="local-worker-routes-title">
     <h2 id="local-worker-routes-title">Task workers are not started</h2>
     <p>{taskWorkers.value.instruction ?? "Create your first project, then run mac:down && mac:up."}</p>
     <p>Saved worker setup does not mean task workers are running or ready.</p>
-    <p><a href="/setup">View read-only setup and proof guidance</a></p>
+    {setupGuidance}
   </section>;
   if (!setup?.localCapabilities) return <section className="private-panel" aria-labelledby="local-worker-routes-title">
     <h2 id="local-worker-routes-title">Local worker routes</h2>
     <p><strong>Not configured.</strong> This installation does not have a recorded local-worker setup. The saved connection inventory below is separate evidence and does not change that.</p>
-    <p><a href="/setup">View read-only setup and proof guidance</a></p>
+    {setupGuidance}
   </section>;
   return <section className="private-panel" aria-labelledby="local-worker-routes-title">
     <h2 id="local-worker-routes-title">Local worker routes</h2>
@@ -98,6 +99,6 @@ export function LocalWorkerRouteStatus({ setup, state, taskWorkerStatus }: { set
       {route.state === "owner_enablement_required" && <p className="private-note">This means the setup proof is recorded. It does not mean this worker is running or has received work.</p>}
     </li>)}</ul>
     <p className="private-note">This panel has no current route-bound task observation. Connection inventory and capacity evidence below cannot substitute for one.</p>
-    <p><a href="/setup">View read-only setup and proof guidance</a></p>
+    {setupGuidance}
   </section>;
 }

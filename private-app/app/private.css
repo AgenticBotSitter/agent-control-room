@@ -72,6 +72,12 @@
 .private-create h2 { margin: 0 0 .5rem; }
 .private-create label { font-size: .875rem; font-weight: 650; }
 .private-create input, .private-create textarea { width: 100%; font: inherit; color: var(--text); border: 1px solid var(--border-strong); border-radius: .5rem; padding: .6rem; background: var(--surface); }
+/* Per-field validation messages sit between the label they describe and the
+ * next control, and are read out through each field's aria-describedby. They
+ * use --text rather than a status colour so the message never depends on a
+ * colour to be legible, and wrap at any character for narrow viewports. */
+.private-field-error { margin: -.25rem 0 0; color: var(--text); font-size: .875rem; font-weight: 650; overflow-wrap: anywhere; }
+.private-create input[aria-invalid="true"], .private-create textarea[aria-invalid="true"] { border-color: var(--red); border-width: 2px; }
 .private-shell button, .private-notice a { min-height: 44px; padding: .6rem .9rem; border: 1px solid var(--border-strong); border-radius: .55rem; background: var(--surface-2); color: var(--text); font: inherit; cursor: pointer; }
 .private-create button { background: var(--green); color: var(--surface); margin-top: .3rem; }
 .private-shell button:disabled { opacity: .55; cursor: wait; }

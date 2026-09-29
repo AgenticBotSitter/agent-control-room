@@ -14,24 +14,29 @@ import type { TaskAssignmentOperation } from "./task-assignment-coordinator";
 import type { TaskApprovalOperation, TaskSubmissionOperation } from "./task-coordinator-lifecycle";
 import type { TaskRevisionOperation } from "./task-revision-operation";
 import type { MacLocalWorkerReadinessV1 } from "./mac-local-worker-readiness";
+import type { LocalOwnerSessionStoreV1 } from "./local-owner-session-store";
+import type { PersistedLocalOwnerSessionV1 } from "./local-owner-session";
+import { taskProjectAgentOptionsSchema } from "./task-project-agents-wire";
 
 export interface MacLocalWebProcessOptionsV1 {
   origin: string;
   localOwnerSession: Readonly<LocalOwnerSessionProfileV1>;
+  localOwnerSessionStore?: LocalOwnerSessionStoreV1;
+  initialLocalOwnerSessions?: readonly PersistedLocalOwnerSessionV1[];
   workspaceId: string;
   database: { client: DatabaseClient; close: () => Promise<void> };
   /** Existing canonical task operations, supplied by the host composition.
    * The local wrapper owns no planner, queue, review store, or worker. */
   ownerReviews?: WebTaskReviewService;
   ownerVerifications?: WebTaskVerificationService;
-  planning?: Pick<TaskPlanningOperation, "plan" | "readSaved" | "readPreparedWorker" | "readConfiguredLocalRoute" | "supportsProject" | "templatesForProject">;
+  planning?: Pick<TaskPlanningOperation, "plan" | "ensureProject" | "readSaved" | "readSavedMany" | "readSavedContinuation" | "readPreparedWorker" | "readConfiguredLocalRoute" | "supportsProject" | "templatesForProject">;
   assignment?: TaskAssignmentOperation;
   approvals?: TaskApprovalOperation;
   submission?: TaskSubmissionOperation;
   revisions?: TaskRevisionOperation;
   /** Read capabilities from the same host-owned task application as the
    * submission operations. Without them, a published result looks absent. */
-  taskReadKeys?: Pick<WebTaskKeys, "harnessIntegrityKey" | "results" | "reviews" | "ownerReviews">;
+  taskReadKeys?: Pick<WebTaskKeys, "harnessIntegrityKey" | "results" | "reviews" | "ownerReviews" | "modelCatalog" | "taskPlanIntegrityKey">;
   /** Host-generation display state built only after pinned executable
    * verification. It is not a delivery, queue, or result authority. */
   workerReadiness?: Pick<MacLocalWorkerReadinessV1, "read">;
@@ -58,7 +63,7 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
     || profile.origin !== options.origin || !options.workspaceId || !options.database || typeof options.database.close !== "function")
     throw new Error("mac_local_web_process_config_invalid");
   const clock = options.clock ?? Date.now;
-  const sessions = new LocalOwnerSessionServiceV1(profile);
+  const sessions = new LocalOwnerSessionServiceV1(profile, options.localOwnerSessionStore, options.initialLocalOwnerSessions);
   const projects = new WebProjectService(options.database.client,
     { tenantId: profile.tenantId, workspaceId: options.workspaceId }, clock);
   const tasks = new WebTaskService(options.database.client,
@@ -75,27 +80,44 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
   });
   let closed: Promise<void> | undefined;
 
-  function pageRedirect(path: "/session" | "/projects"): Response {
+  function pageRedirect(path: "/session" | "/projects", requestOrigin = options.origin): Response {
     return new Response(null, { status: 303, headers: { ...privateResponseHeaders,
-      location: new URL(path, options.origin).href } });
+      location: new URL(path, requestOrigin).href } });
   }
 
-  /** The Mac-local host deliberately exposes only the working project/task
-   * journey.  The broader private product has screens that depend on optional
-   * hosted services; sending an owner to one of those screens would make an
-   * unavailable service look like a live local capability. */
+  function pageFailure(error: unknown): Response {
+    const failure = webFailure(error);
+    const message = failure.status === 400 ? "This page address is invalid. Check the link and try again."
+      : failure.status === 403 ? "Your current access does not allow this page."
+        : failure.status === 404 ? "This page or saved item is not available."
+          : failure.status === 409 ? "This saved item changed. Return to Projects and open its current page."
+            : "Control Room could not load this page. No change was made. Try again when the saved service is available.";
+    return new Response(`<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Control Room page unavailable</title><main><h1>Page unavailable</h1><p role="alert">${message}</p><p><a href="/projects">Return to Projects</a></p></main></html>`, {
+      status: failure.status, headers: { ...privateResponseHeaders, "content-type": "text/html; charset=utf-8",
+        "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'" },
+    });
+  }
+
+  const routeId = (value: string) => {
+    if (!/^[A-Za-z0-9%:_-]{1,600}$/.test(value)) throw new WebAccessError("not_found");
+    let decoded: string;
+    try { decoded = decodeURIComponent(value); } catch { throw new WebAccessError("not_found"); }
+    if (!/^[A-Za-z0-9:_-]{1,200}$/.test(decoded)) throw new WebAccessError("not_found");
+    return decoded;
+  };
+
+  /** The local route table exposes only pages backed by the local database or
+   * host-owned readiness read. Optional hosted modules remain absent. */
   async function renderProductRoute(identity: ReturnType<typeof sessions.verify>, url: URL,
     render: () => Promise<Response> | Response): Promise<Response> {
-    const routeId = (value: string) => {
-      if (!/^[A-Za-z0-9%:_-]{1,600}$/.test(value)) throw new WebAccessError("not_found");
-      let decoded: string;
-      try { decoded = decodeURIComponent(value); } catch { throw new WebAccessError("not_found"); }
-      if (!/^[A-Za-z0-9:_-]{1,200}$/.test(decoded)) throw new WebAccessError("not_found");
-      return decoded;
-    };
     if (url.pathname === "/") {
       if (url.search) throw new WebAccessError("invalid_request");
-      return pageRedirect("/projects");
+      return render();
+    }
+    if (url.pathname === "/needs-me") {
+      if (url.search) throw new WebAccessError("invalid_request");
+      await tasks.authorizeAttentionPage(identity);
+      return render();
     }
     if (url.pathname === "/projects") {
       if ([...url.searchParams.keys()].some(name => !["after", "lifecycle"].includes(name))
@@ -108,9 +130,24 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
       if (url.search) throw new WebAccessError("invalid_request");
       return render();
     }
+    const projectSection = /^\/projects\/([^/]+)\/(inbox|agents|reviews|activity|files|settings)$/.exec(url.pathname);
+    if (projectSection) {
+      if ([...url.searchParams.keys()].some(name => name !== "after")
+        || url.searchParams.getAll("after").length > 1 || !["inbox", "reviews"].includes(projectSection[2]) && url.search)
+        throw new WebAccessError("invalid_request");
+      const projectId = routeId(projectSection[1]);
+      if (projectSection[2] === "inbox" || projectSection[2] === "reviews")
+        await tasks.projectAttention(identity, projectId, projectSection[2], url.searchParams.get("after") ?? undefined);
+      else if (projectSection[2] === "activity") await tasks.projectOverview(identity, projectId);
+      else if (projectSection[2] === "files") await tasks.projectFiles(identity, projectId);
+      else await projects.getView(identity, projectId);
+      return render();
+    }
     const taskDetail = /^\/projects\/([^/]+)\/tasks\/([^/]+)$/.exec(url.pathname);
     if (taskDetail) {
-      if (url.search) throw new WebAccessError("invalid_request");
+      // The selected result is an untrusted browser hint. The result endpoint
+      // validates authorization and binding before any content is returned.
+      if ([...url.searchParams.keys()].some(name => name !== "result")) throw new WebAccessError("invalid_request");
       await tasks.detail(identity, routeId(taskDetail[1]), routeId(taskDetail[2]));
       return render();
     }
@@ -133,30 +170,90 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
   async function handle(request: Request, render: () => Promise<Response> | Response): Promise<Response> {
     try {
       const url = new URL(request.url);
-      if (url.origin !== options.origin) throw new WebAccessError("access_denied");
+      if (url.origin !== options.origin && url.origin !== profile.trustedOrigin) throw new WebAccessError("access_denied");
       if (url.pathname === "/session") {
         if (request.method !== "GET" || url.search) throw new WebAccessError("invalid_request");
         sessions.assertLocalRequest(request);
         return renderLocalOwnerSignInPageV1();
       }
       if (url.pathname === "/api/v1/local-owner-session") {
-        if (request.method !== "POST" || url.search) throw new WebAccessError("invalid_request");
-        const issued = await sessions.issue(request, await readLocalOwnerCodeV1(request), clock());
-        return Response.json({ authenticated: true, expiresAt: issued.expiresAt }, { status: 201,
-          headers: { ...privateResponseHeaders, "set-cookie": issued.cookie } });
+        if (url.search) throw new WebAccessError("invalid_request");
+        if (request.method === "POST") {
+          const issued = await sessions.issue(request, await readLocalOwnerCodeV1(request), clock());
+          return Response.json({ authenticated: true, expiresAt: issued.expiresAt }, { status: 201,
+            headers: { ...privateResponseHeaders, "set-cookie": issued.cookie } });
+        }
+        if (request.method === "DELETE") {
+          await sessions.revoke(request, clock());
+          return new Response(null, { status: 204, headers: { ...privateResponseHeaders,
+            "set-cookie": `${"control_room_local_owner"}=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0` } });
+        }
+        throw new WebAccessError("invalid_request");
       }
       if (url.pathname === "/api/v1/local-workers") {
         if (request.method !== "GET" || url.search || !options.workerReadiness) throw new WebAccessError("not_found");
         sessions.verify(request, clock());
         return Response.json({ taskWorkersStarted: options.taskWorkersStarted === true,
           ...(options.taskWorkersStarted === true ? {} : { instruction: "create your first project, then run mac:down && mac:up" }),
+          projectSections: ["overview", "inbox", "work", "agents", "reviews", "activity",
+            ...(options.taskReadKeys?.results ? ["files"] : []), "settings"],
           workers: options.workerReadiness.read().map(worker => options.taskWorkersStarted === true ? worker
             : { ...worker, state: "unavailable", proof: "not_proven" }) }, { headers: privateResponseHeaders });
+      }
+      const identity = sessions.verify(request, clock());
+      if (url.pathname === "/api/v1/home/tasks") {
+        if (request.method !== "GET" || url.search) throw new WebAccessError("invalid_request");
+        return Response.json(await tasks.home(identity), { headers: privateResponseHeaders });
+      }
+      if (url.pathname === "/api/v1/needs-me/tasks") {
+        if (request.method !== "GET" || [...url.searchParams.keys()].some(key => key !== "after")
+          || url.searchParams.getAll("after").length > 1) throw new WebAccessError("invalid_request");
+        return Response.json(await tasks.attention(identity, url.searchParams.get("after") ?? undefined),
+          { headers: privateResponseHeaders });
+      }
+      const projectOverview = /^\/api\/v1\/projects\/([^/]+)\/overview$/.exec(url.pathname);
+      if (projectOverview) {
+        if (request.method !== "GET" || url.search) throw new WebAccessError("invalid_request");
+        return Response.json(await tasks.projectOverview(identity, routeId(projectOverview[1])),
+          { headers: privateResponseHeaders });
+      }
+      const projectFiles = /^\/api\/v1\/projects\/([^/]+)\/files$/.exec(url.pathname);
+      if (projectFiles) {
+        if (request.method !== "GET" || url.search) throw new WebAccessError("invalid_request");
+        return Response.json(await tasks.projectFiles(identity, decodeURIComponent(projectFiles[1])),
+          { headers: privateResponseHeaders });
+      }
+      const projectReviews = /^\/api\/v1\/projects\/([^/]+)\/reviews$/.exec(url.pathname);
+      if (projectReviews) {
+        if (request.method !== "GET" || [...url.searchParams.keys()].some(key => key !== "after")
+          || url.searchParams.getAll("after").length > 1) throw new WebAccessError("invalid_request");
+        return Response.json(await tasks.projectAttention(identity, decodeURIComponent(projectReviews[1]), "reviews",
+          url.searchParams.get("after") ?? undefined), { headers: privateResponseHeaders });
+      }
+      const projectInbox = /^\/api\/v1\/projects\/([^/]+)\/inbox$/.exec(url.pathname);
+      if (projectInbox) {
+        if (request.method !== "GET" || [...url.searchParams.keys()].some(key => key !== "after")
+          || url.searchParams.getAll("after").length > 1) throw new WebAccessError("invalid_request");
+        return Response.json(await tasks.projectAttention(identity, routeId(projectInbox[1]), "inbox",
+          url.searchParams.get("after") ?? undefined), { headers: privateResponseHeaders });
+      }
+      const projectAgents = /^\/api\/v1\/projects\/([^/]+)\/agents$/.exec(url.pathname);
+      if (projectAgents) {
+        if (request.method !== "GET" || url.search) throw new WebAccessError("invalid_request");
+        const projectId = routeId(projectAgents[1]);
+        if (options.assignment) return Response.json(taskProjectAgentOptionsSchema.parse(
+          await options.assignment.projectOptions(identity, projectId)), { headers: privateResponseHeaders });
+        await tasks.authorize(identity, projectId);
+        return Response.json(taskProjectAgentOptionsSchema.parse({
+          projectId, eligibilitySource: "not_configured", workers: [], tasksExamined: 0,
+          additionalTasksOmitted: false, candidateEvidence: "configured_routes_only",
+          observedAt: new Date(clock()).toISOString(), startsWork: false,
+          grantsAssignmentAuthority: false, grantsExecutionAuthority: false,
+        }), { headers: privateResponseHeaders });
       }
       if (url.pathname === "/api/v1/projects"
         || /^\/api\/v1\/projects\/[^/]+(?:\/(?:lifecycle|idea-lifecycle))?$/.test(url.pathname)) return projectHttp(request);
       if (/^\/api\/v1\/projects\/[^/]+\/tasks(?:\/|$)/.test(url.pathname)) return taskHttp(request);
-      const identity = sessions.verify(request, clock());
       if (request.method !== "GET") throw new WebAccessError("invalid_request");
       const response = await renderProductRoute(identity, url, render);
       for (const [name, value] of Object.entries(privateResponseHeaders)) response.headers.set(name, value);
@@ -164,8 +261,9 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
     } catch (error) {
       if (error instanceof WebAccessError && error.code === "authentication_required" && request.method === "GET"
         && !new URL(request.url).pathname.startsWith("/api/")) {
-        return pageRedirect("/session");
+        return pageRedirect("/session", new URL(request.url).origin);
       }
+      if (request.method === "GET" && !new URL(request.url).pathname.startsWith("/api/")) return pageFailure(error);
       return webFailure(error);
     }
   }

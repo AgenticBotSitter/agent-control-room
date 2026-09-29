@@ -22,7 +22,7 @@ import { taskDetailSchema } from "./task-wire";
 import { observeTaskLocalRoute, type TrustedConfiguredLocalRoute } from "./task-local-route-observation";
 
 export function createTaskHttpHandler(options: { origin: string; trust?: AccessTrust; service: WebTaskService;
-  ownerReviews?: WebTaskReviewService; ownerVerifications?: WebTaskVerificationService; planning?: Pick<TaskPlanningOperation, "plan" | "readSaved" | "readPreparedWorker" | "readConfiguredLocalRoute" | "supportsProject" | "templatesForProject">;
+  ownerReviews?: WebTaskReviewService; ownerVerifications?: WebTaskVerificationService; planning?: Pick<TaskPlanningOperation, "plan" | "ensureProject" | "readSaved" | "readSavedContinuation" | "readPreparedWorker" | "readConfiguredLocalRoute" | "supportsProject" | "templatesForProject">;
   assignment?: TaskAssignmentOperation; approvals?: TaskApprovalOperation; submission?: TaskSubmissionOperation; revisions?: TaskRevisionOperation;
   /** Trusted process selection; the browser cannot choose a header/provider. */
   gatewayAssertionProfile?: GatewayAssertionProviderProfileV1; clock?: () => number;
@@ -42,6 +42,21 @@ export function createTaskHttpHandler(options: { origin: string; trust?: AccessT
       else requireSameOrigin(request, options.origin);
       const identity = localOwnerSession ? localOwnerSession.verify(request, (options.clock ?? Date.now)()) : verify!(request, (options.clock ?? Date.now)());
       const url = new URL(request.url);
+      const fileRoute = /^\/api\/v1\/projects\/([^/]+)\/tasks\/([^/]+)\/files\/([^/]+)$/.exec(url.pathname);
+      if (fileRoute) {
+        if (request.method !== "GET" || [...url.searchParams.keys()].some(key => !["disposition", "token"].includes(key))
+          || url.searchParams.getAll("disposition").length !== 1 || url.searchParams.getAll("token").length !== 1)
+          throw new WebAccessError("invalid_request");
+        let projectId: string, jobId: string, artifactId: string;
+        try { projectId = decodeURIComponent(fileRoute[1]); jobId = decodeURIComponent(fileRoute[2]); artifactId = decodeURIComponent(fileRoute[3]); }
+        catch { throw new WebAccessError("invalid_request"); }
+        const disposition = url.searchParams.get("disposition"), token = url.searchParams.get("token") ?? "";
+        if (disposition !== "preview" && disposition !== "download") throw new WebAccessError("invalid_request");
+        const file = await options.service.file(identity, projectId, jobId, artifactId, disposition, token);
+        return new Response(file.text, { headers: { ...privateResponseHeaders, "content-type": "text/plain; charset=utf-8",
+          "content-security-policy": "default-src 'none'; sandbox", "x-content-type-options": "nosniff",
+          "content-disposition": `${disposition === "download" ? "attachment" : "inline"}; filename="result.txt"` } });
+      }
       const absRoute = /^\/api\/v1\/projects\/([^/]+)\/tasks\/from-news$/.exec(url.pathname);
       if (absRoute) {
         if (request.method !== "POST" || url.search) throw new WebAccessError("invalid_request");
@@ -189,12 +204,16 @@ export function createTaskHttpHandler(options: { origin: string; trust?: AccessT
         if (request.method === "GET") {
           const authorized = await options.service.planningOptions(identity, projectId, jobId, !!options.planning);
           // Resolve server configuration only after database-backed session/project access.
+          if (authorized.availability === "available") await options.planning?.ensureProject?.(projectId);
           const value = authorized.availability === "available" && options.planning?.supportsProject
             && options.planning.supportsProject(projectId) !== true ? { ...authorized, availability: "not_configured" as const } : authorized;
-          const savedPlan = await options.planning?.readSaved?.(identity, projectId, jobId);
+          const continuation = await options.planning?.readSavedContinuation?.(identity, projectId, jobId);
+          const savedPlan = options.planning?.readSavedContinuation ? continuation?.receipt ?? null
+            : await options.planning?.readSaved?.(identity, projectId, jobId);
           const templates = options.planning?.templatesForProject?.(projectId);
           return Response.json(taskPlanningOptionsSchema.parse({ ...value, ...(templates !== undefined ? { templates } : {}),
-            ...(savedPlan !== undefined ? { savedPlan, ...(savedPlan ? { availability: "already_planned" } : {}) } : {}) }),
+            ...(savedPlan !== undefined ? { savedPlan, ...(savedPlan ? { availability: "already_planned" } : {}) } : {}),
+            ...(continuation ? { preparedTask: continuation.preparedTask } : {}) }),
           { headers: privateResponseHeaders });
         }
         if (request.method !== "POST") throw new WebAccessError("not_found");
@@ -238,14 +257,17 @@ export function createTaskHttpHandler(options: { origin: string; trust?: AccessT
         return Response.json(result, { status: result.replayed ? 200 : 201, headers: privateResponseHeaders });
       }
       if (jobId && route[3] && request.method === "GET") {
-        let artifactId: string | undefined;
-        try { artifactId = route[4] ? decodeURIComponent(route[4]) : undefined; } catch { throw new WebAccessError("invalid_request"); }
-        return Response.json(await options.service.results(identity, projectId, jobId, artifactId), { headers: privateResponseHeaders });
+        // Result bytes are never returned from this JSON collection route. A
+        // file read must carry the short-lived, run-bound ticket handled above.
+        if (route[4]) throw new WebAccessError("not_found");
+        return Response.json(await options.service.results(identity, projectId, jobId), { headers: privateResponseHeaders });
       }
       if (jobId && request.method === "GET") {
-        const detail = await options.service.detail(identity, projectId, jobId);
-        const preparedFor = await options.planning?.readPreparedWorker?.(identity, projectId, jobId);
-        const configuredLocalRoute = await options.planning?.readConfiguredLocalRoute?.(identity, projectId, jobId) as TrustedConfiguredLocalRoute | undefined;
+        const [detail, preparedFor, configuredLocalRoute] = await Promise.all([
+          options.service.detail(identity, projectId, jobId),
+          options.planning?.readPreparedWorker?.(identity, projectId, jobId),
+          options.planning?.readConfiguredLocalRoute?.(identity, projectId, jobId) as Promise<TrustedConfiguredLocalRoute | undefined> | undefined,
+        ]);
         const withPreparedRoute = { ...detail, preparedFor: preparedFor ?? null };
         return Response.json(taskDetailSchema.parse({ ...withPreparedRoute,
           localRouteObservation: observeTaskLocalRoute(withPreparedRoute, configuredLocalRoute),

@@ -525,13 +525,13 @@ try {
     await resultPage.getByText(/Agent-written content, not instructions for Control Room/).isVisible());
 
   // The owner affordance the public product UI exposes on the result page is
-  // either Accept quality (decision: accepted) or Request changes (decision:
+  // either Accept (decision: accepted) or Request changes (decision:
   // changes_requested). The issue #214 write scope is the browser-acceptance
   // package that proves the production completion gate in the same
   // bootstrap-backed journey; the completion gate transitions the snapshot
   // from ready to completed and requires decision: accepted with an empty
   // feedback. We drive that leg here.
-  await resultPage.getByRole("button", { name: "Accept quality" }).click();
+  await resultPage.getByRole("button", { name: "Accept", exact: true }).click();
   // The rendered status literal is built by private-app/app/task-owner-review.tsx:88
   // as `Saved: {decision === "accepted" ? "quality acceptance" : "changes requested"}.`
   await resultPage.getByRole("status").filter({ hasText: "Saved: quality acceptance" }).waitFor();
@@ -574,7 +574,7 @@ try {
   // drive the changes_requested branch and then the Prepare revised task
   // button through the bootstrap revision coordinator. The script above
   // crosses the public-product-UI command boundary exactly once (the
-  // Accept quality review), as the post count check below confirms.
+  // Accept review), as the post count check below confirms.
   recordUntested("prepare revised task affordance on the public product UI",
     "this journey drove decision: accepted to prove the production completion gate; the changes_requested / Prepare-revised-task branch is exercised by scripts/private-revision-browser-acceptance.mjs and tests/vps-built-revision-planning.test.mjs",
     { reason: "parallel product journey; completion path driven above", reusePath: "scripts/private-revision-browser-acceptance.mjs" });

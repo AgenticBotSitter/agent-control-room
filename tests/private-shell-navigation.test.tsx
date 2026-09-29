@@ -4,11 +4,14 @@ import { createHash } from "node:crypto";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import Home from "../private-app/app/page";
-import { HomeDashboard, HomeInstallationStatus, type HomeDashboardState } from "../private-app/app/home-workspace";
+import { createHomeReadTransport, HomeDashboard, HomeInstallationStatus, PrivateHome,
+  MacLocalWorkerEvidence, type HomeDashboardState } from "../private-app/app/home-workspace";
+import { LocalRuntimeContextV1 } from "../private-app/app/local-runtime";
 import SettingsPage from "../private-app/app/settings/page";
-import { PrivateProjectWorkspace, ProjectAgentInstallationStatus } from "../private-app/app/workspace";
+import { OrdinaryProjectStatusActions, PrivateProjectWorkspace, ProjectAgentInstallationStatus } from "../private-app/app/workspace";
 import { ProjectCatalogNavigation } from "../app/components/project-catalog-navigation";
-import { createProjectBrowserClient } from "../src/web/v1/browser-client";
+import { browserErrorMessage, createProjectBrowserClient } from "../src/web/v1/browser-client";
+import { taskErrorMessage } from "../src/web/v1/task-browser-client";
 import { readTaskHomeActivity } from "../src/web/v1/task-home-browser-client";
 import { ProjectOverviewActivityView } from "../private-app/app/project-overview-activity";
 import { PrivateTaskResults, readTaskResultSelectionV1, taskResultHrefV1 } from "../private-app/app/task-results";
@@ -38,11 +41,20 @@ test("compiled route parameters decode exactly once before reaching browser clie
     assert.throws(() => decodePrivateRouteSegment(value), /private_route_segment_invalid/);
 });
 
+test("database-or-service failures explain the safe read-only next step", () => {
+  for (const message of [browserErrorMessage.unavailable, taskErrorMessage.unavailable]) {
+    assert.match(message, /saved .*database or service/i);
+    assert.match(message, /No .* (?:made|started|changed)/i);
+    assert.match(message, /Check saved/i);
+  }
+});
+
 test("home gives honest navigation to existing private workspace surfaces", () => {
   const html = renderToStaticMarkup(createElement(Home));
   // Before the browser identifies hosted versus Mac-local, server rendering
   // exposes only links shared by both. Hosted links hydrate after the read.
-  for (const href of ["/projects", "/workers", "/setup", "/needs-me"]) assert.match(html, new RegExp(`href="${href}"`));
+  for (const href of ["/projects", "/workers", "/needs-me"]) assert.match(html, new RegExp(`href="${href}"`));
+  assert.doesNotMatch(html, /href="\/setup"/);
   assert.doesNotMatch(html, /href="\/settings"/);
   assert.doesNotMatch(html, /href="\/ideas"/);
   assert.match(html, /aria-controls="private-workspace-navigation"/);
@@ -58,9 +70,9 @@ test("home gives honest navigation to existing private workspace surfaces", () =
   assert.doesNotMatch(html, /live workers|running now|0 tasks/i);
   for (const label of ["Loading saved work", "Loading saved attention items", "Loading verified result records",
     "Loading saved worker signals", "Loading saved projects"]) assert.match(html, new RegExp(label));
-  assert.match(html, /Operator capacity/);
-  assert.match(html, /Reading the recorded capacity and outcome evidence/);
-  assert.equal((html.match(/operator-capacity-title/g) ?? []).length, 2, "one read-only capacity panel is mounted");
+  assert.doesNotMatch(html, /Operator capacity/);
+  assert.doesNotMatch(html, /Reading the recorded capacity and outcome evidence/);
+  assert.equal((html.match(/operator-capacity-title/g) ?? []).length, 0, "hosted-only capacity stays hidden until runtime detection settles");
 });
 
 /** The route panel renders only once the task-worker read has resolved. The
@@ -85,6 +97,16 @@ test("home shows the three saved local route setup states without presenting the
   assert.match(html, /saved setup and proof states, not a live process monitor/);
   assert.match(html, /This panel has no current route-bound task observation/);
   assert.doesNotMatch(html, /worker:local|sha256:|token|password|provider|model|<button|<form|<input/);
+});
+
+test("settled Mac-local Home explains startup state and result proof without hosted setup errors", () => {
+  const html = renderToStaticMarkup(createElement(MacLocalWorkerEvidence, { status: {
+    taskWorkersStarted: true, projectSections: [], workers: [{ kind: "codex", state: "ready", proof: "not_proven" }],
+  } }));
+  assert.match(html, /current local host reports 1 configured route separately from saved result proof/);
+  assert.match(html, /pinned executable was verified/);
+  assert.match(html, /Neither signal says a worker is currently running/);
+  assert.doesNotMatch(html, /Installation setup status is unavailable|Local worker routes are unavailable|readiness not proven/);
 });
 
 test("task proposal and worker inventory disclose unavailable operational facts", () => {
@@ -207,6 +229,108 @@ test("home task reader accepts only the bounded read-only activity contract", as
     recentResults: [{ unexpected: true }] })) as typeof fetch), /unavailable/);
 });
 
+test("home read transport retries only one transient 503", async () => {
+  const controller = new AbortController();
+  for (const fixture of [
+    { statuses: [503, 200], expected: 200, calls: 2 },
+    { statuses: [503, 503], expected: 503, calls: 2 },
+    { statuses: [500, 200], expected: 500, calls: 1 },
+    { statuses: [401, 200], expected: 401, calls: 1 },
+    { statuses: [404, 200], expected: 404, calls: 1 },
+  ]) {
+    let calls = 0;
+    const transport = createHomeReadTransport(controller.signal, (async () =>
+      new Response(null, { status: fixture.statuses[calls++] })) as typeof fetch);
+    assert.equal((await transport("/api/v1/home/tasks", { method: "GET" })).status, fixture.expected);
+    assert.equal(calls, fixture.calls);
+  }
+  let postCalls = 0;
+  const post = createHomeReadTransport(controller.signal, (async () => {
+    postCalls += 1; return new Response(null, { status: 503 });
+  }) as typeof fetch);
+  assert.equal((await post("/api/v1/home/tasks", { method: "POST" })).status, 503);
+  assert.equal(postCalls, 1);
+});
+
+test("home waits for runtime detection and coalesces strict, focus, visibility and manual refreshes", async () => {
+  const jsdomModule = await import("jsdom");
+  const JSDOM = (jsdomModule as { JSDOM: unknown }).JSDOM as new (
+    html: string, options?: { url?: string; pretendToBeVisual?: boolean },
+  ) => { window: Window & typeof globalThis };
+  const React = await import("react");
+  const { createRoot } = await import("react-dom/client");
+  const dom = new JSDOM('<div id="root"></div>', { url: "https://control.invalid/", pretendToBeVisual: true });
+  const saved = Object.fromEntries(["window", "document", "IS_REACT_ACT_ENVIRONMENT", "fetch"]
+    .map(key => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
+  Object.assign(globalThis, { window: dom.window, document: dom.window.document, IS_REACT_ACT_ENVIRONMENT: true });
+  Object.defineProperty(dom.window.document, "hidden", { configurable: true, get: () => false });
+  const paths = ["/api/v1/projects", "/api/v1/home/tasks", "/api/v1/needs-me/tasks"];
+  const requests: string[] = [];
+  const pending: { path: string; resolve: (response: Response) => void }[] = [];
+  const responseFor = (path: string) => path === "/api/v1/projects"
+    ? Response.json({ projects: [], nextCursor: null, canCreate: true,
+      sources: { ordinary: "included", ideas: "not_configured" } })
+    : path === "/api/v1/home/tasks"
+      ? Response.json({ active: [], recentResults: [], additionalActiveOmitted: false,
+        additionalResultsOmitted: false, resultSource: "not_configured",
+        observedAt: "2026-09-27T12:00:00.000Z", startsWork: false })
+      : Response.json({ items: [], nextCursor: null, examined: 0,
+        observedAt: "2026-09-27T12:00:00.000Z", startsWork: false,
+        planningSource: "not_configured", deliverySource: "not_configured",
+        sources: { ordinary: "included", ideas: "not_configured" } });
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    const path = String(input);
+    requests.push(path);
+    if (!paths.includes(path)) return new Response(null, { status: 404 });
+    return new Promise<Response>(resolve => pending.push({ path, resolve }));
+  }) as typeof fetch;
+  const root = createRoot(dom.window.document.getElementById("root")!);
+  const render = (mode: "checking" | "local") => React.createElement(React.StrictMode, null,
+    React.createElement(LocalRuntimeContextV1.Provider, { value: mode === "checking" ? { mode }
+      : { mode, status: { taskWorkersStarted: true, workers: [], projectSections: [] } } },
+    React.createElement(PrivateHome)));
+  const tick = async () => { await React.act(async () => { await new Promise(resolve => setTimeout(resolve, 0)); }); };
+  const counts = () => Object.fromEntries(paths.map(path => [path, requests.filter(item => item === path).length]));
+  const settle = async () => {
+    const reads = pending.splice(0);
+    await React.act(async () => { for (const read of reads) read.resolve(responseFor(read.path)); });
+    await tick();
+  };
+  try {
+    await React.act(async () => { root.render(render("checking")); });
+    await tick();
+    assert.deepEqual(counts(), Object.fromEntries(paths.map(path => [path, 0])));
+    await React.act(async () => { root.render(render("local")); });
+    await tick();
+    assert.deepEqual(counts(), Object.fromEntries(paths.map(path => [path, 1])), "StrictMode starts one dashboard batch");
+    assert.equal(requests.includes("/api/v1/connections"), false, "local Home never requests the hosted connection route");
+    await React.act(async () => {
+      dom.window.dispatchEvent(new dom.window.Event("focus"));
+      dom.window.document.dispatchEvent(new dom.window.Event("visibilitychange"));
+      const button = [...dom.window.document.querySelectorAll("button")]
+        .find(item => item.textContent === "Check saved dashboard again");
+      assert.ok(button); button.click();
+    });
+    await tick();
+    assert.deepEqual(counts(), Object.fromEntries(paths.map(path => [path, 1])), "in-flight refreshes are coalesced");
+    await settle();
+    await React.act(async () => {
+      dom.window.dispatchEvent(new dom.window.Event("focus"));
+      dom.window.document.dispatchEvent(new dom.window.Event("visibilitychange"));
+    });
+    await tick();
+    assert.deepEqual(counts(), Object.fromEntries(paths.map(path => [path, 2])), "settled batch permits one refresh");
+    await settle();
+  } finally {
+    await React.act(async () => { root.unmount(); });
+    dom.window.close();
+    for (const [key, descriptor] of Object.entries(saved)) {
+      if (descriptor) Object.defineProperty(globalThis, key, descriptor);
+      else delete (globalThis as Record<string, unknown>)[key];
+    }
+  }
+});
+
 test("project catalog filter is sent to the protected read and rejects mixed lifecycle results", async () => {
   let requested = "";
   const project = { projectId: "project:active", title: "Active project", summary: "Saved", lifecycle: "active" as const,
@@ -228,6 +352,27 @@ test("project status filters are direct links and remain selected across catalog
     { lifecycle: "archived", after: "project:one", nextCursor: "project:two", count: 50 }));
   assert.match(pages, /href="\/projects\?lifecycle=archived">First page/);
   assert.match(pages, /href="\/projects\?lifecycle=archived&amp;after=project%3Atwo">Next page/);
+});
+
+test("an invalid project status filter is visibly reset to All without echoing attacker input", () => {
+  const html = renderToStaticMarkup(createElement(PrivateProjectWorkspace, { invalidLifecycleFilter: true }));
+  assert.match(html, /project status filter was invalid and has been reset to All/);
+  assert.match(html, /href="\/projects" aria-current="page">All/);
+  assert.match(html, /Use the canonical All projects URL/);
+  assert.doesNotMatch(html, /garbage|<script/);
+});
+
+test("ordinary project lifecycle controls expose complete and archive, and archived projects expose only reopen", () => {
+  const project = { projectId: "project:alpha", title: "Alpha", summary: "Saved", lifecycle: "active" as const,
+    version: 1, createdAt: "2026-09-04T10:00:00.000Z", updatedAt: "2026-09-04T10:00:00.000Z",
+    origin: "ordinary" as const, lifecycleEditable: true };
+  const active = renderToStaticMarkup(createElement(OrdinaryProjectStatusActions,
+    { project, pending: false, onTransition() {} }));
+  assert.match(active, /Mark complete/); assert.match(active, /Archive project/);
+  const archived = renderToStaticMarkup(createElement(OrdinaryProjectStatusActions,
+    { project: { ...project, lifecycle: "archived" }, pending: false, onTransition() {} }));
+  assert.match(archived, /Reopen project/);
+  assert.doesNotMatch(archived, /Mark complete|Pause project|Archive project/);
 });
 
 test("project overview shows scoped current, review and recent work without commands", async () => {
@@ -258,6 +403,8 @@ test("unavailable project overview does not claim an empty project", () => {
   const html = renderToStaticMarkup(createElement(ProjectOverviewActivityView,
     { projectId: "project:alpha", state: { state: "unavailable", code: "unavailable" } }));
   assert.match(html, /No empty project or all-clear is inferred/);
+  assert.match(html, /saved database or protected task-activity read could not be checked/);
+  assert.match(html, /checking again does not start work/);
   assert.doesNotMatch(html, /No saved tasks exist/);
 });
 
@@ -297,15 +444,19 @@ test("unavailable project files do not claim an empty result set", () => {
       resultSource: "not_configured", observedAt: "2026-09-04T12:00:00.000Z", startsWork: false } } }));
   assert.match(html, /No zero count or empty file list is inferred/);
   assert.doesNotMatch(html, /No verified result files have been received/);
+  const failed = renderToStaticMarkup(createElement(ProjectFilesView,
+    { projectId: "project:alpha", data: { state: "unavailable", code: "unavailable" } }));
+  assert.match(failed, /saved database or protected file index could not be read/);
+  assert.match(failed, /checking again will not change work/);
 });
 
 test("project navigation starts with only routes shared by hosted and Mac-local", () => {
   const html = renderToStaticMarkup(createElement(ProjectNavigation, { projectId: "project:alpha", current: "work" }));
-  for (const [label, path] of [["Overview", "/projects/project%3Aalpha"], ["Work", "/projects/project%3Aalpha/tasks"]]) {
+  for (const [label, path] of [["Overview", "/projects/project%3Aalpha"], ["Tasks", "/projects/project%3Aalpha/tasks"]]) {
     assert.match(html, new RegExp(`href="${path}"[^>]*>${label}`));
   }
   assert.doesNotMatch(html, /href="\/projects\/project%3Aalpha\/(?:files|reviews|activity|settings)"/);
-  assert.match(html, /href="\/projects\/project%3Aalpha\/tasks" aria-current="page">Work/);
+  assert.match(html, /href="\/projects\/project%3Aalpha\/tasks" aria-current="page">Tasks/);
   assert.doesNotMatch(html, />News</);
 });
 
@@ -333,6 +484,8 @@ test("project review page distinguishes unavailable data from an empty list", ()
   const html = renderToStaticMarkup(createElement(ProjectTaskViewPanel,
     { projectId: "project:alpha", view: "reviews", state: { state: "unavailable", code: "unavailable" } }));
   assert.match(html, /No empty list or all-clear is inferred/);
+  assert.match(html, /saved database or protected reviews read could not be checked/);
+  assert.match(html, /checking again does not start work/);
   assert.doesNotMatch(html, /No task is currently recorded/);
 });
 
@@ -361,6 +514,26 @@ test("project inbox and result reviews use exact protected results and keep exec
   await assert.rejects(readTaskProjectAttention("project:other", "reviews", "bad\u0000cursor", transport), /invalid_request/);
 });
 
+test("project inbox distinguishes real saved attention, an empty page, and an unavailable read", () => {
+  const task = { projectId: "project:alpha", requestId: "request:alpha", jobId: "job:proposal", title: "Prepare brief",
+    state: "proposed" as const, version: 1, createdAt: "2026-09-04T10:00:00.000Z", updatedAt: "2026-09-04T12:00:00.000Z" };
+  const base = { projectId: task.projectId, mode: "inbox" as const, nextCursor: null, examined: 1,
+    resultSource: "not_configured" as const, reviewSource: "not_configured" as const,
+    resultContent: "authorized" as const, observedAt: "2026-09-04T12:00:00.000Z", startsWork: false as const };
+  const real = renderToStaticMarkup(createElement(ProjectResultReviewPanel, { projectId: task.projectId, mode: "inbox",
+    data: { state: "ready", value: { ...base, items: [{ task, inputDigest: `sha256:${"a".repeat(64)}`,
+      reasons: ["proposal" as const], resultArtifactIds: [], category: "preparation" as const, urgency: "normal" as const,
+      ownerQuestion: "What should happen next?" }] } } }));
+  assert.match(real, /Prepare brief/); assert.match(real, /Needs preparation/); assert.match(real, /What should happen next/);
+  assert.doesNotMatch(real, /<button|<form/);
+  const empty = renderToStaticMarkup(createElement(ProjectResultReviewPanel, { projectId: task.projectId, mode: "inbox",
+    data: { state: "ready", value: { ...base, items: [] } } }));
+  assert.match(empty, /No saved attention was found/); assert.match(empty, /not an all-clear/);
+  const unavailable = renderToStaticMarkup(createElement(ProjectResultReviewPanel, { projectId: task.projectId, mode: "inbox",
+    data: { state: "unavailable", code: "unavailable" } }));
+  assert.match(unavailable, /could not be checked/); assert.match(unavailable, /No empty list or all-clear is inferred/);
+});
+
 test("project review attention does not turn unavailable evidence into an empty all-clear", () => {
   const html = renderToStaticMarkup(createElement(ProjectResultReviewPanel, { projectId: "project:alpha", mode: "reviews",
     data: { state: "ready", value: { projectId: "project:alpha", mode: "reviews", items: [], nextCursor: null, examined: 1,
@@ -368,6 +541,10 @@ test("project review attention does not turn unavailable evidence into an empty 
       observedAt: "2026-09-04T12:00:00.000Z", startsWork: false } } }));
   assert.match(html, /not an all-clear for omitted or unavailable evidence/);
   assert.doesNotMatch(html, /No returned result needs review/);
+  const failed = renderToStaticMarkup(createElement(ProjectResultReviewPanel, { projectId: "project:alpha", mode: "reviews",
+    data: { state: "unavailable", code: "unavailable" } }));
+  assert.match(failed, /saved database or protected attention read could not be checked/);
+  assert.match(failed, /no review decision was recorded/);
 });
 
 test("project review attention explains limited access without advertising a result link", () => {
@@ -471,16 +648,20 @@ async function mountTaskResults(options: { search?: string; canReadContent?: boo
   const artifacts = ids.map(artifactId => ({ artifactId, attemptId: "attempt:one", runId: "run:one",
     contentHash: `sha256:${createHash("sha256").update(textFor(artifactId)).digest("hex")}`,
     sizeBytes: Buffer.byteLength(textFor(artifactId)), receivedAt: "2026-09-08T12:00:00.000Z",
-    byteCheck: "matched_recorded_claim", qualityAccepted: false }));
+    byteCheck: "matched_recorded_claim", qualityAccepted: false,
+    fileAccess: {
+      previewHref: `/api/v1/projects/project%3Atest/tasks/job%3Atest/files/${encodeURIComponent(artifactId)}?disposition=preview&token=test-token`,
+      downloadHref: `/api/v1/projects/project%3Atest/tasks/job%3Atest/files/${encodeURIComponent(artifactId)}?disposition=attachment&token=test-token`,
+      expiresAt: "2026-09-08T12:05:00.000Z",
+    } }));
   globalThis.fetch = (async (url: string) => {
     requests.push(String(url));
     const path = String(url);
-    const match = /\/results\/([^/?]+)$/.exec(path);
+    const match = /\/files\/([^/?]+)\?/.exec(path);
     if (match) {
       const artifact = artifacts.find(item => item.artifactId === decodeURIComponent(match[1]));
       if (!artifact) return new Response("no", { status: 404 });
-      return Response.json({ projectId: "project:test", jobId: "job:test", artifact,
-        text: textFor(artifact.artifactId), contentVerifiedAt: artifact.receivedAt, untrustedContent: true });
+      return new Response(textFor(artifact.artifactId), { headers: { "content-type": "text/plain" } });
     }
     return Response.json({ projectId: "project:test", jobId: "job:test", observedAt: "2026-09-08T12:00:00.000Z",
       resultSource: "configured", reviewSource: "configured", items: artifacts, reviews: [],
@@ -507,7 +688,11 @@ async function mountTaskResults(options: { search?: string; canReadContent?: boo
   };
   const idle = () => {
     const text = dom.window.document.body.textContent ?? "";
-    return !text.includes("Loading protected results and review…") && !text.includes("Reading protected result…");
+    // An empty body is the pre-effect state, not a settled read. Requiring the
+    // panel prevents the first assertion from racing the initial protected
+    // list request when React has not committed its loading marker yet.
+    return Boolean(dom.window.document.querySelector(".private-task-results"))
+      && !text.includes("Loading protected results and review…") && !text.includes("Reading protected result…");
   };
   await act(async () => { root.render(React.createElement(PrivateTaskResults,
     { projectId: "project:test", jobId: "job:test", reviewWorkspace: {} as never })); });
@@ -526,7 +711,7 @@ async function mountTaskResults(options: { search?: string; canReadContent?: boo
     }
   };
   return { dom, root, act, requests, artifacts, restore, settle, idle,
-    contentRequests: () => requests.filter(url => /\/results\/[^/?]+$/.test(url)) };
+    contentRequests: () => requests.filter(url => /\/files\/[^/?]+\?/.test(url)) };
 }
 
 test("an unlisted URL selection is refused without any content request", async () => {
@@ -544,7 +729,7 @@ test("an unlisted URL selection is refused without any content request", async (
 test("a listed URL selection opens that exact file and moves focus into it", async () => {
   const mounted = await mountTaskResults({ search: "?result=artifact%3Atwo" });
   try {
-    assert.deepEqual(mounted.contentRequests().map(url => decodeURIComponent(url).split("/").pop()),
+    assert.deepEqual(mounted.contentRequests().map(url => decodeURIComponent(new URL(url, "https://control.invalid").pathname).split("/").pop()),
       ["artifact:two"]);
     const body = mounted.dom.window.document.body;
     assert.match(body.textContent ?? "", /artifact:two PROTECTED RESULT TEXT/);
@@ -677,6 +862,22 @@ test("capacity panel states stay independent of the connection inventory", () =>
   assert.match(html, /Reading the recorded capacity and outcome evidence/);
   // Exactly one capacity mount: the panel is not duplicated.
   assert.equal((html.match(/operator-capacity-title/g) ?? []).length, 2);
+});
+
+test("each connection inventory error code gives its own recovery sentence", () => {
+  const sentences = new Map<string, string>();
+  for (const [code, sentence] of [
+    ["authentication_required", "Your session ended before the connection inventory could be read. Sign in again; no sample data is shown."],
+    ["access_denied", "Your account is not allowed to view the connection inventory. No sample data is shown."],
+    ["not_found", "This installation does not serve the connection inventory. No sample data is shown."],
+    ["unavailable", "The saved inventory could not be verified, or its private setup is not configured. No sample or old connection data is shown."],
+  ] as const) {
+    const html = renderToStaticMarkup(createElement(PrivateConnectionView,
+      { data: { state: "unavailable", code }, onRefresh: () => {} }));
+    assert.match(html, new RegExp(sentence.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")), code);
+    sentences.set(code, sentence);
+  }
+  assert.equal(new Set(sentences.values()).size, 4, "each error code must retain a distinct recovery sentence");
 });
 
 test("workers boundary text no longer claims capacity data is unavailable", () => {

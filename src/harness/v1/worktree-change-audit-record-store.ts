@@ -36,6 +36,9 @@ function sameIdentity(scope: Scope, identity: WorktreeChangeAuditRecordV1["ident
   return scope.tenantId === identity.tenantId && scope.projectId === identity.projectId && scope.jobId === identity.jobId
     && scope.attemptId === identity.attemptId && scope.runId === identity.runId && scope.artifactId === identity.artifactId;
 }
+const scopeKey = (scope: Scope | WorktreeChangeAuditRecordV1["identity"]) => JSON.stringify([
+  scope.tenantId, scope.projectId, scope.jobId, scope.attemptId, scope.runId, scope.artifactId,
+]);
 
 function verifyStored(key: Uint8Array, row: Row): WorktreeChangeAuditRecordV1 {
   const record = verifyWorktreeChangeAuditRecordV1(row.record);
@@ -127,4 +130,29 @@ export async function readResultBoundWorktreeChangeAuditSummaryV1(tx: DatabaseSe
   const record = verifyStored(integrityKey, row);
   if (!sameIdentity(scope, record.identity)) fail();
   return summarizeWorktreeChangeAuditRecordV1(record);
+}
+
+/** Fixed-query aggregate reader for a bounded result page. */
+export async function readResultBoundWorktreeChangeAuditSummariesV1(tx: DatabaseSession, integrityKey: Uint8Array,
+  scopeValues: readonly unknown[]): Promise<ReadonlyMap<string, WorktreeChangeAuditSummaryV1>> {
+  if (!(integrityKey instanceof Uint8Array) || integrityKey.length !== 32 || scopeValues.length > 50) fail();
+  const scopes = scopeValues.map(value => scopeSchema.parse(value));
+  if (!scopes.length) return new Map();
+  const tenantId = scopes[0]!.tenantId;
+  if (scopes.some(scope => scope.tenantId !== tenantId)) fail();
+  const wanted = new Map(scopes.map(scope => [scopeKey(scope), scope]));
+  const rows = (await tx.query<Row>(`SELECT tenant_id,project_id,job_id,attempt_id,run_id,artifact_id,record,auth_tag
+    FROM control_worktree_change_audit_records
+    WHERE tenant_id=$1 AND artifact_id=ANY($2::text[]) AND run_id=ANY($3::text[])
+    ORDER BY artifact_id COLLATE "C",run_id COLLATE "C"`,
+  [tenantId, scopes.map(scope => scope.artifactId), scopes.map(scope => scope.runId)])).rows;
+  const output = new Map<string, WorktreeChangeAuditSummaryV1>();
+  for (const row of rows) {
+    const record = verifyStored(integrityKey, row), key = scopeKey(record.identity);
+    const scope = wanted.get(key);
+    if (!scope) continue;
+    if (!sameIdentity(scope, record.identity) || output.has(key)) fail();
+    output.set(key, summarizeWorktreeChangeAuditRecordV1(record));
+  }
+  return output;
 }

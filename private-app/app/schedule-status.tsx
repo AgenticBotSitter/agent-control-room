@@ -148,11 +148,17 @@ export function ScheduleStatusView({ state, projectId, onRetry }: {
 
   if (state.state === "unavailable") {
     const failure = requestFailureCopy(state.code);
-    return <section className="private-panel private-panel--warning" role="alert">
+    // The live region covers the heading and the detail sentence only. Putting
+    // `role="alert"` on the whole section made the region contain a heading,
+    // two static sentences, a Retry button and a closing note, so the region
+    // was far larger than the failure it existed to announce.
+    return <section className="private-panel private-panel--warning">
       <h2>Project schedules</h2>
       <p>Read-only forecasts and retained occurrence records. This page does not enable automatic work.</p>
-      <p className="private-schedule-failure-heading">{failure.heading}</p>
-      <p className="private-note">{failure.detail}</p>
+      <div role="alert">
+        <p className="private-schedule-failure-heading">{failure.heading}</p>
+        <p className="private-note">{failure.detail}</p>
+      </div>
       {onRetry ? <p><button type="button" onClick={onRetry}>{failure.action}</button></p> : null}
       <p className="private-note">Older occurrences remain in the project log; nothing has been removed or replaced with sample data.</p>
     </section>;
@@ -160,9 +166,9 @@ export function ScheduleStatusView({ state, projectId, onRetry }: {
 
   const value = state.value;
   if (value.projectId !== projectId) {
-    return <section className="private-panel" role="alert">
+    return <section className="private-panel">
       <h2>Project schedules</h2>
-      <p>Schedule status is unavailable. No empty schedule list or missed-work conclusion is inferred.</p>
+      <p role="alert">Schedule status is unavailable. No empty schedule list or missed-work conclusion is inferred.</p>
     </section>;
   }
 

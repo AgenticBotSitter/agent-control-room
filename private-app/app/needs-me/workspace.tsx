@@ -5,6 +5,7 @@ import { readQueueAttention } from "../../../src/web/v1/queue-attention-browser-
 import type { QueueAttention } from "../../../src/web/v1/queue-attention-wire";
 import { BrowserRequestError } from "../../../src/web/v1/browser-client";
 import { PrivateTaskAttention } from "./task-attention";
+import { useLocalRuntime } from "../local-runtime";
 
 export function QueueAttentionPanel({ snapshot }: { snapshot: QueueAttention }) {
   return <section aria-labelledby="recovery-heading"><h2 id="recovery-heading">Reconnect recovery</h2>
@@ -19,11 +20,14 @@ export function QueueAttentionPanel({ snapshot }: { snapshot: QueueAttention }) 
 }
 
 export function PrivateNeedsMe() {
+  const runtime = useLocalRuntime();
   const [data, setData] = useState<QueueAttention>();
   const [error, setError] = useState<string>();
   const [refresh, setRefresh] = useState(0);
   const [loading, setLoading] = useState(true);
   useEffect(() => {
+    if (runtime.mode === "local") { setLoading(false); setData(undefined); setError(undefined); return; }
+    if (runtime.mode !== "hosted") return;
     let live = true;
     void readQueueAttention().then(value => { if (live) setData(value); }, failure => {
       if (live) setError(failure instanceof BrowserRequestError && failure.code === "authentication_required"
@@ -32,15 +36,18 @@ export function PrivateNeedsMe() {
           ? "Owner access is required." : "Recovery status is unavailable or not configured. No all-clear is claimed.");
     }).finally(() => { if (live) setLoading(false); });
     return () => { live = false; };
-  }, [refresh]);
+  }, [refresh, runtime.mode]);
   return <div className="private-shell"><PrivateHeader /><main id="private-main" tabIndex={-1}>
-    <h1>Needs Me</h1><p>Owner-only task attention and recovery observations.</p>
+    <h1>Needs attention</h1><p>Owner-only task attention and recovery observations.</p>
     <PrivateTaskAttention />
-    <button type="button" disabled={loading} onClick={() => {
+    {runtime.mode !== "local" ? <><button type="button" disabled={loading} onClick={() => {
       setLoading(true); setData(undefined); setError(undefined); setRefresh(value => value + 1);
     }}>Check recovery status</button>
     <p>Checking status never starts or retries work.</p>
     {loading && <p role="status">Checking…</p>}{error && <p role="alert">{error}</p>}
-    {data && <QueueAttentionPanel snapshot={data} />}
+    {data && <QueueAttentionPanel snapshot={data} />}</> : <section aria-labelledby="local-recovery-heading">
+      <h2 id="local-recovery-heading">Task recovery</h2>
+      <p>Open the exact task to check its saved delivery and result evidence. This page does not start, retry or replace work.</p>
+    </section>}
   </main></div>;
 }

@@ -31,7 +31,10 @@ import { WebAccessError, type VerifiedWebIdentity } from "./access-verifier";
 import { WebSessionAuthority } from "./session-authority";
 import { WebProjectService } from "./project-service";
 import { taskDraftSchema } from "./task-wire";
+import { taskPlanningReceiptSchema, type TaskPlanningReceipt } from "./task-planning-wire";
 import { taskRevisionContextSchema, taskRevisionRequestSchema, type TaskRevisionRequest } from "./task-revision-wire";
+import { inheritTaskModelRequestV1, resolveTaskModelV1, type TaskModelCatalogV1,
+  type RequestedTaskModelV1, type TaskModelWorkerKindV1 } from "./task-model-selection";
 
 const instant = z.string().datetime().refine(value => new Date(value).toISOString() === value);
 /** Server-owned template, never accepted from a browser or worker request. This first planning
@@ -77,6 +80,45 @@ export const nativeTaskTemplateSchema = z.object({ id: localId, adapter: z.enum(
   catch { context.addIssue({ code: "custom", message: "unsupported native destination" }); }
 });
 export type NativeTaskTemplate = z.infer<typeof nativeTaskTemplateSchema>;
+export const MAC_LOCAL_MAX_TASK_TEMPLATES_V1 = 150;
+export type NativeTaskTemplateRegistryV1 = Readonly<{
+  maximumTemplates: number;
+  snapshot(): readonly NativeTaskTemplate[];
+  register(templates: readonly NativeTaskTemplate[]): void;
+}>;
+const nativeTaskTemplateRegistries = new WeakSet<object>();
+
+/** A process-local, server-owned template registry for hosts whose project set
+ * can grow while they are running. Registration is synchronous after parsing,
+ * so readers observe either the old complete snapshot or the new one. */
+export function createNativeTaskTemplateRegistryV1(initial: readonly NativeTaskTemplate[],
+  maximumTemplates = MAC_LOCAL_MAX_TASK_TEMPLATES_V1): NativeTaskTemplateRegistryV1 {
+  if (!Number.isSafeInteger(maximumTemplates) || maximumTemplates < 1 || maximumTemplates > MAC_LOCAL_MAX_TASK_TEMPLATES_V1)
+    throw new Error("task_execution_template_registry_invalid");
+  let values: readonly NativeTaskTemplate[] = Object.freeze([]);
+  const registry: NativeTaskTemplateRegistryV1 = Object.freeze({ maximumTemplates,
+    snapshot: () => values,
+    register(input) {
+      const parsed = z.array(nativeTaskTemplateSchema).max(maximumTemplates).parse(input);
+      for (const value of parsed) assertNoSecretMaterial(value);
+      const next = new Map(values.map(value => [value.id, value]));
+      for (const value of parsed) {
+        const prior = next.get(value.id);
+        if (prior && sha256Digest(prior) !== sha256Digest(value)) throw new Error("task_execution_templates_ambiguous");
+        next.set(value.id, value);
+      }
+      if (next.size > maximumTemplates) throw new Error("task_execution_template_limit_150");
+      values = Object.freeze([...next.values()]);
+    },
+  });
+  nativeTaskTemplateRegistries.add(registry);
+  registry.register(initial);
+  return registry;
+}
+
+function isNativeTaskTemplateRegistryV1(value: unknown): value is NativeTaskTemplateRegistryV1 {
+  return !!value && typeof value === "object" && nativeTaskTemplateRegistries.has(value as object);
+}
 /**
  * Local adapters require installation-specific proof in addition to a normal
  * task template.  This is deliberately server configuration, never a fleet
@@ -207,14 +249,149 @@ const planSchema = z.discriminatedUnion("schema", [initialPlanSchema, revisionPl
 type Plan = z.infer<typeof planSchema>;
 export type TaskPlanningTemplateChoice = Readonly<{ id: string; adapter: NativeTaskTemplate["adapter"] }>;
 export type TaskPlanningOperation = Readonly<{ tenantId: string; workspaceId: string; plan: TaskExecutionPlanner["plan"];
+  ensureProject?: (projectId: string) => Promise<void>;
   supportsProject?: (projectId: string) => boolean; templatesForProject?: (projectId: string) => readonly TaskPlanningTemplateChoice[];
-  readSaved?: TaskExecutionPlanner["readSaved"]; readPreparedWorker?: TaskExecutionPlanner["readPreparedWorker"];
+  readSaved?: TaskExecutionPlanner["readSaved"]; readSavedMany?: TaskExecutionPlanner["readSavedMany"];
+  readSavedContinuation?: TaskExecutionPlanner["readSavedContinuation"];
+  readPreparedWorker?: TaskExecutionPlanner["readPreparedWorker"];
   readConfiguredLocalRoute?: TaskExecutionPlanner["readConfiguredLocalRoute"] }>;
 type Row = { tenant_id: string; project_id: string; source_job_id: string; job_id: string; plan: unknown; auth_tag: string };
 const joined = (tx: DatabaseSession): DatabaseClient => ({ query: tx.query.bind(tx), transaction: async work => work(tx),
   transactionWithPreCommitCheck: async (work, check) => { const result = await work(tx); await check(); return result; } });
 const fail = (): never => { throw new Error("task_execution_plan_unavailable"); };
+function taskExecutionPlanTagV1(key: Uint8Array, plan: Plan) {
+  const version = plan.schema.slice("control-room.task-execution-plan/v".length);
+  return hmacSha256Tag(key, { purpose: `task-execution-plan/v${version}`, plan });
+}
+
+/** Authenticated, read-only lineage for task-page navigation. */
+export async function readTaskRevisionLinksV1(tx: DatabaseSession, integrityKey: Uint8Array,
+  tenantId: string, projectId: string, jobId: string) {
+  localId.parse(tenantId); localId.parse(projectId); localId.parse(jobId);
+  const rows = (await tx.query<Row>(`SELECT tenant_id,project_id,source_job_id,job_id,plan,auth_tag
+    FROM control_task_execution_plans WHERE tenant_id=$1 AND project_id=$2 AND (job_id=$3 OR source_job_id=$3)
+    ORDER BY job_id COLLATE "C"`, [tenantId, projectId, jobId])).rows;
+  const plans = rows.map(row => {
+    const plan = planSchema.parse(row.plan), expected = Buffer.from(taskExecutionPlanTagV1(integrityKey, plan));
+    const actual = Buffer.from(row.auth_tag);
+    if (expected.length !== actual.length || !timingSafeEqual(expected, actual) || row.tenant_id !== plan.tenantId
+      || row.project_id !== plan.projectId || row.source_job_id !== plan.sourceJobId || row.job_id !== plan.job.id) fail();
+    return plan;
+  });
+  const current = plans.find(plan => plan.job.id === jobId);
+  const previousJobId = current && "revision" in current ? current.revision.fromJobId : null;
+  const children = plans.filter(plan => plan.job.id !== jobId && "revision" in plan && plan.revision.fromJobId === jobId);
+  if (children.length > 1) fail();
+  const nextJobId = children[0]?.job.id ?? null;
+  const revisionNumber = current && "revision" in current ? current.revision.revisionNumber : 0;
+  return Object.freeze({ previousJobId, nextJobId, revisionNumber });
+}
 const immutableJob = (job: JobRecord) => ({ ...job, state: "proposed", version: 0, updatedAt: job.createdAt });
+const savedPlanReceipt = (plan: Plan): TaskPlanningReceipt => taskPlanningReceiptSchema.parse({
+  projectId: plan.projectId, sourceJobId: plan.sourceJobId, jobId: plan.job.id,
+  sourceInputDigest: plan.sourceInputDigest, inputDigest: plan.job.inputDigest, plannedAt: plan.plannedAt,
+  startsWork: false, grantsExecutionAuthority: false,
+});
+export type SavedTaskPlanRowV1 = Row & { source_job_payload: unknown; source_job_state: string; source_job_version: number;
+  source_job_workflow_id: string; source_job_created_at: string | Date; source_job_updated_at: string | Date;
+  source_workflow_payload: unknown; source_request_payload: unknown; prepared_job_payload: unknown;
+  prepared_job_state: string; prepared_job_version: number; prepared_job_workflow_id: string;
+  prepared_job_created_at: string | Date; prepared_job_updated_at: string | Date;
+  prepared_workflow_payload: unknown; prepared_request_payload: unknown };
+function verifiedSavedPlans(config:{tenantId:string;planIntegrityKey:Uint8Array},rows:readonly SavedTaskPlanRowV1[]){
+  return rows.map(row=>{const plan=planSchema.parse(row.plan),expected=Buffer.from(taskExecutionPlanTagV1(config.planIntegrityKey,plan));
+    const actual=Buffer.from(row.auth_tag);
+    if(expected.length!==actual.length||!timingSafeEqual(expected,actual)||row.tenant_id!==config.tenantId||row.tenant_id!==plan.tenantId
+      ||row.project_id!==plan.projectId||row.source_job_id!==plan.sourceJobId||row.job_id!==plan.job.id)fail();return plan;});
+}
+export function savedTaskPlanProfileIdsV1(config:{tenantId:string;planIntegrityKey:Uint8Array},rows:readonly SavedTaskPlanRowV1[]){
+  return [...new Set(verifiedSavedPlans(config,rows).map(plan=>plan.acceptanceProfileId))];
+}
+
+/** Server-only fixed-query plan verification for callers that already own an authenticated
+ * transaction and have checked project access. This helper grants no authority of its own. */
+export async function readSavedTaskPlansInSessionV1(tx: DatabaseSession, config: {
+  tenantId: string; planIntegrityKey: Uint8Array; reviewIntegrityKey: Uint8Array;
+  checkpoints: AwaitableRollbackCheckpointStoreV1; preloadedRows?: readonly SavedTaskPlanRowV1[];
+  authenticatedProfiles?: ReadonlyMap<string, unknown>;
+}, tasks: readonly { projectId: string; sourceJobId: string }[]) {
+  localId.parse(config.tenantId);
+  if (!(config.planIntegrityKey instanceof Uint8Array) || config.planIntegrityKey.length !== 32
+    || !(config.reviewIntegrityKey instanceof Uint8Array) || config.reviewIntegrityKey.length !== 32) fail();
+  const unique = [...new Map(tasks.map(task => [JSON.stringify([task.projectId, task.sourceJobId]), task])).values()];
+  for (const task of unique) { localId.parse(task.projectId); localId.parse(task.sourceJobId); }
+  const output = new Map<string, TaskPlanningReceipt | null>();
+  for (const task of unique) output.set(JSON.stringify([task.projectId, task.sourceJobId]), null);
+  if (!unique.length) return output;
+  const projectIds = [...new Set(unique.map(task => task.projectId))], sourceJobIds = unique.map(task => task.sourceJobId);
+  const rows = (config.preloadedRows ? [...config.preloadedRows] : (await tx.query<SavedTaskPlanRowV1>(`SELECT p.tenant_id,p.project_id,p.source_job_id,p.job_id,p.plan,p.auth_tag,
+    sj.payload AS source_job_payload,sj.state AS source_job_state,sj.version AS source_job_version,
+    sj.workflow_id AS source_job_workflow_id,sj.created_at AS source_job_created_at,sj.updated_at AS source_job_updated_at,
+    sw.payload AS source_workflow_payload,sr.payload AS source_request_payload,
+    pj.payload AS prepared_job_payload,pj.state AS prepared_job_state,pj.version AS prepared_job_version,
+    pj.workflow_id AS prepared_job_workflow_id,pj.created_at AS prepared_job_created_at,pj.updated_at AS prepared_job_updated_at,
+    pw.payload AS prepared_workflow_payload,pr.payload AS prepared_request_payload
+    FROM control_task_execution_plans p
+    JOIN control_jobs sj ON sj.tenant_id=p.tenant_id AND sj.project_id=p.project_id AND sj.id=p.source_job_id
+    JOIN control_workflows sw ON sw.tenant_id=sj.tenant_id AND sw.id=sj.workflow_id
+    JOIN control_requests sr ON sr.tenant_id=sw.tenant_id AND sr.id=sw.request_id
+    JOIN control_jobs pj ON pj.tenant_id=p.tenant_id AND pj.project_id=p.project_id AND pj.id=p.job_id
+    JOIN control_workflows pw ON pw.tenant_id=pj.tenant_id AND pw.id=pj.workflow_id
+    JOIN control_requests pr ON pr.tenant_id=pw.tenant_id AND pr.id=pw.request_id
+    WHERE p.tenant_id=$1 AND p.project_id=ANY($2::text[]) AND p.source_job_id=ANY($3::text[])
+    ORDER BY p.project_id COLLATE "C",p.source_job_id COLLATE "C" FOR UPDATE OF sj`,
+  [config.tenantId, projectIds, sourceJobIds])).rows).filter(row => output.has(JSON.stringify([row.project_id, row.source_job_id])));
+  if (!rows.length) return output;
+  const plans = verifiedSavedPlans(config,rows);
+  const profiles = config.authenticatedProfiles ?? await new CompletionGateStoreV1(joined(tx), config.reviewIntegrityKey, config.checkpoints)
+    .getRecords(config.tenantId, [...new Set(plans.map(plan => plan.acceptanceProfileId))], "profile");
+  const verifiedJob = (payload: unknown, state: string, version: number, workflowId: string,
+    createdAt: string | Date, updatedAt: string | Date, projectId: string, jobId: string) => {
+    const job = jobRecordSchema.parse(payload);
+    if (job.id !== jobId || job.projectId !== projectId || job.tenantId !== config.tenantId || job.state !== state
+      || job.version !== Number(version) || job.workflowId !== workflowId
+      || job.createdAt !== new Date(createdAt).toISOString() || job.updatedAt !== new Date(updatedAt).toISOString()) fail();
+    return job;
+  };
+  for (let index = 0; index < rows.length; index += 1) {
+    const row = rows[index]!, plan = plans[index]!;
+    const sourceJob = verifiedJob(row.source_job_payload, row.source_job_state, row.source_job_version,
+      row.source_job_workflow_id, row.source_job_created_at, row.source_job_updated_at, row.project_id, row.source_job_id);
+    const sourceWorkflow = workflowRecordSchema.parse(row.source_workflow_payload);
+    const sourceRequest = requestRecordSchema.parse(row.source_request_payload);
+    const draft = taskDraftSchema.parse({ title: sourceRequest.title, instructions: sourceRequest.objective }), a = sourceJob.authority;
+    if (sourceJob.jobType !== "task.proposal" || sourceJob.state !== "proposed" || sourceJob.version !== 0
+      || sourceWorkflow.projectId !== row.project_id || sourceRequest.projectId !== row.project_id
+      || sourceWorkflow.tenantId !== sourceJob.tenantId || sourceRequest.tenantId !== sourceJob.tenantId
+      || sourceWorkflow.jobIds.length !== 1 || sourceWorkflow.jobIds[0] !== row.source_job_id
+      || sourceWorkflow.id !== sourceJob.workflowId || sourceRequest.id !== sourceWorkflow.requestId
+      || sourceWorkflow.state !== "proposed" || sourceRequest.state !== "draft" || sourceWorkflow.version !== 0 || sourceRequest.version !== 0
+      || sourceJob.inputDigest !== sha256Digest(draft) || a.digest !== computeAuthorityDigest(a)
+      || a.allowedExecutor !== "executor:unassigned" || a.networkPolicy !== "none" || a.effectPolicy !== "none"
+      || a.credentialRefs.length || a.filesystemRoots.length || a.allowedNetworkDestinations.length || a.maxConcurrentEffects) fail();
+    const source = { job: sourceJob, workflow: sourceWorkflow, request: sourceRequest };
+    assertNoSecretMaterial(source);
+    if (["control-room.task-execution-plan/v2", "control-room.task-execution-plan/v4", "control-room.task-execution-plan/v6",
+      "control-room.task-execution-plan/v8", "control-room.task-execution-plan/v10", "control-room.task-execution-plan/v12",
+      "control-room.task-execution-plan/v14", "control-room.task-execution-plan/v16"].includes(plan.schema)
+      || plan.projectId !== row.project_id || plan.sourceJobId !== row.source_job_id
+      || plan.sourceDigest !== sha256Digest(source) || plan.sourceInputDigest !== sourceJob.inputDigest) fail();
+    const preparedJob = verifiedJob(row.prepared_job_payload, row.prepared_job_state, row.prepared_job_version,
+      row.prepared_job_workflow_id, row.prepared_job_created_at, row.prepared_job_updated_at, row.project_id, row.job_id);
+    const preparedWorkflow = workflowRecordSchema.parse(row.prepared_workflow_payload);
+    const preparedRequest = requestRecordSchema.parse(row.prepared_request_payload);
+    const profile = completionAcceptanceProfileSchemaV1.parse(profiles.get(plan.acceptanceProfileId));
+    if (sha256Digest(immutableJob(preparedJob)) !== sha256Digest(plan.job) || sha256Digest(plan.input) !== preparedJob.inputDigest
+      || sha256Digest({ ...preparedWorkflow, state: "proposed", version: 0, updatedAt: preparedWorkflow.createdAt }) !== sha256Digest(plan.workflow)
+      || sha256Digest({ ...preparedRequest, state: "draft", version: 0, updatedAt: preparedRequest.createdAt }) !== sha256Digest(plan.request)
+      || profile.tenantId !== plan.tenantId || profile.projectId !== plan.projectId || profile.targetKind !== "document"
+      || sha256Digest(profile) !== plan.acceptanceProfileDigest || Date.parse(profile.createdAt) > Date.parse(plan.plannedAt)) fail();
+    const receipt = savedPlanReceipt(plan);
+    if (receipt.projectId !== row.project_id || receipt.sourceJobId !== row.source_job_id || receipt.jobId === row.source_job_id) fail();
+    output.set(JSON.stringify([row.project_id, row.source_job_id]), receipt);
+  }
+  return output;
+}
 const taskExecutionPlannerDatabases = new WeakMap<object, DatabaseClient>();
 export const SCHEDULE_ASSIGNMENT_SERVICE_ACTOR_V1 = "service:schedule-assignment:v1";
 export const SCHEDULED_CONTEXT_REFERENCE_BLOCK_V1 = "control-room-scheduled-context-references/v1";
@@ -269,17 +446,27 @@ export async function readCodexTaskExecutionPlanV3InSession(tx: DatabaseSession,
 export class TaskExecutionPlanner {
   private readonly templates: ReadonlyMap<string, NativeTaskTemplate>;
   private readonly projectTemplates: ReadonlyMap<string, readonly NativeTaskTemplate[]>;
+  private readonly templateRegistry?: NativeTaskTemplateRegistryV1;
   private readonly key: Uint8Array;
   private readonly reviewKey: Uint8Array;
   private readonly checkpoints: AwaitableRollbackCheckpointStoreV1;
   private readonly projects: WebProjectService;
   private readonly revisionSource?: NativeResultSubmissionService | TaskResultInspectionSourceV1;
+  private readonly modelCatalog?: TaskModelCatalogV1;
   constructor(private readonly db: DatabaseClient, private readonly scope: { tenantId: string; workspaceId: string },
-    config: { template: NativeTaskTemplate; additionalTemplates?: readonly NativeTaskTemplate[]; integrityKey: Uint8Array; reviewIntegrityKey: Uint8Array;
-      checkpoints: AwaitableRollbackCheckpointStoreV1; ideaIntegrityKey?: Uint8Array; localAdapterAdmission?: LocalTaskAdapterAdmission }, private readonly clock: () => number = Date.now,
+    config: { template?: NativeTaskTemplate; additionalTemplates?: readonly NativeTaskTemplate[]; templateRegistry?: NativeTaskTemplateRegistryV1;
+      integrityKey: Uint8Array; reviewIntegrityKey: Uint8Array;
+      checkpoints: AwaitableRollbackCheckpointStoreV1; ideaIntegrityKey?: Uint8Array; localAdapterAdmission?: LocalTaskAdapterAdmission;
+      modelCatalog?: TaskModelCatalogV1 }, private readonly clock: () => number = Date.now,
     revisionResults?: ConstructorParameters<typeof NativeResultSubmissionService>[1], revisionSource?: TaskResultInspectionSourceV1) {
-    const captured = captureNativeTaskTemplates(config);
-    const values = [captured.template, ...(captured.additionalTemplates ?? [])];
+    if (config.templateRegistry !== undefined) {
+      if (!isNativeTaskTemplateRegistryV1(config.templateRegistry) || config.template !== undefined || config.additionalTemplates !== undefined)
+        throw new Error("task_execution_template_registry_invalid");
+      this.templateRegistry = config.templateRegistry;
+    } else if (config.template === undefined) throw new Error("task_execution_templates_unavailable");
+    const captured = this.templateRegistry ? undefined : captureNativeTaskTemplates({ template: config.template!,
+      ...(config.additionalTemplates === undefined ? {} : { additionalTemplates: config.additionalTemplates }) });
+    const values = this.templateRegistry?.snapshot() ?? [captured!.template, ...(captured!.additionalTemplates ?? [])];
     this.templates = new Map(values.map(value => [value.id, value]));
     this.projectTemplates = new Map([...new Set(values.map(value => value.authority.projectId))].map(projectId => [projectId,
       Object.freeze(values.filter(value => value.authority.projectId === projectId))]));
@@ -289,6 +476,7 @@ export class TaskExecutionPlanner {
     this.checkpoints = { read: config.checkpoints.read.bind(config.checkpoints),
       initialize: fail, advance: fail };
     this.localAdapterAdmission = captureLocalTaskAdapterAdmission(config.localAdapterAdmission);
+    this.modelCatalog = config.modelCatalog;
     this.projects = new WebProjectService(db, scope, clock, config.ideaIntegrityKey);
     if (revisionResults) {
       if (revisionResults.integrityKey.length !== this.reviewKey.length || !timingSafeEqual(revisionResults.integrityKey, this.reviewKey)) fail();
@@ -298,6 +486,52 @@ export class TaskExecutionPlanner {
     taskExecutionPlannerDatabases.set(this, db);
   }
   private readonly localAdapterAdmission?: Readonly<{ enabledAdapters: readonly LocallyAdmittedTaskAdapter[] }>;
+  private currentTemplateMaps() {
+    if (!this.templateRegistry) return { templates: this.templates, projectTemplates: this.projectTemplates };
+    const values = this.templateRegistry.snapshot();
+    return { templates: new Map(values.map(value => [value.id, value])),
+      projectTemplates: new Map([...new Set(values.map(value => value.authority.projectId))].map(projectId => [projectId,
+        Object.freeze(values.filter(value => value.authority.projectId === projectId))])) };
+  }
+  private modelKind(template: NativeTaskTemplate): TaskModelWorkerKindV1 | undefined {
+    if (template.adapter === CODEX_OWNER_TRUSTED_LOCAL_ADAPTER_V1) return "codex";
+    if (template.adapter === CLAUDE_CODE_LOCAL_ADAPTER_V1) return "claude-code";
+    if (template.adapter === HERMES_LOCAL_ADAPTER_V1) return "hermes";
+    return undefined;
+  }
+  private async materializeModelSelection(tx: DatabaseSession, sourceJobId: string, targetJobId: string,
+    projectId: string, template: NativeTaskTemplate, createdAt: string, inheritedFromJobId?: string,
+    override?: { model?: string; effort?: string }) {
+    await tx.query(`INSERT INTO control_task_declared_scopes(tenant_id,project_id,job_id,scope_kind,path,path_fold)
+      SELECT tenant_id,project_id,$3,scope_kind,path,path_fold FROM control_task_declared_scopes
+      WHERE tenant_id=$1 AND job_id=$2`, [this.scope.tenantId, sourceJobId, targetJobId]);
+    const kind = this.modelKind(template);
+    if (!kind || !this.modelCatalog?.some(item => item.kind === kind)) return;
+    const source = (await tx.query<{ selection_key: string | null; effort: string | null }>(
+      "SELECT selection_key,effort FROM control_task_model_selections WHERE tenant_id=$1 AND job_id=$2",
+      [this.scope.tenantId, sourceJobId])).rows[0];
+    // Jobs saved before 0091 have no selection row. Resolve those through the
+    // chosen worker's current protected default; never invent a browser value
+    // or bypass the allowlist. New jobs always retain their exact saved choice.
+    let requested: RequestedTaskModelV1 = source
+      ? { model: source.selection_key ?? undefined, effort: source.effort ?? undefined } : {};
+    if (inheritedFromJobId) {
+      const inherited = (await tx.query<{ selection_key: string; effort: string }>(
+        `SELECT selection_key,effort FROM control_task_model_selections
+         WHERE tenant_id=$1 AND job_id=$2 AND worker_kind IS NOT NULL`,
+      [this.scope.tenantId, inheritedFromJobId])).rows[0];
+      requested = inherited ? { model: inherited.selection_key, effort: inherited.effort } : {};
+    }
+    requested = inheritTaskModelRequestV1(requested, override ?? {});
+    let selected;
+    try { selected = resolveTaskModelV1(this.modelCatalog, kind, requested); }
+    catch { throw new WebAccessError("conflict"); }
+    await tx.query(`INSERT INTO control_task_model_selections
+      (tenant_id,project_id,job_id,worker_kind,selection_key,model,effort,provider,profile,inherited_from_job_id,created_at)
+      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`, [this.scope.tenantId, projectId, targetJobId,
+      selected.workerKind, selected.selectionKey, selected.model, selected.effort, selected.provider ?? null,
+      selected.profile ?? null, inheritedFromJobId ?? null, createdAt]);
+  }
   private canPrepare(template: NativeTaskTemplate) {
     return !requiresLocalAdmission(template.adapter) || this.localAdapterAdmission === undefined
       || this.localAdapterAdmission.enabledAdapters.includes(template.adapter);
@@ -334,41 +568,28 @@ export class TaskExecutionPlanner {
     return { ...context, execution: { leaseId: native.leaseId, leaseEpoch: native.leaseEpoch,
       startedAt: context.run.startedAt, completedAt: context.run.finishedAt, completedBefore: native.deadline } };
   }
-  private tag(plan: Plan) { return hmacSha256Tag(this.key, { purpose: plan.schema === "control-room.task-execution-plan/v1"
-    ? "task-execution-plan/v1" : plan.schema === "control-room.task-execution-plan/v2"
-      ? "task-execution-plan/v2" : plan.schema === "control-room.task-execution-plan/v3"
-        ? "task-execution-plan/v3" : plan.schema === "control-room.task-execution-plan/v4"
-          ? "task-execution-plan/v4" : plan.schema === "control-room.task-execution-plan/v5"
-          ? "task-execution-plan/v5" : plan.schema === "control-room.task-execution-plan/v6"
-            ? "task-execution-plan/v6" : plan.schema === "control-room.task-execution-plan/v7"
-              ? "task-execution-plan/v7" : plan.schema === "control-room.task-execution-plan/v8"
-                ? "task-execution-plan/v8" : plan.schema === "control-room.task-execution-plan/v9"
-                  ? "task-execution-plan/v9" : plan.schema === "control-room.task-execution-plan/v10"
-                  ? "task-execution-plan/v10" : plan.schema === "control-room.task-execution-plan/v11"
-                    ? "task-execution-plan/v11" : plan.schema === "control-room.task-execution-plan/v12"
-                      ? "task-execution-plan/v12" : plan.schema === "control-room.task-execution-plan/v13"
-                        ? "task-execution-plan/v13" : plan.schema === "control-room.task-execution-plan/v14"
-                          ? "task-execution-plan/v14" : plan.schema === "control-room.task-execution-plan/v15"
-                            ? "task-execution-plan/v15" : "task-execution-plan/v16", plan }); }
+  private tag(plan: Plan) { return taskExecutionPlanTagV1(this.key, plan); }
   webOperation(): TaskPlanningOperation {
     return Object.freeze({ tenantId: this.scope.tenantId, workspaceId: this.scope.workspaceId, plan: this.plan.bind(this),
       supportsProject: this.supportsProject.bind(this), templatesForProject: this.templatesForProject.bind(this),
-      readSaved: this.readSaved.bind(this), readPreparedWorker: this.readPreparedWorker.bind(this) });
+      readSaved: this.readSaved.bind(this), readSavedMany: this.readSavedMany.bind(this),
+      readSavedContinuation: this.readSavedContinuation.bind(this),
+      readPreparedWorker: this.readPreparedWorker.bind(this) });
   }
   supportsProject(projectId: string) {
-    return (this.projectTemplates.get(projectId) ?? []).some(template => this.canPrepare(template));
+    return (this.currentTemplateMaps().projectTemplates.get(projectId) ?? []).some(template => this.canPrepare(template));
   }
   /** Safe server-owned choices only. IDs identify reviewed templates, not a host, login or executable. */
   templatesForProject(projectId: string): readonly TaskPlanningTemplateChoice[] {
     localId.parse(projectId);
-    return Object.freeze((this.projectTemplates.get(projectId) ?? []).filter(value => this.canPrepare(value))
+    return Object.freeze((this.currentTemplateMaps().projectTemplates.get(projectId) ?? []).filter(value => this.canPrepare(value))
       .map(value => Object.freeze({ id: value.id, adapter: value.adapter })));
   }
   private selectTemplate(projectId: string, templateId?: string) {
-    const candidates = this.projectTemplates.get(projectId) ?? [];
+    const current = this.currentTemplateMaps(), candidates = current.projectTemplates.get(projectId) ?? [];
     if (templateId !== undefined) {
       localId.parse(templateId);
-      const selected = this.templates.get(templateId);
+      const selected = current.templates.get(templateId);
       if (!selected || selected.authority.projectId !== projectId) throw new WebAccessError("conflict");
       return selected;
     }
@@ -376,12 +597,29 @@ export class TaskExecutionPlanner {
     return candidates[0]!;
   }
   private templateForSavedPlan(projectId: string, templateDigest: string) {
-    const candidates = (this.projectTemplates.get(projectId) ?? []).filter(value => sha256Digest(value) === templateDigest);
+    const candidates = (this.currentTemplateMaps().projectTemplates.get(projectId) ?? []).filter(value => sha256Digest(value) === templateDigest);
     if (candidates.length !== 1) throw new WebAccessError("conflict");
     return candidates[0]!;
   }
   /** Historical receipt only; never replans or applies current template expiry to saved evidence. */
   async readSaved(identity: VerifiedWebIdentity, projectId: string, sourceJobId: string) {
+    return (await this.readSavedContinuation(identity, projectId, sourceJobId))?.receipt ?? null;
+  }
+  /** Fixed-query authenticated saved-plan receipts for a bounded summary page. */
+  async readSavedMany(identity: VerifiedWebIdentity, tasks: readonly { projectId: string; sourceJobId: string }[]) {
+    const unique = [...new Map(tasks.map(task => [JSON.stringify([task.projectId, task.sourceJobId]), task])).values()];
+    for (const task of unique) { localId.parse(task.projectId); localId.parse(task.sourceJobId); }
+    if (!unique.length) return new Map<string, TaskPlanningReceipt | null>();
+    return new WebSessionAuthority(this.db, this.scope, this.clock, "task").authenticated(identity, async (tx, actor) => {
+      for (const task of unique) actor.require("tasks.read", task.projectId);
+      await this.projects.getViewsInSession(tx, actor, unique.map(task => task.projectId));
+      return readSavedTaskPlansInSessionV1(tx, { tenantId: this.scope.tenantId, planIntegrityKey: this.key,
+        reviewIntegrityKey: this.reviewKey, checkpoints: this.checkpoints }, unique);
+    }, { readOnly: true });
+  }
+  /** Authenticated source-to-prepared continuation. The status is read from the
+   * same canonical job verified against the immutable execution plan. */
+  async readSavedContinuation(identity: VerifiedWebIdentity, projectId: string, sourceJobId: string) {
     localId.parse(projectId); localId.parse(sourceJobId);
     return new WebSessionAuthority(this.db, this.scope, this.clock, "task").authenticated(identity, async (tx, actor) => {
       actor.require("tasks.read", projectId);
@@ -396,9 +634,10 @@ export class TaskExecutionPlanner {
       if (["control-room.task-execution-plan/v2", "control-room.task-execution-plan/v4", "control-room.task-execution-plan/v6", "control-room.task-execution-plan/v8", "control-room.task-execution-plan/v10", "control-room.task-execution-plan/v12", "control-room.task-execution-plan/v14", "control-room.task-execution-plan/v16"].includes(plan.schema) || plan.projectId !== projectId
         || plan.sourceJobId !== sourceJobId || plan.sourceDigest !== sha256Digest(source)
         || plan.sourceInputDigest !== source.job.inputDigest) fail();
-      await this.checkedJob(tx, plan);
-      return this.receipt(plan);
-    });
+      const prepared = await this.checkedJob(tx, plan);
+      return { receipt: this.receipt(plan), preparedTask: { jobId: prepared.id, state: prepared.state,
+        version: prepared.version, updatedAt: prepared.updatedAt } };
+    }, { readOnly: true });
   }
   /** A deliberately small read model for a prepared task page. It verifies the saved plan
    * before translating its adapter to a display category; it never exposes a worker, template,
@@ -421,7 +660,7 @@ export class TaskExecutionPlanner {
       if (plan.schema === "control-room.task-execution-plan/v15" || plan.schema === "control-room.task-execution-plan/v16") return "hermes" as const;
       if (plan.schema === "control-room.task-execution-plan/v9" || plan.schema === "control-room.task-execution-plan/v10") return "claude" as const;
       return "configured_worker" as const;
-    });
+    }, { readOnly: true });
   }
   /** Server-only conclusion about whether this saved task plan still names one
    * exact locally admitted adapter. It intentionally returns no route detail. */
@@ -447,7 +686,7 @@ export class TaskExecutionPlanner {
       if (!adapter || !this.localAdapterAdmission) return "not_configured" as const;
       return this.localAdapterAdmission.enabledAdapters.filter(value => value === adapter).length === 1
         ? "configured" as const : "not_configured" as const;
-    });
+    }, { readOnly: true });
   }
   private verify(row: Row) {
     const plan = planSchema.parse(row.plan), expected = Buffer.from(this.tag(plan)), actual = Buffer.from(row.auth_tag);
@@ -551,6 +790,7 @@ export class TaskExecutionPlanner {
       // trusted canonical writer inside our one owner-authorized transaction, without any transition.
       const canonical = new CanonicalStore(joined(tx));
       for (const record of [plan.request, plan.workflow, plan.job]) await canonical.create(record);
+      await this.materializeModelSelection(tx, sourceJobId, plan.job.id, projectId, template, actor.now);
       await tx.query(`INSERT INTO control_task_execution_plans(tenant_id,project_id,source_job_id,job_id,plan,auth_tag)
         VALUES($1,$2,$3,$4,$5::jsonb,$6)`, [plan.tenantId, projectId, sourceJobId, plan.job.id, JSON.stringify(plan), this.tag(plan)]);
       await appendAuditWith(tx, { id: `audit:execution:${suffix}`, tenantId: plan.tenantId, projectId, actorId: actor.id, actorType: "human",
@@ -635,6 +875,7 @@ export class TaskExecutionPlanner {
     await this.profile(tx, plan, plannedAt); assertNoSecretMaterial(plan); await assertCurrent();
     const canonical = new CanonicalStore(joined(tx));
     for (const record of [plan.request, plan.workflow, plan.job]) await canonical.create(record);
+    await this.materializeModelSelection(tx, sourceJobId, plan.job.id, projectId, template, plannedAt);
     await tx.query(`INSERT INTO control_task_execution_plans(tenant_id,project_id,source_job_id,job_id,plan,auth_tag)
       VALUES($1,$2,$3,$4,$5::jsonb,$6)`, [plan.tenantId, projectId, sourceJobId, plan.job.id,
       JSON.stringify(plan), this.tag(plan)]);
@@ -785,6 +1026,8 @@ export class TaskExecutionPlanner {
       assertNoSecretMaterial(plan); current();
       const canonical = new CanonicalStore(joined(tx));
       for (const record of [plan.request, plan.workflow, plan.job]) { await canonical.create(record); current(); }
+      await this.materializeModelSelection(tx, sourceJobId, plan.job.id, projectId, template, actor.now, sourceJobId,
+        { model: input.model, effort: input.effort }); current();
       await tx.query(`INSERT INTO control_task_execution_plans(tenant_id,project_id,source_job_id,job_id,plan,auth_tag)
         VALUES($1,$2,$3,$4,$5::jsonb,$6)`, [plan.tenantId, projectId, sourceJobId, plan.job.id, JSON.stringify(plan), this.tag(plan)]);
       await appendAuditWith(tx, { id: `audit:revision:${suffix}`, tenantId: plan.tenantId, projectId, actorId: actor.id, actorType: "human",
@@ -802,9 +1045,7 @@ export class TaskExecutionPlanner {
     fromContentHash: plan.revision.fromContentHash, reviewId: plan.revision.reviewId, feedbackDigest: plan.revision.feedbackDigest,
     fromTargetId: plan.revision.fromTargetId, revisionNumber: plan.revision.revisionNumber,
     executionAvailability: "requires_separate_assignment_and_approval" as const }; }
-  private receipt(plan: Plan) { return { projectId: plan.projectId, sourceJobId: plan.sourceJobId, jobId: plan.job.id,
-    sourceInputDigest: plan.sourceInputDigest, inputDigest: plan.job.inputDigest, plannedAt: plan.plannedAt,
-    startsWork: false as const, grantsExecutionAuthority: false as const }; }
+  private receipt(plan: Plan) { return savedPlanReceipt(plan); }
   private async jobWith(tx: DatabaseSession, projectId: string, jobId: string, lock = false) {
     const row = (await tx.query<{ payload: unknown; state: string; version: number; workflow_id: string;
       created_at: string | Date; updated_at: string | Date }>(`SELECT payload,state,version,workflow_id,created_at,updated_at

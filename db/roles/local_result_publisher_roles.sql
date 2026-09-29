@@ -27,6 +27,7 @@ GRANT USAGE ON SCHEMA public TO control_room_local_result_publisher;
 -- active owner grant, read-only, as every other results-type login reads them.
 GRANT SELECT ON workspaces, control_identities, control_role_grants TO control_room_local_result_publisher;
 GRANT SELECT ON control_jobs, control_attempts, adapter_registry,
+  control_task_model_selections,
   control_harness_runs, control_harness_run_events, control_artifact_manifests, control_native_artifact_receipts,
   control_durable_result_write_reservations, control_native_review_plans,
   audit_events, control_audit_chain_heads

@@ -60,6 +60,32 @@ Then open that address in the browser and sign in.
 
 If `pnpm mac:up` reports `already running`, you do not need to do anything.
 
+### Optional one-time owner action: start automatically at login
+
+This source tree prepares a per-user launch agent but does not install it for you. When you decide “yes, start at login,” run this once while signed in as the Mac owner:
+
+```sh
+pnpm mac:up -- --protected-root <protected-root> --install-service
+```
+
+If macOS shows a background-item notification, open **System Settings → General → Login Items & Extensions** and confirm the Control Room item is allowed. Do not run the command with `sudo`; this is an owner-login service, not a system service.
+
+Check it without changing anything:
+
+```sh
+pnpm mac:service-status -- --protected-root <protected-root>
+```
+
+A healthy installed result says `running definition=current enabled=true` and includes a PID. Repeating the install command is safe: an already healthy matching service is restarted in place, while a stopped or changed definition is re-enabled/refreshed through the same fixed label.
+
+`pnpm mac:down -- --protected-root <protected-root>` stops and disables the service, so it will not return at the next login. A later ordinary `mac:up` re-enables an installed service. To remove only the login service while keeping all protected data and configuration:
+
+```sh
+pnpm mac:uninstall-service
+```
+
+The uninstall command is repeat-safe. After it reports `removed`, `mac:service-status` reports `not_installed`; an ordinary `mac:up` then uses the direct detached start again unless you explicitly pass `--install-service`.
+
 ## 3. Sign in
 
 The owner sign-in code is created once, during section 1 step 2, and stored in the protected
@@ -116,8 +142,21 @@ but has not yet done any work. "Proven" only ever appears after you accept a res
 zero-row denied-write probes. It must pass before `mac:up` continues, but the
 new one-time owner setup is still unproven. It prints no configuration.
 
-On a new installation with no active project, `mac:up` starts the website only. The worker page truthfully says task workers are not started. Create your first project on the website, then run `mac:down && mac:up` to start the task host. During this phase, a project created later also needs that restart; the provider supports at most 16 templates (about five projects). Both limits require a follow-up package, not a silent drop. If the selected Hermes profile later sets `OPENCODE_GO_BASE_URL`, Hermes tasks fail closed because the saved network allowlist still names `https://opencode.ai:443`. The preparation command creates the protected task-runtime file once; rerunning it does not update an existing file. Stop Hermes task use and ask for a reviewed recovery procedure. Do not edit the protected file by hand or assume rerunning preparation changes its destination.
+`mac:up` starts the task host even when there are no active projects. Create a project on the website and open its task-planning page; the running host derives its fixed local templates and registers its owner-review profile without a restart. The host supports up to 50 active projects and refuses the fifty-first with `mac_local_project_limit_50` rather than silently omitting templates. If the selected Hermes profile later sets `OPENCODE_GO_BASE_URL`, Hermes tasks fail closed because the saved network allowlist still names `https://opencode.ai:443`. The preparation command creates the protected task-runtime file once; rerunning it does not update an existing file. Stop Hermes task use and ask for a reviewed recovery procedure. Do not edit the protected file by hand or assume rerunning preparation changes its destination.
 Any line ending `database_check_refused` means that role is not reachable.
+
+### Owner-review profile v2 upgrade
+
+Database migration 0092 is additive: it does not rewrite existing review profiles or targets.
+On the first `mac:up` after the upgrade, every active project registers the v2 owner-review
+profile. Existing in-flight review targets keep their recorded v1 profile and digest; newly
+published results bind to v2. The owner can review both versions. Under v2, any future agent
+review must have different recorded worker, agent-profile and harness provenance, and the default
+policy also requires a different coarse model family. For a plain-text result, open the result,
+check “I read it and it’s correct,” then choose Accept; that one explicit owner command records the
+acceptance and its configured human observation together. The separate automatic text check still
+has to pass before the task becomes Completed · Accepted. Restarting does not accept, reject,
+migrate, or otherwise decide an existing result.
 
 ## 7. When something is not working
 
@@ -143,10 +182,86 @@ The Tailscale client tag and the access-policy grant are both **done**. Do not r
 one; if a future update needs another machine on the route, give that machine the same approved
 client tag and change nothing else.
 
+### Protected model choices
+
+Model choices are optional installation policy, not browser configuration. An installation created
+before model selection has no `modelPolicy` fields and needs no migration: each such worker keeps
+using its existing CLI or protected profile default, and the task form offers no model choice for
+that worker.
+
+To enable model selection later, stop Control Room and edit the protected enablement record at the
+exact file `<protected-root>/config/mac-local.json`. Add `modelPolicy` inside only the worker object
+you want to enable; do not add it at the top level. Keep only models the owner has approved and the
+installed CLI reports. For example, the complete relevant Codex worker shape is:
+
+```json
+{
+  "workerId": "worker:codex:mac-1",
+  "kind": "codex",
+  "executablePath": "/absolute/path/to/codex",
+  "recordedVersion": "<the already-pinned version line>",
+  "modelPolicy": {
+    "models": ["<installed-codex-model>"],
+    "defaultModel": "<installed-codex-model>",
+    "efforts": ["low", "medium", "high"],
+    "defaultEffort": "medium"
+  }
+}
+```
+
+Claude uses the same shape. Its default should be `sonnet`; put owner-approved, more limited
+choices such as `opus` in `limitedModels` so the task form displays “uses more of your Claude
+limit”. Hermes uses named, worker-side credential profiles:
+
+```json
+{
+  "kind": "hermes",
+  "modelPolicy": {
+    "profiles": [
+      { "name": "build", "provider": "<provider>", "model": "<provider-model>" },
+      { "name": "check", "provider": "<provider>", "model": "<provider-model>" }
+    ],
+    "defaultProfile": "build",
+    "efforts": ["default"],
+    "defaultEffort": "default"
+  }
+}
+```
+
+Each Hermes profile's credentials stay in Hermes's own protected worker configuration. Do not put
+credentials in `mac-local.json`. At every startup Control Room checks an explicitly configured
+policy against the pinned installed CLI. A malformed, changed, or unsupported policy is refused
+fail-closed and the task host does not start with that worker. A policy is never accepted from a
+browser request. Start Control Room normally after saving the protected file. Removing a model
+prevents new tasks from selecting it; existing run evidence remains readable. Removing the whole
+`modelPolicy` object disables model selection for that worker and returns it to its prior default
+behavior.
+
 What is still open is the set of drills in the private installation checklist item 3: the phone-or-PC port test,
 a Mac sleep and wake, the VPS-side PostgreSQL and Tailscale restarts, and a forced certificate
 renewal. Those are not setup steps; they are the checks that prove the route survives real
 interruptions.
+
+### Optional private HTTPS address for a phone or PC
+
+This is off by default. It does not change the Control Room listener: the app still binds only to
+`127.0.0.1`. Tailscale Serve terminates HTTPS and proxies back to that loopback listener. Use Serve,
+not Funnel; Funnel would make the address public.
+
+1. Stop Control Room: `pnpm mac:down -- --protected-root <protected-root>`.
+2. In `<protected-root>/config/mac-local.json`, add this field inside `localOwnerSession`:
+   `"trustedOrigin": "https://<mac-name>.<tailnet-name>.ts.net"`. It must be the exact HTTPS origin,
+   with no path, wildcard, trailing slash, credentials, or query string.
+3. Start the private proxy on the Mac: `tailscale serve --bg 3210`.
+4. Confirm the printed Serve URL exactly matches `trustedOrigin`, then start Control Room with the
+   normal `pnpm mac:up -- --protected-root <protected-root>` command.
+5. Open that exact HTTPS URL on a tailnet-authorized phone or PC. Sign-in uses a `Secure`,
+   `HttpOnly`, `SameSite=Strict` cookie; writes still require the exact origin and CSRF checks.
+
+To turn it off, stop Control Room, run `tailscale serve --https=443 off`, remove `trustedOrigin`
+from the protected file, and start Control Room again. An unconfigured or different origin remains
+refused. Tailscale documents the current Serve syntax in its official
+[Serve command reference](https://tailscale.com/docs/reference/tailscale-cli/serve).
 
 ## 9. Known limitations (read before you rely on this)
 
@@ -171,7 +286,7 @@ intended behaviour once that lands.
 | Sign-in, projects, creating a project or a task | Covered by automated tests against a disposable database. **Not** yet run by you on the real one. |
 | Assigning, approving, accepting, requesting changes, planning | **Routed but unusable.** The page exists and answers "service unavailable", because the operation behind it is not installed. |
 | Cancelling a running task | **Not available at all.** There is no cancel action anywhere in the local product. A task that is running cannot be stopped from the website. |
-| Automatic service at login | **Not built.** Starting is a manual command for now. |
+| Automatic service at login | **Prepared, not installed.** The owner may opt in once with the exact `--install-service` command in section 2. No agent installs it automatically. |
 
 The two rows that matter most to an owner expecting a normal product: you
 cannot cancel a task, and several review steps are not usable. Do not plan
@@ -185,10 +300,11 @@ by finding its pinned executable. A worker that cannot be verified shows
 `ready` and still `not_proven`, which simply means it has not published a
 result yet. Neither state is a fault report.
 
-### 9.4 One Mac, one owner, loopback only
+### 9.4 One Mac, one owner, loopback listener
 
-The site is served on the loopback address on this Mac only. It is not
-published to the network, and it is not reachable from your phone. The
+The site always listens on the loopback address on this Mac only. It is not
+reachable from another device unless the owner configures the optional exact private HTTPS origin
+above and enables Tailscale Serve. The
 database is reached over a private connection to the one remote machine
 holding it, and the database port is not open to your other devices.
 

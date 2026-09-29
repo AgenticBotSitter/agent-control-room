@@ -355,7 +355,9 @@ test("malformed native receipts and cancelled cleanup are uncertainty", async ()
 
 test("health observation is deadline-bounded, aborts its host call and rejects malformed late evidence", async () => {
   let healthAborted = false;
-  const slow = fixture("running", "slow-health", { healthAborted: () => { healthAborted = true; } });
+  let observeAbort!: () => void;
+  const abortObserved = new Promise<void>(resolve => { observeAbort = resolve; });
+  const slow = fixture("running", "slow-health", { healthAborted: () => { healthAborted = true; observeAbort(); } });
   const request = { schema: "control-room.private-macos-service-tool/v1" as const,
     operation: "observe_installed_service" as const, requestDigest: d("slow-health"), lifecycleDigest,
     label: PRIVATE_MACOS_SERVICE_LABEL_V1, expectedReleaseDigest: releaseDigest,
@@ -364,6 +366,7 @@ test("health observation is deadline-bounded, aborts its host call and rejects m
     // the hanging host is still bounded by this explicit deadline.
     deadlineUnixMs: Date.now() + 1_000 };
   await assert.rejects(slow.port.nativePort.observeInstalledService(request, new AbortController().signal), /_uncertain/u);
+  await abortObserved;
   assert.equal(healthAborted, true);
 
   const malformed = fixture("running", "bad-health");

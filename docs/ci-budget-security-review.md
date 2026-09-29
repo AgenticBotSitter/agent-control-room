@@ -10,7 +10,9 @@ standard `ubuntu-latest` runners for pull requests and pushes to main. Manual di
 is available. There are no schedules, deployments, provider calls or private-host jobs.
 Standard hosted runner minutes are free for public repositories; the private owner's
 monthly allowance does not limit these jobs. Larger runners and storage/cache have
-separate billing. Dependency caches are used; no build artifacts are uploaded.
+separate billing. Dependency caches are used. The owner-approved browser journey
+uploads only its Playwright screenshot and trace directory, only when that job fails,
+with seven-day retention.
 See [GitHub billing](https://docs.github.com/en/billing/concepts/product-billing/github-actions).
 
 ## Verified repository settings
@@ -23,6 +25,8 @@ See [GitHub billing](https://docs.github.com/en/billing/concepts/product-billing
   - `actions/checkout@11d5960a326750d5838078e36cf38b85af677262`
   - `pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1`
   - `actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020`
+  - `actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02`
+    (failure-only browser evidence)
 - The quick job now accepts the optional `CONTROL_ROOM_PRIVATE_NAMES` repository
   secret solely as a newline-separated denylist for the private-name guard. GitHub
   withholds it from fork pull requests, where the guard deliberately skips. The value
@@ -233,3 +237,35 @@ check at under a second each; the hosted figures above are the ones to trust.
 - It does not claim merge-readiness is enforced. Nothing was added to branch protection.
   To make the gate binding, the repository has to require `Full suite (merge gate)` as a
   status check; that decision stays with the maintainer.
+
+## Amendment: full Mac-local rehearsal on Linux
+
+The CI workflow now runs the whole Mac-local application against a fresh PostgreSQL 17
+cluster on a standard `ubuntu-latest` runner. It builds the production application,
+creates the protected task runtime with the documented non-secret settings, and drives
+the real HTTP and queue path with pinned fake executables. It supplies no provider
+credentials and makes no provider request. The launchd installation step is macOS-only,
+so Linux uses the product's documented detached-host path and emits an explicit notice.
+
+Each journey gets a `mktemp` directory, dedicated loopback database and web ports, and
+an exit trap that stops PostgreSQL and removes the directory after success or failure.
+`PG_BIN` pins `initdb`, `pg_ctl`, and `psql` to PGDG's PostgreSQL 17 installation.
+Current main predates the model-allowlist journey and records an explicit compatibility
+notice; revisions that contain that mode run both the default and `--model-allowlists`
+journeys. The aggregate merge gate depends on this job, so a failed or cancelled
+rehearsal makes the revision non-merge-ready.
+
+## Amendment: pull request claim evidence
+
+The `PR evidence claims` job reads the pull request body from GitHub's event
+payload and compares references with the checked-out head tree. It uses no
+network calls or dependencies, has read-only repository permissions, checks out
+full history only to calculate the base-to-head path list, and is skipped for
+push and manual-dispatch events. Its result is included in the merge gate.
+
+Untrusted prose is bounded to 64 KiB and is never logged. Diagnostics use fixed
+codes and counts, with the existing private-name redactor as a second safety
+layer when a list is available in the environment. The job receives no secret,
+so its no-echo rule has no secret dependency and works the same way for fork
+pull requests. See `docs/PR_CLAIMS_EVIDENCE.md` for the contributor-facing
+format.

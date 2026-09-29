@@ -1,6 +1,6 @@
 # Third-party notices and distribution manifest
 
-Inventory digest: `8d3731e9837c7ae309a948327fa08c18027d607503cc701eb4973367c8a9491e`
+Inventory digest: `3f63b91f0c670be0bb76fa2d09a0cbcd52422408b8c890fefb07f574341c59d1`
 
 This notice index is generated from the exact declared artifact inputs. It binds retained notice files and their SHA-256 hashes; the release assembler independently verifies the final archive against this digest.
 

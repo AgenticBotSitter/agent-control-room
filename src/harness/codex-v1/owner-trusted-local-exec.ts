@@ -21,6 +21,8 @@ export type OwnerTrustedLocalCodexExecV1 = Readonly<{
     prompt: string;
     workingDirectory: string;
     deadlineMs: number;
+    model?: string;
+    effort?: string;
     signal?: AbortSignal;
   }>): Promise<OwnerTrustedLocalCodexExecResultV1>;
 }>;
@@ -44,11 +46,14 @@ function safeInput(input: unknown): input is Parameters<OwnerTrustedLocalCodexEx
   if (!input || typeof input !== "object" || Array.isArray(input) || types.isProxy(input)
     || Object.getPrototypeOf(input) !== Object.prototype) return false;
   const value = input as Record<string, unknown>;
-  return Object.keys(value).every(key => ["executablePath", "prompt", "workingDirectory", "deadlineMs", "signal"].includes(key))
+  return Object.keys(value).every(key => ["executablePath", "prompt", "workingDirectory", "deadlineMs", "model", "effort", "signal"].includes(key))
     && safePath(value.executablePath) && safePath(value.workingDirectory)
     && typeof value.prompt === "string" && Buffer.byteLength(value.prompt, "utf8") <= MAX_PROMPT_BYTES
     && typeof value.deadlineMs === "number" && Number.isSafeInteger(value.deadlineMs)
     && value.deadlineMs >= 100 && value.deadlineMs <= 3_600_000
+    && ((value.model === undefined && value.effort === undefined)
+      || typeof value.model === "string" && /^[A-Za-z0-9][A-Za-z0-9._:/+-]{0,179}$/u.test(value.model)
+        && typeof value.effort === "string" && /^(?:low|medium|high|xhigh|max)$/u.test(value.effort))
     && (value.signal === undefined || value.signal instanceof AbortSignal);
 }
 
@@ -104,14 +109,18 @@ export function createOwnerTrustedLocalCodexExecV1(dependencies: Readonly<{ spaw
   return Object.freeze({ async execute(input) {
     if (!safeInput(input)) return failed("failed", "invalid_input");
     if (input.signal?.aborted) return failed("canceled", "aborted_before_spawn");
-    try { if ((await list(input.workingDirectory)).length !== 0) return failed("failed", "working_directory_not_empty"); }
+    // The configured worker directory is persistent across tasks. Listing it
+    // is an accessibility check only; prior task output must not disable the
+    // worker for every later assignment.
+    try { await list(input.workingDirectory); }
     catch { return failed("failed", "working_directory_unavailable"); }
     // Directory inspection is asynchronous. A cancellation that arrives while
     // it is in flight must fence the process boundary, not merely the earlier
     // input validation.
     if (input.signal?.aborted) return failed("canceled", "aborted_before_spawn");
     const args = Object.freeze(["exec", "--json", "--sandbox", "read-only", "--ephemeral", "--skip-git-repo-check",
-      "--color", "never", "-C", input.workingDirectory, "-"]);
+      "--color", "never", "-C", input.workingDirectory,
+      ...(input.model ? ["-m", input.model, "-c", `model_reasoning_effort=${input.effort}`] : []), "-"]);
     let child: ChildProcess;
     try {
       child = launch(input.executablePath, args, { cwd: input.workingDirectory, detached: true, shell: false, windowsHide: true,
