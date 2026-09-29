@@ -770,6 +770,19 @@ review-plan trigger remains unchanged. No real evidence column or review
 decision becomes writable by the coordinator. The preflight map, migration
 ledger, and structural schema digest must match this exact change.
 
+**Hold-only amendment proposed 2026-09-29 (lead approval requested under the
+owner's standing inert-lock approval):** Owner acceptance inserts a
+`control_web_task_review_commands` row whose foreign key takes a key-share on
+the reviewed `control_jobs` row. It took that key-share only after holding the
+tenant `control_completion_gate_integrity` row, while quality inspection holds
+the same job `FOR UPDATE` before asking for that row; PostgreSQL resolved the
+cycle by killing one side (40P01), and the owner saw a 503. The web
+transaction now takes `SELECT ... FOR KEY SHARE` on the job before the gate.
+Migration 0101 adds an inert CHECK-false `web_lock` column to `control_jobs`,
+and the private web role receives UPDATE on only that column. No real job
+column becomes writable by the web role. The preflight map, migration ledger,
+and structural schema digest match this exact change.
+
 - **Why.** The first real per-agent journey found that `createOwnerTrustedLocalCliPublishV1`
   (registers the ordinary run, then reads the job's `workflowId`) and `publishDurableResultV1`
   (reserves the result, writes the artifact manifest and receipt, and writes the neutral review
