@@ -12,7 +12,7 @@ import { openMacLocalRollbackCheckpointStoreV1 } from "../../src/web/v1/mac-loca
 import { loadMacLocalTaskRuntimeFromRootV1 } from "../../src/web/v1/mac-local-task-runtime";
 import { AuditStore, auditPartition } from "../../src/audit/audit-store";
 import type { DatabaseClient } from "../../src/persistence/database";
-import { workBatchProposalDigestV1 } from "../../src/work-intake/v1/schemas";
+import { workBatchProposalDigestV1 } from "../../src/work-intake/v1/digest";
 import { captureWorkIntakeClientConfigurationV1, captureWorkIntakeServerConfigurationV1,
   workIntakeClientFileNameV1,
 } from "../../src/work-intake/v1";
@@ -149,6 +149,7 @@ async function submitProposalOnlyBatch(projectId: string) {
       (SELECT count(*)::text FROM work_items) tasks,
       (SELECT count(*)::text FROM control_room_queue.job) queue`)).rows[0]!;
     expect(after, "a proposal-only batch cannot create an ordinary task, workflow, job, or queue item").toEqual(before);
+    return { batchId: receipt.batchId as string, before };
   } finally { await client.end(); }
 }
 
@@ -260,9 +261,28 @@ test("owner completes the real local website journey for every configured worker
   const browserMachineBoundary = await page.evaluate(async ({ projectId }) => (await fetch(
     `/v1/projects/${encodeURIComponent(projectId)}/work-batches`)).status, { projectId });
   expect(browserMachineBoundary, "the owner website must not expose the machine-intake route").toBe(404);
-  await submitProposalOnlyBatch(projectId);
+  const proposedBatch = await submitProposalOnlyBatch(projectId);
   await page.goto(`${projectPath}/tasks`);
   await expect(page.getByText("Machine-only proposed batch")).toHaveCount(0);
+  await page.goto(`${projectPath}/pipelines/${encodeURIComponent(proposedBatch.batchId)}`);
+  await expect(page.getByRole("heading", { name: "Pipeline batch" })).toBeVisible();
+  await expect(page.getByText("Machine-only proposed batch").first()).toBeVisible();
+  await expect(page.getByText(/does not assign, approve execution, dispatch, or start work/).first()).toBeVisible();
+  await page.getByRole("button", { name: "Approve all items" }).click();
+  await page.getByRole("button", { name: "Save all item decisions" }).click();
+  await expect(page.getByRole("heading", { name: "Recorded item decisions" })).toBeVisible();
+  const { client: approvalClient } = await disposableAdmin();
+  try {
+    const afterApproval = (await approvalClient.query<{ jobs: string; queue: string; attempts: string }>(`SELECT
+      (SELECT count(*)::text FROM control_jobs) jobs,
+      (SELECT count(*)::text FROM control_room_queue.job) queue,
+      (SELECT count(*)::text FROM control_attempts) attempts`)).rows[0]!;
+    expect(Number(afterApproval.jobs)).toBe(Number(proposedBatch.before.jobs) + 1);
+    expect(afterApproval.queue).toBe(proposedBatch.before.queue);
+    expect(afterApproval.attempts).toBe("0");
+  } finally { await approvalClient.end(); }
+  await page.goto(`${projectPath}/tasks`);
+  await expect(page.getByText("Machine-only proposed batch").first()).toBeVisible();
 
   await createPreparedTask(page, projectPath, "Hermes browser task", "Hermes Agent", true, true, true);
   await openResult(page);
@@ -295,7 +315,7 @@ test("owner completes the real local website journey for every configured worker
   await expect(page.locator('section[aria-labelledby="home-active"]')).not.toContainText("Claude browser task");
   await expect(page.locator('section[aria-labelledby="home-attention"]')).not.toContainText("Claude browser task");
   await page.goto("/needs-me");
-  await expect(page.getByRole("heading", { name: "Tasks needing attention" }).locator("..")).not.toContainText("Claude browser task");
+  await expect(page.getByRole("region", { name: "Action Inbox" })).not.toContainText("Claude browser task");
 
   await createPreparedTask(page, projectPath, "Codex browser task", "Codex");
   await openResult(page);

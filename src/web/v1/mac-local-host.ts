@@ -15,7 +15,7 @@ import type { PersistedLocalOwnerSessionV1 } from "./local-owner-session";
 
 type OpenedDatabase = Readonly<{ client: DatabaseClient; close(): Promise<void> }>;
 type LocalService = Readonly<{ start(): Promise<void>; close(): Promise<void>; isReady(): boolean }>;
-type HostedTaskApplication = Pick<MacLocalTaskApplicationV1, "operations" | "taskReadKeys" | "projectEvents" | "isReady" | "close" | "queueDelivery" | "queueRecovery">;
+type HostedTaskApplication = Pick<MacLocalTaskApplicationV1, "operations" | "taskReadKeys" | "actionInboxSource" | "projectEvents" | "isReady" | "close" | "queueDelivery" | "queueRecovery">;
 type OwnedQueueWorker = Readonly<{ close(): Promise<void>; status(): { accepting: boolean } }>;
 
 /** One small composition for the Mac-local web host. It deliberately uses the
@@ -39,6 +39,7 @@ export function createMacLocalWebServiceFromConfigurationV1(input: Readonly<{
   workerReadiness?: Pick<MacLocalWorkerReadinessV1, "read">;
   createServer?: (options: Readonly<ServerOptions>) => Server;
   listenerTiming?: { bindMs?: number; closeMs?: number };
+  workBatchIntegrityKey?: Uint8Array;
 }>): LocalService {
   const configuration = input?.configuration;
   if (!configuration || !input.database?.client || typeof input.database.close !== "function"
@@ -58,9 +59,11 @@ export function createMacLocalWebServiceFromConfigurationV1(input: Readonly<{
     database: input.database,
     ...(taskApplication ? { ...taskApplication.operations } : input.operations ? { ...input.operations } : {}),
     ...(taskApplication?.taskReadKeys ? { taskReadKeys: taskApplication.taskReadKeys } : {}),
+    ...(taskApplication?.actionInboxSource ? { actionInboxSource: taskApplication.actionInboxSource } : {}),
     ...(taskApplication?.projectEvents ? { projectEvents: taskApplication.projectEvents } : {}),
     ...(input.workerReadiness ? { workerReadiness: input.workerReadiness } : {}),
     taskWorkersStarted: Boolean(taskApplication),
+    ...(input.workBatchIntegrityKey ? { workBatchIntegrityKey: input.workBatchIntegrityKey } : {}),
     assets: input.assets,
     render: input.render,
     ...(input.createServer ? { createServer: input.createServer } : {}),
@@ -109,6 +112,7 @@ export function createMacLocalProtectedHostV1(input: Readonly<{
   startQueueWorker?: (configuration: NativeQueueWorkerStartupConfiguration) => Promise<OwnedQueueWorker>;
   createServer?: (options: Readonly<ServerOptions>) => Server;
   listenerTiming?: { bindMs?: number; closeMs?: number };
+  workBatchIntegrityKey?: Uint8Array;
 }>) {
   if (!input || typeof input.loadConfiguration !== "function" || typeof input.readVersion !== "function"
     || typeof input.openDatabase !== "function" || !input.assets || typeof input.assets.respond !== "function"
@@ -135,6 +139,7 @@ export function createMacLocalProtectedHostV1(input: Readonly<{
         const initialLocalOwnerSessions = localOwnerSessionStore ? await localOwnerSessionStore.load(Date.now()) : [];
         const web = createMacLocalWebServiceFromConfigurationV1({
           configuration, database, assets: input.assets, render: input.render,
+          ...(input.workBatchIntegrityKey ? { workBatchIntegrityKey: input.workBatchIntegrityKey } : {}),
           ...(localOwnerSessionStore ? { localOwnerSessionStore } : {}), initialLocalOwnerSessions,
           ...(taskApplication ? { taskApplication } : input.operations ? { operations: input.operations } : {}),
           workerReadiness,

@@ -28,7 +28,11 @@ const brokerTables = new Set(["control_github_webhook_replays", "control_github_
 const workIntakeReadTables = new Set(["control_identities", "control_role_grants", "projects"]);
 const workIntakeWriteTables = new Set(["work_batches", "work_batch_revisions", "audit_events",
   "control_audit_chain_heads"]);
-const workIntakeExclusiveTables = new Set(["work_batches", "work_batch_revisions"]);
+const workIntakeExclusiveTables = new Map([
+  ["work_batches", "ar"],
+  ["work_batch_revisions", "ar"],
+  ["work_batch_items", "r"],
+]);
 
 function parseAcl(value: string): ReadonlyMap<string, string> | undefined {
   if (!value.startsWith("{") || !value.endsWith("}")) return undefined;
@@ -60,7 +64,7 @@ function expectedTablePrivileges(table: string): ReadonlyMap<string, string> {
   }
   if (workIntakeExclusiveTables.has(table)) {
     result.set("control_room_backup", "r");
-    result.set("control_room_work_intake", "ar");
+    result.set("control_room_work_intake", workIntakeExclusiveTables.get(table)!);
     return result;
   }
   if (brokerTables.has(table)) {
@@ -77,6 +81,7 @@ function expectedTablePrivileges(table: string): ReadonlyMap<string, string> {
   if (workIntakeReadTables.has(table)) result.set("control_room_work_intake", "r");
   else if (workIntakeWriteTables.has(table)) result.set("control_room_work_intake", "ar");
   else if (table === "control_idempotency") result.set("control_room_work_intake", "r");
+  else if (table === "control_action_inbox") result.set("control_room_work_intake", "a");
   return result;
 }
 

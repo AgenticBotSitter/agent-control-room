@@ -197,6 +197,7 @@ export class OperatorSurfaceReadServiceV1 {
   async read(input: { scope: AuthorizedOperatorReadScopeV1; now: string; inboxFilter?: Omit<ActionInboxFilterV1, "now">; incidentState?: ServiceIncidentV1["state"] }): Promise<OperatorSurfaceReadModelV1> {
     if (!safeId.test(input.scope.tenantId) || !safeId.test(input.scope.actorId) || !instant(input.scope.grantedAt) || !instant(input.now) || Date.parse(input.scope.grantedAt) > Date.parse(input.now)) throw new OperatorSurfaceReadError("invalid_read_scope");
     const tenantId = input.scope.tenantId;
+    const inboxState = input.inboxFilter?.states?.length === 1 ? input.inboxFilter.states[0] : undefined;
     const [fleet, bottlenecks, activeWork, portfolio, services, schedules, inbox, ownerFocus, serviceIncidents] = await Promise.all([
       this.fleetSource.fleet({ tenantId, now: input.now }),
       this.fleetSource.bottlenecks({ tenantId, now: input.now }),
@@ -204,7 +205,7 @@ export class OperatorSurfaceReadServiceV1 {
       this.fleetSource.portfolio({ tenantId, now: input.now }),
       this.fleetSource.services({ tenantId, now: input.now }),
       this.fleetSource.schedules({ tenantId, now: input.now }),
-      this.surfaces.listInbox({ tenantId, limit: 500 }),
+      this.surfaces.listInbox({ tenantId, ...(inboxState ? { state: inboxState } : {}), limit: 500 }),
       this.surfaces.listOwnerFocus({ tenantId, now: input.now }),
       this.incidents.list({ tenantId, state: input.incidentState, limit: 500 }),
     ]);

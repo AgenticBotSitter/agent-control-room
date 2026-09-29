@@ -74,6 +74,7 @@ export async function startMacLocalWebHost(input, runtime = {}) {
     readVersion: runtime.readVersion ?? readPinnedMacExecutableVersion,
     verifyModelPolicy: runtime.verifyModelPolicy ?? verifyPinnedMacModelPolicy,
     openDatabase: postgresModule.createPrivatePostgresDatabase,
+    ...(installed ? { workBatchIntegrityKey: Uint8Array.from(Buffer.from(installed.integrityKey, "base64url")) } : {}),
     assets, render: rendererModule.default,
   });
   return startHostWithOptionalIntake(host, installed, intakeModule);
@@ -143,6 +144,7 @@ export async function startMacLocalTaskHost(input, runtime = {}) {
     readVersion: runtime.readVersion ?? readPinnedMacExecutableVersion,
     verifyModelPolicy: runtime.verifyModelPolicy ?? verifyPinnedMacModelPolicy,
     openDatabase: postgresModule.createPrivatePostgresDatabase,
+    ...(installed ? { workBatchIntegrityKey: Uint8Array.from(Buffer.from(installed.integrityKey, "base64url")) } : {}),
     createTaskApplication: async hostInput => {
       providerModule.requireMacLocalThreeAgentReadinessV1(provider, hostInput.workerReadiness);
       return provider.createTaskApplication({ ...hostInput, protectedRoot: input.protectedRoot });

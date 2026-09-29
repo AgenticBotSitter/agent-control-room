@@ -6,6 +6,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { createOwnerTrustedLocalClaudeExecV1, OWNER_TRUSTED_LOCAL_CLAUDE_ARGS_V1 } from "../src/harness/claude-code-v1/owner-trusted-local-exec";
+import { createOwnerTrustedLocalClaudeExecutionAdapterV1 } from "../src/harness/v1/owner-trusted-local-cli-execution";
 
 const root = await mkdtemp(join(tmpdir(), "acr-claude-exec-"));
 const fake = join(dirname(fileURLToPath(import.meta.url)), "fixtures", "claude-owner-trusted-local-exec-fake.mjs");
@@ -42,6 +43,22 @@ test("passes a chosen effort only when startup verified the installed CLI suppor
   const captured: { args?: readonly string[] } = {};
   const result = await adapter(captured).execute({ ...input(await taskDirectory()), model: "opus", effort: "high", supportsEffort: true });
   assert.equal(result.status, "completed");
+  assert.deepEqual(captured.args, ["-p", "--model", "opus", "--effort", "high", ...OWNER_TRUSTED_LOCAL_CLAUDE_ARGS_V1.slice(3)]);
+});
+
+test("the shared adapter sends a per-task Claude selection through the real executor", async () => {
+  const cwd = await taskDirectory(); const captured: { args?: readonly string[] } = {};
+  const selected = createOwnerTrustedLocalClaudeExecutionAdapterV1(adapter(captured), {
+    executablePath: executable, workingDirectory: cwd, deadlineMs: 10_000,
+    async select(jobId: string) {
+      assert.equal(jobId, "job:selected");
+      return { model: "opus", effort: "high", supportsEffort: true };
+    },
+  });
+  const result = await selected.execute({ delivery: { identity: { jobId: "job:selected" },
+    input: { instructions: "Read only the supplied task.", prompt: "Return the bounded result." } },
+  signal: new AbortController().signal });
+  assert.equal(result.kind, "completed");
   assert.deepEqual(captured.args, ["-p", "--model", "opus", "--effort", "high", ...OWNER_TRUSTED_LOCAL_CLAUDE_ARGS_V1.slice(3)]);
 });
 

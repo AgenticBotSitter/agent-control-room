@@ -1,6 +1,7 @@
 import { isAbsolute, normalize } from "node:path";
 import { types } from "node:util";
 import { sha256Digest } from "../../security/canonical-digest";
+import { MODEL_IDENTIFIER_PATTERN_V1 } from "../../domain/v1/model-identifier";
 
 export const OWNER_TRUSTED_LOCAL_ENABLEMENT_V1 =
   "control-room.owner-trusted-local-enablement/v1" as const;
@@ -41,7 +42,7 @@ export type OwnerTrustedLocalEnablementV1 = Readonly<{
 
 const workerId = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,179}$/u;
 const safeVersion = /^[^\u0000-\u001f\u007f]{1,240}$/u;
-const modelId = /^[A-Za-z0-9][A-Za-z0-9._:/+-]{0,179}$/u;
+const modelId = MODEL_IDENTIFIER_PATTERN_V1;
 const safePath = (value: unknown): value is string => typeof value === "string" && value.length > 0
   && value.length <= 4096 && isAbsolute(value) && normalize(value) === value && !/[\u0000-\u001f\u007f]/u.test(value);
 

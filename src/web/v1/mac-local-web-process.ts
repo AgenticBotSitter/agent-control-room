@@ -16,6 +16,9 @@ import type { TaskRevisionOperation } from "./task-revision-operation";
 import type { MacLocalWorkerReadinessV1 } from "./mac-local-worker-readiness";
 import type { LocalOwnerSessionStoreV1 } from "./local-owner-session-store";
 import type { PersistedLocalOwnerSessionV1 } from "./local-owner-session";
+import type { ActionInboxItemV1 } from "../../operator-surfaces/v1";
+import { WorkBatchOwnerServiceV1 } from "../../work-intake/v1";
+import { createWorkBatchOwnerHttpHandlerV1 } from "./work-batch-owner-http";
 import { encodeProjectEventCursorV1, projectEventSseResponseV1, type ProjectEventReadSourceV1 } from "../../project-events/v1";
 import { ProjectActivityServiceV1 } from "./project-activity-service";
 import { SessionWatchServiceV1 } from "./session-watch-service";
@@ -42,6 +45,9 @@ export interface MacLocalWebProcessOptionsV1 {
   /** Read capabilities from the same host-owned task application as the
    * submission operations. Without them, a published result looks absent. */
   taskReadKeys?: Pick<WebTaskKeys, "harnessIntegrityKey" | "results" | "reviews" | "ownerReviews" | "modelCatalog" | "taskPlanIntegrityKey" | "usagePriceTable">;
+  /** Same protected installation key used by proposal intake. Omission keeps
+   * the Pipelines owner module absent. */
+  workBatchIntegrityKey?: Uint8Array;
   /** Host-owned append-only projection; this wrapper receives no writer. */
   projectEvents?: ProjectEventReadSourceV1;
   /** Host-generation display state built only after pinned executable
@@ -49,6 +55,11 @@ export interface MacLocalWebProcessOptionsV1 {
   workerReadiness?: Pick<MacLocalWorkerReadinessV1, "read">;
   /** A website-only first start verifies CLI versions but has no task workers. */
   taskWorkersStarted?: boolean;
+  /** Read-only canonical owner attention, supplied by the separately restricted
+   * task-coordinator connection. The local web role cannot read these tables. */
+  actionInboxSource?: Readonly<{ read(input: { tenantId: string; actorId: string; grantedAt: string; now: string }): Promise<{
+    observedAt: string; items: ActionInboxItemV1[]; truncated: boolean;
+  }> }>;
   clock?: () => number;
 }
 
@@ -89,6 +100,10 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
     ...(options.submission ? { submission: options.submission } : {}),
     ...(options.revisions ? { revisions: options.revisions } : {}),
   });
+  const workBatches = options.workBatchIntegrityKey ? new WorkBatchOwnerServiceV1(options.database.client, tasks,
+    { tenantId: profile.tenantId, workspaceId: options.workspaceId }, options.workBatchIntegrityKey, clock) : undefined;
+  const workBatchHttp = workBatches ? createWorkBatchOwnerHttpHandlerV1({ origin: options.origin,
+    localOwnerSession: sessions, service: workBatches, clock }) : undefined;
   let closed: Promise<void> | undefined;
 
   function pageRedirect(path: "/session" | "/projects", requestOrigin = options.origin): Response {
@@ -139,6 +154,14 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
     }
     if (url.pathname === "/workers") {
       if (url.search) throw new WebAccessError("invalid_request");
+      return render();
+    }
+    const pipelines = /^\/projects\/([^/]+)\/pipelines(?:\/([^/]+))?$/.exec(url.pathname);
+    if (pipelines) {
+      if (url.search || !workBatches) throw new WebAccessError("not_found");
+      const projectId = routeId(pipelines[1]);
+      if (pipelines[2]) await workBatches.view(identity, projectId, routeId(pipelines[2]));
+      else await workBatches.list(identity, projectId);
       return render();
     }
     if (url.pathname === "/session-watch") {
@@ -214,7 +237,7 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
         sessions.verify(request, clock());
         return Response.json({ taskWorkersStarted: options.taskWorkersStarted === true,
           ...(options.taskWorkersStarted === true ? {} : { instruction: "create your first project, then run mac:down && mac:up" }),
-          projectSections: ["overview", "inbox", "work", "agents", "reviews", "activity",
+          projectSections: ["overview", "inbox", "work", ...(workBatches ? ["pipelines"] : []), "agents", "reviews", "activity",
             ...(options.taskReadKeys?.results ? ["files"] : []), "settings"],
           workers: options.workerReadiness.read().map(worker => options.taskWorkersStarted === true ? worker
             : { ...worker, state: "unavailable", proof: "not_proven" }) }, { headers: privateResponseHeaders });
@@ -256,6 +279,19 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
           || url.searchParams.getAll("after").length > 1) throw new WebAccessError("invalid_request");
         return Response.json(await tasks.attention(identity, url.searchParams.get("after") ?? undefined),
           { headers: privateResponseHeaders });
+      }
+      if (url.pathname === "/api/v1/needs-me/action-items") {
+        if (request.method !== "GET" || url.search) throw new WebAccessError("invalid_request");
+        if (!options.actionInboxSource) throw new WebAccessError("not_found");
+        const owner = await tasks.authorizeActionInbox(identity);
+        const now = new Date(clock()).toISOString();
+        const source = await options.actionInboxSource.read({ tenantId: profile.tenantId,
+          actorId: owner.actorId, grantedAt: owner.grantedAt, now });
+        return Response.json(source, { headers: privateResponseHeaders });
+      }
+      if (url.pathname === "/api/v1/needs-me/pipelines") {
+        if (request.method !== "GET" || url.search || !workBatches) throw new WebAccessError("not_found");
+        return Response.json(await workBatches.attention(identity), { headers: privateResponseHeaders });
       }
       const projectOverview = /^\/api\/v1\/projects\/([^/]+)\/overview$/.exec(url.pathname);
       if (projectOverview) {
@@ -300,6 +336,7 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
       if (url.pathname === "/api/v1/projects"
         || /^\/api\/v1\/projects\/[^/]+(?:\/(?:lifecycle|idea-lifecycle))?$/.test(url.pathname)) return projectHttp(request);
       if (/^\/api\/v1\/projects\/[^/]+\/tasks(?:\/|$)/.test(url.pathname)) return taskHttp(request);
+      if (workBatchHttp && /^\/api\/v1\/projects\/[^/]+\/pipelines(?:\/|$)/.test(url.pathname)) return workBatchHttp(request);
       if (request.method !== "GET") throw new WebAccessError("invalid_request");
       const response = await renderProductRoute(identity, url, render);
       for (const [name, value] of Object.entries(privateResponseHeaders)) response.headers.set(name, value);

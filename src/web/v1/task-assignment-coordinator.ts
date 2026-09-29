@@ -1845,8 +1845,9 @@ export class TaskAssignmentCoordinator {
       const ready = job.state === "ready" ? job : (await canonical.transition({ tenantId: this.scope.tenantId, kind: "job", entityId: jobId,
         expectedVersion: job.version, toState: "ready", transitionId: `${ids.transitionId}:ready`,
         idempotencyKey: `${ids.idempotencyKey}:ready`, actor: actorRef, occurredAt })).entity as JobRecord;
-      const claimed = await canonical.claimReadyJob({ ...ids, tenantId: this.scope.tenantId, jobId, expectedJobVersion: ready.version,
-        nodeId, actor: actorRef, acquiredAt: occurredAt, expiresAt: new Date(commitDeadline).toISOString() });
+      const claimed = await canonical.claimReadyTaskJob({ ...ids, tenantId: this.scope.tenantId, jobId, expectedJobVersion: ready.version,
+        nodeId, actor: actorRef, acquiredAt: occurredAt,
+        expiresAt: new Date(commitDeadline).toISOString() });
       try {
         for (const declared of declaredScopes) await tx.query(`INSERT INTO control_assignment_lease_scopes
           (tenant_id,lease_id,project_id,job_id,attempt_id,node_id,scope_kind,path,path_fold)
