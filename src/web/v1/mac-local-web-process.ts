@@ -17,7 +17,7 @@ import type { MacLocalWorkerReadinessV1 } from "./mac-local-worker-readiness";
 import type { LocalOwnerSessionStoreV1 } from "./local-owner-session-store";
 import type { PersistedLocalOwnerSessionV1 } from "./local-owner-session";
 import type { ActionInboxItemV1 } from "../../operator-surfaces/v1";
-import { WorkBatchOwnerServiceV1, type WorkBatchQueueAdmissionAuthorityV1,
+import { WorkBatchOwnerServiceV1, type WorkBatchQueueAcceptedResultPortV1,
   type WorkBatchQueueCatalogV1 } from "../../work-intake/v1";
 import { createWorkBatchOwnerHttpHandlerV1 } from "./work-batch-owner-http";
 import { LinearPipelineServiceV1 } from "../../pipelines/v1";
@@ -28,6 +28,9 @@ import { SessionWatchServiceV1 } from "./session-watch-service";
 import { catalogProjectIdSchema } from "./project-wire";
 import { sessionWatchIdSchema } from "./session-watch-wire";
 import { taskProjectAgentOptionsSchema } from "./task-project-agents-wire";
+import { ImproveControlRoomDeskServiceV1 } from "../../improve-control-room/v1";
+import { createImproveControlRoomHttpHandlerV1 } from "./improve-control-room-http";
+import { parseProductConfigurationV1 } from "../../config/v1/product-configuration";
 import { createWebPushChannelV1, deliverOwnerPushV1, parseWebPushSubscriptionV1, PostgresOwnerPushStoreV1, type OwnerWebPushConfigV1 } from "../../web-push/v1";
 import { FleetOwnerServiceV1 } from "../../fleet/v1";
 import { createFleetOwnerHttpHandlerV1 } from "./fleet-owner-http";
@@ -62,7 +65,7 @@ export interface MacLocalWebProcessOptionsV1 {
    * admit approved batch items to the existing per-agent queue. */
   workBatchQueueCatalog?: WorkBatchQueueCatalogV1;
   /** The same protected authority captured by the coordinator lifecycle. */
-  workBatchQueueAdmissionAuthority?: WorkBatchQueueAdmissionAuthorityV1;
+  workBatchQueueAdmissionAuthority?: WorkBatchQueueAcceptedResultPortV1;
   /** Host-owned append-only projection; this wrapper receives no writer. */
   projectEvents?: ProjectEventReadSourceV1;
   /** Host-generation display state built only after pinned executable
@@ -107,9 +110,14 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
   if (options.cloudflareAccessOrigin !== undefined && !profile.remoteOrigins?.includes(options.cloudflareAccessOrigin))
     throw new Error("mac_local_web_process_config_invalid");
   const sessions = new LocalOwnerSessionServiceV1(profile, options.localOwnerSessionStore, options.initialLocalOwnerSessions);
+  const productConfiguration = parseProductConfigurationV1({ schema: "control-room.product-configuration/v1",
+    displayName: "Control Room", defaultTimezone: "UTC",
+    modules: { ideaLab: false, news: false, sessionObservations: false },
+    limits: { maxProjects: 24, maxTasksPerProject: 200, maxResultsPerTask: 20, maxArticleSources: 0, maxIdeaParticipants: 0 },
+    projectTemplates: [{ id: "control-room", displayName: "Control Room", enabledModules: [] }] });
   const projects = new WebProjectService(options.database.client,
-    { tenantId: profile.tenantId, workspaceId: options.workspaceId }, clock, undefined, undefined,
-    undefined, options.taskReadKeys?.harnessIntegrityKey);
+    { tenantId: profile.tenantId, workspaceId: options.workspaceId }, clock, undefined, undefined, productConfiguration,
+    options.taskReadKeys?.harnessIntegrityKey);
   const tasks = new WebTaskService(options.database.client,
     { tenantId: profile.tenantId, workspaceId: options.workspaceId }, clock, options.taskReadKeys);
   const projectActivity = new ProjectActivityServiceV1(options.database.client,
@@ -136,6 +144,10 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
     options.workBatchQueueAdmissionAuthority, clock) : undefined;
   const pipelineHttp = pipelines ? createLinearPipelineHttpHandlerV1({ origin: options.origin,
     localOwnerSession: sessions, service: pipelines, clock }) : undefined;
+  const improvementDesk = options.workBatchIntegrityKey && pipelines ? new ImproveControlRoomDeskServiceV1(options.database.client,
+    { tenantId: profile.tenantId, workspaceId: options.workspaceId }, options.workBatchIntegrityKey, pipelines, clock) : undefined;
+  const improvementHttp = improvementDesk ? createImproveControlRoomHttpHandlerV1({ origin: options.origin,
+    localOwnerSession: sessions, service: improvementDesk, clock }) : undefined;
   const ownerPush = options.ownerWebPush ? { store: new PostgresOwnerPushStoreV1(options.database.client),
     channel: createWebPushChannelV1(options.ownerWebPush) } : undefined;
   const fleetHttp = options.fleet ? createFleetOwnerHttpHandlerV1({ origin: options.origin, localOwnerSession: sessions, clock,
@@ -214,7 +226,7 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
       await sessionWatch.authorize(identity);
       return render();
     }
-    const projectSection = /^\/projects\/([^/]+)\/(inbox|agents|reviews|activity|files|settings)$/.exec(url.pathname);
+    const projectSection = /^\/projects\/([^/]+)\/(inbox|agents|reviews|activity|files|settings|improvements)$/.exec(url.pathname);
     if (projectSection) {
       if ([...url.searchParams.keys()].some(name => name !== "after")
         || url.searchParams.getAll("after").length > 1 || !["inbox", "reviews"].includes(projectSection[2]) && url.search)
@@ -291,6 +303,11 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
             : { ...worker, state: "unavailable", proof: "not_proven" }) }, { headers: privateResponseHeaders });
       }
       const identity = sessions.verify(request, clock());
+      if (url.pathname === "/api/v1/product-configuration") {
+        if (request.method !== "GET" || url.search) throw new WebAccessError("invalid_request");
+        await projects.authorizeCatalog(identity);
+        return Response.json(productConfiguration, { headers: privateResponseHeaders });
+      }
       if (url.pathname === "/api/v1/owner-web-push") {
         if (!ownerPush) throw new WebAccessError("not_found");
         if (request.method === "GET" && !url.search) {
@@ -414,6 +431,9 @@ export function createMacLocalWebProcessV1(options: MacLocalWebProcessOptionsV1)
       if (fleetHttp && /^\/api\/v1\/fleet(?:\/|$)/.test(url.pathname)) return fleetHttp(request);
       if (pipelineHttp && /^\/api\/v1\/projects\/[^/]+\/pipeline-(?:templates|runs)(?:\/|$)/.test(url.pathname))
         return pipelineHttp(request);
+      if (improvementHttp && (url.pathname === "/api/v1/update-candidates"
+        || /^\/api\/v1\/update-candidates\/[^/]+\/decision$/.test(url.pathname)
+        || /^\/api\/v1\/projects\/[^/]+\/improvements$/.test(url.pathname))) return improvementHttp(request);
       if (request.method !== "GET") throw new WebAccessError("invalid_request");
       const response = await renderProductRoute(identity, url, render);
       for (const [name, value] of Object.entries(privateResponseHeaders)) response.headers.set(name, value);
