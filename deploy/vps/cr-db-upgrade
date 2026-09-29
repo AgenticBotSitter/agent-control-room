@@ -1,5 +1,6 @@
 #!/bin/bash
 # cr-db-upgrade <commit> — the one VPS command of a live database upgrade.
+# cr-db-upgrade --rehearse <commit> — prove that exact upgrade in a throwaway cluster.
 # cr-db-upgrade --refresh-cache <commit> — the one-off download of its tools.
 #
 # Installed once, root-owned, from a reviewed commit; never updated from main.
@@ -41,6 +42,7 @@ if [ "$(id -u)" -eq 0 ]; then
   pg_bin=/usr/lib/postgresql/17/bin
   pg_target="host=/var/run/postgresql dbname=control_room user=postgres"
   space_factor=2
+  rehearse_port=15620
 elif [ -n "${CR_UPGRADE_TEST_ROOT:-}" ]; then
   test_root=$CR_UPGRADE_TEST_ROOT
   source_repo=$test_root/source
@@ -52,12 +54,16 @@ elif [ -n "${CR_UPGRADE_TEST_ROOT:-}" ]; then
   pg_bin=$CR_UPGRADE_TEST_PG_BIN
   pg_target=$CR_UPGRADE_TEST_PG_TARGET
   space_factor=${CR_UPGRADE_TEST_DISK_FACTOR:-2}
+  rehearse_port=${CR_UPGRADE_TEST_REHEARSE_PORT:-15620}
 else
   refuse upgrade_not_root start "Run this as root: sudo cr-db-upgrade <commit>"
 fi
 
 refresh=
-if [ "${1:-}" = "--refresh-cache" ]; then refresh=1; shift; fi
+rehearse=
+if [ "${1:-}" = "--refresh-cache" ]; then refresh=1; shift
+elif [ "${1:-}" = "--rehearse" ]; then rehearse=1; shift
+fi
 prefix=${1:-}
 if [ "$#" -ne 1 ] || ! printf '%s' "$prefix" | grep -Eq '^[0-9a-f]{7,40}$'; then
   refuse upgrade_input_refused start "Usage: cr-db-upgrade <commit> (the commit the Mac printed)"
@@ -152,6 +158,16 @@ step() {
   as_postgres env -i "${step_env[@]}" node "$stage/src/scripts/mac-local/database-upgrade-vps-step.mjs" \
     "$1" "$main" "$pg_target" "$backup_root" "$pg_bin" "$space_factor" "${2:-}"
 }
+
+# Rehearsal deliberately does not pass $pg_target to any code. The helper gets
+# only the backup root, a fixed throwaway port, and a fresh Unix-socket target
+# that it creates itself. Its owned teardown removes that cluster on success,
+# refusal, or an apply failure.
+if [ -n "$rehearse" ]; then
+  as_postgres env -i "${step_env[@]}" node "$stage/src/scripts/mac-local/database-upgrade-vps-rehearse.mjs" \
+    "$main" "$backup_root" "$pg_bin" "$rehearse_port" "$space_factor"
+  exit $?
+fi
 
 plan=$(step plan </dev/null) || exit 1
 printf '%s\n' "$plan" | sed '$d'
