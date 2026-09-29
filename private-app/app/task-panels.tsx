@@ -254,9 +254,12 @@ function LocalRouteObservationPanel({ detail }: { detail: TaskDetail }) {
     {/* This is prose about the route, not a task state, so it gets its own class.
         It previously shared .private-state with the task's own state label, which
         made `.private-task-detail .private-state` ambiguous — the owner journey
-        reads that selector expecting the task state. */}
+        reads that selector expecting the task state. Needs-attention text stays
+        outside the <details> below so it is never the thing a toggle hides. */}
     <p className={observation.state === "needs_attention" ? "private-notice" : "private-route-observation"}>{text}</p>
-    <p className="private-note">This is saved evidence for this task only. It does not show a worker identity, prove availability for another task, or start, retry, or contact an agent.</p>
+    <details><summary>Details</summary>
+      <p className="private-note">This is saved evidence for this task only. It does not show a worker identity, prove availability for another task, or start, retry, or contact an agent.</p>
+    </details>
   </section>;
 }
 
@@ -267,6 +270,19 @@ export function TaskRevisionTaskLinks({ projectId, links }: { projectId: string;
     {links.previousJobId && <p><a href={`/projects/${encodeURIComponent(projectId)}/tasks/${encodeURIComponent(links.previousJobId)}`}>Open previous task</a></p>}
     {links.nextJobId && <p><a href={`/projects/${encodeURIComponent(projectId)}/tasks/${encodeURIComponent(links.nextJobId)}`}>Open revised task</a></p>}
   </div>;
+}
+
+/** The owner's own words for "who has this task right now", read at a glance
+ * beside the state chip. This is additive: every existing "prepared for X"
+ * sentence lower on the page is untouched, so no existing assertion on that
+ * copy moves or changes. This line exists because the owner could not tell
+ * who a task was assigned to without opening the lower "Prepared worker"
+ * section (owner-ux-feedback-2026-09-27.md item 4). */
+function assignedToLabel(detail: TaskDetail): string {
+  const worker = detail.preparedFor === "hermes" ? "Hermes Agent" : detail.preparedFor === "codex" ? "Codex"
+    : detail.preparedFor === "claude" ? "Claude Code" : detail.preparedFor === "configured_worker" ? "a configured worker" : undefined;
+  if (worker) return `Assigned to ${worker}`;
+  return detail.task.state === "proposed" || detail.task.state === "rejected" ? "Not yet assigned" : "No worker route recorded";
 }
 
 export function TaskDetailPanel({ detail }: { detail: TaskDetail }) {
@@ -282,6 +298,7 @@ export function TaskDetailPanel({ detail }: { detail: TaskDetail }) {
           ? "This route is a saved plan category. Assignment still checks the configured route and does not start a worker." : undefined;
   return <div className="private-task-detail">
     <section className="private-panel"><StateChip state={detail.task.state} label={taskSummaryStateLabel(detail.task)} /><h2>{detail.task.title}</h2>
+      <p className="private-status-line"><strong>{assignedToLabel(detail)}</strong></p>
       <h3>Requested result</h3><p className="private-summary">{detail.instructions}</p>
       {detail.modelSelection?.model && <p><strong>Chosen model:</strong> {detail.modelSelection.profile ? `${detail.modelSelection.profile} · ` : ""}
         {detail.modelSelection.model} · effort {detail.modelSelection.effort}{detail.modelSelection.provider ? ` · ${detail.modelSelection.provider}` : ""}</p>}
@@ -291,16 +308,20 @@ export function TaskDetailPanel({ detail }: { detail: TaskDetail }) {
         links={detail.revisionLinks ?? { previousJobId: null, nextJobId: null, revisionNumber: 0 }} /></section>
     {preparedFor && <section className="private-panel" aria-label="Prepared worker"><h2>Prepared worker</h2>
       <p>This task is prepared for {preparedFor}. Preparation does not assign or start this worker.</p>
+      <details><summary>Details</summary>
       {detail.modelSelection?.model
         ? <p><strong>Chosen for this prepared task:</strong> {preparedFor} · {detail.modelSelection.profile ? `${detail.modelSelection.profile} · ` : ""}
           {detail.modelSelection.model} · effort {detail.modelSelection.effort}</p>
         : <p className="private-note">Model and effort are not configurable for this task; the worker uses its protected default.</p>}
       <p className="private-note">{preparedRouteDetail}</p>
-      <p className="private-note">Next: open assignment to check the configured route for this task. A prepared route is not a current availability or running-work signal.</p></section>}
+      <p className="private-note">Next: open assignment to check the configured route for this task. A prepared route is not a current availability or running-work signal.</p>
+      </details></section>}
     <LocalRouteObservationPanel detail={detail} />
     {!!detail.ownershipLeases.length && <section className="private-panel" aria-label="Ownership leases"><h2>Ownership leases</h2>
+      <details><summary>Details</summary>
       {detail.ownershipLeases.map(lease => <div key={`${lease.nodeId}:${lease.expiresAt}`}><p><strong>{lease.nodeId}</strong> · {lease.current ? "active" : lease.state} · expires <ConfiguredTimestamp value={lease.expiresAt} /></p>
-        <ul>{lease.scopes.map(scope => <li key={`${scope.kind}:${scope.path}`}>{scope.kind}: <code>{scope.path || "/"}</code></li>)}</ul></div>)}</section>}
+        <ul>{lease.scopes.map(scope => <li key={`${scope.kind}:${scope.path}`}>{scope.kind}: <code>{scope.path || "/"}</code></li>)}</ul></div>)}
+      </details></section>}
     <HermesDeliveryRecoveryPanel recovery={detail.hermesDeliveryRecovery} />
     <UsageRollup value={detail.usageRollup} label="Task" />
     <p className="private-note">{detail.priceTable.state === "recorded"
@@ -311,6 +332,7 @@ export function TaskDetailPanel({ detail }: { detail: TaskDetail }) {
         ? "Task submission is configured. A recorded submission is not proof that an agent is online or has started."
         : "Task submission is not configured for this app."}</p>
       {detail.progressSource === "not_configured" && <p className="private-notice">Agent evidence is not configured for this app. Missing progress does not mean no agent work exists.</p>}
+      <details><summary>Details ({detail.attempts.length} attempt{detail.attempts.length === 1 ? "" : "s"})</summary>
       {!detail.attempts.length && <p>No assignment attempts are recorded for this task.</p>}
       {detail.attempts.map(attempt => <section key={attempt.attemptId} className="private-attempt">
         {/* The attempt state is in this heading, so no chip repeats it beside the
@@ -323,6 +345,7 @@ export function TaskDetailPanel({ detail }: { detail: TaskDetail }) {
         {attempt.runs.map(run => <RunPanel key={run.runId} run={run} />)}
         {attempt.additionalRunsOmitted && <p>Only the 10 most recently created run records are shown.</p>}</section>)}
       {detail.earlierAttemptsOmitted && <p>Only the 10 most recent attempts are shown. Earlier history remains saved.</p>}
+      </details>
     </section>
     {detail.artifacts === "not_connected" && detail.review === "not_connected" && <section className="private-panel"><h2>Result and review</h2><p>Result content, independent checks and owner review are not connected to this page yet.</p>
       <p>Agent completion is not owner acceptance. This page cannot approve a result, start a revision, cancel work or authorize an external action.</p></section>}
