@@ -23,7 +23,7 @@ import { privateWebSchemaDigest, readPrivateWebSchemaDigest, verifyPrivateDataba
 import { createFleetGatewayHandlerV1, FleetGatewayStoreV1, FleetOwnerServiceV1 } from "../src/fleet/v1";
 import { FLEET_TENANT, FLEET_WORKSPACE, ownerIdentity, PROJECT_A, PROJECT_B, seedFleetTenant,
   seedProposedTask } from "./support/fleet-fixture";
-// @ts-expect-error -- the connector is a dependency-free .mjs shipped to worker machines
+// The connector is a dependency-free .mjs shipped to worker machines.
 import * as connector from "../scripts/fleet/connector.mjs";
 
 const PORT = 58640;

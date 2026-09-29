@@ -18,7 +18,7 @@ import { createFleetGatewayHandlerV1, FleetGatewayStoreV1, FleetOwnerServiceV1 }
 import { WorkBatchServiceV1, WorkBatchStoreV1 } from "../src/work-intake/v1";
 import { FLEET_TENANT, FLEET_WORKSPACE, ownerIdentity, PROJECT_A, PROJECT_B, seedFleetTenant,
   seedProposedTask } from "./support/fleet-fixture";
-// @ts-expect-error -- the connector is a dependency-free .mjs shipped to worker machines
+// The connector is a dependency-free .mjs shipped to worker machines.
 import * as connector from "../scripts/fleet/connector.mjs";
 
 type Fixture = Awaited<ReturnType<typeof fixture>>;
@@ -186,7 +186,7 @@ test("revoking the worker row alone is enough: its still-active credential is re
   const claim = await worker.client.claim(task.offerId, "claim-key-half001");
   // Only the owner-side worker row changes; the credential row stays active.
   await f.raw.query(`UPDATE fleet_workers SET state='revoked',revoked_at=now(),revoked_by_identity_id='identity:fleet-owner'`);
-  assert.equal((await f.query("SELECT state FROM fleet_worker_credentials"))[0]!.state, "active");
+  assert.equal((await f.query<{ state: string }>("SELECT state FROM fleet_worker_credentials"))[0]!.state, "active");
   await assert.rejects(worker.client.me(), /unauthenticated/u);
   await assert.rejects(f.raw.query(`INSERT INTO fleet_worker_events(tenant_id,event_id,claim_id,worker_id,kind,message,
     idempotency_key,occurred_at) VALUES($1,'fleet-event:${"9".repeat(32)}',$2,$3,'progress','x','direct-key-half1',now())`,
@@ -485,4 +485,14 @@ test("the connector refuses insecure servers and loosely protected credential fi
   await writeFile(path, JSON.stringify({ schema: "control-room.fleet-connector/v1", server: "https://control.example",
     workerId: `fleet-worker:${"a".repeat(32)}`, secret: `crf_${"A".repeat(43)}` }), { mode: 0o644 });
   await assert.rejects(connector.loadConfig(path), /readable by other users/u);
+});
+
+test("the owner's join command carries only a safe address and the one-time code", async () => {
+  const { fleetJoinCommandsV1 } = await import("../src/web/v1/fleet-owner-http");
+  const code = `crj_${"a".repeat(43)}`;
+  const commands = fleetJoinCommandsV1("https://control.example.ts.net", code);
+  assert.equal(commands.unix, `curl -fsSL https://control.example.ts.net/fleet/v1/connector.mjs -o control-room-connector.mjs && node control-room-connector.mjs join --server https://control.example.ts.net --code ${code}`);
+  for (const origin of ["https://x.example;rm -rf ~", "https://x.example/$(id)", "file:///etc", "https://user@x.example"])
+    assert.throws(() => fleetJoinCommandsV1(origin, code));
+  assert.throws(() => fleetJoinCommandsV1("https://x.example", "crj_short;id"));
 });

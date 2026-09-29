@@ -118,6 +118,7 @@ export function createClient(config, fetcher = globalThis.fetch) {
   });
 }
 
+/** @param {{ server: string, code: string, configPath: string, fetcher?: typeof fetch }} options */
 export async function join({ server, code, configPath, fetcher }) {
   const origin = checkServer(server);
   if (!CODE_PATTERN.test(code ?? "")) throw new Error("The join code is not valid. Copy it again from the Workers page.");
@@ -134,6 +135,7 @@ export async function join({ server, code, configPath, fetcher }) {
 
 /** Rotation keeps the next secret on disk first; if the reply is lost the
  * connector tries it on the next start. */
+/** @param {{ configPath: string, fetcher?: typeof fetch }} options */
 export async function rotate({ configPath, fetcher }) {
   const config = await loadConfig(configPath);
   const next = newSecret();
@@ -144,6 +146,7 @@ export async function rotate({ configPath, fetcher }) {
   return result;
 }
 
+/** @param {{ configPath: string, fetcher?: typeof fetch }} options */
 export async function recoverPending({ configPath, fetcher }) {
   const config = await loadConfig(configPath);
   if (!config.pendingSecret || !SECRET_PATTERN.test(config.pendingSecret)) return config;
@@ -256,6 +259,7 @@ export function createMcpDispatcher({ client, workspaceRoot }) {
   };
 }
 
+/** @param {{ configPath: string, input?: NodeJS.ReadableStream, output?: NodeJS.WritableStream, fetcher?: typeof fetch, workspaceRoot?: string }} options */
 export async function serveMcp({ configPath, input = process.stdin, output = process.stdout, fetcher, workspaceRoot = process.cwd() }) {
   const config = await recoverPending({ configPath, fetcher });
   const dispatch = createMcpDispatcher({ client: createClient(config, fetcher), workspaceRoot });

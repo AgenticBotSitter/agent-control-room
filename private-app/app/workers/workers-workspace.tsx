@@ -4,6 +4,7 @@ import { PrivateConnections } from "../connections/workspace";
 import { PrivateHeader } from "../private-header";
 import { localWorkerStateLabel, useLocalRuntime } from "../local-runtime";
 import { StateChip, UnavailableState, workerChipToneV1 } from "../owner-ui";
+import { FleetWorkers } from "./fleet-workers";
 
 function LocalWorkers() {
   const runtime = useLocalRuntime();
@@ -22,6 +23,7 @@ function LocalWorkers() {
               which is exactly the honesty my first chip got wrong. The chip adds
               the scannable state without rewording a word of it. */}
           <p><StateChip state={worker.state} tone={workerChipToneV1(worker)} />. {localWorkerStateLabel(worker)}.</p></li>)}</ul></>}
+    <FleetWorkers />
     <p><a href="/projects">Open projects</a></p>
   </main></div>;
 }
