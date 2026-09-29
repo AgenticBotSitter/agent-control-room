@@ -40,16 +40,22 @@ async function seedBase(admin: Client) {
        'healthy','control_room_native',now(),'{}',now())`, [`project:${project}`]);
     await admin.query(`INSERT INTO control_requests
       (id,tenant_id,project_id,state,version,idempotency_key,payload,created_at,updated_at)
-      VALUES($1,'tenant:lease-attack',$2,'accepted',0,$1,'{}',now(),now())`,
+      VALUES($1,'tenant:lease-attack',$2,'accepted',0,$1,
+        jsonb_build_object('id',$1::text,'tenantId','tenant:lease-attack','projectId',$2::text,
+          'state','accepted','version',0,'idempotencyKey',$1::text),now(),now())`,
     [`request:${project}`, `project:${project}`]);
     await admin.query(`INSERT INTO control_workflows
       (id,tenant_id,request_id,project_id,definition_digest,state,version,payload,created_at,updated_at)
-      VALUES($1,'tenant:lease-attack',$2,$3,$4,'active',0,'{}',now(),now())`,
+      VALUES($1,'tenant:lease-attack',$2,$3,$4,'active',0,
+        jsonb_build_object('id',$1::text,'tenantId','tenant:lease-attack','requestId',$2::text,
+          'projectId',$3::text,'definitionDigest',$4::text,'state','active','version',0),now(),now())`,
     [`workflow:${project}`, `request:${project}`, `project:${project}`, digest]);
   }
   await admin.query(`INSERT INTO control_nodes
     (id,tenant_id,state,version,identity_key_id,payload,created_at,updated_at)
-    VALUES('node:lease-attack','tenant:lease-attack','active',0,'key:lease-attack','{}',now(),now())`);
+    VALUES('node:lease-attack','tenant:lease-attack','active',0,'key:lease-attack',
+      jsonb_build_object('id','node:lease-attack','tenantId','tenant:lease-attack','state','active',
+        'version',0,'identityKeyId','key:lease-attack'),now(),now())`);
 }
 
 async function seedLease(admin: Client, seed: LeaseSeed) {
@@ -57,15 +63,24 @@ async function seedLease(admin: Client, seed: LeaseSeed) {
   const acquiredAt = seed.acquiredAt ?? iso(-1_000), expiresAt = seed.expiresAt ?? iso(120_000);
   await admin.query(`INSERT INTO control_jobs
     (id,tenant_id,workflow_id,project_id,state,version,priority,required_capability,authority_digest,payload,created_at,updated_at)
-    VALUES($1,'tenant:lease-attack',$2,$3,'leased',0,50,'fixture',$4,'{}',$5,$5)`,
+    VALUES($1,'tenant:lease-attack',$2,$3,'leased',0,50,'fixture',$4,
+      jsonb_build_object('id',$1::text,'tenantId','tenant:lease-attack','workflowId',$2::text,
+        'projectId',$3::text,'state','leased','version',0,'priority',50,'requiredCapability','fixture',
+        'authority',jsonb_build_object('digest',$4::text)),$5,$5)`,
   [`job:${seed.id}`, `workflow:${project}`, `project:${project}`, digest, acquiredAt]);
   await admin.query(`INSERT INTO control_attempts
     (id,tenant_id,job_id,attempt_number,state,version,worker_id,node_id,lease_epoch,payload,created_at,updated_at)
-    VALUES($1,'tenant:lease-attack',$2,1,'leased',0,'worker:lease-attack','node:lease-attack',1,'{}',$3,$3)`,
+    VALUES($1,'tenant:lease-attack',$2,1,'leased',0,'worker:lease-attack','node:lease-attack',1,
+      jsonb_build_object('id',$1::text,'tenantId','tenant:lease-attack','jobId',$2::text,
+        'attemptNumber',1,'state','leased','version',0,'workerId','worker:lease-attack',
+        'nodeId','node:lease-attack','leaseEpoch',1),$3,$3)`,
   [`attempt:${seed.id}`, `job:${seed.id}`, acquiredAt]);
   await admin.query(`INSERT INTO control_leases
     (id,tenant_id,job_id,attempt_id,node_id,epoch,state,version,acquired_at,expires_at,payload,created_at,updated_at)
-    VALUES($1,'tenant:lease-attack',$2,$3,'node:lease-attack',1,$4,0,$5,$6,'{}',$5,$5)`,
+    VALUES($1,'tenant:lease-attack',$2,$3,'node:lease-attack',1,$4,0,$5,$6,
+      jsonb_build_object('id',$1::text,'tenantId','tenant:lease-attack','jobId',$2::text,
+        'attemptId',$3::text,'nodeId','node:lease-attack','epoch',1,'state',$4::text,'version',0,
+        'acquiredAt',$5::timestamptz,'expiresAt',$6::timestamptz),$5,$5)`,
   [`lease:${seed.id}`, `job:${seed.id}`, `attempt:${seed.id}`, seed.state ?? "active", acquiredAt, expiresAt]);
   if (seed.declared !== false) await admin.query(`INSERT INTO control_task_declared_scopes
     (tenant_id,project_id,job_id,scope_kind,path,path_fold)
@@ -138,7 +153,9 @@ test("ownership lease trigger resists clock, overlap, state, declaration, temp-s
         const expiredNext = { id: "expired-next", path: "state/expired" };
         await seedLease(admin, expiredHeld); await seedLease(admin, expiredNext);
         await insertAsCoordinator(postgres, expiredHeld);
-        await admin.query("UPDATE control_leases SET expires_at=$1 WHERE tenant_id='tenant:lease-attack' AND id=$2",
+        await admin.query(`UPDATE control_leases SET expires_at=$1,
+          payload=jsonb_set(payload,'{expiresAt}',to_jsonb($1::timestamptz))
+          WHERE tenant_id='tenant:lease-attack' AND id=$2`,
           [iso(-60_000), `lease:${expiredHeld.id}`]);
         await insertAsCoordinator(postgres, expiredNext);
 
@@ -146,7 +163,9 @@ test("ownership lease trigger resists clock, overlap, state, declaration, temp-s
         const revokedNext = { id: "revoked-next", path: "state/revoked" };
         await seedLease(admin, revokedHeld); await seedLease(admin, revokedNext);
         await insertAsCoordinator(postgres, revokedHeld);
-        await admin.query("UPDATE control_leases SET state='revoked' WHERE tenant_id='tenant:lease-attack' AND id=$1",
+        await admin.query(`UPDATE control_leases SET state='revoked',
+          payload=jsonb_set(payload,'{state}',to_jsonb('revoked'::text))
+          WHERE tenant_id='tenant:lease-attack' AND id=$1`,
           [`lease:${revokedHeld.id}`]);
         await insertAsCoordinator(postgres, revokedNext);
 
