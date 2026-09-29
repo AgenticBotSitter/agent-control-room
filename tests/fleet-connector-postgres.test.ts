@@ -19,6 +19,7 @@ import { realPostgresSkipMessage, requiresRealPostgres, withRealPostgres, type R
 import { bindPrivatePgPool } from "../src/web/v1/private-pg-database";
 import { privatePgOptions } from "../src/web/v1/private-pg-options";
 import type { DatabaseClient } from "../src/persistence/database";
+import { privateWebSchemaDigest, readPrivateWebSchemaDigest } from "../src/web/v1/private-database-preflight";
 import { createFleetGatewayHandlerV1, FleetGatewayStoreV1, FleetOwnerServiceV1 } from "../src/fleet/v1";
 import { FLEET_TENANT, FLEET_WORKSPACE, ownerIdentity, PROJECT_A, PROJECT_B, seedFleetTenant,
   seedProposedTask } from "./support/fleet-fixture";
@@ -62,6 +63,8 @@ test("fleet connector end to end and least privilege, as the production logins",
       try { return await client.query(sql, params); } finally { await client.end(); }
     };
     try {
+      assert.equal(await readPrivateWebSchemaDigest(admin.client), privateWebSchemaDigest,
+        "the recorded private web schema digest matches a live cluster with 0140 applied");
       await seedFleetTenant((sql, params) => admin.client.query(sql, params));
       const task = await seedProposedTask(admin.client, PROJECT_A, "pg-1");
       const betaTask = await seedProposedTask(admin.client, PROJECT_B, "pg-beta");
