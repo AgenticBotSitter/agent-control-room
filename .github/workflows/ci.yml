@@ -144,7 +144,7 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
-      # These two need no dependencies, so they report in seconds, before the
+      # These four need no dependencies, so they report in seconds, before the
       # install that the type checks require.
       - name: Test the lane coverage checker and the path routing
         # The quarantine wrapper delegates the original invocation after applying
@@ -457,6 +457,8 @@ jobs:
           sudo apt-get install -y --no-install-recommends postgresql-17
       - name: Build the production application
         run: pnpm build
+      - name: Test Mac task host recovery
+        run: pnpm test:mac-host-supervisor
       - name: Run both supported full journeys with pinned fakes
         run: |
           set -euo pipefail
