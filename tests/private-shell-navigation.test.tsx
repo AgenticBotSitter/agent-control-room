@@ -263,7 +263,8 @@ test("home waits for runtime detection and coalesces strict, focus, visibility a
   const saved = Object.fromEntries(["window", "document", "IS_REACT_ACT_ENVIRONMENT", "fetch"]
     .map(key => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
   Object.assign(globalThis, { window: dom.window, document: dom.window.document, IS_REACT_ACT_ENVIRONMENT: true });
-  Object.defineProperty(dom.window.document, "hidden", { configurable: true, get: () => false });
+  let hidden = false;
+  Object.defineProperty(dom.window.document, "hidden", { configurable: true, get: () => hidden });
   const paths = ["/api/v1/projects", "/api/v1/home/tasks", "/api/v1/needs-me/tasks"];
   const requests: string[] = [];
   const pending: { path: string; resolve: (response: Response) => void }[] = [];
@@ -320,6 +321,15 @@ test("home waits for runtime detection and coalesces strict, focus, visibility a
     });
     await tick();
     assert.deepEqual(counts(), Object.fromEntries(paths.map(path => [path, 2])), "settled batch permits one refresh");
+    await settle();
+    hidden = true;
+    await React.act(async () => { dom.window.document.dispatchEvent(new dom.window.Event("visibilitychange")); });
+    await tick();
+    assert.deepEqual(counts(), Object.fromEntries(paths.map(path => [path, 2])), "hidden Home pauses polling");
+    hidden = false;
+    await React.act(async () => { dom.window.document.dispatchEvent(new dom.window.Event("visibilitychange")); });
+    await tick();
+    assert.deepEqual(counts(), Object.fromEntries(paths.map(path => [path, 3])), "visible Home resumes one saved-state refresh");
     await settle();
   } finally {
     await React.act(async () => { root.unmount(); });
@@ -512,6 +522,26 @@ test("project inbox and result reviews use exact protected results and keep exec
   assert.equal((await readTaskProjectAttention(base.projectId, "reviews", undefined, transport)).items[0]?.task.state, "succeeded");
   assert.equal(requested, "/api/v1/projects/project%3Aalpha/reviews"); assert.equal(method, "GET");
   await assert.rejects(readTaskProjectAttention("project:other", "reviews", "bad\u0000cursor", transport), /invalid_request/);
+});
+
+test("project inbox distinguishes real saved attention, an empty page, and an unavailable read", () => {
+  const task = { projectId: "project:alpha", requestId: "request:alpha", jobId: "job:proposal", title: "Prepare brief",
+    state: "proposed" as const, version: 1, createdAt: "2026-09-04T10:00:00.000Z", updatedAt: "2026-09-04T12:00:00.000Z" };
+  const base = { projectId: task.projectId, mode: "inbox" as const, nextCursor: null, examined: 1,
+    resultSource: "not_configured" as const, reviewSource: "not_configured" as const,
+    resultContent: "authorized" as const, observedAt: "2026-09-04T12:00:00.000Z", startsWork: false as const };
+  const real = renderToStaticMarkup(createElement(ProjectResultReviewPanel, { projectId: task.projectId, mode: "inbox",
+    data: { state: "ready", value: { ...base, items: [{ task, inputDigest: `sha256:${"a".repeat(64)}`,
+      reasons: ["proposal" as const], resultArtifactIds: [], category: "preparation" as const, urgency: "normal" as const,
+      ownerQuestion: "What should happen next?" }] } } }));
+  assert.match(real, /Prepare brief/); assert.match(real, /Needs preparation/); assert.match(real, /What should happen next/);
+  assert.doesNotMatch(real, /<button|<form/);
+  const empty = renderToStaticMarkup(createElement(ProjectResultReviewPanel, { projectId: task.projectId, mode: "inbox",
+    data: { state: "ready", value: { ...base, items: [] } } }));
+  assert.match(empty, /No saved attention was found/); assert.match(empty, /not an all-clear/);
+  const unavailable = renderToStaticMarkup(createElement(ProjectResultReviewPanel, { projectId: task.projectId, mode: "inbox",
+    data: { state: "unavailable", code: "unavailable" } }));
+  assert.match(unavailable, /could not be checked/); assert.match(unavailable, /No empty list or all-clear is inferred/);
 });
 
 test("project review attention does not turn unavailable evidence into an empty all-clear", () => {
@@ -842,6 +872,22 @@ test("capacity panel states stay independent of the connection inventory", () =>
   assert.match(html, /Reading the recorded capacity and outcome evidence/);
   // Exactly one capacity mount: the panel is not duplicated.
   assert.equal((html.match(/operator-capacity-title/g) ?? []).length, 2);
+});
+
+test("each connection inventory error code gives its own recovery sentence", () => {
+  const sentences = new Map<string, string>();
+  for (const [code, sentence] of [
+    ["authentication_required", "Your session ended before the connection inventory could be read. Sign in again; no sample data is shown."],
+    ["access_denied", "Your account is not allowed to view the connection inventory. No sample data is shown."],
+    ["not_found", "This installation does not serve the connection inventory. No sample data is shown."],
+    ["unavailable", "The saved inventory could not be verified, or its private setup is not configured. No sample or old connection data is shown."],
+  ] as const) {
+    const html = renderToStaticMarkup(createElement(PrivateConnectionView,
+      { data: { state: "unavailable", code }, onRefresh: () => {} }));
+    assert.match(html, new RegExp(sentence.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")), code);
+    sentences.set(code, sentence);
+  }
+  assert.equal(new Set(sentences.values()).size, 4, "each error code must retain a distinct recovery sentence");
 });
 
 test("workers boundary text no longer claims capacity data is unavailable", () => {
