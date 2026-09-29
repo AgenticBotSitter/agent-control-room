@@ -40,6 +40,7 @@ import {
   searchPathEndsInPgTemp,
   securityDefinerAudit,
   securityDefinerAuditLive,
+  sharedMemoryLeaks,
   sharedMemorySegments,
   shutdownLadder,
   shortSocketDirectories,
@@ -52,6 +53,7 @@ import {
   UnpinnedSearchPathError,
   withRealPostgres,
   type RealPostgres,
+  type SharedMemorySegment,
 } from "./support/attack-kit/index.ts";
 import { REPOSITORY_ROOT } from "./support/attack-kit/real-postgres.ts";
 
@@ -1524,6 +1526,68 @@ describe("attack kit: the teardown ladder (shared-memory safety)", () => {
     assert.equal(result.stopped, true);
     assert.equal(result.forced, false);
   });
+
+  // The suite-level guard at the end of this file can only pass on a run that
+  // leaks nothing, which means it can never be seen to FAIL. These tests pin
+  // the classification it uses against a synthetic orphan, which is the only way
+  // to make a leak guard falsifiable. The signature is the one measured on this
+  // machine: 56 bytes, creator dead, `nattch 0`.
+
+  const segment = (over: Partial<{
+    id: string; creatorPid: number; lastPid: number; ours: boolean;
+  }> = {}): SharedMemorySegment => ({
+    id: over.id ?? "1",
+    owner: "someone",
+    creatorPid: over.creatorPid ?? 4242,
+    lastPid: over.lastPid ?? 0,
+    ours: over.ours ?? false,
+  });
+  const dead = () => false;
+  const running = () => true;
+
+  test("a new segment with a dead creator is a leak, whatever its attribution", () => {
+    const before = [segment({ id: "1", creatorPid: 10 })];
+    // The measured shape: a segment that appeared, whose creator is gone, and
+    // which nothing in the suite can free because the process that would have
+    // unlinked it no longer exists.
+    const after = [...before, segment({ id: "2", creatorPid: 4242, lastPid: 0, ours: false })];
+    assert.deepEqual(
+      sharedMemoryLeaks(before, after, dead).map(leak => `${leak.segment.id}:${leak.reason}`),
+      ["2:dead_creator"],
+      "a dead creator is the leak, and its command line is gone so attribution cannot rescue it");
+  });
+
+  test("a new segment belonging to another live job is not this suite's leak", () => {
+    // Observed during development: a reviewer's cluster on port 58001 appeared
+    // in `ipcs` and was started and stopped during this suite's run. Failing on
+    // that would report another job's cluster as this suite's leak.
+    const before = [segment({ id: "1", creatorPid: 10 })];
+    const after = [...before, segment({ id: "2", creatorPid: 999, lastPid: 999, ours: false })];
+    assert.deepEqual(sharedMemoryLeaks(before, after, running), [],
+      "another job's live cluster is not this suite's to fail over");
+  });
+
+  test("a segment this suite's own postmaster still holds is a leak", () => {
+    // Alive or dead, a cluster of ours still holding a segment after the run is
+    // one this suite started and did not stop. The `before` snapshot is taken at
+    // module load, so an `ours` segment can only be one this run created.
+    const before = [segment({ id: "1", creatorPid: 10, ours: false })];
+    const after = [...before, segment({ id: "7", creatorPid: 10, ours: true })];
+    assert.deepEqual(
+      sharedMemoryLeaks(before, after, running).map(leak => `${leak.segment.id}:${leak.reason}`),
+      ["7:our_cluster_survived"],
+      "a postmaster that outlived the run is holding a segment the suite must release");
+  });
+
+  test("an unchanged snapshot is not a leak, and an unreadable one is not a clean result", () => {
+    // Nothing of ours, nothing new: the state a correct teardown leaves.
+    const same = [segment({ id: "1", creatorPid: 10, ours: false })];
+    assert.deepEqual(sharedMemoryLeaks(same, same, running), []);
+    // null means `ipcs` could not be read. The suite guard refuses on it
+    // separately; here the point is that the classifier does not invent a
+    // verdict from data it does not have.
+    assert.deepEqual(sharedMemoryLeaks(same, null, running), []);
+  });
 });
 
 describe("attack kit: search_path file hint (not a gate)", () => {
@@ -2259,41 +2323,30 @@ test("the whole suite left no new SysV shared-memory segment", async () => {
   // it would be a false accusation. A dead creator can never be used again: only
   // `ipcrm` frees it, and nothing here may run that.
   //
-  // The count is asserted over segments ATTRIBUTED to this suite, by the
-  // creator's own command line (an `attack-kit-pg-` data directory on a port in
-  // this file's block). A strict per-user count is not enforceable on a shared
-  // login: another job's cluster appearing and being stopped during the run
-  // changes the per-user count without this suite having done anything, which
-  // was measured, not assumed.
+  // The classification itself is `sharedMemoryLeaks`, which is tested directly
+  // against a synthetic orphan: a real orphan appears only when a postmaster has
+  // already been SIGKILLed, so waiting for one in this run would be a hope
+  // rather than a test.
   const after = await sharedMemorySegments(PORTS);
   if (sharedMemoryBefore === null || after === null) {
     // `ipcs` is unreadable, so nothing can be compared. That is REFUSED, not
     // passed: a guard that could not run must not read as a guard that passed.
     assert.fail("attack_kit_shared_memory_count_unavailable:ipcs_could_not_be_read_on_this_host");
   }
-  const known = new Set(sharedMemoryBefore.map(segment => segment.id));
-  const appeared = after.filter(segment => !known.has(segment.id));
   const alive = (pid: number): boolean => {
     if (pid === 0) return false;
     try { process.kill(pid, 0); return true; } catch (error) {
       return (error as { code?: string }).code === "EPERM";
     }
   };
-  // A dead creator is a leak whatever its attribution, because the command line
-  // that would identify it is gone with the process.
-  const orphans = appeared.filter(segment => !alive(segment.creatorPid));
-  assert.deepEqual(orphans.map(segment => `id=${segment.id} creator=${segment.creatorPid} last=${segment.lastPid}`), [],
+  const leaks = sharedMemoryLeaks(sharedMemoryBefore, after, alive);
+  assert.deepEqual(leaks.map(leak => `id=${leak.segment.id} creator=${leak.segment.creatorPid} ${leak.reason}`), [],
     "the suite created SysV shared-memory segments it did not release: a postmaster "
     + "was SIGKILLed instead of stopped, and its segment is now unreclaimable");
-  // And no segment this suite is responsible for may still be held by a
-  // postmaster that survived the run.
-  const stillOurs = after.filter(segment => segment.ours && alive(segment.creatorPid));
-  assert.deepEqual(stillOurs.map(segment => `id=${segment.id} creator=${segment.creatorPid}`), [],
-    "this suite's own cluster is still holding a SysV shared-memory segment after the run");
-  const mine = after.filter(segment => segment.ours);
+  const mine = (after as SharedMemorySegment[]).filter(segment => segment.ours);
   assert.equal(mine.length, sharedMemoryBefore.filter(segment => segment.ours).length,
-    `this suite's segment count changed: before=${sharedMemoryBefore.filter(s => s.ours).length}`
-    + ` after=${mine.length}`);
+    `this suite's segment count changed: `
+    + `before=${sharedMemoryBefore.filter(s => s.ours).length} after=${mine.length}`);
 });
 
 test("the kit's own sources are all present and the working tree is as it was", async () => {

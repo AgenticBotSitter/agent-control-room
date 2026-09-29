@@ -1255,3 +1255,55 @@ export function newSharedMemorySegments(
   const known = new Set(before.map(segment => segment.id));
   return after.filter(segment => !known.has(segment.id));
 }
+
+export interface SharedMemoryLeak {
+  readonly segment: SharedMemorySegment;
+  readonly reason: "dead_creator" | "our_cluster_survived";
+}
+
+/**
+ * Classify the shared-memory segments this run is answerable for.
+ *
+ * Two failures, and only two:
+ *
+ *  - `dead_creator` — a segment that appeared and whose creator is gone. This is
+ *    the leak: PostgreSQL was SIGKILLed instead of stopped, so its exit path
+ *    never unlinked the segment. Nothing can free it except `ipcrm`, which this
+ *    kit must never run. It is a leak whatever its attribution, because the
+ *    command line that would identify the cluster is gone with the process.
+ *  - `our_cluster_survived` — a segment attributed to this suite whose creator
+ *    is still running after the run. A leaked postmaster holding a segment.
+ *
+ * A new segment with a LIVE creator that is NOT this suite's is not returned:
+ * four test slots share this login, so a reviewer or a sibling job starting and
+ * stopping its own cluster mid-run moves the per-user count with nothing to do
+ * with this suite. Failing on that is a false accusation, and it was observed
+ * during development rather than anticipated.
+ *
+ * Extracted as a pure function so the classification can be tested against a
+ * synthetic orphan. Waiting for a real one to appear is not a test: it is a hope.
+ */
+export function sharedMemoryLeaks(
+  before: readonly SharedMemorySegment[],
+  after: readonly SharedMemorySegment[] | null,
+  isAlive: (pid: number) => boolean,
+): SharedMemoryLeak[] {
+  if (after === null) return [];
+  const leaks: SharedMemoryLeak[] = [];
+  for (const segment of newSharedMemorySegments(before, after)) {
+    // A NEW segment whose creator is gone. The command line that would identify
+    // the cluster is gone with the process, so this is a leak whatever its
+    // attribution.
+    if (!isAlive(segment.creatorPid)) leaks.push({ segment, reason: "dead_creator" });
+  }
+  // A cluster of THIS SUITE's still holding a segment after the run, alive or
+  // not: either way this suite started something it did not stop. This is the
+  // case a dead_creator check alone cannot see, because a leaked postmaster is
+  // still running and its segment is not new — the `before` snapshot was taken
+  // at module load, before any cluster started, so a surviving `ours` segment
+  // can only be one this run created and kept.
+  for (const segment of after) {
+    if (segment.ours) leaks.push({ segment, reason: "our_cluster_survived" });
+  }
+  return leaks;
+}
