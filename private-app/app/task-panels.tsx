@@ -76,7 +76,17 @@ export function TaskStateGuidance({ detail, refreshing, onRefresh }: { detail: T
 
 export function TaskProposalForm({ draft, setDraft, modelOptions = [], pending, preparing = false, uncertain, onSave }: { draft: TaskDraft;
   setDraft: (value: TaskDraft) => void; modelOptions?: TaskPage["modelOptions"]; pending: boolean; preparing?: boolean; uncertain: boolean; onSave: () => void }) {
-  const choices = modelOptions.flatMap(worker => worker.choices.map(choice => ({ ...choice, workerKind: worker.workerKind })));
+  const workerLabels = { codex: "Codex", "claude-code": "Claude Code", hermes: "Hermes Agent" } as const;
+  const grouped = new Map<string, Array<NonNullable<TaskPage["modelOptions"]>[number]["choices"][number] &
+    { workerKind: NonNullable<TaskPage["modelOptions"]>[number]["workerKind"] }>>();
+  for (const worker of modelOptions) for (const choice of worker.choices)
+    grouped.set(choice.key, [...(grouped.get(choice.key) ?? []), { ...choice, workerKind: worker.workerKind }]);
+  const ambiguousKeys: string[] = [];
+  const choices = [...grouped.values()].flatMap(group => {
+    const efforts = group[0]!.efforts.filter(effort => group.every(choice => choice.efforts.includes(effort)));
+    if (!efforts.length) { ambiguousKeys.push(group[0]!.key); return []; }
+    return [{ ...group[0]!, efforts, label: `${group.map(choice => workerLabels[choice.workerKind]).join(" / ")}: ${group[0]!.label}` }];
+  });
   const selected = choices.find(choice => choice.key === draft.model);
   return <form id="new-task" className="private-create" onSubmit={event => { event.preventDefault(); onSave(); }}>
     <h2>New task</h2><p className="private-note">Describe and save the work you want done. Saving does not assign or start an agent.
@@ -89,13 +99,23 @@ export function TaskProposalForm({ draft, setDraft, modelOptions = [], pending, 
     <label htmlFor="task-instructions">What should the agent deliver?</label>
     <textarea id="task-instructions" required rows={8} maxLength={4000} value={draft.instructions} disabled={pending || preparing || uncertain}
       aria-describedby="task-secrets-note" onChange={event => setDraft({ ...draft, instructions: event.target.value })} />
+    <fieldset><legend>Configured worker, model and effort defaults</legend>
+      {!!modelOptions.length ? <><p className="private-note">These are the owner-configured defaults. Choosing a model saves the exact model and effort request; preparation still checks it against the worker you choose.</p>
+        <ul>{(["hermes", "claude-code", "codex"] as const).map(workerKind => {
+          const worker = modelOptions.find(item => item.workerKind === workerKind);
+          const recommendation = worker?.choices.find(choice => choice.key === worker.defaultModel);
+          return <li key={workerKind}><strong>{workerLabels[workerKind]}:</strong> {recommendation
+            ? `${recommendation.label} · effort ${worker!.defaultEffort}` : "not configurable"}</li>;
+        })}</ul>{!!ambiguousKeys.length && <p className="private-note">A model shared by workers with no common effort is not offered here. Choose compatible worker settings before saving it.</p>}</>
+        : <p className="private-note">Model and effort are not configurable for this installation. The selected worker uses its protected default.</p>}
+    </fieldset>
     {!!choices.length && <><label htmlFor="task-model">Model (optional)</label><select id="task-model" value={draft.model ?? ""}
       disabled={pending || preparing || uncertain} onChange={event => {
         const choice = choices.find(item => item.key === event.target.value);
         setDraft({ ...draft, model: choice?.key || undefined,
           effort: choice ? (choice.efforts.includes(draft.effort as never) ? draft.effort : choice.efforts[0]) : undefined });
-      }}><option value="">Worker default</option>{choices.map(choice => <option key={`${choice.workerKind}:${choice.key}`}
-        value={choice.key}>{choice.workerKind}: {choice.label}</option>)}</select>
+      }}><option value="">Worker default</option>{choices.map(choice => <option key={choice.key}
+        value={choice.key}>{choice.label}</option>)}</select>
       {selected && <><label htmlFor="task-effort">Effort</label><select id="task-effort" value={draft.effort ?? selected.efforts[0]}
         disabled={pending || preparing || uncertain} onChange={event => setDraft({ ...draft, effort: event.target.value as TaskDraft["effort"] })}>
         {selected.efforts.map(value => <option key={value} value={value}>{value}</option>)}</select>
@@ -271,6 +291,10 @@ export function TaskDetailPanel({ detail }: { detail: TaskDetail }) {
         links={detail.revisionLinks ?? { previousJobId: null, nextJobId: null, revisionNumber: 0 }} /></section>
     {preparedFor && <section className="private-panel" aria-label="Prepared worker"><h2>Prepared worker</h2>
       <p>This task is prepared for {preparedFor}. Preparation does not assign or start this worker.</p>
+      {detail.modelSelection?.model
+        ? <p><strong>Chosen for this prepared task:</strong> {preparedFor} · {detail.modelSelection.profile ? `${detail.modelSelection.profile} · ` : ""}
+          {detail.modelSelection.model} · effort {detail.modelSelection.effort}</p>
+        : <p className="private-note">Model and effort are not configurable for this task; the worker uses its protected default.</p>}
       <p className="private-note">{preparedRouteDetail}</p>
       <p className="private-note">Next: open assignment to check the configured route for this task. A prepared route is not a current availability or running-work signal.</p></section>}
     <LocalRouteObservationPanel detail={detail} />

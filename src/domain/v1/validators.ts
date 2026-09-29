@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { canonicalNetworkDestinationSchema } from "../../security/canonical-network-destination";
+import { MODEL_IDENTIFIER_PATTERN_V1 } from "./model-identifier";
 import { authorityModes } from "../../contracts/v1/types";
 import {
   DOMAIN_CONTRACT_VERSION,
@@ -22,6 +23,7 @@ const isoDate = z.string().datetime({ offset: true });
 const safeId = z.string().min(3).max(180).regex(/^[a-zA-Z0-9][a-zA-Z0-9._:-]*$/);
 const safeLabel = z.string().min(1).max(180);
 const digest = z.string().regex(/^sha256:[a-f0-9]{64}$/);
+const modelIdentifier = z.string().regex(MODEL_IDENTIFIER_PATTERN_V1);
 const nonNegativeMoney = z.number().finite().min(0);
 
 const actorSchema = z.object({
@@ -136,6 +138,10 @@ export const attemptRecordSchema = orderedRecord({
   workerId: safeId.optional(),
   nodeId: safeId.optional(),
   leaseEpoch: z.number().int().positive().optional(),
+  modelSelection: z.object({ workerKind: z.enum(["codex", "claude-code", "hermes"]),
+    selectionKey: modelIdentifier, model: modelIdentifier,
+    effort: z.enum(["default", "low", "medium", "high", "xhigh", "max"]),
+    provider: modelIdentifier.optional(), profile: modelIdentifier.optional() }).strict().optional(),
   offeredAt: isoDate,
   startedAt: isoDate.optional(),
   finishedAt: isoDate.optional(),
@@ -146,6 +152,10 @@ export const attemptRecordSchema = orderedRecord({
   }
   if (["running", "waiting", "succeeded", "failed"].includes(attempt.state) && !attempt.startedAt) {
     context.addIssue({ code: "custom", message: "started execution requires startedAt", path: ["startedAt"] });
+  }
+  if (attempt.modelSelection && (Boolean(attempt.modelSelection.provider) !== Boolean(attempt.modelSelection.profile)
+    || (attempt.modelSelection.workerKind === "hermes") !== Boolean(attempt.modelSelection.provider && attempt.modelSelection.profile))) {
+    context.addIssue({ code: "custom", message: "Hermes attempts require a provider/profile pair", path: ["modelSelection"] });
   }
 });
 

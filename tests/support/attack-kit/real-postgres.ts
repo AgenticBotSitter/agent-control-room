@@ -24,6 +24,9 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { Client } from "pg";
 import { applyMigrations } from "../../../deploy/postgres/apply-migrations.mjs";
+// The single implementation of the teardown ladder, shared with every other
+// disposable-cluster start site in this repository. See `shutdownLadder` below.
+import { shutdownLadder as sharedShutdownLadder } from "../../../scripts/dev/postgres-cluster-lifecycle.mjs";
 
 const exec = promisify(execFile);
 
@@ -305,43 +308,15 @@ export interface ShutdownLadderResult {
  * reaching it sets `forced`.
  */
 export async function shutdownLadder(options: ShutdownLadderOptions): Promise<ShutdownLadderResult> {
-  const graceMs = options.graceMs ?? 30_000;
-  const tickMs = options.tickMs ?? 100;
-  const sleep = options.sleep ?? ((ms: number) => new Promise<void>(done => { setTimeout(done, ms); }));
-  const steps: ShutdownStep[] = [];
-
-  const waitForExit = async (): Promise<boolean> => {
-    const deadline = Date.now() + graceMs;
-    while (Date.now() < deadline && options.alive()) await sleep(tickMs);
-    return !options.alive();
-  };
-
-  for (const mode of ["fast", "immediate"] as const) {
-    if (!options.alive()) break;
-    let error: string | undefined;
-    try {
-      await options.cooperativeStop(mode);
-    } catch (thrown) {
-      // Expected when the postmaster never came up, or is already gone. Whether
-      // that is a failure is decided by asking whether it is still running — and
-      // the reason is kept, because it is the only thing that says why.
-      error = `${thrown instanceof Error ? thrown.message : String(thrown)}`
-        .split("\n")[0]!.slice(0, 200);
-    }
-    const stopped = !options.alive();
-    steps.push({ action: "cooperative", mode, stopped, failed: error !== undefined && !stopped, ...(error === undefined ? {} : { error }) });
-    if (stopped) return { steps, stopped: true, forced: false };
-  }
-
-  for (const signal of ["SIGQUIT", "SIGKILL"] as const) {
-    if (!options.alive()) break;
-    try { options.signal(signal); } catch { /* already gone */ }
-    const stopped = await waitForExit();
-    steps.push({ action: "signal", signal, stopped, failed: !stopped });
-    if (stopped) return { steps, stopped: true, forced: signal === "SIGKILL" };
-  }
-
-  return { steps, stopped: !options.alive(), forced: steps.some(step => step.signal === "SIGKILL") };
+  // The IMPLEMENTATION is the shared one, in
+  // `scripts/dev/postgres-cluster-lifecycle.mjs`. It used to be a hand-copied
+  // second copy of the ladder living in this file, and a hand-copied ladder is
+  // exactly how two copies drift: a later edit that reordered one of them would
+  // leak a 56-byte SysV segment per cluster in whichever lanes had the stale
+  // copy, and nothing here would fail. Every other disposable-cluster start site
+  // in the repository now imports that one module, and the order is asserted
+  // directly in tests/postgres-shared-memory-teardown.test.mjs.
+  return await sharedShutdownLadder(options);
 }
 
 /** The first bin directory that actually holds a PostgreSQL 17 server. */

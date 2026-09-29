@@ -88,7 +88,7 @@ export async function restoreDatabase({ backup, target, confirmTarget, pgBin, re
     // identity column need their own ALTER.
     const objects = (await grantClient.query(
       `SELECT n.nspname AS schema, c.relname AS name,
-              CASE WHEN c.relkind = 'S' THEN 'SEQUENCE' ELSE 'TABLE' END AS kind,
+              CASE c.relkind WHEN 'S' THEN 'SEQUENCE' WHEN 'v' THEN 'VIEW' ELSE 'TABLE' END AS kind,
               EXISTS (
                 SELECT 1 FROM pg_depend d
                 WHERE d.objid = c.oid AND d.classid = 'pg_class'::regclass
@@ -98,7 +98,7 @@ export async function restoreDatabase({ backup, target, confirmTarget, pgBin, re
                                 AND d.refobjsubid = a.attnum)
               ) AS is_identity_sequence
        FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
-       WHERE n.nspname = 'public' AND c.relkind IN ('r', 'S')`)).rows;
+       WHERE n.nspname = 'public' AND c.relkind IN ('r', 'S', 'v')`)).rows;
     for (const object of objects.filter(row => row.kind !== 'SEQUENCE' || !row.is_identity_sequence)) {
       if (!/^[a-z0-9_]+$/.test(object.name)) throw new Error(`restore_refused_object:${object.name}`);
       await grantClient.query(`ALTER ${object.kind} "public"."${object.name}" OWNER TO "${canonicalOwner}"`);

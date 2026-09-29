@@ -75,8 +75,12 @@ test("proposal-only submission is replay-safe, audited, and creates no task or q
   const batchId = first.batchId;
   assert.equal(first.startsWork, false); assert.equal(first.grantsExecutionAuthority, false);
   const replay = await f.service.submit(input); assert.equal("replayed" in replay && replay.replayed, true);
+  const restarted = new WorkBatchServiceV1(new WorkBatchStoreV1(f.db, new Uint8Array(32).fill(7)));
+  const afterRestart = await restarted.submit(input);
+  assert.equal("replayed" in afterRestart && afterRestart.replayed, true);
   assert.equal((await f.raw.query<{ count: number }>("SELECT count(*)::int AS count FROM work_batches")).rows[0]!.count, 1);
   assert.equal((await f.raw.query<{ count: number }>("SELECT count(*)::int AS count FROM work_batch_revisions")).rows[0]!.count, 1);
+  assert.equal((await f.raw.query<{ count: number }>("SELECT count(*)::int AS count FROM control_action_inbox")).rows[0]!.count, 1);
   assert.equal((await f.raw.query<{ count: number }>("SELECT count(*)::int AS count FROM control_jobs")).rows[0]!.count, 0);
   assert.equal((await f.raw.query<{ count: number }>("SELECT count(*)::int AS count FROM control_room_queue.job")).rows[0]!.count, 0);
   await assert.rejects(f.raw.query(`INSERT INTO work_batches
@@ -85,12 +89,12 @@ test("proposal-only submission is replay-safe, audited, and creates no task or q
     FROM work_batches WHERE id=$1`, [batchId]), /proposal-only work batch insert rejected/);
   await assert.rejects(f.raw.query(`INSERT INTO work_batch_revisions
     SELECT 'revision:forged',tenant_id,batch_id,2,edited_by_identity_id,edited_at,'submitted',proposal,revision_digest,auth_tag
-    FROM work_batch_revisions WHERE batch_id=$1`, [batchId]), /initial work batch revision insert rejected/);
+    FROM work_batch_revisions WHERE batch_id=$1`, [batchId]), /work batch revision insert rejected/);
   const verification = await new AuditStore(f.db).verify("tenant:test", auditPartition(NOW));
   assert.equal(verification.valid, true);
   await assert.rejects(f.service.submit({ ...input, rawProposal: JSON.stringify(proposal({ tasks: [{ ...proposal().tasks[0], title: "Changed" }] })) }), /replay_conflict/);
   assert.equal((await f.raw.query<{ count: number }>("SELECT count(*)::int AS count FROM work_batches")).rows[0]!.count, 1);
-  assert.equal((await f.raw.query<{ count: number }>("SELECT count(*)::int AS count FROM audit_events WHERE action='work_batches.propose.replayed'")).rows[0]!.count, 1);
+  assert.equal((await f.raw.query<{ count: number }>("SELECT count(*)::int AS count FROM audit_events WHERE action='work_batches.propose.replayed'")).rows[0]!.count, 2);
   await f.raw.query("UPDATE control_role_grants SET revoked_at=statement_timestamp() WHERE id='grant:proposer'");
   await assert.rejects(f.raw.query(`INSERT INTO work_batches
     SELECT 'batch:forged-with-revoked-grant',tenant_id,project_id,proposed_by_identity_id,proposed_by_actor_type,
@@ -170,15 +174,18 @@ test("the executable down migration refuses records and removes every owned obje
   const populated = await fixture(); t.after(() => void populated.close());
   await populated.service.submit({ principal: principal(), projectId: "project:test", rawProposal: JSON.stringify(proposal()),
     idempotencyKey: "down-refusal-record-0001", now: NOW });
+  const queueDown = await readFile("db/down/0104_work_batch_agent_queue.sql", "utf8");
+  const ownerDown = await readFile("db/down/0102_work_batch_owner_approval.sql", "utf8");
   const down = await readFile("db/down/0093_work_batch_intake.sql", "utf8");
-  await assert.rejects(populated.raw.exec(down), /down migration refused/u);
+  await populated.raw.exec(queueDown);
+  await assert.rejects(populated.raw.exec(ownerDown), /down migration refused/u);
   await populated.raw.exec("ROLLBACK");
   assert.equal((await populated.raw.query("SELECT 1 FROM work_batches")).rows.length, 1);
 
   const empty = new PGlite(); t.after(() => void empty.close());
   for (const file of (await readdir("db/migrations")).filter(file => file.endsWith(".sql")).sort())
     await empty.exec(await readFile(`db/migrations/${file}`, "utf8"));
-  await empty.exec(down);
+  await empty.exec(queueDown); await empty.exec(ownerDown); await empty.exec(down);
   const objects = await empty.query<{ batches: string | null; revisions: string | null; first_guard: string | null; second_guard: string | null }>(
     `SELECT to_regclass('work_batches')::text batches,to_regclass('work_batch_revisions')::text revisions,
       to_regprocedure('guard_proposal_only_work_batch_insert()')::text first_guard,

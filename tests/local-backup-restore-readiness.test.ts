@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -11,6 +12,7 @@ import { sha256Digest } from "../src/security";
 import { createMacLocalDatabaseBackupV1 } from "../scripts/ops/backup-database.mjs";
 import { databaseBackupVerificationRootPrefixV1, normalizeMacApplicationOwnershipV1, verifyMacLocalDatabaseBackupV1 } from
   "../scripts/ops/verify-database-backup.mjs";
+import { createClusterTeardown } from "../scripts/dev/postgres-cluster-lifecycle.mjs";
 
 const planDigest = sha256Digest("reviewed-local-installation-plan");
 const inventory = () => createArtifactBackupInventoryV1({
@@ -135,4 +137,102 @@ test("normalizes only restored application ownership, never bootstrap system own
   assert.doesNotMatch(queries[0]!, /REASSIGN OWNED/u);
   assert.match(queries[0]!, /nspname IN \('public','control_room_queue'\)/u);
   assert.deepEqual(queries.slice(1), commands);
+});
+
+test("a slow disposable-cluster shutdown is DEGRADED, never raised as a teardown failure", async () => {
+  // The shared module's half of review finding 1 (PR #438), asserted on its own so
+  // a lane with no PostgreSQL still holds the rule.
+  //
+  // `verifyMacLocalDatabaseBackupV1` reports the backup's own result and nothing
+  // else: docs/BACKUP_AND_RESTORE.md:41-44 defines `PASS` as the five observed
+  // facts and says any mismatch prints `FAIL`. A `pg_ctl -m fast` that misses its
+  // 60 s window after the restore, followed by an `immediate` that works, is not
+  // a mismatch — the postmaster is gone and no SysV segment leaked. It used to be
+  // raised anyway (`disposable_postgres_stop_degraded` out of the `finally`), so
+  // the CLI printed `database backup verification FAIL` and exited 1 for a backup
+  // that had verified.
+  //
+  // What the VERIFIER then does with a degraded teardown is asserted where a real
+  // cluster exists, in tests/postgres-production-lifecycle.test.mjs, which drives
+  // `verifyMacLocalDatabaseBackupV1` itself and the real CLI as a subprocess. This
+  // file holds the module's contract, and asserts the boundary that keeps it
+  // meaningful: a refused stop that leaves the postmaster CONFIRMED GONE is
+  // degraded, while one that cannot be confirmed is still a refusal.
+  const scratch = await mkdtemp(join(tmpdir(), "crv-degraded-"));
+  const confirmed = createClusterTeardown({ dataDirectory: join(scratch, "pg"),
+    runDirectory: scratch, socketDirectory: join(scratch, "socket"), port: 15620,
+    // Every stop refuses, and `pg_ctl status` reports no server, so the shutdown
+    // IS confirmed (the two evidence sources agree) while the stop itself
+    // degraded — the exact shape a slow `fast` shutdown produces.
+    pgCtl: (args: readonly string[]) => {
+      // `pg_ctl status` exiting non-zero is how a stopped postmaster is read.
+      if (args.includes("status")) throw new Error("pg_ctl: no server running");
+      throw new Error("pg_ctl: server does not take a fast shutdown request");
+    } });
+  let teardownFailure: unknown;
+  try { await confirmed.stop(); } catch (error) { teardownFailure = error; }
+  assert.equal(teardownFailure, undefined,
+    "a confirmed shutdown with a degraded stop must not be a teardown failure");
+  assert.ok(confirmed.degraded().length > 0,
+    "the reason is still available to the caller, so nothing is swallowed");
+  await rm(scratch, { recursive: true, force: true });
+
+  // The refusal that MUST still stand, and it is the one that keeps the rule from
+  // being "never fail": a `pg_ctl status` that reports a running server means the
+  // postmaster SURVIVED, which is a failure, and it keeps the data directory.
+  const surviving = await mkdtemp(join(tmpdir(), "crv-surviving-"));
+  const data = join(surviving, "pg");
+  await mkdir(data, { recursive: true });
+  const unconfirmed = createClusterTeardown({ dataDirectory: data, runDirectory: surviving,
+    socketDirectory: join(surviving, "socket"), port: 15620,
+    pgCtl: (args: readonly string[]) => {
+      if (args.includes("status")) return;
+      throw new Error("pg_ctl: server does not take a fast shutdown request");
+    } });
+  await assert.rejects(unconfirmed.stop(), /disposable_postgres_shutdown_unconfirmed/u,
+    "a postmaster that survived the teardown is still a refusal, and is never a degraded teardown");
+  assert.equal(existsSync(data), true,
+    "a surviving postmaster keeps its data directory so an operator can stop it by hand");
+  await rm(surviving, { recursive: true, force: true });
+
+  // And the verifier itself still refuses a backup that is not one.
+  await assert.rejects(verifyMacLocalDatabaseBackupV1({ backup: "not/an/absolute/path",
+    port: 15620, pgBin: "/unused/postgres/bin" }), /database_backup_path_refused/u,
+    "a backup that is not an absolute, bound backup directory is still a FAIL");
+});
+
+test("the verifier's teardown seam cannot be pointed at another cluster", async () => {
+  // Found by the self-review, and it is a leak, not a style point.
+  //
+  // `verifyMacLocalDatabaseBackupV1` takes a `teardown` option so a test can reach
+  // a degraded stop. Written as `...teardownOptions` spread LAST into
+  // `createClusterTeardown`, it also let a caller replace `dataDirectory`,
+  // `runDirectory`, `socketDirectory`, `port`, `pgBin` and `removeDirectories` —
+  // so `stop()` would run against an empty directory, find no `postmaster.pid`,
+  // record no degradation, resolve, and the verifier would return
+  // `{ verified: true }` for a cluster it never stopped, still running and still
+  // holding its SysV segment. That is exactly the class of leak this PR exists to
+  // remove, reintroduced by the seam that was added to fix the finding.
+  //
+  // The strong form of this assertion — that the real cluster is really stopped,
+  // observed through a real postmaster — is in
+  // tests/postgres-production-lifecycle.test.mjs, which has a real bound backup
+  // and a real cluster. What is checked here is the cheap half that needs no
+  // PostgreSQL: a hijack attempt reaches nothing, and the backup's own verdict
+  // is untouched by whatever the seam is handed.
+  const scratch = await mkdtemp(join(tmpdir(), "crv-seam-"));
+  const notTheCluster = join(scratch, "caller-supplied");
+  const backup = join(scratch, "backup");
+  await mkdir(notTheCluster, { recursive: true });
+  await mkdir(backup, { recursive: true });
+  await writeFile(join(backup, "database.dump"), "not-a-real-dump");
+  const argv: string[] = [];
+  await assert.rejects(verifyMacLocalDatabaseBackupV1({ backup, port: 15620,
+    pgBin: "/unused/postgres/bin",
+    teardown: { dataDirectory: notTheCluster, runDirectory: notTheCluster,
+      socketDirectory: notTheCluster, port: 1, pgBin: "/also/unused", removeDirectories: false,
+      pgCtl: (args: readonly string[]) => { argv.push(args.join(" ")); throw new Error("pg_ctl: no server running"); } } }),
+    /database_backup_digest_refused|ENOENT/u,
+    "a tampered backup is refused no matter what the teardown seam is handed");
+  await rm(scratch, { recursive: true, force: true });
 });
