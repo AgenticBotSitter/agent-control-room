@@ -139,6 +139,223 @@ test("a late exact writer accepts recovery that already retired its own witness"
   } finally { releaseWitness(); await rm(root, { recursive: true, force: true }); }
 });
 
+test("a publisher whose witness name is taken by a concurrent writer still settles its publication", async () => {
+  // This is the interleaving that made CI red, forced rather than waited for.
+  //
+  // The publication witness name is one slot per revision with no writer nonce.
+  // So a publisher can be overtaken at the very end of its own append:
+  //
+  //   P wins the no-replace hard link for revision 0, syncs, removes its own
+  //     temp, reads its plan back, and is descheduled just before retiring its
+  //     witness. Its publication is already complete and proven.
+  //   C, which started earlier and was itself descheduled after its history
+  //     read, wakes and finds P's witness gone -- retired by Q's recovery -- so
+  //     it creates a witness of its own for a revision that is ALREADY
+  //     published, and is descheduled again holding it.
+  //   P resumes and calls unlinkExact(witnessIdentity = P). The entry under that
+  //     name is now C's, not P's.
+  //
+  // P's own artifact is already retired, the publication is already durable, and
+  // C's witness is another writer's evidence. P used to fail closed here with
+  // `installation_plan_journal_unavailable`, turning a successful publication
+  // into a hard error. It must instead leave the foreign entry untouched and
+  // return its result, so the revision converges.
+  //
+  // Each gate is placed on the real storage session, and each asserts the state
+  // it depends on, so this cannot pass by accident: C is only released once the
+  // witness is provably absent, and P is only released once C's witness is
+  // provably present.
+  const root = await realpath(await mkdtemp(join(tmpdir(), "control-room-plan-overtaken-")));
+  await chmod(root, 0o700);
+  const installationId = "local-installation-overtaken", ownerUid = process.getuid!();
+
+  /** A one-shot gate: `reached` fires when the code passes it, `release` opens it. */
+  function gate(label: string) {
+    let reached!: () => void, release!: () => void;
+    const reachedRaw = new Promise<void>(r => { reached = r; });
+    const openedRaw = new Promise<void>(r => { release = r; });
+    // A stalled gate is a test bug, and a hang reports nothing about it. Fail
+    // with the gate's name instead. The timer is deliberately NOT unref'd: it
+    // has to keep the event loop alive long enough to fire, otherwise node
+    // reports an unnamed "promise still pending" and says nothing about where.
+    // `Promise.race` on the SAME promise every time, so awaiting the raced
+    // wrapper twice still waits on the single underlying resolution.
+    const withDeadline = (promise: Promise<void>) => Promise.race([promise,
+      new Promise<void>((_, reject) => { setTimeout(() => reject(new Error(`gate ${label} never completed`)), 5_000); })]);
+    return { reached: withDeadline(reachedRaw), opened: withDeadline(openedRaw), reachedNow: reached, release };
+  }
+  const pAtRetire = gate("P-retire"), cAtClaim = gate("C-claim"), cHoldsWitness = gate("C-live");
+  let pLinked = false, pGated = false, cPastClaim = false;
+  // P's own witness identity, captured when P creates it, so the retirement
+  // gate can distinguish P's own final retirement from any recovery unlink.
+  let pWitness: { device: bigint; inode: bigint } | undefined;
+  // C's own witness identity, for the same reason from the other side: the
+  // "left strictly alone" claim below is about THIS file, and the only way to
+  // say which file that is, by the only other writer in this test.
+  let cWitness: { device: bigint; inode: bigint } | undefined;
+
+  /** P is the publisher. Gated on its own final witness retirement. */
+  const publisher = new InstallationPlanFilesystemJournalV1({ rootDirectory: root, installationId, ownerUid },
+    async request => {
+      const base = await openInstallationPlanFilesystemStorageSessionV1(request);
+      return Object.freeze({ ...base,
+        async createExclusiveEntry(name: string) {
+          const identity = await base.createExclusiveEntry(name);
+          if (name.endsWith(".publish.json")) pWitness = identity;
+          return identity;
+        },
+        async linkNoReplace(...args: unknown[]) {
+          const result = await base.linkNoReplace(...(args as [string, never, string]));
+          pLinked = true;
+          return result;
+        },
+        async unlinkExact(name: string, identity: { device: bigint; inode: bigint }, allowMissing?: boolean) {
+          // Only the retirement that follows this writer's own successful
+          // publication. Gated on the captured witness identity as well as
+          // `pLinked`, because the same journal instance performs recovery
+          // unlinks for revisions it did not publish, and freezing inside one
+          // of those would deadlock every other writer.
+          if (name.endsWith(".publish.json") && pLinked && !pGated && pWitness
+            && identity.device === pWitness.device && identity.inode === pWitness.inode) {
+            pGated = true;
+            assert.ok(await base.statEntry(name),
+              "P must still own its witness at this point, or this test is not the intended interleaving");
+            pAtRetire.reachedNow();
+            await pAtRetire.opened;
+          }
+          return base.unlinkExact(name, identity, allowMissing);
+        },
+      });
+    });
+
+  /** C is overtaken, then claims the freed slot for an already published revision. */
+  const claimer = new InstallationPlanFilesystemJournalV1({ rootDirectory: root, installationId, ownerUid },
+    async request => {
+      const base = await openInstallationPlanFilesystemStorageSessionV1(request);
+      return Object.freeze({ ...base,
+        async createExclusiveEntry(name: string) {
+          const isWitness = name.endsWith(".publish.json");
+          if (isWitness && !cPastClaim) {
+            assert.equal(await base.statEntry(name), undefined,
+              "C must find the witness slot already freed, or it cannot demonstrate a second generation");
+            cPastClaim = true;
+            cAtClaim.reachedNow();
+            await cAtClaim.opened;
+          }
+          const identity = await base.createExclusiveEntry(name);
+          // Once past the gate, hold the newly created witness live so it is
+          // still present when P resumes and looks for its own.
+          if (isWitness && cPastClaim) {
+            cWitness = identity;
+            cHoldsWitness.reachedNow();
+            await cHoldsWitness.opened;
+          }
+          return identity;
+        },
+      });
+    });
+
+  // Q publishes nothing new; it simply loses the link race and its recovery
+  // retires P's witness, which is what frees the slot for C.
+  const other = new InstallationPlanFilesystemJournalV1({ rootDirectory: root, installationId, ownerUid });
+
+  try {
+    const plan = create();
+    // C starts first and pauses at its witness claim, so it is provably past
+    // its own history read before anything exists. It holds no witness yet, so
+    // it blocks nothing that follows.
+    const claimerAppend = claimer.append(plan);
+    await cAtClaim.reached;
+    // P publishes revision 0 and is frozen at its final witness retirement. It
+    // is frozen INSIDE the storage session it owns, holding only its own open
+    // descriptors, so Q can still open an independent session and recover.
+    const published = publisher.append(plan);
+    await pAtRetire.reached;
+    // Q loses the link race; its recovery retires P's witness, freeing the slot.
+    // P is still frozen, so the witness P owned is definitely the one retired.
+    const recovered = await other.append(plan);
+    assert.equal(recovered.replayed, true);
+    assert.equal(await entryExists(root, `${installationId}.installation-plan.revision-0000000000.publish.json`),
+      false, "Q's recovery must retire P's witness for the slot to become free");
+    // Release C: it claims the freed slot. C then holds a live witness for an
+    // already published revision and STAYS frozen there, so the foreign witness
+    // is provably present at the moment P looks for its own. C is released at
+    // the very end, after P has resumed.
+    cAtClaim.release();
+    await cHoldsWitness.reached;
+    assert.ok(await entryExists(root, `${installationId}.installation-plan.revision-0000000000.json`),
+      "the published target must still be present before P resumes");
+    assert.ok(await entryExists(root, `${installationId}.installation-plan.revision-0000000000.publish.json`),
+      "C must now hold a live witness under the name P is about to retire");
+    // Release P. P's own witness is gone and a foreign one is under its name.
+    pAtRetire.release();
+
+    const settled = await published;
+    assert.equal(settled.replayed, false,
+      "a publisher whose witness slot was reused must still report its own publication, not fail");
+    assert.equal(settled.planDigest, plan.planDigest);
+    assert.equal(settled.revision, 0);
+
+    // THE ASSERTION THIS TEST WAS MISSING. The comment on
+    // `unlinkExact(name, identity, allowMissing = true)` in
+    // src/installer/v1/installation-plan-journal-storage-session.ts claims the
+    // foreign entry "is left strictly alone … removing it would destroy evidence
+    // belonging to another writer". Nothing proved that: replacing the early
+    // return with an unlink of the foreign entry left this file green, because
+    // the only later check is the final `readdir`, which happens *after* C is
+    // released and after recovery has legitimately retired the witness anyway
+    // — so the two outcomes are indistinguishable from there.
+    //
+    // This is the earliest point where the difference is observable, and the
+    // only one that names a writer: C is still frozen holding its witness, so
+    // the file on disk can only be C's. Reading it back by device and inode is
+    // what makes the claim falsifiable — a file another writer recreated under
+    // the same name has a different inode, and `unlinkExact` only treats an
+    // entry as its own when the identity matches.
+    const foreignWitness = `${installationId}.installation-plan.revision-0000000000.publish.json`;
+    assert.ok(cWitness, "C must have created a witness, or this test is not the intended interleaving");
+    assert.deepEqual(await entryIdentity(root, foreignWitness), cWitness,
+      "P must leave C's live witness strictly alone: it is another writer's evidence, and only a later recovery read may retire it");
+
+    // Now let C finish, and let recovery converge the journal.
+    cHoldsWitness.release();
+    await claimerAppend;
+    // The published revision is intact and the journal reads back as one clean
+    // revision. C's witness is retired by recovery on this read rather than by
+    // P removing another writer's entry.
+    const journal = new InstallationPlanFilesystemJournalV1({ rootDirectory: root, installationId, ownerUid });
+    const history = await journal.readHistory();
+    assert.equal(history.length, 1, "the journal converges to exactly the one published revision");
+    assert.equal(history[0]!.planDigest, plan.planDigest);
+    assert.deepEqual((await readdir(root)).sort(), [name(installationId, 0)],
+      "no witness and no temp may survive the convergence");
+  } finally {
+    pAtRetire.release(); cAtClaim.release(); cHoldsWitness.release();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+/** Whether `entryName` currently exists in `root`, read straight off disk. */
+async function entryExists(root: string, entryName: string): Promise<boolean> {
+  try { await lstat(join(root, entryName)); return true; }
+  catch { return false; }
+}
+
+/**
+ * The device and inode of `entryName` in `root`, read straight off disk, or
+ * `undefined` when it is absent. Compared by identity rather than by name
+ * because a name is not an identity: the whole point of the assertion using
+ * this is that a *differently owned* file can sit under a name a writer is
+ * about to retire, so a name comparison would pass for exactly the wrong
+ * reason.
+ */
+async function entryIdentity(root: string, entryName: string): Promise<{ device: bigint; inode: bigint } | undefined> {
+  try {
+    const entry = await lstat(join(root, entryName), { bigint: true });
+    return { device: entry.dev, inode: entry.ino };
+  } catch { return undefined; }
+}
+
 test("a crash temp is never read as proof and foreign files are left alone", async () => {
   const f = await fixture();
   try {

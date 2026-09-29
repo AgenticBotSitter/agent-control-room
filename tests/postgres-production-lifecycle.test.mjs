@@ -1070,6 +1070,8 @@ test("agent-review down migration removes every surviving direct privilege", nee
     has_table_privilege('control_room_agent_reviewer','control_harness_runs','SELECT') AS run_select`)).rows[0];
   assert.deepEqual(afterDown,{schema_usage:true,direct_schema_usage:false,gate_select:false,gate_insert:false,gate_update:false,
     integrity_update:false,commit_execute:false,read_execute:false,run_select:false});
+  await query(adminDb(),"DROP DATABASE cr_agent_review_down");
+  await query(adminDb(),"DROP ROLE control_room_agent_reviewer");
 });
 
 // Everything 0108 could touch, including privileges on every public object,
@@ -1181,22 +1183,19 @@ async function seedAgentReviewTenant(client,suffix,reviewKey,checkpoints,at,plan
   return {tenantId,workspaceId,project,pipeline,profile,targetRecord,routes,plan,gate,state,reviewPayload};
 }
 
-// The dedicated reviewer group, one restricted login in it, and the
-// installation tenant binding the owner bootstrap writes.
-async function agentReviewDatabase(database,login,password){
-  await freshDatabase(database);
-  const admin=target(database);
-  await applyMigrations({target:admin,bootstrapTarget:bootstrapTarget(database),migrateTarget:migrateTarget(database),
-    rootDir:ROOT,env:{...process.env,...passwords}});
-  await query(admin,await readFile(join(ROOT,"db/roles/agent_reviewer_roles.sql"),"utf8"));
-  await query(admin,`CREATE ROLE ${login} LOGIN PASSWORD '${password}' INHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS`);
-  await query(admin,`GRANT control_room_agent_reviewer TO ${login}`);
-  return {admin,client:postgresDatabase(admin),reviewer:postgresDatabase({...target(database,login),password})};
+// The reviewer login the real Mac-local installer creates in the dedicated
+// reviewer group, on a fully migrated database.
+function withAgentReviewer(database,callback){
+  return withMacLocalLogins(database,async({client,login})=>{
+    const reviewer=login("control_room_agent_reviewer_login").direct;
+    assert.equal((await reviewer.query("SELECT current_user AS role")).rows[0].role,"control_room_agent_reviewer_login");
+    await callback({database,admin:target(database),client,reviewer});
+  });
 }
 
-test("real reviewer login cannot replay the three raw authority attacks", needsPg, async () => {
-  const database="cr_agent_review_attacks", login="agent_reviewer_attack_probe", password="reviewer-probe-password-389";
-  const {admin,client,reviewer}=await agentReviewDatabase(database,login,password);
+test("real reviewer login cannot replay the three raw authority attacks", needsPg, () =>
+  withAgentReviewer("cr_agent_review_attacks",async({database,admin,client,reviewer})=>{
+  const password="reviewer-probe-password-389";
   const at=new Date(webNow).toISOString(), reviewKey=new Uint8Array(32).fill(52);
   const checkpoints=new InMemoryRollbackCheckpointStoreV1({testOnly:true});
   const own=await seedAgentReviewTenant(client,"probe",reviewKey,checkpoints,at);
@@ -1279,15 +1278,14 @@ test("real reviewer login cannot replay the three raw authority attacks", needsP
     evidenceDigests:[sha256Digest("probe evidence")]}),/existing record integrity rejected/u);
   assert.deepEqual(await state(),beforeDrift);
   assert.deepEqual(await checkpoints.read("completion-gate:tenant:review-probe"),checkpointBeforeDrift);
-});
+}));
 
 // The reviewer login serves one installation. A second tenant in the same
 // database (seeded the way the owner bootstrap and pipeline services seed any
 // tenant) stays invisible to it and cannot receive a review through it, even
 // with the same integrity key.
-test("real reviewer login reads and commits only in its bound installation tenant", needsPg, async () => {
-  const database="cr_agent_review_tenants", login="agent_reviewer_tenant_probe", password="reviewer-tenant-password-389";
-  const {client,reviewer}=await agentReviewDatabase(database,login,password);
+test("real reviewer login reads and commits only in its bound installation tenant", needsPg, () =>
+  withAgentReviewer("cr_agent_review_tenants",async({client,reviewer})=>{
   const at=new Date(webNow).toISOString(), reviewKey=new Uint8Array(32).fill(53);
   const checkpoints=new InMemoryRollbackCheckpointStoreV1({testOnly:true});
   const own=await seedAgentReviewTenant(client,"own",reviewKey,checkpoints,at);
@@ -1315,7 +1313,7 @@ test("real reviewer login reads and commits only in its bound installation tenan
   assert.equal(committed.review.effectiveRisk,"critical");
   await own.gate.verifyProvisionedTenantV1(own.tenantId);
   await other.gate.verifyProvisionedTenantV1(other.tenantId);
-});
+}));
 
 // Two tenants, each registered for work intake exactly as the owner bootstraps
 // register agents (auth_provider='work-intake' plus a valid proposer grant).

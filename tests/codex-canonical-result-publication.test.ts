@@ -44,6 +44,10 @@ const reviewKey = new Uint8Array(32).fill(55);
 class ControlledStorage implements ArtifactStoragePortV1, ArtifactReadPortV1 {
   readonly artifacts = new Map<string, Uint8Array>(); putCalls = 0; readCalls = 0;
   throwAfterPut = false; missingReadback = false; hangPutUntilAbort = false; hangReadUntilAbort = false;
+  // Synchronous busy-wait inside `put`, in ms. Starves the event loop so the
+  // publisher's `setTimeout(storageIoMs)` cannot fire until the write has
+  // already settled, reproducing a CI scheduler stall deterministically.
+  stallPutMs = 0;
   abortObserved = false;
   waitForRelease = false; private enteredResolve!: () => void; private releaseResolve!: () => void;
   readonly entered = new Promise<void>(resolve => { this.enteredResolve = resolve; });
@@ -57,6 +61,11 @@ class ControlledStorage implements ArtifactStoragePortV1, ArtifactReadPortV1 {
   }
   async put(input: { artifactId: string; bytes: Uint8Array; signal?: AbortSignal }) {
     input.signal?.throwIfAborted(); this.putCalls++; this.enteredResolve();
+    if (this.stallPutMs > 0) {
+      // Synchronous: no await, so the timer phase cannot run until this returns.
+      const until = performance.now() + this.stallPutMs;
+      while (performance.now() < until) { /* starve the event loop on purpose */ }
+    }
     if (this.hangPutUntilAbort) await this.untilAbort(input.signal);
     if (this.waitForRelease) await this.released;
     const bytes = Uint8Array.from(input.bytes);
@@ -960,6 +969,56 @@ test("bounded storage timeout aborts the port and records terminal uncertainty",
     assert.equal((await x.f.db.query<{ state: string }>(
       "SELECT state FROM control_native_result_write_reservations")).rows[0]?.state, "storage_uncertain");
   }
+});
+
+test("a storage stall that lets the write settle after its bound still records the verified result", async t => {
+  // The regression this file's publisher guard used to have: `io()` re-checked
+  // elapsed wall-clock time AFTER the race settled and re-poisoned the port, so a
+  // write that genuinely succeeded and verified was reported as
+  // `codex_result_storage_uncertain` whenever a scheduler/GC stall made the
+  // elapsed time exceed the bound. That is what flaked
+  // "bounded storage timeout aborts the port..." in CI.
+  //
+  // Deterministic reproduction of the stall, no timing luck required: a
+  // SYNCHRONOUS busy-wait inside `put` starves the event loop, so the
+  // `setTimeout(storageIoMs)` timer cannot fire until the operation has already
+  // settled. The race is therefore won by the operation even though wall-clock
+  // time exceeds the bound - the exact shape of the CI failure, where the thrown
+  // error matched /codex_result_storage_uncertain/ but `abortObserved` stayed
+  // false. Pre-fix this throws and leaves the reservation storage_uncertain;
+  // at this head the verified write is recorded.
+  const storage = new ControlledStorage();
+  storage.stallPutMs = 40;
+  const x = await prepared(storage); t.after(x.f.close);
+  const captured = await x.publisher(x.f.db, x.f.db, { storageIoMs: 5 }).capture({ publication: x.publication,
+    terminalEvidence: x.terminalEvidence, qualificationReceipt: x.qualificationReceipt, bytes: x.bytes });
+  assert.equal(captured.receipt.publicationId, x.publication.publicationId);
+  // No live abort listener existed when the write finished, so the port was
+  // never aborted - proof this is not the timer branch.
+  assert.equal(storage.abortObserved, false);
+  assert.equal((await x.f.db.query<{ state: string }>(
+    "SELECT state FROM control_native_result_write_reservations")).rows[0]?.state, "metadata_committed");
+});
+
+test("a genuine storage hang poisons the port terminally and the reservation is never retried", async t => {
+  // The other half of the guarantee the stall case above must not weaken: a real
+  // hang still times out, still aborts, and still records terminal uncertainty
+  // so no later caller can retry the write.
+  const storage = new ControlledStorage();
+  storage.hangPutUntilAbort = true;
+  const x = await prepared(storage); t.after(x.f.close);
+  const service = x.publisher(x.f.db, x.f.db, { storageIoMs: 5 });
+  await assert.rejects(() => service.capture({ publication: x.publication, terminalEvidence: x.terminalEvidence,
+    qualificationReceipt: x.qualificationReceipt, bytes: x.bytes }), /codex_result_storage_uncertain/);
+  assert.equal(storage.abortObserved, true);
+  assert.equal((await x.f.db.query<{ state: string }>(
+    "SELECT state FROM control_native_result_write_reservations")).rows[0]?.state, "storage_uncertain");
+  // Terminal: the poisoned port refuses before touching storage again, so the
+  // ambiguous write is never retried against the same bytes.
+  const callsBefore = storage.putCalls;
+  await assert.rejects(() => service.capture({ publication: x.publication, terminalEvidence: x.terminalEvidence,
+    qualificationReceipt: x.qualificationReceipt, bytes: x.bytes }));
+  assert.equal(storage.putCalls, callsBefore);
 });
 
 test("operator role scripts upgrade existing roles and retain least-privilege grants", async t => {

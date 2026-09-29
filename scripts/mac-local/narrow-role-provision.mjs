@@ -3,15 +3,9 @@
  * live membership correction is the separately reviewed step 11.C. */
 import { readFile } from "node:fs/promises";
 import { inspectFixedQueueSchemaV1, installFixedQueueSchemaV1 } from "./fixed-queue-schema.mjs";
+import { macRolePlan } from "./database-upgrade-grants.mjs";
 
-const plan = Object.freeze([
-  ["control_room_web", "control_room_private_web"],
-  ["control_room_coordinator", "control_room_task_coordinator"],
-  ["control_room_results", "control_room_native_results"],
-  ["control_room_publisher", "control_room_local_result_publisher"],
-  ["control_room_agent_reviewer_login", "control_room_agent_reviewer"],
-  ["control_room_queue_worker", "control_room_native_queue_worker"],
-]);
+const plan = Object.freeze(Object.entries(macRolePlan));
 const roleFiles = Object.freeze([
   "private_web_roles.sql", "task_coordinator_roles.sql", "native_queue_producer_roles.sql",
   "native_results_roles.sql", "local_result_publisher_roles.sql", "native_queue_worker_roles.sql",
