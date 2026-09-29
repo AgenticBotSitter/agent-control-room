@@ -67,6 +67,7 @@ function OwnerTaskReviewController({ projectId, jobId, artifactId, targetId, tar
   const reviewRead = usePolledRead<TaskReviewOptions>({
     key: `task-owner-review-${projectId}-${jobId}-${artifactId}-${targetId}-${refresh}`,
     baseIntervalMs: 30_000,
+    dropValueOnError: true,
     read: (signal, transport) => client.options(projectId, jobId,
       { artifactId, targetId, targetDigest, contentHash }, signal, transport),
     onAccept: () => { if (!client.hasPending()) setError(undefined); },

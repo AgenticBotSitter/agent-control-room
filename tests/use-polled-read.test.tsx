@@ -65,6 +65,7 @@ function mount<T>(options: {
   key: string;
   read: (signal: AbortSignal, transport: PolledReadFetch) => Promise<T>;
   unchanged?: (previous: T, next: T) => boolean;
+  dropValueOnError?: boolean;
 }) {
   const { dom, restore } = installDom();
   const observed: Observation[] = [];
@@ -78,7 +79,8 @@ function mount<T>(options: {
   const onInterval = (delayMs: number, reason: PolledReadIntervalReason) => { observed.push({ delayMs, reason }); };
   const Probe = () => {
     const state = usePolledRead<T>({
-      key: options.key, read, baseIntervalMs: BASE_MS, onInterval, unchanged: options.unchanged });
+      key: options.key, read, baseIntervalMs: BASE_MS, onInterval, unchanged: options.unchanged,
+      dropValueOnError: options.dropValueOnError });
     states.push(state);
     return React.createElement("span", null, state.value === undefined ? "empty" : "held");
   };
@@ -232,6 +234,28 @@ test("a good value remains visible throughout a background re-read", async () =>
     releaseSecond();
     await settle(10);
     assert.deepEqual(view.states.at(-1)?.value, { items: [2] });
+  } finally { await view.stop(); }
+});
+
+test("an authority read drops a previously accepted value when its refresh fails", async () => {
+  let attempt = 0;
+  const view = mount<{ items: number[] }>({
+    key: "use-polled-read:drop-on-error",
+    dropValueOnError: true,
+    read: async () => {
+      attempt += 1;
+      if (attempt === 1) return { items: [1] };
+      throw new Error("access was revoked");
+    },
+  });
+  try {
+    await view.start();
+    await settle(160);
+    assert.ok(attempt >= 2, `expected a refresh failure after the accepted read, saw ${attempt} reads`);
+    const last = view.states.at(-1)!;
+    assert.equal(last.value, undefined, "a failed authority refresh must not retain actionable stale data");
+    assert.ok(last.error instanceof Error);
+    assert.equal(view.text(), "empty");
   } finally { await view.stop(); }
 });
 

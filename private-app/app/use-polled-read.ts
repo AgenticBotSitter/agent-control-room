@@ -45,21 +45,26 @@ export interface UsePolledReadOptions<T> {
    */
   shareKey?: string;
   unchanged?: (previous: T, next: T) => boolean;
+  /**
+   * Drop the last accepted value after a failed read. Use this for reads whose
+   * value exposes an authority to act; ordinary status views retain continuity.
+   */
+  dropValueOnError?: boolean;
   onAccept?: (value: T) => void;
   onFailure?: (reason: unknown) => void;
   onInterval?: (delayMs: number, reason: PolledReadIntervalReason) => void;
 }
 
 export function usePolledRead<T>(options: UsePolledReadOptions<T>): PolledReadState<T> {
-  const { key, read, baseIntervalMs, enabled = true, shareKey, unchanged, onAccept, onFailure, onInterval } = options;
+  const { key, read, baseIntervalMs, enabled = true, shareKey, unchanged, dropValueOnError, onAccept, onFailure, onInterval } = options;
   const [value, setValue] = useState<T>();
   const [error, setError] = useState<unknown>();
   const [loading, setLoading] = useState(false);
   const scheduler = useRef<ReturnType<typeof createPolledReadScheduler<T>> | undefined>(undefined);
   // Callers pass inline closures, so the latest ones are read through a ref.
   // The effect depends on the identity of the read, not of the callbacks.
-  const latest = useRef({ read, unchanged, onAccept, onFailure, onInterval });
-  latest.current = { read, unchanged, onAccept, onFailure, onInterval };
+  const latest = useRef({ read, unchanged, dropValueOnError, onAccept, onFailure, onInterval });
+  latest.current = { read, unchanged, dropValueOnError, onAccept, onFailure, onInterval };
 
   useEffect(() => {
     if (!enabled) { setLoading(false); return; }
@@ -73,7 +78,10 @@ export function usePolledRead<T>(options: UsePolledReadOptions<T>): PolledReadSt
       read: signal => sharePolledRequest(`${shareKey ?? key}`,
         signal2 => latest.current.read(signal2, transport), signal),
       accept: next => { setValue(next); setError(undefined); setLoading(false); latest.current.onAccept?.(next); },
-      failed: reason => { setError(reason); setLoading(false); latest.current.onFailure?.(reason); },
+      failed: reason => {
+        if (latest.current.dropValueOnError) setValue(undefined);
+        setError(reason); setLoading(false); latest.current.onFailure?.(reason);
+      },
       baseIntervalMs,
       hidden: () => typeof document === "undefined" ? false : document.hidden,
       schedule: (callback, delayMs) => setTimeout(callback, delayMs),
